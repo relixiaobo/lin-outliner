@@ -1,0 +1,61 @@
+export type SlashCommandId =
+  | 'field'
+  | 'reference'
+  | 'heading'
+  | 'checkbox'
+  | 'command_palette';
+
+export interface SlashCommandDefinition {
+  id: SlashCommandId;
+  label: string;
+  keywords: string[];
+  enabled: boolean;
+  shortcutHint?: string;
+}
+
+export const SLASH_COMMANDS: readonly SlashCommandDefinition[] = [
+  {
+    id: 'field',
+    label: 'Field',
+    keywords: ['field', 'attribute', 'property', '>'],
+    shortcutHint: '>',
+    enabled: true,
+  },
+  {
+    id: 'reference',
+    label: 'Reference',
+    keywords: ['reference', 'ref', '@', 'mention'],
+    shortcutHint: '@',
+    enabled: true,
+  },
+  {
+    id: 'heading',
+    label: 'Heading',
+    keywords: ['heading', 'title', 'h1', '!'],
+    enabled: true,
+  },
+  {
+    id: 'checkbox',
+    label: 'Checkbox',
+    keywords: ['checkbox', 'todo', 'done', 'check'],
+    shortcutHint: 'Cmd+Enter',
+    enabled: true,
+  },
+  {
+    id: 'command_palette',
+    label: 'Command palette',
+    keywords: ['command', 'palette', 'search'],
+    shortcutHint: 'Cmd+K',
+    enabled: true,
+  },
+] as const;
+
+export function filterSlashCommands(query: string): SlashCommandDefinition[] {
+  const normalized = query.trim().toLowerCase();
+  const enabled = SLASH_COMMANDS.filter((command) => command.enabled);
+  if (!normalized) return enabled;
+  return enabled.filter((command) => (
+    command.label.toLowerCase().includes(normalized)
+    || command.keywords.some((keyword) => keyword.toLowerCase().includes(normalized))
+  ));
+}

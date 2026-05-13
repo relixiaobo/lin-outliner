@@ -1,0 +1,39 @@
+{
+  "name": "lin-outliner",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first desktop outliner with a Rust core and Tauri shell",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "dev:tauri": "bun scripts/tauri-dev-server.mjs",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "app:dev": "tauri dev",
+    "app:build": "tauri build",
+    "typecheck": "tsc --noEmit",
+    "test:renderer": "bun test tests/renderer",
+    "test:e2e": "playwright test",
+    "test:rust": "cargo test --workspace"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.9.0",
+    "lucide-react": "^0.575.0",
+    "prosemirror-commands": "^1.7.1",
+    "prosemirror-model": "^1.25.4",
+    "prosemirror-state": "^1.4.4",
+    "prosemirror-view": "^1.41.8",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.1",
+    "@tauri-apps/cli": "^2.9.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.1.3",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.0"
+  }
+}

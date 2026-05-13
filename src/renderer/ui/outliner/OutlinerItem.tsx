@@ -1,0 +1,610 @@
+import {
+  useEffect,
+  useState,
+  type Dispatch,
+  type MouseEvent,
+  type SetStateAction,
+} from 'react';
+import { api } from '../../api/client';
+import type { CreateNodeTree, FocusHint, NodeId, NodeProjection, RichText } from '../../api/types';
+import { EMPTY_RICH_TEXT, plainText } from '../../api/types';
+import { flattenVisibleRows, type DocumentIndex, type UiState } from '../../state/document';
+import { RichTextEditor, type EditorSplitPayload } from '../editor/RichTextEditor';
+import {
+  deleteRichTextRange,
+  markWholeTextAsHeading,
+  replaceRichTextRangeWithInlineRef,
+  replaceRichTextRangeWithText,
+  richTextEquals,
+} from '../editor/richTextCodec';
+import { indentTargetParentId, previousVisibleRowId } from '../interactions/outlinerStructure';
+import {
+  resolveContentRowBackspaceAtStartIntent,
+  resolveReferenceSelectionAction,
+} from '../interactions/rowInteractions';
+import type { SlashCommandId } from '../interactions/slashCommands';
+import type { CommandRunner, TriggerState } from '../shared';
+import { focusRowInput, outlinerChildren, textOf } from '../shared';
+import { TagBar } from '../tags/TagBar';
+import { inlineReferenceTextColor, resolveTagColor, tagBulletColors } from '../tags/tagColors';
+import { TrailingInput } from './TrailingInput';
+import { TriggerPopover } from './TriggerPopover';
+import { DoneCheckbox } from './DoneCheckbox';
+import { NodeContextMenu } from './NodeContextMenu';
+import { NodeDescription } from './NodeDescription';
+import { OutlinerView } from './OutlinerView';
+import { IndentGuide } from './IndentGuide';
+import { RowLeading } from './RowLeading';
+import { buildOutlinerRows, shouldShowTrailingInput } from './row-model';
+import { createTrailingField, createTrailingTriggerNode } from './trailingTriggers';
+import { useOutlinerRowInteraction } from './useOutlinerRowInteraction';
+
+interface OutlinerItemProps {
+  nodeId: NodeId;
+  parentId: NodeId;
+  rootId: NodeId;
+  onRoot: (nodeId: NodeId) => void;
+  depth: number;
+  index: DocumentIndex;
+  ui: UiState;
+  setUi: Dispatch<SetStateAction<UiState>>;
+  run: CommandRunner;
+  trigger: TriggerState;
+  setTrigger: (trigger: TriggerState) => void;
+  pendingFocus: FocusHint | null;
+  dragId: NodeId | null;
+  setDragId: (nodeId: NodeId | null) => void;
+}
+
+export function OutlinerItem(props: OutlinerItemProps) {
+  const node = props.index.byId.get(props.nodeId);
+  const [draftContent, setDraftContent] = useState<RichText>(node?.content ?? EMPTY_RICH_TEXT);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const rowChildIds = outlinerChildren(node, props.index.byId);
+  const row = useOutlinerRowInteraction({
+    rowId: props.nodeId,
+    parentId: props.parentId,
+    rootId: props.rootId,
+    depth: props.depth,
+    childIds: rowChildIds,
+    index: props.index,
+    ui: props.ui,
+    setUi: props.setUi,
+    run: props.run,
+    locked: node?.locked ?? true,
+    dragId: props.dragId,
+    setDragId: props.setDragId,
+  });
+  const displayed = node?.type === 'reference' && node.targetId ? props.index.byId.get(node.targetId) ?? node : node;
+
+  useEffect(() => {
+    setDraftContent(displayed?.content ?? EMPTY_RICH_TEXT);
+  }, [displayed?.id, displayed?.content, displayed?.targetId]);
+
+  useEffect(() => {
+    if (props.pendingFocus?.nodeId === props.nodeId) {
+      const offset = props.ui.focusOffset?.nodeId === props.nodeId
+        ? props.ui.focusOffset.offset
+        : null;
+      focusRowInput(
+        props.nodeId,
+        offset === null
+          ? props.pendingFocus.selectAll ? 'all' : 'end'
+          : { offset },
+      );
+      if (offset !== null) {
+        window.requestAnimationFrame(() => {
+          props.setUi((prev) => (
+            prev.focusOffset?.nodeId === props.nodeId
+              ? { ...prev, focusOffset: null }
+              : prev
+          ));
+        });
+      }
+    }
+  }, [props.pendingFocus, props.nodeId, props.setUi, props.ui.focusOffset]);
+
+  if (!node || !displayed) return null;
+
+  const targetEditId = node.type === 'reference' && node.targetId ? node.targetId : node.id;
+  const drillDownId = node.type === 'reference' && node.targetId ? node.targetId : node.id;
+  const childRows = buildOutlinerRows(node, props.index.byId, {
+    expandedHiddenFields: props.ui.expandedHiddenFields,
+  });
+  const showTrailingInput = shouldShowTrailingInput(childRows);
+  const leadingVariant = node.type === 'reference'
+    ? 'reference'
+    : displayed.type === 'tagDef'
+      ? 'tag'
+      : displayed.type === 'fieldDef'
+        ? 'fieldDef'
+        : 'content';
+  const appliedTags = displayed.tags
+    .map((tagId) => props.index.byId.get(tagId))
+    .filter((tag): tag is NodeProjection => Boolean(tag));
+  const appliedTagColors = tagBulletColors(appliedTags);
+  const tagDefColor = leadingVariant === 'tag' ? resolveTagColor(displayed).text : undefined;
+  const showDoneCheckbox = displayed.showCheckbox
+    || displayed.doneStateEnabled
+    || Boolean(displayed.completedAt);
+  const descriptionEditing = props.ui.editingDescriptionId === targetEditId;
+
+  const commitDraft = async (content = draftContent) => {
+    if (!richTextEquals(content, displayed.content)) {
+      await props.run(() => api.updateNodeText(targetEditId, content));
+    }
+  };
+
+  const applyTextWithoutTrigger = async () => {
+    const trigger = props.trigger?.nodeId === props.nodeId ? props.trigger : null;
+    const nextContent = trigger
+      ? deleteRichTextRange(draftContent, trigger.from, trigger.to)
+      : plainText(draftContent.text.replace(/(?:^|\s)([#@/>])([^\s#@/>]*)$/, '').trimEnd());
+    setDraftContent(nextContent);
+    await api.updateNodeText(targetEditId, nextContent);
+  };
+
+  const handleEditorChange = (content: RichText) => {
+    setDraftContent(content);
+  };
+
+  const handlePasteOutliner = (payload: {
+    content: RichText;
+    children: CreateNodeTree[];
+    siblingsAfter: CreateNodeTree[];
+  }) => {
+    setDraftContent(payload.content);
+    if (payload.children.length > 0) {
+      props.setUi((prev) => {
+        const expanded = new Set(prev.expanded);
+        expanded.add(props.nodeId);
+        return { ...prev, expanded };
+      });
+    }
+    void props.run(() => api.pasteNodesIntoNode(
+      props.nodeId,
+      payload.content,
+      payload.children,
+      payload.siblingsAfter,
+    ));
+  };
+
+  const parentAlreadyContainsReferenceTarget = (targetId: NodeId) => {
+    const parent = props.index.byId.get(props.parentId);
+    return Boolean(parent?.children.some((childId) => {
+      if (childId === props.nodeId) return false;
+      if (childId === targetId) return true;
+      const child = props.index.byId.get(childId);
+      return child?.type === 'reference' && child.targetId === targetId;
+    }));
+  };
+
+  const applyReference = async (target: NodeProjection) => {
+    const trigger = props.trigger?.nodeId === props.nodeId ? props.trigger : null;
+    if (!trigger) return;
+    const action = resolveReferenceSelectionAction({
+      text: draftContent.text,
+      inlineRefCount: draftContent.inlineRefs.length,
+      triggerFrom: trigger.from,
+      triggerTo: trigger.to,
+      canCreateTreeReference: node.type !== 'reference'
+        && !parentAlreadyContainsReferenceTarget(target.id),
+    });
+    if (action === 'tree_reference') {
+      return api.replaceNodeWithReference(props.nodeId, target.id);
+    }
+
+    const nextContent = replaceRichTextRangeWithInlineRef(
+      draftContent,
+      trigger.from,
+      trigger.to,
+      {
+        targetNodeId: target.id,
+        displayName: textOf(target),
+      },
+    );
+    setDraftContent(nextContent);
+    return api.updateNodeText(targetEditId, nextContent);
+  };
+
+  const executeSlashCommand = async (commandId: SlashCommandId) => {
+    const trigger = props.trigger?.nodeId === props.nodeId ? props.trigger : null;
+    if (!trigger) return null;
+
+    if (commandId === 'field') {
+      return api.createInlineFieldAfterNode(props.nodeId, 'Field', 'plain');
+    }
+
+    if (commandId === 'reference') {
+      const nextContent = replaceRichTextRangeWithText(draftContent, trigger.from, trigger.to, '@');
+      setDraftContent(nextContent);
+      const result = await api.updateNodeText(targetEditId, nextContent);
+      window.requestAnimationFrame(() => {
+        props.setTrigger({
+          nodeId: props.nodeId,
+          kind: '@',
+          query: '',
+          from: trigger.from,
+          to: trigger.from + 1,
+          anchor: trigger.anchor,
+        });
+      });
+      return result;
+    }
+
+    if (commandId === 'heading') {
+      const withoutTrigger = deleteRichTextRange(draftContent, trigger.from, trigger.to);
+      const nextContent = markWholeTextAsHeading(withoutTrigger);
+      setDraftContent(nextContent);
+      return api.updateNodeText(targetEditId, nextContent);
+    }
+
+    if (commandId === 'checkbox') {
+      await applyTextWithoutTrigger();
+      return api.toggleDone(targetEditId);
+    }
+
+    if (commandId === 'command_palette') {
+      await applyTextWithoutTrigger();
+      props.setUi((prev) => ({ ...prev, commandOpen: true }));
+      return api.getProjection();
+    }
+
+    return null;
+  };
+
+  const handleEnter = async (payload: EditorSplitPayload) => {
+    if (props.trigger?.nodeId === props.nodeId) return;
+    if (!payload.atEnd) {
+      await props.run(() => api.splitNode(targetEditId, payload.before, payload.after));
+      return;
+    }
+    await commitDraft(payload.before);
+    if (row.expanded && row.hasChildren) {
+      await props.run(() => api.createNode(props.nodeId, 0, payload.after.text));
+      return;
+    }
+    const siblings = props.index.byId.get(props.parentId)?.children ?? [];
+    const rowIndex = siblings.indexOf(props.nodeId);
+    await props.run(() => api.createNode(props.parentId, rowIndex >= 0 ? rowIndex + 1 : null, ''));
+  };
+
+  const handleBackspaceAtStart = async (isEmpty: boolean) => {
+    const intent = resolveContentRowBackspaceAtStartIntent({
+      isEmpty,
+      hasChildren: row.hasChildren,
+    });
+    if (intent === 'block_delete_parent') {
+      return;
+    }
+    if (intent === 'delete_empty') {
+      row.moveFocus(-1);
+      await props.run(() => api.trashNode(props.nodeId));
+      return;
+    }
+
+    const visibleRows = flattenVisibleRows(
+      props.rootId,
+      props.index.byId,
+      props.ui.expanded,
+      props.ui.expandedHiddenFields,
+    );
+    const previousId = previousVisibleRowId(visibleRows, props.nodeId);
+    if (!previousId) return;
+
+    const previousNode = props.index.byId.get(previousId);
+    if (!previousNode) return;
+
+    if (node.type === 'reference' || previousNode.type === 'reference') {
+      focusNode(previousId);
+      return;
+    }
+
+    const joinOffset = previousNode.content.text.length;
+    await commitDraft();
+    props.setUi((prev) => ({
+      ...prev,
+      focusOffset: { nodeId: previousId, offset: joinOffset },
+    }));
+    const result = await props.run(() => api.mergeNodeInto(props.nodeId, previousId));
+    if (result) {
+      window.requestAnimationFrame(() => {
+        focusRowInput(previousId, { offset: joinOffset });
+      });
+    }
+  };
+
+  const handleTab = async (shiftKey: boolean, cursorOffset: number) => {
+    await commitDraft();
+    if (!shiftKey) {
+      const targetParentId = indentTargetParentId(props.nodeId, props.index.byId);
+      if (!targetParentId) return;
+      const expandTargetAndRememberCursor = () => props.setUi((prev) => {
+        const expanded = new Set(prev.expanded);
+        expanded.add(targetParentId);
+        return {
+          ...prev,
+          expanded,
+          focusOffset: { nodeId: props.nodeId, offset: cursorOffset },
+        };
+      });
+      expandTargetAndRememberCursor();
+      const result = await props.run(() => api.indentNode(props.nodeId));
+      if (result) {
+        expandTargetAndRememberCursor();
+        focusRowInput(props.nodeId, { offset: cursorOffset });
+      }
+      return;
+    }
+    props.setUi((prev) => ({
+      ...prev,
+      focusOffset: { nodeId: props.nodeId, offset: cursorOffset },
+    }));
+    const result = await props.run(() => api.outdentNode(props.nodeId));
+    if (result) {
+      props.setUi((prev) => ({
+        ...prev,
+        focusOffset: { nodeId: props.nodeId, offset: cursorOffset },
+      }));
+      focusRowInput(props.nodeId, { offset: cursorOffset });
+    }
+  };
+
+  const moveCurrentNode = async (direction: 'up' | 'down') => {
+    await commitDraft();
+    const result = await props.run(() => (
+      direction === 'up'
+        ? api.batchMoveNodesUp([props.nodeId])
+        : api.batchMoveNodesDown([props.nodeId])
+    ));
+    if (result) {
+      focusRowInput(props.nodeId, 'end');
+    }
+  };
+
+  const exitToSelection = async () => {
+    if (props.trigger?.nodeId === props.nodeId) {
+      props.setTrigger(null);
+      return;
+    }
+    await commitDraft();
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    props.setUi((prev) => ({
+      ...prev,
+      focusedId: null,
+      selectedId: props.nodeId,
+      selectedIds: new Set([props.nodeId]),
+      selectionAnchorId: props.nodeId,
+    }));
+  };
+
+  const focusNode = (nodeId: NodeId) => {
+    props.setUi((prev) => ({
+      ...prev,
+      focusedId: nodeId,
+      selectedId: nodeId,
+      selectedIds: new Set([nodeId]),
+      selectionAnchorId: nodeId,
+    }));
+    focusRowInput(nodeId, 'end');
+  };
+
+  const collapseNode = (nodeId: NodeId) => {
+    props.setUi((prev) => {
+      const expanded = new Set(prev.expanded);
+      expanded.delete(nodeId);
+      return { ...prev, expanded };
+    });
+  };
+
+  const openContextMenu = (event: MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    props.setUi((prev) => ({
+      ...prev,
+      focusedId: null,
+      selectedId: props.nodeId,
+      selectedIds: prev.selectedIds.has(props.nodeId) ? new Set(prev.selectedIds) : new Set([props.nodeId]),
+      selectionAnchorId: prev.selectedIds.has(props.nodeId) ? prev.selectionAnchorId ?? props.nodeId : props.nodeId,
+    }));
+    setContextMenu({ x: event.clientX, y: event.clientY });
+  };
+
+  return (
+    <div
+      className={`row-wrap ${row.hasChildren ? 'has-children' : ''} ${row.expanded ? 'expanded' : ''}`}
+      {...row.wrapProps}
+    >
+      <div
+        className={row.rowClassName()}
+        onMouseDownCapture={row.selectFromPointer}
+        onContextMenu={openContextMenu}
+      >
+        <RowLeading
+          hasChildren={row.hasChildren}
+          expanded={row.expanded}
+          variant={leadingVariant}
+          fieldType={displayed.fieldType}
+          bulletColors={appliedTagColors}
+          tagDefColor={tagDefColor}
+          onToggleExpand={row.toggleExpandOrSelect}
+          onDrillDown={() => props.onRoot(drillDownId)}
+          draggable={row.dragHandleProps.draggable}
+          onDragStart={row.dragHandleProps.onDragStart}
+          onDragEnd={row.dragHandleProps.onDragEnd}
+        />
+        <div className="row-content-line">
+          {showDoneCheckbox && (
+            <DoneCheckbox
+              checked={Boolean(displayed.completedAt)}
+              onToggle={() => void props.run(() => api.toggleDone(targetEditId))}
+            />
+          )}
+          <RichTextEditor
+            nodeId={props.nodeId}
+            content={draftContent}
+            readOnly={displayed.locked}
+            completed={Boolean(displayed.completedAt)}
+            onFocus={row.updateSelection}
+            onChange={handleEditorChange}
+            onCommit={(content) => void commitDraft(content)}
+            onEnter={(payload) => void handleEnter(payload)}
+            onBackspaceAtStart={(isEmpty) => void handleBackspaceAtStart(isEmpty)}
+            onTab={(shiftKey, cursorOffset) => void handleTab(shiftKey, cursorOffset)}
+            onArrowUpAtStart={() => row.moveFocus(-1)}
+            onArrowDownAtEnd={() => row.moveFocus(1)}
+            onShiftArrow={() => void exitToSelection()}
+            onMove={(direction) => void moveCurrentNode(direction)}
+            onUndo={() => void props.run(() => api.undo())}
+            onRedo={() => void props.run(() => api.redo())}
+            onModEnter={() => void props.run(() => api.toggleDone(targetEditId))}
+            onEscape={() => void exitToSelection()}
+            resolveInlineReferenceColor={(targetId) => inlineReferenceTextColor(targetId, props.index)}
+            onFieldTriggerFire={() => {
+              props.setTrigger(null);
+              void props.run(() => api.createInlineFieldAfterNode(props.nodeId, 'Field', 'plain'));
+            }}
+            onTriggerChange={(nextTrigger) => {
+              if (nextTrigger) {
+                props.setTrigger({ nodeId: props.nodeId, ...nextTrigger });
+              } else if (props.trigger?.nodeId === props.nodeId) {
+                props.setTrigger(null);
+              }
+            }}
+            onPasteOutliner={node.type === 'reference' ? undefined : handlePasteOutliner}
+          />
+          {displayed.tags.length > 0 && (
+            <TagBar
+              nodeId={targetEditId}
+              tagIds={displayed.tags}
+              index={props.index}
+              run={props.run}
+              onRoot={props.onRoot}
+            />
+          )}
+          <NodeDescription
+            node={displayed}
+            targetId={targetEditId}
+            editing={descriptionEditing}
+            run={props.run}
+            onEditingChange={(editing) => {
+              props.setUi((prev) => ({
+                ...prev,
+                editingDescriptionId: editing ? targetEditId : null,
+              }));
+            }}
+          />
+        </div>
+      </div>
+
+      {row.expanded && (
+        <IndentGuide onToggleChildren={row.toggleDirectChildrenExpansion} />
+      )}
+
+      {props.trigger?.nodeId === props.nodeId && (
+        <TriggerPopover
+          trigger={props.trigger}
+          index={props.index}
+          nodeId={targetEditId}
+          run={props.run}
+          close={() => props.setTrigger(null)}
+          clearTriggerText={applyTextWithoutTrigger}
+          applyReference={applyReference}
+          executeSlashCommand={executeSlashCommand}
+          enabledSlashCommandIds={['field', 'reference', 'heading', 'checkbox', 'command_palette']}
+          treeReferenceParentId={props.parentId}
+          existingTagIds={displayed.tags}
+        />
+      )}
+
+      {contextMenu && (
+        <NodeContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          node={node}
+          targetId={targetEditId}
+          openId={drillDownId}
+          selectedIds={props.ui.selectedIds}
+          index={props.index}
+          run={props.run}
+          onRoot={props.onRoot}
+          onEditDescription={() => {
+            props.setUi((prev) => ({ ...prev, editingDescriptionId: targetEditId }));
+          }}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {row.expanded && (
+        <div className="children">
+          <OutlinerView
+            parentId={props.nodeId}
+            rootId={props.rootId}
+            onRoot={props.onRoot}
+            depth={0}
+            index={props.index}
+            ui={props.ui}
+            setUi={props.setUi}
+            run={props.run}
+            trigger={props.trigger}
+            setTrigger={props.setTrigger}
+            pendingFocus={props.pendingFocus}
+            dragId={props.dragId}
+            setDragId={props.setDragId}
+          />
+          {showTrailingInput && (
+            <TrailingInput
+              parentId={props.nodeId}
+              index={props.index}
+              expanded={props.ui.expanded}
+              onCreate={async (parentId, text) => {
+                const result = await props.run(() => api.createNode(parentId, null, text));
+                return result && 'focus' in result ? result.focus?.nodeId ?? null : null;
+              }}
+              onCreateTree={(parentId, nodes) => (
+                props.run(() => api.createNodesFromTree(parentId, nodes))
+              )}
+              onUpdateCreated={async (nodeId, text) => {
+                await props.run(() => api.updateNodeText(nodeId, plainText(text)));
+              }}
+              onToggleCreated={async (nodeId) => {
+                await props.run(() => api.toggleDone(nodeId));
+              }}
+              onCreateTrigger={(params) => {
+                void createTrailingTriggerNode({
+                  parentId: params.parentId,
+                  text: params.text,
+                  trigger: params.trigger,
+                  run: props.run,
+                  setTrigger: props.setTrigger,
+                });
+              }}
+              onCreateField={(parentId) => {
+                void createTrailingField({
+                  parentId,
+                  run: props.run,
+                });
+              }}
+              onExpand={(nodeId) => {
+                props.setUi((prev) => {
+                  const expanded = new Set(prev.expanded);
+                  expanded.add(nodeId);
+                  return { ...prev, expanded };
+                });
+              }}
+              onFocusNode={focusNode}
+              onCollapseNode={collapseNode}
+              onUndo={() => void props.run(() => api.undo())}
+              onRedo={() => void props.run(() => api.redo())}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
