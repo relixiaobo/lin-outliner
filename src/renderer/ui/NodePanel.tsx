@@ -33,6 +33,7 @@ import { TriggerPopover } from './outliner/TriggerPopover';
 import { createTrailingField, createTrailingTriggerNode } from './outliner/trailingTriggers';
 import { inlineReferenceTextColor, resolveTagColor } from './tags/tagColors';
 import { TagBar } from './tags/TagBar';
+import { buildPanelBreadcrumb } from './panelBreadcrumb';
 
 interface NodePanelProps {
   rootId: NodeId;
@@ -58,6 +59,7 @@ export function NodePanel(props: NodePanelProps) {
   const definitionTemplateLabel = rootNode ? definitionOutlinerLabel(rootNode) : null;
   const showOutliner = Boolean(rootNode && (!rootDefinitionKind || definitionTemplateLabel));
   const showTrailingInput = Boolean(rootNode && showOutliner);
+  const breadcrumb = buildPanelBreadcrumb(rootNode, props.index);
 
   useEffect(() => {
     setTitleContent(rootNode?.content ?? EMPTY_RICH_TEXT);
@@ -244,79 +246,115 @@ export function NodePanel(props: NodePanelProps) {
     <main className="main-panel">
       <div className="panel-inner">
         <header className="panel-header">
-          {headerIcon && <span className="panel-header-icon">{headerIcon}</span>}
-          <div className="panel-title-editor" aria-label="Page title" onContextMenu={openHeaderContextMenu}>
-            {rootNode && showDoneCheckbox && (
-              <DoneCheckbox
-                checked={Boolean(rootNode.completedAt)}
-                onToggle={() => void props.run(() => api.toggleDone(props.rootId))}
-              />
-            )}
-            <RichTextEditor
-              nodeId={props.rootId}
-              content={titleContent}
-              readOnly={rootNode?.locked}
-              completed={Boolean(rootNode?.completedAt)}
-              onFocus={selectHeader}
-              onChange={setTitleContent}
-              onCommit={(content) => void commitTitle(content)}
-              onEnter={handleTitleEnter}
-              onBackspaceAtStart={() => undefined}
-              onTab={() => undefined}
-              onArrowUpAtStart={() => undefined}
-              onArrowDownAtEnd={focusFirstVisibleRowOrTrailing}
-              onUndo={() => void props.run(() => api.undo())}
-              onRedo={() => void props.run(() => api.redo())}
-              onModEnter={() => void props.run(() => api.toggleDone(props.rootId))}
-              resolveInlineReferenceColor={(targetId) => inlineReferenceTextColor(targetId, props.index)}
-              onEscape={() => {
-                setTitleContent(rootNode?.content ?? EMPTY_RICH_TEXT);
-                setTitleTrigger(null);
-                blurActiveElement();
-                clearHeaderFocus();
-              }}
-              onTriggerChange={(nextTrigger) => {
-                setTitleTrigger(nextTrigger);
-              }}
-            />
-            {titleTrigger && (
-              <TriggerPopover
-                trigger={{ nodeId: props.rootId, ...titleTrigger }}
-                index={props.index}
+          {rootNode && (
+            <nav className="panel-breadcrumb" aria-label="Panel breadcrumb">
+              <button
+                aria-label="Open workspace root"
+                className="panel-breadcrumb-origin"
+                onClick={() => props.onRoot(projection.rootId)}
+                type="button"
+              >
+                <LibraryIcon size={13} />
+              </button>
+              {breadcrumb.nodes.map((node, index) => {
+                const label = node.content.text || 'Untitled';
+                const showCollapsedMarker = breadcrumb.collapsed && index === 1;
+                return (
+                  <span className="panel-breadcrumb-segment" key={node.id}>
+                    <span className="panel-breadcrumb-divider">/</span>
+                    {showCollapsedMarker && (
+                      <>
+                        <span className="panel-breadcrumb-ellipsis" aria-label="Collapsed breadcrumb levels">...</span>
+                        <span className="panel-breadcrumb-divider">/</span>
+                      </>
+                    )}
+                    <button
+                      className="panel-breadcrumb-button"
+                      onClick={() => props.onRoot(node.id)}
+                      type="button"
+                    >
+                      {label}
+                    </button>
+                  </span>
+                );
+              })}
+            </nav>
+          )}
+          <div className="panel-title-row">
+            {headerIcon && <span className="panel-header-icon">{headerIcon}</span>}
+            <div className="panel-title-editor" aria-label="Page title" onContextMenu={openHeaderContextMenu}>
+              {rootNode && showDoneCheckbox && (
+                <DoneCheckbox
+                  checked={Boolean(rootNode.completedAt)}
+                  onToggle={() => void props.run(() => api.toggleDone(props.rootId))}
+                />
+              )}
+              <RichTextEditor
                 nodeId={props.rootId}
-                run={props.run}
-                close={() => setTitleTrigger(null)}
-                clearTriggerText={clearTitleTriggerText}
-                applyReference={applyTitleInlineReference}
-                executeSlashCommand={executeTitleSlashCommand}
-                enabledSlashCommandIds={['reference', 'heading', 'checkbox', 'command_palette']}
-                treeReferenceParentId={null}
-                existingTagIds={rootNode?.tags ?? []}
-              />
-            )}
-            {rootNode && rootNode.tags.length > 0 && (
-              <TagBar
-                nodeId={props.rootId}
-                tagIds={rootNode.tags}
-                index={props.index}
-                run={props.run}
-                onRoot={props.onRoot}
-              />
-            )}
-            {rootNode && (
-              <NodeDescription
-                node={rootNode}
-                targetId={props.rootId}
-                editing={props.ui.editingDescriptionId === props.rootId}
-                run={props.run}
-                onEditingChange={(editing) => {
-                  props.setUi((prev) => ({
-                    ...prev,
-                    editingDescriptionId: editing ? props.rootId : null,
-                  }));
+                content={titleContent}
+                readOnly={rootNode?.locked}
+                completed={Boolean(rootNode?.completedAt)}
+                onFocus={selectHeader}
+                onChange={setTitleContent}
+                onCommit={(content) => void commitTitle(content)}
+                onEnter={handleTitleEnter}
+                onBackspaceAtStart={() => undefined}
+                onTab={() => undefined}
+                onArrowUpAtStart={() => undefined}
+                onArrowDownAtEnd={focusFirstVisibleRowOrTrailing}
+                onUndo={() => void props.run(() => api.undo())}
+                onRedo={() => void props.run(() => api.redo())}
+                onModEnter={() => void props.run(() => api.toggleDone(props.rootId))}
+                resolveInlineReferenceColor={(targetId) => inlineReferenceTextColor(targetId, props.index)}
+                onEscape={() => {
+                  setTitleContent(rootNode?.content ?? EMPTY_RICH_TEXT);
+                  setTitleTrigger(null);
+                  blurActiveElement();
+                  clearHeaderFocus();
+                }}
+                onTriggerChange={(nextTrigger) => {
+                  setTitleTrigger(nextTrigger);
                 }}
               />
-            )}
+              {titleTrigger && (
+                <TriggerPopover
+                  trigger={{ nodeId: props.rootId, ...titleTrigger }}
+                  index={props.index}
+                  nodeId={props.rootId}
+                  run={props.run}
+                  close={() => setTitleTrigger(null)}
+                  clearTriggerText={clearTitleTriggerText}
+                  applyReference={applyTitleInlineReference}
+                  executeSlashCommand={executeTitleSlashCommand}
+                  enabledSlashCommandIds={['reference', 'heading', 'checkbox', 'command_palette']}
+                  treeReferenceParentId={null}
+                  existingTagIds={rootNode?.tags ?? []}
+                />
+              )}
+              {rootNode && rootNode.tags.length > 0 && (
+                <TagBar
+                  nodeId={props.rootId}
+                  tagIds={rootNode.tags}
+                  index={props.index}
+                  run={props.run}
+                  onRoot={props.onRoot}
+                />
+              )}
+              {rootNode && (
+                <NodeDescription
+                  node={rootNode}
+                  targetId={props.rootId}
+                  editing={props.ui.editingDescriptionId === props.rootId}
+                  run={props.run}
+                  onEditingChange={(editing) => {
+                    props.setUi((prev) => ({
+                      ...prev,
+                      editingDescriptionId: editing ? props.rootId : null,
+                    }));
+                  }}
+                />
+              )}
+            </div>
           </div>
         </header>
         {rootNode && contextMenu && (

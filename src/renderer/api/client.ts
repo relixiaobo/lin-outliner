@@ -1,6 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
   Backlink,
+  AgentProviderConfigInput,
+  AgentProviderSecretStatus,
+  AgentProviderSettingsView,
+  AgentSession,
   CommandOutcome,
   CreateNodeTree,
   DocumentProjection,
@@ -102,4 +106,27 @@ export const api = {
   backlinks: (targetId: string) => command<Backlink[]>('backlinks', { targetId }),
   undo: () => command<CommandOutcome>('undo'),
   redo: () => command<CommandOutcome>('redo'),
+  agentCreateSession: () => command<AgentSession>('agent_create_session'),
+  agentSendMessage: (sessionId: string, message: string) =>
+    command<void>('agent_send_message', { sessionId, message }),
+  agentStopSession: (sessionId: string) =>
+    command<void>('agent_stop_session', { sessionId }),
+  agentResetSession: (sessionId: string) =>
+    command<void>('agent_reset_session', { sessionId }),
+  agentCloseSession: (sessionId: string) =>
+    command<void>('agent_close_session', { sessionId }),
+  agentGetProviderSettings: () =>
+    command<AgentProviderSettingsView>('agent_get_provider_settings'),
+  agentUpsertProviderConfig: (provider: AgentProviderConfigInput) =>
+    command<AgentProviderSettingsView>('agent_upsert_provider_config', { provider }),
+  agentDeleteProviderConfig: (providerId: string) =>
+    command<AgentProviderSettingsView>('agent_delete_provider_config', { providerId }),
+  agentSetActiveProvider: (providerId: string) =>
+    command<AgentProviderSettingsView>('agent_set_active_provider', { providerId }),
+  agentSetProviderApiKey: (providerId: string, apiKey: string) =>
+    command<AgentProviderSecretStatus>('agent_set_provider_api_key', { providerId, apiKey }),
+  agentDeleteProviderApiKey: (providerId: string) =>
+    command<AgentProviderSecretStatus>('agent_delete_provider_api_key', { providerId }),
+  agentGetProviderSecretStatus: (providerId: string) =>
+    command<AgentProviderSecretStatus>('agent_get_provider_secret_status', { providerId }),
 };

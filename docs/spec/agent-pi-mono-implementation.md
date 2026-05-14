@@ -34,18 +34,25 @@ pi-agent-core
   -> Agent state and subscriptions
   -> steer / abort / replaceMessages
 
-Lin TypeScript adapter
+Lin Node agent worker
   -> creates Agent
-  -> maps pi-mono events into AgentStore
+  -> maps pi-mono events into Lin snapshots/events
   -> exposes Lin tools as AgentTool[]
-  -> invokes Rust commands for local operations
+  -> calls Rust tool gateway for local operations
 
 Lin Rust backend
+  -> AgentHost process lifecycle
+  -> API key / credential storage
   -> bash execution
   -> file operations
   -> outliner reads and mutations
   -> permissions and approval policy
   -> persistence and undo grouping
+
+Lin renderer
+  -> Agent UI only
+  -> sends prompt/stop/approve commands
+  -> renders Rust-forwarded agent events
 ```
 
 ## Runtime Boundary
@@ -53,31 +60,40 @@ Lin Rust backend
 The agent dock remains a cross-tab shell feature. It owns conversation state and
 rendering. The outliner owns document state and panel state.
 
-The pi-mono Agent should live in the renderer-side agent runtime because Lin is
-a Tauri and React application and pi-mono is TypeScript-native. This keeps
-streaming events close to the agent panel and avoids introducing a second local
-server.
+The pi-mono Agent should not live in the renderer once real models and tools are
+enabled. The clean boundary is:
 
-Rust remains the authority for every operation that touches the local machine or
-document state.
+- Renderer: Agent UI, input, transcript rendering, and approval controls.
+- Rust backend: AgentHost, local security boundary, API key storage, persistence,
+  approval enforcement, and tool gateway.
+- Node agent worker: pi-mono agent loop, provider streaming, context assembly,
+  and tool-call orchestration.
+
+Rust remains the authority for every operation that touches the local machine,
+credentials, or document state. The worker may request tool execution, but Rust
+performs the operation or rejects it.
 
 ```txt
 Agent input
-  -> LinAgentRuntime.prompt()
+  -> renderer agent client
+  -> Tauri command
+  -> Rust AgentHost
+  -> Node pi-mono worker
   -> pi-agent-core Agent
   -> pi-ai stream
   -> tool calls
-  -> Lin AgentTool adapter
-  -> Tauri command
-  -> Rust command handler
+  -> Rust tool gateway
   -> lin-core / filesystem / shell
   -> tool result
   -> pi-agent-core continues loop
-  -> AgentStore event log
+  -> worker emits normalized snapshot/event
+  -> Rust forwards event
+  -> renderer transcript
 ```
 
-The renderer may hold transient agent state, but it must not directly mutate
-documents, files, or process state.
+The renderer may hold transient UI state, but it must not hold provider API keys
+or directly execute model/tool logic. This keeps a future Rust-native agent core
+possible: it only needs to implement the AgentHost event/command contract.
 
 ## Package Usage
 
@@ -87,8 +103,8 @@ minor versions until Lin has its own compatibility tests around the adapter.
 ```json
 {
   "dependencies": {
-    "@mariozechner/pi-ai": "0.x.y",
-    "@mariozechner/pi-agent-core": "0.x.y"
+    "@earendil-works/pi-ai": "0.x.y",
+    "@earendil-works/pi-agent-core": "0.x.y"
   }
 }
 ```
@@ -99,49 +115,51 @@ own adapter modules so product code does not depend on package names directly.
 Suggested module boundary:
 
 ```txt
+src-tauri/src/agent_host.rs
+  # owns worker lifecycle, command transport, and event forwarding
+
+src-tauri/agent-worker/
+  pi-mono-worker.mjs     # only place that imports pi-ai / pi-agent-core
+
 src/renderer/agent/
-  runtime.ts              # owns Agent lifecycle
-  piMonoAdapter.ts        # imports pi-ai / pi-agent-core
-  tools.ts                # builds AgentTool[]
-  events.ts               # maps pi-mono events into Lin events
-  context.ts              # builds active workspace context
-  store.ts                # AgentStore reducer/external store
-  approvals.ts            # approval state and deferred tool resolution
+  runtime.ts              # UI client for Rust AgentHost
+  types.ts                # renderer-owned event/message DTOs
 ```
 
-Only `piMonoAdapter.ts` should import pi-mono directly where practical.
+Only the Node worker should import pi-mono directly. Renderer code should depend
+on Lin-owned DTOs, not pi-mono package types.
 
 ## Agent Runtime
 
-Lin should wrap pi-agent-core in a small `LinAgentRuntime` class. Product UI
-should talk to this wrapper instead of a raw pi-mono Agent.
+Lin should wrap pi-agent-core inside the local Node worker. Product UI talks to
+Rust AgentHost through a renderer `useLinAgentRuntime` client, never to a raw
+pi-mono Agent.
 
 Responsibilities:
 
-- Create and configure the pi-mono `Agent`.
-- Set the active model, system prompt, and tool list.
-- Start prompts and continue interrupted runs.
-- Abort active runs.
-- Apply steering messages from the user.
-- Replace messages after compaction or conversation restore.
-- Subscribe to Agent events and write normalized events into `AgentStore`.
+- Worker: create and configure the pi-mono `Agent`.
+- Worker: set the active model, system prompt, and tool list.
+- Rust: start sessions, route prompts, stop runs, and manage worker lifecycle.
+- Rust: resolve API keys at stream time and expose only key references to the
+  worker when needed.
+- Rust: execute or reject every local tool call.
+- Worker: subscribe to Agent events and emit normalized snapshots/events.
+- Renderer: render snapshots and send user intents.
 
 Conceptual shape:
 
 ```ts
-interface LinAgentRuntime {
-  prompt(input: AgentPromptInput): Promise<void>;
-  continue(): Promise<void>;
-  abort(): void;
-  steer(message: string): void;
-  setModel(modelId: string): void;
-  setTools(context: LinToolContext): void;
-  restoreConversation(conversation: AgentConversation): void;
+interface AgentHostClient {
+  createSession(): Promise<AgentSession>;
+  sendMessage(sessionId: string, message: string): Promise<void>;
+  stopSession(sessionId: string): Promise<void>;
+  resetSession(sessionId: string): Promise<void>;
+  subscribe(listener: (event: LinAgentEvent) => void): () => void;
 }
 ```
 
-The wrapper should expose Lin-owned types at the boundary. pi-mono message and
-event types should not leak throughout the UI.
+The boundary should expose Lin-owned event and message DTOs. pi-mono message and
+event types should not leak throughout the renderer.
 
 ## Model Configuration
 
@@ -158,12 +176,26 @@ Model configuration should include:
 - Reasoning level if the selected model supports it.
 - Temperature and max token defaults.
 
-The API key should be read at stream time through Lin's credential path. It
-should not be embedded into persisted agent messages or tool results.
+The API key should be read at stream time through Lin's Rust credential path. It
+should not be embedded into persisted agent messages, tool results, renderer
+state, or worker command payloads.
 
-For the first local implementation, the renderer can call pi-ai directly with
-the key resolved from Tauri. If later security requirements tighten, streaming
-can move behind a Rust command or local proxy without changing the tool boundary.
+Lin does not need OS keychain for the first implementation. Use app-data files
+owned by Rust:
+
+```txt
+agent-providers.json
+  -> activeProviderId
+  -> providers: providerId, modelId, baseUrl, enabled
+
+agent-secrets.json
+  -> providerId -> apiKey
+  -> local only, private file permissions where the OS supports it
+```
+
+Renderer-facing commands may return provider configuration and `hasApiKey`, but
+must not return the API key itself. Runtime provider resolution should happen
+through Rust AgentHost or the Rust tool/provider gateway.
 
 ## System Prompt
 
@@ -249,15 +281,14 @@ nodex tools:
 nodex is the closest outliner reference. Its important lesson is that document
 tools should be domain-specific, not generic file operations. The agent edits
 nodes through outliner verbs and each write is undoable as one AI operation.
-For `node_*` tools, Lin should copy nodex's descriptions, parameter names, and
-model-visible result payloads as closely as possible. In particular,
-`node_create.text` and `node_edit.text` should use nodex's outliner text parser
-contract, implemented in Rust rather than left as prompt-only behavior. Lin
-should also include the outliner paste normalization layer documented in
-`agent-tool-design.md`, but that compatibility behavior belongs in the
+Lin should keep nodex's compact `node_*` surface, but use Lin's own final
+contracts from `agent-tool-design.md`: `node_create.outline`,
+`node_read(..., format: "outline" | "both")`, and
+`node_edit.oldString/newString`. The parser is implemented in Rust rather than
+left as prompt-only behavior. Compatibility normalization belongs in the
 adapter/runtime layer and should not appear in the model-facing tool
 description. Lin code should use neutral parser names such as
-`outliner_text_parser`.
+`lin_outline_parser`.
 
 cc-2.1 core tools:
 
@@ -312,10 +343,10 @@ These tools should be configured first.
 
 | Tool | Reference | Rust-backed? | Approval | Purpose |
 |---|---|---:|---|---|
-| `node_search` | nodex `node_search` | Yes | No | Search nodes by text, tag, field, date, link, or subtree. |
+| `node_search` | nodex `node_search`, Lin search-node outline | Yes | No | Execute a temporary or saved search node outline without mutating document state. |
 | `node_read` | nodex `node_read` | Yes | No | Read node raw type/data, fields, and bounded children. |
-| `node_create` | nodex `node_create` | Yes | Usually yes | Create content trees, references, search nodes, or duplicates. |
-| `node_edit` | nodex `node_edit`, Lin scoped multi-edit | Yes | Usually yes | Incrementally edit one or more known nodes: content, tags, fields, done state, position, data, or merge. |
+| `node_create` | nodex `node_create`, Lin outline parser | Yes | Usually yes | Create outline trees, references, search/view nodes, schema nodes, or duplicates. |
+| `node_edit` | cc `Edit`, nodex `node_edit`, Lin outline parser | Yes | Usually yes | Edit a known node's canonical outline by exact replacement, or perform explicit move, merge, or reference replacement. |
 | `node_delete` | nodex `node_delete` | Yes | Usually yes | Trash or restore nodes. |
 | `operation_history` | nodex `undo`, Lin history | Yes | Depends | List, undo, or redo user and agent operations. |
 | `file_read` | cc `Read` | Yes | Usually no | Read files with bounded output and freshness tracking. |
@@ -611,30 +642,52 @@ Baseline rules:
 
 ## Implementation Phases
 
-Phase 1: Runtime skeleton
+Phase 0: nodex agent UI audit
+
+- Clone or mount the nodex repo under `.research-repos/nodex`.
+- Inventory the agent UI entry points: dock shell, header, input composer,
+  transcript, message rows, tool call rows, approval rows, error rows, model/menu
+  controls, and persistence hooks.
+- Identify which components are pure presentation and can be reused directly.
+- Identify which components assume nodex tool names, message shapes, approval
+  payloads, or outliner-specific state.
+- Produce a reuse map before implementation: copy, adapt, replace, or ignore.
+- Do not start porting UI until the hard-coded nodex tool-contract assumptions
+  are known.
+
+Phase 1: pi-mono runtime + nodex UI shell
 
 - Add pi-mono dependencies.
 - Create `LinAgentRuntime`.
 - Create `AgentStore`.
+- Reuse or adapt nodex agent UI for the dock header, input composer, transcript
+  stream, message rows, tool call cards, and error states.
 - Support one provider and one model.
 - Stream assistant text into the agent dock.
 - Support abort.
+- Persist enough conversation state to restore the UI shell.
 
-Phase 2: Outliner read tools
+Phase 2: web search and fetch tools
 
-- Add active context and node read tools.
-- Build bounded context injection.
-- Render tool calls in the transcript.
-- Keep agent state outside document projection.
+- Add `web_search` and `web_fetch`.
+- Render search and fetch tool calls in the transcript.
+- Add host permission and offline/private-mode checks.
+- Add HTML-to-markdown extraction, pagination, and find mode for fetched pages.
+- Keep long search/fetch results collapsed by default.
 
-Phase 3: Outliner mutations
+Phase 3: outliner node tools
 
-- Add patch preview.
-- Add approval rows.
+- Add current UI work-context injection from system reminders.
+- Add `node_search`, `node_read`, `node_create`, `node_edit`, `node_delete`, and
+  `operation_history`.
+- Implement Lin Outline parser, search-node outline parser, validation,
+  mutation planning, and preview data.
+- Render node tool previews and approval rows using Lin `ToolPreview`.
 - Apply mutations through Rust commands.
 - Group mutations into undoable transactions.
+- Keep agent state outside document projection.
 
-Phase 4: Local file and bash tools
+Phase 4: local file and bash tools
 
 - Add `file_read`, `file_glob`, `file_grep`, `file_edit`, and `file_write`.
 - Add `bash` with timeout, background mode, output persistence, and approval
@@ -642,11 +695,12 @@ Phase 4: Local file and bash tools
 - Add `task_stop` if background `bash` is enabled.
 - Render large outputs collapsed by default.
 
-Phase 5: Persistence and compaction
+Cross-phase: persistence and compaction
 
-- Persist conversations and run summaries.
+- Persist conversations and run summaries once the UI shell is stable.
 - Restore pi-mono messages through the adapter.
-- Add context overflow detection and compaction.
+- Add context overflow detection and compaction before long-running workflows are
+  enabled by default.
 - Add tests around event normalization and tool result conversion.
 
 ## Testing

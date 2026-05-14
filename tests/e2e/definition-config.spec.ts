@@ -7,7 +7,7 @@ import {
 } from './outlinerMock';
 
 async function openSchema(page: import('@playwright/test').Page) {
-  await page.getByTitle('Workspace').click();
+  await page.getByRole('button', { name: 'Library' }).click();
   await row(page, ids.schema).getByRole('button', { name: 'Open' }).click();
 }
 

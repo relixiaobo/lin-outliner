@@ -36,10 +36,10 @@ These tools are required for the first useful local agent.
 
 | Tool | Kind | Mutates | Approval | Purpose |
 |---|---|---:|---|---|
-| `node_search` | outliner | No | No | Search nodes by text, tag, field, backlink, subtree, date, or sort rules. |
+| `node_search` | outliner | No | No | Execute a temporary or saved search node outline. |
 | `node_read` | outliner | No | No | Read node raw type/data, fields, and bounded children. |
-| `node_create` | outliner | Yes | Usually yes | Create content trees, references, search nodes, or duplicates. |
-| `node_edit` | outliner | Yes | Usually yes | Incrementally edit existing nodes: text, tag, field, done state, move, merge, data. |
+| `node_create` | outliner | Yes | Usually yes | Create outline trees, references, search/view nodes, schema nodes, or duplicates. |
+| `node_edit` | outliner | Yes | Usually yes | Edit the canonical outline for a known node using exact string replacement, or perform explicit structure operations such as move and merge. |
 | `node_delete` | outliner | Yes | Usually yes | Trash or restore one or more nodes. |
 | `operation_history` | outliner | Yes for undo/redo | Usually yes | Inspect, undo, or redo user and agent operations. |
 | `file_read` | local | No | Usually no | Read workspace files with bounded output. |
@@ -94,6 +94,8 @@ interface ToolResult<TData = unknown> {
   data?: TData;
   error?: ToolError;
   operation?: OperationResult;
+  preview?: ToolPreview;
+  validation?: ValidationReport;
   boundary?: string;
   nextStep?: string;
   fallback?: string;
@@ -117,6 +119,7 @@ interface OperationResult {
   action: string;
   affectedNodeIds?: string[];
   affectedPaths?: string[];
+  affectedRevisions?: Record<string, string>;
   summary: string;
 }
 
@@ -144,6 +147,10 @@ Guidance fields are first-class:
 Use guidance fields for unknown tags, unresolved fields, permission denials,
 truncation, no-op updates, and ambiguous targets.
 
+`ToolPreview` and `ValidationReport` are defined in the Rust parser section
+because they are produced by the mutation planner, but they belong in the common
+envelope for every previewable mutating tool.
+
 ## Error Handling
 
 Tools should return a normal `ToolResult` with `status: "error"` rather than
@@ -167,214 +174,156 @@ Example:
 }
 ```
 
-## Nodex Node Tool Contract
+## Node Tool Contract
 
-Node tools should follow nodex's model-facing descriptions, parameter names, and
-parser behavior. Lin keeps the shared `ToolResult` envelope and Rust-backed
-implementation, but the model should learn the same compact outliner surface:
+Node tools use the compact nodex-style surface, but Lin does not expose nodex's
+incremental `text` edit contract. Lin uses one canonical outline format for
+creation, reading, and text replacement edits:
 
-- `node_search`
-- `node_read`
-- `node_create`
-- `node_edit`
-- `node_delete`
+- `node_create.outline` inserts new structure.
+- `node_read(..., format: "outline" | "both")` serializes existing structure.
+- `node_edit.oldString/newString` edits that serialized outline by exact string
+  replacement, then Rust parses and applies the result.
+
+The agent-facing outline must stay clean. Do not embed node ids, internal CRDT
+metadata, timestamps, or implementation markers in outline text. Identity comes
+from explicit tool parameters (`nodeId`, `parentId`, `afterId`) and from the
+structured `node_read` payload. Rust may keep an internal span map from
+serialized text ranges to node ids, but that map is not model-visible.
 
 `operation_history` is a Lin extension over nodex's AI-only `undo` tool. Keep it
 separate from the `node_*` tools.
 
-## Outliner Text Parser Contract
+Read/create/edit symmetry:
 
-`node_create.text` and `node_edit.text` use nodex's outliner text parser shape.
-The parser is part of the tool contract, not a prompt convention. TypeScript may
-validate shape, but Rust must own parsing and application semantics. Lin
-implementation names should use neutral terms such as `outliner_text_parser`,
-not external product names.
+- `node_read` returns structured ids plus optional `outline` text for the same
+  node subtree.
+- `node_create` accepts the same outline format without embedded ids. The
+  insertion point is controlled by `parentId` and `afterId`; omitted `parentId`
+  means today's journal node, not the currently focused UI node.
+- `node_edit` targets one existing root by `nodeId`, applies exact
+  `oldString/newString` replacement to the outline returned by `node_read`, and
+  then lets Rust parse the full resulting outline.
+- Precise child edits should target that child's `nodeId` directly. Parent
+  context is only needed when inserting, moving, or disambiguating repeated text.
 
-Parser patterns:
+## Lin Outline Format
 
-```ts
-const REFERENCE_PATTERN = /\[\[([^\]^]+)\^([^\]]+)\]\]/g;
-const EXACT_REFERENCE_PATTERN = /^\[\[([^\]^]+)\^([^\]]+)\]\]$/;
-const CHECKBOX_PATTERN = /^\[(X| )\](?:\s+(.*))?$/;
-const FIELD_PATTERN = /^([^:\n]+?)::(?:\s*(.*))?$/;
-const TAG_PATTERN = /(^|\s)#([^\s#[\]]+)/g;
-const BULLET_PREFIX = "- ";
-```
+The Lin Outline Format is a parser-backed text representation for outliner
+content. It is used by `node_create`, `node_read`, and `node_edit`. TypeScript
+may do fast schema checks, but Rust owns parsing, resolution, preview,
+validation, and application.
 
-Parsed AST:
-
-```ts
-interface ParsedOutlinerTextValue {
-  text: string;
-  inlineRefs: InlineRefEntry[];
-  targetId?: string;
-}
-
-interface ParsedOutlinerTextField {
-  name: string;
-  values: ParsedOutlinerTextValue[];
-  clear: boolean;
-}
-
-interface ParsedOutlinerTextNode {
-  name: string;
-  inlineRefs: InlineRefEntry[];
-  tags: string[];
-  checked: boolean | null;
-  targetId?: string;
-  fields: ParsedOutlinerTextField[];
-  children: ParsedOutlinerTextNode[];
-}
-
-interface InlineRefEntry {
-  offset: number;
-  targetNodeId: string;
-  displayName?: string;
-}
-```
-
-Agent-facing parser rules:
-
-- Input is multi-line plain text, not Markdown.
-- Each non-empty line is a node, field, or field value.
-- Every agent-generated line must start with `- ` after indentation.
-- Indentation must be exactly 2 spaces per level. Invalid indentation is an
-  error.
-- The first line is the root node, unless it is a `Field::` line.
-- Unindented lines after the first line may only be root metadata: tags,
-  checkbox state, or fields. Plain unindented child content is an error.
-- `#tagName` extracts a tag display name and removes it from node text.
-- `[X]` sets checked to true. `[ ]` sets checked to false.
-- `Field:: value` creates a single field value.
-- `Field::` with no inline value creates a clear-field intent and opens a value
-  block. If indented values follow, the field is no longer a clear and those
-  lines become field values.
-- A whole-line `[[Display^nodeId]]` creates a reference node or reference field
-  value.
-- Inline `[[Display^nodeId]]` creates an inline reference and replaces that text
-  with `\uFFFC` in the parsed text while recording the reference offset.
-- Max application depth follows nodex's parser behavior: 3 child levels.
-
-Agent-facing supported constructs:
-
-Plain tree:
+Agent-facing syntax:
 
 ```text
-- Project
-  - Task A
-    - Subtask A1
-  - Task B
-```
-
-Tags and checkbox state:
-
-```text
-- [ ] Publish release notes #task #work
-```
-
-Single-value fields:
-
-```text
-- Weekly review #meeting
-  - Date:: 2026-05-13
-  - Location:: Room A
-```
-
-Multi-value fields:
-
-```text
-- Weekly review #meeting
-  - Attendees::
-    - Alice
-    - [[Bob^node_bob]]
-```
-
-Children mixed with fields:
-
-```text
-- Weekly review #meeting
-  - Date:: 2026-05-13
-  - [X] Publish notes #task
+- Project Alpha - Q2 customer rollout #project
+  - Status:: Active
+  - Owner:: [[Alice^node_alice]]
+  - [ ] Follow up
   - Notes
-    - Follow up with [[Project Alpha^node_project_alpha]]
+    - Prepare agenda
+  - %%search%% Open tasks %%view:table%%
+    - [[#task]]
+    - Status:: Open
 ```
 
-References:
+Rules:
 
-```text
-- See [[Project Alpha^node_project_alpha]]
-  - Related:: [[Weekly review^node_weekly_review]]
-  - [[Task A^node_task_a]]
+- Every non-empty line starts with `- ` after indentation.
+- Indentation is exactly 2 spaces per level. Tabs and uneven indentation are an
+  error in model-facing output.
+- `- title` creates or serializes a node title.
+- `- title - description` sets a node description. The first ` - ` separates
+  title from description; later ` - ` text stays in the description.
+- `#tag` and `#[[multi word tag]]` apply tags.
+- `[ ]`, `[x]`, and `[X]` at the start of a node set checkbox state.
+- `Field:: value` sets a single field value.
+- `Field::` followed by indented value lines sets a multi-value field.
+- `Field::` without values clears that field in edit results.
+- Whole-line `[[Display^nodeId]]` creates a reference node or reference field
+  value.
+- Inline `[[Display^nodeId]]` creates an inline reference inside node text or a
+  field value.
+- `[[date:YYYY-MM-DD]]` creates or resolves a date reference.
+- `%%search%%` turns the node into a search node. In `node_create` this creates a
+  saved search node; in `node_search` it is a temporary search node that is only
+  executed and rendered.
+- `%%view:table%%`, `%%view:list%%`, `%%view:cards%%`, and similar directives set
+  view presentation for nodes that support views.
+
+Runtime compatibility:
+
+- Tool descriptions should teach only the canonical format above.
+- Rust may accept copied list text, missing bullets, tabs, or other paste
+  variants through a compatibility normalizer.
+- Compatibility normalization is not a prompt contract. If normalization changes
+  meaning or cannot be made deterministic, return a parse error with line and
+  column guidance.
+
+Parser AST:
+
+```ts
+interface OutlineDocument {
+  roots: OutlineNode[];
+}
+
+interface OutlineNode {
+  title: string;
+  description?: string | null;
+  tags: TagRef[];
+  checked?: boolean | null;
+  fields: OutlineField[];
+  children: OutlineNode[];
+  refs: InlineRef[];
+  directives: OutlineDirective[];
+  sourceSpan: SourceSpan;
+}
+
+interface OutlineField {
+  name: string;
+  values: OutlineValue[];
+  clear: boolean;
+  sourceSpan: SourceSpan;
+}
+
+interface OutlineValue {
+  text: string;
+  refs: InlineRef[];
+  targetId?: string;
+  date?: string;
+  sourceSpan: SourceSpan;
+}
+
+interface TagRef {
+  name: string;
+  targetId?: string;
+}
+
+interface InlineRef {
+  display: string;
+  targetId: string;
+  offset?: number;
+}
+
+interface OutlineDirective {
+  kind: "search" | "view" | "code" | "image";
+  value?: string;
+  args?: Record<string, string>;
+}
+
+interface SourceSpan {
+  line: number;
+  column: number;
+  length: number;
+}
 ```
-
-Metadata-only edit without renaming the target node:
-
-```text
-- #task
-- Status:: Done
-- [X]
-```
-
-Clear a field in `node_edit`:
-
-```text
-- Assignees::
-```
-
-Runtime compatibility note:
-
-- The model-facing tool description should expose only the format above.
-- The runtime may accept missing bullet prefixes, copied outliner list text, or
-  editor-specific indentation variants by normalizing them before parsing.
-- Compatibility normalization is an implementation detail. It should not be
-  described in the tool schema, because multiple accepted input forms make the
-  agent less predictable.
-
-### Tag Resolution
-
-Tags are addressed by display name in text input and search rules.
-
-Resolution order:
-
-1. Normalize by trimming, removing a leading `#`, and case-folding.
-2. Exact display name match.
-3. Optional fuzzy match above a conservative threshold.
-4. If allowed by policy, auto-create a tag definition.
-5. Otherwise report `unresolvedTags`.
-
-Nodex behavior: `node_create` and `node_edit` both auto-create missing tags from
-`#tagName` input.
-
-### Field Resolution
-
-Fields are addressed by display name.
-
-Resolution order:
-
-1. Read fields available from the node's applied tags.
-2. Exact display name match.
-3. Optional fuzzy match above a conservative threshold.
-4. If the node has at least one tag, create a field definition under the first
-   tag. Infer field type from field name/value.
-5. Otherwise report `unresolvedFields`.
-
-Field values are represented as child value nodes under the field entry. Options
-fields should resolve or auto-create option nodes, then store value nodes with
-`targetId` pointing at the selected option.
-
-When nodex auto-creates a field definition, it infers field type from the field
-name and sample value:
-
-- `date`, `deadline`, `due`, `start`, `end`, etc. -> `date`
-- `url`, `link`, `website`, or `http(s)://` values -> `url`
-- `email` or email-shaped values -> `email`
-- `count`, `number`, `amount`, `price`, `qty`, etc. -> `number`
-- otherwise -> `options`
 
 Shared outliner type names used below:
 
 ```ts
 type NodeKind =
+  | "node"
   | "fieldEntry"
   | "reference"
   | "codeBlock"
@@ -385,7 +334,8 @@ type NodeKind =
   | "viewDef"
   | "sortRule"
   | "search"
-  | "queryCondition";
+  | "queryCondition"
+  | "date";
 
 type FieldType =
   | "plain"
@@ -402,117 +352,155 @@ type FieldType =
   | "color";
 ```
 
+### Resolution
+
+Resolution happens after parsing and before preview.
+
+Tags:
+
+1. Trim, remove a leading `#`, and case-fold.
+2. Match exact display name.
+3. Optionally fuzzy match above a conservative threshold.
+4. If policy allows, auto-create the tag definition.
+5. Otherwise report `unresolvedTags`.
+
+Fields:
+
+1. Resolve fields available from the node's applied tags.
+2. Match exact display name.
+3. Optionally fuzzy match above a conservative threshold.
+4. If the node has at least one tag and policy allows, create the field
+   definition under the first tag.
+5. Otherwise report `unresolvedFields`.
+
+Field type inference:
+
+- `date`, `deadline`, `due`, `start`, `end`, etc. -> `date`
+- `url`, `link`, `website`, or `http(s)://` values -> `url`
+- `email` or email-shaped values -> `email`
+- `count`, `number`, `amount`, `price`, `qty`, etc. -> `number`
+- otherwise -> `options`
+
+References:
+
+- `[[Display^nodeId]]` requires `nodeId` to exist unless the reference is a date
+  directive.
+- Date references create or reuse date nodes.
+- Tag references such as `[[#task]]` resolve to tag definition nodes.
+
 ## Outliner Tools
 
 ### `node_search`
 
-Search the knowledge graph. Supports text search, tag filtering, field value
-filtering, backlink lookup, date range, subtree scoping, and sorting. Think of
-it as Grep for the knowledge graph.
-
-All search conditions go inside `rules`. Execution parameters stay at the top
-level.
+Execute a temporary or saved search node. Use this to locate nodes before
+editing and to render temporary search results without creating a real node.
+`node_search.outline` uses the same search-node outline shape that
+`node_create.outline` would use to create a saved search node.
 
 Parameters:
 
 ```ts
-interface SearchRules {
-  query?: string; // Text filter on node name and description.
-  searchTags?: string[]; // Tag display names. AND logic.
-  fields?: Record<string, string>; // Field value filters by display name.
-  linkedTo?: string; // Node ID: find nodes that reference this node.
-  scopeId?: string; // Node ID: restrict to this node and descendants.
-  parentId?: string; // Deprecated alias for scopeId.
-  after?: string; // Creation date lower bound, YYYY-MM-DD inclusive.
-  before?: string; // Creation date upper bound, YYYY-MM-DD inclusive.
-  sortBy?: string; // "field" or "field:order"; fields relevance, created, modified, name, refCount.
-}
-
 interface NodeSearchParams {
-  rules?: SearchRules;
-  limit?: number;  // default 20, max 50
-  offset?: number; // default 0
-  count?: boolean; // if true, return only total and guidance
+  outline?: string;
+  searchNodeId?: string;
+  limit?: number; // default 20, max 50
+  offset?: number;
+  count?: boolean;
 }
 ```
+
+Exactly one of `outline` and `searchNodeId` is required.
 
 Return data:
 
 ```ts
 interface NodeSearchData {
+  source: "temporary" | "saved";
+  title?: string;
+  view?: string;
+  searchNodeId?: string;
+  outline?: string;
   total: number;
-  offset?: number;
-  limit?: number;
+  offset: number;
+  limit: number;
   items?: NodeSearchItem[];
   unresolvedTags?: string[];
-  unresolvedFilters?: string[];
+  unresolvedFields?: string[];
 }
 
 interface NodeSearchItem {
-  id: string;
-  name: string;
+  nodeId: string;
+  title: string;
+  description?: string | null;
+  type: NodeKind;
   tags: string[];
   snippet: string;
-  createdAt: string;
-  parentName: string;
-  fields: Record<string, string>;
+  parent?: { nodeId: string; title: string } | null;
+  fields: Record<string, string | string[]>;
+  checked?: boolean | null;
+  hasChildren: boolean;
+  childCount: number;
+  updatedAt: string;
 }
 ```
 
 Result behavior:
 
-- Text search is fuzzy and CJK-aware.
-- `searchTags` are AND filters. If any tag name is unknown, return zero results
-  with guidance.
-- Unknown field names are ignored and reported as `unresolvedFilters`.
-- `linkedTo` should search tree references, inline references, and field value
-  references.
-- `scopeId` includes the scope node and all descendants.
-- `count: true` returns only `total` plus guidance fields.
-- Default sort is relevance when `query` exists, otherwise `modified:desc`.
+- `outline` is a temporary search node and does not mutate document state.
+- The outline must parse as one search node root. If `%%search%%` is omitted,
+  the runtime may still treat the root as a temporary search node, but tool
+  descriptions should teach agents to include `%%search%%`.
+- The root title is returned as `title` and may be used for temporary UI display.
+- `%%view:table%%`, `%%view:list%%`, `%%view:cards%%`, and similar directives are
+  returned as `view` and drive temporary result presentation.
+- Child lines are search conditions using the same parser as saved search nodes:
+  plain text is full-text search, tag references filter by tag, field lines
+  filter by field value, and node/date references filter by relationship or date.
+- `searchNodeId` executes an existing saved search node.
+- Subtree restriction, parent restriction, backlink search, and relationship
+  filters should be represented as search conditions in the outline, not as
+  separate tool parameters.
+- `count: true` returns total and guidance without item payloads.
 
-Example result:
+Examples:
 
 ```json
 {
-  "ok": true,
-  "tool": "node_search",
-  "version": 1,
-  "status": "success",
-  "data": {
-    "total": 2,
-    "offset": 0,
-    "limit": 20,
-    "items": [
-      {
-        "id": "node_1",
-        "name": "Publish release notes",
-        "tags": ["task"],
-        "snippet": "Publish release notes",
-        "createdAt": "2026-05-12T09:00:00.000Z",
-        "parentName": "Today",
-        "fields": { "Status": "Todo" }
-      }
-    ]
-  },
-  "pagination": { "total": 2, "offset": 0, "limit": 20, "hasMore": false }
+  "outline": "- %%search%% 成都天气 %%view:list%%\n  - 成都天气"
+}
+```
+
+```json
+{
+  "outline": "- %%search%% 今日开放任务 %%view:table%%\n  - [[#task]]\n  - Status:: Open\n  - Due:: [[date:2026-05-13]]",
+  "limit": 20
+}
+```
+
+```json
+{
+  "searchNodeId": "node_saved_search"
 }
 ```
 
 ### `node_read`
 
-Read a node's raw type/data, content, fields, and children. Fields show type and
-available options. Field entries are returned in the `fields` array, not in
-`children`; children only list content nodes and references.
+Read nodes as structured data and, when requested, as canonical Lin Outline
+Format. The structured payload carries ids. The outline is clean model-facing
+text and does not contain ids.
 
 Parameters:
 
 ```ts
 interface NodeReadParams {
-  nodeId?: string; // omit to browse workspace root. Shortcuts: "journal", "schema".
-  depth?: number; // 0 = no children, default 1, max 3
-  childOffset?: number; // default 0
+  nodeId?: string; // default: today's journal node
+  nodeIds?: string[];
+  depth?: number; // 0 = node only, default 1, max 3
+  childOffset?: number;
   childLimit?: number; // default 20, max 50
+  format?: "structured" | "outline" | "both"; // default "both"
+  includeDeleted?: boolean;
+  includeBacklinks?: boolean;
 }
 ```
 
@@ -520,27 +508,34 @@ Return data:
 
 ```ts
 interface NodeReadData {
-  id: string;
-  type: NodeKind | null;
-  name: string;
-  description: string;
-  createdAt: number;
-  updatedAt: number;
+  items: NodeReadItem[];
+}
+
+interface NodeReadItem {
+  nodeId: string;
+  type: NodeKind;
+  title: string;
+  description?: string | null;
   tags: string[];
-  nodeData: Record<string, unknown>;
   fields: NodeFieldRead[];
-  checked: boolean | null;
-  parent: { id: string; name: string } | null;
-  breadcrumb: string[];
+  checked?: boolean | null;
+  parent?: { nodeId: string; title: string } | null;
+  breadcrumb: Array<{ nodeId: string; title: string }>;
   children: ChildrenPage;
+  backlinks?: NodeBacklink[];
+  revision: string;
+  outline?: string;
 }
 
 interface NodeFieldRead {
   name: string;
-  type: string;
-  value: string;
+  type: FieldType | string;
+  values: Array<{
+    text: string;
+    valueNodeId?: string;
+    targetId?: string;
+  }>;
   fieldEntryId: string;
-  valueNodeId: string | null;
   options?: string[];
 }
 
@@ -552,367 +547,267 @@ interface ChildrenPage {
 }
 
 interface NodeChildSummary {
-  id: string;
-  name: string;
+  nodeId: string;
+  title: string;
+  type: NodeKind;
+  tags: string[];
+  checked?: boolean | null;
   hasChildren: boolean;
   childCount: number;
-  tags: string[];
-  checked: boolean | null;
   isReference?: boolean;
   targetId?: string;
   children?: ChildrenPage;
+}
+
+interface NodeBacklink {
+  sourceNodeId: string;
+  sourceTitle: string;
+  kind: "tree" | "inline" | "field";
+  snippet?: string;
 }
 ```
 
 Result behavior:
 
-- Omitted `nodeId` reads the workspace root.
-- `nodeId: "journal"` reads the Journal node.
-- `nodeId: "schema"` reads tags and field definitions.
-- `depth` is bounded to prevent dumping the entire document.
-- If children are truncated, return `total`, `offset`, and `limit` so the agent
-  can page with `childOffset`.
-- Use `node_read(nodeId: "schema")` before schema operations, then read a tagDef
-  node to find fieldDef children before editing field definitions.
+- Omitted `nodeId` reads today's journal node.
+- Use either `nodeId` or `nodeIds`, not both. If both are omitted, read today's
+  journal node.
+- `nodeIds` returns multiple independent `items`.
+- `outline` serializes the requested node and bounded descendants using the same
+  canonical format accepted by `node_create` and `node_edit`.
+- If children are truncated, return pagination and do not serialize hidden
+  children into `outline`.
+- To edit a child precisely, use the child `nodeId` from `children.items` and
+  call `node_edit` on that child directly.
 
 ### `node_create`
 
-Create nodes in the knowledge graph. There are three modes:
-
-1. Content node: pass `text`.
-2. Search node: pass `type: "search"`, `text` as the node name, and `rules`.
-3. Duplicate: pass `duplicateId` to deep-copy an existing node. Duplicate mode
-   ignores `text`, `type`, and `rules`.
+Create new outliner content under a parent. The normal path is `outline`, which
+may create one node, many sibling nodes, or a full subtree. Reference creation
+and subtree duplication are explicit shortcuts because they depend on exact ids.
 
 Parameters:
 
 ```ts
 interface NodeCreateParams {
-  type?: "search"; // omit for normal content
-  text?: string; // outliner text, or search node name when type="search"
-  rules?: SearchRules; // required when type is "search"
-  data?: Record<string, unknown>;
-  duplicateId?: string;
   parentId?: string; // default: today's journal node
-  afterId?: string;
+  afterId?: string | null; // null = first child; omitted = last child
+  outline?: string;
+  targetId?: string; // create one reference node to this target
+  duplicateId?: string; // deep-copy this subtree
+  previewOnly?: boolean;
 }
 ```
+
+Exactly one of `outline`, `targetId`, and `duplicateId` is required.
 
 Return data:
 
 ```ts
-type NodeCreateData = ContentCreateData | SearchCreateData | DuplicateCreateData;
-
-interface ContentCreateData {
-  id: string;
-  status: "created";
+interface NodeCreateData {
   parentId: string;
-  isReference?: boolean;
+  afterId?: string | null;
+  createdRootIds: string[];
+  createdNodeIds: string[];
+  createdFieldEntryIds?: string[];
+  createdTagIds?: string[];
+  createdFieldDefIds?: string[];
+  duplicatedFrom?: string;
   targetId?: string;
-  name?: string;
-  childrenCreated?: number;
-  createdFields?: string[];
-  unresolvedFields?: string[];
-}
-
-interface SearchCreateData {
-  id: string;
-  status: "created";
-  type: "search";
-  name: string;
-  parentId: string;
-  appliedRuleCount: number;
-  rulesApplied?: Record<string, unknown>;
+  outline?: string;
+  revisions?: Record<string, string>;
   unresolvedTags?: string[];
   unresolvedFields?: string[];
-  ignoredSortBy?: string;
-}
-
-interface DuplicateCreateData {
-  id: string;
-  name: string;
-  parentId: string;
-  duplicatedFrom: string;
 }
 ```
 
 Result behavior:
 
-- `afterId` resolves insertion location from the sibling's parent. If `parentId`
-  is also provided, it must match that sibling parent.
-- `#tag` auto-creates the tag if it does not exist.
-- Field values only resolve after tags are applied. If a field cannot resolve,
-  return `unresolvedFields` and guidance.
-- A node with at least one tag may auto-create missing field definitions under
-  the first tag, with field type inferred from field name/value.
-- Exact reference lines create reference nodes. Inline reference syntax creates
-  inline refs in node text or field values.
-- `data` is for non-content properties such as `description`, `color`,
-  `codeLanguage`, `showCheckbox`, or content-node `type`. It cannot set `id`,
-  `name`, `children`, `tags`, or timestamps.
-- Search nodes store persistable rules only. Unknown tags/fields are skipped and
-  reported. `sortBy: "relevance:*"` is runtime-only and reported as
-  `ignoredSortBy`.
+- If `afterId` is provided without `parentId`, the parent is `afterId`'s parent.
+- If both are provided, `afterId` must be a child of `parentId`.
+- If `outline` has multiple root lines, the first root is inserted at the
+  requested position and following roots are inserted after the previous root.
+- `targetId` creates one reference node at the requested position.
+- `duplicateId` deep-copies the source subtree at the requested position.
+- Missing tags and fields may be auto-created only when policy allows it.
+- Search/view directives, schema-like tag/field structures, dates, references,
+  descriptions, checkboxes, and fields all come through `outline`.
+- `previewOnly: true` returns preview and validation without applying.
 
 Example:
 
 ```json
 {
-  "ok": true,
-  "tool": "node_create",
-  "version": 1,
-  "status": "partial",
-  "data": {
-    "id": "node_new",
-    "status": "created",
-    "parentId": "today",
-    "childrenCreated": 3,
-    "createdFields": ["Status"],
-    "unresolvedFields": ["Owner"]
-  },
-  "operation": {
-    "operationId": "op_123",
-    "undoGroupId": "undo_123",
-    "origin": "agent",
-    "action": "node_create",
-    "affectedNodeIds": ["node_new"],
-    "summary": "Created Weekly review with 3 children"
-  },
-  "boundary": "Field values only resolve from fields available on the node after tags are applied.",
-  "nextStep": "Add a tag that defines Owner, then call node_edit again with Owner:: value.",
-  "hint": "Some fields could not be resolved because the node has no matching field definition."
+  "outline": "- Project Alpha - Q2 rollout #project\n  - Status:: Active\n  - [ ] Draft plan"
 }
 ```
 
 ### `node_edit`
 
-Incrementally modify existing nodes. Only provided parameters are applied.
-This is a semantic outliner edit, not a file-style line edit or string
-replacement. The agent targets existing content by `nodeId`; the line structure
-inside `text` is only a compact way to express node title, metadata, fields, and
-new child trees.
-
-Use the single-node form for one target. Use `changes` when several
-already-known nodes should be changed together, such as a parent plus children,
-or several siblings. `changes` is a string format that the runtime parses into
-internal edit patches; the model should not construct an array of patch objects.
-This keeps the public tool set compact without introducing a generic
-`node_batch` meta-tool.
+Edit existing outliner content. The content edit path mirrors cc-style exact
+replacement: read the node, copy an exact fragment from the returned canonical
+outline, and replace it with a new canonical fragment.
 
 Parameters:
 
 ```ts
-type NodeEditParams = SingleNodeEditParams | MultiNodeEditTextParams;
+type NodeEditParams =
+  | NodeOutlineEditParams
+  | NodeMoveParams
+  | NodeMergeParams
+  | NodeReferenceReplaceParams;
 
-interface SingleNodeEditParams {
+interface NodeOutlineEditParams {
   nodeId: string;
-  text?: string; // outliner text, incremental add/set semantics
-  removeTags?: string[];
-  data?: Record<string, unknown>;
-  parentId?: string; // Move to this parent.
-  afterId?: string;
-  mergeFrom?: string;
+  oldString: string; // exact fragment from node_read.outline, or "*" for full outline
+  newString: string;
+  expectedRevision?: string;
+  previewOnly?: boolean;
 }
 
-interface MultiNodeEditTextParams {
-  changes: string; // multi-node edit text, max 20 target blocks
+interface NodeMoveParams {
+  nodeId?: string;
+  nodeIds?: string[];
+  move: {
+    parentId?: string;
+    afterId?: string | null;
+    structuralAction?: "indent" | "outdent" | "move_up" | "move_down";
+  };
+  previewOnly?: boolean;
+}
+
+interface NodeMergeParams {
+  nodeId: string; // target node
+  mergeFromNodeIds: string[]; // source nodes
+  previewOnly?: boolean;
+}
+
+interface NodeReferenceReplaceParams {
+  nodeId: string;
+  replaceWithReferenceTo: string;
+  previewOnly?: boolean;
 }
 ```
 
-Incremental text semantics:
+Outline edit semantics:
 
-- `text` is not a patch language. Do not use line numbers, `old_string`, or
-  `new_string` semantics.
-- In `node_create`, `text` describes the full new subtree to create. In
-  `node_edit`, `text` is incremental: it changes the target node metadata/title
-  and appends new children, but it is not a full snapshot of the existing node.
-- Plain first line renames the node.
-- Metadata-only first line does not rename the node.
-- `#tag` adds a tag.
-- `removeTags` removes tags; text syntax cannot remove tags.
-- `Field:: value` sets a field.
-- `Field::` clears a field.
-- `[X]` and `[ ]` set done state.
-- Indented nodes append children and never remove existing children.
-- To create children without changing the target node, prefer
-  `node_create(parentId: nodeId, text: ...)`.
-- To edit existing children or siblings together, use `changes` with each
-  child's or sibling's `nodeId`; do not address them by line number or display
-  text.
-- Search node rule editing is not supported. Delete and recreate the search node
-  with `node_create(type: "search")`.
+- `oldString !== "*"` must match exactly once in the current canonical outline
+  for `nodeId`.
+- `oldString === "*"` is a sentinel that replaces the whole canonical outline for
+  `nodeId`. It is not a wildcard or regular expression; `*` has special meaning
+  only when it is the entire value.
+- `newString` is not parsed in isolation. The full outline after replacement must
+  be valid Lin Outline Format.
+- Whole-line or whole-subtree replacements are preferred. Smaller string
+  fragments are allowed when the resulting outline is still valid and the match
+  is exact.
+- For `oldString: "*"`, `newString` must contain exactly one root line because
+  that root maps to `nodeId`.
+- Rust replaces the matched fragment, parses the resulting whole outline, builds
+  a mutation plan, validates it, renders a preview, and then applies it after
+  approval when needed.
+- The root of a full-outline replacement maps to `nodeId`. If the replacement
+  would make the root ambiguous, return an error.
+- For precise child edits, prefer `node_read` to obtain the child `nodeId`, then
+  call `node_edit` on that child. Do not rely on sibling line numbers.
+- If an outline edit is ambiguous because identical children have meaningful
+  fields, children, references, or history, validation should reject it and tell
+  the agent to target the child node id directly.
+- Removing an existing node, reference, or field value from the resulting outline
+  is a deletion intent. It compiles to an undoable trash/clear mutation, not a
+  permanent delete.
+- Removing all values from a field compiles to `ClearField`; removing individual
+  field value nodes compiles to trashing those value nodes.
 
-Multi-node edit text format:
+Move semantics:
 
-```text
-@task_1
-- [X]
+- `parentId + afterId` is an absolute move.
+- `structuralAction` mirrors user operations: indent, outdent, move up, move
+  down.
+- `nodeIds` is allowed only for homogeneous move operations.
+- Moving a node under itself or under one of its descendants is invalid.
 
-@task_2
-- Status:: In Progress
+Merge semantics:
 
-@task_3
-> move parent=proj_2 after=task_8
-```
+- `nodeId` is the target that survives.
+- `mergeFromNodeIds` are sources whose children, fields, tags, and references
+  are merged into the target.
+- Sources are moved to Trash after merge.
+- Source order determines child append order.
+- Target title and position are preserved.
+- References to sources are redirected to the target.
+- Merge cannot be combined with outline edit or move in the same call.
 
-Format rules:
+Reference replacement semantics:
 
-- Each block starts with `@<nodeId>` on its own line.
-- Lines after the header and before the next `@<nodeId>` header apply to that
-  target node.
-- Outliner text lines use the same agent-facing outliner text format as
-  single-node `text`.
-- Command lines start with `>` and are parsed by the runtime.
-- Supported commands:
-  - `> move parent=<nodeId> [after=<nodeId>]`
-  - `> remove_tags tag1, tag2`
-  - `> merge_from <nodeId>`
-  - `> data {"description":"...", "color":"red"}`
-- `merge_from` should be the only operation in its block.
-
-Multi-node edit semantics:
-
-- `changes` is a scoped multi-edit mode for the same semantic primitive. It is
-  not a generic batch protocol and cannot call `node_create`, `node_delete`,
-  `node_search`, or `operation_history`.
-- Every block must identify an existing node by `nodeId`.
-- Blocks are applied in text order in a single transaction and a single undo
-  group.
-- Validate all blocks before mutating. If any block is invalid, return an error
-  and apply nothing.
-- Use `changes` for efficient sibling/child updates, bulk status changes, field
-  updates on several selected nodes, or a coordinated move of known nodes.
-- Keep `changes` small and reviewable. Initial max: 20 target blocks.
-
-Nodex comparison:
-
-- Nodex `node_edit` accepts one `nodeId` per call.
-- That call can still apply multiple changes to the target node: rename, add
-  tags, set or clear fields, set checked state, mutate `data`, move position, or
-  merge another node.
-- Nodex `text` can append a whole new child subtree under the target node.
-  Existing children are not removed or replaced.
-- Nodex does not edit existing children or siblings by line number. To edit an
-  existing child or sibling, the agent must target that node's own `nodeId`.
-- Lin's `changes` string is a deliberate extension over nodex for efficient
-  multi-node updates while keeping the operation type semantic and bounded.
-
-Relationship to `file_edit`:
-
-- Borrow the safety model: read before non-trivial edits, reject ambiguous
-  targets, return a structured before/after result, and group the mutation for
-  undo.
-- Do not borrow the file mutation model. `file_edit` uses exact
-  `old_string` -> `new_string` replacement because files are linear text.
-  Outliner edits should use semantic parameters: `nodeId`, `text`, `removeTags`,
-  `data`, `parentId`, `afterId`, and `mergeFrom`.
+- `replaceWithReferenceTo` replaces the node at `nodeId` with a reference node to
+  the target at the same parent and position.
+- The original node is moved to Trash after the replacement, preserving undo.
+- If `nodeId` is already a reference, only its target is changed.
 
 Return data:
 
 ```ts
 interface NodeEditData {
+  action: "outline_edit" | "move" | "merge" | "replace_with_reference";
   status: "updated" | "unchanged";
-  mode: "single" | "multi";
-  updated?: Array<"name" | "tags" | "checked" | "fields" | "position" | "data">;
-  items?: NodeEditItemResult[];
-  tags?: string[];
-  parentId?: string;
-  createdFields?: string[];
+  affectedNodeIds: string[];
+  createdNodeIds?: string[];
+  trashedNodeIds?: string[];
+  movedNodeIds?: string[];
+  updatedFields?: string[];
+  updatedTags?: string[];
+  unresolvedTags?: string[];
   unresolvedFields?: string[];
-  merged?: {
-    from: string;
-    childrenMoved: number;
-    tagsMerged: number;
-    fieldsMerged: number;
-    referencesRedirected: number;
+  beforeOutline?: string;
+  afterOutline?: string;
+  revisions?: Record<string, string>;
+  merge?: {
+    targetNodeId: string;
+    sourceNodeIds: string[];
+    movedChildren: number;
+    redirectedReferences: number;
+    mergedFields: Array<{ name: string; addedValues: number }>;
   };
 }
-
-interface NodeEditItemResult {
-  nodeId: string;
-  status: "updated" | "unchanged";
-  updated: Array<"name" | "tags" | "checked" | "fields" | "position" | "data">;
-  tags?: string[];
-  parentId?: string;
-  createdFields?: string[];
-  unresolvedFields?: string[];
-}
 ```
 
-Result behavior:
-
-- Reject a block that combines `merge_from` with outliner text. Merge changes structure
-  and simultaneous text edits are confusing.
-- `data` must be sanitized. Do not allow direct edits to `id`, `children`,
-  `tags`, timestamps, or raw rich text internals through `data`.
-- `parentId + afterId` moves the node. If `afterId` is provided and `parentId`
-  is also provided, they must resolve to the same parent.
-- `mergeFrom` redirects references from source to target, moves source children
-  and fields where valid, merges tags, and trashes the source node.
-- Multi-node edit returns one result item per target block, plus one operation entry for the
-  whole transaction.
-- If nothing changes, return `status: "unchanged"` with guidance to read the
-  node and compare current state.
-
-Single-node example result:
+Examples:
 
 ```json
 {
-  "ok": true,
-  "tool": "node_edit",
-  "version": 1,
-  "status": "success",
-  "data": {
-    "status": "updated",
-    "mode": "single",
-    "updated": ["name", "tags", "fields", "checked"],
-    "tags": ["task"],
-    "createdFields": ["Status"]
-  },
-  "operation": {
-    "operationId": "op_124",
-    "undoGroupId": "undo_124",
-    "origin": "agent",
-    "action": "node_edit",
-    "affectedNodeIds": ["node_1"],
-    "summary": "Updated Publish release notes"
-  }
+  "nodeId": "node_task",
+  "oldString": "*",
+  "newString": "- [x] Check Chengdu weather #weather"
 }
 ```
 
-Multi-node example call:
-
 ```json
 {
-  "changes": "@node_task_a\n- [X]\n\n@node_task_b\n- [ ]\n- Owner:: Alice\n\n@node_task_c\n> move parent=node_done after=node_task_b"
+  "nodeId": "node_project",
+  "oldString": "  - Task B\n  - Task C",
+  "newString": "  - Task B\n  - [ ] Task D\n  - Task C"
 }
 ```
 
-Multi-node example result:
+```json
+{
+  "nodeIds": ["node_task_a", "node_task_b"],
+  "move": { "parentId": "node_done" }
+}
+```
 
 ```json
 {
-  "ok": true,
-  "tool": "node_edit",
-  "version": 1,
-  "status": "success",
-  "data": {
-    "status": "updated",
-    "mode": "multi",
-    "items": [
-      { "nodeId": "node_task_a", "status": "updated", "updated": ["checked"] },
-      { "nodeId": "node_task_b", "status": "updated", "updated": ["checked", "fields"] },
-      { "nodeId": "node_task_c", "status": "updated", "updated": ["position"], "parentId": "node_done" }
-    ]
-  },
-  "operation": {
-    "operationId": "op_125",
-    "undoGroupId": "undo_125",
-    "origin": "agent",
-    "action": "node_edit",
-    "affectedNodeIds": ["node_task_a", "node_task_b", "node_task_c"],
-    "summary": "Updated 3 nodes"
-  }
+  "nodeId": "node_canonical",
+  "mergeFromNodeIds": ["node_duplicate_1", "node_duplicate_2"]
+}
+```
+
+```json
+{
+  "nodeId": "node_old",
+  "replaceWithReferenceTo": "node_canonical"
 }
 ```
 
@@ -920,15 +815,17 @@ Multi-node example result:
 
 Move nodes to Trash, or restore them from Trash. Supports a single ID or an
 array for batch operations. Works on any node: content, field values, and
-references. Deleting a field value node clears that field. Deleting a reference
-removes the link.
+references. Deleting a field value node removes that value; deleting a field
+entry clears that field. Deleting a reference removes the link.
 
 Parameters:
 
 ```ts
 interface NodeDeleteParams {
-  nodeId: string | string[];
+  nodeId?: string;
+  nodeIds?: string[];
   restore?: boolean; // true = restore from Trash; omit/false = move to Trash
+  previewOnly?: boolean;
 }
 ```
 
@@ -938,21 +835,22 @@ Return data:
 interface NodeDeleteData {
   action: "trashed" | "restored";
   count: number;
-  name?: string; // single trash
-  names?: string[]; // batch trash
-  parentId?: string; // single restore
-  items?: Array<{ id: string; parentId: string }>; // batch restore
+  nodeIds: string[];
+  items?: Array<{ nodeId: string; parentId?: string; title?: string }>;
+  revisions?: Record<string, string>;
 }
 ```
 
 Result behavior:
 
+- Use either `nodeId` or `nodeIds`, not both.
 - Validate all node ids before mutating.
-- Default is trash, not permanent delete.
-- Agent v1 should not expose permanent delete through `node_delete`; hard delete
-  can be a future, approval-heavy operation if needed.
-- Batch delete is supported by passing an array. This is not a generic batch
-  protocol; it is the natural shape of the delete operation.
+- Delete means move to Trash. Agent v1 does not expose permanent delete.
+- Restore uses the node's recorded original parent/position when available. If
+  the original location is no longer valid, return an error with guidance instead
+  of guessing a new parent.
+- Batch delete is supported by `nodeIds`. This is not a generic batch protocol;
+  it is the natural shape of the delete operation.
 
 ### `operation_history`
 
@@ -965,8 +863,9 @@ Parameters:
 ```ts
 interface OperationHistoryParams {
   action: "list" | "undo" | "redo";
-  steps?: number; // default 1, max 20 for undo/redo
-  scope?: "all" | "agent" | "user"; // default "all"
+  steps?: number; // default 1, max 10 for undo/redo
+  operationId?: string; // stack-top guard, not arbitrary history jumping
+  origin?: "all" | "agent" | "user"; // default "all"
   limit?: number;  // for list, default 20, max 100
   offset?: number; // for list
 }
@@ -980,8 +879,14 @@ interface OperationHistoryData {
   count: number;
   hasMore?: boolean;
   items?: OperationHistoryItem[];
-  reverted?: OperationHistoryItem[];
+  undone?: OperationHistoryItem[];
   redone?: OperationHistoryItem[];
+  canUndo: boolean;
+  canRedo: boolean;
+  cursor?: {
+    undoDepth: number;
+    redoDepth: number;
+  };
 }
 
 interface OperationHistoryItem {
@@ -1002,12 +907,215 @@ interface OperationHistoryItem {
 Result behavior:
 
 - `list` is read-only and should not require approval.
-- `undo` and `redo` mutate document state and usually require approval when they
-  affect user operations.
-- `scope: "agent"` should undo only agent-origin operations.
-- `scope: "user"` should undo only user-origin operations.
+- `undo` and `redo` are stack operations. Agent v1 does not support arbitrary
+  history jumping.
+- `steps` defaults to 1 and should stay small. Initial maximum: 10.
+- `origin: "agent"` means undo/redo the nearest stack operation whose origin is
+  agent, stopping at unsafe dependencies.
+- `origin: "user"` means undo/redo the nearest user-origin stack operation and
+  usually requires approval.
+- `operationId` is only a guard for the current stack target or a continuous
+  stack range. If it would require skipping unrelated later operations, return
+  `boundary` and do nothing.
+- Undoing user-origin operations requires approval by default.
+- Redo follows the redo stack and must fail if a new document mutation has
+  invalidated the redo stack.
 - If history storage cannot list operations yet, implement `undo` and `redo`
   first but return a clear `boundary` for `list`.
+
+## Rust Parser, Preview, and Validation
+
+Rust owns the complete outliner mutation pipeline. The TypeScript adapter should
+only normalize arguments, invoke Tauri commands, and wrap Rust responses in
+`ToolResult`.
+
+### Parser modules
+
+Expected Rust modules:
+
+```txt
+lin_outline_parser
+lin_outline_serializer
+lin_outline_resolver
+lin_mutation_planner
+lin_tool_preview
+lin_tool_validation
+```
+
+Core responsibilities:
+
+```rust
+parse_outline(input: &str) -> Result<OutlineDocument, ParseError>
+serialize_outline(state: &DocumentState, node_id: &str, opts: SerializeOptions)
+  -> Result<SerializedOutline>
+resolve_outline(ast: OutlineDocument, state: &DocumentState, policy: ResolvePolicy)
+  -> Result<ResolvedOutline, ValidationReport>
+build_mutation_plan(resolved: ResolvedOutline, context: ToolContext)
+  -> Result<MutationPlan, ValidationReport>
+validate_plan(plan: &MutationPlan, state: &DocumentState) -> ValidationReport
+render_preview(plan: &MutationPlan, state: &DocumentState) -> ToolPreview
+apply_plan(plan: MutationPlan, state: &mut DocumentState) -> Result<OperationResult>
+```
+
+`SerializedOutline` contains the model-facing text plus an internal span map:
+
+```rust
+struct SerializedOutline {
+    text: String,
+    revision: String,
+    span_map: Vec<OutlineSpan>,
+}
+
+struct OutlineSpan {
+    byte_start: usize,
+    byte_end: usize,
+    node_id: NodeId,
+    field_entry_id: Option<NodeId>,
+    value_node_id: Option<NodeId>,
+}
+```
+
+The span map is not returned to the model. It lets Rust understand which current
+nodes were touched by `oldString/newString` without polluting the outline with id
+markers.
+
+### `node_edit` flow
+
+Content edits use this sequence:
+
+```txt
+load current node state
+  -> serialize current canonical outline and internal span map
+  -> check expectedRevision when provided
+  -> replace oldString with newString
+  -> parse the whole replacement result
+  -> resolve tags, fields, refs, dates, search/view directives
+  -> build MutationPlan using the old span map as identity context
+  -> validate MutationPlan
+  -> render preview
+  -> wait for approval when required
+  -> apply MutationPlan as one transaction and one undo group
+```
+
+`oldString` matching rules:
+
+- `oldString === "*"` replaces the whole serialized outline for `nodeId`.
+- Otherwise, `oldString` must match exactly once.
+- Zero matches means the agent is using stale context and should call
+  `node_read` again.
+- Multiple matches means the agent should include more surrounding context or
+  edit the child directly by `nodeId`.
+- Matching is byte-exact against the canonical outline string returned by
+  `node_read`, after normalizing line endings to `\n`.
+
+Identity rules:
+
+- The root of a full-outline replacement maps to the `nodeId` argument.
+- Unchanged text outside the replacement keeps identity through the span map.
+- Inside the replacement range, Rust may preserve identity only when the old and
+  new fragment shape makes the mapping unambiguous.
+- If a changed fragment contains repeated sibling titles or nodes with fields,
+  children, references, or history and identity cannot be proven, validation must
+  reject the edit and tell the agent to target the relevant child `nodeId`
+  directly.
+
+### Mutation plan
+
+`MutationPlan` is internal. It is the only object that can be applied to
+document state.
+
+```rust
+enum MutationOp {
+    CreateNode,
+    UpdateNodeContent,
+    UpdateNodeDescription,
+    SetChecked,
+    ApplyTag,
+    RemoveTag,
+    CreateFieldEntry,
+    SetFieldValues,
+    ClearField,
+    CreateReference,
+    ReplaceWithReference,
+    MoveNode,
+    MergeNodes,
+    RedirectReferences,
+    TrashNode,
+    RestoreNode,
+    UpdateSearchConfig,
+    UpdateViewConfig,
+}
+```
+
+Planning must be deterministic. If the same current state and same tool
+arguments are provided, the plan and preview should be identical.
+
+### Preview data
+
+Every mutating node tool can return a preview before apply.
+
+```ts
+interface ToolPreview {
+  summary: string;
+  creates: Array<{ title: string; parentId: string; kind: NodeKind }>;
+  updates: Array<{
+    nodeId: string;
+    title: string;
+    before?: unknown;
+    after?: unknown;
+  }>;
+  moves: Array<{ nodeId: string; fromParentId: string; toParentId: string }>;
+  deletes: Array<{ nodeId: string; title: string; destination: "trash" }>;
+  warnings: string[];
+  requiresApproval: boolean;
+}
+```
+
+Preview should be concise in the model-visible response and richer in the UI
+details object. Broad deletes, merges, and ambiguous identity preservation must
+be called out explicitly.
+
+### Validation rules
+
+Rust validation is the security and correctness boundary.
+
+Required checks:
+
+- The workspace/document boundary is valid for every referenced node.
+- `parentId`, `afterId`, `nodeId`, `nodeIds`, `targetId`, and
+  `mergeFromNodeIds` exist and are editable.
+- `afterId` is a child of `parentId` when both are provided.
+- Moves cannot create cycles and cannot move locked/system nodes.
+- Batch move operations are homogeneous and preserve selected-root semantics.
+- Merge target and sources are distinct and have no unsafe ancestor/descendant
+  relationship.
+- Field values match field type constraints.
+- Tag and field auto-creation follows the active policy.
+- Search/view directives compile to valid internal configs.
+- `expectedRevision` matches when provided.
+- Parser compatibility normalization does not silently change meaning.
+
+Validation should produce structured guidance:
+
+```ts
+interface ValidationReport {
+  ok: boolean;
+  errors: Array<{ code: string; message: string; span?: SourceSpan }>;
+  warnings: Array<{ code: string; message: string; span?: SourceSpan }>;
+  unresolvedTags?: string[];
+  unresolvedFields?: string[];
+  nextStep?: string;
+}
+```
+
+### Apply rules
+
+- A tool call applies as one transaction.
+- A transaction creates one undo group.
+- If any op fails, apply nothing.
+- Operation history records origin, tool name, summary, affected nodes, and undo
+  group id.
+- Apply returns fresh revisions for affected root nodes.
 
 ## Local File Tools
 
@@ -1690,11 +1798,11 @@ coverage maps as follows:
 
 | Public tool | Current or needed backend capability |
 |---|---|
-| `node_search` | `search_nodes`, `backlinks`, future field/tag/date filters. |
-| `node_read` | `get_projection`, `backlinks`, computed field and child summaries. |
-| `node_create` | `create_node`, `create_nodes_from_tree`, `create_tag`, `create_field_def`, `add_reference`, `ensure_date_node`, future duplicate/search-node support. |
-| `node_edit` | `update_node_text`, `toggle_done`, `apply_tag`, `remove_tag`, field value mutations, `move_node`, `merge_node_into_previous`, future semantic `mergeFrom`. |
-| `node_delete` | `trash_node`, `batch_trash_nodes`, `restore_node`; hard delete is not exposed in the v1 agent tool. |
+| `node_search` | Temporary/saved search node parser compiled to `search_nodes`, backlinks, tag/field/date filters, relationship filters, and view metadata. |
+| `node_read` | `get_projection`, `backlinks`, canonical outline serialization, computed field and child summaries. |
+| `node_create` | `create_node`, `create_nodes_from_tree`, `create_tag`, `create_field_def`, `add_reference`, `ensure_date_node`, duplicate/search-node support. |
+| `node_edit` | Canonical outline exact replacement compiled to `update_node_text`, `toggle_done`, tag/field mutations, `move_node`, `merge_node_into`, reference replacement, and search/view updates. |
+| `node_delete` | `trash_node`, `batch_trash_nodes`, `restore_node`; permanent delete is not exposed to agent v1. |
 | `operation_history` | `undo`, `redo`, future operation log/list with origin metadata. |
 | `file_read` | Needed Rust file read command with path normalization, pagination, and freshness tracking. |
 | `file_glob` | Needed Rust glob command under allowed roots. |
@@ -1707,8 +1815,8 @@ coverage maps as follows:
 | `web_fetch` | Needed URL fetch adapter: Rust HTTP and/or embedded browser session fetch, HTML-to-markdown extraction, pagination, find mode, structured hints. |
 
 Lin should prefer adding semantic Rust core commands where the current command
-set is too UI-shaped. For example, semantic `mergeFrom` is better for agents
-than only `merge_node_into_previous`.
+set is too UI-shaped. For example, semantic target/source merge is better for
+agents than only `merge_node_into_previous`.
 
 ## Approval Policy
 
@@ -1739,8 +1847,8 @@ Mutating tools may require approval depending on risk:
 - `bash`
 - `task_stop`
 
-Permanent delete, broad node edits, broad file edits, and risky shell commands
-should require approval even in permissive modes.
+Broad node edits, broad file edits, user-origin undo/redo, and risky shell
+commands should require approval even in permissive modes.
 
 ## Implementation Notes
 

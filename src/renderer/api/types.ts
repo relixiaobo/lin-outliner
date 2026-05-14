@@ -204,6 +204,35 @@ export interface SearchHit {
   score: number;
 }
 
+export interface AgentSession {
+  sessionId: string;
+}
+
+export interface AgentProviderConfigInput {
+  providerId: string;
+  modelId: string;
+  baseUrl?: string | null;
+  enabled?: boolean;
+}
+
+export interface AgentProviderConfigView {
+  providerId: string;
+  modelId: string;
+  baseUrl?: string;
+  enabled: boolean;
+  hasApiKey: boolean;
+}
+
+export interface AgentProviderSettingsView {
+  activeProviderId?: string;
+  providers: AgentProviderConfigView[];
+}
+
+export interface AgentProviderSecretStatus {
+  providerId: string;
+  hasApiKey: boolean;
+}
+
 export const EMPTY_RICH_TEXT: RichText = {
   text: '',
   marks: [],

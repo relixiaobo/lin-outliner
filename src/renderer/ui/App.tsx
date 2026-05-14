@@ -1,82 +1,37 @@
 import { useCallback, useEffect, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { api } from '../api/client';
 import type { DocumentProjection, FocusHint, NodeId } from '../api/types';
-import { flattenVisibleRows, useDocumentIndex, useUiState } from '../state/document';
+import { useDocumentIndex, useUiState } from '../state/document';
+import { AgentDock } from './AgentDock';
 import { CommandPalette } from './CommandPalette';
-import { NodePanel } from './NodePanel';
+import { Sidebar } from './Sidebar';
+import type { TopBarTab } from './TopBar';
 import { TopBar } from './TopBar';
 import { CloseIcon, ICON_SIZE } from './icons';
-import { targetIdsForRows } from './interactions/contextMenuSelection';
 import { useDragSelection } from './interactions/dragSelection';
-import {
-  shouldClearSelectionOnFocusIn,
-  shouldClearSelectionOnPointerDown,
-  shouldPreserveSelectionForModifierGesture,
-} from './interactions/selectionDismiss';
-import {
-  resolveSelectionKeyboardAction,
-  shouldIgnoreSelectionKeyboardTarget,
-} from './interactions/selectionKeyboard';
-import { isImeComposingEvent } from './interactions/imeKeyboard';
-import {
-  appendText,
-  extendSelection,
-  navigationTarget,
-  orderedSelectedRows,
-  resolveSelectionAnchor,
-  selectedRootIds,
-  serializeSelectedRows,
-} from './interactions/selectionActions';
-import { expandIndentTargets } from './interactions/outlinerStructure';
+import { appendText } from './interactions/selectionActions';
 import { BatchTagSelector } from './outliner/BatchTagSelector';
 import type { TriggerState } from './shared';
 import { textOf, useCommandRunner } from './shared';
-
-async function writeClipboardText(text: string): Promise<boolean> {
-  if (!text) return true;
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    const textarea = document.createElement('textarea');
-    textarea.value = text;
-    textarea.style.position = 'fixed';
-    textarea.style.left = '-9999px';
-    document.body.appendChild(textarea);
-    textarea.focus();
-    textarea.select();
-    const ok = document.execCommand('copy');
-    textarea.remove();
-    return ok;
-  }
-}
+import { WorkspaceCanvas } from './WorkspaceCanvas';
+import { useResizableLayout } from './useResizableLayout';
+import { useSelectionDismissal } from './useSelectionDismissal';
+import { useWorkspaceKeyboard } from './useWorkspaceKeyboard';
+import { useWorkspaceTabs } from './useWorkspaceTabs';
 
 export function App() {
   const [projection, setProjection] = useState<DocumentProjection | null>(null);
   const [ui, setUi] = useUiState();
-  const [rootId, setRootId] = useState<NodeId | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [agentOpen, setAgentOpen] = useState(true);
+  const [sidebarExpandedIds, setSidebarExpandedIds] = useState<Set<NodeId>>(() => new Set());
   const [pendingFocus, setPendingFocus] = useState<FocusHint | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [trigger, setTrigger] = useState<TriggerState>(null);
   const [dragId, setDragId] = useState<NodeId | null>(null);
   const index = useDocumentIndex(projection);
   const run = useCommandRunner(setProjection, setPendingFocus, setError);
-  useDragSelection({ rootId, index, ui, setUi });
-
-  useEffect(() => {
-    void run(async () => {
-      const initial = await api.initWorkspace();
-      setRootId(initial.todayId);
-      setUi((prev) => ({
-        ...prev,
-        focusedId: initial.todayId,
-        selectedId: initial.todayId,
-        selectedIds: new Set([initial.todayId]),
-        selectionAnchorId: initial.todayId,
-      }));
-      return initial;
-    });
-  }, [run, setUi]);
 
   const setCommandOpen = useCallback((commandOpen: boolean) => {
     setUi((prev) => ({ ...prev, commandOpen }));
@@ -91,6 +46,78 @@ export function App() {
       selectionAnchorId: nodeId ?? prev.selectionAnchorId,
     }));
   }, [setUi]);
+
+  const {
+    activeTab,
+    activeTabId,
+    activatePanel,
+    closePanel,
+    closeTab,
+    createTab,
+    initializeTabs,
+    navigatePanelRoot: setPanelRoot,
+    navigateRoot: setActivePanelRoot,
+    openPanel,
+    resizePanelPair,
+    rootId,
+    selectTab,
+    tabs,
+  } = useWorkspaceTabs({ focusNode });
+
+  const {
+    agentWidth,
+    beginAgentResize,
+    beginPanelResize,
+    beginSidebarResize,
+    canvasRef,
+    sidebarWidth,
+  } = useResizableLayout({ activeTab, resizePanelPair });
+
+  useDragSelection({ rootId, index, ui, setUi });
+
+  useEffect(() => {
+    void run(async () => {
+      const initial = await api.initWorkspace();
+      const initialFocusId = initializeTabs(initial);
+      setUi((prev) => ({
+        ...prev,
+        focusedId: initialFocusId,
+        selectedId: initialFocusId,
+        selectedIds: new Set([initialFocusId]),
+        selectionAnchorId: initialFocusId,
+        expanded: new Set([...prev.expanded, initial.rootId]),
+      }));
+      return initial;
+    });
+  }, [initializeTabs, run, setUi]);
+
+  const expandNodeInOutliner = useCallback((nodeId: NodeId) => {
+    setUi((prev) => {
+      const expanded = new Set(prev.expanded);
+      expanded.add(nodeId);
+      return { ...prev, expanded };
+    });
+  }, [setUi]);
+
+  const navigateRoot = useCallback((nodeId: NodeId) => {
+    setActivePanelRoot(nodeId);
+    expandNodeInOutliner(nodeId);
+  }, [expandNodeInOutliner, setActivePanelRoot]);
+
+  const navigatePanelRoot = useCallback((panelId: string, nodeId: NodeId) => {
+    setPanelRoot(panelId, nodeId);
+    expandNodeInOutliner(nodeId);
+  }, [expandNodeInOutliner, setPanelRoot]);
+
+  const openRootInPanel = useCallback((nodeId: NodeId) => {
+    openPanel(nodeId);
+    expandNodeInOutliner(nodeId);
+  }, [expandNodeInOutliner, openPanel]);
+
+  const openActiveRootInPanel = useCallback(() => {
+    if (!rootId) return;
+    openRootInPanel(rootId);
+  }, [openRootInPanel, rootId]);
 
   const requestEditFocus = useCallback((nodeId: NodeId) => {
     setUi((prev) => ({
@@ -130,267 +157,94 @@ export function App() {
     applyOutcomeFocus(pendingFocus);
   }, [applyOutcomeFocus, pendingFocus]);
 
-  useEffect(() => {
-    const clearBlockSelection = () => {
-      setUi((prev) => {
-        if (prev.focusedId || prev.selectedIds.size === 0) return prev;
-        return {
-          ...prev,
-          selectedId: null,
-          selectedIds: new Set(),
-          selectionAnchorId: null,
-          batchTagSelectorOpen: false,
-        };
-      });
-    };
+  useSelectionDismissal(setUi);
+  useWorkspaceKeyboard({
+    appendTypedCharToRow,
+    index,
+    onOpenPanel: openActiveRootInPanel,
+    requestEditFocus,
+    rootId,
+    run,
+    setCommandOpen,
+    setError,
+    setUi,
+    ui,
+  });
 
-    const onPointerOrMouseDown = (event: PointerEvent | MouseEvent) => {
-      if (shouldPreserveSelectionForModifierGesture(event)) return;
-      const target = event.target instanceof HTMLElement ? event.target : null;
-      if (!shouldClearSelectionOnPointerDown(target)) return;
-      clearBlockSelection();
-    };
-
-    const onFocusIn = (event: FocusEvent) => {
-      const target = event.target instanceof HTMLElement ? event.target : null;
-      if (!shouldClearSelectionOnFocusIn(target)) return;
-      clearBlockSelection();
-    };
-
-    window.addEventListener('pointerdown', onPointerOrMouseDown, true);
-    window.addEventListener('mousedown', onPointerOrMouseDown, true);
-    document.addEventListener('focusin', onFocusIn, true);
-    return () => {
-      window.removeEventListener('pointerdown', onPointerOrMouseDown, true);
-      window.removeEventListener('mousedown', onPointerOrMouseDown, true);
-      document.removeEventListener('focusin', onFocusIn, true);
-    };
-  }, [setUi]);
-
-  useEffect(() => {
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (isImeComposingEvent(event)) return;
-      if (
-        event.target instanceof HTMLElement
-        && event.target.closest('[data-preserve-selection]')
-      ) {
-        return;
-      }
-      const mod = event.metaKey || event.ctrlKey;
-      if (mod && event.key.toLowerCase() === 'k') {
-        event.preventDefault();
-        setCommandOpen(true);
-      }
-      if (mod && event.key.toLowerCase() === 'z') {
-        event.preventDefault();
-        void run(() => event.shiftKey ? api.redo() : api.undo());
-      }
-      if (!rootId || !index || ui.focusedId || ui.selectedIds.size === 0) {
-        return;
-      }
-      if (shouldIgnoreSelectionKeyboardTarget(event.target, {
-        allowContentEditable: ui.selectedIds.size > 1,
-      })) {
-        return;
-      }
-      const action = resolveSelectionKeyboardAction(event);
-      if (!action) {
-        return;
-      }
-
-      const rows = flattenVisibleRows(rootId, index.byId, ui.expanded, ui.expandedHiddenFields);
-      const orderedSelected = orderedSelectedRows(rows, ui.selectedIds);
-      const anchor = resolveSelectionAnchor({
-        rows,
-        selectedIds: ui.selectedIds,
-        selectedId: ui.selectedId,
-        selectionAnchorId: ui.selectionAnchorId,
-      });
-      if (!anchor) {
-        return;
-      }
-
-      event.preventDefault();
-      if (action === 'clear_selection' || action === 'enter_edit') {
-        requestEditFocus(orderedSelected[0] ?? anchor);
-        return;
-      }
-      if (action === 'type_char') {
-        appendTypedCharToRow(orderedSelected[0] ?? anchor, event.key);
-        return;
-      }
-      if (action === 'select_all') {
-        setUi((prev) => ({
-          ...prev,
-          focusedId: null,
-          selectedId: rows[0] ?? prev.selectedId,
-          selectedIds: new Set(rows),
-          selectionAnchorId: rows[0] ?? prev.selectionAnchorId,
-        }));
-        return;
-      }
-      if (action === 'extend_up' || action === 'extend_down') {
-        const selectedIds = extendSelection(
-          rows,
-          ui.selectedIds,
-          anchor,
-          action === 'extend_down' ? 'down' : 'up',
-        );
-        setUi((prev) => ({
-          ...prev,
-          focusedId: null,
-          selectedId: [...selectedIds].at(-1) ?? anchor,
-          selectedIds,
-          selectionAnchorId: anchor,
-        }));
-        return;
-      }
-      if (action === 'navigate_up' || action === 'navigate_down') {
-        const next = navigationTarget(
-          rows,
-          ui.selectedIds,
-          anchor,
-          action === 'navigate_down' ? 'down' : 'up',
-        );
-        if (next) {
-          requestEditFocus(next);
-        }
-        return;
-      }
-
-      const batchIds = selectedRootIds(orderedSelected.length > 0 ? orderedSelected : [anchor], index.byId);
-      const batchTargetIds = targetIdsForRows(batchIds, index.byId);
-      if (action === 'batch_copy' || action === 'batch_cut') {
-        const clipboardText = serializeSelectedRows(rows, ui.selectedIds, index.byId);
-        void writeClipboardText(clipboardText).then((ok) => {
-          if (!ok) {
-            setError('Could not write selection to clipboard.');
-            return;
-          }
-          if (action === 'batch_copy') return;
-          const previous = rows[Math.max(0, rows.indexOf(batchIds[0]) - 1)];
-          void run(() => api.batchTrashNodes(batchIds)).then(() => {
-            if (previous && !batchIds.includes(previous)) requestEditFocus(previous);
-            else setUi((prev) => ({ ...prev, focusedId: null, selectedIds: new Set(), selectionAnchorId: null }));
-          });
-        });
-        return;
-      }
-      if (action === 'batch_delete') {
-        const previous = rows[Math.max(0, rows.indexOf(batchIds[0]) - 1)];
-        void run(() => api.batchTrashNodes(batchIds)).then(() => {
-          if (previous && !batchIds.includes(previous)) requestEditFocus(previous);
-          else setUi((prev) => ({ ...prev, focusedId: null, selectedIds: new Set(), selectionAnchorId: null }));
-        });
-        return;
-      }
-      if (action === 'batch_duplicate') {
-        void run(() => api.batchDuplicateNodes(batchIds));
-        return;
-      }
-      if (action === 'batch_move_up' || action === 'batch_move_down') {
-        const move = action === 'batch_move_up' ? api.batchMoveNodesUp : api.batchMoveNodesDown;
-        void run(() => move(batchIds)).then(() => {
-          setUi((prev) => ({
-            ...prev,
-            focusedId: null,
-            selectedId: anchor,
-            selectedIds: new Set(batchIds),
-            selectionAnchorId: anchor,
-          }));
-        });
-        return;
-      }
-      if (action === 'batch_apply_tag') {
-        if (document.activeElement instanceof HTMLElement) {
-          document.activeElement.blur();
-        }
-        setUi((prev) => ({
-          ...prev,
-          focusedId: null,
-          batchTagSelectorOpen: true,
-        }));
-        return;
-      }
-      const batchOperation =
-        action === 'batch_indent'
-          ? api.batchIndentNodes
-          : action === 'batch_outdent'
-            ? api.batchOutdentNodes
-            : action === 'batch_checkbox'
-              ? api.batchToggleDone
-              : null;
-      if (batchOperation) {
-        const operationIds = action === 'batch_checkbox' ? batchTargetIds : batchIds;
-        if (action === 'batch_indent') {
-          setUi((prev) => ({
-            ...prev,
-            expanded: expandIndentTargets(prev.expanded, batchIds, index.byId),
-          }));
-        }
-        void run(() => batchOperation(operationIds)).then((result) => {
-          if (result && action === 'batch_indent') {
-            setUi((prev) => ({
-              ...prev,
-              expanded: expandIndentTargets(prev.expanded, batchIds, index.byId),
-            }));
-          }
-          requestEditFocus(anchor);
-        });
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [appendTypedCharToRow, index, requestEditFocus, rootId, run, setCommandOpen, setUi, ui]);
-
-  const navigateRoot = useCallback((nodeId: NodeId) => {
-    setRootId(nodeId);
-    focusNode(nodeId);
-    setUi((prev) => {
-      const expanded = new Set(prev.expanded);
-      expanded.add(nodeId);
-      return { ...prev, expanded };
+  const toggleSidebarTreeNode = useCallback((nodeId: NodeId) => {
+    setSidebarExpandedIds((prev) => {
+      const expanded = new Set(prev);
+      if (expanded.has(nodeId)) expanded.delete(nodeId);
+      else expanded.add(nodeId);
+      return expanded;
     });
-  }, [focusNode, setUi]);
-
-  const newNodeUnderRoot = useCallback(() => {
-    if (!rootId) return;
-    void run(() => api.createNode(rootId, null, ''));
-  }, [rootId, run]);
+  }, []);
 
   if (!projection || !index || !rootId) {
-    return <div className="app"><div className="main-panel">Loading...</div></div>;
+    return <div className="app"><div className="loading-panel">Loading...</div></div>;
   }
 
-  const rootNode = index.byId.get(rootId);
+  const topBarTabs: TopBarTab[] = tabs.map((tab) => {
+    const tabActivePanel = tab.panels.find((panel) => panel.id === tab.activePanelId) ?? tab.panels[0];
+    return {
+      id: tab.id,
+      panelCount: tab.panels.length,
+      title: textOf(index.byId.get(tabActivePanel?.rootId ?? '')) || 'Workspace',
+    };
+  });
+  const appShellStyle = {
+    '--sidebar-width': `${sidebarWidth}px`,
+    '--agent-width': `${agentWidth}px`,
+  } as CSSProperties;
 
   return (
     <div className="app">
       <TopBar
-        projection={projection}
-        rootId={rootId}
-        rootName={textOf(rootNode)}
-        onRoot={navigateRoot}
-        onNew={newNodeUnderRoot}
-        onUndo={() => void run(api.undo)}
-        onRedo={() => void run(api.redo)}
-        onCommand={() => setCommandOpen(true)}
+        agentOpen={agentOpen}
+        sidebarOpen={sidebarOpen}
+        tabs={topBarTabs}
+        activeTabId={activeTabId}
+        onCreateTab={createTab}
+        onCloseTab={closeTab}
+        onSelectTab={selectTab}
+        onToggleAgent={() => setAgentOpen((open) => !open)}
+        onToggleSidebar={() => setSidebarOpen((open) => !open)}
       />
 
-      <div className="shell">
-        <NodePanel
-          rootId={rootId}
-          onRoot={navigateRoot}
+      <div
+        className={`app-shell ${sidebarOpen ? '' : 'sidebar-collapsed'} ${agentOpen ? '' : 'agent-collapsed'}`}
+        style={appShellStyle}
+      >
+        <Sidebar
+          expandedIds={sidebarExpandedIds}
           index={index}
-          ui={ui}
-          setUi={setUi}
-          run={run}
-          trigger={trigger}
-          setTrigger={setTrigger}
-          pendingFocus={pendingFocus}
-          dragId={dragId}
-          setDragId={setDragId}
+          onNavigateRoot={navigateRoot}
+          onOpenPanel={openRootInPanel}
+          onResizeStart={beginSidebarResize}
+          onToggleTreeNode={toggleSidebarTreeNode}
+          projection={projection}
+          rootId={rootId}
         />
+
+        <WorkspaceCanvas
+          activeTab={activeTab}
+          canvasRef={canvasRef}
+          dragId={dragId}
+          index={index}
+          onActivatePanel={activatePanel}
+          onClosePanel={closePanel}
+          onNavigatePanelRoot={navigatePanelRoot}
+          onPanelResizeStart={beginPanelResize}
+          pendingFocus={pendingFocus}
+          run={run}
+          setDragId={setDragId}
+          setTrigger={setTrigger}
+          setUi={setUi}
+          trigger={trigger}
+          ui={ui}
+        />
+
+        <AgentDock onResizeStart={beginAgentResize} />
       </div>
 
       <BatchTagSelector
@@ -421,8 +275,10 @@ export function App() {
 
       {error && (
         <div className="error">
-          <button className="icon-button" style={{ float: 'right' }} onClick={() => setError(null)}><CloseIcon size={ICON_SIZE.menu} /></button>
-          {error}
+          <span>{error}</span>
+          <button className="error-close-button" onClick={() => setError(null)} type="button">
+            <CloseIcon size={ICON_SIZE.menu} />
+          </button>
         </div>
       )}
     </div>

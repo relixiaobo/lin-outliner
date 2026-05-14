@@ -77,7 +77,7 @@ test.describe('outliner selection parity', () => {
   test('clicking blank space exits multi-selection without touching rows', async ({ page }) => {
     await multiSelect(page, [ids.alpha, ids.beta]);
 
-    await page.locator('.main-panel').click({ position: { x: 900, y: 520 } });
+    await page.locator('.main-panel').first().click({ position: { x: 120, y: 520 } });
 
     await expect(rowBody(page, ids.alpha)).not.toHaveClass(/selected/);
     await expect(rowBody(page, ids.beta)).not.toHaveClass(/selected/);

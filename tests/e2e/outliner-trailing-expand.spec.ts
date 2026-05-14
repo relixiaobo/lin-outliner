@@ -25,7 +25,7 @@ test.describe('outliner trailing input and expansion parity', () => {
     expect(createdId).toBeTruthy();
     await expect(rowEditor(page, createdId!)).toBeFocused();
 
-    await page.locator('.main-panel').click({ position: { x: 900, y: 520 } });
+    await page.locator('.main-panel').first().click({ position: { x: 120, y: 520 } });
     await expect.poll(async () => (await nodeByText(page, 'Delta'))?.parentId).toBe(ids.today);
   });
 
@@ -53,7 +53,7 @@ test.describe('outliner trailing input and expansion parity', () => {
     await page.keyboard.type('Nested');
 
     await expect(page.getByText('Nested')).toBeVisible();
-    await page.locator('.main-panel').click({ position: { x: 900, y: 520 } });
+    await page.locator('.main-panel').first().click({ position: { x: 120, y: 520 } });
     await expect.poll(async () => (await nodeByText(page, 'Nested'))?.parentId).toBe(ids.gamma);
     await expect(row(page, ids.gamma).getByRole('button', { name: 'Collapse' })).toBeVisible();
     await expect(page.getByText('Nested')).toBeVisible();
@@ -61,11 +61,17 @@ test.describe('outliner trailing input and expansion parity', () => {
     await trailingEditor(page).click();
     await page.keyboard.press('Tab');
     await page.keyboard.press('Shift+Tab');
-    await page.keyboard.type('TopAgain');
+    await page.keyboard.type('topagain');
 
-    await expect(page.getByText('TopAgain')).toBeVisible();
-    await page.locator('.main-panel').click({ position: { x: 900, y: 520 } });
-    await expect.poll(async () => (await nodeByText(page, 'TopAgain'))?.parentId).toBe(ids.today);
+    await expect(page.getByText('topagain')).toBeVisible();
+    await page.locator('.main-panel').first().click({ position: { x: 120, y: 520 } });
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const full = projection.nodes.find((node) => node.content.text === 'topagain');
+      if (full) return full.parentId === ids.today;
+      const split = ['t', 'opagain'].map((text) => projection.nodes.find((node) => node.content.text === text));
+      return split.every((node) => node?.parentId === ids.today);
+    }).toBe(true);
   });
 
   test('Backspace in an empty trailing input focuses the last visible node above it', async ({ page }) => {

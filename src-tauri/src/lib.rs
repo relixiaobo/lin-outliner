@@ -1,3 +1,11 @@
+mod agent_host;
+mod agent_settings;
+
+use agent_host::{AgentHost, AgentHostError, AgentSession};
+use agent_settings::{
+    AgentProviderConfigInput, AgentProviderSecretStatus, AgentProviderSettingsView,
+    AgentSettingsError,
+};
 use lin_core::{
     Backlink, CommandOutcome, Core, CreateNodeTree, DocumentProjection, DocumentState,
     FieldConfigPatch, FieldType, FilterOp, RichText, SearchHit, SortDirection, TagConfigPatch,
@@ -25,6 +33,10 @@ enum AppError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    AgentHost(#[from] AgentHostError),
+    #[error(transparent)]
+    AgentSettings(#[from] AgentSettingsError),
     #[error("failed to resolve app data directory")]
     AppDataDir,
 }
@@ -505,6 +517,109 @@ fn redo(app: AppHandle, state: State<'_, AppCore>) -> AppResult<CommandOutcome> 
     mutate_and_save(app, state, |core| core.redo())
 }
 
+#[tauri::command]
+fn agent_create_session(app: AppHandle, state: State<'_, AgentHost>) -> AppResult<AgentSession> {
+    Ok(state.create_session(&app)?)
+}
+
+#[tauri::command]
+fn agent_send_message(
+    app: AppHandle,
+    state: State<'_, AgentHost>,
+    session_id: String,
+    message: String,
+) -> AppResult<()> {
+    Ok(state.send_message(&app, session_id, message)?)
+}
+
+#[tauri::command]
+fn agent_stop_session(
+    app: AppHandle,
+    state: State<'_, AgentHost>,
+    session_id: String,
+) -> AppResult<()> {
+    Ok(state.stop_session(&app, session_id)?)
+}
+
+#[tauri::command]
+fn agent_reset_session(
+    app: AppHandle,
+    state: State<'_, AgentHost>,
+    session_id: String,
+) -> AppResult<()> {
+    Ok(state.reset_session(&app, session_id)?)
+}
+
+#[tauri::command]
+fn agent_close_session(
+    app: AppHandle,
+    state: State<'_, AgentHost>,
+    session_id: String,
+) -> AppResult<()> {
+    Ok(state.close_session(&app, session_id)?)
+}
+
+#[tauri::command]
+fn agent_get_provider_settings(app: AppHandle) -> AppResult<AgentProviderSettingsView> {
+    Ok(agent_settings::get_provider_settings(&app)?)
+}
+
+#[tauri::command]
+fn agent_upsert_provider_config(
+    app: AppHandle,
+    provider: AgentProviderConfigInput,
+) -> AppResult<AgentProviderSettingsView> {
+    Ok(agent_settings::upsert_provider_config(&app, provider)?)
+}
+
+#[tauri::command]
+fn agent_delete_provider_config(
+    app: AppHandle,
+    provider_id: String,
+) -> AppResult<AgentProviderSettingsView> {
+    Ok(agent_settings::delete_provider_config(&app, provider_id)?)
+}
+
+#[tauri::command]
+fn agent_set_active_provider(
+    app: AppHandle,
+    provider_id: String,
+) -> AppResult<AgentProviderSettingsView> {
+    Ok(agent_settings::set_active_provider(&app, provider_id)?)
+}
+
+#[tauri::command]
+fn agent_set_provider_api_key(
+    app: AppHandle,
+    provider_id: String,
+    api_key: String,
+) -> AppResult<AgentProviderSecretStatus> {
+    Ok(agent_settings::set_provider_api_key(
+        &app,
+        provider_id,
+        api_key,
+    )?)
+}
+
+#[tauri::command]
+fn agent_delete_provider_api_key(
+    app: AppHandle,
+    provider_id: String,
+) -> AppResult<AgentProviderSecretStatus> {
+    Ok(agent_settings::delete_provider_api_key(&app, provider_id)?)
+}
+
+#[tauri::command]
+fn agent_get_provider_secret_status(
+    app: AppHandle,
+    provider_id: String,
+) -> AppResult<AgentProviderSecretStatus> {
+    Ok(agent_settings::get_provider_secret_status(
+        &app,
+        provider_id,
+    )?)
+}
+
 fn mutate_and_save<F>(app: AppHandle, state: State<'_, AppCore>, f: F) -> AppResult<CommandOutcome>
 where
     F: FnOnce(&mut Core) -> lin_core::Result<CommandOutcome>,
@@ -554,6 +669,7 @@ pub fn run() {
         .manage(AppCore {
             core: Mutex::new(Core::new()),
         })
+        .manage(AgentHost::new())
         .invoke_handler(tauri::generate_handler![
             init_workspace,
             get_projection,
@@ -600,7 +716,19 @@ pub fn run() {
             ensure_tag_search,
             backlinks,
             undo,
-            redo
+            redo,
+            agent_create_session,
+            agent_send_message,
+            agent_stop_session,
+            agent_reset_session,
+            agent_close_session,
+            agent_get_provider_settings,
+            agent_upsert_provider_config,
+            agent_delete_provider_config,
+            agent_set_active_provider,
+            agent_set_provider_api_key,
+            agent_delete_provider_api_key,
+            agent_get_provider_secret_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running Lin Outliner");

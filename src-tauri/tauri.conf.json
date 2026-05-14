@@ -19,7 +19,11 @@
         "minWidth": 760,
         "minHeight": 560,
         "backgroundColor": "#f7f6f1",
-        "titleBarStyle": "Overlay"
+        "titleBarStyle": "Overlay",
+        "trafficLightPosition": {
+          "x": 13,
+          "y": 14
+        }
       }
     ],
     "security": {
@@ -29,6 +33,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": ["agent-worker/pi-mono-worker.mjs"],
     "icon": []
   }
 }

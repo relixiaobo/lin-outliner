@@ -3,6 +3,9 @@
 This document describes the planned app layout model for tabs, the workspace
 canvas, outline panels, the sidebar, and the agent dock.
 
+For visual tokens, density, typography, and interaction states, see
+[`design-system.md`](./design-system.md).
+
 ## Core Model
 
 The app shell owns the persistent outer surfaces. Tabs own only the central

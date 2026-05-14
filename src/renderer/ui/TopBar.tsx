@@ -1,86 +1,111 @@
-import type { DocumentProjection, NodeId } from '../api/types';
 import {
   AddIcon,
+  AgentIcon,
   BackIcon,
+  CloseIcon,
   ForwardIcon,
-  HomeIcon,
   ICON_SIZE,
-  RedoIcon,
-  SearchIcon,
-  UndoIcon,
+  SidebarIcon,
+  UserIcon,
 } from './icons';
-import { textOf } from './shared';
 
-interface TopBarProps {
-  projection: DocumentProjection;
-  rootId: NodeId;
-  rootName: string;
-  onRoot: (nodeId: NodeId) => void;
-  onNew: () => void;
-  onUndo: () => void;
-  onRedo: () => void;
-  onCommand: () => void;
+export interface TopBarTab {
+  id: string;
+  panelCount: number;
+  title: string;
 }
 
-function breadcrumbFor(projection: DocumentProjection, rootId: NodeId) {
-  const byId = new Map(projection.nodes.map((node) => [node.id, node]));
-  const chain = [];
-  let current = byId.get(rootId);
-  const seen = new Set<NodeId>();
-  while (current && !seen.has(current.id)) {
-    seen.add(current.id);
-    chain.unshift(current);
-    if (!current.parentId) break;
-    current = byId.get(current.parentId);
-  }
-  return chain;
+interface TopBarProps {
+  agentOpen: boolean;
+  sidebarOpen: boolean;
+  tabs: TopBarTab[];
+  activeTabId: string | null;
+  onCreateTab: () => void;
+  onCloseTab: (tabId: string) => void;
+  onSelectTab: (tabId: string) => void;
+  onToggleAgent: () => void;
+  onToggleSidebar: () => void;
 }
 
 export function TopBar(props: TopBarProps) {
-  const { projection } = props;
-  const crumbs = breadcrumbFor(projection, props.rootId);
   return (
-    <header className="topbar">
-      <div className="topbar-nav">
-        <button className="topbar-nav-button" disabled title="Back">
+    <header
+      className="top-chrome"
+      data-tauri-drag-region="deep"
+    >
+      <div className="top-chrome-left" aria-label="Window and navigation controls">
+        <div className="window-controls-spacer" aria-hidden="true" />
+        <button
+          aria-pressed={props.sidebarOpen}
+          className="top-chrome-icon-button"
+          onClick={props.onToggleSidebar}
+          title={props.sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+          type="button"
+        >
+          <SidebarIcon size={ICON_SIZE.toolbar} strokeWidth={2} />
+        </button>
+        <button className="top-chrome-icon-button" disabled title="Back">
           <BackIcon size={ICON_SIZE.menu} strokeWidth={1.7} />
         </button>
-        <button className="topbar-nav-button" disabled title="Forward">
+        <button className="top-chrome-icon-button" disabled title="Forward">
           <ForwardIcon size={ICON_SIZE.menu} strokeWidth={1.7} />
         </button>
       </div>
 
-      <nav className="breadcrumb" aria-label="Breadcrumb">
-        <button className="breadcrumb-home" onClick={() => props.onRoot(projection.rootId)} title="Workspace">
-          <HomeIcon size={ICON_SIZE.menu} strokeWidth={1.7} />
-        </button>
-        {crumbs
-          .filter((crumb) => crumb.id !== projection.rootId)
-          .slice(-3)
-          .map((crumb) => (
-            <span className="breadcrumb-segment" key={crumb.id}>
-              <span className="breadcrumb-divider">/</span>
-              <button className="breadcrumb-button" onClick={() => props.onRoot(crumb.id)}>
-                {textOf(crumb)}
+      <nav className="tab-strip" aria-label="Workspace tabs">
+        {props.tabs.map((tab) => {
+          const active = tab.id === props.activeTabId;
+          return (
+          <div
+            className={`workspace-tab ${active ? 'active' : ''}`}
+            key={tab.id}
+            title={tab.title}
+          >
+            <button
+              aria-current={active ? 'page' : undefined}
+              className="workspace-tab-trigger"
+              onClick={() => props.onSelectTab(tab.id)}
+              type="button"
+            >
+              <span className="workspace-tab-title">{tab.title}</span>
+              {tab.panelCount > 1 && <span className="workspace-tab-count">{tab.panelCount}</span>}
+            </button>
+            {props.tabs.length > 1 && (
+              <button
+                aria-label={`Close ${tab.title}`}
+                className="workspace-tab-close"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  props.onCloseTab(tab.id);
+                }}
+                title="Close tab"
+                type="button"
+              >
+                <CloseIcon size={ICON_SIZE.tiny} strokeWidth={2.2} />
               </button>
-            </span>
-          ))}
-        {crumbs.length <= 1 && <span className="breadcrumb-current">{props.rootName}</span>}
+            )}
+          </div>
+          );
+        })}
+        <button className="top-chrome-icon-button add-tab-button" onClick={props.onCreateTab} title="New tab" type="button">
+          <AddIcon size={ICON_SIZE.toolbar} />
+        </button>
       </nav>
 
-      <div className="spacer" />
-      <button className="icon-button" onClick={props.onCommand} title="Command palette">
-        <SearchIcon size={ICON_SIZE.toolbar} />
-      </button>
-      <button className="icon-button" onClick={props.onNew} title="New node">
-        <AddIcon size={ICON_SIZE.toolbar} />
-      </button>
-      <button className="icon-button" onClick={props.onUndo} title="Undo">
-        <UndoIcon size={ICON_SIZE.toolbar} />
-      </button>
-      <button className="icon-button" onClick={props.onRedo} title="Redo">
-        <RedoIcon size={ICON_SIZE.toolbar} />
-      </button>
+      <div className="top-chrome-right" aria-label="Global actions">
+        <button
+          aria-pressed={props.agentOpen}
+          className="top-chrome-icon-button"
+          onClick={props.onToggleAgent}
+          title={props.agentOpen ? 'Collapse agent' : 'Expand agent'}
+          type="button"
+        >
+          <AgentIcon size={ICON_SIZE.toolbar} />
+        </button>
+        <button className="top-chrome-icon-button" disabled title="Account">
+          <UserIcon size={ICON_SIZE.toolbar} />
+        </button>
+      </div>
     </header>
   );
 }
