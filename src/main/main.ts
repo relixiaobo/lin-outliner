@@ -12,6 +12,7 @@ import {
   setProviderApiKey,
   upsertProviderConfig,
 } from './agentSettings';
+import { isAgentCommand, isDocumentCommand, type AgentCommand } from '../core/commands';
 import type { AgentProviderConfigInput } from '../core/types';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -33,7 +34,7 @@ function createWindow() {
       preload: join(__dirname, '../preload/index.mjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
 
@@ -51,8 +52,9 @@ function createWindow() {
 
 function registerIpc() {
   ipcMain.handle('lin:invoke', async (_event, command: string, args?: Record<string, unknown>) => {
-    if (command.startsWith('agent_')) return handleAgentCommand(command, args ?? {});
-    return documentService.handle(command, args);
+    if (isAgentCommand(command)) return handleAgentCommand(command, args ?? {});
+    if (isDocumentCommand(command)) return documentService.handle(command, args);
+    throw new Error(`Unknown command: ${command}`);
   });
 
   ipcMain.handle('lin:window', (_event, command: string) => {
@@ -67,7 +69,7 @@ function registerIpc() {
   });
 }
 
-async function handleAgentCommand(command: string, args: Record<string, unknown>) {
+async function handleAgentCommand(command: AgentCommand, args: Record<string, unknown>) {
   switch (command) {
     case 'agent_create_session':
       return agentRuntime.createSession();
@@ -112,4 +114,3 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
-

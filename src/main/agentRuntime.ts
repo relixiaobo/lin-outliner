@@ -1,8 +1,9 @@
 import type { BrowserWindow } from 'electron';
-import { Agent } from '@earendil-works/pi-agent-core';
-import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
-import type { AssistantMessage, Context, Model, StreamOptions } from '@earendil-works/pi-ai';
+import { Agent, type StreamFn } from '@earendil-works/pi-agent-core';
+import { createAssistantMessageEventStream, getModels, streamSimple } from '@earendil-works/pi-ai';
+import type { Api, AssistantMessage, KnownProvider, Model } from '@earendil-works/pi-ai';
 import type { AgentWorkerEvent } from '../renderer/agent/types';
+import { getActiveProviderRuntimeConfig, getProviderApiKey, type AgentProviderRuntimeConfig } from './agentSettings';
 
 export const AGENT_EVENT = 'lin-agent-event';
 
@@ -21,10 +22,10 @@ const EMPTY_USAGE = {
   },
 };
 
-const MOCK_MODEL = {
-  id: 'lin-local-mock',
-  name: 'Lin Local Mock',
-  api: 'lin-local',
+const CONFIGURATION_ERROR_MODEL = {
+  id: 'lin-provider-not-configured',
+  name: 'Lin Provider Not Configured',
+  api: 'openai-completions',
   provider: 'lin',
   baseUrl: '',
   reasoning: false,
@@ -37,7 +38,7 @@ const MOCK_MODEL = {
   },
   contextWindow: 128000,
   maxTokens: 8192,
-} satisfies Model<string>;
+} satisfies Model<'openai-completions'>;
 
 interface AgentSessionState {
   agent: Agent;
@@ -55,9 +56,9 @@ export class AgentRuntime {
     this.emit({ type: 'ready', sessionId: null, timestamp: Date.now() });
   }
 
-  createSession() {
+  async createSession() {
     const sessionId = `lin-agent-${this.nextSessionId++}`;
-    this.createSessionWithId(sessionId);
+    await this.createSessionWithId(sessionId);
     return { sessionId };
   }
 
@@ -107,21 +108,16 @@ export class AgentRuntime {
     this.emit({ type: 'closed', sessionId, timestamp: Date.now() });
   }
 
-  private createSessionWithId(sessionId: string) {
+  private async createSessionWithId(sessionId: string) {
     const existing = this.sessions.get(sessionId);
     existing?.unsubscribe?.();
+    existing?.agent.abort();
 
-    const agent = new Agent({
-      initialState: {
-        systemPrompt: 'You are Lin Outliner local agent.',
-        model: MOCK_MODEL,
-        thinkingLevel: 'off',
-        tools: [],
-        messages: [],
-      },
-      streamFn: createMockStreamFn(),
-      sessionId,
-    });
+    const providerConfig = await getActiveProviderRuntimeConfig();
+    const agent = providerConfig
+      ? createConfiguredAgent(sessionId, providerConfig)
+      : createConfigurationErrorAgent(sessionId, 'No enabled agent provider is configured.');
+
     const session: AgentSessionState = {
       agent,
       revision: 0,
@@ -173,69 +169,104 @@ export class AgentRuntime {
   }
 }
 
-function createMockStreamFn() {
-  return (_model: Model<string>, context: Context, options?: StreamOptions) => {
+function createConfiguredAgent(sessionId: string, providerConfig: AgentProviderRuntimeConfig) {
+  const model = resolveModel(providerConfig);
+  return new Agent({
+    initialState: {
+      systemPrompt: [
+        'You are Lin Outliner local agent.',
+        'Use concise, concrete responses. When document tools become available, prefer structured edits over broad text rewrites.',
+      ].join('\n'),
+      model,
+      thinkingLevel: 'off',
+      tools: [],
+      messages: [],
+    },
+    streamFn: streamSimple as StreamFn,
+    getApiKey: async (provider) => {
+      if (provider === providerConfig.providerId) {
+        return providerConfig.apiKey ?? getProviderApiKey(provider);
+      }
+      return getProviderApiKey(provider);
+    },
+    sessionId,
+  });
+}
+
+function createConfigurationErrorAgent(sessionId: string, message: string) {
+  return new Agent({
+    initialState: {
+      systemPrompt: 'You are Lin Outliner local agent.',
+      model: CONFIGURATION_ERROR_MODEL,
+      thinkingLevel: 'off',
+      tools: [],
+      messages: [],
+    },
+    streamFn: createConfigurationErrorStreamFn(message),
+    sessionId,
+  });
+}
+
+function resolveModel(config: AgentProviderRuntimeConfig): Model<Api> {
+  const knownModel = findKnownModel(config.providerId, config.modelId);
+  if (knownModel) {
+    return config.baseUrl ? { ...knownModel, baseUrl: config.baseUrl } : knownModel;
+  }
+  if (config.baseUrl) {
+    return createOpenAICompatibleModel(config);
+  }
+  throw new Error(`model not found for provider ${config.providerId}: ${config.modelId}`);
+}
+
+function findKnownModel(providerId: string, modelId: string): Model<Api> | null {
+  try {
+    return getModels(providerId as KnownProvider).find((model) => model.id === modelId) as Model<Api> | undefined ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function createOpenAICompatibleModel(config: AgentProviderRuntimeConfig): Model<'openai-completions'> {
+  return {
+    id: config.modelId,
+    name: config.modelId,
+    api: 'openai-completions',
+    provider: config.providerId,
+    baseUrl: config.baseUrl ?? '',
+    reasoning: false,
+    input: ['text'],
+    cost: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+    },
+    contextWindow: 128000,
+    maxTokens: 8192,
+  };
+}
+
+function createConfigurationErrorStreamFn(messageText: string): StreamFn {
+  return (model) => {
     const stream = createAssistantMessageEventStream();
 
     void (async () => {
-      let message = createAssistantBase(MOCK_MODEL);
-      let text = '';
-
-      try {
-        const response = mockResponse(context);
-        stream.push({ type: 'start', partial: clone(message) });
-        message = {
-          ...message,
-          content: [{ type: 'text', text }],
-        };
-        stream.push({ type: 'text_start', contentIndex: 0, partial: clone(message) });
-
-        for (const chunk of chunks(response)) {
-          await wait(28, options?.signal);
-          text += chunk;
-          message = {
-            ...message,
-            content: [{ type: 'text', text }],
-          };
-          stream.push({
-            type: 'text_delta',
-            contentIndex: 0,
-            delta: chunk,
-            partial: clone(message),
-          });
-        }
-
-        stream.push({
-          type: 'text_end',
-          contentIndex: 0,
-          content: text,
-          partial: clone(message),
-        });
-        stream.push({ type: 'done', reason: 'stop', message: clone(message) });
-        stream.end(clone(message));
-      } catch (error) {
-        const aborted = options?.signal?.aborted === true;
-        const reason = aborted ? 'aborted' : 'error';
-        const failure: AssistantMessage = {
-          ...message,
-          content: text ? [{ type: 'text', text }] : message.content,
-          stopReason: reason,
-          errorMessage: aborted
-            ? 'Request was aborted'
-            : error instanceof Error
-              ? error.message
-              : String(error),
-        };
-        stream.push({ type: 'error', reason, error: clone(failure) });
-        stream.end(clone(failure));
-      }
+      const message = createAssistantBase(model as Model<Api>);
+      stream.push({ type: 'start', partial: clone(message) });
+      const failure: AssistantMessage = {
+        ...message,
+        stopReason: 'error',
+        errorMessage: messageText,
+      };
+      stream.push({ type: 'error', reason: 'error', error: clone(failure) });
+      stream.end(clone(failure));
     })();
 
     return stream;
   };
 }
 
-function createAssistantBase(model: Model<string>): AssistantMessage {
+function createAssistantBase(model: Model<Api>): AssistantMessage {
   return {
     role: 'assistant',
     content: [],
@@ -246,60 +277,6 @@ function createAssistantBase(model: Model<string>): AssistantMessage {
     stopReason: 'stop',
     timestamp: Date.now(),
   };
-}
-
-function mockResponse(context: Context) {
-  const prompt = latestUserText(context.messages);
-  const tail = prompt ? `\n\n收到：${prompt}` : '';
-  return [
-    '我已经在 Electron 主进程中连接到 pi-agent-core。',
-    '现在 renderer 通过 preload IPC 与 agent 通信，后续工具可以直接调用 TypeScript document core。',
-  ].join('\n\n') + tail;
-}
-
-function latestUserText(messages: Context['messages']) {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message?.role === 'user') return extractText(message.content).trim();
-  }
-  return '';
-}
-
-function extractText(content: unknown) {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content
-    .filter((block): block is { type: 'text'; text: string } =>
-      typeof block === 'object'
-      && block !== null
-      && 'type' in block
-      && block.type === 'text'
-      && 'text' in block
-      && typeof block.text === 'string')
-    .map((block) => block.text)
-    .join('\n\n');
-}
-
-function wait(ms: number, signal?: AbortSignal) {
-  return new Promise<void>((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new Error('Request was aborted'));
-      return;
-    }
-    const timeout = setTimeout(resolve, ms);
-    signal?.addEventListener('abort', () => {
-      clearTimeout(timeout);
-      reject(new Error('Request was aborted'));
-    }, { once: true });
-  });
-}
-
-function chunks(text: string) {
-  const result: string[] = [];
-  for (let index = 0; index < text.length; index += 10) {
-    result.push(text.slice(index, index + 10));
-  }
-  return result;
 }
 
 function clone<T>(value: T): T {

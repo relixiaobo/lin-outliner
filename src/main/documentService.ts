@@ -1,13 +1,15 @@
 import { app } from 'electron';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import type { DocumentCommand } from '../core/commands';
 import { Core } from '../core/core';
-import type { FieldConfigPatch, FieldType, RichText, TagConfigPatch } from '../core/types';
+import type { FieldConfigPatch, FieldType, FilterOp, RichText, SortDirection, TagConfigPatch } from '../core/types';
 
 const WORKSPACE_FILE = 'workspace.json';
 
 export class DocumentService {
   private core = Core.new();
+  private mutationQueue = Promise.resolve();
 
   async initWorkspace() {
     this.core = await this.loadCore();
@@ -18,7 +20,7 @@ export class DocumentService {
     return this.core.projection();
   }
 
-  async handle(command: string, args: Record<string, unknown> = {}) {
+  async handle(command: DocumentCommand, args: Record<string, unknown> = {}) {
     switch (command) {
       case 'init_workspace':
         return this.initWorkspace();
@@ -33,13 +35,17 @@ export class DocumentService {
     }
   }
 
-  private async mutate(command: string, args: Record<string, unknown>) {
-    const outcome = this.runMutation(command, args);
-    await this.saveCore();
-    return outcome;
+  private async mutate(command: DocumentCommand, args: Record<string, unknown>) {
+    const task = this.mutationQueue.then(async () => {
+      const outcome = this.runMutation(command, args);
+      await this.saveCore();
+      return outcome;
+    });
+    this.mutationQueue = task.then(() => undefined, () => undefined);
+    return task;
   }
 
-  private runMutation(command: string, args: Record<string, unknown>) {
+  private runMutation(command: DocumentCommand, args: Record<string, unknown>) {
     switch (command) {
       case 'create_node':
         return this.core.createNode(String(args.parentId), nullableNumber(args.index), String(args.text ?? ''));
@@ -61,12 +67,12 @@ export class DocumentService {
       case 'set_node_toolbar_visible':
         return this.core.setNodeToolbarVisible(String(args.nodeId), Boolean(args.visible));
       case 'set_node_sort':
-        return this.core.setNodeSort(String(args.nodeId), nullableString(args.field), nullableString(args.direction) as never);
+        return this.core.setNodeSort(String(args.nodeId), nullableString(args.field), sortDirection(args.direction));
       case 'set_node_filter':
         return this.core.setNodeFilter(
           String(args.nodeId),
           nullableString(args.field),
-          nullableString(args.op) as never,
+          filterOp(args.op),
           arrayArg(args.values),
         );
       case 'set_node_group':
@@ -114,11 +120,11 @@ export class DocumentService {
       case 'set_field_config':
         return this.core.setFieldConfig(String(args.fieldId), args.patch as FieldConfigPatch);
       case 'create_field_def':
-        return this.core.createFieldDef(String(args.tagId), String(args.name), args.fieldType as FieldType);
+        return this.core.createFieldDef(String(args.tagId), String(args.name), fieldType(args.fieldType));
       case 'create_inline_field_after_node':
-        return this.core.createInlineFieldAfterNode(String(args.afterNodeId), String(args.name), args.fieldType as FieldType);
+        return this.core.createInlineFieldAfterNode(String(args.afterNodeId), String(args.name), fieldType(args.fieldType));
       case 'create_inline_field':
-        return this.core.createInlineField(String(args.parentId), nullableNumber(args.index), String(args.name), args.fieldType as FieldType);
+        return this.core.createInlineField(String(args.parentId), nullableNumber(args.index), String(args.name), fieldType(args.fieldType));
       case 'register_collected_option':
         return this.core.registerCollectedOption(String(args.fieldDefId), String(args.name));
       case 'select_field_option':
@@ -162,7 +168,7 @@ function workspacePath() {
 }
 
 async function atomicWrite(path: string, data: string) {
-  const tmp = `${path}.tmp`;
+  const tmp = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
   await writeFile(tmp, data);
   await rename(tmp, path);
 }
@@ -186,3 +192,35 @@ function arrayArg<T>(value: unknown): T[] {
   return Array.isArray(value) ? value as T[] : [];
 }
 
+function sortDirection(value: unknown): SortDirection | null {
+  if (value === null || value === undefined) return null;
+  if (value === 'asc' || value === 'desc') return value;
+  throw new Error(`invalid sort direction: ${String(value)}`);
+}
+
+function filterOp(value: unknown): FilterOp | null {
+  if (value === null || value === undefined) return null;
+  if (value === 'all' || value === 'any') return value;
+  throw new Error(`invalid filter operator: ${String(value)}`);
+}
+
+function fieldType(value: unknown): FieldType {
+  if (
+    value === 'plain'
+    || value === 'options'
+    || value === 'options_from_supertag'
+    || value === 'date'
+    || value === 'number'
+    || value === 'password'
+    || value === 'formula'
+    || value === 'user'
+    || value === 'url'
+    || value === 'email'
+    || value === 'checkbox'
+    || value === 'boolean'
+    || value === 'color'
+  ) {
+    return value;
+  }
+  throw new Error(`invalid field type: ${String(value)}`);
+}

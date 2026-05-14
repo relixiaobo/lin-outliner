@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useLinAgentRuntime } from '../../agent/runtime';
-import { AddIcon, ICON_SIZE, MoreIcon } from '../icons';
+import { AddIcon, ICON_SIZE, MoreIcon, WarningIcon } from '../icons';
 import { AgentComposer } from './AgentComposer';
 import { AgentMessageRow } from './AgentMessageRow';
 
@@ -17,6 +17,7 @@ function shouldStickToBottom(element: HTMLDivElement): boolean {
 export function AgentChatPanel() {
   const {
     entries,
+    error,
     isStreaming,
     reset,
     revision,
@@ -64,6 +65,12 @@ export function AgentChatPanel() {
           stickToBottomRef.current = shouldStickToBottom(event.currentTarget);
         }}
       >
+        {error ? (
+          <div className="agent-message-error" role="status">
+            <WarningIcon size={14} />
+            <span>{error}</span>
+          </div>
+        ) : null}
         {entries.length === 0 ? (
           <div className="agent-empty-state">
             {SUGGESTED_PROMPTS.map((prompt) => (

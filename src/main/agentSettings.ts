@@ -27,8 +27,22 @@ interface SecretFile {
   keys: Record<string, string>;
 }
 
+export interface AgentProviderRuntimeConfig extends AgentProviderConfig {
+  apiKey?: string;
+}
+
 export async function getProviderSettings(): Promise<AgentProviderSettingsView> {
   return toSettingsView(await readProviderFile(), await readSecretFile());
+}
+
+export async function getActiveProviderRuntimeConfig(): Promise<AgentProviderRuntimeConfig | null> {
+  const file = await readProviderFile();
+  const active = file.providers.find((provider) => provider.providerId === file.activeProviderId && provider.enabled)
+    ?? file.providers.find((provider) => provider.enabled)
+    ?? null;
+  if (!active) return null;
+  const secrets = await readSecretFile();
+  return { ...active, apiKey: secrets.keys[active.providerId] };
 }
 
 export async function upsertProviderConfig(input: AgentProviderConfigInput) {
@@ -94,6 +108,12 @@ export async function getProviderSecretStatus(providerIdInput: string): Promise<
   return { providerId, hasApiKey: providerId in secrets.keys };
 }
 
+export async function getProviderApiKey(providerIdInput: string): Promise<string | undefined> {
+  const providerId = normalizeProviderId(providerIdInput);
+  const secrets = await readSecretFile();
+  return secrets.keys[providerId];
+}
+
 function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): AgentProviderSettingsView {
   return {
     activeProviderId: file.activeProviderId,
@@ -112,7 +132,7 @@ function normalizeConfig(input: AgentProviderConfigInput): AgentProviderConfig {
   const modelId = input.modelId.trim();
   if (!modelId) throw new Error('modelId is required');
   const baseUrl = input.baseUrl?.trim() || undefined;
-  return { providerId, modelId, baseUrl, enabled: input.enabled ?? false };
+  return { providerId, modelId, baseUrl, enabled: input.enabled ?? true };
 }
 
 function normalizeProviderId(providerIdInput: string) {
@@ -167,4 +187,3 @@ function providerPath() {
 function secretPath() {
   return join(app.getPath('userData'), SECRETS_FILE);
 }
-
