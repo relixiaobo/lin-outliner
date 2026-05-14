@@ -181,7 +181,13 @@ export function App() {
   }, []);
 
   if (!projection || !index || !rootId) {
-    return <div className="app"><div className="loading-panel">Loading...</div></div>;
+    return (
+      <div className="app">
+        <div className="loading-panel">
+          {error ? `Startup failed: ${error}` : 'Loading...'}
+        </div>
+      </div>
+    );
   }
 
   const topBarTabs: TopBarTab[] = tabs.map((tab) => {
