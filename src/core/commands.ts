@@ -48,8 +48,22 @@ export const DOCUMENT_COMMANDS = [
 ] as const;
 
 export const AGENT_COMMANDS = [
+  'agent_restore_latest_session',
+  'agent_restore_session',
   'agent_create_session',
+  'agent_list_sessions',
+  'agent_rename_session',
+  'agent_delete_session',
+  'agent_debug_snapshot',
+  'agent_debug_history',
+  'agent_debug_totals',
   'agent_send_message',
+  'agent_edit_message',
+  'agent_regenerate_message',
+  'agent_retry_message',
+  'agent_switch_branch',
+  'agent_queue_follow_up',
+  'agent_clear_follow_up',
   'agent_stop_session',
   'agent_reset_session',
   'agent_close_session',

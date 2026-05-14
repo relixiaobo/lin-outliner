@@ -4,7 +4,7 @@ This document describes the planned app layout model for tabs, the workspace
 canvas, outline panels, the sidebar, and the agent dock.
 
 For visual tokens, density, typography, and interaction states, see
-[`design-system.md`](./design-system.md).
+[`design-system/`](./design-system/).
 
 ## Core Model
 
@@ -205,9 +205,12 @@ Rules:
 
 - Panels are laid out from left to right.
 - Panels have minimum and maximum widths.
-- The active canvas can scroll horizontally if panels exceed available width,
-  or panels can resize proportionally. This should be chosen during
-  implementation.
+- Panels resize proportionally according to their persisted ratios while every
+  panel can satisfy the minimum width defined in
+  [`design-system/foundations.md`](./design-system/foundations.md).
+- If panel minimum widths exceed the available canvas width, horizontal scrolling
+  is allowed inside the workspace canvas. Do not shrink panels below the minimum
+  just to avoid scrolling.
 - Panel resize handles may be added between panels.
 - Adding a panel appends it next to the current panel or at the end.
 - Closing a panel removes it from the tab. If it was active, focus moves to the

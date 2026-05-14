@@ -52,7 +52,7 @@ Lin Electron main process
 Lin renderer
   -> Agent UI only
   -> sends prompt/stop/approve commands
-  -> renders TypeScript-forwarded agent events
+  -> renders shared AgentRuntimeEvent snapshots
 ```
 
 ## Runtime Boundary
@@ -90,7 +90,7 @@ Agent input
 ```
 
 The renderer may hold transient UI state, but it must not hold provider API keys
-or directly execute model/tool logic. This keeps a future TypeScript-native agent core
+or directly execute model/tool logic. This keeps a future Lin-owned agent core
 possible: it only needs to implement the AgentRuntime event/command contract.
 
 ## Package Usage
@@ -113,16 +113,23 @@ own adapter modules so product code does not depend on package names directly.
 Suggested module boundary:
 
 ```txt
+src/core/agentTypes.ts
+  # shared AgentRuntimeEvent, snapshot/message DTOs, and IPC event channel
+
 src/main/agentRuntime.ts
   # owns pi-agent-core sessions, command transport, and event forwarding
 
+src/preload/index.ts
+  # exposes typed command and event bridge to the renderer
+
 src/renderer/agent/
   runtime.ts              # UI client for Electron AgentRuntime
-  types.ts                # renderer-owned event/message DTOs
 ```
 
-Only Electron main process agent modules should import pi-mono directly. Renderer code should depend
-on Lin-owned DTOs, not pi-mono package types.
+Only Electron main process agent modules should import pi-mono directly.
+Renderer and preload code should depend on shared Lin-owned DTOs from
+`src/core/agentTypes.ts`, not pi-mono package types and not renderer-owned
+types.
 
 ## Agent Runtime
 
@@ -652,8 +659,8 @@ Phase 0: nodex agent UI audit
 Phase 1: pi-mono runtime + nodex UI shell
 
 - Add pi-mono dependencies.
-- Create `LinAgentRuntime`.
-- Create `AgentStore`.
+- Create Electron main-process `AgentRuntime`.
+- Create the renderer agent runtime hook/store.
 - Reuse or adapt nodex agent UI for the dock header, input composer, transcript
   stream, message rows, tool call cards, and error states.
 - Support one provider and one model.

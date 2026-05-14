@@ -38,8 +38,9 @@ function createWindow() {
     },
   });
 
-  if (process.env.VITE_DEV_SERVER_URL) {
-    void mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
+  const rendererUrl = process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL;
+  if (rendererUrl) {
+    void mainWindow.loadURL(rendererUrl);
   } else {
     void mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
   }
@@ -71,10 +72,42 @@ function registerIpc() {
 
 async function handleAgentCommand(command: AgentCommand, args: Record<string, unknown>) {
   switch (command) {
+    case 'agent_restore_latest_session':
+      return agentRuntime.restoreLatestSession();
+    case 'agent_restore_session':
+      return agentRuntime.restoreSession(String(args.sessionId));
     case 'agent_create_session':
       return agentRuntime.createSession();
+    case 'agent_list_sessions':
+      return agentRuntime.listSessions();
+    case 'agent_rename_session':
+      return agentRuntime.renameSession(String(args.sessionId), String(args.title ?? ''));
+    case 'agent_delete_session':
+      return agentRuntime.deleteSession(String(args.sessionId));
+    case 'agent_debug_snapshot':
+      return agentRuntime.debugSnapshot(String(args.sessionId));
+    case 'agent_debug_history':
+      return agentRuntime.debugHistory(String(args.sessionId));
+    case 'agent_debug_totals':
+      return agentRuntime.debugTotals(String(args.sessionId));
     case 'agent_send_message':
-      return agentRuntime.sendMessage(String(args.sessionId), String(args.message ?? ''));
+      return agentRuntime.sendMessage(String(args.sessionId), String(args.message ?? ''), args.attachments);
+    case 'agent_edit_message':
+      return agentRuntime.editMessage(
+        String(args.sessionId),
+        String(args.nodeId),
+        String(args.message ?? ''),
+      );
+    case 'agent_regenerate_message':
+      return agentRuntime.regenerateMessage(String(args.sessionId), String(args.nodeId));
+    case 'agent_retry_message':
+      return agentRuntime.retryMessage(String(args.sessionId), String(args.nodeId));
+    case 'agent_switch_branch':
+      return agentRuntime.switchBranch(String(args.sessionId), String(args.nodeId));
+    case 'agent_queue_follow_up':
+      return agentRuntime.queueFollowUp(String(args.sessionId), String(args.message ?? ''));
+    case 'agent_clear_follow_up':
+      return agentRuntime.clearFollowUp(String(args.sessionId));
     case 'agent_stop_session':
       return agentRuntime.stopSession(String(args.sessionId));
     case 'agent_reset_session':

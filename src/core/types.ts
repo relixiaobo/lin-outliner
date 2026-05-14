@@ -227,9 +227,20 @@ export interface AgentSession {
   sessionId: string;
 }
 
+export interface AgentSessionMeta {
+  id: string;
+  title: string | null;
+  createdAt: number;
+  updatedAt: number;
+  messageCount: number;
+}
+
+export type AgentReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+
 export interface AgentProviderConfigInput {
   providerId: string;
   modelId: string;
+  reasoningLevel?: AgentReasoningLevel;
   baseUrl?: string | null;
   enabled?: boolean;
 }
@@ -237,14 +248,33 @@ export interface AgentProviderConfigInput {
 export interface AgentProviderConfigView {
   providerId: string;
   modelId: string;
+  reasoningLevel: AgentReasoningLevel;
   baseUrl?: string;
   enabled: boolean;
   hasApiKey: boolean;
+  hasEnvApiKey?: boolean;
+}
+
+export interface AgentModelOption {
+  id: string;
+  name: string;
+  reasoning: boolean;
+  supportedThinkingLevels: AgentReasoningLevel[];
+  contextWindow: number;
+  maxTokens: number;
+}
+
+export interface AgentProviderOption {
+  providerId: string;
+  hasEnvApiKey: boolean;
+  envKeyNames: string[];
+  models: AgentModelOption[];
 }
 
 export interface AgentProviderSettingsView {
   activeProviderId?: string;
   providers: AgentProviderConfigView[];
+  availableProviders: AgentProviderOption[];
 }
 
 export interface AgentProviderSecretStatus {
@@ -286,4 +316,3 @@ export function createNodeRecord(
     filterValues: [],
   };
 }
-

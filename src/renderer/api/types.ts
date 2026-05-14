@@ -1,9 +1,13 @@
 export type {
   AgentProviderConfigInput,
   AgentProviderConfigView,
+  AgentModelOption,
+  AgentProviderOption,
+  AgentReasoningLevel,
   AgentProviderSecretStatus,
   AgentProviderSettingsView,
   AgentSession,
+  AgentSessionMeta,
   Backlink,
   CommandOutcome,
   CreateNodeTree,

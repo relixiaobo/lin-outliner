@@ -3,15 +3,16 @@ import type { FocusHint, NodeId } from '../api/types';
 import type { DocumentIndex, UiState } from '../state/document';
 import { CloseIcon, ICON_SIZE } from './icons';
 import { NodePanel } from './NodePanel';
+import { AgentDebugPanel } from './agent/AgentDebugPanel';
 import type { CommandRunner, TriggerState } from './shared';
-import type { OutlinePanelState, WorkspaceTabState } from './workspaceLayoutTypes';
+import type { WorkspacePanelState, WorkspaceTabState } from './workspaceLayoutTypes';
 
 interface WorkspaceCanvasProps {
   activeTab: WorkspaceTabState | null;
   canvasRef: RefObject<HTMLElement | null>;
   dragId: NodeId | null;
   index: DocumentIndex;
-  onActivatePanel: (panel: OutlinePanelState) => void;
+  onActivatePanel: (panel: WorkspacePanelState) => void;
   onClosePanel: (panelId: string) => void;
   onNavigatePanelRoot: (panelId: string, nodeId: NodeId) => void;
   onPanelResizeStart: (
@@ -40,7 +41,11 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
       {activePanels.map((panel, panelIndex) => (
         <Fragment key={panel.id}>
           <div
-            className={`outline-panel-surface ${props.activeTab?.activePanelId === panel.id ? 'active-panel' : ''}`}
+            className={[
+              'outline-panel-surface',
+              `is-${panel.type}`,
+              props.activeTab?.activePanelId === panel.id ? 'active-panel' : '',
+            ].filter(Boolean).join(' ')}
             onFocusCapture={() => props.onActivatePanel(panel)}
             onPointerDownCapture={() => props.onActivatePanel(panel)}
             style={{
@@ -57,19 +62,23 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 <CloseIcon size={ICON_SIZE.menu} />
               </button>
             )}
-            <NodePanel
-              rootId={panel.rootId}
-              onRoot={(nodeId) => props.onNavigatePanelRoot(panel.id, nodeId)}
-              index={props.index}
-              ui={props.ui}
-              setUi={props.setUi}
-              run={props.run}
-              trigger={props.trigger}
-              setTrigger={props.setTrigger}
-              pendingFocus={props.pendingFocus}
-              dragId={props.dragId}
-              setDragId={props.setDragId}
-            />
+            {panel.type === 'outliner' ? (
+              <NodePanel
+                rootId={panel.rootId}
+                onRoot={(nodeId) => props.onNavigatePanelRoot(panel.id, nodeId)}
+                index={props.index}
+                ui={props.ui}
+                setUi={props.setUi}
+                run={props.run}
+                trigger={props.trigger}
+                setTrigger={props.setTrigger}
+                pendingFocus={props.pendingFocus}
+                dragId={props.dragId}
+                setDragId={props.setDragId}
+              />
+            ) : (
+              <AgentDebugPanel sessionId={panel.sessionId} />
+            )}
           </div>
           {panelIndex < activePanels.length - 1 && (
             <div className="panel-resize-slot">

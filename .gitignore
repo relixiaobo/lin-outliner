@@ -5,6 +5,7 @@ release
 target
 test-results
 playwright-report
+scripts/.out/
 .DS_Store
 *.log
 .env

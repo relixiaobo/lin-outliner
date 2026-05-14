@@ -57,6 +57,7 @@ export function App() {
     initializeTabs,
     navigatePanelRoot: setPanelRoot,
     navigateRoot: setActivePanelRoot,
+    openAgentDebugPanel,
     openPanel,
     resizePanelPair,
     rootId,
@@ -180,7 +181,7 @@ export function App() {
     });
   }, []);
 
-  if (!projection || !index || !rootId) {
+  if (!projection || !index) {
     return (
       <div className="app">
         <div className="loading-panel">
@@ -192,10 +193,15 @@ export function App() {
 
   const topBarTabs: TopBarTab[] = tabs.map((tab) => {
     const tabActivePanel = tab.panels.find((panel) => panel.id === tab.activePanelId) ?? tab.panels[0];
+    const title = tabActivePanel?.type === 'outliner'
+      ? textOf(index.byId.get(tabActivePanel.rootId)) || 'Workspace'
+      : tabActivePanel?.type === 'agent-debug'
+        ? 'Agent Debug'
+        : 'Workspace';
     return {
       id: tab.id,
       panelCount: tab.panels.length,
-      title: textOf(index.byId.get(tabActivePanel?.rootId ?? '')) || 'Workspace',
+      title,
     };
   });
   const appShellStyle = {
@@ -250,7 +256,7 @@ export function App() {
           ui={ui}
         />
 
-        <AgentDock onResizeStart={beginAgentResize} />
+        <AgentDock onOpenDebugPanel={openAgentDebugPanel} onResizeStart={beginAgentResize} />
       </div>
 
       <BatchTagSelector

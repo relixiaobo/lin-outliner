@@ -29,7 +29,7 @@ interface SidebarProps {
   onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   onToggleTreeNode: (nodeId: NodeId) => void;
   projection: DocumentProjection;
-  rootId: NodeId;
+  rootId: NodeId | null;
 }
 
 export function Sidebar(props: SidebarProps) {

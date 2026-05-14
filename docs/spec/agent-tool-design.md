@@ -925,9 +925,12 @@ Result behavior:
 
 ## TypeScript Parser, Preview, and Validation
 
-TypeScript owns the complete outliner mutation pipeline. The TypeScript adapter should
-only normalize arguments, invoke Electron IPC commands, and wrap TypeScript responses in
-`ToolResult`.
+Electron main owns the complete outliner mutation pipeline. The public pi-mono
+tool definitions should stay thin: normalize arguments, call the TypeScript tool
+gateway, and wrap gateway responses in `ToolResult`. The gateway may call
+in-process TypeScript core services directly today; if the document core moves
+behind another runtime boundary later, the public tool contract should not
+change.
 
 ### Parser modules
 
@@ -1848,10 +1851,10 @@ commands should require approval even in permissive modes.
 
 ## Implementation Notes
 
-- Tool schemas live in the TypeScript pi-mono adapter, but validation and
-  mutation semantics should be enforced again in TypeScript.
-- The TypeScript adapter should remain thin: normalize parameters, invoke Electron,
-  and convert TypeScript responses into `ToolResult`.
+- Tool schemas live beside the Electron main-process pi-mono runtime, but
+  validation and mutation semantics live in the TypeScript tool gateway.
+- The pi-mono tool adapter should remain thin: normalize parameters, invoke the
+  gateway, and convert gateway responses into `ToolResult`.
 - TypeScript should own outliner parsing, tag resolution, field resolution, operation
   grouping, permissions, and persistence.
 - All document mutations should create an operation history entry with origin,

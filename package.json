@@ -6,26 +6,32 @@
   "main": "out/main/main.js",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
+    "dev": "electron-vite dev",
     "build": "tsc --noEmit && electron-vite build",
     "preview": "vite preview",
     "app:dev": "electron-vite dev",
+    "renderer:dev": "vite --host 127.0.0.1",
     "app:build": "electron-vite build && electron-builder",
     "typecheck": "tsc --noEmit",
     "test:core": "bun test tests/core",
     "test:renderer": "bun test tests/renderer",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "probe:web-tools": "bun build scripts/probe-web-tools.ts --outfile scripts/.out/probe-web-tools.cjs --target node --format cjs --external electron && electron scripts/.out/probe-web-tools.cjs"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.74.0",
     "@earendil-works/pi-ai": "0.74.0",
     "lucide-react": "^0.575.0",
+    "marked": "^17.0.4",
     "prosemirror-commands": "^1.7.1",
     "prosemirror-model": "^1.25.4",
     "prosemirror-state": "^1.4.4",
     "prosemirror-view": "^1.41.8",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "remend": "^1.2.2"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.1",

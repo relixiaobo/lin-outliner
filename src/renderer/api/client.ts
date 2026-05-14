@@ -4,6 +4,7 @@ import type {
   AgentProviderSecretStatus,
   AgentProviderSettingsView,
   AgentSession,
+  AgentSessionMeta,
   CommandOutcome,
   CreateNodeTree,
   DocumentProjection,
@@ -15,6 +16,7 @@ import type {
   SortDirection,
   TagConfigPatch,
 } from './types';
+import type { AgentDebugSnapshot, AgentDebugTotals, AgentMessageAttachmentInput } from '../../core/agentTypes';
 
 function command<T>(name: string, args?: Record<string, unknown>): Promise<T> {
   if (window.lin) return window.lin.invoke<T>(name, args);
@@ -106,9 +108,34 @@ export const api = {
   backlinks: (targetId: string) => command<Backlink[]>('backlinks', { targetId }),
   undo: () => command<CommandOutcome>('undo'),
   redo: () => command<CommandOutcome>('redo'),
+  agentRestoreLatestSession: () => command<AgentSession>('agent_restore_latest_session'),
+  agentRestoreSession: (sessionId: string) => command<AgentSession>('agent_restore_session', { sessionId }),
   agentCreateSession: () => command<AgentSession>('agent_create_session'),
-  agentSendMessage: (sessionId: string, message: string) =>
-    command<void>('agent_send_message', { sessionId, message }),
+  agentListSessions: () => command<AgentSessionMeta[]>('agent_list_sessions'),
+  agentRenameSession: (sessionId: string, title: string) =>
+    command<AgentSessionMeta | null>('agent_rename_session', { sessionId, title }),
+  agentDeleteSession: (sessionId: string) =>
+    command<void>('agent_delete_session', { sessionId }),
+  agentDebugSnapshot: (sessionId: string) =>
+    command<AgentDebugSnapshot | null>('agent_debug_snapshot', { sessionId }),
+  agentDebugHistory: (sessionId: string) =>
+    command<AgentDebugSnapshot[]>('agent_debug_history', { sessionId }),
+  agentDebugTotals: (sessionId: string) =>
+    command<AgentDebugTotals>('agent_debug_totals', { sessionId }),
+  agentSendMessage: (sessionId: string, message: string, attachments: AgentMessageAttachmentInput[] = []) =>
+    command<void>('agent_send_message', { sessionId, message, attachments }),
+  agentEditMessage: (sessionId: string, nodeId: string, message: string) =>
+    command<void>('agent_edit_message', { sessionId, nodeId, message }),
+  agentRegenerateMessage: (sessionId: string, nodeId: string) =>
+    command<void>('agent_regenerate_message', { sessionId, nodeId }),
+  agentRetryMessage: (sessionId: string, nodeId: string) =>
+    command<void>('agent_retry_message', { sessionId, nodeId }),
+  agentSwitchBranch: (sessionId: string, nodeId: string) =>
+    command<void>('agent_switch_branch', { sessionId, nodeId }),
+  agentQueueFollowUp: (sessionId: string, message: string) =>
+    command<{ queued: boolean }>('agent_queue_follow_up', { sessionId, message }),
+  agentClearFollowUp: (sessionId: string) =>
+    command<void>('agent_clear_follow_up', { sessionId }),
   agentStopSession: (sessionId: string) =>
     command<void>('agent_stop_session', { sessionId }),
   agentResetSession: (sessionId: string) =>

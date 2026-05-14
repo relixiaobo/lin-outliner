@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DocumentProjection, NodeId } from '../api/types';
-import type { OutlinePanelState, WorkspaceTabState } from './workspaceLayoutTypes';
+import type { OutlinePanelState, WorkspacePanelState, WorkspaceTabState } from './workspaceLayoutTypes';
 
 let nextWorkspaceId = 0;
 const STORAGE_KEY = 'lin-outliner:workspace-layout:v1';
@@ -32,25 +32,33 @@ function defaultTabs(initial: DocumentProjection): { activeTabId: string; tabs: 
         [secondPanelId]: 1,
       },
       panels: [
-        { id: firstPanelId, rootId: initial.todayId },
-        { id: secondPanelId, rootId: initial.rootId },
+        { id: firstPanelId, type: 'outliner', rootId: initial.todayId },
+        { id: secondPanelId, type: 'outliner', rootId: initial.rootId },
       ],
     }],
   };
+}
+
+function isOutlinerPanel(panel: WorkspacePanelState | null | undefined): panel is OutlinePanelState {
+  return panel?.type === 'outliner';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
-function sanitizePanel(value: unknown, nodeIds: Set<NodeId>): OutlinePanelState | null {
-  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.rootId !== 'string') return null;
-  if (!nodeIds.has(value.rootId)) return null;
+function sanitizePanel(value: unknown, nodeIds: Set<NodeId>): WorkspacePanelState | null {
+  if (!isRecord(value) || typeof value.id !== 'string') return null;
   rememberId(value.id);
-  return {
-    id: value.id,
-    rootId: value.rootId,
-  };
+  if (value.type === 'agent-debug') {
+    return {
+      id: value.id,
+      type: 'agent-debug',
+      sessionId: typeof value.sessionId === 'string' ? value.sessionId : null,
+    };
+  }
+  if (typeof value.rootId !== 'string' || !nodeIds.has(value.rootId)) return null;
+  return { id: value.id, type: 'outliner', rootId: value.rootId };
 }
 
 function sanitizeTab(value: unknown, nodeIds: Set<NodeId>): WorkspaceTabState | null {
@@ -58,7 +66,7 @@ function sanitizeTab(value: unknown, nodeIds: Set<NodeId>): WorkspaceTabState | 
   const panels = value.panels
     .slice(0, MAX_PERSISTED_PANELS)
     .map((panel) => sanitizePanel(panel, nodeIds))
-    .filter((panel): panel is OutlinePanelState => Boolean(panel));
+    .filter((panel): panel is WorkspacePanelState => Boolean(panel));
   if (panels.length === 0) return null;
 
   rememberId(value.id);
@@ -131,7 +139,10 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
     ? Math.max(0, activeTab.panels.findIndex((panel) => panel.id === activeTab.activePanelId))
     : 0;
   const activePanel = activeTab?.panels[activePanelIndex] ?? null;
-  const rootId = activePanel?.rootId ?? null;
+  const activeOutlinerPanel = isOutlinerPanel(activePanel)
+    ? activePanel
+    : activeTab?.panels.find(isOutlinerPanel) ?? null;
+  const rootId = activeOutlinerPanel?.rootId ?? null;
 
   const initializeTabs = useCallback((initial: DocumentProjection) => {
     const layout = loadPersistedTabs(initial) ?? defaultTabs(initial);
@@ -141,7 +152,9 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
     const activeLayoutTab = layout.tabs.find((tab) => tab.id === layout.activeTabId) ?? layout.tabs[0];
     const activeLayoutPanel = activeLayoutTab.panels.find((panel) => panel.id === activeLayoutTab.activePanelId)
       ?? activeLayoutTab.panels[0];
-    return activeLayoutPanel.rootId;
+    return isOutlinerPanel(activeLayoutPanel)
+      ? activeLayoutPanel.rootId
+      : activeLayoutTab.panels.find(isOutlinerPanel)?.rootId ?? initial.todayId;
   }, []);
 
   useEffect(() => {
@@ -155,28 +168,30 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
 
   const navigateRoot = useCallback((nodeId: NodeId) => {
     updateActiveTab((tab) => {
-      const activePanelId = tab.activePanelId || tab.panels[0]?.id;
+      const activePanel = tab.panels.find((panel) => panel.id === tab.activePanelId);
+      const targetPanel = isOutlinerPanel(activePanel) ? activePanel : tab.panels.find(isOutlinerPanel);
+      const activePanelId = targetPanel?.id;
       if (!activePanelId) {
         const panelId = nextId('panel');
         return {
           ...tab,
           activePanelId: panelId,
           panelSizes: { [panelId]: 1 },
-          panels: [{ id: panelId, rootId: nodeId }],
+          panels: [{ id: panelId, type: 'outliner', rootId: nodeId }],
         };
       }
       return {
         ...tab,
         activePanelId,
         panels: tab.panels.map((panel) => (
-          panel.id === activePanelId ? { ...panel, rootId: nodeId } : panel
+          panel.id === activePanelId && isOutlinerPanel(panel) ? { ...panel, rootId: nodeId } : panel
         )),
       };
     });
     focusNode(nodeId);
   }, [focusNode, updateActiveTab]);
 
-  const activatePanel = useCallback((panel: OutlinePanelState) => {
+  const activatePanel = useCallback((panel: WorkspacePanelState) => {
     updateActiveTab((tab) => ({ ...tab, activePanelId: panel.id }));
   }, [updateActiveTab]);
 
@@ -185,7 +200,7 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
       ...tab,
       activePanelId: panelId,
       panels: tab.panels.map((panel) => (
-        panel.id === panelId ? { ...panel, rootId: nodeId } : panel
+        panel.id === panelId && isOutlinerPanel(panel) ? { ...panel, rootId: nodeId } : panel
       )),
     }));
     focusNode(nodeId);
@@ -200,7 +215,7 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
       delete nextPanelSizes[panelId];
       const nextActiveIndex = Math.max(0, Math.min(panelIndex, nextPanels.length - 1));
       const nextActivePanel = nextPanels[nextActiveIndex];
-      if (tab.activePanelId === panelId && nextActivePanel) {
+      if (tab.activePanelId === panelId && isOutlinerPanel(nextActivePanel)) {
         focusNode(nextActivePanel.rootId);
       }
       return {
@@ -217,7 +232,7 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
     const nextTab = tabs.find((tab) => tab.id === tabId);
     const nextPanel = nextTab?.panels.find((panel) => panel.id === nextTab.activePanelId)
       ?? nextTab?.panels[0];
-    if (nextPanel) {
+    if (isOutlinerPanel(nextPanel)) {
       focusNode(nextPanel.rootId);
     }
   }, [focusNode, tabs]);
@@ -232,7 +247,7 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
         id: tabId,
         activePanelId: panelId,
         panelSizes: { [panelId]: 1 },
-        panels: [{ id: panelId, rootId }],
+        panels: [{ id: panelId, type: 'outliner', rootId }],
       },
     ]);
     setActiveTabId(tabId);
@@ -250,7 +265,7 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
           ...tab,
           activePanelId: lastPanel.id,
           panels: tab.panels.map((panel) => (
-            panel.id === lastPanel.id ? { ...panel, rootId: nodeId } : panel
+            panel.id === lastPanel.id ? { id: panel.id, type: 'outliner', rootId: nodeId } : panel
           )),
         };
       }
@@ -263,12 +278,64 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
         },
         panels: [
           ...tab.panels,
-          { id: panelId, rootId: nodeId },
+          { id: panelId, type: 'outliner', rootId: nodeId },
         ],
       };
     });
     focusNode(nodeId);
   }, [focusNode, rootId, updateActiveTab]);
+
+  const openAgentDebugPanel = useCallback((sessionId: string | null) => {
+    const panelId = nextId('panel');
+    updateActiveTab((tab) => {
+      const existing = tab.panels.find((panel) => (
+        panel.type === 'agent-debug' && panel.sessionId === sessionId
+      ));
+      if (existing) return { ...tab, activePanelId: existing.id };
+
+      const emptyDebugPanel = sessionId
+        ? tab.panels.find((panel) => panel.type === 'agent-debug' && panel.sessionId === null)
+        : null;
+      if (emptyDebugPanel) {
+        return {
+          ...tab,
+          activePanelId: emptyDebugPanel.id,
+          panels: tab.panels.map((panel) => (
+            panel.id === emptyDebugPanel.id
+              ? { id: panel.id, type: 'agent-debug', sessionId }
+              : panel
+          )),
+        };
+      }
+
+      if (tab.panels.length >= MAX_PERSISTED_PANELS) {
+        const replacePanel = [...tab.panels].reverse().find((panel) => panel.type === 'agent-debug') ?? tab.panels.at(-1);
+        if (!replacePanel) return tab;
+        return {
+          ...tab,
+          activePanelId: replacePanel.id,
+          panels: tab.panels.map((panel) => (
+            panel.id === replacePanel.id
+              ? { id: panel.id, type: 'agent-debug', sessionId }
+              : panel
+          )),
+        };
+      }
+
+      return {
+        ...tab,
+        activePanelId: panelId,
+        panelSizes: {
+          ...tab.panelSizes,
+          [panelId]: 1,
+        },
+        panels: [
+          ...tab.panels,
+          { id: panelId, type: 'agent-debug', sessionId },
+        ],
+      };
+    });
+  }, [updateActiveTab]);
 
   const closeTab = useCallback((tabId: string) => {
     if (tabs.length <= 1) return;
@@ -282,7 +349,7 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
       setActiveTabId(nextActiveTab.id);
       const nextPanel = nextActiveTab.panels.find((panel) => panel.id === nextActiveTab.activePanelId)
         ?? nextActiveTab.panels[0];
-      focusNode(nextPanel?.rootId ?? null);
+      focusNode(isOutlinerPanel(nextPanel) ? nextPanel.rootId : null);
     }
   }, [activeTabId, focusNode, tabs]);
 
@@ -318,6 +385,7 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
     initializeTabs,
     navigatePanelRoot,
     navigateRoot,
+    openAgentDebugPanel,
     openPanel,
     resizePanelPair,
     rootId,
