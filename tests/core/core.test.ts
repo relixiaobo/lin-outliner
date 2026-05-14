@@ -147,6 +147,46 @@ describe('Core', () => {
     expect(mustFocus(core.registerCollectedOption(fieldDefId, 'done'))).toBe(optionId);
   });
 
+  test('field config validates constraints and clears type-specific settings', () => {
+    const core = Core.new();
+    const tagId = mustFocus(core.createTag('project'));
+    const templateEntryId = mustFocus(core.createFieldDef(tagId, 'Estimate', 'plain'));
+    const fieldId = core.state().nodes[templateEntryId].fieldDefId!;
+
+    core.setFieldConfig(fieldId, {
+      fieldType: 'number',
+      nullable: false,
+      hideField: 'empty',
+      minValue: 1,
+      maxValue: 5,
+    });
+    expect(core.state().nodes[fieldId].fieldType).toBe('number');
+    expect(core.state().nodes[fieldId].nullable).toBe(false);
+    expect(core.state().nodes[fieldId].hideField).toBe('empty');
+    expect(core.state().nodes[fieldId].minValue).toBe(1);
+    expect(core.state().nodes[fieldId].maxValue).toBe(5);
+
+    core.setFieldConfig(fieldId, { fieldType: 'options', autocollectOptions: true });
+    expect(core.state().nodes[fieldId].fieldType).toBe('options');
+    expect(core.state().nodes[fieldId].autocollectOptions).toBe(true);
+    expect(core.state().nodes[fieldId].minValue).toBeUndefined();
+    expect(core.state().nodes[fieldId].maxValue).toBeUndefined();
+
+    const sourceTagId = mustFocus(core.createTag('source'));
+    core.setFieldConfig(fieldId, {
+      fieldType: 'options_from_supertag',
+      sourceSupertag: sourceTagId,
+    });
+    expect(core.state().nodes[fieldId].fieldType).toBe('options_from_supertag');
+    expect(core.state().nodes[fieldId].sourceSupertag).toBe(sourceTagId);
+    expect(core.state().nodes[fieldId].autocollectOptions).toBe(false);
+
+    expect(() => core.setFieldConfig(fieldId, { autocollectOptions: true }))
+      .toThrow('auto-collect options');
+    expect(() => core.setFieldConfig(fieldId, { fieldType: 'number', minValue: 10, maxValue: 1 }))
+      .toThrow('minimum value');
+  });
+
   test('paste nodes is one undoable rich structural operation', () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -177,6 +217,44 @@ describe('Core', () => {
     expect(core.state().nodes[today].children).toEqual([current, next]);
   });
 
+  test('batch move preserves sibling block order', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const first = mustFocus(core.createNode(today, null, 'First'));
+    const second = mustFocus(core.createNode(today, null, 'Second'));
+    const third = mustFocus(core.createNode(today, null, 'Third'));
+    const fourth = mustFocus(core.createNode(today, null, 'Fourth'));
+
+    core.batchMoveNodesDown([second, third]);
+    expect(core.state().nodes[today].children).toEqual([first, fourth, second, third]);
+
+    core.batchMoveNodesUp([second, third]);
+    expect(core.state().nodes[today].children).toEqual([first, second, third, fourth]);
+  });
+
+  test('inline field after trigger trashes trigger row and undo restores it', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const before = mustFocus(core.createNode(today, null, 'Before'));
+    const trigger = mustFocus(core.createNode(today, null, '/priority'));
+    const after = mustFocus(core.createNode(today, null, 'After'));
+
+    const fieldEntryId = mustFocus(core.createInlineFieldAfterNode(trigger, 'Priority', 'plain'));
+    const fieldId = core.state().nodes[fieldEntryId].fieldDefId!;
+
+    expect(core.state().nodes[trigger].parentId).toBe(TRASH_ID);
+    expect(core.state().nodes[today].children).toEqual([before, fieldEntryId, after]);
+    expect(core.state().nodes[fieldEntryId].type).toBe('fieldEntry');
+    expect(core.state().nodes[fieldId].type).toBe('fieldDef');
+    expect(core.state().nodes[fieldId].parentId).toBe(SCHEMA_ID);
+
+    core.undo();
+    expect(core.state().nodes[today].children).toEqual([before, trigger, after]);
+    expect(core.state().nodes[trigger].parentId).toBe(today);
+    expect(core.state().nodes[fieldEntryId]).toBeUndefined();
+    expect(core.state().nodes[fieldId]).toBeUndefined();
+  });
+
   test('date nodes, tag search, and reference cycle behavior', () => {
     const core = Core.new();
     const dayId = mustFocus(core.ensureDateNode(2026, 5, 14));
@@ -193,6 +271,67 @@ describe('Core', () => {
 
     const childId = mustFocus(core.createNode(nodeId, null, 'Child'));
     expect(() => core.addReference(childId, nodeId, null)).toThrow('cannot create a reference cycle');
+  });
+
+  test('tag inheritance instantiates inherited fields and applies child supertags', () => {
+    const core = Core.new();
+    const parentTagId = mustFocus(core.createTag('project'));
+    const childTagId = mustFocus(core.createTag('task'));
+    const defaultChildTagId = mustFocus(core.createTag('step'));
+    const templateEntryId = mustFocus(core.createFieldDef(parentTagId, 'Owner', 'plain'));
+    const fieldId = core.state().nodes[templateEntryId].fieldDefId!;
+
+    core.setTagConfig(childTagId, {
+      extends: parentTagId,
+      childSupertag: defaultChildTagId,
+      showCheckbox: true,
+      doneStateEnabled: true,
+    });
+
+    const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Launch'));
+    core.applyTag(nodeId, childTagId);
+    const inheritedFieldEntryId = core.state().nodes[nodeId].children.find((childId) => {
+      const child = core.state().nodes[childId];
+      return child?.type === 'fieldEntry' && child.fieldDefId === fieldId;
+    });
+    expect(inheritedFieldEntryId).toBeDefined();
+    expect(core.state().nodes[inheritedFieldEntryId!].templateId).toBe(templateEntryId);
+
+    const childNodeId = mustFocus(core.createNode(nodeId, null, 'Checklist item'));
+    expect(core.state().nodes[childNodeId].tags).toContain(defaultChildTagId);
+    expect(core.state().nodes[childTagId].showCheckbox).toBe(true);
+    expect(core.state().nodes[childTagId].doneStateEnabled).toBe(true);
+    expect(() => core.setTagConfig(parentTagId, { extends: childTagId }))
+      .toThrow('tag inheritance cannot create a cycle');
+  });
+
+  test('replace node with reference creates backlinks and remains undoable', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'Target'));
+    const trigger = mustFocus(core.createNode(today, null, '@Target'));
+    const inlineSource = mustFocus(core.createNode(today, null, 'Inline'));
+
+    core.updateNodeText(inlineSource, {
+      text: 'Inline ref',
+      marks: [],
+      inlineRefs: [{ offset: 6, targetNodeId: target, displayName: 'Target' }],
+    });
+    const referenceId = mustFocus(core.replaceNodeWithReference(trigger, target));
+
+    expect(core.state().nodes[referenceId].type).toBe('reference');
+    expect(core.state().nodes[referenceId].targetId).toBe(target);
+    expect(core.state().nodes[trigger].parentId).toBe(TRASH_ID);
+    expect(core.state().nodes[today].children).toEqual([target, referenceId, inlineSource]);
+    expect(core.backlinks(target)).toEqual(expect.arrayContaining([
+      { sourceId: today, referenceId, kind: 'tree' },
+      { sourceId: inlineSource, referenceId: inlineSource, kind: 'inline' },
+    ]));
+
+    core.undo();
+    expect(core.state().nodes[today].children).toEqual([target, trigger, inlineSource]);
+    expect(core.state().nodes[trigger].parentId).toBe(today);
+    expect(core.state().nodes[referenceId]).toBeUndefined();
   });
 
   test('undo restores trash operations', () => {
