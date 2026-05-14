@@ -1721,6 +1721,14 @@ button:focus-visible {
   transition: color 120ms ease, transform 120ms ease;
 }
 
+.row-chevron-shell > svg {
+  transition: transform 120ms ease;
+}
+
+.row-chevron-shell.expanded > svg {
+  transform: rotate(90deg);
+}
+
 .row-chevron-button:hover .row-chevron-shell {
   color: var(--text);
 }
@@ -1785,9 +1793,23 @@ button:focus-visible {
   color: white;
 }
 
+.row-bullet-tag-glyph {
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  user-select: none;
+}
+
 .row-bullet-shape.field,
 .row-bullet-shape.fieldDef {
   color: var(--muted);
+}
+
+.row-bullet-button:hover .row-bullet-shape.tag,
+.row-bullet-button:hover .row-bullet-shape.field,
+.row-bullet-button:hover .row-bullet-shape.fieldDef {
+  transform: scale(1.1);
 }
 
 .row-bullet-button:active .row-bullet-shape {
@@ -1982,11 +2004,11 @@ button:focus-visible {
 }
 
 .trailing-row:focus-within .row-bullet-shape.dimmed {
-  color: rgba(26, 26, 26, 0.40);
+  color: rgba(26, 26, 26, 0.15);
 }
 
 .trailing-row:not(:focus-within) .row-bullet-shape.dimmed {
-  color: rgba(26, 26, 26, 0.25);
+  color: rgba(26, 26, 26, 0.15);
 }
 
 .row-editor .inline-ref {

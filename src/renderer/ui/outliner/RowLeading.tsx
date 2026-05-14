@@ -1,9 +1,7 @@
-import type { DragEvent } from 'react';
+import type { CSSProperties, DragEvent } from 'react';
 import type { FieldType } from '../../api/types';
 import {
-  ChevronDownIcon,
   ChevronRightIcon,
-  HashIcon,
   ICON_SIZE,
 } from '../icons';
 import { conicColorStyle } from '../tags/tagColors';
@@ -48,9 +46,12 @@ export function RowLeading({
   ].filter(Boolean).join(' ');
 
   const bulletDotStyle = conicColorStyle(bulletColors);
-  const bulletShapeStyle = variant === 'tag' && tagDefColor
-    ? { background: tagDefColor }
-    : undefined;
+  let bulletShapeStyle: CSSProperties | undefined;
+  if (variant === 'tag' && tagDefColor) {
+    bulletShapeStyle = { background: tagDefColor };
+  } else if ((variant === 'field' || variant === 'fieldDef') && bulletColors[0]) {
+    bulletShapeStyle = { color: bulletColors[0] };
+  }
 
   return (
     <div className="row-leading">
@@ -70,11 +71,7 @@ export function RowLeading({
         type="button"
       >
         <span className={`row-chevron-shell ${expanded ? 'expanded' : ''}`}>
-          {expanded ? (
-            <ChevronDownIcon size={ICON_SIZE.tiny} />
-          ) : (
-            <ChevronRightIcon size={ICON_SIZE.tiny} />
-          )}
+          <ChevronRightIcon size={ICON_SIZE.tiny} />
         </span>
       </button>
       <button
@@ -95,7 +92,7 @@ export function RowLeading({
           {variant === 'field' || variant === 'fieldDef' ? (
             <FieldTypeIcon fieldType={fieldType} />
           ) : variant === 'tag' ? (
-            <HashIcon size={ICON_SIZE.tiny} />
+            <span aria-hidden="true" className="row-bullet-tag-glyph">#</span>
           ) : (
             <NodeBulletDot style={bulletDotStyle} />
           )}

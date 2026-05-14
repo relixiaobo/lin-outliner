@@ -9,7 +9,7 @@ import {
   type SetStateAction,
 } from 'react';
 import { api } from '../../api/client';
-import type { FocusHint, NodeId } from '../../api/types';
+import type { FocusHint, NodeId, NodeProjection } from '../../api/types';
 import { plainText } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
 import { savePrimaryFieldEntryChildText } from '../../state/fieldEntryChildren';
@@ -17,6 +17,7 @@ import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { indentTargetParentId } from '../interactions/outlinerStructure';
 import type { CommandRunner, TriggerState } from '../shared';
 import { outlinerChildren } from '../shared';
+import { resolveTagColor } from '../tags/tagColors';
 import { fieldTypeLabel } from './fieldTypePresentation';
 import { FieldValueRenderer } from './FieldValueRenderer';
 import { IndentGuide } from './IndentGuide';
@@ -49,6 +50,30 @@ interface OutlinerFieldRowProps {
   renderChildren?: (controls: FieldRowChildrenControls) => ReactNode;
 }
 
+function resolveFieldOwnerColor(
+  entry: NodeProjection,
+  field: NodeProjection | undefined,
+  byId: Map<NodeId, NodeProjection>,
+): string | undefined {
+  const lookupIds = [entry.templateId, field?.id ?? entry.fieldDefId, field?.sourceSupertag]
+    .filter((id): id is NodeId => Boolean(id));
+
+  for (const lookupId of lookupIds) {
+    const lookup = byId.get(lookupId);
+    const ownerId = lookup?.type === 'tagDef'
+      ? lookup.id
+      : lookup?.type === 'fieldEntry'
+        ? lookup.parentId
+        : lookup?.type === 'fieldDef'
+          ? lookup.sourceSupertag ?? lookup.parentId
+          : undefined;
+    const owner = ownerId ? byId.get(ownerId) : undefined;
+    if (owner?.type === 'tagDef') return resolveTagColor(owner).text;
+  }
+
+  return undefined;
+}
+
 export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   const entry = props.index.byId.get(props.entryId);
   const field = entry?.fieldDefId ? props.index.byId.get(entry.fieldDefId) : undefined;
@@ -74,8 +99,6 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const valueFocusRef = useRef<HTMLElement | null>(null);
-  const fieldType = field?.fieldType ?? entry?.fieldType ?? 'plain';
-  const drillDownId = field?.id ?? props.entryId;
 
   useEffect(() => {
     setNameDraft(field?.content.text || 'Field');
@@ -113,6 +136,10 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   }, [props.pendingFocus, props.entryId, props.setUi, props.ui.focusOffset]);
 
   if (!entry) return null;
+
+  const fieldType = field?.fieldType ?? entry.fieldType ?? 'plain';
+  const drillDownId = field?.id ?? props.entryId;
+  const fieldOwnerColor = resolveFieldOwnerColor(entry, field, props.index.byId);
 
   const commitName = async (nextName = nameDraft) => {
     const normalized = nextName.trim() || 'Field';
@@ -271,6 +298,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
           expanded={row.expanded}
           variant="field"
           fieldType={fieldType}
+          bulletColors={fieldOwnerColor ? [fieldOwnerColor] : undefined}
           onToggleExpand={row.toggleExpandOrSelect}
           onDrillDown={() => props.onRoot(drillDownId)}
           draggable={row.dragHandleProps.draggable}
