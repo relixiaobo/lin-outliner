@@ -11,6 +11,7 @@
     "forceConsistentCasingInFileNames": true,
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "types": ["node"],
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
@@ -20,5 +21,5 @@
       "@/*": ["src/renderer/*"]
     }
   },
-  "include": ["src/renderer"]
+  "include": ["src", "electron.vite.config.ts"]
 }

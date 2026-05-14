@@ -1,4 +1,3 @@
-import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import type {
@@ -10,8 +9,6 @@ import type {
   TextContent,
   ToolResultMessage,
 } from './types';
-
-const AGENT_EVENT = 'lin-agent-event';
 
 export interface AgentMessageEntry {
   id: string;
@@ -176,8 +173,7 @@ export function useLinAgentRuntime() {
     let cancelled = false;
     let unlisten: (() => void) | null = null;
 
-    void listen<AgentWorkerEvent>(AGENT_EVENT, (event) => {
-      const payload = event.payload;
+    const dispose = window.lin?.onAgentEvent((payload: AgentWorkerEvent) => {
       if (payload.type === 'ready') {
         return;
       }
@@ -209,19 +205,14 @@ export function useLinAgentRuntime() {
         setError(payload.state.errorMessage);
         setSnapshot(payload.state);
       }
-    }).then((dispose) => {
+    }) ?? null;
+    unlisten = dispose;
+    void ensureSession().then((createdSessionId) => {
       if (cancelled) {
-        dispose();
-        return;
+        void api.agentCloseSession(createdSessionId);
       }
-      unlisten = dispose;
-      void ensureSession().then((createdSessionId) => {
-        if (cancelled) {
-          void api.agentCloseSession(createdSessionId);
-        }
-      }).catch((caught) => {
-        setError(caught instanceof Error ? caught.message : String(caught));
-      });
+    }).catch((caught) => {
+      setError(caught instanceof Error ? caught.message : String(caught));
     });
 
     return () => {

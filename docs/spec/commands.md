@@ -1,6 +1,7 @@
 # Command Protocol
 
-All document mutations are Tauri commands backed by `lin-core`.
+All document mutations are Electron IPC commands backed by the TypeScript core
+in `src/core`.
 
 ## MVP Commands
 
@@ -9,7 +10,7 @@ All document mutations are Tauri commands backed by `lin-core`.
 - `create_node`
 - `split_node`
 - `update_node_text`
-- `merge_node_into_previous`
+- `merge_node_into`
 - `move_node`
 - `indent_node`
 - `outdent_node`
@@ -26,9 +27,16 @@ All document mutations are Tauri commands backed by `lin-core`.
 - `apply_tag`
 - `remove_tag`
 - `create_field_def`
-- `set_field_value`
+- `set_tag_config`
+- `set_field_config`
+- `create_inline_field`
+- `create_inline_field_after_node`
+- `register_collected_option`
+- `select_field_option`
 - `add_reference`
+- `replace_node_with_reference`
 - `ensure_date_node`
+- `ensure_tag_search`
 - `search_nodes`
 - `backlinks`
 

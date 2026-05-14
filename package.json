@@ -2,25 +2,23 @@
   "name": "lin-outliner",
   "version": "0.1.0",
   "private": true,
-  "description": "Local-first desktop outliner with a Rust core and Tauri shell",
+  "description": "Local-first desktop outliner with an Electron shell and TypeScript core",
+  "main": "out/main/main.js",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "dev:tauri": "bun scripts/tauri-dev-server.mjs",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && electron-vite build",
     "preview": "vite preview",
-    "tauri": "tauri",
-    "app:dev": "tauri dev",
-    "app:build": "tauri build",
+    "app:dev": "electron-vite dev",
+    "app:build": "electron-vite build && electron-builder",
     "typecheck": "tsc --noEmit",
+    "test:core": "bun test tests/core",
     "test:renderer": "bun test tests/renderer",
-    "test:e2e": "playwright test",
-    "test:rust": "cargo test --workspace"
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "^0.74.0",
     "@earendil-works/pi-ai": "^0.74.0",
-    "@tauri-apps/api": "^2.9.0",
     "lucide-react": "^0.575.0",
     "prosemirror-commands": "^1.7.1",
     "prosemirror-model": "^1.25.4",
@@ -31,11 +29,32 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.58.1",
-    "@tauri-apps/cli": "^2.9.0",
+    "@types/node": "^25.7.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.1.3",
+    "electron": "^42.0.1",
+    "electron-builder": "^26.8.1",
+    "electron-vite": "^5.0.0",
     "typescript": "^5.9.3",
     "vite": "^7.2.0"
-  }
+  },
+  "build": {
+    "appId": "com.linoutliner.desktop",
+    "productName": "Lin Outliner",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": "dmg",
+      "identity": null
+    }
+  },
+  "trustedDependencies": [
+    "electron"
+  ]
 }

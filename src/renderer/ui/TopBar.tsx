@@ -31,7 +31,7 @@ export function TopBar(props: TopBarProps) {
   return (
     <header
       className="top-chrome"
-      data-tauri-drag-region="deep"
+      data-electron-drag-region="deep"
     >
       <div className="top-chrome-left" aria-label="Window and navigation controls">
         <div className="window-controls-spacer" aria-hidden="true" />

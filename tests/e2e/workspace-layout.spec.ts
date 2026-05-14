@@ -46,7 +46,7 @@ test.describe('workspace layout resizing', () => {
     const accountButton = await page.getByTitle('Account').boundingBox();
     const panels = page.locator('.outline-panel-surface');
     await expect(panels).toHaveCount(2);
-    await expect(page.locator('.top-chrome')).toHaveAttribute('data-tauri-drag-region', 'deep');
+    await expect(page.locator('.top-chrome')).toHaveAttribute('data-electron-drag-region', 'deep');
     const firstBefore = await panels.nth(0).boundingBox();
     const secondBefore = await panels.nth(1).boundingBox();
     expect(chrome).toBeTruthy();

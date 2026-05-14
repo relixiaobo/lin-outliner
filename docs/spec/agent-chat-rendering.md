@@ -20,8 +20,8 @@ For the proposed pi-mono runtime architecture, see
 
 ## Non-Goals
 
-- Do not copy terminal-specific rendering from Claude Code. Lin Outliner is a
-  Tauri and React application, not a terminal UI.
+- Do not copy terminal-specific rendering from Claude Code. Lin Outliner is an
+  Electron and React application, not a terminal UI.
 - Do not put agent stream state into `DocumentProjection`.
 - Do not make the agent panel a child of a single outline panel.
 - Do not let every streamed token produce a full React tree update.
@@ -284,14 +284,14 @@ getCurrentSelection(tabId: string): Promise<PanelSelectionSnapshot | null>;
 openNodeInPanel(tabId: string, nodeId: NodeId): Promise<void>;
 ```
 
-Mutating tools must go through the same Rust-backed command flow as human UI
+Mutating tools must go through the same TypeScript-backed command flow as human UI
 actions:
 
 ```txt
 Agent tool request
   -> validation and optional approval
-  -> Tauri command
-  -> lin-core mutation
+  -> Electron IPC command
+  -> TypeScript core mutation
   -> persisted snapshot
   -> DocumentProjection returned to React
 ```

@@ -134,6 +134,7 @@ button:focus-visible {
   gap: var(--panel-gap);
   background: var(--app-bg);
   padding: var(--layout-gap) var(--shell-padding-x) 0;
+  -webkit-app-region: drag;
 }
 
 .top-chrome-left,
@@ -170,6 +171,7 @@ button:focus-visible {
   color: currentColor;
   cursor: pointer;
   transition: background 120ms ease, color 120ms ease;
+  -webkit-app-region: no-drag;
 }
 
 .top-chrome-icon-button:hover:not(:disabled) {
@@ -213,6 +215,7 @@ button:focus-visible {
   line-height: 22px;
   overflow: hidden;
   transition: background 120ms ease;
+  -webkit-app-region: no-drag;
 }
 
 .workspace-tab.active {

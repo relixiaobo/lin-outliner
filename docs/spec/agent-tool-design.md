@@ -12,7 +12,7 @@ role.
 
 - Let the agent perform the same document operations a user can perform.
 - Keep the outliner tool set compact and predictable.
-- Put outliner semantics in Rust-backed tools, not in the model prompt.
+- Put outliner semantics in TypeScript-backed tools, not in the model prompt.
 - Make every mutation previewable, auditable, and undoable.
 - Return structured results that tell the agent what happened and how to
   recover from partial success.
@@ -25,7 +25,7 @@ role.
   each user turn as a system reminder.
 - Do not simulate UI gestures such as clicking buttons or pressing Tab. Tools
   expose the document operation behind the gesture.
-- Do not expose internal Rust command names as the public agent API.
+- Do not expose internal Electron IPC command names as the public agent API.
 - Do not make file, bash, or web tools responsible for outliner mutations.
 
 ## Tool Registry
@@ -147,7 +147,7 @@ Guidance fields are first-class:
 Use guidance fields for unknown tags, unresolved fields, permission denials,
 truncation, no-op updates, and ambiguous targets.
 
-`ToolPreview` and `ValidationReport` are defined in the Rust parser section
+`ToolPreview` and `ValidationReport` are defined in the TypeScript parser section
 because they are produced by the mutation planner, but they belong in the common
 envelope for every previewable mutating tool.
 
@@ -183,12 +183,12 @@ creation, reading, and text replacement edits:
 - `node_create.outline` inserts new structure.
 - `node_read(..., format: "outline" | "both")` serializes existing structure.
 - `node_edit.oldString/newString` edits that serialized outline by exact string
-  replacement, then Rust parses and applies the result.
+  replacement, then TypeScript parses and applies the result.
 
 The agent-facing outline must stay clean. Do not embed node ids, internal CRDT
 metadata, timestamps, or implementation markers in outline text. Identity comes
 from explicit tool parameters (`nodeId`, `parentId`, `afterId`) and from the
-structured `node_read` payload. Rust may keep an internal span map from
+structured `node_read` payload. TypeScript may keep an internal span map from
 serialized text ranges to node ids, but that map is not model-visible.
 
 `operation_history` is a Lin extension over nodex's AI-only `undo` tool. Keep it
@@ -203,7 +203,7 @@ Read/create/edit symmetry:
   means today's journal node, not the currently focused UI node.
 - `node_edit` targets one existing root by `nodeId`, applies exact
   `oldString/newString` replacement to the outline returned by `node_read`, and
-  then lets Rust parse the full resulting outline.
+  then lets TypeScript parse the full resulting outline.
 - Precise child edits should target that child's `nodeId` directly. Parent
   context is only needed when inserting, moving, or disambiguating repeated text.
 
@@ -211,7 +211,7 @@ Read/create/edit symmetry:
 
 The Lin Outline Format is a parser-backed text representation for outliner
 content. It is used by `node_create`, `node_read`, and `node_edit`. TypeScript
-may do fast schema checks, but Rust owns parsing, resolution, preview,
+may do fast schema checks, but TypeScript owns parsing, resolution, preview,
 validation, and application.
 
 Agent-facing syntax:
@@ -255,7 +255,7 @@ Rules:
 Runtime compatibility:
 
 - Tool descriptions should teach only the canonical format above.
-- Rust may accept copied list text, missing bullets, tabs, or other paste
+- TypeScript may accept copied list text, missing bullets, tabs, or other paste
   variants through a compatibility normalizer.
 - Compatibility normalization is not a prompt contract. If normalization changes
   meaning or cannot be made deterministic, return a parse error with line and
@@ -703,7 +703,7 @@ Outline edit semantics:
   is exact.
 - For `oldString: "*"`, `newString` must contain exactly one root line because
   that root maps to `nodeId`.
-- Rust replaces the matched fragment, parses the resulting whole outline, builds
+- TypeScript replaces the matched fragment, parses the resulting whole outline, builds
   a mutation plan, validates it, renders a preview, and then applies it after
   approval when needed.
 - The root of a full-outline replacement maps to `nodeId`. If the replacement
@@ -923,15 +923,15 @@ Result behavior:
 - If history storage cannot list operations yet, implement `undo` and `redo`
   first but return a clear `boundary` for `list`.
 
-## Rust Parser, Preview, and Validation
+## TypeScript Parser, Preview, and Validation
 
-Rust owns the complete outliner mutation pipeline. The TypeScript adapter should
-only normalize arguments, invoke Tauri commands, and wrap Rust responses in
+TypeScript owns the complete outliner mutation pipeline. The TypeScript adapter should
+only normalize arguments, invoke Electron IPC commands, and wrap TypeScript responses in
 `ToolResult`.
 
 ### Parser modules
 
-Expected Rust modules:
+Expected TypeScript modules:
 
 ```txt
 lin_outline_parser
@@ -944,38 +944,35 @@ lin_tool_validation
 
 Core responsibilities:
 
-```rust
-parse_outline(input: &str) -> Result<OutlineDocument, ParseError>
-serialize_outline(state: &DocumentState, node_id: &str, opts: SerializeOptions)
-  -> Result<SerializedOutline>
-resolve_outline(ast: OutlineDocument, state: &DocumentState, policy: ResolvePolicy)
-  -> Result<ResolvedOutline, ValidationReport>
-build_mutation_plan(resolved: ResolvedOutline, context: ToolContext)
-  -> Result<MutationPlan, ValidationReport>
-validate_plan(plan: &MutationPlan, state: &DocumentState) -> ValidationReport
-render_preview(plan: &MutationPlan, state: &DocumentState) -> ToolPreview
-apply_plan(plan: MutationPlan, state: &mut DocumentState) -> Result<OperationResult>
+```ts
+parseOutline(input: string): OutlineDocument
+serializeOutline(state: DocumentState, nodeId: string, opts: SerializeOptions): SerializedOutline
+resolveOutline(ast: OutlineDocument, state: DocumentState, policy: ResolvePolicy): ResolvedOutline
+buildMutationPlan(resolved: ResolvedOutline, context: ToolContext): MutationPlan
+validatePlan(plan: MutationPlan, state: DocumentState): ValidationReport
+renderPreview(plan: MutationPlan, state: DocumentState): ToolPreview
+applyPlan(plan: MutationPlan, state: DocumentState): OperationResult
 ```
 
 `SerializedOutline` contains the model-facing text plus an internal span map:
 
-```rust
-struct SerializedOutline {
-    text: String,
-    revision: String,
-    span_map: Vec<OutlineSpan>,
+```ts
+interface SerializedOutline {
+  text: string;
+  revision: string;
+  spanMap: OutlineSpan[];
 }
 
-struct OutlineSpan {
-    byte_start: usize,
-    byte_end: usize,
-    node_id: NodeId,
-    field_entry_id: Option<NodeId>,
-    value_node_id: Option<NodeId>,
+interface OutlineSpan {
+  start: number;
+  end: number;
+  nodeId: NodeId;
+  fieldEntryId?: NodeId;
+  valueNodeId?: NodeId;
 }
 ```
 
-The span map is not returned to the model. It lets Rust understand which current
+The span map is not returned to the model. It lets TypeScript understand which current
 nodes were touched by `oldString/newString` without polluting the outline with id
 markers.
 
@@ -1012,7 +1009,7 @@ Identity rules:
 
 - The root of a full-outline replacement maps to the `nodeId` argument.
 - Unchanged text outside the replacement keeps identity through the span map.
-- Inside the replacement range, Rust may preserve identity only when the old and
+- Inside the replacement range, TypeScript may preserve identity only when the old and
   new fragment shape makes the mapping unambiguous.
 - If a changed fragment contains repeated sibling titles or nodes with fields,
   children, references, or history and identity cannot be proven, validation must
@@ -1024,27 +1021,26 @@ Identity rules:
 `MutationPlan` is internal. It is the only object that can be applied to
 document state.
 
-```rust
-enum MutationOp {
-    CreateNode,
-    UpdateNodeContent,
-    UpdateNodeDescription,
-    SetChecked,
-    ApplyTag,
-    RemoveTag,
-    CreateFieldEntry,
-    SetFieldValues,
-    ClearField,
-    CreateReference,
-    ReplaceWithReference,
-    MoveNode,
-    MergeNodes,
-    RedirectReferences,
-    TrashNode,
-    RestoreNode,
-    UpdateSearchConfig,
-    UpdateViewConfig,
-}
+```ts
+type MutationOp =
+  | 'createNode'
+  | 'updateNodeContent'
+  | 'updateNodeDescription'
+  | 'setChecked'
+  | 'applyTag'
+  | 'removeTag'
+  | 'createFieldEntry'
+  | 'setFieldValues'
+  | 'clearField'
+  | 'createReference'
+  | 'replaceWithReference'
+  | 'moveNode'
+  | 'mergeNodes'
+  | 'redirectReferences'
+  | 'trashNode'
+  | 'restoreNode'
+  | 'updateSearchConfig'
+  | 'updateViewConfig';
 ```
 
 Planning must be deterministic. If the same current state and same tool
@@ -1077,7 +1073,7 @@ be called out explicitly.
 
 ### Validation rules
 
-Rust validation is the security and correctness boundary.
+TypeScript validation is the security and correctness boundary.
 
 Required checks:
 
@@ -1142,9 +1138,9 @@ Path rules:
 - Concrete file tools use `file_path`.
 - Search tools use `path` as an optional search root.
 - Model-facing `file_path` values should be absolute paths. The adapter may
-  resolve user-provided workspace-relative paths before the tool call, but Rust
+  resolve user-provided workspace-relative paths before the tool call, but TypeScript
   returns canonical absolute paths.
-- Rust must enforce the active workspace boundary unless the user explicitly
+- TypeScript must enforce the active workspace boundary unless the user explicitly
   grants a broader root.
 
 ### `file_read`
@@ -1272,7 +1268,7 @@ interface FileGlobData {
 Result behavior:
 
 - Results should be sorted by modified time, newest first, matching cc `Glob`.
-- Rust should cap result count and set `truncated` when needed.
+- TypeScript should cap result count and set `truncated` when needed.
 - Use `file_grep`, not `file_glob`, when the task is content search.
 
 ### `file_grep`
@@ -1321,7 +1317,7 @@ Result behavior:
 - Default to `files_with_matches` so broad searches stay cheap.
 - `content` mode should include file paths and line numbers when useful.
 - Multiline search should be explicit because it is more expensive.
-- Rust must enforce hard output caps even when `head_limit` is `0`. If Lin needs
+- TypeScript must enforce hard output caps even when `head_limit` is `0`. If Lin needs
   to expose hard-cap truncation beyond cc's `appliedLimit`, put it in the common
   `ToolResult.metrics`, not inside `FileGrepData`.
 
@@ -1524,7 +1520,7 @@ Shared behavior:
 - Tools are `isReadOnly: true`, `isConcurrencySafe: true`, and should use a
   `maxResultSizeChars` budget around `100_000`.
 - Prefer an embedded browser/session-backed fetch path when available so normal
-  user cookies and proxy settings work. A Rust HTTP client is acceptable for v1
+  user cookies and proxy settings work. A TypeScript HTTP client is acceptable for v1
   if browser session plumbing is not ready.
 - Return content separately from telemetry. The `data.content` or
   `data.results` fields carry what the model needs; status, bytes, final URL,
@@ -1793,7 +1789,7 @@ interface PastChatsData {
 
 ## Mapping to Current Lin Commands
 
-The public tools should compile down to Rust-backed commands. Current command
+The public tools should compile down to TypeScript-backed commands. Current command
 coverage maps as follows:
 
 | Public tool | Current or needed backend capability |
@@ -1804,17 +1800,17 @@ coverage maps as follows:
 | `node_edit` | Canonical outline exact replacement compiled to `update_node_text`, `toggle_done`, tag/field mutations, `move_node`, `merge_node_into`, reference replacement, and search/view updates. |
 | `node_delete` | `trash_node`, `batch_trash_nodes`, `restore_node`; permanent delete is not exposed to agent v1. |
 | `operation_history` | `undo`, `redo`, future operation log/list with origin metadata. |
-| `file_read` | Needed Rust file read command with path normalization, pagination, and freshness tracking. |
-| `file_glob` | Needed Rust glob command under allowed roots. |
-| `file_grep` | Needed Rust grep/search command under allowed roots with output caps. |
-| `file_edit` | Needed Rust exact-replacement command with read-before-edit freshness checks. |
-| `file_write` | Needed Rust create/rewrite command with read-before-write freshness checks for existing files. |
-| `bash` | Needed Rust command runner with timeout, approval, background task support, and output persistence. |
-| `task_stop` | Needed Rust background task stop command scoped to Lin-created bash tasks. |
+| `file_read` | Needed TypeScript file read command with path normalization, pagination, and freshness tracking. |
+| `file_glob` | Needed TypeScript glob command under allowed roots. |
+| `file_grep` | Needed TypeScript grep/search command under allowed roots with output caps. |
+| `file_edit` | Needed TypeScript exact-replacement command with read-before-edit freshness checks. |
+| `file_write` | Needed TypeScript create/rewrite command with read-before-write freshness checks for existing files. |
+| `bash` | Needed Electron IPC command runner with timeout, approval, background task support, and output persistence. |
+| `task_stop` | Needed TypeScript background task stop command scoped to Lin-created bash tasks. |
 | `web_search` | Needed web search adapter: provider-backed search or embedded-browser SERP extraction, host permission scope, rate limiting, structured hints. |
-| `web_fetch` | Needed URL fetch adapter: Rust HTTP and/or embedded browser session fetch, HTML-to-markdown extraction, pagination, find mode, structured hints. |
+| `web_fetch` | Needed URL fetch adapter: TypeScript HTTP and/or embedded browser session fetch, HTML-to-markdown extraction, pagination, find mode, structured hints. |
 
-Lin should prefer adding semantic Rust core commands where the current command
+Lin should prefer adding semantic TypeScript core commands where the current command
 set is too UI-shaped. For example, semantic target/source merge is better for
 agents than only `merge_node_into_previous`.
 
@@ -1853,10 +1849,10 @@ commands should require approval even in permissive modes.
 ## Implementation Notes
 
 - Tool schemas live in the TypeScript pi-mono adapter, but validation and
-  mutation semantics should be enforced again in Rust.
-- The TypeScript adapter should remain thin: normalize parameters, invoke Tauri,
-  and convert Rust responses into `ToolResult`.
-- Rust should own outliner parsing, tag resolution, field resolution, operation
+  mutation semantics should be enforced again in TypeScript.
+- The TypeScript adapter should remain thin: normalize parameters, invoke Electron,
+  and convert TypeScript responses into `ToolResult`.
+- TypeScript should own outliner parsing, tag resolution, field resolution, operation
   grouping, permissions, and persistence.
 - All document mutations should create an operation history entry with origin,
   summary, affected nodes, and undo group id.

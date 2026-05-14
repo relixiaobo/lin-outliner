@@ -1,6 +1,6 @@
 # UI And Interaction Spec
 
-The outliner should follow nodex-style behavior while using the new Rust
+The outliner should follow nodex-style behavior while using the TypeScript
 core. This file is the parity checklist for future UI changes: any outliner
 keyboard or pointer change should be checked against this matrix.
 

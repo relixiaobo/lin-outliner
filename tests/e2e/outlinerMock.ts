@@ -23,10 +23,13 @@ type E2EWindow = Window & {
     projection: () => unknown;
     clipboardText: () => string;
   };
-  __TAURI_INTERNALS__?: unknown;
+  lin?: {
+    invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+    onAgentEvent: (listener: (event: unknown) => void) => () => void;
+  };
 };
 
-export async function installTauriMock(page: Page) {
+export async function installElectronMock(page: Page) {
   await page.addInitScript(({ ids }) => {
     type RichText = { text: string; marks: unknown[]; inlineRefs: Array<{ offset: number; targetNodeId: string; displayName?: string }> };
     type MockNode = {
@@ -266,9 +269,11 @@ export async function installTauriMock(page: Page) {
     });
 
     win.__LIN_E2E__ = { calls, projection, clipboardText: () => clipboardText };
-    win.__TAURI_INTERNALS__ = {
-      invoke: async (cmd: string, args: Record<string, unknown> = {}) => {
+    win.lin = {
+      invoke: async <T,>(cmd: string, args: Record<string, unknown> = {}): Promise<T> => {
         calls.push({ cmd, args: clone(args) });
+        if (cmd === 'agent_create_session') return clone({ sessionId: 'mock-agent-session' }) as T;
+        if (cmd.startsWith('agent_')) return clone(undefined) as T;
         if (cmd === 'init_workspace' || cmd === 'get_projection') return clone(projection());
         if (cmd === 'create_node') {
           const nodeId = createNode(String(args.parentId), args.index as number | null, String(args.text ?? ''));
@@ -477,8 +482,7 @@ export async function installTauriMock(page: Page) {
         }
         throw new Error(`Unhandled mock invoke: ${cmd}`);
       },
-      transformCallback: (callback: unknown) => callback,
-      unregisterCallback: () => undefined,
+      onAgentEvent: () => () => undefined,
     };
   }, { ids });
 }
@@ -500,7 +504,7 @@ export function trailingEditor(page: Page, parentId = ids.today) {
 }
 
 export async function openMockedApp(page: Page) {
-  await installTauriMock(page);
+  await installElectronMock(page);
   await page.goto('/');
   await expect(row(page, ids.alpha)).toContainText('Alpha');
   await expect(row(page, ids.beta)).toContainText('Beta');

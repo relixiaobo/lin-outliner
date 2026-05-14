@@ -5,7 +5,7 @@ runtime using pi-mono as the agent core.
 
 The goal is to reuse pi-mono for model/provider abstraction, streaming, and the
 agent loop, while keeping Lin's local capabilities, document mutations, and
-security boundaries in Rust.
+security boundaries in TypeScript.
 
 ## Decision
 
@@ -18,7 +18,7 @@ Lin should use these pi-mono packages:
 
 Lin should not directly use `pi-coding-agent` as the product agent runtime. Its
 built-in terminal tools are useful implementation references, but Lin's tools
-must execute through the Rust command bridge so file access, bash execution,
+must execute through the Electron IPC command bridge so file access, bash execution,
 document mutation, undo, approval, and workspace boundaries stay under Lin's
 control.
 
@@ -34,14 +34,14 @@ pi-agent-core
   -> Agent state and subscriptions
   -> steer / abort / replaceMessages
 
-Lin Node agent worker
+Lin Electron main process
   -> creates Agent
   -> maps pi-mono events into Lin snapshots/events
   -> exposes Lin tools as AgentTool[]
-  -> calls Rust tool gateway for local operations
+  -> calls TypeScript tool gateway for local operations
 
-Lin Rust backend
-  -> AgentHost process lifecycle
+Lin Electron main process
+  -> AgentRuntime session lifecycle
   -> API key / credential storage
   -> bash execution
   -> file operations
@@ -52,7 +52,7 @@ Lin Rust backend
 Lin renderer
   -> Agent UI only
   -> sends prompt/stop/approve commands
-  -> renders Rust-forwarded agent events
+  -> renders TypeScript-forwarded agent events
 ```
 
 ## Runtime Boundary
@@ -64,36 +64,34 @@ The pi-mono Agent should not live in the renderer once real models and tools are
 enabled. The clean boundary is:
 
 - Renderer: Agent UI, input, transcript rendering, and approval controls.
-- Rust backend: AgentHost, local security boundary, API key storage, persistence,
+- Electron main process: AgentRuntime, local security boundary, API key storage, persistence,
   approval enforcement, and tool gateway.
-- Node agent worker: pi-mono agent loop, provider streaming, context assembly,
+- Electron main process: pi-mono agent loop, provider streaming, context assembly,
   and tool-call orchestration.
 
-Rust remains the authority for every operation that touches the local machine,
-credentials, or document state. The worker may request tool execution, but Rust
-performs the operation or rejects it.
+Electron main process remains the authority for every operation that touches the
+local machine, credentials, or document state. The pi-mono loop may request tool
+execution, but the TypeScript tool gateway performs the operation or rejects it.
 
 ```txt
 Agent input
   -> renderer agent client
-  -> Tauri command
-  -> Rust AgentHost
-  -> Node pi-mono worker
+  -> Electron IPC command
+  -> Electron AgentRuntime
   -> pi-agent-core Agent
   -> pi-ai stream
   -> tool calls
-  -> Rust tool gateway
-  -> lin-core / filesystem / shell
+  -> TypeScript tool gateway
+  -> TypeScript core / filesystem / shell
   -> tool result
   -> pi-agent-core continues loop
-  -> worker emits normalized snapshot/event
-  -> Rust forwards event
+  -> Electron main emits normalized snapshot/event
   -> renderer transcript
 ```
 
 The renderer may hold transient UI state, but it must not hold provider API keys
-or directly execute model/tool logic. This keeps a future Rust-native agent core
-possible: it only needs to implement the AgentHost event/command contract.
+or directly execute model/tool logic. This keeps a future TypeScript-native agent core
+possible: it only needs to implement the AgentRuntime event/command contract.
 
 ## Package Usage
 
@@ -115,41 +113,37 @@ own adapter modules so product code does not depend on package names directly.
 Suggested module boundary:
 
 ```txt
-src-tauri/src/agent_host.rs
-  # owns worker lifecycle, command transport, and event forwarding
-
-src-tauri/agent-worker/
-  pi-mono-worker.mjs     # only place that imports pi-ai / pi-agent-core
+src/main/agentRuntime.ts
+  # owns pi-agent-core sessions, command transport, and event forwarding
 
 src/renderer/agent/
-  runtime.ts              # UI client for Rust AgentHost
+  runtime.ts              # UI client for Electron AgentRuntime
   types.ts                # renderer-owned event/message DTOs
 ```
 
-Only the Node worker should import pi-mono directly. Renderer code should depend
+Only Electron main process agent modules should import pi-mono directly. Renderer code should depend
 on Lin-owned DTOs, not pi-mono package types.
 
 ## Agent Runtime
 
-Lin should wrap pi-agent-core inside the local Node worker. Product UI talks to
-Rust AgentHost through a renderer `useLinAgentRuntime` client, never to a raw
+Lin should wrap pi-agent-core inside Electron main process. Product UI talks to
+Electron AgentRuntime through a renderer `useLinAgentRuntime` client, never to a raw
 pi-mono Agent.
 
 Responsibilities:
 
-- Worker: create and configure the pi-mono `Agent`.
-- Worker: set the active model, system prompt, and tool list.
-- Rust: start sessions, route prompts, stop runs, and manage worker lifecycle.
-- Rust: resolve API keys at stream time and expose only key references to the
-  worker when needed.
-- Rust: execute or reject every local tool call.
-- Worker: subscribe to Agent events and emit normalized snapshots/events.
+- Electron main process: create and configure the pi-mono `Agent`.
+- Electron main process: set the active model, system prompt, and tool list.
+- Electron main process: start sessions, route prompts, stop runs, and manage runtime lifecycle.
+- Electron main process: resolve API keys at stream time.
+- Electron main process: execute or reject every local tool call.
+- Electron main process: subscribe to Agent events and emit normalized snapshots/events.
 - Renderer: render snapshots and send user intents.
 
 Conceptual shape:
 
 ```ts
-interface AgentHostClient {
+interface AgentRuntimeClient {
   createSession(): Promise<AgentSession>;
   sendMessage(sessionId: string, message: string): Promise<void>;
   stopSession(sessionId: string): Promise<void>;
@@ -176,12 +170,12 @@ Model configuration should include:
 - Reasoning level if the selected model supports it.
 - Temperature and max token defaults.
 
-The API key should be read at stream time through Lin's Rust credential path. It
+The API key should be read at stream time through Lin's TypeScript credential path. It
 should not be embedded into persisted agent messages, tool results, renderer
-state, or worker command payloads.
+state, or IPC command payloads.
 
 Lin does not need OS keychain for the first implementation. Use app-data files
-owned by Rust:
+owned by TypeScript:
 
 ```txt
 agent-providers.json
@@ -195,7 +189,7 @@ agent-secrets.json
 
 Renderer-facing commands may return provider configuration and `hasApiKey`, but
 must not return the API key itself. Runtime provider resolution should happen
-through Rust AgentHost or the Rust tool/provider gateway.
+through Electron AgentRuntime or the TypeScript tool/provider gateway.
 
 ## System Prompt
 
@@ -214,7 +208,7 @@ It should state:
   workspace operations or when the task clearly requires them.
 
 Avoid putting implementation details such as React component names or internal
-Rust function names into the system prompt unless a tool needs them.
+TypeScript function names into the system prompt unless a tool needs them.
 
 ## Context Construction
 
@@ -247,13 +241,13 @@ policy separate so it can preserve outliner-specific anchors.
 ## Tool Model
 
 All tools exposed to pi-agent-core should be Lin tools. A tool is a TypeScript
-adapter around a Tauri command.
+adapter around a Electron IPC command.
 
 ```txt
 AgentTool.execute(args)
   -> validate args
   -> check approval policy
-  -> invoke Tauri command
+  -> invoke Electron IPC command
   -> normalize result
   -> return AgentToolResult
 ```
@@ -284,7 +278,7 @@ nodes through outliner verbs and each write is undoable as one AI operation.
 Lin should keep nodex's compact `node_*` surface, but use Lin's own final
 contracts from `agent-tool-design.md`: `node_create.outline`,
 `node_read(..., format: "outline" | "both")`, and
-`node_edit.oldString/newString`. The parser is implemented in Rust rather than
+`node_edit.oldString/newString`. The parser is implemented in TypeScript rather than
 left as prompt-only behavior. Compatibility normalization belongs in the
 adapter/runtime layer and should not appear in the model-facing tool
 description. Lin code should use neutral parser names such as
@@ -341,7 +335,7 @@ fit into the pi-mono runtime.
 
 These tools should be configured first.
 
-| Tool | Reference | Rust-backed? | Approval | Purpose |
+| Tool | Reference | TypeScript-backed? | Approval | Purpose |
 |---|---|---:|---|---|
 | `node_search` | nodex `node_search`, Lin search-node outline | Yes | No | Execute a temporary or saved search node outline without mutating document state. |
 | `node_read` | nodex `node_read` | Yes | No | Read node raw type/data, fields, and bounded children. |
@@ -368,7 +362,7 @@ belong inside `node_create` and `node_edit` semantics, not separate `node_tag`,
 
 Add these once P0 is reliable.
 
-| Tool | Reference | Rust-backed? | Approval | Purpose |
+| Tool | Reference | TypeScript-backed? | Approval | Purpose |
 |---|---|---:|---|---|
 | `past_chats` | nodex `past_chats` | Yes | No | Search and read older Lin agent conversations. |
 
@@ -380,7 +374,7 @@ commands exist.
 
 These should wait until the product needs them.
 
-| Tool | Reference | Rust-backed? | Approval | Purpose |
+| Tool | Reference | TypeScript-backed? | Approval | Purpose |
 |---|---|---:|---|---|
 | `browser` | nodex `browser` | Yes | Usually yes | Control an embedded browser tab if Lin adds one. |
 | `mcp_list_resources` | cc `ListMcpResources` | Yes | No | Discover MCP resources. |
@@ -417,9 +411,9 @@ The first implementation should configure only the P0 tools listed above.
 Additional tools should be added by phase, not because a reference project has
 them.
 
-## Rust Tool Commands
+## TypeScript Tool Commands
 
-Rust command handlers should be the only place where local side effects happen.
+Electron main handlers should be the only place where local side effects happen.
 
 Expected command families:
 
@@ -459,7 +453,7 @@ Each command should return:
 - optional `operation` with `undoGroupId` for document mutations
 - optional `requiresApproval` for deferred execution
 
-Rust should validate paths, workspace boundaries, command timeouts, output size,
+TypeScript should validate paths, workspace boundaries, command timeouts, output size,
 and mutation legality. TypeScript validation is useful for fast feedback, but it
 is not the security boundary.
 
@@ -489,7 +483,7 @@ Approval flow:
 
 ```txt
 Tool call starts
-  -> adapter asks Rust for preview or risk classification
+  -> adapter asks TypeScript for preview or risk classification
   -> AgentStore records approval row
   -> tool promise waits
   -> user approves or rejects
@@ -525,7 +519,7 @@ The raw pi-mono event can be kept in the run event log for debugging, but UI
 components should render from Lin's normalized event model.
 
 This keeps the transcript renderer independent from pi-mono and makes future
-migration to a Rust agent core or another library possible.
+migration to a TypeScript agent core or another library possible.
 
 ## State Persistence
 
@@ -627,13 +621,13 @@ mark the run as failed and leave the transcript readable.
 ## Local Security
 
 The local agent is powerful because it can edit files, run commands, and mutate
-the outliner. Rust must enforce the boundary.
+the outliner. TypeScript must enforce the boundary.
 
 Baseline rules:
 
 - Restrict file tools to the active workspace unless the user explicitly grants
   broader access.
-- Normalize and canonicalize paths in Rust.
+- Normalize and canonicalize paths in TypeScript.
 - Enforce command timeout and output limits.
 - Redact known secret patterns from tool output where possible.
 - Require approval for destructive file and shell operations.
@@ -683,7 +677,7 @@ Phase 3: outliner node tools
 - Implement Lin Outline parser, search-node outline parser, validation,
   mutation planning, and preview data.
 - Render node tool previews and approval rows using Lin `ToolPreview`.
-- Apply mutations through Rust commands.
+- Apply mutations through Electron IPC commands.
 - Group mutations into undoable transactions.
 - Keep agent state outside document projection.
 
@@ -713,7 +707,7 @@ Unit tests:
 - Context builder token and size limits.
 - Approval policy classification.
 
-Rust tests:
+core tests:
 
 - Path boundary enforcement.
 - Bash timeout and output truncation.
@@ -739,11 +733,11 @@ Keep these interfaces stable:
 - Lin-owned `AgentEvent`.
 - Lin-owned `AgentMessage`.
 - Lin-owned `AgentToolDefinition`.
-- Lin-owned Rust command payloads.
+- Lin-owned Electron IPC command payloads.
 - Lin-owned persisted conversation schema.
 
-If Lin later moves to a Rust agent core, the replacement should only need to
-implement the runtime adapter contract. Document tools, Rust commands,
+If Lin later moves to a TypeScript agent core, the replacement should only need to
+implement the runtime adapter contract. Document tools, Electron IPC commands,
 permissions, transcript rendering, and persistence should remain mostly intact.
 
 ## Summary
@@ -755,4 +749,4 @@ Lin should provide the local body: outliner operations, file operations, bash,
 permissions, approvals, undo, persistence, and UI state.
 
 This split gives Lin a fast path to a capable local agent without giving up
-control over the local-first Rust core.
+control over the local-first TypeScript core.

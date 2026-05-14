@@ -152,13 +152,11 @@ Visual rules:
 - Workspace tabs and top chrome controls share the same vertical center line.
 - The `26px` tab/control row sits `8px` from the top edge.
 - The visible gap from chrome bottom to panel top is `--layout-gap`.
-- On macOS, native traffic-light controls are positioned through Tauri
+- On macOS, native traffic-light controls are positioned through Electron
   `trafficLightPosition`. Their visual height is smaller than the `26px`
-  toolbar row, so the default `y` inset is `14px` to optically center the
-  circles against the row rather than copying the `8px` row top inset.
-- Empty chrome space uses `data-tauri-drag-region="deep"` so native window
-  dragging and macOS double-click maximize behavior come from Tauri's drag
-  region script.
+  toolbar row, so the default `y` inset is `8px` to align with the row top inset.
+- Empty chrome space uses `data-electron-drag-region="deep"` and
+  `-webkit-app-region: drag` so native window dragging works in Electron.
 - Interactive controls and tabs must remain native-clickable and must not start
   a window drag.
 

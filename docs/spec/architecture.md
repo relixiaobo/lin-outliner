@@ -7,19 +7,21 @@ external behavior reference only.
 
 ## Runtime Boundaries
 
-- `crates/lin-core`: pure Rust outliner state machine.
-- `src-tauri`: Tauri desktop shell and command bridge.
+- `src/core`: pure TypeScript outliner state machine.
+- `src/main`: Electron main process, persistence, IPC command bridge, and agent runtime.
+- `src/preload`: narrow Electron preload bridge exposed as `window.lin`.
 - `src/renderer`: React view and interaction layer.
 
-Rust core is the only document writer. React keeps UI-only state such as focus,
-expanded rows, selection, popovers, and transient editor drafts.
+The TypeScript core is the only document writer. React keeps UI-only state such
+as focus, expanded rows, selection, popovers, and transient editor drafts.
 
 ## Command Flow
 
 ```txt
 React interaction
-  -> Tauri command
-  -> lin-core mutation
+  -> preload IPC command
+  -> Electron main document service
+  -> TypeScript core mutation
   -> persisted workspace snapshot
   -> DocumentProjection returned to React
 ```
@@ -29,8 +31,6 @@ document content or tree structure must use commands.
 
 ## Type Boundary
 
-Rust structs in `lin-core::model` are serialized with `serde` using camelCase.
-The TypeScript mirror lives in `src/renderer/api/types.ts`. The mirror is kept
-small and protocol-shaped; it should match Rust model fields exactly.
-
-When the protocol stabilizes, this boundary should move to generated types.
+Protocol-shaped TypeScript types live in `src/core/types.ts` and are re-exported
+to the renderer through `src/renderer/api/types.ts`. The renderer API client
+keeps command names stable so UI code does not depend on Electron internals.

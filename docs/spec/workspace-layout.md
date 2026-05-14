@@ -353,7 +353,7 @@ interface AgentPanelState {
 }
 ```
 
-This is UI state. Document content remains in the Rust-backed document model.
+This is UI state. Document content remains in the TypeScript-backed document model.
 
 ## Interaction Examples
 

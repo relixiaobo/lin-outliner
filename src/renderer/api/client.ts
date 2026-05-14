@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import type {
   Backlink,
   AgentProviderConfigInput,
@@ -18,7 +17,8 @@ import type {
 } from './types';
 
 function command<T>(name: string, args?: Record<string, unknown>): Promise<T> {
-  return invoke<T>(name, args);
+  if (window.lin) return window.lin.invoke<T>(name, args);
+  return Promise.reject(new Error('Lin desktop bridge is unavailable'));
 }
 
 export const api = {

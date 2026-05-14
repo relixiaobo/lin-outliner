@@ -74,7 +74,7 @@ Reference sources:
 | Shift+Tab while editing | Outdent current row and keep editor focus. | `outdent_node` with focus offset restore. | `outliner-row-editing.spec.ts` |
 | ArrowUp/Down at editor boundary | Move focus to previous/next visible row. | `moveFocus`. | `outliner-row-editing.spec.ts` |
 | Escape while editing | Exit to single selected-row mode. | `exitToSelection`. | `outliner-row-editing.spec.ts` |
-| Multiline paste in row editor | Replace selected text with first pasted row, create parsed child rows under the current node, and create remaining parsed rows as following siblings. | `paste_nodes_into_node` keeps the paste as one core undo step. | `rowInteractions.test.ts`, `outliner-row-editing.spec.ts`, Rust tests |
+| Multiline paste in row editor | Replace selected text with first pasted row, create parsed child rows under the current node, and create remaining parsed rows as following siblings. | `paste_nodes_into_node` keeps the paste as one core undo step. | `rowInteractions.test.ts`, `outliner-row-editing.spec.ts`, core tests |
 | IME composition in row editor | Do not convert `>` into fields or open trigger menus until composition ends. | Rich text editor defers trigger/update actions during composition. | `rowInteractions.test.ts` |
 
 ## Context And Batch Operations
@@ -83,9 +83,9 @@ Reference sources:
 | --- | --- | --- | --- |
 | Duplicate | Operate on top-level selected rows only. | `selectedRootIds`. | `outlinerParity.test.ts` |
 | Trash | Operate on top-level selected rows only. | `selectedRootIds`. | `outlinerParity.test.ts`, `outliner-selection.spec.ts` |
-| Move up/down | Operate on selected sibling block. | Core batch move commands. | Rust tests |
+| Move up/down | Operate on selected sibling block. | Core batch move commands. | core tests |
 | Done | For references, toggle the target node, not the display reference row. | `targetIdsForRows`. | `outlinerParity.test.ts`, `outliner-selection-keyboard.spec.ts` |
-| Add tag | Batch apply to selected target nodes; create tag then apply if needed. | `batch_apply_tag`. | Rust + renderer + E2E tests |
+| Add tag | Batch apply to selected target nodes; create tag then apply if needed. | `batch_apply_tag`. | core + renderer + E2E tests |
 | Nested selected rows | Parent selection suppresses child duplicate/trash/move. | `selectedRootIds`. | `outlinerParity.test.ts` |
 | Duplicate references to same target | Target operations are deduped. | `targetIdsForRows`. | `outlinerParity.test.ts` |
 | Batch duplicate | Duplicate all selected rows after sources. | `batch_duplicate_nodes`. | `outliner-selection-keyboard.spec.ts` |
