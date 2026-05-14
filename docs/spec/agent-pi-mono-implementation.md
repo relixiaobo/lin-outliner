@@ -60,6 +60,12 @@ Lin renderer
 The agent dock remains a cross-tab shell feature. It owns conversation state and
 rendering. The outliner owns document state and panel state.
 
+Lin's current product runtime is TypeScript/Electron only. Agent tools, outliner
+mutation planning, outline parsing, preview rendering data, validation, undo
+grouping, file access, bash execution, and web adapters should all be implemented
+through TypeScript modules under Electron main and `src/core`. Do not introduce a
+Rust-side parser or command bridge for the current architecture.
+
 The pi-mono Agent should not live in the renderer once real models and tools are
 enabled. The clean boundary is:
 

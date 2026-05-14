@@ -12,6 +12,10 @@ external behavior reference only.
 - `src/preload`: narrow Electron preload bridge exposed as `window.lin`.
 - `src/renderer`: React view and interaction layer.
 
+There is no Rust, Cargo, Tauri, or `src-tauri` product runtime in this repository.
+Document state, agent tools, parser logic, preview/validation, and persistence
+are all implemented in TypeScript.
+
 The TypeScript core is the only document writer. React keeps UI-only state such
 as focus, expanded rows, selection, popovers, and transient editor drafts.
 
