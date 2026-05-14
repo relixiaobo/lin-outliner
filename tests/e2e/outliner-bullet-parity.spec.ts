@@ -73,4 +73,22 @@ test.describe('outliner bullet parity', () => {
     expect(Number(styles.fontWeight)).toBeGreaterThanOrEqual(700);
     expect(styles.lineHeight).toBe('9px');
   });
+
+  test('collapsed content bullets use fill only without an outer border', async ({ page }) => {
+    await page.getByRole('button', { name: 'Library' }).click();
+
+    const collapsedBullet = row(page, ids.daily).locator('.row-bullet-shape.content.has-children.collapsed').first();
+    await expect(collapsedBullet).toBeVisible();
+
+    const borderWidths = await collapsedBullet.evaluate((element) => {
+      const computed = getComputedStyle(element);
+      return [
+        computed.borderTopWidth,
+        computed.borderRightWidth,
+        computed.borderBottomWidth,
+        computed.borderLeftWidth,
+      ];
+    });
+    expect(borderWidths).toEqual(['0px', '0px', '0px', '0px']);
+  });
 });

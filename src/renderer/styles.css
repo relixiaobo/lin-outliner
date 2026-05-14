@@ -1776,14 +1776,6 @@ button:focus-visible {
   background: transparent;
 }
 
-.row-bullet-shape.has-children.collapsed {
-  border: 1px solid rgba(26, 26, 26, 0.12);
-}
-
-.row:hover .row-bullet-shape.has-children.collapsed {
-  border-color: rgba(26, 26, 26, 0.22);
-}
-
 .row-bullet-shape.reference {
   border: 1px dashed var(--muted);
 }
