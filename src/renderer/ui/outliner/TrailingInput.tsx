@@ -570,7 +570,11 @@ export function TrailingInput(props: TrailingInputProps) {
           </span>
         </span>
       </span>
-      <div ref={mountRef} className="row-editor trailing-editor idle-hint" />
+      <div
+        ref={mountRef}
+        className={`row-editor trailing-editor idle-hint ${hasContent ? '' : 'is-empty'}`}
+        data-placeholder="Type here or '/' for commands"
+      />
       {optionsOpen && isOptionsField && (
         <div className="node-picker-popover trailing-options-popover" onMouseDown={(event) => event.preventDefault()}>
           {optionCount === 0 && <div className="popover-empty">No options</div>}

@@ -292,6 +292,7 @@ export function NodePanel(props: NodePanelProps) {
               <RichTextEditor
                 nodeId={props.rootId}
                 content={titleContent}
+                placeholder="Untitled"
                 readOnly={rootNode?.locked}
                 completed={Boolean(rootNode?.completedAt)}
                 onFocus={selectHeader}

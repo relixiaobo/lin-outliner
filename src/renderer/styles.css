@@ -1085,11 +1085,6 @@ button:focus-visible {
   min-height: 36px;
 }
 
-.panel-title-editor .row-editor .ProseMirror p:empty::before,
-.panel-title-editor .row-editor .ProseMirror p:has(> br.ProseMirror-trailingBreak:only-child)::before {
-  content: "Untitled";
-}
-
 .panel-title-editor .tag-bar {
   margin-left: 8px;
 }
@@ -1829,6 +1824,7 @@ button:focus-visible {
 }
 
 .row-editor {
+  position: relative;
   min-width: 0;
   color: var(--text);
   font-size: 15px;
@@ -1957,16 +1953,17 @@ button:focus-visible {
   vertical-align: top;
 }
 
-.row-editor .ProseMirror p:empty::before,
-.row-editor .ProseMirror p:has(> br.ProseMirror-trailingBreak:only-child)::before {
+.row-editor.is-empty::before {
+  position: absolute;
+  inset: 0 auto auto 0;
   color: color-mix(in srgb, var(--text) 20%, transparent);
-  content: "Type here";
+  content: attr(data-placeholder);
   pointer-events: none;
+  white-space: nowrap;
 }
 
-.row-editor:not(.trailing-editor) .ProseMirror.ProseMirror-focused p:empty::before,
-.row-editor:not(.trailing-editor) .ProseMirror.ProseMirror-focused p:has(> br.ProseMirror-trailingBreak:only-child)::before {
-  content: "";
+.row-editor:not(.trailing-editor):focus-within::before {
+  display: none;
 }
 
 @keyframes idle-hint-fadein {
@@ -1979,9 +1976,7 @@ button:focus-visible {
   }
 }
 
-.trailing-editor .ProseMirror p:empty::before,
-.trailing-editor .ProseMirror p:has(> br.ProseMirror-trailingBreak:only-child)::before {
-  content: "Type here or '/' for commands";
+.trailing-editor.is-empty::before {
   opacity: 0;
   animation: idle-hint-fadein 0.3s ease 2s forwards;
 }

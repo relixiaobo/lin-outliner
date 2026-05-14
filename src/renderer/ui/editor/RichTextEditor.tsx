@@ -32,6 +32,7 @@ export interface EditorSplitPayload {
 interface RichTextEditorProps {
   nodeId: string;
   content: RichText;
+  placeholder?: string;
   readOnly?: boolean;
   completed?: boolean;
   onFocus: () => void;
@@ -146,6 +147,11 @@ function resolveEditorTrigger(view: EditorView): EditorTrigger | null {
   return null;
 }
 
+function isEmptyDoc(doc: EditorState['doc']) {
+  const content = docToRichText(doc);
+  return content.text.replace(/\u200B/g, '').trim().length === 0 && content.inlineRefs.length === 0;
+}
+
 export function RichTextEditor(props: RichTextEditorProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -153,6 +159,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
   const lastExternalContentRef = useRef(props.content);
   const fieldTriggerFiredRef = useRef(false);
   const composingRef = useRef(false);
+  const [isEmpty, setIsEmpty] = useState(() => props.content.text.trim().length === 0 && props.content.inlineRefs.length === 0);
   const [toolbar, setToolbar] = useState({
     visible: false,
     left: 0,
@@ -226,6 +233,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
         }
         if (transaction.docChanged) {
           const nextContent = docToRichText(nextState.doc);
+          setIsEmpty(nextContent.text.replace(/\u200B/g, '').trim().length === 0 && nextContent.inlineRefs.length === 0);
           lastExternalContentRef.current = nextContent;
           propsRef.current.onChange(nextContent);
           if (!composing) handleContentUpdateAction(nextContent);
@@ -453,6 +461,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
     if (nextDoc.eq(view.state.doc)) return;
     const nextState = EditorState.create({ doc: nextDoc, schema: pmSchema });
     view.updateState(nextState);
+    setIsEmpty(isEmptyDoc(nextState.doc));
     lastExternalContentRef.current = props.content;
   }, [props.content, props.resolveInlineReferenceColor]);
 
@@ -466,7 +475,8 @@ export function RichTextEditor(props: RichTextEditorProps) {
     <>
       <div
         ref={mountRef}
-        className={`row-editor ${props.completed ? 'done' : ''}`}
+        className={`row-editor ${props.completed ? 'done' : ''} ${isEmpty ? 'is-empty' : ''}`}
+        data-placeholder={props.placeholder ?? 'Type here'}
       />
       <FloatingEditorToolbar
         visible={toolbar.visible}

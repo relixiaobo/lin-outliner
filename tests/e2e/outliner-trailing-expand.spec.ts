@@ -29,6 +29,20 @@ test.describe('outliner trailing input and expansion parity', () => {
     await expect.poll(async () => (await nodeByText(page, 'Delta'))?.parentId).toBe(ids.today);
   });
 
+  test('empty trailing placeholder stays outside the editable ProseMirror paragraph', async ({ page }) => {
+    const editor = page.locator(`[data-trailing-parent-id="${ids.today}"] .trailing-editor`).first();
+    await expect(editor).toHaveClass(/is-empty/);
+
+    await expect.poll(async () => editor.evaluate((element) =>
+      getComputedStyle(element, '::before').content,
+    )).toBe('"Type here or \'/\' for commands"');
+
+    const paragraphPlaceholder = await editor.locator('.ProseMirror p').evaluate((element) =>
+      getComputedStyle(element, '::before').content,
+    );
+    expect(paragraphPlaceholder).toBe('none');
+  });
+
   test('empty Enter in trailing input creates an empty node in the current scope', async ({ page }) => {
     await trailingEditor(page).click();
     await page.keyboard.press('Enter');
