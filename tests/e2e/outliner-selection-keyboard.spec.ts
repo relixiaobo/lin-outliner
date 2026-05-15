@@ -75,13 +75,20 @@ test.describe('outliner selection keyboard parity', () => {
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.today);
   });
 
-  test('Cmd+Enter toggles done state for all selected target rows', async ({ page }) => {
+  test('Cmd+Enter cycles checkbox state for all selected target rows', async ({ page }) => {
     await multiSelect(page, [ids.alpha, ids.beta]);
 
     await page.keyboard.press('Meta+Enter');
 
     await expect.poll(async () => Boolean((await nodeById(page, ids.alpha))?.completedAt)).toBe(true);
     await expect.poll(async () => Boolean((await nodeById(page, ids.beta))?.completedAt)).toBe(true);
+
+    await page.keyboard.press('Meta+Enter');
+
+    await expect.poll(async () => Boolean((await nodeById(page, ids.alpha))?.completedAt)).toBe(false);
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.showCheckbox).toBe(false);
+    await expect.poll(async () => Boolean((await nodeById(page, ids.beta))?.completedAt)).toBe(false);
+    await expect.poll(async () => (await nodeById(page, ids.beta))?.showCheckbox).toBe(false);
   });
 
   test('Cmd+Shift+D duplicates all selected rows after their sources', async ({ page }) => {

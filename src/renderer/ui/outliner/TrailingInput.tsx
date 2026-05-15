@@ -22,7 +22,13 @@ import {
 import { filterFieldOptions, isOptionsFieldType, resolveFieldOptions } from '../interactions/fieldOptions';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { parseOutlinerPaste } from '../interactions/pasteParser';
-import { NodeBulletDot } from './NodeBulletDot';
+import {
+  PopoverBulletIcon,
+  PopoverEmpty,
+  PopoverListbox,
+  PopoverListItem,
+} from './PopoverList';
+import { TrailingInputLeading } from './TrailingInputLeading';
 import type { TrailingTriggerKind } from './trailingTriggers';
 
 interface TrailingInputProps {
@@ -556,60 +562,51 @@ export function TrailingInput(props: TrailingInputProps) {
     };
   }, []);
 
+  const rowInlineIndent = `calc(var(--row-depth) * ${depthShift})`;
   const wrapStyle: CSSProperties | undefined = depthShift > 0
-    ? { marginLeft: `calc(var(--row-depth) * ${depthShift})` }
+    ? ({
+      marginLeft: rowInlineIndent,
+      '--row-inline-indent': rowInlineIndent,
+    } as CSSProperties)
     : undefined;
 
   return (
     <div className="row control trailing-row" data-trailing-parent-id={effectiveParentId} style={wrapStyle}>
-      <span className="row-leading trailing-leading">
-        <span className="row-chevron-spacer" />
-        <span className="row-bullet-button inert">
-          <span className={`row-bullet-shape content ${hasContent ? '' : 'dimmed'}`}>
-            <NodeBulletDot />
-          </span>
-        </span>
-      </span>
+      <TrailingInputLeading hasContent={hasContent} />
       <div
         ref={mountRef}
         className={`row-editor trailing-editor idle-hint ${hasContent ? '' : 'is-empty'}`}
         data-placeholder="Type here or '/' for commands"
       />
       {optionsOpen && isOptionsField && (
-        <div className="node-picker-popover trailing-options-popover" onMouseDown={(event) => event.preventDefault()}>
-          {optionCount === 0 && <div className="popover-empty">No options</div>}
+        <PopoverListbox className="node-picker-popover trailing-options-popover" label="Field options">
+          {optionCount === 0 && <PopoverEmpty>No options</PopoverEmpty>}
           {filteredOptions.map((option, index) => (
-            <button
+            <PopoverListItem
               key={option.id}
-              type="button"
-              className={`popover-item ${index === optionsIndex ? 'active' : ''}`}
+              active={index === optionsIndex}
+              icon={<PopoverBulletIcon />}
+              label={option.label}
               onMouseEnter={() => setOptionsIndex(index)}
-              onMouseDown={(event) => event.preventDefault()}
               onClick={() => {
                 const view = viewRef.current;
                 if (view) selectOption(view, option.id);
               }}
-            >
-              <span className="command-item-bullet" />
-              <span className="popover-item-label">{option.label}</span>
-            </button>
+            />
           ))}
           {canCreateOption && (
-            <button
-              type="button"
-              className={`popover-item ${optionsIndex === filteredOptions.length ? 'active' : ''}`}
+            <PopoverListItem
+              active={optionsIndex === filteredOptions.length}
+              icon={<PopoverBulletIcon />}
+              label={`Create "${optionsQuery.trim()}"`}
               onMouseEnter={() => setOptionsIndex(filteredOptions.length)}
-              onMouseDown={(event) => event.preventDefault()}
               onClick={() => {
                 const view = viewRef.current;
                 if (view) createOption(view);
               }}
-            >
-              <span className="command-item-bullet" />
-              <span className="popover-item-label">Create "{optionsQuery.trim()}"</span>
-            </button>
+            />
           )}
-        </div>
+        </PopoverListbox>
       )}
       <span />
     </div>

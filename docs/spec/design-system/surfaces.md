@@ -175,17 +175,24 @@ Regions:
 
 Typography:
 
-- Panel title: existing `NodePanel` title style.
-- Row text: existing outliner row style.
-- Placeholder text: existing outliner placeholder style.
-- Metadata and descriptions: muted existing styles.
+- Panel title: outliner contract title style, currently implemented through
+  `NodePanel`.
+- Row text: outliner contract row rhythm, currently implemented through
+  outliner rows.
+- Placeholder text: muted outliner placeholder rhythm.
+- Metadata and descriptions: muted outliner metadata rhythm.
 
 Spacing:
 
-- Panel internal padding is `10px` top, `16px` left/right, and `30px` bottom on
+- Panel internal padding is `10px` top, `28px` left/right, and `30px` bottom on
   desktop.
 - Breadcrumb-to-title spacing is `28px` by default.
 - Panel header and row indentation are owned by `NodePanel`.
+- Top-level outliner rows may bleed the chevron slot into the left gutter so
+  row bullets align with the panel header content start. The internal row
+  leading grid remains unchanged.
+- Header action controls align to the panel content right edge. Do not add a
+  second header-only right inset on top of `--panel-content-x`.
 - Wrapper CSS may control panel surface size and scroll behavior, but should not
   override row font size or row rhythm.
 
@@ -262,7 +269,9 @@ Component dependencies:
 
 ## Tags And Metadata
 
-Tags and metadata are inline surfaces attached to outliner rows or panel titles.
+Tags and metadata stay attached to outliner content, but placement depends on
+the surface: row tags are inline after row text; title tags live in the
+dedicated heading tag row.
 
 Current sources:
 
@@ -274,8 +283,10 @@ Current sources:
 
 Visual rules:
 
-- Applied tags render inline after node text or panel title.
-- Applied tags must not become a second-line chip strip during normal editing.
+- Row applied tags render inline after node text.
+- Title applied tags render in the dedicated title tag row.
+- Applied tags must not become detached chip strips or separate cards during
+  normal editing.
 - Descriptions are muted metadata, not separate cards.
 - Tag colors follow the user-defined palette from `foundations.md`.
 - Remove affordances should feel precise, not destructive by default.
@@ -345,7 +356,8 @@ Current sources:
 Visual rules:
 
 - Definition configuration rows are dense grid rows.
-- Field values preserve outliner row rhythm.
+- Field values and definition configuration share the same dense icon, name, and
+  value row primitive while preserving outliner rhythm.
 - Icons describe field meaning but should not dominate labels.
 - Switch, select, color, number, and text controls use shared form tokens.
 - Invalid number or field values must be visible without using color alone.
@@ -354,7 +366,9 @@ Behavior:
 
 - Field controls commit on the existing product timing: immediate, blur, or
   explicit selection depending on field type.
-- Option picker is a small overlay connected to the field value row.
+- Option picker is a small overlay connected to the field value row; it uses
+  the shared popover listbox shell while option creation and commit timing stay
+  field-owned.
 - View toolbar visibility is node configuration, not shell state.
 
 Component dependencies:
@@ -362,6 +376,7 @@ Component dependencies:
 - `FormField`
 - `MenuSurface`
 - `MenuItem`
+- `PopoverListbox`
 - `IconButton`
 
 ## Command Palette
@@ -409,6 +424,7 @@ Current sources:
 - `src/renderer/ui/outliner/SlashCommandMenu.tsx`
 - `src/renderer/ui/outliner/ReferenceSelector.tsx`
 - `src/renderer/ui/outliner/OptionsPicker.tsx`
+- `src/renderer/ui/outliner/PopoverList.tsx`
 - `src/renderer/ui/agent/AgentComposer.tsx`
 
 Visual rules:
@@ -425,6 +441,8 @@ Behavior:
 - Escape closes.
 - Outside pointer down closes non-modal surfaces.
 - Searchable popovers keep keyboard navigation predictable.
+- Trigger and field-option listboxes share option-row structure; active index,
+  filtering, positioning, and execution remain caller-owned.
 - Context menu actions must apply to the current selection, not only the row
   under the pointer, when a multi-selection is active.
 
@@ -432,6 +450,7 @@ Component dependencies:
 
 - `MenuSurface`
 - `MenuItem`
+- `PopoverListbox`
 - `TagSelectorItem`
 - `FormField`
 
@@ -535,6 +554,8 @@ dock. Detailed behavior lives in [`agent.md`](./agent.md).
 Current sources:
 
 - `src/renderer/ui/agent/AgentComposer.tsx`
+- `src/renderer/ui/agent/AgentComposerControls.tsx`
+- `src/renderer/ui/agent/AgentComposerModelMenu.tsx`
 
 Visual rules:
 
@@ -552,6 +573,8 @@ Behavior:
 - During streaming, submitting text queues a follow-up or steer.
 - Stop replaces send when streaming and no draft is present.
 - Model picker and reasoning controls use overlay/menu behavior.
+- Model/reasoning menu structure is isolated; open state, provider updates, and
+  composer draft behavior remain in `AgentComposer`.
 - Textarea auto-resizes up to a bounded maximum height.
 - Drag, paste, and picker attachments are optional and must be implemented as
   one coherent attachment model if shipped.
@@ -561,9 +584,12 @@ Behavior:
 Component dependencies:
 
 - `AgentComposer`
+- `AgentComposerControls`
+- `AgentComposerModelMenu`
 - `IconButton`
 - `MenuSurface`
 - `MenuItem`
+- `SwitchControl`
 - `FormField`
 
 ## Agent Settings Dialog

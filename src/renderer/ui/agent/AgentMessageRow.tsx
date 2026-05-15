@@ -9,25 +9,32 @@ import type {
 } from '../../../core/agentTypes';
 import { parseAgentTextAttachmentBlock, type ParsedAgentTextAttachment } from '../../../core/agentAttachments';
 import {
-  BackIcon,
   CheckIcon,
   CloseIcon,
   CopyIcon,
   FileTextIcon,
-  ForwardIcon,
   ICON_SIZE,
   PencilIcon,
   RedoIcon,
-  WarningIcon,
 } from '../icons';
 import {
   AgentProcessBlock,
   type AgentExpandState,
   type AgentProcessSegmentBlock,
 } from './AgentProcessBlock';
+import { IconButton } from '../primitives/IconButton';
 import { AgentMarkdown } from './AgentMarkdown';
 import { AgentToolCallBlock } from './AgentToolCallBlock';
 import { looksLikeRawAgentErrorPayload, parseAgentErrorMessage } from './agentErrorParse';
+import { AgentBranchNavigator } from './AgentBranchNavigator';
+import {
+  AgentAssistantContent,
+  AgentMessageActions,
+  AgentMessageError,
+  AgentMessageFrame,
+  AgentStreamingCapsule,
+  AgentStreamingIndicator,
+} from './AgentMessageFrame';
 
 interface AgentMessageRowProps {
   busy?: boolean;
@@ -281,47 +288,11 @@ export function AgentMessageRow({
     setEditing(false);
   }
 
-  function renderBranchNavigator(entry: AgentMessageEntry) {
-    const branches = entry.branches;
-    if (!branches || branches.ids.length <= 1) return null;
-    const turnActive = turnPhase !== 'idle';
-    const canGoPrev = !busy && !turnActive && branches.currentIndex > 0;
-    const canGoNext = !busy && !turnActive && branches.currentIndex < branches.ids.length - 1;
-
-    return (
-      <div className="agent-branch-navigator">
-        <button
-          aria-label="Show previous branch"
-          className="agent-message-action-button"
-          disabled={!canGoPrev}
-          onClick={() => canGoPrev && void onSwitchBranch?.(branches.ids[branches.currentIndex - 1]!)}
-          title="Previous branch"
-          type="button"
-        >
-          <BackIcon size={ICON_SIZE.menu} />
-        </button>
-        <span className="agent-branch-counter">
-          {branches.currentIndex + 1}/{branches.ids.length}
-        </span>
-        <button
-          aria-label="Show next branch"
-          className="agent-message-action-button"
-          disabled={!canGoNext}
-          onClick={() => canGoNext && void onSwitchBranch?.(branches.ids[branches.currentIndex + 1]!)}
-          title="Next branch"
-          type="button"
-        >
-          <ForwardIcon size={ICON_SIZE.menu} />
-        </button>
-      </div>
-    );
-  }
-
   if (!isMessageEntry(entry)) {
     return (
-      <div className="agent-message-row assistant">
-        <span className="agent-streaming-capsule" aria-label="Assistant is responding" />
-      </div>
+      <AgentMessageFrame role="assistant">
+        <AgentStreamingCapsule labelled />
+      </AgentMessageFrame>
     );
   }
 
@@ -337,7 +308,7 @@ export function AgentMessageRow({
     const nodeId = entry.nodeId;
     if (editing && nodeId) {
       return (
-        <div className="agent-message-row user">
+        <AgentMessageFrame role="user">
           <div className="agent-user-edit-card">
             <textarea
               autoFocus
@@ -352,60 +323,60 @@ export function AgentMessageRow({
               value={editDraft}
             />
             <div className="agent-user-edit-actions">
-              <button
-                aria-label="Cancel edit"
+              <IconButton
                 className="agent-message-action-button"
+                icon={CloseIcon}
+                label="Cancel edit"
                 onClick={() => setEditing(false)}
                 title="Cancel"
-                type="button"
-              >
-                <CloseIcon size={ICON_SIZE.menu} />
-              </button>
-              <button
-                aria-label="Save edit"
+                variant="message"
+              />
+              <IconButton
                 className="agent-message-action-button"
+                icon={CheckIcon}
+                label="Save edit"
                 onClick={() => void saveEdit(nodeId)}
                 title="Save"
-                type="button"
-              >
-                <CheckIcon size={ICON_SIZE.menu} />
-              </button>
+                variant="message"
+              />
             </div>
           </div>
-        </div>
+        </AgentMessageFrame>
       );
     }
     return (
-      <div className="agent-message-row user">
+      <AgentMessageFrame role="user">
         {!turnActive ? (
-          <div className="agent-message-actions">
+          <AgentMessageActions>
             {nodeId && onEdit && !hasAttachments && text.trim().length > 0 ? (
-              <button
-                aria-label="Edit message"
+              <IconButton
                 className="agent-message-action-button"
                 disabled={actionsDisabled}
+                icon={PencilIcon}
+                label="Edit message"
                 onClick={() => {
                   setEditDraft(text);
                   setEditing(true);
                 }}
                 title="Edit"
-                type="button"
-              >
-                <PencilIcon size={ICON_SIZE.menu} />
-              </button>
+                variant="message"
+              />
             ) : null}
-            <button
-              aria-label="Copy message"
+            <IconButton
               className="agent-message-action-button"
               disabled={!text.trim()}
+              icon={CopyStateIcon}
+              label="Copy message"
               onClick={() => void copyMessage(text)}
               title="Copy"
-              type="button"
-            >
-              <CopyStateIcon size={ICON_SIZE.menu} />
-            </button>
-            {renderBranchNavigator(entry)}
-          </div>
+              variant="message"
+            />
+            <AgentBranchNavigator
+              branches={entry.branches}
+              disabled={actionsDisabled}
+              onSwitchBranch={onSwitchBranch}
+            />
+          </AgentMessageActions>
         ) : null}
         <div className="agent-user-content">
           {userContent.textAttachments.length > 0 ? (
@@ -432,7 +403,7 @@ export function AgentMessageRow({
           ) : null}
           {text.trim().length > 0 ? <div className="agent-user-bubble">{text}</div> : null}
         </div>
-      </div>
+      </AgentMessageFrame>
     );
   }
 
@@ -455,48 +426,41 @@ export function AgentMessageRow({
   const showToolbar = nodeId !== null && !turnActive && isLastInTurn;
 
   return (
-    <div className="agent-message-row assistant">
-      <div className="agent-assistant-content">
-        {hasError ? (
-          <div className="agent-message-error">
-            <WarningIcon size={14} />
-            <span>{displayError}</span>
-          </div>
-        ) : null}
+    <AgentMessageFrame role="assistant">
+      <AgentAssistantContent>
+        {hasError ? <AgentMessageError message={displayError} /> : null}
         {assistantBlocks}
-        {turnActive ? (
-          <div className="agent-streaming-indicator" aria-label="Assistant is responding">
-            <span className="agent-streaming-capsule" />
-          </div>
-        ) : null}
+        {turnActive ? <AgentStreamingIndicator /> : null}
         {showToolbar ? (
-          <div className="agent-message-actions is-assistant">
+          <AgentMessageActions assistant>
             {nodeId && (hasError ? onRetry : onRegenerate) ? (
-              <button
-                aria-label={hasError ? 'Retry response' : 'Regenerate response'}
+              <IconButton
                 className="agent-message-action-button"
                 disabled={actionsDisabled}
+                icon={RedoIcon}
+                label={hasError ? 'Retry response' : 'Regenerate response'}
                 onClick={() => void (hasError ? onRetry : onRegenerate)?.(nodeId)}
                 title={hasError ? 'Retry' : 'Regenerate'}
-                type="button"
-              >
-                <RedoIcon size={ICON_SIZE.menu} />
-              </button>
+                variant="message"
+              />
             ) : null}
-            <button
-              aria-label="Copy message"
+            <IconButton
               className="agent-message-action-button"
               disabled={!copyText && !onCopy}
+              icon={CopyStateIcon}
+              label="Copy message"
               onClick={() => void copyAssistantMessage(copyText)}
               title="Copy"
-              type="button"
-            >
-              <CopyStateIcon size={ICON_SIZE.menu} />
-            </button>
-            {renderBranchNavigator(entry)}
-          </div>
+              variant="message"
+            />
+            <AgentBranchNavigator
+              branches={entry.branches}
+              disabled={actionsDisabled}
+              onSwitchBranch={onSwitchBranch}
+            />
+          </AgentMessageActions>
         ) : null}
-      </div>
-    </div>
+      </AgentAssistantContent>
+    </AgentMessageFrame>
   );
 }

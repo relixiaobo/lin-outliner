@@ -18,6 +18,8 @@ in `src/core`.
 - `restore_node`
 - `delete_node`
 - `toggle_done`
+- `cycle_done_state`
+- `batch_cycle_done_state`
 - `undo`
 - `redo`
 

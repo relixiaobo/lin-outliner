@@ -17,6 +17,7 @@ import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { referenceItems, ReferenceSelector } from './ReferenceSelector';
 import { slashCommandItems, SlashCommandMenu } from './SlashCommandMenu';
 import { TagSelector } from './TagSelector';
+import { PopoverListbox } from './PopoverList';
 
 interface TriggerPopoverProps {
   trigger: NonNullable<TriggerState>;
@@ -141,8 +142,20 @@ export function TriggerPopover(props: TriggerPopoverProps) {
       ?.scrollIntoView({ block: 'nearest' });
   }, [selectedIndex]);
 
+  const label = props.trigger.kind === '#'
+    ? 'Tag suggestions'
+    : props.trigger.kind === '@'
+      ? 'Reference suggestions'
+      : 'Slash commands';
+
   return (
-    <div ref={menuRef} className="trigger-popover" style={dropStyle} role="listbox">
+    <PopoverListbox
+      ref={menuRef}
+      label={label}
+      className="trigger-popover"
+      preventMouseDown={false}
+      style={dropStyle}
+    >
       {props.trigger.kind === '#' && (
         <TagSelector
           query={props.trigger.query}
@@ -181,6 +194,6 @@ export function TriggerPopover(props: TriggerPopoverProps) {
           close={props.close}
         />
       )}
-    </div>
+    </PopoverListbox>
   );
 }

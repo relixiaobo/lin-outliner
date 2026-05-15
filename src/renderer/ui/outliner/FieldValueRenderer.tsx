@@ -38,7 +38,7 @@ function isValidDateValue(value: string): boolean {
 }
 
 function colorValue(value: string): string {
-  return /^#[0-9a-f]{6}$/i.test(value.trim()) ? value.trim() : '#5e8e65';
+  return /^#[0-9a-f]{6}$/i.test(value.trim()) ? value.trim() : '#f43f5e';
 }
 
 function numberInvalid(value: string, field?: NodeProjection): boolean {
@@ -178,7 +178,7 @@ export function FieldValueRenderer(props: FieldValueRendererProps) {
           <input
             className="field-color-text"
             value={props.valueDraft}
-            placeholder="#5e8e65"
+            placeholder="#f43f5e"
             spellCheck={false}
             onFocus={props.onFocus}
             onChange={(event) => props.setValueDraft(event.target.value)}

@@ -67,9 +67,9 @@ test.describe('outliner selection parity', () => {
     await multiSelect(page, [ids.alpha, ids.beta]);
 
     await row(page, ids.alpha).click({ button: 'right' });
-    await expect(page.getByRole('button', { name: '2 nodes: Trash' })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: '2 nodes: Trash' })).toBeVisible();
 
-    await page.getByRole('button', { name: '2 nodes: Trash' }).click();
+    await page.getByRole('menuitem', { name: '2 nodes: Trash' }).click();
     await expect(row(page, ids.alpha)).toHaveCount(0);
     await expect(row(page, ids.beta)).toHaveCount(0);
   });

@@ -95,6 +95,8 @@ export class DocumentService {
         return this.core.batchOutdentNodes(arrayArg(args.nodeIds));
       case 'batch_toggle_done':
         return this.core.batchToggleDone(arrayArg(args.nodeIds));
+      case 'batch_cycle_done_state':
+        return this.core.batchCycleDoneState(arrayArg(args.nodeIds));
       case 'batch_duplicate_nodes':
         return this.core.batchDuplicateNodes(arrayArg(args.nodeIds));
       case 'batch_move_nodes_up':
@@ -109,6 +111,8 @@ export class DocumentService {
         return this.core.deleteNode(String(args.nodeId));
       case 'toggle_done':
         return this.core.toggleDone(String(args.nodeId));
+      case 'cycle_done_state':
+        return this.core.cycleDoneState(String(args.nodeId));
       case 'create_tag':
         return this.core.createTag(String(args.name ?? ''));
       case 'apply_tag':

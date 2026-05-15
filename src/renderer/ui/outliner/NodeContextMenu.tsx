@@ -23,6 +23,8 @@ import {
   TagIcon,
   TrashIcon,
 } from '../icons';
+import { MenuItem } from '../primitives/MenuItem';
+import { MenuSurface } from '../primitives/MenuSurface';
 import type { CommandRunner } from '../shared';
 import { textOf } from '../shared';
 
@@ -135,17 +137,16 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     icon: ReactNode,
     onClick: () => void,
   ) => (
-    <button
+    <MenuItem
       className="node-context-item"
-      type="button"
+      icon={icon}
+      label={label}
       onClick={() => {
         onClick();
         props.onClose();
       }}
-    >
-      {icon}
-      <span>{label}</span>
-    </button>
+      role="menuitem"
+    />
   );
 
   const renderMain = () => (
@@ -154,44 +155,42 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       {item(`${activeLabelPrefix}Duplicate`, <AddIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.batchDuplicateNodes(activeNodeIds)))}
       {item(`${activeLabelPrefix}Move up`, <MoreIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.batchMoveNodesUp(activeNodeIds)))}
       {item(`${activeLabelPrefix}Move down`, <MoreIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.batchMoveNodesDown(activeNodeIds)))}
-      <button
+      <MenuItem
         className="node-context-item"
-        type="button"
+        icon={<MoreIcon size={ICON_SIZE.menu} />}
+        label="Move to"
         onClick={() => {
           setMode('move');
           setQuery('');
         }}
-      >
-        <MoreIcon size={ICON_SIZE.menu} />
-        <span>Move to</span>
-      </button>
-      <div className="node-context-separator" />
+        role="menuitem"
+      />
+      <div className="node-context-separator" role="separator" />
       {item(
         `${activeLabelPrefix}${activeNodeIds.length > 1 ? 'Toggle done' : target.completedAt ? 'Mark not done' : 'Mark done'}`,
         <CheckboxIcon size={ICON_SIZE.menu} />,
         () => void props.run(() => activeTargetIds.length > 1 ? api.batchToggleDone(activeTargetIds) : api.toggleDone(props.targetId)),
       )}
-      <button
+      <MenuItem
         className="node-context-item"
-        type="button"
+        icon={<TagIcon size={ICON_SIZE.menu} />}
+        label={`${activeLabelPrefix}Add tag`}
         onClick={() => {
           setMode('tag');
           setQuery('');
         }}
-      >
-        <TagIcon size={ICON_SIZE.menu} />
-        <span>{`${activeLabelPrefix}Add tag`}</span>
-      </button>
+        role="menuitem"
+      />
       {item(target.description ? 'Edit description' : 'Add description', <MoreIcon size={ICON_SIZE.menu} />, props.onEditDescription)}
       {item(
         target.toolbarVisible ? 'Hide view toolbar' : 'Show view toolbar',
         target.toolbarVisible ? <CloseIcon size={ICON_SIZE.menu} /> : <FilterIcon size={ICON_SIZE.menu} />,
         () => void props.run(() => api.setNodeToolbarVisible(props.targetId, !target.toolbarVisible)),
       )}
-      <div className="node-context-separator" />
+      <div className="node-context-separator" role="separator" />
       {item('Copy text', <MoreIcon size={ICON_SIZE.menu} />, () => void writeClipboardText(textOf(target)))}
       {item('Copy node id', <MoreIcon size={ICON_SIZE.menu} />, () => void writeClipboardText(props.targetId))}
-      <div className="node-context-separator" />
+      <div className="node-context-separator" role="separator" />
       {trashed
         ? item('Restore', <RestoreIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.restoreNode(props.node.id)))
         : item(`${activeLabelPrefix}Trash`, <TrashIcon size={ICON_SIZE.menu} />, () => void props.run(() => activeNodeIds.length > 1 ? api.batchTrashNodes(activeNodeIds) : api.trashNode(props.node.id)))}
@@ -221,18 +220,16 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
         }}
       />
       {tagItems.map((tagItem) => (
-        <button
+        <MenuItem
           key={tagItem.type === 'existing' ? tagItem.tag.id : `create:${tagItem.name}`}
           className="node-context-item"
-          type="button"
+          icon={<TagIcon size={ICON_SIZE.menu} />}
+          label={tagSelectorItemLabel(tagItem)}
           onClick={() => {
             if (tagItem.type === 'existing') applyExistingTag(tagItem.tag.id);
             else createAndApplyTag(tagItem.name);
           }}
-        >
-          <TagIcon size={ICON_SIZE.menu} />
-          <span>{tagSelectorItemLabel(tagItem)}</span>
-        </button>
+        />
       ))}
     </>
   );
@@ -251,10 +248,11 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
         onChange={(event) => setQuery(event.currentTarget.value)}
       />
       {moveTargets.map((targetNode) => (
-        <button
+        <MenuItem
           key={targetNode.id}
           className="node-context-item"
-          type="button"
+          icon={<ShowIcon size={ICON_SIZE.menu} />}
+          label={textOf(targetNode)}
           onClick={() => {
             void props.run(async () => {
               let lastResult: CommandOutcome | null = null;
@@ -265,24 +263,23 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
             });
             props.onClose();
           }}
-        >
-          <ShowIcon size={ICON_SIZE.menu} />
-          <span>{textOf(targetNode)}</span>
-        </button>
+        />
       ))}
     </>
   );
 
   return createPortal(
-    <div
+    <MenuSurface
       ref={menuRef}
+      aria-label={mode === 'main' ? 'Node actions' : mode === 'tag' ? 'Add tag' : 'Move node'}
       className="node-context-menu"
-      data-preserve-selection
+      preserveSelection
+      role={mode === 'main' ? 'menu' : 'dialog'}
       style={{ left: props.x, top: props.y }}
       onMouseDown={(event) => event.stopPropagation()}
     >
       {mode === 'main' ? renderMain() : mode === 'tag' ? renderTagMode() : renderMoveMode()}
-    </div>,
+    </MenuSurface>,
     document.body,
   );
 }

@@ -23,7 +23,9 @@ test.describe('outliner trigger parity', () => {
     await trailingEditor(page).click();
     await page.keyboard.type('#project');
 
-    await expect(page.locator('.trigger-popover')).toBeVisible();
+    const listbox = page.getByRole('listbox', { name: 'Tag suggestions' });
+    await expect(listbox).toBeVisible();
+    await expect(listbox.getByRole('option').first()).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('option', { name: /Create project/ })).toBeVisible();
 
     const triggerRowId = await lastTodayChildId(page);
@@ -40,7 +42,9 @@ test.describe('outliner trigger parity', () => {
     await trailingEditor(page).click();
     await page.keyboard.type('@Zeta');
 
-    await expect(page.locator('.trigger-popover')).toBeVisible();
+    const listbox = page.getByRole('listbox', { name: 'Reference suggestions' });
+    await expect(listbox).toBeVisible();
+    await expect(listbox.getByRole('option').first()).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('option', { name: /Create "Zeta"/ })).toBeVisible();
 
     const triggerRowId = await lastTodayChildId(page);
@@ -59,7 +63,9 @@ test.describe('outliner trigger parity', () => {
     await trailingEditor(page).click();
     await page.keyboard.type('/');
 
-    await expect(page.locator('.trigger-popover')).toBeVisible();
+    const listbox = page.getByRole('listbox', { name: 'Slash commands' });
+    await expect(listbox).toBeVisible();
+    await expect(listbox.getByRole('option').first()).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('option', { name: /Field/ })).toBeVisible();
 
     await page.keyboard.press('Enter');
@@ -79,5 +85,42 @@ test.describe('outliner trigger parity', () => {
       return calls.some((call) => call.cmd === 'create_inline_field');
     }).toBe(true);
     await expect(page.locator('.trigger-popover')).toHaveCount(0);
+  });
+
+});
+
+test.describe('outliner option picker parity', () => {
+  test.beforeEach(async ({ page }) => {
+    await openMockedApp(page, { optionsField: true });
+  });
+
+  test('options field picker exposes listbox state and creates a selected option', async ({ page }) => {
+    const pickerInput = row(page, ids.priorityEntry).locator('.node-picker-input');
+    await pickerInput.click();
+
+    const listbox = page.getByRole('listbox', { name: 'Field options' });
+    await expect(listbox).toBeVisible();
+    await expect(listbox.getByRole('option').first()).toHaveAttribute('aria-selected', 'true');
+    await expect(listbox.getByRole('option', { name: 'High' })).toBeVisible();
+
+    await page.keyboard.type('Urgent');
+    await expect(listbox.getByRole('option', { name: 'Create "Urgent"' })).toBeVisible();
+    await page.keyboard.press('Enter');
+
+    await expect(page.getByRole('listbox', { name: 'Field options' })).toHaveCount(0);
+    await expect(pickerInput).toHaveValue('Urgent');
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const entry = projection.nodes.find((node) => node.id === ids.priorityEntry);
+      const valueNode = projection.nodes.find((node) => node.parentId === ids.priorityEntry);
+      const optionNode = projection.nodes.find((node) => node.id === valueNode?.targetId);
+      return {
+        entryChildren: entry?.children.length,
+        option: optionNode?.content.text,
+      };
+    }).toEqual({
+      entryChildren: 1,
+      option: 'Urgent',
+    });
   });
 });

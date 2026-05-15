@@ -19,10 +19,12 @@ import type { CommandRunner, TriggerState } from '../shared';
 import { outlinerChildren } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
 import { fieldTypeLabel } from './fieldTypePresentation';
+import { FieldEntryGrid } from './FieldEntryGrid';
 import { FieldValueRenderer } from './FieldValueRenderer';
 import { IndentGuide } from './IndentGuide';
 import { NodeContextMenu } from './NodeContextMenu';
 import { NodeDescription } from './NodeDescription';
+import { OutlinerRowShell } from './OutlinerRowShell';
 import { RowLeading } from './RowLeading';
 import { useOutlinerRowInteraction } from './useOutlinerRowInteraction';
 
@@ -235,7 +237,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     }
     if (mod && event.key === 'Enter') {
       event.preventDefault();
-      void commitDrafts().then(() => props.run(() => api.toggleDone(props.entryId)));
+      void commitDrafts().then(() => props.run(() => api.cycleDoneState(props.entryId)));
       return;
     }
     if (event.key === 'Escape') {
@@ -283,16 +285,78 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     setContextMenu({ x: event.clientX, y: event.clientY });
   };
 
-  return (
-    <div
-      className={`row-wrap ${row.hasChildren ? 'has-children' : ''} ${row.expanded ? 'expanded' : ''}`}
-      {...row.wrapProps}
+  const nameControl = (
+    <input
+      ref={nameInputRef}
+      className={`field-name-input ${entry.completedAt ? 'done' : ''}`}
+      data-focus-node-id={props.entryId}
+      value={nameDraft}
+      title={`${nameDraft || 'Field'} (${fieldTypeLabel(fieldType)})`}
+      onFocus={row.updateSelection}
+      onChange={(event) => setNameDraft(event.target.value)}
+      onBlur={() => void commitName()}
+      onKeyDown={(event) => onKeyDown(event, 'name')}
+    />
+  );
+
+  const valueControl = row.expanded && rowChildIds.length > 0 ? (
+    <button
+      ref={(element) => {
+        valueFocusRef.current = element;
+      }}
+      className={`field-value-preview ${entry.completedAt ? 'done' : ''}`}
+      onClick={row.focusLastVisibleChild}
+      onFocus={row.updateSelection}
+      onKeyDown={(event) => onKeyDown(event, 'value')}
+      title="Focus field children"
     >
-      <div
-        className={row.rowClassName('field-row-inline')}
-        onMouseDownCapture={row.selectFromPointer}
-        onContextMenu={openContextMenu}
-      >
+      {rowChildIds.length === 1 ? (value || '1 child') : `${rowChildIds.length} children`}
+    </button>
+  ) : (
+    <FieldValueRenderer
+      entryId={props.entryId}
+      index={props.index}
+      run={props.run}
+      fieldType={fieldType}
+      field={field}
+      value={value}
+      valueDraft={valueDraft}
+      setValueDraft={setValueDraft}
+      onCommitValue={commitValue}
+      onFocus={row.updateSelection}
+      onKeyDown={(event) => onKeyDown(event, 'value')}
+      completed={Boolean(entry.completedAt)}
+      setFocusElement={(element) => {
+        valueFocusRef.current = element;
+      }}
+    />
+  );
+
+  const description = (
+    <NodeDescription
+      node={entry}
+      targetId={props.entryId}
+      editing={props.ui.editingDescriptionId === props.entryId}
+      run={props.run}
+      onEditingChange={(editing) => {
+        props.setUi((prev) => ({
+          ...prev,
+          editingDescriptionId: editing ? props.entryId : null,
+        }));
+      }}
+    />
+  );
+
+  return (
+    <OutlinerRowShell
+      hasChildren={row.hasChildren}
+      expanded={row.expanded}
+      wrapProps={row.wrapProps}
+      rowClassName={row.rowClassName('field-row-inline')}
+      onSelectFromPointer={row.selectFromPointer}
+      onContextMenu={openContextMenu}
+      rowContent={(
+        <>
         <RowLeading
           hasChildren={row.hasChildren}
           expanded={row.expanded}
@@ -305,64 +369,10 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
           onDragStart={row.dragHandleProps.onDragStart}
           onDragEnd={row.dragHandleProps.onDragEnd}
         />
-        <div className="outliner-field-grid">
-          <input
-            ref={nameInputRef}
-            className={`field-name-input ${entry.completedAt ? 'done' : ''}`}
-            data-focus-node-id={props.entryId}
-            value={nameDraft}
-            title={`${nameDraft || 'Field'} (${fieldTypeLabel(fieldType)})`}
-            onFocus={row.updateSelection}
-            onChange={(event) => setNameDraft(event.target.value)}
-            onBlur={() => void commitName()}
-            onKeyDown={(event) => onKeyDown(event, 'name')}
-          />
-          {row.expanded && rowChildIds.length > 0 ? (
-            <button
-              ref={(element) => {
-                valueFocusRef.current = element;
-              }}
-              className={`field-value-preview ${entry.completedAt ? 'done' : ''}`}
-              onClick={row.focusLastVisibleChild}
-              onFocus={row.updateSelection}
-              onKeyDown={(event) => onKeyDown(event, 'value')}
-              title="Focus field children"
-            >
-              {rowChildIds.length === 1 ? (value || '1 child') : `${rowChildIds.length} children`}
-            </button>
-          ) : (
-            <FieldValueRenderer
-              entryId={props.entryId}
-              index={props.index}
-              run={props.run}
-              fieldType={fieldType}
-              field={field}
-              value={value}
-              valueDraft={valueDraft}
-              setValueDraft={setValueDraft}
-              onCommitValue={commitValue}
-              onFocus={row.updateSelection}
-              onKeyDown={(event) => onKeyDown(event, 'value')}
-              completed={Boolean(entry.completedAt)}
-              setFocusElement={(element) => {
-                valueFocusRef.current = element;
-              }}
-            />
-          )}
-          <NodeDescription
-            node={entry}
-            targetId={props.entryId}
-            editing={props.ui.editingDescriptionId === props.entryId}
-            run={props.run}
-            onEditingChange={(editing) => {
-              props.setUi((prev) => ({
-                ...prev,
-                editingDescriptionId: editing ? props.entryId : null,
-              }));
-            }}
-          />
-        </div>
-      </div>
+        <FieldEntryGrid name={nameControl} value={valueControl} description={description} />
+        </>
+      )}
+    >
       {contextMenu && (
         <NodeContextMenu
           x={contextMenu.x}
@@ -388,6 +398,6 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
         focusLastVisibleChild: row.focusLastVisibleChild,
         collapseToSelf: row.collapseToSelf,
       })}
-    </div>
+    </OutlinerRowShell>
   );
 }

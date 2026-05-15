@@ -61,6 +61,67 @@ describe('Core', () => {
     expect(node.groupField).toBeUndefined();
   });
 
+  test('toggle done enables and preserves checkbox affordance', () => {
+    const core = Core.new();
+    const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Task'));
+
+    core.toggleDone(nodeId);
+    expect(core.state().nodes[nodeId].completedAt).toBeDefined();
+    expect(core.state().nodes[nodeId].showCheckbox).toBe(true);
+
+    core.toggleDone(nodeId);
+    expect(core.state().nodes[nodeId].completedAt).toBeUndefined();
+    expect(core.state().nodes[nodeId].showCheckbox).toBe(true);
+  });
+
+  test('batch toggle done enables checkbox affordance on each target', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const first = mustFocus(core.createNode(today, null, 'First'));
+    const second = mustFocus(core.createNode(today, null, 'Second'));
+
+    core.batchToggleDone([first, second]);
+
+    expect(core.state().nodes[first].completedAt).toBeDefined();
+    expect(core.state().nodes[first].showCheckbox).toBe(true);
+    expect(core.state().nodes[second].completedAt).toBeDefined();
+    expect(core.state().nodes[second].showCheckbox).toBe(true);
+  });
+
+  test('keyboard cycle moves through no checkbox, undone, and done', () => {
+    const core = Core.new();
+    const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Task'));
+
+    expect(core.state().nodes[nodeId].showCheckbox).toBe(false);
+    expect(core.state().nodes[nodeId].completedAt).toBeUndefined();
+
+    core.cycleDoneState(nodeId);
+    expect(core.state().nodes[nodeId].showCheckbox).toBe(true);
+    expect(core.state().nodes[nodeId].completedAt).toBeUndefined();
+
+    core.cycleDoneState(nodeId);
+    expect(core.state().nodes[nodeId].showCheckbox).toBe(true);
+    expect(core.state().nodes[nodeId].completedAt).toBeDefined();
+
+    core.cycleDoneState(nodeId);
+    expect(core.state().nodes[nodeId].showCheckbox).toBe(false);
+    expect(core.state().nodes[nodeId].completedAt).toBeUndefined();
+  });
+
+  test('keyboard cycle preserves forced done affordance', () => {
+    const core = Core.new();
+    const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Configured task'));
+    core.state().nodes[nodeId].doneStateEnabled = true;
+
+    core.cycleDoneState(nodeId);
+    expect(core.state().nodes[nodeId].showCheckbox).toBe(true);
+    expect(core.state().nodes[nodeId].completedAt).toBeDefined();
+
+    core.cycleDoneState(nodeId);
+    expect(core.state().nodes[nodeId].showCheckbox).toBe(true);
+    expect(core.state().nodes[nodeId].completedAt).toBeUndefined();
+  });
+
   test('merge preserves UTF-16 rich text offsets', () => {
     const core = Core.new();
     const today = core.projection().todayId;

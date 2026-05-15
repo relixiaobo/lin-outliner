@@ -12,6 +12,8 @@ overlay, tag, and token specimens. It is not a separate product surface.
 
 - [Inventory](./inventory.md): current product UI map, source ownership, gaps,
   component candidates, and refactor phases.
+- [Progress](./progress.md): current UI refactor stage, completed work,
+  in-progress items, deferred work, and validation checklist.
 - [Foundations](./foundations.md): canonical tokens, typography, color,
   elevation, motion, and accessibility.
 - [Components](./components.md): reusable UI component contracts for buttons,

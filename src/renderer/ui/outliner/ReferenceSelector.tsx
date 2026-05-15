@@ -4,6 +4,7 @@ import type { DocumentIndex } from '../../state/document';
 import { AddIcon, CalendarIcon, ICON_SIZE, ReferenceIcon } from '../icons';
 import { buildReferenceCandidates, type ReferenceCandidate } from '../interactions/referenceCandidates';
 import type { CommandRunner } from '../shared';
+import { PopoverEmpty, PopoverListItem } from './PopoverList';
 
 interface ReferenceSelectorProps {
   query: string;
@@ -104,7 +105,7 @@ export function ReferenceSelector(props: ReferenceSelectorProps) {
   };
 
   if (items.length === 0) {
-    return <div className="popover-empty">No matches</div>;
+    return <PopoverEmpty>No matches</PopoverEmpty>;
   }
 
   return (
@@ -112,17 +113,26 @@ export function ReferenceSelector(props: ReferenceSelectorProps) {
       {items.map((item, index) => {
         const disabled = item.type === 'node' && Boolean(item.disabledReason);
         return (
-          <button
+          <PopoverListItem
             key={item.type === 'node' ? item.id : `${item.type}:${item.label}`}
-            className={`popover-item ${index === props.selectedIndex ? 'active' : ''} ${disabled ? 'disabled' : ''}`}
-            role="option"
+            active={index === props.selectedIndex}
+            disabled={disabled}
             data-create-reference={item.type === 'create' ? 'true' : undefined}
-            data-selected={index === props.selectedIndex ? 'true' : undefined}
-            aria-selected={index === props.selectedIndex}
-            aria-disabled={disabled}
             title={item.type === 'node' ? item.disabledReason ?? undefined : undefined}
+            icon={iconForItem(item)}
+            iconClassName="popover-item-icon"
+            label={(
+              <>
+                <span>{item.type === 'create' ? `Create "${item.label}"` : item.label}</span>
+                {item.type === 'node' && item.breadcrumb && (
+                  <span className="popover-item-meta">{item.breadcrumb}</span>
+                )}
+                {item.type === 'node' && item.disabledReason && (
+                  <span className="popover-item-meta">{item.disabledReason}</span>
+                )}
+              </>
+            )}
             onMouseEnter={() => props.setSelectedIndex(index)}
-            onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
               if (disabled) return;
               if (item.type === 'node') {
@@ -136,18 +146,7 @@ export function ReferenceSelector(props: ReferenceSelectorProps) {
               }
               createAndSelect(item.label);
             }}
-          >
-            <span className="popover-item-icon">{iconForItem(item)}</span>
-            <span className="popover-item-label">
-              <span>{item.type === 'create' ? `Create "${item.label}"` : item.label}</span>
-              {item.type === 'node' && item.breadcrumb && (
-                <span className="popover-item-meta">{item.breadcrumb}</span>
-              )}
-              {item.type === 'node' && item.disabledReason && (
-                <span className="popover-item-meta">{item.disabledReason}</span>
-              )}
-            </span>
-          </button>
+          />
         );
       })}
     </>

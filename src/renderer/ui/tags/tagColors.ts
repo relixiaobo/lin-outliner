@@ -2,39 +2,40 @@ import type { CSSProperties } from 'react';
 import type { NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 
-interface TagColor {
+export interface TagColor {
   text: string;
+  background: string;
 }
 
 const TAG_COLORS: TagColor[] = [
-  { text: '#A6535B' },
-  { text: '#BA6C43' },
-  { text: '#9B7C38' },
-  { text: '#608A55' },
-  { text: '#40857A' },
-  { text: '#4B7C9E' },
-  { text: '#6064A6' },
-  { text: '#8E5B8E' },
-  { text: '#8A6754' },
-  { text: '#8B8422' },
+  { text: '#e11d48', background: '#fff1f2' },
+  { text: '#ea580c', background: '#fff7ed' },
+  { text: '#ca8a04', background: '#fefce8' },
+  { text: '#059669', background: '#ecfdf5' },
+  { text: '#2563eb', background: '#eff6ff' },
+  { text: '#9333ea', background: '#faf5ff' },
+  { text: '#db2777', background: '#fdf2f8' },
+  { text: '#475569', background: '#f8fafc' },
 ];
 
-const TAG_COLOR_GRAY: TagColor = { text: '#788691' };
+const TAG_COLOR_GRAY: TagColor = { text: '#475569', background: '#f8fafc' };
 
 const TAG_COLOR_MAP: Record<string, TagColor> = {
   red: TAG_COLORS[0],
   orange: TAG_COLORS[1],
   amber: TAG_COLORS[2],
-  yellow: TAG_COLORS[9],
+  yellow: TAG_COLORS[2],
   green: TAG_COLORS[3],
   emerald: TAG_COLORS[3],
-  teal: TAG_COLORS[4],
-  sky: TAG_COLORS[5],
-  blue: TAG_COLORS[5],
-  indigo: TAG_COLORS[6],
-  violet: TAG_COLORS[7],
-  rose: TAG_COLORS[7],
-  brown: TAG_COLORS[8],
+  teal: TAG_COLORS[3],
+  sky: TAG_COLORS[4],
+  blue: TAG_COLORS[4],
+  indigo: TAG_COLORS[5],
+  violet: TAG_COLORS[5],
+  purple: TAG_COLORS[5],
+  rose: TAG_COLORS[6],
+  pink: TAG_COLORS[6],
+  brown: TAG_COLOR_GRAY,
   slate: TAG_COLOR_GRAY,
   gray: TAG_COLOR_GRAY,
 };
@@ -58,7 +59,12 @@ export function resolveTagColor(tag: NodeProjection | undefined): TagColor {
   if (!tag) return TAG_COLOR_GRAY;
   if (JOURNAL_TAG_IDS.has(tag.id)) return TAG_COLOR_GRAY;
   if (tag.color) {
-    if (tag.color.startsWith('#')) return { text: tag.color };
+    if (tag.color.startsWith('#')) {
+      return {
+        text: tag.color,
+        background: `color-mix(in srgb, ${tag.color} 10%, white)`,
+      };
+    }
     const mapped = TAG_COLOR_MAP[tag.color];
     if (mapped) return mapped;
   }

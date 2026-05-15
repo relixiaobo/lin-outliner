@@ -1,9 +1,10 @@
-import { Fragment, type CSSProperties, type Dispatch, type PointerEvent as ReactPointerEvent, type RefObject, type SetStateAction } from 'react';
+import { Fragment, type Dispatch, type PointerEvent as ReactPointerEvent, type RefObject, type SetStateAction } from 'react';
 import type { FocusHint, NodeId } from '../api/types';
 import type { DocumentIndex, UiState } from '../state/document';
-import { CloseIcon, ICON_SIZE } from './icons';
 import { NodePanel } from './NodePanel';
+import { WorkspacePanelSurface } from './WorkspacePanelSurface';
 import { AgentDebugPanel } from './agent/AgentDebugPanel';
+import { ResizeHandle } from './primitives/ResizeHandle';
 import type { CommandRunner, TriggerState } from './shared';
 import type { WorkspacePanelState, WorkspaceTabState } from './workspaceLayoutTypes';
 
@@ -40,28 +41,14 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
     >
       {activePanels.map((panel, panelIndex) => (
         <Fragment key={panel.id}>
-          <div
-            className={[
-              'outline-panel-surface',
-              `is-${panel.type}`,
-              props.activeTab?.activePanelId === panel.id ? 'active-panel' : '',
-            ].filter(Boolean).join(' ')}
-            onFocusCapture={() => props.onActivatePanel(panel)}
-            onPointerDownCapture={() => props.onActivatePanel(panel)}
-            style={{
-              '--panel-size': props.activeTab?.panelSizes[panel.id] ?? 1,
-            } as CSSProperties}
+          <WorkspacePanelSurface
+            active={props.activeTab?.activePanelId === panel.id}
+            onActivate={() => props.onActivatePanel(panel)}
+            onClose={() => props.onClosePanel(panel.id)}
+            panel={panel}
+            showClose={activePanels.length > 1}
+            size={props.activeTab?.panelSizes[panel.id] ?? 1}
           >
-            {activePanels.length > 1 && (
-              <button
-                className="outline-panel-close"
-                onClick={() => props.onClosePanel(panel.id)}
-                title="Close panel"
-                type="button"
-              >
-                <CloseIcon size={ICON_SIZE.menu} />
-              </button>
-            )}
             {panel.type === 'outliner' ? (
               <NodePanel
                 rootId={panel.rootId}
@@ -79,16 +66,15 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
             ) : (
               <AgentDebugPanel sessionId={panel.sessionId} />
             )}
-          </div>
+          </WorkspacePanelSurface>
           {panelIndex < activePanels.length - 1 && (
             <div className="panel-resize-slot">
-              <button
-                aria-label="Resize panels"
+              <ResizeHandle
                 className="panel-resize-handle"
+                label="Resize panels"
                 onPointerDown={(event) => (
                   props.onPanelResizeStart(panel.id, activePanels[panelIndex + 1].id, event)
                 )}
-                type="button"
               />
             </div>
           )}

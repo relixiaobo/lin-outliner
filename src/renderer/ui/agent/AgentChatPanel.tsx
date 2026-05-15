@@ -24,6 +24,7 @@ import {
 import { AgentComposer } from './AgentComposer';
 import { AgentSettingsDialog } from './AgentSettingsDialog';
 import { AgentMessageRow } from './AgentMessageRow';
+import { IconButton } from '../primitives/IconButton';
 
 const SUGGESTED_PROMPTS = [
   '总结当前大纲',
@@ -448,49 +449,45 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
         <div className="agent-dock-actions">
           <span className="agent-status-dot" aria-hidden="true" />
           <span className="agent-status-dot is-muted" aria-hidden="true" />
-          <button
-            aria-label="New conversation"
+          <IconButton
             className="agent-menu-button"
             disabled={isStreaming}
+            icon={AddIcon}
+            label="New conversation"
             onClick={() => void handleNewSession()}
             title="New conversation"
-            type="button"
-          >
-            <AddIcon size={ICON_SIZE.toolbar} />
-          </button>
-          <button
-            aria-label="Open agent debug"
+            variant="composerTool"
+          />
+          <IconButton
             className="agent-menu-button"
+            icon={CodeIcon}
+            label="Open agent debug"
             onClick={() => onOpenDebugPanel?.(sessionId)}
             title="Open agent debug"
-            type="button"
-          >
-            <CodeIcon size={ICON_SIZE.toolbar} />
-          </button>
-          <button
-            aria-label="Agent settings"
+            variant="composerTool"
+          />
+          <IconButton
             className="agent-menu-button"
+            icon={SettingsIcon}
+            label="Agent settings"
             onClick={() => setSettingsOpen(true)}
             title="Agent settings"
-            type="button"
-          >
-            <SettingsIcon size={ICON_SIZE.toolbar} />
-          </button>
+            variant="composerTool"
+          />
         </div>
         {historyOpen ? (
-          <div className="agent-session-menu" role="menu">
+          <div className="agent-session-menu" role="dialog" aria-label="Conversations">
             <div className="agent-session-menu-header">
               <span>Conversations</span>
-              <button
-                aria-label="New conversation"
+              <IconButton
                 className="agent-message-action-button"
                 disabled={isStreaming}
+                icon={AddIcon}
+                label="New conversation"
                 onClick={() => void handleNewSession()}
                 title="New conversation"
-                type="button"
-              >
-                <AddIcon size={ICON_SIZE.menu} />
-              </button>
+                variant="message"
+              />
             </div>
             <div className="agent-session-list">
               {sessionsLoading ? (
@@ -513,22 +510,20 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
                         }}
                         value={editingTitle}
                       />
-                      <button
-                        aria-label="Cancel rename"
+                      <IconButton
                         className="agent-message-action-button"
+                        icon={CloseIcon}
+                        label="Cancel rename"
                         onClick={() => setEditingSessionId(null)}
-                        type="button"
-                      >
-                        <CloseIcon size={ICON_SIZE.menu} />
-                      </button>
-                      <button
-                        aria-label="Save rename"
+                        variant="message"
+                      />
+                      <IconButton
                         className="agent-message-action-button"
+                        icon={CheckIcon}
+                        label="Save rename"
                         onClick={() => void handleRenameSession(session.id)}
-                        type="button"
-                      >
-                        <CheckIcon size={ICON_SIZE.menu} />
-                      </button>
+                        variant="message"
+                      />
                     </div>
                   );
                 }
@@ -550,29 +545,27 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
                       </span>
                     </button>
                     <div className="agent-session-row-actions">
-                      <button
-                        aria-label="Rename conversation"
+                      <IconButton
                         className="agent-message-action-button"
                         disabled={isStreaming}
+                        icon={PencilIcon}
+                        label="Rename conversation"
                         onClick={() => {
                           setEditingSessionId(session.id);
                           setEditingTitle(title);
                         }}
                         title="Rename"
-                        type="button"
-                      >
-                        <PencilIcon size={ICON_SIZE.menu} />
-                      </button>
-                      <button
-                        aria-label="Delete conversation"
+                        variant="message"
+                      />
+                      <IconButton
                         className="agent-message-action-button"
                         disabled={isStreaming}
+                        icon={TrashIcon}
+                        label="Delete conversation"
                         onClick={() => void handleDeleteSession(session.id, session.title)}
                         title="Delete"
-                        type="button"
-                      >
-                        <TrashIcon size={ICON_SIZE.menu} />
-                      </button>
+                        variant="message"
+                      />
                     </div>
                   </div>
                 );

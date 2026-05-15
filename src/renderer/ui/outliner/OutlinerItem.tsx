@@ -32,6 +32,7 @@ import { TriggerPopover } from './TriggerPopover';
 import { DoneCheckbox } from './DoneCheckbox';
 import { NodeContextMenu } from './NodeContextMenu';
 import { NodeDescription } from './NodeDescription';
+import { OutlinerRowShell } from './OutlinerRowShell';
 import { OutlinerView } from './OutlinerView';
 import { IndentGuide } from './IndentGuide';
 import { RowLeading } from './RowLeading';
@@ -269,6 +270,12 @@ export function OutlinerItem(props: OutlinerItemProps) {
     await props.run(() => api.createNode(props.parentId, rowIndex >= 0 ? rowIndex + 1 : null, ''));
   };
 
+  const handleModEnter = async (content: RichText) => {
+    setDraftContent(content);
+    await commitDraft(content);
+    await props.run(() => api.cycleDoneState(targetEditId));
+  };
+
   const handleBackspaceAtStart = async (isEmpty: boolean) => {
     const intent = resolveContentRowBackspaceAtStartIntent({
       isEmpty,
@@ -416,15 +423,15 @@ export function OutlinerItem(props: OutlinerItemProps) {
   };
 
   return (
-    <div
-      className={`row-wrap ${row.hasChildren ? 'has-children' : ''} ${row.expanded ? 'expanded' : ''}`}
-      {...row.wrapProps}
-    >
-      <div
-        className={row.rowClassName()}
-        onMouseDownCapture={row.selectFromPointer}
-        onContextMenu={openContextMenu}
-      >
+    <OutlinerRowShell
+      hasChildren={row.hasChildren}
+      expanded={row.expanded}
+      wrapProps={row.wrapProps}
+      rowClassName={row.rowClassName()}
+      onSelectFromPointer={row.selectFromPointer}
+      onContextMenu={openContextMenu}
+      rowContent={(
+        <>
         <RowLeading
           hasChildren={row.hasChildren}
           expanded={row.expanded}
@@ -462,7 +469,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
             onMove={(direction) => void moveCurrentNode(direction)}
             onUndo={() => void props.run(() => api.undo())}
             onRedo={() => void props.run(() => api.redo())}
-            onModEnter={() => void props.run(() => api.toggleDone(targetEditId))}
+            onModEnter={(content) => void handleModEnter(content)}
             onEscape={() => void exitToSelection()}
             resolveInlineReferenceColor={(targetId) => inlineReferenceTextColor(targetId, props.index)}
             onFieldTriggerFire={() => {
@@ -500,7 +507,9 @@ export function OutlinerItem(props: OutlinerItemProps) {
             }}
           />
         </div>
-      </div>
+        </>
+      )}
+    >
 
       {row.expanded && (
         <IndentGuide onToggleChildren={row.toggleDirectChildrenExpansion} />
@@ -605,6 +614,6 @@ export function OutlinerItem(props: OutlinerItemProps) {
           )}
         </div>
       )}
-    </div>
+    </OutlinerRowShell>
   );
 }

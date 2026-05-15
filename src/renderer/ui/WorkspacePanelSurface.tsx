@@ -1,0 +1,51 @@
+import type { CSSProperties, ReactNode } from 'react';
+import { CloseIcon } from './icons';
+import { IconButton } from './primitives/IconButton';
+import type { WorkspacePanelState } from './workspaceLayoutTypes';
+
+interface WorkspacePanelSurfaceProps {
+  active: boolean;
+  children: ReactNode;
+  onActivate: () => void;
+  onClose: () => void;
+  panel: WorkspacePanelState;
+  showClose: boolean;
+  size: number;
+}
+
+export function WorkspacePanelSurface({
+  active,
+  children,
+  onActivate,
+  onClose,
+  panel,
+  showClose,
+  size,
+}: WorkspacePanelSurfaceProps) {
+  return (
+    <div
+      className={[
+        'outline-panel-surface',
+        `is-${panel.type}`,
+        active ? 'active-panel' : '',
+      ].filter(Boolean).join(' ')}
+      onFocusCapture={onActivate}
+      onPointerDownCapture={onActivate}
+      style={{
+        '--panel-size': size,
+      } as CSSProperties}
+    >
+      {showClose && (
+        <IconButton
+          className="outline-panel-close"
+          icon={CloseIcon}
+          label="Close panel"
+          onClick={onClose}
+          title="Close panel"
+          variant="panel"
+        />
+      )}
+      {children}
+    </div>
+  );
+}

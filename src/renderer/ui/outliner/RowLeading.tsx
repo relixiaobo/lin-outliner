@@ -1,14 +1,12 @@
-import type { CSSProperties, DragEvent } from 'react';
+import type { DragEvent } from 'react';
 import type { FieldType } from '../../api/types';
 import {
   ChevronRightIcon,
   ICON_SIZE,
 } from '../icons';
-import { conicColorStyle } from '../tags/tagColors';
-import { FieldTypeIcon } from './fieldTypePresentation';
-import { NodeBulletDot } from './NodeBulletDot';
+import { RowMarker, type RowMarkerVariant } from './RowMarker';
 
-type RowLeadingVariant = 'content' | 'reference' | 'tag' | 'field' | 'fieldDef';
+export type RowLeadingVariant = RowMarkerVariant;
 
 interface RowLeadingProps {
   hasChildren: boolean;
@@ -37,22 +35,6 @@ export function RowLeading({
   onDragStart,
   onDragEnd,
 }: RowLeadingProps) {
-  const bulletClass = [
-    'row-bullet-shape',
-    variant,
-    hasChildren ? 'has-children' : '',
-    hasChildren && !expanded ? 'collapsed' : '',
-    expanded ? 'expanded' : '',
-  ].filter(Boolean).join(' ');
-
-  const bulletDotStyle = conicColorStyle(bulletColors);
-  let bulletShapeStyle: CSSProperties | undefined;
-  if (variant === 'tag' && tagDefColor) {
-    bulletShapeStyle = { background: tagDefColor };
-  } else if ((variant === 'field' || variant === 'fieldDef') && bulletColors[0]) {
-    bulletShapeStyle = { color: bulletColors[0] };
-  }
-
   return (
     <div className="row-leading">
       <button
@@ -88,15 +70,14 @@ export function RowLeading({
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
       >
-        <span className={bulletClass} style={bulletShapeStyle}>
-          {variant === 'field' || variant === 'fieldDef' ? (
-            <FieldTypeIcon fieldType={fieldType} />
-          ) : variant === 'tag' ? (
-            <span aria-hidden="true" className="row-bullet-tag-glyph">#</span>
-          ) : (
-            <NodeBulletDot style={bulletDotStyle} />
-          )}
-        </span>
+        <RowMarker
+          hasChildren={hasChildren}
+          expanded={expanded}
+          variant={variant}
+          fieldType={fieldType}
+          bulletColors={bulletColors}
+          tagDefColor={tagDefColor}
+        />
       </button>
     </div>
   );

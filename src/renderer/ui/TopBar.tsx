@@ -2,18 +2,15 @@ import {
   AddIcon,
   AgentIcon,
   BackIcon,
-  CloseIcon,
   ForwardIcon,
   ICON_SIZE,
   SidebarIcon,
   UserIcon,
 } from './icons';
+import { IconButton } from './primitives/IconButton';
+import { WorkspaceTab, type WorkspaceTabModel } from './WorkspaceTab';
 
-export interface TopBarTab {
-  id: string;
-  panelCount: number;
-  title: string;
-}
+export type TopBarTab = WorkspaceTabModel;
 
 interface TopBarProps {
   agentOpen: boolean;
@@ -35,76 +32,67 @@ export function TopBar(props: TopBarProps) {
     >
       <div className="top-chrome-left" aria-label="Window and navigation controls">
         <div className="window-controls-spacer" aria-hidden="true" />
-        <button
+        <IconButton
           aria-pressed={props.sidebarOpen}
           className="top-chrome-icon-button"
+          icon={SidebarIcon}
+          label={props.sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
           onClick={props.onToggleSidebar}
           title={props.sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
-          type="button"
-        >
-          <SidebarIcon size={ICON_SIZE.toolbar} strokeWidth={2} />
-        </button>
-        <button className="top-chrome-icon-button" disabled title="Back">
-          <BackIcon size={ICON_SIZE.menu} strokeWidth={1.7} />
-        </button>
-        <button className="top-chrome-icon-button" disabled title="Forward">
-          <ForwardIcon size={ICON_SIZE.menu} strokeWidth={1.7} />
-        </button>
+          strokeWidth={2}
+        />
+        <IconButton
+          className="top-chrome-icon-button"
+          disabled
+          icon={BackIcon}
+          iconSize={ICON_SIZE.menu}
+          label="Back"
+          strokeWidth={1.7}
+        />
+        <IconButton
+          className="top-chrome-icon-button"
+          disabled
+          icon={ForwardIcon}
+          iconSize={ICON_SIZE.menu}
+          label="Forward"
+          strokeWidth={1.7}
+        />
       </div>
 
       <nav className="tab-strip" aria-label="Workspace tabs">
-        {props.tabs.map((tab) => {
-          const active = tab.id === props.activeTabId;
-          return (
-          <div
-            className={`workspace-tab ${active ? 'active' : ''}`}
+        {props.tabs.map((tab) => (
+          <WorkspaceTab
+            active={tab.id === props.activeTabId}
+            canClose={props.tabs.length > 1}
             key={tab.id}
-            title={tab.title}
-          >
-            <button
-              aria-current={active ? 'page' : undefined}
-              className="workspace-tab-trigger"
-              onClick={() => props.onSelectTab(tab.id)}
-              type="button"
-            >
-              <span className="workspace-tab-title">{tab.title}</span>
-              {tab.panelCount > 1 && <span className="workspace-tab-count">{tab.panelCount}</span>}
-            </button>
-            {props.tabs.length > 1 && (
-              <button
-                aria-label={`Close ${tab.title}`}
-                className="workspace-tab-close"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  props.onCloseTab(tab.id);
-                }}
-                title="Close tab"
-                type="button"
-              >
-                <CloseIcon size={ICON_SIZE.tiny} strokeWidth={2.2} />
-              </button>
-            )}
-          </div>
-          );
-        })}
-        <button className="top-chrome-icon-button add-tab-button" onClick={props.onCreateTab} title="New tab" type="button">
-          <AddIcon size={ICON_SIZE.toolbar} />
-        </button>
+            tab={tab}
+            onClose={props.onCloseTab}
+            onSelect={props.onSelectTab}
+          />
+        ))}
+        <IconButton
+          className="top-chrome-icon-button add-tab-button"
+          icon={AddIcon}
+          label="New tab"
+          onClick={props.onCreateTab}
+        />
       </nav>
 
       <div className="top-chrome-right" aria-label="Global actions">
-        <button
+        <IconButton
           aria-pressed={props.agentOpen}
           className="top-chrome-icon-button"
+          icon={AgentIcon}
+          label={props.agentOpen ? 'Collapse agent' : 'Expand agent'}
           onClick={props.onToggleAgent}
           title={props.agentOpen ? 'Collapse agent' : 'Expand agent'}
-          type="button"
-        >
-          <AgentIcon size={ICON_SIZE.toolbar} />
-        </button>
-        <button className="top-chrome-icon-button" disabled title="Account">
-          <UserIcon size={ICON_SIZE.toolbar} />
-        </button>
+        />
+        <IconButton
+          className="top-chrome-icon-button"
+          disabled
+          icon={UserIcon}
+          label="Account"
+        />
       </div>
     </header>
   );

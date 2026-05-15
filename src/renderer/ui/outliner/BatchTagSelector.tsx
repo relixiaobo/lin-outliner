@@ -9,6 +9,7 @@ import {
   targetIdsForRows,
 } from '../interactions/contextMenuSelection';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
+import { MenuItem } from '../primitives/MenuItem';
 import { selectedRootIds } from '../interactions/selectionActions';
 import { clampTagSelectorIndex, tagSelectorItemLabel, tagSelectorItems } from '../interactions/tagSelector';
 import type { CommandRunner } from '../shared';
@@ -157,21 +158,22 @@ export function BatchTagSelector(props: BatchTagSelectorProps) {
               )
               : <AddIcon size={ICON_SIZE.menu} />;
             return (
-              <button
+              <MenuItem
                 key={item.type === 'existing' ? item.tag.id : `create:${item.name}`}
-                className={`popover-item ${active ? 'active' : ''}`}
-                type="button"
+                active={active}
+                className="popover-item"
                 data-selected={active ? 'true' : undefined}
+                icon={icon}
+                iconClassName="popover-item-icon"
+                label={label}
+                labelClassName="popover-item-label"
                 onMouseEnter={() => setSelectedIndex(index)}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
                   if (item.type === 'existing') applyTag(item.tag.id);
                   else createAndApplyTag(item.name);
                 }}
-              >
-                <span className="popover-item-icon">{icon}</span>
-                <span className="popover-item-label">{label}</span>
-              </button>
+              />
             );
           })}
         </div>

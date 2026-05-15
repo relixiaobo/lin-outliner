@@ -45,13 +45,57 @@ State rules:
   owns layout expansion.
 - If a control exists and is enabled, it must perform a real action.
 
+## CheckboxMark
+
+Current sources:
+
+- `src/renderer/ui/primitives/CheckboxMark.tsx`
+- `src/renderer/ui/outliner/DoneCheckbox.tsx`
+- `src/renderer/styles.css`
+
+Purpose:
+
+- Stable visual mark for checkbox-like done state.
+- Represents the visual state only; it does not own click handling, keyboard
+  handling, persistence, or row behavior.
+
+Structure:
+
+- Root is a decorative `span` with a fixed measured box.
+- Checked state keeps the same measured box and adds an internal `CheckIcon`
+  glyph from `src/renderer/ui/icons.ts`.
+- The parent control owns button semantics and accessible naming.
+
+States:
+
+- No checkbox: parent row renders no `CheckboxMark`; the row shows only its
+  normal bullet.
+- Unchecked: neutral filled square using the shared measured box.
+- Checked: success filled square using `--semantic-success` with white internal
+  check glyph.
+- Hover may adjust fill color, but it must not change the measured box.
+
+Accessibility:
+
+- `CheckboxMark` is decorative and uses `aria-hidden`.
+- The parent button, row, or field control exposes `aria-pressed`,
+  `aria-checked`, label text, and keyboard behavior as appropriate.
+
+Non-goals:
+
+- CheckboxMark does not own `Mod+Enter` cycling, mouse toggling, row selection,
+  completion timestamps, or title/row layout.
+
 ## IconButton
 
 Current sources:
 
+- `src/renderer/ui/primitives/IconButton.tsx`
 - `src/renderer/ui/TopBar.tsx`
 - `src/renderer/ui/WorkspaceCanvas.tsx`
-- `src/renderer/ui/AgentDock.tsx`
+- `src/renderer/ui/NodePanel.tsx`
+- `src/renderer/ui/agent/AgentChatPanel.tsx`
+- `src/renderer/ui/agent/AgentComposer.tsx`
 - `src/renderer/ui/agent/AgentMessageRow.tsx`
 - `src/renderer/ui/editor/FloatingEditorToolbar.tsx`
 
@@ -64,6 +108,8 @@ Structure:
 
 - Root is a `button`.
 - One icon slot using an alias from `src/renderer/ui/icons.ts`.
+- Icon SVG receives a fixed slot and must not decide the button's measured
+  size.
 - Optional active/pressed state.
 - Optional disabled state.
 - Optional tooltip through `title` until a shared tooltip exists.
@@ -125,10 +171,148 @@ Accessibility:
 - Formatting controls use clear labels such as `Bold`, `Italic`, `Code`, and
   `Highlight`.
 
+## MenuSurface
+
+Current sources:
+
+- `src/renderer/ui/primitives/MenuSurface.tsx`
+- `src/renderer/ui/outliner/NodeContextMenu.tsx`
+- `src/renderer/ui/outliner/PopoverList.tsx`
+- `src/renderer/ui/agent/AgentComposer.tsx`
+
+Purpose:
+
+- Shared menu/popover surface wrapper for dense command lists, context menus,
+  trigger popovers, option pickers, and model menus.
+- Keeps ref, role, className, style, and preserve-selection wiring consistent
+  without owning positioning or keyboard behavior.
+
+Structure:
+
+- Root is a `div`.
+- The caller supplies role: `menu`, `listbox`, or no role when an existing
+  surface already owns semantics.
+- The caller supplies surface className so product-specific size, elevation,
+  and positioning remain local.
+
+States:
+
+- Surface open/closed state is owned by the caller.
+- Positioning is owned by the caller.
+- Preserve-selection is opt-in for outliner context menus and other popovers
+  that must not clear block selection.
+
+Accessibility:
+
+- The caller owns focus management, Escape handling, outside click, and
+  keyboard navigation.
+- Surface role must match the item role used inside it.
+
+Non-goals:
+
+- MenuSurface does not own portal rendering, menu positioning, roving focus,
+  filtering, or command execution.
+
+## MenuItem
+
+Current sources:
+
+- `src/renderer/ui/primitives/MenuItem.tsx`
+- `src/renderer/ui/CommandPalette.tsx`
+- `src/renderer/ui/outliner/PopoverList.tsx`
+- `src/renderer/ui/outliner/BatchTagSelector.tsx`
+- `src/renderer/ui/outliner/NodeContextMenu.tsx`
+- `src/renderer/ui/agent/AgentComposer.tsx`
+
+Purpose:
+
+- Shared button row with icon, label, and optional meta slots.
+- Keeps measured row layout and active class naming stable while allowing each
+  menu to preserve its own behavior and semantics.
+
+Structure:
+
+- Root is a `button`.
+- Optional icon slot.
+- Required label slot.
+- Optional meta slot.
+- The caller supplies class names for the root and slots so existing surfaces
+  keep their local visual contract.
+
+States:
+
+- Default.
+- Active/highlighted through an explicit active class.
+- Disabled through native `disabled` when the row cannot act, or
+  `aria-disabled` when focus/selection behavior still needs the row to remain
+  present.
+- Selected state is caller-owned through `aria-selected`, `data-selected`, or
+  surface-specific class names.
+
+Accessibility:
+
+- Listbox items use `role="option"` and `aria-selected`.
+- Menu items use `role="menuitem"` where the surrounding surface is a menu.
+- The caller owns keyboard navigation and focus restoration.
+
+Non-goals:
+
+- MenuItem does not own search, async loading, creation flows, submenu state,
+  or close-on-select behavior.
+
+## PopoverListbox
+
+Current sources:
+
+- `src/renderer/ui/outliner/PopoverList.tsx`
+- `src/renderer/ui/outliner/TriggerPopover.tsx`
+- `src/renderer/ui/outliner/OptionsPicker.tsx`
+- `src/renderer/ui/outliner/TrailingInput.tsx`
+- `src/renderer/ui/outliner/TagSelector.tsx`
+- `src/renderer/ui/outliner/ReferenceSelector.tsx`
+- `src/renderer/ui/outliner/SlashCommandMenu.tsx`
+
+Purpose:
+
+- Shared outliner listbox shell and option-row structure for trigger
+  suggestions, field option pickers, and trailing option pickers.
+- Removes duplicated popover item markup while preserving each caller's product
+  behavior.
+
+Structure:
+
+- `PopoverListbox` wraps `MenuSurface` and defaults to `role="listbox"`.
+- `PopoverListItem` wraps `MenuItem` and defaults to `role="option"`.
+- Optional icon, label, meta, empty, and bullet-placeholder slots.
+- The caller supplies surface class names, positioning style, active state, and
+  item action handlers.
+
+States:
+
+- Active item exposes `aria-selected` and `data-selected`.
+- Disabled items use `aria-disabled` when they must remain visible in the list.
+- Empty state is compact and muted through `PopoverEmpty`.
+- Hover and active visuals must not change row height or icon-slot width.
+
+Accessibility:
+
+- Trigger, tag, reference, slash, and field-option popovers need an accessible
+  listbox label.
+- Keyboard navigation, focus retention, Escape close, and focus restoration
+  stay with the caller because each surface is anchored to different editor
+  state.
+
+Non-goals:
+
+- PopoverListbox does not own filtering, positioning, active-index updates,
+  field option creation, tag/reference creation, command execution, or
+  close-on-select behavior.
+
 ## WorkspaceTab
 
 Current sources:
 
+- `src/renderer/ui/WorkspaceTab.tsx`
 - `src/renderer/ui/TopBar.tsx`
 - `src/renderer/ui/useWorkspaceTabs.ts`
 
@@ -143,6 +327,7 @@ Structure:
 - Title slot truncates with ellipsis.
 - Optional count slot shows number of visible panels.
 - Optional close button appears only when closing is allowed.
+- `TopBar` owns the surrounding strip, create-tab action, and shell controls.
 
 States:
 
@@ -169,6 +354,7 @@ Accessibility:
 
 Current sources:
 
+- `src/renderer/ui/WorkspacePanelSurface.tsx`
 - `src/renderer/ui/WorkspaceCanvas.tsx`
 - `src/renderer/ui/NodePanel.tsx`
 - `src/renderer/styles.css`
@@ -183,6 +369,8 @@ Structure:
 - Scroll container for real `NodePanel`.
 - Top-right close slot when multiple panels are visible.
 - Active-panel indication.
+- `WorkspaceCanvas` still decides which product surface is rendered inside the
+  shell.
 
 States:
 
@@ -196,6 +384,7 @@ Behavior:
 - Every product panel must contain a real `NodePanel`.
 - PanelSurface does not own outliner row typography or row rhythm.
 - Closing the last panel is not allowed.
+- PanelSurface does not own tab state, panel root navigation, or resize math.
 
 Accessibility:
 
@@ -206,6 +395,7 @@ Accessibility:
 
 Current sources:
 
+- `src/renderer/ui/primitives/ResizeHandle.tsx`
 - `src/renderer/ui/WorkspaceCanvas.tsx`
 - `src/renderer/ui/Sidebar.tsx`
 - `src/renderer/ui/AgentDock.tsx`
@@ -245,19 +435,21 @@ Accessibility:
 
 Current sources:
 
+- `src/renderer/ui/tags/AppliedTag.tsx`
 - `src/renderer/ui/tags/TagBar.tsx`
 - `src/renderer/ui/tags/tagColors.ts`
 
 Purpose:
 
-- Inline applied tag shown after node text or panel title.
+- Measured applied tag used inline after outliner row text and inside the
+  dedicated title tag segment.
 
 Structure:
 
 - Root owns measured inline width and row height.
 - Normal state contains hash marker and label.
-- Hover/focus state swaps inside the same measured box to remove target plus a
-  label-only pill.
+- Hover/focus state swaps the hash/remove icon inside the same fixed leading
+  slot and turns the label segment into a label-only pill.
 - Remove target and label target are separate interactive controls.
 
 Color rules:
@@ -270,8 +462,8 @@ Color rules:
 Layout rules:
 
 - Normal state owns the measured width.
-- Hover/focus state is constrained to that exact box with
-  `position: absolute; inset: 0`.
+- Hover/focus state is constrained to the exact same inline box; icon visibility
+  changes with opacity inside the fixed leading slot.
 - Use a gapped relative layout so icon and text anchors do not move.
 - Normal text starts at `6px left padding + 12px icon slot + 8px gap`.
 - Hover text starts at
@@ -322,12 +514,8 @@ Behavior:
 
 Current sources:
 
-- `src/renderer/ui/CommandPalette.tsx`
 - `src/renderer/ui/outliner/NodeContextMenu.tsx`
-- `src/renderer/ui/outliner/TriggerPopover.tsx`
-- `src/renderer/ui/outliner/SlashCommandMenu.tsx`
-- `src/renderer/ui/outliner/ReferenceSelector.tsx`
-- `src/renderer/ui/outliner/OptionsPicker.tsx`
+- `src/renderer/ui/outliner/PopoverList.tsx`
 - `src/renderer/ui/agent/AgentComposer.tsx`
 
 Purpose:
@@ -371,7 +559,7 @@ Current sources:
 
 - `src/renderer/ui/CommandPalette.tsx`
 - `src/renderer/ui/outliner/NodeContextMenu.tsx`
-- `src/renderer/ui/outliner/OptionsPicker.tsx`
+- `src/renderer/ui/outliner/PopoverList.tsx`
 - `src/renderer/ui/agent/AgentComposer.tsx`
 
 Purpose:
@@ -406,6 +594,7 @@ Rules:
 
 Current sources:
 
+- `src/renderer/ui/primitives/Dialog.tsx`
 - `src/renderer/ui/agent/AgentSettingsDialog.tsx`
 - `src/renderer/ui/CommandPalette.tsx`
 
@@ -421,6 +610,8 @@ Structure:
 - Body.
 - Optional alert/notice region.
 - Footer actions.
+- `Dialog` owns the backdrop wrapper, semantic dialog surface, and title
+  linkage. Header, body, footer content, and action behavior stay caller-owned.
 
 States:
 
@@ -444,11 +635,15 @@ Accessibility:
 - Focus should move into the dialog on open and return to the invoking control
   on close.
 - Focus should be trapped while modal is open.
+- Current primitive wires the semantic surface, `aria-labelledby` or
+  `aria-label`, Escape close hook, Tab focus trap, caller-provided initial
+  focus, initial surface focus fallback, and focus restoration.
 
 ## FormField
 
 Current sources:
 
+- `src/renderer/ui/primitives/FormField.tsx`
 - `src/renderer/ui/agent/AgentSettingsDialog.tsx`
 - `src/renderer/ui/definition/DefinitionConfigPanel.tsx`
 - `src/renderer/ui/outliner/FieldValueRenderer.tsx`
@@ -466,6 +661,8 @@ Structure:
 - Optional icon.
 - Optional help/meta text.
 - Optional error/validation state.
+- `FormField` owns only the visible label/control wrapper; control behavior and
+  validation stay with the calling surface.
 
 Variants:
 
@@ -500,14 +697,235 @@ Accessibility:
 - Switches use `role="switch"` and `aria-checked`.
 - Invalid fields expose an error message when validation blocks action.
 
+## SwitchControl
+
+Current sources:
+
+- `src/renderer/ui/primitives/SwitchControl.tsx`
+- `src/renderer/ui/definition/DefinitionConfigPanel.tsx`
+
+Purpose:
+
+- Shared semantic wrapper for binary on/off controls.
+
+Structure:
+
+- Root is a `button`.
+- Caller supplies visual children, such as track, thumb, and text.
+- Caller supplies surface-specific class names.
+
+States:
+
+- Off.
+- On.
+- Disabled through native `disabled`.
+- Focus-visible through the caller's surface class.
+
+Behavior:
+
+- Click toggles `checked` through `onCheckedChange`.
+- Custom click handlers may prevent the default toggle when a surface needs
+  additional validation.
+
+Accessibility:
+
+- Uses `role="switch"`.
+- Uses `aria-checked`.
+- Requires an accessible `label`.
+
+Non-goals:
+
+- SwitchControl does not own visual track/thumb styling, labels like `Yes/No`,
+  persistence, or setting-specific validation.
+
+## SelectControl
+
+Current sources:
+
+- `src/renderer/ui/primitives/SelectControl.tsx`
+- `src/renderer/ui/definition/DefinitionConfigPanel.tsx`
+
+Purpose:
+
+- Shared wrapper for native select controls.
+
+Structure:
+
+- Root is a native `select`.
+- Caller supplies options and surface-specific class names.
+- Caller owns value, change behavior, and domain coercion.
+
+States:
+
+- Default.
+- Focus-visible/focus.
+- Disabled through native `disabled`.
+
+Accessibility:
+
+- Requires a `label` that maps to `aria-label`.
+- Select semantics remain native.
+
+Non-goals:
+
+- SelectControl does not own custom menu rendering, filtering, async options,
+  option creation, or popover positioning.
+
+## TextInputControl
+
+Current sources:
+
+- `src/renderer/ui/primitives/TextInputControl.tsx`
+- `src/renderer/ui/definition/DefinitionConfigControls.tsx`
+- `src/renderer/ui/definition/DefinitionConfigPanel.tsx`
+
+Purpose:
+
+- Shared wrapper for native text inputs that need an accessible label.
+
+Structure:
+
+- Root is a native `input type="text"`.
+- Caller supplies value, change behavior, placeholder, class names, and keyboard
+  handling.
+
+States:
+
+- Default.
+- Focus-visible/focus.
+- Disabled through native `disabled`.
+- Invalid through caller-owned attributes and classes.
+
+Accessibility:
+
+- Requires a `label` that maps to `aria-label`.
+- Text input semantics remain native.
+
+Non-goals:
+
+- TextInputControl does not own draft state, commit-on-blur, Enter commit,
+  Escape revert, validation, persistence, or password/search variants.
+
+## NumberInputControl
+
+Current sources:
+
+- `src/renderer/ui/primitives/NumberInputControl.tsx`
+- `src/renderer/ui/definition/DefinitionConfigControls.tsx`
+- `src/renderer/ui/definition/DefinitionConfigPanel.tsx`
+
+Purpose:
+
+- Shared wrapper for native number inputs that need an accessible label.
+
+Structure:
+
+- Root is a native `input type="number"`.
+- Caller supplies value parsing, invalid handling, class names, and keyboard
+  behavior.
+
+States:
+
+- Default.
+- Focus-visible/focus.
+- Disabled through native `disabled`.
+- Invalid through caller-owned attributes and classes.
+
+Accessibility:
+
+- Requires a `label` that maps to `aria-label`.
+- Number input semantics remain native.
+
+Non-goals:
+
+- NumberInputControl does not own number parsing, empty-value semantics,
+  min/max validation, commit timing, or persistence.
+
+## DefinitionConfigControls
+
+Current sources:
+
+- `src/renderer/ui/definition/DefinitionConfigControls.tsx`
+- `src/renderer/ui/definition/DefinitionConfigPanel.tsx`
+- `src/renderer/styles/outliner.css`
+
+Purpose:
+
+- Definition-specific control family for tag and field configuration rows.
+
+Structure:
+
+- Field type select.
+- Hide-field select.
+- Tag select.
+- Switch.
+- Color input pair.
+- Number input.
+
+Rules:
+
+- These controls are definition-scoped, not global primitives.
+- They may compose global primitives such as `SelectControl`, `SwitchControl`,
+  `TextInputControl`, and `NumberInputControl`.
+- Draft state, commit timing, parsing, and Escape revert may live here when the
+  behavior is specific to definition configuration.
+- `DefinitionConfigPanel` owns mapping config items to controls and persistence
+  patches; the controls own only local input interaction.
+
+Accessibility:
+
+- Every control exposes a label through native control labels or `aria-label`.
+- Decorative inline glyphs are hidden from assistive technology.
+
+## DefinitionConfigRow
+
+Current sources:
+
+- `src/renderer/ui/definition/DefinitionConfigRowShell.tsx`
+- `src/renderer/ui/definition/DefinitionConfigControls.tsx`
+- `src/renderer/ui/definition/DefinitionConfigPanel.tsx`
+- `src/renderer/styles/outliner.css`
+
+Purpose:
+
+- Dense configuration row for tag and field definition settings.
+
+Structure:
+
+- Icon slot.
+- Label slot.
+- Control slot.
+- Stable `data-config-key` hook for tests and targeted styling.
+
+States:
+
+- Default.
+- Focus-within through the owned control.
+- Disabled or unavailable through the owned control.
+
+Rules:
+
+- The shell owns only icon/label/control geometry.
+- Controls remain local to `DefinitionConfigPanel` until each control family has
+  a shared contract.
+- Definition config rows may share visual rhythm with field value rows, but they
+  are not editable outliner rows and should not inherit row selection behavior.
+
+Accessibility:
+
+- Decorative row icons are hidden from assistive technology.
+- Each control must expose its own label or `aria-label`.
+
 ## OutlinerRow
 
 Current sources:
 
 - `src/renderer/ui/outliner/OutlinerItem.tsx`
+- `src/renderer/ui/outliner/OutlinerRowShell.tsx`
 - `src/renderer/ui/outliner/RowLeading.tsx`
 - `src/renderer/ui/outliner/RowHost.tsx`
 - `src/renderer/ui/outliner/useOutlinerRowInteraction.ts`
+- `src/renderer/styles/outliner.css`
 
 Purpose:
 
@@ -516,7 +934,7 @@ Purpose:
 
 Structure:
 
-- Row wrapper.
+- `OutlinerRowShell` wrapper and inner `.row` surface.
 - Leading slot: chevron, bullet, tag glyph, reference marker, or field icon.
 - Content line: checkbox, rich text editor, applied tags, description.
 - Optional trigger popover.
@@ -536,11 +954,14 @@ States:
 
 Rules:
 
-- Row typography is owned by the existing outliner implementation:
-  `15px / 24px` for row editors, `13px / 18px` for descriptions.
+- Row typography follows the outliner design contract and current product
+  rhythm: `15px / 24px` for row editors, `13px / 18px` for descriptions.
 - Row geometry is fixed to the current outliner rhythm: `26px` minimum row
   height, `42px` leading slot, `15px 4px 15px 8px` leading columns, and
   selection fill starting at `21px`.
+- Panel placement may offset the top-level row wrapper left by the row bullet
+  start offset so the bullet column aligns with the panel title/tag column
+  while the chevron sits in the gutter.
 - Shell CSS must not override row font size or row rhythm.
 - Applied tags render inline after node text using the future `AppliedTag`
   visual contract: fixed measured pill, stable hover/focus swap, and no row
@@ -553,6 +974,8 @@ Rules:
   [`../ui-behavior.md`](../ui-behavior.md).
 - Component extraction must wrap current behavior rather than replacing the row
   interaction model.
+- `OutlinerRowShell` owns only wrapper class structure; selection, context menu,
+  drag/drop, expansion, and keyboard behavior stay with row interaction code.
 
 Accessibility:
 
@@ -565,6 +988,7 @@ Accessibility:
 Current sources:
 
 - `src/renderer/ui/outliner/RowLeading.tsx`
+- `src/renderer/ui/outliner/RowMarker.tsx`
 - `src/renderer/ui/outliner/NodeBulletDot.tsx`
 - `src/renderer/ui/outliner/fieldTypePresentation.tsx`
 
@@ -576,8 +1000,8 @@ Structure:
 
 - Chevron button.
 - Bullet/open button.
-- Optional type icon, reference marker, or tag glyph.
-- Optional conic tag color indicator.
+- `RowMarker` visual shape for type icon, reference marker, tag glyph, or conic
+  tag color indicator.
 
 Rules:
 
@@ -596,6 +1020,7 @@ Rules:
 Current sources:
 
 - `src/renderer/ui/outliner/OutlinerFieldRow.tsx`
+- `src/renderer/ui/outliner/FieldEntryGrid.tsx`
 - `src/renderer/ui/outliner/FieldValueRenderer.tsx`
 - `src/renderer/ui/outliner/FieldValueRow.tsx`
 - `src/renderer/ui/outliner/OptionsPicker.tsx`
@@ -608,10 +1033,9 @@ Purpose:
 Structure:
 
 - Row wrapper and `RowLeading` field variant.
-- Field name column.
-- Field value column.
-- Optional value child-count preview when expanded.
-- Optional description spanning both columns.
+- `FieldEntryGrid` name, value, and optional description slots.
+- Value slot may render a typed value control or a child-count preview when
+  expanded.
 
 Rules:
 
@@ -621,6 +1045,79 @@ Rules:
 - Invalid value state must not change row height or text start.
 - Expanded field rows with children show a preview/focus affordance instead of
   duplicating child content in the value cell.
+
+## TrailingInput
+
+Current sources:
+
+- `src/renderer/ui/outliner/TrailingInput.tsx`
+- `src/renderer/ui/outliner/TrailingInputLeading.tsx`
+- `src/renderer/ui/outliner/RowMarker.tsx`
+
+Purpose:
+
+- Empty outliner row used to create the next child or sibling inside the
+  current scope.
+
+Structure:
+
+- Row wrapper with the same leading width as normal rows.
+- `TrailingInputLeading` renders a dimmed content marker through `RowMarker`.
+- ProseMirror editor mount owns placeholder text and input behavior.
+- Optional options popover for option-field values.
+
+Rules:
+
+- Placeholder remains `Type here or '/' for commands`.
+- Empty marker uses muted leading color and must not change row text start.
+- Creation, paste parsing, trigger handling, undo/redo, IME composition, and
+  option selection remain owned by `TrailingInput`.
+
+## NodeDescription
+
+Current sources:
+
+- `src/renderer/ui/outliner/NodeDescription.tsx`
+- `src/renderer/ui/outliner/NodeDescriptionSurface.tsx`
+
+Purpose:
+
+- Muted metadata attached to an outliner row or panel title.
+
+Structure:
+
+- Read state renders a compact text button.
+- Edit state renders a one-row textarea in the same rhythm.
+- `NodeDescription` owns draft state, focus, IME-safe keyboard handling, and
+  persistence.
+- `NodeDescriptionSurface` owns only the read/edit visual elements and class
+  names.
+
+Rules:
+
+- Description never becomes a card.
+- Read and edit states must keep the same row flow and muted typography.
+- Enter commits; Escape cancels without committing; IME composition must not be
+  interrupted.
+
+## OutlinerViewChrome
+
+Current sources:
+
+- `src/renderer/ui/outliner/OutlinerView.tsx`
+- `src/renderer/ui/outliner/OutlinerViewChrome.tsx`
+
+Purpose:
+
+- Lightweight non-row chrome inside outliner views, such as grouped headings
+  and hidden-field reveal actions.
+
+Rules:
+
+- Group headings stay compact, muted, and subordinate to rows.
+- Hidden-field reveal uses a small inline action, not a settings card.
+- Filtering, hidden-field expansion state, and row building stay in
+  `OutlinerView` and row-model code.
 
 ## PanelBreadcrumb
 
@@ -680,6 +1177,8 @@ See [`agent.md`](./agent.md) for the full agent turn model.
 Current sources:
 
 - `src/renderer/ui/agent/AgentMessageRow.tsx`
+- `src/renderer/ui/agent/AgentMessageFrame.tsx`
+- `src/renderer/ui/agent/AgentBranchNavigator.tsx`
 
 Purpose:
 
@@ -732,7 +1231,10 @@ See [`agent.md`](./agent.md) for process and tool-call behavior.
 Current sources:
 
 - `src/renderer/ui/agent/AgentProcessBlock.tsx`
+- `src/renderer/ui/agent/AgentProcessTimeline.tsx`
+- `src/renderer/ui/agent/AgentThinkingBlock.tsx`
 - `src/renderer/ui/agent/AgentToolCallBlock.tsx`
+- `src/renderer/ui/agent/AgentToolCallDisclosure.tsx`
 
 Purpose:
 
@@ -785,6 +1287,8 @@ See [`agent.md`](./agent.md) for the full composer contract.
 Current sources:
 
 - `src/renderer/ui/agent/AgentComposer.tsx`
+- `src/renderer/ui/agent/AgentComposerControls.tsx`
+- `src/renderer/ui/agent/AgentComposerModelMenu.tsx`
 
 Purpose:
 
@@ -803,6 +1307,14 @@ Structure:
 - Send/stop action.
 - Single primary action slot shared by send and stop.
 - Secondary control group for attachment, model, reasoning, and settings.
+- `AgentComposerControls` owns presentational controls for queued follow-up
+  actions, attachment chips, attachment trigger, model button, and primary
+  action slot.
+- `AgentComposerModelMenu` owns the model/reasoning menu shell and item
+  structure.
+- `AgentComposer` owns textarea draft, send/queue/stop behavior, file reading,
+  attachment state, menu open state, provider updates, and IME-safe keyboard
+  handling.
 
 States:
 
@@ -834,6 +1346,8 @@ Accessibility:
 - Textarea has `aria-label`.
 - Send/stop/action buttons have labels.
 - Model picker exposes expanded state and menu semantics.
+- Thinking switch exposes `role="switch"` with a label.
+- Thinking-level choices expose menu radio state.
 
 ## Component Priority
 

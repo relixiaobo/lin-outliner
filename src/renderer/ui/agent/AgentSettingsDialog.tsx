@@ -8,6 +8,8 @@ import type {
 } from '../../api/types';
 import { api } from '../../api/client';
 import { ICON_SIZE, PasswordIcon, TrashIcon, WarningIcon } from '../icons';
+import { Dialog } from '../primitives/Dialog';
+import { FormField } from '../primitives/FormField';
 
 interface AgentSettingsDialogProps {
   open: boolean;
@@ -190,29 +192,27 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
   }
 
   return (
-    <div
-      aria-modal="true"
-      className="agent-settings-backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-      role="dialog"
+    <Dialog
+      backdropClassName="agent-settings-backdrop"
+      labelledBy="agent-settings-title"
+      onBackdropMouseDown={onClose}
+      onEscapeKeyDown={onClose}
+      surfaceClassName="agent-settings-dialog"
     >
-      <section className="agent-settings-dialog">
-        <header className="agent-settings-header">
-          <div>
-            <h2>Agent settings</h2>
-            <p>{draft.providerId && draft.modelId ? `${draft.providerId}/${draft.modelId}` : 'No model configured'}</p>
-          </div>
-          <button className="agent-settings-close" onClick={onClose} type="button">
-            Close
-          </button>
-        </header>
+      <header className="agent-settings-header">
+        <div>
+          <h2 id="agent-settings-title">Agent settings</h2>
+          <p>{draft.providerId && draft.modelId ? `${draft.providerId}/${draft.modelId}` : 'No model configured'}</p>
+        </div>
+        <button className="agent-settings-close" onClick={onClose} type="button">
+          Close
+        </button>
+      </header>
 
-        {loading ? (
-          <div className="agent-settings-empty">Loading...</div>
-        ) : (
-          <>
+      {loading ? (
+        <div className="agent-settings-empty">Loading...</div>
+      ) : (
+        <>
             <div className="agent-settings-provider-list">
               {settings?.providers.map((provider) => (
                 <button
@@ -227,8 +227,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
               ))}
             </div>
 
-            <label className="agent-settings-field">
-              <span>Provider</span>
+            <FormField className="agent-settings-field" label="Provider">
               <input
                 list="agent-provider-options"
                 onChange={(event) => updateProvider(event.target.value)}
@@ -240,10 +239,9 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
                   <option key={provider.providerId} value={provider.providerId} />
                 ))}
               </datalist>
-            </label>
+            </FormField>
 
-            <label className="agent-settings-field">
-              <span>Model</span>
+            <FormField className="agent-settings-field" label="Model">
               <input
                 list="agent-model-options"
                 onChange={(event) => {
@@ -266,10 +264,9 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
                   <option key={model.id} value={model.id}>{model.name}</option>
                 ))}
               </datalist>
-            </label>
+            </FormField>
 
-            <label className="agent-settings-field">
-              <span>Reasoning</span>
+            <FormField className="agent-settings-field" label="Reasoning">
               <select
                 onChange={(event) => {
                   setDraft((current) => ({
@@ -285,19 +282,17 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
                   </option>
                 ))}
               </select>
-            </label>
+            </FormField>
 
-            <label className="agent-settings-field">
-              <span>Base URL</span>
+            <FormField className="agent-settings-field" label="Base URL">
               <input
                 onChange={(event) => setDraft((current) => ({ ...current, baseUrl: event.target.value }))}
                 placeholder="Optional OpenAI-compatible endpoint"
                 value={draft.baseUrl}
               />
-            </label>
+            </FormField>
 
-            <label className="agent-settings-field">
-              <span>API key</span>
+            <FormField className="agent-settings-field" label="API key">
               <div className="agent-settings-key-row">
                 <PasswordIcon size={ICON_SIZE.menu} />
                 <input
@@ -307,7 +302,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
                   value={apiKey}
                 />
               </div>
-            </label>
+            </FormField>
 
             <div className="agent-settings-row">
               <label className="agent-settings-checkbox">
@@ -359,10 +354,9 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
                 {saving ? 'Saving...' : 'Save'}
               </button>
             </footer>
-          </>
-        )}
-      </section>
-    </div>
+        </>
+      )}
+    </Dialog>
   );
 }
 

@@ -82,8 +82,9 @@ and color must use the outliner contract values:
 - Future applied tags use the `AppliedTag` / tag token contract: `22px` fixed
   height, color `50` background, color `600` text/icon, stable measured width,
   and the gapped relative hover layout.
-- Applied tags render inline after row text or panel title. They do not become a
-  second-line chip strip during normal editing.
+- Row applied tags render inline after row text. Title applied tags live in the
+  dedicated heading tag segment, not after the title text.
+- Row tags do not become a second-line chip strip during normal editing.
 
 Future visual colors are:
 
@@ -96,6 +97,12 @@ Future visual colors are:
   hover states.
 - Tag definition marker: current tag color, defaulting to the theme accent when
   no user tag color is present.
+
+The design-system site may expose outliner-specific CSS aliases such as
+`--outliner-text`, `--outliner-muted`, `--outliner-row-selected`, and
+`--outliner-row-leading-width`. These aliases must resolve back to the canonical
+foundation tokens or to the numeric values in this module; they are not a second
+palette.
 
 ## Breadcrumb
 
@@ -164,6 +171,11 @@ Field entry row:
 Rows stay text-first. Selection, hover, focus, drag/drop, and indentation must
 not shift the editor text start.
 
+Done state has three visible forms: no checkbox renders only the row bullet;
+unchecked renders the same measured checkbox slot as a neutral filled square;
+checked keeps that square, switches it to `--semantic-success`, and adds a
+white internal check glyph.
+
 ## Leading Cluster
 
 `RowLeading` owns hierarchy and type affordance.
@@ -180,8 +192,11 @@ not shift the editor text start.
 
 ## Tags And Description
 
-- Applied tags render inline after node text or panel title.
-- Tags do not become a separate chip strip during normal editing.
+- Row applied tags render inline after node text.
+- Title applied tags render in the heading tag segment below the title
+  description and above heading field rows.
+- Tags do not become detached cards or decorative chip strips during normal
+  editing.
 - Tag open/remove actions are real controls.
 - Descriptions are muted metadata below the content line or title line.
 - Description edit state uses an inline text area rhythm, not a modal.

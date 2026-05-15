@@ -1,16 +1,11 @@
 import {
   useEffect,
-  useLayoutEffect,
   useRef,
   useState,
   type ChangeEvent,
-  type CSSProperties,
   type ClipboardEvent,
   type DragEvent,
-  type ReactNode,
-  type RefObject,
 } from 'react';
-import { createPortal } from 'react-dom';
 import type { AgentMessageAttachmentInput } from '../../../core/agentTypes';
 import type {
   AgentModelOption,
@@ -19,19 +14,16 @@ import type {
   AgentReasoningLevel,
 } from '../../api/types';
 import {
-  AddIcon,
-  BrainIcon,
-  CheckIcon,
-  ChevronDownIcon,
-  CloseIcon,
-  FileTextIcon,
-  ICON_SIZE,
-  PencilIcon,
-  SendIcon,
-  SettingsIcon,
-  StopIcon,
-  TrashIcon,
-} from '../icons';
+  AgentComposerAttachmentButton,
+  AgentComposerAttachmentChip,
+  AgentComposerModelButton,
+  AgentComposerPrimaryAction,
+  AgentQueuedFollowUp,
+} from './AgentComposerControls';
+import {
+  AgentComposerModelMenu,
+  type ComposerModelChoice,
+} from './AgentComposerModelMenu';
 
 interface AgentComposerProps {
   isStreaming: boolean;
@@ -45,15 +37,6 @@ interface AgentComposerProps {
   settings: AgentProviderSettingsView | null;
   steeringNote: string | null;
 }
-
-const REASONING_LABELS: Record<AgentReasoningLevel, string> = {
-  off: 'Off',
-  minimal: 'Minimal',
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-  xhigh: 'Max',
-};
 
 const VENDOR_PREFIXES = [
   'Anthropic: ',
@@ -102,10 +85,6 @@ const TEXT_ATTACHMENT_EXTENSIONS = new Set([
   '.yaml',
   '.yml',
 ]);
-
-interface ComposerModelChoice extends AgentModelOption {
-  providerId: string;
-}
 
 type ComposerAttachment = AgentMessageAttachmentInput & {
   fingerprint?: string;
@@ -160,10 +139,6 @@ export function AgentComposer({
   const supportsReasoning = !!selectedModel?.reasoning || reasoningOptions.some((level) => level !== 'off');
   const reasoningEnabled = selectedReasoning !== 'off';
   const configDisabled = isStreaming || configSubmitting || modelOptions.length === 0;
-  const featuredModels = getFeaturedModelChoices(modelOptions, activeProvider);
-  const featuredIds = new Set(featuredModels.map((model) => modelKey(model)));
-  const moreModels = modelOptions.filter((model) => !featuredIds.has(modelKey(model)));
-  const moreModelGroups = groupModelsByProvider(moreModels);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -403,29 +378,11 @@ export function AgentComposer({
       }}
     >
       {steeringNote ? (
-        <div className="agent-steer-bubble">
-          <div className="agent-steer-actions">
-            <button
-              aria-label="Edit queued follow-up"
-              className="agent-message-action-button"
-              onClick={() => void editSteer()}
-              title="Edit queued follow-up"
-              type="button"
-            >
-              <PencilIcon size={ICON_SIZE.menu} />
-            </button>
-            <button
-              aria-label="Cancel queued follow-up"
-              className="agent-message-action-button"
-              onClick={() => void onCancelSteer()}
-              title="Cancel queued follow-up"
-              type="button"
-            >
-              <TrashIcon size={ICON_SIZE.menu} />
-            </button>
-          </div>
-          <div className="agent-steer-preview">{steeringNote}</div>
-        </div>
+        <AgentQueuedFollowUp
+          note={steeringNote}
+          onCancel={() => void onCancelSteer()}
+          onEdit={() => void editSteer()}
+        />
       ) : null}
       <div
         className={`agent-composer-surface ${isStreaming ? 'is-streaming' : ''} ${dragActive ? 'is-dragging' : ''}`}
@@ -439,10 +396,11 @@ export function AgentComposer({
         {attachments.length > 0 ? (
           <div className="agent-attachment-list">
             {attachments.map((attachment) => (
-              <ComposerAttachmentChip
+              <AgentComposerAttachmentChip
                 attachment={attachment}
                 key={attachment.id}
                 onRemove={() => removeAttachment(attachment.id)}
+                sizeLabel={formatBytes(attachment.sizeBytes)}
               />
             ))}
           </div>
@@ -483,217 +441,60 @@ export function AgentComposer({
             onChange={handleFileInputChange}
             type="file"
           />
-          <button
-            aria-label="Add attachment"
-            className="agent-composer-tool-button"
+          <AgentComposerAttachmentButton
             disabled={isStreaming || attachments.length >= MAX_ATTACHMENTS}
             onClick={() => fileInputRef.current?.click()}
-            title="Add attachment"
-            type="button"
-          >
-            <AddIcon size={ICON_SIZE.toolbar} />
-          </button>
+          />
 
           <div className="agent-composer-spacer" />
 
           <div className="agent-composer-model" ref={modelMenuRef}>
-            <button
-              aria-expanded={modelMenuOpen}
-              aria-haspopup="menu"
-              aria-label="Select model"
-              className="agent-composer-model-button"
+            <AgentComposerModelButton
               disabled={configDisabled || modelOptions.length === 0}
-              onClick={() => setModelMenuOpen((open) => !open)}
-              title={activeProvider ? `${activeProvider.providerId}/${activeProvider.modelId}` : 'No model configured'}
-              type="button"
-            >
-              <span className="agent-composer-model-name">{modelLabel}</span>
-              {supportsReasoning && reasoningEnabled ? (
-                <span className="agent-composer-reasoning-chip">{REASONING_LABELS[selectedReasoning]}</span>
-              ) : null}
-              <ChevronDownIcon size={ICON_SIZE.tiny} />
-            </button>
+              modelLabel={modelLabel}
+              modelTitle={activeProvider ? `${activeProvider.providerId}/${activeProvider.modelId}` : 'No model configured'}
+              onToggle={() => setModelMenuOpen((open) => !open)}
+              open={modelMenuOpen}
+              reasoningEnabled={reasoningEnabled}
+              selectedReasoning={selectedReasoning}
+              supportsReasoning={supportsReasoning}
+            />
 
             {modelMenuOpen ? (
-              <FloatingComposerMenu
+              <AgentComposerModelMenu
+                activeProvider={activeProvider}
                 anchorRef={modelMenuRef}
-                layoutKey={`${moreModelsOpen}:${reasoningMenuOpen}:${moreModelGroups.length}:${featuredModels.length}`}
+                configDisabled={configDisabled}
+                models={modelOptions}
+                moreModelsOpen={moreModelsOpen}
                 onClose={() => setModelMenuOpen(false)}
-              >
-                <div className="agent-composer-model-list">
-                  {featuredModels.map((model) => (
-                    <ModelMenuItem
-                      activeProvider={activeProvider}
-                      key={modelKey(model)}
-                      model={model}
-                      onSelect={() => void changeModel(model)}
-                    />
-                  ))}
-                  {moreModelGroups.length > 0 ? (
-                    <>
-                      <button
-                        aria-expanded={moreModelsOpen}
-                        className="agent-composer-more-models"
-                        onClick={() => setMoreModelsOpen((open) => !open)}
-                        type="button"
-                      >
-                        <ChevronDownIcon
-                          className={moreModelsOpen ? 'is-open' : ''}
-                          size={ICON_SIZE.menu}
-                        />
-                        <span>More models</span>
-                      </button>
-                      {moreModelsOpen ? (
-                        <div className="agent-composer-more-model-list">
-                          {moreModelGroups.map(([providerId, models]) => (
-                            <div className="agent-composer-more-model-group" key={providerId}>
-                              <div className="agent-composer-menu-caption">{formatProviderName(providerId)}</div>
-                              {models.map((model) => (
-                                <ModelMenuItem
-                                  activeProvider={activeProvider}
-                                  key={modelKey(model)}
-                                  model={model}
-                                  onSelect={() => void changeModel(model)}
-                                />
-                              ))}
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                    </>
-                  ) : null}
-                </div>
-
-                {supportsReasoning ? (
-                  <>
-                    <div className="agent-composer-menu-divider" />
-                    <div className="agent-composer-thinking-row">
-                      <BrainIcon size={ICON_SIZE.menu} />
-                      <span>Thinking</span>
-                      {reasoningEnabled ? (
-                        <div className="agent-composer-thinking-level-wrap">
-                          <button
-                            aria-expanded={reasoningMenuOpen}
-                            className="agent-composer-thinking-level"
-                            onClick={() => setReasoningMenuOpen((open) => !open)}
-                            type="button"
-                          >
-                            {REASONING_LABELS[selectedReasoning]}
-                            <ChevronDownIcon size={ICON_SIZE.tiny} />
-                          </button>
-                          {reasoningMenuOpen ? (
-                            <div className="agent-composer-thinking-level-menu">
-                              {reasoningOptions
-                                .filter((level) => level !== 'off')
-                                .map((level) => (
-                                  <button
-                                    className={`agent-composer-thinking-level-item ${
-                                      selectedReasoning === level ? 'is-selected' : ''
-                                    }`}
-                                    key={level}
-                                    onClick={() => {
-                                      setReasoningMenuOpen(false);
-                                      void changeReasoning(level);
-                                    }}
-                                    type="button"
-                                  >
-                                    {REASONING_LABELS[level]}
-                                  </button>
-                                ))}
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-                      <button
-                        aria-checked={reasoningEnabled}
-                        className={`agent-composer-thinking-switch ${reasoningEnabled ? 'is-on' : ''}`}
-                        disabled={configDisabled || !reasoningOptions.includes('off')}
-                        onClick={() => {
-                          void changeReasoning(reasoningEnabled ? 'off' : defaultEnabledReasoning());
-                        }}
-                        role="switch"
-                        type="button"
-                      >
-                        <span />
-                      </button>
-                    </div>
-                  </>
-                ) : null}
-
-                <div className="agent-composer-menu-divider" />
-                <button
-                  className="agent-composer-settings-item"
-                  onClick={() => {
-                    setModelMenuOpen(false);
-                    onOpenSettings();
-                  }}
-                  role="menuitem"
-                  type="button"
-                >
-                  <SettingsIcon size={ICON_SIZE.menu} />
-                  <span>API Settings</span>
-                </button>
-              </FloatingComposerMenu>
+                onModelSelect={(model) => void changeModel(model)}
+                onMoreModelsOpenChange={setMoreModelsOpen}
+                onOpenSettings={onOpenSettings}
+                onReasoningLevelSelect={(reasoningLevel) => {
+                  setReasoningMenuOpen(false);
+                  void changeReasoning(reasoningLevel);
+                }}
+                onReasoningMenuOpenChange={setReasoningMenuOpen}
+                onReasoningToggle={() => void changeReasoning(reasoningEnabled ? 'off' : defaultEnabledReasoning())}
+                reasoningEnabled={reasoningEnabled}
+                reasoningMenuOpen={reasoningMenuOpen}
+                reasoningOptions={reasoningOptions}
+                selectedReasoning={selectedReasoning}
+                supportsReasoning={supportsReasoning}
+              />
             ) : null}
           </div>
 
-          {isStreaming && !hasDraft ? (
-            <button
-              aria-label="Stop agent"
-              className="agent-composer-action-button"
-              onClick={onStop}
-              title="Stop"
-              type="button"
-            >
-              <StopIcon size={ICON_SIZE.toolbar} />
-            </button>
-          ) : (
-            <button
-              aria-label={isStreaming ? 'Queue follow-up' : 'Send message'}
-              className="agent-composer-action-button"
-              disabled={!canSubmit}
-              title={isStreaming ? 'Queue follow-up' : 'Send'}
-              type="submit"
-            >
-              <SendIcon size={ICON_SIZE.toolbar} />
-            </button>
-          )}
+          <AgentComposerPrimaryAction
+            canSubmit={canSubmit}
+            hasDraft={hasDraft}
+            isStreaming={isStreaming}
+            onStop={onStop}
+          />
         </div>
       </div>
     </form>
-  );
-}
-
-function ComposerAttachmentChip({
-  attachment,
-  onRemove,
-}: {
-  attachment: ComposerAttachment;
-  onRemove: () => void;
-}) {
-  return (
-    <div className="agent-attachment-chip">
-      <div className="agent-attachment-preview">
-        {attachment.kind === 'image' && attachment.previewUrl ? (
-          <img alt="" src={attachment.previewUrl} />
-        ) : (
-          <FileTextIcon size={ICON_SIZE.menu} />
-        )}
-      </div>
-      <div className="agent-attachment-meta">
-        <span title={attachment.name}>{attachment.name}</span>
-        <small>{formatBytes(attachment.sizeBytes)}</small>
-      </div>
-      <button
-        aria-label={`Remove ${attachment.name}`}
-        className="agent-attachment-remove"
-        onClick={onRemove}
-        title="Remove attachment"
-        type="button"
-      >
-        <CloseIcon size={ICON_SIZE.tiny} />
-      </button>
-    </div>
   );
 }
 
@@ -870,41 +671,6 @@ function getModelChoices(
   }, ...choices];
 }
 
-function getFeaturedModelChoices(
-  models: ComposerModelChoice[],
-  activeProvider: AgentProviderConfigView | null,
-): ComposerModelChoice[] {
-  const featured = models.slice(0, 5);
-  if (!activeProvider) return featured;
-  const selected = models.find(
-    (model) => model.providerId === activeProvider.providerId && model.id === activeProvider.modelId,
-  );
-  if (!selected || featured.some((model) => modelKey(model) === modelKey(selected))) return featured;
-  return [...featured.slice(0, Math.max(0, featured.length - 1)), selected];
-}
-
-function modelKey(model: ComposerModelChoice): string {
-  return `${model.providerId}:${model.id}`;
-}
-
-function groupModelsByProvider(models: ComposerModelChoice[]): [string, ComposerModelChoice[]][] {
-  const groups = new Map<string, ComposerModelChoice[]>();
-  for (const model of models) {
-    const existing = groups.get(model.providerId);
-    if (existing) existing.push(model);
-    else groups.set(model.providerId, [model]);
-  }
-  return [...groups.entries()];
-}
-
-function formatProviderName(providerId: string): string {
-  return providerId
-    .split(/[-_]/g)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
-}
-
 function shortenModelName(name: string): string {
   let result = name;
   let changed = true;
@@ -919,113 +685,4 @@ function shortenModelName(name: string): string {
     }
   }
   return result;
-}
-
-function ModelMenuItem({
-  activeProvider,
-  model,
-  onSelect,
-}: {
-  activeProvider: AgentProviderConfigView | null;
-  model: ComposerModelChoice;
-  onSelect: () => void;
-}) {
-  const selected = model.providerId === activeProvider?.providerId && model.id === activeProvider?.modelId;
-  return (
-    <button
-      className={`agent-composer-model-item ${selected ? 'is-selected' : ''}`}
-      onClick={onSelect}
-      role="menuitem"
-      type="button"
-    >
-      <span className="agent-composer-menu-check">
-        {selected ? <CheckIcon size={ICON_SIZE.menu} /> : null}
-      </span>
-      <span className="agent-composer-model-item-name">{model.name || model.id}</span>
-    </button>
-  );
-}
-
-function FloatingComposerMenu({
-  anchorRef,
-  children,
-  layoutKey,
-  onClose,
-}: {
-  anchorRef: RefObject<HTMLElement | null>;
-  children: ReactNode;
-  layoutKey: string;
-  onClose: () => void;
-}) {
-  const menuRef = useRef<HTMLDivElement>(null);
-  const [style, setStyle] = useState<CSSProperties>({
-    position: 'fixed',
-    top: -9999,
-    left: -9999,
-  });
-
-  useEffect(() => {
-    function handlePointerDown(event: PointerEvent) {
-      const target = event.target as Node;
-      if (menuRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
-      onClose();
-    }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      onClose();
-    }
-    document.addEventListener('pointerdown', handlePointerDown, true);
-    document.addEventListener('keydown', handleKeyDown, true);
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown, true);
-      document.removeEventListener('keydown', handleKeyDown, true);
-    };
-  }, [anchorRef, onClose]);
-
-  useLayoutEffect(() => {
-    const anchor = anchorRef.current;
-    if (!anchor) return;
-
-    const update = () => {
-      const rect = anchor.getBoundingClientRect();
-      const gap = 6;
-      const margin = 8;
-      const width = Math.min(300, window.innerWidth - margin * 2);
-      const maxHeight = Math.min(440, Math.max(120, window.innerHeight - margin * 2));
-      const contentHeight = menuRef.current?.scrollHeight ?? maxHeight;
-      const height = Math.min(contentHeight, maxHeight);
-      const left = Math.max(margin, Math.min(rect.right - width, window.innerWidth - width - margin));
-      const top = Math.max(margin, rect.top - gap - height);
-      setStyle({
-        position: 'fixed',
-        top,
-        left,
-        width,
-        maxHeight,
-      });
-    };
-
-    update();
-    const frame = window.requestAnimationFrame(update);
-    window.addEventListener('scroll', update, true);
-    window.addEventListener('resize', update);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.removeEventListener('scroll', update, true);
-      window.removeEventListener('resize', update);
-    };
-  }, [anchorRef, layoutKey]);
-
-  return createPortal(
-    <div
-      ref={menuRef}
-      className="agent-composer-model-menu"
-      role="menu"
-      style={style}
-    >
-      {children}
-    </div>,
-    document.body,
-  );
 }

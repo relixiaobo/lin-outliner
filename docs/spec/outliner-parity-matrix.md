@@ -57,7 +57,7 @@ Reference sources:
 | Backspace / Delete | Trash selected root rows. | `batch_delete`. | `outlinerParity.test.ts` |
 | Tab / Shift+Tab | Batch indent/outdent selected root rows. | `batch_indent/outdent`. | `outlinerParity.test.ts` |
 | Cmd/Ctrl+Shift+D | Batch duplicate selected root rows. | `batch_duplicate`. | `outlinerParity.test.ts` |
-| Cmd/Ctrl+Enter | Toggle done for selected target nodes. | `batch_checkbox`. | `outlinerParity.test.ts` |
+| Cmd/Ctrl+Enter | Cycle selected target nodes through no checkbox, undone checkbox, and done checkbox. | `batch_checkbox`. | `outlinerParity.test.ts`, `outliner-selection-keyboard.spec.ts` |
 | # | Open batch tag selector. | `batch_apply_tag`. | `outlinerParity.test.ts`, `outliner-selection.spec.ts` |
 | Cmd/Ctrl+C / Cmd/Ctrl+X | Copy/cut selected rows. | `batch_copy/cut`. | `outlinerParity.test.ts` |
 | Selection printable char | Focus first selected row and insert/append char. | `type_char` followed by row focus. | `outliner-selection-keyboard.spec.ts` |

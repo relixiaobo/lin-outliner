@@ -38,7 +38,7 @@ keyboard or pointer change should be checked against this matrix.
 | `ArrowUp` at text start | Focus previous visible row at end. |
 | `ArrowDown` at text end | Enter expanded child scope first, then next visible row/trailing row. |
 | `Escape` | Leave edit mode and select the current row. |
-| `Mod+Enter` | Toggle done state. |
+| `Mod+Enter` | Cycle checkbox state: no checkbox, undone checkbox, done checkbox. |
 
 ## Trailing Input Matrix
 

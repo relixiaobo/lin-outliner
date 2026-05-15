@@ -11,6 +11,7 @@ import {
   SearchIcon,
   TagIcon,
 } from './icons';
+import { ResizeHandle } from './primitives/ResizeHandle';
 import { textOf } from './shared';
 
 const primaryNavItems = [
@@ -125,12 +126,11 @@ export function Sidebar(props: SidebarProps) {
           ))}
         </div>
       </div>
-      <button
-        aria-label="Resize sidebar"
+      <ResizeHandle
         className="dock-resize-handle sidebar-resize-handle"
+        label="Resize sidebar"
         onPointerDown={props.onResizeStart}
         title="Resize sidebar"
-        type="button"
       />
     </aside>
   );

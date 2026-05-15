@@ -47,7 +47,7 @@ interface RichTextEditorProps {
   onMove?: (direction: 'up' | 'down') => void;
   onUndo?: () => void;
   onRedo?: () => void;
-  onModEnter: () => void;
+  onModEnter: (content: RichText) => void;
   onEscape: () => void;
   onTriggerChange: (trigger: EditorTrigger | null) => void;
   onFieldTriggerFire?: () => void;
@@ -370,7 +370,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
         }
         if (mod && event.key === 'Enter') {
           event.preventDefault();
-          propsRef.current.onModEnter();
+          propsRef.current.onModEnter(docToRichText(viewInstance.state.doc));
           return true;
         }
         if (mod && event.shiftKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {

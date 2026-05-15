@@ -12,16 +12,25 @@ export const ids = {
   dayTag: 'tag-day',
   projectTag: 'tag-project',
   statusField: 'field-status',
+  priorityField: 'field-priority',
+  priorityEntry: 'field-entry-priority',
+  priorityHigh: 'option-priority-high',
+  priorityLow: 'option-priority-low',
   alpha: 'node-alpha',
   beta: 'node-beta',
   gamma: 'node-gamma',
 } as const;
+
+interface MockFixtureOptions {
+  optionsField?: boolean;
+}
 
 type E2EWindow = Window & {
   __LIN_E2E__?: {
     calls: Array<{ cmd: string; args: Record<string, unknown> }>;
     projection: () => unknown;
     clipboardText: () => string;
+    emitAgentEvent: (event: unknown) => void;
   };
   lin?: {
     invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
@@ -29,8 +38,8 @@ type E2EWindow = Window & {
   };
 };
 
-export async function installElectronMock(page: Page) {
-  await page.addInitScript(({ ids }) => {
+export async function installElectronMock(page: Page, options: MockFixtureOptions = {}) {
+  await page.addInitScript(({ ids, options }) => {
     type RichText = { text: string; marks: unknown[]; inlineRefs: Array<{ offset: number; targetNodeId: string; displayName?: string }> };
     type MockNode = {
       id: string;
@@ -75,6 +84,42 @@ export async function installElectronMock(page: Page) {
     let sequence = 0;
     let clipboardText = '';
     const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+    const agentListeners: Array<(event: unknown) => void> = [];
+    const agentSettings = {
+      activeProviderId: 'openai',
+      providers: [{
+        providerId: 'openai',
+        modelId: 'gpt-5.4',
+        reasoningLevel: 'medium',
+        baseUrl: '',
+        enabled: true,
+        hasApiKey: true,
+        hasEnvApiKey: false,
+      }],
+      availableProviders: [{
+        providerId: 'openai',
+        hasEnvApiKey: false,
+        envKeyNames: ['OPENAI_API_KEY'],
+        models: [
+          {
+            id: 'gpt-5.4',
+            name: 'GPT-5.4',
+            reasoning: true,
+            supportedThinkingLevels: ['off', 'low', 'medium', 'high'],
+            contextWindow: 256_000,
+            maxTokens: 8192,
+          },
+          {
+            id: 'gpt-5.4-mini',
+            name: 'GPT-5.4 Mini',
+            reasoning: true,
+            supportedThinkingLevels: ['off', 'low', 'medium', 'high'],
+            contextWindow: 128_000,
+            maxTokens: 4096,
+          },
+        ],
+      }],
+    };
 
     const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
     const makeNode = (id: string, text: string, overrides: Partial<MockNode> = {}) => {
@@ -160,6 +205,39 @@ export async function installElectronMock(page: Page) {
         lastId = nodeId;
       });
       return lastId;
+    };
+    const registerOption = (fieldDefId: string, name: string) => {
+      const field = nodes.get(fieldDefId);
+      const normalized = name.trim();
+      if (!field || !normalized) return outcome();
+      const existing = field.children
+        .map((childId) => nodes.get(childId))
+        .find((node) => node?.content.text.toLowerCase() === normalized.toLowerCase());
+      if (existing) return outcome({ nodeId: existing.id, selectAll: false });
+      const optionId = `option-${++sequence}`;
+      makeNode(optionId, normalized, {
+        parentId: fieldDefId,
+        autoCollected: true,
+      });
+      appendChild(fieldDefId, optionId);
+      return outcome({ nodeId: optionId, selectAll: false });
+    };
+    const selectOption = (fieldEntryId: string, optionNodeId: string) => {
+      const fieldEntry = nodes.get(fieldEntryId);
+      const option = nodes.get(optionNodeId);
+      if (!fieldEntry || !option) return outcome();
+      for (const childId of [...fieldEntry.children]) {
+        removeFromParent(childId);
+        nodes.delete(childId);
+      }
+      const valueId = `option-value-${++sequence}`;
+      makeNode(valueId, option.content.text, {
+        type: 'reference',
+        parentId: fieldEntryId,
+        targetId: optionNodeId,
+      });
+      appendChild(fieldEntryId, valueId);
+      return outcome({ nodeId: fieldEntryId, selectAll: false });
     };
     const duplicateNode = (nodeId: string) => {
       const node = nodes.get(nodeId);
@@ -247,6 +325,23 @@ export async function installElectronMock(page: Page) {
       fieldType: 'plain',
       nullable: true,
     });
+    if (options.optionsField) {
+      makeNode(ids.priorityField, 'Priority', {
+        type: 'fieldDef',
+        parentId: ids.schema,
+        fieldType: 'options',
+        nullable: true,
+        autocollectOptions: true,
+      });
+      makeNode(ids.priorityHigh, 'High', { parentId: ids.priorityField });
+      makeNode(ids.priorityLow, 'Low', { parentId: ids.priorityField });
+      makeNode(ids.priorityEntry, 'Priority', {
+        type: 'fieldEntry',
+        parentId: ids.today,
+        fieldDefId: ids.priorityField,
+        fieldType: 'options',
+      });
+    }
     makeNode(ids.today, '2026-05-13', { parentId: ids.daily, tags: [ids.dayTag] });
     makeNode(ids.alpha, 'Alpha', { parentId: ids.today, showCheckbox: true });
     makeNode(ids.beta, 'Beta', { parentId: ids.today, showCheckbox: true });
@@ -256,7 +351,13 @@ export async function installElectronMock(page: Page) {
     appendChild(ids.schema, ids.dayTag);
     appendChild(ids.schema, ids.projectTag);
     appendChild(ids.schema, ids.statusField);
+    if (options.optionsField) {
+      appendChild(ids.schema, ids.priorityField);
+      appendChild(ids.priorityField, ids.priorityHigh);
+      appendChild(ids.priorityField, ids.priorityLow);
+    }
     appendChild(ids.daily, ids.today);
+    if (options.optionsField) appendChild(ids.today, ids.priorityEntry);
     for (const childId of [ids.alpha, ids.beta, ids.gamma]) appendChild(ids.today, childId);
 
     Object.defineProperty(navigator, 'clipboard', {
@@ -268,11 +369,53 @@ export async function installElectronMock(page: Page) {
       configurable: true,
     });
 
-    win.__LIN_E2E__ = { calls, projection, clipboardText: () => clipboardText };
+    const emitAgentEvent = (event: unknown) => {
+      for (const listener of agentListeners) {
+        listener(clone(event));
+      }
+    };
+
+    win.__LIN_E2E__ = { calls, projection, clipboardText: () => clipboardText, emitAgentEvent };
     win.lin = {
       invoke: async <T,>(cmd: string, args: Record<string, unknown> = {}): Promise<T> => {
         calls.push({ cmd, args: clone(args) });
-        if (cmd === 'agent_create_session') return clone({ sessionId: 'mock-agent-session' }) as T;
+        if (cmd === 'agent_create_session' || cmd === 'agent_restore_latest_session' || cmd === 'agent_restore_session') {
+          return clone({ sessionId: 'mock-agent-session' }) as T;
+        }
+        if (cmd === 'agent_get_provider_settings') return clone(agentSettings) as T;
+        if (cmd === 'agent_list_sessions') return clone([]) as T;
+        if (cmd === 'agent_upsert_provider_config') {
+          const provider = args.provider as {
+            providerId: string;
+            modelId: string;
+            reasoningLevel: string;
+            baseUrl?: string | null;
+            enabled?: boolean;
+          };
+          const existing = agentSettings.providers.find((item) => item.providerId === provider.providerId);
+          if (existing) {
+            existing.modelId = provider.modelId;
+            existing.reasoningLevel = provider.reasoningLevel;
+            existing.baseUrl = provider.baseUrl ?? '';
+            existing.enabled = provider.enabled ?? true;
+          } else {
+            agentSettings.providers.push({
+              providerId: provider.providerId,
+              modelId: provider.modelId,
+              reasoningLevel: provider.reasoningLevel,
+              baseUrl: provider.baseUrl ?? '',
+              enabled: provider.enabled ?? true,
+              hasApiKey: true,
+              hasEnvApiKey: false,
+            });
+          }
+          return clone(agentSettings) as T;
+        }
+        if (cmd === 'agent_set_active_provider') {
+          agentSettings.activeProviderId = String(args.providerId);
+          return clone(agentSettings) as T;
+        }
+        if (cmd === 'agent_queue_follow_up') return clone({ queued: true }) as T;
         if (cmd.startsWith('agent_')) return clone(undefined) as T;
         if (cmd === 'init_workspace' || cmd === 'get_projection') return clone(projection());
         if (cmd === 'create_node') {
@@ -366,13 +509,34 @@ export async function installElectronMock(page: Page) {
           const firstClone = (args.nodeIds as string[]).map(duplicateNode).find(Boolean);
           return clone(outcome(firstClone ? { nodeId: firstClone, selectAll: false } : undefined));
         }
-        if (cmd === 'toggle_done' || cmd === 'batch_toggle_done') {
-          const targetIds = cmd === 'toggle_done' ? [String(args.nodeId)] : args.nodeIds as string[];
+        if (
+          cmd === 'toggle_done'
+          || cmd === 'batch_toggle_done'
+          || cmd === 'cycle_done_state'
+          || cmd === 'batch_cycle_done_state'
+        ) {
+          const targetIds = cmd === 'toggle_done' || cmd === 'cycle_done_state'
+            ? [String(args.nodeId)]
+            : args.nodeIds as string[];
           for (const nodeId of targetIds) {
             const node = nodes.get(nodeId);
             if (!node) continue;
-            node.completedAt = node.completedAt ? undefined : ++now;
-            node.showCheckbox = true;
+            if (cmd === 'cycle_done_state' || cmd === 'batch_cycle_done_state') {
+              const hasCheckboxAffordance = node.showCheckbox || node.doneStateEnabled || Boolean(node.completedAt);
+              if (!hasCheckboxAffordance) {
+                node.showCheckbox = true;
+                node.completedAt = undefined;
+              } else if (!node.completedAt) {
+                node.showCheckbox = true;
+                node.completedAt = ++now;
+              } else {
+                node.completedAt = undefined;
+                node.showCheckbox = Boolean(node.doneStateEnabled);
+              }
+            } else {
+              node.completedAt = node.completedAt ? undefined : ++now;
+              node.showCheckbox = true;
+            }
           }
           return clone(outcome());
         }
@@ -442,6 +606,12 @@ export async function installElectronMock(page: Page) {
           const fieldEntryId = inlineField(after?.parentId ?? ids.today, index, String(args.name), String(args.fieldType));
           return clone(outcome({ nodeId: fieldEntryId, selectAll: false }));
         }
+        if (cmd === 'register_collected_option') {
+          return clone(registerOption(String(args.fieldDefId), String(args.name)));
+        }
+        if (cmd === 'select_field_option') {
+          return clone(selectOption(String(args.fieldEntryId), String(args.optionNodeId)));
+        }
         if (cmd === 'add_reference') {
           const target = nodes.get(String(args.targetId));
           const refId = createNode(String(args.parentId), args.index as number | null, target?.content.text ?? '', {
@@ -482,9 +652,16 @@ export async function installElectronMock(page: Page) {
         }
         throw new Error(`Unhandled mock invoke: ${cmd}`);
       },
-      onAgentEvent: () => () => undefined,
+      onAgentEvent: (listener: (event: unknown) => void) => {
+        agentListeners.push(listener);
+        listener({ type: 'ready' });
+        return () => {
+          const index = agentListeners.indexOf(listener);
+          if (index >= 0) agentListeners.splice(index, 1);
+        };
+      },
     };
-  }, { ids });
+  }, { ids, options });
 }
 
 export function row(page: Page, id: string) {
@@ -503,11 +680,18 @@ export function trailingEditor(page: Page, parentId = ids.today) {
   return page.locator(`[data-trailing-parent-id="${parentId}"] .ProseMirror`).first();
 }
 
-export async function openMockedApp(page: Page) {
-  await installElectronMock(page);
+export async function openMockedApp(page: Page, options: MockFixtureOptions = {}) {
+  await installElectronMock(page, options);
   await page.goto('/');
   await expect(row(page, ids.alpha)).toContainText('Alpha');
   await expect(row(page, ids.beta)).toContainText('Beta');
+}
+
+export async function emitAgentEvent(page: Page, event: unknown) {
+  await page.evaluate((nextEvent) => {
+    const win = window as E2EWindow;
+    win.__LIN_E2E__?.emitAgentEvent(nextEvent);
+  }, event);
 }
 
 export async function multiSelect(page: Page, rowIds: string[]) {

@@ -5,6 +5,7 @@ import { AddIcon, ICON_SIZE } from '../icons';
 import { tagSelectorItemLabel, tagSelectorItems } from '../interactions/tagSelector';
 import type { CommandRunner } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
+import { PopoverListItem } from './PopoverList';
 
 interface TagSelectorProps {
   query: string;
@@ -64,20 +65,16 @@ export function TagSelector(props: TagSelectorProps) {
   return (
     <>
       {items.map((item, index) => (
-        <button
+        <PopoverListItem
           key={item.key}
-          className={`popover-item ${index === props.selectedIndex ? 'active' : ''}`}
-          role="option"
+          active={index === props.selectedIndex}
           data-create-tag={item.create ? 'true' : undefined}
-          data-selected={index === props.selectedIndex ? 'true' : undefined}
-          aria-selected={index === props.selectedIndex}
+          icon={item.icon}
+          iconClassName="popover-item-icon"
+          label={item.label}
           onMouseEnter={() => props.setSelectedIndex(index)}
-          onMouseDown={(event) => event.preventDefault()}
           onClick={item.action}
-        >
-          <span className="popover-item-icon">{item.icon}</span>
-          <span className="popover-item-label">{item.label}</span>
-        </button>
+        />
       ))}
     </>
   );

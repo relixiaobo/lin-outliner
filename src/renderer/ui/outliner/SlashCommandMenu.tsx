@@ -16,6 +16,7 @@ import {
   type SlashCommandId,
 } from '../interactions/slashCommands';
 import type { CommandRunner } from '../shared';
+import { PopoverEmpty, PopoverListItem } from './PopoverList';
 
 interface SlashCommandMenuProps {
   query: string;
@@ -48,20 +49,19 @@ export function SlashCommandMenu(props: SlashCommandMenuProps) {
   const items = slashCommandItems(props.query, props.enabledSlashCommandIds);
 
   if (items.length === 0) {
-    return <div className="popover-empty">No commands</div>;
+    return <PopoverEmpty>No commands</PopoverEmpty>;
   }
 
   return (
     <>
       {items.map((command, index) => (
-        <button
+        <PopoverListItem
           key={command.id}
-          className={`popover-item ${index === props.selectedIndex ? 'active' : ''}`}
-          role="option"
-          data-selected={index === props.selectedIndex ? 'true' : undefined}
-          aria-selected={index === props.selectedIndex}
+          active={index === props.selectedIndex}
+          icon={slashCommandIcon(command)}
+          iconClassName="popover-item-icon"
+          label={command.shortcutHint ? `${command.label}  ${command.shortcutHint}` : command.label}
           onMouseEnter={() => props.setSelectedIndex(index)}
-          onMouseDown={(event) => event.preventDefault()}
           onClick={() => {
             props.close();
             void props.run(async () => {
@@ -69,12 +69,7 @@ export function SlashCommandMenu(props: SlashCommandMenuProps) {
               return result ?? api.getProjection();
             });
           }}
-        >
-          <span className="popover-item-icon">{slashCommandIcon(command)}</span>
-          <span className="popover-item-label">
-            {command.shortcutHint ? `${command.label}  ${command.shortcutHint}` : command.label}
-          </span>
-        </button>
+        />
       ))}
     </>
   );

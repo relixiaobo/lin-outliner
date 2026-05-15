@@ -3,8 +3,6 @@ import type { ToolCall, ToolResultMessage } from '../../../core/agentTypes';
 import {
   AddIcon,
   CheckIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
   CodeIcon,
   CopyIcon,
   FileTextIcon,
@@ -17,6 +15,7 @@ import {
   UrlIcon,
   WarningIcon,
 } from '../icons';
+import { AgentToolCallDisclosure } from './AgentToolCallDisclosure';
 
 interface AgentToolCallBlockProps {
   defaultExpanded?: boolean;
@@ -312,62 +311,48 @@ export function AgentToolCallBlock({
     setInternalExpanded((current) => !current);
   }
 
-  const Chevron = isExpanded ? ChevronDownIcon : ChevronRightIcon;
-
   return (
-    <div className={`agent-tool-call is-${status}`}>
-      <div className="agent-tool-call-row">
-        <button
-          aria-expanded={isExpanded}
-          className="agent-tool-call-toggle"
-          disabled={!hasDetails}
-          onClick={toggle}
-          type="button"
-        >
-          <Chevron className="agent-tool-call-chevron" size={12} />
-          <StatusIcon
-            className={status === 'pending' ? 'agent-tool-call-spinner' : undefined}
-            size={14}
-          />
-          <span>{summarizeToolCall(toolCall, status)}</span>
-        </button>
-      </div>
-      <ToolResultImages images={images} />
-      {isExpanded && hasDetails ? (
-        <div className="agent-tool-call-panel">
-          {inputText !== '{}' ? (
-            <section className="agent-tool-call-section">
-              <div className="agent-tool-call-section-header">
-                <div className="agent-tool-call-section-title">Input</div>
-                <ToolCopyButton ariaLabel="Copy tool input" text={inputText} />
-              </div>
-              <pre>{inputText}</pre>
-            </section>
-          ) : null}
-          {result && hasOutputDetails ? (
-            <section className="agent-tool-call-section">
-              <div className="agent-tool-call-section-header">
-                <div className="agent-tool-call-section-title">
-                  Output
-                  {result.isError ? <span>error</span> : null}
-                </div>
-                <ToolCopyButton ariaLabel="Copy tool output" text={outputText} />
-              </div>
-              {envelope ? <ToolEnvelopeOutput envelope={envelope} /> : null}
-              {!envelope ? parts.map((part, index) =>
-                part.type === 'imagePlaceholder' ? (
-                  <div className="agent-tool-image-placeholder" key={`placeholder-${index}`}>
-                    <FileTextIcon size={14} />
-                    <span>Screenshot captured</span>
-                  </div>
-                ) : (
-                  <pre key={`text-${index}`}>{part.text}</pre>
-                ),
-              ) : null}
-            </section>
-          ) : null}
-        </div>
+    <AgentToolCallDisclosure
+      expanded={isExpanded}
+      hasDetails={hasDetails}
+      images={<ToolResultImages images={images} />}
+      onToggle={toggle}
+      status={status}
+      statusIcon={StatusIcon}
+      statusIconClassName={status === 'pending' ? 'agent-tool-call-spinner' : undefined}
+      summary={summarizeToolCall(toolCall, status)}
+    >
+      {inputText !== '{}' ? (
+        <section className="agent-tool-call-section">
+          <div className="agent-tool-call-section-header">
+            <div className="agent-tool-call-section-title">Input</div>
+            <ToolCopyButton ariaLabel="Copy tool input" text={inputText} />
+          </div>
+          <pre>{inputText}</pre>
+        </section>
       ) : null}
-    </div>
+      {result && hasOutputDetails ? (
+        <section className="agent-tool-call-section">
+          <div className="agent-tool-call-section-header">
+            <div className="agent-tool-call-section-title">
+              Output
+              {result.isError ? <span>error</span> : null}
+            </div>
+            <ToolCopyButton ariaLabel="Copy tool output" text={outputText} />
+          </div>
+          {envelope ? <ToolEnvelopeOutput envelope={envelope} /> : null}
+          {!envelope ? parts.map((part, index) =>
+            part.type === 'imagePlaceholder' ? (
+              <div className="agent-tool-image-placeholder" key={`placeholder-${index}`}>
+                <FileTextIcon size={14} />
+                <span>Screenshot captured</span>
+              </div>
+            ) : (
+              <pre key={`text-${index}`}>{part.text}</pre>
+            ),
+          ) : null}
+        </section>
+      ) : null}
+    </AgentToolCallDisclosure>
   );
 }

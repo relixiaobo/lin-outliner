@@ -68,6 +68,21 @@ Core UI surfaces should map back to these files:
 - Agent chat panel: `src/renderer/ui/agent/AgentChatPanel.tsx`
 - Icon aliases: `src/renderer/ui/icons.ts`
 - CSS tokens and layout classes: `src/renderer/styles.css`
+- Outliner row, field, tag, and metadata classes:
+  `src/renderer/styles/outliner.css`
+
+## Stylesheet Boundaries
+
+- `src/renderer/styles.css` owns foundation tokens, app shell, panel chrome,
+  agent surfaces, shared overlays, command palette, and global feedback.
+- `src/renderer/styles/outliner.css` owns outliner body rhythm: rows, leading
+  markers, field rows, definition configuration, descriptions, applied tags,
+  outliner context menus, batch tag selector, and children indentation.
+- Shell styles may compose outliner components through more specific selectors
+  such as panel title overrides, but must not redefine base row typography,
+  row grid, or marker geometry.
+- Outliner CSS may consume global tokens from `styles.css`, but should not
+  introduce shell layout rules.
 
 ## Current Product Gaps
 

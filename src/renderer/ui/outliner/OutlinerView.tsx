@@ -10,6 +10,7 @@ import { RowHost } from './RowHost';
 import { buildOutlinerRows, hiddenFieldKey } from './row-model';
 import { focusRowInput } from '../shared';
 import { ViewToolbar } from './ViewToolbar';
+import { HiddenFieldReveal, ViewGroupHeading } from './OutlinerViewChrome';
 
 interface OutlinerViewProps {
   parentId: NodeId;
@@ -41,22 +42,19 @@ export function OutlinerView(props: OutlinerViewProps) {
       <RowHost
         rows={rows}
         renderGroup={(row) => (
-          <div className="view-group-heading">{row.label}</div>
+          <ViewGroupHeading label={row.label} />
         )}
         renderHiddenField={(row) => (
-          <button
-            className="hidden-field-reveal"
-            type="button"
-            onClick={() => {
+          <HiddenFieldReveal
+            label={row.label}
+            onReveal={() => {
               props.setUi((prev) => {
                 const expandedHiddenFields = new Set(prev.expandedHiddenFields);
                 expandedHiddenFields.add(hiddenFieldKey(props.parentId, row.fieldId));
                 return { ...prev, expandedHiddenFields };
               });
             }}
-          >
-            {row.label}
-          </button>
+          />
         )}
         renderField={(row) => (
           <OutlinerFieldRow

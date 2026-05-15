@@ -94,6 +94,9 @@ viewer.
 - Expanded tool state may reveal input and output payload details under that row.
 - Tool input/output payloads are often long; render them in bounded, scrollable
   detail areas with compact labels and monospace only where exact values matter.
+- Current product structure maps this contract to `AgentProcessBlock`,
+  `AgentProcessTimeline`, `AgentThinkingBlock`, `AgentToolCallBlock`, and
+  `AgentToolCallDisclosure`.
 
 Tool summaries should be action-based:
 
@@ -112,6 +115,9 @@ The composer is the bottom dock control surface.
 - Send and stop share the same primary action slot.
 - Attachment, model, reasoning, and settings controls live in a secondary
   toolbar row and must not compete with the textarea.
+- Queued follow-up actions, attachment chips, model button, model/reasoning
+  menu, reasoning switch, and send/stop action slot are separate control
+  components.
 - While streaming, typed text becomes steering or a queued follow-up rather than
   forcing a second layout mode.
 - Queued steering/follow-up appears as a compact preview above the composer.
@@ -137,14 +143,19 @@ compact chip contract and must not expand the dock into a file manager.
   `MenuItem`, `Dialog`, and `FormField` contracts.
 - Floating menus are portal-based, viewport-aware, and dismiss on Escape and
   outside pointer down.
+- Composer menu controls use shared item/switch semantics; textarea draft,
+  provider updates, attachments, and queue/stop behavior stay in
+  `AgentComposer`.
 - Agent settings is configuration, not a landing page.
 - Provider secrets are masked and never shown in full after saving.
 
 ## Refactor Sequence
 
 1. Align current `AgentDock`, `AgentChatPanel`, `AgentMessageRow`,
-   `AgentProcessBlock`, `AgentToolCallBlock`, `AgentComposer`, and
-   `AgentSettingsDialog` to this contract.
+   `AgentMessageFrame`, `AgentBranchNavigator`, `AgentProcessBlock`,
+   `AgentProcessTimeline`, `AgentThinkingBlock`, `AgentToolCallBlock`,
+   `AgentToolCallDisclosure`, `AgentComposer`, `AgentComposerControls`,
+   `AgentComposerModelMenu`, and `AgentSettingsDialog` to this contract.
 2. Extract shared primitives only where they preserve current behavior:
    `IconButton`, `MenuSurface`, `MenuItem`, `Dialog`, `FormField`.
 3. Normalize turn rendering before polishing visual details.

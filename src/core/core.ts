@@ -303,8 +303,19 @@ export class Core {
     return this.mutate((state) => {
       ensureNodeEditable(state, nodeId);
       const node = requiredNode(state, nodeId);
+      node.showCheckbox = true;
       if (node.completedAt) delete node.completedAt;
       else node.completedAt = nowMs();
+      node.updatedAt = nowMs();
+      return focus(nodeId);
+    });
+  }
+
+  cycleDoneState(nodeId: string): CommandOutcome {
+    return this.mutate((state) => {
+      ensureNodeEditable(state, nodeId);
+      const node = requiredNode(state, nodeId);
+      cycleNodeDoneState(node);
       node.updatedAt = nowMs();
       return focus(nodeId);
     });
@@ -355,8 +366,22 @@ export class Core {
         if (!state.nodes[nodeId]) continue;
         ensureNodeEditable(state, nodeId);
         const node = requiredNode(state, nodeId);
+        node.showCheckbox = true;
         if (node.completedAt) delete node.completedAt;
         else node.completedAt = nowMs();
+        node.updatedAt = nowMs();
+      }
+      return undefined;
+    });
+  }
+
+  batchCycleDoneState(nodeIds: string[]): CommandOutcome {
+    return this.mutate((state) => {
+      for (const nodeId of nodeIds) {
+        if (!state.nodes[nodeId]) continue;
+        ensureNodeEditable(state, nodeId);
+        const node = requiredNode(state, nodeId);
+        cycleNodeDoneState(node);
         node.updatedAt = nowMs();
       }
       return undefined;
@@ -774,6 +799,22 @@ function focus(nodeId: string): FocusHint {
 
 function nowMs() {
   return Date.now();
+}
+
+function cycleNodeDoneState(node: Node) {
+  const hasCheckboxAffordance = node.showCheckbox || node.doneStateEnabled || Boolean(node.completedAt);
+  if (!hasCheckboxAffordance) {
+    node.showCheckbox = true;
+    delete node.completedAt;
+    return;
+  }
+  if (!node.completedAt) {
+    node.showCheckbox = true;
+    node.completedAt = nowMs();
+    return;
+  }
+  delete node.completedAt;
+  node.showCheckbox = Boolean(node.doneStateEnabled);
 }
 
 function freshId(prefix: string): string {
@@ -1412,4 +1453,3 @@ function appendRichText(left: RichText, right: RichText): RichText {
     ],
   };
 }
-

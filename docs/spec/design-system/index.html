@@ -1286,12 +1286,19 @@
       flex: 0 0 18px;
       align-items: center;
       justify-content: center;
-      border: 1.5px solid var(--accent-brand);
       border-radius: 5px;
-      color: var(--accent-brand);
-      font-size: 13px;
-      font-weight: 700;
-      line-height: 1;
+      background: var(--semantic-success);
+      color: var(--panel-bg);
+    }
+
+    .outliner-title-checkbox svg {
+      width: 12px;
+      height: 12px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-linejoin: round;
     }
 
     .outliner-title-toolbar-row {
@@ -1374,6 +1381,34 @@
       text-decoration: line-through;
     }
 
+    .outliner-row-checkbox {
+      display: inline-flex;
+      width: 12px;
+      height: 12px;
+      align-items: center;
+      justify-content: center;
+      margin-right: 6px;
+      border-radius: 3px;
+      background: var(--border-muted);
+      color: var(--panel-bg);
+      text-decoration: none;
+      vertical-align: -1px;
+    }
+
+    .outliner-row-checkbox.checked {
+      background: var(--semantic-success);
+    }
+
+    .outliner-row-checkbox svg {
+      width: 10px;
+      height: 10px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
     .outliner-row-spec.subtle-parent .outliner-chevron-spec::before {
       display: inline-flex;
     }
@@ -1416,8 +1451,8 @@
       align-items: center;
       justify-content: center;
       border-radius: 999px;
-      outline: 2px solid #ffffff;
-      background: #ebebe6;
+      outline: 2px solid var(--panel-bg);
+      background: var(--row-selected);
       color: rgba(26, 26, 26, 0.4);
       font-size: 13px;
       line-height: 15px;
@@ -2492,7 +2527,11 @@
             <h3>Agent And Overlays</h3>
             <p>Agent messages, process/tool blocks, composer, settings dialog, command palette, menus, and popovers.</p>
             <div class="source-list">
+              <code>AgentMessageRow.tsx</code>
+              <code>AgentProcessBlock.tsx</code>
+              <code>AgentToolCallBlock.tsx</code>
               <code>AgentComposer.tsx</code>
+              <code>AgentComposerControls.tsx</code>
               <code>CommandPalette.tsx</code>
               <code>NodeContextMenu.tsx</code>
             </div>
@@ -2526,10 +2565,11 @@
           </article>
           <article class="contract-card">
             <h3>Menus And Forms</h3>
-            <p>MenuSurface, MenuItem, Dialog, and FormField normalize overlays, settings, popovers, and field controls.</p>
+            <p>MenuSurface, MenuItem, PopoverListbox, Dialog, and FormField normalize overlays, settings, popovers, and field controls.</p>
             <div class="source-list">
               <code>MenuSurface</code>
               <code>MenuItem</code>
+              <code>PopoverListbox</code>
               <code>Dialog</code>
               <code>FormField</code>
             </div>
@@ -2541,6 +2581,7 @@
               <code>AppliedTag</code>
               <code>OutlinerRow</code>
               <code>AgentMessage</code>
+              <code>AgentProcessBlock</code>
               <code>AgentComposer</code>
             </div>
           </article>
@@ -2625,7 +2666,11 @@
                   <span class="outliner-title-icon" aria-hidden="true">✦</span>
                 </div>
                 <div class="outliner-title-line">
-                  <span class="outliner-title-checkbox" aria-label="Checked">✓</span>
+                  <span class="outliner-title-checkbox" aria-label="Checked">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <path d="M20 6 9 17l-5-5"></path>
+                    </svg>
+                  </span>
                   <span class="outliner-title-text">Design system alignment</span>
                 </div>
                 <div class="outliner-title-meta">Description attached to the panel title, not a separate card.</div>
@@ -2694,9 +2739,19 @@
                   <span class="outliner-leading-spec"><span class="outliner-chevron-spec"></span><span class="outliner-marker-spec field"></span></span>
                   <span class="outliner-field-spec"><span class="outliner-field-name">Status</span><span class="outliner-field-value">In progress</span></span>
                 </div>
+                <div class="outliner-row-spec">
+                  <span class="outliner-leading-spec"><span></span><span class="outliner-marker-spec"></span></span>
+                  <span class="outliner-row-content-spec"><span class="outliner-row-checkbox" aria-label="Unchecked"></span>Checkbox state remains open.</span>
+                </div>
                 <div class="outliner-row-spec done">
                   <span class="outliner-leading-spec"><span></span><span class="outliner-marker-spec"></span></span>
-                  <span class="outliner-row-content-spec">Completed row keeps rhythm and lowers emphasis.</span>
+                  <span class="outliner-row-content-spec">
+                    <span class="outliner-row-checkbox checked" aria-label="Checked">
+                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M20 6 9 17l-5-5"></path>
+                      </svg>
+                    </span>Completed row keeps rhythm and lowers emphasis.
+                  </span>
                 </div>
               </div>
             </div>
@@ -2705,8 +2760,9 @@
             <h3>System Coverage</h3>
             <ul class="pattern-list">
               <li><span class="pattern-label">Panel</span><span>Breadcrumb, title icon, checkbox, title editor, tags, description, definition config, body, and trailing input.</span></li>
-              <li><span class="pattern-label">Node types</span><span>Content, reference, tag definition, field definition, field entry, search/system roots, completed and locked states.</span></li>
-              <li><span class="pattern-label">Metadata</span><span>Tags and descriptions stay inline with rows and title; they do not become separate cards.</span></li>
+              <li><span class="pattern-label">Node semantics</span><span>Content, reference, tag definition, field definition, field entry, and search/system roots.</span></li>
+              <li><span class="pattern-label">Row states</span><span>Selected, completed, locked, expanded, collapsed, drag target, and trailing input states.</span></li>
+              <li><span class="pattern-label">Metadata</span><span>Row tags stay inline with row text; title tags live in the heading tag row. Descriptions stay attached metadata, not cards.</span></li>
               <li><span class="pattern-label">Behavior</span><span>Selection, editing, paste, triggers, drag, hierarchy, and field commit timing remain product behavior.</span></li>
             </ul>
           </article>
@@ -2878,7 +2934,7 @@
                 </div>
               </div>
             </div>
-            <p>Textarea is primary. Secondary controls stay in the toolbar; send and stop share one action slot.</p>
+            <p>Textarea is primary. Secondary controls stay in the toolbar; send and stop share one extracted action slot.</p>
           </article>
           <article class="agent-state-card">
             <h3>Model Menu</h3>
@@ -2887,7 +2943,7 @@
               <div class="mini-menu-item"><span class="mini-icon"></span><span>gpt-5.4</span></div>
               <div class="mini-menu-item"><span class="mini-icon">⚙</span><span>Agent settings</span></div>
             </div>
-            <p>Model, reasoning, and settings use shared menu/dialog primitives instead of custom floating UI.</p>
+            <p>Model and reasoning controls use shared menu item and switch semantics; positioning remains local until the overlay pass.</p>
           </article>
           <article class="agent-state-card">
             <h3>Scroll Behavior</h3>
@@ -3156,8 +3212,8 @@
         <div class="type-grid">
           <div class="type-row"><span class="type-name">xs</span><span style="font-size:12px;line-height:16px;">Metadata, tags, badges, timestamps.</span></div>
           <div class="type-row"><span class="type-name">sm</span><span style="font-size:13px;line-height:20px;">Sidebar navigation, tabs, context menus.</span></div>
-          <div class="type-row"><span class="type-name">base</span><span style="font-size:14px;line-height:24px;">Main controls, inputs, outliner body text.</span></div>
-          <div class="type-row"><span class="type-name">2xl</span><span style="font-size:24px;line-height:32px;font-weight:700;">Primary panel title.</span></div>
+          <div class="type-row"><span class="type-name">base</span><span style="font-size:14px;line-height:24px;">Main controls, inputs, default body text.</span></div>
+          <div class="type-row"><span class="type-name">2xl</span><span style="font-size:24px;line-height:32px;font-weight:700;">Non-outliner panel title.</span></div>
         </div>
         <div class="token-grid" style="margin-top:16px;">
           <div class="token-row"><span class="token-name">layout-gap</span><span>8px</span></div>

@@ -13,6 +13,12 @@ import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import type { CommandRunner } from '../shared';
 import { FieldValueRow } from './FieldValueRow';
 import { NodeBulletDot } from './NodeBulletDot';
+import {
+  PopoverBulletIcon,
+  PopoverEmpty,
+  PopoverListbox,
+  PopoverListItem,
+} from './PopoverList';
 
 interface OptionsPickerProps {
   entryId: NodeId;
@@ -143,34 +149,28 @@ export function OptionsPicker(props: OptionsPickerProps) {
           />
         </div>
         {open && (
-          <div className="node-picker-popover" onMouseDown={(event) => event.preventDefault()}>
-            {itemCount === 0 && <div className="popover-empty">No options</div>}
+          <PopoverListbox className="node-picker-popover" label="Field options">
+            {itemCount === 0 && <PopoverEmpty>No options</PopoverEmpty>}
             {filtered.map((option, index) => (
-              <button
+              <PopoverListItem
                 key={option.id}
-                type="button"
-                className={`popover-item ${index === activeIndex ? 'active' : ''}`}
+                active={index === activeIndex}
+                icon={<PopoverBulletIcon />}
+                label={option.label}
                 onMouseEnter={() => setActiveIndex(index)}
-                onMouseDown={(event) => event.preventDefault()}
                 onClick={() => selectOption(option.id)}
-              >
-                <span className="command-item-bullet" />
-                <span className="popover-item-label">{option.label}</span>
-              </button>
+              />
             ))}
             {canCreate && (
-              <button
-                type="button"
-                className={`popover-item ${activeIndex === filtered.length ? 'active' : ''}`}
+              <PopoverListItem
+                active={activeIndex === filtered.length}
+                icon={<PopoverBulletIcon />}
+                label={`Create "${query.trim()}"`}
                 onMouseEnter={() => setActiveIndex(filtered.length)}
-                onMouseDown={(event) => event.preventDefault()}
                 onClick={createOption}
-              >
-                <span className="command-item-bullet" />
-                <span className="popover-item-label">Create "{query.trim()}"</span>
-              </button>
+              />
             )}
-          </div>
+          </PopoverListbox>
         )}
       </div>
     </FieldValueRow>

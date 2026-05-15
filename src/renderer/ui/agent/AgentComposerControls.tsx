@@ -1,0 +1,184 @@
+import type { AgentMessageAttachmentInput } from '../../../core/agentTypes';
+import type { AgentReasoningLevel } from '../../api/types';
+import {
+  AddIcon,
+  ChevronDownIcon,
+  CloseIcon,
+  FileTextIcon,
+  ICON_SIZE,
+  PencilIcon,
+  SendIcon,
+  StopIcon,
+  TrashIcon,
+} from '../icons';
+import { IconButton } from '../primitives/IconButton';
+import { REASONING_LABELS } from './AgentComposerModelMenu';
+
+export function AgentQueuedFollowUp({
+  note,
+  onCancel,
+  onEdit,
+}: {
+  note: string;
+  onCancel: () => void;
+  onEdit: () => void;
+}) {
+  return (
+    <div className="agent-steer-bubble">
+      <div className="agent-steer-actions">
+        <IconButton
+          className="agent-message-action-button"
+          icon={PencilIcon}
+          label="Edit queued follow-up"
+          onClick={onEdit}
+          title="Edit queued follow-up"
+          variant="message"
+        />
+        <IconButton
+          className="agent-message-action-button"
+          icon={TrashIcon}
+          label="Cancel queued follow-up"
+          onClick={onCancel}
+          title="Cancel queued follow-up"
+          variant="message"
+        />
+      </div>
+      <div className="agent-steer-preview">{note}</div>
+    </div>
+  );
+}
+
+type AttachmentChipAttachment = Pick<AgentMessageAttachmentInput, 'kind' | 'name' | 'sizeBytes'> & {
+  previewUrl?: string;
+};
+
+export function AgentComposerAttachmentChip({
+  attachment,
+  onRemove,
+  sizeLabel,
+}: {
+  attachment: AttachmentChipAttachment;
+  onRemove: () => void;
+  sizeLabel: string;
+}) {
+  return (
+    <div className="agent-attachment-chip">
+      <div className="agent-attachment-preview">
+        {attachment.kind === 'image' && attachment.previewUrl ? (
+          <img alt="" src={attachment.previewUrl} />
+        ) : (
+          <FileTextIcon size={ICON_SIZE.menu} />
+        )}
+      </div>
+      <div className="agent-attachment-meta">
+        <span title={attachment.name}>{attachment.name}</span>
+        <small>{sizeLabel}</small>
+      </div>
+      <IconButton
+        className="agent-attachment-remove"
+        icon={CloseIcon}
+        iconSize={ICON_SIZE.tiny}
+        label={`Remove ${attachment.name}`}
+        onClick={onRemove}
+        title="Remove attachment"
+        variant="tabClose"
+      />
+    </div>
+  );
+}
+
+export function AgentComposerAttachmentButton({
+  disabled,
+  onClick,
+}: {
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <IconButton
+      className="agent-composer-tool-button"
+      disabled={disabled}
+      icon={AddIcon}
+      label="Add attachment"
+      onClick={onClick}
+      title="Add attachment"
+      variant="composerTool"
+    />
+  );
+}
+
+export function AgentComposerModelButton({
+  disabled,
+  modelLabel,
+  modelTitle,
+  onToggle,
+  open,
+  reasoningEnabled,
+  selectedReasoning,
+  supportsReasoning,
+}: {
+  disabled: boolean;
+  modelLabel: string;
+  modelTitle: string;
+  onToggle: () => void;
+  open: boolean;
+  reasoningEnabled: boolean;
+  selectedReasoning: AgentReasoningLevel;
+  supportsReasoning: boolean;
+}) {
+  return (
+    <button
+      aria-expanded={open}
+      aria-haspopup="menu"
+      aria-label="Select model"
+      className="agent-composer-model-button"
+      disabled={disabled}
+      onClick={onToggle}
+      title={modelTitle}
+      type="button"
+    >
+      <span className="agent-composer-model-name">{modelLabel}</span>
+      {supportsReasoning && reasoningEnabled ? (
+        <span className="agent-composer-reasoning-chip">{REASONING_LABELS[selectedReasoning]}</span>
+      ) : null}
+      <ChevronDownIcon size={ICON_SIZE.tiny} />
+    </button>
+  );
+}
+
+export function AgentComposerPrimaryAction({
+  canSubmit,
+  hasDraft,
+  isStreaming,
+  onStop,
+}: {
+  canSubmit: boolean;
+  hasDraft: boolean;
+  isStreaming: boolean;
+  onStop: () => void;
+}) {
+  if (isStreaming && !hasDraft) {
+    return (
+      <IconButton
+        className="agent-composer-action-button"
+        icon={StopIcon}
+        label="Stop agent"
+        onClick={onStop}
+        title="Stop"
+        variant="composerAction"
+      />
+    );
+  }
+
+  return (
+    <IconButton
+      className="agent-composer-action-button"
+      disabled={!canSubmit}
+      icon={SendIcon}
+      label={isStreaming ? 'Queue follow-up' : 'Send message'}
+      title={isStreaming ? 'Queue follow-up' : 'Send'}
+      type="submit"
+      variant="composerAction"
+    />
+  );
+}

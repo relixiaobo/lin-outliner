@@ -70,6 +70,7 @@ export const api = {
   batchIndentNodes: (nodeIds: string[]) => command<CommandOutcome>('batch_indent_nodes', { nodeIds }),
   batchOutdentNodes: (nodeIds: string[]) => command<CommandOutcome>('batch_outdent_nodes', { nodeIds }),
   batchToggleDone: (nodeIds: string[]) => command<CommandOutcome>('batch_toggle_done', { nodeIds }),
+  batchCycleDoneState: (nodeIds: string[]) => command<CommandOutcome>('batch_cycle_done_state', { nodeIds }),
   batchDuplicateNodes: (nodeIds: string[]) => command<CommandOutcome>('batch_duplicate_nodes', { nodeIds }),
   batchMoveNodesUp: (nodeIds: string[]) => command<CommandOutcome>('batch_move_nodes_up', { nodeIds }),
   batchMoveNodesDown: (nodeIds: string[]) => command<CommandOutcome>('batch_move_nodes_down', { nodeIds }),
@@ -78,6 +79,7 @@ export const api = {
   restoreNode: (nodeId: string) => command<CommandOutcome>('restore_node', { nodeId }),
   deleteNode: (nodeId: string) => command<CommandOutcome>('delete_node', { nodeId }),
   toggleDone: (nodeId: string) => command<CommandOutcome>('toggle_done', { nodeId }),
+  cycleDoneState: (nodeId: string) => command<CommandOutcome>('cycle_done_state', { nodeId }),
   createTag: (name: string) => command<CommandOutcome>('create_tag', { name }),
   applyTag: (nodeId: string, tagId: string) =>
     command<CommandOutcome>('apply_tag', { nodeId, tagId }),

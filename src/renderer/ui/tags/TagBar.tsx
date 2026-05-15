@@ -4,16 +4,10 @@ import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { isNodeInTrash } from '../interactions/nodeLocation';
-import {
-  CloseIcon,
-  ICON_SIZE,
-  SearchIcon,
-  SettingsIcon,
-  TrashIcon,
-  WarningIcon,
-} from '../icons';
+import { CloseIcon, ICON_SIZE, SearchIcon, SettingsIcon } from '../icons';
 import type { CommandRunner } from '../shared';
 import { textOf } from '../shared';
+import { AppliedTag } from './AppliedTag';
 import { resolveTagColor } from './tagColors';
 
 interface TagBarProps {
@@ -76,59 +70,25 @@ function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
 
   if (trashed) {
     return (
-      <span className="tag-badge trashed" title={`Tag "${label}" has been deleted`}>
-        <span className="tag-badge-hash">#</span>
-        <span className="tag-badge-label">{label}</span>
-        <WarningIcon size={ICON_SIZE.tiny + 1} />
-        <TrashIcon size={ICON_SIZE.tiny + 1} />
-      </span>
+      <AppliedTag
+        label={label}
+        color={color}
+        trashed
+        onOpen={openTagSearch}
+        onRemove={removeTag}
+      />
     );
   }
 
   return (
     <>
-      <span
-        className="tag-badge"
-        style={{ color: color.text }}
-        onMouseDown={(event) => {
-          event.stopPropagation();
-        }}
+      <AppliedTag
+        label={label}
+        color={color}
+        onOpen={openTagSearch}
+        onRemove={removeTag}
         onContextMenu={openMenu}
-      >
-        <button
-          className="tag-badge-remove"
-          title="Remove tag"
-          type="button"
-          onMouseDown={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          }}
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            removeTag();
-          }}
-        >
-          <span className="tag-badge-hash">#</span>
-          <CloseIcon className="tag-badge-x" size={ICON_SIZE.tiny + 1} strokeWidth={2.5} />
-        </button>
-        <button
-          className="tag-badge-label clickable"
-          title={label}
-          type="button"
-          onMouseDown={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          }}
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            openTagSearch();
-          }}
-        >
-          {label}
-        </button>
-      </span>
+      />
       {menu && createPortal(
         <div
           ref={menuRef}

@@ -1,4 +1,4 @@
-import { CheckboxIcon, ICON_SIZE } from '../icons';
+import { CheckboxMark } from '../primitives/CheckboxMark';
 
 interface DoneCheckboxProps {
   checked: boolean;
@@ -9,7 +9,7 @@ export function DoneCheckbox(props: DoneCheckboxProps) {
   return (
     <button
       type="button"
-      className={`done-checkbox ${props.checked ? 'checked' : ''}`}
+      className="done-checkbox"
       aria-pressed={props.checked}
       title={props.checked ? 'Mark not done' : 'Mark done'}
       onMouseDown={(event) => {
@@ -22,11 +22,7 @@ export function DoneCheckbox(props: DoneCheckboxProps) {
         props.onToggle();
       }}
     >
-      {props.checked ? (
-        <CheckboxIcon size={ICON_SIZE.menu} strokeWidth={2} />
-      ) : (
-        <span className="done-checkbox-empty" />
-      )}
+      <CheckboxMark checked={props.checked} />
     </button>
   );
 }

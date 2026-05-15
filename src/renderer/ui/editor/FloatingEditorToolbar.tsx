@@ -2,11 +2,11 @@ import {
   BoldIcon,
   CodeIcon,
   HighlightIcon,
-  ICON_SIZE,
   ItalicIcon,
   StrikeIcon,
   type AppIcon,
 } from '../icons';
+import { IconButton } from '../primitives/IconButton';
 
 export type ToolbarMark = 'bold' | 'italic' | 'strike' | 'code' | 'highlight';
 
@@ -40,14 +40,16 @@ export function FloatingEditorToolbar(props: FloatingEditorToolbarProps) {
       onMouseDown={(event) => event.preventDefault()}
     >
       {BUTTONS.map(({ mark, label, icon: Icon }) => (
-        <button
+        <IconButton
+          aria-pressed={props.activeMarks.has(mark)}
           key={mark}
           className={`toolbar-icon ${props.activeMarks.has(mark) ? 'active' : ''}`}
+          icon={Icon}
+          label={label}
           title={label}
           onClick={() => props.onToggle(mark)}
-        >
-          <Icon size={ICON_SIZE.menu} />
-        </button>
+          variant="toolbar"
+        />
       ))}
     </div>
   );

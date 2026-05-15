@@ -21,20 +21,20 @@ Inventory covers shipped or in-progress product UI under `src/renderer/ui`:
 | --- | --- | --- | --- |
 | App shell | `App.tsx`, `TopBar.tsx`, `Sidebar.tsx`, `WorkspaceCanvas.tsx`, `AgentDock.tsx` | `patterns.md`, `surfaces.md` | Structure mostly aligned; tokens and responsive rules incomplete. |
 | Workspace tabs | `TopBar.tsx`, `useWorkspaceTabs.ts` | `components.md`, `patterns.md` | Real behavior exists; close/reorder semantics need component contract. |
-| Multi-panel canvas | `WorkspaceCanvas.tsx`, `useResizableLayout.ts`, `useWorkspaceTabs.ts` | `patterns.md`, `surfaces.md` | Real tiled panels exist; minimum width and overflow strategy incomplete. |
+| Multi-panel canvas | `WorkspaceCanvas.tsx`, `WorkspacePanelSurface.tsx`, `ResizeHandle.tsx`, `useResizableLayout.ts`, `useWorkspaceTabs.ts` | `patterns.md`, `surfaces.md` | Real tiled panels exist; panel shell and resize button structure are isolated; minimum width and overflow strategy incomplete. |
 | Outliner panel | `NodePanel.tsx`, `OutlinerView.tsx`, `OutlinerItem.tsx` | `surfaces.md`, `components.md` | Real product UI exists; should remain authoritative for rows. |
-| Outliner rows | `OutlinerItem.tsx`, `RowLeading.tsx`, `RowHost.tsx`, `useOutlinerRowInteraction.ts` | `components.md` | Rich behavior exists; visual primitives are not yet isolated. |
+| Outliner rows | `OutlinerItem.tsx`, `OutlinerRowShell.tsx`, `RowLeading.tsx`, `RowMarker.tsx`, `NodeDescriptionSurface.tsx`, `OutlinerViewChrome.tsx`, `RowHost.tsx`, `useOutlinerRowInteraction.ts` | `components.md` | Rich behavior exists; row shell, leading marker, description visuals, and view chrome are isolated while row behavior remains product-owned. |
 | Editor | `RichTextEditor.tsx`, `FloatingEditorToolbar.tsx`, `editorRegistry.ts` | `components.md`, `implementation.md` | ProseMirror-based editor is core infrastructure; toolbar needs shared overlay treatment. |
-| Tags | `TagBar.tsx`, `tagColors.ts`, `TagSelector.tsx`, `BatchTagSelector.tsx` | `components.md`, `patterns.md` | Behavior exists; applied tag hover layout is not yet the stable gapped model. |
-| Fields and definitions | `DefinitionConfigPanel.tsx`, `FieldValueRenderer.tsx`, `OptionsPicker.tsx`, field row files | `components.md`, `surfaces.md` | Domain controls exist; need component-level form/control primitives. |
-| Commands | `CommandPalette.tsx`, `useWorkspaceKeyboard.ts` | `components.md`, `implementation.md` | Core overlay exists; should share menu/list primitives. |
-| Node menus | `NodeContextMenu.tsx`, `TriggerPopover.tsx`, `SlashCommandMenu.tsx`, `ReferenceSelector.tsx` | `components.md`, `implementation.md` | Multiple menu systems exist; keyboard/focus and positioning should converge. |
+| Tags | `AppliedTag.tsx`, `TagBar.tsx`, `tagColors.ts`, `TagSelector.tsx`, `BatchTagSelector.tsx` | `components.md`, `patterns.md` | Behavior exists; applied tag rendering and trigger selector rows are isolated; batch selector and tag context submodes still need scoped convergence. |
+| Fields and definitions | `DefinitionConfigPanel.tsx`, `FieldEntryGrid.tsx`, `FieldValueRenderer.tsx`, `OptionsPicker.tsx`, field row files | `components.md`, `surfaces.md` | Domain controls exist; field entry layout, definition controls, and option popover shell are isolated; broader form/control primitives still need convergence. |
+| Commands | `CommandPalette.tsx`, `useWorkspaceKeyboard.ts` | `components.md`, `implementation.md` | Core overlay exists; dialog shell and menu item rows are shared while search/list behavior stays command-owned. |
+| Node menus | `NodeContextMenu.tsx`, `TriggerPopover.tsx`, `SlashCommandMenu.tsx`, `ReferenceSelector.tsx` | `components.md`, `implementation.md` | Trigger listbox shell and option rows are shared; context-menu submodes, keyboard/focus, and positioning should converge later. |
 | Agent dock | `AgentDock.tsx`, `AgentChatPanel.tsx` | `surfaces.md`, `patterns.md` | Real surface exists and is persistent; tokens and message primitives need consolidation. |
-| Agent messages | `AgentMessageRow.tsx`, `AgentProcessBlock.tsx`, `AgentToolCallBlock.tsx` | `components.md`, `surfaces.md` | Useful production UI exists; needs component contracts for message, process, and tool-call blocks. |
-| Agent composer | `AgentComposer.tsx` | `components.md`, `surfaces.md` | Rich behavior exists; model menu and reasoning controls should use shared popover/menu primitives. |
+| Agent messages | `AgentMessageRow.tsx`, `AgentMessageFrame.tsx`, `AgentBranchNavigator.tsx`, `AgentProcessBlock.tsx`, `AgentProcessTimeline.tsx`, `AgentThinkingBlock.tsx`, `AgentToolCallBlock.tsx`, `AgentToolCallDisclosure.tsx` | `components.md`, `surfaces.md` | Production UI exists; message frame, branch navigator, process timeline, thinking, and tool-call disclosure are isolated while turn behavior stays product-owned. |
+| Agent composer | `AgentComposer.tsx`, `AgentComposerControls.tsx`, `AgentComposerModelMenu.tsx` | `components.md`, `surfaces.md` | Rich behavior exists; queued follow-up controls, attachment chip, model picker, reasoning menu/switch, and send/stop slot are isolated while composer behavior remains product-owned. |
 | Agent settings | `AgentSettingsDialog.tsx` | `components.md`, `implementation.md` | Dialog exists; should share modal, field, button, and alert primitives. |
 | Icons | `icons.ts` | `foundations.md`, `components.md` | Central alias file exists; icon sizes need token alignment. |
-| CSS tokens | `styles.css` | `foundations.md` | Product tokens diverge from canonical design-system tokens. |
+| CSS tokens | `styles.css`, `styles/outliner.css` | `foundations.md`, `implementation.md` | Product tokens live in the shell stylesheet; outliner rhythm now has a separate stylesheet boundary. |
 
 ## App Shell
 
@@ -85,13 +85,17 @@ Source:
 - `src/renderer/ui/NodePanel.tsx`
 - `src/renderer/ui/outliner/OutlinerView.tsx`
 - `src/renderer/ui/outliner/OutlinerItem.tsx`
+- `src/renderer/ui/outliner/OutlinerRowShell.tsx`
 - `src/renderer/ui/outliner/RowLeading.tsx`
 - `src/renderer/ui/outliner/RowHost.tsx`
 - `src/renderer/ui/outliner/useOutlinerRowInteraction.ts`
 - `src/renderer/ui/outliner/TrailingInput.tsx`
+- `src/renderer/ui/outliner/TrailingInputLeading.tsx`
 - `src/renderer/ui/outliner/DoneCheckbox.tsx`
 - `src/renderer/ui/outliner/IndentGuide.tsx`
 - `src/renderer/ui/outliner/NodeDescription.tsx`
+- `src/renderer/ui/outliner/NodeDescriptionSurface.tsx`
+- `src/renderer/ui/outliner/OutlinerViewChrome.tsx`
 
 Current state:
 
@@ -113,9 +117,8 @@ Aligned:
 
 Gaps:
 
-- Row visual pieces are not yet formal component primitives:
-  `OutlinerRow`, `RowLeading`, `RowBullet`, `DoneCheckbox`,
-  `NodeDescription`, `TrailingInput`.
+- Row visual pieces are now partially isolated; the full `OutlinerRow`
+  behavior wrapper remains product-owned.
 - Shell CSS and row CSS share one large file, which makes accidental row rhythm
   changes likely.
 - Focus-visible treatment is inconsistent because global button focus is reset.
@@ -162,8 +165,15 @@ Source:
 - `src/renderer/ui/agent/AgentChatPanel.tsx`
 - `src/renderer/ui/agent/AgentComposer.tsx`
 - `src/renderer/ui/agent/AgentMessageRow.tsx`
+- `src/renderer/ui/agent/AgentMessageFrame.tsx`
+- `src/renderer/ui/agent/AgentBranchNavigator.tsx`
 - `src/renderer/ui/agent/AgentProcessBlock.tsx`
+- `src/renderer/ui/agent/AgentProcessTimeline.tsx`
+- `src/renderer/ui/agent/AgentThinkingBlock.tsx`
 - `src/renderer/ui/agent/AgentToolCallBlock.tsx`
+- `src/renderer/ui/agent/AgentToolCallDisclosure.tsx`
+- `src/renderer/ui/agent/AgentComposerControls.tsx`
+- `src/renderer/ui/agent/AgentComposerModelMenu.tsx`
 - `src/renderer/ui/agent/AgentSettingsDialog.tsx`
 
 Current state:
@@ -181,13 +191,17 @@ Aligned:
 - Header title follows `# conversation`.
 - Agent surface is real, not a placeholder.
 - Tool calls and process/thinking blocks are visible product concepts.
+- Message shell, branch navigation, process timeline, thinking rows, and
+  tool-call disclosure shells are componentized without moving runtime turn
+  behavior.
+- Composer controls are componentized around existing primitives while draft,
+  streaming, provider update, attachment, and queue behavior stay local.
 
 Gaps:
 
-- Agent messages, process blocks, tool-call blocks, composer controls, and
-  settings dialog are not documented as component contracts.
-- Agent model menu uses a local floating menu implementation instead of shared
-  popover/menu primitives.
+- Agent settings dialog controls still need stronger component contracts.
+- Agent composer floating positioning remains local; a shared overlay
+  positioning primitive is still deferred.
 - Agent settings dialog has its own button, field, alert, and dialog styles.
 - Composer typography and rounded surfaces are more prominent than the rest of
   the dense desktop system; tokens need normalization before visual polish.
@@ -218,13 +232,16 @@ Aligned:
 - Overlays are real product workflows.
 - Most overlays have Escape behavior and outside-click dismissal.
 - Command palette has keyboard navigation.
+- Command palette uses the shared `Dialog` shell while retaining its search
+  input focus and active-descendant listbox behavior.
 
 Gaps:
 
 - There is no shared overlay host or shared positioning primitive.
-- Menu/list item visuals are duplicated across command palette, context menus,
-  trigger popovers, options picker, and agent model menu.
-- Focus trapping and roving focus are not consistently defined.
+- Trigger popovers and option pickers now share listbox and option-row shells;
+  some agent/context menu variants still carry local row visuals.
+- Focus trapping and roving focus are not consistently defined outside shared
+  modal dialogs.
 - Z-index values and elevation are not yet tokenized against `foundations.md`.
 
 ## Fields And Definition Configuration
@@ -267,20 +284,34 @@ should stabilize before broad UI refactors.
 
 | Candidate | Current sources | Notes |
 | --- | --- | --- |
-| `IconButton` | top chrome, panel close, agent actions, toolbar buttons | Needs size, hover, active, disabled, focus-visible variants. |
+| `CheckboxMark` | `src/renderer/ui/primitives/CheckboxMark.tsx`, `DoneCheckbox.tsx` | First extracted primitive; owns three-state visual mark only, not row behavior. |
+| `IconButton` | `src/renderer/ui/primitives/IconButton.tsx`, top chrome, panel close, title actions, editor toolbar, agent message/composer actions | Extracted for icon-only command buttons while preserving existing surface class names. |
 | `ToolbarButton` | `FloatingEditorToolbar`, agent message actions, top chrome | May be an `IconButton` variant. |
-| `WorkspaceTab` | `TopBar.tsx` | Needs active, hover, close, count, focus, future reorder states. |
-| `PanelSurface` | `WorkspaceCanvas.tsx`, `styles.css` | Owns radius, active outline, close slot, scroll container. |
-| `ResizeHandle` | `WorkspaceCanvas.tsx`, `Sidebar.tsx`, `AgentDock.tsx` | Needs pointer and keyboard behavior. |
-| `AppliedTag` | `TagBar.tsx` | Needs gapped relative layout and keyboard-reachable remove/open controls. |
-| `MenuSurface` | node context menu, command palette, trigger popover, model menu | Needs elevation, radius, z-index, width, positioning rules. |
-| `MenuItem` | command item, context item, popover item, model item | Needs icon slot, label slot, meta slot, active/selected/disabled states. |
-| `Dialog` | `AgentSettingsDialog.tsx`, command palette overlay | Needs modal semantics, header/body/footer, focus management. |
-| `FormField` | agent settings, definition config, field value rows | Needs label, help/error, input, select, switch, color, number variants. |
+| `MenuSurface` | `src/renderer/ui/primitives/MenuSurface.tsx`, `PopoverListbox`, context menu, option/model menus | Extracted as a wrapper only; positioning and keyboard behavior remain local. |
+| `MenuItem` | `src/renderer/ui/primitives/MenuItem.tsx`, `PopoverListItem`, command item, context item, model item | Extracted for icon/label/meta row slots while preserving local classes and roles. |
+| `PopoverListbox` / `PopoverListItem` | `src/renderer/ui/outliner/PopoverList.tsx`, trigger popover, option picker, trailing option picker, tag/reference/slash suggestions | Extracted for listbox popover shell, option rows, empty rows, and bullet placeholder; active index, positioning, creation, selection, and command execution stay caller-owned. |
+| `WorkspaceTab` | `src/renderer/ui/WorkspaceTab.tsx`, `TopBar.tsx` | Extracted for title, count, active state, and close affordance; `TopBar` still owns strip layout and tab creation. |
+| `PanelSurface` | `WorkspacePanelSurface.tsx`, `WorkspaceCanvas.tsx`, `styles.css` | Extracted for workspace panel shell, active class, close slot, and sizing variable. |
+| `ResizeHandle` | `src/renderer/ui/primitives/ResizeHandle.tsx`, `WorkspaceCanvas.tsx`, `Sidebar.tsx`, `AgentDock.tsx` | Extracted for shared resize button structure; pointer behavior remains in `useResizableLayout`. |
+| `AppliedTag` | `src/renderer/ui/tags/AppliedTag.tsx`, `TagBar.tsx` | Extracted for measured applied tag rendering; `TagBar` still owns tag lookup, commands, and context menu state. |
+| `Dialog` | `src/renderer/ui/primitives/Dialog.tsx`, `AgentSettingsDialog.tsx`, command palette overlay | Extracted for settings and command-palette modal shells, semantic surface, label linkage, Escape close, focus trap, initial focus, and focus restoration. |
+| `FormField` | `src/renderer/ui/primitives/FormField.tsx`, agent settings, definition config, field value rows | Extracted for visible label/control wrapper in settings; definition config and outliner field variants still need scoped adoption. |
+| `SwitchControl` | `src/renderer/ui/primitives/SwitchControl.tsx`, `DefinitionConfigPanel.tsx` | Extracted semantic switch wrapper for `role=switch`, `aria-checked`, and checked toggle; visual treatment remains surface-owned. |
+| `SelectControl` | `src/renderer/ui/primitives/SelectControl.tsx`, `DefinitionConfigPanel.tsx` | Extracted native select wrapper for accessible label and prop forwarding; options and value coercion remain caller-owned. |
+| `TextInputControl` | `src/renderer/ui/primitives/TextInputControl.tsx`, `DefinitionConfigControls.tsx` | Extracted native text input wrapper for accessible label and prop forwarding; draft/commit behavior remains definition-owned. |
+| `NumberInputControl` | `src/renderer/ui/primitives/NumberInputControl.tsx`, `DefinitionConfigControls.tsx` | Extracted native number input wrapper for accessible label and prop forwarding; parsing and empty-value semantics remain definition-owned. |
+| `DefinitionConfigControls` | `src/renderer/ui/definition/DefinitionConfigControls.tsx`, `DefinitionConfigPanel.tsx` | Extracted definition-scoped select, switch, color, and number controls; panel now owns item mapping and persistence patches. |
+| `DefinitionConfigRow` | `src/renderer/ui/definition/DefinitionConfigRowShell.tsx`, `DefinitionConfigControls.tsx`, `DefinitionConfigPanel.tsx` | Extracted dense icon/label/control shell for tag and field definition settings; control behavior remains definition-scoped. |
+| `RowLeading` | `RowLeading.tsx`, `RowMarker.tsx` | Leading control cluster is isolated; marker visuals are split from chevron and drill-down behavior. |
+| `FieldEntryGrid` | `FieldEntryGrid.tsx`, `OutlinerFieldRow.tsx` | Extracted for field name, value, and description slots without owning commit behavior. |
+| `TrailingInput` | `TrailingInput.tsx`, `TrailingInputLeading.tsx` | Leading display is isolated; ProseMirror mount, creation, triggers, paste, and option behavior stay local. |
+| `NodeDescription` | `NodeDescription.tsx`, `NodeDescriptionSurface.tsx` | Read/edit visuals are isolated; draft state, commit, focus, and keyboard behavior stay local. |
+| `OutlinerViewChrome` | `OutlinerView.tsx`, `OutlinerViewChrome.tsx` | Group heading and hidden-field reveal visuals are isolated; row building and reveal state stay local. |
+| `OutlinerRowShell` | `OutlinerRowShell.tsx`, `OutlinerItem.tsx`, `OutlinerFieldRow.tsx` | Extracted wrapper/inner-row structure; behavior and row model stay with existing row code. |
 | `OutlinerRow` | `OutlinerItem.tsx`, row files | Must wrap existing behavior without replacing row model. |
-| `AgentMessage` | `AgentMessageRow.tsx` | Needs user, assistant, error, streaming, copy action states. |
-| `AgentProcessBlock` | `AgentProcessBlock.tsx`, `AgentToolCallBlock.tsx` | Needs collapsed/expanded, pending/done/error, input/output sections. |
-| `Composer` | `AgentComposer.tsx` | Needs textarea, toolbar, send/stop, model picker, reasoning controls. |
+| `AgentMessage` | `AgentMessageRow.tsx`, `AgentMessageFrame.tsx`, `AgentBranchNavigator.tsx` | Message frame and branch navigation are extracted; copy/edit/retry/regenerate behavior remains in the row. |
+| `AgentProcessBlock` | `AgentProcessBlock.tsx`, `AgentProcessTimeline.tsx`, `AgentThinkingBlock.tsx`, `AgentToolCallBlock.tsx`, `AgentToolCallDisclosure.tsx` | Process summary, timeline, thinking row/body, and tool disclosure shell are isolated; expand state and tool data stay caller-owned. |
+| `Composer` | `AgentComposer.tsx`, `AgentComposerControls.tsx`, `AgentComposerModelMenu.tsx` | Queued follow-up controls, attachment chip, model picker, reasoning menu/switch, and send/stop slot are extracted; textarea draft, file processing, menu state, and provider updates stay in `AgentComposer`. |
 
 ## Refactor Phases
 

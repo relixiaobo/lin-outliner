@@ -12,6 +12,8 @@ import {
   type AppIcon,
 } from './icons';
 import { isImeComposingEvent } from './interactions/imeKeyboard';
+import { Dialog } from './primitives/Dialog';
+import { MenuItem } from './primitives/MenuItem';
 import type { CommandRunner } from './shared';
 
 interface CommandPaletteProps {
@@ -44,10 +46,6 @@ export function CommandPalette(props: CommandPaletteProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
 
   useEffect(() => {
     let active = true;
@@ -165,65 +163,82 @@ export function CommandPalette(props: CommandPaletteProps) {
     listEl.querySelector('[data-selected="true"]')?.scrollIntoView({ block: 'nearest' });
   }, [selectedIndex]);
 
+  const selectedItemId = selected ? `command-item-${selectedIndex}` : undefined;
+
   return (
-    <div className="overlay" onMouseDown={props.onClose}>
-      <div className="command-palette" onMouseDown={(event) => event.stopPropagation()}>
-        <input
-          ref={inputRef}
-          className="command-input"
-          value={query}
-          placeholder="Search or create"
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (isImeComposingEvent(event)) return;
-            if (event.key === 'Escape') props.onClose();
-            if (event.key === 'ArrowDown') {
-              event.preventDefault();
-              setSelectedIndex((current) => Math.min(current + 1, visibleItems.length - 1));
-            }
-            if (event.key === 'ArrowUp') {
-              event.preventDefault();
-              setSelectedIndex((current) => Math.max(current - 1, 0));
-            }
-            if (event.key === 'Enter') {
-              event.preventDefault();
-              selected?.action();
-            }
-          }}
-        />
-        <div className="command-list" ref={listRef}>
-          {!trimmedQuery && <div className="command-group-heading">Navigate</div>}
-          {trimmedQuery && hitItems.length > 0 && <div className="command-group-heading">Nodes</div>}
-          {visibleItems.map((item, index) => {
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.id}
-                className={`command-item ${index === selectedIndex ? 'active' : ''}`}
-                data-selected={index === selectedIndex}
-                onMouseEnter={() => setSelectedIndex(index)}
-                onClick={item.action}
-              >
-                {Icon ? (
-                  <Icon className="command-item-icon" size={ICON_SIZE.toolbar} strokeWidth={1.5} />
-                ) : (
-                  <span className="command-item-bullet" />
-                )}
-                <span className="command-item-label">{item.kind === 'create' ? `Create "${item.label}"` : item.label}</span>
-                <span className="command-item-type">{item.typeLabel}</span>
-              </button>
-            );
-          })}
-        </div>
-        {selected && (
-          <div className="command-action-bar">
-            <button className="command-action-button" onClick={selected.action}>
-              <span>{actionLabel(selected.kind)}</span>
-              <span className="kbd">↵</span>
-            </button>
-          </div>
-        )}
+    <Dialog
+      backdropClassName="overlay"
+      initialFocus={() => inputRef.current}
+      label="Command palette"
+      onBackdropMouseDown={props.onClose}
+      onEscapeKeyDown={props.onClose}
+      surfaceClassName="command-palette"
+    >
+      <input
+        ref={inputRef}
+        aria-activedescendant={selectedItemId}
+        aria-controls="command-palette-list"
+        aria-label="Search or create"
+        className="command-input"
+        value={query}
+        placeholder="Search or create"
+        onChange={(event) => setQuery(event.target.value)}
+        onKeyDown={(event) => {
+          if (isImeComposingEvent(event)) {
+            if (event.key === 'Escape') event.stopPropagation();
+            return;
+          }
+          if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            setSelectedIndex((current) => Math.min(current + 1, visibleItems.length - 1));
+          }
+          if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            setSelectedIndex((current) => Math.max(current - 1, 0));
+          }
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            selected?.action();
+          }
+        }}
+      />
+      <div className="command-list" id="command-palette-list" ref={listRef} role="listbox">
+        {!trimmedQuery && <div className="command-group-heading">Navigate</div>}
+        {trimmedQuery && hitItems.length > 0 && <div className="command-group-heading">Nodes</div>}
+        {visibleItems.map((item, index) => {
+          const Icon = item.icon;
+          return (
+            <MenuItem
+              key={item.id}
+              active={index === selectedIndex}
+              aria-selected={index === selectedIndex}
+              className="command-item"
+              data-selected={index === selectedIndex}
+              id={`command-item-${index}`}
+              icon={Icon ? (
+                <Icon className="command-item-icon" size={ICON_SIZE.toolbar} strokeWidth={1.5} />
+              ) : (
+                <span className="command-item-bullet" />
+              )}
+              label={item.kind === 'create' ? `Create "${item.label}"` : item.label}
+              labelClassName="command-item-label"
+              meta={item.typeLabel}
+              metaClassName="command-item-type"
+              onMouseEnter={() => setSelectedIndex(index)}
+              onClick={item.action}
+              role="option"
+            />
+          );
+        })}
       </div>
-    </div>
+      {selected && (
+        <div className="command-action-bar">
+          <button className="command-action-button" onClick={selected.action} type="button">
+            <span>{actionLabel(selected.kind)}</span>
+            <span className="kbd">↵</span>
+          </button>
+        </div>
+      )}
+    </Dialog>
   );
 }

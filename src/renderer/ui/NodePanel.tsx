@@ -20,6 +20,7 @@ import {
   CalendarIcon,
   HashIcon,
   LibraryIcon,
+  MoreIcon,
   SearchIcon,
   TrashIcon,
 } from './icons';
@@ -31,6 +32,7 @@ import { OutlinerView } from './outliner/OutlinerView';
 import { TrailingInput } from './outliner/TrailingInput';
 import { TriggerPopover } from './outliner/TriggerPopover';
 import { createTrailingField, createTrailingTriggerNode } from './outliner/trailingTriggers';
+import { IconButton } from './primitives/IconButton';
 import { inlineReferenceTextColor, resolveTagColor } from './tags/tagColors';
 import { TagBar } from './tags/TagBar';
 import { buildPanelBreadcrumb } from './panelBreadcrumb';
@@ -146,12 +148,15 @@ export function NodePanel(props: NodePanelProps) {
     ));
   };
 
-  const commitTitle = async (content = titleContent) => {
+  const persistTitle = async (content = titleContent) => {
     if (!rootNode || rootNode.locked || richTextEquals(content, rootNode.content)) {
-      clearHeaderFocus();
       return;
     }
     await props.run(() => api.updateNodeText(props.rootId, content));
+  };
+
+  const commitTitle = async (content = titleContent) => {
+    await persistTitle(content);
     clearHeaderFocus();
   };
 
@@ -163,6 +168,12 @@ export function NodePanel(props: NodePanelProps) {
 
   const handleTitleEnter = (_payload: EditorSplitPayload) => {
     void commitTitle().then(blurActiveElement);
+  };
+
+  const handleTitleModEnter = async (content: RichText) => {
+    setTitleContent(content);
+    await persistTitle(content);
+    await props.run(() => api.cycleDoneState(props.rootId));
   };
 
   const openHeaderContextMenu = (event: MouseEvent) => {
@@ -178,6 +189,22 @@ export function NodePanel(props: NodePanelProps) {
       selectionAnchorId: prev.selectedIds.has(props.rootId) ? prev.selectionAnchorId ?? props.rootId : props.rootId,
     }));
     setContextMenu({ x: event.clientX, y: event.clientY });
+  };
+
+  const openHeaderMoreMenu = (event: MouseEvent<HTMLButtonElement>) => {
+    if (!rootNode) return;
+    event.preventDefault();
+    event.stopPropagation();
+    blurActiveElement();
+    props.setUi((prev) => ({
+      ...prev,
+      focusedId: null,
+      selectedId: props.rootId,
+      selectedIds: prev.selectedIds.has(props.rootId) ? new Set(prev.selectedIds) : new Set([props.rootId]),
+      selectionAnchorId: prev.selectedIds.has(props.rootId) ? prev.selectionAnchorId ?? props.rootId : props.rootId,
+    }));
+    const rect = event.currentTarget.getBoundingClientRect();
+    setContextMenu({ x: rect.left, y: rect.bottom + 4 });
   };
 
   const clearTitleTriggerText = async () => {
@@ -280,8 +307,12 @@ export function NodePanel(props: NodePanelProps) {
               })}
             </nav>
           )}
+          {headerIcon && (
+            <div className="panel-heading-icon-row">
+              <span className="panel-header-icon">{headerIcon}</span>
+            </div>
+          )}
           <div className="panel-title-row">
-            {headerIcon && <span className="panel-header-icon">{headerIcon}</span>}
             <div className="panel-title-editor" aria-label="Page title" onContextMenu={openHeaderContextMenu}>
               {rootNode && showDoneCheckbox && (
                 <DoneCheckbox
@@ -305,7 +336,7 @@ export function NodePanel(props: NodePanelProps) {
                 onArrowDownAtEnd={focusFirstVisibleRowOrTrailing}
                 onUndo={() => void props.run(() => api.undo())}
                 onRedo={() => void props.run(() => api.redo())}
-                onModEnter={() => void props.run(() => api.toggleDone(props.rootId))}
+                onModEnter={(content) => void handleTitleModEnter(content)}
                 resolveInlineReferenceColor={(targetId) => inlineReferenceTextColor(targetId, props.index)}
                 onEscape={() => {
                   setTitleContent(rootNode?.content ?? EMPTY_RICH_TEXT);
@@ -332,7 +363,25 @@ export function NodePanel(props: NodePanelProps) {
                   existingTagIds={rootNode?.tags ?? []}
                 />
               )}
-              {rootNode && rootNode.tags.length > 0 && (
+            </div>
+          </div>
+          {rootNode && (
+            <NodeDescription
+              node={rootNode}
+              targetId={props.rootId}
+              editing={props.ui.editingDescriptionId === props.rootId}
+              run={props.run}
+              onEditingChange={(editing) => {
+                props.setUi((prev) => ({
+                  ...prev,
+                  editingDescriptionId: editing ? props.rootId : null,
+                }));
+              }}
+            />
+          )}
+          {rootNode && (
+            <div className="panel-title-toolbar-row">
+              {rootNode.tags.length > 0 ? (
                 <TagBar
                   nodeId={props.rootId}
                   tagIds={rootNode.tags}
@@ -340,23 +389,24 @@ export function NodePanel(props: NodePanelProps) {
                   run={props.run}
                   onRoot={props.onRoot}
                 />
+              ) : (
+                <span />
               )}
-              {rootNode && (
-                <NodeDescription
-                  node={rootNode}
-                  targetId={props.rootId}
-                  editing={props.ui.editingDescriptionId === props.rootId}
-                  run={props.run}
-                  onEditingChange={(editing) => {
-                    props.setUi((prev) => ({
-                      ...prev,
-                      editingDescriptionId: editing ? props.rootId : null,
-                    }));
-                  }}
-                />
-              )}
+              <IconButton
+                className="panel-title-more-button"
+                icon={MoreIcon}
+                iconSize={14}
+                label="More node actions"
+                onClick={openHeaderMoreMenu}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }}
+                title="More"
+                variant="panel"
+              />
             </div>
-          </div>
+          )}
         </header>
         {rootNode && contextMenu && (
           <NodeContextMenu

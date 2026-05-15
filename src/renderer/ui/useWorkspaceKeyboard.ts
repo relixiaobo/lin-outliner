@@ -233,7 +233,7 @@ export function useWorkspaceKeyboard({
           : action === 'batch_outdent'
             ? api.batchOutdentNodes
             : action === 'batch_checkbox'
-              ? api.batchToggleDone
+              ? api.batchCycleDoneState
               : null;
       if (batchOperation) {
         const operationIds = action === 'batch_checkbox' ? batchTargetIds : batchIds;
@@ -249,6 +249,16 @@ export function useWorkspaceKeyboard({
               ...prev,
               expanded: expandIndentTargets(prev.expanded, batchIds, index.byId),
             }));
+          }
+          if (action === 'batch_checkbox') {
+            setUi((prev) => ({
+              ...prev,
+              focusedId: null,
+              selectedId: anchor,
+              selectedIds: new Set(batchIds),
+              selectionAnchorId: anchor,
+            }));
+            return;
           }
           requestEditFocus(anchor);
         });

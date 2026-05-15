@@ -55,6 +55,43 @@ test.describe('outliner bullet parity', () => {
     expectClose(trailingMetrics.editorLeft - trailingMetrics.bulletCenter, 15.5);
   });
 
+  test('top-level bullets align to the panel header content start', async ({ page }) => {
+    const metrics = await page.evaluate((ids) => {
+      const titleRect = document.querySelector('.panel-title-editor')?.getBoundingClientRect();
+      const tagRect = document.querySelector('.panel-title-toolbar-row .tag-bar')?.getBoundingClientRect();
+      const rootStyle = getComputedStyle(document.documentElement);
+      const panelRect = document.querySelector('.main-panel')?.getBoundingClientRect();
+      const moreRect = document.querySelector('.panel-title-more-button')?.getBoundingClientRect();
+      const rowElement = document.querySelector(`[data-node-id="${ids.alpha}"] > .row`);
+      const rowBulletRect = rowElement?.querySelector('.row-bullet-button')?.getBoundingClientRect();
+      const rowChevronRect = rowElement?.querySelector('.row-chevron-button')?.getBoundingClientRect();
+      const trailingBulletRect = document
+        .querySelector(`[data-trailing-parent-id="${ids.today}"] .row-bullet-button`)
+        ?.getBoundingClientRect();
+      if (!titleRect || !tagRect || !panelRect || !moreRect || !rowBulletRect || !rowChevronRect || !trailingBulletRect) {
+        throw new Error('missing panel alignment target');
+      }
+      return {
+        panelContentX: Number.parseFloat(rootStyle.getPropertyValue('--panel-content-x')),
+        panelLeft: panelRect.left,
+        panelRight: panelRect.right,
+        titleLeft: titleRect.left,
+        tagLeft: tagRect.left,
+        moreRight: moreRect.right,
+        rowBulletLeft: rowBulletRect.left,
+        rowChevronLeft: rowChevronRect.left,
+        trailingBulletLeft: trailingBulletRect.left,
+      };
+    }, ids);
+
+    expectClose(metrics.tagLeft, metrics.titleLeft);
+    expectClose(metrics.rowBulletLeft, metrics.titleLeft);
+    expectClose(metrics.trailingBulletLeft, metrics.titleLeft);
+    expect(metrics.rowChevronLeft).toBeGreaterThanOrEqual(metrics.panelLeft + 8);
+    expect(metrics.rowChevronLeft).toBeLessThan(metrics.titleLeft);
+    expectClose(metrics.panelRight - metrics.moreRight, metrics.panelContentX);
+  });
+
   test('tag definition bullet uses nodex hash glyph', async ({ page }) => {
     await page.getByRole('button', { name: 'Supertags' }).click();
 

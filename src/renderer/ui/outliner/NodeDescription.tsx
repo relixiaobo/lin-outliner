@@ -3,6 +3,7 @@ import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import type { CommandRunner } from '../shared';
+import { NodeDescriptionEditor, NodeDescriptionRead } from './NodeDescriptionSurface';
 
 interface NodeDescriptionProps {
   node: NodeProjection;
@@ -51,28 +52,20 @@ export function NodeDescription({
 
   if (!editing) {
     return (
-      <button
-        type="button"
-        className="node-description read"
-        onMouseDown={(event) => event.stopPropagation()}
-        onClick={() => onEditingChange(true)}
-      >
-        {node.description}
-      </button>
+      <NodeDescriptionRead
+        description={node.description ?? ''}
+        onEdit={() => onEditingChange(true)}
+      />
     );
   }
 
   return (
-    <textarea
-      ref={inputRef}
-      className="node-description edit"
-      data-focus-node-id={`${targetId}:description`}
-      rows={1}
+    <NodeDescriptionEditor
+      inputRef={inputRef}
+      focusId={`${targetId}:description`}
       value={draft}
-      placeholder="Description"
-      onMouseDown={(event) => event.stopPropagation()}
-      onChange={(event) => setDraft(event.currentTarget.value)}
-      onBlur={commit}
+      onValueChange={setDraft}
+      onCommit={commit}
       onKeyDown={(event) => {
         if (isImeComposingEvent(event)) return;
         if (event.key === 'Escape') {

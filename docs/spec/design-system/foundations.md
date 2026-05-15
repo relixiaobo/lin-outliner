@@ -52,7 +52,7 @@ Use these default desktop tokens before adding component-specific values:
 
   --outline-panel-min-width: 360px;
   --outline-panel-ideal-width: 520px;
-  --panel-content-x: 16px;
+  --panel-content-x: 28px;
   --panel-content-top: 10px;
   --panel-content-bottom: 30px;
   --panel-content-max: 720px;
