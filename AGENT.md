@@ -47,3 +47,10 @@ folders.
 - Prefer a separate worktree over stashing when a branch already has substantial
   uncommitted changes.
 - Do not commit files under `tmp/`.
+
+## Agent Progress
+
+- Use `docs/spec/agent-progress.md` as the living checklist for agent integration
+  status and next work.
+- Keep detailed tool contracts in `docs/spec/agent-tool-design.md`; the progress
+  file should stay short and milestone-oriented.
