@@ -21,7 +21,7 @@ export async function savePrimaryFieldEntryChildText({
       const outcome = await api.deleteNode(childId);
       return outcome.projection;
     }
-    const outcome = await api.updateNodeText(childId, plainText(nextText));
+    const outcome = await api.replaceNodeText(childId, plainText(nextText));
     return outcome.projection;
   }
 

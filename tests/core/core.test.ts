@@ -4,6 +4,8 @@ import {
   SCHEMA_ID,
   TAG_DAY_ID,
   TRASH_ID,
+  plainText,
+  replaceAllRichTextPatch,
   type CreateNodeTree,
   type RichText,
 } from '../../src/core/types';
@@ -68,16 +70,16 @@ describe('Core', () => {
     const first = mustFocus(core.createNode(today, null, '😀'));
     const second = mustFocus(core.createNode(today, null, 'Hi'));
 
-    core.updateNodeText(first, {
+    core.applyNodeTextPatch(first, replaceAllRichTextPatch({
       text: '😀',
       marks: [{ start: 0, end: 2, type: 'bold' }],
       inlineRefs: [{ offset: 2, targetNodeId: target, displayName: 'Target' }],
-    });
-    core.updateNodeText(second, {
+    }));
+    core.applyNodeTextPatch(second, replaceAllRichTextPatch({
       text: 'Hi',
       marks: [{ start: 0, end: 2, type: 'code' }],
       inlineRefs: [{ offset: 1, targetNodeId: target, displayName: 'Target' }],
-    });
+    }));
 
     core.mergeNodeInto(second, first);
 
@@ -312,11 +314,11 @@ describe('Core', () => {
     const trigger = mustFocus(core.createNode(today, null, '@Target'));
     const inlineSource = mustFocus(core.createNode(today, null, 'Inline'));
 
-    core.updateNodeText(inlineSource, {
+    core.applyNodeTextPatch(inlineSource, replaceAllRichTextPatch({
       text: 'Inline ref',
       marks: [],
       inlineRefs: [{ offset: 6, targetNodeId: target, displayName: 'Target' }],
-    });
+    }));
     const referenceId = mustFocus(core.replaceNodeWithReference(trigger, target));
 
     expect(core.state().nodes[referenceId].type).toBe('reference');
@@ -349,17 +351,166 @@ describe('Core', () => {
     expect(core.state().nodes[second].parentId).toBe(today);
   });
 
-  test('state serializes without persistence-only fields in projection', () => {
+  test('agent undo only reverts agent-origin commits', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const userNode = mustFocus(core.createNode(today, null, 'User node'));
+    const agentNode = mustFocus(core.withOrigin('agent', () => core.createNode(today, null, 'Agent node')));
+
+    core.undoAgent();
+
+    expect(core.state().nodes[userNode]).toBeDefined();
+    expect(core.state().nodes[agentNode]).toBeUndefined();
+
+    core.redoAgent();
+    expect(core.state().nodes[userNode]).toBeDefined();
+    expect(core.state().nodes[agentNode]).toBeDefined();
+  });
+
+  test('projection-created today node is not rolled into user undo history', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const nodeId = mustFocus(core.createNode(today, null, 'User node'));
+
+    core.undo();
+
+    expect(core.state().nodes[today]).toBeDefined();
+    expect(core.state().nodes[nodeId]).toBeUndefined();
+  });
+
+  test('new operations clear stale origin-specific redo stacks', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const agentNode = mustFocus(core.withOrigin('agent', () => core.createNode(today, null, 'Agent node')));
+
+    core.undoAgent();
+    expect(core.operationHistory({ action: 'list', origin: 'agent' }).canRedo).toBe(true);
+
+    core.createNode(today, null, 'User node');
+
+    expect(core.operationHistory({ action: 'list', origin: 'agent' }).canRedo).toBe(false);
+    expect(core.operationHistory({ action: 'redo', origin: 'agent' }).count).toBe(0);
+    expect(core.state().nodes[agentNode]).toBeUndefined();
+  });
+
+  test('operation history guards against the Loro stack top operation id', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const agentNode = mustFocus(core.withOrigin('agent', () => core.createNode(today, null, 'Agent node')));
+    const history = core.operationHistory({ action: 'list', origin: 'agent' });
+    const operationId = history.cursor?.topUndoOperationId;
+
+    expect(operationId).toBe(history.items?.[0]?.operationId);
+    expect(core.operationHistory({ action: 'undo', origin: 'agent', operationId: 'op:not-top' }).count).toBe(0);
+    expect(core.state().nodes[agentNode]).toBeDefined();
+
+    expect(core.operationHistory({ action: 'undo', origin: 'agent', operationId }).count).toBe(1);
+    expect(core.state().nodes[agentNode]).toBeUndefined();
+  });
+
+  test('failed transactions roll back uncommitted Loro changes', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+
+    await expect(core.transaction('agent', async () => {
+      core.createNode(today, null, 'Partial agent node');
+      throw new Error('abort transaction');
+    }, { tool: 'node_create' })).rejects.toThrow('abort transaction');
+
+    expect(Object.values(core.state().nodes).map((node) => node.content.text)).not.toContain('Partial agent node');
+    expect(core.operationHistory({ action: 'list', origin: 'agent' }).items).toEqual([]);
+    expect(core.operationHistory({ action: 'undo', origin: 'agent' }).count).toBe(0);
+  });
+
+  test('rich text marks and inline refs round-trip through the Loro text snapshot', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'Target'));
+    const nodeId = mustFocus(core.createNode(today, null, 'Rich'));
+    const content = {
+      text: 'HelloWorld',
+      marks: [
+        { start: 0, end: 5, type: 'bold' as const },
+        { start: 5, end: 10, type: 'link' as const, attrs: { href: 'https://example.com' } },
+      ],
+      inlineRefs: [{ offset: 5, targetNodeId: target, displayName: 'Target' }],
+    };
+
+    core.applyNodeTextPatch(nodeId, replaceAllRichTextPatch(content));
+    const restored = Core.fromState(Core.deserializeState(core.serializeState()));
+
+    expect(restored.state().nodes[nodeId]!.content).toEqual(content);
+  });
+
+  test('applies node text patches directly to Loro text', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'Target'));
+    const nodeId = mustFocus(core.createNode(today, null, 'Hello'));
+
+    core.applyNodeTextPatch(nodeId, {
+      ops: [{
+        type: 'replace',
+        from: 5,
+        to: 5,
+        content: {
+          text: ' world',
+          marks: [{ start: 1, end: 6, type: 'bold' }],
+          inlineRefs: [{ offset: 6, targetNodeId: target, displayName: 'Target' }],
+        },
+      }],
+    });
+    core.applyNodeTextPatch(nodeId, {
+      ops: [{ type: 'add_mark', from: 0, to: 5, markType: 'italic' }],
+    });
+
+    expect(core.state().nodes[nodeId]!.content).toEqual({
+      text: 'Hello world',
+      marks: [
+        { start: 0, end: 5, type: 'italic' },
+        { start: 6, end: 11, type: 'bold' },
+      ],
+      inlineRefs: [{ offset: 11, targetNodeId: target, displayName: 'Target' }],
+    });
+
+    core.applyNodeTextPatch(nodeId, {
+      ops: [{ type: 'replace', from: 11, to: 11, content: { text: '', marks: [], inlineRefs: [] }, deletedInlineRefs: [{ offset: 11, targetNodeId: target, displayName: 'Target' }] }],
+    });
+    expect(core.state().nodes[nodeId]!.content.inlineRefs).toEqual([]);
+  });
+
+  test('groups continuous text patches into one Loro undo item and one journal entry', () => {
+    const core = Core.new();
+    const nodeId = mustFocus(core.createNode(core.projection().todayId, null, ''));
+
+    core.beginUndoGroup();
+    core.withOrigin('user', () => core.applyNodeTextPatch(nodeId, {
+      ops: [{ type: 'replace', from: 0, to: 0, content: plainText('A') }],
+    }), { operationId: 'op:text-session', summary: 'Edited node text.' });
+    core.withOrigin('user', () => core.applyNodeTextPatch(nodeId, {
+      ops: [{ type: 'replace', from: 1, to: 1, content: plainText('B') }],
+    }), { operationId: 'op:text-session', summary: 'Edited node text.' });
+    core.endUndoGroup();
+
+    const history = core.operationHistory({ action: 'list', origin: 'user' });
+    expect(history.items?.filter((item) => item.operationId === 'op:text-session')).toHaveLength(1);
+    expect(core.state().nodes[nodeId]!.content.text).toBe('AB');
+
+    core.undoUser();
+    expect(core.state().nodes[nodeId]!.content.text).toBe('');
+  });
+
+  test('state serializes and restores the Loro-backed projection', () => {
     const core = Core.new();
     const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Plain'));
-    core.state().nodes[nodeId].type = 'codeBlock';
+    core.updateNodeDescription(nodeId, 'Persisted description');
     const raw = core.serializeState();
     const restored = Core.fromState(Core.deserializeState(raw));
     const projected = restored.projection().nodes.find((node) => node.id === nodeId)!;
 
-    expect(projected.type).toBe('codeBlock');
     expect(projected.id).toBe(nodeId);
     expect(projected.content.text).toBe('Plain');
+    expect(projected.description).toBe('Persisted description');
     expect(restored.state().nodes[SCHEMA_ID]).toBeDefined();
   });
 });

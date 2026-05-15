@@ -7,11 +7,13 @@
       "dependencies": {
         "@earendil-works/pi-agent-core": "0.74.0",
         "@earendil-works/pi-ai": "0.74.0",
+        "loro-crdt": "^1.10.6",
         "lucide-react": "^0.575.0",
         "marked": "^17.0.4",
         "prosemirror-commands": "^1.7.1",
         "prosemirror-model": "^1.25.4",
         "prosemirror-state": "^1.4.4",
+        "prosemirror-transform": "^1.12.0",
         "prosemirror-view": "^1.41.8",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
@@ -768,6 +770,8 @@
     "long": ["long@5.3.2", "", {}, "sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA=="],
 
     "longest-streak": ["longest-streak@3.1.0", "", {}, "sha512-9Ri+o0JYgehTaVBBDoMqIl8GXtbWg711O3srftcHhZ0dqnETqLaoIK0x17fUw9rFSlK/0NlsKe0Ahhyl5pXE2g=="],
+
+    "loro-crdt": ["loro-crdt@1.12.1", "", {}, "sha512-iHDGq4RaTHr6CFbXqV91ngKyVlB2NuYXz0q9t0Dedr8sQnbcPNdFs4DaqzDNP1jojuygFvYv12gt407M22OeQg=="],
 
     "lowercase-keys": ["lowercase-keys@2.0.0", "", {}, "sha512-tqNXrS78oMOE73NMxK4EMLQsQowWf8jKooH9g7xPavRT706R6bkQJ6DY2Te7QukaZsulxa30wQ7bk0pm4XiHmA=="],
 

@@ -32,6 +32,14 @@ type E2EWindow = Window & {
 export async function installElectronMock(page: Page) {
   await page.addInitScript(({ ids }) => {
     type RichText = { text: string; marks: unknown[]; inlineRefs: Array<{ offset: number; targetNodeId: string; displayName?: string }> };
+    type RichTextPatch = {
+      ops: Array<
+        | { type: 'replace_all'; content: RichText }
+        | { type: 'replace'; from: number; to: number; content: RichText }
+        | { type: 'add_mark'; from: number; to: number; markType: string; attrs?: Record<string, string> }
+        | { type: 'remove_mark'; from: number; to: number; markType: string }
+      >;
+    };
     type MockNode = {
       id: string;
       type?: string;
@@ -77,6 +85,37 @@ export async function installElectronMock(page: Page) {
     const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
 
     const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+    const applyRichTextPatch = (content: RichText, patch: RichTextPatch): RichText => {
+      let next = clone(content);
+      for (const op of patch.ops) {
+        if (op.type === 'replace_all') {
+          next = clone(op.content);
+          continue;
+        }
+        if (op.type === 'replace') {
+          const from = Math.max(0, Math.min(next.text.length, op.from));
+          const to = Math.max(from, Math.min(next.text.length, op.to));
+          next = {
+            text: `${next.text.slice(0, from)}${op.content.text}${next.text.slice(to)}`,
+            marks: clone(op.content.marks),
+            inlineRefs: [
+              ...next.inlineRefs.filter((ref) => ref.offset < from || ref.offset > to),
+              ...op.content.inlineRefs.map((ref) => ({ ...ref, offset: from + ref.offset })),
+            ],
+          };
+          continue;
+        }
+        if (op.type === 'add_mark') {
+          next.marks.push({ start: op.from, end: op.to, type: op.markType, attrs: op.attrs });
+          continue;
+        }
+        next.marks = next.marks.filter((mark) => {
+          const typed = mark as { type?: string; start?: number; end?: number };
+          return typed.type !== op.markType || typed.end! <= op.from || typed.start! >= op.to;
+        });
+      }
+      return next;
+    };
     const makeNode = (id: string, text: string, overrides: Partial<MockNode> = {}) => {
       nodes.set(id, {
         id,
@@ -295,10 +334,10 @@ export async function installElectronMock(page: Page) {
           const lastSiblingId = createTree(node.parentId, args.siblingsAfter as CreateNodeTree[], index);
           return clone(outcome({ nodeId: lastSiblingId ?? nodeId, selectAll: false }));
         }
-        if (cmd === 'update_node_text') {
+        if (cmd === 'apply_node_text_patch') {
           const node = nodes.get(String(args.nodeId));
           if (node) {
-            node.content = clone(args.content as RichText);
+            node.content = applyRichTextPatch(node.content, args.patch as RichTextPatch);
             node.updatedAt = ++now;
           }
           return clone(outcome({ nodeId: String(args.nodeId), selectAll: false }));
@@ -449,6 +488,16 @@ export async function installElectronMock(page: Page) {
             targetId: String(args.targetId),
           });
           return clone(outcome({ nodeId: refId, selectAll: false }));
+        }
+        if (cmd === 'set_reference_target') {
+          const node = nodes.get(String(args.referenceId));
+          const target = nodes.get(String(args.targetId));
+          if (node && target) {
+            node.type = 'reference';
+            node.targetId = target.id;
+            node.content = clone(target.content);
+          }
+          return clone(outcome({ nodeId: String(args.referenceId), selectAll: false }));
         }
         if (cmd === 'replace_node_with_reference') {
           const node = nodes.get(String(args.nodeId));

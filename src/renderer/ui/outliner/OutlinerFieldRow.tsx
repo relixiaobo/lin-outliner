@@ -145,7 +145,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     const normalized = nextName.trim() || 'Field';
     if (field && normalized !== field.content.text) {
       await props.run(async () => {
-        await api.updateNodeText(field.id, plainText(normalized));
+        await api.replaceNodeText(field.id, plainText(normalized));
         return api.getProjection();
       });
     }

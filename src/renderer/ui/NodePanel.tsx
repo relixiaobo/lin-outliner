@@ -1,6 +1,6 @@
-import { useEffect, useState, type Dispatch, type MouseEvent, type SetStateAction } from 'react';
+import { useEffect, useRef, useState, type Dispatch, type MouseEvent, type SetStateAction } from 'react';
 import { api } from '../api/client';
-import type { FocusHint, NodeId, RichText } from '../api/types';
+import type { FocusHint, NodeId, RichText, RichTextPatch } from '../api/types';
 import { EMPTY_RICH_TEXT, plainText } from '../api/types';
 import { flattenVisibleRows, type DocumentIndex, type UiState } from '../state/document';
 import { RichTextEditor, type EditorSplitPayload } from './editor/RichTextEditor';
@@ -9,7 +9,6 @@ import {
   markWholeTextAsHeading,
   replaceRichTextRangeWithInlineRef,
   replaceRichTextRangeWithText,
-  richTextEquals,
 } from './editor/richTextCodec';
 import { DefinitionConfigPanel } from './definition/DefinitionConfigPanel';
 import { definitionKind, definitionOutlinerLabel } from './definition/definitionConfig';
@@ -53,8 +52,10 @@ export function NodePanel(props: NodePanelProps) {
   const rootNode = props.index.byId.get(props.rootId);
   const projection = props.index.projection;
   const [titleContent, setTitleContent] = useState<RichText>(rootNode?.content ?? EMPTY_RICH_TEXT);
+  const [titleContentRevision, setTitleContentRevision] = useState(0);
   const [titleTrigger, setTitleTrigger] = useState<EditorTrigger | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const pendingTitlePatchRef = useRef<Promise<unknown>>(Promise.resolve());
   const rootDefinitionKind = definitionKind(rootNode);
   const definitionTemplateLabel = rootNode ? definitionOutlinerLabel(rootNode) : null;
   const showOutliner = Boolean(rootNode && (!rootDefinitionKind || definitionTemplateLabel));
@@ -86,6 +87,11 @@ export function NodePanel(props: NodePanelProps) {
       selectionAnchorId: first,
     }));
     focusRowInput(first, 'start');
+  };
+
+  const replaceLocalTitleContent = (content: RichText) => {
+    setTitleContent(content);
+    setTitleContentRevision((revision) => revision + 1);
   };
 
   const focusNode = (nodeId: NodeId) => {
@@ -146,13 +152,15 @@ export function NodePanel(props: NodePanelProps) {
     ));
   };
 
-  const commitTitle = async (content = titleContent) => {
-    if (!rootNode || rootNode.locked || richTextEquals(content, rootNode.content)) {
-      clearHeaderFocus();
-      return;
-    }
-    await props.run(() => api.updateNodeText(props.rootId, content));
+  const commitTitle = async (_content = titleContent) => {
+    await pendingTitlePatchRef.current;
     clearHeaderFocus();
+  };
+
+  const applyTitlePatch = (patch: RichTextPatch) => {
+    pendingTitlePatchRef.current = pendingTitlePatchRef.current.then(() =>
+      props.run(() => api.applyNodeTextPatch(props.rootId, patch)));
+    void pendingTitlePatchRef.current;
   };
 
   const blurActiveElement = () => {
@@ -182,13 +190,15 @@ export function NodePanel(props: NodePanelProps) {
 
   const clearTitleTriggerText = async () => {
     if (!titleTrigger || !rootNode) return;
+    await pendingTitlePatchRef.current;
     const nextContent = deleteRichTextRange(titleContent, titleTrigger.from, titleTrigger.to);
-    setTitleContent(nextContent);
-    await api.updateNodeText(props.rootId, nextContent);
+    replaceLocalTitleContent(nextContent);
+    await props.run(() => api.replaceNodeText(props.rootId, nextContent));
   };
 
   const applyTitleInlineReference = async (target: { id: NodeId; content: RichText }) => {
     if (!titleTrigger || !rootNode) return;
+    await pendingTitlePatchRef.current;
     const nextContent = replaceRichTextRangeWithInlineRef(
       titleContent,
       titleTrigger.from,
@@ -198,17 +208,18 @@ export function NodePanel(props: NodePanelProps) {
         displayName: target.content.text,
       },
     );
-    setTitleContent(nextContent);
-    return api.updateNodeText(props.rootId, nextContent);
+    replaceLocalTitleContent(nextContent);
+    return api.replaceNodeText(props.rootId, nextContent);
   };
 
   const executeTitleSlashCommand = async (commandId: SlashCommandId) => {
     if (!titleTrigger || !rootNode) return null;
 
     if (commandId === 'reference') {
+      await pendingTitlePatchRef.current;
       const nextContent = replaceRichTextRangeWithText(titleContent, titleTrigger.from, titleTrigger.to, '@');
-      setTitleContent(nextContent);
-      const result = await api.updateNodeText(props.rootId, nextContent);
+      replaceLocalTitleContent(nextContent);
+      const result = await api.replaceNodeText(props.rootId, nextContent);
       window.requestAnimationFrame(() => {
         setTitleTrigger({
           kind: '@',
@@ -222,10 +233,11 @@ export function NodePanel(props: NodePanelProps) {
     }
 
     if (commandId === 'heading') {
+      await pendingTitlePatchRef.current;
       const withoutTrigger = deleteRichTextRange(titleContent, titleTrigger.from, titleTrigger.to);
       const nextContent = markWholeTextAsHeading(withoutTrigger);
-      setTitleContent(nextContent);
-      return api.updateNodeText(props.rootId, nextContent);
+      replaceLocalTitleContent(nextContent);
+      return api.replaceNodeText(props.rootId, nextContent);
     }
 
     if (commandId === 'checkbox') {
@@ -292,11 +304,13 @@ export function NodePanel(props: NodePanelProps) {
               <RichTextEditor
                 nodeId={props.rootId}
                 content={titleContent}
+                contentRevision={titleContentRevision}
                 placeholder="Untitled"
                 readOnly={rootNode?.locked}
                 completed={Boolean(rootNode?.completedAt)}
                 onFocus={selectHeader}
                 onChange={setTitleContent}
+                onPatch={applyTitlePatch}
                 onCommit={(content) => void commitTitle(content)}
                 onEnter={handleTitleEnter}
                 onBackspaceAtStart={() => undefined}
@@ -308,7 +322,7 @@ export function NodePanel(props: NodePanelProps) {
                 onModEnter={() => void props.run(() => api.toggleDone(props.rootId))}
                 resolveInlineReferenceColor={(targetId) => inlineReferenceTextColor(targetId, props.index)}
                 onEscape={() => {
-                  setTitleContent(rootNode?.content ?? EMPTY_RICH_TEXT);
+                  replaceLocalTitleContent(rootNode?.content ?? EMPTY_RICH_TEXT);
                   setTitleTrigger(null);
                   blurActiveElement();
                   clearHeaderFocus();
@@ -411,7 +425,7 @@ export function NodePanel(props: NodePanelProps) {
                   props.run(() => api.createNodesFromTree(parentId, nodes))
                 )}
                 onUpdateCreated={async (nodeId, text) => {
-                  await props.run(() => api.updateNodeText(nodeId, plainText(text)));
+                  await props.run(() => api.replaceNodeText(nodeId, plainText(text)));
                 }}
                 onToggleCreated={async (nodeId) => {
                   await props.run(() => api.toggleDone(nodeId));

@@ -145,7 +145,7 @@ export function App() {
       requestEditFocus(rowId);
       return;
     }
-    void run(() => api.updateNodeText(targetId, appendText(target.content, char)))
+    void run(() => api.replaceNodeText(targetId, appendText(target.content, char)))
       .then(() => requestEditFocus(rowId));
   }, [index, requestEditFocus, run]);
 

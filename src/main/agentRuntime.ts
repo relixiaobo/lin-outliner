@@ -50,6 +50,7 @@ import {
   saveChatSession,
 } from './agentChatStore';
 import { getActiveProviderRuntimeConfig, getProviderApiKey, type AgentProviderRuntimeConfig } from './agentSettings';
+import type { OutlinerToolHost } from './agentNodeTools';
 
 const EMPTY_USAGE = {
   input: 0,
@@ -105,7 +106,10 @@ export class AgentRuntime {
   private sessions = new Map<string, AgentSessionState>();
   private nextSessionId = 1;
 
-  constructor(private readonly getWindow: () => BrowserWindow | null) {}
+  constructor(
+    private readonly getWindow: () => BrowserWindow | null,
+    private readonly outlinerToolHost: OutlinerToolHost,
+  ) {}
 
   ready() {
     this.emit({ type: 'ready', sessionId: null, timestamp: Date.now() });
@@ -318,7 +322,7 @@ export class AgentRuntime {
     const providerConfig = await getActiveProviderRuntimeConfig();
     const activePath = getAgentChatMessages(chatSession);
     const agent = providerConfig
-      ? createConfiguredAgent(sessionId, providerConfig, activePath, (payload, model) => {
+      ? createConfiguredAgent(sessionId, providerConfig, activePath, this.outlinerToolHost, (payload, model) => {
           this.captureDebugPayload(sessionId, payload, model);
         })
       : createConfigurationErrorAgent(sessionId, 'No enabled agent provider is configured.', activePath);
@@ -647,6 +651,7 @@ function createConfiguredAgent(
   sessionId: string,
   providerConfig: AgentProviderRuntimeConfig,
   messages: AgentMessage[] = [],
+  outlinerToolHost: OutlinerToolHost,
   onPayload?: (payload: unknown, model: Model<any>) => void,
 ) {
   const model = resolveModel(providerConfig);
@@ -658,7 +663,7 @@ function createConfiguredAgent(
       ].join('\n'),
       model,
       thinkingLevel: providerConfig.reasoningLevel,
-      tools: createAgentTools(),
+      tools: createAgentTools(outlinerToolHost),
       messages,
     },
     streamFn: streamSimple as StreamFn,

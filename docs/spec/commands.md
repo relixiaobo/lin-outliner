@@ -9,7 +9,8 @@ in `src/core`.
 - `get_projection`
 - `create_node`
 - `split_node`
-- `update_node_text`
+- `apply_node_text_patch`
+- `set_node_checkbox_visible`
 - `merge_node_into`
 - `move_node`
 - `indent_node`
@@ -34,9 +35,12 @@ in `src/core`.
 - `register_collected_option`
 - `select_field_option`
 - `add_reference`
+- `set_reference_target`
 - `replace_node_with_reference`
 - `ensure_date_node`
 - `ensure_tag_search`
+- `create_search_node`
+- `set_search_node`
 - `search_nodes`
 - `backlinks`
 
