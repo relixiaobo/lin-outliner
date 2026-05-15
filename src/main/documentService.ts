@@ -1,15 +1,44 @@
 import { app } from 'electron';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { DocumentCommand } from '../core/commands';
-import { Core } from '../core/core';
-import type { FieldConfigPatch, FieldType, FilterOp, RichText, SortDirection, TagConfigPatch } from '../core/types';
+import { Core, type CoreTransactionMetadata, type OperationHistoryQuery } from '../core/core';
+import type {
+  FieldConfigPatch,
+  FieldType,
+  FilterOp,
+  RichText,
+  RichTextPatch,
+  SearchNodeConfig,
+  SortDirection,
+  TagConfigPatch,
+} from '../core/types';
 
-const WORKSPACE_FILE = 'workspace.json';
+const WORKSPACE_FILE = 'workspace.loro.json';
+
+export interface DocumentMutationMeta {
+  origin?: 'user' | 'agent' | 'system';
+  operationId?: string;
+  command?: string;
+  tool?: string;
+  summary?: string;
+}
+
+interface TextEditGroup {
+  nodeId: string;
+  origin: NonNullable<DocumentMutationMeta['origin']>;
+  operationId: string;
+  timer?: ReturnType<typeof setTimeout>;
+}
 
 export class DocumentService {
   private core = Core.new();
   private mutationQueue = Promise.resolve();
+  private transactionContext = new AsyncLocalStorage<boolean>();
+  private textEditGroup?: TextEditGroup;
+  private readonly textEditFlushDelayMs = 700;
 
   async initWorkspace() {
     this.core = await this.loadCore();
@@ -20,7 +49,40 @@ export class DocumentService {
     return this.core.projection();
   }
 
-  async handle(command: DocumentCommand, args: Record<string, unknown> = {}) {
+  async operationHistory(query: OperationHistoryQuery = {}) {
+    const mutatesHistory = query.action === 'undo' || query.action === 'redo';
+    if (!mutatesHistory && !this.textEditGroup) {
+      return this.mutationQueue.then(() => this.core.operationHistory(query));
+    }
+    const task = this.mutationQueue.then(async () => {
+      await this.flushTextEditGroupNow();
+      const result = this.core.operationHistory(query);
+      if (mutatesHistory) await this.saveCore();
+      return result;
+    });
+    this.mutationQueue = task.then(() => undefined, () => undefined);
+    return task;
+  }
+
+  async flushPendingChanges() {
+    const task = this.mutationQueue.then(() => this.flushTextEditGroupNow());
+    this.mutationQueue = task.then(() => undefined, () => undefined);
+    return task;
+  }
+
+  async transaction<T>(meta: DocumentMutationMeta, fn: () => Promise<T>) {
+    const task = this.mutationQueue.then(async () => {
+      await this.flushTextEditGroupNow();
+      const result = await this.core.transaction(meta.origin ?? 'user', async () =>
+        this.transactionContext.run(true, fn), transactionMetadata(meta));
+      await this.saveCore();
+      return result;
+    });
+    this.mutationQueue = task.then(() => undefined, () => undefined);
+    return task;
+  }
+
+  async handle(command: DocumentCommand, args: Record<string, unknown> = {}, meta: DocumentMutationMeta = {}) {
     switch (command) {
       case 'init_workspace':
         return this.initWorkspace();
@@ -31,21 +93,82 @@ export class DocumentService {
       case 'backlinks':
         return this.core.backlinks(String(args.targetId));
       default:
-        return this.mutate(command, args);
+        return this.mutate(command, args, meta);
     }
   }
 
-  private async mutate(command: DocumentCommand, args: Record<string, unknown>) {
+  private async mutate(command: DocumentCommand, args: Record<string, unknown>, meta: DocumentMutationMeta) {
+    if (this.transactionContext.getStore()) {
+      return this.runMutation(command, args, meta);
+    }
     const task = this.mutationQueue.then(async () => {
-      const outcome = this.runMutation(command, args);
-      await this.saveCore();
+      if (command !== 'apply_node_text_patch') {
+        await this.flushTextEditGroupNow();
+      }
+      const textEditMeta = command === 'apply_node_text_patch'
+        ? await this.textEditMetadata(String(args.nodeId), meta)
+        : meta;
+      const outcome = this.core.withOrigin(
+        textEditMeta.origin ?? 'user',
+        () => this.runMutation(command, args, textEditMeta),
+        transactionMetadata({ ...textEditMeta, command }),
+      );
+      if (command === 'apply_node_text_patch') {
+        this.scheduleTextEditFlush();
+      } else {
+        await this.saveCore();
+      }
       return outcome;
     });
     this.mutationQueue = task.then(() => undefined, () => undefined);
     return task;
   }
 
-  private runMutation(command: DocumentCommand, args: Record<string, unknown>) {
+  private async textEditMetadata(nodeId: string, meta: DocumentMutationMeta): Promise<DocumentMutationMeta> {
+    const origin = meta.origin ?? 'user';
+    if (this.textEditGroup && (this.textEditGroup.nodeId !== nodeId || this.textEditGroup.origin !== origin)) {
+      await this.flushTextEditGroupNow();
+    }
+    if (!this.textEditGroup) {
+      this.core.beginUndoGroup();
+      this.textEditGroup = {
+        nodeId,
+        origin,
+        operationId: `op:${randomUUID()}`,
+      };
+    }
+    return {
+      ...meta,
+      origin,
+      operationId: this.textEditGroup.operationId,
+      summary: meta.summary ?? 'Edited node text.',
+    };
+  }
+
+  private scheduleTextEditFlush() {
+    if (!this.textEditGroup) return;
+    if (this.textEditGroup.timer) clearTimeout(this.textEditGroup.timer);
+    this.textEditGroup.timer = setTimeout(() => {
+      void this.flushTextEditGroup();
+    }, this.textEditFlushDelayMs);
+  }
+
+  private async flushTextEditGroup() {
+    const task = this.mutationQueue.then(() => this.flushTextEditGroupNow());
+    this.mutationQueue = task.then(() => undefined, () => undefined);
+    return task;
+  }
+
+  private async flushTextEditGroupNow() {
+    const group = this.textEditGroup;
+    if (!group) return;
+    if (group.timer) clearTimeout(group.timer);
+    this.textEditGroup = undefined;
+    this.core.endUndoGroup();
+    await this.saveCore();
+  }
+
+  private runMutation(command: DocumentCommand, args: Record<string, unknown>, meta: DocumentMutationMeta) {
     switch (command) {
       case 'create_node':
         return this.core.createNode(String(args.parentId), nullableNumber(args.index), String(args.text ?? ''));
@@ -60,10 +183,12 @@ export class DocumentService {
         );
       case 'split_node':
         return this.core.splitNode(String(args.nodeId), args.before as RichText, args.after as RichText);
-      case 'update_node_text':
-        return this.core.updateNodeText(String(args.nodeId), args.content as RichText);
+      case 'apply_node_text_patch':
+        return this.core.applyNodeTextPatch(String(args.nodeId), args.patch as RichTextPatch);
       case 'update_node_description':
         return this.core.updateNodeDescription(String(args.nodeId), nullableString(args.description));
+      case 'set_node_checkbox_visible':
+        return this.core.setNodeCheckboxVisible(String(args.nodeId), Boolean(args.visible));
       case 'set_node_toolbar_visible':
         return this.core.setNodeToolbarVisible(String(args.nodeId), Boolean(args.visible));
       case 'set_node_sort':
@@ -135,16 +260,32 @@ export class DocumentService {
         return this.core.selectFieldOption(String(args.fieldEntryId), String(args.optionNodeId));
       case 'add_reference':
         return this.core.addReference(String(args.parentId), String(args.targetId), nullableNumber(args.index));
+      case 'set_reference_target':
+        return this.core.setReferenceTarget(String(args.referenceId), String(args.targetId));
       case 'replace_node_with_reference':
         return this.core.replaceNodeWithReference(String(args.nodeId), String(args.targetId));
       case 'ensure_date_node':
         return this.core.ensureDateNode(Number(args.year), Number(args.month), Number(args.day));
       case 'ensure_tag_search':
         return this.core.ensureTagSearch(String(args.tagId));
+      case 'create_search_node':
+        return this.core.createSearchNode(String(args.parentId), nullableNumber(args.index), args.config as SearchNodeConfig);
+      case 'set_search_node':
+        return this.core.setSearchNode(String(args.nodeId), args.config as SearchNodeConfig);
       case 'undo':
-        return this.core.undo();
+        return this.core.operationHistory({
+          action: 'undo',
+          origin: historyOrigin(args.historyOrigin, meta.origin),
+          steps: nullableNumber(args.steps) ?? 1,
+          operationId: nullableString(args.operationId) ?? undefined,
+        });
       case 'redo':
-        return this.core.redo();
+        return this.core.operationHistory({
+          action: 'redo',
+          origin: historyOrigin(args.historyOrigin, meta.origin),
+          steps: nullableNumber(args.steps) ?? 1,
+          operationId: nullableString(args.operationId) ?? undefined,
+        });
       default:
         throw new Error(`Unknown command: ${command}`);
     }
@@ -194,6 +335,22 @@ function nullableNumber(value: unknown): number | null {
 
 function arrayArg<T>(value: unknown): T[] {
   return Array.isArray(value) ? value as T[] : [];
+}
+
+function transactionMetadata(meta: DocumentMutationMeta): CoreTransactionMetadata {
+  return {
+    operationId: meta.operationId,
+    command: meta.command,
+    tool: meta.tool,
+    summary: meta.summary,
+  };
+}
+
+function historyOrigin(value: unknown, fallback?: DocumentMutationMeta['origin']) {
+  if (value === 'all' || value === 'agent' || value === 'user') return value;
+  if (fallback === 'agent') return 'agent';
+  if (fallback === 'user') return 'user';
+  return 'all';
 }
 
 function sortDirection(value: unknown): SortDirection | null {

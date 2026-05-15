@@ -12,10 +12,12 @@ import type {
   FieldType,
   FilterOp,
   RichText,
+  RichTextPatch,
   SearchHit,
   SortDirection,
   TagConfigPatch,
 } from './types';
+import { replaceAllRichTextPatch } from './types';
 import type { AgentDebugSnapshot, AgentDebugTotals, AgentMessageAttachmentInput } from '../../core/agentTypes';
 
 function command<T>(name: string, args?: Record<string, unknown>): Promise<T> {
@@ -43,10 +45,14 @@ export const api = {
   }),
   splitNode: (nodeId: string, before: RichText, after: RichText) =>
     command<CommandOutcome>('split_node', { nodeId, before, after }),
-  updateNodeText: (nodeId: string, content: RichText) =>
-    command<CommandOutcome>('update_node_text', { nodeId, content }),
+  applyNodeTextPatch: (nodeId: string, patch: RichTextPatch) =>
+    command<CommandOutcome>('apply_node_text_patch', { nodeId, patch }),
+  replaceNodeText: (nodeId: string, content: RichText) =>
+    command<CommandOutcome>('apply_node_text_patch', { nodeId, patch: replaceAllRichTextPatch(content) }),
   updateNodeDescription: (nodeId: string, description: string | null) =>
     command<CommandOutcome>('update_node_description', { nodeId, description }),
+  setNodeCheckboxVisible: (nodeId: string, visible: boolean) =>
+    command<CommandOutcome>('set_node_checkbox_visible', { nodeId, visible }),
   setNodeToolbarVisible: (nodeId: string, visible: boolean) =>
     command<CommandOutcome>('set_node_toolbar_visible', { nodeId, visible }),
   setNodeSort: (nodeId: string, field: string | null, direction: SortDirection | null = null) =>
@@ -101,6 +107,8 @@ export const api = {
     command<CommandOutcome>('select_field_option', { fieldEntryId, optionNodeId }),
   addReference: (parentId: string, targetId: string, index: number | null = null) =>
     command<CommandOutcome>('add_reference', { parentId, targetId, index }),
+  setReferenceTarget: (referenceId: string, targetId: string) =>
+    command<CommandOutcome>('set_reference_target', { referenceId, targetId }),
   replaceNodeWithReference: (nodeId: string, targetId: string) =>
     command<CommandOutcome>('replace_node_with_reference', { nodeId, targetId }),
   ensureDateNode: (year: number, month: number, day: number) =>

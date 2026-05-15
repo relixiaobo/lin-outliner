@@ -24,6 +24,8 @@ export type {
   QueryLogic,
   QueryOp,
   RichText,
+  RichTextPatch,
+  RichTextPatchOp,
   SearchHit,
   SortDirection,
   TagConfigPatch,
@@ -31,4 +33,4 @@ export type {
   TextMarkKind,
 } from '../../core/types';
 
-export { EMPTY_RICH_TEXT, plainText } from '../../core/types';
+export { EMPTY_RICH_TEXT, plainText, replaceAllRichTextPatch } from '../../core/types';

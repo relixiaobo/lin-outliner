@@ -87,6 +87,50 @@ export interface RichText {
   inlineRefs: InlineRef[];
 }
 
+export type RichTextPatchOp =
+  | {
+    type: 'replace';
+    from: number;
+    to: number;
+    content: RichText;
+    deletedInlineRefs?: InlineRef[];
+  }
+  | {
+    type: 'replace_all';
+    content: RichText;
+  }
+  | {
+    type: 'add_mark';
+    from: number;
+    to: number;
+    markType: TextMarkKind;
+    attrs?: Record<string, string>;
+  }
+  | {
+    type: 'remove_mark';
+    from: number;
+    to: number;
+    markType: TextMarkKind;
+  };
+
+export interface RichTextPatch {
+  ops: RichTextPatchOp[];
+}
+
+export interface SearchNodeCondition {
+  op: 'STRING_MATCH' | 'HAS_TAG' | 'LINKS_TO' | 'FIELD_CONTAINS';
+  text?: string;
+  tagId?: NodeId;
+  targetId?: NodeId;
+  fieldDefId?: NodeId;
+}
+
+export interface SearchNodeConfig {
+  title: string;
+  viewMode?: string | null;
+  conditions: SearchNodeCondition[];
+}
+
 export type QueryLogic = 'AND' | 'OR' | 'NOT';
 
 export type QueryOp =
@@ -290,6 +334,10 @@ export const EMPTY_RICH_TEXT: RichText = {
 
 export function plainText(text: string): RichText {
   return { text, marks: [], inlineRefs: [] };
+}
+
+export function replaceAllRichTextPatch(content: RichText): RichTextPatch {
+  return { ops: [{ type: 'replace_all', content }] };
 }
 
 export function createNodeRecord(

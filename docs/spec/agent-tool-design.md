@@ -36,7 +36,7 @@ These tools are required for the first useful local agent.
 
 | Tool | Kind | Mutates | Approval | Purpose |
 |---|---|---:|---|---|
-| `node_search` | outliner | No | No | Execute a temporary or saved search node outline. |
+| `node_search` | outliner | No | No | Execute simple full-text, temporary search outline, or saved search node queries. |
 | `node_read` | outliner | No | No | Read node raw type/data, fields, and bounded children. |
 | `node_create` | outliner | Yes | Usually yes | Create outline trees, references, search/view nodes, schema nodes, or duplicates. |
 | `node_edit` | outliner | Yes | Usually yes | Edit the canonical outline for a known node using exact string replacement, or perform explicit structure operations such as move and merge. |
@@ -224,7 +224,7 @@ Agent-facing syntax:
   - Notes
     - Prepare agenda
   - %%search%% Open tasks %%view:table%%
-    - [[#task]]
+    - #task
     - Status:: Open
 ```
 
@@ -245,7 +245,8 @@ Rules:
   value.
 - Inline `[[Display^nodeId]]` creates an inline reference inside node text or a
   field value.
-- `[[date:YYYY-MM-DD]]` creates or resolves a date reference.
+- Date nodes are referenced by id with `[[Display^nodeId]]`; date shortcut
+  syntax is not part of the model-facing outline contract yet.
 - `%%search%%` turns the node into a search node. In `node_create` this creates a
   saved search node; in `node_search` it is a temporary search node that is only
   executed and rendered.
@@ -383,10 +384,11 @@ Field type inference:
 
 References:
 
-- `[[Display^nodeId]]` requires `nodeId` to exist unless the reference is a date
-  directive.
-- Date references create or reuse date nodes.
-- Tag references such as `[[#task]]` resolve to tag definition nodes.
+- `[[Display^nodeId]]` requires `nodeId` to exist and the target must not be in
+  Trash.
+- Date references use normal node references to existing date node ids.
+- Search condition lines may use `#task` or `[[#task]]` to refer to tag
+  definition nodes.
 
 ## Outliner Tools
 
@@ -401,6 +403,7 @@ Parameters:
 
 ```ts
 interface NodeSearchParams {
+  query?: string;
   outline?: string;
   searchNodeId?: string;
   limit?: number; // default 20, max 50
@@ -409,7 +412,7 @@ interface NodeSearchParams {
 }
 ```
 
-Exactly one of `outline` and `searchNodeId` is required.
+Exactly one of `query`, `outline`, and `searchNodeId` is required.
 
 Return data:
 
@@ -424,8 +427,6 @@ interface NodeSearchData {
   offset: number;
   limit: number;
   items?: NodeSearchItem[];
-  unresolvedTags?: string[];
-  unresolvedFields?: string[];
 }
 
 interface NodeSearchItem {
@@ -446,6 +447,7 @@ interface NodeSearchItem {
 
 Result behavior:
 
+- `query` is a simple full-text shortcut.
 - `outline` is a temporary search node and does not mutate document state.
 - The outline must parse as one search node root. If `%%search%%` is omitted,
   the runtime may still treat the root as a temporary search node, but tool
@@ -455,7 +457,9 @@ Result behavior:
   returned as `view` and drive temporary result presentation.
 - Child lines are search conditions using the same parser as saved search nodes:
   plain text is full-text search, tag references filter by tag, field lines
-  filter by field value, and node/date references filter by relationship or date.
+  filter by field value, and node references filter by link relationship.
+- Unknown tag, field, or reference conditions are errors. The tool does not
+  silently drop unresolved structured conditions.
 - `searchNodeId` executes an existing saved search node.
 - Subtree restriction, parent restriction, backlink search, and relationship
   filters should be represented as search conditions in the outline, not as
@@ -472,7 +476,7 @@ Examples:
 
 ```json
 {
-  "outline": "- %%search%% 今日开放任务 %%view:table%%\n  - [[#task]]\n  - Status:: Open\n  - Due:: [[date:2026-05-13]]",
+  "outline": "- %%search%% 今日开放任务 %%view:table%%\n  - #task\n  - Status:: Open",
   "limit": 20
 }
 ```
@@ -615,9 +619,6 @@ interface NodeCreateData {
   duplicatedFrom?: string;
   targetId?: string;
   outline?: string;
-  revisions?: Record<string, string>;
-  unresolvedTags?: string[];
-  unresolvedFields?: string[];
 }
 ```
 
@@ -629,9 +630,12 @@ Result behavior:
   requested position and following roots are inserted after the previous root.
 - `targetId` creates one reference node at the requested position.
 - `duplicateId` deep-copies the source subtree at the requested position.
-- Missing tags and fields may be auto-created only when policy allows it.
-- Search/view directives, schema-like tag/field structures, dates, references,
+- Missing normal node tags and fields may be created by the outline application
+  layer. Search-node tag and field conditions must resolve to existing
+  definitions.
+- Search/view directives, schema-like tag/field structures, references,
   descriptions, checkboxes, and fields all come through `outline`.
+- Reference targets must exist and must not be in Trash.
 - `previewOnly: true` returns preview and validation without applying.
 
 Example:
@@ -733,9 +737,17 @@ Merge semantics:
 - `mergeFromNodeIds` are sources whose children, fields, tags, and references
   are merged into the target.
 - Sources are moved to Trash after merge.
-- Source order determines child append order.
+- Source order determines child and field-value append order.
 - Target title and position are preserved.
-- References to sources are redirected to the target.
+- Matching fields are merged by field display name. If the target already has a
+  matching field, source field values move into the target field and the emptied
+  source field entry moves to Trash. If the target does not have that field, the
+  source field entry moves under the target.
+- Merge return data includes those emptied source field entries in
+  `trashedNodeIds`, and moved field values or field entries in `movedNodeIds`.
+- External tree references to sources are redirected to the target. References
+  inside a source subtree are not rewritten during the merge because their parent
+  is being moved or trashed as part of the source content.
 - Merge cannot be combined with outline edit or move in the same call.
 
 Reference replacement semantics:
@@ -754,11 +766,10 @@ interface NodeEditData {
   affectedNodeIds: string[];
   createdNodeIds?: string[];
   trashedNodeIds?: string[];
+  matchedNodeIds?: string[];
   movedNodeIds?: string[];
   updatedFields?: string[];
   updatedTags?: string[];
-  unresolvedTags?: string[];
-  unresolvedFields?: string[];
   beforeOutline?: string;
   afterOutline?: string;
   revisions?: Record<string, string>;
@@ -766,8 +777,15 @@ interface NodeEditData {
     targetNodeId: string;
     sourceNodeIds: string[];
     movedChildren: number;
+    mergedFields: Array<{
+      fieldName: string;
+      sourceFieldEntryId: string;
+      targetFieldEntryId: string;
+      movedValueIds: string[];
+      mode: "merged_values" | "moved_entry";
+    }>;
+    appliedTags: number;
     redirectedReferences: number;
-    mergedFields: Array<{ name: string; addedValues: number }>;
   };
 }
 ```
@@ -834,10 +852,26 @@ Return data:
 ```ts
 interface NodeDeleteData {
   action: "trashed" | "restored";
-  count: number;
-  nodeIds: string[];
-  items?: Array<{ nodeId: string; parentId?: string; title?: string }>;
-  revisions?: Record<string, string>;
+  trashId: string;
+  requestedNodeIds: string[];
+  deletedNodeIds: string[];
+  restoredNodeIds?: string[];
+  deletedCount: number;
+  restoredCount?: number;
+  affectedNodeCount: number;
+  preview: Array<{
+    nodeId: string;
+    title: string;
+    type: NodeKind;
+    parent?: { nodeId: string; title: string } | null;
+    childCount: number;
+    subtreeNodeCount: number;
+  }>;
+  skippedNodeIds?: Array<{
+    nodeId: string;
+    reason: string;
+    coveredBy?: string;
+  }>;
 }
 ```
 
@@ -862,10 +896,10 @@ Parameters:
 
 ```ts
 interface OperationHistoryParams {
-  action: "list" | "undo" | "redo";
+  action?: "list" | "undo" | "redo"; // default "list"
   steps?: number; // default 1, max 10 for undo/redo
   operationId?: string; // stack-top guard, not arbitrary history jumping
-  origin?: "all" | "agent" | "user"; // default "all"
+  origin?: "all" | "agent" | "user"; // default: all for list, agent for undo/redo
   limit?: number;  // for list, default 20, max 100
   offset?: number; // for list
 }
@@ -876,7 +910,9 @@ Return data:
 ```ts
 interface OperationHistoryData {
   action: "list" | "undo" | "redo";
+  historyMode?: "journal" | "undo_stack";
   count: number;
+  total?: number;
   hasMore?: boolean;
   items?: OperationHistoryItem[];
   undone?: OperationHistoryItem[];
@@ -884,14 +920,13 @@ interface OperationHistoryData {
   canUndo: boolean;
   canRedo: boolean;
   cursor?: {
-    undoDepth: number;
-    redoDepth: number;
+    topUndoOperationId?: string;
+    topRedoOperationId?: string;
   };
 }
 
 interface OperationHistoryItem {
   operationId: string;
-  undoGroupId?: string;
   origin: "agent" | "user" | "system";
   tool?: string;
   command?: string;
@@ -906,10 +941,13 @@ interface OperationHistoryItem {
 
 Result behavior:
 
-- `list` is read-only and should not require approval.
+- Omitted `action` means `list`.
+- `list` is read-only, defaults to `origin: "all"`, and should not require
+  approval.
 - `undo` and `redo` are stack operations. Agent v1 does not support arbitrary
   history jumping.
 - `steps` defaults to 1 and should stay small. Initial maximum: 10.
+- `undo` and `redo` default to `origin: "agent"` for safety.
 - `origin: "agent"` means undo/redo the nearest stack operation whose origin is
   agent, stopping at unsafe dependencies.
 - `origin: "user"` means undo/redo the nearest user-origin stack operation and
@@ -1797,12 +1835,12 @@ coverage maps as follows:
 
 | Public tool | Current or needed backend capability |
 |---|---|
-| `node_search` | Temporary/saved search node parser compiled to `search_nodes`, backlinks, tag/field/date filters, relationship filters, and view metadata. |
+| `node_search` | Simple full-text search plus temporary/saved search node parser compiled to tag, field, link-relationship, and view metadata. |
 | `node_read` | `get_projection`, `backlinks`, canonical outline serialization, computed field and child summaries. |
-| `node_create` | `create_node`, `create_nodes_from_tree`, `create_tag`, `create_field_def`, `add_reference`, `ensure_date_node`, duplicate/search-node support. |
-| `node_edit` | Canonical outline exact replacement compiled to `update_node_text`, `toggle_done`, tag/field mutations, `move_node`, `merge_node_into`, reference replacement, and search/view updates. |
+| `node_create` | `create_node`, `create_tag`, `create_field_def`, `create_inline_field`, `set_node_checkbox_visible`, `add_reference`, `create_search_node`, duplicate support. |
+| `node_edit` | Canonical outline exact replacement compiled to `apply_node_text_patch`, `set_node_checkbox_visible`, `toggle_done`, tag/field mutations, `move_node`, `trash_node`, `set_reference_target`, `replace_node_with_reference`, and `set_search_node`. |
 | `node_delete` | `trash_node`, `batch_trash_nodes`, `restore_node`; permanent delete is not exposed to agent v1. |
-| `operation_history` | `undo`, `redo`, future operation log/list with origin metadata. |
+| `operation_history` | Loro UndoManager-backed `undo`/`redo` plus operation journal listing with origin metadata. |
 | `file_read` | Needed TypeScript file read command with path normalization, pagination, and freshness tracking. |
 | `file_glob` | Needed TypeScript glob command under allowed roots. |
 | `file_grep` | Needed TypeScript grep/search command under allowed roots with output caps. |

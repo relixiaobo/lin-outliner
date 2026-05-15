@@ -268,7 +268,7 @@ Global document tools:
 readNode(id: NodeId): Promise<NodeProjection>;
 searchNodes(query: string): Promise<NodeProjection[]>;
 getNodeChildren(id: NodeId): Promise<NodeProjection[]>;
-updateNodeText(id: NodeId, text: string): Promise<DocumentProjection>;
+applyNodeTextPatch(id: NodeId, patch: RichTextPatch): Promise<DocumentProjection>;
 insertNode(input: InsertNodeInput): Promise<DocumentProjection>;
 moveNode(input: MoveNodeInput): Promise<DocumentProjection>;
 batchEdit(ops: DocumentEditOp[]): Promise<DocumentProjection>;

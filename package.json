@@ -21,11 +21,13 @@
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.74.0",
     "@earendil-works/pi-ai": "0.74.0",
+    "loro-crdt": "^1.10.6",
     "lucide-react": "^0.575.0",
     "marked": "^17.0.4",
     "prosemirror-commands": "^1.7.1",
     "prosemirror-model": "^1.25.4",
     "prosemirror-state": "^1.4.4",
+    "prosemirror-transform": "^1.12.0",
     "prosemirror-view": "^1.41.8",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

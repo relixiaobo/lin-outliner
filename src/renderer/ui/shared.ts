@@ -59,7 +59,10 @@ export function outlinerChildren(
   byId: Map<NodeId, NodeProjection>,
 ): NodeId[] {
   if (!node) return [];
-  return node.children.filter((childId) => byId.has(childId));
+  return node.children.filter((childId) => {
+    const child = byId.get(childId);
+    return Boolean(child) && child?.type !== 'queryCondition';
+  });
 }
 
 export function fieldEntries(

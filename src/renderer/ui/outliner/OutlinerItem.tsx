@@ -1,12 +1,13 @@
 import {
   useEffect,
+  useRef,
   useState,
   type Dispatch,
   type MouseEvent,
   type SetStateAction,
 } from 'react';
 import { api } from '../../api/client';
-import type { CreateNodeTree, FocusHint, NodeId, NodeProjection, RichText } from '../../api/types';
+import type { CreateNodeTree, FocusHint, NodeId, NodeProjection, RichText, RichTextPatch } from '../../api/types';
 import { EMPTY_RICH_TEXT, plainText } from '../../api/types';
 import { flattenVisibleRows, type DocumentIndex, type UiState } from '../../state/document';
 import { RichTextEditor, type EditorSplitPayload } from '../editor/RichTextEditor';
@@ -15,7 +16,6 @@ import {
   markWholeTextAsHeading,
   replaceRichTextRangeWithInlineRef,
   replaceRichTextRangeWithText,
-  richTextEquals,
 } from '../editor/richTextCodec';
 import { indentTargetParentId, previousVisibleRowId } from '../interactions/outlinerStructure';
 import {
@@ -60,7 +60,9 @@ interface OutlinerItemProps {
 export function OutlinerItem(props: OutlinerItemProps) {
   const node = props.index.byId.get(props.nodeId);
   const [draftContent, setDraftContent] = useState<RichText>(node?.content ?? EMPTY_RICH_TEXT);
+  const [draftContentRevision, setDraftContentRevision] = useState(0);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const pendingTextPatchRef = useRef<Promise<unknown>>(Promise.resolve());
   const rowChildIds = outlinerChildren(node, props.index.byId);
   const row = useOutlinerRowInteraction({
     rowId: props.nodeId,
@@ -107,6 +109,11 @@ export function OutlinerItem(props: OutlinerItemProps) {
 
   if (!node || !displayed) return null;
 
+  const replaceLocalDraftContent = (content: RichText) => {
+    setDraftContent(content);
+    setDraftContentRevision((revision) => revision + 1);
+  };
+
   const targetEditId = node.type === 'reference' && node.targetId ? node.targetId : node.id;
   const drillDownId = node.type === 'reference' && node.targetId ? node.targetId : node.id;
   const childRows = buildOutlinerRows(node, props.index.byId, {
@@ -130,19 +137,24 @@ export function OutlinerItem(props: OutlinerItemProps) {
     || Boolean(displayed.completedAt);
   const descriptionEditing = props.ui.editingDescriptionId === targetEditId;
 
-  const commitDraft = async (content = draftContent) => {
-    if (!richTextEquals(content, displayed.content)) {
-      await props.run(() => api.updateNodeText(targetEditId, content));
-    }
+  const commitDraft = async (_content = draftContent) => {
+    await pendingTextPatchRef.current;
+  };
+
+  const applyTextPatch = (patch: RichTextPatch) => {
+    pendingTextPatchRef.current = pendingTextPatchRef.current.then(() =>
+      props.run(() => api.applyNodeTextPatch(targetEditId, patch)));
+    void pendingTextPatchRef.current;
   };
 
   const applyTextWithoutTrigger = async () => {
     const trigger = props.trigger?.nodeId === props.nodeId ? props.trigger : null;
+    await pendingTextPatchRef.current;
     const nextContent = trigger
       ? deleteRichTextRange(draftContent, trigger.from, trigger.to)
-      : plainText(draftContent.text.replace(/(?:^|\s)([#@/>])([^\s#@/>]*)$/, '').trimEnd());
-    setDraftContent(nextContent);
-    await api.updateNodeText(targetEditId, nextContent);
+        : plainText(draftContent.text.replace(/(?:^|\s)([#@/>])([^\s#@/>]*)$/, '').trimEnd());
+    replaceLocalDraftContent(nextContent);
+    await props.run(() => api.replaceNodeText(targetEditId, nextContent));
   };
 
   const handleEditorChange = (content: RichText) => {
@@ -183,6 +195,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
   const applyReference = async (target: NodeProjection) => {
     const trigger = props.trigger?.nodeId === props.nodeId ? props.trigger : null;
     if (!trigger) return;
+    await pendingTextPatchRef.current;
     const action = resolveReferenceSelectionAction({
       text: draftContent.text,
       inlineRefCount: draftContent.inlineRefs.length,
@@ -204,8 +217,8 @@ export function OutlinerItem(props: OutlinerItemProps) {
         displayName: textOf(target),
       },
     );
-    setDraftContent(nextContent);
-    return api.updateNodeText(targetEditId, nextContent);
+    replaceLocalDraftContent(nextContent);
+    return api.replaceNodeText(targetEditId, nextContent);
   };
 
   const executeSlashCommand = async (commandId: SlashCommandId) => {
@@ -217,9 +230,10 @@ export function OutlinerItem(props: OutlinerItemProps) {
     }
 
     if (commandId === 'reference') {
+      await pendingTextPatchRef.current;
       const nextContent = replaceRichTextRangeWithText(draftContent, trigger.from, trigger.to, '@');
-      setDraftContent(nextContent);
-      const result = await api.updateNodeText(targetEditId, nextContent);
+      replaceLocalDraftContent(nextContent);
+      const result = await api.replaceNodeText(targetEditId, nextContent);
       window.requestAnimationFrame(() => {
         props.setTrigger({
           nodeId: props.nodeId,
@@ -234,10 +248,11 @@ export function OutlinerItem(props: OutlinerItemProps) {
     }
 
     if (commandId === 'heading') {
+      await pendingTextPatchRef.current;
       const withoutTrigger = deleteRichTextRange(draftContent, trigger.from, trigger.to);
       const nextContent = markWholeTextAsHeading(withoutTrigger);
-      setDraftContent(nextContent);
-      return api.updateNodeText(targetEditId, nextContent);
+      replaceLocalDraftContent(nextContent);
+      return api.replaceNodeText(targetEditId, nextContent);
     }
 
     if (commandId === 'checkbox') {
@@ -455,10 +470,12 @@ export function OutlinerItem(props: OutlinerItemProps) {
           <RichTextEditor
             nodeId={props.nodeId}
             content={draftContent}
+            contentRevision={draftContentRevision}
             readOnly={displayed.locked}
             completed={Boolean(displayed.completedAt)}
             onFocus={row.updateSelection}
             onChange={handleEditorChange}
+            onPatch={applyTextPatch}
             onCommit={(content) => void commitDraft(content)}
             onEnter={(payload) => void handleEnter(payload)}
             onBackspaceAtStart={(isEmpty) => void handleBackspaceAtStart(isEmpty)}
@@ -579,7 +596,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
                 props.run(() => api.createNodesFromTree(parentId, nodes))
               )}
               onUpdateCreated={async (nodeId, text) => {
-                await props.run(() => api.updateNodeText(nodeId, plainText(text)));
+                await props.run(() => api.replaceNodeText(nodeId, plainText(text)));
               }}
               onToggleCreated={async (nodeId) => {
                 await props.run(() => api.toggleDone(nodeId));

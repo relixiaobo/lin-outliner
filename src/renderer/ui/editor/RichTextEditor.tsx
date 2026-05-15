@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { toggleMark } from 'prosemirror-commands';
 import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
-import type { CreateNodeTree, RichText } from '../../api/types';
+import type { CreateNodeTree, RichText, RichTextPatch } from '../../api/types';
 import type { EditorTrigger, TriggerAnchor } from '../shared';
 import {
   resolveContentRowUpdateAction,
@@ -17,10 +17,12 @@ import {
   docPosToTextOffset,
   docToRichText,
   richTextToDoc,
+  richTextEquals,
   sliceRichText,
   textOffsetToDocPos,
 } from './richTextCodec';
 import { registerEditor, type EditorFocusPlacement } from './editorRegistry';
+import { richTextPatchFromTransaction } from './editorTextPatch';
 import { pmSchema } from './pmSchema';
 
 export interface EditorSplitPayload {
@@ -32,11 +34,13 @@ export interface EditorSplitPayload {
 interface RichTextEditorProps {
   nodeId: string;
   content: RichText;
+  contentRevision?: number;
   placeholder?: string;
   readOnly?: boolean;
   completed?: boolean;
   onFocus: () => void;
   onChange: (content: RichText) => void;
+  onPatch: (patch: RichTextPatch) => void;
   onCommit: (content: RichText) => void;
   onEnter: (payload: EditorSplitPayload) => void;
   onBackspaceAtStart: (isEmpty: boolean) => void;
@@ -157,6 +161,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
   const viewRef = useRef<EditorView | null>(null);
   const propsRef = useRef(props);
   const lastExternalContentRef = useRef(props.content);
+  const lastContentRevisionRef = useRef(props.contentRevision ?? 0);
   const fieldTriggerFiredRef = useRef(false);
   const composingRef = useRef(false);
   const [isEmpty, setIsEmpty] = useState(() => props.content.text.trim().length === 0 && props.content.inlineRefs.length === 0);
@@ -236,6 +241,8 @@ export function RichTextEditor(props: RichTextEditorProps) {
           setIsEmpty(nextContent.text.replace(/\u200B/g, '').trim().length === 0 && nextContent.inlineRefs.length === 0);
           lastExternalContentRef.current = nextContent;
           propsRef.current.onChange(nextContent);
+          const patch = richTextPatchFromTransaction(transaction);
+          if (patch.ops.length > 0) propsRef.current.onPatch(patch);
           if (!composing) handleContentUpdateAction(nextContent);
         }
       },
@@ -457,13 +464,22 @@ export function RichTextEditor(props: RichTextEditorProps) {
   useEffect(() => {
     const view = viewRef.current;
     if (!view || props.content === lastExternalContentRef.current) return;
+    const contentRevision = props.contentRevision ?? 0;
+    const contentRevisionChanged = contentRevision !== lastContentRevisionRef.current;
+    lastContentRevisionRef.current = contentRevision;
+    if (
+      view.hasFocus()
+      && !contentRevisionChanged
+      && !richTextEquals(props.content, docToRichText(view.state.doc))
+    ) return;
     const nextDoc = richTextToDoc(props.content, pmSchema, props.resolveInlineReferenceColor);
     if (nextDoc.eq(view.state.doc)) return;
     const nextState = EditorState.create({ doc: nextDoc, schema: pmSchema });
     view.updateState(nextState);
     setIsEmpty(isEmptyDoc(nextState.doc));
     lastExternalContentRef.current = props.content;
-  }, [props.content, props.resolveInlineReferenceColor]);
+    if (!composingRef.current && !view.composing) updateTrigger(view);
+  }, [props.content, props.contentRevision, props.resolveInlineReferenceColor]);
 
   useEffect(() => {
     const view = viewRef.current;

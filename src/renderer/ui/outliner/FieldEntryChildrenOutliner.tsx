@@ -47,7 +47,7 @@ export function FieldEntryChildrenOutliner(props: FieldEntryChildrenOutlinerProp
             props.run(() => api.createNodesFromTree(parentId, nodes))
           )}
           onUpdateCreated={async (nodeId, text) => {
-            await props.run(() => api.updateNodeText(nodeId, plainText(text)));
+            await props.run(() => api.replaceNodeText(nodeId, plainText(text)));
           }}
           onToggleCreated={async (nodeId) => {
             await props.run(() => api.toggleDone(nodeId));

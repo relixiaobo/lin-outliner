@@ -1,34 +1,13 @@
 import { BrowserWindow, session as electronSession, type WebContents } from 'electron';
-import type { AgentTool, AgentToolResult, AfterToolCallResult } from '@earendil-works/pi-agent-core';
-
-type ToolStatus = 'success' | 'partial' | 'unchanged' | 'denied' | 'error';
-
-interface ToolError {
-  code: string;
-  message: string;
-  recoverable: boolean;
-  details?: unknown;
-}
-
-interface ToolMetrics {
-  durationMs?: number;
-  truncated?: boolean;
-  outputBytes?: number;
-}
-
-export interface ToolEnvelope<TData = unknown> {
-  ok: boolean;
-  tool: string;
-  version: 1;
-  status: ToolStatus;
-  data?: TData;
-  error?: ToolError;
-  nextStep?: string;
-  fallback?: string;
-  hint?: string;
-  warnings?: string[];
-  metrics?: ToolMetrics;
-}
+import type { AgentTool, AfterToolCallResult } from '@earendil-works/pi-agent-core';
+import { createNodeTools, type OutlinerToolHost } from './agentNodeTools';
+import {
+  TOOL_RESULT_VERSION,
+  agentToolResult,
+  errorEnvelope,
+  successEnvelope,
+  type ToolEnvelope,
+} from './agentToolEnvelope';
 
 type WebToolHint =
   | {
@@ -135,7 +114,6 @@ interface FetchTextResult {
   redirectedHostHint?: WebToolHint;
 }
 
-const TOOL_RESULT_VERSION = 1;
 const FETCH_TIMEOUT_MS = 45_000;
 const MAX_FETCH_BYTES = 10 * 1024 * 1024;
 const DEFAULT_FETCH_CHARS = 30_000;
@@ -240,8 +218,11 @@ const WEB_SEARCH_PARAMETERS = {
   },
 };
 
-export function createAgentTools(): AgentTool<any>[] {
+export type { ToolEnvelope } from './agentToolEnvelope';
+
+export function createAgentTools(outliner?: OutlinerToolHost): AgentTool<any>[] {
   return [
+    ...(outliner ? createNodeTools(outliner) : []),
     createWebSearchTool(),
     createWebFetchTool(),
   ];
@@ -500,54 +481,6 @@ function createWebSearchTool(): AgentTool<any, ToolEnvelope<WebSearchData>> {
       }
     },
   };
-}
-
-function agentToolResult<TData>(envelope: ToolEnvelope<TData>): AgentToolResult<ToolEnvelope<TData>> {
-  return {
-    content: [{ type: 'text', text: JSON.stringify(envelope, null, 2) }],
-    details: envelope,
-  };
-}
-
-function successEnvelope<TData>(
-  tool: string,
-  data: TData,
-  options: Partial<Pick<ToolEnvelope<TData>, 'nextStep' | 'fallback' | 'hint' | 'warnings' | 'metrics'>> = {},
-): ToolEnvelope<TData> {
-  return {
-    ok: true,
-    tool,
-    version: TOOL_RESULT_VERSION,
-    status: 'success',
-    data,
-    ...compactOptions(options),
-  };
-}
-
-function errorEnvelope<TData = unknown>(
-  tool: string,
-  code: string,
-  message: string,
-  options: Partial<Pick<ToolEnvelope<TData>, 'data' | 'nextStep' | 'fallback' | 'hint' | 'warnings' | 'metrics'>> = {},
-): ToolEnvelope<TData> {
-  return {
-    ok: false,
-    tool,
-    version: TOOL_RESULT_VERSION,
-    status: 'error',
-    error: {
-      code,
-      message,
-      recoverable: true,
-    },
-    ...compactOptions(options),
-  };
-}
-
-function compactOptions<T extends Record<string, unknown>>(options: T): Partial<T> {
-  return Object.fromEntries(
-    Object.entries(options).filter(([, value]) => value !== undefined),
-  ) as Partial<T>;
 }
 
 interface ValidUrl {

@@ -18,7 +18,8 @@ import type { AgentProviderConfigInput } from '../core/types';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const documentService = new DocumentService();
 let mainWindow: BrowserWindow | null = null;
-const agentRuntime = new AgentRuntime(() => mainWindow);
+let quitAfterFlush = false;
+const agentRuntime = new AgentRuntime(() => mainWindow, documentService);
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -146,4 +147,13 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('before-quit', (event) => {
+  if (quitAfterFlush) return;
+  event.preventDefault();
+  quitAfterFlush = true;
+  void documentService.flushPendingChanges()
+    .catch((error) => console.error(error))
+    .finally(() => app.quit());
 });
