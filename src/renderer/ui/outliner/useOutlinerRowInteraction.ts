@@ -18,12 +18,21 @@ import {
 } from '../interactions/rowPointerSelection';
 import { toggleVisibleSelection } from '../interactions/selectionActions';
 import type { CommandRunner } from '../shared';
-import { focusRowInput, focusTrailingInput } from '../shared';
+import {
+  clearFocusState,
+  cursorEnd,
+  cursorStart,
+  focusTarget,
+  requestFocusState,
+  rowFocusTarget,
+  selectFocusState,
+} from '../focus/focusModel';
 import { buildOutlinerRows, shouldShowTrailingInput } from './row-model';
 
 interface UseOutlinerRowInteractionOptions {
   rowId: NodeId;
   parentId: NodeId;
+  panelId: string;
   rootId: NodeId;
   depth: number;
   childIds: NodeId[];
@@ -40,6 +49,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
   const {
     rowId,
     parentId,
+    panelId,
     rootId,
     depth,
     childIds,
@@ -62,14 +72,8 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
   );
 
   const updateSelection = useCallback(() => {
-    setUi((prev) => ({
-      ...prev,
-      focusedId: rowId,
-      selectedId: rowId,
-      selectedIds: new Set([rowId]),
-      selectionAnchorId: rowId,
-    }));
-  }, [rowId, setUi]);
+    setUi((prev) => selectFocusState(prev, rowFocusTarget(rowId, parentId, panelId)));
+  }, [panelId, parentId, rowId, setUi]);
 
   const toggleExpandOrSelect = useCallback(() => {
     if (!hasChildren) {
@@ -78,36 +82,23 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
         const expandedSet = new Set(prev.expanded);
         if (shouldFocusTrailing) expandedSet.add(rowId);
         else expandedSet.delete(rowId);
-        return {
-          ...prev,
-          expanded: expandedSet,
-          selectedId: rowId,
-          focusedId: rowId,
-          selectedIds: new Set([rowId]),
-          selectionAnchorId: rowId,
-        };
+        const next = { ...prev, expanded: expandedSet };
+        return shouldFocusTrailing
+          ? requestFocusState(next, focusTarget(rowId, rowId, panelId, 'trailing'), cursorEnd())
+          : selectFocusState(next, rowFocusTarget(rowId, parentId, panelId));
       });
-      if (shouldFocusTrailing) {
-        window.requestAnimationFrame(() => {
-          focusTrailingInput(rowId);
-        });
-      }
       return;
     }
     setUi((prev) => {
       const expandedSet = new Set(prev.expanded);
       if (expandedSet.has(rowId)) expandedSet.delete(rowId);
       else expandedSet.add(rowId);
-      return {
+      return selectFocusState({
         ...prev,
         expanded: expandedSet,
-        selectedId: rowId,
-        focusedId: rowId,
-        selectedIds: new Set([rowId]),
-        selectionAnchorId: rowId,
-      };
+      }, rowFocusTarget(rowId, parentId, panelId));
     });
-  }, [expanded, hasChildren, rowId, setUi]);
+  }, [expanded, hasChildren, panelId, parentId, rowId, setUi]);
 
   const moveFocus = useCallback((direction: 1 | -1) => {
     const scopeShowsTrailingInput = (scopeParentId: NodeId) => {
@@ -117,7 +108,8 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
 
     if (direction === 1 && expanded) {
       const childRows = buildOutlinerRows(byId.get(rowId), byId);
-      if (childRows.length === 0 && shouldShowTrailingInput(childRows) && focusTrailingInput(rowId)) {
+      if (childRows.length === 0 && shouldShowTrailingInput(childRows)) {
+        setUi((prev) => requestFocusState(prev, focusTarget(rowId, rowId, panelId, 'trailing'), cursorEnd()));
         return;
       }
     }
@@ -127,8 +119,8 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
       if (
         siblingRows[siblingRows.length - 1]?.id === rowId
         && scopeShowsTrailingInput(parentId)
-        && focusTrailingInput(parentId)
       ) {
+        setUi((prev) => requestFocusState(prev, focusTarget(parentId, parentId, panelId, 'trailing'), cursorEnd()));
         return;
       }
     }
@@ -138,51 +130,43 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     const nextId = rows[at + direction];
     if (!nextId) {
       if (direction === 1) {
-        if (scopeShowsTrailingInput(parentId) && focusTrailingInput(parentId)) {
+        if (scopeShowsTrailingInput(parentId)) {
+          setUi((prev) => requestFocusState(prev, focusTarget(parentId, parentId, panelId, 'trailing'), cursorEnd()));
           return;
         }
       }
       return;
     }
-    setUi((prev) => ({
-      ...prev,
-      focusedId: nextId,
-      selectedId: nextId,
-      selectedIds: new Set([nextId]),
-      selectionAnchorId: nextId,
-    }));
-    focusRowInput(nextId, direction === 1 ? 'start' : 'end');
-  }, [byId, expanded, parentId, rootId, rowId, setUi, ui.expanded]);
+    const nextNode = byId.get(nextId);
+    setUi((prev) => requestFocusState(
+      prev,
+      rowFocusTarget(nextId, nextNode?.parentId ?? null, panelId),
+      direction === 1 ? cursorStart() : cursorEnd(),
+    ));
+  }, [byId, expanded, panelId, parentId, rootId, rowId, setUi, ui.expanded, ui.expandedHiddenFields]);
 
   const focusLastVisibleChild = useCallback(() => {
     const rows = flattenVisibleRows(rowId, byId, ui.expanded, ui.expandedHiddenFields);
     const last = rows[rows.length - 1] ?? childIds[childIds.length - 1];
     if (!last) return;
-    setUi((prev) => ({
-      ...prev,
-      focusedId: last,
-      selectedId: last,
-      selectedIds: new Set([last]),
-      selectionAnchorId: last,
-    }));
-    focusRowInput(last, 'end');
-  }, [byId, childIds, rowId, setUi, ui.expanded]);
+    const lastNode = byId.get(last);
+    setUi((prev) => requestFocusState(
+      prev,
+      rowFocusTarget(last, lastNode?.parentId ?? rowId, panelId),
+      cursorEnd(),
+    ));
+  }, [byId, childIds, panelId, rowId, setUi, ui.expanded, ui.expandedHiddenFields]);
 
   const collapseToSelf = useCallback(() => {
     setUi((prev) => {
       const expandedSet = new Set(prev.expanded);
       expandedSet.delete(rowId);
-      return {
+      return requestFocusState({
         ...prev,
         expanded: expandedSet,
-        focusedId: rowId,
-        selectedId: rowId,
-        selectedIds: new Set([rowId]),
-        selectionAnchorId: rowId,
-      };
+      }, rowFocusTarget(rowId, parentId, panelId), cursorEnd());
     });
-    focusRowInput(rowId, 'end');
-  }, [rowId, setUi]);
+  }, [panelId, parentId, rowId, setUi]);
 
   const expandSelf = useCallback(() => {
     setUi((prev) => {
@@ -219,8 +203,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
         document.activeElement.blur();
       }
       setUi((prev) => ({
-        ...prev,
-        focusedId: null,
+        ...clearFocusState(prev),
       }));
       return;
     }
@@ -250,7 +233,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
         if (from >= 0 && to >= 0) {
           const [start, end] = from < to ? [from, to] : [to, from];
           return {
-            ...prev,
+            ...clearFocusState(prev),
             focusedId: null,
             selectedId: rowId,
             selectedIds: new Set(rows.slice(start, end + 1)),
@@ -264,7 +247,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
           ? rowId
           : [...selectedIds].at(-1) ?? rowId;
         return {
-          ...prev,
+          ...clearFocusState(prev),
           focusedId: null,
           selectedId,
           selectedIds,
@@ -272,7 +255,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
         };
       }
       return {
-        ...prev,
+        ...clearFocusState(prev),
         focusedId: null,
         selectedId: rowId,
         selectedIds: new Set([rowId]),

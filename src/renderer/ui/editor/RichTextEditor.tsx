@@ -3,6 +3,7 @@ import { toggleMark } from 'prosemirror-commands';
 import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import type { CreateNodeTree, RichText, RichTextPatch } from '../../api/types';
+import type { FocusRequest, FocusTarget, PendingInputChar, CursorPlacement } from '../../state/document';
 import type { EditorTrigger, TriggerAnchor } from '../shared';
 import {
   resolveContentRowUpdateAction,
@@ -21,15 +22,17 @@ import {
   sliceRichText,
   textOffsetToDocPos,
 } from './richTextCodec';
-import { registerEditor, type EditorFocusPlacement } from './editorRegistry';
 import { richTextPatchFromTransaction } from './editorTextPatch';
 import { pmSchema } from './pmSchema';
+import { focusTargetMatches } from '../focus/focusModel';
 
 export interface EditorSplitPayload {
   before: RichText;
   after: RichText;
   atEnd: boolean;
 }
+
+type EditorFocusPlacement = 'start' | 'end' | 'all' | { offset: number; inlineRefBias?: 'before' | 'after' };
 
 interface RichTextEditorProps {
   nodeId: string;
@@ -61,6 +64,11 @@ interface RichTextEditorProps {
     siblingsAfter: CreateNodeTree[];
   }) => void;
   resolveInlineReferenceColor?: (targetNodeId: string) => string | undefined;
+  focusTarget?: FocusTarget;
+  focusRequest?: FocusRequest | null;
+  pendingInput?: PendingInputChar | null;
+  onFocusRequestConsumed?: (request: FocusRequest) => void;
+  onPendingInputConsumed?: (input: PendingInputChar) => void;
 }
 
 function setEditorSelection(view: EditorView, placement: EditorFocusPlacement) {
@@ -68,14 +76,23 @@ function setEditorSelection(view: EditorView, placement: EditorFocusPlacement) {
   const start = 1;
   const end = Math.max(1, view.state.doc.content.size - 1);
   const pos = typeof placement === 'object'
-    ? textOffsetToDocPos(view.state.doc, placement.offset)
+    ? textOffsetToDocPos(view.state.doc, placement.offset, { inlineRefBias: placement.inlineRefBias })
     : placement === 'start'
       ? start
-      : textOffsetToDocPos(view.state.doc, content.text.length);
+      : textOffsetToDocPos(view.state.doc, content.text.length, { inlineRefBias: 'after' });
   const selection = placement === 'all'
     ? TextSelection.create(view.state.doc, start, end)
     : TextSelection.create(view.state.doc, pos);
   view.dispatch(view.state.tr.setSelection(selection));
+}
+
+function setEditorCursorPlacement(view: EditorView, placement: CursorPlacement) {
+  if (placement.kind === 'preserve') return;
+  if (placement.kind === 'text-offset') {
+    setEditorSelection(view, { offset: placement.offset, inlineRefBias: placement.inlineRefBias });
+    return;
+  }
+  setEditorSelection(view, placement.kind);
 }
 
 function selectionOffsets(view: EditorView) {
@@ -211,6 +228,13 @@ export function RichTextEditor(props: RichTextEditorProps) {
     }
   };
 
+  const clearMatchingPendingInput = () => {
+    const input = propsRef.current.pendingInput;
+    const target = propsRef.current.focusTarget;
+    if (!input || !target || !focusTargetMatches(input.target, target)) return;
+    propsRef.current.onPendingInputConsumed?.(input);
+  };
+
   const toggleToolbarMark = (mark: ToolbarMark) => {
     const view = viewRef.current;
     if (!view || propsRef.current.readOnly) return;
@@ -247,6 +271,17 @@ export function RichTextEditor(props: RichTextEditorProps) {
         }
       },
       handleDOMEvents: {
+        keydown(_viewInstance, event) {
+          if (isImeComposingEvent(event as KeyboardEvent)) {
+            composingRef.current = true;
+            clearMatchingPendingInput();
+          }
+          return false;
+        },
+        beforeinput() {
+          clearMatchingPendingInput();
+          return false;
+        },
         paste(viewInstance, event) {
           const onPasteOutliner = propsRef.current.onPasteOutliner;
           if (!onPasteOutliner || propsRef.current.readOnly) return false;
@@ -300,6 +335,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
         },
         compositionstart() {
           composingRef.current = true;
+          clearMatchingPendingInput();
           return false;
         },
         compositionend(viewInstance) {
@@ -389,10 +425,18 @@ export function RichTextEditor(props: RichTextEditorProps) {
         if (event.key === 'Enter' && !event.shiftKey) {
           event.preventDefault();
           const current = docToRichText(viewInstance.state.doc);
+          if (propsRef.current.readOnly) {
+            propsRef.current.onEnter({
+              before: current,
+              after: { text: '', marks: [], inlineRefs: [] },
+              atEnd: true,
+            });
+            return true;
+          }
           const { from, to } = selectionOffsets(viewInstance);
           propsRef.current.onEnter({
             before: sliceRichText(current, 0, from),
-            after: sliceRichText(current, to, current.text.length),
+            after: sliceRichText(current, from, current.text.length),
             atEnd: from === to && to >= current.text.length,
           });
           return true;
@@ -447,15 +491,8 @@ export function RichTextEditor(props: RichTextEditorProps) {
     });
 
     viewRef.current = view;
-    const unregister = registerEditor(propsRef.current.nodeId, {
-      focus(placement = 'end') {
-        view.focus();
-        setEditorSelection(view, placement);
-      },
-    });
 
     return () => {
-      unregister();
       view.destroy();
       viewRef.current = null;
     };
@@ -486,6 +523,41 @@ export function RichTextEditor(props: RichTextEditorProps) {
     if (!view) return;
     view.setProps({ editable: () => !props.readOnly });
   }, [props.readOnly]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    const request = props.focusRequest;
+    const target = props.focusTarget;
+    if (!view || view.isDestroyed || !request || !target) return;
+    if (!focusTargetMatches(request.target, target)) return;
+
+    view.focus();
+    setEditorCursorPlacement(view, request.placement);
+    updateToolbar(view);
+    if (!composingRef.current && !view.composing) updateTrigger(view);
+    props.onFocusRequestConsumed?.(request);
+  }, [props.focusRequest, props.focusTarget, props.onFocusRequestConsumed]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    const input = props.pendingInput;
+    const target = props.focusTarget;
+    if (!view || view.isDestroyed || !input || !target) return;
+    if (!focusTargetMatches(input.target, target)) return;
+    if (props.readOnly || composingRef.current || view.composing) return;
+
+    view.focus();
+    const insertFrom = view.state.selection.from;
+    let tr = view.state.tr.insertText(input.char);
+    const maxPos = tr.doc.content.size - 1;
+    const nextPos = Math.max(1, Math.min(insertFrom + input.char.length, maxPos));
+    tr = tr.setSelection(TextSelection.create(tr.doc, nextPos));
+    view.dispatch(tr);
+    updateToolbar(view);
+    updateTrigger(view);
+    handleContentUpdateAction(docToRichText(view.state.doc));
+    props.onPendingInputConsumed?.(input);
+  }, [props.pendingInput, props.focusTarget, props.readOnly, props.onPendingInputConsumed]);
 
   return (
     <>

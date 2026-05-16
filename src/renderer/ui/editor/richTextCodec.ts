@@ -278,28 +278,63 @@ export function markWholeTextAsHeading(content: RichText): RichText {
   };
 }
 
-export function textOffsetToDocPos(doc: PMNode, textOffset: number): number {
+export function textOffsetToDocPos(
+  doc: PMNode,
+  textOffset: number,
+  options: { inlineRefBias?: 'before' | 'after' } = {},
+): number {
   const paragraph = doc.firstChild;
   if (!paragraph) return 1;
 
   const clampedOffset = Math.max(0, textOffset);
+  const inlineRefBias = options.inlineRefBias ?? 'after';
   let textSeen = 0;
   let found: number | null = null;
   paragraph.forEach((child, childOffset) => {
     if (found !== null) return;
+    const childStart = 1 + childOffset;
     if (!child.isText) {
-      if (textSeen >= clampedOffset) found = 1 + childOffset;
+      if (textSeen === clampedOffset && inlineRefBias === 'before') {
+        found = childStart;
+        return;
+      }
+      if (textSeen > clampedOffset) {
+        found = childStart;
+      }
       return;
     }
     const textLength = child.text?.length ?? 0;
-    if (clampedOffset <= textSeen + textLength) {
-      found = 1 + childOffset + (clampedOffset - textSeen);
+    if (
+      clampedOffset < textSeen + textLength
+      || (clampedOffset === textSeen + textLength && inlineRefBias === 'before')
+    ) {
+      found = childStart + (clampedOffset - textSeen);
       return;
     }
     textSeen += textLength;
   });
 
-  return found ?? Math.max(1, doc.content.size - 1);
+  if (found !== null) return found;
+
+  if (inlineRefBias === 'after') {
+    let afterRefsAtOffset: number | null = null;
+    let textBeforeChild = 0;
+    paragraph.forEach((child, childOffset) => {
+      const childStart = 1 + childOffset;
+      if (child.isText) {
+        textBeforeChild += child.text?.length ?? 0;
+        return;
+      }
+      if (textBeforeChild === clampedOffset && afterRefsAtOffset === null) {
+        afterRefsAtOffset = childStart + child.nodeSize;
+      } else if (afterRefsAtOffset !== null && textBeforeChild === clampedOffset) {
+        afterRefsAtOffset = childStart + child.nodeSize;
+      }
+    });
+    if (afterRefsAtOffset !== null) return afterRefsAtOffset;
+  }
+
+  return Math.max(1, doc.content.size - 1);
 }
 
 export function docPosToTextOffset(doc: PMNode, docPos: number): number {

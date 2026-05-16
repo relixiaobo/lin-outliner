@@ -8,9 +8,10 @@ import { EditorState, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import type { CreateNodeTree, NodeId, NodeProjection } from '../../api/types';
 import { EMPTY_RICH_TEXT } from '../../api/types';
-import type { DocumentIndex } from '../../state/document';
+import type { CursorPlacement, DocumentIndex, FocusRequest } from '../../state/document';
 import { pmSchema } from '../editor/pmSchema';
 import { richTextToDoc } from '../editor/richTextCodec';
+import { focusTarget, focusTargetMatches } from '../focus/focusModel';
 import {
   resolveTrailingRowArrowDownIntent,
   resolveTrailingRowArrowUpIntent,
@@ -32,9 +33,12 @@ import { TrailingInputLeading } from './TrailingInputLeading';
 import type { TrailingTriggerKind } from './trailingTriggers';
 
 interface TrailingInputProps {
+  panelId?: string | null;
   parentId: NodeId;
   index: DocumentIndex;
   expanded: Set<NodeId>;
+  focusRequest?: FocusRequest | null;
+  onFocusRequestConsumed?: (request: FocusRequest) => void;
   onCreate: (parentId: NodeId, text: string) => Promise<NodeId | null> | NodeId | null | void;
   onCreateTree?: (parentId: NodeId, nodes: CreateNodeTree[]) => Promise<unknown> | unknown;
   onUpdateCreated?: (nodeId: NodeId, text: string) => Promise<void> | void;
@@ -66,6 +70,19 @@ function resetEditorContent(view: EditorView) {
 
 function getEditorText(view: EditorView): string {
   return view.state.doc.textContent;
+}
+
+function setTrailingSelection(view: EditorView, placement: CursorPlacement) {
+  if (placement.kind === 'preserve') return;
+  const textLength = getEditorText(view).length;
+  const boundedOffset = placement.kind === 'start'
+    ? 0
+    : placement.kind === 'text-offset'
+      ? Math.max(0, Math.min(textLength, placement.offset))
+      : textLength;
+  const from = placement.kind === 'all' ? 1 : Math.max(1, Math.min(1 + boundedOffset, view.state.doc.content.size - 1));
+  const to = placement.kind === 'all' ? Math.max(1, view.state.doc.content.size - 1) : from;
+  view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, from, to)));
 }
 
 function isPlainPrintableKey(event: KeyboardEvent): boolean {
@@ -561,6 +578,22 @@ export function TrailingInput(props: TrailingInputProps) {
       viewRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    const request = props.focusRequest;
+    if (!view || view.isDestroyed || !request) return;
+    const target = focusTarget(
+      effectiveParentId,
+      effectiveParentId,
+      props.panelId ?? null,
+      'trailing',
+    );
+    if (!focusTargetMatches(request.target, target)) return;
+    view.focus();
+    setTrailingSelection(view, request.placement);
+    props.onFocusRequestConsumed?.(request);
+  }, [effectiveParentId, props.focusRequest, props.onFocusRequestConsumed, props.panelId]);
 
   const rowInlineIndent = `calc(var(--row-depth) * ${depthShift})`;
   const wrapStyle: CSSProperties | undefined = depthShift > 0

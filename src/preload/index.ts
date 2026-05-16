@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../core/agentTypes';
+import { LIN_DOCUMENT_EVENT_CHANNEL, type DocumentProjectionChangedEvent } from '../core/types';
 
 const api = {
   invoke: <T>(command: string, args?: Record<string, unknown>) =>
@@ -9,6 +10,13 @@ const api = {
     ipcRenderer.on(LIN_AGENT_EVENT_CHANNEL, handler);
     return () => {
       ipcRenderer.removeListener(LIN_AGENT_EVENT_CHANNEL, handler);
+    };
+  },
+  onDocumentEvent: (listener: (event: DocumentProjectionChangedEvent) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: DocumentProjectionChangedEvent) => listener(payload);
+    ipcRenderer.on(LIN_DOCUMENT_EVENT_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(LIN_DOCUMENT_EVENT_CHANNEL, handler);
     };
   },
   window: {

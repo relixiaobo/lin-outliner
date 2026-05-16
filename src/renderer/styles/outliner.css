@@ -874,6 +874,10 @@
   display: inline;
 }
 
+.row-content-line > .row-editor.is-empty .ProseMirror p {
+  display: inline-block;
+}
+
 .row-editor .ProseMirror {
   min-height: 24px;
   caret-color: var(--text);

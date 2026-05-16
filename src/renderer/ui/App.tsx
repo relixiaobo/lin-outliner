@@ -9,8 +9,16 @@ import { Sidebar } from './Sidebar';
 import type { TopBarTab } from './TopBar';
 import { TopBar } from './TopBar';
 import { CloseIcon, ICON_SIZE } from './icons';
+import {
+  clearFocusState,
+  cursorAll,
+  cursorEnd,
+  requestFocusState,
+  requestPendingInputState,
+  rowFocusTarget,
+  focusTarget,
+} from './focus/focusModel';
 import { useDragSelection } from './interactions/dragSelection';
-import { appendText } from './interactions/selectionActions';
 import { BatchTagSelector } from './outliner/BatchTagSelector';
 import type { TriggerState } from './shared';
 import { textOf, useCommandRunner } from './shared';
@@ -38,13 +46,10 @@ export function App() {
   }, [setUi]);
 
   const focusNode = useCallback((nodeId: NodeId | null) => {
-    setUi((prev) => ({
-      ...prev,
-      focusedId: nodeId,
-      selectedId: nodeId ?? prev.selectedId,
-      selectedIds: nodeId ? new Set([nodeId]) : prev.selectedIds,
-      selectionAnchorId: nodeId ?? prev.selectionAnchorId,
-    }));
+    setUi((prev) => {
+      if (!nodeId) return clearFocusState(prev);
+      return requestFocusState(prev, rowFocusTarget(nodeId, null, null), cursorEnd());
+    });
   }, [setUi]);
 
   const {
@@ -80,17 +85,25 @@ export function App() {
     void run(async () => {
       const initial = await api.initWorkspace();
       const initialFocusId = initializeTabs(initial);
-      setUi((prev) => ({
-        ...prev,
-        focusedId: initialFocusId,
-        selectedId: initialFocusId,
-        selectedIds: new Set([initialFocusId]),
-        selectionAnchorId: initialFocusId,
-        expanded: new Set([...prev.expanded, initial.rootId]),
-      }));
+      setUi((prev) => {
+        const next = requestFocusState(prev, rowFocusTarget(initialFocusId, null, null), cursorEnd());
+        return {
+          ...next,
+          expanded: new Set([...next.expanded, initial.rootId]),
+        };
+      });
       return initial;
     });
   }, [initializeTabs, run, setUi]);
+
+  useEffect(() => {
+    const unlisten = window.lin?.onDocumentEvent((event) => {
+      if (event.type === 'projection_changed') setProjection(event.projection);
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
 
   const expandNodeInOutliner = useCallback((nodeId: NodeId) => {
     setUi((prev) => {
@@ -121,13 +134,7 @@ export function App() {
   }, [openRootInPanel, rootId]);
 
   const requestEditFocus = useCallback((nodeId: NodeId) => {
-    setUi((prev) => ({
-      ...prev,
-      focusedId: nodeId,
-      selectedId: nodeId,
-      selectedIds: new Set([nodeId]),
-      selectionAnchorId: nodeId,
-    }));
+    setUi((prev) => requestFocusState(prev, rowFocusTarget(nodeId, null, null), cursorEnd()));
     setPendingFocus({ nodeId, selectAll: false });
   }, [setUi]);
 
@@ -135,24 +142,20 @@ export function App() {
     if (!index) return;
     const row = index.byId.get(rowId);
     if (!row) return;
-    const targetId = row.type === 'fieldEntry' && row.fieldDefId
-      ? row.fieldDefId
-      : row.type === 'reference' && row.targetId
-        ? row.targetId
-        : row.id;
-    const target = index.byId.get(targetId);
-    if (!target) {
-      requestEditFocus(rowId);
-      return;
-    }
-    void run(() => api.replaceNodeText(targetId, appendText(target.content, char)))
-      .then(() => requestEditFocus(rowId));
-  }, [index, requestEditFocus, run]);
+    const target = row.type === 'fieldEntry'
+      ? focusTarget(rowId, row.parentId ?? null, null, 'field-name')
+      : rowFocusTarget(rowId, row.parentId ?? null, null);
+    setUi((prev) => requestPendingInputState(prev, target, char, cursorEnd()));
+  }, [index, setUi]);
 
   const applyOutcomeFocus = useCallback((focus: FocusHint | null) => {
     if (!focus) return;
-    focusNode(focus.nodeId);
-  }, [focusNode]);
+    setUi((prev) => requestFocusState(
+      prev,
+      focusTarget(focus.nodeId, focus.parentId ?? null, null, focus.surface ?? 'row'),
+      focus.placement ?? (focus.selectAll ? cursorAll() : cursorEnd()),
+    ));
+  }, [setUi]);
 
   useEffect(() => {
     applyOutcomeFocus(pendingFocus);
@@ -247,7 +250,6 @@ export function App() {
           onClosePanel={closePanel}
           onNavigatePanelRoot={navigatePanelRoot}
           onPanelResizeStart={beginPanelResize}
-          pendingFocus={pendingFocus}
           run={run}
           setDragId={setDragId}
           setTrigger={setTrigger}
@@ -266,7 +268,7 @@ export function App() {
         run={run}
         close={() => setUi((prev) => ({ ...prev, batchTagSelectorOpen: false }))}
         clearSelection={() => setUi((prev) => ({
-          ...prev,
+          ...clearFocusState(prev),
           focusedId: null,
           selectedIds: new Set(),
           selectionAnchorId: null,

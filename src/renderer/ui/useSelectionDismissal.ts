@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { UiState } from '../state/document';
+import { clearFocusState } from './focus/focusModel';
 import {
   shouldClearSelectionOnFocusIn,
   shouldClearSelectionOnPointerDown,
@@ -13,7 +14,7 @@ export function useSelectionDismissal(setUi: Dispatch<SetStateAction<UiState>>) 
       setUi((prev) => {
         if (prev.focusedId || prev.selectedIds.size === 0) return prev;
         return {
-          ...prev,
+          ...clearFocusState(prev),
           selectedId: null,
           selectedIds: new Set(),
           selectionAnchorId: null,

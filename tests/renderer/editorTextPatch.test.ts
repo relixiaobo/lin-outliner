@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { EditorState } from 'prosemirror-state';
 import { richTextPatchFromTransaction } from '../../src/renderer/ui/editor/editorTextPatch';
 import { pmSchema } from '../../src/renderer/ui/editor/pmSchema';
-import { richTextToDoc } from '../../src/renderer/ui/editor/richTextCodec';
+import { richTextToDoc, textOffsetToDocPos } from '../../src/renderer/ui/editor/richTextCodec';
 import { plainText } from '../../src/renderer/api/types';
 
 describe('editor text patch', () => {
@@ -38,5 +38,25 @@ describe('editor text patch', () => {
         markType: 'bold',
       }],
     });
+  });
+
+  test('maps cursor bias around inline references at the same text offset', () => {
+    const trailingRefDoc = richTextToDoc({
+      text: 'Hi',
+      marks: [],
+      inlineRefs: [{ offset: 2, targetNodeId: 'target', displayName: 'Target' }],
+    });
+
+    expect(textOffsetToDocPos(trailingRefDoc, 2, { inlineRefBias: 'before' })).toBe(3);
+    expect(textOffsetToDocPos(trailingRefDoc, 2, { inlineRefBias: 'after' })).toBe(4);
+
+    const leadingRefDoc = richTextToDoc({
+      text: 'Hi',
+      marks: [],
+      inlineRefs: [{ offset: 0, targetNodeId: 'target', displayName: 'Target' }],
+    });
+
+    expect(textOffsetToDocPos(leadingRefDoc, 0, { inlineRefBias: 'before' })).toBe(1);
+    expect(textOffsetToDocPos(leadingRefDoc, 0, { inlineRefBias: 'after' })).toBe(2);
   });
 });

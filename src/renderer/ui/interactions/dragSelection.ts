@@ -1,6 +1,7 @@
 import { useEffect, useRef, type Dispatch, type SetStateAction } from 'react';
 import type { NodeId } from '../../api/types';
 import { flattenVisibleRows, type DocumentIndex, type UiState } from '../../state/document';
+import { clearFocusState } from '../focus/focusModel';
 
 const DRAG_SELECT_THRESHOLD_PX = 5;
 
@@ -100,8 +101,7 @@ export function useDragSelection(options: UseDragSelectionOptions) {
       const range = selectedRange(rows, startId, hoverId);
       if (range.length === 0) return;
       setUiRef.current((prev) => ({
-        ...prev,
-        focusedId: null,
+        ...clearFocusState(prev),
         selectedId: hoverId,
         selectedIds: new Set(range),
         selectionAnchorId: startId,

@@ -81,6 +81,23 @@ export interface InlineRef {
   displayName?: string;
 }
 
+export type InlineRefCursorBias = 'before' | 'after';
+
+export type FocusSurface =
+  | 'row'
+  | 'panel-title'
+  | 'description'
+  | 'field-name'
+  | 'field-value'
+  | 'trailing';
+
+export type FocusPlacement =
+  | { kind: 'start' }
+  | { kind: 'end' }
+  | { kind: 'all' }
+  | { kind: 'preserve' }
+  | { kind: 'text-offset'; offset: number; inlineRefBias?: InlineRefCursorBias };
+
 export interface RichText {
   text: string;
   marks: TextMark[];
@@ -229,6 +246,8 @@ export interface DocumentState {
 
 export type NodeProjection = Omit<Node, 'trashedFromParentId' | 'trashedFromIndex'>;
 
+export const LIN_DOCUMENT_EVENT_CHANNEL = 'lin-document-event';
+
 export interface DocumentProjection {
   workspaceId: NodeId;
   rootId: NodeId;
@@ -241,9 +260,25 @@ export interface DocumentProjection {
   nodes: NodeProjection[];
 }
 
+export interface DocumentProjectionChangedEvent {
+  type: 'projection_changed';
+  origin: 'agent' | 'user' | 'system';
+  projection: DocumentProjection;
+  timestamp: number;
+}
+
 export interface FocusHint {
   nodeId: NodeId;
+  parentId?: NodeId | null;
+  surface?: FocusSurface;
+  placement?: FocusPlacement;
   selectAll: boolean;
+}
+
+export interface SplitNodeOptions {
+  targetParentId?: NodeId | null;
+  targetIndex?: number | null;
+  focusPlacement?: FocusPlacement;
 }
 
 export interface CommandOutcome {

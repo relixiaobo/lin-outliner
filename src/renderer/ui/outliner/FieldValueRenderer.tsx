@@ -167,7 +167,6 @@ export function FieldValueRenderer(props: FieldValueRendererProps) {
       <FieldValueRow dimmed={!props.valueDraft} completed={props.completed}>
         <div className="field-color-value">
           <input
-            ref={(element) => props.setFocusElement?.(element)}
             className="field-color-input"
             type="color"
             value={colorValue(props.valueDraft)}
@@ -176,6 +175,7 @@ export function FieldValueRenderer(props: FieldValueRendererProps) {
             onKeyDown={props.onKeyDown}
           />
           <input
+            ref={(element) => props.setFocusElement?.(element)}
             className="field-color-text"
             value={props.valueDraft}
             placeholder="#f43f5e"

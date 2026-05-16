@@ -7,8 +7,9 @@ import {
   type SetStateAction,
 } from 'react';
 import { api } from '../../api/client';
-import type { CreateNodeTree, FocusHint, NodeId, NodeProjection, RichText, RichTextPatch } from '../../api/types';
+import type { CreateNodeTree, NodeId, NodeProjection, RichText, RichTextPatch } from '../../api/types';
 import { EMPTY_RICH_TEXT, plainText } from '../../api/types';
+import type { CursorPlacement } from '../../state/document';
 import { flattenVisibleRows, type DocumentIndex, type UiState } from '../../state/document';
 import { RichTextEditor, type EditorSplitPayload } from '../editor/RichTextEditor';
 import {
@@ -24,7 +25,19 @@ import {
 } from '../interactions/rowInteractions';
 import type { SlashCommandId } from '../interactions/slashCommands';
 import type { CommandRunner, TriggerState } from '../shared';
-import { focusRowInput, outlinerChildren, textOf } from '../shared';
+import { outlinerChildren, textOf } from '../shared';
+import {
+  clearFocusRequestState,
+  clearFocusState,
+  clearPendingInputState,
+  cursorEnd,
+  cursorOffset as cursorAtOffset,
+  focusTarget,
+  requestFocusState,
+  rowFocusTarget,
+  selectFocusState,
+} from '../focus/focusModel';
+import { renderedTextRightEdge, resolveTextOffsetFromPoint } from '../interactions/domCaret';
 import { TagBar } from '../tags/TagBar';
 import { inlineReferenceTextColor, resolveTagColor, tagBulletColors } from '../tags/tagColors';
 import { TrailingInput } from './TrailingInput';
@@ -41,6 +54,7 @@ import { createTrailingField, createTrailingTriggerNode } from './trailingTrigge
 import { useOutlinerRowInteraction } from './useOutlinerRowInteraction';
 
 interface OutlinerItemProps {
+  panelId: string;
   nodeId: NodeId;
   parentId: NodeId;
   rootId: NodeId;
@@ -52,7 +66,6 @@ interface OutlinerItemProps {
   run: CommandRunner;
   trigger: TriggerState;
   setTrigger: (trigger: TriggerState) => void;
-  pendingFocus: FocusHint | null;
   dragId: NodeId | null;
   setDragId: (nodeId: NodeId | null) => void;
 }
@@ -67,6 +80,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
   const row = useOutlinerRowInteraction({
     rowId: props.nodeId,
     parentId: props.parentId,
+    panelId: props.panelId,
     rootId: props.rootId,
     depth: props.depth,
     childIds: rowChildIds,
@@ -84,29 +98,6 @@ export function OutlinerItem(props: OutlinerItemProps) {
     setDraftContent(displayed?.content ?? EMPTY_RICH_TEXT);
   }, [displayed?.id, displayed?.content, displayed?.targetId]);
 
-  useEffect(() => {
-    if (props.pendingFocus?.nodeId === props.nodeId) {
-      const offset = props.ui.focusOffset?.nodeId === props.nodeId
-        ? props.ui.focusOffset.offset
-        : null;
-      focusRowInput(
-        props.nodeId,
-        offset === null
-          ? props.pendingFocus.selectAll ? 'all' : 'end'
-          : { offset },
-      );
-      if (offset !== null) {
-        window.requestAnimationFrame(() => {
-          props.setUi((prev) => (
-            prev.focusOffset?.nodeId === props.nodeId
-              ? { ...prev, focusOffset: null }
-              : prev
-          ));
-        });
-      }
-    }
-  }, [props.pendingFocus, props.nodeId, props.setUi, props.ui.focusOffset]);
-
   if (!node || !displayed) return null;
 
   const replaceLocalDraftContent = (content: RichText) => {
@@ -116,6 +107,19 @@ export function OutlinerItem(props: OutlinerItemProps) {
 
   const targetEditId = node.type === 'reference' && node.targetId ? node.targetId : node.id;
   const drillDownId = node.type === 'reference' && node.targetId ? node.targetId : node.id;
+  const editorFocusTarget = rowFocusTarget(props.nodeId, props.parentId, props.panelId);
+  const descriptionFocusTarget = focusTarget(props.nodeId, props.parentId, props.panelId, 'description');
+  const requestRowFocus = (
+    nodeId: NodeId,
+    placement: CursorPlacement = cursorEnd(),
+    parentId: NodeId | null = props.index.byId.get(nodeId)?.parentId ?? null,
+  ) => {
+    props.setUi((prev) => requestFocusState(
+      prev,
+      rowFocusTarget(nodeId, parentId, props.panelId),
+      placement,
+    ));
+  };
   const childRows = buildOutlinerRows(node, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
   });
@@ -271,8 +275,17 @@ export function OutlinerItem(props: OutlinerItemProps) {
 
   const handleEnter = async (payload: EditorSplitPayload) => {
     if (props.trigger?.nodeId === props.nodeId) return;
+    const siblings = props.index.byId.get(props.parentId)?.children ?? [];
+    const rowIndex = siblings.indexOf(props.nodeId);
     if (!payload.atEnd) {
-      await props.run(() => api.splitNode(targetEditId, payload.before, payload.after));
+      await props.run(() => api.splitNode(targetEditId, payload.before, payload.after, {
+        ...(node.type === 'reference'
+          ? { targetParentId: props.parentId, targetIndex: rowIndex >= 0 ? rowIndex + 1 : null }
+          : row.expanded && row.hasChildren
+            ? { targetParentId: props.nodeId, targetIndex: 0 }
+            : {}),
+        focusPlacement: { kind: 'start' },
+      }));
       return;
     }
     await commitDraft(payload.before);
@@ -280,8 +293,6 @@ export function OutlinerItem(props: OutlinerItemProps) {
       await props.run(() => api.createNode(props.nodeId, 0, payload.after.text));
       return;
     }
-    const siblings = props.index.byId.get(props.parentId)?.children ?? [];
-    const rowIndex = siblings.indexOf(props.nodeId);
     await props.run(() => api.createNode(props.parentId, rowIndex >= 0 ? rowIndex + 1 : null, ''));
   };
 
@@ -318,21 +329,15 @@ export function OutlinerItem(props: OutlinerItemProps) {
     if (!previousNode) return;
 
     if (node.type === 'reference' || previousNode.type === 'reference') {
-      focusNode(previousId);
+      requestRowFocus(previousId);
       return;
     }
 
     const joinOffset = previousNode.content.text.length;
     await commitDraft();
-    props.setUi((prev) => ({
-      ...prev,
-      focusOffset: { nodeId: previousId, offset: joinOffset },
-    }));
     const result = await props.run(() => api.mergeNodeInto(props.nodeId, previousId));
     if (result) {
-      window.requestAnimationFrame(() => {
-        focusRowInput(previousId, { offset: joinOffset });
-      });
+      requestRowFocus(previousId, cursorAtOffset(joinOffset));
     }
   };
 
@@ -344,31 +349,31 @@ export function OutlinerItem(props: OutlinerItemProps) {
       const expandTargetAndRememberCursor = () => props.setUi((prev) => {
         const expanded = new Set(prev.expanded);
         expanded.add(targetParentId);
-        return {
-          ...prev,
-          expanded,
-          focusOffset: { nodeId: props.nodeId, offset: cursorOffset },
-        };
+        return requestFocusState(
+          { ...prev, expanded },
+          rowFocusTarget(props.nodeId, null, props.panelId),
+          cursorAtOffset(cursorOffset),
+        );
       });
       expandTargetAndRememberCursor();
       const result = await props.run(() => api.indentNode(props.nodeId));
       if (result) {
         expandTargetAndRememberCursor();
-        focusRowInput(props.nodeId, { offset: cursorOffset });
       }
       return;
     }
-    props.setUi((prev) => ({
-      ...prev,
-      focusOffset: { nodeId: props.nodeId, offset: cursorOffset },
-    }));
+    props.setUi((prev) => requestFocusState(
+      prev,
+      rowFocusTarget(props.nodeId, null, props.panelId),
+      cursorAtOffset(cursorOffset),
+    ));
     const result = await props.run(() => api.outdentNode(props.nodeId));
     if (result) {
-      props.setUi((prev) => ({
-        ...prev,
-        focusOffset: { nodeId: props.nodeId, offset: cursorOffset },
-      }));
-      focusRowInput(props.nodeId, { offset: cursorOffset });
+      props.setUi((prev) => requestFocusState(
+        prev,
+        rowFocusTarget(props.nodeId, null, props.panelId),
+        cursorAtOffset(cursorOffset),
+      ));
     }
   };
 
@@ -379,9 +384,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
         ? api.batchMoveNodesUp([props.nodeId])
         : api.batchMoveNodesDown([props.nodeId])
     ));
-    if (result) {
-      focusRowInput(props.nodeId, 'end');
-    }
+    if (result) requestRowFocus(props.nodeId);
   };
 
   const exitToSelection = async () => {
@@ -394,7 +397,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
       document.activeElement.blur();
     }
     props.setUi((prev) => ({
-      ...prev,
+      ...clearFocusState(prev),
       focusedId: null,
       selectedId: props.nodeId,
       selectedIds: new Set([props.nodeId]),
@@ -403,14 +406,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
   };
 
   const focusNode = (nodeId: NodeId) => {
-    props.setUi((prev) => ({
-      ...prev,
-      focusedId: nodeId,
-      selectedId: nodeId,
-      selectedIds: new Set([nodeId]),
-      selectionAnchorId: nodeId,
-    }));
-    focusRowInput(nodeId, 'end');
+    requestRowFocus(nodeId);
   };
 
   const collapseNode = (nodeId: NodeId) => {
@@ -428,13 +424,48 @@ export function OutlinerItem(props: OutlinerItemProps) {
       document.activeElement.blur();
     }
     props.setUi((prev) => ({
-      ...prev,
+      ...clearFocusState(prev),
       focusedId: null,
       selectedId: props.nodeId,
       selectedIds: prev.selectedIds.has(props.nodeId) ? new Set(prev.selectedIds) : new Set([props.nodeId]),
       selectionAnchorId: prev.selectedIds.has(props.nodeId) ? prev.selectionAnchorId ?? props.nodeId : props.nodeId,
     }));
     setContextMenu({ x: event.clientX, y: event.clientY });
+  };
+
+  const focusEditorFromRowClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (
+      event.button !== 0
+      || event.metaKey
+      || event.ctrlKey
+      || event.shiftKey
+      || event.altKey
+      || displayed.locked
+    ) {
+      return;
+    }
+
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (target?.closest('button, a, input, textarea, select, [data-preserve-selection]')) return;
+
+    const editor = event.currentTarget.querySelector<HTMLElement>('.ProseMirror');
+    if (!editor) return;
+
+    const clickedInsideEditor = Boolean(target?.closest('.ProseMirror'));
+    const rightEdge = renderedTextRightEdge(editor);
+    if (clickedInsideEditor && (rightEdge === null || event.clientX <= rightEdge + 1)) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    const offset = resolveTextOffsetFromPoint({
+      container: editor,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      textLength: draftContent.text.length,
+    });
+    const editorRect = editor.getBoundingClientRect();
+    const inlineRefBias = event.clientX <= editorRect.left + 2 ? 'before' : 'after';
+    requestRowFocus(props.nodeId, cursorAtOffset(offset, inlineRefBias), props.parentId);
   };
 
   return (
@@ -460,7 +491,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
           onDragStart={row.dragHandleProps.onDragStart}
           onDragEnd={row.dragHandleProps.onDragEnd}
         />
-        <div className="row-content-line">
+        <div className="row-content-line" onMouseDown={focusEditorFromRowClick}>
           {showDoneCheckbox && (
             <DoneCheckbox
               checked={Boolean(displayed.completedAt)}
@@ -501,6 +532,15 @@ export function OutlinerItem(props: OutlinerItemProps) {
               }
             }}
             onPasteOutliner={node.type === 'reference' ? undefined : handlePasteOutliner}
+            focusTarget={editorFocusTarget}
+            focusRequest={props.ui.focusRequest}
+            pendingInput={props.ui.pendingInputChar}
+            onFocusRequestConsumed={(request) => {
+              props.setUi((prev) => clearFocusRequestState(prev, request));
+            }}
+            onPendingInputConsumed={(input) => {
+              props.setUi((prev) => clearPendingInputState(prev, input));
+            }}
           />
           {displayed.tags.length > 0 && (
             <TagBar
@@ -521,6 +561,18 @@ export function OutlinerItem(props: OutlinerItemProps) {
                 ...prev,
                 editingDescriptionId: editing ? targetEditId : null,
               }));
+            }}
+            focusTarget={descriptionFocusTarget}
+            focusRequest={props.ui.focusRequest}
+            pendingInput={props.ui.pendingInputChar}
+            onFocusTarget={(target) => {
+              props.setUi((prev) => selectFocusState(prev, target));
+            }}
+            onFocusRequestConsumed={(request) => {
+              props.setUi((prev) => clearFocusRequestState(prev, request));
+            }}
+            onPendingInputConsumed={(input) => {
+              props.setUi((prev) => clearPendingInputState(prev, input));
             }}
           />
         </div>
@@ -560,7 +612,11 @@ export function OutlinerItem(props: OutlinerItemProps) {
           run={props.run}
           onRoot={props.onRoot}
           onEditDescription={() => {
-            props.setUi((prev) => ({ ...prev, editingDescriptionId: targetEditId }));
+            props.setUi((prev) => requestFocusState(
+              { ...prev, editingDescriptionId: targetEditId },
+              descriptionFocusTarget,
+              cursorEnd(),
+            ));
           }}
           onClose={() => setContextMenu(null)}
         />
@@ -569,6 +625,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
       {row.expanded && (
         <div className="children">
           <OutlinerView
+            panelId={props.panelId}
             parentId={props.nodeId}
             rootId={props.rootId}
             onRoot={props.onRoot}
@@ -579,15 +636,19 @@ export function OutlinerItem(props: OutlinerItemProps) {
             run={props.run}
             trigger={props.trigger}
             setTrigger={props.setTrigger}
-            pendingFocus={props.pendingFocus}
             dragId={props.dragId}
             setDragId={props.setDragId}
           />
           {showTrailingInput && (
             <TrailingInput
+              panelId={props.panelId}
               parentId={props.nodeId}
               index={props.index}
               expanded={props.ui.expanded}
+              focusRequest={props.ui.focusRequest}
+              onFocusRequestConsumed={(request) => {
+                props.setUi((prev) => clearFocusRequestState(prev, request));
+              }}
               onCreate={async (parentId, text) => {
                 const result = await props.run(() => api.createNode(parentId, null, text));
                 return result && 'focus' in result ? result.focus?.nodeId ?? null : null;

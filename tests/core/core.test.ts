@@ -503,6 +503,52 @@ describe('Core', () => {
     expect(restored.state().nodes[nodeId]!.content).toEqual(content);
   });
 
+  test('splits a node into a focused sibling at the start of moved content', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const nodeId = mustFocus(core.createNode(today, null, 'HelloWorld'));
+
+    const outcome = core.splitNode(
+      nodeId,
+      { text: 'Hello', marks: [], inlineRefs: [] },
+      { text: 'World', marks: [], inlineRefs: [] },
+    );
+    const newId = mustFocus(outcome);
+
+    expect(core.state().nodes[nodeId]!.content.text).toBe('Hello');
+    expect(core.state().nodes[newId]!.content.text).toBe('World');
+    expect(core.state().nodes[newId]!.parentId).toBe(today);
+    expect(outcome.focus).toMatchObject({
+      nodeId: newId,
+      parentId: today,
+      placement: { kind: 'start' },
+    });
+  });
+
+  test('can split an expanded parent into its first child', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const parentId = mustFocus(core.createNode(today, null, 'ParentTail'));
+    const existingChildId = mustFocus(core.createNode(parentId, null, 'Existing child'));
+
+    const outcome = core.splitNode(
+      parentId,
+      { text: 'Parent', marks: [], inlineRefs: [] },
+      { text: 'Tail', marks: [], inlineRefs: [] },
+      { targetParentId: parentId, targetIndex: 0, focusPlacement: { kind: 'start' } },
+    );
+    const newChildId = mustFocus(outcome);
+
+    expect(core.state().nodes[parentId]!.content.text).toBe('Parent');
+    expect(core.state().nodes[parentId]!.children).toEqual([newChildId, existingChildId]);
+    expect(core.state().nodes[newChildId]!.content.text).toBe('Tail');
+    expect(outcome.focus).toMatchObject({
+      nodeId: newChildId,
+      parentId,
+      placement: { kind: 'start' },
+    });
+  });
+
   test('applies node text patches directly to Loro text', () => {
     const core = Core.new();
     const today = core.projection().todayId;

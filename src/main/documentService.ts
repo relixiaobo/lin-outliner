@@ -6,9 +6,11 @@ import { dirname, join } from 'node:path';
 import type { DocumentCommand } from '../core/commands';
 import { Core, type CoreTransactionMetadata, type OperationHistoryQuery } from '../core/core';
 import type {
+  DocumentProjectionChangedEvent,
   FieldConfigPatch,
   FieldType,
   FilterOp,
+  FocusPlacement,
   RichText,
   RichTextPatch,
   SearchNodeConfig,
@@ -33,9 +35,12 @@ interface TextEditGroup {
   timer?: ReturnType<typeof setTimeout>;
 }
 
+type ProjectionChangedListener = (event: DocumentProjectionChangedEvent) => void;
+
 export class DocumentService {
   private core = Core.new();
   private mutationQueue = Promise.resolve();
+  private projectionChangedListeners = new Set<ProjectionChangedListener>();
   private transactionContext = new AsyncLocalStorage<boolean>();
   private textEditGroup?: TextEditGroup;
   private readonly textEditFlushDelayMs = 700;
@@ -49,6 +54,13 @@ export class DocumentService {
     return this.core.projection();
   }
 
+  onProjectionChanged(listener: ProjectionChangedListener) {
+    this.projectionChangedListeners.add(listener);
+    return () => {
+      this.projectionChangedListeners.delete(listener);
+    };
+  }
+
   async operationHistory(query: OperationHistoryQuery = {}) {
     const mutatesHistory = query.action === 'undo' || query.action === 'redo';
     if (!mutatesHistory && !this.textEditGroup) {
@@ -57,7 +69,10 @@ export class DocumentService {
     const task = this.mutationQueue.then(async () => {
       await this.flushTextEditGroupNow();
       const result = this.core.operationHistory(query);
-      if (mutatesHistory) await this.saveCore();
+      if (mutatesHistory && result.count > 0) {
+        await this.saveCore();
+        this.emitProjectionChanged(historyChangeOrigin(query.origin));
+      }
       return result;
     });
     this.mutationQueue = task.then(() => undefined, () => undefined);
@@ -73,9 +88,13 @@ export class DocumentService {
   async transaction<T>(meta: DocumentMutationMeta, fn: () => Promise<T>) {
     const task = this.mutationQueue.then(async () => {
       await this.flushTextEditGroupNow();
+      const before = this.core.intoState();
       const result = await this.core.transaction(meta.origin ?? 'user', async () =>
         this.transactionContext.run(true, fn), transactionMetadata(meta));
-      await this.saveCore();
+      if (!sameJson(before, this.core.intoState())) {
+        await this.saveCore();
+        this.emitProjectionChanged(meta.origin ?? 'user');
+      }
       return result;
     });
     this.mutationQueue = task.then(() => undefined, () => undefined);
@@ -118,6 +137,7 @@ export class DocumentService {
       } else {
         await this.saveCore();
       }
+      this.emitProjectionChanged(textEditMeta.origin ?? 'user');
       return outcome;
     });
     this.mutationQueue = task.then(() => undefined, () => undefined);
@@ -166,6 +186,7 @@ export class DocumentService {
     this.textEditGroup = undefined;
     this.core.endUndoGroup();
     await this.saveCore();
+    this.emitProjectionChanged(group.origin);
   }
 
   private runMutation(command: DocumentCommand, args: Record<string, unknown>, meta: DocumentMutationMeta) {
@@ -182,7 +203,11 @@ export class DocumentService {
           arrayArg(args.siblingsAfter),
         );
       case 'split_node':
-        return this.core.splitNode(String(args.nodeId), args.before as RichText, args.after as RichText);
+        return this.core.splitNode(String(args.nodeId), args.before as RichText, args.after as RichText, {
+          targetParentId: nullableString(args.targetParentId),
+          targetIndex: nullableNumber(args.targetIndex),
+          focusPlacement: args.focusPlacement as FocusPlacement | undefined,
+        });
       case 'apply_node_text_patch':
         return this.core.applyNodeTextPatch(String(args.nodeId), args.patch as RichTextPatch);
       case 'update_node_description':
@@ -306,6 +331,17 @@ export class DocumentService {
     await mkdir(dirname(path), { recursive: true });
     await atomicWrite(path, this.core.serializeState());
   }
+
+  private emitProjectionChanged(origin: DocumentProjectionChangedEvent['origin']) {
+    if (this.projectionChangedListeners.size === 0) return;
+    const event: DocumentProjectionChangedEvent = {
+      type: 'projection_changed',
+      origin,
+      projection: this.core.projection(),
+      timestamp: Date.now(),
+    };
+    for (const listener of this.projectionChangedListeners) listener(event);
+  }
 }
 
 function workspacePath() {
@@ -351,6 +387,15 @@ function historyOrigin(value: unknown, fallback?: DocumentMutationMeta['origin']
   if (fallback === 'agent') return 'agent';
   if (fallback === 'user') return 'user';
   return 'all';
+}
+
+function historyChangeOrigin(value: unknown): DocumentProjectionChangedEvent['origin'] {
+  if (value === 'agent' || value === 'user' || value === 'system') return value;
+  return 'agent';
+}
+
+function sameJson(left: unknown, right: unknown) {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function sortDirection(value: unknown): SortDirection | null {

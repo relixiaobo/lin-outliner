@@ -14,6 +14,7 @@ import type {
   RichText,
   RichTextPatch,
   SearchHit,
+  SplitNodeOptions,
   SortDirection,
   TagConfigPatch,
 } from './types';
@@ -43,8 +44,8 @@ export const api = {
     children,
     siblingsAfter,
   }),
-  splitNode: (nodeId: string, before: RichText, after: RichText) =>
-    command<CommandOutcome>('split_node', { nodeId, before, after }),
+  splitNode: (nodeId: string, before: RichText, after: RichText, options: SplitNodeOptions = {}) =>
+    command<CommandOutcome>('split_node', { nodeId, before, after, ...options }),
   applyNodeTextPatch: (nodeId: string, patch: RichTextPatch) =>
     command<CommandOutcome>('apply_node_text_patch', { nodeId, patch }),
   replaceNodeText: (nodeId: string, content: RichText) =>

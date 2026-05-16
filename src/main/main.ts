@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DocumentService } from './documentService';
 import { AgentRuntime } from './agentRuntime';
+import { LIN_DOCUMENT_EVENT_CHANNEL } from '../core/types';
 import {
   deleteProviderApiKey,
   deleteProviderConfig,
@@ -20,6 +21,10 @@ const documentService = new DocumentService();
 let mainWindow: BrowserWindow | null = null;
 let quitAfterFlush = false;
 const agentRuntime = new AgentRuntime(() => mainWindow, documentService);
+
+documentService.onProjectionChanged((event) => {
+  mainWindow?.webContents.send(LIN_DOCUMENT_EVENT_CHANNEL, event);
+});
 
 function createWindow() {
   mainWindow = new BrowserWindow({

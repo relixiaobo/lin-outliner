@@ -7,7 +7,6 @@ import type {
   NodeId,
   NodeProjection,
 } from '../api/types';
-import { focusEditor, type EditorFocusPlacement } from './editor/editorRegistry';
 
 export type CommandRunner = (
   operation: () => Promise<CommandOutcome | DocumentProjection>,
@@ -73,42 +72,6 @@ export function fieldEntries(
   return node.children
     .map((childId) => byId.get(childId))
     .filter((child): child is NodeProjection => child?.type === 'fieldEntry');
-}
-
-export function focusRowInput(nodeId: NodeId, placement: EditorFocusPlacement = 'end') {
-  window.requestAnimationFrame(() => {
-    focusEditor(nodeId, placement);
-    const focusTargets = document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
-      '[data-focus-node-id]',
-    );
-    for (const target of focusTargets) {
-      if (target.dataset.focusNodeId !== nodeId) continue;
-      target.focus();
-      if (placement === 'all') {
-        target.select();
-      } else {
-        const cursor = typeof placement === 'object'
-          ? Math.max(0, Math.min(target.value.length, placement.offset))
-          : placement === 'start'
-            ? 0
-            : target.value.length;
-        target.setSelectionRange(cursor, cursor);
-      }
-      break;
-    }
-  });
-}
-
-export function focusTrailingInput(parentId: NodeId): boolean {
-  const rows = document.querySelectorAll<HTMLElement>('[data-trailing-parent-id]');
-  for (const row of rows) {
-    if (row.dataset.trailingParentId !== parentId) continue;
-    const editor = row.querySelector<HTMLElement>('.ProseMirror');
-    if (!editor) continue;
-    editor.focus({ preventScroll: true });
-    return true;
-  }
-  return false;
 }
 
 export function useCommandRunner(

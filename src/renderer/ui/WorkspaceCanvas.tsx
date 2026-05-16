@@ -1,5 +1,5 @@
 import { Fragment, type Dispatch, type PointerEvent as ReactPointerEvent, type RefObject, type SetStateAction } from 'react';
-import type { FocusHint, NodeId } from '../api/types';
+import type { NodeId } from '../api/types';
 import type { DocumentIndex, UiState } from '../state/document';
 import { NodePanel } from './NodePanel';
 import { WorkspacePanelSurface } from './WorkspacePanelSurface';
@@ -21,7 +21,6 @@ interface WorkspaceCanvasProps {
     rightPanelId: string,
     event: ReactPointerEvent<HTMLButtonElement>,
   ) => void;
-  pendingFocus: FocusHint | null;
   run: CommandRunner;
   setDragId: (nodeId: NodeId | null) => void;
   setTrigger: (trigger: TriggerState) => void;
@@ -51,6 +50,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
           >
             {panel.type === 'outliner' ? (
               <NodePanel
+                panelId={panel.id}
                 rootId={panel.rootId}
                 onRoot={(nodeId) => props.onNavigatePanelRoot(panel.id, nodeId)}
                 index={props.index}
@@ -59,7 +59,6 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 run={props.run}
                 trigger={props.trigger}
                 setTrigger={props.setTrigger}
-                pendingFocus={props.pendingFocus}
                 dragId={props.dragId}
                 setDragId={props.setDragId}
               />

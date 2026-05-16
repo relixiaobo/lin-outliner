@@ -69,6 +69,36 @@ test.describe('outliner row editing parity', () => {
     await expect(rowEditor(page, createdId)).toBeFocused();
   });
 
+  test('clearing row text keeps the row height stable', async ({ page }) => {
+    const rowBody = row(page, ids.alpha).locator('> .row');
+    const editorShell = rowBody.locator('.row-editor').first();
+    const heightBefore = (await rowBody.boundingBox())?.height ?? 0;
+
+    await selectEditorContents(page, ids.alpha);
+    await page.keyboard.press('Backspace');
+
+    await expect(editorShell).toHaveClass(/is-empty/);
+    await expect.poll(async () => (await rowBody.boundingBox())?.height ?? 0).toBeLessThanOrEqual(heightBefore + 1);
+  });
+
+  test('clicking row text right-side blank space focuses the editor at the row end', async ({ page }) => {
+    const contentLine = row(page, ids.alpha).locator('> .row .row-content-line').first();
+    const box = await contentLine.boundingBox();
+    expect(box).toBeTruthy();
+
+    await contentLine.click({
+      position: {
+        x: Math.max(1, (box?.width ?? 1) - 8),
+        y: Math.max(1, (box?.height ?? 1) / 2),
+      },
+    });
+
+    await expect(rowEditor(page, ids.alpha)).toBeFocused();
+    await page.keyboard.type('!');
+
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe('Alpha!');
+  });
+
   test('Backspace at the start of an empty row deletes it and returns focus upward', async ({ page }) => {
     await placeCursor(page, ids.alpha, 'end');
     await page.keyboard.press('Enter');

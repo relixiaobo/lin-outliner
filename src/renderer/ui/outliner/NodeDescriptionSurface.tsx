@@ -11,6 +11,7 @@ interface NodeDescriptionEditorProps {
   value: string;
   onValueChange: (value: string) => void;
   onCommit: () => void;
+  onFocus: () => void;
   onKeyDown: KeyboardEventHandler<HTMLTextAreaElement>;
 }
 
@@ -33,6 +34,7 @@ export function NodeDescriptionEditor({
   value,
   onValueChange,
   onCommit,
+  onFocus,
   onKeyDown,
 }: NodeDescriptionEditorProps) {
   return (
@@ -44,6 +46,7 @@ export function NodeDescriptionEditor({
       value={value}
       placeholder="Description"
       onMouseDown={(event) => event.stopPropagation()}
+      onFocus={onFocus}
       onChange={(event) => onValueChange(event.currentTarget.value)}
       onBlur={onCommit}
       onKeyDown={onKeyDown}

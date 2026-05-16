@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react';
 import { api } from '../../api/client';
-import type { FocusHint, NodeId } from '../../api/types';
+import type { NodeId } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
 import type { CommandRunner, TriggerState } from '../shared';
 import { FieldEntryChildrenOutliner } from './FieldEntryChildrenOutliner';
@@ -8,11 +8,12 @@ import { OutlinerFieldRow } from './OutlinerFieldRow';
 import { OutlinerItem } from './OutlinerItem';
 import { RowHost } from './RowHost';
 import { buildOutlinerRows, hiddenFieldKey } from './row-model';
-import { focusRowInput } from '../shared';
+import { clearFocusRequestState, cursorEnd, requestFocusState, rowFocusTarget } from '../focus/focusModel';
 import { ViewToolbar } from './ViewToolbar';
 import { HiddenFieldReveal, ViewGroupHeading } from './OutlinerViewChrome';
 
 interface OutlinerViewProps {
+  panelId: string;
   parentId: NodeId;
   rootId: NodeId;
   onRoot: (nodeId: NodeId) => void;
@@ -23,7 +24,6 @@ interface OutlinerViewProps {
   run: CommandRunner;
   trigger: TriggerState;
   setTrigger: (trigger: TriggerState) => void;
-  pendingFocus: FocusHint | null;
   dragId: NodeId | null;
   setDragId: (nodeId: NodeId | null) => void;
 }
@@ -58,6 +58,7 @@ export function OutlinerView(props: OutlinerViewProps) {
         )}
         renderField={(row) => (
           <OutlinerFieldRow
+            panelId={props.panelId}
             entryId={row.id}
             parentId={props.parentId}
             rootId={props.rootId}
@@ -69,15 +70,19 @@ export function OutlinerView(props: OutlinerViewProps) {
             run={props.run}
             trigger={props.trigger}
             setTrigger={props.setTrigger}
-            pendingFocus={props.pendingFocus}
             dragId={props.dragId}
             setDragId={props.setDragId}
             renderChildren={(controls) => (
               <FieldEntryChildrenOutliner
+                panelId={props.panelId}
                 entryId={row.id}
                 childIds={controls.childIds}
                 index={props.index}
                 expanded={props.ui.expanded}
+                focusRequest={props.ui.focusRequest}
+                onFocusRequestConsumed={(request) => {
+                  props.setUi((prev) => clearFocusRequestState(prev, request));
+                }}
                 run={props.run}
                 setTrigger={props.setTrigger}
                 onExpand={(nodeId) => {
@@ -90,14 +95,12 @@ export function OutlinerView(props: OutlinerViewProps) {
                 onNavigateUp={controls.focusLastVisibleChild}
                 onCollapseToSelf={controls.collapseToSelf}
                 onFocusNode={(nodeId) => {
-                  props.setUi((prev) => ({
-                    ...prev,
-                    focusedId: nodeId,
-                    selectedId: nodeId,
-                    selectedIds: new Set([nodeId]),
-                    selectionAnchorId: nodeId,
-                  }));
-                  focusRowInput(nodeId, 'end');
+                  const targetNode = props.index.byId.get(nodeId);
+                  props.setUi((prev) => requestFocusState(
+                    prev,
+                    rowFocusTarget(nodeId, targetNode?.parentId ?? row.id, props.panelId),
+                    cursorEnd(),
+                  ));
                 }}
                 onCollapseNode={(nodeId) => {
                   props.setUi((prev) => {
@@ -110,6 +113,7 @@ export function OutlinerView(props: OutlinerViewProps) {
                 onRedo={() => props.run(api.redo)}
               >
                 <OutlinerView
+                  panelId={props.panelId}
                   parentId={row.id}
                   rootId={props.rootId}
                   onRoot={props.onRoot}
@@ -120,7 +124,6 @@ export function OutlinerView(props: OutlinerViewProps) {
                   run={props.run}
                   trigger={props.trigger}
                   setTrigger={props.setTrigger}
-                  pendingFocus={props.pendingFocus}
                   dragId={props.dragId}
                   setDragId={props.setDragId}
                 />
@@ -130,6 +133,7 @@ export function OutlinerView(props: OutlinerViewProps) {
         )}
         renderContent={(row) => (
           <OutlinerItem
+            panelId={props.panelId}
             nodeId={row.id}
             parentId={props.parentId}
             rootId={props.rootId}
@@ -141,7 +145,6 @@ export function OutlinerView(props: OutlinerViewProps) {
             run={props.run}
             trigger={props.trigger}
             setTrigger={props.setTrigger}
-            pendingFocus={props.pendingFocus}
             dragId={props.dragId}
             setDragId={props.setDragId}
           />

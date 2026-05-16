@@ -2,17 +2,20 @@ import type { ReactNode } from 'react';
 import { api } from '../../api/client';
 import type { NodeId } from '../../api/types';
 import { plainText } from '../../api/types';
-import type { DocumentIndex } from '../../state/document';
+import type { DocumentIndex, FocusRequest } from '../../state/document';
 import type { CommandRunner, TriggerState } from '../shared';
 import { TrailingInput } from './TrailingInput';
 import { createTrailingField, createTrailingTriggerNode } from './trailingTriggers';
 import { buildOutlinerRows, shouldShowTrailingInput } from './row-model';
 
 interface FieldEntryChildrenOutlinerProps {
+  panelId: string;
   entryId: NodeId;
   childIds: NodeId[];
   index: DocumentIndex;
   expanded: Set<NodeId>;
+  focusRequest?: FocusRequest | null;
+  onFocusRequestConsumed?: (request: FocusRequest) => void;
   run: CommandRunner;
   setTrigger: (trigger: TriggerState) => void;
   onExpand: (nodeId: NodeId) => void;
@@ -36,9 +39,12 @@ export function FieldEntryChildrenOutliner(props: FieldEntryChildrenOutlinerProp
       {props.children}
       {showTrailingInput && (
         <TrailingInput
+          panelId={props.panelId}
           parentId={props.entryId}
           index={props.index}
           expanded={props.expanded}
+          focusRequest={props.focusRequest}
+          onFocusRequestConsumed={props.onFocusRequestConsumed}
           onCreate={async (parentId, text) => {
             const result = await props.run(() => api.createNode(parentId, null, text));
             return result && 'focus' in result ? result.focus?.nodeId ?? null : null;

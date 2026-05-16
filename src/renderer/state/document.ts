@@ -1,11 +1,22 @@
 import { useMemo, useState } from 'react';
-import type { DocumentProjection, NodeId, NodeProjection } from '../api/types';
+import type {
+  DocumentProjection,
+  FocusPlacement,
+  FocusSurface as CoreFocusSurface,
+  InlineRefCursorBias as CoreInlineRefCursorBias,
+  NodeId,
+  NodeProjection,
+} from '../api/types';
 import { buildOutlinerRows } from './outlinerRows';
 
 export interface DocumentIndex {
   projection: DocumentProjection;
   byId: Map<NodeId, NodeProjection>;
 }
+
+export type FocusSurface = CoreFocusSurface;
+export type CursorPlacement = FocusPlacement;
+export type InlineRefCursorBias = CoreInlineRefCursorBias;
 
 export function buildIndex(projection: DocumentProjection): DocumentIndex {
   return {
@@ -20,10 +31,14 @@ export function useDocumentIndex(projection: DocumentProjection | null): Documen
 
 export interface UiState {
   focusedId: NodeId | null;
+  focusedParentId: NodeId | null;
+  focusedPanelId: string | null;
+  focusSurface: FocusSurface | null;
   selectedId: NodeId | null;
   selectedIds: Set<NodeId>;
   selectionAnchorId: NodeId | null;
-  focusOffset: { nodeId: NodeId; offset: number } | null;
+  focusRequest: FocusRequest | null;
+  pendingInputChar: PendingInputChar | null;
   expanded: Set<NodeId>;
   expandedHiddenFields: Set<string>;
   editingDescriptionId: NodeId | null;
@@ -31,13 +46,34 @@ export interface UiState {
   batchTagSelectorOpen: boolean;
 }
 
+export interface FocusTarget {
+  nodeId: NodeId;
+  parentId: NodeId | null;
+  panelId: string | null;
+  surface: FocusSurface;
+}
+
+export interface FocusRequest {
+  target: FocusTarget;
+  placement: CursorPlacement;
+}
+
+export interface PendingInputChar {
+  target: FocusTarget;
+  char: string;
+}
+
 export function useUiState() {
   return useState<UiState>({
     focusedId: null,
+    focusedParentId: null,
+    focusedPanelId: null,
+    focusSurface: null,
     selectedId: null,
     selectedIds: new Set<NodeId>(),
     selectionAnchorId: null,
-    focusOffset: null,
+    focusRequest: null,
+    pendingInputChar: null,
     expanded: new Set<NodeId>(),
     expandedHiddenFields: new Set<string>(),
     editingDescriptionId: null,

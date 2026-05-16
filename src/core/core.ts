@@ -45,12 +45,14 @@ import {
   type SearchNodeConfig,
   type SearchNodeCondition,
   type SearchHit,
+  type SplitNodeOptions,
   type SortDirection,
   type TagConfigPatch,
   type TextMark,
 } from './types';
 
 type Mutator = () => FocusHint | undefined;
+type FocusOptions = Omit<FocusHint, 'nodeId' | 'selectAll'> & { selectAll?: boolean };
 type MoveDirection = 'up' | 'down';
 type CommitOrigin = 'user' | 'agent' | 'system' | '__seed__';
 export type CoreTransactionMetadata = OperationHistoryMetadata;
@@ -197,7 +199,7 @@ export class Core {
       ensureParentMutable(state, parentId);
       const id = this.createPlainNode(parentId, index, text);
       this.applyChildTagsDirect(parentId, id);
-      return focus(id);
+      return focus(id, { parentId, placement: { kind: 'end' } });
     });
   }
 
@@ -241,26 +243,39 @@ export class Core {
     });
   }
 
-  splitNode(nodeId: string, before: RichText, after: RichText): CommandOutcome {
+  splitNode(nodeId: string, before: RichText, after: RichText, options: SplitNodeOptions = {}): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureNodeEditable(state, nodeId);
       const parentId = state.nodes[nodeId]?.parentId;
       if (!parentId) throw CoreError.noParent();
-      const index = (childIndex(state, parentId, nodeId) ?? 0) + 1;
+      const targetParentId = options.targetParentId ?? parentId;
+      ensureParentMutable(state, targetParentId);
+      const index = options.targetIndex ?? (
+        targetParentId === parentId
+          ? (childIndex(state, parentId, nodeId) ?? 0) + 1
+          : null
+      );
       const node = clone(requiredNode(state, nodeId));
       node.content = clone(before);
       node.updatedAt = nowMs();
       this.loro.writeNode(node);
 
       const newId = freshId('node');
-      const tags = [...node.tags];
-      this.loro.createNodeWithId(newId, parentId, index, undefined, (created) => {
+      const copiedTags = targetParentId === parentId ? [...node.tags] : [];
+      this.loro.createNodeWithId(newId, targetParentId, index, undefined, (created) => {
         created.content = clone(after);
-        created.tags = tags;
+        created.tags = copiedTags;
       });
-      for (const tagId of tags) this.instantiateTagTemplateDirect(newId, tagId);
-      return focus(newId);
+      if (targetParentId === parentId) {
+        for (const tagId of copiedTags) this.instantiateTagTemplateDirect(newId, tagId);
+      } else {
+        this.applyChildTagsDirect(targetParentId, newId);
+      }
+      return focus(newId, {
+        parentId: targetParentId,
+        placement: options.focusPlacement ?? { kind: 'start' },
+      });
     });
   }
 
@@ -1539,8 +1554,14 @@ function commitOriginFor(origin: CommitOrigin) {
   return DEFAULT_COMMIT_ORIGIN;
 }
 
-function focus(nodeId: string): FocusHint {
-  return { nodeId, selectAll: false };
+function focus(nodeId: string, options: FocusOptions = {}): FocusHint {
+  return {
+    nodeId,
+    selectAll: options.selectAll ?? (options.placement?.kind === 'all'),
+    ...(options.parentId !== undefined ? { parentId: options.parentId } : {}),
+    ...(options.surface ? { surface: options.surface } : {}),
+    ...(options.placement ? { placement: options.placement } : {}),
+  };
 }
 
 function nowMs() {

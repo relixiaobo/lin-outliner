@@ -31,10 +31,12 @@ type E2EWindow = Window & {
     projection: () => unknown;
     clipboardText: () => string;
     emitAgentEvent: (event: unknown) => void;
+    emitDocumentEvent: (event: unknown) => void;
   };
   lin?: {
     invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
     onAgentEvent: (listener: (event: unknown) => void) => () => void;
+    onDocumentEvent: (listener: (event: unknown) => void) => () => void;
   };
 };
 
@@ -93,6 +95,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     let clipboardText = '';
     const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
     const agentListeners: Array<(event: unknown) => void> = [];
+    const documentListeners: Array<(event: unknown) => void> = [];
     const agentSettings = {
       activeProviderId: 'openai',
       providers: [{
@@ -215,7 +218,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       todayId: ids.today,
       nodes: [...nodes.values()],
     });
-    const outcome = (focus?: { nodeId: string; selectAll: boolean }) => ({
+    const outcome = (focus?: { nodeId: string; selectAll: boolean; parentId?: string | null; placement?: unknown }) => ({
       projection: projection(),
       ...(focus ? { focus } : {}),
     });
@@ -414,7 +417,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       }
     };
 
-    win.__LIN_E2E__ = { calls, projection, clipboardText: () => clipboardText, emitAgentEvent };
+    const emitDocumentEvent = (event: unknown) => {
+      for (const listener of documentListeners) {
+        listener(clone(event));
+      }
+    };
+
+    win.__LIN_E2E__ = { calls, projection, clipboardText: () => clipboardText, emitAgentEvent, emitDocumentEvent };
     win.lin = {
       invoke: async <T,>(cmd: string, args: Record<string, unknown> = {}): Promise<T> => {
         calls.push({ cmd, args: clone(args) });
@@ -459,7 +468,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd === 'init_workspace' || cmd === 'get_projection') return clone(projection());
         if (cmd === 'create_node') {
           const nodeId = createNode(String(args.parentId), args.index as number | null, String(args.text ?? ''));
-          return clone(outcome({ nodeId, selectAll: false }));
+          return clone(outcome({ nodeId, parentId: String(args.parentId), placement: { kind: 'end' }, selectAll: false }));
         }
         if (cmd === 'create_nodes_from_tree') {
           const lastId = createTree(String(args.parentId), args.nodes as CreateNodeTree[]);
@@ -490,12 +499,22 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const node = nodes.get(nodeId);
           if (!node?.parentId) return clone(outcome());
           node.content = clone(args.before as RichText);
+          const targetParentId = typeof args.targetParentId === 'string' ? args.targetParentId : node.parentId;
           const parent = nodes.get(node.parentId);
-          const insertAt = parent ? parent.children.indexOf(nodeId) + 1 : null;
-          const nextId = createNode(node.parentId, insertAt, (args.after as RichText).text);
+          const insertAt = typeof args.targetIndex === 'number'
+            ? args.targetIndex
+            : targetParentId === node.parentId && parent
+              ? parent.children.indexOf(nodeId) + 1
+              : null;
+          const nextId = createNode(targetParentId, insertAt, (args.after as RichText).text);
           const next = nodes.get(nextId);
           if (next) next.content = clone(args.after as RichText);
-          return clone(outcome({ nodeId: nextId, selectAll: false }));
+          return clone(outcome({
+            nodeId: nextId,
+            parentId: targetParentId,
+            placement: args.focusPlacement ?? { kind: 'start' },
+            selectAll: false,
+          }));
         }
         if (cmd === 'merge_node_into') {
           const node = nodes.get(String(args.nodeId));
@@ -709,6 +728,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           if (index >= 0) agentListeners.splice(index, 1);
         };
       },
+      onDocumentEvent: (listener: (event: unknown) => void) => {
+        documentListeners.push(listener);
+        return () => {
+          const index = documentListeners.indexOf(listener);
+          if (index >= 0) documentListeners.splice(index, 1);
+        };
+      },
     };
   }, { ids, options });
 }
@@ -740,6 +766,13 @@ export async function emitAgentEvent(page: Page, event: unknown) {
   await page.evaluate((nextEvent) => {
     const win = window as E2EWindow;
     win.__LIN_E2E__?.emitAgentEvent(nextEvent);
+  }, event);
+}
+
+export async function emitDocumentEvent(page: Page, event: unknown) {
+  await page.evaluate((nextEvent) => {
+    const win = window as E2EWindow;
+    win.__LIN_E2E__?.emitDocumentEvent(nextEvent);
   }, event);
 }
 

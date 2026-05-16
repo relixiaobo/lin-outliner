@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type Dispatch, type MouseEvent, type SetStateAction } from 'react';
 import { api } from '../api/client';
-import type { FocusHint, NodeId, RichText, RichTextPatch } from '../api/types';
+import type { NodeId, RichText, RichTextPatch } from '../api/types';
 import { EMPTY_RICH_TEXT, plainText } from '../api/types';
 import { flattenVisibleRows, type DocumentIndex, type UiState } from '../state/document';
 import { RichTextEditor, type EditorSplitPayload } from './editor/RichTextEditor';
@@ -14,7 +14,17 @@ import { DefinitionConfigPanel } from './definition/DefinitionConfigPanel';
 import { definitionKind, definitionOutlinerLabel } from './definition/definitionConfig';
 import type { SlashCommandId } from './interactions/slashCommands';
 import type { CommandRunner, EditorTrigger, TriggerState } from './shared';
-import { focusRowInput, focusTrailingInput } from './shared';
+import {
+  clearFocusRequestState,
+  clearFocusState,
+  clearPendingInputState,
+  cursorEnd,
+  cursorStart,
+  focusTarget,
+  requestFocusState,
+  rowFocusTarget,
+  selectFocusState,
+} from './focus/focusModel';
 import {
   CalendarIcon,
   HashIcon,
@@ -37,6 +47,7 @@ import { TagBar } from './tags/TagBar';
 import { buildPanelBreadcrumb } from './panelBreadcrumb';
 
 interface NodePanelProps {
+  panelId: string;
   rootId: NodeId;
   onRoot: (nodeId: NodeId) => void;
   index: DocumentIndex;
@@ -45,7 +56,6 @@ interface NodePanelProps {
   run: CommandRunner;
   trigger: TriggerState;
   setTrigger: (trigger: TriggerState) => void;
-  pendingFocus: FocusHint | null;
   dragId: NodeId | null;
   setDragId: (nodeId: NodeId | null) => void;
 }
@@ -63,6 +73,8 @@ export function NodePanel(props: NodePanelProps) {
   const showOutliner = Boolean(rootNode && (!rootDefinitionKind || definitionTemplateLabel));
   const showTrailingInput = Boolean(rootNode && showOutliner);
   const breadcrumb = buildPanelBreadcrumb(rootNode, props.index);
+  const titleFocusTarget = focusTarget(props.rootId, null, props.panelId, 'panel-title');
+  const descriptionFocusTarget = focusTarget(props.rootId, null, props.panelId, 'description');
 
   useEffect(() => {
     setTitleContent(rootNode?.content ?? EMPTY_RICH_TEXT);
@@ -78,17 +90,19 @@ export function NodePanel(props: NodePanelProps) {
     );
     const first = rows[0];
     if (!first) {
-      focusTrailingInput(props.rootId);
+      props.setUi((prev) => requestFocusState(
+        prev,
+        focusTarget(props.rootId, props.rootId, props.panelId, 'trailing'),
+        cursorEnd(),
+      ));
       return;
     }
-    props.setUi((prev) => ({
-      ...prev,
-      focusedId: first,
-      selectedId: first,
-      selectedIds: new Set([first]),
-      selectionAnchorId: first,
-    }));
-    focusRowInput(first, 'start');
+    const firstNode = props.index.byId.get(first);
+    props.setUi((prev) => requestFocusState(
+      prev,
+      rowFocusTarget(first, firstNode?.parentId ?? props.rootId, props.panelId),
+      cursorStart(),
+    ));
   };
 
   const replaceLocalTitleContent = (content: RichText) => {
@@ -97,14 +111,12 @@ export function NodePanel(props: NodePanelProps) {
   };
 
   const focusNode = (nodeId: NodeId) => {
-    props.setUi((prev) => ({
-      ...prev,
-      focusedId: nodeId,
-      selectedId: nodeId,
-      selectedIds: new Set([nodeId]),
-      selectionAnchorId: nodeId,
-    }));
-    focusRowInput(nodeId, 'end');
+    const targetNode = props.index.byId.get(nodeId);
+    props.setUi((prev) => requestFocusState(
+      prev,
+      rowFocusTarget(nodeId, targetNode?.parentId ?? null, props.panelId),
+      cursorEnd(),
+    ));
   };
 
   const collapseNode = (nodeId: NodeId) => {
@@ -137,19 +149,13 @@ export function NodePanel(props: NodePanelProps) {
   const showDoneCheckbox = Boolean(rootNode?.showCheckbox || rootNode?.doneStateEnabled || rootNode?.completedAt);
 
   const selectHeader = () => {
-    props.setUi((prev) => ({
-      ...prev,
-      focusedId: props.rootId,
-      selectedId: props.rootId,
-      selectedIds: new Set([props.rootId]),
-      selectionAnchorId: props.rootId,
-    }));
+    props.setUi((prev) => selectFocusState(prev, titleFocusTarget));
   };
 
   const clearHeaderFocus = () => {
     props.setUi((prev) => (
       prev.focusedId === props.rootId
-        ? { ...prev, focusedId: null }
+        ? clearFocusState(prev)
         : prev
     ));
   };
@@ -187,7 +193,7 @@ export function NodePanel(props: NodePanelProps) {
     event.stopPropagation();
     blurActiveElement();
     props.setUi((prev) => ({
-      ...prev,
+      ...clearFocusState(prev),
       focusedId: null,
       selectedId: props.rootId,
       selectedIds: prev.selectedIds.has(props.rootId) ? new Set(prev.selectedIds) : new Set([props.rootId]),
@@ -202,7 +208,7 @@ export function NodePanel(props: NodePanelProps) {
     event.stopPropagation();
     blurActiveElement();
     props.setUi((prev) => ({
-      ...prev,
+      ...clearFocusState(prev),
       focusedId: null,
       selectedId: props.rootId,
       selectedIds: prev.selectedIds.has(props.rootId) ? new Set(prev.selectedIds) : new Set([props.rootId]),
@@ -358,6 +364,15 @@ export function NodePanel(props: NodePanelProps) {
                 onTriggerChange={(nextTrigger) => {
                   setTitleTrigger(nextTrigger);
                 }}
+                focusTarget={titleFocusTarget}
+                focusRequest={props.ui.focusRequest}
+                pendingInput={props.ui.pendingInputChar}
+                onFocusRequestConsumed={(request) => {
+                  props.setUi((prev) => clearFocusRequestState(prev, request));
+                }}
+                onPendingInputConsumed={(input) => {
+                  props.setUi((prev) => clearPendingInputState(prev, input));
+                }}
               />
               {titleTrigger && (
                 <TriggerPopover
@@ -387,6 +402,18 @@ export function NodePanel(props: NodePanelProps) {
                   ...prev,
                   editingDescriptionId: editing ? props.rootId : null,
                 }));
+              }}
+              focusTarget={descriptionFocusTarget}
+              focusRequest={props.ui.focusRequest}
+              pendingInput={props.ui.pendingInputChar}
+              onFocusTarget={(target) => {
+                props.setUi((prev) => selectFocusState(prev, target));
+              }}
+              onFocusRequestConsumed={(request) => {
+                props.setUi((prev) => clearFocusRequestState(prev, request));
+              }}
+              onPendingInputConsumed={(input) => {
+                props.setUi((prev) => clearPendingInputState(prev, input));
               }}
             />
           )}
@@ -431,7 +458,11 @@ export function NodePanel(props: NodePanelProps) {
             run={props.run}
             onRoot={props.onRoot}
             onEditDescription={() => {
-              props.setUi((prev) => ({ ...prev, editingDescriptionId: props.rootId }));
+              props.setUi((prev) => requestFocusState(
+                { ...prev, editingDescriptionId: props.rootId },
+                descriptionFocusTarget,
+                cursorEnd(),
+              ));
             }}
             onClose={() => setContextMenu(null)}
           />
@@ -445,6 +476,7 @@ export function NodePanel(props: NodePanelProps) {
               <div className="definition-template-label">{definitionTemplateLabel}</div>
             )}
             <OutlinerView
+              panelId={props.panelId}
               parentId={props.rootId}
               rootId={props.rootId}
               onRoot={props.onRoot}
@@ -455,15 +487,19 @@ export function NodePanel(props: NodePanelProps) {
               run={props.run}
               trigger={props.trigger}
               setTrigger={props.setTrigger}
-              pendingFocus={props.pendingFocus}
               dragId={props.dragId}
               setDragId={props.setDragId}
             />
             {showTrailingInput && (
               <TrailingInput
+                panelId={props.panelId}
                 parentId={props.rootId}
                 index={props.index}
                 expanded={props.ui.expanded}
+                focusRequest={props.ui.focusRequest}
+                onFocusRequestConsumed={(request) => {
+                  props.setUi((prev) => clearFocusRequestState(prev, request));
+                }}
                 onCreate={async (parentId, text) => {
                   const result = await props.run(() => api.createNode(parentId, null, text));
                   return result && 'focus' in result ? result.focus?.nodeId ?? null : null;

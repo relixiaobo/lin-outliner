@@ -19,6 +19,7 @@ import {
   resolveSelectionKeyboardAction,
   shouldIgnoreSelectionKeyboardTarget,
 } from './interactions/selectionKeyboard';
+import { clearFocusState } from './focus/focusModel';
 import type { CommandRunner } from './shared';
 
 async function writeClipboardText(text: string): Promise<boolean> {
@@ -67,7 +68,35 @@ export function useWorkspaceKeyboard({
 }: UseWorkspaceKeyboardOptions) {
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (isImeComposingEvent(event)) return;
+      const focusSelectedRowForTextInput = () => {
+        if (!rootId || !index || ui.focusedId || ui.selectedIds.size === 0) return;
+        if (
+          event.target instanceof HTMLElement
+          && event.target.closest('[data-preserve-selection]')
+        ) {
+          return;
+        }
+        if (shouldIgnoreSelectionKeyboardTarget(event.target, {
+          allowContentEditable: ui.selectedIds.size > 1,
+        })) {
+          return;
+        }
+        const rows = flattenVisibleRows(rootId, index.byId, ui.expanded, ui.expandedHiddenFields);
+        const orderedSelected = orderedSelectedRows(rows, ui.selectedIds);
+        const anchor = resolveSelectionAnchor({
+          rows,
+          selectedIds: ui.selectedIds,
+          selectedId: ui.selectedId,
+          selectionAnchorId: ui.selectionAnchorId,
+        });
+        if (!anchor) return;
+        requestEditFocus(orderedSelected[0] ?? anchor);
+      };
+
+      if (isImeComposingEvent(event)) {
+        focusSelectedRowForTextInput();
+        return;
+      }
       if (
         event.target instanceof HTMLElement
         && event.target.closest('[data-preserve-selection]')
@@ -126,7 +155,7 @@ export function useWorkspaceKeyboard({
       }
       if (action === 'select_all') {
         setUi((prev) => ({
-          ...prev,
+          ...clearFocusState(prev),
           focusedId: null,
           selectedId: rows[0] ?? prev.selectedId,
           selectedIds: new Set(rows),
@@ -142,7 +171,7 @@ export function useWorkspaceKeyboard({
           action === 'extend_down' ? 'down' : 'up',
         );
         setUi((prev) => ({
-          ...prev,
+          ...clearFocusState(prev),
           focusedId: null,
           selectedId: [...selectedIds].at(-1) ?? anchor,
           selectedIds,
@@ -177,7 +206,7 @@ export function useWorkspaceKeyboard({
           void run(() => api.batchTrashNodes(batchIds)).then(() => {
             if (previous && !batchIds.includes(previous)) requestEditFocus(previous);
             else setUi((prev) => ({
-              ...prev,
+              ...clearFocusState(prev),
               focusedId: null,
               selectedIds: new Set(),
               selectionAnchorId: null,
@@ -191,7 +220,7 @@ export function useWorkspaceKeyboard({
         void run(() => api.batchTrashNodes(batchIds)).then(() => {
           if (previous && !batchIds.includes(previous)) requestEditFocus(previous);
           else setUi((prev) => ({
-            ...prev,
+            ...clearFocusState(prev),
             focusedId: null,
             selectedIds: new Set(),
             selectionAnchorId: null,
@@ -207,7 +236,7 @@ export function useWorkspaceKeyboard({
         const move = action === 'batch_move_up' ? api.batchMoveNodesUp : api.batchMoveNodesDown;
         void run(() => move(batchIds)).then(() => {
           setUi((prev) => ({
-            ...prev,
+            ...clearFocusState(prev),
             focusedId: null,
             selectedId: anchor,
             selectedIds: new Set(batchIds),
@@ -221,7 +250,7 @@ export function useWorkspaceKeyboard({
           document.activeElement.blur();
         }
         setUi((prev) => ({
-          ...prev,
+          ...clearFocusState(prev),
           focusedId: null,
           batchTagSelectorOpen: true,
         }));
@@ -252,7 +281,7 @@ export function useWorkspaceKeyboard({
           }
           if (action === 'batch_checkbox') {
             setUi((prev) => ({
-              ...prev,
+              ...clearFocusState(prev),
               focusedId: null,
               selectedId: anchor,
               selectedIds: new Set(batchIds),
