@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AgentModelOption,
   AgentProviderConfigView,
@@ -51,30 +51,49 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const mountedRef = useRef(false);
+  const requestRef = useRef(0);
 
   useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      requestRef.current += 1;
+    };
+  }, []);
+
+  function beginRequest() {
+    requestRef.current += 1;
+    return requestRef.current;
+  }
+
+  function isCurrentRequest(requestId: number) {
+    return mountedRef.current && requestId === requestRef.current;
+  }
+
+  useEffect(() => {
+    if (!open) {
+      beginRequest();
+      setSaving(false);
+      return;
+    }
+    const requestId = beginRequest();
     setLoading(true);
     setError(null);
     setNotice(null);
     void api.agentGetProviderSettings()
       .then((next) => {
-        if (cancelled) return;
+        if (!isCurrentRequest(requestId)) return;
         setSettings(next);
         setDraft(resolveInitialDraft(next));
         setApiKey('');
       })
       .catch((caught) => {
-        if (!cancelled) setError(caught instanceof Error ? caught.message : String(caught));
+        if (isCurrentRequest(requestId)) setError(caught instanceof Error ? caught.message : String(caught));
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (isCurrentRequest(requestId)) setLoading(false);
       });
-
-    return () => {
-      cancelled = true;
-    };
   }, [open]);
 
   const providerCatalog = useMemo(() => {
@@ -123,6 +142,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
       return;
     }
 
+    const requestId = beginRequest();
     setSaving(true);
     setError(null);
     setNotice(null);
@@ -139,55 +159,63 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
         await api.agentSetProviderApiKey(providerId, apiKey.trim());
         next = await api.agentGetProviderSettings();
       }
-      setSettings(next);
-      setDraft(resolveDraftForProvider(next, providerId));
-      setApiKey('');
-      setNotice('Saved');
+      if (isCurrentRequest(requestId)) {
+        setSettings(next);
+        setDraft(resolveDraftForProvider(next, providerId));
+        setApiKey('');
+        setNotice('Saved');
+      }
       await onApplied();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      if (isCurrentRequest(requestId)) setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
-      setSaving(false);
+      if (isCurrentRequest(requestId)) setSaving(false);
     }
   }
 
   async function removeApiKey() {
     const providerId = draft.providerId.trim();
     if (!providerId) return;
+    const requestId = beginRequest();
     setSaving(true);
     setError(null);
     setNotice(null);
     try {
       await api.agentDeleteProviderApiKey(providerId);
       const next = await api.agentGetProviderSettings();
-      setSettings(next);
-      setDraft(resolveDraftForProvider(next, providerId));
-      setNotice('Key removed');
+      if (isCurrentRequest(requestId)) {
+        setSettings(next);
+        setDraft(resolveDraftForProvider(next, providerId));
+        setNotice('Key removed');
+      }
       await onApplied();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      if (isCurrentRequest(requestId)) setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
-      setSaving(false);
+      if (isCurrentRequest(requestId)) setSaving(false);
     }
   }
 
   async function removeProvider() {
     const providerId = draft.providerId.trim();
     if (!providerId || !configuredProvider) return;
+    const requestId = beginRequest();
     setSaving(true);
     setError(null);
     setNotice(null);
     try {
       const next = await api.agentDeleteProviderConfig(providerId);
-      setSettings(next);
-      setDraft(resolveInitialDraft(next));
-      setApiKey('');
-      setNotice('Provider removed');
+      if (isCurrentRequest(requestId)) {
+        setSettings(next);
+        setDraft(resolveInitialDraft(next));
+        setApiKey('');
+        setNotice('Provider removed');
+      }
       await onApplied();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      if (isCurrentRequest(requestId)) setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
-      setSaving(false);
+      if (isCurrentRequest(requestId)) setSaving(false);
     }
   }
 

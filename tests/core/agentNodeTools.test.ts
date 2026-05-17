@@ -86,20 +86,8 @@ async function executeRawTool<TData>(core: Core, name: string, params: unknown):
   };
 }
 
-function parseVisibleToolResult<TData>(contentText: string): {
-  ok: boolean;
-  tool: string;
-  status: string;
-  data?: TData;
-  metrics?: unknown;
-} {
-  return JSON.parse(contentText) as {
-    ok: boolean;
-    tool: string;
-    status: string;
-    data?: TData;
-    metrics?: unknown;
-  };
+function parseVisibleToolResult<TData>(contentText: string): TData {
+  return JSON.parse(contentText) as TData;
 }
 
 describe('agent node tools', () => {
@@ -154,20 +142,51 @@ describe('agent node tools', () => {
     });
 
     const visible = parseVisibleToolResult<{
-      summary: string;
+      kind: 'mutation';
+      action: 'create';
+      status: 'applied' | 'preview' | 'unchanged';
       outline?: string;
       changes?: { created?: string[] };
-      handles?: Array<{ nodeId: string; path?: string }>;
+      refs?: Array<{ nodeId: string; path?: string }>;
+      next?: { tool: string; params?: Record<string, unknown> };
     }>(result.contentText);
 
-    expect(visible.ok).toBe(true);
-    expect(visible.metrics).toBeUndefined();
-    expect(visible.data!.summary).toContain('Created 1 root node');
-    expect(visible.data!.outline).toBeUndefined();
-    expect(visible.data!.changes!.created).toEqual(result.details.data!.createdNodeIds);
-    expect(visible.data!.handles![0]!.nodeId).toBe(result.details.data!.createdRootIds[0]);
+    expect(visible.kind).toBe('mutation');
+    expect(visible.action).toBe('create');
+    expect(visible.status).toBe('applied');
+    expect((visible as any).metrics).toBeUndefined();
+    expect((visible as any).ok).toBeUndefined();
+    expect(visible.outline).toBeUndefined();
+    expect(visible.changes!.created).toEqual(result.details.data!.createdNodeIds);
+    expect(visible.refs![0]!.nodeId).toBe(result.details.data!.createdRootIds[0]);
+    expect(visible.next).toMatchObject({ tool: 'node_read' });
     expect(result.details.data!.outline).toContain('Status:: Active');
     expect(result.contentText).not.toContain('Status:: Active');
+  });
+
+  test('node_create keeps CSS hex colors as text instead of bare tags', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+
+    const envelope = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parentId: today,
+      outline: '- Palette - brand #112233 #urgent\n  - Swatch #fff\n  - Explicit tag #[[abc]]',
+    });
+
+    expect(envelope.ok).toBe(true);
+    const state = core.state();
+    const root = state.nodes[envelope.data!.createdRootIds[0]!]!;
+    const swatch = state.nodes[root.children[0]!]!;
+    const explicit = state.nodes[root.children[1]!]!;
+    const tagNames = (tagIds: string[]) => tagIds.map((tagId) => state.nodes[tagId]!.content.text);
+
+    expect(root.content.text).toBe('Palette');
+    expect(root.description).toBe('brand #112233');
+    expect(tagNames(root.tags)).toEqual(['urgent']);
+    expect(swatch.content.text).toBe('Swatch #fff');
+    expect(swatch.tags).toEqual([]);
+    expect(explicit.content.text).toBe('Explicit tag');
+    expect(tagNames(explicit.tags)).toEqual(['abc']);
   });
 
   test('node_create preserves unchecked checkbox markers', async () => {
@@ -434,16 +453,19 @@ describe('agent node tools', () => {
     });
 
     const visible = parseVisibleToolResult<{
-      summary: string;
+      kind: 'mutation';
+      action: 'edit';
+      status: 'applied' | 'preview' | 'unchanged';
       outline?: string;
       changes?: { updated?: string[] };
-      handles?: Array<{ nodeId: string }>;
+      refs?: Array<{ nodeId: string }>;
     }>(result.contentText);
 
     expect(result.details.data!.beforeOutline).toContain('Task A');
     expect(result.details.data!.afterOutline).toContain('Task B');
-    expect(visible.data!.outline).toBeUndefined();
-    expect(visible.data!.changes!.updated).toEqual(result.details.data!.affectedNodeIds);
+    expect(visible).toMatchObject({ kind: 'mutation', action: 'edit', status: 'applied' });
+    expect(visible.outline).toBeUndefined();
+    expect(visible.changes!.updated).toEqual(result.details.data!.affectedNodeIds);
     expect(JSON.stringify(visible)).not.toContain('beforeOutline');
     expect(JSON.stringify(visible)).not.toContain('afterOutline');
   });
@@ -750,7 +772,7 @@ describe('agent node tools', () => {
     expect(item.outline).toContain('  - Draft plan');
   });
 
-  test('node_read default returns outline-visible handles without structured child details', async () => {
+  test('node_read default returns outline-visible refs without structured child details', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
     const root = mustFocus(core.createNode(today, null, 'Root'));
@@ -760,19 +782,44 @@ describe('agent node tools', () => {
       items: Array<{ nodeId: string; children: { items: Array<{ nodeId: string }> }; outline?: string }>;
     }>(core, 'node_read', { nodeId: root, depth: 1 });
     const visible = parseVisibleToolResult<{
-      summary: string;
+      kind: 'read';
       outline?: string;
-      handles?: Array<{ nodeId: string; path?: string }>;
+      refs?: Array<{ nodeId: string; path?: string }>;
     }>(result.contentText);
 
-    expect(visible.ok).toBe(true);
-    expect(visible.metrics).toBeUndefined();
-    expect(visible.data!.outline).toBe('- Root\n  - Child');
-    expect(visible.data!.handles).toEqual(expect.arrayContaining([
+    expect(visible.kind).toBe('read');
+    expect((visible as any).metrics).toBeUndefined();
+    expect((visible as any).ok).toBeUndefined();
+    expect(visible.outline).toBe('- Root\n  - Child');
+    expect(visible.refs).toEqual(expect.arrayContaining([
       expect.objectContaining({ nodeId: root, path: '1' }),
       expect.objectContaining({ nodeId: child, path: '1.1' }),
     ]));
     expect(result.details.data!.items[0]!.children.items).toEqual([]);
+  });
+
+  test('node_read model-visible errors use the node protocol', async () => {
+    const core = Core.new();
+
+    const result = await executeRawTool(core, 'node_read', { nodeId: 'missing-node' });
+    const visible = parseVisibleToolResult<{
+      kind: 'error';
+      code: string;
+      message: string;
+      recoverable: boolean;
+      retry?: { tool: string; reason?: string };
+    }>(result.contentText);
+
+    expect(result.details.ok).toBe(false);
+    expect(visible).toMatchObject({
+      kind: 'error',
+      code: 'node_not_found',
+      recoverable: true,
+      retry: { tool: 'node_search' },
+    });
+    expect((visible as any).details).toBeUndefined();
+    expect((visible as any).metrics).toBeUndefined();
+    expect((visible as any).ok).toBeUndefined();
   });
 
   test('node_search supports simple query search', async () => {
@@ -793,7 +840,7 @@ describe('agent node tools', () => {
     ]);
   });
 
-  test('node_search model-visible result is an outline-like result list', async () => {
+  test('node_search model-visible result returns matches and refs', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
     const chengdu = mustFocus(core.createNode(today, null, 'Chengdu weather'));
@@ -804,15 +851,17 @@ describe('agent node tools', () => {
       items?: Array<{ nodeId: string; title: string }>;
     }>(core, 'node_search', { query: 'Chengdu', limit: 10 });
     const visible = parseVisibleToolResult<{
-      summary: string;
-      outline?: string;
-      handles?: Array<{ nodeId: string; line?: number }>;
+      kind: 'search';
+      matches: Array<{ nodeId: string; line?: number; snippet?: string }>;
+      refs?: Array<{ nodeId: string; line?: number }>;
       page?: { total: number; offset: number; limit: number; nextOffset?: number };
     }>(result.contentText);
 
-    expect(visible.data!.outline).toBe('- Chengdu weather');
-    expect(visible.data!.handles).toEqual([expect.objectContaining({ nodeId: chengdu, line: 1 })]);
-    expect(visible.data!.page).toMatchObject({ total: 1, offset: 0, limit: 10 });
+    expect(visible.kind).toBe('search');
+    expect((visible as any).outline).toBeUndefined();
+    expect(visible.matches).toEqual([expect.objectContaining({ nodeId: chengdu, line: 1, snippet: 'Chengdu weather' })]);
+    expect(visible.refs).toEqual([expect.objectContaining({ nodeId: chengdu, line: 1 })]);
+    expect(visible.page).toMatchObject({ total: 1, offset: 0, limit: 10 });
     expect(result.details.data!.items![0]!.nodeId).toBe(chengdu);
   });
 

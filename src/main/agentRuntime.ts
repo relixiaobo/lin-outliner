@@ -13,6 +13,7 @@ import {
   type AgentDebugTotals,
   type AgentMessage,
   type AgentRuntimeEvent,
+  type AgentSnapshotState,
   type ImageContent,
   type TextContent,
   type UserMessage,
@@ -117,22 +118,22 @@ export class AgentRuntime {
 
   async restoreLatestSession() {
     const chatSession = await getLatestChatSession() ?? createAgentChatSession(this.createSessionId());
-    await this.createSessionWithChatSession(chatSession);
-    return { sessionId: chatSession.id };
+    const session = await this.createSessionWithChatSession(chatSession);
+    return this.sessionResponse(chatSession.id, session);
   }
 
   async restoreSession(sessionId: string) {
     const chatSession = await getChatSession(sessionId);
     if (!chatSession) throw new Error(`Agent chat session not found: ${sessionId}`);
-    await this.createSessionWithChatSession(chatSession);
-    return { sessionId };
+    const session = await this.createSessionWithChatSession(chatSession);
+    return this.sessionResponse(sessionId, session);
   }
 
   async createSession() {
     const chatSession = createAgentChatSession(this.createSessionId());
-    await this.createSessionWithChatSession(chatSession);
+    const session = await this.createSessionWithChatSession(chatSession);
     await saveChatSession(chatSession);
-    return { sessionId: chatSession.id };
+    return this.sessionResponse(chatSession.id, session);
   }
 
   listSessions() {
@@ -355,6 +356,7 @@ export class AgentRuntime {
     });
     this.sessions.set(sessionId, session);
     this.emitSnapshot(sessionId, 'session_created');
+    return session;
   }
 
   private async ensureSessionWithId(sessionId: string) {
@@ -446,28 +448,39 @@ export class AgentRuntime {
     return `lin-agent-${randomUUID()}`;
   }
 
+  private sessionResponse(sessionId: string, session: AgentSessionState) {
+    return {
+      sessionId,
+      state: this.snapshotState(session),
+    };
+  }
+
+  private snapshotState(session: AgentSessionState): AgentSnapshotState {
+    const state = session.agent.state;
+    return {
+      sessionTitle: session.chatSession.title,
+      systemPrompt: state.systemPrompt,
+      model: clone(state.model) as unknown as Record<string, unknown>,
+      thinkingLevel: state.thinkingLevel,
+      messages: state.messages.map(clone),
+      conversation: buildConversationSnapshot(session.chatSession).map(clone),
+      streamingMessage: state.streamingMessage ? clone(state.streamingMessage) : null,
+      isStreaming: state.isStreaming,
+      pendingToolCallIds: Array.from(state.pendingToolCalls),
+      errorMessage: state.errorMessage ?? null,
+    };
+  }
+
   private emitSnapshot(sessionId: string, lastEventType: string | null = null) {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     session.revision += 1;
-    const state = session.agent.state;
     this.emit({
       type: 'snapshot',
       sessionId,
       lastEventType,
       revision: session.revision,
-      state: {
-        sessionTitle: session.chatSession.title,
-        systemPrompt: state.systemPrompt,
-        model: clone(state.model) as unknown as Record<string, unknown>,
-        thinkingLevel: state.thinkingLevel,
-        messages: state.messages.map(clone),
-        conversation: buildConversationSnapshot(session.chatSession).map(clone),
-        streamingMessage: state.streamingMessage ? clone(state.streamingMessage) : null,
-        isStreaming: state.isStreaming,
-        pendingToolCallIds: Array.from(state.pendingToolCalls),
-        errorMessage: state.errorMessage ?? null,
-      },
+      state: this.snapshotState(session),
       timestamp: Date.now(),
     });
   }

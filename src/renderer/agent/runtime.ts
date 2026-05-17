@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 import { api } from '../api/client';
 import type {
   AgentConversationSnapshotEntry,
@@ -11,7 +11,9 @@ import type {
   AssistantMessage,
   TextContent,
   ToolResultMessage,
+  UserMessage,
 } from '../../core/agentTypes';
+import type { AgentSession } from '../../core/types';
 
 export interface AgentMessageEntry {
   id: string;
@@ -177,206 +179,385 @@ function sessionCost(snapshot: AgentSnapshotState): number {
   }, 0);
 }
 
-export function useLinAgentRuntime() {
-  const [snapshot, setSnapshot] = useState<AgentSnapshotState>(EMPTY_SNAPSHOT);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const sessionIdRef = useRef<string | null>(null);
-  const createSessionPromiseRef = useRef<Promise<string> | null>(null);
+export interface AgentRuntimeClient {
+  restoreLatestSession: () => Promise<AgentSession>;
+  restoreSession: (sessionId: string) => Promise<AgentSession>;
+  createSession: () => Promise<AgentSession>;
+  closeSession: (sessionId: string) => Promise<void>;
+  sendMessage: (sessionId: string, message: string, attachments?: AgentMessageAttachmentInput[]) => Promise<void>;
+  editMessage: (sessionId: string, nodeId: string, message: string) => Promise<void>;
+  regenerateMessage: (sessionId: string, nodeId: string) => Promise<void>;
+  retryMessage: (sessionId: string, nodeId: string) => Promise<void>;
+  switchBranch: (sessionId: string, nodeId: string) => Promise<void>;
+  queueFollowUp: (sessionId: string, message: string) => Promise<{ queued: boolean }>;
+  clearFollowUp: (sessionId: string) => Promise<void>;
+  stopSession: (sessionId: string) => Promise<void>;
+  onEvent: (listener: (event: AgentRuntimeEvent) => void) => (() => void) | null;
+}
 
-  const ensureSession = useCallback(async () => {
-    if (sessionIdRef.current) {
-      return sessionIdRef.current;
-    }
+export interface LinAgentRuntimeView {
+  entries: AgentConversationEntry[];
+  error: string | null;
+  isStreaming: boolean;
+  modelId: string | null;
+  providerId: string | null;
+  pendingToolCallIds: Set<string>;
+  reasoningLevel: string;
+  revision: string;
+  sessionId: string | null;
+  sessionTitle: string | null;
+  sessionCost: number;
+  toolResults: Map<string, ToolResultMessage>;
+  turnPhase: AgentTurnPhase;
+  selectSession: (targetSessionId: string) => Promise<void>;
+  newSession: () => Promise<void>;
+  sendMessage: (prompt: string, attachments?: AgentMessageAttachmentInput[]) => Promise<void>;
+  editMessage: (nodeId: string, prompt: string) => Promise<void>;
+  regenerateMessage: (nodeId: string) => Promise<void>;
+  retryMessage: (nodeId: string) => Promise<void>;
+  switchBranch: (nodeId: string) => Promise<void>;
+  queueFollowUp: (prompt: string) => Promise<boolean>;
+  clearFollowUp: () => Promise<void>;
+  stop: () => void;
+  reset: () => void;
+  reloadSession: () => Promise<void>;
+  seedUserMessage: (message: string) => UserMessage;
+}
 
-    if (!createSessionPromiseRef.current) {
-      createSessionPromiseRef.current = api.agentRestoreLatestSession().then((session) => {
-        sessionIdRef.current = session.sessionId;
-        setSessionId(session.sessionId);
-        return session.sessionId;
-      });
-    }
+const defaultAgentRuntimeClient: AgentRuntimeClient = {
+  restoreLatestSession: () => api.agentRestoreLatestSession(),
+  restoreSession: (sessionId) => api.agentRestoreSession(sessionId),
+  createSession: () => api.agentCreateSession(),
+  closeSession: (sessionId) => api.agentCloseSession(sessionId),
+  sendMessage: (sessionId, message, attachments = []) => api.agentSendMessage(sessionId, message, attachments),
+  editMessage: (sessionId, nodeId, message) => api.agentEditMessage(sessionId, nodeId, message),
+  regenerateMessage: (sessionId, nodeId) => api.agentRegenerateMessage(sessionId, nodeId),
+  retryMessage: (sessionId, nodeId) => api.agentRetryMessage(sessionId, nodeId),
+  switchBranch: (sessionId, nodeId) => api.agentSwitchBranch(sessionId, nodeId),
+  queueFollowUp: (sessionId, message) => api.agentQueueFollowUp(sessionId, message),
+  clearFollowUp: (sessionId) => api.agentClearFollowUp(sessionId),
+  stopSession: (sessionId) => api.agentStopSession(sessionId),
+  onEvent: (listener) => typeof window === 'undefined' ? null : window.lin?.onAgentEvent(listener) ?? null,
+};
 
-    return createSessionPromiseRef.current;
-  }, []);
+export class AgentRuntimeStore {
+  private readonly listeners = new Set<() => void>();
+  private snapshot: AgentSnapshotState = EMPTY_SNAPSHOT;
+  private sessionId: string | null = null;
+  private error: string | null = null;
+  private restorePromise: Promise<string> | null = null;
+  private requestVersion = 0;
+  private started = false;
+  private view: LinAgentRuntimeView;
 
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | null = null;
+  constructor(private readonly client: AgentRuntimeClient) {
+    this.view = this.buildView();
+  }
 
-    const dispose = window.lin?.onAgentEvent((payload: AgentRuntimeEvent) => {
-      if (payload.type === 'ready') {
-        return;
-      }
-
-      if (payload.type === 'closed') {
-        if (payload.sessionId === sessionIdRef.current) {
-          sessionIdRef.current = null;
-          setSessionId(null);
-          setSnapshot(EMPTY_SNAPSHOT);
-        }
-        return;
-      }
-
-      if (payload.type === 'error') {
-        if (!sessionIdRef.current || payload.sessionId === sessionIdRef.current) {
-          setError(payload.error);
-        }
-        return;
-      }
-
-      if (payload.type === 'snapshot') {
-        if (!sessionIdRef.current) {
-          sessionIdRef.current = payload.sessionId;
-          setSessionId(payload.sessionId);
-        }
-        if (payload.sessionId !== sessionIdRef.current) {
-          return;
-        }
-        setError(payload.state.errorMessage);
-        setSnapshot(payload.state);
-      }
-    }) ?? null;
-    unlisten = dispose;
-    void ensureSession().then((createdSessionId) => {
-      if (cancelled) {
-        void api.agentCloseSession(createdSessionId);
-      }
-    }).catch((caught) => {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    });
-
+  subscribe = (listener: () => void) => {
+    this.listeners.add(listener);
+    this.start();
     return () => {
-      cancelled = true;
-      const currentSessionId = sessionIdRef.current;
-      if (currentSessionId) {
-        void api.agentCloseSession(currentSessionId);
-      }
-      unlisten?.();
+      this.listeners.delete(listener);
     };
-  }, [ensureSession]);
+  };
 
-  return useMemo(() => {
-    const toolResults = buildToolResultMap(snapshot.messages);
-    const { entries, turnPhase } = buildEntries(snapshot, toolResults);
+  getSnapshot = () => this.view;
 
+  selectSession = async (targetSessionId: string) => {
+    if (!targetSessionId || targetSessionId === this.sessionId) return;
+    const previousSessionId = this.sessionId;
+    const requestVersion = this.beginSessionRequest();
+    this.sessionId = targetSessionId;
+    this.snapshot = EMPTY_SNAPSHOT;
+    this.error = null;
+    this.publish();
+    try {
+      const session = await this.client.restoreSession(targetSessionId);
+      if (!this.isCurrentRequest(requestVersion)) return;
+      this.hydrateSession(session);
+      await this.closePreviousSession(previousSessionId, session.sessionId);
+    } catch (caught) {
+      this.reportError(caught);
+      throw caught;
+    }
+  };
+
+  newSession = async () => {
+    const previousSessionId = this.sessionId;
+    const requestVersion = this.beginSessionRequest();
+    this.sessionId = null;
+    this.snapshot = EMPTY_SNAPSHOT;
+    this.error = null;
+    this.publish();
+    try {
+      const session = await this.client.createSession();
+      if (!this.isCurrentRequest(requestVersion)) return;
+      this.hydrateSession(session);
+      await this.closePreviousSession(previousSessionId, session.sessionId);
+    } catch (caught) {
+      this.reportError(caught);
+      throw caught;
+    }
+  };
+
+  sendMessage = async (prompt: string, attachments: AgentMessageAttachmentInput[] = []) => {
+    const trimmed = prompt.trim();
+    if (!trimmed && attachments.length === 0) return;
+    try {
+      const currentSessionId = await this.ensureSession();
+      await this.client.sendMessage(currentSessionId, trimmed, attachments);
+    } catch (caught) {
+      this.reportError(caught);
+      throw caught;
+    }
+  };
+
+  editMessage = async (nodeId: string, prompt: string) => {
+    const trimmed = prompt.trim();
+    if (!trimmed || !this.sessionId) return;
+    try {
+      await this.client.editMessage(this.sessionId, nodeId, trimmed);
+    } catch (caught) {
+      this.reportError(caught);
+      throw caught;
+    }
+  };
+
+  regenerateMessage = async (nodeId: string) => {
+    if (!this.sessionId) return;
+    try {
+      await this.client.regenerateMessage(this.sessionId, nodeId);
+    } catch (caught) {
+      this.reportError(caught);
+      throw caught;
+    }
+  };
+
+  retryMessage = async (nodeId: string) => {
+    if (!this.sessionId) return;
+    try {
+      await this.client.retryMessage(this.sessionId, nodeId);
+    } catch (caught) {
+      this.reportError(caught);
+      throw caught;
+    }
+  };
+
+  switchBranch = async (nodeId: string) => {
+    if (!this.sessionId) return;
+    try {
+      await this.client.switchBranch(this.sessionId, nodeId);
+    } catch (caught) {
+      this.reportError(caught);
+      throw caught;
+    }
+  };
+
+  queueFollowUp = async (prompt: string) => {
+    const trimmed = prompt.trim();
+    if (!trimmed) return false;
+    try {
+      const currentSessionId = await this.ensureSession();
+      const result = await this.client.queueFollowUp(currentSessionId, trimmed);
+      return result.queued;
+    } catch (caught) {
+      this.reportError(caught);
+      throw caught;
+    }
+  };
+
+  clearFollowUp = async () => {
+    if (!this.sessionId) return;
+    try {
+      await this.client.clearFollowUp(this.sessionId);
+    } catch (caught) {
+      this.reportError(caught);
+      throw caught;
+    }
+  };
+
+  stop = () => {
+    if (!this.sessionId) return;
+    void this.client.stopSession(this.sessionId).catch((caught) => {
+      this.reportError(caught);
+    });
+  };
+
+  reset = () => {
+    void this.newSession();
+  };
+
+  reloadSession = async () => {
+    const currentSessionId = this.sessionId;
+    const requestVersion = this.beginSessionRequest();
+    this.snapshot = EMPTY_SNAPSHOT;
+    this.error = null;
+    this.publish();
+    try {
+      if (currentSessionId) {
+        this.sessionId = currentSessionId;
+        this.publish();
+        const session = await this.client.restoreSession(currentSessionId);
+        if (this.isCurrentRequest(requestVersion)) this.hydrateSession(session);
+        return;
+      }
+      await this.ensureSession();
+    } catch (caught) {
+      this.reportError(caught);
+      throw caught;
+    }
+  };
+
+  seedUserMessage = (message: string): UserMessage => ({
+    role: 'user',
+    content: textContent(message),
+    timestamp: Date.now(),
+  });
+
+  private start() {
+    if (this.started) return;
+    this.started = true;
+    this.client.onEvent(this.handleEvent);
+    void this.ensureSession().catch((caught) => {
+      this.reportError(caught);
+    });
+  }
+
+  private ensureSession() {
+    if (this.sessionId) return Promise.resolve(this.sessionId);
+    if (!this.restorePromise) {
+      const requestVersion = this.requestVersion;
+      this.restorePromise = this.client.restoreLatestSession()
+        .then((session) => {
+          if (!this.isCurrentRequest(requestVersion)) {
+            return this.sessionId ?? session.sessionId;
+          }
+          this.hydrateSession(session);
+          return session.sessionId;
+        })
+        .catch((caught) => {
+          this.restorePromise = null;
+          throw caught;
+        });
+    }
+    return this.restorePromise;
+  }
+
+  private hydrateSession(session: AgentSession) {
+    this.sessionId = session.sessionId;
+    if (session.state) {
+      this.snapshot = session.state;
+      this.error = session.state.errorMessage;
+    }
+    this.publish();
+  }
+
+  private handleEvent = (payload: AgentRuntimeEvent) => {
+    if (payload.type === 'ready') return;
+
+    if (payload.type === 'closed') {
+      if (payload.sessionId === this.sessionId) {
+        this.beginSessionRequest();
+        this.sessionId = null;
+        this.restorePromise = null;
+        this.snapshot = EMPTY_SNAPSHOT;
+        this.error = null;
+        this.publish();
+      }
+      return;
+    }
+
+    if (payload.type === 'error') {
+      if (!this.sessionId || payload.sessionId === this.sessionId) {
+        this.error = payload.error;
+        this.publish();
+      }
+      return;
+    }
+
+    if (payload.type === 'snapshot') {
+      if (!this.sessionId) {
+        this.sessionId = payload.sessionId;
+      }
+      if (payload.sessionId !== this.sessionId) return;
+      this.snapshot = payload.state;
+      this.error = payload.state.errorMessage;
+      this.publish();
+    }
+  };
+
+  private async closePreviousSession(previousSessionId: string | null, nextSessionId: string) {
+    if (!previousSessionId || previousSessionId === nextSessionId) return;
+    await this.client.closeSession(previousSessionId);
+  }
+
+  private beginSessionRequest() {
+    this.requestVersion += 1;
+    this.restorePromise = null;
+    return this.requestVersion;
+  }
+
+  private isCurrentRequest(requestVersion: number) {
+    return requestVersion === this.requestVersion;
+  }
+
+  private reportError(caught: unknown) {
+    this.error = caught instanceof Error ? caught.message : String(caught);
+    this.publish();
+  }
+
+  private publish() {
+    this.view = this.buildView();
+    for (const listener of this.listeners) {
+      listener();
+    }
+  }
+
+  private buildView(): LinAgentRuntimeView {
+    const toolResults = buildToolResultMap(this.snapshot.messages);
+    const { entries, turnPhase } = buildEntries(this.snapshot, toolResults);
     return {
       entries,
-      error,
-      isStreaming: snapshot.isStreaming,
-      modelId: snapshotModelValue(snapshot, 'id'),
-      providerId: snapshotModelValue(snapshot, 'provider'),
-      pendingToolCallIds: new Set(snapshot.pendingToolCallIds),
-      reasoningLevel: snapshot.thinkingLevel,
-      revision: `${sessionId ?? 'pending'}-${snapshot.messages.length}-${snapshot.pendingToolCallIds.join(',')}`,
-      sessionId,
-      sessionTitle: snapshot.sessionTitle,
-      sessionCost: sessionCost(snapshot),
+      error: this.error,
+      isStreaming: this.snapshot.isStreaming,
+      modelId: snapshotModelValue(this.snapshot, 'id'),
+      providerId: snapshotModelValue(this.snapshot, 'provider'),
+      pendingToolCallIds: new Set(this.snapshot.pendingToolCallIds),
+      reasoningLevel: this.snapshot.thinkingLevel,
+      revision: `${this.sessionId ?? 'pending'}-${this.snapshot.messages.length}-${this.snapshot.pendingToolCallIds.join(',')}`,
+      sessionId: this.sessionId,
+      sessionTitle: this.snapshot.sessionTitle,
+      sessionCost: sessionCost(this.snapshot),
       toolResults,
       turnPhase,
-      selectSession: async (targetSessionId: string) => {
-        if (!targetSessionId || targetSessionId === sessionIdRef.current) return;
-        const previousSessionId = sessionIdRef.current;
-        createSessionPromiseRef.current = null;
-        sessionIdRef.current = targetSessionId;
-        setSessionId(targetSessionId);
-        setSnapshot(EMPTY_SNAPSHOT);
-        setError(null);
-        await api.agentRestoreSession(targetSessionId);
-        if (previousSessionId && previousSessionId !== targetSessionId) {
-          await api.agentCloseSession(previousSessionId);
-        }
-      },
-      newSession: async () => {
-        const previousSessionId = sessionIdRef.current;
-        createSessionPromiseRef.current = null;
-        sessionIdRef.current = null;
-        setSnapshot(EMPTY_SNAPSHOT);
-        setError(null);
-        const session = await api.agentCreateSession();
-        sessionIdRef.current = session.sessionId;
-        setSessionId(session.sessionId);
-        if (previousSessionId && previousSessionId !== session.sessionId) {
-          await api.agentCloseSession(previousSessionId);
-        }
-      },
-      sendMessage: async (prompt: string, attachments: AgentMessageAttachmentInput[] = []) => {
-        const trimmed = prompt.trim();
-        if (!trimmed && attachments.length === 0) return;
-        const currentSessionId = await ensureSession();
-        await api.agentSendMessage(currentSessionId, trimmed, attachments);
-      },
-      editMessage: async (nodeId: string, prompt: string) => {
-        const trimmed = prompt.trim();
-        const currentSessionId = sessionIdRef.current;
-        if (!trimmed || !currentSessionId) return;
-        await api.agentEditMessage(currentSessionId, nodeId, trimmed);
-      },
-      regenerateMessage: async (nodeId: string) => {
-        const currentSessionId = sessionIdRef.current;
-        if (!currentSessionId) return;
-        await api.agentRegenerateMessage(currentSessionId, nodeId);
-      },
-      retryMessage: async (nodeId: string) => {
-        const currentSessionId = sessionIdRef.current;
-        if (!currentSessionId) return;
-        await api.agentRetryMessage(currentSessionId, nodeId);
-      },
-      switchBranch: async (nodeId: string) => {
-        const currentSessionId = sessionIdRef.current;
-        if (!currentSessionId) return;
-        await api.agentSwitchBranch(currentSessionId, nodeId);
-      },
-      queueFollowUp: async (prompt: string) => {
-        const trimmed = prompt.trim();
-        if (!trimmed) return false;
-        const currentSessionId = await ensureSession();
-        const result = await api.agentQueueFollowUp(currentSessionId, trimmed);
-        return result.queued;
-      },
-      clearFollowUp: async () => {
-        const currentSessionId = sessionIdRef.current;
-        if (!currentSessionId) return;
-        await api.agentClearFollowUp(currentSessionId);
-      },
-      stop: () => {
-        const currentSessionId = sessionIdRef.current;
-        if (!currentSessionId) return;
-        void api.agentStopSession(currentSessionId).catch((caught) => {
-          setError(caught instanceof Error ? caught.message : String(caught));
-        });
-      },
-      reset: () => {
-        const previousSessionId = sessionIdRef.current;
-        createSessionPromiseRef.current = null;
-        sessionIdRef.current = null;
-        setSnapshot(EMPTY_SNAPSHOT);
-        void api.agentCreateSession().then((session) => {
-          sessionIdRef.current = session.sessionId;
-          setSessionId(session.sessionId);
-          if (previousSessionId) void api.agentCloseSession(previousSessionId);
-        }).catch((caught) => {
-          setError(caught instanceof Error ? caught.message : String(caught));
-        });
-      },
-      reloadSession: async () => {
-        const currentSessionId = sessionIdRef.current;
-        createSessionPromiseRef.current = null;
-        setSnapshot(EMPTY_SNAPSHOT);
-        setError(null);
-        if (currentSessionId) {
-          sessionIdRef.current = currentSessionId;
-          setSessionId(currentSessionId);
-          await api.agentRestoreSession(currentSessionId);
-          return;
-        }
-        await ensureSession();
-      },
-      seedUserMessage: (message: string) => ({
-        role: 'user',
-        content: textContent(message),
-        timestamp: Date.now(),
-      }),
+      selectSession: this.selectSession,
+      newSession: this.newSession,
+      sendMessage: this.sendMessage,
+      editMessage: this.editMessage,
+      regenerateMessage: this.regenerateMessage,
+      retryMessage: this.retryMessage,
+      switchBranch: this.switchBranch,
+      queueFollowUp: this.queueFollowUp,
+      clearFollowUp: this.clearFollowUp,
+      stop: this.stop,
+      reset: this.reset,
+      reloadSession: this.reloadSession,
+      seedUserMessage: this.seedUserMessage,
     };
-  }, [ensureSession, error, sessionId, snapshot]);
+  }
+}
+
+export function createAgentRuntimeStore(client: AgentRuntimeClient) {
+  return new AgentRuntimeStore(client);
+}
+
+export const linAgentRuntimeStore = createAgentRuntimeStore(defaultAgentRuntimeClient);
+
+export function useLinAgentRuntime() {
+  return useSyncExternalStore(
+    linAgentRuntimeStore.subscribe,
+    linAgentRuntimeStore.getSnapshot,
+    linAgentRuntimeStore.getSnapshot,
+  );
 }

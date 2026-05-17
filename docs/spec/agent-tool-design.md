@@ -79,20 +79,20 @@ permission behavior harder to reason about.
 - Do not use a generic `node_batch`; batch capability belongs inside the
   relevant tool parameters.
 
-## Common Result Envelope
+## Tool Result Layers
 
-Every tool returns JSON in both the model-visible text result and a structured
-details object, but they serve different audiences:
+Tool results have three separate audiences:
 
-- Model-visible `content.text` is the smallest useful result for the next agent
-  step. It omits metrics, debug data, duplicated input, and bulky before/after
-  payloads.
-- Structured `details` keeps the complete internal result for UI rendering,
-  debugging, copy/export, and tests.
+- Runtime envelope: internal `details` data for status, metrics, debugging,
+  permissions, UI rendering, export, and tests.
+- Model-visible result: the smallest stable protocol the agent needs for the
+  next action.
+- UI detail view: optional rich rendering derived from `details`, not from the
+  model-visible text.
 
-For node tools, model-visible data should use one shape centered on Lin Outline
-Format plus node handles. The agent should not need to learn a separate rich
-result schema for each node tool.
+Do not expose the runtime envelope as the node tools' model-facing contract.
+The agent should see an action protocol, not a trimmed copy of implementation
+state.
 
 ```ts
 interface ToolResult<TData = unknown> {
@@ -146,53 +146,85 @@ interface ToolMetrics {
 }
 ```
 
-The model-visible envelope is a compact projection of this object:
+For `node_*`, model-visible `content.text` is a discriminated JSON protocol:
 
 ```ts
-interface ModelVisibleToolResult<TData = unknown> {
-  ok: boolean;
-  tool: string;
-  status: "success" | "partial" | "unchanged" | "denied" | "error";
-  data?: TData;
-  error?: ToolError;
-  nextStep?: string;
+type NodeVisibleResult =
+  | NodeVisibleReadResult
+  | NodeVisibleSearchResult
+  | NodeVisibleMutationResult
+  | NodeVisibleErrorResult;
+
+interface NodeVisibleReadResult {
+  kind: "read";
+  outline?: string;
+  refs: NodeVisibleRef[];
+  page?: NodeVisiblePage;
+  next?: NodeVisibleNextStep;
+}
+
+interface NodeVisibleSearchResult {
+  kind: "search";
+  matches: NodeVisibleMatch[];
+  refs: NodeVisibleRef[];
+  page: NodeVisiblePage;
+  next?: NodeVisibleNextStep;
+}
+
+interface NodeVisibleMutationResult {
+  kind: "mutation";
+  action: "create" | "edit" | "delete";
+  status: "applied" | "preview" | "unchanged";
+  changes: NodeVisibleChanges;
+  refs?: NodeVisibleRef[];
+  outline?: string; // preview only
+  next?: NodeVisibleNextStep;
+}
+
+interface NodeVisibleErrorResult {
+  kind: "error";
+  code: string;
+  message: string;
+  recoverable: boolean;
+  retry?: NodeVisibleNextStep;
   fallback?: string;
   hint?: string;
   warnings?: string[];
 }
-```
 
-Metrics and implementation diagnostics stay in `details`, not in the
-model-visible result.
+interface NodeVisibleRef {
+  nodeId: string;
+  kind?: string;
+  title?: string;
+  path?: string;
+  line?: number;
+  revision?: string;
+  targetId?: string;
+}
 
-Node tool model-visible data:
+interface NodeVisibleMatch extends NodeVisibleRef {
+  snippet?: string;
+}
 
-```ts
-interface AgentVisibleNodeResult {
-  summary: string;
-  outline?: string;
-  handles?: Array<{
-    nodeId: string;
-    kind?: string;
-    title?: string;
-    path?: string;
-    line?: number;
-    revision?: string;
-    targetId?: string;
-  }>;
-  changes?: {
-    created?: string[];
-    updated?: string[];
-    moved?: string[];
-    trashed?: string[];
-    restored?: string[];
-  };
-  page?: {
-    total: number;
-    offset: number;
-    limit: number;
-    nextOffset?: number;
-  };
+interface NodeVisibleChanges {
+  created?: string[];
+  updated?: string[];
+  moved?: string[];
+  trashed?: string[];
+  restored?: string[];
+}
+
+interface NodeVisiblePage {
+  total: number;
+  offset: number;
+  limit: number;
+  nextOffset?: number;
+}
+
+interface NodeVisibleNextStep {
+  tool: "node_read" | "node_search" | "node_create" | "node_edit" | "node_delete";
+  params?: Record<string, unknown>;
+  reason?: string;
 }
 ```
 
@@ -200,19 +232,20 @@ Rules:
 
 - `outline` is the same Lin Outline Format accepted by `node_create` and
   `node_edit`.
-- `handles` maps outline lines or stable paths to node ids without embedding ids
-  into the outline text.
-- Mutating tools return `summary`, `changes`, and affected handles by default;
-  they do not echo large input outlines or applied before/after outlines unless
-  the call is explicitly a preview.
+- `refs` maps outline lines, search matches, or mutation results to node ids
+  without embedding ids into the outline text.
+- Mutating tools return `changes`, affected `refs`, and optional `next`; they do
+  not echo large input outlines or applied before/after outlines unless the call
+  is explicitly a preview.
 - Full structured payloads such as `NodeReadItem`, `NodeSearchItem`,
   `beforeOutline`, `afterOutline`, and raw preview details remain available in
   `details`.
+- `summary` is not part of the model-visible node protocol. Human-facing summary
+  text belongs in UI rendering or `details`.
 
 Guidance fields are first-class:
 
-- `boundary`: what the tool intentionally did not do.
-- `nextStep`: the recommended next tool call or action.
+- `next` / `retry`: the recommended next tool call or action.
 - `fallback`: an alternative if the recommended path fails.
 - `hint`: short agent-facing correction.
 
@@ -309,6 +342,9 @@ Rules:
 - `- title - description` sets a node description. The first ` - ` separates
   title from description; later ` - ` text stays in the description.
 - `#tag` and `#[[multi word tag]]` apply tags.
+- Bare CSS hex colors such as `#fff`, `#ffff`, `#112233`, and `#112233ff`
+  are color text, not tags. Use explicit bracket syntax such as `#[[fff]]` if a
+  tag name intentionally looks like a hex color.
 - `[ ]`, `[x]`, and `[X]` at the start of a node set checkbox state.
 - `Field:: value` sets a single field value.
 - `Field::` followed by indented value lines sets a multi-value field.
@@ -650,7 +686,7 @@ Result behavior:
   journal node.
 - `nodeIds` returns multiple independent `items`.
 - The default `format: "outline"` is agent-first: model-visible output contains
-  canonical outline plus handles for visible outline nodes, while structured
+  `kind: "read"`, canonical outline, and `refs` for visible outline nodes, while structured
   children/fields stay omitted from `details`.
 - Use `format: "both"` only when the caller needs the full structured
   `NodeReadItem` data in addition to the outline.

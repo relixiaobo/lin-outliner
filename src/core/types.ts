@@ -1,3 +1,5 @@
+import type { AgentSnapshotState } from './agentTypes';
+
 export type NodeId = string;
 
 export const WORKSPACE_ID = 'workspace';
@@ -304,6 +306,7 @@ export interface SearchHit {
 
 export interface AgentSession {
   sessionId: string;
+  state?: AgentSnapshotState;
 }
 
 export interface AgentSessionMeta {

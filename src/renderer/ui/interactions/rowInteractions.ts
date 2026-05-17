@@ -1,3 +1,5 @@
+import { isCssHexColorToken } from '../../../core/textSyntax';
+
 export type EditorTriggerKind = '#' | '@' | '/' | '>';
 export type DropdownTriggerKind = Exclude<EditorTriggerKind, '>'>;
 
@@ -18,6 +20,7 @@ export function resolveEditorTriggerText(params: {
 
   const hashMatch = beforeCursor.match(/#([^\s#@]*)$/u);
   if (hashMatch?.index !== undefined) {
+    if (isCssHexColorToken(hashMatch[1] ?? '')) return null;
     return {
       kind: '#',
       query: hashMatch[1] ?? '',

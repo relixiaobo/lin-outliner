@@ -306,6 +306,15 @@ describe('row interaction resolvers', () => {
     });
   });
 
+  test('does not treat CSS hex colors as tag triggers', () => {
+    expect(resolveEditorTriggerText({ text: 'color #fff', cursorOffset: 10 })).toBeNull();
+    expect(resolveEditorTriggerText({ text: 'color #112233', cursorOffset: 13 })).toBeNull();
+    expect(resolveEditorTriggerText({ text: 'hello #task', cursorOffset: 11 })).toMatchObject({
+      kind: '#',
+      query: 'task',
+    });
+  });
+
   test('opens slash commands only when the current node is otherwise empty', () => {
     expect(resolveEditorTriggerText({ text: '/', cursorOffset: 1 })).toEqual({
       kind: '/',

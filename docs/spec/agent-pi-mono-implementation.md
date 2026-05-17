@@ -319,9 +319,10 @@ cc-2.1 core tools:
 
 cc-2.1 is the strongest reference for tool contracts, permission checks, and
 tool pool filtering. For local tools, Lin should copy the role boundaries,
-descriptions, argument schemas, and model-visible `data` payloads as closely as
-possible. Lin should only change the public names and wrap results in its common
-`ToolResult` envelope:
+descriptions, argument schemas, and model-visible action payloads as closely as
+possible. Runtime details can keep Lin's common `ToolResult` envelope, but
+`node_*` model-visible output should use the discriminated node protocol from
+`agent-tool-design.md` rather than exposing the envelope directly:
 
 - Dedicated file tools should be preferred over shell commands.
 - `Read` is the freshness prerequisite for `Edit` and existing-file `Write`.

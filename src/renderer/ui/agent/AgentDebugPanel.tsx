@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type {
   AgentDebugMessagePart,
   AgentDebugMessageRow,
@@ -204,15 +204,20 @@ function useAgentDebug(sessionId: string | null) {
   const [totals, setTotals] = useState<AgentDebugTotals>(() => emptyTotals());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const refreshRequestRef = useRef(0);
 
   const refresh = useCallback(async () => {
+    const requestId = refreshRequestRef.current + 1;
+    refreshRequestRef.current = requestId;
     setLoading(true);
     try {
       let targetSessionId = sessionId;
       if (!targetSessionId) {
         const sessions = await api.agentListSessions();
+        if (requestId !== refreshRequestRef.current) return;
         targetSessionId = sessions[0]?.id ?? null;
       }
+      if (requestId !== refreshRequestRef.current) return;
       setResolvedSessionId(targetSessionId);
 
       if (!targetSessionId) {
@@ -228,14 +233,16 @@ function useAgentDebug(sessionId: string | null) {
         api.agentDebugHistory(targetSessionId),
         api.agentDebugTotals(targetSessionId),
       ]);
+      if (requestId !== refreshRequestRef.current) return;
       setSnapshot(nextSnapshot);
       setHistory(nextHistory);
       setTotals(nextTotals);
       setError(null);
     } catch (caught) {
+      if (requestId !== refreshRequestRef.current) return;
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
-      setLoading(false);
+      if (requestId === refreshRequestRef.current) setLoading(false);
     }
   }, [sessionId]);
 

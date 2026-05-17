@@ -182,21 +182,45 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLElement>(null);
   const stickToBottomRef = useRef(true);
+  const mountedRef = useRef(false);
+  const providerSettingsRequestRef = useRef(0);
+  const sessionsRequestRef = useRef(0);
 
   const loadProviderSettings = useCallback(async () => {
-    const next = await api.agentGetProviderSettings();
-    setProviderSettings(next);
-    setSettingsError(null);
-    return next;
+    const requestId = providerSettingsRequestRef.current + 1;
+    providerSettingsRequestRef.current = requestId;
+    try {
+      const next = await api.agentGetProviderSettings();
+      if (!mountedRef.current || requestId !== providerSettingsRequestRef.current) return null;
+      setProviderSettings(next);
+      setSettingsError(null);
+      return next;
+    } catch (caught) {
+      if (mountedRef.current && requestId === providerSettingsRequestRef.current) {
+        setSettingsError(caught instanceof Error ? caught.message : String(caught));
+      }
+      return null;
+    }
   }, []);
 
   const loadSessions = useCallback(async () => {
+    const requestId = sessionsRequestRef.current + 1;
+    sessionsRequestRef.current = requestId;
     setSessionsLoading(true);
     try {
       const next = await api.agentListSessions();
+      if (!mountedRef.current || requestId !== sessionsRequestRef.current) return null;
       setSessions(next);
+      return next;
+    } catch (caught) {
+      if (mountedRef.current && requestId === sessionsRequestRef.current) {
+        setSettingsError(caught instanceof Error ? caught.message : String(caught));
+      }
+      return null;
     } finally {
-      setSessionsLoading(false);
+      if (mountedRef.current && requestId === sessionsRequestRef.current) {
+        setSessionsLoading(false);
+      }
     }
   }, []);
 
@@ -207,21 +231,14 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
   }, [entries.length, isStreaming, revision]);
 
   useEffect(() => {
-    let cancelled = false;
-    void api.agentGetProviderSettings()
-      .then((next) => {
-        if (cancelled) return;
-        setProviderSettings(next);
-        setSettingsError(null);
-      })
-      .catch((caught) => {
-        if (cancelled) return;
-        setSettingsError(caught instanceof Error ? caught.message : String(caught));
-      });
+    mountedRef.current = true;
+    void loadProviderSettings();
     return () => {
-      cancelled = true;
+      mountedRef.current = false;
+      providerSettingsRequestRef.current += 1;
+      sessionsRequestRef.current += 1;
     };
-  }, []);
+  }, [loadProviderSettings]);
 
   useEffect(() => {
     if (!isStreaming) {
@@ -258,6 +275,8 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
       patch.reasoningLevel ?? provider?.reasoningLevel ?? 'off',
       supportedLevels,
     );
+    const requestId = providerSettingsRequestRef.current + 1;
+    providerSettingsRequestRef.current = requestId;
     try {
       setSettingsError(null);
       await api.agentUpsertProviderConfig({
@@ -268,10 +287,14 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
         enabled: provider?.enabled ?? true,
       });
       const next = await api.agentSetActiveProvider(providerId);
-      setProviderSettings(next);
+      if (mountedRef.current && requestId === providerSettingsRequestRef.current) {
+        setProviderSettings(next);
+      }
       await reloadSession();
     } catch (caught) {
-      setSettingsError(caught instanceof Error ? caught.message : String(caught));
+      if (mountedRef.current && requestId === providerSettingsRequestRef.current) {
+        setSettingsError(caught instanceof Error ? caught.message : String(caught));
+      }
     }
   }
 

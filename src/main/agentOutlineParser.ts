@@ -1,3 +1,5 @@
+import { isCssHexColorToken } from '../core/textSyntax';
+
 export interface OutlineDocument {
   roots: OutlineNode[];
 }
@@ -184,15 +186,22 @@ function splitDescription(text: string): [string, string?] {
   return [text.slice(0, separator), text.slice(separator + 3)];
 }
 
+const TAG_TOKEN_PATTERN = /\[\[#([^\]]+)\]\]|#\[\[([^\]]+)\]\]|#([\p{L}\p{N}_-]+)/gu;
+
 function extractTags(text: string): string[] {
   const tags: string[] = [];
-  for (const match of text.matchAll(/\[\[#([^\]]+)\]\]|#\[\[([^\]]+)\]\]|#([\p{L}\p{N}_-]+)/gu)) {
+  for (const match of text.matchAll(TAG_TOKEN_PATTERN)) {
     const tag = (match[1] ?? match[2] ?? match[3] ?? '').trim();
+    if (match[3] && isCssHexColorToken(tag)) continue;
     if (tag) tags.push(tag);
   }
   return [...new Set(tags)];
 }
 
 function removeTags(text: string): string {
-  return text.replace(/\[\[#([^\]]+)\]\]|#\[\[([^\]]+)\]\]|#([\p{L}\p{N}_-]+)/gu, '').replace(/\s+/g, ' ').trim();
+  return text
+    .replace(TAG_TOKEN_PATTERN, (match, _bracketTag: string | undefined, _hashBracketTag: string | undefined, bareTag: string | undefined) =>
+      bareTag && isCssHexColorToken(bareTag) ? match : '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
