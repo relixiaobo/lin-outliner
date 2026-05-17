@@ -31,9 +31,19 @@ export interface ToolEnvelope<TData = unknown> {
 
 export const TOOL_RESULT_VERSION = 1;
 
-export function agentToolResult<TData>(envelope: ToolEnvelope<TData>): AgentToolResult<ToolEnvelope<TData>> {
+export type ModelVisibleToolEnvelope<TData = unknown> =
+  Pick<ToolEnvelope<TData>, 'ok' | 'tool' | 'status'>
+  & Partial<Pick<ToolEnvelope<TData>, 'data' | 'error' | 'nextStep' | 'fallback' | 'hint' | 'warnings'>>;
+
+const MODEL_DATA_UNSET = Symbol('model-data-unset');
+
+export function agentToolResult<TData>(
+  envelope: ToolEnvelope<TData>,
+  modelData: unknown = MODEL_DATA_UNSET,
+): AgentToolResult<ToolEnvelope<TData>> {
+  const visibleEnvelope = modelVisibleEnvelope(envelope, modelData);
   return {
-    content: [{ type: 'text', text: JSON.stringify(envelope, null, 2) }],
+    content: [{ type: 'text', text: JSON.stringify(visibleEnvelope, null, 2) }],
     details: envelope,
   };
 }
@@ -77,4 +87,22 @@ function compactOptions<T extends Record<string, unknown>>(options: T): Partial<
   return Object.fromEntries(
     Object.entries(options).filter(([, value]) => value !== undefined),
   ) as Partial<T>;
+}
+
+function modelVisibleEnvelope<TData>(
+  envelope: ToolEnvelope<TData>,
+  modelData: unknown,
+): ModelVisibleToolEnvelope<unknown> {
+  const data = modelData === MODEL_DATA_UNSET ? envelope.data : modelData;
+  return {
+    ok: envelope.ok,
+    tool: envelope.tool,
+    status: envelope.status,
+    ...(data !== undefined ? { data } : {}),
+    ...(envelope.error ? { error: envelope.error } : {}),
+    ...(envelope.nextStep ? { nextStep: envelope.nextStep } : {}),
+    ...(envelope.fallback ? { fallback: envelope.fallback } : {}),
+    ...(envelope.hint ? { hint: envelope.hint } : {}),
+    ...(envelope.warnings?.length ? { warnings: envelope.warnings } : {}),
+  };
 }

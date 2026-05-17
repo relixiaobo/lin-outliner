@@ -65,10 +65,41 @@ function arrayArg(value: unknown): string[] {
 }
 
 async function executeTool<TData>(core: Core, name: string, params: unknown): Promise<ToolEnvelope<TData>> {
+  const result = await executeRawTool<TData>(core, name, params);
+  return result.details;
+}
+
+async function executeRawTool<TData>(core: Core, name: string, params: unknown): Promise<{
+  contentText: string;
+  details: ToolEnvelope<TData>;
+}> {
   const tool = createNodeTools(hostFor(core)).find((candidate) => candidate.name === name);
   expect(tool).toBeDefined();
   const result = await (tool!.execute as any)('test-call', params);
-  return result.details as ToolEnvelope<TData>;
+  const contentText = result.content
+    .filter((block: { type: string }) => block.type === 'text')
+    .map((block: { text: string }) => block.text)
+    .join('\n');
+  return {
+    contentText,
+    details: result.details as ToolEnvelope<TData>,
+  };
+}
+
+function parseVisibleToolResult<TData>(contentText: string): {
+  ok: boolean;
+  tool: string;
+  status: string;
+  data?: TData;
+  metrics?: unknown;
+} {
+  return JSON.parse(contentText) as {
+    ok: boolean;
+    tool: string;
+    status: string;
+    data?: TData;
+    metrics?: unknown;
+  };
 }
 
 describe('agent node tools', () => {
@@ -107,6 +138,36 @@ describe('agent node tools', () => {
     const fieldEntry = core.state().nodes[fieldEntryId]!;
     expect(fieldEntry.type).toBe('fieldEntry');
     expect(fieldEntry.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual(['Active']);
+  });
+
+  test('node_create keeps model-visible result concise while details stay complete', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+
+    const result = await executeRawTool<{
+      createdRootIds: string[];
+      createdNodeIds: string[];
+      outline?: string;
+    }>(core, 'node_create', {
+      parentId: today,
+      outline: '- Launch #project\n  - Status:: Active\n  - Draft plan',
+    });
+
+    const visible = parseVisibleToolResult<{
+      summary: string;
+      outline?: string;
+      changes?: { created?: string[] };
+      handles?: Array<{ nodeId: string; path?: string }>;
+    }>(result.contentText);
+
+    expect(visible.ok).toBe(true);
+    expect(visible.metrics).toBeUndefined();
+    expect(visible.data!.summary).toContain('Created 1 root node');
+    expect(visible.data!.outline).toBeUndefined();
+    expect(visible.data!.changes!.created).toEqual(result.details.data!.createdNodeIds);
+    expect(visible.data!.handles![0]!.nodeId).toBe(result.details.data!.createdRootIds[0]);
+    expect(result.details.data!.outline).toContain('Status:: Active');
+    expect(result.contentText).not.toContain('Status:: Active');
   });
 
   test('node_create preserves unchecked checkbox markers', async () => {
@@ -354,6 +415,37 @@ describe('agent node tools', () => {
     expect(envelope.data!.afterOutline).toBe('- Root\n  - Task A\n  - Task C');
     expect(envelope.data!.matchedNodeIds).toContain(taskB);
     expect(core.state().nodes[root]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual(['Task A', 'Task C']);
+  });
+
+  test('node_edit model-visible result omits bulky before and after outlines after apply', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Root'));
+    core.createNode(root, null, 'Task A');
+
+    const result = await executeRawTool<{
+      beforeOutline?: string;
+      afterOutline?: string;
+      affectedNodeIds: string[];
+    }>(core, 'node_edit', {
+      nodeId: root,
+      oldString: '  - Task A',
+      newString: '  - Task B',
+    });
+
+    const visible = parseVisibleToolResult<{
+      summary: string;
+      outline?: string;
+      changes?: { updated?: string[] };
+      handles?: Array<{ nodeId: string }>;
+    }>(result.contentText);
+
+    expect(result.details.data!.beforeOutline).toContain('Task A');
+    expect(result.details.data!.afterOutline).toContain('Task B');
+    expect(visible.data!.outline).toBeUndefined();
+    expect(visible.data!.changes!.updated).toEqual(result.details.data!.affectedNodeIds);
+    expect(JSON.stringify(visible)).not.toContain('beforeOutline');
+    expect(JSON.stringify(visible)).not.toContain('afterOutline');
   });
 
   test('node_edit reports order-based matching for duplicate sibling titles', async () => {
@@ -658,6 +750,31 @@ describe('agent node tools', () => {
     expect(item.outline).toContain('  - Draft plan');
   });
 
+  test('node_read default returns outline-visible handles without structured child details', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Root'));
+    const child = mustFocus(core.createNode(root, null, 'Child'));
+
+    const result = await executeRawTool<{
+      items: Array<{ nodeId: string; children: { items: Array<{ nodeId: string }> }; outline?: string }>;
+    }>(core, 'node_read', { nodeId: root, depth: 1 });
+    const visible = parseVisibleToolResult<{
+      summary: string;
+      outline?: string;
+      handles?: Array<{ nodeId: string; path?: string }>;
+    }>(result.contentText);
+
+    expect(visible.ok).toBe(true);
+    expect(visible.metrics).toBeUndefined();
+    expect(visible.data!.outline).toBe('- Root\n  - Child');
+    expect(visible.data!.handles).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nodeId: root, path: '1' }),
+      expect.objectContaining({ nodeId: child, path: '1.1' }),
+    ]));
+    expect(result.details.data!.items[0]!.children.items).toEqual([]);
+  });
+
   test('node_search supports simple query search', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -674,6 +791,29 @@ describe('agent node tools', () => {
     expect(envelope.data!.items).toEqual([
       expect.objectContaining({ nodeId: chengdu, title: 'Chengdu weather' }),
     ]);
+  });
+
+  test('node_search model-visible result is an outline-like result list', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const chengdu = mustFocus(core.createNode(today, null, 'Chengdu weather'));
+    core.createNode(today, null, 'Beijing itinerary');
+
+    const result = await executeRawTool<{
+      total: number;
+      items?: Array<{ nodeId: string; title: string }>;
+    }>(core, 'node_search', { query: 'Chengdu', limit: 10 });
+    const visible = parseVisibleToolResult<{
+      summary: string;
+      outline?: string;
+      handles?: Array<{ nodeId: string; line?: number }>;
+      page?: { total: number; offset: number; limit: number; nextOffset?: number };
+    }>(result.contentText);
+
+    expect(visible.data!.outline).toBe('- Chengdu weather');
+    expect(visible.data!.handles).toEqual([expect.objectContaining({ nodeId: chengdu, line: 1 })]);
+    expect(visible.data!.page).toMatchObject({ total: 1, offset: 0, limit: 10 });
+    expect(result.details.data!.items![0]!.nodeId).toBe(chengdu);
   });
 
   test('node_search resolves tag conditions from temporary search outlines', async () => {

@@ -298,6 +298,39 @@ interface NodeDeleteSkip {
   coveredBy?: string;
 }
 
+interface AgentVisibleNodeResult {
+  summary: string;
+  outline?: string;
+  handles?: AgentVisibleNodeHandle[];
+  changes?: AgentVisibleNodeChanges;
+  page?: AgentVisibleNodePage;
+}
+
+interface AgentVisibleNodeHandle {
+  nodeId: string;
+  kind?: string;
+  title?: string;
+  path?: string;
+  line?: number;
+  revision?: string;
+  targetId?: string;
+}
+
+interface AgentVisibleNodeChanges {
+  created?: string[];
+  updated?: string[];
+  moved?: string[];
+  trashed?: string[];
+  restored?: string[];
+}
+
+interface AgentVisibleNodePage {
+  total: number;
+  offset: number;
+  limit: number;
+  nextOffset?: number;
+}
+
 interface ProjectionIndex {
   projection: DocumentProjection;
   nodes: Map<string, NodeProjection>;
@@ -378,7 +411,7 @@ const NODE_READ_PARAMETERS = {
     format: {
       type: 'string',
       enum: ['structured', 'outline', 'both'],
-      description: 'Return structured data, canonical outline text, or both. Default both.',
+      description: 'Return structured data, canonical outline text, or both. Default outline; use both only when structured fields/children are needed.',
     },
     includeDeleted: {
       type: 'boolean',
@@ -799,10 +832,10 @@ function createNodeDeleteTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
           preview,
         };
         if (params.previewOnly) {
-          return agentToolResult(successEnvelope('node_delete', data, {
+          return nodeToolResult(successEnvelope('node_delete', data, {
             status: 'unchanged',
             metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-          }));
+          }), visibleDeleteResult(data, true));
         }
         try {
           for (const nodeId of requestedNodeIds) await host.handle('restore_node', { nodeId });
@@ -812,9 +845,9 @@ function createNodeDeleteTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
             metrics: { durationMs: elapsed(started) },
           }));
         }
-        return agentToolResult(successEnvelope('node_delete', data, {
+        return nodeToolResult(successEnvelope('node_delete', data, {
           metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-        }));
+        }), visibleDeleteResult(data, false));
       }
       const trashed = requestedNodeIds.find((nodeId) => isInTrash(index, nodeId));
       if (trashed) {
@@ -839,10 +872,10 @@ function createNodeDeleteTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
       };
 
       if (params.previewOnly) {
-        return agentToolResult(successEnvelope('node_delete', data, {
+        return nodeToolResult(successEnvelope('node_delete', data, {
           status: 'unchanged',
           metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-        }));
+        }), visibleDeleteResult(data, true));
       }
 
       try {
@@ -858,10 +891,10 @@ function createNodeDeleteTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
         }));
       }
 
-      return agentToolResult(successEnvelope('node_delete', data, {
+      return nodeToolResult(successEnvelope('node_delete', data, {
         warnings: selection.skipped.length ? ['Some requested descendant nodes were covered by a selected ancestor and skipped.'] : undefined,
         metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-      }));
+      }), visibleDeleteResult(data, false));
     },
   };
 }
@@ -907,10 +940,10 @@ async function executeOutlineEdit(
 
   if (replacement.afterOutline === currentOutline) {
     const data: NodeEditData = { ...dataBase, status: 'unchanged' };
-    return agentToolResult(successEnvelope('node_edit', data, {
+    return nodeToolResult(successEnvelope('node_edit', data, {
       status: 'unchanged',
       metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-    }));
+    }), visibleEditResult(data, false));
   }
 
   const parsed = parseLinOutline(replacement.afterOutline);
@@ -950,11 +983,11 @@ async function executeOutlineEdit(
 
   if (params.previewOnly) {
     const data: NodeEditData = { ...dataBase, status: 'updated' };
-    return agentToolResult(successEnvelope('node_edit', data, {
+    return nodeToolResult(successEnvelope('node_edit', data, {
       status: 'unchanged',
       warnings: parsed.warnings.length ? parsed.warnings : undefined,
       metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-    }));
+    }), visibleEditResult(data, true));
   }
 
   const tracker = createMutationTracker();
@@ -987,10 +1020,10 @@ async function executeOutlineEdit(
     updatedTags: updatedTags.length ? updatedTags : undefined,
     revisions: updatedNode ? { [params.nodeId]: revisionOf(updatedNode) } : undefined,
   };
-  return agentToolResult(successEnvelope('node_edit', data, {
+  return nodeToolResult(successEnvelope('node_edit', data, {
     warnings: warnings.length ? unique(warnings) : undefined,
     metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-  }));
+  }), visibleEditResult(data, false));
 }
 
 async function executeMoveEdit(
@@ -1024,10 +1057,10 @@ async function executeMoveEdit(
   };
 
   if (params.previewOnly) {
-    return agentToolResult(successEnvelope('node_edit', data, {
+    return nodeToolResult(successEnvelope('node_edit', data, {
       status: 'unchanged',
       metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-    }));
+    }), visibleEditResult(data, true));
   }
 
   try {
@@ -1048,9 +1081,9 @@ async function executeMoveEdit(
     .map((nodeId) => updatedIndex.nodes.get(nodeId))
     .filter((node): node is NodeProjection => Boolean(node))
     .map((node) => [node.id, revisionOf(node)]));
-  return agentToolResult(successEnvelope('node_edit', data, {
+  return nodeToolResult(successEnvelope('node_edit', data, {
     metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-  }));
+  }), visibleEditResult(data, false));
 }
 
 async function executeMergeEdit(
@@ -1108,11 +1141,11 @@ async function executeMergeEdit(
   };
 
   if (params.previewOnly) {
-    return agentToolResult(successEnvelope('node_edit', data, {
+    return nodeToolResult(successEnvelope('node_edit', data, {
       status: 'unchanged',
       warnings: ['Merge preview does not mutate. Source titles and descriptions are not appended to the target.'],
       metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-    }));
+    }), visibleEditResult(data, true));
   }
 
   try {
@@ -1126,10 +1159,10 @@ async function executeMergeEdit(
 
   const updatedNode = indexProjection(host.getProjection()).nodes.get(params.nodeId);
   if (updatedNode) data.revisions = { [params.nodeId]: revisionOf(updatedNode) };
-  return agentToolResult(successEnvelope('node_edit', data, {
+  return nodeToolResult(successEnvelope('node_edit', data, {
     warnings: ['Source titles and descriptions are not appended to the target; source nodes are preserved in Trash for undo/restore.'],
     metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-  }));
+  }), visibleEditResult(data, false));
 }
 
 async function executeReferenceReplaceEdit(
@@ -1167,10 +1200,10 @@ async function executeReferenceReplaceEdit(
       affectedNodeIds: [params.nodeId],
       revisions: { [params.nodeId]: revisionOf(current) },
     };
-    return agentToolResult(successEnvelope('node_edit', data, {
+    return nodeToolResult(successEnvelope('node_edit', data, {
       status: 'unchanged',
       metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-    }));
+    }), visibleEditResult(data, false));
   }
   const retargetingReference = current.type === 'reference';
 
@@ -1183,10 +1216,10 @@ async function executeReferenceReplaceEdit(
   if (!retargetingReference) data.trashedNodeIds = [params.nodeId];
 
   if (params.previewOnly) {
-    return agentToolResult(successEnvelope('node_edit', data, {
+    return nodeToolResult(successEnvelope('node_edit', data, {
       status: 'unchanged',
       metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-    }));
+    }), visibleEditResult(data, true));
   }
 
   try {
@@ -1203,9 +1236,9 @@ async function executeReferenceReplaceEdit(
     }));
   }
 
-  return agentToolResult(successEnvelope('node_edit', data, {
+  return nodeToolResult(successEnvelope('node_edit', data, {
     metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-  }));
+  }), visibleEditResult(data, false));
 }
 
 function createNodeCreateTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope<NodeCreateData>> {
@@ -1247,16 +1280,17 @@ function createNodeCreateTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
           }));
         }
         if (params.previewOnly) {
-          return agentToolResult(successEnvelope('node_create', {
+          const data: NodeCreateData = {
             parentId: insertion.parentId,
             afterId: insertion.afterId,
             createdRootIds: [],
             createdNodeIds: [],
             targetId: params.targetId,
-          }, {
+          };
+          return nodeToolResult(successEnvelope('node_create', data, {
             status: 'unchanged',
             metrics: { durationMs: elapsed(started) },
-          }));
+          }), visibleCreateResult(data, true));
         }
         try {
           const createdId = await addReference(host, insertion.parentId, params.targetId, insertion.index);
@@ -1267,9 +1301,9 @@ function createNodeCreateTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
             createdNodeIds: [createdId],
             targetId: params.targetId,
           };
-          return agentToolResult(successEnvelope('node_create', data, {
+          return nodeToolResult(successEnvelope('node_create', data, {
             metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-          }));
+          }), visibleCreateResult(data, false));
         } catch (error) {
           return agentToolResult(errorEnvelope('node_create', 'mutation_failed', errorMessage(error), {
             nextStep: 'Check that the parent and reference target are valid and retry.',
@@ -1320,11 +1354,11 @@ function createNodeCreateTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
           duplicatedFrom: params.duplicateId,
           outline: outline.outline,
         };
-        return agentToolResult(successEnvelope('node_create', data, {
+        return nodeToolResult(successEnvelope('node_create', data, {
           status: 'unchanged',
           warnings: parsed.warnings.length ? parsed.warnings : undefined,
           metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-        }));
+        }), visibleCreateResult(data, true));
       }
 
       const tracker = createMutationTracker();
@@ -1353,10 +1387,10 @@ function createNodeCreateTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
         duplicatedFrom: params.duplicateId,
         outline: outline.outline,
       };
-      return agentToolResult(successEnvelope('node_create', data, {
+      return nodeToolResult(successEnvelope('node_create', data, {
         warnings: warnings.length ? unique(warnings) : undefined,
         metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-      }));
+      }), visibleCreateResult(data, false));
     },
   };
 }
@@ -1400,13 +1434,13 @@ function createNodeReadTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope
       }
 
       const items = nodeIds.map((nodeId) => buildReadItem(index, nodeId, params));
-      return agentToolResult(successEnvelope('node_read', { items }, {
+      return nodeToolResult(successEnvelope('node_read', { items }, {
         metrics: {
           durationMs: elapsed(started),
           truncated: items.some((item) => pageHasMore(item.children)),
           outputBytes: jsonByteLength({ items }),
         },
-      }));
+      }), visibleReadResult(index, nodeIds, params, items));
     },
   };
 }
@@ -1473,7 +1507,7 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
         unresolvedFields: search.unresolvedFields.length ? search.unresolvedFields : undefined,
       };
 
-      return agentToolResult(successEnvelope('node_search', data, {
+      return nodeToolResult(successEnvelope('node_search', data, {
         nextStep: offset + limit < total ? `Call node_search with offset ${offset + limit} to continue.` : undefined,
         warnings: search.warnings.length ? search.warnings : undefined,
         metrics: {
@@ -1481,7 +1515,7 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
           truncated: offset + limit < total,
           outputBytes: jsonByteLength(data),
         },
-      }));
+      }), visibleSearchResult(data));
     },
   };
 }
@@ -1496,7 +1530,7 @@ function normalizeReadParams(rawParams: unknown): Required<Pick<NodeReadParams, 
     : undefined;
   const format = input.format === 'structured' || input.format === 'outline' || input.format === 'both'
     ? input.format
-    : 'both';
+    : 'outline';
   return {
     nodeId,
     nodeIds,
@@ -3407,6 +3441,231 @@ function errorMessage(error: unknown): string {
 
 function jsonByteLength(value: unknown): number {
   return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+}
+
+function nodeToolResult<TData>(
+  envelope: ToolEnvelope<TData>,
+  visibleData: AgentVisibleNodeResult,
+) {
+  return agentToolResult(envelope, visibleData);
+}
+
+function visibleReadResult(
+  index: ProjectionIndex,
+  nodeIds: string[],
+  params: ReturnType<typeof normalizeReadParams>,
+  items: NodeReadItem[],
+): AgentVisibleNodeResult {
+  const outline = compactOutline(items.map((item) => item.outline).filter((value): value is string => Boolean(value)));
+  const handles = nodeIds.flatMap((nodeId, itemIndex) =>
+    outlineReadHandles(index, nodeId, params.depth, params.childOffset, params.childLimit, params.includeDeleted, `${itemIndex + 1}`));
+  const rootPages = nodeIds
+    .map((nodeId) => visibleReadPage(index, nodeId, params))
+    .filter((page) => page.total > page.limit || page.offset > 0);
+  return compactVisibleResult({
+    summary: `Read ${items.length} ${items.length === 1 ? 'node' : 'nodes'}.`,
+    outline,
+    handles: handles.length ? handles : undefined,
+    page: rootPages.length === 1 ? rootPages[0] : undefined,
+  });
+}
+
+function visibleReadPage(
+  index: ProjectionIndex,
+  nodeId: string,
+  params: ReturnType<typeof normalizeReadParams>,
+): AgentVisibleNodePage {
+  return visiblePage({
+    total: normalChildIds(index, nodeId, params.includeDeleted).length,
+    offset: params.childOffset,
+    limit: params.childLimit,
+    items: [],
+  });
+}
+
+function outlineReadHandles(
+  projectionIndex: ProjectionIndex,
+  nodeId: string,
+  depth: number,
+  childOffset: number,
+  childLimit: number,
+  includeDeleted: boolean,
+  path: string,
+): AgentVisibleNodeHandle[] {
+  const node = requiredNode(projectionIndex, nodeId);
+  const handles: AgentVisibleNodeHandle[] = [{
+    nodeId,
+    kind: nodeKind(node),
+    title: nodeTitle(projectionIndex, node),
+    path,
+    revision: revisionOf(node),
+    targetId: node.targetId,
+  }];
+
+  fieldReads(projectionIndex, node, includeDeleted).forEach((field, fieldIndex) => {
+    const fieldPath = `${path}.field.${fieldIndex + 1}`;
+    handles.push({
+      nodeId: field.fieldEntryId,
+      kind: 'field',
+      title: field.name,
+      path: fieldPath,
+    });
+    field.values.forEach((value, valueIndex) => {
+      if (!value.valueNodeId) return;
+      handles.push({
+        nodeId: value.valueNodeId,
+        kind: value.targetId ? 'reference' : 'value',
+        title: value.text,
+        path: `${fieldPath}.${valueIndex + 1}`,
+        targetId: value.targetId,
+      });
+    });
+  });
+
+  if (depth <= 0) return handles;
+  const childIds = normalChildIds(projectionIndex, nodeId, includeDeleted).slice(childOffset, childOffset + childLimit);
+  childIds.forEach((childId, childIndex) => {
+    handles.push(...outlineReadHandles(projectionIndex, childId, depth - 1, 0, childLimit, includeDeleted, `${path}.${childIndex + 1}`));
+  });
+  return handles;
+}
+
+function visibleSearchResult(data: NodeSearchData): AgentVisibleNodeResult {
+  const items = data.items ?? [];
+  return compactVisibleResult({
+    summary: `Found ${data.total} ${data.total === 1 ? 'node' : 'nodes'}${data.title ? ` for "${data.title}"` : ''}; showing ${items.length}.`,
+    outline: searchItemsOutline(items),
+    handles: items.map((item, index) => ({
+      nodeId: item.nodeId,
+      kind: item.type,
+      title: item.title,
+      line: index + 1,
+      path: `${data.offset + index + 1}`,
+    })),
+    page: visiblePage({ total: data.total, offset: data.offset, limit: data.limit, items }),
+  });
+}
+
+function visibleCreateResult(data: NodeCreateData, previewOnly: boolean): AgentVisibleNodeResult {
+  const createdCount = data.createdNodeIds.length;
+  const rootCount = data.createdRootIds.length;
+  const summary = previewOnly
+    ? `Previewed node creation under ${data.parentId}.`
+    : `Created ${rootCount} root ${rootCount === 1 ? 'node' : 'nodes'} (${createdCount} total) under ${data.parentId}.`;
+  return compactVisibleResult({
+    summary,
+    outline: previewOnly ? data.outline : undefined,
+    handles: data.createdRootIds.map((nodeId, index) => ({
+      nodeId,
+      kind: data.targetId ? 'reference' : 'node',
+      path: `created.root.${index + 1}`,
+      targetId: data.targetId,
+    })),
+    changes: previewOnly ? undefined : compactChanges({ created: data.createdNodeIds }),
+  });
+}
+
+function visibleDeleteResult(data: NodeDeleteData, previewOnly: boolean): AgentVisibleNodeResult {
+  const verb = data.action === 'restored' ? 'restore' : 'trash';
+  const appliedVerb = data.action === 'restored' ? 'Restored' : 'Trashed';
+  const targetCount = data.action === 'restored' ? data.restoredCount ?? 0 : data.deletedCount;
+  const summary = previewOnly
+    ? `Previewed ${verb} for ${data.affectedNodeCount} affected ${data.affectedNodeCount === 1 ? 'node' : 'nodes'}.`
+    : `${appliedVerb} ${targetCount} ${targetCount === 1 ? 'target' : 'targets'} (${data.affectedNodeCount} affected ${data.affectedNodeCount === 1 ? 'node' : 'nodes'}).`;
+  return compactVisibleResult({
+    summary,
+    handles: data.preview.map((item, index) => ({
+      nodeId: item.nodeId,
+      kind: item.type,
+      title: item.title,
+      path: `affected.${index + 1}`,
+    })),
+    changes: previewOnly
+      ? undefined
+      : compactChanges({
+        trashed: data.deletedNodeIds,
+        restored: data.restoredNodeIds,
+      }),
+  });
+}
+
+function visibleEditResult(data: NodeEditData, previewOnly: boolean): AgentVisibleNodeResult {
+  const changed = data.status === 'updated';
+  const summary = previewOnly
+    ? `Previewed ${data.action}; ${changed ? 'changes are valid' : 'no changes detected'}.`
+    : `${changed ? 'Applied' : 'Skipped'} ${data.action}; ${data.affectedNodeIds.length} affected ${data.affectedNodeIds.length === 1 ? 'node' : 'nodes'}.`;
+  return compactVisibleResult({
+    summary,
+    outline: previewOnly ? data.afterOutline : undefined,
+    handles: data.affectedNodeIds.map((nodeId, index) => ({
+      nodeId,
+      kind: 'node',
+      path: `affected.${index + 1}`,
+      revision: data.revisions?.[nodeId],
+    })),
+    changes: previewOnly
+      ? undefined
+      : compactChanges({
+        updated: data.status === 'updated' ? data.affectedNodeIds : undefined,
+        created: data.createdNodeIds,
+        moved: data.movedNodeIds,
+        trashed: data.trashedNodeIds,
+      }),
+  });
+}
+
+function searchItemsOutline(items: NodeSearchItem[]): string | undefined {
+  if (items.length === 0) return undefined;
+  return items.map((item) => `- ${outlineSearchItemText(item)}`).join('\n');
+}
+
+function outlineSearchItemText(item: NodeSearchItem): string {
+  const parts: string[] = [];
+  if (item.checked === true) parts.push('[x]');
+  else if (item.checked === false) parts.push('[ ]');
+  parts.push(outlineSafeText(item.title));
+  if (item.description) parts.push(`- ${outlineSafeText(item.description)}`);
+  parts.push(...item.tags);
+  return parts.join(' ').trim();
+}
+
+function outlineSafeText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim() || '(untitled)';
+}
+
+function compactOutline(outlines: string[]): string | undefined {
+  const text = outlines.map((outline) => outline.trim()).filter(Boolean).join('\n\n');
+  return text || undefined;
+}
+
+function visiblePage(page: ChildrenPage | { total: number; offset: number; limit: number; items: unknown[] }): AgentVisibleNodePage {
+  const nextOffset = page.offset + page.limit < page.total ? page.offset + page.limit : undefined;
+  return {
+    total: page.total,
+    offset: page.offset,
+    limit: page.limit,
+    ...(nextOffset !== undefined ? { nextOffset } : {}),
+  };
+}
+
+function compactChanges(changes: AgentVisibleNodeChanges): AgentVisibleNodeChanges | undefined {
+  const result: AgentVisibleNodeChanges = {};
+  if (changes.created?.length) result.created = changes.created;
+  if (changes.updated?.length) result.updated = changes.updated;
+  if (changes.moved?.length) result.moved = changes.moved;
+  if (changes.trashed?.length) result.trashed = changes.trashed;
+  if (changes.restored?.length) result.restored = changes.restored;
+  return Object.keys(result).length ? result : undefined;
+}
+
+function compactVisibleResult(result: AgentVisibleNodeResult): AgentVisibleNodeResult {
+  return {
+    summary: result.summary,
+    ...(result.outline ? { outline: result.outline } : {}),
+    ...(result.handles?.length ? { handles: result.handles } : {}),
+    ...(result.changes ? { changes: result.changes } : {}),
+    ...(result.page ? { page: result.page } : {}),
+  };
 }
 
 function normalizeLineEndings(value: string): string {

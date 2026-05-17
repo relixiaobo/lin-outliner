@@ -82,8 +82,17 @@ permission behavior harder to reason about.
 ## Common Result Envelope
 
 Every tool returns JSON in both the model-visible text result and a structured
-details object. The text result should be a pretty-printed JSON serialization of
-the same object, so weaker models can still inspect the result.
+details object, but they serve different audiences:
+
+- Model-visible `content.text` is the smallest useful result for the next agent
+  step. It omits metrics, debug data, duplicated input, and bulky before/after
+  payloads.
+- Structured `details` keeps the complete internal result for UI rendering,
+  debugging, copy/export, and tests.
+
+For node tools, model-visible data should use one shape centered on Lin Outline
+Format plus node handles. The agent should not need to learn a separate rich
+result schema for each node tool.
 
 ```ts
 interface ToolResult<TData = unknown> {
@@ -136,6 +145,69 @@ interface ToolMetrics {
   outputBytes?: number;
 }
 ```
+
+The model-visible envelope is a compact projection of this object:
+
+```ts
+interface ModelVisibleToolResult<TData = unknown> {
+  ok: boolean;
+  tool: string;
+  status: "success" | "partial" | "unchanged" | "denied" | "error";
+  data?: TData;
+  error?: ToolError;
+  nextStep?: string;
+  fallback?: string;
+  hint?: string;
+  warnings?: string[];
+}
+```
+
+Metrics and implementation diagnostics stay in `details`, not in the
+model-visible result.
+
+Node tool model-visible data:
+
+```ts
+interface AgentVisibleNodeResult {
+  summary: string;
+  outline?: string;
+  handles?: Array<{
+    nodeId: string;
+    kind?: string;
+    title?: string;
+    path?: string;
+    line?: number;
+    revision?: string;
+    targetId?: string;
+  }>;
+  changes?: {
+    created?: string[];
+    updated?: string[];
+    moved?: string[];
+    trashed?: string[];
+    restored?: string[];
+  };
+  page?: {
+    total: number;
+    offset: number;
+    limit: number;
+    nextOffset?: number;
+  };
+}
+```
+
+Rules:
+
+- `outline` is the same Lin Outline Format accepted by `node_create` and
+  `node_edit`.
+- `handles` maps outline lines or stable paths to node ids without embedding ids
+  into the outline text.
+- Mutating tools return `summary`, `changes`, and affected handles by default;
+  they do not echo large input outlines or applied before/after outlines unless
+  the call is explicitly a preview.
+- Full structured payloads such as `NodeReadItem`, `NodeSearchItem`,
+  `beforeOutline`, `afterOutline`, and raw preview details remain available in
+  `details`.
 
 Guidance fields are first-class:
 
@@ -502,7 +574,7 @@ interface NodeReadParams {
   depth?: number; // 0 = node only, default 1, max 3
   childOffset?: number;
   childLimit?: number; // default 20, max 50
-  format?: "structured" | "outline" | "both"; // default "both"
+  format?: "structured" | "outline" | "both"; // default "outline"
   includeDeleted?: boolean;
   includeBacklinks?: boolean;
 }
@@ -577,6 +649,11 @@ Result behavior:
 - Use either `nodeId` or `nodeIds`, not both. If both are omitted, read today's
   journal node.
 - `nodeIds` returns multiple independent `items`.
+- The default `format: "outline"` is agent-first: model-visible output contains
+  canonical outline plus handles for visible outline nodes, while structured
+  children/fields stay omitted from `details`.
+- Use `format: "both"` only when the caller needs the full structured
+  `NodeReadItem` data in addition to the outline.
 - `outline` serializes the requested node and bounded descendants using the same
   canonical format accepted by `node_create` and `node_edit`.
 - If children are truncated, return pagination and do not serialize hidden
