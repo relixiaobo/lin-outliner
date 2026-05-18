@@ -1,4 +1,4 @@
-import { Fragment, type Dispatch, type PointerEvent as ReactPointerEvent, type RefObject, type SetStateAction } from 'react';
+import { Fragment, type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject, type SetStateAction } from 'react';
 import type { NodeId } from '../api/types';
 import type { DocumentIndex, UiState } from '../state/document';
 import { NodePanel } from './NodePanel';
@@ -20,6 +20,11 @@ interface WorkspaceCanvasProps {
     leftPanelId: string,
     rightPanelId: string,
     event: ReactPointerEvent<HTMLButtonElement>,
+  ) => void;
+  onPanelResizeKeyDown: (
+    leftPanelId: string,
+    rightPanelId: string,
+    event: ReactKeyboardEvent<HTMLButtonElement>,
   ) => void;
   run: CommandRunner;
   setDragId: (nodeId: NodeId | null) => void;
@@ -71,6 +76,9 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
               <ResizeHandle
                 className="panel-resize-handle"
                 label="Resize panels"
+                onKeyDown={(event) => (
+                  props.onPanelResizeKeyDown(panel.id, activePanels[panelIndex + 1].id, event)
+                )}
                 onPointerDown={(event) => (
                   props.onPanelResizeStart(panel.id, activePanels[panelIndex + 1].id, event)
                 )}

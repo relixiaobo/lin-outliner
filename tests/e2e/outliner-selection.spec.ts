@@ -74,6 +74,25 @@ test.describe('outliner selection parity', () => {
     await expect(row(page, ids.beta)).toHaveCount(0);
   });
 
+  test('context menu clamps to viewport edges', async ({ page }) => {
+    await page.setViewportSize({ width: 980, height: 620 });
+    const target = rowBody(page, ids.alpha);
+    const box = await target.boundingBox();
+    expect(box).toBeTruthy();
+
+    await target.click({
+      button: 'right',
+      position: { x: box!.width - 2, y: Math.max(4, box!.height / 2) },
+    });
+
+    const menu = page.getByRole('menu', { name: 'Node actions' });
+    await expect(menu).toBeVisible();
+    const menuBox = await menu.boundingBox();
+    expect(menuBox).toBeTruthy();
+    expect(menuBox!.x).toBeGreaterThanOrEqual(8);
+    expect(menuBox!.x + menuBox!.width).toBeLessThanOrEqual(972);
+  });
+
   test('clicking blank space exits multi-selection without touching rows', async ({ page }) => {
     await multiSelect(page, [ids.alpha, ids.beta]);
 

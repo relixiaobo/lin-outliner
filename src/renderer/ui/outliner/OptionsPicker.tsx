@@ -5,11 +5,13 @@ import {
   useState,
   type KeyboardEvent,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { filterFieldOptions, resolveFieldOptions, resolveSelectedOptionId } from '../interactions/fieldOptions';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
+import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import type { CommandRunner } from '../shared';
 import { FieldValueRow } from './FieldValueRow';
 import { NodeBulletDot } from './NodeBulletDot';
@@ -33,6 +35,7 @@ interface OptionsPickerProps {
 
 export function OptionsPicker(props: OptionsPickerProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const valueNodeId = props.index.byId.get(props.entryId)?.children[0];
   const valueNode = valueNodeId ? props.index.byId.get(valueNodeId) : undefined;
   const options = useMemo(
@@ -49,6 +52,14 @@ export function OptionsPicker(props: OptionsPickerProps) {
     && props.field?.autocollectOptions !== false
     && !options.some((option) => option.label.toLowerCase() === query.trim().toLowerCase());
   const itemCount = filtered.length + (canCreate ? 1 : 0);
+  const menuStyle = useAnchoredOverlay(menuRef, {
+    anchorRef: inputRef,
+    disabled: !open,
+    layoutKey: `${query}:${itemCount}`,
+    maxHeight: 240,
+    placement: 'bottom-start',
+    width: 280,
+  });
 
   useEffect(() => {
     setActiveIndex(0);
@@ -148,8 +159,13 @@ export function OptionsPicker(props: OptionsPickerProps) {
             onKeyDown={handleKeyDown}
           />
         </div>
-        {open && (
-          <PopoverListbox className="node-picker-popover" label="Field options">
+        {open && createPortal(
+          <PopoverListbox
+            ref={menuRef}
+            className="node-picker-popover"
+            label="Field options"
+            style={menuStyle}
+          >
             {itemCount === 0 && <PopoverEmpty>No options</PopoverEmpty>}
             {filtered.map((option, index) => (
               <PopoverListItem
@@ -170,7 +186,8 @@ export function OptionsPicker(props: OptionsPickerProps) {
                 onClick={createOption}
               />
             )}
-          </PopoverListbox>
+          </PopoverListbox>,
+          document.body,
         )}
       </div>
     </FieldValueRow>

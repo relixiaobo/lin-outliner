@@ -1,4 +1,4 @@
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import type { DocumentProjection, NodeId, NodeProjection } from '../api/types';
 import type { DocumentIndex } from '../state/document';
 import {
@@ -27,6 +27,7 @@ interface SidebarProps {
   index: DocumentIndex;
   onNavigateRoot: (nodeId: NodeId) => void;
   onOpenPanel: (nodeId: NodeId) => void;
+  onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
   onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   onToggleTreeNode: (nodeId: NodeId) => void;
   projection: DocumentProjection;
@@ -129,6 +130,7 @@ export function Sidebar(props: SidebarProps) {
       <ResizeHandle
         className="dock-resize-handle sidebar-resize-handle"
         label="Resize sidebar"
+        onKeyDown={props.onResizeKeyDown}
         onPointerDown={props.onResizeStart}
         title="Resize sidebar"
       />

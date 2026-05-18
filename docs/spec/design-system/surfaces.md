@@ -573,8 +573,9 @@ Behavior:
 - During streaming, submitting text queues a follow-up or steer.
 - Stop replaces send when streaming and no draft is present.
 - Model picker and reasoning controls use overlay/menu behavior.
-- Model/reasoning menu structure is isolated; open state, provider updates, and
-  composer draft behavior remain in `AgentComposer`.
+- Model/reasoning menu and conversation picker positioning use the shared
+  anchored overlay model; open state, provider updates, and composer draft
+  behavior remain in `AgentComposer` / `AgentChatPanel`.
 - Textarea auto-resizes up to a bounded maximum height.
 - Drag, paste, and picker attachments are optional and must be implemented as
   one coherent attachment model if shipped.
@@ -591,6 +592,7 @@ Component dependencies:
 - `MenuItem`
 - `SwitchControl`
 - `FormField`
+- `AnchoredOverlay`
 
 ## Agent Settings Dialog
 

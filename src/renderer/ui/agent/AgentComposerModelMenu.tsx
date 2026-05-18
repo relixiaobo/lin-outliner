@@ -1,10 +1,7 @@
 import {
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
-  useState,
-  type CSSProperties,
   type ReactNode,
   type RefObject,
 } from 'react';
@@ -24,6 +21,7 @@ import {
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 import { SwitchControl } from '../primitives/SwitchControl';
+import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 
 export const REASONING_LABELS: Record<AgentReasoningLevel, string> = {
   off: 'Off',
@@ -251,10 +249,12 @@ function FloatingComposerMenu({
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
-  const [style, setStyle] = useState<CSSProperties>({
-    position: 'fixed',
-    top: -9999,
-    left: -9999,
+  const style = useAnchoredOverlay(menuRef, {
+    anchorRef,
+    layoutKey,
+    maxHeight: 440,
+    placement: 'top-end',
+    width: 300,
   });
 
   useEffect(() => {
@@ -275,40 +275,6 @@ function FloatingComposerMenu({
       document.removeEventListener('keydown', handleKeyDown, true);
     };
   }, [anchorRef, onClose]);
-
-  useLayoutEffect(() => {
-    const anchor = anchorRef.current;
-    if (!anchor) return;
-
-    const update = () => {
-      const rect = anchor.getBoundingClientRect();
-      const gap = 6;
-      const margin = 8;
-      const width = Math.min(300, window.innerWidth - margin * 2);
-      const maxHeight = Math.min(440, Math.max(120, window.innerHeight - margin * 2));
-      const contentHeight = menuRef.current?.scrollHeight ?? maxHeight;
-      const height = Math.min(contentHeight, maxHeight);
-      const left = Math.max(margin, Math.min(rect.right - width, window.innerWidth - width - margin));
-      const top = Math.max(margin, rect.top - gap - height);
-      setStyle({
-        position: 'fixed',
-        top,
-        left,
-        width,
-        maxHeight,
-      });
-    };
-
-    update();
-    const frame = window.requestAnimationFrame(update);
-    window.addEventListener('scroll', update, true);
-    window.addEventListener('resize', update);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.removeEventListener('scroll', update, true);
-      window.removeEventListener('resize', update);
-    };
-  }, [anchorRef, layoutKey]);
 
   return createPortal(
     <MenuSurface

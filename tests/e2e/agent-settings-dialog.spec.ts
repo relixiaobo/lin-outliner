@@ -28,4 +28,20 @@ test.describe('agent settings dialog', () => {
     await expect(dialog).toHaveCount(0);
     await expect(trigger).toBeFocused();
   });
+
+  test('uses the shared checkbox mark for provider enablement', async ({ page }) => {
+    await page.getByRole('button', { name: 'Agent settings' }).click();
+
+    const dialog = page.getByRole('dialog', { name: 'Agent settings' });
+    const enabled = dialog.getByLabel('Enabled');
+    const mark = dialog.locator('.agent-settings-checkbox .checkbox-mark');
+
+    await expect(enabled).toBeChecked();
+    await expect(mark).toHaveClass(/checked/);
+
+    await dialog.getByText('Enabled').click();
+
+    await expect(enabled).not.toBeChecked();
+    await expect(mark).not.toHaveClass(/checked/);
+  });
 });

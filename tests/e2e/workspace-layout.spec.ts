@@ -23,6 +23,11 @@ test.describe('workspace layout resizing', () => {
     await page.mouse.up();
 
     await expect.poll(async () => (await sidebar.boundingBox())?.width ?? 0).toBeGreaterThan(sidebarBefore!.width + 30);
+    const sidebarAfterDrag = await sidebar.boundingBox();
+    expect(sidebarAfterDrag).toBeTruthy();
+    await sidebarHandle.focus();
+    await page.keyboard.press('ArrowLeft');
+    await expect.poll(async () => (await sidebar.boundingBox())?.width ?? 0).toBeLessThan(sidebarAfterDrag!.width - 8);
 
     const agentHandle = page.getByRole('button', { name: 'Resize agent' });
     const agentHandleBox = await agentHandle.boundingBox();
@@ -33,9 +38,15 @@ test.describe('workspace layout resizing', () => {
     await page.mouse.up();
 
     await expect.poll(async () => (await agent.boundingBox())?.width ?? 0).toBeGreaterThan(agentBefore!.width + 40);
+    const agentAfterDrag = await agent.boundingBox();
+    expect(agentAfterDrag).toBeTruthy();
+    await agentHandle.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(async () => (await agent.boundingBox())?.width ?? 0).toBeLessThan(agentAfterDrag!.width - 8);
   });
 
-  test('panel split resizes by ratio and canvas does not horizontally scroll', async ({ page }) => {
+  test('panel split resizes by ratio and canvas supports min-width overflow', async ({ page }) => {
+    await page.setViewportSize({ width: 1700, height: 900 });
     const chrome = await page.locator('.top-chrome').boundingBox();
     const activeTab = await page.locator('.workspace-tab.active').boundingBox();
     const sidebarToggle = await page.getByTitle('Collapse sidebar').boundingBox();
@@ -92,14 +103,28 @@ test.describe('workspace layout resizing', () => {
 
     await expect.poll(async () => (await panels.nth(0).boundingBox())?.width ?? 0).toBeGreaterThan(firstBefore!.width + 45);
     await expect.poll(async () => (await panels.nth(1).boundingBox())?.width ?? 0).toBeLessThan(secondBefore!.width - 45);
+    const firstAfterDrag = await panels.nth(0).boundingBox();
+    expect(firstAfterDrag).toBeTruthy();
+    await panelHandle.focus();
+    await page.keyboard.press('ArrowLeft');
+    await expect.poll(async () => (await panels.nth(0).boundingBox())?.width ?? 0).toBeLessThan(firstAfterDrag!.width - 8);
 
     const canvasOverflow = await page.locator('.workspace-canvas').evaluate((element) => ({
       clientWidth: element.clientWidth,
       overflowX: getComputedStyle(element).overflowX,
       scrollWidth: element.scrollWidth,
     }));
-    expect(canvasOverflow.overflowX).toBe('hidden');
+    expect(canvasOverflow.overflowX).toBe('auto');
     expect(canvasOverflow.scrollWidth).toBeLessThanOrEqual(canvasOverflow.clientWidth + 1);
+
+    await page.setViewportSize({ width: 980, height: 900 });
+    const narrowCanvasOverflow = await page.locator('.workspace-canvas').evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      overflowX: getComputedStyle(element).overflowX,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(narrowCanvasOverflow.overflowX).toBe('auto');
+    expect(narrowCanvasOverflow.scrollWidth).toBeGreaterThan(narrowCanvasOverflow.clientWidth);
   });
 
   test('workspace section renders the root node as an expandable tree', async ({ page }) => {

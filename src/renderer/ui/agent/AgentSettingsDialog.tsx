@@ -8,6 +8,7 @@ import type {
 } from '../../api/types';
 import { api } from '../../api/client';
 import { ICON_SIZE, PasswordIcon, TrashIcon, WarningIcon } from '../icons';
+import { CheckboxMark } from '../primitives/CheckboxMark';
 import { Dialog } from '../primitives/Dialog';
 import { FormField } from '../primitives/FormField';
 
@@ -339,6 +340,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
                   onChange={(event) => setDraft((current) => ({ ...current, enabled: event.target.checked }))}
                   type="checkbox"
                 />
+                <CheckboxMark checked={draft.enabled} />
                 <span>Enabled</span>
               </label>
               {selectedModel ? (

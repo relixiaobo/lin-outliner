@@ -25,6 +25,7 @@ import {
 } from '../icons';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
+import { overlayAnchorFromPoint, useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import type { CommandRunner } from '../shared';
 import { textOf } from '../shared';
 
@@ -62,6 +63,14 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   const [mode, setMode] = useState<'main' | 'tag' | 'move'>('main');
   const [query, setQuery] = useState('');
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuAnchor = useMemo(() => overlayAnchorFromPoint(props.x, props.y), [props.x, props.y]);
+  const menuStyle = useAnchoredOverlay(menuRef, {
+    anchorRect: menuAnchor,
+    layoutKey: `${mode}:${query.length}`,
+    maxHeight: 440,
+    placement: 'bottom-start',
+    width: mode === 'main' ? 240 : 280,
+  });
   const target = props.index.byId.get(props.targetId) ?? props.node;
   const trashed = isNodeInTrash(props.index, props.node.id);
   const activeSelection = useMemo(() => resolveActiveNodeSelection({
@@ -109,7 +118,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       document.removeEventListener('mousedown', close);
       document.removeEventListener('keydown', closeOnEscape);
     };
-  }, [props]);
+  }, [props.onClose]);
 
   const applyExistingTag = (tagId: NodeId) => {
     void props.run(() => (
@@ -275,7 +284,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       className="node-context-menu"
       preserveSelection
       role={mode === 'main' ? 'menu' : 'dialog'}
-      style={{ left: props.x, top: props.y }}
+      style={menuStyle}
       onMouseDown={(event) => event.stopPropagation()}
     >
       {mode === 'main' ? renderMain() : mode === 'tag' ? renderTagMode() : renderMoveMode()}

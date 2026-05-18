@@ -134,7 +134,7 @@ export function resolveTrailingRowUpdateAction(params: {
   const { text, isOptionsField = false } = params;
   if (text === '>') return { type: 'create_field' };
 
-  const triggerMatch = text.match(/(#|@|\/)$/u);
+  const triggerMatch = text.match(/(#|@|\/)([^\s#@/]*)$/u);
   if (triggerMatch) {
     return {
       type: 'create_trigger_node',

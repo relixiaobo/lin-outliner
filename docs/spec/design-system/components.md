@@ -51,11 +51,12 @@ Current sources:
 
 - `src/renderer/ui/primitives/CheckboxMark.tsx`
 - `src/renderer/ui/outliner/DoneCheckbox.tsx`
+- `src/renderer/ui/agent/AgentSettingsDialog.tsx`
 - `src/renderer/styles.css`
 
 Purpose:
 
-- Stable visual mark for checkbox-like done state.
+- Stable visual mark for checkbox-like done or enabled state.
 - Represents the visual state only; it does not own click handling, keyboard
   handling, persistence, or row behavior.
 
@@ -78,13 +79,13 @@ States:
 Accessibility:
 
 - `CheckboxMark` is decorative and uses `aria-hidden`.
-- The parent button, row, or field control exposes `aria-pressed`,
+- The parent button, row, label, or field control exposes `aria-pressed`,
   `aria-checked`, label text, and keyboard behavior as appropriate.
 
 Non-goals:
 
 - CheckboxMark does not own `Mod+Enter` cycling, mouse toggling, row selection,
-  completion timestamps, or title/row layout.
+  completion timestamps, settings persistence, or title/row layout.
 
 ## IconButton
 
@@ -185,7 +186,7 @@ Purpose:
 - Shared menu/popover surface wrapper for dense command lists, context menus,
   trigger popovers, option pickers, and model menus.
 - Keeps ref, role, className, style, and preserve-selection wiring consistent
-  without owning positioning or keyboard behavior.
+  without owning open state or keyboard behavior.
 
 Structure:
 
@@ -198,7 +199,7 @@ Structure:
 States:
 
 - Surface open/closed state is owned by the caller.
-- Positioning is owned by the caller.
+- Positioning is supplied by the caller, usually through `useAnchoredOverlay`.
 - Preserve-selection is opt-in for outliner context menus and other popovers
   that must not clear block selection.
 
@@ -210,8 +211,36 @@ Accessibility:
 
 Non-goals:
 
-- MenuSurface does not own portal rendering, menu positioning, roving focus,
+- MenuSurface does not own portal rendering, anchor calculation, roving focus,
   filtering, or command execution.
+
+## AnchoredOverlay
+
+Current sources:
+
+- `src/renderer/ui/primitives/useAnchoredOverlay.ts`
+- `src/renderer/ui/outliner/TriggerPopover.tsx`
+- `src/renderer/ui/outliner/NodeContextMenu.tsx`
+- `src/renderer/ui/tags/TagBar.tsx`
+- `src/renderer/ui/outliner/OptionsPicker.tsx`
+- `src/renderer/ui/outliner/TrailingInput.tsx`
+- `src/renderer/ui/editor/FloatingEditorToolbar.tsx`
+- `src/renderer/ui/agent/AgentComposerModelMenu.tsx`
+- `src/renderer/ui/agent/AgentChatPanel.tsx`
+
+Purpose:
+
+- Shared viewport-aware overlay positioning for anchored popovers, pointer
+  context menus, selection toolbars, and agent menus.
+- Keeps margin, flip, clamp, max-height, and scroll/resize reflow behavior in
+  one place.
+
+Rules:
+
+- Callers provide an anchor rect, anchor element ref, or pointer-derived anchor.
+- Callers still own open state, dismissal, focus restoration, keyboard
+  navigation, and command behavior.
+- Overlays must not invent local z-index stacks; use design-system z tokens.
 
 ## MenuItem
 

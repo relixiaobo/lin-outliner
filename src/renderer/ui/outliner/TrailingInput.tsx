@@ -4,6 +4,7 @@ import {
   useState,
   type CSSProperties,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { EditorState, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import type { CreateNodeTree, NodeId, NodeProjection } from '../../api/types';
@@ -23,6 +24,7 @@ import {
 import { filterFieldOptions, isOptionsFieldType, resolveFieldOptions } from '../interactions/fieldOptions';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { parseOutlinerPaste } from '../interactions/pasteParser';
+import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import {
   PopoverBulletIcon,
   PopoverEmpty,
@@ -43,7 +45,12 @@ interface TrailingInputProps {
   onCreateTree?: (parentId: NodeId, nodes: CreateNodeTree[]) => Promise<unknown> | unknown;
   onUpdateCreated?: (nodeId: NodeId, text: string) => Promise<void> | void;
   onToggleCreated?: (nodeId: NodeId) => Promise<void> | void;
-  onCreateTrigger?: (params: { parentId: NodeId; trigger: TrailingTriggerKind; text: string }) => Promise<void> | void;
+  onCreateTrigger?: (params: {
+    parentId: NodeId;
+    trigger: TrailingTriggerKind;
+    text: string;
+    getText: () => string;
+  }) => Promise<unknown> | unknown;
   onCreateField?: (parentId: NodeId) => Promise<void> | void;
   onExpand?: (nodeId: NodeId) => void;
   onFocusNode?: (nodeId: NodeId) => void;
@@ -55,6 +62,9 @@ interface TrailingInputProps {
   onSelectOption?: (optionId: NodeId) => Promise<unknown> | unknown;
   onCreateOption?: (name: string) => Promise<unknown> | unknown;
 }
+
+const TRIGGER_NODE_IDLE_MS = 160;
+const PLAIN_NODE_IDLE_MS = 160;
 
 function emptyDoc() {
   return richTextToDoc(EMPTY_RICH_TEXT, pmSchema);
@@ -114,6 +124,7 @@ export function TrailingInput(props: TrailingInputProps) {
   const [optionsQuery, setOptionsQuery] = useState('');
   const [optionsIndex, setOptionsIndex] = useState(0);
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const optionsMenuRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const propsRef = useRef(props);
   const effectiveParentRef = useRef(props.parentId);
@@ -121,6 +132,8 @@ export function TrailingInput(props: TrailingInputProps) {
   const committingRef = useRef(false);
   const composingRef = useRef(false);
   const eagerBufferRef = useRef('');
+  const triggerIdleTimerRef = useRef<number | null>(null);
+  const plainCommitTimerRef = useRef<number | null>(null);
   const optionsStateRef = useRef({
     isOptionsField: false,
     optionsOpen: false,
@@ -138,6 +151,14 @@ export function TrailingInput(props: TrailingInputProps) {
     && props.optionField?.autocollectOptions !== false
     && !allOptions.some((option) => option.label.toLowerCase() === optionsQuery.trim().toLowerCase());
   const optionCount = filteredOptions.length + (canCreateOption ? 1 : 0);
+  const optionsMenuStyle = useAnchoredOverlay(optionsMenuRef, {
+    anchorRef: mountRef,
+    disabled: !optionsOpen || !isOptionsField,
+    layoutKey: `${optionsQuery}:${optionCount}`,
+    maxHeight: 240,
+    placement: 'bottom-start',
+    width: 280,
+  });
   optionsStateRef.current = {
     isOptionsField,
     optionsOpen,
@@ -193,26 +214,6 @@ export function TrailingInput(props: TrailingInputProps) {
     }
   };
 
-  const createEagerNode = (view: EditorView, initialText: string) => {
-    if (committingRef.current) return;
-    const targetParentId = effectiveParentRef.current;
-    committingRef.current = true;
-    eagerBufferRef.current = initialText;
-    resetEditorContent(view);
-    updateHasContent(false);
-    void createNode(targetParentId, initialText)
-      .then(async (nodeId) => {
-        const bufferedText = eagerBufferRef.current;
-        if (nodeId && bufferedText !== initialText) {
-          await propsRef.current.onUpdateCreated?.(nodeId, bufferedText);
-        }
-      })
-      .finally(() => {
-        committingRef.current = false;
-        eagerBufferRef.current = '';
-      });
-  };
-
   const createDoneNode = async (view: EditorView, rawText: string) => {
     if (committingRef.current) return;
     const targetParentId = effectiveParentRef.current;
@@ -243,15 +244,59 @@ export function TrailingInput(props: TrailingInputProps) {
   const createTriggerNode = (view: EditorView, trigger: TrailingTriggerKind, text: string) => {
     if (committingRef.current || !propsRef.current.onCreateTrigger) return;
     committingRef.current = true;
+    eagerBufferRef.current = text;
     resetEditorContent(view);
     updateHasContent(false);
     void Promise.resolve(propsRef.current.onCreateTrigger({
+      getText: () => eagerBufferRef.current,
       parentId: effectiveParentRef.current,
       trigger,
       text,
     })).finally(() => {
       committingRef.current = false;
+      eagerBufferRef.current = '';
     });
+  };
+
+  const clearTriggerIdleTimer = () => {
+    if (triggerIdleTimerRef.current === null) return;
+    window.clearTimeout(triggerIdleTimerRef.current);
+    triggerIdleTimerRef.current = null;
+  };
+
+  const clearPlainCommitTimer = () => {
+    if (plainCommitTimerRef.current === null) return;
+    window.clearTimeout(plainCommitTimerRef.current);
+    plainCommitTimerRef.current = null;
+  };
+
+  const schedulePlainNode = (view: EditorView, text: string) => {
+    clearPlainCommitTimer();
+    plainCommitTimerRef.current = window.setTimeout(() => {
+      plainCommitTimerRef.current = null;
+      if (
+        committingRef.current
+        || composingRef.current
+        || view.isDestroyed
+        || getEditorText(view) !== text
+      ) {
+        return;
+      }
+      void commitContent(view, text, false);
+    }, PLAIN_NODE_IDLE_MS);
+  };
+
+  const scheduleTriggerNode = (view: EditorView, trigger: TrailingTriggerKind, text: string) => {
+    clearTriggerIdleTimer();
+    if (trigger === '/') {
+      createTriggerNode(view, trigger, text);
+      return;
+    }
+    triggerIdleTimerRef.current = window.setTimeout(() => {
+      triggerIdleTimerRef.current = null;
+      if (committingRef.current || view.isDestroyed || getEditorText(view) !== text) return;
+      createTriggerNode(view, trigger, text);
+    }, TRIGGER_NODE_IDLE_MS);
   };
 
   const closeOptions = () => {
@@ -329,6 +374,8 @@ export function TrailingInput(props: TrailingInputProps) {
         const text = getEditorText(view);
         updateHasContent(text.length > 0);
         if (committingRef.current) return;
+        clearTriggerIdleTimer();
+        clearPlainCommitTimer();
 
         const optionState = optionsStateRef.current;
         const action = resolveTrailingRowUpdateAction({
@@ -340,7 +387,7 @@ export function TrailingInput(props: TrailingInputProps) {
           return;
         }
         if (action.type === 'create_trigger_node') {
-          createTriggerNode(view, action.trigger as TrailingTriggerKind, action.matchText);
+          scheduleTriggerNode(view, action.trigger as TrailingTriggerKind, action.matchText);
           return;
         }
         if (action.type === 'open_options') {
@@ -350,6 +397,9 @@ export function TrailingInput(props: TrailingInputProps) {
         }
         if (action.type === 'close_options') {
           closeOptions();
+        }
+        if (!composingRef.current && text.trim().length > 0) {
+          schedulePlainNode(view, text);
         }
       },
       handleDOMEvents: {
@@ -438,16 +488,6 @@ export function TrailingInput(props: TrailingInputProps) {
         if (mod && event.key.toLowerCase() === 'y') {
           event.preventDefault();
           propsRef.current.onRedo?.();
-          return true;
-        }
-
-        if (
-          getEditorText(viewInstance).length === 0
-          && isPlainPrintableKey(event)
-          && !['>', '#', '@', '/'].includes(event.key)
-        ) {
-          event.preventDefault();
-          createEagerNode(viewInstance, event.key);
           return true;
         }
 
@@ -574,6 +614,8 @@ export function TrailingInput(props: TrailingInputProps) {
 
     viewRef.current = view;
     return () => {
+      clearTriggerIdleTimer();
+      clearPlainCommitTimer();
       view.destroy();
       viewRef.current = null;
     };
@@ -611,8 +653,13 @@ export function TrailingInput(props: TrailingInputProps) {
         className={`row-editor trailing-editor idle-hint ${hasContent ? '' : 'is-empty'}`}
         data-placeholder="Type here or '/' for commands"
       />
-      {optionsOpen && isOptionsField && (
-        <PopoverListbox className="node-picker-popover trailing-options-popover" label="Field options">
+      {optionsOpen && isOptionsField && createPortal(
+        <PopoverListbox
+          ref={optionsMenuRef}
+          className="node-picker-popover trailing-options-popover"
+          label="Field options"
+          style={optionsMenuStyle}
+        >
           {optionCount === 0 && <PopoverEmpty>No options</PopoverEmpty>}
           {filteredOptions.map((option, index) => (
             <PopoverListItem
@@ -639,7 +686,8 @@ export function TrailingInput(props: TrailingInputProps) {
               }}
             />
           )}
-        </PopoverListbox>
+        </PopoverListbox>,
+        document.body,
       )}
       <span />
     </div>
