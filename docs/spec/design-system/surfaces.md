@@ -634,6 +634,39 @@ Component dependencies:
 - `FormField`
 - `IconButton`
 
+## Agent Debug Panel
+
+Agent debug is an inspection surface for provider payloads and runtime
+accounting. It lives in a workspace panel, not in the normal chat reading flow.
+
+Current sources:
+
+- `src/renderer/ui/agent/AgentDebugPanel.tsx`
+
+Visual rules:
+
+- Information architecture is Overview, Request Context, Provider Timeline.
+- Overview is a compact metric strip: session, model, context, and status.
+- Request context owns token budget, system prompt, tool schemas, and raw request
+  payload links.
+- Provider timeline owns query, round, message, response, and raw provider
+  payload details.
+- Long JSON, tool schema, thinking, tool input, and tool output bodies are
+  bounded scroll regions.
+- Debug cards may use subtle section backgrounds, but they must remain quieter
+  than the primary outliner panel and agent chat.
+
+Behavior:
+
+- Refresh is an explicit icon action.
+- Copy actions copy only the adjacent raw/debug payload.
+- Disclosure rows preserve browser-native summary behavior while using the
+  shared icon button primitive for actions.
+
+Component dependencies:
+
+- `IconButton`
+
 ## Overlay Layering
 
 Overlay surfaces include command palette, context menus, trigger popovers,

@@ -105,6 +105,21 @@ Tool summaries should be action-based:
 - Avoid: raw tool names, raw JSON as the primary row label, or vague labels such
   as `Tool call`.
 
+## Debug Surface
+
+Agent debug is an inspection panel for provider payloads, token accounting, and
+runtime history. It must not become the normal chat presentation.
+
+- Organize the panel as Overview, Request Context, and Provider Timeline.
+- Overview shows session count, model, context budget, and status as compact
+  metrics.
+- Request Context contains system prompt, tools, and request JSON.
+- Provider Timeline contains query, round, message, response, and raw payload
+  disclosure.
+- Debug payloads are bounded and scrollable; raw JSON is never the primary row
+  label.
+- Refresh and copy use shared icon-button affordances.
+
 ## Composer Contract
 
 The composer is the bottom dock control surface.

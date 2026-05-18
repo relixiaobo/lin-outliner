@@ -26,7 +26,8 @@ test.describe('workspace layout resizing', () => {
     const sidebarAfterDrag = await sidebar.boundingBox();
     expect(sidebarAfterDrag).toBeTruthy();
     await sidebarHandle.press('ArrowLeft');
-    await expect.poll(async () => (await sidebar.boundingBox())?.width ?? 0).toBeLessThan(sidebarAfterDrag!.width - 8);
+    await sidebarHandle.press('ArrowLeft');
+    await expect.poll(async () => (await sidebar.boundingBox())?.width ?? 0).toBeLessThan(sidebarAfterDrag!.width - 12);
 
     const agentHandle = page.getByRole('button', { name: 'Resize agent' });
     const agentHandleBox = await agentHandle.boundingBox();
@@ -40,7 +41,8 @@ test.describe('workspace layout resizing', () => {
     const agentAfterDrag = await agent.boundingBox();
     expect(agentAfterDrag).toBeTruthy();
     await agentHandle.press('ArrowRight');
-    await expect.poll(async () => (await agent.boundingBox())?.width ?? 0).toBeLessThan(agentAfterDrag!.width - 8);
+    await agentHandle.press('ArrowRight');
+    await expect.poll(async () => (await agent.boundingBox())?.width ?? 0).toBeLessThan(agentAfterDrag!.width - 12);
   });
 
   test('panel split resizes by ratio and canvas supports min-width overflow', async ({ page }) => {

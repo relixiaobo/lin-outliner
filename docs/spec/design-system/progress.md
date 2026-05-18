@@ -106,6 +106,9 @@ Completion means:
 - Reworked agent settings information architecture into Provider, Connection,
   and Model behavior sections; API key removal now sits with key configuration,
   while provider removal remains the secondary destructive footer action.
+- Reworked agent debug into a compact Overview, Request Context, and Provider
+  Timeline hierarchy; refresh and copy actions now use the shared icon-button
+  primitive while runtime debug data remains caller-owned.
 - Added e2e coverage for agent settings modal focus entry, focus cycling,
   Escape close, and trigger focus restoration.
 - Adopted `Dialog` in the command palette while preserving the search input as

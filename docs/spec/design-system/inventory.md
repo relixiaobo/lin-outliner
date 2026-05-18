@@ -29,7 +29,7 @@ Inventory covers shipped or in-progress product UI under `src/renderer/ui`:
 | Fields and definitions | `DefinitionConfigPanel.tsx`, `DefinitionConfigControls.tsx`, `DefinitionConfigRowShell.tsx`, `FieldEntryGrid.tsx`, `FieldValueRenderer.tsx`, `OptionsPicker.tsx`, field row files | `components.md`, `surfaces.md` | Field entry layout, definition row shell, definition controls, and option popover shell are isolated; option pickers now use shared anchored positioning while field values and definition configuration receive one final dense-row visual pass in this refactor. |
 | Commands | `CommandPalette.tsx`, `useWorkspaceKeyboard.ts` | `components.md`, `implementation.md` | Core overlay exists; dialog shell and menu item rows are shared while search/list behavior stays command-owned. |
 | Node menus | `NodeContextMenu.tsx`, `TriggerPopover.tsx`, `SlashCommandMenu.tsx`, `ReferenceSelector.tsx` | `components.md`, `implementation.md` | Trigger listbox shell, option rows, trigger positioning, and node context-menu positioning are shared; context-menu submodes and keyboard/focus convergence remain. |
-| Agent dock | `AgentDock.tsx`, `AgentChatPanel.tsx` | `surfaces.md`, `patterns.md` | Real surface exists and is persistent; tokens and message primitives need consolidation. |
+| Agent dock | `AgentDock.tsx`, `AgentChatPanel.tsx`, `AgentDebugPanel.tsx` | `surfaces.md`, `patterns.md` | Real surface exists and is persistent; chat/message primitives are mostly isolated and debug now has a sectioned inspection hierarchy. |
 | Agent messages | `AgentMessageRow.tsx`, `AgentMessageFrame.tsx`, `AgentBranchNavigator.tsx`, `AgentProcessBlock.tsx`, `AgentProcessTimeline.tsx`, `AgentThinkingBlock.tsx`, `AgentToolCallBlock.tsx`, `AgentToolCallDisclosure.tsx` | `components.md`, `surfaces.md` | Production UI exists; message frame, branch navigator, process timeline, thinking, and tool-call disclosure are isolated while turn behavior stays product-owned. |
 | Agent composer | `AgentComposer.tsx`, `AgentComposerControls.tsx`, `AgentComposerModelMenu.tsx` | `components.md`, `surfaces.md` | Rich behavior exists; queued follow-up controls, attachment chip, toolbar composition, model picker, reasoning menu/switch, settings trigger, send/stop slot, anchored model menu, and conversation menu positioning are isolated while composer behavior remains product-owned. |
 | Agent settings | `AgentSettingsDialog.tsx` | `components.md`, `implementation.md` | Dialog shell, sectioned provider/connection/model behavior architecture, form field wrapper, key action placement, and shared checkbox mark are in place while destructive confirmation remains future work. |
@@ -173,6 +173,7 @@ Source:
 - `src/renderer/ui/agent/AgentComposerControls.tsx`
 - `src/renderer/ui/agent/AgentComposerModelMenu.tsx`
 - `src/renderer/ui/agent/AgentSettingsDialog.tsx`
+- `src/renderer/ui/agent/AgentDebugPanel.tsx`
 
 Current state:
 
@@ -182,6 +183,8 @@ Current state:
   reasoning control, queued follow-up, and settings dialog.
 - Provider settings include model, reasoning, base URL, API key, enable switch,
   remove provider, remove key, save/cancel, and alerts.
+- Agent debug includes session/model/context overview, request context,
+  provider timeline, raw payload disclosure, refresh, and copy actions.
 
 Aligned:
 
@@ -194,13 +197,13 @@ Aligned:
   behavior.
 - Composer controls are componentized around existing primitives while draft,
   streaming, provider update, attachment, and queue behavior stay local.
+- Agent settings and debug information architecture are sectioned while runtime
+  data and persistence remain local.
 
 Remaining convergence:
 
-- Finish agent settings control adoption for shared inputs, selects, switches,
-  buttons, alerts, and provider rows.
-- Move composer/model menu placement onto the shared overlay positioning
-  contract once it exists.
+- Finish agent settings control adoption for shared inputs, selects, buttons,
+  alerts, and provider rows.
 - Normalize composer typography, radius, spacing, and toolbar hierarchy against
   the dense desktop system.
 - Keep thinking and tool-call disclosure grouped under assistant turns, with
