@@ -3,7 +3,7 @@
 This document is the working checklist for Lin's local agent integration. Keep
 it current whenever a meaningful agent milestone lands or a priority changes.
 
-Last updated: 2026-05-15
+Last updated: 2026-05-18
 
 ## Current Direction
 
@@ -29,34 +29,53 @@ Do not add Rust runtime code for the product agent path.
   - `operation_history`
 - [x] Lin Outline parser shared by create, edit, and search flows.
 - [x] Agent node tool docs, return value docs, and command protocol updates.
+- [x] Local cc-style tool roles wired into the agent runtime:
+  - `file_read`
+  - `file_glob`
+  - `file_grep`
+  - `file_edit`
+  - `file_write`
+  - `bash`
+  - `task_stop`
+- [x] Local tool capability parity pass:
+  - `file_read` image dimensions, cc-style PDF text extraction via `pdftotext`,
+    PDF page rendering via `pdftoppm`, and notebook parsing
+  - `file_glob` and `file_grep` return local-root-relative paths
+  - `file_grep` backed by ripgrep with cc-style output modes
+  - `file_edit` narrowed to exact non-empty replacements after a full read
+    with compact local hunks
+  - `bash` background task output files with live status headers
+- [x] Web read tools:
+  - `web_search`
+  - `web_fetch`
+- [x] Per-turn hidden context reminders for current outliner context and
+  uploaded file metadata.
+- [x] Lin-specific stable system prompt module for agent identity, tool
+  boundaries, dynamic reminder handling, and safety posture.
 
 ## Next Milestone
 
-Implement local tools based on cc-2.1's tool roles, with Lin-specific TypeScript
-execution and approval boundaries.
+Finish approval and UI/debug polish for the local tools that now execute through
+the TypeScript main-process tool gateway.
 
-- [ ] `file_read`: bounded file reads with offset/limit and clear truncation.
-- [ ] `file_glob`: workspace-rooted file discovery.
-- [ ] `file_grep`: bounded content search with useful match context.
-- [ ] `file_edit`: exact string replacement with uniqueness checks.
-- [ ] `file_write`: create or full-file rewrite with approval.
-- [ ] `bash`: command execution with timeout, output caps, cwd policy, and
-  background task support.
-- [ ] `task_stop`: stop background commands created by `bash`.
 - [ ] Approval rendering for mutating local tools.
 - [ ] Debug panel visibility for local tool inputs, outputs, status, and
   truncation.
+- [ ] Dedicated diff preview UI for `file_edit` and `file_write`.
+- [ ] Background task completion notifications surfaced in the message stream.
+- [ ] Host permission and offline/private-mode checks for web tools.
 
 ## Following Milestones
 
-- [ ] Web tools:
-  - `web_search`
-  - `web_fetch`
-- [ ] Agent context reminders:
-  - active panel and selected node context
+- [ ] Agent context reminder expansion:
+  - active panel and selected node context beyond today's default node
   - visible outline window
   - recent user edits
   - available local/document tool summary
+- [ ] Prompt/context budget split:
+  - keep stable behavior in `agentSystemPrompt.ts`
+  - keep changing UI and document state in per-turn `<system-reminder>` blocks
+  - keep exact argument rules in tool schemas and descriptions
 - [ ] Agent approval UX polish:
   - compact tool cards
   - preview diffs for file edits and node edits

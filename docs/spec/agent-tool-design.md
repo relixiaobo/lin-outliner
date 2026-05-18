@@ -36,13 +36,13 @@ These tools are required for the first useful local agent.
 
 | Tool | Kind | Mutates | Approval | Purpose |
 |---|---|---:|---|---|
-| `node_search` | outliner | No | No | Execute simple full-text, temporary search outline, or saved search node queries. |
+| `node_search` | outliner | No | No | Execute temporary search outlines or saved search node queries. |
 | `node_read` | outliner | No | No | Read node raw type/data, fields, and bounded children. |
 | `node_create` | outliner | Yes | Usually yes | Create outline trees, references, search/view nodes, schema nodes, or duplicates. |
-| `node_edit` | outliner | Yes | Usually yes | Edit the canonical outline for a known node using exact string replacement, or perform explicit structure operations such as move and merge. |
+| `node_edit` | outliner | Yes | Usually yes | Edit the annotated outline for a known node using exact string replacement, or perform explicit structure operations such as move and merge. |
 | `node_delete` | outliner | Yes | Usually yes | Trash or restore one or more nodes. |
 | `operation_history` | outliner | Yes for undo/redo | Usually yes | Inspect, undo, or redo user and agent operations. |
-| `file_read` | local | No | Usually no | Read workspace files with bounded output. |
+| `file_read` | local | No | Usually no | Read local files with bounded output. |
 | `file_glob` | local | No | No | Find files by glob or path pattern. |
 | `file_grep` | local | No | No | Search file contents under allowed roots. |
 | `file_edit` | local | Yes | Yes | Apply exact string replacements to files. |
@@ -76,19 +76,44 @@ permission behavior harder to reason about.
 - Use `web_*` for network read tools.
 - Local file tools should mirror cc-2.1's `Read`, `Edit`, `Write`, `Glob`,
   and `Grep` roles, while keeping Lin's lower snake case names.
+- The local tool list is intentionally smaller than cc-2.1's full registry.
+  Compatibility aliases and history-shaped tools such as `KillShell`,
+  `TaskOutput`, and old agent-output readers are not exposed; background output
+  should be surfaced through runtime events or persisted paths that can be read
+  with `file_read`.
 - Do not use a generic `node_batch`; batch capability belongs inside the
   relevant tool parameters.
+
+## Tool Description Style
+
+Tool descriptions and parameter descriptions are part of the agent prompt. They
+should be written as operational guidance, not as implementation notes:
+
+- Say when to use the tool and when to use a neighboring tool instead.
+- Describe the exact model-facing input contract, including defaults and
+  pagination/preview behavior.
+- Keep wording close to proven references: nodex for `node_*`, cc-2.1 for
+  local file/bash tools, and a search/fetch split for `web_*`.
+- Avoid exposing internal implementation details unless the model must act on
+  them, such as `%%node:id%%` markers, `operation_id` guards, or `nextOffset`.
+- Do not promise capabilities that are not implemented.
 
 ## Tool Result Layers
 
 Tool results have three separate audiences:
 
-- Runtime envelope: internal `details` data for status, metrics, debugging,
-  permissions, UI rendering, export, and tests.
+- pi-agent-core result: every tool `execute` returns native
+  `AgentToolResult<T>` with `content`, `details`, and optional `terminate`.
+- Runtime envelope: Lin stores the common envelope in `details` for status,
+  metrics, debugging, permissions, UI rendering, export, and tests.
 - Model-visible result: the smallest stable protocol the agent needs for the
   next action.
 - UI detail view: optional rich rendering derived from `details`, not from the
   model-visible text.
+
+Lin error envelopes (`ok: false`) are converted in the shared `afterToolCall`
+adapter to pi-agent-core's native `ToolResultMessage.isError = true`. Tools
+should not invent a separate `isError` field inside `AgentToolResult`.
 
 Do not expose the runtime envelope as the node tools' model-facing contract.
 The agent should see an action protocol, not a trimmed copy of implementation
@@ -106,9 +131,7 @@ interface ToolResult<TData = unknown> {
   preview?: ToolPreview;
   validation?: ValidationReport;
   boundary?: string;
-  nextStep?: string;
-  fallback?: string;
-  hint?: string;
+  instructions?: string;
   warnings?: string[];
   pagination?: Pagination;
   metrics?: ToolMetrics;
@@ -146,29 +169,37 @@ interface ToolMetrics {
 }
 ```
 
-For `node_*`, model-visible `content.text` is a discriminated JSON protocol:
+For `node_*`, model-visible `content.text` uses one concise envelope. Runtime
+debug details stay in `details`; the model-facing payload avoids duplicated
+representations.
 
 ```ts
+interface NodeVisibleEnvelope {
+  ok: boolean;
+  tool: string;
+  status: "success" | "partial" | "unchanged" | "denied" | "error";
+  instructions?: string;
+  data?: NodeVisibleResult;
+  error?: ToolError;
+  warnings?: string[];
+}
+
 type NodeVisibleResult =
   | NodeVisibleReadResult
   | NodeVisibleSearchResult
-  | NodeVisibleMutationResult
-  | NodeVisibleErrorResult;
+  | NodeVisibleCountResult
+  | NodeVisibleMutationResult;
 
 interface NodeVisibleReadResult {
   kind: "read";
   outline?: string;
-  refs: NodeVisibleRef[];
   page?: NodeVisiblePage;
-  next?: NodeVisibleNextStep;
 }
 
 interface NodeVisibleSearchResult {
   kind: "search";
-  matches: NodeVisibleMatch[];
-  refs: NodeVisibleRef[];
+  outline?: string;
   page: NodeVisiblePage;
-  next?: NodeVisibleNextStep;
 }
 
 interface NodeVisibleMutationResult {
@@ -176,34 +207,13 @@ interface NodeVisibleMutationResult {
   action: "create" | "edit" | "delete";
   status: "applied" | "preview" | "unchanged";
   changes: NodeVisibleChanges;
-  refs?: NodeVisibleRef[];
-  outline?: string; // preview only
-  next?: NodeVisibleNextStep;
+  outline?: string;
 }
 
-interface NodeVisibleErrorResult {
-  kind: "error";
-  code: string;
-  message: string;
-  recoverable: boolean;
-  retry?: NodeVisibleNextStep;
-  fallback?: string;
-  hint?: string;
-  warnings?: string[];
-}
-
-interface NodeVisibleRef {
-  nodeId: string;
-  kind?: string;
-  title?: string;
-  path?: string;
-  line?: number;
-  revision?: string;
-  targetId?: string;
-}
-
-interface NodeVisibleMatch extends NodeVisibleRef {
-  snippet?: string;
+interface NodeVisibleCountResult {
+  kind: "count";
+  total: number;
+  page: NodeVisiblePage;
 }
 
 interface NodeVisibleChanges {
@@ -218,38 +228,28 @@ interface NodeVisiblePage {
   total: number;
   offset: number;
   limit: number;
-  nextOffset?: number;
-}
-
-interface NodeVisibleNextStep {
-  tool: "node_read" | "node_search" | "node_create" | "node_edit" | "node_delete";
-  params?: Record<string, unknown>;
-  reason?: string;
+  next_offset?: number;
 }
 ```
 
 Rules:
 
-- `outline` is the same Lin Outline Format accepted by `node_create` and
-  `node_edit`.
-- `refs` maps outline lines, search matches, or mutation results to node ids
-  without embedding ids into the outline text.
-- Mutating tools return `changes`, affected `refs`, and optional `next`; they do
-  not echo large input outlines or applied before/after outlines unless the call
-  is explicitly a preview.
+- `outline` is the single model-visible representation for read/search results.
+  It is an annotated outline: `%%node:id%%` is protocol metadata, not node text.
+- Mutating tools return `changes` and, when useful, a fresh annotated `outline`
+  for follow-up edits.
 - Full structured payloads such as `NodeReadItem`, `NodeSearchItem`,
   `beforeOutline`, `afterOutline`, and raw preview details remain available in
   `details`.
 - `summary` is not part of the model-visible node protocol. Human-facing summary
   text belongs in UI rendering or `details`.
 
-Guidance fields are first-class:
+Guidance is first-class:
 
-- `next` / `retry`: the recommended next tool call or action.
-- `fallback`: an alternative if the recommended path fails.
-- `hint`: short agent-facing correction.
+- `instructions`: the current state, recommended next action, boundary, and
+  recovery guidance in one field.
 
-Use guidance fields for unknown tags, unresolved fields, permission denials,
+Use `instructions` for unknown tags, unresolved fields, permission denials,
 truncation, no-op updates, and ambiguous targets.
 
 `ToolPreview` and `ValidationReport` are defined in the TypeScript parser section
@@ -274,42 +274,41 @@ Example:
     "message": "Node not found: node_123",
     "recoverable": true
   },
-  "nextStep": "Use node_search or node_read on the parent context to find the correct node id.",
-  "hint": "The node id may be stale after a delete, restore, or undo."
+  "instructions": "Use node_search or node_read on the parent context to find the correct node id. The node id may be stale after a delete, restore, or undo."
 }
 ```
 
 ## Node Tool Contract
 
 Node tools use the compact nodex-style surface, but Lin does not expose nodex's
-incremental `text` edit contract. Lin uses one canonical outline format for
-creation, reading, and text replacement edits:
+incremental `text` edit contract. Lin uses one outline grammar for creation,
+reading, and text replacement edits. Read/search results are annotated with
+`%%node:id%%` markers so ids and content are not returned in two parallel
+structures:
 
 - `node_create.outline` inserts new structure.
-- `node_read(..., format: "outline" | "both")` serializes existing structure.
-- `node_edit.oldString/newString` edits that serialized outline by exact string
+- `node_read(...)` serializes existing structure as annotated outline.
+- `node_edit.old_string/new_string` edits that serialized outline by exact string
   replacement, then TypeScript parses and applies the result.
 
-The agent-facing outline must stay clean. Do not embed node ids, internal CRDT
-metadata, timestamps, or implementation markers in outline text. Identity comes
-from explicit tool parameters (`nodeId`, `parentId`, `afterId`) and from the
-structured `node_read` payload. TypeScript may keep an internal span map from
-serialized text ranges to node ids, but that map is not model-visible.
+`%%node:id%%` is the only agent-visible identity marker. It is protocol metadata,
+not node text, and the parser strips it before applying content changes. Do not
+embed internal CRDT metadata, timestamps, or other implementation markers in
+outline text.
 
 `operation_history` is a Lin extension over nodex's AI-only `undo` tool. Keep it
 separate from the `node_*` tools.
 
 Read/create/edit symmetry:
 
-- `node_read` returns structured ids plus optional `outline` text for the same
-  node subtree.
-- `node_create` accepts the same outline format without embedded ids. The
-  insertion point is controlled by `parentId` and `afterId`; omitted `parentId`
+- `node_read` returns one annotated `outline` for the requested node subtree.
+- `node_create` accepts the same content grammar without `%%node:id%%` markers. The
+  insertion point is controlled by `parent_id` and `after_id`; omitted `parent_id`
   means today's journal node, not the currently focused UI node.
-- `node_edit` targets one existing root by `nodeId`, applies exact
-  `oldString/newString` replacement to the outline returned by `node_read`, and
+- `node_edit` targets one existing root by `node_id`, applies exact
+  `old_string/new_string` replacement to the outline returned by `node_read`, and
   then lets TypeScript parse the full resulting outline.
-- Precise child edits should target that child's `nodeId` directly. Parent
+- Precise child edits should target that child's node id directly. Parent
   context is only needed when inserting, moving, or disambiguating repeated text.
 
 ## Lin Outline Format
@@ -349,11 +348,11 @@ Rules:
 - `Field:: value` sets a single field value.
 - `Field::` followed by indented value lines sets a multi-value field.
 - `Field::` without values clears that field in edit results.
-- Whole-line `[[Display^nodeId]]` creates a reference node or reference field
+- Whole-line `[[Display^node:...]]` creates a reference node or reference field
   value.
-- Inline `[[Display^nodeId]]` creates an inline reference inside node text or a
+- Inline `[[Display^node:...]]` creates an inline reference inside node text or a
   field value.
-- Date nodes are referenced by id with `[[Display^nodeId]]`; date shortcut
+- Date nodes are referenced by id with `[[Display^node:...]]`; date shortcut
   syntax is not part of the model-facing outline contract yet.
 - `%%search%%` turns the node into a search node. In `node_create` this creates a
   saved search node; in `node_search` it is a temporary search node that is only
@@ -492,7 +491,7 @@ Field type inference:
 
 References:
 
-- `[[Display^nodeId]]` requires `nodeId` to exist and the target must not be in
+- `[[Display^node:...]]` requires the target id to exist and the target must not be in
   Trash.
 - Date references use normal node references to existing date node ids.
 - Search condition lines may use `#task` or `[[#task]]` to refer to tag
@@ -511,16 +510,15 @@ Parameters:
 
 ```ts
 interface NodeSearchParams {
-  query?: string;
   outline?: string;
-  searchNodeId?: string;
+  search_node_id?: string;
   limit?: number; // default 20, max 50
   offset?: number;
   count?: boolean;
 }
 ```
 
-Exactly one of `query`, `outline`, and `searchNodeId` is required.
+Exactly one of `outline` and `search_node_id` is required.
 
 Return data:
 
@@ -555,11 +553,13 @@ interface NodeSearchItem {
 
 Result behavior:
 
-- `query` is a simple full-text shortcut.
 - `outline` is a temporary search node and does not mutate document state.
 - The outline must parse as one search node root. If `%%search%%` is omitted,
   the runtime may still treat the root as a temporary search node, but tool
   descriptions should teach agents to include `%%search%%`.
+- Keyword search is represented as a search outline with a plain text condition,
+  for example `- %%search%% 成都天气\n  - 成都天气`. There is no separate
+  `query` parameter.
 - The root title is returned as `title` and may be used for temporary UI display.
 - `%%view:table%%`, `%%view:list%%`, `%%view:cards%%`, and similar directives are
   returned as `view` and drive temporary result presentation.
@@ -568,11 +568,14 @@ Result behavior:
   filter by field value, and node references filter by link relationship.
 - Unknown tag, field, or reference conditions are errors. The tool does not
   silently drop unresolved structured conditions.
-- `searchNodeId` executes an existing saved search node.
+- `search_node_id` executes an existing saved search node.
 - Subtree restriction, parent restriction, backlink search, and relationship
   filters should be represented as search conditions in the outline, not as
   separate tool parameters.
-- `count: true` returns total and guidance without item payloads.
+- Model-visible search results return one annotated outline of matches, not
+  separate `matches` and `refs` arrays.
+- `count: true` returns `kind: "count"` with total and guidance without item
+  payloads.
 
 Examples:
 
@@ -591,28 +594,27 @@ Examples:
 
 ```json
 {
-  "searchNodeId": "node_saved_search"
+  "search_node_id": "node_saved_search"
 }
 ```
 
 ### `node_read`
 
-Read nodes as structured data and, when requested, as canonical Lin Outline
-Format. The structured payload carries ids. The outline is clean model-facing
-text and does not contain ids.
+Read nodes as structured data in `details` and as annotated Lin Outline Format
+for the model-visible result. The outline carries `%%node:id%%` markers so the
+agent has one source of truth for both content and ids.
 
 Parameters:
 
 ```ts
 interface NodeReadParams {
-  nodeId?: string; // default: today's journal node
-  nodeIds?: string[];
+  node_id?: string; // default: today's journal node
+  node_ids?: string[];
   depth?: number; // 0 = node only, default 1, max 3
-  childOffset?: number;
-  childLimit?: number; // default 20, max 50
-  format?: "structured" | "outline" | "both"; // default "outline"
-  includeDeleted?: boolean;
-  includeBacklinks?: boolean;
+  child_offset?: number;
+  child_limit?: number; // default 20, max 50
+  include_deleted?: boolean;
+  include_backlinks?: boolean;
 }
 ```
 
@@ -681,21 +683,23 @@ interface NodeBacklink {
 
 Result behavior:
 
-- Omitted `nodeId` reads today's journal node.
-- Use either `nodeId` or `nodeIds`, not both. If both are omitted, read today's
+- Omitted `node_id` reads today's journal node.
+- Use either `node_id` or `node_ids`, not both. If both are omitted, read today's
   journal node.
-- `nodeIds` returns multiple independent `items`.
-- The default `format: "outline"` is agent-first: model-visible output contains
-  `kind: "read"`, canonical outline, and `refs` for visible outline nodes, while structured
-  children/fields stay omitted from `details`.
-- Use `format: "both"` only when the caller needs the full structured
-  `NodeReadItem` data in addition to the outline.
+- `node_ids` returns multiple independent `items`.
+- Model-visible output contains one annotated outline. Full structured
+  `NodeReadItem` data remains available in `details`.
 - `outline` serializes the requested node and bounded descendants using the same
-  canonical format accepted by `node_create` and `node_edit`.
+  content grammar accepted by `node_create` and `node_edit`, plus agent-only
+  `%%node:id%%` markers.
+- `%%node:id%%` markers are not node text. Preserve markers for existing nodes
+  when editing; omit markers for newly created lines.
+- Field entries and field values are serialized on separate lines in annotated
+  output so both the field entry id and value node ids can be represented.
 - If children are truncated, return pagination and do not serialize hidden
   children into `outline`.
-- To edit a child precisely, use the child `nodeId` from `children.items` and
-  call `node_edit` on that child directly.
+- To edit a child precisely, copy the child line with its `%%node:id%%` marker or
+  call `node_edit` directly on that child id.
 
 ### `node_create`
 
@@ -707,16 +711,16 @@ Parameters:
 
 ```ts
 interface NodeCreateParams {
-  parentId?: string; // default: today's journal node
-  afterId?: string | null; // null = first child; omitted = last child
+  parent_id?: string; // default: today's journal node
+  after_id?: string | null; // null = first child; omitted = last child
   outline?: string;
-  targetId?: string; // create one reference node to this target
-  duplicateId?: string; // deep-copy this subtree
-  previewOnly?: boolean;
+  target_id?: string; // create one reference node to this target
+  duplicate_id?: string; // deep-copy this subtree
+  preview_only?: boolean;
 }
 ```
 
-Exactly one of `outline`, `targetId`, and `duplicateId` is required.
+Exactly one of `outline`, `target_id`, and `duplicate_id` is required.
 
 Return data:
 
@@ -737,19 +741,23 @@ interface NodeCreateData {
 
 Result behavior:
 
-- If `afterId` is provided without `parentId`, the parent is `afterId`'s parent.
-- If both are provided, `afterId` must be a child of `parentId`.
+- If `after_id` is provided without `parent_id`, the parent is `after_id`'s parent.
+- If both are provided, `after_id` must be a child of `parent_id`.
 - If `outline` has multiple root lines, the first root is inserted at the
   requested position and following roots are inserted after the previous root.
-- `targetId` creates one reference node at the requested position.
-- `duplicateId` deep-copies the source subtree at the requested position.
+- `target_id` creates one reference node at the requested position.
+- `duplicate_id` deep-copies the source subtree at the requested position.
 - Missing normal node tags and fields may be created by the outline application
   layer. Search-node tag and field conditions must resolve to existing
   definitions.
 - Search/view directives, schema-like tag/field structures, references,
   descriptions, checkboxes, and fields all come through `outline`.
+- `node_create.outline` must not contain `%%node:id%%` markers. Those markers are
+  only emitted by read/search results and accepted by edit replacements.
+- After apply, model-visible data returns a fresh annotated `outline` for the
+  created roots.
 - Reference targets must exist and must not be in Trash.
-- `previewOnly: true` returns preview and validation without applying.
+- `preview_only: true` returns preview and validation without applying.
 
 Example:
 
@@ -762,8 +770,8 @@ Example:
 ### `node_edit`
 
 Edit existing outliner content. The content edit path mirrors cc-style exact
-replacement: read the node, copy an exact fragment from the returned canonical
-outline, and replace it with a new canonical fragment.
+replacement: read the node, copy an exact fragment from the returned annotated
+outline, and replace it with a new annotated fragment.
 
 Parameters:
 
@@ -775,57 +783,62 @@ type NodeEditParams =
   | NodeReferenceReplaceParams;
 
 interface NodeOutlineEditParams {
-  nodeId: string;
-  oldString: string; // exact fragment from node_read.outline, or "*" for full outline
-  newString: string;
-  expectedRevision?: string;
-  previewOnly?: boolean;
+  node_id: string;
+  old_string: string; // exact fragment from node_read data.outline, or "*" for full outline
+  new_string: string;
+  expected_revision?: string;
+  preview_only?: boolean;
 }
 
 interface NodeMoveParams {
-  nodeId?: string;
-  nodeIds?: string[];
+  node_id?: string;
+  node_ids?: string[];
   move: {
-    parentId?: string;
-    afterId?: string | null;
-    structuralAction?: "indent" | "outdent" | "move_up" | "move_down";
+    parent_id?: string;
+    after_id?: string | null;
+    structural_action?: "indent" | "outdent" | "move_up" | "move_down";
   };
-  previewOnly?: boolean;
+  preview_only?: boolean;
 }
 
 interface NodeMergeParams {
-  nodeId: string; // target node
-  mergeFromNodeIds: string[]; // source nodes
-  previewOnly?: boolean;
+  node_id: string; // target node
+  merge_from_node_ids: string[]; // source nodes
+  preview_only?: boolean;
 }
 
 interface NodeReferenceReplaceParams {
-  nodeId: string;
-  replaceWithReferenceTo: string;
-  previewOnly?: boolean;
+  node_id: string;
+  replace_with_reference_to: string;
+  preview_only?: boolean;
 }
 ```
 
 Outline edit semantics:
 
-- `oldString !== "*"` must match exactly once in the current canonical outline
-  for `nodeId`.
-- `oldString === "*"` is a sentinel that replaces the whole canonical outline for
-  `nodeId`. It is not a wildcard or regular expression; `*` has special meaning
+- `old_string !== "*"` must match exactly once in the current annotated outline
+  for `node_id`.
+- `old_string === "*"` is a sentinel that replaces the whole annotated outline for
+  `node_id`. It is not a wildcard or regular expression; `*` has special meaning
   only when it is the entire value.
-- `newString` is not parsed in isolation. The full outline after replacement must
+- `new_string` is not parsed in isolation. The full outline after replacement must
   be valid Lin Outline Format.
+- Existing lines should preserve their `%%node:id%%` marker. New lines should omit
+  it. Removing a marked line means removing/trashing that existing node.
 - Whole-line or whole-subtree replacements are preferred. Smaller string
   fragments are allowed when the resulting outline is still valid and the match
   is exact.
-- For `oldString: "*"`, `newString` must contain exactly one root line because
-  that root maps to `nodeId`.
+- For `old_string: "*"`, `new_string` must contain exactly one root line because
+  that root maps to `node_id`.
 - TypeScript replaces the matched fragment, parses the resulting whole outline, builds
   a mutation plan, validates it, renders a preview, and then applies it after
   approval when needed.
-- The root of a full-outline replacement maps to `nodeId`. If the replacement
+- The root of a full-outline replacement maps to `node_id`. If the replacement
   would make the root ambiguous, return an error.
-- For precise child edits, prefer `node_read` to obtain the child `nodeId`, then
+- If the root line has a marker, it must match the `node_id` parameter.
+- Annotated ids must be unique and must belong to the edited subtree. Moving
+  external nodes into the subtree should use the explicit move form.
+- For precise child edits, prefer `node_read` to obtain the child id, then
   call `node_edit` on that child. Do not rely on sibling line numbers.
 - If an outline edit is ambiguous because identical children have meaningful
   fields, children, references, or history, validation should reject it and tell
@@ -838,16 +851,16 @@ Outline edit semantics:
 
 Move semantics:
 
-- `parentId + afterId` is an absolute move.
-- `structuralAction` mirrors user operations: indent, outdent, move up, move
+- `parent_id + after_id` is an absolute move.
+- `structural_action` mirrors user operations: indent, outdent, move up, move
   down.
-- `nodeIds` is allowed only for homogeneous move operations.
+- `node_ids` is allowed only for homogeneous move operations.
 - Moving a node under itself or under one of its descendants is invalid.
 
 Merge semantics:
 
-- `nodeId` is the target that survives.
-- `mergeFromNodeIds` are sources whose children, fields, tags, and references
+- `node_id` is the target that survives.
+- `merge_from_node_ids` are sources whose children, fields, tags, and references
   are merged into the target.
 - Sources are moved to Trash after merge.
 - Source order determines child and field-value append order.
@@ -865,10 +878,10 @@ Merge semantics:
 
 Reference replacement semantics:
 
-- `replaceWithReferenceTo` replaces the node at `nodeId` with a reference node to
+- `replace_with_reference_to` replaces the node at `node_id` with a reference node to
   the target at the same parent and position.
 - The original node is moved to Trash after the replacement, preserving undo.
-- If `nodeId` is already a reference, only its target is changed.
+- If `node_id` is already a reference, only its target is changed.
 
 Return data:
 
@@ -907,38 +920,38 @@ Examples:
 
 ```json
 {
-  "nodeId": "node_task",
-  "oldString": "*",
-  "newString": "- [x] Check Chengdu weather #weather"
+  "node_id": "node_task",
+  "old_string": "*",
+  "new_string": "- %%node:node_task%% [x] Check Chengdu weather #weather"
 }
 ```
 
 ```json
 {
-  "nodeId": "node_project",
-  "oldString": "  - Task B\n  - Task C",
-  "newString": "  - Task B\n  - [ ] Task D\n  - Task C"
+  "node_id": "node_project",
+  "old_string": "  - %%node:node_task_b%% Task B\n  - %%node:node_task_c%% Task C",
+  "new_string": "  - %%node:node_task_b%% Task B\n  - [ ] Task D\n  - %%node:node_task_c%% Task C"
 }
 ```
 
 ```json
 {
-  "nodeIds": ["node_task_a", "node_task_b"],
-  "move": { "parentId": "node_done" }
+  "node_ids": ["node_task_a", "node_task_b"],
+  "move": { "parent_id": "node_done" }
 }
 ```
 
 ```json
 {
-  "nodeId": "node_canonical",
-  "mergeFromNodeIds": ["node_duplicate_1", "node_duplicate_2"]
+  "node_id": "node_canonical",
+  "merge_from_node_ids": ["node_duplicate_1", "node_duplicate_2"]
 }
 ```
 
 ```json
 {
-  "nodeId": "node_old",
-  "replaceWithReferenceTo": "node_canonical"
+  "node_id": "node_old",
+  "replace_with_reference_to": "node_canonical"
 }
 ```
 
@@ -953,10 +966,10 @@ Parameters:
 
 ```ts
 interface NodeDeleteParams {
-  nodeId?: string;
-  nodeIds?: string[];
+  node_id?: string;
+  node_ids?: string[];
   restore?: boolean; // true = restore from Trash; omit/false = move to Trash
-  previewOnly?: boolean;
+  preview_only?: boolean;
 }
 ```
 
@@ -990,13 +1003,13 @@ interface NodeDeleteData {
 
 Result behavior:
 
-- Use either `nodeId` or `nodeIds`, not both.
+- Use either `node_id` or `node_ids`, not both.
 - Validate all node ids before mutating.
 - Delete means move to Trash. Agent v1 does not expose permanent delete.
 - Restore uses the node's recorded original parent/position when available. If
   the original location is no longer valid, return an error with guidance instead
   of guessing a new parent.
-- Batch delete is supported by `nodeIds`. This is not a generic batch protocol;
+- Batch delete is supported by `node_ids`. This is not a generic batch protocol;
   it is the natural shape of the delete operation.
 
 ### `operation_history`
@@ -1011,7 +1024,7 @@ Parameters:
 interface OperationHistoryParams {
   action?: "list" | "undo" | "redo"; // default "list"
   steps?: number; // default 1, max 10 for undo/redo
-  operationId?: string; // stack-top guard, not arbitrary history jumping
+  operation_id?: string; // stack-top guard, not arbitrary history jumping
   origin?: "all" | "agent" | "user"; // default: all for list, agent for undo/redo
   limit?: number;  // for list, default 20, max 100
   offset?: number; // for list
@@ -1065,7 +1078,7 @@ Result behavior:
   agent, stopping at unsafe dependencies.
 - `origin: "user"` means undo/redo the nearest user-origin stack operation and
   usually requires approval.
-- `operationId` is only a guard for the current stack target or a continuous
+- `operation_id` is only a guard for the current stack target or a continuous
   stack range. If it would require skipping unrelated later operations, return
   `boundary` and do nothing.
 - Undoing user-origin operations requires approval by default.
@@ -1108,27 +1121,20 @@ renderPreview(plan: MutationPlan, state: DocumentState): ToolPreview
 applyPlan(plan: MutationPlan, state: DocumentState): OperationResult
 ```
 
-`SerializedOutline` contains the model-facing text plus an internal span map:
+`SerializedOutline` contains annotated model-facing text. `%%node:id%%` markers
+are protocol metadata and are stripped before writing node content.
 
 ```ts
 interface SerializedOutline {
   text: string;
   revision: string;
-  spanMap: OutlineSpan[];
-}
-
-interface OutlineSpan {
-  start: number;
-  end: number;
-  nodeId: NodeId;
-  fieldEntryId?: NodeId;
-  valueNodeId?: NodeId;
 }
 ```
 
-The span map is not returned to the model. It lets TypeScript understand which current
-nodes were touched by `oldString/newString` without polluting the outline with id
-markers.
+The parser accepts `%%node:id%%` only at the start of an outline line after
+`- `. For field values written on the same line as a field header, it also
+accepts an inline value marker after `::`. `node_create` rejects these markers;
+`node_edit` uses them to map existing nodes, fields, and field values.
 
 ### `node_edit` flow
 
@@ -1136,39 +1142,39 @@ Content edits use this sequence:
 
 ```txt
 load current node state
-  -> serialize current canonical outline and internal span map
-  -> check expectedRevision when provided
-  -> replace oldString with newString
+  -> serialize current annotated outline
+  -> check expected_revision when provided
+  -> replace old_string with new_string
   -> parse the whole replacement result
+  -> validate annotated ids are unique, current, and inside the edited subtree
   -> resolve tags, fields, refs, dates, search/view directives
-  -> build MutationPlan using the old span map as identity context
+  -> build MutationPlan using annotated ids only for existing-node identity
   -> validate MutationPlan
   -> render preview
   -> wait for approval when required
   -> apply MutationPlan as one transaction and one undo group
 ```
 
-`oldString` matching rules:
+`old_string` matching rules:
 
-- `oldString === "*"` replaces the whole serialized outline for `nodeId`.
-- Otherwise, `oldString` must match exactly once.
+- `old_string === "*"` replaces the whole annotated outline for `node_id`.
+- Otherwise, `old_string` must match exactly once.
 - Zero matches means the agent is using stale context and should call
   `node_read` again.
 - Multiple matches means the agent should include more surrounding context or
-  edit the child directly by `nodeId`.
-- Matching is byte-exact against the canonical outline string returned by
+  edit the child directly by node id.
+- Matching is byte-exact against the annotated outline string returned by
   `node_read`, after normalizing line endings to `\n`.
 
 Identity rules:
 
-- The root of a full-outline replacement maps to the `nodeId` argument.
-- Unchanged text outside the replacement keeps identity through the span map.
-- Inside the replacement range, TypeScript may preserve identity only when the old and
-  new fragment shape makes the mapping unambiguous.
-- If a changed fragment contains repeated sibling titles or nodes with fields,
-  children, references, or history and identity cannot be proven, validation must
-  reject the edit and tell the agent to target the relevant child `nodeId`
-  directly.
+- The root of a full-outline replacement maps to the `node_id` argument.
+- If the root line carries `%%node:id%%`, that id must match the `node_id`
+  argument.
+- Existing marked lines keep identity through their marker.
+- Unmarked lines are treated as newly created content.
+- Removed marked lines are moved to Trash; they are not permanently deleted.
+- Reordered marked lines are moved to the new order.
 
 ### Mutation plan
 
@@ -1232,9 +1238,9 @@ TypeScript validation is the security and correctness boundary.
 Required checks:
 
 - The workspace/document boundary is valid for every referenced node.
-- `parentId`, `afterId`, `nodeId`, `nodeIds`, `targetId`, and
-  `mergeFromNodeIds` exist and are editable.
-- `afterId` is a child of `parentId` when both are provided.
+- `parent_id`, `after_id`, `node_id`, `node_ids`, `target_id`, and
+  `merge_from_node_ids` exist and are editable.
+- `after_id` is a child of `parent_id` when both are provided.
 - Moves cannot create cycles and cannot move locked/system nodes.
 - Batch move operations are homogeneous and preserve selected-root semantics.
 - Merge target and sources are distinct and have no unsafe ancestor/descendant
@@ -1242,7 +1248,7 @@ Required checks:
 - Field values match field type constraints.
 - Tag and field auto-creation follows the active policy.
 - Search/view directives compile to valid internal configs.
-- `expectedRevision` matches when provided.
+- `expected_revision` matches when provided.
 - Parser compatibility normalization does not silently change meaning.
 
 Validation should produce structured guidance:
@@ -1254,7 +1260,7 @@ interface ValidationReport {
   warnings: Array<{ code: string; message: string; span?: SourceSpan }>;
   unresolvedTags?: string[];
   unresolvedFields?: string[];
-  nextStep?: string;
+  instructions?: string;
 }
 ```
 
@@ -1269,7 +1275,7 @@ interface ValidationReport {
 
 ## Local File Tools
 
-File tools are for local workspace files. They must not mutate the outliner
+File tools are for local files under the configured local file root. They must not mutate the outliner
 document. The design mirrors cc-2.1's dedicated local tools:
 
 - `file_read` maps to cc `Read`.
@@ -1283,6 +1289,13 @@ close to cc-2.1 as possible. Lin keeps lower snake case names and wraps the
 payload in the common `ToolResult` envelope, but should not invent a second
 filesystem protocol.
 
+For local tools, the model-facing descriptions should intentionally follow the
+cc-2.1 wording and usage nudges. The agent already performs well with that
+contract, so Lin should preserve the same habits: use dedicated file/search
+tools before `bash`, read before edit/write, use exact string replacement, and
+background long-running commands through the tool parameter instead of shell
+syntax.
+
 The important design rule is that `bash` is not the filesystem API. Agents
 should use dedicated tools for reading, editing, writing, listing, and searching
 files, and reserve `bash` for commands that actually need a shell.
@@ -1291,11 +1304,41 @@ Path rules:
 
 - Concrete file tools use `file_path`.
 - Search tools use `path` as an optional search root.
-- Model-facing `file_path` values should be absolute paths. The adapter may
-  resolve user-provided workspace-relative paths before the tool call, but TypeScript
-  returns canonical absolute paths.
-- TypeScript must enforce the active workspace boundary unless the user explicitly
+- Model-facing `file_path` input values should be absolute paths. Search outputs
+  such as `file_glob.filenames` and `file_grep.filenames` are local-root-relative
+  to save tokens and match cc path ergonomics.
+- TypeScript must enforce the configured local file root unless the user explicitly
   grants a broader root.
+
+## Per-Turn Context And Attachments
+
+Dynamic context should be sent with the latest user turn, not baked into the
+stable system prompt. This follows the cc-2.1/lin-agent pattern:
+
+- Stable identity, behavior, and tool policy live in the system prompt.
+- Turn-specific state lives in one or more leading text parts wrapped in
+  `<system-reminder>...</system-reminder>`.
+- The renderer hides these reminder parts from the transcript, but debug panels
+  show them under the request context.
+- Current outliner context is a reminder part. Today node id is included because
+  `node_create` defaults to today.
+- Uploaded file metadata is a reminder part containing a `<user-attachments>`
+  JSON marker. The marker tells the agent which images are inline and which
+  files are available at local paths.
+- Uploaded files are copied under the local file root when their original path
+  is outside that root. The model should call `file_read` on the materialized
+  path to inspect contents.
+- Uploaded images remain inline image blocks, with attachment metadata in the
+  reminder marker so the model can refer to them by name/order. The inline part
+  uses pi-ai's native `ImageContent` contract:
+  `{ type: "image", data: base64, mimeType }`.
+- Inline uploaded images are limited to provider-safe pi-mono/coding-agent
+  formats (`image/jpeg`, `image/png`, `image/gif`, `image/webp`). Large static
+  images should be resized before sending so the base64 payload stays under the
+  same 4.5 MB inline-image budget used by pi-mono's coding-agent.
+- Text attachments without a native local path may still be inlined as text
+  fallback. Native Electron file uploads should prefer a file path plus
+  `file_read`.
 
 ### `file_read`
 
@@ -1307,9 +1350,9 @@ Parameters:
 ```ts
 interface FileReadParams {
   file_path: string;
-  offset?: number; // line offset, default 0
+  offset?: number; // one-based starting line number, default 1
   limit?: number;  // max lines, default 2000
-  pages?: string;  // PDF page selector, for example "1-3,7"
+  pages?: string;  // PDF page selector, for example "1-3" or "7"
 }
 ```
 
@@ -1319,9 +1362,8 @@ Return data:
 type FileReadData =
   | FileReadTextData
   | FileReadImageData
-  | FileReadPdfData
+  | FileReadPdfPartsData
   | FileReadNotebookData
-  | FileReadPartsData
   | FileReadUnchangedData;
 
 interface FileReadTextData {
@@ -1338,24 +1380,32 @@ interface FileReadTextData {
 interface FileReadImageData {
   type: "image";
   file: {
+    filePath: string;
     base64: string;
     type: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
     originalSize: number;
     dimensions?: {
-      originalWidth?: number;
-      originalHeight?: number;
-      displayWidth?: number;
-      displayHeight?: number;
+      width: number;
+      height: number;
     };
   };
 }
 
-interface FileReadPdfData {
-  type: "pdf";
+interface FileReadPdfPartsData {
+  type: "parts";
   file: {
     filePath: string;
-    base64: string;
     originalSize: number;
+    pages: {
+      firstPage: number;
+      lastPage: number;
+    };
+    extractedText?: {
+      chars: number;
+      truncated: boolean;
+    };
+    count: number;
+    outputDir: string;
   };
 }
 
@@ -1363,17 +1413,15 @@ interface FileReadNotebookData {
   type: "notebook";
   file: {
     filePath: string;
-    cells: unknown[];
-  };
-}
-
-interface FileReadPartsData {
-  type: "parts";
-  file: {
-    filePath: string;
+    cells: Array<{
+      cellType: "code" | "markdown" | "raw" | "unknown";
+      source: string;
+      outputs?: string[];
+      executionCount?: number | null;
+    }>;
+    content: string;
+    totalCells: number;
     originalSize: number;
-    count: number;
-    outputDir: string;
   };
 }
 
@@ -1390,6 +1438,22 @@ Result behavior:
 - Reading directories should fail. Use `file_glob` for file discovery, or
   `bash` with `ls` only when directory metadata is required.
 - Large text files are paginated with `offset` and `limit`.
+- Image reads return dimensions when they can be determined, attach the image
+  block for the model to inspect, and omit base64 from the model-visible JSON so
+  text output stays compact.
+- PDF reads support cc-style `pages` ranges such as `"3"` and `"1-5"`, with a
+  maximum of 20 pages per request. PDFs over 10 pages require an explicit range.
+  The implementation uses the cc page-extraction path: `pdfinfo` determines
+  page count, `pdftoppm` renders selected pages as JPEGs, and those page images
+  are attached to the tool result for the model. If `pdftotext` is available and
+  the selected pages contain embedded text, that extracted text is attached as a
+  text part before the page images. Scanned PDFs therefore still work through
+  images, while text PDFs remain searchable and token-efficient.
+- Lin currently does not send native PDF document blocks because `pi-agent-core`
+  exposes text/image tool-result content only. If pi-ai adds document content,
+  small PDFs can adopt cc's `type: "pdf"` base64 document-block path.
+- Notebook reads parse `.ipynb` cells and outputs into a compact text rendering
+  plus structured cell metadata.
 - Binary files should return a typed result only when Lin supports the media
   type; otherwise return a recoverable error.
 - Successful reads update a per-run file freshness record used by `file_edit`
@@ -1404,7 +1468,7 @@ Parameters:
 ```ts
 interface FileGlobParams {
   pattern: string; // for example "**/*.rs" or "src/**/*.ts"
-  path?: string;   // optional absolute search root, default active workspace
+  path?: string;   // optional absolute search root, default local file root
 }
 ```
 
@@ -1422,20 +1486,22 @@ interface FileGlobData {
 Result behavior:
 
 - Results should be sorted by modified time, newest first, matching cc `Glob`.
+- Returned filenames are local-root-relative, matching `file_grep` and saving
+  model tokens.
 - TypeScript should cap result count and set `truncated` when needed.
 - Use `file_grep`, not `file_glob`, when the task is content search.
 
 ### `file_grep`
 
-Search file contents. Use this instead of running `grep`, `rg`, or similar
-commands through `bash`.
+Search file contents through ripgrep. Use this instead of running `grep`, `rg`,
+or similar commands through `bash`.
 
 Parameters:
 
 ```ts
 interface FileGrepParams {
   pattern: string; // regular expression
-  path?: string;   // file or directory root, default active workspace
+  path?: string;   // file or directory root, default local file root
   glob?: string;   // include filter, for example "**/*.rs"
   output_mode?: "content" | "files_with_matches" | "count"; // default files_with_matches
   "-B"?: number;
@@ -1469,6 +1535,8 @@ interface FileGrepData {
 Result behavior:
 
 - Default to `files_with_matches` so broad searches stay cheap.
+- Results paths are local-root-relative to reduce tokens and match cc-style
+  output.
 - `content` mode should include file paths and line numbers when useful.
 - Multiline search should be explicit because it is more expensive.
 - TypeScript must enforce hard output caps even when `head_limit` is `0`. If Lin needs
@@ -1502,7 +1570,6 @@ interface FileEditData {
   structuredPatch: Hunk[];
   userModified: boolean;
   replaceAll: boolean;
-  gitDiff?: GitDiff;
 }
 
 interface Hunk {
@@ -1513,15 +1580,6 @@ interface Hunk {
   lines: string[];
 }
 
-interface GitDiff {
-  filename: string;
-  status: "modified" | "added";
-  additions: number;
-  deletions: number;
-  changes: number;
-  patch: string;
-  repository?: string | null;
-}
 ```
 
 Result behavior:
@@ -1533,7 +1591,8 @@ Result behavior:
   guidance to read again.
 - Return `unchanged` when the requested replacement is already reflected in the
   file.
-- Include a file operation id in `operation.affectedPaths`.
+- Return a compact local hunk around the changed region, not a whole-file
+  before/after patch, so small edits stay cheap for the model.
 
 ### `file_write`
 
@@ -1558,7 +1617,6 @@ interface FileWriteData {
   content: string;
   structuredPatch: Hunk[];
   originalFile: string | null;
-  gitDiff?: GitDiff;
 }
 ```
 
@@ -1606,21 +1664,28 @@ interface BashData {
   structuredContent?: unknown[];
   persistedOutputPath?: string;
   persistedOutputSize?: number;
+  command?: string;
+  taskStatus?: "running" | "completed" | "failed" | "stopped";
+  exitCode?: number | null;
+  startedAt?: string;
+  completedAt?: string;
 }
 ```
 
 Result behavior:
 
-- Commands run in the active workspace by default. Lin should not expose a
+- Commands run in the local file root by default. Lin should not expose a
   model-facing `cwd` parameter initially; the agent can use shell syntax when a
   command truly needs another directory.
 - Long-running commands should use `run_in_background: true` and return
   `backgroundTaskId`. The agent should not append `&`.
+- Foreground commands that outlive Lin's blocking budget may be auto-backgrounded
+  and return `assistantAutoBackgrounded: true` with a task output file path.
 - Output must be bounded. Large output should be persisted and referenced by
   `persistedOutputPath`, which the agent can read with `file_read`.
 - Risky commands require approval.
-- Non-zero command exit is represented through `stdout`, `stderr`, and optional
-  `returnCodeInterpretation`, not a separate model-facing `exitCode` field.
+- Non-zero command exit is represented through `stdout`, `stderr`, `exitCode`,
+  and optional `returnCodeInterpretation`.
 - Do not use `bash` to read, edit, write, glob, or grep files when the dedicated
   file tool fits the task.
 
@@ -1645,6 +1710,8 @@ interface TaskStopData {
   task_id: string;
   task_type: string;
   command?: string;
+  status: "stopped";
+  outputPath: string;
 }
 ```
 
@@ -1766,7 +1833,7 @@ Result behavior:
   `status: "success"` with `data.hint.type: "search_blocked"`, not retries in a
   loop.
 - Empty results return `status: "success"` with `resultCount: 0` and a
-  `nextStep` suggesting a broader query.
+  `instructions` suggesting a broader query.
 - The model-visible result should make sources easy to cite. If the adapter
   renders a compact text view in addition to JSON, use a short numbered source
   list and include a reminder that answers using search results must cite
@@ -1948,19 +2015,19 @@ coverage maps as follows:
 
 | Public tool | Current or needed backend capability |
 |---|---|
-| `node_search` | Simple full-text search plus temporary/saved search node parser compiled to tag, field, link-relationship, and view metadata. |
-| `node_read` | `get_projection`, `backlinks`, canonical outline serialization, computed field and child summaries. |
+| `node_search` | Temporary/saved search node parser compiled to full-text, tag, field, link-relationship, and view metadata. |
+| `node_read` | `get_projection`, `backlinks`, annotated outline serialization, computed field and child summaries. |
 | `node_create` | `create_node`, `create_tag`, `create_field_def`, `create_inline_field`, `set_node_checkbox_visible`, `add_reference`, `create_search_node`, duplicate support. |
 | `node_edit` | Canonical outline exact replacement compiled to `apply_node_text_patch`, `set_node_checkbox_visible`, `toggle_done`, tag/field mutations, `move_node`, `trash_node`, `set_reference_target`, `replace_node_with_reference`, and `set_search_node`. |
 | `node_delete` | `trash_node`, `batch_trash_nodes`, `restore_node`; permanent delete is not exposed to agent v1. |
 | `operation_history` | Loro UndoManager-backed `undo`/`redo` plus operation journal listing with origin metadata. |
-| `file_read` | Needed TypeScript file read command with path normalization, pagination, and freshness tracking. |
-| `file_glob` | Needed TypeScript glob command under allowed roots. |
-| `file_grep` | Needed TypeScript grep/search command under allowed roots with output caps. |
-| `file_edit` | Needed TypeScript exact-replacement command with read-before-edit freshness checks. |
-| `file_write` | Needed TypeScript create/rewrite command with read-before-write freshness checks for existing files. |
-| `bash` | Needed Electron IPC command runner with timeout, approval, background task support, and output persistence. |
-| `task_stop` | Needed TypeScript background task stop command scoped to Lin-created bash tasks. |
+| `file_read` | Implemented TypeScript file read command with path normalization, text pagination, image content/dimensions, PDF page rendering, notebook parsing, and freshness tracking. |
+| `file_glob` | Implemented TypeScript glob command under allowed roots with local-root-relative output paths. |
+| `file_grep` | Implemented ripgrep-backed search command under allowed roots with relative paths, output modes, pagination, and output caps. |
+| `file_edit` | Implemented TypeScript exact-replacement command with read-before-edit freshness checks. |
+| `file_write` | Implemented TypeScript create/rewrite command with read-before-write freshness checks for existing files. |
+| `bash` | Implemented TypeScript command runner with timeout, output caps, background task support, and output persistence. |
+| `task_stop` | Implemented TypeScript background task stop command scoped to Lin-created bash tasks. |
 | `web_search` | Needed web search adapter: provider-backed search or embedded-browser SERP extraction, host permission scope, rate limiting, structured hints. |
 | `web_fetch` | Needed URL fetch adapter: TypeScript HTTP and/or embedded browser session fetch, HTML-to-markdown extraction, pagination, find mode, structured hints. |
 

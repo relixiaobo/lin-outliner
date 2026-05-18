@@ -5,6 +5,7 @@ export interface OutlineDocument {
 }
 
 export interface OutlineNode {
+  nodeId?: string;
   title: string;
   description?: string | null;
   tags: string[];
@@ -17,17 +18,20 @@ export interface OutlineNode {
 }
 
 export interface OutlineField {
+  nodeId?: string;
   name: string;
   values: OutlineValue[];
   clear: boolean;
 }
 
 export interface OutlineValue {
+  nodeId?: string;
   text: string;
   targetId?: string;
 }
 
 export interface OutlineParseError {
+  code?: string;
   message: string;
   line: number;
   column: number;
@@ -48,16 +52,21 @@ interface ParsedLine {
   level: number;
   text: string;
   line: number;
+  column: number;
 }
 
 type StackFrame =
   | { kind: 'node'; level: number; node: OutlineNode }
   | { kind: 'field'; level: number; field: OutlineField };
 
-export function parseLinOutline(input: string): OutlineParseResult | OutlineParseFailure {
+export function parseLinOutline(
+  input: string,
+  options: { annotations?: 'allow' | 'forbid' } = {},
+): OutlineParseResult | OutlineParseFailure {
   const normalized = input.replace(/\r\n?/g, '\n');
   const parsedLines: ParsedLine[] = [];
   const warnings: string[] = [];
+  const annotations = options.annotations ?? 'forbid';
 
   for (const [index, rawLine] of normalized.split('\n').entries()) {
     if (rawLine.trim().length === 0) continue;
@@ -73,7 +82,7 @@ export function parseLinOutline(input: string): OutlineParseResult | OutlinePars
     if (!rest.startsWith('- ')) {
       return { ok: false, error: { message: 'Every non-empty line must start with "- ".', line, column: leading + 1 } };
     }
-    parsedLines.push({ level: leading / 2, text: rest.slice(2).trim(), line });
+    parsedLines.push({ level: leading / 2, text: rest.slice(2).trim(), line, column: leading + 3 });
   }
 
   const roots: OutlineNode[] = [];
@@ -82,10 +91,23 @@ export function parseLinOutline(input: string): OutlineParseResult | OutlinePars
   for (const line of parsedLines) {
     while (stack.length > 0 && stack[stack.length - 1]!.level >= line.level) stack.pop();
     const parent = stack[stack.length - 1];
-    const fieldHeader = parseFieldHeader(line.text);
+    if (annotations === 'forbid' && line.text.includes('%%node:')) {
+      return {
+        ok: false,
+        error: {
+          code: 'invalid_annotation',
+          message: 'Node annotations are not allowed in this outline.',
+          line: line.line,
+          column: line.column + Math.max(0, line.text.indexOf('%%node:')),
+        },
+      };
+    }
+    const annotated = stripNodeMarker(line.text);
+    const fieldHeader = parseFieldHeader(annotated.text);
 
     if (fieldHeader && parent?.kind === 'node') {
       const field: OutlineField = {
+        ...(annotated.nodeId ? { nodeId: annotated.nodeId } : {}),
         name: fieldHeader.name,
         values: fieldHeader.value ? [parseOutlineValue(fieldHeader.value)] : [],
         clear: !fieldHeader.value,
@@ -96,13 +118,13 @@ export function parseLinOutline(input: string): OutlineParseResult | OutlinePars
     }
 
     if (parent?.kind === 'field') {
-      parent.field.values.push(parseOutlineValue(line.text));
+      parent.field.values.push(parseOutlineValue(annotated.text, annotated.nodeId));
       parent.field.clear = false;
       stack.push({ kind: 'field', level: line.level, field: parent.field });
       continue;
     }
 
-    const node = parseOutlineNode(line.text);
+    const node = parseOutlineNode(annotated.text, annotated.nodeId);
     if (!parent) roots.push(node);
     else parent.node.children.push(node);
     stack.push({ kind: 'node', level: line.level, node });
@@ -115,7 +137,7 @@ export function parseLinOutline(input: string): OutlineParseResult | OutlinePars
   return { ok: true, document: { roots }, warnings };
 }
 
-function parseOutlineNode(input: string): OutlineNode {
+function parseOutlineNode(input: string, nodeId?: string): OutlineNode {
   let text = input.trim();
   const search = text.includes('%%search%%');
   text = text.replace(/%%search%%/g, '').trim();
@@ -135,6 +157,7 @@ function parseOutlineNode(input: string): OutlineNode {
   const reference = parseReference(text);
   if (reference && reference.full) {
     return {
+      ...(nodeId ? { nodeId } : {}),
       title: reference.display,
       description: null,
       tags,
@@ -149,6 +172,7 @@ function parseOutlineNode(input: string): OutlineNode {
 
   const [titlePart, descriptionPart] = splitDescription(text);
   return {
+    ...(nodeId ? { nodeId } : {}),
     title: titlePart.trim() || '(untitled)',
     description: descriptionPart?.trim() || null,
     tags,
@@ -168,10 +192,30 @@ function parseFieldHeader(text: string): { name: string; value: string } | null 
   return { name, value: match[2]?.trim() ?? '' };
 }
 
-function parseOutlineValue(text: string): OutlineValue {
-  const reference = parseReference(text.trim());
-  if (reference?.full) return { text: reference.display, targetId: reference.targetId };
-  return { text: text.trim() };
+function parseOutlineValue(text: string, lineNodeId?: string): OutlineValue {
+  const annotated = stripNodeMarker(text.trim());
+  const nodeId = lineNodeId ?? annotated.nodeId;
+  const reference = parseReference(annotated.text.trim());
+  if (reference?.full) {
+    return {
+      ...(nodeId ? { nodeId } : {}),
+      text: reference.display,
+      targetId: reference.targetId,
+    };
+  }
+  return {
+    ...(nodeId ? { nodeId } : {}),
+    text: annotated.text.trim(),
+  };
+}
+
+function stripNodeMarker(text: string): { nodeId?: string; text: string } {
+  const match = /^%%node:([^%]+)%%\s*/.exec(text.trim());
+  if (!match) return { text };
+  return {
+    nodeId: match[1]!.trim(),
+    text: text.trim().slice(match[0].length).trim(),
+  };
 }
 
 function parseReference(text: string): { display: string; targetId: string; full: boolean } | null {

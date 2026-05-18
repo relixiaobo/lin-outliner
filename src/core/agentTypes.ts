@@ -1,21 +1,27 @@
+import type {
+  AssistantMessage,
+  ImageContent,
+  Message,
+  TextContent,
+  ThinkingContent,
+  ToolCall,
+  ToolResultMessage,
+  Usage,
+  UserMessage,
+} from '@earendil-works/pi-ai';
+
 export const LIN_AGENT_EVENT_CHANNEL = 'lin-agent-event';
 
-export interface TextContent {
-  type: 'text';
-  text: string;
-}
-
-export interface ThinkingContent {
-  type: 'thinking';
-  thinking: string;
-  redacted?: boolean;
-}
-
-export interface ImageContent {
-  type: 'image';
-  data: string;
-  mimeType: string;
-}
+export type {
+  AssistantMessage,
+  ImageContent,
+  TextContent,
+  ThinkingContent,
+  ToolCall,
+  ToolResultMessage,
+  Usage,
+  UserMessage,
+} from '@earendil-works/pi-ai';
 
 export interface AgentAttachmentInputBase {
   id: string;
@@ -35,59 +41,14 @@ export interface AgentTextAttachmentInput extends AgentAttachmentInputBase {
   truncated?: boolean;
 }
 
-export type AgentMessageAttachmentInput = AgentImageAttachmentInput | AgentTextAttachmentInput;
-
-export interface ToolCall {
-  type: 'toolCall';
-  id: string;
-  name: string;
-  arguments: Record<string, unknown>;
+export interface AgentFileAttachmentInput extends AgentAttachmentInputBase {
+  kind: 'file';
+  path: string;
 }
 
-export interface Usage {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  totalTokens: number;
-  cost: {
-    input: number;
-    output: number;
-    cacheRead: number;
-    cacheWrite: number;
-    total: number;
-  };
-}
+export type AgentMessageAttachmentInput = AgentImageAttachmentInput | AgentTextAttachmentInput | AgentFileAttachmentInput;
 
-export interface UserMessage {
-  role: 'user';
-  content: string | (TextContent | ImageContent)[];
-  timestamp: number;
-}
-
-export interface AssistantMessage {
-  role: 'assistant';
-  content: (TextContent | ThinkingContent | ToolCall)[];
-  api: string;
-  provider: string;
-  model: string;
-  usage: Usage;
-  stopReason: 'stop' | 'length' | 'toolUse' | 'error' | 'aborted';
-  errorMessage?: string;
-  timestamp: number;
-}
-
-export interface ToolResultMessage {
-  role: 'toolResult';
-  toolCallId: string;
-  toolName: string;
-  content: (TextContent | ImageContent)[];
-  details?: unknown;
-  isError: boolean;
-  timestamp: number;
-}
-
-export type AgentMessage = UserMessage | AssistantMessage | ToolResultMessage;
+export type AgentMessage = Message;
 export type AgentConversationMessage = UserMessage | AssistantMessage;
 
 export type AgentDebugSnapshotSource = 'provider_payload' | 'runtime_state';

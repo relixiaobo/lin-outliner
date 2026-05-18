@@ -1,21 +1,8 @@
-import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
-import type { DocumentCommand } from '../core/commands';
+import type { AgentTool } from '@earendil-works/pi-agent-core';
 import {
-  DAILY_NOTES_ID,
-  SCHEMA_ID,
-  SEARCHES_ID,
-  SETTINGS_ID,
-  TAG_DAY_ID,
-  TAG_WEEK_ID,
-  TAG_YEAR_ID,
-  TRASH_ID,
-  WORKSPACE_ID,
   plainText,
   replaceAllRichTextPatch,
-  type DocumentProjection,
   type NodeProjection,
-  type SearchNodeCondition,
-  type SearchNodeConfig,
 } from '../core/types';
 import { agentToolResult, errorEnvelope, successEnvelope, type ToolEnvelope } from './agentToolEnvelope';
 import {
@@ -25,694 +12,85 @@ import {
   type OutlineNode,
   type OutlineValue,
 } from './agentOutlineParser';
+import {
+  NODE_CREATE_PARAMETERS,
+  NODE_DELETE_PARAMETERS,
+  NODE_EDIT_PARAMETERS,
+  NODE_READ_PARAMETERS,
+  NODE_SEARCH_PARAMETERS,
+  OPERATION_HISTORY_PARAMETERS,
+} from './agentNodeToolSchemas';
+import {
+  buildReadItem,
+  normalizeReadParams,
+  pageHasMore,
+  serializeAnnotatedOutline,
+  serializeOutline,
+} from './agentNodeToolRead';
+import {
+  buildSearchItem,
+  normalizeSearchParams,
+  resolveSearch,
+  resolveSearchSpecFromOutlineNode,
+  runSearch,
+  searchNodeConfigFromSpec,
+  validateReferenceTargetIds,
+  validateSearchNodes,
+} from './agentNodeToolSearch';
+import {
+  changedNodeIds,
+  fieldName,
+  findTagByName,
+  indexProjection,
+  isInTrash,
+  isSystemNodeId,
+  nodeKind,
+  nodeTitle,
+  normalChildIds,
+  parentRef,
+  projectionFingerprint,
+  requiredNode,
+  revisionOf,
+} from './agentNodeToolProjection';
+import {
+  asRecord,
+  clampInteger,
+  elapsed,
+  errorMessage,
+  firstDuplicate,
+  jsonByteLength,
+  normalizeLineEndings,
+  unique,
+} from './agentNodeToolUtils';
+import {
+  nodeErrorResult,
+  nodeToolResult,
+  visibleCreateResult,
+  visibleDeleteResult,
+  visibleEditResult,
+  visibleReadResult,
+  visibleSearchResult,
+} from './agentNodeToolVisibility';
+import type {
+  NodeCreateData,
+  NodeCreateParams,
+  NodeDeleteData,
+  NodeDeleteParams,
+  NodeDeletePreview,
+  NodeDeleteSkip,
+  NodeEditData,
+  NodeEditMoveParams,
+  NodeMergeFieldPreview,
+  NodeReadData,
+  NodeSearchData,
+  NormalizedEditParams,
+  OperationHistoryData,
+  OperationHistoryParams,
+  OutlinerToolHost,
+  ProjectionIndex,
+} from './agentNodeToolTypes';
 
-export interface OutlinerToolHost {
-  getProjection(): DocumentProjection;
-  handle(
-    command: DocumentCommand,
-    args?: Record<string, unknown>,
-    meta?: { origin?: 'user' | 'agent' | 'system'; command?: string; tool?: string; summary?: string },
-  ): Promise<unknown>;
-  transaction?<T>(
-    meta: { origin?: 'user' | 'agent' | 'system'; command?: string; tool?: string; summary?: string },
-    fn: () => Promise<T>,
-  ): Promise<T>;
-  operationHistory?(query: OperationHistoryParams): Promise<OperationHistoryData> | OperationHistoryData;
-}
-
-interface NodeReadParams {
-  nodeId?: string;
-  nodeIds?: string[];
-  depth?: number;
-  childOffset?: number;
-  childLimit?: number;
-  format?: 'structured' | 'outline' | 'both';
-  includeDeleted?: boolean;
-  includeBacklinks?: boolean;
-}
-
-interface NodeReadData {
-  items: NodeReadItem[];
-}
-
-interface NodeReadItem {
-  nodeId: string;
-  type: string;
-  title: string;
-  description?: string | null;
-  tags: string[];
-  fields: NodeFieldRead[];
-  checked?: boolean | null;
-  parent?: NodeRef | null;
-  breadcrumb: NodeRef[];
-  children: ChildrenPage;
-  backlinks?: NodeBacklink[];
-  revision: string;
-  outline?: string;
-}
-
-interface NodeFieldRead {
-  name: string;
-  type: string;
-  values: Array<{
-    text: string;
-    valueNodeId?: string;
-    targetId?: string;
-  }>;
-  fieldEntryId: string;
-  options?: string[];
-}
-
-interface ChildrenPage {
-  total: number;
-  offset: number;
-  limit: number;
-  items: NodeChildSummary[];
-}
-
-interface NodeChildSummary {
-  nodeId: string;
-  title: string;
-  type: string;
-  tags: string[];
-  checked?: boolean | null;
-  hasChildren: boolean;
-  childCount: number;
-  isReference?: boolean;
-  targetId?: string;
-  children?: ChildrenPage;
-}
-
-interface NodeBacklink {
-  sourceNodeId: string;
-  sourceTitle: string;
-  kind: 'tree' | 'inline' | 'field';
-  snippet?: string;
-}
-
-interface NodeRef {
-  nodeId: string;
-  title: string;
-}
-
-interface NodeSearchParams {
-  outline?: string;
-  searchNodeId?: string;
-  query?: string;
-  limit?: number;
-  offset?: number;
-  count?: boolean;
-}
-
-interface NodeSearchData {
-  source: 'temporary' | 'saved';
-  title?: string;
-  view?: string;
-  searchNodeId?: string;
-  outline?: string;
-  total: number;
-  offset: number;
-  limit: number;
-  items?: NodeSearchItem[];
-  unresolvedTags?: string[];
-  unresolvedFields?: string[];
-}
-
-interface NodeSearchItem {
-  nodeId: string;
-  title: string;
-  description?: string | null;
-  type: string;
-  tags: string[];
-  snippet: string;
-  parent?: NodeRef | null;
-  fields: Record<string, string | string[]>;
-  checked?: boolean | null;
-  hasChildren: boolean;
-  childCount: number;
-  updatedAt: string;
-}
-
-interface NodeCreateParams {
-  parentId?: string;
-  afterId?: string | null;
-  outline?: string;
-  targetId?: string;
-  duplicateId?: string;
-  previewOnly?: boolean;
-}
-
-interface NodeDeleteParams {
-  nodeId?: string;
-  nodeIds?: string[];
-  restore?: boolean;
-  previewOnly?: boolean;
-}
-
-interface NodeEditParams {
-  nodeId?: string;
-  nodeIds?: string[];
-  oldString?: string;
-  newString?: string;
-  expectedRevision?: string;
-  move?: NodeEditMoveParams;
-  mergeFromNodeIds?: string[];
-  replaceWithReferenceTo?: string;
-  previewOnly?: boolean;
-}
-
-interface NodeEditMoveParams {
-  parentId?: string;
-  afterId?: string | null;
-  structuralAction?: 'indent' | 'outdent' | 'move_up' | 'move_down';
-}
-
-interface OperationHistoryParams {
-  action?: 'list' | 'undo' | 'redo';
-  steps?: number;
-  operationId?: string;
-  origin?: 'all' | 'agent' | 'user';
-  limit?: number;
-  offset?: number;
-}
-
-interface NodeCreateData {
-  parentId: string;
-  afterId?: string | null;
-  createdRootIds: string[];
-  createdNodeIds: string[];
-  createdFieldEntryIds?: string[];
-  createdTagIds?: string[];
-  createdFieldDefIds?: string[];
-  duplicatedFrom?: string;
-  targetId?: string;
-  outline?: string;
-}
-
-interface NodeDeleteData {
-  action: 'trashed' | 'restored';
-  trashId: string;
-  requestedNodeIds: string[];
-  deletedNodeIds: string[];
-  restoredNodeIds?: string[];
-  deletedCount: number;
-  restoredCount?: number;
-  affectedNodeCount: number;
-  preview: NodeDeletePreview[];
-  skippedNodeIds?: NodeDeleteSkip[];
-}
-
-interface NodeEditData {
-  action: 'outline_edit' | 'move' | 'merge' | 'replace_with_reference';
-  status: 'updated' | 'unchanged';
-  affectedNodeIds: string[];
-  createdNodeIds?: string[];
-  trashedNodeIds?: string[];
-  matchedNodeIds?: string[];
-  movedNodeIds?: string[];
-  updatedFields?: string[];
-  updatedTags?: string[];
-  beforeOutline?: string;
-  afterOutline?: string;
-  revisions?: Record<string, string>;
-  merge?: {
-    targetNodeId: string;
-    sourceNodeIds: string[];
-    movedChildren: number;
-    mergedFields: NodeMergeFieldPreview[];
-    appliedTags: number;
-    redirectedReferences: number;
-  };
-}
-
-interface NodeMergeFieldPreview {
-  fieldName: string;
-  sourceFieldEntryId: string;
-  targetFieldEntryId: string;
-  movedValueIds: string[];
-  mode: 'merged_values' | 'moved_entry';
-}
-
-interface OperationHistoryData {
-  action: 'list' | 'undo' | 'redo';
-  historyMode?: 'journal' | 'undo_stack';
-  count: number;
-  total?: number;
-  hasMore?: boolean;
-  items?: OperationHistoryItem[];
-  undone?: OperationHistoryItem[];
-  redone?: OperationHistoryItem[];
-  canUndo: boolean;
-  canRedo: boolean;
-  cursor?: {
-    topUndoOperationId?: string;
-    topRedoOperationId?: string;
-  };
-}
-
-interface OperationHistoryItem {
-  operationId: string;
-  origin: 'agent' | 'user' | 'system';
-  command?: string;
-  tool?: string;
-  action: string;
-  summary: string;
-  affectedNodeIds: string[];
-  createdAt: string;
-  canUndo: boolean;
-  canRedo: boolean;
-}
-
-interface NodeDeletePreview {
-  nodeId: string;
-  title: string;
-  type: string;
-  parent?: NodeRef | null;
-  childCount: number;
-  subtreeNodeCount: number;
-}
-
-interface NodeDeleteSkip {
-  nodeId: string;
-  reason: string;
-  coveredBy?: string;
-}
-
-type NodeVisibleResult =
-  | NodeVisibleReadResult
-  | NodeVisibleSearchResult
-  | NodeVisibleMutationResult
-  | NodeVisibleErrorResult;
-
-interface NodeVisibleReadResult {
-  kind: 'read';
-  outline?: string;
-  refs: NodeVisibleRef[];
-  page?: NodeVisiblePage;
-  next?: NodeVisibleNextStep;
-}
-
-interface NodeVisibleSearchResult {
-  kind: 'search';
-  matches: NodeVisibleMatch[];
-  refs: NodeVisibleRef[];
-  page: NodeVisiblePage;
-  next?: NodeVisibleNextStep;
-}
-
-interface NodeVisibleMutationResult {
-  kind: 'mutation';
-  action: 'create' | 'edit' | 'delete';
-  status: 'applied' | 'preview' | 'unchanged';
-  changes: NodeVisibleChanges;
-  refs?: NodeVisibleRef[];
-  outline?: string;
-  next?: NodeVisibleNextStep;
-}
-
-interface NodeVisibleErrorResult {
-  kind: 'error';
-  code: string;
-  message: string;
-  recoverable: boolean;
-  retry?: NodeVisibleNextStep;
-  fallback?: string;
-  hint?: string;
-  warnings?: string[];
-}
-
-interface NodeVisibleRef {
-  nodeId: string;
-  kind?: string;
-  title?: string;
-  path?: string;
-  line?: number;
-  revision?: string;
-  targetId?: string;
-}
-
-interface NodeVisibleMatch extends NodeVisibleRef {
-  snippet?: string;
-}
-
-interface NodeVisibleChanges {
-  created?: string[];
-  updated?: string[];
-  moved?: string[];
-  trashed?: string[];
-  restored?: string[];
-}
-
-interface NodeVisiblePage {
-  total: number;
-  offset: number;
-  limit: number;
-  nextOffset?: number;
-}
-
-interface NodeVisibleNextStep {
-  tool: 'node_read' | 'node_search' | 'node_create' | 'node_edit' | 'node_delete';
-  params?: Record<string, unknown>;
-  reason?: string;
-}
-
-interface ProjectionIndex {
-  projection: DocumentProjection;
-  nodes: Map<string, NodeProjection>;
-}
-
-interface ParsedSearch {
-  title?: string;
-  view?: string;
-  queryTerms: string[];
-  tagNames: string[];
-  linkTargetIds: string[];
-  fieldConditions: ParsedFieldSearchCondition[];
-}
-
-interface ResolvedSearchSpec {
-  title: string;
-  view?: string;
-  queryTerms: string[];
-  tagIds: string[];
-  linkTargetIds: string[];
-  fieldConditions: ResolvedFieldSearchCondition[];
-  unresolvedTagNames: string[];
-  unresolvedFields: string[];
-  warnings: string[];
-}
-
-interface ParsedFieldSearchCondition {
-  fieldName: string;
-  text?: string;
-}
-
-interface ResolvedFieldSearchCondition {
-  fieldName: string;
-  fieldDefId: string;
-  text?: string;
-}
-
-type NormalizedEditParams =
-  | (NodeEditParams & { action: 'outline_edit'; nodeId: string; oldString: string; newString: string })
-  | (NodeEditParams & { action: 'move'; move: NodeEditMoveParams; nodeIds: string[] })
-  | (NodeEditParams & { action: 'merge'; nodeId: string; mergeFromNodeIds: string[] })
-  | (NodeEditParams & { action: 'replace_with_reference'; nodeId: string; replaceWithReferenceTo: string })
-  | { error: string };
-
-const NODE_READ_PARAMETERS = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    nodeId: {
-      type: 'string',
-      minLength: 1,
-      description: "Node id to read. Defaults to today's journal node when nodeIds is omitted.",
-    },
-    nodeIds: {
-      type: 'array',
-      minItems: 1,
-      maxItems: 20,
-      items: { type: 'string', minLength: 1 },
-      description: 'Read multiple independent nodes. Do not combine with nodeId.',
-    },
-    depth: {
-      type: 'integer',
-      minimum: 0,
-      maximum: 3,
-      description: 'Descendant depth to include. 0 reads only the node. Default 1, max 3.',
-    },
-    childOffset: {
-      type: 'integer',
-      minimum: 0,
-      description: 'Child offset for the root children page. Default 0.',
-    },
-    childLimit: {
-      type: 'integer',
-      minimum: 0,
-      maximum: 50,
-      description: 'Maximum children returned per page. Default 20, max 50.',
-    },
-    format: {
-      type: 'string',
-      enum: ['structured', 'outline', 'both'],
-      description: 'Return structured data, canonical outline text, or both. Default outline; use both only when structured fields/children are needed.',
-    },
-    includeDeleted: {
-      type: 'boolean',
-      description: 'Allow reading nodes in Trash. Default false.',
-    },
-    includeBacklinks: {
-      type: 'boolean',
-      description: 'Include tree and inline backlinks to the requested nodes. Default false.',
-    },
-  },
-};
-
-const NODE_SEARCH_PARAMETERS = {
-  type: 'object',
-  additionalProperties: false,
-  oneOf: [
-    { required: ['query'] },
-    { required: ['outline'] },
-    { required: ['searchNodeId'] },
-  ],
-  properties: {
-    outline: {
-      type: 'string',
-      minLength: 1,
-      maxLength: 12000,
-      description: 'Temporary search-node outline. Use "- %%search%% Title" plus child condition lines.',
-    },
-    searchNodeId: {
-      type: 'string',
-      minLength: 1,
-      description: 'Existing saved search node id to execute.',
-    },
-    query: {
-      type: 'string',
-      minLength: 1,
-      maxLength: 500,
-      description: 'Simple full-text shortcut. Prefer outline for structured searches.',
-    },
-    limit: {
-      type: 'integer',
-      minimum: 1,
-      maximum: 50,
-      description: 'Maximum results to return. Default 20, max 50.',
-    },
-    offset: {
-      type: 'integer',
-      minimum: 0,
-      description: 'Result offset. Default 0.',
-    },
-    count: {
-      type: 'boolean',
-      description: 'When true, return total without result items.',
-    },
-  },
-};
-
-const NODE_CREATE_PARAMETERS = {
-  type: 'object',
-  additionalProperties: false,
-  oneOf: [
-    { required: ['outline'] },
-    { required: ['targetId'] },
-    { required: ['duplicateId'] },
-  ],
-  properties: {
-    parentId: {
-      type: 'string',
-      minLength: 1,
-      description: "Parent node id. Defaults to today's journal node.",
-    },
-    afterId: {
-      anyOf: [{ type: 'string', minLength: 1 }, { type: 'null' }],
-      description: 'Sibling insertion point. null means first child; omitted means append.',
-    },
-    outline: {
-      type: 'string',
-      minLength: 1,
-      maxLength: 60000,
-      description: 'Lin Outline Format to create. Supports nodes, descriptions, #tags, fields, references, and [x] completion.',
-    },
-    targetId: {
-      type: 'string',
-      minLength: 1,
-      description: 'Create one reference node to this target.',
-    },
-    duplicateId: {
-      type: 'string',
-      minLength: 1,
-      description: 'Duplicate an existing subtree by serializing and recreating its outline.',
-    },
-    previewOnly: {
-      type: 'boolean',
-      description: 'Parse and validate only; do not mutate the document.',
-    },
-  },
-};
-
-const NODE_DELETE_PARAMETERS = {
-  type: 'object',
-  additionalProperties: false,
-  oneOf: [
-    { required: ['nodeId'] },
-    { required: ['nodeIds'] },
-  ],
-  properties: {
-    nodeId: {
-      type: 'string',
-      minLength: 1,
-      description: 'Single node id to move to Trash.',
-    },
-    nodeIds: {
-      type: 'array',
-      minItems: 1,
-      maxItems: 50,
-      items: { type: 'string', minLength: 1 },
-      description: 'Multiple node ids to move to Trash as one operation. Do not combine with nodeId.',
-    },
-    restore: {
-      type: 'boolean',
-      description: 'Restore nodes from Trash instead of moving them to Trash.',
-    },
-    previewOnly: {
-      type: 'boolean',
-      description: 'Validate and describe affected nodes only; do not mutate the document.',
-    },
-  },
-};
-
-const NODE_EDIT_PARAMETERS = {
-  type: 'object',
-  additionalProperties: false,
-  oneOf: [
-    { required: ['nodeId', 'oldString', 'newString'] },
-    {
-      required: ['move'],
-      anyOf: [{ required: ['nodeId'] }, { required: ['nodeIds'] }],
-    },
-    { required: ['nodeId', 'mergeFromNodeIds'] },
-    { required: ['nodeId', 'replaceWithReferenceTo'] },
-  ],
-  properties: {
-    nodeId: {
-      type: 'string',
-      minLength: 1,
-      description: 'Target node id. Required for outline edits, single-node moves, merge target, and reference replacement.',
-    },
-    nodeIds: {
-      type: 'array',
-      minItems: 1,
-      maxItems: 50,
-      items: { type: 'string', minLength: 1 },
-      description: 'Target node ids for homogeneous move operations. Do not combine with nodeId except where explicitly allowed.',
-    },
-    oldString: {
-      type: 'string',
-      minLength: 1,
-      description: 'Exact fragment from node_read.outline, or "*" to replace the whole canonical outline for nodeId.',
-    },
-    newString: {
-      type: 'string',
-      description: 'Replacement fragment. The full outline after replacement must parse as Lin Outline Format.',
-    },
-    expectedRevision: {
-      type: 'string',
-      minLength: 1,
-      description: 'Optional revision from node_read; edit fails if the node changed.',
-    },
-    move: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        parentId: {
-          type: 'string',
-          minLength: 1,
-          description: 'Destination parent for an absolute move.',
-        },
-        afterId: {
-          anyOf: [{ type: 'string', minLength: 1 }, { type: 'null' }],
-          description: 'Destination sibling. null means first child; omitted means append.',
-        },
-        structuralAction: {
-          type: 'string',
-          enum: ['indent', 'outdent', 'move_up', 'move_down'],
-          description: 'User-like structural command for one or more nodes.',
-        },
-      },
-    },
-    mergeFromNodeIds: {
-      type: 'array',
-      minItems: 1,
-      maxItems: 20,
-      items: { type: 'string', minLength: 1 },
-      description: 'Source node ids to merge into nodeId. Sources are moved to Trash after their children and tags are merged.',
-    },
-    replaceWithReferenceTo: {
-      type: 'string',
-      minLength: 1,
-      description: 'Replace nodeId with a reference to this target node id at the same position.',
-    },
-    previewOnly: {
-      type: 'boolean',
-      description: 'Validate and render before/after data only; do not mutate the document.',
-    },
-  },
-};
-
-const OPERATION_HISTORY_PARAMETERS = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    action: {
-      type: 'string',
-      enum: ['list', 'undo', 'redo'],
-      description: 'History action. Defaults to list. list is read-only; undo/redo operate on the selected Loro stack.',
-    },
-    steps: {
-      type: 'integer',
-      minimum: 1,
-      maximum: 10,
-      description: 'Number of stack steps for undo/redo. Default 1, max 10.',
-    },
-    operationId: {
-      type: 'string',
-      minLength: 1,
-      description: 'Optional stack-top guard. The action is skipped unless the current Loro stack top has this operationId.',
-    },
-    origin: {
-      type: 'string',
-      enum: ['all', 'agent', 'user'],
-      description: 'Filter/target origin. Defaults to all for list and agent for undo/redo.',
-    },
-    limit: {
-      type: 'integer',
-      minimum: 1,
-      maximum: 100,
-      description: 'List page size. Default 20, max 100.',
-    },
-    offset: {
-      type: 'integer',
-      minimum: 0,
-      description: 'List offset. Default 0.',
-    },
-  },
-};
-
-const SYSTEM_IDS = new Set([
-  WORKSPACE_ID,
-  DAILY_NOTES_ID,
-  SCHEMA_ID,
-  SEARCHES_ID,
-  TRASH_ID,
-  SETTINGS_ID,
-  TAG_DAY_ID,
-  TAG_WEEK_ID,
-  TAG_YEAR_ID,
-]);
+export type { OutlinerToolHost } from './agentNodeToolTypes';
 
 export function createNodeTools(host: OutlinerToolHost): AgentTool<any>[] {
   const agentHost = asAgentToolHost(host);
@@ -753,8 +131,10 @@ function createOperationHistoryTool(host: OutlinerToolHost): AgentTool<any, Tool
     name: 'operation_history',
     label: 'Operation History',
     description: [
-      'Inspect, undo, or redo document operations.',
-      'Undo/redo uses the Loro-backed operation stack. Agent calls default to the agent-origin stack; list returns stored commit metadata.',
+      'Inspect, undo, or redo outliner operations.',
+      'Use action "list" first when you need to see recent user and agent operations before deciding what to undo or redo.',
+      'Undo/redo uses the Loro-backed operation stack. Agent calls default to the agent-origin stack so agent undo does not unexpectedly undo user work.',
+      'Use operation_id as a guard when undoing or redoing a specific visible operation.',
     ].join('\n'),
     parameters: OPERATION_HISTORY_PARAMETERS,
     executionMode: 'sequential',
@@ -763,13 +143,13 @@ function createOperationHistoryTool(host: OutlinerToolHost): AgentTool<any, Tool
       const params = normalizeOperationHistoryParams(rawParams);
       if (params.error) {
         return agentToolResult(errorEnvelope<OperationHistoryData>('operation_history', 'invalid_args', params.error, {
-          nextStep: 'Call operation_history with action "list", "undo", or "redo".',
+          instructions: 'Call operation_history with action "list", "undo", or "redo".',
           metrics: { durationMs: elapsed(started) },
         }));
       }
       if (!host.operationHistory) {
         return agentToolResult(errorEnvelope<OperationHistoryData>('operation_history', 'history_unavailable', 'The host does not expose Loro operation history.', {
-          nextStep: 'Retry after the document service has initialized operation history support.',
+          instructions: 'Retry after the document service has initialized operation history support.',
           metrics: { durationMs: elapsed(started) },
         }));
       }
@@ -788,9 +168,11 @@ function createNodeEditTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope
     name: 'node_edit',
     label: 'Node Edit',
     description: [
-      'Edit existing Lin outliner content.',
-      'For content edits, use node_read first, then pass exact oldString/newString against the canonical outline; oldString "*" replaces the whole outline for nodeId.',
-      'Also supports user-like move operations, merge into a surviving target, and replacing a node with a reference.',
+      'Edits existing Lin outliner content.',
+      'For text and child-structure edits, use node_read first, then pass exact old_string/new_string against the annotated outline. old_string "*" replaces the whole annotated outline for node_id.',
+      'The replacement outline must keep existing %%node:id%% markers for nodes that should be updated or moved. Lines without markers create new nodes.',
+      'Also supports user-like move operations, merging source nodes into one surviving target, and replacing a node with a reference.',
+      'Use preview_only when the edit is large or ambiguous and you want validation before mutating the document.',
     ].join('\n'),
     parameters: NODE_EDIT_PARAMETERS,
     executionMode: 'sequential',
@@ -799,7 +181,7 @@ function createNodeEditTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope
       const params = normalizeEditParams(rawParams);
       if ('error' in params) {
         return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'invalid_args', params.error, {
-          nextStep: 'Use exactly one action: outline edit, move, mergeFromNodeIds, or replaceWithReferenceTo.',
+          instructions: 'Use exactly one action: outline edit, move, merge_from_node_ids, or replace_with_reference_to.',
           metrics: { durationMs: elapsed(started) },
         }));
       }
@@ -823,9 +205,10 @@ function createNodeDeleteTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
     name: 'node_delete',
     label: 'Node Delete',
     description: [
-      'Move one or more Lin outliner nodes to Trash, or restore nodes from Trash with restore true. This is not a permanent delete.',
-      'Use nodeId for one node, or nodeIds for a batch. Children and fields move with their parent.',
+      'Moves one or more Lin outliner nodes to Trash, or restores nodes from Trash with restore true. This is not a permanent delete.',
+      'Use node_id for one node, or node_ids for a batch that matches a user multi-selection. Children and fields move with their parent.',
       'If both a parent and its descendant are provided, the descendant is skipped because the parent covers it.',
+      'Use preview_only to inspect affected nodes before mutating the document.',
     ].join('\n'),
     parameters: NODE_DELETE_PARAMETERS,
     executionMode: 'sequential',
@@ -834,7 +217,7 @@ function createNodeDeleteTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
       const params = normalizeDeleteParams(rawParams);
       if (params.error) {
         return nodeErrorResult(errorEnvelope('node_delete', 'invalid_args', params.error, {
-          nextStep: 'Call node_delete with either nodeId or nodeIds, not both.',
+          instructions: 'Call node_delete with either node_id or node_ids, not both.',
           metrics: { durationMs: elapsed(started) },
         }));
       }
@@ -844,14 +227,14 @@ function createNodeDeleteTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
       const missing = requestedNodeIds.find((nodeId) => !index.nodes.has(nodeId));
       if (missing) {
         return nodeErrorResult(errorEnvelope('node_delete', 'node_not_found', `Node not found: ${missing}`, {
-          nextStep: 'Use node_search or node_read to locate the current node id.',
+          instructions: 'Use node_search or node_read to locate the current node id.',
           metrics: { durationMs: elapsed(started) },
         }));
       }
-      const locked = requestedNodeIds.find((nodeId) => SYSTEM_IDS.has(nodeId));
+      const locked = requestedNodeIds.find((nodeId) => isSystemNodeId(nodeId));
       if (locked) {
         return nodeErrorResult(errorEnvelope('node_delete', 'locked_node', `System node cannot be deleted: ${locked}`, {
-          nextStep: 'Choose a user-created node instead of a workspace/system node.',
+          instructions: 'Choose a user-created node instead of a workspace/system node.',
           metrics: { durationMs: elapsed(started) },
         }));
       }
@@ -859,7 +242,7 @@ function createNodeDeleteTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
         const notTrashed = requestedNodeIds.find((nodeId) => !isInTrash(index, nodeId));
         if (notTrashed) {
           return nodeErrorResult(errorEnvelope('node_delete', 'node_not_in_trash', `Node is not in Trash: ${notTrashed}`, {
-            nextStep: 'Use restore true only for nodes currently in Trash.',
+            instructions: 'Use restore true only for nodes currently in Trash.',
             metrics: { durationMs: elapsed(started) },
           }));
         }
@@ -886,7 +269,7 @@ function createNodeDeleteTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
           for (const nodeId of requestedNodeIds) await host.handle('restore_node', { nodeId });
         } catch (error) {
           return nodeErrorResult(errorEnvelope('node_delete', 'mutation_failed', errorMessage(error), {
-            nextStep: 'Use node_read with includeDeleted true to verify the nodes are restorable.',
+            instructions: 'Use node_read with include_deleted true to verify the nodes are restorable.',
             metrics: { durationMs: elapsed(started) },
           }));
         }
@@ -897,7 +280,7 @@ function createNodeDeleteTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
       const trashed = requestedNodeIds.find((nodeId) => isInTrash(index, nodeId));
       if (trashed) {
         return nodeErrorResult(errorEnvelope('node_delete', 'node_in_trash', `Node is already in Trash: ${trashed}`, {
-          nextStep: 'Use node_read with includeDeleted true to inspect Trash content.',
+          instructions: 'Use node_read with include_deleted true to inspect Trash content.',
           metrics: { durationMs: elapsed(started) },
         }));
       }
@@ -931,7 +314,7 @@ function createNodeDeleteTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
         }
       } catch (error) {
         return nodeErrorResult(errorEnvelope('node_delete', 'mutation_failed', errorMessage(error), {
-          nextStep: 'Use node_read to verify the selected nodes still exist and are movable.',
+          instructions: 'Use node_read to verify the selected nodes still exist and are movable.',
           metrics: { durationMs: elapsed(started) },
         }));
       }
@@ -953,7 +336,7 @@ async function executeOutlineEdit(
   const validation = validateMutableNodeIds(index, [params.nodeId]);
   if (validation) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', validation.code, validation.error, {
-      nextStep: validation.nextStep,
+      instructions: validation.instructions,
       metrics: { durationMs: elapsed(started) },
     }));
   }
@@ -961,16 +344,16 @@ async function executeOutlineEdit(
   const currentRevision = revisionOf(currentNode);
   if (params.expectedRevision && params.expectedRevision !== currentRevision) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'revision_mismatch', `Node changed since it was read: ${params.nodeId}`, {
-      nextStep: 'Call node_read again and retry with the latest outline and revision.',
+      instructions: 'Call node_read again and retry with the latest outline and revision.',
       metrics: { durationMs: elapsed(started) },
     }));
   }
 
-  const currentOutline = serializeOutline(index, params.nodeId, 12, 0, 500, false);
+  const currentOutline = serializeAnnotatedOutline(index, params.nodeId, 12, 0, 500, false);
   const replacement = replaceOutline(currentOutline, params.oldString, params.newString);
   if (!replacement.ok) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', replacement.code, replacement.error, {
-      nextStep: replacement.nextStep,
+      instructions: replacement.instructions,
       metrics: { durationMs: elapsed(started) },
     }));
   }
@@ -991,37 +374,43 @@ async function executeOutlineEdit(
     }), visibleEditResult(data, false, index));
   }
 
-  const parsed = parseLinOutline(replacement.afterOutline);
+  const parsed = parseLinOutline(replacement.afterOutline, { annotations: 'allow' });
   if (!parsed.ok) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'parse_error', parsed.error.message, {
-      hint: `Line ${parsed.error.line}, column ${parsed.error.column}`,
-      nextStep: 'Fix newString so the complete outline remains valid Lin Outline Format.',
+      instructions: `Fix new_string so the complete outline remains valid Lin Outline Format. Line ${parsed.error.line}, column ${parsed.error.column}.`,
       metrics: { durationMs: elapsed(started) },
     }));
   }
   if (parsed.document.roots.length !== 1) {
-    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'ambiguous_root', 'node_edit must produce exactly one root node for the target nodeId.', {
-      nextStep: 'Call node_create for new sibling roots, or edit a child node directly.',
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'ambiguous_root', 'node_edit must produce exactly one root node for the target node_id.', {
+      instructions: 'Call node_create for new sibling roots, or edit a child node directly.',
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
+  const annotationValidation = validateEditAnnotations(index, params.nodeId, parsed.document);
+  if (annotationValidation) {
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', annotationValidation.code, annotationValidation.error, {
+      instructions: annotationValidation.instructions,
       metrics: { durationMs: elapsed(started) },
     }));
   }
   const referenceValidation = validateReferenceTargetIds(index, collectReferenceTargetIds(parsed.document));
   if (referenceValidation) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', referenceValidation.code, referenceValidation.error, {
-      nextStep: referenceValidation.nextStep,
+      instructions: referenceValidation.instructions,
       metrics: { durationMs: elapsed(started) },
     }));
   }
   const searchValidation = validateSearchNodes(index, parsed.document);
   if (searchValidation) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', searchValidation.code, searchValidation.error, {
-      nextStep: searchValidation.nextStep,
+      instructions: searchValidation.instructions,
       metrics: { durationMs: elapsed(started) },
     }));
   }
   if (parsed.document.roots[0]!.referenceTargetId) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'invalid_outline_root', 'Outline edits cannot turn the target root into a reference.', {
-      nextStep: 'Use node_edit with replaceWithReferenceTo for root reference replacement.',
+      instructions: 'Use node_edit with replace_with_reference_to for root reference replacement.',
       metrics: { durationMs: elapsed(started) },
     }));
   }
@@ -1046,7 +435,7 @@ async function executeOutlineEdit(
     updatedTags = applied.updatedTagIds;
   } catch (error) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'mutation_failed', errorMessage(error), {
-      nextStep: 'Use node_read to refresh the target node, then retry a smaller exact replacement if needed.',
+      instructions: 'Use node_read to refresh the target node, then retry a smaller exact replacement if needed.',
       metrics: { durationMs: elapsed(started) },
     }));
   }
@@ -1080,7 +469,7 @@ async function executeMoveEdit(
   const validation = validateMutableNodeIds(index, params.nodeIds);
   if (validation) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', validation.code, validation.error, {
-      nextStep: validation.nextStep,
+      instructions: validation.instructions,
       metrics: { durationMs: elapsed(started) },
     }));
   }
@@ -1088,7 +477,7 @@ async function executeMoveEdit(
   const moveValidation = validateMoveRequest(index, params.nodeIds, params.move);
   if (moveValidation) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', moveValidation.code, moveValidation.error, {
-      nextStep: moveValidation.nextStep,
+      instructions: moveValidation.instructions,
       metrics: { durationMs: elapsed(started) },
     }));
   }
@@ -1116,7 +505,7 @@ async function executeMoveEdit(
     }
   } catch (error) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'mutation_failed', errorMessage(error), {
-      nextStep: 'Use node_read to refresh the source and destination ids before retrying.',
+      instructions: 'Use node_read to refresh the source and destination ids before retrying.',
       metrics: { durationMs: elapsed(started) },
     }));
   }
@@ -1141,20 +530,20 @@ async function executeMergeEdit(
   const validation = validateMutableNodeIds(index, nodeIds);
   if (validation) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', validation.code, validation.error, {
-      nextStep: validation.nextStep,
+      instructions: validation.instructions,
       metrics: { durationMs: elapsed(started) },
     }));
   }
   if (params.mergeFromNodeIds.includes(params.nodeId)) {
-    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'invalid_merge', 'mergeFromNodeIds cannot include the target nodeId.', {
-      nextStep: 'Pass only duplicate/source nodes in mergeFromNodeIds.',
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'invalid_merge', 'merge_from_node_ids cannot include the target node_id.', {
+      instructions: 'Pass only duplicate/source nodes in merge_from_node_ids.',
       metrics: { durationMs: elapsed(started) },
     }));
   }
   const ancestorSource = params.mergeFromNodeIds.find((sourceId) => isDescendantOf(index, params.nodeId, sourceId));
   if (ancestorSource) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'invalid_merge', `Cannot merge ancestor ${ancestorSource} into descendant ${params.nodeId}.`, {
-      nextStep: 'Choose an ancestor as the merge target, or move content manually.',
+      instructions: 'Choose an ancestor as the merge target, or move content manually.',
       metrics: { durationMs: elapsed(started) },
     }));
   }
@@ -1197,7 +586,7 @@ async function executeMergeEdit(
     await runMerge(host, params.nodeId, params.mergeFromNodeIds);
   } catch (error) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'mutation_failed', errorMessage(error), {
-      nextStep: 'Use node_read to refresh the target and source ids, then retry.',
+      instructions: 'Use node_read to refresh the target and source ids, then retry.',
       metrics: { durationMs: elapsed(started) },
     }));
   }
@@ -1220,20 +609,20 @@ async function executeReferenceReplaceEdit(
   const validation = validateMutableNodeIds(index, [params.nodeId]);
   if (validation) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', validation.code, validation.error, {
-      nextStep: validation.nextStep,
+      instructions: validation.instructions,
       metrics: { durationMs: elapsed(started) },
     }));
   }
   const targetValidation = validateReferenceTargetIds(index, [params.replaceWithReferenceTo]);
   if (targetValidation) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', targetValidation.code, targetValidation.error, {
-      nextStep: targetValidation.nextStep,
+      instructions: targetValidation.instructions,
       metrics: { durationMs: elapsed(started) },
     }));
   }
   if (params.nodeId === params.replaceWithReferenceTo) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'invalid_reference', 'A node cannot be replaced with a reference to itself.', {
-      nextStep: 'Choose a different target node id.',
+      instructions: 'Choose a different target node id.',
       metrics: { durationMs: elapsed(started) },
     }));
   }
@@ -1277,7 +666,7 @@ async function executeReferenceReplaceEdit(
     data.affectedNodeIds = unique([...data.affectedNodeIds, createdReferenceId]);
   } catch (error) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'mutation_failed', errorMessage(error), {
-      nextStep: 'Use node_read to refresh the node and target ids before retrying.',
+      instructions: 'Use node_read to refresh the node and target ids before retrying.',
       metrics: { durationMs: elapsed(started) },
     }));
   }
@@ -1292,9 +681,11 @@ function createNodeCreateTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
     name: 'node_create',
     label: 'Node Create',
     description: [
-      'Create Lin outliner content under a parent. Omit parentId to create under today.',
-      'Use outline for Lin Outline Format. Use targetId for one reference node. Use duplicateId to recreate a subtree.',
-      'Insertion: afterId omitted appends; afterId null inserts first; afterId string inserts after that sibling.',
+      'Creates Lin outliner content under a parent. Omit parent_id to create under today, not the current UI selection.',
+      'Use outline for normal nodes, fields, tags, references, saved search nodes, and nested children in Lin Outline Format.',
+      'Use target_id only when you want to create one reference node. Use duplicate_id only when you want to duplicate an existing subtree with new ids.',
+      'Insertion: after_id omitted appends, after_id null inserts first, after_id string inserts after that sibling.',
+      'Do not include %%node:id%% markers from node_read in create outlines.',
     ].join('\n'),
     parameters: NODE_CREATE_PARAMETERS,
     executionMode: 'sequential',
@@ -1303,7 +694,7 @@ function createNodeCreateTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
       const params = normalizeCreateParams(rawParams);
       if (params.error) {
         return nodeErrorResult(errorEnvelope('node_create', 'invalid_args', params.error, {
-          nextStep: 'Call node_create with exactly one of outline, targetId, or duplicateId.',
+          instructions: 'Call node_create with exactly one of outline, target_id, or duplicate_id.',
           metrics: { durationMs: elapsed(started) },
         }));
       }
@@ -1312,7 +703,7 @@ function createNodeCreateTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
       const insertion = resolveInsertion(initialIndex, params);
       if ('error' in insertion) {
         return nodeErrorResult(errorEnvelope('node_create', insertion.code, insertion.error, {
-          nextStep: insertion.nextStep,
+          instructions: insertion.instructions,
           metrics: { durationMs: elapsed(started) },
         }));
       }
@@ -1321,7 +712,7 @@ function createNodeCreateTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
         const targetValidation = validateReferenceTargetIds(initialIndex, [params.targetId]);
         if (targetValidation) {
           return nodeErrorResult(errorEnvelope('node_create', targetValidation.code, targetValidation.error, {
-            nextStep: targetValidation.nextStep,
+            instructions: targetValidation.instructions,
             metrics: { durationMs: elapsed(started) },
           }));
         }
@@ -1352,7 +743,7 @@ function createNodeCreateTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
           }), visibleCreateResult(data, false, indexProjection(host.getProjection())));
         } catch (error) {
           return nodeErrorResult(errorEnvelope('node_create', 'mutation_failed', errorMessage(error), {
-            nextStep: 'Check that the parent and reference target are valid and retry.',
+            instructions: 'Check that the parent and reference target are valid and retry.',
             metrics: { durationMs: elapsed(started) },
           }));
         }
@@ -1363,30 +754,32 @@ function createNodeCreateTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
         : { ok: true as const, outline: params.outline! };
       if (!outline.ok) {
         return nodeErrorResult(errorEnvelope('node_create', outline.code, outline.error, {
-          nextStep: outline.nextStep,
+          instructions: outline.instructions,
           metrics: { durationMs: elapsed(started) },
         }));
       }
 
-      const parsed = parseLinOutline(outline.outline);
+      const parsed = parseLinOutline(outline.outline, { annotations: 'forbid' });
       if (!parsed.ok) {
-        return nodeErrorResult(errorEnvelope('node_create', 'parse_error', parsed.error.message, {
-          hint: `Line ${parsed.error.line}, column ${parsed.error.column}`,
-          nextStep: 'Fix the outline so every non-empty line uses "- " and 2-space indentation.',
+        const instructions = parsed.error.code === 'invalid_annotation'
+          ? `Remove all %%node:id%% markers before creating new nodes. Line ${parsed.error.line}, column ${parsed.error.column}.`
+          : `Fix the outline so every non-empty line uses "- " and 2-space indentation. Line ${parsed.error.line}, column ${parsed.error.column}.`;
+        return nodeErrorResult(errorEnvelope('node_create', parsed.error.code ?? 'parse_error', parsed.error.message, {
+          instructions,
           metrics: { durationMs: elapsed(started) },
         }));
       }
       const referenceValidation = validateReferenceTargetIds(initialIndex, collectReferenceTargetIds(parsed.document));
       if (referenceValidation) {
         return nodeErrorResult(errorEnvelope('node_create', referenceValidation.code, referenceValidation.error, {
-          nextStep: referenceValidation.nextStep,
+          instructions: referenceValidation.instructions,
           metrics: { durationMs: elapsed(started) },
         }));
       }
       const searchValidation = validateSearchNodes(initialIndex, parsed.document);
       if (searchValidation) {
         return nodeErrorResult(errorEnvelope('node_create', searchValidation.code, searchValidation.error, {
-          nextStep: searchValidation.nextStep,
+          instructions: searchValidation.instructions,
           metrics: { durationMs: elapsed(started) },
         }));
       }
@@ -1418,7 +811,7 @@ function createNodeCreateTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
         }
       } catch (error) {
         return nodeErrorResult(errorEnvelope('node_create', 'mutation_failed', errorMessage(error), {
-          nextStep: 'Use node_read/node_search to verify node ids, references, and parent insertion point before retrying.',
+          instructions: 'Use node_read/node_search to verify node ids, references, and parent insertion point before retrying.',
           metrics: { durationMs: elapsed(started) },
         }));
       }
@@ -1446,9 +839,10 @@ function createNodeReadTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope
     name: 'node_read',
     label: 'Node Read',
     description: [
-      'Read Lin outliner nodes as structured data and optional canonical outline text.',
-      'Omit nodeId to read today. Use depth/childOffset/childLimit to bound children.',
-      'Use node_read before node_edit when you need exact node ids or canonical outline fragments.',
+      'Reads Lin outliner nodes as annotated outline text with %%node:id%% markers for exact follow-up edits.',
+      'Omit node_id to read today. Use node_ids for independent nodes. Use depth, child_offset, and child_limit to bound children.',
+      'Use node_read before node_edit whenever you need exact node ids, revisions, or outline fragments.',
+      'Treat %%node:id%% as protocol metadata, not node text.',
     ].join('\n'),
     parameters: NODE_READ_PARAMETERS,
     executionMode: 'parallel',
@@ -1457,7 +851,7 @@ function createNodeReadTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope
       const params = normalizeReadParams(rawParams);
       if (params.error) {
         return nodeErrorResult(errorEnvelope('node_read', 'invalid_args', params.error, {
-          nextStep: 'Call node_read with either nodeId or nodeIds, not both.',
+          instructions: 'Call node_read with either node_id or node_ids, not both.',
           metrics: { durationMs: elapsed(started) },
         }));
       }
@@ -1467,14 +861,14 @@ function createNodeReadTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope
       const missing = nodeIds.find((nodeId) => !index.nodes.has(nodeId));
       if (missing) {
         return nodeErrorResult(errorEnvelope('node_read', 'node_not_found', `Node not found: ${missing}`, {
-          nextStep: 'Use node_search to locate the current node id.',
+          instructions: 'Use node_search to locate the current node id.',
           metrics: { durationMs: elapsed(started) },
         }));
       }
       const deleted = nodeIds.find((nodeId) => !params.includeDeleted && isInTrash(index, nodeId));
       if (deleted) {
         return nodeErrorResult(errorEnvelope('node_read', 'node_in_trash', `Node is in Trash: ${deleted}`, {
-          nextStep: 'Call node_read with includeDeleted true if you intentionally need Trash content.',
+          instructions: 'Call node_read with include_deleted true if you intentionally need Trash content.',
           metrics: { durationMs: elapsed(started) },
         }));
       }
@@ -1486,7 +880,7 @@ function createNodeReadTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope
           truncated: items.some((item) => pageHasMore(item.children)),
           outputBytes: jsonByteLength({ items }),
         },
-      }), visibleReadResult(index, nodeIds, params, items));
+      }), visibleReadResult(index, nodeIds, params));
     },
   };
 }
@@ -1496,9 +890,10 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
     name: 'node_search',
     label: 'Node Search',
     description: [
-      'Search Lin outliner nodes. Use query for simple full-text search.',
-      'Use outline for temporary search-node syntax: "- %%search%% Title" plus child condition lines.',
-      'Use searchNodeId to execute a saved search node.',
+      'Searches Lin outliner nodes by executing a temporary search outline or a saved search node.',
+      'Use outline for a one-off search: "- %%search%% Title" plus child condition lines. Plain child lines are keyword conditions.',
+      'Use search_node_id to execute a saved search node. Do not use node_search to create saved searches; use node_create with a search outline.',
+      'Returned outlines include %%node:id%% markers so you can call node_read or node_edit on exact matches.',
     ].join('\n'),
     parameters: NODE_SEARCH_PARAMETERS,
     executionMode: 'parallel',
@@ -1507,7 +902,7 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
       const params = normalizeSearchParams(rawParams);
       if (params.error) {
         return nodeErrorResult(errorEnvelope('node_search', 'invalid_args', params.error, {
-          nextStep: 'Call node_search with exactly one of query, outline, or searchNodeId.',
+          instructions: 'Call node_search with exactly one of outline or search_node_id.',
           metrics: { durationMs: elapsed(started) },
         }));
       }
@@ -1518,7 +913,7 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
       const search = resolveSearch(index, params);
       if ('error' in search) {
         return nodeErrorResult(errorEnvelope('node_search', search.code, search.error, {
-          nextStep: search.nextStep,
+          instructions: search.instructions,
           metrics: { durationMs: elapsed(started) },
         }));
       }
@@ -1530,7 +925,7 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
         && search.fieldConditions.length === 0
       ) {
         return nodeErrorResult(errorEnvelope('node_search', 'empty_search', 'Search has no executable terms.', {
-          nextStep: 'Provide a non-empty query or add condition lines to the search outline.',
+          instructions: 'Add at least one plain keyword, tag, field, or reference condition line to the search outline.',
           metrics: { durationMs: elapsed(started) },
         }));
       }
@@ -1554,72 +949,29 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
       };
 
       return nodeToolResult(successEnvelope('node_search', data, {
-        nextStep: offset + limit < total ? `Call node_search with offset ${offset + limit} to continue.` : undefined,
+        instructions: offset + limit < total ? `Call node_search with offset ${offset + limit} to continue.` : undefined,
         warnings: search.warnings.length ? search.warnings : undefined,
         metrics: {
           durationMs: elapsed(started),
           truncated: offset + limit < total,
           outputBytes: jsonByteLength(data),
         },
-      }), visibleSearchResult(data, params));
+      }), visibleSearchResult(index, data));
     },
-  };
-}
-
-function normalizeReadParams(rawParams: unknown): Required<Pick<NodeReadParams, 'depth' | 'childOffset' | 'childLimit' | 'format' | 'includeDeleted' | 'includeBacklinks'>>
-  & Pick<NodeReadParams, 'nodeId' | 'nodeIds'>
-  & { error?: string } {
-  const input = asRecord(rawParams);
-  const nodeId = typeof input.nodeId === 'string' && input.nodeId.trim() ? input.nodeId.trim() : undefined;
-  const nodeIds = Array.isArray(input.nodeIds)
-    ? input.nodeIds.filter((value): value is string => typeof value === 'string' && value.trim().length > 0).map((value) => value.trim())
-    : undefined;
-  const format = input.format === 'structured' || input.format === 'outline' || input.format === 'both'
-    ? input.format
-    : 'outline';
-  return {
-    nodeId,
-    nodeIds,
-    depth: clampInteger(input.depth, 0, 3, 1),
-    childOffset: clampInteger(input.childOffset, 0, Number.MAX_SAFE_INTEGER, 0),
-    childLimit: clampInteger(input.childLimit, 0, 50, 20),
-    format,
-    includeDeleted: input.includeDeleted === true,
-    includeBacklinks: input.includeBacklinks === true,
-    error: nodeId && nodeIds ? 'Use either nodeId or nodeIds, not both.' : undefined,
-  };
-}
-
-function normalizeSearchParams(rawParams: unknown): Required<Pick<NodeSearchParams, 'limit' | 'offset' | 'count'>>
-  & Pick<NodeSearchParams, 'outline' | 'searchNodeId' | 'query'>
-  & { error?: string } {
-  const input = asRecord(rawParams);
-  const outline = typeof input.outline === 'string' && input.outline.trim() ? input.outline.trim() : undefined;
-  const searchNodeId = typeof input.searchNodeId === 'string' && input.searchNodeId.trim() ? input.searchNodeId.trim() : undefined;
-  const query = typeof input.query === 'string' && input.query.trim() ? input.query.trim() : undefined;
-  const provided = [outline, searchNodeId, query].filter(Boolean).length;
-  return {
-    outline,
-    searchNodeId,
-    query,
-    limit: clampInteger(input.limit, 1, 50, 20),
-    offset: clampInteger(input.offset, 0, Number.MAX_SAFE_INTEGER, 0),
-    count: input.count === true,
-    error: provided === 1 ? undefined : 'Exactly one of query, outline, or searchNodeId is required.',
   };
 }
 
 function normalizeCreateParams(rawParams: unknown): NodeCreateParams & { error?: string } {
   const input = asRecord(rawParams);
-  const parentId = typeof input.parentId === 'string' && input.parentId.trim() ? input.parentId.trim() : undefined;
-  const afterId = input.afterId === null
+  const parentId = typeof input.parent_id === 'string' && input.parent_id.trim() ? input.parent_id.trim() : undefined;
+  const afterId = input.after_id === null
     ? null
-    : typeof input.afterId === 'string' && input.afterId.trim()
-      ? input.afterId.trim()
+    : typeof input.after_id === 'string' && input.after_id.trim()
+      ? input.after_id.trim()
       : undefined;
   const outline = typeof input.outline === 'string' && input.outline.trim() ? input.outline.trim() : undefined;
-  const targetId = typeof input.targetId === 'string' && input.targetId.trim() ? input.targetId.trim() : undefined;
-  const duplicateId = typeof input.duplicateId === 'string' && input.duplicateId.trim() ? input.duplicateId.trim() : undefined;
+  const targetId = typeof input.target_id === 'string' && input.target_id.trim() ? input.target_id.trim() : undefined;
+  const duplicateId = typeof input.duplicate_id === 'string' && input.duplicate_id.trim() ? input.duplicate_id.trim() : undefined;
   const provided = [outline, targetId, duplicateId].filter(Boolean).length;
   return {
     parentId,
@@ -1627,43 +979,43 @@ function normalizeCreateParams(rawParams: unknown): NodeCreateParams & { error?:
     outline,
     targetId,
     duplicateId,
-    previewOnly: input.previewOnly === true,
-    error: provided === 1 ? undefined : 'Exactly one of outline, targetId, or duplicateId is required.',
+    previewOnly: input.preview_only === true,
+    error: provided === 1 ? undefined : 'Exactly one of outline, target_id, or duplicate_id is required.',
   };
 }
 
 function normalizeDeleteParams(rawParams: unknown): NodeDeleteParams & { error?: string } {
   const input = asRecord(rawParams);
-  const nodeId = typeof input.nodeId === 'string' && input.nodeId.trim() ? input.nodeId.trim() : undefined;
-  const nodeIds = Array.isArray(input.nodeIds)
-    ? unique(input.nodeIds.filter((value): value is string => typeof value === 'string' && value.trim().length > 0).map((value) => value.trim()))
+  const nodeId = typeof input.node_id === 'string' && input.node_id.trim() ? input.node_id.trim() : undefined;
+  const nodeIds = Array.isArray(input.node_ids)
+    ? unique(input.node_ids.filter((value): value is string => typeof value === 'string' && value.trim().length > 0).map((value) => value.trim()))
     : undefined;
   return {
     nodeId,
     nodeIds,
     restore: input.restore === true,
-    previewOnly: input.previewOnly === true,
-    error: nodeId && nodeIds ? 'Use either nodeId or nodeIds, not both.' : !nodeId && !nodeIds ? 'nodeId or nodeIds is required.' : undefined,
+    previewOnly: input.preview_only === true,
+    error: nodeId && nodeIds ? 'Use either node_id or node_ids, not both.' : !nodeId && !nodeIds ? 'node_id or node_ids is required.' : undefined,
   };
 }
 
 function normalizeEditParams(rawParams: unknown): NormalizedEditParams {
   const input = asRecord(rawParams);
-  const nodeId = typeof input.nodeId === 'string' && input.nodeId.trim() ? input.nodeId.trim() : undefined;
-  const nodeIds = Array.isArray(input.nodeIds)
-    ? unique(input.nodeIds.filter((value): value is string => typeof value === 'string' && value.trim().length > 0).map((value) => value.trim()))
+  const nodeId = typeof input.node_id === 'string' && input.node_id.trim() ? input.node_id.trim() : undefined;
+  const nodeIds = Array.isArray(input.node_ids)
+    ? unique(input.node_ids.filter((value): value is string => typeof value === 'string' && value.trim().length > 0).map((value) => value.trim()))
     : undefined;
-  const oldString = typeof input.oldString === 'string' ? normalizeLineEndings(input.oldString) : undefined;
-  const newString = typeof input.newString === 'string' ? normalizeLineEndings(input.newString) : undefined;
-  const expectedRevision = typeof input.expectedRevision === 'string' && input.expectedRevision.trim() ? input.expectedRevision.trim() : undefined;
+  const oldString = typeof input.old_string === 'string' ? normalizeLineEndings(input.old_string) : undefined;
+  const newString = typeof input.new_string === 'string' ? normalizeLineEndings(input.new_string) : undefined;
+  const expectedRevision = typeof input.expected_revision === 'string' && input.expected_revision.trim() ? input.expected_revision.trim() : undefined;
   const move = normalizeMoveParams(input.move);
-  const mergeFromNodeIds = Array.isArray(input.mergeFromNodeIds)
-    ? unique(input.mergeFromNodeIds.filter((value): value is string => typeof value === 'string' && value.trim().length > 0).map((value) => value.trim()))
+  const mergeFromNodeIds = Array.isArray(input.merge_from_node_ids)
+    ? unique(input.merge_from_node_ids.filter((value): value is string => typeof value === 'string' && value.trim().length > 0).map((value) => value.trim()))
     : undefined;
-  const replaceWithReferenceTo = typeof input.replaceWithReferenceTo === 'string' && input.replaceWithReferenceTo.trim()
-    ? input.replaceWithReferenceTo.trim()
+  const replaceWithReferenceTo = typeof input.replace_with_reference_to === 'string' && input.replace_with_reference_to.trim()
+    ? input.replace_with_reference_to.trim()
     : undefined;
-  const previewOnly = input.previewOnly === true;
+  const previewOnly = input.preview_only === true;
 
   const outlineAction = Boolean(nodeId && oldString !== undefined && newString !== undefined);
   const moveAction = Boolean(move !== undefined && (nodeId || nodeIds));
@@ -1671,8 +1023,8 @@ function normalizeEditParams(rawParams: unknown): NormalizedEditParams {
   const referenceAction = Boolean(nodeId && replaceWithReferenceTo !== undefined);
   const provided = [outlineAction, moveAction, mergeAction, referenceAction].filter(Boolean).length;
   if (provided !== 1) return { error: 'Exactly one node_edit action is required.' };
-  if (nodeId && nodeIds && !moveAction) return { error: 'nodeIds is only valid for move actions.' };
-  if (nodeId && nodeIds && moveAction) return { error: 'Use either nodeId or nodeIds for move actions, not both.' };
+  if (nodeId && nodeIds && !moveAction) return { error: 'node_ids is only valid for move actions.' };
+  if (nodeId && nodeIds && moveAction) return { error: 'Use either node_id or node_ids for move actions, not both.' };
 
   if (outlineAction) {
     return { action: 'outline_edit', nodeId: nodeId!, oldString: oldString!, newString: newString!, expectedRevision, previewOnly };
@@ -1697,7 +1049,7 @@ function normalizeOperationHistoryParams(rawParams: unknown): Required<Pick<Oper
       : undefined;
   const defaultOrigin = action === 'list' ? 'all' : 'agent';
   const origin = input.origin === 'agent' || input.origin === 'user' || input.origin === 'all' ? input.origin : defaultOrigin;
-  const operationId = typeof input.operationId === 'string' && input.operationId.trim() ? input.operationId.trim() : undefined;
+  const operationId = typeof input.operation_id === 'string' && input.operation_id.trim() ? input.operation_id.trim() : undefined;
   return {
     action: action ?? 'list',
     steps: clampInteger(input.steps, 1, 10, 1),
@@ -1712,17 +1064,17 @@ function normalizeOperationHistoryParams(rawParams: unknown): Required<Pick<Oper
 function normalizeMoveParams(value: unknown): NodeEditMoveParams | undefined {
   const input = asRecord(value);
   if (Object.keys(input).length === 0) return undefined;
-  const parentId = typeof input.parentId === 'string' && input.parentId.trim() ? input.parentId.trim() : undefined;
-  const afterId = input.afterId === null
+  const parentId = typeof input.parent_id === 'string' && input.parent_id.trim() ? input.parent_id.trim() : undefined;
+  const afterId = input.after_id === null
     ? null
-    : typeof input.afterId === 'string' && input.afterId.trim()
-      ? input.afterId.trim()
+    : typeof input.after_id === 'string' && input.after_id.trim()
+      ? input.after_id.trim()
       : undefined;
-  const structuralAction = input.structuralAction === 'indent'
-    || input.structuralAction === 'outdent'
-    || input.structuralAction === 'move_up'
-    || input.structuralAction === 'move_down'
-    ? input.structuralAction
+  const structuralAction = input.structural_action === 'indent'
+    || input.structural_action === 'outdent'
+    || input.structural_action === 'move_up'
+    || input.structural_action === 'move_down'
+    ? input.structural_action
     : undefined;
   return { parentId, afterId, structuralAction };
 }
@@ -1731,7 +1083,7 @@ function resolveInsertion(index: ProjectionIndex, params: NodeCreateParams): {
   parentId: string;
   afterId?: string | null;
   index: number | null;
-} | { code: string; error: string; nextStep: string } {
+} | { code: string; error: string; instructions: string } {
   if (params.afterId === null) {
     const parentId = params.parentId ?? index.projection.todayId;
     if (!index.nodes.has(parentId)) return parentNotFound(parentId);
@@ -1739,11 +1091,11 @@ function resolveInsertion(index: ProjectionIndex, params: NodeCreateParams): {
   }
   if (params.afterId) {
     const after = index.nodes.get(params.afterId);
-    if (!after) return { code: 'node_not_found', error: `afterId not found: ${params.afterId}`, nextStep: 'Use node_read on the parent to find a current sibling id.' };
-    if (!after.parentId) return { code: 'invalid_insertion', error: `afterId has no parent: ${params.afterId}`, nextStep: 'Pass an explicit parentId and omit afterId.' };
+    if (!after) return { code: 'node_not_found', error: `after_id not found: ${params.afterId}`, instructions: 'Use node_read on the parent to find a current sibling id.' };
+    if (!after.parentId) return { code: 'invalid_insertion', error: `after_id has no parent: ${params.afterId}`, instructions: 'Pass an explicit parent_id and omit after_id.' };
     const parentId = params.parentId ?? after.parentId;
     if (parentId !== after.parentId) {
-      return { code: 'invalid_insertion', error: `afterId ${params.afterId} is not a child of parentId ${parentId}`, nextStep: 'Use either afterId alone or pass the matching parentId.' };
+      return { code: 'invalid_insertion', error: `after_id ${params.afterId} is not a child of parent_id ${parentId}`, instructions: 'Use either after_id alone or pass the matching parent_id.' };
     }
     const parent = index.nodes.get(parentId);
     if (!parent) return parentNotFound(parentId);
@@ -1755,22 +1107,22 @@ function resolveInsertion(index: ProjectionIndex, params: NodeCreateParams): {
   return { parentId, index: null };
 }
 
-function validateMutableNodeIds(index: ProjectionIndex, nodeIds: string[]): { code: string; error: string; nextStep: string } | null {
+function validateMutableNodeIds(index: ProjectionIndex, nodeIds: string[]): { code: string; error: string; instructions: string } | null {
   const missing = nodeIds.find((nodeId) => !index.nodes.has(nodeId));
-  if (missing) return { code: 'node_not_found', error: `Node not found: ${missing}`, nextStep: 'Use node_search or node_read to locate the current node id.' };
-  const system = nodeIds.find((nodeId) => SYSTEM_IDS.has(nodeId));
-  if (system) return { code: 'locked_node', error: `System node cannot be edited: ${system}`, nextStep: 'Choose a user-created node.' };
+  if (missing) return { code: 'node_not_found', error: `Node not found: ${missing}`, instructions: 'Use node_search or node_read to locate the current node id.' };
+  const system = nodeIds.find((nodeId) => isSystemNodeId(nodeId));
+  if (system) return { code: 'locked_node', error: `System node cannot be edited: ${system}`, instructions: 'Choose a user-created node.' };
   const locked = nodeIds.find((nodeId) => index.nodes.get(nodeId)?.locked);
-  if (locked) return { code: 'locked_node', error: `Locked node cannot be edited: ${locked}`, nextStep: 'Choose an editable node.' };
+  if (locked) return { code: 'locked_node', error: `Locked node cannot be edited: ${locked}`, instructions: 'Choose an editable node.' };
   const trashed = nodeIds.find((nodeId) => isInTrash(index, nodeId));
-  if (trashed) return { code: 'node_in_trash', error: `Node is in Trash: ${trashed}`, nextStep: 'Restore the node before editing it.' };
+  if (trashed) return { code: 'node_in_trash', error: `Node is in Trash: ${trashed}`, instructions: 'Restore the node before editing it.' };
   return null;
 }
 
 function replaceOutline(currentOutline: string, oldString: string, newString: string): {
   ok: true;
   afterOutline: string;
-} | { ok: false; code: string; error: string; nextStep: string } {
+} | { ok: false; code: string; error: string; instructions: string } {
   const normalizedOld = normalizeLineEndings(oldString);
   const normalizedNew = normalizeLineEndings(newString);
   if (normalizedOld === '*') return { ok: true, afterOutline: normalizedNew.trim() };
@@ -1779,16 +1131,16 @@ function replaceOutline(currentOutline: string, oldString: string, newString: st
     return {
       ok: false,
       code: 'old_string_not_found',
-      error: 'oldString did not match the current canonical outline.',
-      nextStep: 'Call node_read again and copy an exact fragment from outline.',
+      error: 'old_string did not match the current annotated outline.',
+      instructions: 'Call node_read again and copy an exact fragment from data.outline.',
     };
   }
   if (matches > 1) {
     return {
       ok: false,
       code: 'old_string_not_unique',
-      error: `oldString matched ${matches} times in the current canonical outline.`,
-      nextStep: 'Include more surrounding context or edit the intended child node directly by nodeId.',
+      error: `old_string matched ${matches} times in the current annotated outline.`,
+      instructions: 'Include more surrounding context or edit the intended child node directly by node_id.',
     };
   }
   return { ok: true, afterOutline: currentOutline.replace(normalizedOld, normalizedNew) };
@@ -1874,7 +1226,7 @@ async function syncOutlineNodeInPlace(
 
   const currentIndex = indexProjection(host.getProjection());
   const current = requiredNode(currentIndex, nodeId);
-  if (current.type === 'reference') throw new Error('Outline edit cannot update a reference node root; use replaceWithReferenceTo.');
+  if (current.type === 'reference') throw new Error('Outline edit cannot update a reference node root; use replace_with_reference_to.');
   trackMatchedNode(tracker, nodeId);
   if (current.content.text !== node.title) {
     await host.handle('apply_node_text_patch', { nodeId, patch: replaceAllRichTextPatch(plainText(node.title)) });
@@ -1898,11 +1250,14 @@ async function syncFieldEntries(
     const child = index.nodes.get(childId);
     return child?.type === 'fieldEntry' && !isInTrash(index, childId);
   });
+  const misplacedAnnotatedField = fields.find((field) => field.nodeId && !existingFieldIds.includes(field.nodeId));
+  if (misplacedAnnotatedField?.nodeId) {
+    throw new Error(`Annotated field id is not a field under ${parentId}: ${misplacedAnnotatedField.nodeId}`);
+  }
   const plan = sequenceEditPlan(
     existingFieldIds,
     fields,
-    (fieldEntryId) => fieldName(index, requiredNode(index, fieldEntryId)).toLowerCase(),
-    (field) => field.name.trim().toLowerCase(),
+    (fieldEntryId, field) => field.nodeId === fieldEntryId,
   );
   pushDuplicateKeyWarning('field entries', existingFieldIds.map((fieldEntryId) => fieldName(index, requiredNode(index, fieldEntryId)).toLowerCase()), warnings);
   pushDuplicateKeyWarning('desired field names', fields.map((field) => field.name.trim().toLowerCase()), warnings);
@@ -1949,11 +1304,14 @@ async function syncFieldValues(
   const index = indexProjection(host.getProjection());
   const existingValueIds = [...requiredNode(index, fieldEntryId).children].filter((childId) => !isInTrash(index, childId));
   const desiredValues = field.clear ? [] : field.values;
+  const misplacedAnnotatedValue = desiredValues.find((value) => value.nodeId && !existingValueIds.includes(value.nodeId));
+  if (misplacedAnnotatedValue?.nodeId) {
+    throw new Error(`Annotated field value id is not a value under ${fieldEntryId}: ${misplacedAnnotatedValue.nodeId}`);
+  }
   const plan = sequenceEditPlan(
     existingValueIds,
     desiredValues,
-    (valueId) => outlineValueKeyFromProjection(index, requiredNode(index, valueId)),
-    outlineValueKey,
+    (valueId, value) => value.nodeId === valueId,
   );
   pushDuplicateKeyWarning('field values', existingValueIds.map((valueId) => outlineValueKeyFromProjection(index, requiredNode(index, valueId))), warnings);
   pushDuplicateKeyWarning('desired field values', desiredValues.map(outlineValueKey), warnings);
@@ -2000,11 +1358,14 @@ async function syncNormalChildren(
 ): Promise<{ trashedNodeIds: string[] }> {
   const index = indexProjection(host.getProjection());
   const existingChildIds = normalChildIds(index, parentId, false);
+  const misplacedAnnotatedChild = desiredChildren.find((child) => child.nodeId && !existingChildIds.includes(child.nodeId));
+  if (misplacedAnnotatedChild?.nodeId) {
+    throw new Error(`Annotated child id is not a child under ${parentId}: ${misplacedAnnotatedChild.nodeId}`);
+  }
   const plan = sequenceEditPlan(
     existingChildIds,
     desiredChildren,
-    (childId) => outlineNodeKeyFromProjection(index, requiredNode(index, childId)),
-    outlineNodeKey,
+    (childId, child) => child.nodeId === childId,
   );
   pushDuplicateKeyWarning('child nodes', existingChildIds.map((childId) => outlineNodeKeyFromProjection(index, requiredNode(index, childId))), warnings);
   pushDuplicateKeyWarning('desired child nodes', desiredChildren.map(outlineNodeKey), warnings);
@@ -2056,56 +1417,31 @@ interface SequenceEditItem<TExisting, TDesired> {
 function sequenceEditPlan<TExisting, TDesired>(
   existing: TExisting[],
   desired: TDesired[],
-  existingKey: (item: TExisting) => string,
-  desiredKey: (item: TDesired) => string,
+  matches: (existing: TExisting, desired: TDesired) => boolean,
 ): Array<SequenceEditItem<TExisting, TDesired>> {
-  const existingKeys = existing.map(existingKey);
-  const desiredKeys = desired.map(desiredKey);
-  const dp = Array.from({ length: existing.length + 1 }, () => Array(desired.length + 1).fill(0) as number[]);
-  for (let left = existing.length - 1; left >= 0; left -= 1) {
-    for (let right = desired.length - 1; right >= 0; right -= 1) {
-      dp[left]![right] = existingKeys[left] === desiredKeys[right]
-        ? dp[left + 1]![right + 1]! + 1
-        : Math.max(dp[left + 1]![right]!, dp[left]![right + 1]!);
-    }
-  }
-
-  const anchors: Array<{ existingIndex: number; desiredIndex: number }> = [];
-  let left = 0;
-  let right = 0;
-  while (left < existing.length && right < desired.length) {
-    if (existingKeys[left] === desiredKeys[right]) {
-      anchors.push({ existingIndex: left, desiredIndex: right });
-      left += 1;
-      right += 1;
-    } else if (dp[left + 1]![right]! >= dp[left]![right + 1]!) {
-      left += 1;
-    } else {
-      right += 1;
-    }
-  }
-
   const result: Array<SequenceEditItem<TExisting, TDesired>> = [];
-  const appendGap = (existingStart: number, existingEnd: number, desiredStart: number, desiredEnd: number) => {
-    const oldGap = existing.slice(existingStart, existingEnd);
-    const newGap = desired.slice(desiredStart, desiredEnd);
-    const paired = Math.min(oldGap.length, newGap.length);
-    for (let index = 0; index < paired; index += 1) {
-      result.push({ existing: oldGap[index], desired: newGap[index] });
-    }
-    for (const item of oldGap.slice(paired)) result.push({ existing: item });
-    for (const item of newGap.slice(paired)) result.push({ desired: item });
-  };
+  const usedExisting = new Set<number>();
 
-  let existingCursor = 0;
-  let desiredCursor = 0;
-  for (const anchor of anchors) {
-    appendGap(existingCursor, anchor.existingIndex, desiredCursor, anchor.desiredIndex);
-    result.push({ existing: existing[anchor.existingIndex], desired: desired[anchor.desiredIndex] });
-    existingCursor = anchor.existingIndex + 1;
-    desiredCursor = anchor.desiredIndex + 1;
+  for (const desiredItem of desired) {
+    let matchedIndex = -1;
+    for (let index = 0; index < existing.length; index += 1) {
+      if (usedExisting.has(index)) continue;
+      if (!matches(existing[index]!, desiredItem)) continue;
+      matchedIndex = index;
+      break;
+    }
+    if (matchedIndex === -1) {
+      result.push({ desired: desiredItem });
+      continue;
+    }
+    usedExisting.add(matchedIndex);
+    result.push({ existing: existing[matchedIndex], desired: desiredItem });
   }
-  appendGap(existingCursor, existing.length, desiredCursor, desired.length);
+
+  existing.forEach((existingItem, index) => {
+    if (!usedExisting.has(index)) result.push({ existing: existingItem });
+  });
+
   return result;
 }
 
@@ -2229,34 +1565,34 @@ async function syncTags(host: OutlinerToolHost, nodeId: string, tagNames: string
   return unique(updated);
 }
 
-function validateMoveRequest(index: ProjectionIndex, nodeIds: string[], move: NodeEditMoveParams): { code: string; error: string; nextStep: string } | null {
+function validateMoveRequest(index: ProjectionIndex, nodeIds: string[], move: NodeEditMoveParams): { code: string; error: string; instructions: string } | null {
   if (move.structuralAction) {
     if (move.parentId || move.afterId !== undefined) {
-      return { code: 'invalid_move', error: 'structuralAction cannot be combined with parentId or afterId.', nextStep: 'Use either a structural action or an absolute destination.' };
+      return { code: 'invalid_move', error: 'structural_action cannot be combined with parent_id or after_id.', instructions: 'Use either a structural action or an absolute destination.' };
     }
     return null;
   }
   if (!move.parentId && move.afterId === undefined) {
-    return { code: 'invalid_move', error: 'Absolute moves require parentId, afterId, or both.', nextStep: 'Pass move.parentId to append under a parent, or move.afterId to insert after a sibling.' };
+    return { code: 'invalid_move', error: 'Absolute moves require parent_id, after_id, or both.', instructions: 'Pass move.parent_id to append under a parent, or move.after_id to insert after a sibling.' };
   }
   if (move.afterId && nodeIds.includes(move.afterId)) {
-    return { code: 'invalid_move', error: 'afterId cannot be one of the moved nodes.', nextStep: 'Choose a stable sibling outside the moved selection.' };
+    return { code: 'invalid_move', error: 'after_id cannot be one of the moved nodes.', instructions: 'Choose a stable sibling outside the moved selection.' };
   }
   const after = move.afterId ? index.nodes.get(move.afterId) : undefined;
   if (move.afterId && !after) {
-    return { code: 'node_not_found', error: `afterId not found: ${move.afterId}`, nextStep: 'Use node_read to refresh destination sibling ids.' };
+    return { code: 'node_not_found', error: `after_id not found: ${move.afterId}`, instructions: 'Use node_read to refresh destination sibling ids.' };
   }
   const parentId = move.parentId ?? after?.parentId;
-  if (!parentId) return { code: 'invalid_move', error: 'Destination parent could not be resolved.', nextStep: 'Pass move.parentId explicitly.' };
+  if (!parentId) return { code: 'invalid_move', error: 'Destination parent could not be resolved.', instructions: 'Pass move.parent_id explicitly.' };
   const parent = index.nodes.get(parentId);
   if (!parent) return parentNotFound(parentId);
-  if (isInTrash(index, parentId)) return { code: 'node_in_trash', error: `Destination parent is in Trash: ${parentId}`, nextStep: 'Choose a non-deleted destination parent.' };
+  if (isInTrash(index, parentId)) return { code: 'node_in_trash', error: `Destination parent is in Trash: ${parentId}`, instructions: 'Choose a non-deleted destination parent.' };
   if (move.afterId && !parent.children.includes(move.afterId)) {
-    return { code: 'invalid_move', error: `afterId ${move.afterId} is not a child of destination parent ${parentId}.`, nextStep: 'Pass the matching parentId or omit parentId.' };
+    return { code: 'invalid_move', error: `after_id ${move.afterId} is not a child of destination parent ${parentId}.`, instructions: 'Pass the matching parent_id or omit parent_id.' };
   }
   const cycleNodeId = nodeIds.find((nodeId) => parentId === nodeId || isDescendantOf(index, parentId, nodeId));
   if (cycleNodeId) {
-    return { code: 'invalid_move', error: `Cannot move ${cycleNodeId} under itself or one of its descendants.`, nextStep: 'Choose a destination outside the moved subtree.' };
+    return { code: 'invalid_move', error: `Cannot move ${cycleNodeId} under itself or one of its descendants.`, instructions: 'Choose a destination outside the moved subtree.' };
   }
   return null;
 }
@@ -2503,7 +1839,7 @@ function parentNotFound(parentId: string) {
   return {
     code: 'parent_not_found',
     error: `Parent node not found: ${parentId}`,
-    nextStep: 'Use node_read or node_search to find the current parent node id.',
+    instructions: 'Use node_read or node_search to find the current parent node id.',
   };
 }
 
@@ -2633,12 +1969,12 @@ async function createFieldValue(
   return focusFromOutcome(await host.handle('create_node', { parentId: fieldEntryId, index, text: value.text }));
 }
 
-function duplicateOutline(index: ProjectionIndex, duplicateId: string): { ok: true; outline: string } | { ok: false; code: string; error: string; nextStep: string } {
+function duplicateOutline(index: ProjectionIndex, duplicateId: string): { ok: true; outline: string } | { ok: false; code: string; error: string; instructions: string } {
   if (!index.nodes.has(duplicateId)) {
-    return { ok: false, code: 'node_not_found', error: `Duplicate source node not found: ${duplicateId}`, nextStep: 'Use node_search to locate the source node id.' };
+    return { ok: false, code: 'node_not_found', error: `Duplicate source node not found: ${duplicateId}`, instructions: 'Use node_search to locate the source node id.' };
   }
   if (isInTrash(index, duplicateId)) {
-    return { ok: false, code: 'node_in_trash', error: `Duplicate source is in Trash: ${duplicateId}`, nextStep: 'Restore or choose a non-deleted source node.' };
+    return { ok: false, code: 'node_in_trash', error: `Duplicate source is in Trash: ${duplicateId}`, instructions: 'Restore or choose a non-deleted source node.' };
   }
   return { ok: true, outline: serializeOutline(index, duplicateId, 12, 0, 500, false) };
 }
@@ -2647,6 +1983,79 @@ function collectReferenceTargetIds(document: OutlineDocument): string[] {
   const ids: string[] = [];
   for (const root of document.roots) collectNodeReferenceTargetIds(root, ids);
   return unique(ids);
+}
+
+function collectOutlineAnnotationIds(document: OutlineDocument): string[] {
+  const ids: string[] = [];
+  for (const root of document.roots) collectNodeAnnotationIds(root, ids);
+  return unique(ids);
+}
+
+function collectNodeAnnotationIds(node: OutlineNode, ids: string[]) {
+  if (node.nodeId) ids.push(node.nodeId);
+  for (const field of node.fields) {
+    if (field.nodeId) ids.push(field.nodeId);
+    for (const value of field.values) {
+      if (value.nodeId) ids.push(value.nodeId);
+    }
+  }
+  for (const child of node.children) collectNodeAnnotationIds(child, ids);
+}
+
+function validateEditAnnotations(
+  index: ProjectionIndex,
+  rootNodeId: string,
+  document: OutlineDocument,
+): { code: string; error: string; instructions: string } | null {
+  const root = document.roots[0];
+  if (!root) return null;
+  if (root.nodeId && root.nodeId !== rootNodeId) {
+    return {
+      code: 'invalid_annotation',
+      error: `Root annotation ${root.nodeId} does not match target node_id ${rootNodeId}.`,
+      instructions: 'Use the annotated outline returned by node_read for the same target node.',
+    };
+  }
+  const ids = collectOutlineAnnotationIds(document);
+  const duplicate = firstDuplicate(ids);
+  if (duplicate) {
+    return {
+      code: 'duplicate_annotation',
+      error: `Duplicate %%node:id%% marker in outline: ${duplicate}`,
+      instructions: 'Each existing node id may appear at most once in a node_edit outline.',
+    };
+  }
+  const missing = ids.find((nodeId) => !index.nodes.has(nodeId));
+  if (missing) {
+    return {
+      code: 'node_not_found',
+      error: `Annotated node id not found: ${missing}`,
+      instructions: 'Call node_read again and retry with the latest annotated outline.',
+    };
+  }
+  const scope = descendantNodeIdSet(index, rootNodeId, false);
+  const outside = ids.find((nodeId) => !scope.has(nodeId));
+  if (outside) {
+    return {
+      code: 'invalid_annotation_scope',
+      error: `Annotated node id is outside the edited subtree: ${outside}`,
+      instructions: 'Use node_edit move parameters for moving external nodes, or edit the correct subtree.',
+    };
+  }
+  return null;
+}
+
+function descendantNodeIdSet(index: ProjectionIndex, rootNodeId: string, includeDeleted: boolean): Set<string> {
+  const ids = new Set<string>();
+  const visit = (nodeId: string) => {
+    if (ids.has(nodeId)) return;
+    const node = index.nodes.get(nodeId);
+    if (!node || (!includeDeleted && isInTrash(index, nodeId))) return;
+    ids.add(nodeId);
+    for (const childId of node.children) visit(childId);
+  };
+  visit(rootNodeId);
+  return ids;
 }
 
 function collectNodeReferenceTargetIds(node: OutlineNode, ids: string[]) {
@@ -2659,1174 +2068,10 @@ function collectNodeReferenceTargetIds(node: OutlineNode, ids: string[]) {
   for (const child of node.children) collectNodeReferenceTargetIds(child, ids);
 }
 
-function validateReferenceTargetIds(index: ProjectionIndex, targetIds: string[]): { code: string; error: string; nextStep: string } | null {
-  const missing = targetIds.find((targetId) => !index.nodes.has(targetId));
-  if (missing) {
-    return {
-      code: 'node_not_found',
-      error: `Reference target not found: ${missing}`,
-      nextStep: 'Use node_search to locate the target id, then retry with [[Display^nodeId]].',
-    };
-  }
-  const trashed = targetIds.find((targetId) => isInTrash(index, targetId));
-  if (trashed) {
-    return {
-      code: 'node_in_trash',
-      error: `Reference target is in Trash: ${trashed}`,
-      nextStep: 'Choose a non-deleted target node or restore the target first.',
-    };
-  }
-  return null;
-}
-
-function validateSearchNodes(index: ProjectionIndex, document: OutlineDocument): { code: string; error: string; nextStep: string } | null {
-  for (const root of document.roots) {
-    const validation = validateSearchNode(index, root);
-    if (validation) return validation;
-  }
-  return null;
-}
-
-function validateSearchNode(index: ProjectionIndex, node: OutlineNode): { code: string; error: string; nextStep: string } | null {
-  if (node.search) {
-    const spec = resolveSearchSpecFromOutlineNode(index, node);
-    if (spec.unresolvedTagNames.length) {
-      return {
-        code: 'unresolved_tag',
-        error: `Search references unknown tags: ${spec.unresolvedTagNames.join(', ')}`,
-        nextStep: 'Create/apply the tag first, or remove the tag condition from the search node outline.',
-      };
-    }
-    if (spec.unresolvedFields.length) {
-      return {
-        code: 'unresolved_field',
-        error: `Search references unknown fields: ${spec.unresolvedFields.join(', ')}`,
-        nextStep: 'Create the field definition first, or remove the field condition from the search node outline.',
-      };
-    }
-  }
-  for (const child of node.children) {
-    const validation = validateSearchNode(index, child);
-    if (validation) return validation;
-  }
-  return null;
-}
-
 function focusFromOutcome(outcome: unknown): string {
   const focusNodeId = outcome && typeof outcome === 'object'
     ? (outcome as { focus?: { nodeId?: unknown } }).focus?.nodeId
     : undefined;
   if (typeof focusNodeId !== 'string' || !focusNodeId) throw new Error('Mutation did not return a focus node id.');
   return focusNodeId;
-}
-
-function buildReadItem(index: ProjectionIndex, nodeId: string, params: ReturnType<typeof normalizeReadParams>): NodeReadItem {
-  const node = requiredNode(index, nodeId);
-  const includeOutline = params.format === 'outline' || params.format === 'both';
-  const item: NodeReadItem = {
-    nodeId,
-    type: nodeKind(node),
-    title: nodeTitle(index, node),
-    description: node.description ?? null,
-    tags: tagLabels(index, node),
-    fields: fieldReads(index, node, params.includeDeleted),
-    checked: checkedState(node),
-    parent: parentRef(index, node),
-    breadcrumb: breadcrumb(index, nodeId),
-    children: buildChildrenPage(index, nodeId, params.depth, params.childOffset, params.childLimit, params.includeDeleted),
-    backlinks: params.includeBacklinks ? backlinks(index, nodeId, params.includeDeleted) : undefined,
-    revision: revisionOf(node),
-    outline: includeOutline
-      ? serializeOutline(index, nodeId, params.depth, params.childOffset, params.childLimit, params.includeDeleted)
-      : undefined,
-  };
-  return params.format === 'outline' ? { ...item, fields: [], children: emptyChildrenPage(params.childOffset, params.childLimit) } : item;
-}
-
-function buildChildrenPage(
-  index: ProjectionIndex,
-  nodeId: string,
-  depth: number,
-  offset: number,
-  limit: number,
-  includeDeleted: boolean,
-): ChildrenPage {
-  const childIds = normalChildIds(index, nodeId, includeDeleted);
-  const pageIds = depth > 0 ? childIds.slice(offset, offset + limit) : [];
-  return {
-    total: childIds.length,
-    offset,
-    limit,
-    items: pageIds.map((childId) => childSummary(index, childId, depth - 1, limit, includeDeleted)),
-  };
-}
-
-function childSummary(
-  index: ProjectionIndex,
-  nodeId: string,
-  remainingDepth: number,
-  childLimit: number,
-  includeDeleted: boolean,
-): NodeChildSummary {
-  const node = requiredNode(index, nodeId);
-  const children = normalChildIds(index, nodeId, includeDeleted);
-  return {
-    nodeId,
-    title: nodeTitle(index, node),
-    type: nodeKind(node),
-    tags: tagLabels(index, node),
-    checked: checkedState(node),
-    hasChildren: children.length > 0,
-    childCount: children.length,
-    isReference: node.type === 'reference' || undefined,
-    targetId: node.targetId,
-    children: remainingDepth > 0 ? buildChildrenPage(index, nodeId, remainingDepth, 0, childLimit, includeDeleted) : undefined,
-  };
-}
-
-function buildSearchItem(index: ProjectionIndex, nodeId: string, queryTerms: string[]): NodeSearchItem {
-  const node = requiredNode(index, nodeId);
-  const children = normalChildIds(index, nodeId, false);
-  return {
-    nodeId,
-    title: nodeTitle(index, node),
-    description: node.description ?? null,
-    type: nodeKind(node),
-    tags: tagLabels(index, node),
-    snippet: snippetFor(node, queryTerms),
-    parent: parentRef(index, node),
-    fields: Object.fromEntries(fieldReads(index, node, false).map((field) => {
-      const values = field.values.map((value) => value.text);
-      return [field.name, values.length === 1 ? values[0] : values];
-    })),
-    checked: checkedState(node),
-    hasChildren: children.length > 0,
-    childCount: children.length,
-    updatedAt: new Date(node.updatedAt).toISOString(),
-  };
-}
-
-function resolveSearchSpecFromOutlineNode(index: ProjectionIndex, node: OutlineNode): ResolvedSearchSpec {
-  const parsed = parsedSearchFromOutlineNode(node);
-  const resolvedTags = resolveTagNames(index, parsed.tagNames);
-  const resolvedFields = resolveFieldSearchConditions(index, parsed.fieldConditions);
-  return {
-    title: parsed.title ?? 'Search',
-    view: parsed.view,
-    queryTerms: parsed.queryTerms,
-    tagIds: resolvedTags.tagIds,
-    linkTargetIds: parsed.linkTargetIds,
-    fieldConditions: resolvedFields.fieldConditions,
-    unresolvedTagNames: resolvedTags.unresolvedTagNames,
-    unresolvedFields: resolvedFields.unresolvedFields,
-    warnings: [],
-  };
-}
-
-function parsedSearchFromOutlineNode(node: OutlineNode): ParsedSearch {
-  const queryTerms: string[] = [];
-  const tagNames: string[] = [];
-  const linkTargetIds: string[] = [];
-  const fieldConditions: ParsedFieldSearchCondition[] = [];
-
-  for (const field of node.fields) {
-    fieldConditions.push(...fieldSearchConditionsFromOutlineField(field));
-  }
-
-  for (const child of node.children) {
-    tagNames.push(...child.tags);
-    if (child.referenceTargetId) {
-      linkTargetIds.push(child.referenceTargetId);
-    } else if (child.title.trim() && child.title !== '(untitled)') {
-      queryTerms.push(child.title.trim());
-    }
-    for (const field of child.fields) {
-      fieldConditions.push(...fieldSearchConditionsFromOutlineField(field));
-    }
-  }
-
-  if (queryTerms.length === 0 && tagNames.length === 0 && linkTargetIds.length === 0 && fieldConditions.length === 0 && node.title.trim()) {
-    queryTerms.push(node.title.trim());
-  }
-
-  return {
-    title: node.title.trim() || undefined,
-    view: node.view,
-    queryTerms: unique(queryTerms.filter(Boolean)),
-    tagNames: unique(tagNames),
-    linkTargetIds: unique(linkTargetIds),
-    fieldConditions: uniqueParsedFieldConditions(fieldConditions),
-  };
-}
-
-function searchNodeConfigFromSpec(spec: ResolvedSearchSpec): SearchNodeConfig {
-  return {
-    title: spec.title,
-    viewMode: spec.view,
-    conditions: [
-      ...spec.queryTerms.map((text): SearchNodeCondition => ({ op: 'STRING_MATCH', text })),
-      ...spec.tagIds.map((tagId): SearchNodeCondition => ({ op: 'HAS_TAG', tagId })),
-      ...spec.linkTargetIds.map((targetId): SearchNodeCondition => ({ op: 'LINKS_TO', targetId })),
-      ...spec.fieldConditions.map((field): SearchNodeCondition => ({
-        op: 'FIELD_CONTAINS',
-        fieldDefId: field.fieldDefId,
-        text: field.text,
-      })),
-    ],
-  };
-}
-
-function searchSpecFromSavedSearch(index: ProjectionIndex, node: NodeProjection): ResolvedSearchSpec {
-  const queryTerms: string[] = [];
-  const tagIds: string[] = [];
-  const linkTargetIds: string[] = [];
-  const fieldConditions: ResolvedFieldSearchCondition[] = [];
-  const conditionNodes = node.children
-    .map((childId) => index.nodes.get(childId))
-    .filter((child): child is NodeProjection => child?.type === 'queryCondition' && !isInTrash(index, child.id));
-
-  for (const condition of conditionNodes) {
-    if (condition.queryOp === 'HAS_TAG' && condition.queryTagDefId) tagIds.push(condition.queryTagDefId);
-    else if (condition.queryOp === 'LINKS_TO' && condition.targetId) linkTargetIds.push(condition.targetId);
-    else if (condition.queryOp === 'FIELD_CONTAINS' && condition.queryFieldDefId) {
-      fieldConditions.push({
-        fieldDefId: condition.queryFieldDefId,
-        fieldName: fieldDefinitionName(index, condition.queryFieldDefId),
-        text: condition.content.text.trim() || undefined,
-      });
-    }
-    else if (condition.queryOp === 'STRING_MATCH' && condition.content.text.trim()) queryTerms.push(condition.content.text.trim());
-  }
-
-  if (conditionNodes.length === 0) {
-    if (node.queryOp === 'HAS_TAG' && node.queryTagDefId) tagIds.push(node.queryTagDefId);
-    else if (node.queryOp === 'LINKS_TO' && node.targetId) linkTargetIds.push(node.targetId);
-    else if (node.queryOp === 'FIELD_CONTAINS' && node.queryFieldDefId) {
-      fieldConditions.push({
-        fieldDefId: node.queryFieldDefId,
-        fieldName: fieldDefinitionName(index, node.queryFieldDefId),
-      });
-    }
-    else if (node.queryOp === 'STRING_MATCH' && node.content.text.trim()) queryTerms.push(node.content.text.trim());
-    else if (node.content.text.trim()) queryTerms.push(node.content.text.trim());
-  }
-
-  return {
-    title: node.content.text.trim() || 'Search',
-    view: node.viewMode,
-    queryTerms: unique(queryTerms),
-    tagIds: unique(tagIds),
-    linkTargetIds: unique(linkTargetIds),
-    fieldConditions: uniqueFieldConditions(fieldConditions),
-    unresolvedTagNames: [],
-    unresolvedFields: [],
-    warnings: [],
-  };
-}
-
-function resolveSearch(index: ProjectionIndex, params: ReturnType<typeof normalizeSearchParams>): {
-  source: 'temporary' | 'saved';
-  title?: string;
-  view?: string;
-  searchNodeId?: string;
-  outline?: string;
-  queryTerms: string[];
-  tagIds: string[];
-  linkTargetIds: string[];
-  fieldConditions: ResolvedFieldSearchCondition[];
-  unresolvedTagNames: string[];
-  unresolvedFields: string[];
-  warnings: string[];
-} | { error: string; code: string; nextStep: string } {
-  if (params.query) {
-    return {
-      source: 'temporary',
-      title: params.query,
-      queryTerms: [params.query],
-      tagIds: [],
-      linkTargetIds: [],
-      fieldConditions: [],
-      unresolvedTagNames: [],
-      unresolvedFields: [],
-      warnings: [],
-    };
-  }
-
-  if (params.outline) {
-    const parsed = parseSearchOutline(params.outline);
-    if ('error' in parsed) return parsed;
-    const referenceValidation = validateReferenceTargetIds(index, parsed.linkTargetIds);
-    if (referenceValidation) return referenceValidation;
-    const resolvedTags = resolveTagNames(index, parsed.tagNames);
-    const resolvedFields = resolveFieldSearchConditions(index, parsed.fieldConditions);
-    if (resolvedTags.unresolvedTagNames.length) {
-      return {
-        code: 'unresolved_tag',
-        error: `Search references unknown tags: ${resolvedTags.unresolvedTagNames.join(', ')}`,
-        nextStep: 'Use node_search with query first, or create/apply the tag before filtering by it.',
-      };
-    }
-    if (resolvedFields.unresolvedFields.length) {
-      return {
-        code: 'unresolved_field',
-        error: `Search references unknown fields: ${resolvedFields.unresolvedFields.join(', ')}`,
-        nextStep: 'Use node_read on a tagged node to inspect available field names before filtering by field.',
-      };
-    }
-    return {
-      source: 'temporary',
-      title: parsed.title,
-      view: parsed.view,
-      outline: params.outline,
-      queryTerms: parsed.queryTerms,
-      tagIds: resolvedTags.tagIds,
-      linkTargetIds: parsed.linkTargetIds,
-      fieldConditions: resolvedFields.fieldConditions,
-      unresolvedTagNames: [],
-      unresolvedFields: [],
-      warnings: [],
-    };
-  }
-
-  const searchNodeId = params.searchNodeId!;
-  const node = index.nodes.get(searchNodeId);
-  if (!node) return { code: 'node_not_found', error: `Search node not found: ${searchNodeId}`, nextStep: 'Use node_search with query or locate the saved search id first.' };
-  if (isInTrash(index, searchNodeId)) return { code: 'node_in_trash', error: `Search node is in Trash: ${searchNodeId}`, nextStep: 'Use a non-deleted saved search node.' };
-  if (node.type !== 'search') {
-    return { code: 'invalid_search_node', error: `Node is not a search node: ${searchNodeId}`, nextStep: 'Use node_search with query for simple content search.' };
-  }
-  const spec = searchSpecFromSavedSearch(index, node);
-  const referenceValidation = validateReferenceTargetIds(index, spec.linkTargetIds);
-  if (referenceValidation) return referenceValidation;
-  return {
-    source: 'saved',
-    title: spec.title,
-    view: spec.view,
-    searchNodeId,
-    queryTerms: spec.queryTerms,
-    tagIds: spec.tagIds,
-    linkTargetIds: spec.linkTargetIds,
-    fieldConditions: spec.fieldConditions,
-    unresolvedTagNames: spec.unresolvedTagNames,
-    unresolvedFields: spec.unresolvedFields,
-    warnings: spec.warnings,
-  };
-}
-
-function runSearch(index: ProjectionIndex, search: {
-  queryTerms: string[];
-  tagIds: string[];
-  linkTargetIds: string[];
-  fieldConditions: ResolvedFieldSearchCondition[];
-}): string[] {
-  const scored: Array<{ nodeId: string; score: number }> = [];
-  for (const node of index.projection.nodes) {
-    if (!isSearchCandidate(index, node.id)) continue;
-    if (!search.tagIds.every((tagId) => node.tags.includes(tagId))) continue;
-    if (!search.linkTargetIds.every((targetId) => nodeLinksTo(index, node, targetId))) continue;
-    if (!search.fieldConditions.every((condition) => nodeMatchesFieldCondition(index, node, condition))) continue;
-    let score = search.tagIds.length * 25 + search.linkTargetIds.length * 20 + search.fieldConditions.length * 18;
-    let matched = true;
-    for (const term of search.queryTerms) {
-      const termScore = scoreTerm(index, node, term);
-      if (termScore <= 0) {
-        matched = false;
-        break;
-      }
-      score += termScore;
-    }
-    if (matched) scored.push({ nodeId: node.id, score });
-  }
-  return scored.sort((left, right) => right.score - left.score || left.nodeId.localeCompare(right.nodeId)).map((hit) => hit.nodeId);
-}
-
-function nodeLinksTo(index: ProjectionIndex, node: NodeProjection, targetId: string): boolean {
-  if (node.type === 'reference' && node.targetId === targetId) return true;
-  if (node.content.inlineRefs.some((ref) => ref.targetNodeId === targetId)) return true;
-  return node.children.some((childId) => {
-    const child = index.nodes.get(childId);
-    return child?.type === 'reference' && child.targetId === targetId;
-  });
-}
-
-function nodeMatchesFieldCondition(index: ProjectionIndex, node: NodeProjection, condition: ResolvedFieldSearchCondition): boolean {
-  const fields = fieldReads(index, node, false).filter((field) => {
-    const fieldEntry = index.nodes.get(field.fieldEntryId);
-    return fieldEntry?.fieldDefId === condition.fieldDefId;
-  });
-  if (fields.length === 0) return false;
-  const text = condition.text?.trim().toLowerCase();
-  if (!text) return true;
-  return fields.some((field) => field.values.some((value) => value.text.toLowerCase().includes(text)));
-}
-
-function parseSearchOutline(outline: string): ParsedSearch | { code: string; error: string; nextStep: string } {
-  const parsed = parseLinOutline(outline);
-  if (!parsed.ok) {
-    return {
-      code: 'parse_error',
-      error: `${parsed.error.message} Line ${parsed.error.line}, column ${parsed.error.column}.`,
-      nextStep: 'Fix the search outline so every non-empty line uses "- " and 2-space indentation.',
-    };
-  }
-  if (parsed.document.roots.length !== 1) {
-    return {
-      code: 'ambiguous_search',
-      error: 'Search outline must contain exactly one root search node.',
-      nextStep: 'Wrap all search conditions under one "- %%search%% Title" root.',
-    };
-  }
-  return parsedSearchFromOutlineNode(parsed.document.roots[0]!);
-}
-
-function serializeOutline(
-  index: ProjectionIndex,
-  nodeId: string,
-  depth: number,
-  childOffset: number,
-  childLimit: number,
-  includeDeleted: boolean,
-): string {
-  return serializeOutlineNode(index, nodeId, depth, 0, childOffset, childLimit, includeDeleted).join('\n');
-}
-
-function serializeOutlineNode(
-  index: ProjectionIndex,
-  nodeId: string,
-  depth: number,
-  level: number,
-  childOffset: number,
-  childLimit: number,
-  includeDeleted: boolean,
-): string[] {
-  const node = requiredNode(index, nodeId);
-  const indent = '  '.repeat(level);
-  const lines = [`${indent}- ${outlineNodeText(index, node)}`];
-  for (const field of fieldReads(index, node, includeDeleted)) {
-    const fieldIndent = '  '.repeat(level + 1);
-    if (field.values.length === 0) {
-      lines.push(`${fieldIndent}- ${field.name}::`);
-    } else if (field.values.length === 1) {
-      lines.push(`${fieldIndent}- ${field.name}:: ${field.values[0]!.text}`);
-    } else {
-      lines.push(`${fieldIndent}- ${field.name}::`);
-      for (const value of field.values) lines.push(`${fieldIndent}  - ${value.text}`);
-    }
-  }
-  if (node.type === 'search') {
-    lines.push(...searchConditionOutlineLines(index, node, level + 1));
-    return lines;
-  }
-  if (depth <= 0) return lines;
-  const childIds = normalChildIds(index, nodeId, includeDeleted).slice(childOffset, childOffset + childLimit);
-  for (const childId of childIds) {
-    lines.push(...serializeOutlineNode(index, childId, depth - 1, level + 1, 0, childLimit, includeDeleted));
-  }
-  return lines;
-}
-
-function searchConditionOutlineLines(index: ProjectionIndex, node: NodeProjection, level: number): string[] {
-  const indent = '  '.repeat(level);
-  const spec = searchSpecFromSavedSearch(index, node);
-  return [
-    ...spec.queryTerms.map((term) => `${indent}- ${term}`),
-    ...spec.tagIds.map((tagId) => {
-      const tag = tagLabel(index.nodes.get(tagId)) ?? `#${tagId}`;
-      return `${indent}- ${tag}`;
-    }),
-    ...spec.linkTargetIds.map((targetId) => {
-      const target = index.nodes.get(targetId);
-      return `${indent}- [[${target ? nodeTitle(index, target) : targetId}^${targetId}]]`;
-    }),
-    ...spec.fieldConditions.map((field) => `${indent}- ${field.fieldName}:: ${field.text ?? ''}`.trimEnd()),
-  ];
-}
-
-function outlineNodeText(index: ProjectionIndex, node: NodeProjection): string {
-  const parts: string[] = [];
-  if (node.type === 'search') parts.push('%%search%%');
-  if (node.viewMode) parts.push(`%%view:${node.viewMode}%%`);
-  if (node.completedAt) parts.push('[x]');
-  else if (node.showCheckbox) parts.push('[ ]');
-  parts.push((referenceText(index, node) ?? node.content.text) || '(untitled)');
-  if (node.description) parts.push(`- ${node.description}`);
-  parts.push(...tagLabels(index, node));
-  return parts.join(' ').trim();
-}
-
-function fieldReads(index: ProjectionIndex, node: NodeProjection, includeDeleted: boolean): NodeFieldRead[] {
-  return node.children
-    .map((childId) => index.nodes.get(childId))
-    .filter((child): child is NodeProjection => child !== undefined && child.type === 'fieldEntry' && (includeDeleted || !isInTrash(index, child.id)))
-    .map((fieldEntry) => {
-      const fieldDef = fieldEntry.fieldDefId ? index.nodes.get(fieldEntry.fieldDefId) : undefined;
-      const values = fieldEntry.children
-        .map((valueId) => index.nodes.get(valueId))
-        .filter((value): value is NodeProjection => value !== undefined && (includeDeleted || !isInTrash(index, value.id)))
-        .map((value) => ({
-          text: referenceText(index, value) ?? value.content.text,
-          valueNodeId: value.id,
-          targetId: value.targetId,
-        }));
-      const options = fieldDef?.children
-        .map((optionId) => index.nodes.get(optionId)?.content.text.trim())
-        .filter((value): value is string => Boolean(value));
-      return {
-        name: fieldDef?.content.text || fieldEntry.content.text || 'Field',
-        type: fieldDef?.fieldType ?? fieldEntry.fieldType ?? 'plain',
-        values,
-        fieldEntryId: fieldEntry.id,
-        options: options && options.length ? options : undefined,
-      };
-    });
-}
-
-function backlinks(index: ProjectionIndex, targetId: string, includeDeleted: boolean): NodeBacklink[] {
-  const result: NodeBacklink[] = [];
-  for (const node of index.projection.nodes) {
-    if (!includeDeleted && isInTrash(index, node.id)) continue;
-    if (node.type === 'reference' && node.targetId === targetId) {
-      const parent = node.parentId ? index.nodes.get(node.parentId) : undefined;
-      const source = parent && parent.type === 'fieldEntry' && parent.parentId ? index.nodes.get(parent.parentId) : parent;
-      result.push({
-        sourceNodeId: source?.id ?? node.id,
-        sourceTitle: source ? nodeTitle(index, source) : nodeTitle(index, node),
-        kind: parent?.type === 'fieldEntry' ? 'field' : 'tree',
-        snippet: parent?.type === 'fieldEntry' ? fieldName(index, parent) : undefined,
-      });
-    }
-    for (const inlineRef of node.content.inlineRefs) {
-      if (inlineRef.targetNodeId === targetId) {
-        result.push({
-          sourceNodeId: node.id,
-          sourceTitle: nodeTitle(index, node),
-          kind: 'inline',
-          snippet: snippetFor(node, [inlineRef.displayName ?? '']),
-        });
-      }
-    }
-  }
-  return result;
-}
-
-function normalChildIds(index: ProjectionIndex, nodeId: string, includeDeleted: boolean): string[] {
-  const node = requiredNode(index, nodeId);
-  return node.children.filter((childId) => {
-    const child = index.nodes.get(childId);
-    return Boolean(child)
-      && child!.type !== 'fieldEntry'
-      && child!.type !== 'queryCondition'
-      && (includeDeleted || !isInTrash(index, childId));
-  });
-}
-
-function tagLabels(index: ProjectionIndex, node: NodeProjection): string[] {
-  return node.tags.map((tagId) => tagLabel(index.nodes.get(tagId))).filter((tag): tag is string => Boolean(tag));
-}
-
-function tagLabel(node: NodeProjection | undefined): string | null {
-  if (!node) return null;
-  const name = node.content.text.trim();
-  if (!name) return null;
-  return /^[\w-]+$/.test(name) ? `#${name}` : `#[[${name}]]`;
-}
-
-function nodeTitle(index: ProjectionIndex, node: NodeProjection): string {
-  if (node.type === 'reference' && node.targetId) {
-    const target = index.nodes.get(node.targetId);
-    if (target) return nodeTitle(index, target);
-  }
-  return node.content.text || '(untitled)';
-}
-
-function nodeKind(node: NodeProjection): string {
-  return node.type ?? 'node';
-}
-
-function checkedState(node: NodeProjection): boolean | null | undefined {
-  if (node.completedAt) return true;
-  if (node.showCheckbox) return false;
-  return undefined;
-}
-
-function parentRef(index: ProjectionIndex, node: NodeProjection): NodeRef | null {
-  if (!node.parentId) return null;
-  const parent = index.nodes.get(node.parentId);
-  return parent ? { nodeId: parent.id, title: nodeTitle(index, parent) } : null;
-}
-
-function breadcrumb(index: ProjectionIndex, nodeId: string): NodeRef[] {
-  const items: NodeRef[] = [];
-  let current = index.nodes.get(nodeId);
-  const visited = new Set<string>();
-  while (current?.parentId && !visited.has(current.parentId)) {
-    visited.add(current.parentId);
-    const parent = index.nodes.get(current.parentId);
-    if (!parent) break;
-    items.push({ nodeId: parent.id, title: nodeTitle(index, parent) });
-    current = parent;
-  }
-  return items.reverse();
-}
-
-function referenceText(index: ProjectionIndex, node: NodeProjection): string | null {
-  if (node.type !== 'reference' || !node.targetId) return null;
-  const target = index.nodes.get(node.targetId);
-  const display = target ? nodeTitle(index, target) : node.targetId;
-  return `[[${display}^${node.targetId}]]`;
-}
-
-function fieldName(index: ProjectionIndex, fieldEntry: NodeProjection): string {
-  const fieldDef = fieldEntry.fieldDefId ? index.nodes.get(fieldEntry.fieldDefId) : undefined;
-  return fieldDef?.content.text || fieldEntry.content.text || 'Field';
-}
-
-function snippetFor(node: NodeProjection, queryTerms: string[]): string {
-  const haystack = [node.content.text, node.description ?? ''].join(' ').trim();
-  if (!haystack) return '';
-  const lower = haystack.toLowerCase();
-  const term = queryTerms.map((value) => value.toLowerCase()).find((value) => value && lower.includes(value));
-  if (!term) return haystack.slice(0, 160);
-  const index = lower.indexOf(term);
-  const start = Math.max(0, index - 60);
-  const end = Math.min(haystack.length, index + term.length + 80);
-  return `${start > 0 ? '...' : ''}${haystack.slice(start, end)}${end < haystack.length ? '...' : ''}`;
-}
-
-function scoreTerm(index: ProjectionIndex, node: NodeProjection, term: string): number {
-  const q = term.trim().toLowerCase();
-  if (!q) return 0;
-  let score = 0;
-  const text = node.content.text.toLowerCase();
-  if (text === q) score += 100;
-  else if (text.startsWith(q)) score += 60;
-  else if (text.includes(q)) score += 30;
-  if (node.description?.toLowerCase().includes(q)) score += 15;
-  for (const tag of tagLabels(index, node)) {
-    if (tag.toLowerCase().includes(q)) score += 15;
-  }
-  for (const field of fieldReads(index, node, false)) {
-    if (field.name.toLowerCase().includes(q)) score += 8;
-    for (const value of field.values) {
-      if (value.text.toLowerCase().includes(q)) score += 10;
-    }
-  }
-  return score;
-}
-
-function isSearchCandidate(index: ProjectionIndex, nodeId: string): boolean {
-  const node = index.nodes.get(nodeId);
-  if (!node) return false;
-  return !isInTrash(index, nodeId)
-    && !SYSTEM_IDS.has(nodeId)
-    && (node.type === undefined || ['tagDef', 'fieldDef', 'search', 'codeBlock'].includes(node.type));
-}
-
-function isInTrash(index: ProjectionIndex, nodeId: string): boolean {
-  if (nodeId === TRASH_ID) return true;
-  let current = index.nodes.get(nodeId)?.parentId;
-  const visited = new Set<string>();
-  while (current && !visited.has(current)) {
-    if (current === TRASH_ID) return true;
-    visited.add(current);
-    current = index.nodes.get(current)?.parentId;
-  }
-  return false;
-}
-
-function resolveTagNames(index: ProjectionIndex, tagNames: string[]): { tagIds: string[]; unresolvedTagNames: string[] } {
-  const tagIds: string[] = [];
-  const unresolvedTagNames: string[] = [];
-  for (const tagName of tagNames) {
-    const normalized = tagName.toLowerCase();
-    const tag = index.projection.nodes.find((node) => node.type === 'tagDef' && node.content.text.toLowerCase() === normalized);
-    if (tag) tagIds.push(tag.id);
-    else unresolvedTagNames.push(tagName);
-  }
-  return { tagIds: unique(tagIds), unresolvedTagNames: unique(unresolvedTagNames) };
-}
-
-function resolveFieldSearchConditions(
-  index: ProjectionIndex,
-  conditions: ParsedFieldSearchCondition[],
-): { fieldConditions: ResolvedFieldSearchCondition[]; unresolvedFields: string[] } {
-  const fieldConditions: ResolvedFieldSearchCondition[] = [];
-  const unresolvedFields: string[] = [];
-  for (const condition of conditions) {
-    const field = findFieldDefByName(index, condition.fieldName);
-    if (!field) {
-      unresolvedFields.push(condition.fieldName);
-      continue;
-    }
-    fieldConditions.push({
-      fieldName: field.content.text.trim() || condition.fieldName,
-      fieldDefId: field.id,
-      text: condition.text?.trim() || undefined,
-    });
-  }
-  return {
-    fieldConditions: uniqueFieldConditions(fieldConditions),
-    unresolvedFields: unique(unresolvedFields),
-  };
-}
-
-function fieldSearchConditionsFromOutlineField(field: OutlineField): ParsedFieldSearchCondition[] {
-  const fieldName = field.name.trim();
-  if (!fieldName) return [];
-  if (field.values.length === 0) return [{ fieldName }];
-  return field.values.map((value) => ({
-    fieldName,
-    text: value.text.trim() || undefined,
-  }));
-}
-
-function uniqueParsedFieldConditions(conditions: ParsedFieldSearchCondition[]): ParsedFieldSearchCondition[] {
-  const result: ParsedFieldSearchCondition[] = [];
-  const seen = new Set<string>();
-  for (const condition of conditions) {
-    const fieldName = condition.fieldName.trim();
-    if (!fieldName) continue;
-    const text = condition.text?.trim() || undefined;
-    const key = `${fieldName.toLowerCase()}:${(text ?? '').toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push({ fieldName, text });
-  }
-  return result;
-}
-
-function uniqueFieldConditions(conditions: ResolvedFieldSearchCondition[]): ResolvedFieldSearchCondition[] {
-  const result: ResolvedFieldSearchCondition[] = [];
-  const seen = new Set<string>();
-  for (const condition of conditions) {
-    const text = condition.text?.trim() || undefined;
-    const key = `${condition.fieldDefId}:${(text ?? '').toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push({ ...condition, text });
-  }
-  return result;
-}
-
-function fieldDefinitionName(index: ProjectionIndex, fieldDefId: string): string {
-  return index.nodes.get(fieldDefId)?.content.text.trim() || fieldDefId;
-}
-
-function findTagByName(index: ProjectionIndex, tagName: string): NodeProjection | undefined {
-  const normalized = tagName.trim().toLowerCase();
-  return index.projection.nodes.find((node) => node.type === 'tagDef' && node.content.text.trim().toLowerCase() === normalized);
-}
-
-function findFieldDefByName(index: ProjectionIndex, fieldName: string): NodeProjection | undefined {
-  const normalized = fieldName.trim().toLowerCase();
-  return index.projection.nodes.find((node) => node.type === 'fieldDef' && node.content.text.trim().toLowerCase() === normalized);
-}
-
-function pageHasMore(page: ChildrenPage): boolean {
-  return page.offset + page.items.length < page.total;
-}
-
-function emptyChildrenPage(offset: number, limit: number): ChildrenPage {
-  return { total: 0, offset, limit, items: [] };
-}
-
-function indexProjection(projection: DocumentProjection): ProjectionIndex {
-  return {
-    projection,
-    nodes: new Map(projection.nodes.map((node) => [node.id, node])),
-  };
-}
-
-function projectionFingerprint(projection: DocumentProjection): string {
-  return JSON.stringify(projection.nodes.map((node) => ({
-    id: node.id,
-    parentId: node.parentId,
-    children: node.children,
-    text: node.content.text,
-    tags: node.tags,
-    type: node.type,
-    targetId: node.targetId,
-    updatedAt: node.updatedAt,
-  })));
-}
-
-function changedNodeIds(before: DocumentProjection, after: DocumentProjection): string[] {
-  const beforeById = new Map(before.nodes.map((node) => [node.id, node]));
-  const afterById = new Map(after.nodes.map((node) => [node.id, node]));
-  const ids = unique([...beforeById.keys(), ...afterById.keys()]);
-  return ids.filter((id) => JSON.stringify(beforeById.get(id)) !== JSON.stringify(afterById.get(id)));
-}
-
-function requiredNode(index: ProjectionIndex, nodeId: string): NodeProjection {
-  const node = index.nodes.get(nodeId);
-  if (!node) throw new Error(`Node not found: ${nodeId}`);
-  return node;
-}
-
-function revisionOf(node: NodeProjection): string {
-  return `${node.id}:${node.updatedAt}`;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
-}
-
-function clampInteger(value: unknown, min: number, max: number, fallback: number): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(max, Math.max(min, Math.trunc(parsed)));
-}
-
-function elapsed(started: number): number {
-  return Date.now() - started;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function jsonByteLength(value: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
-}
-
-function nodeToolResult<TData>(
-  envelope: ToolEnvelope<TData>,
-  visibleData: NodeVisibleResult,
-): AgentToolResult<ToolEnvelope<TData>> {
-  return {
-    content: [{ type: 'text', text: JSON.stringify(visibleData, null, 2) }],
-    details: envelope,
-  };
-}
-
-function nodeErrorResult<TData>(
-  envelope: ToolEnvelope<TData>,
-): AgentToolResult<ToolEnvelope<TData>> {
-  return nodeToolResult(envelope, visibleErrorResult(envelope));
-}
-
-function visibleReadResult(
-  index: ProjectionIndex,
-  nodeIds: string[],
-  params: ReturnType<typeof normalizeReadParams>,
-  items: NodeReadItem[],
-): NodeVisibleReadResult {
-  const outline = compactOutline(items.map((item) => item.outline).filter((value): value is string => Boolean(value)));
-  const refs = nodeIds.flatMap((nodeId, itemIndex) =>
-    outlineReadRefs(index, nodeId, params.depth, params.childOffset, params.childLimit, params.includeDeleted, `${itemIndex + 1}`));
-  const rootPages = nodeIds
-    .map((nodeId) => visibleReadPage(index, nodeId, params))
-    .filter((page) => page.total > page.limit || page.offset > 0);
-  const page = rootPages.length === 1 ? rootPages[0] : undefined;
-  return compactVisibleResult({
-    kind: 'read',
-    outline,
-    refs,
-    page,
-    next: page ? nextReadStep(nodeIds, params, page) : undefined,
-  });
-}
-
-function visibleReadPage(
-  index: ProjectionIndex,
-  nodeId: string,
-  params: ReturnType<typeof normalizeReadParams>,
-): NodeVisiblePage {
-  return visiblePage({
-    total: normalChildIds(index, nodeId, params.includeDeleted).length,
-    offset: params.childOffset,
-    limit: params.childLimit,
-    items: [],
-  });
-}
-
-function outlineReadRefs(
-  projectionIndex: ProjectionIndex,
-  nodeId: string,
-  depth: number,
-  childOffset: number,
-  childLimit: number,
-  includeDeleted: boolean,
-  path: string,
-): NodeVisibleRef[] {
-  const node = requiredNode(projectionIndex, nodeId);
-  const refs: NodeVisibleRef[] = [{
-    nodeId,
-    kind: nodeKind(node),
-    title: nodeTitle(projectionIndex, node),
-    path,
-    revision: revisionOf(node),
-    targetId: node.targetId,
-  }];
-
-  fieldReads(projectionIndex, node, includeDeleted).forEach((field, fieldIndex) => {
-    const fieldPath = `${path}.field.${fieldIndex + 1}`;
-    refs.push({
-      nodeId: field.fieldEntryId,
-      kind: 'field',
-      title: field.name,
-      path: fieldPath,
-    });
-    field.values.forEach((value, valueIndex) => {
-      if (!value.valueNodeId) return;
-      refs.push({
-        nodeId: value.valueNodeId,
-        kind: value.targetId ? 'reference' : 'value',
-        title: value.text,
-        path: `${fieldPath}.${valueIndex + 1}`,
-        targetId: value.targetId,
-      });
-    });
-  });
-
-  if (depth <= 0) return refs;
-  const childIds = normalChildIds(projectionIndex, nodeId, includeDeleted).slice(childOffset, childOffset + childLimit);
-  childIds.forEach((childId, childIndex) => {
-    refs.push(...outlineReadRefs(projectionIndex, childId, depth - 1, 0, childLimit, includeDeleted, `${path}.${childIndex + 1}`));
-  });
-  return refs;
-}
-
-function visibleSearchResult(data: NodeSearchData, params: ReturnType<typeof normalizeSearchParams>): NodeVisibleSearchResult {
-  const items = data.items ?? [];
-  const page = visiblePage({ total: data.total, offset: data.offset, limit: data.limit, items });
-  const matches = items.map((item, index): NodeVisibleMatch => ({
-    nodeId: item.nodeId,
-    kind: item.type,
-    title: item.title,
-    snippet: item.snippet,
-    line: index + 1,
-    path: `${data.offset + index + 1}`,
-  }));
-  return compactVisibleResult({
-    kind: 'search',
-    matches,
-    refs: matches.map(({ snippet: _snippet, ...ref }) => ref),
-    page,
-    next: nextSearchStep(params, page),
-  });
-}
-
-function visibleCreateResult(data: NodeCreateData, previewOnly: boolean, index?: ProjectionIndex): NodeVisibleMutationResult {
-  return compactVisibleResult({
-    kind: 'mutation',
-    action: 'create',
-    status: previewOnly ? 'preview' : 'applied',
-    outline: previewOnly ? data.outline : undefined,
-    refs: visibleRefs(index, data.createdRootIds, 'created.root'),
-    changes: previewOnly ? {} : compactChanges({ created: data.createdNodeIds }) ?? {},
-    next: !previewOnly && data.createdRootIds.length ? nextReadNodesStep(data.createdRootIds) : undefined,
-  });
-}
-
-function visibleDeleteResult(data: NodeDeleteData, previewOnly: boolean): NodeVisibleMutationResult {
-  return compactVisibleResult({
-    kind: 'mutation',
-    action: 'delete',
-    status: previewOnly ? 'preview' : 'applied',
-    refs: data.preview.map((item, index) => ({
-      nodeId: item.nodeId,
-      kind: item.type,
-      title: item.title,
-      path: `affected.${index + 1}`,
-    })),
-    changes: previewOnly
-      ? {}
-      : compactChanges({
-        trashed: data.deletedNodeIds,
-        restored: data.restoredNodeIds,
-      }) ?? {},
-    next: !previewOnly && data.action === 'restored' && data.restoredNodeIds?.length ? nextReadNodesStep(data.restoredNodeIds) : undefined,
-  });
-}
-
-function visibleEditResult(data: NodeEditData, previewOnly: boolean, index?: ProjectionIndex): NodeVisibleMutationResult {
-  const changed = data.status === 'updated';
-  return compactVisibleResult({
-    kind: 'mutation',
-    action: 'edit',
-    status: previewOnly ? 'preview' : changed ? 'applied' : 'unchanged',
-    outline: previewOnly ? data.afterOutline : undefined,
-    refs: visibleRefs(index, data.affectedNodeIds, 'affected', data.revisions),
-    changes: previewOnly
-      ? {}
-      : compactChanges({
-        updated: data.status === 'updated' ? editUpdatedNodeIds(data) : undefined,
-        created: data.createdNodeIds,
-        moved: data.movedNodeIds,
-        trashed: data.trashedNodeIds,
-      }) ?? {},
-    next: !previewOnly ? nextReadNodesStep(readableEditNodeIds(data)) : undefined,
-  });
-}
-
-function compactOutline(outlines: string[]): string | undefined {
-  const text = outlines.map((outline) => outline.trim()).filter(Boolean).join('\n\n');
-  return text || undefined;
-}
-
-function visiblePage(page: ChildrenPage | { total: number; offset: number; limit: number; items: unknown[] }): NodeVisiblePage {
-  const nextOffset = page.offset + page.limit < page.total ? page.offset + page.limit : undefined;
-  return {
-    total: page.total,
-    offset: page.offset,
-    limit: page.limit,
-    ...(nextOffset !== undefined ? { nextOffset } : {}),
-  };
-}
-
-function visibleRefs(
-  index: ProjectionIndex | undefined,
-  nodeIds: string[],
-  pathPrefix: string,
-  revisions: Record<string, string> = {},
-): NodeVisibleRef[] | undefined {
-  if (nodeIds.length === 0) return undefined;
-  return nodeIds.map((nodeId, indexInList) => {
-    const node = index?.nodes.get(nodeId);
-    const path = `${pathPrefix}.${indexInList + 1}`;
-    if (!node || !index) {
-      return {
-        nodeId,
-        path,
-        ...(revisions[nodeId] ? { revision: revisions[nodeId] } : {}),
-      };
-    }
-    return {
-      nodeId,
-      kind: nodeKind(node),
-      title: nodeTitle(index, node),
-      targetId: node.targetId,
-      path,
-      revision: revisions[nodeId] ?? revisionOf(node),
-    };
-  });
-}
-
-function nextReadStep(
-  nodeIds: string[],
-  params: ReturnType<typeof normalizeReadParams>,
-  page: NodeVisiblePage,
-): NodeVisibleNextStep | undefined {
-  if (page.nextOffset === undefined) return undefined;
-  return {
-    tool: 'node_read',
-    params: compactRecord({
-      ...(nodeIds.length === 1 ? { nodeId: nodeIds[0] } : { nodeIds }),
-      depth: params.depth,
-      childOffset: page.nextOffset,
-      childLimit: params.childLimit,
-      format: params.format === 'outline' ? undefined : params.format,
-      includeDeleted: params.includeDeleted || undefined,
-      includeBacklinks: params.includeBacklinks || undefined,
-    }),
-    reason: 'Continue reading the next child page.',
-  };
-}
-
-function nextSearchStep(
-  params: ReturnType<typeof normalizeSearchParams>,
-  page: NodeVisiblePage,
-): NodeVisibleNextStep | undefined {
-  if (page.nextOffset === undefined) return undefined;
-  return {
-    tool: 'node_search',
-    params: compactRecord({
-      query: params.query,
-      outline: params.outline,
-      searchNodeId: params.searchNodeId,
-      offset: page.nextOffset,
-      limit: params.limit,
-      count: params.count || undefined,
-    }),
-    reason: 'Continue reading the next search result page.',
-  };
-}
-
-function nextReadNodesStep(nodeIds: string[]): NodeVisibleNextStep | undefined {
-  if (nodeIds.length === 0) return undefined;
-  return {
-    tool: 'node_read',
-    params: nodeIds.length === 1 ? { nodeId: nodeIds[0], depth: 1 } : { nodeIds, depth: 1 },
-    reason: 'Read the affected nodes if you need current outline or revisions.',
-  };
-}
-
-function editUpdatedNodeIds(data: NodeEditData): string[] {
-  const nonUpdatedIds = new Set([
-    ...(data.createdNodeIds ?? []),
-    ...(data.movedNodeIds ?? []),
-    ...(data.trashedNodeIds ?? []),
-  ]);
-  return data.affectedNodeIds.filter((nodeId) => !nonUpdatedIds.has(nodeId));
-}
-
-function readableEditNodeIds(data: NodeEditData): string[] {
-  const trashedIds = new Set(data.trashedNodeIds ?? []);
-  return data.affectedNodeIds.filter((nodeId) => !trashedIds.has(nodeId));
-}
-
-function visibleErrorResult<TData>(envelope: ToolEnvelope<TData>): NodeVisibleErrorResult {
-  const error = envelope.error ?? {
-    code: 'unknown_error',
-    message: 'Tool failed without an error payload.',
-    recoverable: true,
-  };
-  return compactVisibleResult({
-    kind: 'error',
-    code: error.code,
-    message: error.message,
-    recoverable: error.recoverable,
-    retry: envelope.nextStep ? {
-      tool: nodeVisibleToolFromGuidance(envelope.nextStep) ?? nodeVisibleTool(envelope.tool) ?? 'node_read',
-      reason: envelope.nextStep,
-    } : undefined,
-    fallback: envelope.fallback,
-    hint: envelope.hint,
-    warnings: envelope.warnings,
-  });
-}
-
-function nodeVisibleTool(tool: string): NodeVisibleNextStep['tool'] | undefined {
-  if (tool === 'node_read' || tool === 'node_search' || tool === 'node_create' || tool === 'node_edit' || tool === 'node_delete') return tool;
-  return undefined;
-}
-
-function nodeVisibleToolFromGuidance(guidance: string): NodeVisibleNextStep['tool'] | undefined {
-  if (guidance.includes('node_search')) return 'node_search';
-  if (guidance.includes('node_read')) return 'node_read';
-  if (guidance.includes('node_create')) return 'node_create';
-  if (guidance.includes('node_edit')) return 'node_edit';
-  if (guidance.includes('node_delete')) return 'node_delete';
-  return undefined;
-}
-
-function compactChanges(changes: NodeVisibleChanges): NodeVisibleChanges | undefined {
-  const result: NodeVisibleChanges = {};
-  if (changes.created?.length) result.created = changes.created;
-  if (changes.updated?.length) result.updated = changes.updated;
-  if (changes.moved?.length) result.moved = changes.moved;
-  if (changes.trashed?.length) result.trashed = changes.trashed;
-  if (changes.restored?.length) result.restored = changes.restored;
-  return Object.keys(result).length ? result : undefined;
-}
-
-function compactVisibleResult<T extends NodeVisibleResult>(result: T): T {
-  return Object.fromEntries(
-    Object.entries(result as unknown as Record<string, unknown>).filter(([, value]) => value !== undefined),
-  ) as unknown as T;
-}
-
-function compactRecord<T extends Record<string, unknown>>(record: T): Partial<T> {
-  return Object.fromEntries(
-    Object.entries(record).filter(([, value]) => value !== undefined),
-  ) as Partial<T>;
-}
-
-function normalizeLineEndings(value: string): string {
-  return value.replace(/\r\n?/g, '\n');
-}
-
-function unique<T>(values: T[]): T[] {
-  return [...new Set(values)];
 }

@@ -1,4 +1,4 @@
-import type { AgentToolResult } from '@earendil-works/pi-agent-core';
+import type { AgentToolResult, AfterToolCallResult } from '@earendil-works/pi-agent-core';
 
 export type ToolStatus = 'success' | 'partial' | 'unchanged' | 'denied' | 'error';
 
@@ -22,9 +22,7 @@ export interface ToolEnvelope<TData = unknown> {
   status: ToolStatus;
   data?: TData;
   error?: ToolError;
-  nextStep?: string;
-  fallback?: string;
-  hint?: string;
+  instructions?: string;
   warnings?: string[];
   metrics?: ToolMetrics;
 }
@@ -33,17 +31,18 @@ export const TOOL_RESULT_VERSION = 1;
 
 export type ModelVisibleToolEnvelope<TData = unknown> =
   Pick<ToolEnvelope<TData>, 'ok' | 'tool' | 'status'>
-  & Partial<Pick<ToolEnvelope<TData>, 'data' | 'error' | 'nextStep' | 'fallback' | 'hint' | 'warnings'>>;
+  & Partial<Pick<ToolEnvelope<TData>, 'data' | 'error' | 'instructions' | 'warnings'>>;
 
 const MODEL_DATA_UNSET = Symbol('model-data-unset');
 
 export function agentToolResult<TData>(
   envelope: ToolEnvelope<TData>,
   modelData: unknown = MODEL_DATA_UNSET,
+  extraContent: AgentToolResult<TData>['content'] = [],
 ): AgentToolResult<ToolEnvelope<TData>> {
   const visibleEnvelope = modelVisibleEnvelope(envelope, modelData);
   return {
-    content: [{ type: 'text', text: JSON.stringify(visibleEnvelope, null, 2) }],
+    content: [{ type: 'text', text: JSON.stringify(visibleEnvelope, null, 2) }, ...extraContent],
     details: envelope,
   };
 }
@@ -51,7 +50,7 @@ export function agentToolResult<TData>(
 export function successEnvelope<TData>(
   tool: string,
   data: TData,
-  options: Partial<Pick<ToolEnvelope<TData>, 'status' | 'nextStep' | 'fallback' | 'hint' | 'warnings' | 'metrics'>> = {},
+  options: Partial<Pick<ToolEnvelope<TData>, 'status' | 'instructions' | 'warnings' | 'metrics'>> = {},
 ): ToolEnvelope<TData> {
   return {
     ok: true,
@@ -67,7 +66,7 @@ export function errorEnvelope<TData = unknown>(
   tool: string,
   code: string,
   message: string,
-  options: Partial<Pick<ToolEnvelope<TData>, 'data' | 'nextStep' | 'fallback' | 'hint' | 'warnings' | 'metrics'>> = {},
+  options: Partial<Pick<ToolEnvelope<TData>, 'data' | 'instructions' | 'warnings' | 'metrics'>> = {},
 ): ToolEnvelope<TData> {
   return {
     ok: false,
@@ -81,6 +80,21 @@ export function errorEnvelope<TData = unknown>(
     },
     ...compactOptions(options),
   };
+}
+
+export function toolEnvelopeAfterToolCall(details: unknown, isError: boolean): AfterToolCallResult | undefined {
+  if (isError || !isToolEnvelope(details)) return undefined;
+  if (details.ok) return undefined;
+  return { isError: true };
+}
+
+export function isToolEnvelope(value: unknown): value is ToolEnvelope {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as { version?: unknown; ok?: unknown; tool?: unknown; status?: unknown };
+  return candidate.version === TOOL_RESULT_VERSION
+    && typeof candidate.ok === 'boolean'
+    && typeof candidate.tool === 'string'
+    && typeof candidate.status === 'string';
 }
 
 function compactOptions<T extends Record<string, unknown>>(options: T): Partial<T> {
@@ -100,9 +114,7 @@ function modelVisibleEnvelope<TData>(
     status: envelope.status,
     ...(data !== undefined ? { data } : {}),
     ...(envelope.error ? { error: envelope.error } : {}),
-    ...(envelope.nextStep ? { nextStep: envelope.nextStep } : {}),
-    ...(envelope.fallback ? { fallback: envelope.fallback } : {}),
-    ...(envelope.hint ? { hint: envelope.hint } : {}),
+    ...(envelope.instructions ? { instructions: envelope.instructions } : {}),
     ...(envelope.warnings?.length ? { warnings: envelope.warnings } : {}),
   };
 }

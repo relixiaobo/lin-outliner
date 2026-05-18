@@ -7,7 +7,12 @@ import type {
   ToolResultMessage,
   UserMessage,
 } from '../../../core/agentTypes';
-import { parseAgentTextAttachmentBlock, type ParsedAgentTextAttachment } from '../../../core/agentAttachments';
+import {
+  isHiddenAgentContextBlock,
+  parseAgentAttachmentMarkerBlock,
+  parseAgentTextAttachmentBlock,
+  type ParsedAgentTextAttachment,
+} from '../../../core/agentAttachments';
 import {
   CheckIcon,
   CloseIcon,
@@ -81,6 +86,22 @@ function displayContentFromUser(content: UserMessage['content']): UserDisplayCon
     const parsedAttachment = parseAgentTextAttachmentBlock(block.text);
     if (parsedAttachment) {
       textAttachments.push(parsedAttachment);
+    } else if (isHiddenAgentContextBlock(block.text)) {
+      const marker = parseAgentAttachmentMarkerBlock(block.text);
+      if (marker) {
+        for (const item of marker.attachments) {
+          if (item.kind === 'file') {
+            textAttachments.push({
+              name: item.name,
+              mimeType: item.mimeType,
+              sizeBytes: item.sizeBytes,
+              truncated: false,
+              text: '',
+              path: item.path,
+            });
+          }
+        }
+      }
     } else {
       textBlocks.push(block.text);
     }
