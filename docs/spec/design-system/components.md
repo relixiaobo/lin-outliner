@@ -51,6 +51,7 @@ Current sources:
 
 - `src/renderer/ui/primitives/CheckboxMark.tsx`
 - `src/renderer/ui/outliner/DoneCheckbox.tsx`
+- `src/renderer/ui/outliner/FieldValueRenderer.tsx`
 - `src/renderer/ui/agent/AgentSettingsDialog.tsx`
 - `src/renderer/styles.css`
 
@@ -75,6 +76,8 @@ States:
 - Checked: success filled square using `--semantic-success` with white internal
   check glyph.
 - Hover may adjust fill color, but it must not change the measured box.
+- Field checkbox values use this same mark inside their field-owned value
+  control; field commit timing stays owned by the field renderer.
 
 Accessibility:
 

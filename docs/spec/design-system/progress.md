@@ -1,6 +1,6 @@
 # Design System Progress
 
-Last updated: 2026-05-17
+Last updated: 2026-05-18
 
 This file tracks the UI refactor work at project level. It complements
 `inventory.md`: inventory names the surfaces and component candidates; this file
@@ -176,6 +176,21 @@ Completion means:
 - Fixed fast trailing trigger input so `#project` and `@Zeta` create one
   trigger row with the full query instead of splitting the query into a second
   plain node.
+- Continued outliner visual convergence by making parent chevrons lightly
+  visible by default while preserving the same leading/bullet axis.
+- Removed hover scale from non-content row markers so tag, field, and reference
+  leading states remain visually stable.
+- Aligned reference bullets to a smaller centered dashed marker inside the fixed
+  leading slot.
+- Aligned row tags with the row text baseline using the shared `AppliedTag`
+  measured pill instead of a vertical offset.
+- Removed the inner value bullet from field value rows so field values and
+  definition configuration now share the same dense label/value treatment.
+- Adopted `CheckboxMark` for checkbox field values so outliner done controls,
+  field checkbox values, and agent settings no longer use separate checkbox
+  glyph systems.
+- Added e2e coverage for persistent parent chevrons and field value dense-row
+  alignment.
 
 ## In Progress
 
@@ -202,11 +217,9 @@ avoidance:
      dialogs, positioning, Escape/outside dismissal, focus restoration, z-index,
      and elevation.
 5. **Outliner system**
-   - Finish panel heading, breadcrumb, title icon/check/title/description/tags,
-     heading field rows, outliner rows, row leading states, checkbox states,
-     reference rows, collapsed parent rows, tag definition rows, field rows,
-     definition configuration, trailing input, descriptions, selection,
-     drag/drop visuals, and applied tag behavior.
+   - Continue the remaining product convergence after the first real-code pass:
+     heading field rows, richer field value examples, reference/inline-ref
+     visual review, drag/drop screenshots, and design-system site specimens.
 6. **Rich text, cursor, and IME semantics**
    - Recheck ProseMirror text editing, split/merge, description editing,
      field-value editing, inline reference atoms, trigger anchors, paste, and

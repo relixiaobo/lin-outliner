@@ -7,6 +7,7 @@ import type { FieldType, NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import type { CommandRunner } from '../shared';
 import { isOptionsFieldType } from '../interactions/fieldOptions';
+import { CheckboxMark } from '../primitives/CheckboxMark';
 import { FieldValueRow } from './FieldValueRow';
 import { OptionsPicker } from './OptionsPicker';
 
@@ -113,15 +114,19 @@ export function FieldValueRenderer(props: FieldValueRendererProps) {
     const checked = isTruthyValue(props.valueDraft);
     return (
       <FieldValueRow dimmed={!props.valueDraft} completed={props.completed}>
-        <input
+        <button
           ref={(element) => props.setFocusElement?.(element)}
-          className="field-checkbox-input"
-          type="checkbox"
-          checked={checked}
+          aria-checked={checked}
+          aria-label={`${props.field?.content.text || 'Field'} checkbox value`}
+          className="field-checkbox-button"
+          role="checkbox"
+          type="button"
           onFocus={props.onFocus}
-          onChange={(event) => commitImmediateValue(event.currentTarget.checked ? TRUE_VALUE : FALSE_VALUE)}
+          onClick={() => commitImmediateValue(checked ? FALSE_VALUE : TRUE_VALUE)}
           onKeyDown={props.onKeyDown}
-        />
+        >
+          <CheckboxMark checked={checked} />
+        </button>
       </FieldValueRow>
     );
   }

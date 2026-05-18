@@ -128,4 +128,48 @@ test.describe('outliner bullet parity', () => {
     });
     expect(borderWidths).toEqual(['0px', '0px', '0px', '0px']);
   });
+
+  test('parent chevrons remain visible without moving the bullet axis', async ({ page }) => {
+    await page.getByRole('button', { name: 'Library' }).click();
+
+    const dailyRow = rowBody(page, ids.daily);
+    const metrics = await dailyRow.evaluate((element) => {
+      const rowRect = element.getBoundingClientRect();
+      const chevron = element.querySelector('.row-chevron-button');
+      const bullet = element.querySelector('.row-bullet-button');
+      if (!chevron || !bullet) throw new Error('missing row leading elements');
+      const chevronRect = chevron.getBoundingClientRect();
+      const bulletRect = bullet.getBoundingClientRect();
+      return {
+        chevronOpacity: Number(getComputedStyle(chevron).opacity),
+        chevronLeft: chevronRect.left - rowRect.left,
+        bulletLeft: bulletRect.left - rowRect.left,
+      };
+    });
+
+    expect(metrics.chevronOpacity).toBeGreaterThan(0.3);
+    expectClose(metrics.chevronLeft, 6);
+    expectClose(metrics.bulletLeft, 25);
+  });
+});
+
+test.describe('outliner field row visual parity', () => {
+  test('field value rows use the dense label-value axis without an inner value bullet', async ({ page }) => {
+    await openMockedApp(page, { optionsField: true });
+
+    const priorityRow = rowBody(page, ids.priorityEntry);
+    await expect(priorityRow.locator('.field-value-node-bullet')).toHaveCount(0);
+
+    const metrics = await priorityRow.evaluate((element) => {
+      const name = element.querySelector('.field-name-input')?.getBoundingClientRect();
+      const value = element.querySelector('.field-value-row-content')?.getBoundingClientRect();
+      if (!name || !value) throw new Error('missing field row cells');
+      return {
+        nameCenter: name.top + name.height / 2,
+        valueCenter: value.top + value.height / 2,
+      };
+    });
+
+    expectClose(metrics.nameCenter, metrics.valueCenter);
+  });
 });

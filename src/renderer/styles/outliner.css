@@ -15,13 +15,13 @@
   max-width: 760px;
   flex-direction: column;
   margin: 2px 0 18px;
-  padding-left: 10px;
+  padding-left: 0;
 }
 
 .definition-config-row {
   display: grid;
   min-height: 34px;
-  grid-template-columns: 28px minmax(150px, 240px) minmax(220px, 1fr);
+  grid-template-columns: 28px clamp(112px, 32%, 180px) minmax(220px, 1fr);
   align-items: center;
   border-top: 1px solid var(--border-subtle);
   color: var(--muted);
@@ -344,7 +344,8 @@
   display: grid;
   min-width: 0;
   grid-template-columns: clamp(112px, 32%, 180px) minmax(0, 1fr);
-  gap: 8px;
+  column-gap: 8px;
+  row-gap: 0;
   align-items: center;
 }
 
@@ -396,8 +397,7 @@
   display: flex;
   min-width: 0;
   min-height: 24px;
-  align-items: flex-start;
-  gap: 8px;
+  align-items: center;
 }
 
 .field-value-row.dimmed {
@@ -415,16 +415,6 @@
   text-decoration: line-through;
 }
 
-.field-value-node-bullet {
-  display: flex;
-  width: 15px;
-  height: 24px;
-  flex: 0 0 15px;
-  align-items: center;
-  justify-content: center;
-  color: rgba(26, 26, 26, 0.40);
-}
-
 .field-value-row-content {
   min-width: 0;
   flex: 1;
@@ -440,11 +430,21 @@
   box-shadow: inset 0 -1px 0 var(--danger);
 }
 
-.field-checkbox-input {
-  width: 14px;
-  height: 14px;
-  margin: 5px 0 0;
-  accent-color: var(--primary);
+.field-checkbox-button {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0;
+  border-radius: 4px;
+  color: var(--panel-bg);
+  cursor: pointer;
+}
+
+.field-checkbox-button:hover .checkbox-mark:not(.checked),
+.field-checkbox-button:focus-visible .checkbox-mark:not(.checked) {
+  background: var(--text-muted);
 }
 
 .field-boolean-switch {
@@ -605,7 +605,14 @@
   box-shadow: none;
 }
 
-.row:hover .row-chevron-button {
+.row-wrap.has-children > .row .row-chevron-button {
+  opacity: 0.44;
+  pointer-events: auto;
+}
+
+.row:hover .row-chevron-button,
+.row-wrap.has-children > .row:hover .row-chevron-button,
+.row-wrap.has-children > .row.selected .row-chevron-button {
   opacity: 1;
   pointer-events: auto;
 }
@@ -683,7 +690,10 @@
 }
 
 .row-bullet-shape.reference {
-  border: 1px dashed var(--muted);
+  width: 13px;
+  height: 13px;
+  border: 1.5px dashed color-mix(in srgb, var(--text) 46%, transparent);
+  background: transparent;
 }
 
 .row-bullet-shape.tag {
@@ -702,16 +712,6 @@
 .row-bullet-shape.field,
 .row-bullet-shape.fieldDef {
   color: var(--muted);
-}
-
-.row-bullet-button:hover .row-bullet-shape.tag,
-.row-bullet-button:hover .row-bullet-shape.field,
-.row-bullet-button:hover .row-bullet-shape.fieldDef {
-  transform: scale(1.1);
-}
-
-.row-bullet-button:active .row-bullet-shape {
-  transform: scale(0.9);
 }
 
 .row-bullet-dot {
@@ -969,7 +969,7 @@
   gap: var(--space-3);
   margin-left: 6px;
   min-width: 0;
-  vertical-align: -4px;
+  vertical-align: middle;
 }
 
 .tag-badge {

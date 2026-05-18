@@ -167,6 +167,8 @@ Field entry row:
 - Field name input.
 - Field value renderer or child-count preview when expanded.
 - Optional description.
+- Field value controls do not add a second node bullet inside the value column;
+  the row's leading slot already identifies the field entry.
 
 Rows stay text-first. Selection, hover, focus, drag/drop, and indentation must
 not shift the editor text start.
@@ -180,15 +182,19 @@ white internal check glyph.
 
 `RowLeading` owns hierarchy and type affordance.
 
-- Chevron slot is fixed width and appears on hover/focus or when interaction
-  requires it.
+- Chevron slot is fixed width. Rows with children show a low-emphasis chevron
+  by default; hover, focus, and selected states increase emphasis. Leaf rows keep
+  the slot measured but visually hidden.
 - Bullet/open slot is fixed width.
 - Content rows use a small dot.
 - Collapsed parent rows may use a subtle filled bullet shape.
-- Reference rows use a dashed marker.
+- Reference rows use a smaller centered dashed marker inside the same measured
+  bullet/open slot.
 - Tag definition rows use a colored circular marker with hash glyph.
 - Field rows and field definitions use field type icons.
 - Applied tag colors may tint content row bullets.
+- Marker hover states must not scale tag, field, or reference markers in a way
+  that reads as positional jitter.
 
 ## Tags And Description
 
@@ -213,7 +219,8 @@ Field behavior is not generic form behavior.
 - Field value types include plain, options, options-from-tag, date, number,
   password, formula, user, URL, email, checkbox, boolean, and color.
 - Options use `OptionsPicker`.
-- Checkbox and boolean commit immediately.
+- Checkbox and boolean commit immediately. Checkbox field values use the shared
+  `CheckboxMark` measured square; boolean fields use switch semantics.
 - Date/color controls commit immediately or on field-specific control events.
 - Text-like values commit on blur/keyboard flow.
 - Invalid number values use semantic invalid styling without changing row
