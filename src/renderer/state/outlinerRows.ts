@@ -8,8 +8,13 @@ export type OutlinerRowItem =
   | { id: string; type: 'group'; label: string }
   | { id: string; type: 'hiddenField'; fieldId: NodeId; label: string };
 
-interface RowBuildOptions {
+export interface RowBuildOptions {
   expandedHiddenFields?: Set<string>;
+}
+
+export interface OutlinerRowSections {
+  headingRows: OutlinerRowItem[];
+  bodyRows: OutlinerRowItem[];
 }
 
 export function hiddenFieldKey(parentId: NodeId, fieldEntryId: NodeId): string {
@@ -162,7 +167,7 @@ function groupRows(
   return result;
 }
 
-export function buildOutlinerRows(
+function buildChildRows(
   parent: NodeProjection | undefined,
   byId: Map<NodeId, NodeProjection>,
   options: RowBuildOptions = {},
@@ -191,7 +196,48 @@ export function buildOutlinerRows(
     });
   }
 
+  return rows;
+}
+
+function applyViewSettings(
+  parent: NodeProjection,
+  rows: OutlinerRowItem[],
+  byId: Map<NodeId, NodeProjection>,
+): OutlinerRowItem[] {
   return groupRows(parent, sortRows(parent, filterRows(parent, rows, byId), byId), byId);
+}
+
+export function buildOutlinerRows(
+  parent: NodeProjection | undefined,
+  byId: Map<NodeId, NodeProjection>,
+  options: RowBuildOptions = {},
+): OutlinerRowItem[] {
+  if (!parent) return [];
+  return applyViewSettings(parent, buildChildRows(parent, byId, options), byId);
+}
+
+export function buildPanelOutlinerSections(
+  parent: NodeProjection | undefined,
+  byId: Map<NodeId, NodeProjection>,
+  options: RowBuildOptions = {},
+): OutlinerRowSections {
+  if (!parent) return { headingRows: [], bodyRows: [] };
+  const rows = buildChildRows(parent, byId, options);
+  const headingRows: OutlinerRowItem[] = [];
+  const bodyRows: OutlinerRowItem[] = [];
+
+  for (const row of rows) {
+    if (row.type === 'field') {
+      headingRows.push(row);
+    } else {
+      bodyRows.push(row);
+    }
+  }
+
+  return {
+    headingRows,
+    bodyRows: applyViewSettings(parent, bodyRows, byId),
+  };
 }
 
 export function shouldShowTrailingInput(rows: OutlinerRowItem[]): boolean {

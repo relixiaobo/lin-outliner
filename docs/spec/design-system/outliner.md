@@ -64,9 +64,10 @@ Heading area order:
 5. Field segment when heading fields exist.
 
 Heading field rows are real `fieldEntry` rows directly owned by the panel root.
-They render through `OutlinerView` / `OutlinerFieldRow` inside
-`.panel-heading-fields` and are excluded from the body outliner so the same
-field does not appear twice.
+The row model exposes them as `headingRows`, while regular content rows and
+hidden-field reveal rows remain `bodyRows`. `NodePanel` renders both sections
+through `OutlinerView` / `OutlinerFieldRow`; body view filter, sort, and group
+settings apply to `bodyRows`, not to heading metadata fields.
 
 ## Visual Tokens
 

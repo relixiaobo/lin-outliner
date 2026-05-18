@@ -191,9 +191,9 @@ Completion means:
   glyph systems.
 - Added e2e coverage for persistent parent chevrons and field value dense-row
   alignment.
-- Moved root-owned field entries into the panel heading field segment using the
-  real `OutlinerView` / `OutlinerFieldRow` path, and excluded them from the body
-  outliner to prevent duplicate field rows.
+- Moved root-owned field entries into explicit row-model `headingRows`, with
+  content and hidden-field reveal rows in `bodyRows`; both sections still render
+  through the real `OutlinerView` / `OutlinerFieldRow` path.
 - Refined inline reference atoms from filled chip styling to text-like inline
   reference styling with semantic color and underline.
 - Refined drag/drop inside state to use an inset treatment that does not shift

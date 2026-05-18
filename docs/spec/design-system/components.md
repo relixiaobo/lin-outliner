@@ -1003,9 +1003,10 @@ Rules:
 - Normal content rows, reference rows, tag definition rows, field definition
   rows, field entry rows, completed rows, selected rows, and expanded/collapsed
   parent rows must all keep the same text-start grid.
-- Root-owned field entry rows may render in the panel heading field segment,
-  but they remain real `OutlinerFieldRow` instances and must not be duplicated
-  in the body outliner.
+- Root-owned field entry rows may render in the panel heading field segment.
+  Row placement comes from explicit `headingRows` / `bodyRows` sections in the
+  row model, while the rendered fields remain real `OutlinerFieldRow`
+  instances.
 - Drop indicators use the same `21px` row-selection axis and must not change
   row content geometry.
 - Bullet, chevron, indentation, selection, and edit/focus behavior should follow
@@ -1157,8 +1158,9 @@ Rules:
 
 - Group headings stay compact, muted, and subordinate to rows.
 - Hidden-field reveal uses a small inline action, not a settings card.
-- Filtering, hidden-field expansion state, and row building stay in
-  `OutlinerView` and row-model code.
+- Filtering, hidden-field expansion state, and row building stay in row-model
+  code. `OutlinerView` renders either a supplied row section or its default
+  built rows.
 
 ## PanelBreadcrumb
 
