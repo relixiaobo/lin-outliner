@@ -8,9 +8,12 @@ import type {
 } from '../../api/types';
 import { api } from '../../api/client';
 import { ICON_SIZE, PasswordIcon, TrashIcon, WarningIcon } from '../icons';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { CheckboxMark } from '../primitives/CheckboxMark';
 import { Dialog } from '../primitives/Dialog';
 import { FormField } from '../primitives/FormField';
+import { SelectControl } from '../primitives/SelectControl';
+import { TextInputControl } from '../primitives/TextInputControl';
 
 interface AgentSettingsDialogProps {
   open: boolean;
@@ -248,9 +251,9 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
           <h2 id="agent-settings-title">Agent settings</h2>
           <p>{draft.providerId && draft.modelId ? `${draft.providerId}/${draft.modelId}` : 'No model configured'}</p>
         </div>
-        <button className="agent-settings-close" onClick={onClose} type="button">
+        <ButtonControl className="agent-settings-close" onClick={onClose}>
           Close
-        </button>
+        </ButtonControl>
       </header>
 
       {loading ? (
@@ -263,11 +266,10 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
             </div>
             <div className="agent-settings-provider-list">
               {providerChoices.map((provider) => (
-                <button
+                <ButtonControl
                   className={`agent-settings-provider-pill ${provider.providerId === draft.providerId ? 'is-active' : ''}`}
                   key={provider.providerId}
                   onClick={() => updateProvider(provider.providerId)}
-                  type="button"
                 >
                   <span className="agent-settings-provider-title">
                     {formatProviderName(provider.providerId)}
@@ -276,7 +278,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
                     </span>
                   </span>
                   <small>{provider.modelId || 'No model'}</small>
-                </button>
+                </ButtonControl>
               ))}
             </div>
           </section>
@@ -288,7 +290,8 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
             </div>
             <div className="agent-settings-grid">
               <FormField className="agent-settings-field" label="Provider ID">
-                <input
+                <TextInputControl
+                  label="Provider ID"
                   list="agent-provider-options"
                   onChange={(event) => updateProvider(event.target.value)}
                   placeholder="anthropic"
@@ -301,7 +304,8 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
                 </datalist>
               </FormField>
               <FormField className="agent-settings-field" label="Base URL">
-                <input
+                <TextInputControl
+                  label="Base URL"
                   onChange={(event) => setDraft((current) => ({ ...current, baseUrl: event.target.value }))}
                   placeholder="Optional OpenAI-compatible endpoint"
                   value={draft.baseUrl}
@@ -312,22 +316,21 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
                 <div className="agent-settings-key-line">
                   <div className="agent-settings-key-row">
                     <PasswordIcon size={ICON_SIZE.menu} />
-                    <input
-                      aria-label="API key"
+                    <TextInputControl
+                      label="API key"
                       onChange={(event) => setApiKey(event.target.value)}
                       placeholder={hasAnyKey ? 'Configured' : 'Paste key'}
                       type="password"
                       value={apiKey}
                     />
                   </div>
-                  <button
+                  <ButtonControl
                     className="agent-settings-secondary"
                     disabled={saving || !configuredProvider?.hasApiKey}
                     onClick={removeApiKey}
-                    type="button"
                   >
                     Remove key
-                  </button>
+                  </ButtonControl>
                 </div>
                 <span className="agent-settings-field-meta">{keyStatus}</span>
               </FormField>
@@ -353,7 +356,8 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
             </div>
             <div className="agent-settings-grid">
               <FormField className="agent-settings-field agent-settings-field-wide" label="Model ID">
-                <input
+                <TextInputControl
+                  label="Model ID"
                   list="agent-model-options"
                   onChange={(event) => {
                     const modelId = event.target.value;
@@ -378,7 +382,8 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
               </FormField>
 
               <FormField className="agent-settings-field" label="Reasoning">
-                <select
+                <SelectControl
+                  label="Reasoning"
                   onChange={(event) => {
                     setDraft((current) => ({
                       ...current,
@@ -392,7 +397,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
                       {REASONING_LABELS[reasoningLevel]}
                     </option>
                   ))}
-                </select>
+                </SelectControl>
               </FormField>
 
               <div className="agent-settings-model-stat">
@@ -411,23 +416,22 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
           {notice ? <div className="agent-settings-notice">{notice}</div> : null}
 
           <footer className="agent-settings-footer">
-            <button
+            <ButtonControl
               className="agent-settings-danger"
               disabled={saving || !configuredProvider}
               onClick={removeProvider}
               title="Remove provider"
-              type="button"
             >
               <TrashIcon size={ICON_SIZE.menu} />
               <span>Remove provider</span>
-            </button>
+            </ButtonControl>
             <div className="agent-settings-footer-actions">
-              <button className="agent-settings-secondary" onClick={onClose} type="button">
+              <ButtonControl className="agent-settings-secondary" onClick={onClose}>
                 Cancel
-              </button>
-              <button className="agent-settings-primary" disabled={saving} onClick={save} type="button">
+              </ButtonControl>
+              <ButtonControl className="agent-settings-primary" disabled={saving} onClick={save}>
                 {saving ? 'Saving...' : 'Save'}
-              </button>
+              </ButtonControl>
             </div>
           </footer>
         </div>

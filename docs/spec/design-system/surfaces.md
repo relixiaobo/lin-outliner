@@ -627,11 +627,16 @@ Behavior:
   when supplied.
 - Removing key and removing provider are real actions and should require clear
   visual affordance.
+- Native input/select behavior is wrapped by shared form primitives; settings
+  keeps provider/model persistence local.
 
 Component dependencies:
 
 - `Dialog`
 - `FormField`
+- `TextInputControl`
+- `SelectControl`
+- `ButtonControl`
 - `IconButton`
 
 ## Agent Debug Panel
@@ -666,6 +671,42 @@ Behavior:
 Component dependencies:
 
 - `IconButton`
+
+## Agent Approval And Tool Preview
+
+Approval and preview are trust surfaces for agent actions that may mutate the
+outline.
+
+Current sources:
+
+- `src/core/agentTypes.ts`
+- `src/main/agentNodeTools.ts`
+
+Current product state:
+
+- `AgentApprovalRequestEvent` exists in the runtime event type system.
+- No renderer approval overlay is currently shipped.
+- Node tool preview is exposed through `previewOnly` tool arguments and compact
+  preview results.
+
+Visual rules:
+
+- Approval, when shipped, attaches to the requesting agent turn and uses the
+  modal/dialog hierarchy only when the user must decide before the tool can
+  continue.
+- Tool preview summaries lead with status, affected node/reference counts,
+  warnings, and next read step.
+- Raw preview JSON, diffs, or long payloads are expanded details with bounded
+  scroll regions.
+- Do not render fake approval controls in the design-system site before product
+  behavior exists; show the contract boundary instead.
+
+Behavior:
+
+- Approval actions must be explicit and keyboard reachable.
+- Preview-only tool calls do not mutate state.
+- Destructive previews use danger only for the destructive confirmation action,
+  not for every preview row.
 
 ## Overlay Layering
 

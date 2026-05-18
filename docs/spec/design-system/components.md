@@ -729,6 +729,35 @@ Accessibility:
 - Switches use `role="switch"` and `aria-checked`.
 - Invalid fields expose an error message when validation blocks action.
 
+## ButtonControl
+
+Current sources:
+
+- `src/renderer/ui/primitives/ButtonControl.tsx`
+- `src/renderer/ui/agent/AgentSettingsDialog.tsx`
+
+Purpose:
+
+- Shared wrapper for text buttons that need native button semantics while the
+  surface keeps visual hierarchy.
+
+Structure:
+
+- Root is a native `button`.
+- Default `type` is `button`.
+- Caller supplies label children and surface-specific class names.
+
+States:
+
+- Default.
+- Hover/focus-visible through the caller's surface class.
+- Disabled through native `disabled`.
+
+Non-goals:
+
+- ButtonControl does not own primary, secondary, or destructive styling.
+- Icon-only command buttons use `IconButton`.
+
 ## SwitchControl
 
 Current sources:
@@ -776,6 +805,7 @@ Current sources:
 
 - `src/renderer/ui/primitives/SelectControl.tsx`
 - `src/renderer/ui/definition/DefinitionConfigPanel.tsx`
+- `src/renderer/ui/agent/AgentSettingsDialog.tsx`
 
 Purpose:
 
@@ -810,14 +840,16 @@ Current sources:
 - `src/renderer/ui/primitives/TextInputControl.tsx`
 - `src/renderer/ui/definition/DefinitionConfigControls.tsx`
 - `src/renderer/ui/definition/DefinitionConfigPanel.tsx`
+- `src/renderer/ui/agent/AgentSettingsDialog.tsx`
 
 Purpose:
 
-- Shared wrapper for native text inputs that need an accessible label.
+- Shared wrapper for native text-like inputs that need an accessible label.
 
 Structure:
 
-- Root is a native `input type="text"`.
+- Root is a native `input`.
+- Default type is `text`; password/API key fields may pass `type="password"`.
 - Caller supplies value, change behavior, placeholder, class names, and keyboard
   handling.
 
@@ -836,7 +868,7 @@ Accessibility:
 Non-goals:
 
 - TextInputControl does not own draft state, commit-on-blur, Enter commit,
-  Escape revert, validation, persistence, or password/search variants.
+  Escape revert, validation, persistence, or search/menu behavior.
 
 ## NumberInputControl
 

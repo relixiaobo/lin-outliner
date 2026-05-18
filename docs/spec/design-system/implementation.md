@@ -104,7 +104,7 @@ browsable site by:
   Escape/outside dismissal and focus-restoration review.
 - Finishing outliner heading, row, field, tag, and definition configuration
   visual convergence.
-- Finishing agent message, process, tool-call, composer, settings, approval,
-  and debug visual convergence.
+- Finishing agent message, process, tool-call, composer, settings, debug, and
+  documented approval/tool-preview convergence.
 - Keeping `docs/spec/design-system/index.html` synchronized with real product
   source maps instead of maintaining a separate demo style.

@@ -120,6 +120,30 @@ runtime history. It must not become the normal chat presentation.
   label.
 - Refresh and copy use shared icon-button affordances.
 
+## Approval And Tool Preview
+
+Current product state:
+
+- The runtime type system contains `AgentApprovalRequestEvent`, but the
+  renderer does not currently ship an interactive approval overlay.
+- Node mutation tools expose `previewOnly`; preview results are returned as
+  compact tool-result data rather than shown as a blocking confirmation UI.
+
+Contract:
+
+- Approval UI, when shipped, is a modal or anchored inspection state attached to
+  the agent turn that requested it. It must not appear as an outliner card or a
+  separate settings page.
+- Tool previews must summarize status, affected references, change counts, and
+  next read step before raw JSON.
+- Preview bodies stay bounded and scrollable; exact payloads belong in expanded
+  detail, not the primary row.
+- Approve/deny actions use the same button hierarchy as settings: primary for
+  approve/apply, secondary for cancel/deny, danger only for destructive
+  irreversible operations.
+- Until a real approval workflow exists, the design system documents the
+  boundary and product code should not render fake approval controls.
+
 ## Composer Contract
 
 The composer is the bottom dock control surface.
@@ -157,7 +181,8 @@ compact chip contract and must not expand the dock into a file manager.
 ## Settings And Menus
 
 - Model picker, reasoning picker, and agent settings use shared `MenuSurface`,
-  `MenuItem`, `Dialog`, and `FormField` contracts.
+  `MenuItem`, `Dialog`, `FormField`, `TextInputControl`, `SelectControl`, and
+  `ButtonControl` contracts.
 - Floating menus are portal-based, viewport-aware, and dismiss on Escape and
   outside pointer down.
 - Composer menu controls use shared item/switch semantics; textarea draft,

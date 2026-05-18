@@ -1805,12 +1805,14 @@
     .agent-state-grid {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
+      align-items: start;
       gap: var(--space-md);
       margin-top: var(--space-md);
     }
 
     .agent-state-card {
       display: grid;
+      align-content: start;
       gap: var(--space-sm);
       min-width: 0;
       border-radius: var(--radius-md);
@@ -1904,7 +1906,8 @@
       display: grid;
       gap: 8px;
       border-radius: var(--radius-lg);
-      background: #ffffff;
+      background: rgba(255, 255, 255, 0.72);
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.04);
       padding: 10px;
     }
 
@@ -1924,6 +1927,8 @@
       align-items: center;
       justify-content: space-between;
       gap: 8px;
+      border-top: 1px solid rgba(0, 0, 0, 0.04);
+      padding-top: 7px;
     }
 
     .composer-tools {
@@ -1965,6 +1970,83 @@
       line-height: 16px;
       padding: 4px 8px;
       box-shadow: 0 4px 12px -8px rgba(0, 0, 0, 0.18);
+    }
+
+    .agent-debug-spec {
+      display: grid;
+      gap: 8px;
+    }
+
+    .debug-metric-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+    }
+
+    .debug-metric {
+      display: grid;
+      gap: 2px;
+      border-radius: var(--radius-sm);
+      background: rgba(255, 255, 255, 0.72);
+      padding: 8px;
+    }
+
+    .debug-metric span {
+      color: var(--text-muted);
+      font-size: 10px;
+      line-height: 14px;
+      text-transform: uppercase;
+    }
+
+    .debug-metric strong {
+      overflow: hidden;
+      color: var(--text-main);
+      font-size: 12px;
+      line-height: 18px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .debug-section-row,
+    .settings-section-mini,
+    .preview-result {
+      display: grid;
+      gap: 4px;
+      border-radius: var(--radius-sm);
+      background: rgba(255, 255, 255, 0.58);
+      padding: 8px;
+    }
+
+    .debug-section-row strong,
+    .settings-section-mini strong,
+    .preview-result strong {
+      color: var(--text-main);
+      font-size: 12px;
+      line-height: 18px;
+    }
+
+    .debug-section-row span,
+    .settings-section-mini span,
+    .preview-result span {
+      color: var(--text-sub);
+      font-size: 11px;
+      line-height: 16px;
+    }
+
+    .approval-boundary {
+      display: grid;
+      gap: 8px;
+    }
+
+    .boundary-pill {
+      display: inline-flex;
+      width: fit-content;
+      border-radius: 999px;
+      background: var(--row-selected);
+      color: var(--text-sub);
+      font-size: 11px;
+      line-height: 16px;
+      padding: 3px 8px;
     }
 
     .mini-composer {
@@ -2501,7 +2583,10 @@
         <h2>Agent Dock</h2>
         <code>src/renderer/ui/AgentDock.tsx</code>
         <code>src/renderer/ui/agent/AgentChatPanel.tsx</code>
-        <p>Uses real agent dock, chat panel, and composer class names so styling decisions map back to source.</p>
+        <code>src/renderer/ui/agent/AgentComposer.tsx</code>
+        <code>src/renderer/ui/agent/AgentSettingsDialog.tsx</code>
+        <code>src/renderer/ui/agent/AgentDebugPanel.tsx</code>
+        <p>Uses real agent dock, chat, process, composer, settings, and debug source maps so styling decisions map back to product code.</p>
       </article>
     </section>
 
@@ -2546,6 +2631,8 @@
               <code>AgentToolCallBlock.tsx</code>
               <code>AgentComposer.tsx</code>
               <code>AgentComposerControls.tsx</code>
+              <code>AgentSettingsDialog.tsx</code>
+              <code>AgentDebugPanel.tsx</code>
               <code>CommandPalette.tsx</code>
               <code>NodeContextMenu.tsx</code>
               <code>useAnchoredOverlay.ts</code>
@@ -2884,6 +2971,8 @@
               <li><span class="pattern-label">Turn model</span><span>Assistant prose, thinking, and tools render as one turn-level stack.</span></li>
               <li><span class="pattern-label">Process</span><span>Thinking and tools collapse into one summary after final prose appears.</span></li>
               <li><span class="pattern-label">Composer</span><span>Textarea is primary; streaming text becomes steering or a queued follow-up.</span></li>
+              <li><span class="pattern-label">Settings</span><span>Provider, connection, and model behavior are separate configuration sections.</span></li>
+              <li><span class="pattern-label">Debug</span><span>Overview, request context, and provider timeline are inspection-only surfaces.</span></li>
               <li><span class="pattern-label">Boundary</span><span>Sider-agent informs behavior, not Lin's palette, shell, or product scope.</span></li>
             </ul>
           </article>
@@ -2976,15 +3065,38 @@
               <div class="mini-dialog-header">
                 <div>
                   <div class="mini-dialog-title">Agent settings</div>
-                  <div class="mini-dialog-subtitle">Provider, model, reasoning</div>
+                  <div class="mini-dialog-subtitle">openai/gpt-5.4</div>
                 </div>
                 <span class="mini-icon">×</span>
               </div>
-              <div class="mini-form-row"><span>API key</span><span class="mini-input">•••• saved</span></div>
-              <div class="mini-form-row"><span>Reasoning</span><span class="mini-input">Medium</span></div>
-              <div class="mini-form-row"><span>Enabled</span><span><span class="mini-checkbox-mark">✓</span></span></div>
+              <div class="settings-section-mini"><strong>Provider</strong><span>OpenAI · Active · gpt-5.4</span></div>
+              <div class="settings-section-mini"><strong>Connection</strong><span>Provider ID, Base URL, API key, Enabled</span></div>
+              <div class="settings-section-mini"><strong>Model behavior</strong><span>Model ID, reasoning, 256K context</span></div>
             </div>
-            <p>Settings are configuration, not onboarding or a separate product page.</p>
+            <p>Settings use Dialog, FormField, TextInputControl, SelectControl, ButtonControl, and CheckboxMark while persistence stays local.</p>
+          </article>
+          <article class="agent-state-card">
+            <h3>Debug Panel</h3>
+            <div class="agent-debug-spec">
+              <div class="debug-metric-grid">
+                <div class="debug-metric"><span>Session</span><strong>1 query</strong></div>
+                <div class="debug-metric"><span>Model</span><strong>gpt-5.4</strong></div>
+                <div class="debug-metric"><span>Context</span><strong>12K / 256K</strong></div>
+                <div class="debug-metric"><span>Status</span><strong>Completed</strong></div>
+              </div>
+              <div class="debug-section-row"><strong>Request Context</strong><span>System prompt, tools, and bounded request JSON.</span></div>
+              <div class="debug-section-row"><strong>Provider Timeline</strong><span>Queries, rounds, messages, responses, and raw payload disclosure.</span></div>
+            </div>
+            <p>Debug is a workspace inspection panel, not the normal chat reading mode.</p>
+          </article>
+          <article class="agent-state-card">
+            <h3>Approval / Preview Boundary</h3>
+            <div class="approval-boundary">
+              <span class="boundary-pill">contract only</span>
+              <div class="preview-result"><strong>Runtime event</strong><span>AgentApprovalRequestEvent exists; no renderer approval overlay is shipped.</span></div>
+              <div class="preview-result"><strong>Tool preview</strong><span>previewOnly returns compact status, refs, changes, warnings, and next read step.</span></div>
+            </div>
+            <p>The site documents the boundary and does not fake approval controls before product behavior exists.</p>
           </article>
         </div>
       </section>

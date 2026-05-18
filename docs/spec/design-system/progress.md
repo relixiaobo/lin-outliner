@@ -106,9 +106,16 @@ Completion means:
 - Reworked agent settings information architecture into Provider, Connection,
   and Model behavior sections; API key removal now sits with key configuration,
   while provider removal remains the secondary destructive footer action.
+- Adopted shared input, select, and text-button primitives inside agent
+  settings while keeping provider/model persistence behavior local.
+- Completed an agent composer visual pass so the textarea remains primary,
+  toolbar controls stay compact, and focus treatment follows the shared ring.
 - Reworked agent debug into a compact Overview, Request Context, and Provider
   Timeline hierarchy; refresh and copy actions now use the shared icon-button
   primitive while runtime debug data remains caller-owned.
+- Documented the agent approval/tool-preview boundary: runtime approval events
+  and node-tool `previewOnly` results exist, but no renderer approval overlay is
+  shipped yet, so the site and spec must not fake controls.
 - Added e2e coverage for agent settings modal focus entry, focus cycling,
   Escape close, and trigger focus restoration.
 - Adopted `Dialog` in the command palette while preserving the search input as
@@ -240,10 +247,9 @@ avoidance:
      field-value editing, inline reference atoms, trigger anchors, paste, and
      Chinese IME composition after the visual refactor.
 7. **Agent system**
-   - Finish chat turn stack, assistant message hierarchy, thinking disclosure,
-     tool-call summary/detail disclosure, bounded tool payloads, branch/actions,
-     composer, queued follow-up, model/reasoning menu, settings dialog, debug
-     surfaces, and approval/tool preview states.
+   - Agent message/process/composer/settings/debug have converged to real
+     source maps and shared primitives. Remaining agent work is screenshot
+     review across narrow dock widths and any future real approval workflow.
 8. **Design-system site convergence**
    - Update `index.html` so each specimen maps to real source files and shared
      tokens.

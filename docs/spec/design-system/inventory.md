@@ -31,8 +31,9 @@ Inventory covers shipped or in-progress product UI under `src/renderer/ui`:
 | Node menus | `NodeContextMenu.tsx`, `TriggerPopover.tsx`, `SlashCommandMenu.tsx`, `ReferenceSelector.tsx` | `components.md`, `implementation.md` | Trigger listbox shell, option rows, trigger positioning, and node context-menu positioning are shared; context-menu submodes and keyboard/focus convergence remain. |
 | Agent dock | `AgentDock.tsx`, `AgentChatPanel.tsx`, `AgentDebugPanel.tsx` | `surfaces.md`, `patterns.md` | Real surface exists and is persistent; chat/message primitives are mostly isolated and debug now has a sectioned inspection hierarchy. |
 | Agent messages | `AgentMessageRow.tsx`, `AgentMessageFrame.tsx`, `AgentBranchNavigator.tsx`, `AgentProcessBlock.tsx`, `AgentProcessTimeline.tsx`, `AgentThinkingBlock.tsx`, `AgentToolCallBlock.tsx`, `AgentToolCallDisclosure.tsx` | `components.md`, `surfaces.md` | Production UI exists; message frame, branch navigator, process timeline, thinking, and tool-call disclosure are isolated while turn behavior stays product-owned. |
-| Agent composer | `AgentComposer.tsx`, `AgentComposerControls.tsx`, `AgentComposerModelMenu.tsx` | `components.md`, `surfaces.md` | Rich behavior exists; queued follow-up controls, attachment chip, toolbar composition, model picker, reasoning menu/switch, settings trigger, send/stop slot, anchored model menu, and conversation menu positioning are isolated while composer behavior remains product-owned. |
-| Agent settings | `AgentSettingsDialog.tsx` | `components.md`, `implementation.md` | Dialog shell, sectioned provider/connection/model behavior architecture, form field wrapper, key action placement, and shared checkbox mark are in place while destructive confirmation remains future work. |
+| Agent composer | `AgentComposer.tsx`, `AgentComposerControls.tsx`, `AgentComposerModelMenu.tsx` | `components.md`, `surfaces.md` | Rich behavior exists; queued follow-up controls, attachment chip, toolbar composition, model picker, reasoning menu/switch, settings trigger, send/stop slot, anchored model menu, conversation menu positioning, and final compact visual hierarchy are isolated while composer behavior remains product-owned. |
+| Agent settings | `AgentSettingsDialog.tsx` | `components.md`, `implementation.md` | Dialog shell, sectioned provider/connection/model behavior architecture, form field wrapper, shared input/select/button primitives, key action placement, and shared checkbox mark are in place while destructive confirmation remains future work. |
+| Agent approval and preview | `agentTypes.ts`, `agentNodeTools.ts` | `agent.md`, `surfaces.md` | Runtime approval event type and node-tool `previewOnly` results exist; no renderer approval overlay is shipped, so the design system documents the boundary instead of rendering fake controls. |
 | Icons | `icons.ts` | `foundations.md`, `components.md` | Central alias file exists; icon sizes need token alignment. |
 | CSS tokens | `styles.css`, `styles/outliner.css` | `foundations.md`, `implementation.md` | Product tokens and outliner stylesheet boundary exist; this pass canonicalizes remaining one-off values, widths, z-index, overlays, and focus states. |
 
@@ -202,12 +203,12 @@ Aligned:
 
 Remaining convergence:
 
-- Finish agent settings control adoption for shared inputs, selects, buttons,
-  alerts, and provider rows.
-- Normalize composer typography, radius, spacing, and toolbar hierarchy against
-  the dense desktop system.
 - Keep thinking and tool-call disclosure grouped under assistant turns, with
   bounded expanded payloads.
+- Validate agent dock, composer, settings, debug, and process specimens with
+  screenshots across default and narrow dock widths.
+- Implement a renderer approval overlay only after product behavior exists; do
+  not fake it in the design-system site.
 
 ## Commands And Overlays
 
@@ -292,6 +293,7 @@ should stabilize before broad UI refactors.
 | --- | --- | --- |
 | `CheckboxMark` | `src/renderer/ui/primitives/CheckboxMark.tsx`, `DoneCheckbox.tsx`, `AgentSettingsDialog.tsx` | Shared primitive; owns three-state visual mark only, not row, form, or settings behavior. |
 | `IconButton` | `src/renderer/ui/primitives/IconButton.tsx`, top chrome, panel close, title actions, editor toolbar, agent message/composer actions | Extracted for icon-only command buttons while preserving existing surface class names. |
+| `ButtonControl` | `src/renderer/ui/primitives/ButtonControl.tsx`, `AgentSettingsDialog.tsx` | Extracted for text button semantics and default button type; surface-specific visual variants remain class-owned. |
 | `ToolbarButton` | `FloatingEditorToolbar`, agent message actions, top chrome | May be an `IconButton` variant. |
 | `MenuSurface` | `src/renderer/ui/primitives/MenuSurface.tsx`, `PopoverListbox`, context menu, option/model menus | Extracted as a wrapper only; keyboard behavior remains local. |
 | `AnchoredOverlay` | `src/renderer/ui/primitives/useAnchoredOverlay.ts`, trigger popovers, context menus, option/model/session menus, floating editor toolbar | Shared viewport-aware positioning hook; callers still own open state, dismissal, focus, and command behavior. |
@@ -305,7 +307,7 @@ should stabilize before broad UI refactors.
 | `FormField` | `src/renderer/ui/primitives/FormField.tsx`, agent settings, definition config, field value rows | Extracted for visible label/control wrapper in settings; this refactor decides where definition config and outliner field variants should adopt it. |
 | `SwitchControl` | `src/renderer/ui/primitives/SwitchControl.tsx`, `DefinitionConfigPanel.tsx` | Extracted semantic switch wrapper for `role=switch`, `aria-checked`, and checked toggle; visual treatment remains surface-owned. |
 | `SelectControl` | `src/renderer/ui/primitives/SelectControl.tsx`, `DefinitionConfigPanel.tsx` | Extracted native select wrapper for accessible label and prop forwarding; options and value coercion remain caller-owned. |
-| `TextInputControl` | `src/renderer/ui/primitives/TextInputControl.tsx`, `DefinitionConfigControls.tsx` | Extracted native text input wrapper for accessible label and prop forwarding; draft/commit behavior remains definition-owned. |
+| `TextInputControl` | `src/renderer/ui/primitives/TextInputControl.tsx`, `DefinitionConfigControls.tsx`, `AgentSettingsDialog.tsx` | Extracted native input wrapper for accessible label, type, and prop forwarding; draft/commit behavior remains caller-owned. |
 | `NumberInputControl` | `src/renderer/ui/primitives/NumberInputControl.tsx`, `DefinitionConfigControls.tsx` | Extracted native number input wrapper for accessible label and prop forwarding; parsing and empty-value semantics remain definition-owned. |
 | `DefinitionConfigControls` | `src/renderer/ui/definition/DefinitionConfigControls.tsx`, `DefinitionConfigPanel.tsx` | Extracted definition-scoped select, switch, color, and number controls; panel now owns item mapping and persistence patches. |
 | `DefinitionConfigRow` | `src/renderer/ui/definition/DefinitionConfigRowShell.tsx`, `DefinitionConfigControls.tsx`, `DefinitionConfigPanel.tsx` | Extracted dense icon/label/control shell for tag and field definition settings; control behavior remains definition-scoped. |
