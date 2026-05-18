@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type Dispatch, type MouseEvent, type SetStateAction } from 'react';
+import { useEffect, useMemo, useRef, useState, type Dispatch, type MouseEvent, type SetStateAction } from 'react';
 import { api } from '../api/client';
 import type { NodeId, RichText, RichTextPatch } from '../api/types';
 import { EMPTY_RICH_TEXT, plainText } from '../api/types';
@@ -38,6 +38,7 @@ import { DoneCheckbox } from './outliner/DoneCheckbox';
 import { NodeContextMenu } from './outliner/NodeContextMenu';
 import { NodeDescription } from './outliner/NodeDescription';
 import { OutlinerView } from './outliner/OutlinerView';
+import { buildOutlinerRows } from './outliner/row-model';
 import { TrailingInput } from './outliner/TrailingInput';
 import { TriggerPopover } from './outliner/TriggerPopover';
 import { createTrailingField, createTrailingTriggerNode } from './outliner/trailingTriggers';
@@ -75,6 +76,16 @@ export function NodePanel(props: NodePanelProps) {
   const breadcrumb = buildPanelBreadcrumb(rootNode, props.index);
   const titleFocusTarget = focusTarget(props.rootId, null, props.panelId, 'panel-title');
   const descriptionFocusTarget = focusTarget(props.rootId, null, props.panelId, 'description');
+  const headingFieldIds = useMemo(() => {
+    const ids = new Set<NodeId>();
+    for (const row of buildOutlinerRows(rootNode, props.index.byId, {
+      expandedHiddenFields: props.ui.expandedHiddenFields,
+    })) {
+      if (row.type === 'field') ids.add(row.id);
+    }
+    return ids;
+  }, [props.index.byId, props.ui.expandedHiddenFields, rootNode]);
+  const hasHeadingFields = headingFieldIds.size > 0;
 
   useEffect(() => {
     setTitleContent(rootNode?.content ?? EMPTY_RICH_TEXT);
@@ -445,6 +456,27 @@ export function NodePanel(props: NodePanelProps) {
               />
             </div>
           )}
+          {rootNode && hasHeadingFields && (
+            <div className="panel-heading-fields outliner">
+              <OutlinerView
+                panelId={props.panelId}
+                parentId={props.rootId}
+                rootId={props.rootId}
+                onRoot={props.onRoot}
+                depth={0}
+                index={props.index}
+                ui={props.ui}
+                setUi={props.setUi}
+                run={props.run}
+                trigger={props.trigger}
+                setTrigger={props.setTrigger}
+                dragId={props.dragId}
+                setDragId={props.setDragId}
+                includedIds={headingFieldIds}
+                showViewToolbar={false}
+              />
+            </div>
+          )}
         </header>
         {rootNode && contextMenu && (
           <NodeContextMenu
@@ -489,6 +521,7 @@ export function NodePanel(props: NodePanelProps) {
               setTrigger={props.setTrigger}
               dragId={props.dragId}
               setDragId={props.setDragId}
+              excludedIds={hasHeadingFields ? headingFieldIds : undefined}
             />
             {showTrailingInput && (
               <TrailingInput

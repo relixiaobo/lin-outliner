@@ -63,6 +63,11 @@ Heading area order:
 4. Tag segment with More actions aligned to the right.
 5. Field segment when heading fields exist.
 
+Heading field rows are real `fieldEntry` rows directly owned by the panel root.
+They render through `OutlinerView` / `OutlinerFieldRow` inside
+`.panel-heading-fields` and are excluded from the body outliner so the same
+field does not appear twice.
+
 ## Visual Tokens
 
 The design system site may simplify behavior, but outliner spacing, typography,
@@ -156,6 +161,7 @@ Normal content row:
 - Optional trigger popover.
 - Optional context menu.
 - Optional children and trailing input.
+- Drag/drop target state.
 
 Trailing input is an empty row state. Its bullet uses the dimmed leading color
 and its placeholder is `Type here or '/' for commands`.
@@ -172,6 +178,13 @@ Field entry row:
 
 Rows stay text-first. Selection, hover, focus, drag/drop, and indentation must
 not shift the editor text start.
+
+Drag/drop state:
+
+- Before/after indicators start on the same `--row-selection-start` axis as row
+  selection.
+- Inside-drop state may use a subtle inset treatment and soft fill, but it must
+  not resize or shift row content.
 
 Done state has three visible forms: no checkbox renders only the row bullet;
 unchecked renders the same measured checkbox slot as a neutral filled square;
@@ -206,6 +219,14 @@ white internal check glyph.
 - Tag open/remove actions are real controls.
 - Descriptions are muted metadata below the content line or title line.
 - Description edit state uses an inline text area rhythm, not a modal.
+
+Inline references are text atoms, not tags:
+
+- Inline reference atoms remain in text flow and use `display: inline`.
+- They use semantic reference color and a fine underline instead of a filled
+  chip background.
+- They remain ProseMirror atom nodes and must not break cursor or split/merge
+  semantics.
 
 ## Fields And Definition Configuration
 

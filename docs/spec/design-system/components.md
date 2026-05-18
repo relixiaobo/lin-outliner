@@ -972,6 +972,7 @@ Structure:
 - Optional trigger popover.
 - Optional context menu.
 - Optional children and trailing input.
+- Optional heading-field placement when the row is a root-owned `fieldEntry`.
 
 States:
 
@@ -1002,6 +1003,11 @@ Rules:
 - Normal content rows, reference rows, tag definition rows, field definition
   rows, field entry rows, completed rows, selected rows, and expanded/collapsed
   parent rows must all keep the same text-start grid.
+- Root-owned field entry rows may render in the panel heading field segment,
+  but they remain real `OutlinerFieldRow` instances and must not be duplicated
+  in the body outliner.
+- Drop indicators use the same `21px` row-selection axis and must not change
+  row content geometry.
 - Bullet, chevron, indentation, selection, and edit/focus behavior should follow
   [`../ui-behavior.md`](../ui-behavior.md).
 - Component extraction must wrap current behavior rather than replacing the row
@@ -1042,6 +1048,9 @@ Rules:
   and field definition rows.
 - Collapsed/expanded state may change marker treatment, but must not shift row
   content.
+- Reference markers use a centered dashed shape inside the fixed bullet slot.
+- Hover treatments must not scale tag, field, or reference markers in a way that
+  reads as positional movement.
 - Double-click drill-down is product behavior and should remain owned by row
   interaction code.
 - `tabIndex={-1}` may remain while row editor owns keyboard navigation, but the

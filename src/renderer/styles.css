@@ -3200,6 +3200,11 @@ button:focus-visible {
   margin-left: 0;
 }
 
+.panel-heading-fields {
+  max-width: 720px;
+  margin-top: 10px;
+}
+
 .panel-title-more-button {
   display: inline-flex;
   width: 30px;

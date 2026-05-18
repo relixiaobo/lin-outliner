@@ -191,6 +191,15 @@ Completion means:
   glyph systems.
 - Added e2e coverage for persistent parent chevrons and field value dense-row
   alignment.
+- Moved root-owned field entries into the panel heading field segment using the
+  real `OutlinerView` / `OutlinerFieldRow` path, and excluded them from the body
+  outliner to prevent duplicate field rows.
+- Refined inline reference atoms from filled chip styling to text-like inline
+  reference styling with semantic color and underline.
+- Refined drag/drop inside state to use an inset treatment that does not shift
+  row content.
+- Added e2e coverage for heading field placement, tree reference marker
+  geometry, inline reference text-like rendering, and drag/drop visual axes.
 
 ## In Progress
 
@@ -218,8 +227,8 @@ avoidance:
      and elevation.
 5. **Outliner system**
    - Continue the remaining product convergence after the first real-code pass:
-     heading field rows, richer field value examples, reference/inline-ref
-     visual review, drag/drop screenshots, and design-system site specimens.
+     richer field value examples, reference/inline-ref screenshots, drag/drop
+     screenshots, and design-system site specimens.
 6. **Rich text, cursor, and IME semantics**
    - Recheck ProseMirror text editing, split/merge, description editing,
      field-value editing, inline reference atoms, trigger anchors, paste, and

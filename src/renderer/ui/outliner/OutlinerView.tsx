@@ -26,17 +26,31 @@ interface OutlinerViewProps {
   setTrigger: (trigger: TriggerState) => void;
   dragId: NodeId | null;
   setDragId: (nodeId: NodeId | null) => void;
+  includedIds?: ReadonlySet<NodeId>;
+  excludedIds?: ReadonlySet<NodeId>;
+  showViewToolbar?: boolean;
 }
 
 export function OutlinerView(props: OutlinerViewProps) {
   const parent = props.index.byId.get(props.parentId);
-  const rows = buildOutlinerRows(parent, props.index.byId, {
+  const builtRows = buildOutlinerRows(parent, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
+  });
+  const rows = builtRows.filter((row) => {
+    if (props.includedIds) {
+      if (row.type === 'content' || row.type === 'field') return props.includedIds.has(row.id);
+      if (row.type === 'hiddenField') return props.includedIds.has(row.fieldId);
+      return false;
+    }
+    if (!props.excludedIds) return true;
+    if (row.type === 'content' || row.type === 'field') return !props.excludedIds.has(row.id);
+    if (row.type === 'hiddenField') return !props.excludedIds.has(row.fieldId);
+    return true;
   });
 
   return (
     <>
-      {parent?.toolbarVisible && (
+      {props.showViewToolbar !== false && parent?.toolbarVisible && (
         <ViewToolbar node={parent} index={props.index} run={props.run} />
       )}
       <RowHost
@@ -126,6 +140,7 @@ export function OutlinerView(props: OutlinerViewProps) {
                   setTrigger={props.setTrigger}
                   dragId={props.dragId}
                   setDragId={props.setDragId}
+                  showViewToolbar={props.showViewToolbar}
                 />
               </FieldEntryChildrenOutliner>
             )}

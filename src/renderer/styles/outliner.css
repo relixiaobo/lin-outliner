@@ -327,9 +327,8 @@
 }
 
 .row.drop-inside {
-  outline: 1px solid color-mix(in srgb, var(--primary) 32%, transparent);
-  outline-offset: -1px;
   background: var(--primary-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 26%, transparent);
 }
 
 .row.control {
@@ -907,10 +906,18 @@
 }
 
 .row-editor .inline-ref {
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--inline-ref-accent, var(--primary)) 10%, transparent);
+  display: inline;
+  border-radius: 3px;
+  background: transparent;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
   color: var(--inline-ref-accent, var(--primary));
-  padding: 0 3px;
+  font-weight: 550;
+  padding: 0 1px;
+  text-decoration-line: underline;
+  text-decoration-color: color-mix(in srgb, var(--inline-ref-accent, var(--primary)) 28%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
 }
 
 .row-editor [data-heading-mark="true"] {
