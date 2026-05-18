@@ -12,6 +12,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remend from 'remend';
 import { CheckIcon, CopyIcon, ICON_SIZE } from '../icons';
+import { ButtonControl } from '../primitives/ButtonControl';
 
 interface AgentMarkdownProps {
   keyPrefix: string;
@@ -63,15 +64,14 @@ function AgentCodeBlock({
     <div className="agent-code-block">
       <div className="agent-code-header">
         <span>{lang || 'text'}</span>
-        <button
+        <ButtonControl
           aria-label="Copy code"
           className="agent-code-copy"
           disabled={!code}
           onClick={copyCode}
-          type="button"
         >
           <CopyStateIcon size={ICON_SIZE.menu} />
-        </button>
+        </ButtonControl>
       </div>
       <pre><code className={className}>{code}</code></pre>
     </div>

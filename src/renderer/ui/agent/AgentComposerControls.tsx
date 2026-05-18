@@ -13,6 +13,7 @@ import {
   StopIcon,
   TrashIcon,
 } from '../icons';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
 import { REASONING_LABELS } from './AgentComposerModelMenu';
 
@@ -146,7 +147,7 @@ export function AgentComposerModelButton({
   supportsReasoning: boolean;
 }) {
   return (
-    <button
+    <ButtonControl
       aria-expanded={open}
       aria-haspopup="menu"
       aria-label="Select model"
@@ -154,14 +155,13 @@ export function AgentComposerModelButton({
       disabled={disabled}
       onClick={onToggle}
       title={modelTitle}
-      type="button"
     >
       <span className="agent-composer-model-name">{modelLabel}</span>
       {supportsReasoning && reasoningEnabled ? (
         <span className="agent-composer-reasoning-chip">{REASONING_LABELS[selectedReasoning]}</span>
       ) : null}
       <ChevronDownIcon size={ICON_SIZE.tiny} />
-    </button>
+    </ButtonControl>
   );
 }
 

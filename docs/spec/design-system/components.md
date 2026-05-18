@@ -50,6 +50,7 @@ State rules:
 Current sources:
 
 - `src/renderer/ui/primitives/CheckboxMark.tsx`
+- `src/renderer/ui/primitives/CheckboxControl.tsx`
 - `src/renderer/ui/outliner/DoneCheckbox.tsx`
 - `src/renderer/ui/outliner/FieldValueRenderer.tsx`
 - `src/renderer/ui/agent/AgentSettingsDialog.tsx`
@@ -89,6 +90,39 @@ Non-goals:
 
 - CheckboxMark does not own `Mod+Enter` cycling, mouse toggling, row selection,
   completion timestamps, settings persistence, or title/row layout.
+
+## CheckboxControl
+
+Current sources:
+
+- `src/renderer/ui/primitives/CheckboxControl.tsx`
+- `src/renderer/ui/agent/AgentSettingsDialog.tsx`
+
+Purpose:
+
+- Shared native checkbox wrapper for labeled settings and form controls.
+- Keeps the hidden/native checkbox behavior and the visual `CheckboxMark`
+  coupled so checkbox visuals do not fork across settings surfaces.
+
+Structure:
+
+- Root is a caller-styled `label`.
+- Native `input type="checkbox"` owns form and keyboard semantics.
+- `CheckboxMark` owns the measured visual mark.
+- Caller supplies visible label children and checked persistence.
+
+States:
+
+- Unchecked.
+- Checked.
+- Disabled through native `disabled`.
+- Focus-visible through the caller's surface class.
+
+Non-goals:
+
+- CheckboxControl does not own outliner done-state cycling or row selection.
+- CheckboxControl does not replace checkbox-like button controls that need
+  custom row keyboard behavior.
 
 ## IconButton
 
@@ -734,7 +768,8 @@ Accessibility:
 Current sources:
 
 - `src/renderer/ui/primitives/ButtonControl.tsx`
-- `src/renderer/ui/agent/AgentSettingsDialog.tsx`
+- app shell, sidebar, workspace tabs, command palette, outliner rows, tags, and
+  agent surfaces
 
 Purpose:
 
@@ -745,6 +780,7 @@ Structure:
 
 - Root is a native `button`.
 - Default `type` is `button`.
+- Forwards refs for focus-managed surfaces.
 - Caller supplies label children and surface-specific class names.
 
 States:
@@ -764,6 +800,7 @@ Current sources:
 
 - `src/renderer/ui/primitives/SwitchControl.tsx`
 - `src/renderer/ui/definition/DefinitionConfigPanel.tsx`
+- `src/renderer/ui/outliner/FieldValueRenderer.tsx`
 
 Purpose:
 
@@ -772,6 +809,7 @@ Purpose:
 Structure:
 
 - Root is a `button`.
+- Forwards refs for focus-managed rows.
 - Caller supplies visual children, such as track, thumb, and text.
 - Caller supplies surface-specific class names.
 
@@ -806,6 +844,7 @@ Current sources:
 - `src/renderer/ui/primitives/SelectControl.tsx`
 - `src/renderer/ui/definition/DefinitionConfigPanel.tsx`
 - `src/renderer/ui/agent/AgentSettingsDialog.tsx`
+- `src/renderer/ui/outliner/ViewToolbar.tsx`
 
 Purpose:
 
@@ -814,6 +853,7 @@ Purpose:
 Structure:
 
 - Root is a native `select`.
+- Forwards refs for focus-managed surfaces.
 - Caller supplies options and surface-specific class names.
 - Caller owns value, change behavior, and domain coercion.
 
@@ -841,6 +881,8 @@ Current sources:
 - `src/renderer/ui/definition/DefinitionConfigControls.tsx`
 - `src/renderer/ui/definition/DefinitionConfigPanel.tsx`
 - `src/renderer/ui/agent/AgentSettingsDialog.tsx`
+- command palette, node context search, outliner field rows, option/tag
+  pickers, and agent session rename
 
 Purpose:
 
@@ -849,7 +891,9 @@ Purpose:
 Structure:
 
 - Root is a native `input`.
-- Default type is `text`; password/API key fields may pass `type="password"`.
+- Default type is `text`; callers may pass native input types such as
+  `password`, `date`, `color`, `url`, or `email`.
+- Forwards refs for focus-managed surfaces.
 - Caller supplies value, change behavior, placeholder, class names, and keyboard
   handling.
 
@@ -885,6 +929,7 @@ Purpose:
 Structure:
 
 - Root is a native `input type="number"`.
+- Forwards refs for focus-managed surfaces.
 - Caller supplies value parsing, invalid handling, class names, and keyboard
   behavior.
 

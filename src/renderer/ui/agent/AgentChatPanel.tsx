@@ -24,7 +24,9 @@ import {
 import { AgentComposer } from './AgentComposer';
 import { AgentSettingsDialog } from './AgentSettingsDialog';
 import { AgentMessageRow } from './AgentMessageRow';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
+import { TextInputControl } from '../primitives/TextInputControl';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 
 const SUGGESTED_PROMPTS = [
@@ -466,21 +468,20 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
   return (
     <div className="agent-chat-panel" data-turn-phase={turnPhase}>
       <header className="agent-dock-header" ref={headerRef}>
-        <button
+        <ButtonControl
           ref={historyButtonRef}
           aria-expanded={historyOpen}
           aria-label="Show conversations"
           className="agent-dock-title-button"
           onClick={() => setHistoryOpen((open) => !open)}
           title="Show conversations"
-          type="button"
         >
           <span className="agent-dock-title"># {displayTitle}</span>
           <ChevronDownIcon
             className={historyOpen ? 'agent-title-chevron is-open' : 'agent-title-chevron'}
             size={ICON_SIZE.menu}
           />
-        </button>
+        </ButtonControl>
         <div className="agent-dock-actions">
           <span className="agent-status-dot" aria-hidden="true" />
           <span className="agent-status-dot is-muted" aria-hidden="true" />
@@ -541,9 +542,10 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
                 if (editingSessionId === session.id) {
                   return (
                     <div className="agent-session-row is-editing" key={session.id}>
-                      <input
+                      <TextInputControl
                         autoFocus
                         className="agent-session-title-input"
+                        label="Conversation title"
                         onChange={(event) => setEditingTitle(event.target.value)}
                         onKeyDown={(event) => {
                           if (event.key === 'Escape') setEditingSessionId(null);
@@ -573,18 +575,17 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
                     className={isCurrent ? 'agent-session-row is-current' : 'agent-session-row'}
                     key={session.id}
                   >
-                    <button
+                    <ButtonControl
                       className="agent-session-select"
                       disabled={isStreaming}
                       onClick={() => void handleSelectSession(session.id)}
-                      type="button"
                     >
                       <span className="agent-session-name">{title}</span>
                       <span className="agent-session-meta">
                         {formatSessionTime(session.updatedAt)}
                         {session.messageCount > 0 ? ` · ${session.messageCount}` : ''}
                       </span>
-                    </button>
+                    </ButtonControl>
                     <div className="agent-session-row-actions">
                       <IconButton
                         className="agent-message-action-button"
@@ -632,16 +633,15 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
         {entries.length === 0 ? (
           <div className="agent-empty-state">
             {SUGGESTED_PROMPTS.map((prompt) => (
-              <button
+              <ButtonControl
                 className="agent-suggestion"
                 key={prompt}
                 onClick={() => {
                   void sendMessage(prompt);
                 }}
-                type="button"
               >
                 {prompt}
-              </button>
+              </ButtonControl>
             ))}
           </div>
         ) : renderConversationEntries()}

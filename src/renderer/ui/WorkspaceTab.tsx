@@ -1,4 +1,5 @@
 import { CloseIcon } from './icons';
+import { ButtonControl } from './primitives/ButtonControl';
 import { IconButton } from './primitives/IconButton';
 
 export interface WorkspaceTabModel {
@@ -21,15 +22,14 @@ export function WorkspaceTab({ active, canClose, tab, onClose, onSelect }: Works
       className={`workspace-tab ${active ? 'active' : ''}`}
       title={tab.title}
     >
-      <button
+      <ButtonControl
         aria-current={active ? 'page' : undefined}
         className="workspace-tab-trigger"
         onClick={() => onSelect(tab.id)}
-        type="button"
       >
         <span className="workspace-tab-title">{tab.title}</span>
         {tab.panelCount > 1 && <span className="workspace-tab-count">{tab.panelCount}</span>}
-      </button>
+      </ButtonControl>
       {canClose && (
         <IconButton
           className="workspace-tab-close"

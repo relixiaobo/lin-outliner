@@ -7,7 +7,10 @@ import type { FieldType, NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import type { CommandRunner } from '../shared';
 import { isOptionsFieldType } from '../interactions/fieldOptions';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { CheckboxMark } from '../primitives/CheckboxMark';
+import { SwitchControl } from '../primitives/SwitchControl';
+import { TextInputControl } from '../primitives/TextInputControl';
 import { FieldValueRow } from './FieldValueRow';
 import { OptionsPicker } from './OptionsPicker';
 
@@ -114,19 +117,18 @@ export function FieldValueRenderer(props: FieldValueRendererProps) {
     const checked = isTruthyValue(props.valueDraft);
     return (
       <FieldValueRow dimmed={!props.valueDraft} completed={props.completed}>
-        <button
+        <ButtonControl
           ref={(element) => props.setFocusElement?.(element)}
           aria-checked={checked}
           aria-label={`${props.field?.content.text || 'Field'} checkbox value`}
           className="field-checkbox-button"
           role="checkbox"
-          type="button"
           onFocus={props.onFocus}
           onClick={() => commitImmediateValue(checked ? FALSE_VALUE : TRUE_VALUE)}
           onKeyDown={props.onKeyDown}
         >
           <CheckboxMark checked={checked} />
-        </button>
+        </ButtonControl>
       </FieldValueRow>
     );
   }
@@ -135,18 +137,17 @@ export function FieldValueRenderer(props: FieldValueRendererProps) {
     const checked = isTruthyValue(props.valueDraft);
     return (
       <FieldValueRow dimmed={!props.valueDraft} completed={props.completed}>
-        <button
+        <SwitchControl
           ref={(element) => props.setFocusElement?.(element)}
           className={`field-boolean-switch ${checked ? 'on' : ''}`}
-          type="button"
-          role="switch"
-          aria-checked={checked}
+          checked={checked}
+          label={`${props.field?.content.text || 'Field'} boolean value`}
           onFocus={props.onFocus}
-          onClick={() => commitImmediateValue(checked ? FALSE_VALUE : TRUE_VALUE)}
+          onCheckedChange={(nextChecked) => commitImmediateValue(nextChecked ? TRUE_VALUE : FALSE_VALUE)}
           onKeyDown={props.onKeyDown}
         >
           <span />
-        </button>
+        </SwitchControl>
       </FieldValueRow>
     );
   }
@@ -154,9 +155,10 @@ export function FieldValueRenderer(props: FieldValueRendererProps) {
   if (fieldType === 'date') {
     return (
       <FieldValueRow dimmed={!props.valueDraft} completed={props.completed}>
-        <input
+        <TextInputControl
           ref={(element) => props.setFocusElement?.(element)}
           className="field-value-input field-value-typed-input"
+          label={`${props.field?.content.text || 'Field'} date value`}
           type="date"
           value={isValidDateValue(props.valueDraft) ? props.valueDraft : ''}
           onFocus={props.onFocus}
@@ -171,17 +173,19 @@ export function FieldValueRenderer(props: FieldValueRendererProps) {
     return (
       <FieldValueRow dimmed={!props.valueDraft} completed={props.completed}>
         <div className="field-color-value">
-          <input
+          <TextInputControl
             className="field-color-input"
+            label={`${props.field?.content.text || 'Field'} color swatch`}
             type="color"
             value={colorValue(props.valueDraft)}
             onFocus={props.onFocus}
             onChange={(event) => commitImmediateValue(event.currentTarget.value)}
             onKeyDown={props.onKeyDown}
           />
-          <input
+          <TextInputControl
             ref={(element) => props.setFocusElement?.(element)}
             className="field-color-text"
+            label={`${props.field?.content.text || 'Field'} color value`}
             value={props.valueDraft}
             placeholder="#f43f5e"
             spellCheck={false}
@@ -199,9 +203,10 @@ export function FieldValueRenderer(props: FieldValueRendererProps) {
 
   return (
     <FieldValueRow dimmed={!props.valueDraft} completed={props.completed}>
-      <input
+      <TextInputControl
         ref={(element) => props.setFocusElement?.(element)}
         className={`field-value-input field-value-typed-input ${invalidNumber ? 'invalid' : ''}`}
+        label={`${props.field?.content.text || 'Field'} value`}
         type={textInputType(fieldType)}
         inputMode={fieldType === 'number' ? 'decimal' : undefined}
         value={props.valueDraft}

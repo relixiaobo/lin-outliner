@@ -4,6 +4,7 @@ import {
   ChevronRightIcon,
   LoaderIcon,
 } from '../icons';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { AgentProcessTimeline } from './AgentProcessTimeline';
 import { getToolCallStatus, summarizeToolCall } from './AgentToolCallBlock';
 import type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
@@ -100,11 +101,10 @@ export function AgentProcessBlock({
 
   return (
     <div className={`agent-process-block ${turnFailedWithoutProse ? 'is-error' : ''}`}>
-      <button
+      <ButtonControl
         aria-expanded={expanded}
         className="agent-process-toggle"
         onClick={() => expandState.toggle(id, expanded)}
-        type="button"
       >
         {liveSegment ? (
           <LoaderIcon className="agent-process-spinner" size={12} />
@@ -122,7 +122,7 @@ export function AgentProcessBlock({
           })}
         </span>
         <Chevron size={12} />
-      </button>
+      </ButtonControl>
       {expanded ? (
         <AgentProcessTimeline
           blocks={blocks}

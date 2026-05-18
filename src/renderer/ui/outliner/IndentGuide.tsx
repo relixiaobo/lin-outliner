@@ -1,12 +1,13 @@
+import { ButtonControl } from '../primitives/ButtonControl';
+
 interface IndentGuideProps {
   onToggleChildren: () => void;
 }
 
 export function IndentGuide({ onToggleChildren }: IndentGuideProps) {
   return (
-    <button
+    <ButtonControl
       className="indent-guide"
-      type="button"
       tabIndex={-1}
       title="Toggle children"
       onMouseDown={(event) => {
@@ -19,6 +20,6 @@ export function IndentGuide({ onToggleChildren }: IndentGuideProps) {
       }}
     >
       <span className="indent-guide-line" />
-    </button>
+    </ButtonControl>
   );
 }

@@ -11,6 +11,7 @@ import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { filterFieldOptions, resolveFieldOptions, resolveSelectedOptionId } from '../interactions/fieldOptions';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
+import { TextInputControl } from '../primitives/TextInputControl';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import type { CommandRunner } from '../shared';
 import { FieldValueRow } from './FieldValueRow';
@@ -131,12 +132,13 @@ export function OptionsPicker(props: OptionsPickerProps) {
               <NodeBulletDot />
             </span>
           )}
-          <input
+          <TextInputControl
             ref={(element) => {
               inputRef.current = element;
               props.setFocusElement?.(element);
             }}
             className="field-value-input node-picker-input"
+            label={`${props.field?.content.text || 'Field'} option value`}
             value={open ? query : selectedOption?.label ?? ''}
             placeholder="Select option"
             spellCheck={false}

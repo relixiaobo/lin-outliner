@@ -15,6 +15,7 @@ import {
   UrlIcon,
   WarningIcon,
 } from '../icons';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { AgentToolCallDisclosure } from './AgentToolCallDisclosure';
 
 interface AgentToolCallBlockProps {
@@ -221,15 +222,14 @@ function ToolCopyButton({ ariaLabel, text }: { ariaLabel: string; text: string }
   }
 
   return (
-    <button
+    <ButtonControl
       aria-label={ariaLabel}
       className="agent-tool-call-copy"
       disabled={!text}
       onClick={() => void copy()}
-      type="button"
     >
       <CopyStateIcon size={ICON_SIZE.menu} />
-    </button>
+    </ButtonControl>
   );
 }
 

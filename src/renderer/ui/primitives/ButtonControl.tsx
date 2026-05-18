@@ -1,20 +1,21 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 
 interface ButtonControlProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> {
   children: ReactNode;
 }
 
-export function ButtonControl({
+export const ButtonControl = forwardRef<HTMLButtonElement, ButtonControlProps>(function ButtonControl({
   children,
   type = 'button',
   ...buttonProps
-}: ButtonControlProps) {
+}, ref) {
   return (
     <button
+      ref={ref}
       {...buttonProps}
       type={type}
     >
       {children}
     </button>
   );
-}
+});

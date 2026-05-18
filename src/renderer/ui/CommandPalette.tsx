@@ -12,8 +12,10 @@ import {
   type AppIcon,
 } from './icons';
 import { isImeComposingEvent } from './interactions/imeKeyboard';
+import { ButtonControl } from './primitives/ButtonControl';
 import { Dialog } from './primitives/Dialog';
 import { MenuItem } from './primitives/MenuItem';
+import { TextInputControl } from './primitives/TextInputControl';
 import type { CommandRunner } from './shared';
 
 interface CommandPaletteProps {
@@ -174,12 +176,12 @@ export function CommandPalette(props: CommandPaletteProps) {
       onEscapeKeyDown={props.onClose}
       surfaceClassName="command-palette"
     >
-      <input
+      <TextInputControl
         ref={inputRef}
         aria-activedescendant={selectedItemId}
         aria-controls="command-palette-list"
-        aria-label="Search or create"
         className="command-input"
+        label="Search or create"
         value={query}
         placeholder="Search or create"
         onChange={(event) => setQuery(event.target.value)}
@@ -233,10 +235,10 @@ export function CommandPalette(props: CommandPaletteProps) {
       </div>
       {selected && (
         <div className="command-action-bar">
-          <button className="command-action-button" onClick={selected.action} type="button">
+          <ButtonControl className="command-action-button" onClick={selected.action}>
             <span>{actionLabel(selected.kind)}</span>
             <span className="kbd">↵</span>
-          </button>
+          </ButtonControl>
         </div>
       )}
     </Dialog>

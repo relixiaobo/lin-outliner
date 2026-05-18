@@ -106,8 +106,16 @@ Completion means:
 - Reworked agent settings information architecture into Provider, Connection,
   and Model behavior sections; API key removal now sits with key configuration,
   while provider removal remains the secondary destructive footer action.
-- Adopted shared input, select, and text-button primitives inside agent
-  settings while keeping provider/model persistence behavior local.
+- Adopted shared input, select, text-button, and checkbox primitives inside
+  agent settings while keeping provider/model persistence behavior local.
+- Promoted button, text input, select, number input, and switch primitives to
+  forward refs so focus-managed surfaces can adopt them without breaking cursor
+  or overlay behavior.
+- Consolidated business UI controls across app shell, sidebar, workspace tabs,
+  command palette, outliner rows, view toolbar, tag menus, field values, option
+  pickers, batch tag picker, and agent message/composer surfaces. Direct native
+  controls now remain only inside primitives, markdown-rendered disabled
+  inputs, and the native file input.
 - Completed an agent composer visual pass so the textarea remains primary,
   toolbar controls stay compact, and focus treatment follows the shared ring.
 - Reworked agent debug into a compact Overview, Request Context, and Provider

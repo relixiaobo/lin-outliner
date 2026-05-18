@@ -4,6 +4,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
 } from '../icons';
+import { ButtonControl } from '../primitives/ButtonControl';
 import type { AgentExpandState } from './agentProcessTypes';
 import { firstLine, previewText } from './agentProcessTypes';
 
@@ -51,18 +52,17 @@ export function AgentThinkingRow({
 
   const Chevron = expanded ? ChevronDownIcon : ChevronRightIcon;
   return (
-    <button
+    <ButtonControl
       aria-expanded={expanded}
       className={`agent-thinking-row is-toggle ${expanded ? 'is-expanded' : ''}`}
       onClick={() => expandState.toggle(id, expanded)}
-      type="button"
     >
       <AgentThinkingIcon>
         <BrainIcon size={12} />
         <Chevron className="agent-thinking-chevron" size={12} />
       </AgentThinkingIcon>
       <span>{expanded ? trimmed : preview}</span>
-    </button>
+    </ButtonControl>
   );
 }
 

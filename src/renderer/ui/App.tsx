@@ -20,6 +20,7 @@ import {
 } from './focus/focusModel';
 import { useDragSelection } from './interactions/dragSelection';
 import { BatchTagSelector } from './outliner/BatchTagSelector';
+import { ButtonControl } from './primitives/ButtonControl';
 import type { TriggerState } from './shared';
 import { textOf, useCommandRunner } from './shared';
 import { WorkspaceCanvas } from './WorkspaceCanvas';
@@ -299,9 +300,9 @@ export function App() {
       {error && (
         <div className="error">
           <span>{error}</span>
-          <button className="error-close-button" onClick={() => setError(null)} type="button">
+          <ButtonControl className="error-close-button" onClick={() => setError(null)}>
             <CloseIcon size={ICON_SIZE.menu} />
-          </button>
+          </ButtonControl>
         </div>
       )}
     </div>

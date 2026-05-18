@@ -31,6 +31,8 @@ import {
 import { savePrimaryFieldEntryChildText } from '../../state/fieldEntryChildren';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { indentTargetParentId } from '../interactions/outlinerStructure';
+import { ButtonControl } from '../primitives/ButtonControl';
+import { TextInputControl } from '../primitives/TextInputControl';
 import type { CommandRunner, TriggerState } from '../shared';
 import { outlinerChildren } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
@@ -364,10 +366,11 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   };
 
   const nameControl = (
-    <input
+    <TextInputControl
       ref={nameInputRef}
       className={`field-name-input ${entry.completedAt ? 'done' : ''}`}
       data-focus-node-id={props.entryId}
+      label="Field name"
       value={nameDraft}
       title={`${nameDraft || 'Field'} (${fieldTypeLabel(fieldType)})`}
       onFocus={() => {
@@ -380,7 +383,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   );
 
   const valueControl = row.expanded && rowChildIds.length > 0 ? (
-    <button
+    <ButtonControl
       ref={(element) => {
         valueFocusRef.current = element;
       }}
@@ -391,7 +394,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       title="Focus field children"
     >
       {rowChildIds.length === 1 ? (value || '1 child') : `${rowChildIds.length} children`}
-    </button>
+    </ButtonControl>
   ) : (
     <FieldValueRenderer
       entryId={props.entryId}

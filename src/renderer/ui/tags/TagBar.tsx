@@ -5,6 +5,7 @@ import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { isNodeInTrash } from '../interactions/nodeLocation';
 import { CloseIcon, ICON_SIZE, SearchIcon, SettingsIcon } from '../icons';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { overlayAnchorFromPoint, useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import type { CommandRunner } from '../shared';
 import { textOf } from '../shared';
@@ -108,9 +109,8 @@ function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
           style={menuStyle}
           onMouseDown={(event) => event.stopPropagation()}
         >
-          <button
+          <ButtonControl
             className="tag-context-item"
-            type="button"
             onClick={() => {
               removeTag();
               setMenu(null);
@@ -118,10 +118,9 @@ function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
           >
             <CloseIcon size={ICON_SIZE.menu} />
             Remove tag
-          </button>
-          <button
+          </ButtonControl>
+          <ButtonControl
             className="tag-context-item"
-            type="button"
             onClick={() => {
               openTagSearch();
               setMenu(null);
@@ -129,11 +128,10 @@ function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
           >
             <SearchIcon size={ICON_SIZE.menu} />
             Everything tagged #{label}
-          </button>
+          </ButtonControl>
           <div className="tag-context-separator" />
-          <button
+          <ButtonControl
             className="tag-context-item"
-            type="button"
             onClick={() => {
               onRoot?.(tag.id);
               setMenu(null);
@@ -141,7 +139,7 @@ function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
           >
             <SettingsIcon size={ICON_SIZE.menu} />
             Configure tag
-          </button>
+          </ButtonControl>
         </div>,
         document.body,
       )}

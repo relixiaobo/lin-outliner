@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 
 interface SwitchControlProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'aria-checked' | 'aria-label' | 'children' | 'onChange' | 'role'> {
   checked: boolean;
@@ -7,7 +7,7 @@ interface SwitchControlProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement
   onCheckedChange: (checked: boolean) => void;
 }
 
-export function SwitchControl({
+export const SwitchControl = forwardRef<HTMLButtonElement, SwitchControlProps>(function SwitchControl({
   checked,
   children,
   label,
@@ -15,9 +15,10 @@ export function SwitchControl({
   onClick,
   type = 'button',
   ...buttonProps
-}: SwitchControlProps) {
+}, ref) {
   return (
     <button
+      ref={ref}
       {...buttonProps}
       aria-checked={checked}
       aria-label={label}
@@ -31,4 +32,4 @@ export function SwitchControl({
       {children}
     </button>
   );
-}
+});

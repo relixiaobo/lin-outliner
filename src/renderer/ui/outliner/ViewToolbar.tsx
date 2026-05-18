@@ -4,6 +4,9 @@ import type { FilterOp, NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { FilterIcon, GroupIcon, ICON_SIZE, SortAscIcon, SortDescIcon } from '../icons';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
+import { ButtonControl } from '../primitives/ButtonControl';
+import { SelectControl } from '../primitives/SelectControl';
+import { TextInputControl } from '../primitives/TextInputControl';
 import type { CommandRunner } from '../shared';
 import { collectViewFieldChoices, fieldChoiceLabel, NAME_FIELD } from './row-model';
 
@@ -39,9 +42,9 @@ export function ViewToolbar({ node, index, run }: ViewToolbarProps) {
         ) : (
           <SortAscIcon size={ICON_SIZE.menu} />
         )}
-        <select
+        <SelectControl
           value={node.sortField ?? ''}
-          aria-label={sortLabel}
+          label={sortLabel}
           onChange={(event) => {
             const field = event.currentTarget.value || null;
             void run(() => api.setNodeSort(node.id, field, field ? node.sortDirection ?? 'asc' : null));
@@ -51,11 +54,10 @@ export function ViewToolbar({ node, index, run }: ViewToolbarProps) {
           {choices.map((choice) => (
             <option key={choice.id} value={choice.id}>{choice.label}</option>
           ))}
-        </select>
+        </SelectControl>
         {node.sortField && (
-          <button
+          <ButtonControl
             className="view-toolbar-icon"
-            type="button"
             title="Reverse sort"
             onClick={() => {
               void run(() => api.setNodeSort(
@@ -70,15 +72,15 @@ export function ViewToolbar({ node, index, run }: ViewToolbarProps) {
             ) : (
               <SortDescIcon size={ICON_SIZE.menu} />
             )}
-          </button>
+          </ButtonControl>
         )}
       </label>
 
       <label className="view-toolbar-control">
         <FilterIcon size={ICON_SIZE.menu} />
-        <select
+        <SelectControl
           value={node.filterField ?? ''}
-          aria-label={filterLabel}
+          label={filterLabel}
           onChange={(event) => {
             const field = event.currentTarget.value || null;
             void run(() => api.setNodeFilter(
@@ -93,12 +95,12 @@ export function ViewToolbar({ node, index, run }: ViewToolbarProps) {
           {choices.map((choice) => (
             <option key={choice.id} value={choice.id}>{choice.label}</option>
           ))}
-        </select>
+        </SelectControl>
         {node.filterField && (
           <>
-            <select
+            <SelectControl
               value={node.filterOp ?? 'all'}
-              aria-label="Filter mode"
+              label="Filter mode"
               onChange={(event) => {
                 const op = event.currentTarget.value as FilterOp;
                 void run(() => api.setNodeFilter(node.id, node.filterField ?? NAME_FIELD, op, normalizeValues(filterText)));
@@ -106,11 +108,11 @@ export function ViewToolbar({ node, index, run }: ViewToolbarProps) {
             >
               <option value="all">All</option>
               <option value="any">Any</option>
-            </select>
-            <input
+            </SelectControl>
+            <TextInputControl
               value={filterText}
               placeholder="value"
-              aria-label="Filter values"
+              label="Filter values"
               onChange={(event) => setFilterText(event.currentTarget.value)}
               onBlur={() => {
                 void run(() => api.setNodeFilter(
@@ -133,9 +135,9 @@ export function ViewToolbar({ node, index, run }: ViewToolbarProps) {
 
       <label className="view-toolbar-control">
         <GroupIcon size={ICON_SIZE.menu} />
-        <select
+        <SelectControl
           value={node.groupField ?? ''}
-          aria-label={groupLabel}
+          label={groupLabel}
           onChange={(event) => {
             void run(() => api.setNodeGroup(node.id, event.currentTarget.value || null));
           }}
@@ -144,7 +146,7 @@ export function ViewToolbar({ node, index, run }: ViewToolbarProps) {
           {choices.map((choice) => (
             <option key={choice.id} value={choice.id}>{choice.label}</option>
           ))}
-        </select>
+        </SelectControl>
       </label>
     </div>
   );

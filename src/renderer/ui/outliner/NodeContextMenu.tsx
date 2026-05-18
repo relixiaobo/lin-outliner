@@ -23,8 +23,10 @@ import {
   TagIcon,
   TrashIcon,
 } from '../icons';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
+import { TextInputControl } from '../primitives/TextInputControl';
 import { overlayAnchorFromPoint, useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import type { CommandRunner } from '../shared';
 import { textOf } from '../shared';
@@ -209,11 +211,12 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   const renderTagMode = () => (
     <>
       <div className="node-context-subhead">
-        <button type="button" onClick={() => setMode('main')}>Back</button>
+        <ButtonControl onClick={() => setMode('main')}>Back</ButtonControl>
         <span>Add tag</span>
       </div>
-      <input
+      <TextInputControl
         className="node-context-search"
+        label="Tag name"
         value={query}
         placeholder="tag name"
         autoFocus
@@ -246,11 +249,12 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   const renderMoveMode = () => (
     <>
       <div className="node-context-subhead">
-        <button type="button" onClick={() => setMode('main')}>Back</button>
+        <ButtonControl onClick={() => setMode('main')}>Back</ButtonControl>
         <span>Move to</span>
       </div>
-      <input
+      <TextInputControl
         className="node-context-search"
+        label="Node name"
         value={query}
         placeholder="node name"
         autoFocus

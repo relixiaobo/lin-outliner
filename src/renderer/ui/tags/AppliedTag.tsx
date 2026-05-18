@@ -1,5 +1,6 @@
 import type { CSSProperties, MouseEventHandler } from 'react';
 import { CloseIcon, ICON_SIZE, TrashIcon, WarningIcon } from '../icons';
+import { ButtonControl } from '../primitives/ButtonControl';
 import type { TagColor } from './tagColors';
 
 interface AppliedTagProps {
@@ -42,11 +43,10 @@ export function AppliedTag({
       }}
       onContextMenu={onContextMenu}
     >
-      <button
+      <ButtonControl
         aria-label={`Remove ${label} tag`}
         className="tag-badge-remove"
         title="Remove tag"
-        type="button"
         onMouseDown={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -59,12 +59,11 @@ export function AppliedTag({
       >
         <span className="tag-badge-hash">#</span>
         <CloseIcon className="tag-badge-x" size={ICON_SIZE.tiny + 1} strokeWidth={2.5} />
-      </button>
-      <button
+      </ButtonControl>
+      <ButtonControl
         aria-label={`Open ${label} tag`}
         className="tag-badge-label clickable"
         title={label}
-        type="button"
         onMouseDown={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -76,7 +75,7 @@ export function AppliedTag({
         }}
       >
         {label}
-      </button>
+      </ButtonControl>
     </span>
   );
 }

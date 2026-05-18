@@ -9,7 +9,7 @@ import type {
 import { api } from '../../api/client';
 import { ICON_SIZE, PasswordIcon, TrashIcon, WarningIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
-import { CheckboxMark } from '../primitives/CheckboxMark';
+import { CheckboxControl } from '../primitives/CheckboxControl';
 import { Dialog } from '../primitives/Dialog';
 import { FormField } from '../primitives/FormField';
 import { SelectControl } from '../primitives/SelectControl';
@@ -336,15 +336,13 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
               </FormField>
 
               <div className="agent-settings-row agent-settings-field-wide">
-                <label className="agent-settings-checkbox">
-                  <input
-                    checked={draft.enabled}
-                    onChange={(event) => setDraft((current) => ({ ...current, enabled: event.target.checked }))}
-                    type="checkbox"
-                  />
-                  <CheckboxMark checked={draft.enabled} />
+                <CheckboxControl
+                  checked={draft.enabled}
+                  className="agent-settings-checkbox"
+                  onCheckedChange={(enabled) => setDraft((current) => ({ ...current, enabled }))}
+                >
                   <span>Enabled</span>
-                </label>
+                </CheckboxControl>
               </div>
             </div>
           </section>

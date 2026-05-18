@@ -42,6 +42,7 @@ import { buildPanelOutlinerSections } from './outliner/row-model';
 import { TrailingInput } from './outliner/TrailingInput';
 import { TriggerPopover } from './outliner/TriggerPopover';
 import { createTrailingField, createTrailingTriggerNode } from './outliner/trailingTriggers';
+import { ButtonControl } from './primitives/ButtonControl';
 import { IconButton } from './primitives/IconButton';
 import { inlineReferenceTextColor, resolveTagColor } from './tags/tagColors';
 import { TagBar } from './tags/TagBar';
@@ -295,14 +296,13 @@ export function NodePanel(props: NodePanelProps) {
         <header className="panel-header">
           {rootNode && (
             <nav className="panel-breadcrumb" aria-label="Panel breadcrumb">
-              <button
+              <ButtonControl
                 aria-label="Open workspace root"
                 className="panel-breadcrumb-origin"
                 onClick={() => props.onRoot(projection.rootId)}
-                type="button"
               >
                 <LibraryIcon size={13} />
-              </button>
+              </ButtonControl>
               {breadcrumb.nodes.map((node, index) => {
                 const label = node.content.text || 'Untitled';
                 const showCollapsedMarker = breadcrumb.collapsed && index === 1;
@@ -315,13 +315,12 @@ export function NodePanel(props: NodePanelProps) {
                         <span className="panel-breadcrumb-divider">/</span>
                       </>
                     )}
-                    <button
+                    <ButtonControl
                       className="panel-breadcrumb-button"
                       onClick={() => props.onRoot(node.id)}
-                      type="button"
                     >
                       {label}
-                    </button>
+                    </ButtonControl>
                   </span>
                 );
               })}

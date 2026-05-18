@@ -1,3 +1,5 @@
+import { ButtonControl } from '../primitives/ButtonControl';
+
 interface ViewGroupHeadingProps {
   label: string;
 }
@@ -13,12 +15,11 @@ export function ViewGroupHeading({ label }: ViewGroupHeadingProps) {
 
 export function HiddenFieldReveal({ label, onReveal }: HiddenFieldRevealProps) {
   return (
-    <button
+    <ButtonControl
       className="hidden-field-reveal"
-      type="button"
       onClick={onReveal}
     >
       {label}
-    </button>
+    </ButtonControl>
   );
 }

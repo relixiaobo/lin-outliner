@@ -18,6 +18,7 @@ import {
   ICON_SIZE,
   SettingsIcon,
 } from '../icons';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 import { SwitchControl } from '../primitives/SwitchControl';
@@ -146,17 +147,16 @@ export function AgentComposerModelMenu({
             <span>Thinking</span>
             {reasoningEnabled ? (
               <div className="agent-composer-thinking-level-wrap">
-                <button
+                <ButtonControl
                   aria-expanded={reasoningMenuOpen}
                   aria-haspopup="menu"
                   aria-label="Thinking level"
                   className="agent-composer-thinking-level"
                   onClick={() => onReasoningMenuOpenChange(!reasoningMenuOpen)}
-                  type="button"
                 >
                   {REASONING_LABELS[selectedReasoning]}
                   <ChevronDownIcon size={ICON_SIZE.tiny} />
-                </button>
+                </ButtonControl>
                 {reasoningMenuOpen ? (
                   <MenuSurface
                     aria-label="Thinking levels"

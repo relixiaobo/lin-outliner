@@ -1,4 +1,5 @@
 import { CheckboxMark } from '../primitives/CheckboxMark';
+import { ButtonControl } from '../primitives/ButtonControl';
 
 interface DoneCheckboxProps {
   checked: boolean;
@@ -7,8 +8,7 @@ interface DoneCheckboxProps {
 
 export function DoneCheckbox(props: DoneCheckboxProps) {
   return (
-    <button
-      type="button"
+    <ButtonControl
       className="done-checkbox"
       aria-pressed={props.checked}
       title={props.checked ? 'Mark not done' : 'Mark done'}
@@ -23,6 +23,6 @@ export function DoneCheckbox(props: DoneCheckboxProps) {
       }}
     >
       <CheckboxMark checked={props.checked} />
-    </button>
+    </ButtonControl>
   );
 }

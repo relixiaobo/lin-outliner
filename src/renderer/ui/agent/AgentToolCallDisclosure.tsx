@@ -4,6 +4,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
 } from '../icons';
+import { ButtonControl } from '../primitives/ButtonControl';
 
 interface AgentToolCallDisclosureProps {
   children: ReactNode;
@@ -33,17 +34,16 @@ export function AgentToolCallDisclosure({
   return (
     <div className={`agent-tool-call is-${status}`}>
       <div className="agent-tool-call-row">
-        <button
+        <ButtonControl
           aria-expanded={expanded}
           className="agent-tool-call-toggle"
           disabled={!hasDetails}
           onClick={onToggle}
-          type="button"
         >
           <Chevron className="agent-tool-call-chevron" size={12} />
           <StatusIcon className={statusIconClassName} size={14} />
           <span>{summary}</span>
-        </button>
+        </ButtonControl>
       </div>
       {images}
       {expanded && hasDetails ? (

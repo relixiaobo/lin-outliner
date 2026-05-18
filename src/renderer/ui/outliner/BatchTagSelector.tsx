@@ -10,6 +10,7 @@ import {
 } from '../interactions/contextMenuSelection';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { MenuItem } from '../primitives/MenuItem';
+import { TextInputControl } from '../primitives/TextInputControl';
 import { selectedRootIds } from '../interactions/selectionActions';
 import { clampTagSelectorIndex, tagSelectorItemLabel, tagSelectorItems } from '../interactions/tagSelector';
 import type { CommandRunner } from '../shared';
@@ -109,9 +110,10 @@ export function BatchTagSelector(props: BatchTagSelectorProps) {
     >
       <div className="batch-tag-selector" data-preserve-selection>
         <div className="batch-tag-heading">Apply tag to {targetIds.length} nodes</div>
-        <input
+        <TextInputControl
           ref={inputRef}
           className="batch-tag-input"
+          label="Search or create tag"
           value={query}
           placeholder="Search or create tag"
           onChange={(event) => {

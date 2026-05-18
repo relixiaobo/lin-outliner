@@ -181,8 +181,8 @@ compact chip contract and must not expand the dock into a file manager.
 ## Settings And Menus
 
 - Model picker, reasoning picker, and agent settings use shared `MenuSurface`,
-  `MenuItem`, `Dialog`, `FormField`, `TextInputControl`, `SelectControl`, and
-  `ButtonControl` contracts.
+  `MenuItem`, `Dialog`, `FormField`, `TextInputControl`, `SelectControl`,
+  `ButtonControl`, and `CheckboxControl` contracts.
 - Floating menus are portal-based, viewport-aware, and dismiss on Escape and
   outside pointer down.
 - Composer menu controls use shared item/switch semantics; textarea draft,

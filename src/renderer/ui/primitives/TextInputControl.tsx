@@ -1,19 +1,20 @@
-import type { InputHTMLAttributes } from 'react';
+import { forwardRef, type InputHTMLAttributes } from 'react';
 
 interface TextInputControlProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'aria-label'> {
   label: string;
 }
 
-export function TextInputControl({
+export const TextInputControl = forwardRef<HTMLInputElement, TextInputControlProps>(function TextInputControl({
   label,
   type = 'text',
   ...inputProps
-}: TextInputControlProps) {
+}, ref) {
   return (
     <input
+      ref={ref}
       {...inputProps}
       aria-label={label}
       type={type}
     />
   );
-}
+});

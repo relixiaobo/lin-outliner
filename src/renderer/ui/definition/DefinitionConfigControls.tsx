@@ -120,9 +120,9 @@ export function DefinitionColorControl(props: {
 
   return (
     <span className="definition-color-control">
-      <input
+      <TextInputControl
         type="color"
-        aria-label={`${props.label} swatch`}
+        label={`${props.label} swatch`}
         value={swatchValue}
         onChange={(event) => {
           setDraft(event.target.value);

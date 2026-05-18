@@ -637,6 +637,7 @@ Component dependencies:
 - `TextInputControl`
 - `SelectControl`
 - `ButtonControl`
+- `CheckboxControl`
 - `IconButton`
 
 ## Agent Debug Panel

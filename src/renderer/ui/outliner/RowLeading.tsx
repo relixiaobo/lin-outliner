@@ -4,6 +4,7 @@ import {
   ChevronRightIcon,
   ICON_SIZE,
 } from '../icons';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { RowMarker, type RowMarkerVariant } from './RowMarker';
 
 export type RowLeadingVariant = RowMarkerVariant;
@@ -37,7 +38,7 @@ export function RowLeading({
 }: RowLeadingProps) {
   return (
     <div className="row-leading">
-      <button
+      <ButtonControl
         className="row-chevron-button"
         title={expanded ? 'Collapse' : 'Expand'}
         onMouseDown={(event) => {
@@ -50,13 +51,12 @@ export function RowLeading({
           onDrillDown();
         }}
         tabIndex={-1}
-        type="button"
       >
         <span className={`row-chevron-shell ${expanded ? 'expanded' : ''}`}>
           <ChevronRightIcon size={ICON_SIZE.tiny} />
         </span>
-      </button>
-      <button
+      </ButtonControl>
+      <ButtonControl
         className="row-bullet-button"
         title={variant === 'field' ? 'Open field' : 'Open'}
         onClick={(event) => {
@@ -65,7 +65,6 @@ export function RowLeading({
           onDrillDown();
         }}
         tabIndex={-1}
-        type="button"
         draggable={draggable}
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
@@ -78,7 +77,7 @@ export function RowLeading({
           bulletColors={bulletColors}
           tagDefColor={tagDefColor}
         />
-      </button>
+      </ButtonControl>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import type { KeyboardEventHandler, Ref } from 'react';
+import { ButtonControl } from '../primitives/ButtonControl';
 
 interface NodeDescriptionReadProps {
   description: string;
@@ -17,14 +18,13 @@ interface NodeDescriptionEditorProps {
 
 export function NodeDescriptionRead({ description, onEdit }: NodeDescriptionReadProps) {
   return (
-    <button
-      type="button"
+    <ButtonControl
       className="node-description read"
       onMouseDown={(event) => event.stopPropagation()}
       onClick={onEdit}
     >
       {description}
-    </button>
+    </ButtonControl>
   );
 }
 

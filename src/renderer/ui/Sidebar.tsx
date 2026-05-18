@@ -11,6 +11,7 @@ import {
   SearchIcon,
   TagIcon,
 } from './icons';
+import { ButtonControl } from './primitives/ButtonControl';
 import { ResizeHandle } from './primitives/ResizeHandle';
 import { textOf } from './shared';
 
@@ -60,29 +61,27 @@ export function Sidebar(props: SidebarProps) {
           className={`workspace-tree-row ${active ? 'active' : ''}`}
           style={{ '--tree-depth': depth } as CSSProperties}
         >
-          <button
+          <ButtonControl
             aria-label={expanded ? `Collapse ${label}` : `Expand ${label}`}
             className="workspace-tree-chevron-button"
             disabled={!hasChildren}
             onClick={() => props.onToggleTreeNode(node.id)}
-            type="button"
           >
             {hasChildren && (
               expanded
                 ? <ChevronDownIcon size={ICON_SIZE.menu} strokeWidth={2} />
                 : <ChevronRightIcon size={ICON_SIZE.menu} strokeWidth={2} />
             )}
-          </button>
-          <button
+          </ButtonControl>
+          <ButtonControl
             className="workspace-tree-label"
             onClick={(event) => {
               if (event.altKey) props.onOpenPanel(node.id);
               else props.onNavigateRoot(node.id);
             }}
-            type="button"
           >
             <span>{label}</span>
-          </button>
+          </ButtonControl>
         </div>
         {hasChildren && expanded && (
           <div className="workspace-tree-children">
@@ -101,7 +100,7 @@ export function Sidebar(props: SidebarProps) {
           const active = target === props.rootId;
           const NavIcon = item.icon;
           return (
-            <button
+            <ButtonControl
               className={`sidebar-nav-item ${active ? 'active' : ''}`}
               disabled={!target}
               key={item.key}
@@ -110,11 +109,10 @@ export function Sidebar(props: SidebarProps) {
                 if (event.altKey) props.onOpenPanel(target);
                 else props.onNavigateRoot(target);
               }}
-              type="button"
             >
               <NavIcon className="sidebar-nav-icon" size={ICON_SIZE.toolbar} strokeWidth={1.8} />
               <span>{item.label}</span>
-            </button>
+            </ButtonControl>
           );
         })}
       </nav>

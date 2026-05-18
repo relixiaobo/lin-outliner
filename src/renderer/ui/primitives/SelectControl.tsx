@@ -1,21 +1,22 @@
-import type { ReactNode, SelectHTMLAttributes } from 'react';
+import { forwardRef, type ReactNode, type SelectHTMLAttributes } from 'react';
 
 interface SelectControlProps extends Omit<SelectHTMLAttributes<HTMLSelectElement>, 'aria-label' | 'children'> {
   children: ReactNode;
   label: string;
 }
 
-export function SelectControl({
+export const SelectControl = forwardRef<HTMLSelectElement, SelectControlProps>(function SelectControl({
   children,
   label,
   ...selectProps
-}: SelectControlProps) {
+}, ref) {
   return (
     <select
+      ref={ref}
       {...selectProps}
       aria-label={label}
     >
       {children}
     </select>
   );
-}
+});
