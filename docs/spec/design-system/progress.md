@@ -143,10 +143,10 @@ Completion means:
   state across tag, reference, and slash command suggestions.
 - Extracted `AgentComposerControls` and `AgentComposerModelMenu` for queued
   follow-up actions, attachment chips, attachment trigger, model picker button,
-  model/reasoning menu, reasoning switch, thinking-level menu, and the shared
-  send/stop action slot while keeping textarea draft, sending state,
-  attachments state, menu open state, provider updates, and queue/stop behavior
-  in `AgentComposer`.
+  model/reasoning menu, reasoning switch, thinking-level menu, direct settings
+  trigger, toolbar composition, and the shared send/stop action slot while
+  keeping textarea draft, sending state, attachments state, menu open state,
+  provider updates, and queue/stop behavior in `AgentComposer`.
 - Added e2e coverage for composer send, attachment chip removal, model menu
   semantics, reasoning radio state, streaming stop, and queued follow-up
   submission.

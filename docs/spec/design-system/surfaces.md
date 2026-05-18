@@ -562,6 +562,8 @@ Visual rules:
 - Composer remains compact and dock-native.
 - Textarea is the primary affordance.
 - Model and reasoning controls are secondary.
+- Settings has a direct secondary icon in the toolbar and may also be repeated
+  inside the model menu.
 - Send/stop action is clear and icon-first.
 - Send and stop occupy the same primary action slot.
 - Queued follow-up preview is visible but not a modal interruption.

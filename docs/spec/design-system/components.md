@@ -1347,12 +1347,13 @@ Structure:
 - Attachment slot.
 - Model picker.
 - Reasoning switch/menu.
+- Settings trigger.
 - Send/stop action.
 - Single primary action slot shared by send and stop.
 - Secondary control group for attachment, model, reasoning, and settings.
 - `AgentComposerControls` owns presentational controls for queued follow-up
-  actions, attachment chips, attachment trigger, model button, and primary
-  action slot.
+  actions, attachment chips, attachment trigger, model button, settings trigger,
+  toolbar composition, and primary action slot.
 - `AgentComposerModelMenu` owns the model/reasoning menu shell and item
   structure.
 - `AgentComposer` owns textarea draft, send/queue/stop behavior, file reading,

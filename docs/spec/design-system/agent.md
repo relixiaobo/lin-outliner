@@ -116,13 +116,15 @@ The composer is the bottom dock control surface.
 - Attachment, model, reasoning, and settings controls live in a secondary
   toolbar row and must not compete with the textarea.
 - Queued follow-up actions, attachment chips, model button, model/reasoning
-  menu, reasoning switch, and send/stop action slot are separate control
-  components.
+  menu, reasoning switch, settings trigger, and send/stop action slot are
+  separate control components.
 - While streaming, typed text becomes steering or a queued follow-up rather than
   forcing a second layout mode.
 - Queued steering/follow-up appears as a compact preview above the composer.
 - Model, reasoning, attachment, and settings controls are secondary toolbar
-  controls.
+  controls. Settings may also appear inside the model menu, but the composer
+  toolbar keeps a direct settings icon so configuration is not hidden behind
+  model selection.
 - On send failure, restore draft and attachments only if the user has not
   started a new draft.
 

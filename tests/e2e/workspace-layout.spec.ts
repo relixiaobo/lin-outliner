@@ -25,8 +25,7 @@ test.describe('workspace layout resizing', () => {
     await expect.poll(async () => (await sidebar.boundingBox())?.width ?? 0).toBeGreaterThan(sidebarBefore!.width + 30);
     const sidebarAfterDrag = await sidebar.boundingBox();
     expect(sidebarAfterDrag).toBeTruthy();
-    await sidebarHandle.focus();
-    await page.keyboard.press('ArrowLeft');
+    await sidebarHandle.press('ArrowLeft');
     await expect.poll(async () => (await sidebar.boundingBox())?.width ?? 0).toBeLessThan(sidebarAfterDrag!.width - 8);
 
     const agentHandle = page.getByRole('button', { name: 'Resize agent' });
@@ -40,8 +39,7 @@ test.describe('workspace layout resizing', () => {
     await expect.poll(async () => (await agent.boundingBox())?.width ?? 0).toBeGreaterThan(agentBefore!.width + 40);
     const agentAfterDrag = await agent.boundingBox();
     expect(agentAfterDrag).toBeTruthy();
-    await agentHandle.focus();
-    await page.keyboard.press('ArrowRight');
+    await agentHandle.press('ArrowRight');
     await expect.poll(async () => (await agent.boundingBox())?.width ?? 0).toBeLessThan(agentAfterDrag!.width - 8);
   });
 
