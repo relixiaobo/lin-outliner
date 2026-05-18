@@ -20,7 +20,9 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const documentService = new DocumentService();
 let mainWindow: BrowserWindow | null = null;
 let quitAfterFlush = false;
-const agentRuntime = new AgentRuntime(() => mainWindow, documentService);
+const agentRuntime = new AgentRuntime(() => mainWindow, documentService, {
+  localFileRoot: process.env.LIN_AGENT_LOCAL_ROOT ?? process.cwd(),
+});
 
 documentService.onProjectionChanged((event) => {
   mainWindow?.webContents.send(LIN_DOCUMENT_EVENT_CHANNEL, event);

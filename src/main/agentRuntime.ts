@@ -3,7 +3,10 @@ import { Agent, type StreamFn } from '@earendil-works/pi-agent-core';
 import { createAssistantMessageEventStream, getModels, streamSimple } from '@earendil-works/pi-ai';
 import type { Api, AssistantMessage, KnownProvider, Model } from '@earendil-works/pi-ai';
 import { randomUUID } from 'node:crypto';
+import { copyFile, mkdir, stat } from 'node:fs/promises';
+import path from 'node:path';
 import {
+  type AgentFileAttachmentInput,
   LIN_AGENT_EVENT_CHANNEL,
   type AgentImageAttachmentInput,
   type AgentMessageAttachmentInput,
@@ -18,7 +21,7 @@ import {
   type TextContent,
   type UserMessage,
 } from '../core/agentTypes';
-import { serializeAgentTextAttachment } from '../core/agentAttachments';
+import { serializeAgentAttachmentMarker, serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
 import {
   createAgentChatSession,
   deriveAgentChatTitle,
@@ -32,7 +35,9 @@ import {
   syncAgentMessagesToChatTree,
   type AgentChatSession,
 } from '../core/agentChatTree';
-import { createAgentTools, toolEnvelopeAfterToolCall } from './agentTools';
+import { toolEnvelopeAfterToolCall } from './agentToolEnvelope';
+import { createAgentTools } from './agentTools';
+import { LIN_AGENT_SYSTEM_PROMPT } from './agentSystemPrompt';
 import {
   addUsageToDebugTotals,
   cloneDebug,
@@ -89,7 +94,14 @@ const CONFIGURATION_ERROR_MODEL = {
 const MAX_ATTACHMENTS = 8;
 const MAX_ATTACHMENT_NAME_LENGTH = 180;
 const MAX_TEXT_ATTACHMENT_CHARS = 120_000;
-const MAX_IMAGE_ATTACHMENT_BASE64_CHARS = 18 * 1024 * 1024;
+const MAX_IMAGE_ATTACHMENT_BASE64_CHARS = Math.floor(4.5 * 1024 * 1024);
+const AGENT_ATTACHMENT_DIR = 'agent-attachments';
+const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+]);
 
 interface AgentSessionState {
   agent: Agent;
@@ -110,6 +122,7 @@ export class AgentRuntime {
   constructor(
     private readonly getWindow: () => BrowserWindow | null,
     private readonly outlinerToolHost: OutlinerToolHost,
+    private readonly options: { localFileRoot?: string } = {},
   ) {}
 
   ready() {
@@ -181,7 +194,7 @@ export class AgentRuntime {
   async sendMessage(sessionId: string, message: string, attachmentInput: unknown = []) {
     try {
       const session = await this.ensureSessionWithId(sessionId);
-      const attachments = normalizeAttachmentInputs(attachmentInput);
+      const attachments = await this.materializeFileAttachments(normalizeAttachmentInputs(attachmentInput));
       if (!message.trim() && attachments.length === 0) return;
       if (session.agent.state.isStreaming) {
         if (attachments.length > 0) {
@@ -191,7 +204,9 @@ export class AgentRuntime {
         return;
       }
       this.beginDebugQuery(session);
-      await session.agent.prompt(buildUserPromptMessage(message, attachments));
+      await session.agent.prompt(buildUserPromptMessage(message, attachments, {
+        outlinerContext: buildOutlinerContextReminder(this.outlinerToolHost),
+      }));
       await this.persistAndEmitIdle(sessionId, session);
     } catch (error) {
       this.emitError(sessionId, error instanceof Error ? error.message : String(error));
@@ -323,7 +338,7 @@ export class AgentRuntime {
     const providerConfig = await getActiveProviderRuntimeConfig();
     const activePath = getAgentChatMessages(chatSession);
     const agent = providerConfig
-      ? createConfiguredAgent(sessionId, providerConfig, activePath, this.outlinerToolHost, (payload, model) => {
+      ? createConfiguredAgent(sessionId, providerConfig, activePath, this.outlinerToolHost, this.options.localFileRoot, (payload, model) => {
           this.captureDebugPayload(sessionId, payload, model);
         })
       : createConfigurationErrorAgent(sessionId, 'No enabled agent provider is configured.', activePath);
@@ -497,6 +512,23 @@ export class AgentRuntime {
   private emit(payload: AgentRuntimeEvent) {
     this.getWindow()?.webContents.send(LIN_AGENT_EVENT_CHANNEL, payload);
   }
+
+  private localFileRoot() {
+    return path.resolve(this.options.localFileRoot ?? process.cwd());
+  }
+
+  private async materializeFileAttachments(attachments: AgentMessageAttachmentInput[]) {
+    const root = this.localFileRoot();
+    const out: AgentMessageAttachmentInput[] = [];
+    for (const attachment of attachments) {
+      if (attachment.kind !== 'file') {
+        out.push(attachment);
+        continue;
+      }
+      out.push(await materializeFileAttachment(root, attachment));
+    }
+    return out;
+  }
 }
 
 async function getLatestChatSessionByIdOrFresh(sessionId: string) {
@@ -507,10 +539,17 @@ function textContent(text: string): TextContent[] {
   return [{ type: 'text', text }];
 }
 
-function buildUserPromptMessage(message: string, attachments: AgentMessageAttachmentInput[]): UserMessage {
+function buildUserPromptMessage(
+  message: string,
+  attachments: AgentMessageAttachmentInput[],
+  context: { outlinerContext?: string | null } = {},
+): UserMessage {
   const trimmed = message.trim();
   const baseText = trimmed || defaultAttachmentPrompt(attachments);
-  const content: (TextContent | ImageContent)[] = [{ type: 'text', text: baseText }];
+  const content: (TextContent | ImageContent)[] = [];
+  const reminders = buildTurnReminderBlocks(attachments, context);
+  content.push(...reminders);
+  content.push({ type: 'text', text: baseText });
 
   for (const attachment of attachments) {
     if (attachment.kind !== 'text') continue;
@@ -540,8 +579,9 @@ function buildUserPromptMessage(message: string, attachments: AgentMessageAttach
 function defaultAttachmentPrompt(attachments: AgentMessageAttachmentInput[]): string {
   const hasText = attachments.some((attachment) => attachment.kind === 'text');
   const hasImage = attachments.some((attachment) => attachment.kind === 'image');
-  if (hasText && hasImage) return 'Please review the attached files and images.';
-  if (hasText) return 'Please review the attached files.';
+  const hasFile = attachments.some((attachment) => attachment.kind === 'file');
+  if ((hasText || hasFile) && hasImage) return 'Please review the attached files and images.';
+  if (hasText || hasFile) return 'Please review the attached files.';
   return 'Please review the attached images.';
 }
 
@@ -573,11 +613,14 @@ function normalizeAttachmentInput(input: unknown): AgentMessageAttachmentInput |
   const sizeBytes = Number.isFinite(record.sizeBytes) ? Math.max(0, Number(record.sizeBytes)) : 0;
 
   if (kind === 'image') {
+    const normalizedMimeType = normalizeInlineImageMimeType(mimeType);
+    if (!normalizedMimeType) return null;
     const dataBase64 = typeof record.dataBase64 === 'string'
-      ? record.dataBase64.slice(0, MAX_IMAGE_ATTACHMENT_BASE64_CHARS)
+      ? stripDataUrlPrefix(record.dataBase64)
       : '';
     if (!dataBase64) return null;
-    return { id, kind: 'image', name, mimeType, sizeBytes, dataBase64 };
+    if (dataBase64.length > MAX_IMAGE_ATTACHMENT_BASE64_CHARS) return null;
+    return { id, kind: 'image', name, mimeType: normalizedMimeType, sizeBytes, dataBase64 };
   }
 
   if (kind === 'text') {
@@ -594,7 +637,84 @@ function normalizeAttachmentInput(input: unknown): AgentMessageAttachmentInput |
     };
   }
 
+  if (kind === 'file') {
+    const filePath = stringOrFallback(record.path, '');
+    if (!filePath) return null;
+    return { id, kind: 'file', name, mimeType, sizeBytes, path: filePath };
+  }
+
   return null;
+}
+
+function normalizeInlineImageMimeType(mimeType: string): string | null {
+  const normalized = mimeType.toLowerCase();
+  if (normalized === 'image/jpg') return 'image/jpeg';
+  if (SUPPORTED_INLINE_IMAGE_MIME_TYPES.has(normalized)) return normalized;
+  return null;
+}
+
+function stripDataUrlPrefix(data: string): string {
+  const marker = ';base64,';
+  const markerIndex = data.indexOf(marker);
+  if (!data.startsWith('data:') || markerIndex < 0) return data;
+  return data.slice(markerIndex + marker.length);
+}
+
+function buildTurnReminderBlocks(
+  attachments: AgentMessageAttachmentInput[],
+  context: { outlinerContext?: string | null },
+): TextContent[] {
+  const blocks: TextContent[] = [];
+  const parts: string[] = [];
+  if (context.outlinerContext) {
+    parts.push(context.outlinerContext);
+  }
+  if (parts.length > 0) {
+    blocks.push({ type: 'text', text: systemReminder(parts.join('\n\n')) });
+  }
+
+  const marker = serializeAgentAttachmentMarker(attachments);
+  if (marker) {
+    blocks.push({ type: 'text', text: systemReminder(marker) });
+  }
+  return blocks;
+}
+
+function buildOutlinerContextReminder(host: OutlinerToolHost): string | null {
+  try {
+    const projection = host.getProjection();
+    const today = projection.nodes.find((node) => node.id === projection.todayId);
+    return [
+      'Current Lin outliner context:',
+      `- Today node id: ${projection.todayId}${today ? ` (${today.content.text})` : ''}`,
+      '- node_create without parent_id creates under today.',
+      '- Use node_read/node_search when you need exact node ids or current content.',
+    ].join('\n');
+  } catch {
+    return null;
+  }
+}
+
+async function materializeFileAttachment(localRoot: string, attachment: AgentFileAttachmentInput): Promise<AgentFileAttachmentInput> {
+  const sourcePath = path.resolve(attachment.path);
+  if (isPathInside(localRoot, sourcePath)) return { ...attachment, path: sourcePath };
+
+  await stat(sourcePath);
+  const attachmentDir = path.join(localRoot, 'tmp', AGENT_ATTACHMENT_DIR);
+  await mkdir(attachmentDir, { recursive: true });
+  const targetPath = path.join(attachmentDir, `${randomUUID()}-${safeAttachmentFileName(attachment.name)}`);
+  await copyFile(sourcePath, targetPath);
+  return { ...attachment, path: targetPath };
+}
+
+function isPathInside(root: string, candidate: string): boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function safeAttachmentFileName(name: string): string {
+  const base = path.basename(name).replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '');
+  return base || 'attachment';
 }
 
 function stringOrFallback(value: unknown, fallback: string): string {
@@ -665,18 +785,16 @@ function createConfiguredAgent(
   providerConfig: AgentProviderRuntimeConfig,
   messages: AgentMessage[] = [],
   outlinerToolHost: OutlinerToolHost,
+  localFileRoot?: string,
   onPayload?: (payload: unknown, model: Model<any>) => void,
 ) {
   const model = resolveModel(providerConfig);
   return new Agent({
     initialState: {
-      systemPrompt: [
-        'You are Lin Outliner local agent.',
-        'Use concise, concrete responses. When document tools become available, prefer structured edits over broad text rewrites.',
-      ].join('\n'),
+      systemPrompt: LIN_AGENT_SYSTEM_PROMPT,
       model,
       thinkingLevel: providerConfig.reasoningLevel,
-      tools: createAgentTools(outlinerToolHost),
+      tools: createAgentTools(outlinerToolHost, { localFileRoot }),
       messages,
     },
     streamFn: streamSimple as StreamFn,
@@ -698,7 +816,7 @@ function createConfiguredAgent(
 function createConfigurationErrorAgent(sessionId: string, message: string, messages: AgentMessage[] = []) {
   return new Agent({
     initialState: {
-      systemPrompt: 'You are Lin Outliner local agent.',
+      systemPrompt: LIN_AGENT_SYSTEM_PROMPT,
       model: CONFIGURATION_ERROR_MODEL,
       thinkingLevel: 'off',
       tools: [],

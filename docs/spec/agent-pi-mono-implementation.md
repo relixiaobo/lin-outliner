@@ -165,13 +165,21 @@ interface AgentRuntimeClient {
 }
 ```
 
-The boundary should expose Lin-owned event and message DTOs. pi-mono message and
-event types should not leak throughout the renderer.
+The boundary should expose Lin-owned runtime events, attachment DTOs, debug DTOs,
+and UI state. Conversation message/content types should directly reuse pi-ai
+types where possible so Lin does not maintain a parallel, shape-compatible copy
+of `TextContent`, `ImageContent`, `UserMessage`, `AssistantMessage`, or
+`ToolResultMessage`.
 
 ## Model Configuration
 
 Lin should use `pi-ai` for known provider and model metadata, but Lin should own
 the user's provider settings.
+
+Multimodal user turns should use pi-ai's native `ImageContent` shape:
+`{ type: "image", data: base64, mimeType }`. Provider adapters then translate
+the same Lin message to Anthropic base64 image blocks, OpenAI image URLs,
+Gemini inline data, and other upstream formats.
 
 Model configuration should include:
 
@@ -206,19 +214,42 @@ through Electron AgentRuntime or the TypeScript tool/provider gateway.
 
 ## System Prompt
 
-The system prompt should define Lin-specific behavior, not generic coding-agent
-behavior.
+Lin follows the same prompt layering principle as cc-2.1:
 
-It should state:
+- The stable system prompt defines identity, tool boundaries, communication
+  rules, and safety posture.
+- Per-turn `<system-reminder>` blocks carry current outliner context,
+  attachment metadata, and other dynamic state.
+- Tool descriptions define exact parameter contracts and result interpretation.
 
-- Lin is a local-first outliner.
-- The agent can read and edit the current workspace only through tools.
-- The active tab and active panel are default context, not global truth.
-- Mutations must preserve document structure and use narrow edits.
-- Risky or broad mutations may require approval.
-- The agent should prefer structured outliner tools for document work.
-- The agent may use bash and file tools only when the user asks for local
-  workspace operations or when the task clearly requires them.
+The stable prompt is implemented in `src/main/agentSystemPrompt.ts`. It should
+not contain current UI state, current node ids beyond generic rules, local file
+paths, provider settings, or any state that changes per turn.
+
+It states:
+
+- Lin is a local-first outliner and local assistant.
+- The agent should use the user's language unless asked otherwise.
+- The agent should treat `<system-reminder>` as hidden context from Lin, not as
+  user-authored text.
+- Dynamic state can change because the user may edit the outliner directly, so
+  exact node ids, node content, and file contents must be read with tools when
+  needed.
+- Outliner work should use `node_search`, `node_read`, `node_create`,
+  `node_edit`, `node_delete`, and `operation_history` with narrow mutations and
+  confirmed tool results.
+- Local file work should prefer `file_read`, `file_glob`, `file_grep`,
+  `file_edit`, and `file_write` over `bash`.
+- `bash` is reserved for terminal operations, tests, builds, package managers,
+  and system commands.
+- Web work should use `web_search` for discovery and `web_fetch` for reading
+  known URLs and verifying source details.
+- File attachments require `file_read`; inline images are visible as image
+  content blocks.
+- The agent should not invent tool outcomes, node ids, file contents, URLs, or
+  capabilities.
+- Broad or destructive actions should be gated by clear user intent and the
+  relevant approval/tool flow.
 
 Avoid putting implementation details such as React component names or internal
 TypeScript function names into the system prompt unless a tool needs them.
@@ -229,7 +260,6 @@ Each prompt should include a compact context block built by Lin, not by pi-mono.
 
 Default context:
 
-- Current workspace id and name.
 - Active tab id.
 - Active panel id.
 - Selected node ids in the active panel.
@@ -243,7 +273,7 @@ entire document unless the user explicitly asks for whole-document work.
 
 ```txt
 User prompt
-  -> context.ts builds active workspace context
+  -> context.ts builds active outliner context
   -> runtime sends messages to Agent
   -> transformContext can inject reminders or compact old messages
 ```
@@ -290,8 +320,8 @@ tools should be domain-specific, not generic file operations. The agent edits
 nodes through outliner verbs and each write is undoable as one AI operation.
 Lin should keep nodex's compact `node_*` surface, but use Lin's own final
 contracts from `agent-tool-design.md`: `node_create.outline`,
-`node_read(..., format: "outline" | "both")`, and
-`node_edit.oldString/newString`. The parser is implemented in TypeScript rather than
+`node_read(...)`, and
+`node_edit.old_string/new_string`. The parser is implemented in TypeScript rather than
 left as prompt-only behavior. Compatibility normalization belongs in the
 adapter/runtime layer and should not appear in the model-facing tool
 description. Lin code should use neutral parser names such as
@@ -324,6 +354,11 @@ possible. Runtime details can keep Lin's common `ToolResult` envelope, but
 `node_*` model-visible output should use the discriminated node protocol from
 `agent-tool-design.md` rather than exposing the envelope directly:
 
+The bridge to pi-agent-core must remain native: tool `execute` returns
+`AgentToolResult` content/details only, while Lin's shared `afterToolCall`
+adapter maps envelope errors (`details.ok === false`) to
+`ToolResultMessage.isError = true`.
+
 - Dedicated file tools should be preferred over shell commands.
 - `Read` is the freshness prerequisite for `Edit` and existing-file `Write`.
 - `Edit` is exact string replacement, not a custom patch protocol.
@@ -354,7 +389,7 @@ These tools should be configured first.
 | `node_search` | nodex `node_search`, Lin search-node outline | Yes | No | Execute a temporary or saved search node outline without mutating document state. |
 | `node_read` | nodex `node_read` | Yes | No | Read node raw type/data, fields, and bounded children. |
 | `node_create` | nodex `node_create`, Lin outline parser | Yes | Usually yes | Create outline trees, references, search/view nodes, schema nodes, or duplicates. |
-| `node_edit` | cc `Edit`, nodex `node_edit`, Lin outline parser | Yes | Usually yes | Edit a known node's canonical outline by exact replacement, or perform explicit move, merge, or reference replacement. |
+| `node_edit` | cc `Edit`, nodex `node_edit`, Lin outline parser | Yes | Usually yes | Edit a known node's annotated outline by exact replacement, or perform explicit move, merge, or reference replacement. |
 | `node_delete` | nodex `node_delete` | Yes | Usually yes | Trash or restore nodes. |
 | `operation_history` | nodex `undo`, Lin history | Yes | Depends | List, undo, or redo user and agent operations. |
 | `file_read` | cc `Read` | Yes | Usually no | Read files with bounded output and freshness tracking. |
@@ -455,7 +490,6 @@ Each command should receive:
 - `runId`
 - `toolCallId`
 - normalized tool arguments
-- active workspace id
 - active tab context if relevant
 
 Each command should return:
@@ -639,8 +673,8 @@ the outliner. TypeScript must enforce the boundary.
 
 Baseline rules:
 
-- Restrict file tools to the active workspace unless the user explicitly grants
-  broader access.
+- Restrict file tools to the configured local file root unless the user
+  explicitly grants broader access.
 - Normalize and canonicalize paths in TypeScript.
 - Enforce command timeout and output limits.
 - Redact known secret patterns from tool output where possible.
@@ -697,11 +731,25 @@ Phase 3: outliner node tools
 
 Phase 4: local file and bash tools
 
-- Add `file_read`, `file_glob`, `file_grep`, `file_edit`, and `file_write`.
-- Add `bash` with timeout, background mode, output persistence, and approval
-  policy.
-- Add `task_stop` if background `bash` is enabled.
-- Render large outputs collapsed by default.
+- Added `file_read`, `file_glob`, `file_grep`, `file_edit`, and `file_write`
+  through a TypeScript main-process local tool gateway.
+- Expanded `file_read` with image dimensions, `.ipynb` parsing, and cc-style PDF
+  page rendering through `pdfinfo`/`pdftoppm`. When `pdftotext` can extract text
+  from the selected pages, the text is attached before rendered page images.
+  Rendered PDF pages are still attached as image blocks because pi-agent-core
+  currently supports text/image tool-result content, not native PDF document
+  blocks.
+- Switched `file_grep` to a ripgrep-backed implementation with cc-style output
+  modes, relative paths, pagination, glob/type filters, and explicit multiline
+  support.
+- `file_glob` now returns local-root-relative paths to match `file_grep` and cc
+  path ergonomics.
+- Added `bash` with timeout, background mode, output caps, and output
+  persistence under `tmp/agent-tool-outputs`. Background output files include
+  task status, exit code, timestamps, stdout, and stderr.
+- Added `task_stop` for background commands created by Lin's own `bash` tool.
+- Remaining work: approval rendering, richer diff previews, background
+  completion events, and collapsed large-output UI.
 
 Cross-phase: persistence and compaction
 

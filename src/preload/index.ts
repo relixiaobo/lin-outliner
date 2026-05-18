@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../core/agentTypes';
 import { LIN_DOCUMENT_EVENT_CHANNEL, type DocumentProjectionChangedEvent } from '../core/types';
 
@@ -24,6 +24,7 @@ const api = {
     toggleMaximize: () => ipcRenderer.invoke('lin:window', 'toggle_maximize') as Promise<void>,
     close: () => ipcRenderer.invoke('lin:window', 'close') as Promise<void>,
   },
+  getFilePath: (file: File) => webUtils.getPathForFile(file),
 };
 
 contextBridge.exposeInMainWorld('lin', api);

@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  parseAgentAttachmentMarkerBlock,
   parseAgentTextAttachmentBlock,
+  serializeAgentAttachmentMarker,
   serializeAgentTextAttachment,
+  systemReminder,
 } from '../../src/core/agentAttachments';
 
 describe('agent attachments', () => {
@@ -27,5 +30,25 @@ describe('agent attachments', () => {
 
   test('ignores normal user text', () => {
     expect(parseAgentTextAttachmentBlock('Please review this file')).toBeNull();
+  });
+
+  test('serializes attachment marker for hidden model context', () => {
+    const marker = serializeAgentAttachmentMarker([{
+      id: 'file-1',
+      kind: 'file',
+      name: 'report.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 2048,
+      path: '/tmp/lin/report.pdf',
+    }]);
+
+    expect(marker).toContain('<user-attachments>');
+    expect(parseAgentAttachmentMarkerBlock(systemReminder(marker!))?.attachments).toEqual([{
+      kind: 'file',
+      name: 'report.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 2048,
+      path: '/tmp/lin/report.pdf',
+    }]);
   });
 });

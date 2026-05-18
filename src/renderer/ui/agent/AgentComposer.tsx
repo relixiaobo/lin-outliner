@@ -53,6 +53,16 @@ const VENDOR_PREFIXES = [
 const MAX_ATTACHMENTS = 6;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const MAX_TEXT_ATTACHMENT_CHARS = 80_000;
+const MAX_INLINE_IMAGE_BASE64_CHARS = Math.floor(4.5 * 1024 * 1024);
+const INLINE_IMAGE_MAX_DIMENSION = 2000;
+const INLINE_IMAGE_JPEG_QUALITIES = [0.8, 0.7, 0.55, 0.4];
+const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+]);
 
 const TEXT_ATTACHMENT_EXTENSIONS = new Set([
   '.c',
@@ -494,22 +504,33 @@ async function fileToAttachment(file: File): Promise<ComposerAttachment> {
   }
 
   const mimeType = file.type || inferMimeType(file.name);
+  const inlineImageMimeType = normalizeInlineImageMimeType(mimeType);
   const id = createAttachmentId();
   const name = file.name || (mimeType.startsWith('image/') ? 'image' : 'attachment.txt');
+  const nativePath = window.lin?.getFilePath?.(file) ?? '';
 
-  if (mimeType.startsWith('image/')) {
-    const dataUrl = await readFileAsDataUrl(file);
-    const commaIndex = dataUrl.indexOf(',');
-    const dataBase64 = commaIndex >= 0 ? dataUrl.slice(commaIndex + 1) : dataUrl;
+  if (inlineImageMimeType) {
+    const inlineImage = await readInlineImageForModel(file, inlineImageMimeType);
     const previewUrl = URL.createObjectURL(file);
     return {
       id,
       kind: 'image',
       name,
+      mimeType: inlineImage.mimeType,
+      sizeBytes: file.size,
+      dataBase64: inlineImage.dataBase64,
+      previewUrl,
+    };
+  }
+
+  if (nativePath) {
+    return {
+      id,
+      kind: 'file',
+      name,
       mimeType,
       sizeBytes: file.size,
-      dataBase64,
-      previewUrl,
+      path: nativePath,
     };
   }
 
@@ -564,6 +585,13 @@ function inferMimeType(name: string): string {
   return 'application/octet-stream';
 }
 
+function normalizeInlineImageMimeType(mimeType: string): string | null {
+  const normalized = mimeType.toLowerCase();
+  if (normalized === 'image/jpg') return 'image/jpeg';
+  if (SUPPORTED_INLINE_IMAGE_MIME_TYPES.has(normalized)) return normalized;
+  return null;
+}
+
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -574,6 +602,79 @@ function readFileAsDataUrl(file: File): Promise<string> {
     };
     reader.readAsDataURL(file);
   });
+}
+
+async function readInlineImageForModel(file: File, mimeType: string): Promise<{ dataBase64: string; mimeType: string }> {
+  const dataUrl = await readFileAsDataUrl(file);
+  const original = dataUrlToInlineImage(dataUrl, mimeType);
+  if (original.dataBase64.length <= MAX_INLINE_IMAGE_BASE64_CHARS) return original;
+  if (mimeType === 'image/gif') {
+    throw new Error(`${file.name || 'Image'} is too large for inline model vision input.`);
+  }
+  return resizeInlineImageForModel(file);
+}
+
+async function resizeInlineImageForModel(file: File): Promise<{ dataBase64: string; mimeType: string }> {
+  const bitmap = await createImageBitmap(file);
+  try {
+    let width = bitmap.width;
+    let height = bitmap.height;
+    if (width > INLINE_IMAGE_MAX_DIMENSION || height > INLINE_IMAGE_MAX_DIMENSION) {
+      const scale = Math.min(INLINE_IMAGE_MAX_DIMENSION / width, INLINE_IMAGE_MAX_DIMENSION / height);
+      width = Math.max(1, Math.round(width * scale));
+      height = Math.max(1, Math.round(height * scale));
+    }
+
+    while (width >= 1 && height >= 1) {
+      for (const quality of INLINE_IMAGE_JPEG_QUALITIES) {
+        const dataUrl = await renderBitmapToDataUrl(bitmap, width, height, 'image/jpeg', quality);
+        const candidate = dataUrlToInlineImage(dataUrl, 'image/jpeg');
+        if (candidate.dataBase64.length <= MAX_INLINE_IMAGE_BASE64_CHARS) return candidate;
+      }
+      const nextWidth = Math.max(1, Math.floor(width * 0.75));
+      const nextHeight = Math.max(1, Math.floor(height * 0.75));
+      if (nextWidth === width && nextHeight === height) break;
+      width = nextWidth;
+      height = nextHeight;
+    }
+  } finally {
+    bitmap.close();
+  }
+  throw new Error(`${file.name || 'Image'} could not be resized for inline model vision input.`);
+}
+
+function renderBitmapToDataUrl(
+  bitmap: ImageBitmap,
+  width: number,
+  height: number,
+  mimeType: string,
+  quality: number,
+): Promise<string> {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Could not prepare image for model input.');
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, width, height);
+  context.drawImage(bitmap, 0, 0, width, height);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error('Could not encode image for model input.'));
+        return;
+      }
+      readFileAsDataUrl(new File([blob], 'image.jpg', { type: mimeType })).then(resolve, reject);
+    }, mimeType, quality);
+  });
+}
+
+function dataUrlToInlineImage(dataUrl: string, fallbackMimeType: string): { dataBase64: string; mimeType: string } {
+  const commaIndex = dataUrl.indexOf(',');
+  const header = commaIndex >= 0 ? dataUrl.slice(0, commaIndex) : '';
+  const dataBase64 = commaIndex >= 0 ? dataUrl.slice(commaIndex + 1) : dataUrl;
+  const mimeType = /^data:([^;]+);/i.exec(header)?.[1] ?? fallbackMimeType;
+  return { dataBase64, mimeType };
 }
 
 async function sha256File(file: File): Promise<string> {
