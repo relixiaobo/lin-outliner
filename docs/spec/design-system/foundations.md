@@ -72,6 +72,7 @@ Use these default desktop tokens before adding component-specific values:
   --tab-active-bg: #e4e4e7; /* Zinc-200 */
   --control-hover: rgba(0, 0, 0, 0.055);
   --control-active: rgba(0, 0, 0, 0.08);
+  --focus-border: rgba(9, 9, 11, 0.52);
   --focus-ring: rgba(9, 9, 11, 0.24);
 
   --accent-brand: #f43f5e; /* Rose-500, sparse brand/status indicator only */
@@ -176,6 +177,17 @@ Stacking order:
 
 Overlays should render through a shared shell-level overlay host to avoid panel
 clipping and stacking conflicts.
+
+## Scrollbars
+
+Scrollbars are product infrastructure, not decorative chrome.
+
+- Scrollbars stay visible when a region can scroll; do not hide them globally.
+- Use thin neutral thumbs with transparent tracks.
+- Scroll containers reserve gutter space where possible so the thumb does not
+  cover text, row controls, or debug/code output.
+- Avoid dark, thick, platform-default scrollbars inside panels, popovers, debug
+  inspectors, composer menus, and long code/tool blocks.
 
 ## Motion
 

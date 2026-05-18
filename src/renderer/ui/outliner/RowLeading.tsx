@@ -53,7 +53,7 @@ export function RowLeading({
         tabIndex={-1}
       >
         <span className={`row-chevron-shell ${expanded ? 'expanded' : ''}`}>
-          <ChevronRightIcon size={ICON_SIZE.tiny} />
+          <ChevronRightIcon size={ICON_SIZE.rowGlyph} />
         </span>
       </ButtonControl>
       <ButtonControl

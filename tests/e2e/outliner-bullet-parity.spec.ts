@@ -170,48 +170,67 @@ test.describe('outliner bullet parity', () => {
     expect(borderWidths).toEqual(['0px', '0px', '0px', '0px']);
   });
 
-  test('parent chevrons remain visible without moving the bullet axis', async ({ page }) => {
+  test('parent chevrons are hover-only and do not duplicate the child bullet state', async ({ page }) => {
     await page.getByRole('button', { name: 'Library' }).click();
 
     const dailyRow = rowBody(page, ids.daily);
-    const metrics = await dailyRow.evaluate((element) => {
+    const restingMetrics = await dailyRow.evaluate((element) => {
       const rowRect = element.getBoundingClientRect();
       const chevron = element.querySelector('.row-chevron-button');
+      const chevronShell = element.querySelector('.row-chevron-shell');
       const bullet = element.querySelector('.row-bullet-button');
-      if (!chevron || !bullet) throw new Error('missing row leading elements');
+      const bulletShape = element.querySelector('.row-bullet-shape');
+      if (!chevron || !chevronShell || !bullet || !bulletShape) throw new Error('missing row leading elements');
       const chevronRect = chevron.getBoundingClientRect();
+      const chevronShellRect = chevronShell.getBoundingClientRect();
       const bulletRect = bullet.getBoundingClientRect();
+      const bulletShapeRect = bulletShape.getBoundingClientRect();
       return {
         chevronOpacity: Number(getComputedStyle(chevron).opacity),
         chevronLeft: chevronRect.left - rowRect.left,
+        chevronShellWidth: chevronShellRect.width,
         bulletLeft: bulletRect.left - rowRect.left,
+        bulletShapeWidth: bulletShapeRect.width,
       };
     });
 
-    expect(metrics.chevronOpacity).toBeGreaterThan(0.3);
-    expectClose(metrics.chevronLeft, 6);
-    expectClose(metrics.bulletLeft, 25);
+    expect(restingMetrics.chevronOpacity).toBe(0);
+    expectClose(restingMetrics.chevronLeft, 6);
+    expectClose(restingMetrics.bulletLeft, 25);
+    expectClose(restingMetrics.chevronShellWidth, restingMetrics.bulletShapeWidth);
+
+    await dailyRow.hover();
+
+    await expect.poll(async () => dailyRow.locator('.row-chevron-button').evaluate((element) =>
+      Number(getComputedStyle(element).opacity))).toBeGreaterThan(0.9);
   });
 });
 
 test.describe('outliner field row visual parity', () => {
-  test('root field entries render in the panel heading field segment, not the body list', async ({ page }) => {
+  test('root field entries render in normal body order', async ({ page }) => {
     await openMockedApp(page, { optionsField: true });
 
     const panel = page.locator('.main-panel').first();
-    await expect(panel.locator(`.panel-heading-fields [data-node-id="${ids.priorityEntry}"]`)).toBeVisible();
-    await expect(panel.locator(`.panel-inner > .outliner [data-node-id="${ids.priorityEntry}"]`)).toHaveCount(0);
+    await expect(panel.locator('.panel-heading-fields')).toHaveCount(0);
+    await expect(panel.locator(`.panel-inner > .outliner [data-node-id="${ids.priorityEntry}"]`)).toBeVisible();
+
+    const priorityBox = await row(page, ids.priorityEntry).boundingBox();
+    const alphaBox = await row(page, ids.alpha).boundingBox();
+    expect(priorityBox).toBeTruthy();
+    expect(alphaBox).toBeTruthy();
+    expect(priorityBox!.y).toBeLessThan(alphaBox!.y);
   });
 
-  test('field value rows use the dense label-value axis without an inner value bullet', async ({ page }) => {
+  test('field value rows use a node-like value preview on the dense label-value axis', async ({ page }) => {
     await openMockedApp(page, { optionsField: true });
 
     const priorityRow = rowBody(page, ids.priorityEntry);
-    await expect(priorityRow.locator('.field-value-node-bullet')).toHaveCount(0);
+    await expect(priorityRow.locator('.field-value-outliner .trailing-leading')).toHaveCount(1);
+    await expect(priorityRow.locator('.field-value-node-preview')).toHaveAttribute('aria-label', 'Select option');
 
     const metrics = await priorityRow.evaluate((element) => {
       const name = element.querySelector('.field-name-input')?.getBoundingClientRect();
-      const value = element.querySelector('.field-value-row-content')?.getBoundingClientRect();
+      const value = element.querySelector('.field-value-node-preview')?.getBoundingClientRect();
       if (!name || !value) throw new Error('missing field row cells');
       return {
         nameCenter: name.top + name.height / 2,
@@ -220,6 +239,44 @@ test.describe('outliner field row visual parity', () => {
     });
 
     expectClose(metrics.nameCenter, metrics.valueCenter);
+  });
+
+  test('field label keeps first-line alignment when the value contains multiple rows', async ({ page }) => {
+    await openMockedApp(page, { optionsField: true });
+
+    await page.evaluate(async ({ parentId }) => {
+      const win = window as Window & {
+        lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      };
+      await win.lin?.invoke('create_node', { parentId, index: null, text: 'First value' });
+      await win.lin?.invoke('create_node', { parentId, index: null, text: 'Second value' });
+    }, { parentId: ids.priorityEntry });
+    await emitDocumentEvent(page, {
+      type: 'projection_changed',
+      origin: 'test',
+      projection: await e2eProjection(page),
+      timestamp: Date.now(),
+    });
+
+    const priorityRow = rowBody(page, ids.priorityEntry);
+    await expect(priorityRow.locator('.field-value-outliner .row-wrap')).toHaveCount(2);
+
+    const metrics = await priorityRow.evaluate((element) => {
+      const leading = element.querySelector(':scope > .row-leading')?.getBoundingClientRect();
+      const name = element.querySelector('.field-name-input')?.getBoundingClientRect();
+      const firstValueLeading = element
+        .querySelector('.field-value-outliner > .row-wrap:first-child > .row > .row-leading')
+        ?.getBoundingClientRect();
+      if (!leading || !name || !firstValueLeading) throw new Error('missing field alignment target');
+      return {
+        leadingTop: leading.top,
+        nameTop: name.top,
+        firstValueLeadingTop: firstValueLeading.top,
+      };
+    });
+
+    expectClose(metrics.nameTop, metrics.leadingTop);
+    expectClose(metrics.nameTop, metrics.firstValueLeadingTop);
   });
 });
 

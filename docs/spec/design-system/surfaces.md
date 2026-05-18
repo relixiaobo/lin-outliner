@@ -167,7 +167,7 @@ Regions:
 - Dedicated title tag row.
 - Title action buttons, including More for the same node action surface as the
   row context menu.
-- Optional heading field rows.
+- Optional day navigation for daily note panels.
 - Optional definition configuration.
 - Optional definition template label.
 - Outliner body.
@@ -193,6 +193,8 @@ Spacing:
   leading grid remains unchanged.
 - Header action controls align to the panel content right edge. Do not add a
   second header-only right inset on top of `--panel-content-x`.
+- If the panel title has no tags, the More action sits in the title row and
+  aligns with the title. If title tags exist, More sits in the tag row.
 - Wrapper CSS may control panel surface size and scroll behavior, but should not
   override row font size or row rhythm.
 
@@ -348,9 +350,7 @@ Current sources:
 
 - `src/renderer/ui/definition/DefinitionConfigPanel.tsx`
 - `src/renderer/ui/outliner/OutlinerFieldRow.tsx`
-- `src/renderer/ui/outliner/FieldValueRenderer.tsx`
-- `src/renderer/ui/outliner/FieldValueRow.tsx`
-- `src/renderer/ui/outliner/OptionsPicker.tsx`
+- `src/renderer/ui/outliner/FieldValueOutliner.tsx`
 - `src/renderer/ui/outliner/ViewToolbar.tsx`
 
 Visual rules:
@@ -423,7 +423,6 @@ Current sources:
 - `src/renderer/ui/outliner/TriggerPopover.tsx`
 - `src/renderer/ui/outliner/SlashCommandMenu.tsx`
 - `src/renderer/ui/outliner/ReferenceSelector.tsx`
-- `src/renderer/ui/outliner/OptionsPicker.tsx`
 - `src/renderer/ui/outliner/PopoverList.tsx`
 - `src/renderer/ui/agent/AgentComposer.tsx`
 
@@ -514,13 +513,13 @@ Visual rules:
 - Streaming indicator should be visible but quiet.
 - Error state uses semantic danger and icon.
 - Message actions reveal on hover/focus-within but remain keyboard reachable.
-- Tool-call rows use stable icon and label slots across pending, done, and error
-  states.
+- Tool-call rows use one stable disclosure/status slot plus the label slot
+  across pending, done, error, hover, focus, and expanded states.
 - Process details may use a subtle timeline rule, not a separate card for every
   event.
 - Tool-call rows should not rely on a background or border per row in normal
-  states; hierarchy comes from grouping, indentation, icon slots, and text
-  weight.
+  states; hierarchy comes from grouping, indentation, the shared
+  disclosure/status slot, and text weight.
 - A tool call's default state is one action-summary row. Input/output payloads
   appear only in the expanded state and must be bounded so long output does not
   dominate the chat.
@@ -560,10 +559,18 @@ Current sources:
 Visual rules:
 
 - Composer remains compact and dock-native.
+- Composer, chat scroll, and dock header share the same horizontal dock inset;
+  the composer right edge matches the sidebar right inset.
+- Composer bottom aligns to the workspace panel bottom edge, and the composer
+  surface radius uses the shared `--panel-radius`.
 - Textarea is the primary affordance.
+- Textarea and toolbar live in one quiet surface; do not add an internal
+  divider between them.
+- Focus uses a neutral dark border. Brand/accent color is reserved for
+  actions, status, or validation states, not normal input focus.
 - Model and reasoning controls are secondary.
-- Settings has a direct secondary icon in the toolbar and may also be repeated
-  inside the model menu.
+- Provider settings is a single agent-header entry; do not duplicate it in the
+  composer toolbar or model menu.
 - Send/stop action is clear and icon-first.
 - Send and stop occupy the same primary action slot.
 - Queued follow-up preview is visible but not a modal interruption.
@@ -574,6 +581,8 @@ Behavior:
 - Enter sends unless Shift is held or IME composition is active.
 - During streaming, submitting text queues a follow-up or steer.
 - Stop replaces send when streaming and no draft is present.
+- Waiting and streaming output share one assistant turn container so the active
+  processing indicator remains anchored when the first text chunk appears.
 - Model picker and reasoning controls use overlay/menu behavior.
 - Model/reasoning menu and conversation picker positioning use the shared
   anchored overlay model; open state, provider updates, and composer draft
@@ -660,12 +669,14 @@ Visual rules:
 - Overview is a compact metric strip: session, model, context, and status.
 - Request context owns token budget, system prompt, tool schemas, and raw request
   payload links.
-- Provider timeline owns query, round, message, response, and raw provider
-  payload details.
+- Provider timeline owns query, round, request message, provider response, and
+  raw provider payload details. Request messages and the provider response are
+  peers in one ordered message list; response is not a separate column.
 - Long JSON, tool schema, thinking, tool input, and tool output bodies are
   bounded scroll regions.
-- Debug cards may use subtle section backgrounds, but they must remain quieter
-  than the primary outliner panel and agent chat.
+- Debug panels use the workspace white surface. Cards and rows rely on light
+  borders, compact spacing, and bounded disclosure bodies rather than tinted
+  page backgrounds.
 
 Behavior:
 

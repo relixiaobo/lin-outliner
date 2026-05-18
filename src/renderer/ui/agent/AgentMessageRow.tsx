@@ -32,7 +32,6 @@ import {
   AgentMessageActions,
   AgentMessageError,
   AgentMessageFrame,
-  AgentStreamingCapsule,
   AgentStreamingIndicator,
 } from './AgentMessageFrame';
 
@@ -230,10 +229,6 @@ function renderAssistantBlocks(
   return rendered;
 }
 
-function isMessageEntry(entry: AgentConversationEntry): entry is AgentMessageEntry {
-  return entry.kind === 'message';
-}
-
 export function AgentMessageRow({
   busy = false,
   contentKey,
@@ -288,14 +283,6 @@ export function AgentMessageRow({
     setEditing(false);
   }
 
-  if (!isMessageEntry(entry)) {
-    return (
-      <AgentMessageFrame role="assistant">
-        <AgentStreamingCapsule labelled />
-      </AgentMessageFrame>
-    );
-  }
-
   const { message } = entry;
   const streaming = streamingOverride ?? entry.streaming;
   const turnActive = turnPhase !== 'idle';
@@ -346,38 +333,6 @@ export function AgentMessageRow({
     }
     return (
       <AgentMessageFrame role="user">
-        {!turnActive ? (
-          <AgentMessageActions>
-            {nodeId && onEdit && !hasAttachments && text.trim().length > 0 ? (
-              <IconButton
-                className="agent-message-action-button"
-                disabled={actionsDisabled}
-                icon={PencilIcon}
-                label="Edit message"
-                onClick={() => {
-                  setEditDraft(text);
-                  setEditing(true);
-                }}
-                title="Edit"
-                variant="message"
-              />
-            ) : null}
-            <IconButton
-              className="agent-message-action-button"
-              disabled={!text.trim()}
-              icon={CopyStateIcon}
-              label="Copy message"
-              onClick={() => void copyMessage(text)}
-              title="Copy"
-              variant="message"
-            />
-            <AgentBranchNavigator
-              branches={entry.branches}
-              disabled={actionsDisabled}
-              onSwitchBranch={onSwitchBranch}
-            />
-          </AgentMessageActions>
-        ) : null}
         <div className="agent-user-content">
           {userContent.textAttachments.length > 0 ? (
             <div className="agent-user-file-list">
@@ -402,6 +357,38 @@ export function AgentMessageRow({
             </div>
           ) : null}
           {text.trim().length > 0 ? <div className="agent-user-bubble">{text}</div> : null}
+          {!turnActive ? (
+            <AgentMessageActions>
+              {nodeId && onEdit && !hasAttachments && text.trim().length > 0 ? (
+                <IconButton
+                  className="agent-message-action-button"
+                  disabled={actionsDisabled}
+                  icon={PencilIcon}
+                  label="Edit message"
+                  onClick={() => {
+                    setEditDraft(text);
+                    setEditing(true);
+                  }}
+                  title="Edit"
+                  variant="message"
+                />
+              ) : null}
+              <IconButton
+                className="agent-message-action-button"
+                disabled={!text.trim()}
+                icon={CopyStateIcon}
+                label="Copy message"
+                onClick={() => void copyMessage(text)}
+                title="Copy"
+                variant="message"
+              />
+              <AgentBranchNavigator
+                branches={entry.branches}
+                disabled={actionsDisabled}
+                onSwitchBranch={onSwitchBranch}
+              />
+            </AgentMessageActions>
+          ) : null}
         </div>
       </AgentMessageFrame>
     );

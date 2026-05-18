@@ -219,6 +219,22 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       queries: 1,
       rounds: 1,
     };
+    const agentSessions = [
+      {
+        id: 'mock-agent-session',
+        title: 'Agent System',
+        createdAt: now - 100_000,
+        updatedAt: now - 1_000,
+        messageCount: 33,
+      },
+      {
+        id: 'mock-agent-session-2',
+        title: null,
+        createdAt: now - 200_000,
+        updatedAt: now - 80_000,
+        messageCount: 1,
+      },
+    ];
 
     const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
     const applyRichTextPatch = (content: RichText, patch: RichTextPatch): RichText => {
@@ -306,7 +322,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       todayId: ids.today,
       nodes: [...nodes.values()],
     });
-    const outcome = (focus?: { nodeId: string; selectAll: boolean; parentId?: string | null; placement?: unknown }) => ({
+    const outcome = (focus?: {
+      nodeId: string;
+      selectAll: boolean;
+      parentId?: string | null;
+      placement?: unknown;
+      surface?: string;
+    }) => ({
       projection: projection(),
       ...(focus ? { focus } : {}),
     });
@@ -423,6 +445,23 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       appendChild(parentId, fieldEntryId, index);
       return fieldEntryId;
     };
+    const convertNodeToInlineField = (nodeId: string, name: string, fieldType: string) => {
+      const node = nodes.get(nodeId);
+      if (!node?.parentId) return nodeId;
+      const fieldDefId = `field-def-${++sequence}`;
+      makeNode(fieldDefId, name, { type: 'fieldDef', fieldType, parentId: ids.schema, nullable: true });
+      appendChild(ids.schema, fieldDefId);
+      node.type = 'fieldEntry';
+      node.fieldDefId = fieldDefId;
+      node.fieldType = fieldType;
+      node.content = rich('');
+      node.tags = [];
+      node.showCheckbox = false;
+      node.doneStateEnabled = false;
+      delete node.completedAt;
+      node.updatedAt = ++now;
+      return nodeId;
+    };
     const setOptionalText = (node: MockNode, key: keyof MockNode, value: unknown) => {
       const normalized = typeof value === 'string' ? value.trim() : value == null ? '' : String(value);
       if (!normalized) {
@@ -519,7 +558,20 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone({ sessionId: 'mock-agent-session' }) as T;
         }
         if (cmd === 'agent_get_provider_settings') return clone(agentSettings) as T;
-        if (cmd === 'agent_list_sessions') return clone([]) as T;
+        if (cmd === 'agent_list_sessions') return clone(agentSessions) as T;
+        if (cmd === 'agent_rename_session') {
+          const target = agentSessions.find((session) => session.id === args.sessionId);
+          if (target) {
+            target.title = String(args.title ?? '');
+            target.updatedAt = now += 1;
+          }
+          return clone({ ok: true }) as T;
+        }
+        if (cmd === 'agent_delete_session') {
+          const index = agentSessions.findIndex((session) => session.id === args.sessionId);
+          if (index >= 0) agentSessions.splice(index, 1);
+          return clone({ ok: true }) as T;
+        }
         if (cmd === 'agent_upsert_provider_config') {
           const provider = args.provider as {
             providerId: string;
@@ -589,7 +641,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             node.content = applyRichTextPatch(node.content, args.patch as RichTextPatch);
             node.updatedAt = ++now;
           }
-          return clone(outcome({ nodeId: String(args.nodeId), selectAll: false }));
+          return clone(outcome({
+            nodeId: String(args.nodeId),
+            selectAll: false,
+            placement: { kind: 'preserve' },
+          }));
         }
         if (cmd === 'split_node') {
           const nodeId = String(args.nodeId);
@@ -752,14 +808,24 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'create_inline_field') {
           const fieldEntryId = inlineField(String(args.parentId), args.index as number | null, String(args.name), String(args.fieldType));
-          return clone(outcome({ nodeId: fieldEntryId, selectAll: false }));
+          return clone(outcome({
+            nodeId: fieldEntryId,
+            parentId: String(args.parentId),
+            placement: { kind: 'all' },
+            selectAll: true,
+            surface: 'field-name',
+          }));
         }
         if (cmd === 'create_inline_field_after_node') {
-          const after = nodes.get(String(args.afterNodeId));
-          const parent = after?.parentId ? nodes.get(after.parentId) : null;
-          const index = parent && after ? parent.children.indexOf(after.id) + 1 : null;
-          const fieldEntryId = inlineField(after?.parentId ?? ids.today, index, String(args.name), String(args.fieldType));
-          return clone(outcome({ nodeId: fieldEntryId, selectAll: false }));
+          const fieldEntryId = convertNodeToInlineField(String(args.afterNodeId), String(args.name), String(args.fieldType));
+          const parentId = nodes.get(fieldEntryId)?.parentId ?? null;
+          return clone(outcome({
+            nodeId: fieldEntryId,
+            parentId,
+            placement: { kind: 'all' },
+            selectAll: true,
+            surface: 'field-name',
+          }));
         }
         if (cmd === 'register_collected_option') {
           return clone(registerOption(String(args.fieldDefId), String(args.name)));
@@ -798,7 +864,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd === 'ensure_date_node') {
           const label = `${String(args.year).padStart(4, '0')}-${String(args.month).padStart(2, '0')}-${String(args.day).padStart(2, '0')}`;
           const existing = [...nodes.values()].find((node) => node.parentId === ids.daily && node.content.text === label);
-          const nodeId = existing?.id ?? createNode(ids.daily, null, label);
+          const nodeId = existing?.id ?? createNode(ids.daily, null, label, { tags: [ids.dayTag], showCheckbox: false });
           return clone(outcome({ nodeId, selectAll: false }));
         }
         if (cmd === 'set_node_toolbar_visible') {

@@ -3,11 +3,12 @@ import { api } from '../api/client';
 import type { DocumentProjection, NodeId, SearchHit } from '../api/types';
 import type { DocumentIndex } from '../state/document';
 import {
-  AddIcon,
+  AddChildIcon,
   CalendarIcon,
   ICON_SIZE,
   LibraryIcon,
   SearchIcon,
+  SupertagIcon,
   TrashIcon,
   type AppIcon,
 } from './icons';
@@ -107,7 +108,7 @@ export function CommandPalette(props: CommandPaletteProps) {
     {
       id: props.projection.schemaId,
       label: 'Schema',
-      icon: LibraryIcon,
+      icon: SupertagIcon,
       kind: 'navigate',
       typeLabel: 'Navigate',
       action: () => openNode(props.projection.schemaId),
@@ -144,7 +145,7 @@ export function CommandPalette(props: CommandPaletteProps) {
     ? {
       id: '__create__',
       label: trimmedQuery,
-      icon: AddIcon,
+      icon: AddChildIcon,
       kind: 'create',
       typeLabel: 'New in Today',
       action: createFromQuery,

@@ -16,7 +16,8 @@ Sider-agent is useful for interaction structure:
 - Process blocks that group contiguous thinking and tool calls.
 - Tool-call summaries that are action-based instead of raw JSON-first.
 - Composer behavior for streaming, steering, send/stop, IME, and auto-resize.
-- Shared floating menus for model and settings choices.
+- Shared floating menus for model choices and a single header-owned settings
+  entry.
 - Sticky-bottom chat scrolling only when the user is already near the bottom.
 
 Do not copy sider-agent as visual style:
@@ -49,7 +50,16 @@ The dock is a shell surface, not a tab surface.
 - Resize range: `280px` to `520px`.
 - Collapsed width: `0px`.
 - Header stays compact and aligned with the top chrome rhythm.
+- Header, chat scroll content, steering preview, and composer share a single
+  internal dock inset: `--agent-dock-inset-x` (`8px` at the current scale),
+  matching the sidebar's right inset.
 - Current title pattern remains `# conversation`.
+- The title trigger uses content-width geometry with internal padding; its
+  hover/active background must not stretch across unused header space.
+- Header actions are real commands only. Do not add decorative status dots or
+  placeholder circles.
+- Conversation rename keeps the same row height as the read-only session row so
+  editing a title does not move the menu contents.
 - Collapse state does not reset active tab, panel layout, chat draft, or
   conversation state.
 - Resize uses the shared `ResizeHandle` contract.
@@ -76,7 +86,10 @@ Process blocks make agent work legible without turning the chat into a log
 viewer.
 
 - Group contiguous thinking and tool calls under one compact header.
-- Header contains status icon, concise summary, and disclosure chevron.
+- Header contains one measured disclosure/status slot and a concise summary.
+- The status/tool icon and disclosure chevron share that slot: default state
+  communicates the status or tool type, while hover/focus/expanded state reveals
+  the disclosure affordance without moving text.
 - Pending process may expand while live.
 - Process collapses after final prose appears unless the user explicitly opened
   it.
@@ -88,8 +101,8 @@ viewer.
 - Thinking rows are independently collapsible inside the process timeline:
   collapsed shows a one-line preview, expanded shows the full thinking text.
 - Tool rows should sit inside the process hierarchy. Avoid per-tool card
-  backgrounds in normal states; use indentation, a light timeline rule, stable
-  icon slots, and text hierarchy first.
+  backgrounds in normal states; use indentation, a light timeline rule, the
+  shared disclosure/status slot, and text hierarchy first.
 - Default tool state is a single action-summary row.
 - Expanded tool state may reveal input and output payload details under that row.
 - Tool input/output payloads are often long; render them in bounded, scrollable
@@ -114,10 +127,14 @@ runtime history. It must not become the normal chat presentation.
 - Overview shows session count, model, context budget, and status as compact
   metrics.
 - Request Context contains system prompt, tools, and request JSON.
-- Provider Timeline contains query, round, message, response, and raw payload
-  disclosure.
+- Provider Timeline contains query and round groups. Request messages and the
+  provider response are rendered as one ordered message list; response must not
+  become a separate side column.
 - Debug payloads are bounded and scrollable; raw JSON is never the primary row
   label.
+- Debug surfaces use the same white panel background as the workspace; subtle
+  section separation comes from light borders and spacing, not tinted page
+  backgrounds.
 - Refresh and copy use shared icon-button affordances.
 
 ## Approval And Tool Preview
@@ -146,24 +163,38 @@ Contract:
 
 ## Composer Contract
 
-The composer is the bottom dock control surface.
+The composer is the bottom dock control surface. It stays bottom-aligned inside
+the dock and uses the same horizontal inset as the header and chat scroll
+content. Its bottom edge aligns with the workspace panel bottom edge, and its
+surface radius uses `--panel-radius`.
 
 - Textarea is the primary affordance.
 - Auto-resize the textarea up to a bounded maximum height.
 - Enter sends unless Shift is held or IME composition is active.
 - Send and stop share the same primary action slot.
-- Attachment, model, reasoning, and settings controls live in a secondary
-  toolbar row and must not compete with the textarea.
+- Attachment, model, and reasoning controls live in a secondary toolbar row and
+  must not compete with the textarea.
+- The composer surface stays visually unified. Do not insert a divider between
+  textarea and toolbar.
+- Composer surface radius uses `--panel-radius`; nested action buttons use the
+  compact control radius so the input surface and primary action read as one
+  nested control family.
+- Focus on the composer/input surface uses the neutral dark focus border, not
+  brand/accent color.
+- Stop uses a filled square glyph in the shared primary action slot, not an
+  outlined square icon.
 - Queued follow-up actions, attachment chips, model button, model/reasoning
-  menu, reasoning switch, settings trigger, and send/stop action slot are
-  separate control components.
+  menu, reasoning switch, and send/stop action slot are separate control
+  components.
 - While streaming, typed text becomes steering or a queued follow-up rather than
   forcing a second layout mode.
+- Active assistant waiting, tool, and text-streaming states share the same
+  assistant turn shell. The processing indicator must not move between a
+  temporary row and the final message row when text starts.
 - Queued steering/follow-up appears as a compact preview above the composer.
-- Model, reasoning, attachment, and settings controls are secondary toolbar
-  controls. Settings may also appear inside the model menu, but the composer
-  toolbar keeps a direct settings icon so configuration is not hidden behind
-  model selection.
+- Model, reasoning, and attachment controls are secondary toolbar controls.
+  Provider settings has one entry in the agent header, not duplicated in the
+  composer toolbar or model menu.
 - On send failure, restore draft and attachments only if the user has not
   started a new draft.
 

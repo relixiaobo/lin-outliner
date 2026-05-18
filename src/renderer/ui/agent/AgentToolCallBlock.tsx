@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ToolCall, ToolResultMessage } from '../../../core/agentTypes';
 import {
-  AddIcon,
   CheckIcon,
-  CodeIcon,
   CopyIcon,
   FileTextIcon,
   ICON_SIZE,
   LoaderIcon,
+  NodeCreateToolIcon,
+  NodeEditToolIcon,
   RestoreIcon,
   SearchIcon,
   TerminalIcon,
@@ -66,15 +66,16 @@ export function getToolCallStatus(
 }
 
 function getToolIcon(toolCall: ToolCall) {
-  if (toolCall.name === 'node_create') return AddIcon;
+  if (toolCall.name === 'node_create') return NodeCreateToolIcon;
   if (toolCall.name === 'node_read') return FileTextIcon;
+  if (toolCall.name === 'node_edit') return NodeEditToolIcon;
   if (toolCall.name === 'node_search' || toolCall.name === 'web_search') return SearchIcon;
   if (toolCall.name === 'node_delete') {
     return toolCall.arguments.restore === true ? RestoreIcon : TrashIcon;
   }
   if (toolCall.name === 'web_fetch') return UrlIcon;
   if (toolCall.name === 'bash') return TerminalIcon;
-  if (toolCall.name === 'file_edit') return CodeIcon;
+  if (toolCall.name === 'file_edit') return NodeEditToolIcon;
   return WarningIcon;
 }
 

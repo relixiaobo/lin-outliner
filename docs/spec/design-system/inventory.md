@@ -26,12 +26,12 @@ Inventory covers shipped or in-progress product UI under `src/renderer/ui`:
 | Outliner rows | `OutlinerItem.tsx`, `OutlinerRowShell.tsx`, `RowLeading.tsx`, `RowMarker.tsx`, `NodeDescriptionSurface.tsx`, `OutlinerViewChrome.tsx`, `RowHost.tsx`, `useOutlinerRowInteraction.ts` | `components.md` | Row shell, leading marker, description visuals, and view chrome are isolated; full row visual contract and behavior boundary cleanup are in scope. |
 | Editor | `RichTextEditor.tsx`, `FloatingEditorToolbar.tsx`, `editorRegistry.ts` | `components.md`, `implementation.md` | ProseMirror-based editor is core infrastructure; floating toolbar now uses shared anchored overlay positioning. |
 | Tags | `AppliedTag.tsx`, `TagBar.tsx`, `tagColors.ts`, `TagSelector.tsx`, `BatchTagSelector.tsx` | `components.md`, `patterns.md` | Applied tag measured rendering is isolated and tokenized; tag context menu now uses shared anchored positioning while selector, batch, focus, and validation convergence remain. |
-| Fields and definitions | `DefinitionConfigPanel.tsx`, `DefinitionConfigControls.tsx`, `DefinitionConfigRowShell.tsx`, `FieldEntryGrid.tsx`, `FieldValueRenderer.tsx`, `OptionsPicker.tsx`, field row files | `components.md`, `surfaces.md` | Field entry layout, definition row shell, definition controls, and option popover shell are isolated; option pickers now use shared anchored positioning while field values and definition configuration receive one final dense-row visual pass in this refactor. |
+| Fields and definitions | `DefinitionConfigPanel.tsx`, `DefinitionConfigControls.tsx`, `DefinitionConfigRowShell.tsx`, `FieldEntryGrid.tsx`, `OutlinerFieldRow.tsx`, `FieldValueOutliner.tsx` | `components.md`, `surfaces.md` | Field entry layout, definition row shell, definition controls, and field value mini-outliner flow are isolated; field values remain child nodes while definition configuration keeps dense-row controls. |
 | Commands | `CommandPalette.tsx`, `useWorkspaceKeyboard.ts` | `components.md`, `implementation.md` | Core overlay exists; dialog shell and menu item rows are shared while search/list behavior stays command-owned. |
 | Node menus | `NodeContextMenu.tsx`, `TriggerPopover.tsx`, `SlashCommandMenu.tsx`, `ReferenceSelector.tsx` | `components.md`, `implementation.md` | Trigger listbox shell, option rows, trigger positioning, and node context-menu positioning are shared; context-menu submodes and keyboard/focus convergence remain. |
 | Agent dock | `AgentDock.tsx`, `AgentChatPanel.tsx`, `AgentDebugPanel.tsx` | `surfaces.md`, `patterns.md` | Real surface exists and is persistent; chat/message primitives are mostly isolated and debug now has a sectioned inspection hierarchy. |
 | Agent messages | `AgentMessageRow.tsx`, `AgentMessageFrame.tsx`, `AgentBranchNavigator.tsx`, `AgentProcessBlock.tsx`, `AgentProcessTimeline.tsx`, `AgentThinkingBlock.tsx`, `AgentToolCallBlock.tsx`, `AgentToolCallDisclosure.tsx` | `components.md`, `surfaces.md` | Production UI exists; message frame, branch navigator, process timeline, thinking, and tool-call disclosure are isolated while turn behavior stays product-owned. |
-| Agent composer | `AgentComposer.tsx`, `AgentComposerControls.tsx`, `AgentComposerModelMenu.tsx` | `components.md`, `surfaces.md` | Rich behavior exists; queued follow-up controls, attachment chip, toolbar composition, model picker, reasoning menu/switch, settings trigger, send/stop slot, anchored model menu, conversation menu positioning, and final compact visual hierarchy are isolated while composer behavior remains product-owned. |
+| Agent composer | `AgentComposer.tsx`, `AgentComposerControls.tsx`, `AgentComposerModelMenu.tsx` | `components.md`, `surfaces.md` | Rich behavior exists; queued follow-up controls, attachment chip, toolbar composition, model picker, reasoning menu/switch, send/stop slot, anchored model menu, conversation menu positioning, and final compact visual hierarchy are isolated while composer behavior remains product-owned. |
 | Agent settings | `AgentSettingsDialog.tsx` | `components.md`, `implementation.md` | Dialog shell, sectioned provider/connection/model behavior architecture, form field wrapper, shared input/select/button/checkbox primitives, key action placement, and shared checkbox mark are in place while destructive confirmation remains future work. |
 | Agent approval and preview | `agentTypes.ts`, `agentNodeTools.ts` | `agent.md`, `surfaces.md` | Runtime approval event type and node-tool `previewOnly` results exist; no renderer approval overlay is shipped, so the design system documents the boundary instead of rendering fake controls. |
 | Icons | `icons.ts` | `foundations.md`, `components.md` | Central alias file exists; icon sizes need token alignment. |
@@ -221,7 +221,6 @@ Source:
 - `src/renderer/ui/outliner/TriggerPopover.tsx`
 - `src/renderer/ui/outliner/SlashCommandMenu.tsx`
 - `src/renderer/ui/outliner/ReferenceSelector.tsx`
-- `src/renderer/ui/outliner/OptionsPicker.tsx`
 - `src/renderer/ui/editor/FloatingEditorToolbar.tsx`
 
 Current state:
@@ -231,7 +230,8 @@ Current state:
 - Node context menu supports main, tag, and move modes.
 - Trigger popovers support slash commands, references, tags, and field creation.
 - Editor toolbar floats above text selection.
-- Options picker provides a small popover inside field values.
+- Field option selection uses the field child trailing input and shared
+  `PopoverListbox` menu.
 
 Aligned:
 
@@ -258,33 +258,27 @@ Source:
 - `src/renderer/ui/definition/DefinitionConfigPanel.tsx`
 - `src/renderer/ui/definition/definitionConfig.ts`
 - `src/renderer/ui/outliner/OutlinerFieldRow.tsx`
-- `src/renderer/ui/outliner/FieldValueRenderer.tsx`
-- `src/renderer/ui/outliner/FieldValueRow.tsx`
-- `src/renderer/ui/outliner/OptionsPicker.tsx`
+- `src/renderer/ui/outliner/FieldValueOutliner.tsx`
 - `src/renderer/ui/outliner/ViewToolbar.tsx`
 
 Current state:
 
 - Definition configuration has rows for field type, tag inheritance, checkbox
   behavior, autocollect options, hidden field modes, min/max numbers, and color.
-- Field values support plain text, number, URL, email, password, checkbox,
-  boolean switch, date, color, and options.
-- Options picker supports keyboard open/select/create.
+- Field values are outliner child nodes under `fieldEntry`; option fields use
+  the field child trailing input for keyboard open/select/create.
 
 Aligned:
 
-- Domain controls exist and are real product behavior.
+- Domain configuration controls exist and are real product behavior.
 - Icons are used for config row meaning.
 - Switch controls expose `role="switch"` and `aria-checked`.
 
 Remaining convergence:
 
-- Use the extracted definition row and control primitives as the dense-row
-  baseline for both field values and definition configuration.
-- Normalize field controls around shared input, select, switch, number, color,
-  invalid, disabled, and focus tokens.
-- Preserve field-specific commit timing and keyboard flow while aligning visual
-  structure.
+- Keep definition controls on extracted dense-row primitives.
+- Preserve field-specific child-node creation and option selection while keeping
+  field value persistence in normal node children.
 
 ## Shared Component Candidates
 
@@ -370,7 +364,7 @@ the unified refactor branch.
 ### 5. Outliner And Tags
 
 - Finish `NodePanel`, heading structure, breadcrumb, title icon/check/title,
-  description, title tags, heading fields, panel actions, definition
+  description, title tags, panel actions, definition
   configuration, outliner rows, row leading states, field rows, descriptions,
   trailing input, applied tags, tag selectors, and row state visuals.
 - Preserve current selection, editing, paste, trigger, drag/drop, collapse,

@@ -285,7 +285,7 @@ export class Core {
       ensureNodeEditable(state, nodeId);
       this.loro.applyNodeTextPatch(nodeId, patch);
       this.loro.setNodeUpdatedAt(nodeId, nowMs());
-      return focus(nodeId);
+      return focus(nodeId, { placement: { kind: 'preserve' } });
     });
   }
 
@@ -717,15 +717,17 @@ export class Core {
       const parentId = state.nodes[afterNodeId]?.parentId;
       if (!parentId) throw CoreError.noParent();
       ensureParentMutable(state, parentId);
-      const afterIndex = childIndex(state, parentId, afterNodeId) ?? 0;
       const fieldDefId = this.insertFieldDefNodeDirect(SCHEMA_ID, normalized, fieldType);
-      const fieldEntryId = this.insertFieldEntryNodeDirect(parentId, afterIndex + 1, fieldDefId);
       const node = clone(requiredNode(state, afterNodeId));
-      node.trashedFromParentId = parentId;
-      node.trashedFromIndex = afterIndex;
+      node.type = 'fieldEntry';
+      node.fieldDefId = fieldDefId;
+      node.content = plainText('');
+      node.tags = [];
+      node.showCheckbox = false;
+      node.doneStateEnabled = false;
+      delete node.completedAt;
       this.loro.writeNode(node);
-      this.loro.moveNode(afterNodeId, TRASH_ID, undefined);
-      return focus(fieldEntryId);
+      return focus(afterNodeId, { parentId, surface: 'field-name', placement: { kind: 'all' } });
     });
   }
 
@@ -737,7 +739,7 @@ export class Core {
       ensureParentMutable(state, parentId);
       const fieldDefId = this.insertFieldDefNodeDirect(SCHEMA_ID, normalized, fieldType);
       const fieldEntryId = this.insertFieldEntryNodeDirect(parentId, index, fieldDefId);
-      return focus(fieldEntryId);
+      return focus(fieldEntryId, { parentId, surface: 'field-name', placement: { kind: 'all' } });
     });
   }
 

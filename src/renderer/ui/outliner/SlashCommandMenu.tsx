@@ -4,11 +4,11 @@ import { api } from '../../api/client';
 import {
   AddChildIcon,
   CheckboxIcon,
-  ChevronRightIcon,
+  CommandIcon,
+  FieldIcon,
+  HeadingIcon,
   ICON_SIZE,
-  PlainTextIcon,
   ReferenceIcon,
-  SearchIcon,
 } from '../icons';
 import {
   filterSlashCommands,
@@ -29,11 +29,11 @@ interface SlashCommandMenuProps {
 }
 
 function slashCommandIcon(command: SlashCommandDefinition): ReactNode {
-  if (command.id === 'field') return <ChevronRightIcon size={ICON_SIZE.menu} />;
+  if (command.id === 'field') return <FieldIcon size={ICON_SIZE.menu} />;
   if (command.id === 'reference') return <ReferenceIcon size={ICON_SIZE.menu} />;
-  if (command.id === 'heading') return <PlainTextIcon size={ICON_SIZE.menu} />;
+  if (command.id === 'heading') return <HeadingIcon size={ICON_SIZE.menu} />;
   if (command.id === 'checkbox') return <CheckboxIcon size={ICON_SIZE.menu} />;
-  if (command.id === 'command_palette') return <SearchIcon size={ICON_SIZE.menu} />;
+  if (command.id === 'command_palette') return <CommandIcon size={ICON_SIZE.menu} />;
   return <AddChildIcon size={ICON_SIZE.menu} />;
 }
 

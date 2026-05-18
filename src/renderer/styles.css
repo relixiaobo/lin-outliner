@@ -50,6 +50,7 @@
   --agent-min-width: 280px;
   --agent-max-width: 520px;
   --agent-collapsed-width: 0px;
+  --agent-dock-inset-x: var(--space-4);
   --outline-panel-min-width: 360px;
   --outline-panel-ideal-width: 520px;
   --shell-padding-x: var(--layout-gap);
@@ -75,8 +76,11 @@
   --tab-active-bg: #e4e4e7;
   --control-hover: rgba(0, 0, 0, 0.055);
   --control-active: rgba(0, 0, 0, 0.08);
+  --focus-border: rgba(9, 9, 11, 0.52);
   --focus-ring: rgba(9, 9, 11, 0.24);
   --focus-ring-shadow: 0 0 0 2px var(--focus-ring);
+  --scrollbar-thumb: rgba(9, 9, 11, 0.16);
+  --scrollbar-thumb-hover: rgba(9, 9, 11, 0.28);
   --agent-accent: var(--accent-brand);
   --bg: var(--app-bg);
   --surface: var(--panel-bg);
@@ -115,6 +119,48 @@
 
 * {
   box-sizing: border-box;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+  scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+  background-color: var(--scrollbar-thumb);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+.main-panel,
+.agent-debug-panel,
+.agent-debug-card pre,
+.agent-debug-part-details pre,
+.agent-debug-tool-row pre,
+.agent-chat-scroll,
+.agent-session-list,
+.agent-code-block pre,
+.agent-thinking-body,
+.agent-tool-call-section pre,
+.agent-steer-preview,
+.agent-composer-input,
+.agent-composer-model-menu,
+.agent-composer-more-model-list,
+.agent-settings-dialog,
+.command-list,
+.node-picker-popover {
+  scrollbar-gutter: stable;
 }
 
 html,
@@ -583,12 +629,7 @@ button:focus-visible {
   overflow: auto;
   background: var(--surface);
   padding: 0;
-  scrollbar-width: none;
-}
-
-.outline-panel-surface .main-panel::-webkit-scrollbar {
-  width: 0;
-  height: 0;
+  scrollbar-gutter: stable;
 }
 
 .outline-panel-surface .panel-inner {
@@ -604,7 +645,7 @@ button:focus-visible {
 
 .outline-panel-surface.is-agent-debug {
   overflow: hidden;
-  background: #f8f8f5;
+  background: var(--surface);
 }
 
 .agent-debug-panel {
@@ -613,9 +654,10 @@ button:focus-visible {
   min-width: 0;
   flex-direction: column;
   gap: var(--space-6);
+  background: var(--surface);
   overflow: auto;
   padding: 18px 18px 28px;
-  scrollbar-width: thin;
+  scrollbar-gutter: stable;
 }
 
 .agent-debug-header {
@@ -663,8 +705,7 @@ button:focus-visible {
 .agent-debug-card {
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.74);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7);
+  background: var(--surface);
 }
 
 .agent-debug-card {
@@ -700,8 +741,9 @@ button:focus-visible {
   min-height: 74px;
   flex-direction: column;
   justify-content: space-between;
+  border: 1px solid var(--border-subtle);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--surface);
   padding: var(--space-5);
 }
 
@@ -1069,7 +1111,7 @@ button:focus-visible {
   gap: var(--space-5);
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.018);
+  background: var(--surface);
   padding: var(--space-6);
 }
 
@@ -1126,11 +1168,11 @@ button:focus-visible {
   color: var(--danger);
 }
 
-.agent-debug-round-grid {
-  display: grid;
+.agent-debug-round-timeline {
+  display: flex;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) minmax(240px, 0.72fr);
-  gap: var(--space-6);
+  flex-direction: column;
+  gap: var(--space-4);
 }
 
 .agent-debug-message-row {
@@ -1138,9 +1180,14 @@ button:focus-visible {
   min-width: 0;
   flex-direction: column;
   gap: var(--space-4);
+  border: 1px solid var(--border-subtle);
   border-radius: 7px;
-  background: rgba(255, 255, 255, 0.55);
+  background: var(--surface);
   padding: var(--space-5);
+}
+
+.agent-debug-message-row.is-response {
+  border-color: var(--border-muted);
 }
 
 .agent-debug-message-head {
@@ -1250,10 +1297,6 @@ button:focus-visible {
 @media (max-width: 1200px) {
   .agent-debug-overview-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .agent-debug-round-grid {
-    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -1418,22 +1461,27 @@ button:focus-visible {
   height: 28px;
   flex: 0 0 28px;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: var(--space-4);
+  padding: 0 var(--agent-dock-inset-x);
 }
 
 .agent-dock-title-button {
   display: inline-flex;
+  width: fit-content;
   min-width: 0;
-  flex: 1 1 auto;
+  max-width: min(100%, 260px);
+  height: 26px;
+  flex: 0 1 auto;
   align-items: center;
   gap: var(--space-2);
   border-radius: 6px;
   cursor: pointer;
-  padding: 2px 4px 2px 0;
+  padding: 2px var(--space-3);
 }
 
-.agent-dock-title-button:hover {
+.agent-dock-title-button:hover,
+.agent-dock-title-button[aria-expanded="true"] {
   background: var(--control-hover);
 }
 
@@ -1463,17 +1511,7 @@ button:focus-visible {
   flex: 0 0 auto;
   align-items: center;
   gap: var(--space-3);
-}
-
-.agent-status-dot {
-  width: 14px;
-  height: 14px;
-  border-radius: 999px;
-  background: var(--border-muted);
-}
-
-.agent-status-dot.is-muted {
-  background: var(--row-hover);
+  margin-left: auto;
 }
 
 .agent-menu-button {
@@ -1540,6 +1578,7 @@ button:focus-visible {
 .agent-session-row {
   display: flex;
   min-width: 0;
+  min-height: 54px;
   align-items: center;
   gap: var(--space-2);
   border-radius: 7px;
@@ -1551,15 +1590,17 @@ button:focus-visible {
 }
 
 .agent-session-row.is-editing {
-  padding: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-5);
 }
 
 .agent-session-select {
   display: flex;
   min-width: 0;
+  min-height: 54px;
   flex: 1 1 auto;
   flex-direction: column;
   gap: var(--space-1);
+  justify-content: center;
   cursor: pointer;
   padding: var(--space-4) var(--space-5);
   text-align: left;
@@ -1602,15 +1643,18 @@ button:focus-visible {
 }
 
 .agent-session-title-input {
+  height: 32px;
   min-width: 0;
   flex: 1 1 auto;
   border: 0;
+  border-radius: 6px;
   background: transparent;
   color: #2b2b30;
   font: inherit;
   font-size: 13px;
-  line-height: 24px;
+  line-height: 20px;
   outline: none;
+  padding: 0 var(--space-3);
 }
 
 .agent-chat-panel {
@@ -1627,7 +1671,7 @@ button:focus-visible {
   flex-direction: column;
   gap: var(--space-7);
   overflow-y: auto;
-  padding: var(--space-8) 2px var(--space-7);
+  padding: var(--space-8) var(--agent-dock-inset-x) var(--space-7);
   scrollbar-width: thin;
 }
 
@@ -1810,7 +1854,7 @@ button:focus-visible {
   width: min(88%, 520px);
   flex-direction: column;
   gap: var(--space-4);
-  border: 1px solid color-mix(in srgb, var(--primary) 35%, var(--border));
+  border: 1px solid var(--border-emphasis);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.7);
   padding: var(--space-5);
@@ -2029,6 +2073,52 @@ button:focus-visible {
   color: var(--danger);
 }
 
+.agent-disclosure-indicator {
+  position: relative;
+  display: inline-flex;
+  width: 14px;
+  height: 18px;
+  flex: 0 0 14px;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+}
+
+.agent-disclosure-status,
+.agent-disclosure-chevron {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 120ms ease;
+}
+
+.agent-disclosure-status {
+  opacity: 1;
+}
+
+.agent-disclosure-chevron {
+  opacity: 0;
+}
+
+.agent-disclosure-chevron svg {
+  color: #8b8b91;
+  transition: transform 120ms ease;
+}
+
+.agent-disclosure-chevron svg.is-expanded {
+  transform: rotate(180deg);
+}
+
+.agent-disclosure-indicator.is-expanded:not(.is-status-persistent) .agent-disclosure-status {
+  opacity: 0;
+}
+
+.agent-disclosure-indicator.is-expanded:not(.is-status-persistent) .agent-disclosure-chevron {
+  opacity: 1;
+}
+
 .agent-process-toggle {
   display: flex;
   max-width: 100%;
@@ -2046,11 +2136,38 @@ button:focus-visible {
   color: #4f4f55;
 }
 
+.agent-process-toggle:hover .agent-disclosure-indicator.is-interactive .agent-disclosure-status,
+.agent-process-toggle:focus-visible .agent-disclosure-indicator.is-interactive .agent-disclosure-status,
+.agent-thinking-row.is-toggle:hover .agent-disclosure-indicator.is-interactive .agent-disclosure-status,
+.agent-thinking-row.is-toggle:focus-visible .agent-disclosure-indicator.is-interactive .agent-disclosure-status,
+.agent-tool-call-toggle:hover:not(:disabled) .agent-disclosure-indicator.is-interactive .agent-disclosure-status,
+.agent-tool-call-toggle:focus-visible:not(:disabled) .agent-disclosure-indicator.is-interactive .agent-disclosure-status {
+  opacity: 0;
+}
+
+.agent-process-toggle:hover .agent-disclosure-indicator.is-interactive .agent-disclosure-chevron,
+.agent-process-toggle:focus-visible .agent-disclosure-indicator.is-interactive .agent-disclosure-chevron,
+.agent-thinking-row.is-toggle:hover .agent-disclosure-indicator.is-interactive .agent-disclosure-chevron,
+.agent-thinking-row.is-toggle:focus-visible .agent-disclosure-indicator.is-interactive .agent-disclosure-chevron,
+.agent-tool-call-toggle:hover:not(:disabled) .agent-disclosure-indicator.is-interactive .agent-disclosure-chevron,
+.agent-tool-call-toggle:focus-visible:not(:disabled) .agent-disclosure-indicator.is-interactive .agent-disclosure-chevron {
+  opacity: 1;
+}
+
 .agent-process-title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.agent-process-indicator,
+.agent-thinking-icon {
+  color: #94949a;
+}
+
+.agent-process-block.is-error .agent-process-indicator {
+  color: var(--danger);
 }
 
 .agent-process-timeline {
@@ -2067,7 +2184,7 @@ button:focus-visible {
   display: flex;
   width: 100%;
   min-width: 0;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   color: #68686e;
   font-size: 12px;
@@ -2084,11 +2201,7 @@ button:focus-visible {
   color: #333337;
 }
 
-.agent-thinking-row.is-expanded {
-  align-items: flex-start;
-}
-
-.agent-thinking-row span:last-child {
+.agent-thinking-text {
   min-width: 0;
   flex: 1 1 auto;
   overflow-wrap: anywhere;
@@ -2096,29 +2209,7 @@ button:focus-visible {
 }
 
 .agent-thinking-icon {
-  position: relative;
-  display: inline-flex;
-  width: 14px;
-  height: 18px;
-  flex: 0 0 14px;
-  align-items: center;
-  justify-content: center;
-  color: #94949a;
-}
-
-.agent-thinking-chevron {
-  position: absolute;
-  inset: auto auto 1px 8px;
-  border-radius: 999px;
-  background: var(--bg);
-  color: #8b8b91;
-  opacity: 0;
-  transition: opacity 120ms ease;
-}
-
-.agent-thinking-row.is-toggle:hover .agent-thinking-chevron,
-.agent-thinking-row.is-toggle:focus-visible .agent-thinking-chevron {
-  opacity: 1;
+  height: 20px;
 }
 
 .agent-thinking-body {
@@ -2199,7 +2290,7 @@ button:focus-visible {
   display: flex;
   max-width: min(100%, 520px);
   min-width: 0;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   color: inherit;
   cursor: pointer;
@@ -2218,15 +2309,14 @@ button:focus-visible {
   cursor: default;
 }
 
-.agent-tool-call-toggle span {
+.agent-tool-call-summary {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.agent-tool-call-chevron {
-  flex: 0 0 auto;
+.agent-tool-call-icon-slot {
   color: #94949a;
 }
 
@@ -2374,7 +2464,7 @@ button:focus-visible {
 .agent-composer {
   display: block;
   flex: 0 0 auto;
-  padding: 0 0 var(--space-3);
+  padding: 0 var(--agent-dock-inset-x) 0;
   position: relative;
 }
 
@@ -2384,7 +2474,7 @@ button:focus-visible {
   flex-direction: column;
   align-items: flex-end;
   gap: var(--space-2);
-  padding: 0 var(--space-1) var(--space-3);
+  padding: 0 0 var(--space-3);
 }
 
 .agent-steer-actions {
@@ -2410,16 +2500,16 @@ button:focus-visible {
 
 .agent-composer-surface {
   position: relative;
-  border-radius: 12px;
+  border-radius: var(--panel-radius);
   background: rgba(255, 255, 255, 0.62);
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.035);
-  padding: 10px 10px 7px;
+  padding: var(--space-4);
   transition: background 120ms ease, box-shadow 120ms ease;
 }
 
 .agent-composer-surface:focus-within {
   background: rgba(255, 255, 255, 0.82);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 42%, var(--border-subtle));
+  box-shadow: inset 0 0 0 1px var(--focus-border);
 }
 
 .agent-composer-surface:hover {
@@ -2427,12 +2517,16 @@ button:focus-visible {
 }
 
 .agent-composer-surface.is-streaming {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 24%, transparent);
+  box-shadow: inset 0 0 0 1px rgba(9, 9, 11, 0.12);
 }
 
 .agent-composer-surface.is-dragging {
   background: rgba(255, 255, 255, 0.78);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 58%, var(--border-subtle));
+}
+
+.agent-composer-surface.is-streaming:focus-within {
+  box-shadow: inset 0 0 0 1px var(--focus-border);
 }
 
 .agent-composer-drop-overlay {
@@ -2565,12 +2659,10 @@ button:focus-visible {
 
 .agent-composer-toolbar {
   display: flex;
-  min-height: 30px;
+  min-height: 28px;
   align-items: center;
   gap: var(--space-2);
   overflow: hidden;
-  border-top: 1px solid rgba(0, 0, 0, 0.035);
-  padding-top: 6px;
 }
 
 .agent-composer-file-input {
@@ -2665,8 +2757,7 @@ button:focus-visible {
 }
 
 .agent-composer-model-item,
-.agent-composer-more-models,
-.agent-composer-settings-item {
+.agent-composer-more-models {
   display: flex;
   width: 100%;
   min-width: 0;
@@ -2682,8 +2773,7 @@ button:focus-visible {
 }
 
 .agent-composer-model-item:hover,
-.agent-composer-more-models:hover,
-.agent-composer-settings-item:hover {
+.agent-composer-more-models:hover {
   background: var(--control-hover);
   color: #2e2e32;
 }
@@ -2708,12 +2798,6 @@ button:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.agent-composer-menu-divider {
-  height: 1px;
-  margin: var(--space-5) var(--space-2);
-  background: var(--border-subtle);
 }
 
 .agent-composer-more-models > svg {
@@ -2744,6 +2828,7 @@ button:focus-visible {
   display: flex;
   align-items: center;
   gap: var(--space-4);
+  margin-top: var(--space-2);
   color: #59595f;
   font-size: 14px;
   line-height: 20px;
@@ -2855,7 +2940,7 @@ button:focus-visible {
   flex: 0 0 28px;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
@@ -2873,13 +2958,14 @@ button:focus-visible {
   cursor: default;
 }
 
-.agent-composer-settings-button {
-  color: #8b8b91;
-}
-
 .agent-composer-action-button {
   background: #2e2e32;
   color: #ffffff;
+}
+
+.agent-composer-action-button.is-stop svg {
+  fill: currentColor;
+  stroke: currentColor;
 }
 
 .agent-composer-action-button:hover:not(:disabled) {
@@ -3112,7 +3198,7 @@ button:focus-visible {
 
 .agent-settings-field input:focus,
 .agent-settings-field select:focus {
-  border-color: color-mix(in srgb, var(--primary) 55%, var(--border));
+  border-color: var(--focus-border);
   background: rgba(255, 255, 255, 0.72);
 }
 
@@ -3128,7 +3214,7 @@ button:focus-visible {
 }
 
 .agent-settings-key-row:focus-within {
-  border-color: color-mix(in srgb, var(--primary) 55%, var(--border));
+  border-color: var(--focus-border);
   background: rgba(255, 255, 255, 0.72);
 }
 
@@ -3378,6 +3464,7 @@ button:focus-visible {
   max-width: 720px;
   align-items: center;
   gap: var(--space-3);
+  justify-content: space-between;
 }
 
 .panel-heading-icon-row {
@@ -3405,6 +3492,7 @@ button:focus-visible {
   display: flex;
   max-width: 720px;
   min-width: 0;
+  flex: 1 1 auto;
   align-items: center;
   flex-wrap: nowrap;
   gap: 0;
@@ -3441,9 +3529,182 @@ button:focus-visible {
   margin-left: 0;
 }
 
-.panel-heading-fields {
+.panel-date-nav-wrap {
+  position: relative;
   max-width: 720px;
-  margin-top: 10px;
+}
+
+.panel-date-nav {
+  display: flex;
+  max-width: 720px;
+  min-height: 26px;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-5);
+  color: var(--muted-2);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.panel-date-nav-button,
+.panel-date-nav-today,
+.panel-date-picker-button,
+.panel-date-calendar-nav,
+.panel-date-calendar-day {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.panel-date-nav-button,
+.panel-date-nav-today,
+.panel-date-picker-button {
+  height: 24px;
+  border-radius: 6px;
+}
+
+.panel-date-nav-button {
+  width: 24px;
+  padding: 0;
+}
+
+.panel-date-nav-today {
+  padding: 0 var(--space-4);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 500;
+}
+
+.panel-date-nav-button:hover,
+.panel-date-nav-button:focus-visible,
+.panel-date-nav-today:hover,
+.panel-date-nav-today:focus-visible,
+.panel-date-picker-button:hover,
+.panel-date-picker-button:focus-visible,
+.panel-date-picker-button[aria-expanded="true"],
+.panel-date-calendar-nav:hover,
+.panel-date-calendar-nav:focus-visible,
+.panel-date-calendar-day:hover,
+.panel-date-calendar-day:focus-visible {
+  background: var(--control-hover);
+  color: var(--text-sub);
+}
+
+.panel-date-nav-divider {
+  width: 1px;
+  height: 12px;
+  margin: 0 var(--space-2);
+  background: var(--border-subtle);
+}
+
+.panel-date-picker-button {
+  width: 24px;
+  padding: 0;
+  font: inherit;
+}
+
+.panel-date-popover {
+  position: absolute;
+  z-index: var(--z-popover);
+  top: calc(100% + 6px);
+  left: 0;
+  width: 232px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--overlay-bg);
+  box-shadow: var(--overlay-shadow-level-2);
+  padding: var(--space-5);
+}
+
+.panel-date-calendar-header {
+  display: grid;
+  height: 28px;
+  grid-template-columns: 28px 1fr 28px;
+  align-items: center;
+  color: var(--text-sub);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+}
+
+.panel-date-calendar-nav {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+}
+
+.panel-date-calendar-weekdays,
+.panel-date-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+}
+
+.panel-date-calendar-weekdays {
+  margin-top: var(--space-4);
+  color: var(--muted-2);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}
+
+.panel-date-calendar-grid {
+  gap: 1px;
+  margin-top: var(--space-2);
+}
+
+.panel-date-calendar-day {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-sub);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.panel-date-calendar-day.is-outside-month {
+  color: color-mix(in srgb, var(--muted-2) 42%, transparent);
+}
+
+.panel-date-calendar-day.is-today:not(.is-selected) {
+  box-shadow: inset 0 0 0 1px var(--border-emphasis);
+}
+
+.panel-date-calendar-day.has-note-count:not(.is-selected) {
+  color: #3f3f46;
+}
+
+.panel-date-calendar-day.note-density-1:not(.is-selected) {
+  background: rgba(9, 9, 11, 0.032);
+}
+
+.panel-date-calendar-day.note-density-2:not(.is-selected) {
+  background: rgba(9, 9, 11, 0.055);
+}
+
+.panel-date-calendar-day.note-density-3:not(.is-selected) {
+  background: rgba(9, 9, 11, 0.082);
+}
+
+.panel-date-calendar-day.note-density-4:not(.is-selected) {
+  background: rgba(9, 9, 11, 0.11);
+}
+
+.panel-date-calendar-day.has-note-count:hover:not(.is-selected),
+.panel-date-calendar-day.has-note-count:focus-visible:not(.is-selected) {
+  background: var(--control-hover);
+}
+
+.panel-date-calendar-day.is-selected {
+  background: var(--text-main);
+  color: var(--panel-bg);
 }
 
 .panel-title-more-button {

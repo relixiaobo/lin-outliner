@@ -230,6 +230,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
     if (!trigger) return null;
 
     if (commandId === 'field') {
+      await pendingTextPatchRef.current;
       return api.createInlineFieldAfterNode(props.nodeId, 'Field', 'plain');
     }
 
@@ -522,7 +523,9 @@ export function OutlinerItem(props: OutlinerItemProps) {
             resolveInlineReferenceColor={(targetId) => inlineReferenceTextColor(targetId, props.index)}
             onFieldTriggerFire={() => {
               props.setTrigger(null);
-              void props.run(() => api.createInlineFieldAfterNode(props.nodeId, 'Field', 'plain'));
+              void pendingTextPatchRef.current.then(() => props.run(() => (
+                api.createInlineFieldAfterNode(props.nodeId, 'Field', 'plain')
+              )));
             }}
             onTriggerChange={(nextTrigger) => {
               if (nextTrigger) {

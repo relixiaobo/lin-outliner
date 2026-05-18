@@ -271,14 +271,14 @@
   left: calc(100% - 0.5px);
   width: 1px;
   border-radius: 999px;
-  background: var(--border-subtle);
+  background: color-mix(in srgb, var(--text) 9%, transparent);
   transform: translateX(-50%);
   transition: background 120ms ease, width 120ms ease;
 }
 
 .indent-guide:hover > .indent-guide-line {
-  width: 3px;
-  background: var(--border-emphasis);
+  width: 2px;
+  background: color-mix(in srgb, var(--text) 14%, transparent);
 }
 
 .row {
@@ -345,12 +345,10 @@
   grid-template-columns: clamp(112px, 32%, 180px) minmax(0, 1fr);
   column-gap: 8px;
   row-gap: 0;
-  align-items: center;
+  align-items: start;
 }
 
-.field-name-input,
-.field-value-input,
-.field-value-preview {
+.field-name-input {
   min-width: 0;
   height: 24px;
   border: 0;
@@ -365,176 +363,70 @@
   color: var(--muted);
 }
 
-.field-name-input.done,
-.field-value-input.done,
-.field-value-preview.done {
+.field-name-input.done {
   color: var(--muted);
   text-decoration: line-through;
 }
 
-.field-name-input:focus,
-.field-value-input:focus,
-.field-value-preview:focus {
+.field-name-input:focus {
   background: transparent;
   box-shadow: inset 0 -1px 0 rgba(26, 26, 26, 0.20);
 }
 
-.field-value-preview {
+.field-value-node-preview {
   display: block;
-  overflow: hidden;
-  cursor: pointer;
-  text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.field-value-input::placeholder {
-  color: color-mix(in srgb, var(--text) 20%, transparent);
-}
-
-.field-value-row {
-  display: flex;
+  width: 100%;
   min-width: 0;
   min-height: 24px;
-  align-items: center;
-}
-
-.field-value-row.dimmed {
-  color: var(--muted);
-}
-
-.field-value-row.done {
-  color: var(--muted);
-  text-decoration: line-through;
-}
-
-.field-value-row.done .field-value-input,
-.field-value-row.done .field-color-text {
-  color: var(--muted);
-  text-decoration: line-through;
-}
-
-.field-value-row-content {
-  min-width: 0;
-  flex: 1;
-}
-
-.field-value-typed-input,
-.field-color-text {
-  width: 100%;
-}
-
-.field-value-typed-input.invalid {
-  color: var(--danger);
-  box-shadow: inset 0 -1px 0 var(--danger);
-}
-
-.field-checkbox-button {
-  display: inline-flex;
-  width: 24px;
-  height: 24px;
-  align-items: center;
-  justify-content: flex-start;
-  padding: 0;
-  border-radius: 4px;
-  color: var(--panel-bg);
-  cursor: pointer;
-}
-
-.field-checkbox-button:hover .checkbox-mark:not(.checked),
-.field-checkbox-button:focus-visible .checkbox-mark:not(.checked) {
-  background: var(--text-muted);
-}
-
-.field-boolean-switch {
-  position: relative;
-  display: inline-flex;
-  width: 36px;
-  height: 20px;
-  align-items: center;
-  border-radius: 999px;
-  background: var(--border);
-  cursor: pointer;
-  padding: 2px;
-}
-
-.field-boolean-switch span {
-  width: 16px;
-  height: 16px;
-  border-radius: 999px;
-  background: var(--surface);
-  box-shadow: 0 1px 2px rgba(36, 35, 31, 0.18);
-  transition: transform 120ms ease;
-}
-
-.field-boolean-switch.on {
-  background: var(--primary);
-}
-
-.field-boolean-switch.on span {
-  transform: translateX(16px);
-}
-
-.field-color-value {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
-}
-
-.field-color-input {
-  width: 22px;
-  height: 22px;
-  flex: 0 0 22px;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  padding: 0;
-}
-
-.field-color-text {
-  min-width: 0;
-  height: 24px;
-  border: 0;
-  outline: none;
-  background: transparent;
+  border-radius: 5px;
   color: var(--text);
   font-size: 15px;
   line-height: 24px;
 }
 
-.field-color-text:focus {
-  background: transparent;
-  box-shadow: inset 0 -1px 0 rgba(26, 26, 26, 0.20);
+.field-value-outliner > .row-wrap,
+.field-value-outliner > .trailing-row {
+  width: 100%;
+  transform: none;
 }
 
-.node-picker {
-  position: relative;
-  min-width: 0;
-  flex: 1;
+.field-value-outliner > .row-wrap > .row,
+.field-value-outliner > .trailing-row {
+  min-height: 24px;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  padding: 0;
 }
 
-.node-picker-input-wrap {
-  position: relative;
-  display: flex;
-  min-width: 0;
-  align-items: center;
+.field-value-outliner .row-leading {
+  width: 22px;
+  grid-template-columns: 0 0 var(--row-bullet-width) 7px;
 }
 
-.node-picker-ref-bullet {
-  position: absolute;
-  left: 0;
-  display: inline-flex;
-  width: 15px;
-  height: 24px;
-  align-items: center;
-  justify-content: center;
-  color: rgba(26, 26, 26, 0.40);
-  pointer-events: none;
+.field-value-outliner .row-chevron-button,
+.field-value-outliner .row-chevron-spacer {
+  display: none;
 }
 
-.node-picker-ref-bullet + .node-picker-input {
-  padding-left: 18px;
+.field-value-outliner .row-bullet-button {
+  grid-column: 3;
+}
+
+.field-value-outliner .trailing-editor.is-empty::before {
+  opacity: 1;
+  animation: none;
+}
+
+.field-value-outliner .trailing-editor.is-empty:focus-within::before {
+  opacity: 0;
+}
+
+.field-value-node-preview.empty {
+  color: color-mix(in srgb, var(--text) 28%, transparent);
+}
+
+.field-value-node-preview.done {
+  color: var(--muted);
+  text-decoration: line-through;
 }
 
 .node-picker-popover {
@@ -604,14 +496,8 @@
   box-shadow: none;
 }
 
-.row-wrap.has-children > .row .row-chevron-button {
-  opacity: 0.44;
-  pointer-events: auto;
-}
-
-.row:hover .row-chevron-button,
 .row-wrap.has-children > .row:hover .row-chevron-button,
-.row-wrap.has-children > .row.selected .row-chevron-button {
+.row-wrap.has-children > .row:focus-within .row-chevron-button {
   opacity: 1;
   pointer-events: auto;
 }
@@ -622,12 +508,11 @@
 
 .row-chevron-shell {
   display: inline-flex;
-  width: var(--row-chevron-width);
-  height: var(--row-chevron-width);
+  width: var(--row-bullet-width);
+  height: var(--row-bullet-width);
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  outline: 2px solid var(--panel-bg);
   background: var(--surface-2);
   color: rgba(26, 26, 26, 0.40);
   transition: color 120ms ease, transform 120ms ease;
@@ -878,8 +763,9 @@
   white-space: nowrap;
 }
 
-.row-editor:not(.trailing-editor):focus-within::before {
-  display: none;
+.row-editor:not(.trailing-editor):focus-within::before,
+.row-editor.is-focus-pending::before {
+  opacity: 0;
 }
 
 @keyframes idle-hint-fadein {
@@ -894,6 +780,10 @@
 
 .trailing-editor.is-empty::before {
   opacity: 0;
+  animation: none;
+}
+
+.trailing-editor.is-empty:focus-within::before {
   animation: idle-hint-fadein 0.3s ease 2s forwards;
 }
 
@@ -1214,6 +1104,7 @@
 .batch-tag-list {
   max-height: 240px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .tag-context-item {

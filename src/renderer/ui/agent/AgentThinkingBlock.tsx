@@ -1,10 +1,6 @@
-import type { ReactNode } from 'react';
-import {
-  BrainIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
-} from '../icons';
+import { BrainIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { AgentDisclosureIndicator } from './AgentDisclosureIndicator';
 import type { AgentExpandState } from './agentProcessTypes';
 import { firstLine, previewText } from './agentProcessTypes';
 
@@ -26,10 +22,13 @@ export function AgentThinkingRow({
     if (!streaming) return null;
     return (
       <div className="agent-thinking-row">
-        <AgentThinkingIcon>
-          <BrainIcon size={12} />
-        </AgentThinkingIcon>
-        <span>Thinking...</span>
+        <AgentDisclosureIndicator
+          className="agent-thinking-icon"
+          expanded={false}
+          icon={<BrainIcon size={12} />}
+          interactive={false}
+        />
+        <span className="agent-thinking-text">Thinking...</span>
       </div>
     );
   }
@@ -42,26 +41,29 @@ export function AgentThinkingRow({
   if (!isLong) {
     return (
       <div className="agent-thinking-row">
-        <AgentThinkingIcon>
-          <BrainIcon size={12} />
-        </AgentThinkingIcon>
-        <span>{trimmed}</span>
+        <AgentDisclosureIndicator
+          className="agent-thinking-icon"
+          expanded={false}
+          icon={<BrainIcon size={12} />}
+          interactive={false}
+        />
+        <span className="agent-thinking-text">{trimmed}</span>
       </div>
     );
   }
 
-  const Chevron = expanded ? ChevronDownIcon : ChevronRightIcon;
   return (
     <ButtonControl
       aria-expanded={expanded}
       className={`agent-thinking-row is-toggle ${expanded ? 'is-expanded' : ''}`}
       onClick={() => expandState.toggle(id, expanded)}
     >
-      <AgentThinkingIcon>
-        <BrainIcon size={12} />
-        <Chevron className="agent-thinking-chevron" size={12} />
-      </AgentThinkingIcon>
-      <span>{expanded ? trimmed : preview}</span>
+      <AgentDisclosureIndicator
+        className="agent-thinking-icon"
+        expanded={expanded}
+        icon={<BrainIcon size={12} />}
+      />
+      <span className="agent-thinking-text">{expanded ? trimmed : preview}</span>
     </ButtonControl>
   );
 }
@@ -73,8 +75,4 @@ export function AgentThinkingBody({ streaming, text }: { streaming: boolean; tex
   }
   if (!trimmed) return null;
   return <pre className="agent-thinking-body">{trimmed}</pre>;
-}
-
-function AgentThinkingIcon({ children }: { children: ReactNode }) {
-  return <span className="agent-thinking-icon">{children}</span>;
 }

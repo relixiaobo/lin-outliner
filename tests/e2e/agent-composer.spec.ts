@@ -80,9 +80,109 @@ test.describe('agent composer controls', () => {
     }).toBe(true);
   });
 
-  test('exposes settings as a secondary composer control', async ({ page }) => {
-    await page.getByRole('button', { name: 'Open settings' }).click();
-    await expect(page.getByRole('dialog', { name: 'Agent settings' })).toBeVisible();
+  test('keeps provider settings out of the composer controls', async ({ page }) => {
+    await expect(page.getByRole('button', { name: 'Agent settings' })).toHaveCount(1);
+    await expect(page.getByRole('button', { name: 'Open settings' })).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Select model' }).click();
+    await expect(page.getByRole('menuitem', { name: 'API Settings' })).toHaveCount(0);
+  });
+
+  test('keeps the composer surface unified with neutral focus', async ({ page }) => {
+    await expect(page.locator('.agent-composer-toolbar')).toHaveCSS('border-top-width', '0px');
+
+    const input = page.locator('.agent-composer-input');
+    await input.click();
+    await expect(input).toBeFocused();
+    const focusState = await input.evaluate((element) => {
+      const surface = element.closest('.agent-composer-surface');
+      if (!(surface instanceof HTMLElement)) {
+        return null;
+      }
+
+      return {
+        focusWithin: surface.matches(':focus-within'),
+        shadow: getComputedStyle(surface).boxShadow,
+      };
+    });
+
+    expect(focusState).not.toBeNull();
+    expect(focusState!.focusWithin).toBe(true);
+    expect(focusState!.shadow).not.toContain('244, 63, 94');
+  });
+
+  test('keeps the composer bottom-aligned with the shared dock inset', async ({ page }) => {
+    const metrics = await page.locator('.agent-chat-panel').evaluate((panel) => {
+      const dock = document.querySelector('.agent-dock');
+      const header = document.querySelector('.agent-dock-header');
+      const outlinePanel = document.querySelector('.outline-panel-surface');
+      const sidebar = document.querySelector('.sidebar-dock');
+      const scroll = document.querySelector('.agent-chat-scroll');
+      const composer = document.querySelector('.agent-composer');
+      const surface = document.querySelector('.agent-composer-surface');
+      if (
+        !(dock instanceof HTMLElement)
+        || !(header instanceof HTMLElement)
+        || !(outlinePanel instanceof HTMLElement)
+        || !(sidebar instanceof HTMLElement)
+        || !(scroll instanceof HTMLElement)
+        || !(composer instanceof HTMLElement)
+        || !(surface instanceof HTMLElement)
+        || !(panel instanceof HTMLElement)
+      ) {
+        return null;
+      }
+
+      const dockBox = dock.getBoundingClientRect();
+      const outlinePanelBox = outlinePanel.getBoundingClientRect();
+      const panelBox = panel.getBoundingClientRect();
+      const composerBox = composer.getBoundingClientRect();
+      const surfaceBox = surface.getBoundingClientRect();
+      const composerStyle = getComputedStyle(composer);
+      const outlinePanelStyle = getComputedStyle(outlinePanel);
+      const sidebarStyle = getComputedStyle(sidebar);
+      const scrollStyle = getComputedStyle(scroll);
+      const headerStyle = getComputedStyle(header);
+      const surfaceStyle = getComputedStyle(surface);
+      const actionButton = surface.querySelector('.agent-composer-action-button');
+      const actionStyle = actionButton instanceof HTMLElement ? getComputedStyle(actionButton) : null;
+
+      return {
+        actionRadius: actionStyle ? Number.parseFloat(actionStyle.borderTopLeftRadius) : null,
+        composerBottomDelta: Math.abs(panelBox.bottom - composerBox.bottom),
+        composerPaddingBottom: Number.parseFloat(composerStyle.paddingBottom),
+        composerPaddingLeft: Number.parseFloat(composerStyle.paddingLeft),
+        composerPaddingRight: Number.parseFloat(composerStyle.paddingRight),
+        headerPaddingLeft: Number.parseFloat(headerStyle.paddingLeft),
+        headerPaddingRight: Number.parseFloat(headerStyle.paddingRight),
+        panelRadius: Number.parseFloat(outlinePanelStyle.borderTopLeftRadius),
+        sidebarPaddingRight: Number.parseFloat(sidebarStyle.paddingRight),
+        scrollPaddingLeft: Number.parseFloat(scrollStyle.paddingLeft),
+        scrollPaddingRight: Number.parseFloat(scrollStyle.paddingRight),
+        surfaceBottomToPanelBottom: Math.abs(outlinePanelBox.bottom - surfaceBox.bottom),
+        surfaceLeftInset: surfaceBox.left - dockBox.left,
+        surfacePaddingBottom: Number.parseFloat(surfaceStyle.paddingBottom),
+        surfacePaddingRight: Number.parseFloat(surfaceStyle.paddingRight),
+        surfaceRadius: Number.parseFloat(surfaceStyle.borderTopLeftRadius),
+        surfaceRightInset: dockBox.right - surfaceBox.right,
+      };
+    });
+
+    expect(metrics).not.toBeNull();
+    expect(metrics!.actionRadius).toBe(6);
+    expect(metrics!.composerBottomDelta).toBeLessThanOrEqual(1);
+    expect(metrics!.composerPaddingBottom).toBe(0);
+    expect(metrics!.composerPaddingLeft).toBe(metrics!.sidebarPaddingRight);
+    expect(metrics!.composerPaddingLeft).toBe(metrics!.composerPaddingRight);
+    expect(metrics!.headerPaddingLeft).toBe(metrics!.composerPaddingLeft);
+    expect(metrics!.headerPaddingRight).toBe(metrics!.composerPaddingRight);
+    expect(metrics!.scrollPaddingLeft).toBe(metrics!.composerPaddingLeft);
+    expect(metrics!.scrollPaddingRight).toBe(metrics!.composerPaddingRight);
+    expect(metrics!.surfaceBottomToPanelBottom).toBeLessThanOrEqual(1);
+    expect(metrics!.surfacePaddingBottom).toBe(metrics!.surfacePaddingRight);
+    expect(metrics!.surfaceRadius).toBe(metrics!.panelRadius);
+    expect(Math.abs(metrics!.surfaceLeftInset - metrics!.composerPaddingLeft)).toBeLessThanOrEqual(1);
+    expect(Math.abs(metrics!.surfaceRightInset - metrics!.composerPaddingRight)).toBeLessThanOrEqual(1);
   });
 
   test('conversation menu stays anchored inside narrow agent surfaces', async ({ page }) => {
@@ -96,6 +196,62 @@ test.describe('agent composer controls', () => {
     expect(box).toBeTruthy();
     expect(box!.x).toBeGreaterThanOrEqual(8);
     expect(box!.x + box!.width).toBeLessThanOrEqual(752);
+  });
+
+  test('keeps the header title compact and free of decorative status dots', async ({ page }) => {
+    const metrics = await page.locator('.agent-dock-header').evaluate((header) => {
+      const titleButton = header.querySelector('.agent-dock-title-button');
+      const title = header.querySelector('.agent-dock-title');
+      const chevron = header.querySelector('.agent-title-chevron');
+      const actions = header.querySelector('.agent-dock-actions');
+      if (
+        !(header instanceof HTMLElement)
+        || !(titleButton instanceof HTMLElement)
+        || !(title instanceof HTMLElement)
+        || !(chevron instanceof SVGElement)
+        || !(actions instanceof HTMLElement)
+      ) {
+        return null;
+      }
+
+      const titleButtonBox = titleButton.getBoundingClientRect();
+      const titleBox = title.getBoundingClientRect();
+      const chevronBox = chevron.getBoundingClientRect();
+      const actionsBox = actions.getBoundingClientRect();
+      const titleStyle = getComputedStyle(titleButton);
+
+      return {
+        buttonExtraWidth: titleButtonBox.width - titleBox.width - chevronBox.width,
+        buttonPaddingLeft: Number.parseFloat(titleStyle.paddingLeft),
+        gapToActions: actionsBox.left - titleButtonBox.right,
+        statusDotCount: header.querySelectorAll('.agent-status-dot').length,
+      };
+    });
+
+    expect(metrics).not.toBeNull();
+    expect(metrics!.statusDotCount).toBe(0);
+    expect(metrics!.buttonPaddingLeft).toBeGreaterThanOrEqual(6);
+    expect(metrics!.buttonExtraWidth).toBeLessThanOrEqual(32);
+    expect(metrics!.gapToActions).toBeGreaterThanOrEqual(8);
+  });
+
+  test('keeps conversation rename geometry stable', async ({ page }) => {
+    await page.getByRole('button', { name: 'Show conversations' }).click();
+    const menu = page.getByRole('dialog', { name: 'Conversations' });
+    await expect(menu).toBeVisible();
+
+    const row = menu.locator('.agent-session-row').nth(1);
+    await expect(row).toBeVisible();
+    const before = await row.boundingBox();
+    expect(before).toBeTruthy();
+
+    await row.hover();
+    await row.getByRole('button', { name: 'Rename conversation' }).click();
+    await expect(row.getByLabel('Conversation title')).toBeVisible();
+
+    const after = await row.boundingBox();
+    expect(after).toBeTruthy();
+    expect(Math.abs(after!.height - before!.height)).toBeLessThanOrEqual(1);
   });
 
   test('switches the primary action between stop and queued follow-up while streaming', async ({ page }) => {
@@ -115,6 +271,16 @@ test.describe('agent composer controls', () => {
         errorMessage: null,
       },
     });
+
+    const stopIcon = await page.getByRole('button', { name: 'Stop agent' }).locator('svg').evaluate((icon) => {
+      const style = getComputedStyle(icon);
+      return {
+        fill: style.fill,
+        strokeWidth: style.strokeWidth,
+      };
+    });
+    expect(stopIcon.fill).not.toBe('none');
+    expect(Number.parseFloat(stopIcon.strokeWidth)).toBe(0);
 
     await page.getByRole('button', { name: 'Stop agent' }).click();
     await expect.poll(async () => {

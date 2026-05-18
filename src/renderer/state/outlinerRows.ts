@@ -12,11 +12,6 @@ export interface RowBuildOptions {
   expandedHiddenFields?: Set<string>;
 }
 
-export interface OutlinerRowSections {
-  headingRows: OutlinerRowItem[];
-  bodyRows: OutlinerRowItem[];
-}
-
 export function hiddenFieldKey(parentId: NodeId, fieldEntryId: NodeId): string {
   return `${parentId}:${fieldEntryId}`;
 }
@@ -214,30 +209,6 @@ export function buildOutlinerRows(
 ): OutlinerRowItem[] {
   if (!parent) return [];
   return applyViewSettings(parent, buildChildRows(parent, byId, options), byId);
-}
-
-export function buildPanelOutlinerSections(
-  parent: NodeProjection | undefined,
-  byId: Map<NodeId, NodeProjection>,
-  options: RowBuildOptions = {},
-): OutlinerRowSections {
-  if (!parent) return { headingRows: [], bodyRows: [] };
-  const rows = buildChildRows(parent, byId, options);
-  const headingRows: OutlinerRowItem[] = [];
-  const bodyRows: OutlinerRowItem[] = [];
-
-  for (const row of rows) {
-    if (row.type === 'field') {
-      headingRows.push(row);
-    } else {
-      bodyRows.push(row);
-    }
-  }
-
-  return {
-    headingRows,
-    bodyRows: applyViewSettings(parent, bodyRows, byId),
-  };
 }
 
 export function shouldShowTrailingInput(rows: OutlinerRowItem[]): boolean {

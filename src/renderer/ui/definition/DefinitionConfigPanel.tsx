@@ -15,7 +15,7 @@ import {
   ICON_SIZE,
   OptionsIcon,
   SettingsIcon,
-  TagIcon,
+  SupertagIcon,
 } from '../icons';
 import { FieldTypeIcon } from '../outliner/fieldTypePresentation';
 import type { CommandRunner } from '../shared';
@@ -96,7 +96,7 @@ function ConfigIcon({ item, node }: { item: DefinitionConfigItem; node: NodeProj
   if (item.key === 'fieldType') return <FieldTypeIcon fieldType={node.fieldType} size={ICON_SIZE.rowGlyph} />;
   if (item.key === 'color') return <ColorIcon size={ICON_SIZE.rowGlyph} />;
   if (item.key === 'extends' || item.key === 'childSupertag' || item.key === 'sourceSupertag') {
-    return <TagIcon size={ICON_SIZE.rowGlyph} />;
+    return <SupertagIcon size={ICON_SIZE.rowGlyph} />;
   }
   if (item.key === 'showCheckbox' || item.key === 'doneStateEnabled' || item.key === 'required') {
     return <CheckboxIcon size={ICON_SIZE.rowGlyph} />;

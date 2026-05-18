@@ -32,7 +32,6 @@ interface AgentComposerProps {
   onCancelSteer: () => Promise<void>;
   onStop: () => void;
   onModelChange: (providerId: string, modelId: string) => Promise<void>;
-  onOpenSettings: () => void;
   onReasoningChange: (reasoningLevel: AgentReasoningLevel) => Promise<void>;
   settings: AgentProviderSettingsView | null;
   steeringNote: string | null;
@@ -95,7 +94,6 @@ type ComposerAttachment = AgentMessageAttachmentInput & {
 export function AgentComposer({
   isStreaming,
   onModelChange,
-  onOpenSettings,
   onReasoningChange,
   onCancelSteer,
   onSend,
@@ -363,11 +361,6 @@ export function AgentComposer({
     return reasoningOptions.find((level) => level !== 'off') ?? selectedReasoning;
   }
 
-  function openSettingsFromToolbar() {
-    setModelMenuOpen(false);
-    onOpenSettings();
-  }
-
   const modelLabel = selectedModel
     ? shortenModelName(selectedModel.name || selectedModel.id)
     : activeProvider?.modelId
@@ -443,7 +436,6 @@ export function AgentComposer({
           fileInputRef={fileInputRef}
           onAttachmentClick={() => fileInputRef.current?.click()}
           onFileInputChange={handleFileInputChange}
-          onOpenSettings={openSettingsFromToolbar}
           modelControl={(
             <div className="agent-composer-model" ref={modelMenuRef}>
               <AgentComposerModelButton
@@ -467,7 +459,6 @@ export function AgentComposer({
                   onClose={() => setModelMenuOpen(false)}
                   onModelSelect={(model) => void changeModel(model)}
                   onMoreModelsOpenChange={setMoreModelsOpen}
-                  onOpenSettings={onOpenSettings}
                   onReasoningLevelSelect={(reasoningLevel) => {
                     setReasoningMenuOpen(false);
                     void changeReasoning(reasoningLevel);

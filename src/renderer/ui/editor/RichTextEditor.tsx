@@ -194,6 +194,16 @@ export function RichTextEditor(props: RichTextEditorProps) {
     anchorRect: null as OverlayAnchorRect | null,
     activeMarks: new Set<ToolbarMark>(),
   });
+  const focusPending = Boolean(props.focusTarget && (
+    (props.focusRequest && focusTargetMatches(props.focusRequest.target, props.focusTarget))
+    || (props.pendingInput && focusTargetMatches(props.pendingInput.target, props.focusTarget))
+  ));
+  const editorClassName = [
+    'row-editor',
+    props.completed ? 'done' : '',
+    isEmpty ? 'is-empty' : '',
+    focusPending ? 'is-focus-pending' : '',
+  ].filter(Boolean).join(' ');
 
   propsRef.current = props;
 
@@ -568,7 +578,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
     <>
       <div
         ref={mountRef}
-        className={`row-editor ${props.completed ? 'done' : ''} ${isEmpty ? 'is-empty' : ''}`}
+        className={editorClassName}
         data-placeholder={props.placeholder ?? 'Type here'}
       />
       <FloatingEditorToolbar

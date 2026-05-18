@@ -11,6 +11,7 @@ import type {
   AssistantMessage,
   TextContent,
   ToolResultMessage,
+  Usage,
   UserMessage,
 } from '../../core/agentTypes';
 import type { AgentSession } from '../../core/types';
@@ -24,13 +25,7 @@ export interface AgentMessageEntry {
   streaming: boolean;
 }
 
-export interface ActiveAssistantEntry {
-  id: string;
-  kind: 'active_assistant';
-  timestamp: number;
-}
-
-export type AgentConversationEntry = AgentMessageEntry | ActiveAssistantEntry;
+export type AgentConversationEntry = AgentMessageEntry;
 
 export type AgentTurnPhase = 'idle' | 'streaming_text' | 'waiting_for_tool' | 'resuming_after_tool';
 
@@ -45,6 +40,21 @@ const EMPTY_SNAPSHOT: AgentSnapshotState = {
   isStreaming: false,
   pendingToolCallIds: [],
   errorMessage: null,
+};
+
+const EMPTY_USAGE: Usage = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 0,
+  cost: {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    total: 0,
+  },
 };
 
 function isConversationMessage(message: AgentMessage | null | undefined): message is AgentConversationMessage {
@@ -113,13 +123,19 @@ function buildEntries(snapshot: AgentSnapshotState, toolResults: Map<string, Too
   const streamingMessage = isConversationMessage(snapshot.streamingMessage)
     ? snapshot.streamingMessage
     : null;
+  const activeAssistantId = activeAssistantEntryId(entries, snapshot);
 
   if (streamingMessage) {
     const lastEntry = entries[entries.length - 1];
-    const lastMessage = lastEntry?.kind === 'message' ? lastEntry.message : undefined;
-    if (!sameConversationMessage(lastMessage, streamingMessage)) {
+    const lastMessage = lastEntry?.message;
+    if (streamingMessage.role === 'assistant' && sameConversationMessage(lastMessage, streamingMessage) && lastEntry) {
+      lastEntry.id = activeAssistantId;
+      lastEntry.streaming = true;
+    } else {
       entries.push({
-        id: messageId(streamingMessage, entries.length, true),
+        id: streamingMessage.role === 'assistant'
+          ? activeAssistantId
+          : messageId(streamingMessage, entries.length, true),
         kind: 'message',
         nodeId: null,
         message: streamingMessage,
@@ -136,8 +152,7 @@ function buildEntries(snapshot: AgentSnapshotState, toolResults: Map<string, Too
     } else {
       const latestAssistant = [...entries]
         .reverse()
-        .find((entry): entry is AgentMessageEntry =>
-          entry.kind === 'message' && entry.message.role === 'assistant')?.message as AssistantMessage | undefined;
+        .find((entry) => entry.message.role === 'assistant')?.message as AssistantMessage | undefined;
       turnPhase = assistantHasPendingToolCalls(latestAssistant, toolResults)
         ? 'waiting_for_tool'
         : 'resuming_after_tool';
@@ -148,19 +163,53 @@ function buildEntries(snapshot: AgentSnapshotState, toolResults: Map<string, Too
   const shouldAppendAssistantPlaceholder = snapshot.isStreaming
     && (
       !lastEntry
-      || lastEntry.kind !== 'message'
       || lastEntry.message.role !== 'assistant'
     );
 
   if (shouldAppendAssistantPlaceholder) {
     entries.push({
-      id: `active-${snapshot.messages.length}-${snapshot.pendingToolCallIds.join('-')}`,
-      kind: 'active_assistant',
-      timestamp: Date.now(),
+      id: activeAssistantId,
+      kind: 'message',
+      nodeId: null,
+      message: createActiveAssistantPlaceholder(snapshot, entries),
+      branches: null,
+      streaming: true,
     });
   }
 
   return { entries, turnPhase };
+}
+
+function activeAssistantEntryId(entries: AgentMessageEntry[], snapshot: AgentSnapshotState): string {
+  return `active-assistant-${activeAssistantAnchorTimestamp(entries, snapshot)}`;
+}
+
+function activeAssistantAnchorTimestamp(entries: AgentMessageEntry[], snapshot: AgentSnapshotState): number {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]!;
+    if (entry.message.role === 'user') return entry.message.timestamp;
+  }
+  for (let index = snapshot.messages.length - 1; index >= 0; index -= 1) {
+    const message = snapshot.messages[index]!;
+    if (message.role === 'user') return message.timestamp;
+  }
+  return 0;
+}
+
+function createActiveAssistantPlaceholder(
+  snapshot: AgentSnapshotState,
+  entries: AgentMessageEntry[],
+): AssistantMessage {
+  return {
+    role: 'assistant',
+    content: [],
+    api: snapshotModelValue(snapshot, 'api') ?? '',
+    provider: snapshotModelValue(snapshot, 'provider') ?? '',
+    model: snapshotModelValue(snapshot, 'id') ?? '',
+    usage: EMPTY_USAGE,
+    stopReason: 'stop',
+    timestamp: activeAssistantAnchorTimestamp(entries, snapshot),
+  };
 }
 
 function textContent(text: string): TextContent[] {

@@ -118,6 +118,12 @@ Completion means:
   inputs, and the native file input.
 - Completed an agent composer visual pass so the textarea remains primary,
   toolbar controls stay compact, and focus treatment follows the shared ring.
+- Added a shared agent dock inset so header, chat scroll, steering preview, and
+  composer keep the same side breathing room while the composer remains
+  bottom-aligned.
+- Realigned the agent composer geometry to the shell: the dock inset matches the
+  sidebar right inset, the composer surface bottom aligns with panel bottoms,
+  and its radius uses `--panel-radius`.
 - Reworked agent debug into a compact Overview, Request Context, and Provider
   Timeline hierarchy; refresh and copy actions now use the shared icon-button
   primitive while runtime debug data remains caller-owned.
@@ -168,8 +174,8 @@ Completion means:
   state across tag, reference, and slash command suggestions.
 - Extracted `AgentComposerControls` and `AgentComposerModelMenu` for queued
   follow-up actions, attachment chips, attachment trigger, model picker button,
-  model/reasoning menu, reasoning switch, thinking-level menu, direct settings
-  trigger, toolbar composition, and the shared send/stop action slot while
+  model/reasoning menu, reasoning switch, thinking-level menu, toolbar
+  composition, and the shared send/stop action slot while
   keeping textarea draft, sending state, attachments state, menu open state,
   provider updates, and queue/stop behavior in `AgentComposer`.
 - Added e2e coverage for composer send, attachment chip removal, model menu
@@ -182,6 +188,23 @@ Completion means:
   for the chevron instead of making chevron spacing a one-off override.
 - Removed the panel header's extra right inset so the More action aligns to the
   same panel content edge as the rest of the header system.
+- Standardized product scrollbars as thin neutral infrastructure with reserved
+  gutters where possible, instead of hidden or dark platform-default scrollbars.
+- Added day-note panel navigation for previous day, Today, next day, and one
+  calendar icon through `ensure_date_node`; the date stays in the panel title,
+  while the Lin-styled popover keeps nodex-style month navigation,
+  selected/today states, and day-note count-density shading.
+- Replaced day-note calendar dots with neutral count-density shading and aligned
+  date navigation controls to the shared 6-7px radius system.
+- Matched nodex's header action placement: More aligns with the title when
+  there are no title tags, and moves to the tag row when tags exist.
+- Made parent row chevrons hover/focus-only so child state is expressed by the
+  bullet, and softened child indent guide lines.
+- Matched nodex's trailing idle hint behavior: only the focused empty trailing
+  editor reveals the command hint after a delay, so multiple blank nodes do not
+  show duplicate placeholders.
+- Suppressed content-row placeholders during pending focus or pending typed
+  input so typing into newly created blank nodes does not flash placeholder text.
 - Opened the unified full-system refactor branch and updated progress,
   inventory, implementation, and README docs to track one complete UI system
   pass instead of a temporary checkpoint.
@@ -216,14 +239,14 @@ Completion means:
   glyph systems.
 - Added e2e coverage for persistent parent chevrons and field value dense-row
   alignment.
-- Moved root-owned field entries into explicit row-model `headingRows`, with
-  content and hidden-field reveal rows in `bodyRows`; both sections still render
-  through the real `OutlinerView` / `OutlinerFieldRow` path.
+- Reverted root-owned field promotion: field entries now remain in normal
+  outliner sibling order, and `>` converts the current row in place instead of
+  changing row position.
 - Refined inline reference atoms from filled chip styling to text-like inline
   reference styling with semantic color and underline.
 - Refined drag/drop inside state to use an inset treatment that does not shift
   row content.
-- Added e2e coverage for heading field placement, tree reference marker
+- Added e2e coverage for field row position stability, tree reference marker
   geometry, inline reference text-like rendering, and drag/drop visual axes.
 
 ## In Progress

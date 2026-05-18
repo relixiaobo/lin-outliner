@@ -9,7 +9,7 @@ import {
   LibraryIcon,
   RecentsIcon,
   SearchIcon,
-  TagIcon,
+  SupertagIcon,
 } from './icons';
 import { ButtonControl } from './primitives/ButtonControl';
 import { ResizeHandle } from './primitives/ResizeHandle';
@@ -18,7 +18,7 @@ import { textOf } from './shared';
 const primaryNavItems = [
   { label: 'Today', key: 'today', icon: CalendarIcon },
   { label: 'Search', key: 'search', icon: SearchIcon },
-  { label: 'Supertags', key: 'supertags', icon: TagIcon },
+  { label: 'Supertags', key: 'supertags', icon: SupertagIcon },
   { label: 'Library', key: 'library', icon: LibraryIcon },
   { label: 'Recents', key: 'recents', icon: RecentsIcon },
 ] as const;

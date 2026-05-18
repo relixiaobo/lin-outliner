@@ -61,6 +61,7 @@ interface TrailingInputProps {
   optionField?: NodeProjection;
   onSelectOption?: (optionId: NodeId) => Promise<unknown> | unknown;
   onCreateOption?: (name: string) => Promise<unknown> | unknown;
+  placeholder?: string;
 }
 
 const TRIGGER_NODE_IDLE_MS = 160;
@@ -651,7 +652,7 @@ export function TrailingInput(props: TrailingInputProps) {
       <div
         ref={mountRef}
         className={`row-editor trailing-editor idle-hint ${hasContent ? '' : 'is-empty'}`}
-        data-placeholder="Type here or '/' for commands"
+        data-placeholder={props.placeholder ?? "Type here or '/' for commands"}
       />
       {optionsOpen && isOptionsField && createPortal(
         <PopoverListbox

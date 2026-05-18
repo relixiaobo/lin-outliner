@@ -72,6 +72,7 @@
       --tab-active-bg: #e4e4e7;
       --control-hover: rgba(0, 0, 0, 0.055);
       --control-active: rgba(0, 0, 0, 0.08);
+      --focus-border: rgba(9, 9, 11, 0.52);
       --focus-ring: rgba(9, 9, 11, 0.24);
 
       --accent-brand: #f43f5e;
@@ -1927,8 +1928,7 @@
       align-items: center;
       justify-content: space-between;
       gap: 8px;
-      border-top: 1px solid rgba(0, 0, 0, 0.04);
-      padding-top: 7px;
+      padding-top: 2px;
     }
 
     .composer-tools {
@@ -3045,7 +3045,7 @@
             <div class="mini-menu">
               <div class="mini-menu-item active"><span class="mini-icon">✓</span><span>gpt-5.4</span></div>
               <div class="mini-menu-item"><span class="mini-icon"></span><span>gpt-5.4-mini</span></div>
-              <div class="mini-menu-item"><span class="mini-icon">⚙</span><span>Agent settings</span></div>
+              <div class="mini-menu-item"><span class="mini-icon"></span><span>Thinking · Medium</span></div>
             </div>
             <p>Model and reasoning controls only list models from enabled providers with credentials.</p>
           </article>
@@ -3085,7 +3085,7 @@
                 <div class="debug-metric"><span>Status</span><strong>Completed</strong></div>
               </div>
               <div class="debug-section-row"><strong>Request Context</strong><span>System prompt, tools, and bounded request JSON.</span></div>
-              <div class="debug-section-row"><strong>Provider Timeline</strong><span>Queries, rounds, messages, responses, and raw payload disclosure.</span></div>
+              <div class="debug-section-row"><strong>Provider Timeline</strong><span>Queries and rounds with request messages plus provider response in one ordered list.</span></div>
             </div>
             <p>Debug is a workspace inspection panel, not the normal chat reading mode.</p>
           </article>

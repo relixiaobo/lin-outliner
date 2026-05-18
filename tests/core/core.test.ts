@@ -295,7 +295,7 @@ describe('Core', () => {
     expect(core.state().nodes[today].children).toEqual([first, second, third, fourth]);
   });
 
-  test('inline field after trigger trashes trigger row and undo restores it', () => {
+  test('inline field trigger converts the current row in place and undo restores it', () => {
     const core = Core.new();
     const today = core.projection().todayId;
     const before = mustFocus(core.createNode(today, null, 'Before'));
@@ -305,16 +305,18 @@ describe('Core', () => {
     const fieldEntryId = mustFocus(core.createInlineFieldAfterNode(trigger, 'Priority', 'plain'));
     const fieldId = core.state().nodes[fieldEntryId].fieldDefId!;
 
-    expect(core.state().nodes[trigger].parentId).toBe(TRASH_ID);
-    expect(core.state().nodes[today].children).toEqual([before, fieldEntryId, after]);
+    expect(fieldEntryId).toBe(trigger);
+    expect(core.state().nodes[today].children).toEqual([before, trigger, after]);
     expect(core.state().nodes[fieldEntryId].type).toBe('fieldEntry');
+    expect(core.state().nodes[fieldEntryId].content.text).toBe('');
     expect(core.state().nodes[fieldId].type).toBe('fieldDef');
     expect(core.state().nodes[fieldId].parentId).toBe(SCHEMA_ID);
 
     core.undo();
     expect(core.state().nodes[today].children).toEqual([before, trigger, after]);
     expect(core.state().nodes[trigger].parentId).toBe(today);
-    expect(core.state().nodes[fieldEntryId]).toBeUndefined();
+    expect(core.state().nodes[trigger].type).toBeUndefined();
+    expect(core.state().nodes[trigger].content.text).toBe('/priority');
     expect(core.state().nodes[fieldId]).toBeUndefined();
   });
 
@@ -555,7 +557,7 @@ describe('Core', () => {
     const target = mustFocus(core.createNode(today, null, 'Target'));
     const nodeId = mustFocus(core.createNode(today, null, 'Hello'));
 
-    core.applyNodeTextPatch(nodeId, {
+    const outcome = core.applyNodeTextPatch(nodeId, {
       ops: [{
         type: 'replace',
         from: 5,
@@ -566,6 +568,10 @@ describe('Core', () => {
           inlineRefs: [{ offset: 6, targetNodeId: target, displayName: 'Target' }],
         },
       }],
+    });
+    expect(outcome.focus).toMatchObject({
+      nodeId,
+      placement: { kind: 'preserve' },
     });
     core.applyNodeTextPatch(nodeId, {
       ops: [{ type: 'add_mark', from: 0, to: 5, markType: 'italic' }],

@@ -37,7 +37,6 @@ import {
   previousVisibleRowId,
 } from '../../src/renderer/ui/interactions/outlinerStructure';
 import {
-  buildPanelOutlinerSections,
   buildOutlinerRows,
   hiddenFieldKey,
   NAME_FIELD,
@@ -81,7 +80,7 @@ describe('row interaction resolvers', () => {
     })).toEqual([{ id: 'field', type: 'field' }]);
   });
 
-  test('splits panel heading fields from filtered body rows', () => {
+  test('keeps panel fields in the normal body row model', () => {
     const parent = makeNode('parent', 'Parent', {
       children: ['status', 'beta', 'alpha', 'hidden'],
       filterField: NAME_FIELD,
@@ -102,19 +101,13 @@ describe('row interaction resolvers', () => {
       ['beta', makeNode('beta', 'Beta', { parentId: 'parent' })],
     ]);
 
-    expect(buildPanelOutlinerSections(parent as any, byId)).toEqual({
-      headingRows: [{ id: 'status', type: 'field' }],
-      bodyRows: [
-        { id: 'alpha', type: 'content' },
-        { id: 'hidden:parent:hidden', type: 'hiddenField', fieldId: 'hidden', label: 'Archive' },
-      ],
-    });
-    expect(buildPanelOutlinerSections(parent as any, byId, {
-      expandedHiddenFields: new Set([hiddenFieldKey('parent', 'hidden')]),
-    }).headingRows).toEqual([
-      { id: 'status', type: 'field' },
-      { id: 'hidden', type: 'field' },
+    expect(buildOutlinerRows(parent as any, byId)).toEqual([
+      { id: 'alpha', type: 'content' },
+      { id: 'hidden:parent:hidden', type: 'hiddenField', fieldId: 'hidden', label: 'Archive' },
     ]);
+    expect(buildOutlinerRows(parent as any, byId, {
+      expandedHiddenFields: new Set([hiddenFieldKey('parent', 'hidden')]),
+    })).toEqual([{ id: 'alpha', type: 'content' }]);
   });
 
   test('applies sort, filter, and group view settings to row models', () => {

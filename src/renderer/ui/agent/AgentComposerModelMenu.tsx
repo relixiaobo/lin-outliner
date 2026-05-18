@@ -16,7 +16,6 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ICON_SIZE,
-  SettingsIcon,
 } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { MenuItem } from '../primitives/MenuItem';
@@ -46,7 +45,6 @@ export function AgentComposerModelMenu({
   onClose,
   onModelSelect,
   onMoreModelsOpenChange,
-  onOpenSettings,
   onReasoningLevelSelect,
   onReasoningMenuOpenChange,
   onReasoningToggle,
@@ -64,7 +62,6 @@ export function AgentComposerModelMenu({
   onClose: () => void;
   onModelSelect: (model: ComposerModelChoice) => void;
   onMoreModelsOpenChange: (open: boolean) => void;
-  onOpenSettings: () => void;
   onReasoningLevelSelect: (reasoningLevel: AgentReasoningLevel) => void;
   onReasoningMenuOpenChange: (open: boolean) => void;
   onReasoningToggle: () => void;
@@ -140,71 +137,56 @@ export function AgentComposerModelMenu({
       </div>
 
       {supportsReasoning ? (
-        <>
-          <div className="agent-composer-menu-divider" role="separator" />
-          <div className="agent-composer-thinking-row">
-            <BrainIcon size={ICON_SIZE.menu} />
-            <span>Thinking</span>
-            {reasoningEnabled ? (
-              <div className="agent-composer-thinking-level-wrap">
-                <ButtonControl
-                  aria-expanded={reasoningMenuOpen}
-                  aria-haspopup="menu"
-                  aria-label="Thinking level"
-                  className="agent-composer-thinking-level"
-                  onClick={() => onReasoningMenuOpenChange(!reasoningMenuOpen)}
+        <div className="agent-composer-thinking-row">
+          <BrainIcon size={ICON_SIZE.menu} />
+          <span>Thinking</span>
+          {reasoningEnabled ? (
+            <div className="agent-composer-thinking-level-wrap">
+              <ButtonControl
+                aria-expanded={reasoningMenuOpen}
+                aria-haspopup="menu"
+                aria-label="Thinking level"
+                className="agent-composer-thinking-level"
+                onClick={() => onReasoningMenuOpenChange(!reasoningMenuOpen)}
+              >
+                {REASONING_LABELS[selectedReasoning]}
+                <ChevronDownIcon size={ICON_SIZE.tiny} />
+              </ButtonControl>
+              {reasoningMenuOpen ? (
+                <MenuSurface
+                  aria-label="Thinking levels"
+                  className="agent-composer-thinking-level-menu"
+                  role="menu"
                 >
-                  {REASONING_LABELS[selectedReasoning]}
-                  <ChevronDownIcon size={ICON_SIZE.tiny} />
-                </ButtonControl>
-                {reasoningMenuOpen ? (
-                  <MenuSurface
-                    aria-label="Thinking levels"
-                    className="agent-composer-thinking-level-menu"
-                    role="menu"
-                  >
-                    {reasoningOptions
-                      .filter((level) => level !== 'off')
-                      .map((level) => (
-                        <MenuItem
-                          active={selectedReasoning === level}
-                          activeClassName="is-selected"
-                          aria-checked={selectedReasoning === level}
-                          className="agent-composer-thinking-level-item"
-                          key={level}
-                          label={REASONING_LABELS[level]}
-                          onClick={() => onReasoningLevelSelect(level)}
-                          role="menuitemradio"
-                        />
-                      ))}
-                  </MenuSurface>
-                ) : null}
-              </div>
-            ) : null}
-            <SwitchControl
-              className={`agent-composer-thinking-switch ${reasoningEnabled ? 'is-on' : ''}`}
-              checked={reasoningEnabled}
-              disabled={configDisabled || !reasoningOptions.includes('off')}
-              label="Thinking"
-              onCheckedChange={onReasoningToggle}
-            >
-              <span />
-            </SwitchControl>
-          </div>
-        </>
+                  {reasoningOptions
+                    .filter((level) => level !== 'off')
+                    .map((level) => (
+                      <MenuItem
+                        active={selectedReasoning === level}
+                        activeClassName="is-selected"
+                        aria-checked={selectedReasoning === level}
+                        className="agent-composer-thinking-level-item"
+                        key={level}
+                        label={REASONING_LABELS[level]}
+                        onClick={() => onReasoningLevelSelect(level)}
+                        role="menuitemradio"
+                      />
+                    ))}
+                </MenuSurface>
+              ) : null}
+            </div>
+          ) : null}
+          <SwitchControl
+            className={`agent-composer-thinking-switch ${reasoningEnabled ? 'is-on' : ''}`}
+            checked={reasoningEnabled}
+            disabled={configDisabled || !reasoningOptions.includes('off')}
+            label="Thinking"
+            onCheckedChange={onReasoningToggle}
+          >
+            <span />
+          </SwitchControl>
+        </div>
       ) : null}
-
-      <div className="agent-composer-menu-divider" role="separator" />
-      <MenuItem
-        className="agent-composer-settings-item"
-        icon={<SettingsIcon size={ICON_SIZE.menu} />}
-        label={<span>API Settings</span>}
-        onClick={() => {
-          onClose();
-          onOpenSettings();
-        }}
-        role="menuitem"
-      />
     </FloatingComposerMenu>
   );
 }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type Dispatch, type MouseEvent, t
 import { api } from '../api/client';
 import type { NodeId, RichText, RichTextPatch } from '../api/types';
 import { EMPTY_RICH_TEXT, plainText } from '../api/types';
+import { TAG_DAY_ID } from '../../core/types';
 import { flattenVisibleRows, type DocumentIndex, type UiState } from '../state/document';
 import { RichTextEditor, type EditorSplitPayload } from './editor/RichTextEditor';
 import {
@@ -31,6 +32,7 @@ import {
   LibraryIcon,
   MoreIcon,
   SearchIcon,
+  SupertagIcon,
   TrashIcon,
 } from './icons';
 import { FieldTypeIcon } from './outliner/fieldTypePresentation';
@@ -38,7 +40,7 @@ import { DoneCheckbox } from './outliner/DoneCheckbox';
 import { NodeContextMenu } from './outliner/NodeContextMenu';
 import { NodeDescription } from './outliner/NodeDescription';
 import { OutlinerView } from './outliner/OutlinerView';
-import { buildPanelOutlinerSections } from './outliner/row-model';
+import { buildOutlinerRows } from './outliner/row-model';
 import { TrailingInput } from './outliner/TrailingInput';
 import { TriggerPopover } from './outliner/TriggerPopover';
 import { createTrailingField, createTrailingTriggerNode } from './outliner/trailingTriggers';
@@ -47,6 +49,7 @@ import { IconButton } from './primitives/IconButton';
 import { inlineReferenceTextColor, resolveTagColor } from './tags/tagColors';
 import { TagBar } from './tags/TagBar';
 import { buildPanelBreadcrumb } from './panelBreadcrumb';
+import { PanelDateNavigation } from './PanelDateNavigation';
 
 interface NodePanelProps {
   panelId: string;
@@ -60,6 +63,28 @@ interface NodePanelProps {
   setTrigger: (trigger: TriggerState) => void;
   dragId: NodeId | null;
   setDragId: (nodeId: NodeId | null) => void;
+}
+
+function parsePanelDateLabel(label: string) {
+  const trimmed = label.trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+  return trimmed;
+}
+
+function isDayTagId(tagId: NodeId, byId: DocumentIndex['byId']) {
+  return tagId === TAG_DAY_ID || byId.get(tagId)?.content.text.toLowerCase() === 'day';
 }
 
 export function NodePanel(props: NodePanelProps) {
@@ -77,10 +102,9 @@ export function NodePanel(props: NodePanelProps) {
   const breadcrumb = buildPanelBreadcrumb(rootNode, props.index);
   const titleFocusTarget = focusTarget(props.rootId, null, props.panelId, 'panel-title');
   const descriptionFocusTarget = focusTarget(props.rootId, null, props.panelId, 'description');
-  const panelRows = useMemo(() => buildPanelOutlinerSections(rootNode, props.index.byId, {
+  const panelRows = useMemo(() => buildOutlinerRows(rootNode, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
   }), [props.index.byId, props.ui.expandedHiddenFields, rootNode]);
-  const hasHeadingFields = panelRows.headingRows.length > 0;
 
   useEffect(() => {
     setTitleContent(rootNode?.content ?? EMPTY_RICH_TEXT);
@@ -137,7 +161,7 @@ export function NodePanel(props: NodePanelProps) {
     if (!rootNode) return null;
     if (props.rootId === projection.todayId) return <CalendarIcon size={20} />;
     if (props.rootId === projection.rootId) return <LibraryIcon size={20} />;
-    if (props.rootId === projection.schemaId) return <LibraryIcon size={20} />;
+    if (props.rootId === projection.schemaId) return <SupertagIcon size={20} />;
     if (props.rootId === projection.trashId) return <TrashIcon size={20} />;
     if (props.rootId === projection.searchesId || rootNode.type === 'search') return <SearchIcon size={20} />;
     if (rootNode.type === 'tagDef') {
@@ -153,6 +177,20 @@ export function NodePanel(props: NodePanelProps) {
 
   const headerIcon = renderHeaderIcon();
   const showDoneCheckbox = Boolean(rootNode?.showCheckbox || rootNode?.doneStateEnabled || rootNode?.completedAt);
+  const rootTagIds = rootNode?.tags ?? [];
+  const hasTitleTags = rootTagIds.length > 0;
+  const panelIsoDate = rootNode && rootTagIds.some((tagId) => isDayTagId(tagId, props.index.byId))
+    ? parsePanelDateLabel(rootNode.content.text)
+    : null;
+  const dateNoteCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const node of props.index.byId.values()) {
+      if (!node.tags.some((tagId) => isDayTagId(tagId, props.index.byId))) continue;
+      const isoDate = parsePanelDateLabel(node.content.text);
+      if (isoDate) counts[isoDate] = node.children.length;
+    }
+    return counts;
+  }, [props.index.byId]);
 
   const selectHeader = () => {
     props.setUi((prev) => selectFocusState(prev, titleFocusTarget));
@@ -223,6 +261,22 @@ export function NodePanel(props: NodePanelProps) {
     const rect = event.currentTarget.getBoundingClientRect();
     setContextMenu({ x: rect.left, y: rect.bottom + 4 });
   };
+
+  const headerMoreButton = rootNode ? (
+    <IconButton
+      className="panel-title-more-button"
+      icon={MoreIcon}
+      iconSize={14}
+      label="More node actions"
+      onClick={openHeaderMoreMenu}
+      onMouseDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      title="More"
+      variant="panel"
+    />
+  ) : null;
 
   const clearTitleTriggerText = async () => {
     if (!titleTrigger || !rootNode) return;
@@ -394,6 +448,7 @@ export function NodePanel(props: NodePanelProps) {
                 />
               )}
             </div>
+            {!hasTitleTags && headerMoreButton}
           </div>
           {rootNode && (
             <NodeDescription
@@ -421,54 +476,25 @@ export function NodePanel(props: NodePanelProps) {
               }}
             />
           )}
-          {rootNode && (
+          {rootNode && hasTitleTags && (
             <div className="panel-title-toolbar-row">
-              {rootNode.tags.length > 0 ? (
-                <TagBar
-                  nodeId={props.rootId}
-                  tagIds={rootNode.tags}
-                  index={props.index}
-                  run={props.run}
-                  onRoot={props.onRoot}
-                />
-              ) : (
-                <span />
-              )}
-              <IconButton
-                className="panel-title-more-button"
-                icon={MoreIcon}
-                iconSize={14}
-                label="More node actions"
-                onClick={openHeaderMoreMenu}
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                }}
-                title="More"
-                variant="panel"
+              <TagBar
+                nodeId={props.rootId}
+                tagIds={rootNode.tags}
+                index={props.index}
+                run={props.run}
+                onRoot={props.onRoot}
               />
+              {headerMoreButton}
             </div>
           )}
-          {rootNode && hasHeadingFields && (
-            <div className="panel-heading-fields outliner">
-              <OutlinerView
-                panelId={props.panelId}
-                parentId={props.rootId}
-                rootId={props.rootId}
-                onRoot={props.onRoot}
-                depth={0}
-                index={props.index}
-                ui={props.ui}
-                setUi={props.setUi}
-                run={props.run}
-                trigger={props.trigger}
-                setTrigger={props.setTrigger}
-                dragId={props.dragId}
-                setDragId={props.setDragId}
-                rows={panelRows.headingRows}
-                showViewToolbar={false}
-              />
-            </div>
+          {panelIsoDate && (
+            <PanelDateNavigation
+              dateNoteCounts={dateNoteCounts}
+              isoDate={panelIsoDate}
+              onRoot={props.onRoot}
+              run={props.run}
+            />
           )}
         </header>
         {rootNode && contextMenu && (
@@ -514,7 +540,7 @@ export function NodePanel(props: NodePanelProps) {
               setTrigger={props.setTrigger}
               dragId={props.dragId}
               setDragId={props.setDragId}
-              rows={panelRows.bodyRows}
+              rows={panelRows}
             />
             {showTrailingInput && (
               <TrailingInput

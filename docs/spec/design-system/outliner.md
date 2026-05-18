@@ -18,7 +18,7 @@ Primary sources:
 - `src/renderer/ui/outliner/OutlinerView.tsx`
 - `src/renderer/ui/outliner/OutlinerItem.tsx`
 - `src/renderer/ui/outliner/OutlinerFieldRow.tsx`
-- `src/renderer/ui/outliner/FieldValueRenderer.tsx`
+- `src/renderer/ui/outliner/FieldValueOutliner.tsx`
 - `src/renderer/ui/outliner/RowLeading.tsx`
 - `src/renderer/ui/outliner/NodeDescription.tsx`
 - `src/renderer/ui/tags/TagBar.tsx`
@@ -44,7 +44,6 @@ An outliner panel contains:
 - Dedicated title tag row.
 - Title action buttons, including a More action that opens the same node action
   surface as the row context menu.
-- Optional heading field rows.
 - Optional definition configuration.
 - Optional definition template label.
 - Outliner body.
@@ -60,14 +59,28 @@ Heading area order:
 1. Node icon row when an icon exists.
 2. Title segment with optional checkbox and title text.
 3. Description segment bound to the title.
-4. Tag segment with More actions aligned to the right.
-5. Field segment when heading fields exist.
+4. Tag segment when title tags exist, with More actions aligned to the right.
+5. Date navigation segment when the node is a day note.
 
-Heading field rows are real `fieldEntry` rows directly owned by the panel root.
-The row model exposes them as `headingRows`, while regular content rows and
-hidden-field reveal rows remain `bodyRows`. `NodePanel` renders both sections
-through `OutlinerView` / `OutlinerFieldRow`; body view filter, sort, and group
-settings apply to `bodyRows`, not to heading metadata fields.
+When a node has no title tags, the More action belongs to the title segment and
+aligns vertically with the title text. When title tags exist, More moves to the
+tag segment so the tag row owns the horizontal action edge.
+
+Day note panels are allowed to add day-specific navigation under the heading
+metadata. The navigation must stay compact: previous day, Today, next day, and
+one calendar icon. Do not repeat the date in the navigation row because the
+panel title is already the date. It must navigate through the same
+`ensure_date_node` command used by the product model. The popover may borrow
+nodex's capability model including month navigation, selected date, today state,
+and day-note count density, but it must use Lin's neutral overlay, border,
+spacing, and focus tokens. Day-note density is expressed by neutral cell
+background strength, not by an extra dot marker.
+
+Field rows are real outliner rows. A `fieldEntry` keeps its parent and sibling
+position like any content node; the row model must not promote root-owned fields
+into a separate heading section. Typing `>` in an empty row converts that row in
+place to a field row. Creating a trailing field appends a field row at the
+trailing position. Neither action may reorder the row visually.
 
 ## Visual Tokens
 
@@ -82,6 +95,19 @@ and color must use the outliner contract values:
 - Row padding: `1px 6px 1px 6px`.
 - Leading cluster width: `42px`.
 - Leading cluster columns: `15px 4px 15px 8px`.
+- Parent nodes express child state through their bullet. The chevron lives in
+  the leading gutter as a hover/focus affordance for the current row only; it is
+  not a persistent second child-state marker.
+- Chevron shell and parent bullet shell use the same `15px` measured size.
+- Child indent guide lines stay lighter than row text and selection; hover may
+  thicken slightly but must remain subtle.
+- Empty trailing-node hints follow the nodex idle-hint rule: only the focused
+  trailing editor may reveal `Type here or '/' for commands`, and it fades in
+  after a short delay. Multiple empty trailing editors must not show hints at
+  the same time.
+- Empty content-row placeholders must also be suppressed while a focus request
+  or pending typed character is targeting that row, before DOM focus has landed,
+  so blank-node editing does not flash placeholder text.
 - Selection background starts at `21px`, not at the text edge.
 - Description: `13px` font size, `18px` line height, muted text color.
 - Field row grid: `clamp(112px, 32%, 180px) minmax(0, 1fr)`.
@@ -214,7 +240,7 @@ white internal check glyph.
 
 - Row applied tags render inline after node text.
 - Title applied tags render in the heading tag segment below the title
-  description and above heading field rows.
+  description.
 - Tags do not become detached cards or decorative chip strips during normal
   editing.
 - Tag open/remove actions are real controls.
@@ -234,21 +260,21 @@ Inline references are text atoms, not tags:
 Field behavior is not generic form behavior.
 
 - `fieldEntry` rows use a name/value grid.
-- Field values and definition configuration share one dense row treatment:
-  compact icon slot, field/config name, and value. Definition config should not
-  look like a separate settings card, and field values should not use a looser
-  visual style than definition config.
+- Field values are child nodes of the `fieldEntry`, not form values stored on
+  the field row. The value slot shows a node-like preview with a bullet and
+  placeholder; editing focuses the existing value child or the field's trailing
+  child input.
+- Definition configuration shares the dense row rhythm, but it remains a
+  configuration surface. Definition config should not look like a separate
+  settings card, and field values should not become private form controls.
 - Field value types include plain, options, options-from-tag, date, number,
   password, formula, user, URL, email, checkbox, boolean, and color.
-- Options use `OptionsPicker`.
-- Checkbox and boolean commit immediately. Checkbox field values use the shared
-  `CheckboxMark` measured square; boolean fields use switch semantics.
-- Date/color controls commit immediately or on field-specific control events.
-- Text-like values commit on blur/keyboard flow.
-- Invalid number values use semantic invalid styling without changing row
-  layout.
-- Expanded field rows with child rows show a value preview such as child count
-  and focus into field children.
+- Options are selected through the field child trailing input and the shared
+  `PopoverListbox` option menu.
+- Typed field affordances may specialize the child-node creation/selection flow,
+  but must preserve the value node as the persisted editable object.
+- Expanded field rows render their value children through the normal outliner
+  row path.
 
 Definition configuration appears under tag/field definition panel roots:
 

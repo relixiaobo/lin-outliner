@@ -1,10 +1,12 @@
 import type { ToolCall, ToolResultMessage } from '../../../core/agentTypes';
 import {
-  ChevronDownIcon,
-  ChevronRightIcon,
+  BrainIcon,
   LoaderIcon,
+  OptionsIcon,
+  WarningIcon,
 } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { AgentDisclosureIndicator } from './AgentDisclosureIndicator';
 import { AgentProcessTimeline } from './AgentProcessTimeline';
 import { getToolCallStatus, summarizeToolCall } from './AgentToolCallBlock';
 import type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
@@ -97,7 +99,13 @@ export function AgentProcessBlock({
   const liveSegment = turnActive && !sealed;
   const defaultExpanded = liveSegment || turnFailedWithoutProse;
   const expanded = expandState.isExpanded(id, defaultExpanded);
-  const Chevron = expanded ? ChevronDownIcon : ChevronRightIcon;
+  const processIcon = liveSegment
+    ? <LoaderIcon className="agent-process-spinner" size={12} />
+    : turnFailedWithoutProse
+      ? <WarningIcon size={13} />
+      : toolCalls.length > 0
+        ? <OptionsIcon size={13} />
+        : <BrainIcon size={13} />;
 
   return (
     <div className={`agent-process-block ${turnFailedWithoutProse ? 'is-error' : ''}`}>
@@ -106,9 +114,12 @@ export function AgentProcessBlock({
         className="agent-process-toggle"
         onClick={() => expandState.toggle(id, expanded)}
       >
-        {liveSegment ? (
-          <LoaderIcon className="agent-process-spinner" size={12} />
-        ) : null}
+        <AgentDisclosureIndicator
+          className="agent-process-indicator"
+          expanded={expanded}
+          icon={processIcon}
+          statusPersistent={liveSegment}
+        />
         <span className="agent-process-title">
           {summarizeProcess({
             firstThinkingText,
@@ -121,7 +132,6 @@ export function AgentProcessBlock({
             turnFailedWithoutProse,
           })}
         </span>
-        <Chevron size={12} />
       </ButtonControl>
       {expanded ? (
         <AgentProcessTimeline

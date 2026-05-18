@@ -27,6 +27,42 @@ async function placeCursor(page: Page, nodeId: string, placement: 'start' | 'end
   await page.waitForTimeout(25);
 }
 
+async function placeCursorAtTextOffset(page: Page, nodeId: string, offset: number) {
+  const editor = rowEditor(page, nodeId);
+  await editor.click();
+  await editor.evaluate((element, targetOffset) => {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let remaining = targetOffset;
+    let target: Node | null = null;
+    let targetNodeOffset = 0;
+
+    while (true) {
+      const next = walker.nextNode();
+      if (!next) break;
+      const length = next.textContent?.length ?? 0;
+      if (remaining <= length) {
+        target = next;
+        targetNodeOffset = remaining;
+        break;
+      }
+      remaining -= length;
+    }
+
+    if (target) {
+      range.setStart(target, targetNodeOffset);
+      range.collapse(true);
+    } else {
+      range.selectNodeContents(element);
+      range.collapse(false);
+    }
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }, offset);
+  await page.waitForTimeout(25);
+}
+
 async function selectEditorContents(page: Page, nodeId: string) {
   const editor = rowEditor(page, nodeId);
   await editor.click();
@@ -67,6 +103,41 @@ test.describe('outliner row editing parity', () => {
     expect(createdId).toBeTruthy();
     expect((await nodeById(page, createdId))?.content.text).toBe('');
     await expect(rowEditor(page, createdId)).toBeFocused();
+
+    const placeholderStyle = await row(page, createdId).locator('.row-editor').first().evaluate((element) => {
+      const style = getComputedStyle(element, '::before');
+      return {
+        display: style.display,
+        opacity: Number(style.opacity),
+      };
+    });
+    expect(placeholderStyle.display).not.toBe('none');
+    expect(placeholderStyle.opacity).toBe(0);
+  });
+
+  test('> converts the current empty row to a field row without moving it', async ({ page }) => {
+    await placeCursor(page, ids.alpha, 'end');
+    await page.keyboard.press('Enter');
+
+    const childrenAfterEnter = await todayChildren(page);
+    const createdId = childrenAfterEnter[1];
+    expect(createdId).toBeTruthy();
+    await expect(rowEditor(page, createdId)).toBeFocused();
+
+    await page.keyboard.type('>');
+
+    await expect.poll(async () => (await nodeById(page, createdId))?.type).toBe('fieldEntry');
+    expect((await todayChildren(page))[1]).toBe(createdId);
+    await expect(row(page, createdId).locator('.field-name-input')).toBeVisible();
+
+    const alphaBox = await row(page, ids.alpha).boundingBox();
+    const fieldBox = await row(page, createdId).boundingBox();
+    const betaBox = await row(page, ids.beta).boundingBox();
+    expect(alphaBox).toBeTruthy();
+    expect(fieldBox).toBeTruthy();
+    expect(betaBox).toBeTruthy();
+    expect(fieldBox!.y).toBeGreaterThan(alphaBox!.y);
+    expect(fieldBox!.y).toBeLessThan(betaBox!.y);
   });
 
   test('clearing row text keeps the row height stable', async ({ page }) => {
@@ -79,6 +150,30 @@ test.describe('outliner row editing parity', () => {
 
     await expect(editorShell).toHaveClass(/is-empty/);
     await expect.poll(async () => (await rowBody.boundingBox())?.height ?? 0).toBeLessThanOrEqual(heightBefore + 1);
+  });
+
+  test('pending-focus empty rows suppress placeholder before DOM focus lands', async ({ page }) => {
+    await page.evaluate(() => {
+      const fixture = document.createElement('div');
+      fixture.setAttribute('data-testid', 'pending-focus-placeholder-fixture');
+      fixture.innerHTML = `
+        <div class="row-editor is-empty is-focus-pending" data-placeholder="Type here">
+          <div class="ProseMirror" contenteditable="true"></div>
+        </div>
+      `;
+      document.body.appendChild(fixture);
+    });
+
+    const placeholderStyle = await page.locator('[data-testid="pending-focus-placeholder-fixture"] .row-editor').evaluate((element) => {
+      const style = getComputedStyle(element, '::before');
+      return {
+        display: style.display,
+        opacity: Number(style.opacity),
+      };
+    });
+
+    expect(placeholderStyle.display).not.toBe('none');
+    expect(placeholderStyle.opacity).toBe(0);
   });
 
   test('clicking row text right-side blank space focuses the editor at the row end', async ({ page }) => {
@@ -97,6 +192,17 @@ test.describe('outliner row editing parity', () => {
     await page.keyboard.type('!');
 
     await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe('Alpha!');
+  });
+
+  test('typing in the middle of a node preserves the cursor instead of jumping to the end', async ({ page }) => {
+    await placeCursorAtTextOffset(page, ids.alpha, 2);
+
+    await page.keyboard.type('X');
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe('AlXpha');
+    await page.waitForTimeout(50);
+
+    await page.keyboard.type('Y');
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe('AlXYpha');
   });
 
   test('Backspace at the start of an empty row deletes it and returns focus upward', async ({ page }) => {

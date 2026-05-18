@@ -472,29 +472,38 @@ function RoundCard({ round }: { round: AgentDebugSnapshot }) {
           <code>{round.wire.hash}</code>
         </div>
       </div>
-      <div className="agent-debug-round-grid">
-        <section>
-          <div className="agent-debug-subsection-title">Request Context · {round.messageCount} messages</div>
-          <div className="agent-debug-message-list">
-            {round.messages.map((message) => (
-              <MessageRow message={message} key={message.id} />
-            ))}
-          </div>
-        </section>
-        <section>
-          <div className="agent-debug-subsection-title">Response</div>
-          {round.usage ? <UsageRow usage={round.usage} /> : <div className="agent-debug-empty-line">No provider usage yet.</div>}
-          {round.responseParts.length === 0 ? (
-            <div className="agent-debug-empty-line">No response parts captured yet.</div>
-          ) : round.responseParts.map((part, index) => (
-            <PartRow part={part} rowId={`response-${round.id}`} index={index} key={`response-${index}`} />
+      <div className="agent-debug-round-timeline">
+        <div className="agent-debug-subsection-title">Messages · {round.messageCount} request messages</div>
+        <div className="agent-debug-message-list">
+          {round.messages.map((message) => (
+            <MessageRow message={message} key={message.id} />
           ))}
-          {round.errorMessage ? <div className="agent-debug-error">{round.errorMessage}</div> : null}
-        </section>
+          <ResponseMessageRow round={round} />
+        </div>
       </div>
       <ContextDisclosure title={`Raw Provider Payload · ${formatBytes(round.wire.bytes)}`} copyText={round.wire.json}>
         <pre>{round.wire.json}</pre>
       </ContextDisclosure>
+    </article>
+  );
+}
+
+function ResponseMessageRow({ round }: { round: AgentDebugSnapshot }) {
+  return (
+    <article className="agent-debug-message-row is-response">
+      <div className="agent-debug-message-head">
+        <span>assistant</span>
+        <strong>Provider response</strong>
+        <span>{round.usage ? <CostInline usage={round.usage} /> : 'usage pending'}</span>
+      </div>
+      <div className="agent-debug-part-list">
+        {round.responseParts.length === 0 ? (
+          <div className="agent-debug-empty-line">No response parts captured yet.</div>
+        ) : round.responseParts.map((part, index) => (
+          <PartRow part={part} rowId={`response-${round.id}`} index={index} key={`response-${index}`} />
+        ))}
+      </div>
+      {round.errorMessage ? <div className="agent-debug-error">{round.errorMessage}</div> : null}
     </article>
   );
 }
@@ -541,15 +550,6 @@ function PartRow(props: { index: number; part: AgentDebugMessagePart; rowId: str
       </summary>
       <pre>{body}</pre>
     </details>
-  );
-}
-
-function UsageRow({ usage }: { usage: AgentDebugUsage }) {
-  return (
-    <div className="agent-debug-usage-row">
-      <span>Provider usage</span>
-      <CostInline usage={usage} />
-    </div>
   );
 }
 

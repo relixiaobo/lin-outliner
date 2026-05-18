@@ -11,16 +11,19 @@ import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { isDescendantOf, isNodeInTrash } from '../interactions/nodeLocation';
 import { tagSelectorItemLabel, tagSelectorItems } from '../interactions/tagSelector';
 import {
-  AddIcon,
   CheckboxIcon,
-  CloseIcon,
-  FilterIcon,
+  CopyIcon,
+  DescriptionIcon,
+  DuplicateIcon,
+  HideToolbarIcon,
   ICON_SIZE,
-  MoreIcon,
+  MoveDownIcon,
+  MoveToIcon,
+  MoveUpIcon,
+  OpenIcon,
   RestoreIcon,
-  SearchIcon,
-  ShowIcon,
-  TagIcon,
+  ShowToolbarIcon,
+  SupertagIcon,
   TrashIcon,
 } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
@@ -30,6 +33,7 @@ import { TextInputControl } from '../primitives/TextInputControl';
 import { overlayAnchorFromPoint, useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import type { CommandRunner } from '../shared';
 import { textOf } from '../shared';
+import { resolveTagColor } from '../tags/tagColors';
 
 interface NodeContextMenuProps {
   x: number;
@@ -162,13 +166,13 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
 
   const renderMain = () => (
     <>
-      {item('Open', <SearchIcon size={ICON_SIZE.menu} />, () => props.onRoot(props.openId))}
-      {item(`${activeLabelPrefix}Duplicate`, <AddIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.batchDuplicateNodes(activeNodeIds)))}
-      {item(`${activeLabelPrefix}Move up`, <MoreIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.batchMoveNodesUp(activeNodeIds)))}
-      {item(`${activeLabelPrefix}Move down`, <MoreIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.batchMoveNodesDown(activeNodeIds)))}
+      {item('Open', <OpenIcon size={ICON_SIZE.menu} />, () => props.onRoot(props.openId))}
+      {item(`${activeLabelPrefix}Duplicate`, <DuplicateIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.batchDuplicateNodes(activeNodeIds)))}
+      {item(`${activeLabelPrefix}Move up`, <MoveUpIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.batchMoveNodesUp(activeNodeIds)))}
+      {item(`${activeLabelPrefix}Move down`, <MoveDownIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.batchMoveNodesDown(activeNodeIds)))}
       <MenuItem
         className="node-context-item"
-        icon={<MoreIcon size={ICON_SIZE.menu} />}
+        icon={<MoveToIcon size={ICON_SIZE.menu} />}
         label="Move to"
         onClick={() => {
           setMode('move');
@@ -184,7 +188,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       )}
       <MenuItem
         className="node-context-item"
-        icon={<TagIcon size={ICON_SIZE.menu} />}
+        icon={<SupertagIcon size={ICON_SIZE.menu} />}
         label={`${activeLabelPrefix}Add tag`}
         onClick={() => {
           setMode('tag');
@@ -192,15 +196,15 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
         }}
         role="menuitem"
       />
-      {item(target.description ? 'Edit description' : 'Add description', <MoreIcon size={ICON_SIZE.menu} />, props.onEditDescription)}
+      {item(target.description ? 'Edit description' : 'Add description', <DescriptionIcon size={ICON_SIZE.menu} />, props.onEditDescription)}
       {item(
         target.toolbarVisible ? 'Hide view toolbar' : 'Show view toolbar',
-        target.toolbarVisible ? <CloseIcon size={ICON_SIZE.menu} /> : <FilterIcon size={ICON_SIZE.menu} />,
+        target.toolbarVisible ? <HideToolbarIcon size={ICON_SIZE.menu} /> : <ShowToolbarIcon size={ICON_SIZE.menu} />,
         () => void props.run(() => api.setNodeToolbarVisible(props.targetId, !target.toolbarVisible)),
       )}
       <div className="node-context-separator" role="separator" />
-      {item('Copy text', <MoreIcon size={ICON_SIZE.menu} />, () => void writeClipboardText(textOf(target)))}
-      {item('Copy node id', <MoreIcon size={ICON_SIZE.menu} />, () => void writeClipboardText(props.targetId))}
+      {item('Copy text', <CopyIcon size={ICON_SIZE.menu} />, () => void writeClipboardText(textOf(target)))}
+      {item('Copy node id', <CopyIcon size={ICON_SIZE.menu} />, () => void writeClipboardText(props.targetId))}
       <div className="node-context-separator" role="separator" />
       {trashed
         ? item('Restore', <RestoreIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.restoreNode(props.node.id)))
@@ -235,7 +239,17 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
         <MenuItem
           key={tagItem.type === 'existing' ? tagItem.tag.id : `create:${tagItem.name}`}
           className="node-context-item"
-          icon={<TagIcon size={ICON_SIZE.menu} />}
+          icon={tagItem.type === 'existing'
+            ? (
+              <span
+                className="tag-selector-hash"
+                style={{ color: resolveTagColor(tagItem.tag).text }}
+                aria-hidden="true"
+              >
+                #
+              </span>
+            )
+            : <SupertagIcon size={ICON_SIZE.menu} />}
           label={tagSelectorItemLabel(tagItem)}
           onClick={() => {
             if (tagItem.type === 'existing') applyExistingTag(tagItem.tag.id);
@@ -264,7 +278,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
         <MenuItem
           key={targetNode.id}
           className="node-context-item"
-          icon={<ShowIcon size={ICON_SIZE.menu} />}
+          icon={<MoveToIcon size={ICON_SIZE.menu} />}
           label={textOf(targetNode)}
           onClick={() => {
             void props.run(async () => {

@@ -147,7 +147,7 @@ describe('agent runtime store', () => {
 
     expect(fake.calls.restoreLatestSession).toBe(1);
     expect(store.getSnapshot().sessionId).toBe('saved');
-    expect(store.getSnapshot().entries.map((entry) => entry.kind === 'message' ? entry.nodeId : null))
+    expect(store.getSnapshot().entries.map((entry) => entry.nodeId))
       .toEqual(['u1', 'a1']);
     expect(fake.calls.closeSession).toEqual([]);
     unsubscribe();
@@ -191,8 +191,56 @@ describe('agent runtime store', () => {
     expect(fake.calls.createSession).toBe(1);
     expect(fake.calls.closeSession).toEqual(['saved']);
     expect(store.getSnapshot().sessionId).toBe('created');
-    expect(store.getSnapshot().entries.map((entry) => entry.kind === 'message' ? entry.nodeId : null))
+    expect(store.getSnapshot().entries.map((entry) => entry.nodeId))
       .toEqual(['u2']);
+    unsubscribe();
+  });
+
+  test('keeps a stable assistant entry while a streamed turn starts producing text', async () => {
+    const user = userMessage('hello', 42);
+    const restored = session('saved', snapshot([
+      { nodeId: 'u1', message: user, branches: null },
+    ]));
+    const fake = createFakeClient({ latestSession: restored });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+    await flushMicrotasks();
+
+    fake.emit({
+      type: 'snapshot',
+      sessionId: 'saved',
+      lastEventType: null,
+      revision: 1,
+      state: {
+        ...snapshot([{ nodeId: 'u1', message: user, branches: null }]),
+        isStreaming: true,
+      },
+      timestamp: 100,
+    });
+
+    const pendingAssistant = store.getSnapshot().entries[1];
+    expect(pendingAssistant?.kind).toBe('message');
+    expect(pendingAssistant?.id).toBe('active-assistant-42');
+    expect(pendingAssistant?.message.role).toBe('assistant');
+    expect(pendingAssistant?.message.content).toEqual([]);
+
+    fake.emit({
+      type: 'snapshot',
+      sessionId: 'saved',
+      lastEventType: null,
+      revision: 2,
+      state: {
+        ...snapshot([{ nodeId: 'u1', message: user, branches: null }]),
+        streamingMessage: assistantMessage('hi', 50),
+        isStreaming: true,
+      },
+      timestamp: 101,
+    });
+
+    const streamingAssistant = store.getSnapshot().entries[1];
+    expect(streamingAssistant?.id).toBe('active-assistant-42');
+    expect(streamingAssistant?.message.role).toBe('assistant');
+    expect(streamingAssistant?.message.content).toEqual([{ type: 'text', text: 'hi' }]);
     unsubscribe();
   });
 
@@ -215,7 +263,7 @@ describe('agent runtime store', () => {
     expect(fake.calls.restoreLatestSession).toBe(1);
     expect(fake.calls.createSession).toBe(1);
     expect(store.getSnapshot().sessionId).toBe('created');
-    expect(store.getSnapshot().entries.map((entry) => entry.kind === 'message' ? entry.nodeId : null))
+    expect(store.getSnapshot().entries.map((entry) => entry.nodeId))
       .toEqual(['u2']);
     unsubscribe();
   });

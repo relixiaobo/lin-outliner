@@ -2,7 +2,6 @@ import {
   useEffect,
   useRef,
   useState,
-  type ReactNode,
   type Dispatch,
   type KeyboardEvent,
   type MouseEvent,
@@ -20,37 +19,28 @@ import {
   cursorOffset as cursorAtOffset,
   focusTarget,
   focusTargetMatches,
+  rowFocusTarget,
   requestFocusState,
   selectFocusState,
 } from '../focus/focusModel';
 import {
   insertTextIntoControlValue,
-  isTextControlElement,
   setTextControlCursor,
 } from '../focus/textControlFocus';
-import { savePrimaryFieldEntryChildText } from '../../state/fieldEntryChildren';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { indentTargetParentId } from '../interactions/outlinerStructure';
-import { ButtonControl } from '../primitives/ButtonControl';
 import { TextInputControl } from '../primitives/TextInputControl';
 import type { CommandRunner, TriggerState } from '../shared';
 import { outlinerChildren } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
 import { fieldTypeLabel } from './fieldTypePresentation';
 import { FieldEntryGrid } from './FieldEntryGrid';
-import { FieldValueRenderer } from './FieldValueRenderer';
-import { IndentGuide } from './IndentGuide';
+import { FieldValueOutliner } from './FieldValueOutliner';
 import { NodeContextMenu } from './NodeContextMenu';
 import { NodeDescription } from './NodeDescription';
 import { OutlinerRowShell } from './OutlinerRowShell';
 import { RowLeading } from './RowLeading';
 import { useOutlinerRowInteraction } from './useOutlinerRowInteraction';
-
-interface FieldRowChildrenControls {
-  childIds: NodeId[];
-  focusLastVisibleChild: () => void;
-  collapseToSelf: () => void;
-}
 
 interface OutlinerFieldRowProps {
   panelId: string;
@@ -67,7 +57,6 @@ interface OutlinerFieldRowProps {
   setTrigger: (trigger: TriggerState) => void;
   dragId: NodeId | null;
   setDragId: (nodeId: NodeId | null) => void;
-  renderChildren?: (controls: FieldRowChildrenControls) => ReactNode;
 }
 
 function resolveFieldOwnerColor(
@@ -114,23 +103,15 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     dragId: props.dragId,
     setDragId: props.setDragId,
   });
-  const value = primaryValueId ? props.index.byId.get(primaryValueId)?.content.text ?? '' : '';
   const [nameDraft, setNameDraft] = useState(field?.content.text || 'Field');
-  const [valueDraft, setValueDraft] = useState(value);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
-  const valueFocusRef = useRef<HTMLElement | null>(null);
   const fieldNameFocusTarget = focusTarget(props.entryId, props.parentId, props.panelId, 'field-name');
-  const fieldValueFocusTarget = focusTarget(props.entryId, props.parentId, props.panelId, 'field-value');
   const descriptionFocusTarget = focusTarget(props.entryId, props.parentId, props.panelId, 'description');
 
   useEffect(() => {
     setNameDraft(field?.content.text || 'Field');
   }, [field?.id, field?.content.text]);
-
-  useEffect(() => {
-    setValueDraft(value);
-  }, [value]);
 
   useEffect(() => {
     const request = props.ui.focusRequest;
@@ -167,47 +148,6 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     });
   }, [fieldNameFocusTarget, props.setUi, props.ui.pendingInputChar]);
 
-  useEffect(() => {
-    const request = props.ui.focusRequest;
-    if (!request || !focusTargetMatches(request.target, fieldValueFocusTarget)) return;
-    window.requestAnimationFrame(() => {
-      const target = valueFocusRef.current;
-      if (!target) return;
-      target.focus();
-      if (isTextControlElement(target)) {
-        setTextControlCursor(target, request.placement);
-      }
-      props.setUi((prev) => clearFocusRequestState(prev, request));
-    });
-  }, [fieldValueFocusTarget, props.setUi, props.ui.focusRequest]);
-
-  useEffect(() => {
-    const input = props.ui.pendingInputChar;
-    if (!input || !focusTargetMatches(input.target, fieldValueFocusTarget)) return;
-    window.requestAnimationFrame(() => {
-      const target = valueFocusRef.current;
-      if (!target) return;
-      target.focus();
-      if (!isTextControlElement(target)) {
-        props.setUi((prev) => clearPendingInputState(prev, input));
-        return;
-      }
-      const next = insertTextIntoControlValue({
-        value: target.value,
-        selectionStart: target.selectionStart,
-        selectionEnd: target.selectionEnd,
-        text: input.char,
-      });
-      setValueDraft(next.value);
-      window.requestAnimationFrame(() => {
-        const current = valueFocusRef.current;
-        if (!isTextControlElement(current)) return;
-        current.setSelectionRange(next.cursor, next.cursor);
-      });
-      props.setUi((prev) => clearPendingInputState(prev, input));
-    });
-  }, [fieldValueFocusTarget, props.setUi, props.ui.pendingInputChar]);
-
   if (!entry) return null;
 
   const fieldType = field?.fieldType ?? entry.fieldType ?? 'plain';
@@ -224,25 +164,8 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     }
   };
 
-  const commitValue = async (nextValue = valueDraft) => {
-    if (nextValue === value) return;
-    await props.run(() => savePrimaryFieldEntryChildText({
-      entryId: props.entryId,
-      childId: primaryValueId,
-      currentText: value,
-      nextText: nextValue,
-    }));
-  };
-
   const commitDrafts = async () => {
     await commitName();
-    await commitValue();
-  };
-
-  const createSiblingAfterField = async () => {
-    const siblings = props.index.byId.get(props.parentId)?.children ?? [];
-    const rowIndex = siblings.indexOf(props.entryId);
-    await props.run(() => api.createNode(props.parentId, rowIndex >= 0 ? rowIndex + 1 : null, ''));
   };
 
   const exitToSelection = async () => {
@@ -296,6 +219,23 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     }
   };
 
+  const focusFieldValueNode = () => {
+    props.setUi((prev) => {
+      if (primaryValueId) {
+        return requestFocusState(
+          prev,
+          rowFocusTarget(primaryValueId, props.entryId, props.panelId),
+          cursorEnd(),
+        );
+      }
+      return requestFocusState(
+        prev,
+        focusTarget(props.entryId, props.entryId, props.panelId, 'trailing'),
+        cursorEnd(),
+      );
+    });
+  };
+
   const onKeyDown = (event: KeyboardEvent<HTMLElement>, column: 'name' | 'value') => {
     if (isImeComposingEvent(event)) return;
     const mod = event.metaKey || event.ctrlKey;
@@ -337,16 +277,12 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       event.preventDefault();
       if (column === 'name') {
         void commitName().then(() => {
-          props.setUi((prev) => requestFocusState(prev, fieldValueFocusTarget, cursorEnd()));
+          focusFieldValueNode();
         });
       } else {
-        void commitDrafts().then(() => createSiblingAfterField());
+        void commitName().then(() => focusFieldValueNode());
       }
     }
-  };
-
-  const focusFieldValue = () => {
-    props.setUi((prev) => selectFocusState(prev, fieldValueFocusTarget));
   };
 
   const openContextMenu = (event: MouseEvent) => {
@@ -382,36 +318,24 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     />
   );
 
-  const valueControl = row.expanded && rowChildIds.length > 0 ? (
-    <ButtonControl
-      ref={(element) => {
-        valueFocusRef.current = element;
-      }}
-      className={`field-value-preview ${entry.completedAt ? 'done' : ''}`}
-      onClick={row.focusLastVisibleChild}
-      onFocus={focusFieldValue}
-      onKeyDown={(event) => onKeyDown(event, 'value')}
-      title="Focus field children"
-    >
-      {rowChildIds.length === 1 ? (value || '1 child') : `${rowChildIds.length} children`}
-    </ButtonControl>
-  ) : (
-    <FieldValueRenderer
+  const valuePlaceholder = fieldType === 'options' || fieldType === 'options_from_supertag'
+    ? 'Select option'
+    : 'Empty';
+  const valueControl = (
+    <FieldValueOutliner
+      panelId={props.panelId}
       entryId={props.entryId}
+      onRoot={props.onRoot}
       index={props.index}
+      ui={props.ui}
+      setUi={props.setUi}
       run={props.run}
-      fieldType={fieldType}
-      field={field}
-      value={value}
-      valueDraft={valueDraft}
-      setValueDraft={setValueDraft}
-      onCommitValue={commitValue}
-      onFocus={focusFieldValue}
-      onKeyDown={(event) => onKeyDown(event, 'value')}
-      completed={Boolean(entry.completedAt)}
-      setFocusElement={(element) => {
-        valueFocusRef.current = element;
-      }}
+      trigger={props.trigger}
+      setTrigger={props.setTrigger}
+      dragId={props.dragId}
+      setDragId={props.setDragId}
+      optionField={field}
+      placeholder={valuePlaceholder}
     />
   );
 
@@ -444,8 +368,8 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
 
   return (
     <OutlinerRowShell
-      hasChildren={row.hasChildren}
-      expanded={row.expanded}
+      hasChildren={false}
+      expanded={false}
       wrapProps={row.wrapProps}
       rowClassName={row.rowClassName('field-row-inline')}
       onSelectFromPointer={row.selectFromPointer}
@@ -453,8 +377,8 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       rowContent={(
         <>
         <RowLeading
-          hasChildren={row.hasChildren}
-          expanded={row.expanded}
+          hasChildren={false}
+          expanded={false}
           variant="field"
           fieldType={fieldType}
           bulletColors={fieldOwnerColor ? [fieldOwnerColor] : undefined}
@@ -489,14 +413,6 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
           onClose={() => setContextMenu(null)}
         />
       )}
-      {row.expanded && (
-        <IndentGuide onToggleChildren={row.toggleDirectChildrenExpansion} />
-      )}
-      {row.expanded && props.renderChildren?.({
-        childIds: rowChildIds,
-        focusLastVisibleChild: row.focusLastVisibleChild,
-        collapseToSelf: row.collapseToSelf,
-      })}
     </OutlinerRowShell>
   );
 }

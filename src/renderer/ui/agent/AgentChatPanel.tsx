@@ -10,12 +10,12 @@ import { api } from '../../api/client';
 import { useLinAgentRuntime } from '../../agent/runtime';
 import type { AgentConversationEntry, AgentMessageEntry, AgentTurnPhase } from '../../agent/runtime';
 import {
-  AddIcon,
   CheckIcon,
   ChevronDownIcon,
   CloseIcon,
-  CodeIcon,
+  DebugIcon,
   ICON_SIZE,
+  NewConversationIcon,
   PencilIcon,
   SettingsIcon,
   TrashIcon,
@@ -87,15 +87,15 @@ function formatSessionTime(timestamp: number): string {
 type AssistantEntry = AgentMessageEntry & { message: AssistantMessage };
 
 function getEntryRole(entry: AgentConversationEntry): 'user' | 'assistant' {
-  return entry.kind === 'message' ? entry.message.role : 'assistant';
+  return entry.message.role;
 }
 
 function getEntryTimestamp(entry: AgentConversationEntry): number {
-  return entry.kind === 'message' ? entry.message.timestamp : entry.timestamp;
+  return entry.message.timestamp;
 }
 
 function isAssistantEntry(entry: AgentConversationEntry): entry is AssistantEntry {
-  return entry.kind === 'message' && entry.message.role === 'assistant';
+  return entry.message.role === 'assistant';
 }
 
 function mergeAssistantEntries(entries: AssistantEntry[]): AgentMessageEntry {
@@ -126,14 +126,14 @@ function buildAssistantTurnCopyText(
   let turnStart = lastEntryIndex;
   while (turnStart > 0) {
     const previous = entries[turnStart - 1]!;
-    if (previous.kind === 'message' && previous.message.role === 'user') break;
+    if (previous.message.role === 'user') break;
     turnStart -= 1;
   }
 
   const parts: string[] = [];
   for (let i = turnStart; i <= lastEntryIndex; i += 1) {
     const entry = entries[i]!;
-    if (entry.kind !== 'message' || entry.message.role !== 'assistant') continue;
+    if (entry.message.role !== 'assistant') continue;
 
     for (const block of entry.message.content) {
       if (block.type === 'text') {
@@ -378,7 +378,6 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
       let hasNextUserMessage = false;
       for (let j = i + 1; j < entries.length; j += 1) {
         const next = entries[j]!;
-        if (next.kind !== 'message') continue;
         if (next.message.role === 'user') {
           hasNextUserMessage = true;
           break;
@@ -406,7 +405,7 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
           }
         : undefined;
       const entryKey = key
-        ?? (entry.kind === 'message' ? entry.nodeId : null)
+        ?? entry.nodeId
         ?? `${entry.kind}-${getEntryTimestamp(entry)}-${startIndex}`;
 
       rendered.push(
@@ -444,7 +443,7 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
           index += 1;
         }
 
-        const stableKey = `assistant-turn-${assistantEntries[0]!.message.timestamp}`;
+        const stableKey = `assistant-turn-${assistantEntries[0]!.id}`;
         const mergedEntry = assistantEntries.length >= 2
           ? mergeAssistantEntries(assistantEntries)
           : assistantEntries[0]!;
@@ -488,12 +487,10 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
           />
         </ButtonControl>
         <div className="agent-dock-actions">
-          <span className="agent-status-dot" aria-hidden="true" />
-          <span className="agent-status-dot is-muted" aria-hidden="true" />
           <IconButton
             className="agent-menu-button"
             disabled={isStreaming}
-            icon={AddIcon}
+            icon={NewConversationIcon}
             label="New conversation"
             onClick={() => void handleNewSession()}
             title="New conversation"
@@ -501,7 +498,7 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
           />
           <IconButton
             className="agent-menu-button"
-            icon={CodeIcon}
+            icon={DebugIcon}
             label="Open agent debug"
             onClick={() => onOpenDebugPanel?.(sessionId)}
             title="Open agent debug"
@@ -529,7 +526,7 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
               <IconButton
                 className="agent-message-action-button"
                 disabled={isStreaming}
-                icon={AddIcon}
+                icon={NewConversationIcon}
                 label="New conversation"
                 onClick={() => void handleNewSession()}
                 title="New conversation"
@@ -655,7 +652,6 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
       <AgentComposer
         isStreaming={isStreaming}
         onModelChange={(providerId, modelId) => updateProviderConfig(providerId, { modelId })}
-        onOpenSettings={() => setSettingsOpen(true)}
         onReasoningChange={(reasoningLevel) => updateActiveProviderConfig({ reasoningLevel })}
         onCancelSteer={handleCancelSteer}
         onSend={sendMessage}

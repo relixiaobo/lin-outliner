@@ -14,6 +14,11 @@ async function lastTodayChildId(page: import('@playwright/test').Page) {
   return projection.nodes.find((node) => node.id === ids.today)?.children.at(-1);
 }
 
+async function todayChildren(page: import('@playwright/test').Page) {
+  const projection = await e2eProjection(page);
+  return projection.nodes.find((node) => node.id === ids.today)?.children ?? [];
+}
+
 test.describe('outliner trigger parity', () => {
   test.beforeEach(async ({ page }) => {
     await openMockedApp(page);
@@ -77,6 +82,7 @@ test.describe('outliner trigger parity', () => {
   });
 
   test('> in trailing input directly creates an inline field without leaving a trigger row', async ({ page }) => {
+    const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
     await page.keyboard.type('>');
 
@@ -84,6 +90,13 @@ test.describe('outliner trigger parity', () => {
       const calls = await commandCalls(page);
       return calls.some((call) => call.cmd === 'create_inline_field');
     }).toBe(true);
+    const fieldId = await lastTodayChildId(page);
+    expect(fieldId).toBeTruthy();
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      return projection.nodes.find((node) => node.id === fieldId)?.type;
+    }).toBe('fieldEntry');
+    expect(await todayChildren(page)).toEqual([...beforeChildren, fieldId]);
     await expect(page.locator('.trigger-popover')).toHaveCount(0);
   });
 
@@ -95,8 +108,8 @@ test.describe('outliner option picker parity', () => {
   });
 
   test('options field picker exposes listbox state and creates a selected option', async ({ page }) => {
-    const pickerInput = row(page, ids.priorityEntry).locator('.node-picker-input');
-    await pickerInput.click();
+    const valuePreview = row(page, ids.priorityEntry).locator('.field-value-node-preview');
+    await valuePreview.click();
 
     const listbox = page.getByRole('listbox', { name: 'Field options' });
     await expect(listbox).toBeVisible();
@@ -108,7 +121,7 @@ test.describe('outliner option picker parity', () => {
     await page.keyboard.press('Enter');
 
     await expect(page.getByRole('listbox', { name: 'Field options' })).toHaveCount(0);
-    await expect(pickerInput).toHaveValue('Urgent');
+    await expect(valuePreview).toHaveText(/Urgent/);
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
       const entry = projection.nodes.find((node) => node.id === ids.priorityEntry);
@@ -127,8 +140,7 @@ test.describe('outliner option picker parity', () => {
   test('options picker stays inside a narrow viewport', async ({ page }) => {
     await page.setViewportSize({ width: 980, height: 620 });
 
-    const pickerInput = row(page, ids.priorityEntry).locator('.node-picker-input');
-    await pickerInput.click();
+    await row(page, ids.priorityEntry).locator('.field-value-node-preview').click();
 
     const listbox = page.getByRole('listbox', { name: 'Field options' });
     await expect(listbox).toBeVisible();

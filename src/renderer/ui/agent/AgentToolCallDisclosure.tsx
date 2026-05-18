@@ -1,10 +1,7 @@
 import type { ReactNode } from 'react';
 import type { AppIcon } from '../icons';
-import {
-  ChevronDownIcon,
-  ChevronRightIcon,
-} from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { AgentDisclosureIndicator } from './AgentDisclosureIndicator';
 
 interface AgentToolCallDisclosureProps {
   children: ReactNode;
@@ -29,8 +26,6 @@ export function AgentToolCallDisclosure({
   statusIconClassName,
   summary,
 }: AgentToolCallDisclosureProps) {
-  const Chevron = expanded ? ChevronDownIcon : ChevronRightIcon;
-
   return (
     <div className={`agent-tool-call is-${status}`}>
       <div className="agent-tool-call-row">
@@ -40,9 +35,13 @@ export function AgentToolCallDisclosure({
           disabled={!hasDetails}
           onClick={onToggle}
         >
-          <Chevron className="agent-tool-call-chevron" size={12} />
-          <StatusIcon className={statusIconClassName} size={14} />
-          <span>{summary}</span>
+          <AgentDisclosureIndicator
+            className="agent-tool-call-icon-slot"
+            expanded={expanded}
+            icon={<StatusIcon className={statusIconClassName} size={14} />}
+            interactive={hasDetails}
+          />
+          <span className="agent-tool-call-summary">{summary}</span>
         </ButtonControl>
       </div>
       {images}

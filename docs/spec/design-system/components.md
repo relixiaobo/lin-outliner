@@ -52,7 +52,6 @@ Current sources:
 - `src/renderer/ui/primitives/CheckboxMark.tsx`
 - `src/renderer/ui/primitives/CheckboxControl.tsx`
 - `src/renderer/ui/outliner/DoneCheckbox.tsx`
-- `src/renderer/ui/outliner/FieldValueRenderer.tsx`
 - `src/renderer/ui/agent/AgentSettingsDialog.tsx`
 - `src/renderer/styles.css`
 
@@ -180,6 +179,35 @@ Non-goals:
 
 - IconButton does not own menu positioning, dialog state, or command execution.
 
+## Icon Semantics
+
+Current sources:
+
+- `src/renderer/ui/icons.ts`
+- Menu, popover, sidebar, panel, and agent components that import from the
+  shared icon module.
+
+Purpose:
+
+- Icons communicate action or domain meaning; they are not decorative
+  placeholders.
+- Product components import semantic aliases from `icons.ts` whenever the
+  meaning is product-specific.
+
+Rules:
+
+- Use one shared icon alias per repeated action or domain concept.
+- Do not use `MoreIcon` as a fallback for row actions such as move, copy,
+  duplicate, edit description, or show toolbar.
+- Supertag and tag-definition affordances use `SupertagIcon` / `HashIcon` or a
+  rendered `#` glyph. They do not use the generic Lucide `Tag` icon because the
+  product's tag syntax and applied tag pills are hash-based.
+- Tool-call rows use tool-specific aliases such as `NodeCreateToolIcon` and
+  `NodeEditToolIcon`, while pending state may temporarily swap to the shared
+  loader in the same measured slot.
+- Icon replacement must not change the measured slot size, row height, or text
+  alignment.
+
 ## ToolbarButton
 
 Current sources:
@@ -259,7 +287,6 @@ Current sources:
 - `src/renderer/ui/outliner/TriggerPopover.tsx`
 - `src/renderer/ui/outliner/NodeContextMenu.tsx`
 - `src/renderer/ui/tags/TagBar.tsx`
-- `src/renderer/ui/outliner/OptionsPicker.tsx`
 - `src/renderer/ui/outliner/TrailingInput.tsx`
 - `src/renderer/ui/editor/FloatingEditorToolbar.tsx`
 - `src/renderer/ui/agent/AgentComposerModelMenu.tsx`
@@ -332,7 +359,6 @@ Current sources:
 
 - `src/renderer/ui/outliner/PopoverList.tsx`
 - `src/renderer/ui/outliner/TriggerPopover.tsx`
-- `src/renderer/ui/outliner/OptionsPicker.tsx`
 - `src/renderer/ui/outliner/TrailingInput.tsx`
 - `src/renderer/ui/outliner/TagSelector.tsx`
 - `src/renderer/ui/outliner/ReferenceSelector.tsx`
@@ -712,13 +738,10 @@ Current sources:
 - `src/renderer/ui/primitives/FormField.tsx`
 - `src/renderer/ui/agent/AgentSettingsDialog.tsx`
 - `src/renderer/ui/definition/DefinitionConfigPanel.tsx`
-- `src/renderer/ui/outliner/FieldValueRenderer.tsx`
-- `src/renderer/ui/outliner/OptionsPicker.tsx`
 
 Purpose:
 
-- Dense form control row for settings, definition configuration, and field
-  values.
+- Dense form control row for settings and definition configuration.
 
 Structure:
 
@@ -756,6 +779,8 @@ Rules:
 - Field value rows preserve outliner row rhythm.
 - Settings fields can be roomier than outliner fields, but still use the same
   token scale.
+- Text-like inputs and selects use neutral focus borders. Accent color is not a
+  normal focus state because it can read as validation or error.
 
 Accessibility:
 
@@ -800,7 +825,6 @@ Current sources:
 
 - `src/renderer/ui/primitives/SwitchControl.tsx`
 - `src/renderer/ui/definition/DefinitionConfigPanel.tsx`
-- `src/renderer/ui/outliner/FieldValueRenderer.tsx`
 
 Purpose:
 
@@ -1049,7 +1073,7 @@ Structure:
 - Optional trigger popover.
 - Optional context menu.
 - Optional children and trailing input.
-- Optional heading-field placement when the row is a root-owned `fieldEntry`.
+- Field rows preserve ordinary outliner sibling placement.
 
 States:
 
@@ -1080,10 +1104,9 @@ Rules:
 - Normal content rows, reference rows, tag definition rows, field definition
   rows, field entry rows, completed rows, selected rows, and expanded/collapsed
   parent rows must all keep the same text-start grid.
-- Root-owned field entry rows may render in the panel heading field segment.
-  Row placement comes from explicit `headingRows` / `bodyRows` sections in the
-  row model, while the rendered fields remain real `OutlinerFieldRow`
-  instances.
+- Field entry placement comes from the parent node's child order. `>` turns the
+  current empty row into a field entry in place; trailing field creation appends
+  a field entry at the trailing position.
 - Drop indicators use the same `21px` row-selection axis and must not change
   row content geometry.
 - Bullet, chevron, indentation, selection, and edit/focus behavior should follow
@@ -1140,30 +1163,30 @@ Current sources:
 
 - `src/renderer/ui/outliner/OutlinerFieldRow.tsx`
 - `src/renderer/ui/outliner/FieldEntryGrid.tsx`
-- `src/renderer/ui/outliner/FieldValueRenderer.tsx`
-- `src/renderer/ui/outliner/FieldValueRow.tsx`
-- `src/renderer/ui/outliner/OptionsPicker.tsx`
+- `src/renderer/ui/outliner/FieldValueOutliner.tsx`
+- `src/renderer/ui/outliner/TrailingInput.tsx`
 
 Purpose:
 
-- Inline field row with editable field name, value renderer, optional child
-  preview, and optional description.
+- Inline field row with editable field name, node-like value preview, child
+  outliner, and optional description.
 
 Structure:
 
 - Row wrapper and `RowLeading` field variant.
 - `FieldEntryGrid` name, value, and optional description slots.
-- Value slot may render a typed value control or a child-count preview when
-  expanded.
+- Value slot renders a node-like preview with a bullet and placeholder. Editing
+  moves into the value child node or the field child trailing input.
 
 Rules:
 
 - Field rows use a grid, not a card or standalone form.
-- Value renderers must cover plain text, options, options-from-tag, date,
-  number, password, formula, user, URL, email, checkbox, boolean, and color.
-- Invalid value state must not change row height or text start.
-- Expanded field rows with children show a preview/focus affordance instead of
-  duplicating child content in the value cell.
+- Field values are represented by child nodes of the `fieldEntry`; the field row
+  itself must not own a private value input.
+- Typed value behavior may specialize child-node creation or selection, but it
+  must keep value persistence and editing on child nodes.
+- Expanded field rows with children use the normal outliner row path instead of
+  duplicating child editors inside the field row.
 
 ## TrailingInput
 
@@ -1362,7 +1385,10 @@ Purpose:
 
 Structure:
 
-- Toggle row with chevron, status icon, and summary.
+- Toggle row with one measured disclosure/status slot and a summary.
+- The disclosure/status slot overlays the status or tool icon with the chevron
+  in the same measured box; hover, focus, and expanded state must not move the
+  summary text.
 - Optional timeline/details section.
 - Optional input and output sections for tool calls.
 - Optional inline media or download affordance when the tool result is the
@@ -1392,8 +1418,8 @@ Rules:
   instead of expanding the dock indefinitely.
 - Details use monospace only for exact tool input/output.
 - Tool summaries should be concise and action-based.
-- Tool rows should use stable icon slots so labels do not jump across status
-  changes.
+- Tool rows should use the shared disclosure/status slot so labels do not jump
+  across status changes, hover, focus, or expansion.
 
 Accessibility:
 
@@ -1413,7 +1439,7 @@ Current sources:
 Purpose:
 
 - Agent input area with message text, send/stop, queued follow-up, model picker,
-  reasoning controls, and settings entry.
+  and reasoning controls.
 
 Structure:
 
@@ -1424,13 +1450,12 @@ Structure:
 - Attachment slot.
 - Model picker.
 - Reasoning switch/menu.
-- Settings trigger.
 - Send/stop action.
 - Single primary action slot shared by send and stop.
-- Secondary control group for attachment, model, reasoning, and settings.
+- Secondary control group for attachment, model, and reasoning.
 - `AgentComposerControls` owns presentational controls for queued follow-up
-  actions, attachment chips, attachment trigger, model button, settings trigger,
-  toolbar composition, and primary action slot.
+  actions, attachment chips, attachment trigger, model button, toolbar
+  composition, and primary action slot.
 - `AgentComposerModelMenu` owns the model/reasoning menu shell and item
   structure.
 - `AgentComposer` owns textarea draft, send/queue/stop behavior, file reading,
@@ -1456,6 +1481,9 @@ Behavior:
 - Textarea auto-resizes up to a bounded maximum height.
 - Composer layout must make the textarea visually primary; toolbar controls are
   compact and secondary.
+- Textarea and toolbar must stay visually unified; do not separate them with an
+  internal divider.
+- Composer focus uses the neutral focus border, not the brand/accent color.
 - Failed send restores the draft only if the user has not started a new draft.
 - Model and reasoning controls must stay usable without visually dominating the
   dock.
