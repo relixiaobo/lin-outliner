@@ -2971,7 +2971,7 @@
               <li><span class="pattern-label">Turn model</span><span>Assistant prose, thinking, and tools render as one turn-level stack.</span></li>
               <li><span class="pattern-label">Process</span><span>Thinking and tools collapse into one summary after final prose appears.</span></li>
               <li><span class="pattern-label">Composer</span><span>Textarea is primary; streaming text becomes steering or a queued follow-up.</span></li>
-              <li><span class="pattern-label">Settings</span><span>Provider, connection, and model behavior are separate configuration sections.</span></li>
+              <li><span class="pattern-label">Settings</span><span>Provider setup, credentials, and model behavior are separate; model controls appear only after credentials exist.</span></li>
               <li><span class="pattern-label">Debug</span><span>Overview, request context, and provider timeline are inspection-only surfaces.</span></li>
               <li><span class="pattern-label">Boundary</span><span>Sider-agent informs behavior, not Lin's palette, shell, or product scope.</span></li>
             </ul>
@@ -3043,11 +3043,11 @@
           <article class="agent-state-card">
             <h3>Model Menu</h3>
             <div class="mini-menu">
-              <div class="mini-menu-item active"><span class="mini-icon">✓</span><span>claude-sonnet</span></div>
-              <div class="mini-menu-item"><span class="mini-icon"></span><span>gpt-5.4</span></div>
+              <div class="mini-menu-item active"><span class="mini-icon">✓</span><span>gpt-5.4</span></div>
+              <div class="mini-menu-item"><span class="mini-icon"></span><span>gpt-5.4-mini</span></div>
               <div class="mini-menu-item"><span class="mini-icon">⚙</span><span>Agent settings</span></div>
             </div>
-            <p>Model and reasoning controls use shared menu item, switch, and anchored overlay positioning semantics.</p>
+            <p>Model and reasoning controls only list models from enabled providers with credentials.</p>
           </article>
           <article class="agent-state-card">
             <h3>Scroll Behavior</h3>
@@ -3071,7 +3071,7 @@
               </div>
               <div class="settings-section-mini"><strong>Provider</strong><span>OpenAI · Active · gpt-5.4</span></div>
               <div class="settings-section-mini"><strong>Connection</strong><span>Provider ID, Base URL, API key, Enabled</span></div>
-              <div class="settings-section-mini"><strong>Model behavior</strong><span>Model ID, reasoning, 256K context</span></div>
+              <div class="settings-section-mini"><strong>Model behavior</strong><span>Shown after API key; otherwise key-required placeholder</span></div>
             </div>
             <p>Settings use Dialog, FormField, TextInputControl, SelectControl, ButtonControl, CheckboxControl, and CheckboxMark while persistence stays local.</p>
           </article>

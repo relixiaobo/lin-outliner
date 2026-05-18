@@ -124,6 +124,10 @@ Completion means:
 - Documented the agent approval/tool-preview boundary: runtime approval events
   and node-tool `previewOnly` results exist, but no renderer approval overlay is
   shipped yet, so the site and spec must not fake controls.
+- Aligned agent provider/model information architecture with the credential
+  boundary: model menus and runtime selection now use only enabled providers
+  with a saved or environment API key, while settings keeps unconnected
+  providers in the Provider ID setup path.
 - Added e2e coverage for agent settings modal focus entry, focus cycling,
   Escape close, and trigger focus restoration.
 - Adopted `Dialog` in the command palette while preserving the search input as

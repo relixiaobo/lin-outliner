@@ -34,6 +34,8 @@ interface ProviderChoice {
   modelId: string;
   configured: boolean;
   active: boolean;
+  enabled: boolean;
+  hasCredential: boolean;
 }
 
 const EMPTY_DRAFT: DraftConfig = {
@@ -117,16 +119,21 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
 
   const configuredProvider = settings?.providers.find((provider) => provider.providerId === draft.providerId);
   const selectedCatalog = providerCatalog.get(draft.providerId);
-  const selectedModels = selectedCatalog?.models ?? [];
+  const hasPendingApiKey = apiKey.trim().length > 0;
+  const hasSavedCredential = providerHasCredential(configuredProvider, selectedCatalog);
+  const canChooseModels = draft.enabled && (hasSavedCredential || hasPendingApiKey);
+  const selectedModels = canChooseModels ? selectedCatalog?.models ?? [] : [];
   const selectedModel = selectedModels.find((model) => model.id === draft.modelId);
   const selectedReasoningLevels: AgentReasoningLevel[] = selectedModel?.supportedThinkingLevels.length
     ? selectedModel.supportedThinkingLevels
     : ['off'];
-  const hasAnyKey = Boolean(configuredProvider?.hasApiKey || configuredProvider?.hasEnvApiKey || selectedCatalog?.hasEnvApiKey);
+  const hasAnyKey = hasSavedCredential || hasPendingApiKey;
   const keyStatus = configuredProvider?.hasApiKey
     ? 'Saved key'
-    : configuredProvider?.hasEnvApiKey || selectedCatalog?.hasEnvApiKey ? 'Environment key' : 'No key';
-  const modelContext = selectedModel?.contextWindow ? `${formatTokens(selectedModel.contextWindow)} context` : 'Custom model';
+    : configuredProvider?.hasEnvApiKey || selectedCatalog?.hasEnvApiKey ? 'Environment key' : hasPendingApiKey ? 'Unsaved key' : 'No key';
+  const modelContext = canChooseModels
+    ? selectedModel?.contextWindow ? `${formatTokens(selectedModel.contextWindow)} context` : 'Custom model'
+    : 'Key required';
   const providerChoices = useMemo(
     () => settings ? buildProviderChoices(settings, draft.providerId) : [],
     [draft.providerId, settings],
@@ -151,7 +158,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
 
   async function save() {
     const providerId = draft.providerId.trim();
-    const modelId = draft.modelId.trim();
+    const modelId = draft.modelId.trim() || selectedCatalog?.models[0]?.id || '';
     if (!providerId) {
       setError('provider is required');
       return;
@@ -249,7 +256,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
       <header className="agent-settings-header">
         <div>
           <h2 id="agent-settings-title">Agent settings</h2>
-          <p>{draft.providerId && draft.modelId ? `${draft.providerId}/${draft.modelId}` : 'No model configured'}</p>
+          <p>{canChooseModels && draft.providerId && draft.modelId ? `${draft.providerId}/${draft.modelId}` : draft.providerId ? formatProviderName(draft.providerId) : 'No provider connected'}</p>
         </div>
         <ButtonControl className="agent-settings-close" onClick={onClose}>
           Close
@@ -273,11 +280,11 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
                 >
                   <span className="agent-settings-provider-title">
                     {formatProviderName(provider.providerId)}
-                    <span className={provider.active ? 'agent-settings-provider-state is-active' : 'agent-settings-provider-state'}>
-                      {provider.active ? 'Active' : provider.configured ? 'Configured' : 'Available'}
+                    <span className={provider.active && provider.enabled && provider.hasCredential ? 'agent-settings-provider-state is-active' : 'agent-settings-provider-state'}>
+                      {providerStatusLabel(provider)}
                     </span>
                   </span>
-                  <small>{provider.modelId || 'No model'}</small>
+                  <small>{provider.hasCredential && provider.enabled ? provider.modelId || 'No model' : provider.configured ? 'Add API key' : 'Set up provider'}</small>
                 </ButtonControl>
               ))}
             </div>
@@ -352,57 +359,63 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
               <h3 id="agent-settings-model-heading">Model behavior</h3>
               <span>{modelContext}</span>
             </div>
-            <div className="agent-settings-grid">
-              <FormField className="agent-settings-field agent-settings-field-wide" label="Model ID">
-                <TextInputControl
-                  label="Model ID"
-                  list="agent-model-options"
-                  onChange={(event) => {
-                    const modelId = event.target.value;
-                    const model = selectedModels.find((candidate) => candidate.id === modelId);
-                    const supportedLevels: AgentReasoningLevel[] = model?.supportedThinkingLevels.length
-                      ? model.supportedThinkingLevels
-                      : ['off'];
-                    setDraft((current) => ({
-                      ...current,
-                      modelId,
-                      reasoningLevel: coerceReasoningLevel(current.reasoningLevel, supportedLevels),
-                    }));
-                  }}
-                  placeholder="model id"
-                  value={draft.modelId}
-                />
-                <datalist id="agent-model-options">
-                  {selectedModels.map((model) => (
-                    <option key={model.id} value={model.id}>{model.name}</option>
-                  ))}
-                </datalist>
-              </FormField>
+            {canChooseModels ? (
+              <div className="agent-settings-grid">
+                <FormField className="agent-settings-field agent-settings-field-wide" label="Model ID">
+                  <TextInputControl
+                    label="Model ID"
+                    list="agent-model-options"
+                    onChange={(event) => {
+                      const modelId = event.target.value;
+                      const model = selectedModels.find((candidate) => candidate.id === modelId);
+                      const supportedLevels: AgentReasoningLevel[] = model?.supportedThinkingLevels.length
+                        ? model.supportedThinkingLevels
+                        : ['off'];
+                      setDraft((current) => ({
+                        ...current,
+                        modelId,
+                        reasoningLevel: coerceReasoningLevel(current.reasoningLevel, supportedLevels),
+                      }));
+                    }}
+                    placeholder="model id"
+                    value={draft.modelId}
+                  />
+                  <datalist id="agent-model-options">
+                    {selectedModels.map((model) => (
+                      <option key={model.id} value={model.id}>{model.name}</option>
+                    ))}
+                  </datalist>
+                </FormField>
 
-              <FormField className="agent-settings-field" label="Reasoning">
-                <SelectControl
-                  label="Reasoning"
-                  onChange={(event) => {
-                    setDraft((current) => ({
-                      ...current,
-                      reasoningLevel: event.target.value as AgentReasoningLevel,
-                    }));
-                  }}
-                  value={coerceReasoningLevel(draft.reasoningLevel, selectedReasoningLevels)}
-                >
-                  {selectedReasoningLevels.map((reasoningLevel) => (
-                    <option key={reasoningLevel} value={reasoningLevel}>
-                      {REASONING_LABELS[reasoningLevel]}
-                    </option>
-                  ))}
-                </SelectControl>
-              </FormField>
+                <FormField className="agent-settings-field" label="Reasoning">
+                  <SelectControl
+                    label="Reasoning"
+                    onChange={(event) => {
+                      setDraft((current) => ({
+                        ...current,
+                        reasoningLevel: event.target.value as AgentReasoningLevel,
+                      }));
+                    }}
+                    value={coerceReasoningLevel(draft.reasoningLevel, selectedReasoningLevels)}
+                  >
+                    {selectedReasoningLevels.map((reasoningLevel) => (
+                      <option key={reasoningLevel} value={reasoningLevel}>
+                        {REASONING_LABELS[reasoningLevel]}
+                      </option>
+                    ))}
+                  </SelectControl>
+                </FormField>
 
-              <div className="agent-settings-model-stat">
-                <span>Context</span>
-                <strong>{modelContext}</strong>
+                <div className="agent-settings-model-stat">
+                  <span>Context</span>
+                  <strong>{modelContext}</strong>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="agent-settings-model-placeholder">
+                Add an API key for this provider before choosing a model.
+              </div>
+            )}
           </section>
 
           {error ? (
@@ -439,10 +452,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
 }
 
 function resolveInitialDraft(settings: AgentProviderSettingsView): DraftConfig {
-  const activeProviderId = settings.activeProviderId;
-  const active = activeProviderId
-    ? settings.providers.find((provider) => provider.providerId === activeProviderId)
-    : undefined;
+  const active = resolveUsableActiveProvider(settings);
   const existing = active ?? settings.providers[0];
   if (existing) return providerToDraft(existing);
 
@@ -465,37 +475,30 @@ function resolveDraftForProvider(settings: AgentProviderSettingsView, providerId
 }
 
 function buildProviderChoices(settings: AgentProviderSettingsView, draftProviderId: string): ProviderChoice[] {
-  const activeProviderId = settings.activeProviderId
-    ?? settings.providers.find((provider) => provider.enabled)?.providerId
-    ?? settings.providers[0]?.providerId
-    ?? '';
+  const activeProviderId = resolveUsableActiveProvider(settings)?.providerId ?? '';
   const choices = new Map<string, ProviderChoice>();
 
-  for (const catalog of settings.availableProviders) {
-    const configured = settings.providers.find((provider) => provider.providerId === catalog.providerId);
-    choices.set(catalog.providerId, {
-      providerId: catalog.providerId,
-      modelId: configured?.modelId ?? catalog.models[0]?.id ?? '',
-      configured: Boolean(configured),
-      active: catalog.providerId === activeProviderId,
-    });
-  }
-
   for (const provider of settings.providers) {
+    const catalog = settings.availableProviders.find((candidate) => candidate.providerId === provider.providerId);
     choices.set(provider.providerId, {
       providerId: provider.providerId,
       modelId: provider.modelId,
       configured: true,
       active: provider.providerId === activeProviderId,
+      enabled: provider.enabled,
+      hasCredential: providerHasCredential(provider, catalog),
     });
   }
 
   if (draftProviderId && !choices.has(draftProviderId)) {
+    const catalog = settings.availableProviders.find((candidate) => candidate.providerId === draftProviderId);
     choices.set(draftProviderId, {
       providerId: draftProviderId,
-      modelId: '',
+      modelId: catalog?.models[0]?.id ?? '',
       configured: false,
       active: draftProviderId === activeProviderId,
+      enabled: true,
+      hasCredential: Boolean(catalog?.hasEnvApiKey),
     });
   }
 
@@ -503,7 +506,10 @@ function buildProviderChoices(settings: AgentProviderSettingsView, draftProvider
 }
 
 function compareProviderChoices(left: ProviderChoice, right: ProviderChoice): number {
+  const leftReady = left.enabled && left.hasCredential;
+  const rightReady = right.enabled && right.hasCredential;
   if (left.active !== right.active) return left.active ? -1 : 1;
+  if (leftReady !== rightReady) return leftReady ? -1 : 1;
   if (left.configured !== right.configured) return left.configured ? -1 : 1;
   const leftPreferred = preferredProviderIndex(left.providerId);
   const rightPreferred = preferredProviderIndex(right.providerId);
@@ -511,6 +517,31 @@ function compareProviderChoices(left: ProviderChoice, right: ProviderChoice): nu
   return formatProviderName(left.providerId).localeCompare(formatProviderName(right.providerId), undefined, {
     sensitivity: 'base',
   });
+}
+
+function providerHasCredential(
+  provider: AgentProviderConfigView | undefined,
+  catalog: AgentProviderOption | undefined,
+): boolean {
+  return Boolean(provider?.hasApiKey || provider?.hasEnvApiKey || catalog?.hasEnvApiKey);
+}
+
+function resolveUsableActiveProvider(settings: AgentProviderSettingsView): AgentProviderConfigView | undefined {
+  const isUsable = (provider: AgentProviderConfigView) => {
+    const catalog = settings.availableProviders.find((candidate) => candidate.providerId === provider.providerId);
+    return provider.enabled && providerHasCredential(provider, catalog);
+  };
+  return settings.activeProviderId
+    ? settings.providers.find((provider) => provider.providerId === settings.activeProviderId && isUsable(provider))
+      ?? settings.providers.find(isUsable)
+    : settings.providers.find(isUsable);
+}
+
+function providerStatusLabel(provider: ProviderChoice): string {
+  if (!provider.configured) return 'Setup';
+  if (!provider.enabled) return 'Disabled';
+  if (!provider.hasCredential) return 'Needs key';
+  return provider.active ? 'Active' : 'Ready';
 }
 
 function preferredProviderIndex(providerId: string): number {

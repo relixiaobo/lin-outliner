@@ -129,6 +129,20 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             maxTokens: 4096,
           },
         ],
+      }, {
+        providerId: 'anthropic',
+        hasEnvApiKey: false,
+        envKeyNames: ['ANTHROPIC_API_KEY'],
+        models: [
+          {
+            id: 'claude-sonnet-4-5',
+            name: 'Claude Sonnet 4.5',
+            reasoning: true,
+            supportedThinkingLevels: ['off', 'low', 'medium', 'high'],
+            contextWindow: 200_000,
+            maxTokens: 8192,
+          },
+        ],
       }],
     };
     const debugUsage = {

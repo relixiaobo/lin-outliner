@@ -3217,6 +3217,15 @@ button:focus-visible {
   line-height: 17px;
 }
 
+.agent-settings-model-placeholder {
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.34);
+  color: var(--muted-2);
+  font-size: 12px;
+  line-height: 18px;
+  padding: var(--space-5) var(--space-6);
+}
+
 .agent-settings-alert {
   display: flex;
   align-items: center;

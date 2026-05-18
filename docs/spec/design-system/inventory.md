@@ -199,7 +199,9 @@ Aligned:
 - Composer controls are componentized around existing primitives while draft,
   streaming, provider update, attachment, and queue behavior stay local.
 - Agent settings and debug information architecture are sectioned while runtime
-  data and persistence remain local.
+  data and persistence remain local. Provider/model selection now follows the
+  credential boundary: enabled providers without API keys can be configured, but
+  they do not expose model lists.
 
 Remaining convergence:
 

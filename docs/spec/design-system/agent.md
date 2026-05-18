@@ -188,9 +188,14 @@ compact chip contract and must not expand the dock into a file manager.
 - Composer menu controls use shared item/switch semantics; textarea draft,
   provider updates, attachments, and queue/stop behavior stay in
   `AgentComposer`.
+- Composer model choices are derived only from providers that are enabled and
+  have a saved or environment API key; unconnected SDK providers are not shown
+  as selectable models.
 - Agent settings is configuration, not a landing page. Provider choice,
   connection credentials, model behavior, and destructive actions are separate
   sections.
+- Settings may expose the provider catalog through Provider ID entry, but model
+  controls appear only after the selected provider has credentials.
 - Provider secrets are masked and never shown in full after saving.
 
 ## Refactor Sequence

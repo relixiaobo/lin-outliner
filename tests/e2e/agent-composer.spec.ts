@@ -47,6 +47,7 @@ test.describe('agent composer controls', () => {
     const menu = page.getByRole('menu', { name: 'Model and reasoning settings' });
     await expect(menu).toBeVisible();
     await expect(menu.getByRole('menuitem', { name: 'GPT-5.4', exact: true })).toBeVisible();
+    await expect(menu.getByRole('menuitem', { name: 'Claude Sonnet 4.5', exact: true })).toHaveCount(0);
     await expect(menu.getByRole('switch', { name: 'Thinking' })).toHaveAttribute('aria-checked', 'true');
 
     await menu.getByRole('menuitem', { name: 'GPT-5.4 Mini', exact: true }).click();

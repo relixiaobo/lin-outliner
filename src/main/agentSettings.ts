@@ -78,17 +78,17 @@ export async function getProviderSettings(): Promise<AgentProviderSettingsView> 
 
 export async function getActiveProviderRuntimeConfig(): Promise<AgentProviderRuntimeConfig | null> {
   const file = await readProviderFile();
-  const active = file.providers.find((provider) => provider.providerId === file.activeProviderId && provider.enabled)
-    ?? file.providers.find((provider) => provider.enabled)
+  const secrets = await readSecretFile();
+  const active = file.providers.find((provider) => provider.providerId === file.activeProviderId && providerHasCredential(provider, secrets))
+    ?? file.providers.find((provider) => providerHasCredential(provider, secrets))
     ?? null;
   if (!active) return null;
-  const secrets = await readSecretFile();
   const modelId = normalizeModelId(active.providerId, active.modelId);
   return {
     ...active,
     modelId,
     reasoningLevel: normalizeReasoningLevel(active.providerId, modelId, active.reasoningLevel),
-    apiKey: secrets.keys[active.providerId],
+    apiKey: secrets.keys[active.providerId] ?? getEnvApiKey(active.providerId),
   };
 }
 
@@ -206,6 +206,10 @@ function normalizeConfig(input: AgentProviderConfigInput): AgentProviderConfig {
   const reasoningLevel = normalizeReasoningLevel(providerId, modelId, input.reasoningLevel);
   const baseUrl = input.baseUrl?.trim() || undefined;
   return { providerId, modelId, reasoningLevel, baseUrl, enabled: input.enabled ?? true };
+}
+
+function providerHasCredential(provider: AgentProviderConfig, secrets: SecretFile): boolean {
+  return provider.enabled && Boolean(secrets.keys[provider.providerId] || getEnvApiKey(provider.providerId));
 }
 
 function normalizeProviderId(providerIdInput: string) {

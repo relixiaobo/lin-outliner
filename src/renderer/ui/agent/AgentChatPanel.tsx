@@ -46,9 +46,14 @@ function shouldStickToBottom(element: HTMLDivElement): boolean {
 function getActiveProvider(settings: AgentProviderSettingsView | null): AgentProviderConfigView | null {
   if (!settings) return null;
   const active = settings.activeProviderId
-    ? settings.providers.find((provider) => provider.providerId === settings.activeProviderId)
+    ? settings.providers.find((provider) => provider.providerId === settings.activeProviderId && providerCanUseModels(settings, provider))
     : undefined;
-  return active ?? settings.providers.find((provider) => provider.enabled) ?? settings.providers[0] ?? null;
+  return active ?? settings.providers.find((provider) => providerCanUseModels(settings, provider)) ?? null;
+}
+
+function providerCanUseModels(settings: AgentProviderSettingsView, provider: AgentProviderConfigView): boolean {
+  const catalog = settings.availableProviders.find((candidate) => candidate.providerId === provider.providerId);
+  return provider.enabled && Boolean(provider.hasApiKey || provider.hasEnvApiKey || catalog?.hasEnvApiKey);
 }
 
 function getSupportedReasoningLevels(

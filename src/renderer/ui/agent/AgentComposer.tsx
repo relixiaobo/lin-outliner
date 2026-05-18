@@ -642,9 +642,9 @@ function formatBytes(bytes: number): string {
 function getActiveProvider(settings: AgentProviderSettingsView | null): AgentProviderConfigView | null {
   if (!settings) return null;
   const active = settings.activeProviderId
-    ? settings.providers.find((provider) => provider.providerId === settings.activeProviderId)
+    ? settings.providers.find((provider) => provider.providerId === settings.activeProviderId && providerCanUseModels(settings, provider))
     : undefined;
-  return active ?? settings.providers.find((provider) => provider.enabled) ?? settings.providers[0] ?? null;
+  return active ?? settings.providers.find((provider) => providerCanUseModels(settings, provider)) ?? null;
 }
 
 function getModelChoices(
@@ -652,9 +652,16 @@ function getModelChoices(
   activeProvider: AgentProviderConfigView | null,
 ): ComposerModelChoice[] {
   if (!settings) return [];
-  const choices = settings.availableProviders.flatMap((provider) =>
-    provider.models.map((model) => ({ ...model, providerId: provider.providerId })),
+  const usableProviderIds = new Set(
+    settings.providers
+      .filter((provider) => providerCanUseModels(settings, provider))
+      .map((provider) => provider.providerId),
   );
+  const choices = settings.availableProviders
+    .filter((provider) => usableProviderIds.has(provider.providerId))
+    .flatMap((provider) =>
+      provider.models.map((model) => ({ ...model, providerId: provider.providerId })),
+    );
   if (!activeProvider) return choices;
   if (choices.some((model) => model.providerId === activeProvider.providerId && model.id === activeProvider.modelId)) {
     return choices;
@@ -668,6 +675,11 @@ function getModelChoices(
     contextWindow: 0,
     maxTokens: 0,
   }, ...choices];
+}
+
+function providerCanUseModels(settings: AgentProviderSettingsView, provider: AgentProviderConfigView): boolean {
+  const catalog = settings.availableProviders.find((candidate) => candidate.providerId === provider.providerId);
+  return provider.enabled && Boolean(provider.hasApiKey || provider.hasEnvApiKey || catalog?.hasEnvApiKey);
 }
 
 function shortenModelName(name: string): string {

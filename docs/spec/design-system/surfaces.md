@@ -609,10 +609,13 @@ Visual rules:
 - Dialog uses level 2 elevation.
 - Information architecture is sectioned as Provider, Connection, Model
   behavior, alert/notice, and footer actions.
-- Provider choices are compact buttons that distinguish active, configured, and
-  available providers.
+- Provider choices are compact buttons for connected or in-progress providers;
+  the full SDK provider catalog stays in the Provider ID input and must not
+  render as a long list of available cards.
 - Connection owns Provider ID, Base URL, API key, key status, and enabled state.
-- Model behavior owns Model ID, reasoning level, and context metadata.
+- Model behavior owns Model ID, reasoning level, and context metadata only after
+  the selected provider is enabled and has a saved, environment, or pending API
+  key. Without credentials, the section shows a key-required placeholder.
 - API key removal sits next to the API key field; provider removal stays in the
   footer as the secondary destructive action.
 - Destructive provider removal is secondary unless the dialog is specifically in
@@ -625,6 +628,8 @@ Behavior:
 - Loading, saving, error, and saved notice states are explicit.
 - Save persists provider, model, reasoning, base URL, enabled state, and API key
   when supplied.
+- Runtime and composer model selection only use providers that are enabled and
+  have a saved or environment API key.
 - Removing key and removing provider are real actions and should require clear
   visual affordance.
 - Native input/select behavior is wrapped by shared form primitives; settings

@@ -57,6 +57,22 @@ test.describe('agent settings dialog', () => {
     await expect(dialog.getByRole('button', { name: 'Remove key' })).toBeEnabled();
   });
 
+  test('only exposes model controls after the selected provider has a key', async ({ page }) => {
+    await page.getByRole('button', { name: 'Agent settings' }).click();
+
+    const dialog = page.getByRole('dialog', { name: 'Agent settings' });
+    await expect(dialog.getByRole('button', { name: /Anthropic/ })).toHaveCount(0);
+
+    await dialog.getByLabel('Provider ID').fill('anthropic');
+
+    await expect(dialog.getByLabel('API key')).toHaveAttribute('placeholder', 'Paste key');
+    await expect(dialog.getByLabel('Model ID')).toHaveCount(0);
+    await expect(dialog.getByText('Add an API key for this provider before choosing a model.')).toBeVisible();
+
+    await dialog.getByLabel('API key').fill('sk-ant-test');
+    await expect(dialog.getByLabel('Model ID')).toBeVisible();
+  });
+
   test('saves grouped provider configuration', async ({ page }) => {
     await page.getByRole('button', { name: 'Agent settings' }).click();
 
