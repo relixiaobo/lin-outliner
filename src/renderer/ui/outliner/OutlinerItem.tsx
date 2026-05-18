@@ -663,7 +663,8 @@ export function OutlinerItem(props: OutlinerItemProps) {
                 await props.run(() => api.toggleDone(nodeId));
               }}
               onCreateTrigger={(params) => {
-                void createTrailingTriggerNode({
+                return createTrailingTriggerNode({
+                  getText: params.getText,
                   parentId: params.parentId,
                   text: params.text,
                   trigger: params.trigger,

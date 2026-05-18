@@ -37,6 +37,7 @@ import {
   previousVisibleRowId,
 } from '../../src/renderer/ui/interactions/outlinerStructure';
 import {
+  buildPanelOutlinerSections,
   buildOutlinerRows,
   hiddenFieldKey,
   NAME_FIELD,
@@ -78,6 +79,42 @@ describe('row interaction resolvers', () => {
     expect(buildOutlinerRows(parent as any, byId, {
       expandedHiddenFields: new Set([hiddenFieldKey('parent', 'field')]),
     })).toEqual([{ id: 'field', type: 'field' }]);
+  });
+
+  test('splits panel heading fields from filtered body rows', () => {
+    const parent = makeNode('parent', 'Parent', {
+      children: ['status', 'beta', 'alpha', 'hidden'],
+      filterField: NAME_FIELD,
+      filterOp: 'any',
+      filterValues: ['Alpha'],
+      sortField: NAME_FIELD,
+      sortDirection: 'asc',
+    });
+    const statusDef = makeNode('status-def', 'Status', { type: 'fieldDef' });
+    const hiddenDef = makeNode('hidden-def', 'Archive', { type: 'fieldDef', hideField: 'always' });
+    const byId = new Map<string, any>([
+      ['parent', parent],
+      ['status-def', statusDef],
+      ['hidden-def', hiddenDef],
+      ['status', makeNode('status', '', { type: 'fieldEntry', parentId: 'parent', fieldDefId: 'status-def' })],
+      ['hidden', makeNode('hidden', '', { type: 'fieldEntry', parentId: 'parent', fieldDefId: 'hidden-def' })],
+      ['alpha', makeNode('alpha', 'Alpha', { parentId: 'parent' })],
+      ['beta', makeNode('beta', 'Beta', { parentId: 'parent' })],
+    ]);
+
+    expect(buildPanelOutlinerSections(parent as any, byId)).toEqual({
+      headingRows: [{ id: 'status', type: 'field' }],
+      bodyRows: [
+        { id: 'alpha', type: 'content' },
+        { id: 'hidden:parent:hidden', type: 'hiddenField', fieldId: 'hidden', label: 'Archive' },
+      ],
+    });
+    expect(buildPanelOutlinerSections(parent as any, byId, {
+      expandedHiddenFields: new Set([hiddenFieldKey('parent', 'hidden')]),
+    }).headingRows).toEqual([
+      { id: 'status', type: 'field' },
+      { id: 'hidden', type: 'field' },
+    ]);
   });
 
   test('applies sort, filter, and group view settings to row models', () => {

@@ -19,9 +19,9 @@ test.describe('outliner trailing input and expansion parity', () => {
     await trailingEditor(page).click();
     await page.keyboard.type('Delta');
 
-    await expect(page.getByText('Delta')).toBeVisible();
+    await expect.poll(async () => (await nodeByText(page, 'Delta'))?.parentId).toBe(ids.today);
     const projectionBeforeBlur = await e2eProjection(page);
-    const createdId = projectionBeforeBlur.nodes.find((node) => node.id === ids.today)?.children.at(-1);
+    const createdId = projectionBeforeBlur.nodes.find((node) => node.content.text === 'Delta')?.id;
     expect(createdId).toBeTruthy();
     await expect(rowEditor(page, createdId!)).toBeFocused();
 
@@ -66,6 +66,7 @@ test.describe('outliner trailing input and expansion parity', () => {
     await page.keyboard.press('Tab');
     await page.keyboard.type('Nested');
 
+    await expect.poll(async () => (await nodeByText(page, 'Nested'))?.parentId).toBe(ids.gamma);
     await expect(page.getByText('Nested')).toBeVisible();
     await page.locator('.main-panel').first().click({ position: { x: 120, y: 520 } });
     await expect.poll(async () => (await nodeByText(page, 'Nested'))?.parentId).toBe(ids.gamma);

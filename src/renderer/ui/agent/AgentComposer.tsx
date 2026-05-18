@@ -14,10 +14,10 @@ import type {
   AgentReasoningLevel,
 } from '../../api/types';
 import {
-  AgentComposerAttachmentButton,
   AgentComposerAttachmentChip,
   AgentComposerModelButton,
   AgentComposerPrimaryAction,
+  AgentComposerToolbar,
   AgentQueuedFollowUp,
 } from './AgentComposerControls';
 import {
@@ -363,6 +363,11 @@ export function AgentComposer({
     return reasoningOptions.find((level) => level !== 'off') ?? selectedReasoning;
   }
 
+  function openSettingsFromToolbar() {
+    setModelMenuOpen(false);
+    onOpenSettings();
+  }
+
   const modelLabel = selectedModel
     ? shortenModelName(selectedModel.name || selectedModel.id)
     : activeProvider?.modelId
@@ -433,66 +438,60 @@ export function AgentComposer({
           rows={1}
           value={value}
         />
-        <div className="agent-composer-toolbar">
-          <input
-            ref={fileInputRef}
-            className="agent-composer-file-input"
-            multiple
-            onChange={handleFileInputChange}
-            type="file"
-          />
-          <AgentComposerAttachmentButton
-            disabled={isStreaming || attachments.length >= MAX_ATTACHMENTS}
-            onClick={() => fileInputRef.current?.click()}
-          />
-
-          <div className="agent-composer-spacer" />
-
-          <div className="agent-composer-model" ref={modelMenuRef}>
-            <AgentComposerModelButton
-              disabled={configDisabled || modelOptions.length === 0}
-              modelLabel={modelLabel}
-              modelTitle={activeProvider ? `${activeProvider.providerId}/${activeProvider.modelId}` : 'No model configured'}
-              onToggle={() => setModelMenuOpen((open) => !open)}
-              open={modelMenuOpen}
-              reasoningEnabled={reasoningEnabled}
-              selectedReasoning={selectedReasoning}
-              supportsReasoning={supportsReasoning}
-            />
-
-            {modelMenuOpen ? (
-              <AgentComposerModelMenu
-                activeProvider={activeProvider}
-                anchorRef={modelMenuRef}
-                configDisabled={configDisabled}
-                models={modelOptions}
-                moreModelsOpen={moreModelsOpen}
-                onClose={() => setModelMenuOpen(false)}
-                onModelSelect={(model) => void changeModel(model)}
-                onMoreModelsOpenChange={setMoreModelsOpen}
-                onOpenSettings={onOpenSettings}
-                onReasoningLevelSelect={(reasoningLevel) => {
-                  setReasoningMenuOpen(false);
-                  void changeReasoning(reasoningLevel);
-                }}
-                onReasoningMenuOpenChange={setReasoningMenuOpen}
-                onReasoningToggle={() => void changeReasoning(reasoningEnabled ? 'off' : defaultEnabledReasoning())}
+        <AgentComposerToolbar
+          attachmentDisabled={isStreaming || attachments.length >= MAX_ATTACHMENTS}
+          fileInputRef={fileInputRef}
+          onAttachmentClick={() => fileInputRef.current?.click()}
+          onFileInputChange={handleFileInputChange}
+          onOpenSettings={openSettingsFromToolbar}
+          modelControl={(
+            <div className="agent-composer-model" ref={modelMenuRef}>
+              <AgentComposerModelButton
+                disabled={configDisabled || modelOptions.length === 0}
+                modelLabel={modelLabel}
+                modelTitle={activeProvider ? `${activeProvider.providerId}/${activeProvider.modelId}` : 'No model configured'}
+                onToggle={() => setModelMenuOpen((open) => !open)}
+                open={modelMenuOpen}
                 reasoningEnabled={reasoningEnabled}
-                reasoningMenuOpen={reasoningMenuOpen}
-                reasoningOptions={reasoningOptions}
                 selectedReasoning={selectedReasoning}
                 supportsReasoning={supportsReasoning}
               />
-            ) : null}
-          </div>
 
-          <AgentComposerPrimaryAction
-            canSubmit={canSubmit}
-            hasDraft={hasDraft}
-            isStreaming={isStreaming}
-            onStop={onStop}
-          />
-        </div>
+              {modelMenuOpen ? (
+                <AgentComposerModelMenu
+                  activeProvider={activeProvider}
+                  anchorRef={modelMenuRef}
+                  configDisabled={configDisabled}
+                  models={modelOptions}
+                  moreModelsOpen={moreModelsOpen}
+                  onClose={() => setModelMenuOpen(false)}
+                  onModelSelect={(model) => void changeModel(model)}
+                  onMoreModelsOpenChange={setMoreModelsOpen}
+                  onOpenSettings={onOpenSettings}
+                  onReasoningLevelSelect={(reasoningLevel) => {
+                    setReasoningMenuOpen(false);
+                    void changeReasoning(reasoningLevel);
+                  }}
+                  onReasoningMenuOpenChange={setReasoningMenuOpen}
+                  onReasoningToggle={() => void changeReasoning(reasoningEnabled ? 'off' : defaultEnabledReasoning())}
+                  reasoningEnabled={reasoningEnabled}
+                  reasoningMenuOpen={reasoningMenuOpen}
+                  reasoningOptions={reasoningOptions}
+                  selectedReasoning={selectedReasoning}
+                  supportsReasoning={supportsReasoning}
+                />
+              ) : null}
+            </div>
+          )}
+          primaryAction={(
+            <AgentComposerPrimaryAction
+              canSubmit={canSubmit}
+              hasDraft={hasDraft}
+              isStreaming={isStreaming}
+              onStop={onStop}
+            />
+          )}
+        />
       </div>
     </form>
   );

@@ -13,6 +13,7 @@ import { resolveSelectedReferenceShortcut } from '../interactions/selectedRefere
 import { parseOutlinerPaste } from '../interactions/pasteParser';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { FloatingEditorToolbar, type ToolbarMark } from './FloatingEditorToolbar';
+import type { OverlayAnchorRect } from '../primitives/useAnchoredOverlay';
 import {
   concatRichText,
   docPosToTextOffset,
@@ -124,14 +125,20 @@ function activeMarksForSelection(view: EditorView): Set<ToolbarMark> {
   return result;
 }
 
-function toolbarPosition(view: EditorView): { left: number; top: number } | null {
+function toolbarAnchor(view: EditorView): OverlayAnchorRect | null {
   if (view.state.selection.empty) return null;
   try {
     const from = view.coordsAtPos(view.state.selection.from);
     const to = view.coordsAtPos(view.state.selection.to);
+    const left = Math.min(from.left, to.left);
+    const right = Math.max(from.right, to.right);
+    const top = Math.min(from.top, to.top);
     return {
-      left: Math.max(8, (from.left + to.right) / 2),
-      top: Math.max(8, Math.min(from.top, to.top) - 38),
+      bottom: top,
+      left,
+      right,
+      top,
+      width: Math.max(1, right - left),
     };
   } catch {
     return null;
@@ -184,8 +191,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
   const [isEmpty, setIsEmpty] = useState(() => props.content.text.trim().length === 0 && props.content.inlineRefs.length === 0);
   const [toolbar, setToolbar] = useState({
     visible: false,
-    left: 0,
-    top: 0,
+    anchorRect: null as OverlayAnchorRect | null,
     activeMarks: new Set<ToolbarMark>(),
   });
 
@@ -197,15 +203,14 @@ export function RichTextEditor(props: RichTextEditorProps) {
   }), []);
 
   const updateToolbar = (view: EditorView) => {
-    const position = toolbarPosition(view);
-    if (!position || !view.hasFocus()) {
+    const anchorRect = toolbarAnchor(view);
+    if (!anchorRect || !view.hasFocus()) {
       setToolbar((prev) => prev.visible ? { ...prev, visible: false } : prev);
       return;
     }
     setToolbar({
       visible: true,
-      left: position.left,
-      top: position.top,
+      anchorRect,
       activeMarks: activeMarksForSelection(view),
     });
   };
@@ -568,8 +573,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
       />
       <FloatingEditorToolbar
         visible={toolbar.visible}
-        left={toolbar.left}
-        top={toolbar.top}
+        anchorRect={toolbar.anchorRect}
         activeMarks={toolbar.activeMarks}
         onToggle={toggleToolbarMark}
       />

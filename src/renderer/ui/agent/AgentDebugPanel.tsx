@@ -9,6 +9,7 @@ import type {
 } from '../../../core/agentTypes';
 import { api } from '../../api/client';
 import { ChevronDownIcon, CopyIcon, RefreshIcon, ICON_SIZE } from '../icons';
+import { IconButton } from '../primitives/IconButton';
 
 interface AgentDebugPanelProps {
   sessionId: string | null;
@@ -84,6 +85,10 @@ function statusLabel(input: Pick<AgentDebugSnapshot, 'status'>): string {
   if (input.status === 'aborted') return 'Aborted';
   if (input.status === 'interrupted') return 'Interrupted';
   return 'Error';
+}
+
+function statusClassName(input: Pick<AgentDebugSnapshot, 'status'>): string {
+  return `agent-debug-status-pill is-${input.status}`;
 }
 
 function partTitle(part: AgentDebugMessagePart): string {
@@ -197,6 +202,25 @@ function CostInline({ usage }: { usage: AgentDebugUsage }) {
   );
 }
 
+function DebugMetric(props: { label: string; meta?: ReactNode; value: ReactNode }) {
+  return (
+    <div className="agent-debug-metric">
+      <span>{props.label}</span>
+      <strong>{props.value}</strong>
+      {props.meta ? <small>{props.meta}</small> : null}
+    </div>
+  );
+}
+
+function DebugSectionHeader(props: { id?: string; meta?: ReactNode; title: string }) {
+  return (
+    <div className="agent-debug-section-header">
+      <h3 id={props.id}>{props.title}</h3>
+      {props.meta ? <span>{props.meta}</span> : null}
+    </div>
+  );
+}
+
 function useAgentDebug(sessionId: string | null) {
   const [resolvedSessionId, setResolvedSessionId] = useState<string | null>(sessionId);
   const [snapshot, setSnapshot] = useState<AgentDebugSnapshot | null>(null);
@@ -296,15 +320,14 @@ export function AgentDebugPanel({ sessionId }: AgentDebugPanelProps) {
           <h2>Agent Debug</h2>
           <p>{resolvedSessionId ?? sessionId}</p>
         </div>
-        <button
-          aria-label="Refresh agent debug"
+        <IconButton
           className="agent-debug-icon-button"
+          icon={RefreshIcon}
+          label="Refresh agent debug"
           onClick={() => void refresh()}
           title="Refresh"
-          type="button"
-        >
-          <RefreshIcon size={ICON_SIZE.toolbar} />
-        </button>
+          variant="panel"
+        />
       </header>
 
       {loading && !latest ? <div className="agent-debug-card is-muted">Loading live runtime data...</div> : null}
@@ -331,18 +354,30 @@ export function AgentDebugPanel({ sessionId }: AgentDebugPanelProps) {
 
 function SessionBar(props: { latest: AgentDebugSnapshot; totals: AgentDebugTotals }) {
   const latest = props.latest;
+  const estimate = latest.tokenEstimate;
+  const contextWindow = estimate.contextWindow ? formatTokens(estimate.contextWindow) : 'unknown';
   return (
-    <section className="agent-debug-session-bar">
-      <div>
-        <div className="agent-debug-session-title">Session</div>
-        <div className="agent-debug-session-meta">
-          {props.totals.queries} queries · {props.totals.rounds} rounds · <CostInline usage={props.totals} />
-        </div>
-      </div>
-      <div className="agent-debug-session-model">
-        <strong>{latest.modelId}</strong>
-        <span>{latest.provider} · {sourceLabel(latest)} · {statusLabel(latest)}</span>
-      </div>
+    <section className="agent-debug-overview-grid" aria-label="Agent debug overview">
+      <DebugMetric
+        label="Session"
+        value={`${props.totals.queries} queries`}
+        meta={<>{props.totals.rounds} rounds · <CostInline usage={props.totals} /></>}
+      />
+      <DebugMetric
+        label="Model"
+        value={latest.modelId}
+        meta={<>{latest.provider} · {sourceLabel(latest)}</>}
+      />
+      <DebugMetric
+        label="Context"
+        value={`${formatTokens(estimate.total)} / ${contextWindow}`}
+        meta={formatPercent(estimate.usagePercent)}
+      />
+      <DebugMetric
+        label="Status"
+        value={<span className={statusClassName(latest)}>{statusLabel(latest)}</span>}
+        meta={formatTime(latest.capturedAt)}
+      />
     </section>
   );
 }
@@ -351,7 +386,12 @@ function ContextCard({ snapshot }: { snapshot: AgentDebugSnapshot }) {
   const estimate = snapshot.tokenEstimate;
   const contextWindow = estimate.contextWindow ? formatTokens(estimate.contextWindow) : 'unknown';
   return (
-    <section className="agent-debug-card agent-debug-context-card">
+    <section className="agent-debug-card agent-debug-context-card" aria-labelledby="agent-debug-context-heading">
+      <DebugSectionHeader
+        id="agent-debug-context-heading"
+        title="Request Context"
+        meta={`${formatBytes(snapshot.wire.bytes)} request JSON`}
+      />
       <div className="agent-debug-context-head">
         <div>
           <div className="agent-debug-section-title">Context</div>
@@ -404,9 +444,10 @@ function QueryCard({ block }: { block: AgentDebugQueryBlock }) {
         <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.menu} />
         <span className="agent-debug-query-index">Q{block.queryIndex}</span>
         <strong>{block.preview}</strong>
-        <span>
-          {block.rounds.length} rounds · <CostInline usage={block.total} /> · {statusLabel({ status: block.status })}
+        <span className="agent-debug-query-meta">
+          {block.rounds.length} rounds · <CostInline usage={block.total} />
         </span>
+        <span className={statusClassName({ status: block.status })}>{statusLabel({ status: block.status })}</span>
       </summary>
       <div className="agent-debug-query-body">
         {block.rounds.map((round) => (
@@ -426,7 +467,7 @@ function RoundCard({ round }: { round: AgentDebugSnapshot }) {
           <span>{formatTime(round.capturedAt)} · {round.modelId}</span>
         </div>
         <div className="agent-debug-round-meta">
-          <span>{statusLabel(round)}</span>
+          <span className={statusClassName(round)}>{statusLabel(round)}</span>
           <span>{round.usage ? <CostInline usage={round.usage} /> : 'usage pending'}</span>
           <code>{round.wire.hash}</code>
         </div>
@@ -486,17 +527,17 @@ function PartRow(props: { index: number; part: AgentDebugMessagePart; rowId: str
         <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.tiny} />
         <span>{partTitle(props.part)}</span>
         <strong>{previewFromPart(props.part)}</strong>
-        <button
-          aria-label={`Copy ${partTitle(props.part)}`}
+        <IconButton
           className="agent-debug-copy-button"
+          icon={CopyIcon}
+          iconSize={ICON_SIZE.tiny}
+          label={`Copy ${partTitle(props.part)}`}
           onClick={(event) => {
             event.preventDefault();
             void copyText(body);
           }}
-          type="button"
-        >
-          <CopyIcon size={ICON_SIZE.tiny} />
-        </button>
+          variant="panel"
+        />
       </summary>
       <pre>{body}</pre>
     </details>
@@ -519,17 +560,17 @@ function ContextDisclosure(props: { children: ReactNode; copyText?: string; titl
         <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.menu} />
         <span>{props.title}</span>
         {props.copyText !== undefined ? (
-          <button
-            aria-label={`Copy ${props.title}`}
+          <IconButton
             className="agent-debug-copy-button"
+            icon={CopyIcon}
+            iconSize={ICON_SIZE.tiny}
+            label={`Copy ${props.title}`}
             onClick={(event) => {
               event.preventDefault();
               void copyText(props.copyText ?? '');
             }}
-            type="button"
-          >
-            <CopyIcon size={ICON_SIZE.tiny} />
-          </button>
+            variant="panel"
+          />
         ) : null}
       </summary>
       <div className="agent-debug-disclosure-body">{props.children}</div>

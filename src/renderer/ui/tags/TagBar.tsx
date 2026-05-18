@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type MouseEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { isNodeInTrash } from '../interactions/nodeLocation';
 import { CloseIcon, ICON_SIZE, SearchIcon, SettingsIcon } from '../icons';
+import { overlayAnchorFromPoint, useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import type { CommandRunner } from '../shared';
 import { textOf } from '../shared';
 import { AppliedTag } from './AppliedTag';
@@ -32,6 +33,17 @@ function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
   const trashed = isNodeInTrash(index, tag.id);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuAnchor = useMemo(
+    () => menu ? overlayAnchorFromPoint(menu.x, menu.y) : null,
+    [menu],
+  );
+  const menuStyle = useAnchoredOverlay(menuRef, {
+    anchorRect: menuAnchor,
+    disabled: !menuAnchor,
+    maxHeight: 320,
+    placement: 'bottom-start',
+    width: 220,
+  });
 
   useEffect(() => {
     if (!menu) return undefined;
@@ -93,7 +105,7 @@ function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
         <div
           ref={menuRef}
           className="tag-context-menu"
-          style={{ left: menu.x, top: menu.y }}
+          style={menuStyle}
           onMouseDown={(event) => event.stopPropagation()}
         >
           <button

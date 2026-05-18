@@ -63,6 +63,12 @@ Heading area order:
 4. Tag segment with More actions aligned to the right.
 5. Field segment when heading fields exist.
 
+Heading field rows are real `fieldEntry` rows directly owned by the panel root.
+The row model exposes them as `headingRows`, while regular content rows and
+hidden-field reveal rows remain `bodyRows`. `NodePanel` renders both sections
+through `OutlinerView` / `OutlinerFieldRow`; body view filter, sort, and group
+settings apply to `bodyRows`, not to heading metadata fields.
+
 ## Visual Tokens
 
 The design system site may simplify behavior, but outliner spacing, typography,
@@ -156,6 +162,7 @@ Normal content row:
 - Optional trigger popover.
 - Optional context menu.
 - Optional children and trailing input.
+- Drag/drop target state.
 
 Trailing input is an empty row state. Its bullet uses the dimmed leading color
 and its placeholder is `Type here or '/' for commands`.
@@ -167,9 +174,18 @@ Field entry row:
 - Field name input.
 - Field value renderer or child-count preview when expanded.
 - Optional description.
+- Field value controls do not add a second node bullet inside the value column;
+  the row's leading slot already identifies the field entry.
 
 Rows stay text-first. Selection, hover, focus, drag/drop, and indentation must
 not shift the editor text start.
+
+Drag/drop state:
+
+- Before/after indicators start on the same `--row-selection-start` axis as row
+  selection.
+- Inside-drop state may use a subtle inset treatment and soft fill, but it must
+  not resize or shift row content.
 
 Done state has three visible forms: no checkbox renders only the row bullet;
 unchecked renders the same measured checkbox slot as a neutral filled square;
@@ -180,15 +196,19 @@ white internal check glyph.
 
 `RowLeading` owns hierarchy and type affordance.
 
-- Chevron slot is fixed width and appears on hover/focus or when interaction
-  requires it.
+- Chevron slot is fixed width. Rows with children show a low-emphasis chevron
+  by default; hover, focus, and selected states increase emphasis. Leaf rows keep
+  the slot measured but visually hidden.
 - Bullet/open slot is fixed width.
 - Content rows use a small dot.
 - Collapsed parent rows may use a subtle filled bullet shape.
-- Reference rows use a dashed marker.
+- Reference rows use a smaller centered dashed marker inside the same measured
+  bullet/open slot.
 - Tag definition rows use a colored circular marker with hash glyph.
 - Field rows and field definitions use field type icons.
 - Applied tag colors may tint content row bullets.
+- Marker hover states must not scale tag, field, or reference markers in a way
+  that reads as positional jitter.
 
 ## Tags And Description
 
@@ -200,6 +220,14 @@ white internal check glyph.
 - Tag open/remove actions are real controls.
 - Descriptions are muted metadata below the content line or title line.
 - Description edit state uses an inline text area rhythm, not a modal.
+
+Inline references are text atoms, not tags:
+
+- Inline reference atoms remain in text flow and use `display: inline`.
+- They use semantic reference color and a fine underline instead of a filled
+  chip background.
+- They remain ProseMirror atom nodes and must not break cursor or split/merge
+  semantics.
 
 ## Fields And Definition Configuration
 
@@ -213,7 +241,8 @@ Field behavior is not generic form behavior.
 - Field value types include plain, options, options-from-tag, date, number,
   password, formula, user, URL, email, checkbox, boolean, and color.
 - Options use `OptionsPicker`.
-- Checkbox and boolean commit immediately.
+- Checkbox and boolean commit immediately. Checkbox field values use the shared
+  `CheckboxMark` measured square; boolean fields use switch semantics.
 - Date/color controls commit immediately or on field-specific control events.
 - Text-like values commit on blur/keyboard flow.
 - Invalid number values use semantic invalid styling without changing row

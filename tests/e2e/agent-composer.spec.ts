@@ -79,6 +79,24 @@ test.describe('agent composer controls', () => {
     }).toBe(true);
   });
 
+  test('exposes settings as a secondary composer control', async ({ page }) => {
+    await page.getByRole('button', { name: 'Open settings' }).click();
+    await expect(page.getByRole('dialog', { name: 'Agent settings' })).toBeVisible();
+  });
+
+  test('conversation menu stays anchored inside narrow agent surfaces', async ({ page }) => {
+    await page.setViewportSize({ width: 760, height: 620 });
+
+    await page.getByRole('button', { name: 'Show conversations' }).click();
+    const menu = page.getByRole('dialog', { name: 'Conversations' });
+    await expect(menu).toBeVisible();
+
+    const box = await menu.boundingBox();
+    expect(box).toBeTruthy();
+    expect(box!.x).toBeGreaterThanOrEqual(8);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(752);
+  });
+
   test('switches the primary action between stop and queued follow-up while streaming', async ({ page }) => {
     await emitAgentEvent(page, {
       type: 'snapshot',

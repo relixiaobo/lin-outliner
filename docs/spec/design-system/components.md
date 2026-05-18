@@ -51,11 +51,13 @@ Current sources:
 
 - `src/renderer/ui/primitives/CheckboxMark.tsx`
 - `src/renderer/ui/outliner/DoneCheckbox.tsx`
+- `src/renderer/ui/outliner/FieldValueRenderer.tsx`
+- `src/renderer/ui/agent/AgentSettingsDialog.tsx`
 - `src/renderer/styles.css`
 
 Purpose:
 
-- Stable visual mark for checkbox-like done state.
+- Stable visual mark for checkbox-like done or enabled state.
 - Represents the visual state only; it does not own click handling, keyboard
   handling, persistence, or row behavior.
 
@@ -74,17 +76,19 @@ States:
 - Checked: success filled square using `--semantic-success` with white internal
   check glyph.
 - Hover may adjust fill color, but it must not change the measured box.
+- Field checkbox values use this same mark inside their field-owned value
+  control; field commit timing stays owned by the field renderer.
 
 Accessibility:
 
 - `CheckboxMark` is decorative and uses `aria-hidden`.
-- The parent button, row, or field control exposes `aria-pressed`,
+- The parent button, row, label, or field control exposes `aria-pressed`,
   `aria-checked`, label text, and keyboard behavior as appropriate.
 
 Non-goals:
 
 - CheckboxMark does not own `Mod+Enter` cycling, mouse toggling, row selection,
-  completion timestamps, or title/row layout.
+  completion timestamps, settings persistence, or title/row layout.
 
 ## IconButton
 
@@ -185,7 +189,7 @@ Purpose:
 - Shared menu/popover surface wrapper for dense command lists, context menus,
   trigger popovers, option pickers, and model menus.
 - Keeps ref, role, className, style, and preserve-selection wiring consistent
-  without owning positioning or keyboard behavior.
+  without owning open state or keyboard behavior.
 
 Structure:
 
@@ -198,7 +202,7 @@ Structure:
 States:
 
 - Surface open/closed state is owned by the caller.
-- Positioning is owned by the caller.
+- Positioning is supplied by the caller, usually through `useAnchoredOverlay`.
 - Preserve-selection is opt-in for outliner context menus and other popovers
   that must not clear block selection.
 
@@ -210,8 +214,36 @@ Accessibility:
 
 Non-goals:
 
-- MenuSurface does not own portal rendering, menu positioning, roving focus,
+- MenuSurface does not own portal rendering, anchor calculation, roving focus,
   filtering, or command execution.
+
+## AnchoredOverlay
+
+Current sources:
+
+- `src/renderer/ui/primitives/useAnchoredOverlay.ts`
+- `src/renderer/ui/outliner/TriggerPopover.tsx`
+- `src/renderer/ui/outliner/NodeContextMenu.tsx`
+- `src/renderer/ui/tags/TagBar.tsx`
+- `src/renderer/ui/outliner/OptionsPicker.tsx`
+- `src/renderer/ui/outliner/TrailingInput.tsx`
+- `src/renderer/ui/editor/FloatingEditorToolbar.tsx`
+- `src/renderer/ui/agent/AgentComposerModelMenu.tsx`
+- `src/renderer/ui/agent/AgentChatPanel.tsx`
+
+Purpose:
+
+- Shared viewport-aware overlay positioning for anchored popovers, pointer
+  context menus, selection toolbars, and agent menus.
+- Keeps margin, flip, clamp, max-height, and scroll/resize reflow behavior in
+  one place.
+
+Rules:
+
+- Callers provide an anchor rect, anchor element ref, or pointer-derived anchor.
+- Callers still own open state, dismissal, focus restoration, keyboard
+  navigation, and command behavior.
+- Overlays must not invent local z-index stacks; use design-system z tokens.
 
 ## MenuItem
 
@@ -697,6 +729,35 @@ Accessibility:
 - Switches use `role="switch"` and `aria-checked`.
 - Invalid fields expose an error message when validation blocks action.
 
+## ButtonControl
+
+Current sources:
+
+- `src/renderer/ui/primitives/ButtonControl.tsx`
+- `src/renderer/ui/agent/AgentSettingsDialog.tsx`
+
+Purpose:
+
+- Shared wrapper for text buttons that need native button semantics while the
+  surface keeps visual hierarchy.
+
+Structure:
+
+- Root is a native `button`.
+- Default `type` is `button`.
+- Caller supplies label children and surface-specific class names.
+
+States:
+
+- Default.
+- Hover/focus-visible through the caller's surface class.
+- Disabled through native `disabled`.
+
+Non-goals:
+
+- ButtonControl does not own primary, secondary, or destructive styling.
+- Icon-only command buttons use `IconButton`.
+
 ## SwitchControl
 
 Current sources:
@@ -744,6 +805,7 @@ Current sources:
 
 - `src/renderer/ui/primitives/SelectControl.tsx`
 - `src/renderer/ui/definition/DefinitionConfigPanel.tsx`
+- `src/renderer/ui/agent/AgentSettingsDialog.tsx`
 
 Purpose:
 
@@ -778,14 +840,16 @@ Current sources:
 - `src/renderer/ui/primitives/TextInputControl.tsx`
 - `src/renderer/ui/definition/DefinitionConfigControls.tsx`
 - `src/renderer/ui/definition/DefinitionConfigPanel.tsx`
+- `src/renderer/ui/agent/AgentSettingsDialog.tsx`
 
 Purpose:
 
-- Shared wrapper for native text inputs that need an accessible label.
+- Shared wrapper for native text-like inputs that need an accessible label.
 
 Structure:
 
-- Root is a native `input type="text"`.
+- Root is a native `input`.
+- Default type is `text`; password/API key fields may pass `type="password"`.
 - Caller supplies value, change behavior, placeholder, class names, and keyboard
   handling.
 
@@ -804,7 +868,7 @@ Accessibility:
 Non-goals:
 
 - TextInputControl does not own draft state, commit-on-blur, Enter commit,
-  Escape revert, validation, persistence, or password/search variants.
+  Escape revert, validation, persistence, or search/menu behavior.
 
 ## NumberInputControl
 
@@ -940,6 +1004,7 @@ Structure:
 - Optional trigger popover.
 - Optional context menu.
 - Optional children and trailing input.
+- Optional heading-field placement when the row is a root-owned `fieldEntry`.
 
 States:
 
@@ -970,6 +1035,12 @@ Rules:
 - Normal content rows, reference rows, tag definition rows, field definition
   rows, field entry rows, completed rows, selected rows, and expanded/collapsed
   parent rows must all keep the same text-start grid.
+- Root-owned field entry rows may render in the panel heading field segment.
+  Row placement comes from explicit `headingRows` / `bodyRows` sections in the
+  row model, while the rendered fields remain real `OutlinerFieldRow`
+  instances.
+- Drop indicators use the same `21px` row-selection axis and must not change
+  row content geometry.
 - Bullet, chevron, indentation, selection, and edit/focus behavior should follow
   [`../ui-behavior.md`](../ui-behavior.md).
 - Component extraction must wrap current behavior rather than replacing the row
@@ -1010,6 +1081,9 @@ Rules:
   and field definition rows.
 - Collapsed/expanded state may change marker treatment, but must not shift row
   content.
+- Reference markers use a centered dashed shape inside the fixed bullet slot.
+- Hover treatments must not scale tag, field, or reference markers in a way that
+  reads as positional movement.
 - Double-click drill-down is product behavior and should remain owned by row
   interaction code.
 - `tabIndex={-1}` may remain while row editor owns keyboard navigation, but the
@@ -1116,8 +1190,9 @@ Rules:
 
 - Group headings stay compact, muted, and subordinate to rows.
 - Hidden-field reveal uses a small inline action, not a settings card.
-- Filtering, hidden-field expansion state, and row building stay in
-  `OutlinerView` and row-model code.
+- Filtering, hidden-field expansion state, and row building stay in row-model
+  code. `OutlinerView` renders either a supplied row section or its default
+  built rows.
 
 ## PanelBreadcrumb
 
@@ -1304,12 +1379,13 @@ Structure:
 - Attachment slot.
 - Model picker.
 - Reasoning switch/menu.
+- Settings trigger.
 - Send/stop action.
 - Single primary action slot shared by send and stop.
 - Secondary control group for attachment, model, reasoning, and settings.
 - `AgentComposerControls` owns presentational controls for queued follow-up
-  actions, attachment chips, attachment trigger, model button, and primary
-  action slot.
+  actions, attachment chips, attachment trigger, model button, settings trigger,
+  toolbar composition, and primary action slot.
 - `AgentComposerModelMenu` owns the model/reasoning menu shell and item
   structure.
 - `AgentComposer` owns textarea draft, send/queue/stop behavior, file reading,

@@ -84,13 +84,27 @@ Core UI surfaces should map back to these files:
 - Outliner CSS may consume global tokens from `styles.css`, but should not
   introduce shell layout rules.
 
-## Current Product Gaps
+## Current Product Convergence Work
 
-The implementation should converge toward this design system by:
+The full UI refactor should converge product code, design-system docs, and the
+browsable site by:
 
-- Moving repeated CSS values into canonical design tokens.
+- Moving repeated CSS values into canonical design tokens when they express a
+  system decision.
 - Keeping the real tab state model authoritative for panel state.
-- Defining keyboard resizing for panel, sidebar, and agent handles.
+- Keeping the current outliner row interaction model authoritative for
+  selection, editing, paste, drag/drop, triggers, collapse, and IME behavior.
+- Keeping the current agent runtime model authoritative for sessions, turns,
+  streaming, tools, settings, and restore behavior.
+- Keeping panel, sidebar, and agent resize handles keyboard reachable as well
+  as pointer reachable.
 - Adding screenshot validation at desktop and narrow desktop widths.
-- Replacing any temporary agent empty state with the real chat surface when the
-  agent model is active.
+- Continuing shared overlay convergence: `useAnchoredOverlay` owns positioning,
+  viewport clamp, flip, scroll, and resize reflow; callers still need final
+  Escape/outside dismissal and focus-restoration review.
+- Finishing outliner heading, row, field, tag, and definition configuration
+  visual convergence.
+- Finishing agent message, process, tool-call, composer, settings, debug, and
+  documented approval/tool-preview convergence.
+- Keeping `docs/spec/design-system/index.html` synchronized with real product
+  source maps instead of maintaining a separate demo style.

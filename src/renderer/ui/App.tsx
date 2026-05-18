@@ -76,6 +76,9 @@ export function App() {
     beginPanelResize,
     beginSidebarResize,
     canvasRef,
+    resizeAgentWithKeyboard,
+    resizePanelPairWithKeyboard,
+    resizeSidebarWithKeyboard,
     sidebarWidth,
   } = useResizableLayout({ activeTab, resizePanelPair });
 
@@ -235,6 +238,7 @@ export function App() {
           index={index}
           onNavigateRoot={navigateRoot}
           onOpenPanel={openRootInPanel}
+          onResizeKeyDown={resizeSidebarWithKeyboard}
           onResizeStart={beginSidebarResize}
           onToggleTreeNode={toggleSidebarTreeNode}
           projection={projection}
@@ -249,6 +253,7 @@ export function App() {
           onActivatePanel={activatePanel}
           onClosePanel={closePanel}
           onNavigatePanelRoot={navigatePanelRoot}
+          onPanelResizeKeyDown={resizePanelPairWithKeyboard}
           onPanelResizeStart={beginPanelResize}
           run={run}
           setDragId={setDragId}
@@ -258,7 +263,11 @@ export function App() {
           ui={ui}
         />
 
-        <AgentDock onOpenDebugPanel={openAgentDebugPanel} onResizeStart={beginAgentResize} />
+        <AgentDock
+          onOpenDebugPanel={openAgentDebugPanel}
+          onResizeKeyDown={resizeAgentWithKeyboard}
+          onResizeStart={beginAgentResize}
+        />
       </div>
 
       <BatchTagSelector

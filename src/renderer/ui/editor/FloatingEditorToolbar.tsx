@@ -1,3 +1,6 @@
+import { useRef } from 'react';
+import type { OverlayAnchorRect } from '../primitives/useAnchoredOverlay';
+import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import {
   BoldIcon,
   CodeIcon,
@@ -12,8 +15,7 @@ export type ToolbarMark = 'bold' | 'italic' | 'strike' | 'code' | 'highlight';
 
 interface FloatingEditorToolbarProps {
   visible: boolean;
-  left: number;
-  top: number;
+  anchorRect: OverlayAnchorRect | null;
   activeMarks: Set<ToolbarMark>;
   onToggle: (mark: ToolbarMark) => void;
 }
@@ -31,12 +33,22 @@ const BUTTONS: Array<{
 ];
 
 export function FloatingEditorToolbar(props: FloatingEditorToolbarProps) {
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const toolbarStyle = useAnchoredOverlay(toolbarRef, {
+    anchorRect: props.anchorRect,
+    disabled: !props.visible || !props.anchorRect,
+    gap: 8,
+    placement: 'top-center',
+    width: 156,
+  });
+
   if (!props.visible) return null;
 
   return (
     <div
+      ref={toolbarRef}
       className="floating-editor-toolbar"
-      style={{ left: props.left, top: props.top }}
+      style={toolbarStyle}
       onMouseDown={(event) => event.preventDefault()}
     >
       {BUTTONS.map(({ mark, label, icon: Icon }) => (

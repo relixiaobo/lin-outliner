@@ -1,10 +1,8 @@
 import {
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
 } from 'react';
 import type { CommandOutcome, DocumentProjection, NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
@@ -14,6 +12,7 @@ import { nextMenuIndex, clampMenuIndex } from '../interactions/menuNavigation';
 import { resolveTriggerForceCreateIntent } from '../interactions/rowInteractions';
 import { tagSelectorItems } from '../interactions/tagSelector';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
+import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { referenceItems, ReferenceSelector } from './ReferenceSelector';
 import { slashCommandItems, SlashCommandMenu } from './SlashCommandMenu';
 import { TagSelector } from './TagSelector';
@@ -35,35 +34,8 @@ interface TriggerPopoverProps {
 
 export function TriggerPopover(props: TriggerPopoverProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [dropStyle, setDropStyle] = useState<CSSProperties | undefined>(undefined);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const existingTagIds = props.existingTagIds ?? [];
-
-  useLayoutEffect(() => {
-    const anchor = props.trigger.anchor;
-    if (!anchor) {
-      setDropStyle(undefined);
-      return undefined;
-    }
-    const update = () => {
-      const menuHeight = Math.min(menuRef.current?.offsetHeight ?? 240, 240);
-      const gap = 6;
-      const spaceBelow = window.innerHeight - anchor.bottom - gap;
-      const spaceAbove = anchor.top - gap;
-      if (spaceBelow >= menuHeight || spaceBelow >= spaceAbove) {
-        setDropStyle({ position: 'fixed', left: anchor.left, top: anchor.bottom + gap });
-      } else {
-        setDropStyle({ position: 'fixed', left: anchor.left, bottom: window.innerHeight - anchor.top + gap });
-      }
-    };
-    update();
-    window.addEventListener('scroll', update, true);
-    window.addEventListener('resize', update);
-    return () => {
-      window.removeEventListener('scroll', update, true);
-      window.removeEventListener('resize', update);
-    };
-  }, [props.trigger.anchor]);
 
   const itemCount = useMemo(() => {
     if (props.trigger.kind === '#') {
@@ -84,6 +56,14 @@ export function TriggerPopover(props: TriggerPopoverProps) {
     if (!props.executeSlashCommand) return 0;
     return slashCommandItems(props.trigger.query, props.enabledSlashCommandIds).length;
   }, [props, existingTagIds]);
+  const anchoredDropStyle = useAnchoredOverlay(menuRef, {
+    anchorRect: props.trigger.anchor ?? null,
+    disabled: !props.trigger.anchor,
+    layoutKey: `${props.trigger.kind}:${props.trigger.query}:${itemCount}`,
+    maxHeight: 240,
+    placement: 'bottom-start',
+    width: 220,
+  });
 
   useEffect(() => {
     setSelectedIndex(0);
@@ -154,7 +134,7 @@ export function TriggerPopover(props: TriggerPopoverProps) {
       label={label}
       className="trigger-popover"
       preventMouseDown={false}
-      style={dropStyle}
+      style={anchoredDropStyle}
     >
       {props.trigger.kind === '#' && (
         <TagSelector

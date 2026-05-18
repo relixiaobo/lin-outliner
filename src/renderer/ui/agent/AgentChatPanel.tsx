@@ -25,6 +25,7 @@ import { AgentComposer } from './AgentComposer';
 import { AgentSettingsDialog } from './AgentSettingsDialog';
 import { AgentMessageRow } from './AgentMessageRow';
 import { IconButton } from '../primitives/IconButton';
+import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 
 const SUGGESTED_PROMPTS = [
   '总结当前大纲',
@@ -181,6 +182,8 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
   const [editingTitle, setEditingTitle] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLElement>(null);
+  const historyButtonRef = useRef<HTMLButtonElement>(null);
+  const historyMenuRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const mountedRef = useRef(false);
   const providerSettingsRequestRef = useRef(0);
@@ -451,11 +454,20 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
 
   const visibleError = error ?? settingsError;
   const displayTitle = sessionTitle || 'conversation';
+  const historyMenuStyle = useAnchoredOverlay(historyMenuRef, {
+    anchorRef: historyButtonRef,
+    disabled: !historyOpen,
+    layoutKey: `${sessions.length}:${sessionsLoading ? 'loading' : 'ready'}`,
+    maxHeight: 420,
+    placement: 'bottom-start',
+    width: 326,
+  });
 
   return (
     <div className="agent-chat-panel" data-turn-phase={turnPhase}>
       <header className="agent-dock-header" ref={headerRef}>
         <button
+          ref={historyButtonRef}
           aria-expanded={historyOpen}
           aria-label="Show conversations"
           className="agent-dock-title-button"
@@ -499,7 +511,13 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
           />
         </div>
         {historyOpen ? (
-          <div className="agent-session-menu" role="dialog" aria-label="Conversations">
+          <div
+            ref={historyMenuRef}
+            className="agent-session-menu"
+            role="dialog"
+            aria-label="Conversations"
+            style={historyMenuStyle}
+          >
             <div className="agent-session-menu-header">
               <span>Conversations</span>
               <IconButton

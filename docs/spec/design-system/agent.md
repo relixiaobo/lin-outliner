@@ -105,6 +105,45 @@ Tool summaries should be action-based:
 - Avoid: raw tool names, raw JSON as the primary row label, or vague labels such
   as `Tool call`.
 
+## Debug Surface
+
+Agent debug is an inspection panel for provider payloads, token accounting, and
+runtime history. It must not become the normal chat presentation.
+
+- Organize the panel as Overview, Request Context, and Provider Timeline.
+- Overview shows session count, model, context budget, and status as compact
+  metrics.
+- Request Context contains system prompt, tools, and request JSON.
+- Provider Timeline contains query, round, message, response, and raw payload
+  disclosure.
+- Debug payloads are bounded and scrollable; raw JSON is never the primary row
+  label.
+- Refresh and copy use shared icon-button affordances.
+
+## Approval And Tool Preview
+
+Current product state:
+
+- The runtime type system contains `AgentApprovalRequestEvent`, but the
+  renderer does not currently ship an interactive approval overlay.
+- Node mutation tools expose `previewOnly`; preview results are returned as
+  compact tool-result data rather than shown as a blocking confirmation UI.
+
+Contract:
+
+- Approval UI, when shipped, is a modal or anchored inspection state attached to
+  the agent turn that requested it. It must not appear as an outliner card or a
+  separate settings page.
+- Tool previews must summarize status, affected references, change counts, and
+  next read step before raw JSON.
+- Preview bodies stay bounded and scrollable; exact payloads belong in expanded
+  detail, not the primary row.
+- Approve/deny actions use the same button hierarchy as settings: primary for
+  approve/apply, secondary for cancel/deny, danger only for destructive
+  irreversible operations.
+- Until a real approval workflow exists, the design system documents the
+  boundary and product code should not render fake approval controls.
+
 ## Composer Contract
 
 The composer is the bottom dock control surface.
@@ -116,13 +155,15 @@ The composer is the bottom dock control surface.
 - Attachment, model, reasoning, and settings controls live in a secondary
   toolbar row and must not compete with the textarea.
 - Queued follow-up actions, attachment chips, model button, model/reasoning
-  menu, reasoning switch, and send/stop action slot are separate control
-  components.
+  menu, reasoning switch, settings trigger, and send/stop action slot are
+  separate control components.
 - While streaming, typed text becomes steering or a queued follow-up rather than
   forcing a second layout mode.
 - Queued steering/follow-up appears as a compact preview above the composer.
 - Model, reasoning, attachment, and settings controls are secondary toolbar
-  controls.
+  controls. Settings may also appear inside the model menu, but the composer
+  toolbar keeps a direct settings icon so configuration is not hidden behind
+  model selection.
 - On send failure, restore draft and attachments only if the user has not
   started a new draft.
 
@@ -140,13 +181,16 @@ compact chip contract and must not expand the dock into a file manager.
 ## Settings And Menus
 
 - Model picker, reasoning picker, and agent settings use shared `MenuSurface`,
-  `MenuItem`, `Dialog`, and `FormField` contracts.
+  `MenuItem`, `Dialog`, `FormField`, `TextInputControl`, `SelectControl`, and
+  `ButtonControl` contracts.
 - Floating menus are portal-based, viewport-aware, and dismiss on Escape and
   outside pointer down.
 - Composer menu controls use shared item/switch semantics; textarea draft,
   provider updates, attachments, and queue/stop behavior stay in
   `AgentComposer`.
-- Agent settings is configuration, not a landing page.
+- Agent settings is configuration, not a landing page. Provider choice,
+  connection credentials, model behavior, and destructive actions are separate
+  sections.
 - Provider secrets are masked and never shown in full after saving.
 
 ## Refactor Sequence

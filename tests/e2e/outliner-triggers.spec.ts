@@ -123,4 +123,19 @@ test.describe('outliner option picker parity', () => {
       option: 'Urgent',
     });
   });
+
+  test('options picker stays inside a narrow viewport', async ({ page }) => {
+    await page.setViewportSize({ width: 980, height: 620 });
+
+    const pickerInput = row(page, ids.priorityEntry).locator('.node-picker-input');
+    await pickerInput.click();
+
+    const listbox = page.getByRole('listbox', { name: 'Field options' });
+    await expect(listbox).toBeVisible();
+
+    const box = await listbox.boundingBox();
+    expect(box).toBeTruthy();
+    expect(box!.x).toBeGreaterThanOrEqual(8);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(972);
+  });
 });

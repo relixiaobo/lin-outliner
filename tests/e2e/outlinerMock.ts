@@ -131,6 +131,80 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         ],
       }],
     };
+    const debugUsage = {
+      input: 12000,
+      output: 420,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 12420,
+      costUsd: 0.0005,
+      costInputUsd: 0.0003,
+      costOutputUsd: 0.0002,
+      costCacheReadUsd: 0,
+      costCacheWriteUsd: 0,
+    };
+    const debugSnapshot = {
+      id: 'debug-snapshot-1',
+      source: 'provider_payload',
+      sessionId: 'mock-agent-session',
+      sessionTitle: 'conversation',
+      turnIndex: 1,
+      queryIndex: 1,
+      capturedAt: 1_800_000_000_100,
+      modelId: 'gpt-5.4',
+      provider: 'openai',
+      status: 'completed',
+      wire: {
+        json: '{"model":"gpt-5.4","messages":[{"role":"user","content":"Summarize current outline."}]}',
+        bytes: 86,
+        hash: 'wireabc',
+      },
+      systemPrompt: 'You are Lin agent.',
+      systemPromptBytes: 18,
+      systemPromptHash: 'sysabc',
+      reminders: [],
+      remindersBytes: 0,
+      remindersHash: '',
+      tools: [{
+        name: 'node_read',
+        description: 'Read node context',
+        schema: '{"type":"object","properties":{"nodeId":{"type":"string"}}}',
+        bytes: 58,
+      }],
+      toolsBytes: 58,
+      toolsHash: 'toolsabc',
+      messages: [{
+        id: 'debug-message-user',
+        role: 'user',
+        summary: 'Summarize current outline.',
+        json: '{"role":"user","content":"Summarize current outline."}',
+        bytes: 56,
+        parts: [{ kind: 'text', body: 'Summarize current outline.' }],
+      }],
+      messageCount: 1,
+      messagesBytes: 56,
+      tokenEstimate: {
+        systemPrompt: 39,
+        tools: 766,
+        messages: 11000,
+        total: 12000,
+        contextWindow: 256000,
+        usagePercent: 4.7,
+      },
+      usage: debugUsage,
+      responseParts: [
+        { kind: 'thinking', body: 'Identify relevant outline nodes.' },
+        { kind: 'toolCall', name: 'node_read', toolUseId: 'tool-1', body: '{"nodeId":"today"}' },
+        { kind: 'toolResult', toolUseId: 'tool-1', body: 'Daily note content.', isError: false },
+        { kind: 'text', body: 'Current outline focuses on UI work.' },
+      ],
+      errorMessage: null,
+    };
+    const debugTotals = {
+      ...debugUsage,
+      queries: 1,
+      rounds: 1,
+    };
 
     const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
     const applyRichTextPatch = (content: RichText, patch: RichTextPatch): RichText => {
@@ -462,6 +536,15 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd === 'agent_set_active_provider') {
           agentSettings.activeProviderId = String(args.providerId);
           return clone(agentSettings) as T;
+        }
+        if (cmd === 'agent_debug_snapshot') {
+          return clone(String(args.sessionId) === 'mock-agent-session' ? debugSnapshot : null) as T;
+        }
+        if (cmd === 'agent_debug_history') {
+          return clone(String(args.sessionId) === 'mock-agent-session' ? [debugSnapshot] : []) as T;
+        }
+        if (cmd === 'agent_debug_totals') {
+          return clone(debugTotals) as T;
         }
         if (cmd === 'agent_queue_follow_up') return clone({ queued: true }) as T;
         if (cmd.startsWith('agent_')) return clone(undefined) as T;

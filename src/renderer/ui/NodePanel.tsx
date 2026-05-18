@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type Dispatch, type MouseEvent, type SetStateAction } from 'react';
+import { useEffect, useMemo, useRef, useState, type Dispatch, type MouseEvent, type SetStateAction } from 'react';
 import { api } from '../api/client';
 import type { NodeId, RichText, RichTextPatch } from '../api/types';
 import { EMPTY_RICH_TEXT, plainText } from '../api/types';
@@ -38,6 +38,7 @@ import { DoneCheckbox } from './outliner/DoneCheckbox';
 import { NodeContextMenu } from './outliner/NodeContextMenu';
 import { NodeDescription } from './outliner/NodeDescription';
 import { OutlinerView } from './outliner/OutlinerView';
+import { buildPanelOutlinerSections } from './outliner/row-model';
 import { TrailingInput } from './outliner/TrailingInput';
 import { TriggerPopover } from './outliner/TriggerPopover';
 import { createTrailingField, createTrailingTriggerNode } from './outliner/trailingTriggers';
@@ -75,6 +76,10 @@ export function NodePanel(props: NodePanelProps) {
   const breadcrumb = buildPanelBreadcrumb(rootNode, props.index);
   const titleFocusTarget = focusTarget(props.rootId, null, props.panelId, 'panel-title');
   const descriptionFocusTarget = focusTarget(props.rootId, null, props.panelId, 'description');
+  const panelRows = useMemo(() => buildPanelOutlinerSections(rootNode, props.index.byId, {
+    expandedHiddenFields: props.ui.expandedHiddenFields,
+  }), [props.index.byId, props.ui.expandedHiddenFields, rootNode]);
+  const hasHeadingFields = panelRows.headingRows.length > 0;
 
   useEffect(() => {
     setTitleContent(rootNode?.content ?? EMPTY_RICH_TEXT);
@@ -445,6 +450,27 @@ export function NodePanel(props: NodePanelProps) {
               />
             </div>
           )}
+          {rootNode && hasHeadingFields && (
+            <div className="panel-heading-fields outliner">
+              <OutlinerView
+                panelId={props.panelId}
+                parentId={props.rootId}
+                rootId={props.rootId}
+                onRoot={props.onRoot}
+                depth={0}
+                index={props.index}
+                ui={props.ui}
+                setUi={props.setUi}
+                run={props.run}
+                trigger={props.trigger}
+                setTrigger={props.setTrigger}
+                dragId={props.dragId}
+                setDragId={props.setDragId}
+                rows={panelRows.headingRows}
+                showViewToolbar={false}
+              />
+            </div>
+          )}
         </header>
         {rootNode && contextMenu && (
           <NodeContextMenu
@@ -489,6 +515,7 @@ export function NodePanel(props: NodePanelProps) {
               setTrigger={props.setTrigger}
               dragId={props.dragId}
               setDragId={props.setDragId}
+              rows={panelRows.bodyRows}
             />
             {showTrailingInput && (
               <TrailingInput
@@ -514,7 +541,8 @@ export function NodePanel(props: NodePanelProps) {
                   await props.run(() => api.toggleDone(nodeId));
                 }}
                 onCreateTrigger={(params) => {
-                  void createTrailingTriggerNode({
+                  return createTrailingTriggerNode({
+                    getText: params.getText,
                     parentId: params.parentId,
                     text: params.text,
                     trigger: params.trigger,

@@ -562,6 +562,8 @@ Visual rules:
 - Composer remains compact and dock-native.
 - Textarea is the primary affordance.
 - Model and reasoning controls are secondary.
+- Settings has a direct secondary icon in the toolbar and may also be repeated
+  inside the model menu.
 - Send/stop action is clear and icon-first.
 - Send and stop occupy the same primary action slot.
 - Queued follow-up preview is visible but not a modal interruption.
@@ -573,8 +575,9 @@ Behavior:
 - During streaming, submitting text queues a follow-up or steer.
 - Stop replaces send when streaming and no draft is present.
 - Model picker and reasoning controls use overlay/menu behavior.
-- Model/reasoning menu structure is isolated; open state, provider updates, and
-  composer draft behavior remain in `AgentComposer`.
+- Model/reasoning menu and conversation picker positioning use the shared
+  anchored overlay model; open state, provider updates, and composer draft
+  behavior remain in `AgentComposer` / `AgentChatPanel`.
 - Textarea auto-resizes up to a bounded maximum height.
 - Drag, paste, and picker attachments are optional and must be implemented as
   one coherent attachment model if shipped.
@@ -591,6 +594,7 @@ Component dependencies:
 - `MenuItem`
 - `SwitchControl`
 - `FormField`
+- `AnchoredOverlay`
 
 ## Agent Settings Dialog
 
@@ -603,8 +607,14 @@ Current sources:
 Visual rules:
 
 - Dialog uses level 2 elevation.
-- Provider list, fields, alerts, and footer actions use shared form/dialog
-  patterns.
+- Information architecture is sectioned as Provider, Connection, Model
+  behavior, alert/notice, and footer actions.
+- Provider choices are compact buttons that distinguish active, configured, and
+  available providers.
+- Connection owns Provider ID, Base URL, API key, key status, and enabled state.
+- Model behavior owns Model ID, reasoning level, and context metadata.
+- API key removal sits next to the API key field; provider removal stays in the
+  footer as the secondary destructive action.
 - Destructive provider removal is secondary unless the dialog is specifically in
   a destructive confirmation state.
 - API key input should clearly indicate configured state without showing secret
@@ -617,12 +627,86 @@ Behavior:
   when supplied.
 - Removing key and removing provider are real actions and should require clear
   visual affordance.
+- Native input/select behavior is wrapped by shared form primitives; settings
+  keeps provider/model persistence local.
 
 Component dependencies:
 
 - `Dialog`
 - `FormField`
+- `TextInputControl`
+- `SelectControl`
+- `ButtonControl`
 - `IconButton`
+
+## Agent Debug Panel
+
+Agent debug is an inspection surface for provider payloads and runtime
+accounting. It lives in a workspace panel, not in the normal chat reading flow.
+
+Current sources:
+
+- `src/renderer/ui/agent/AgentDebugPanel.tsx`
+
+Visual rules:
+
+- Information architecture is Overview, Request Context, Provider Timeline.
+- Overview is a compact metric strip: session, model, context, and status.
+- Request context owns token budget, system prompt, tool schemas, and raw request
+  payload links.
+- Provider timeline owns query, round, message, response, and raw provider
+  payload details.
+- Long JSON, tool schema, thinking, tool input, and tool output bodies are
+  bounded scroll regions.
+- Debug cards may use subtle section backgrounds, but they must remain quieter
+  than the primary outliner panel and agent chat.
+
+Behavior:
+
+- Refresh is an explicit icon action.
+- Copy actions copy only the adjacent raw/debug payload.
+- Disclosure rows preserve browser-native summary behavior while using the
+  shared icon button primitive for actions.
+
+Component dependencies:
+
+- `IconButton`
+
+## Agent Approval And Tool Preview
+
+Approval and preview are trust surfaces for agent actions that may mutate the
+outline.
+
+Current sources:
+
+- `src/core/agentTypes.ts`
+- `src/main/agentNodeTools.ts`
+
+Current product state:
+
+- `AgentApprovalRequestEvent` exists in the runtime event type system.
+- No renderer approval overlay is currently shipped.
+- Node tool preview is exposed through `previewOnly` tool arguments and compact
+  preview results.
+
+Visual rules:
+
+- Approval, when shipped, attaches to the requesting agent turn and uses the
+  modal/dialog hierarchy only when the user must decide before the tool can
+  continue.
+- Tool preview summaries lead with status, affected node/reference counts,
+  warnings, and next read step.
+- Raw preview JSON, diffs, or long payloads are expanded details with bounded
+  scroll regions.
+- Do not render fake approval controls in the design-system site before product
+  behavior exists; show the contract boundary instead.
+
+Behavior:
+
+- Approval actions must be explicit and keyboard reachable.
+- Preview-only tool calls do not mutate state.
+- Destructive previews use danger only for the destructive confirmation action,
+  not for every preview row.
 
 ## Overlay Layering
 

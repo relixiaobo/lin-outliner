@@ -15,13 +15,13 @@
   max-width: 760px;
   flex-direction: column;
   margin: 2px 0 18px;
-  padding-left: 10px;
+  padding-left: 0;
 }
 
 .definition-config-row {
   display: grid;
   min-height: 34px;
-  grid-template-columns: 28px minmax(150px, 240px) minmax(220px, 1fr);
+  grid-template-columns: 28px clamp(112px, 32%, 180px) minmax(220px, 1fr);
   align-items: center;
   border-top: 1px solid var(--border-subtle);
   color: var(--muted);
@@ -249,7 +249,7 @@
   top: 24px;
   bottom: 0;
   left: calc(var(--row-bullet-center) - 15.5px);
-  z-index: 2;
+  z-index: var(--z-raised);
   width: 16px;
   border: 0;
   background: transparent;
@@ -327,9 +327,8 @@
 }
 
 .row.drop-inside {
-  outline: 1px solid color-mix(in srgb, var(--primary) 32%, transparent);
-  outline-offset: -1px;
   background: var(--primary-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 26%, transparent);
 }
 
 .row.control {
@@ -344,7 +343,8 @@
   display: grid;
   min-width: 0;
   grid-template-columns: clamp(112px, 32%, 180px) minmax(0, 1fr);
-  gap: 8px;
+  column-gap: 8px;
+  row-gap: 0;
   align-items: center;
 }
 
@@ -396,8 +396,7 @@
   display: flex;
   min-width: 0;
   min-height: 24px;
-  align-items: flex-start;
-  gap: 8px;
+  align-items: center;
 }
 
 .field-value-row.dimmed {
@@ -415,16 +414,6 @@
   text-decoration: line-through;
 }
 
-.field-value-node-bullet {
-  display: flex;
-  width: 15px;
-  height: 24px;
-  flex: 0 0 15px;
-  align-items: center;
-  justify-content: center;
-  color: rgba(26, 26, 26, 0.40);
-}
-
 .field-value-row-content {
   min-width: 0;
   flex: 1;
@@ -440,11 +429,21 @@
   box-shadow: inset 0 -1px 0 var(--danger);
 }
 
-.field-checkbox-input {
-  width: 14px;
-  height: 14px;
-  margin: 5px 0 0;
-  accent-color: var(--primary);
+.field-checkbox-button {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0;
+  border-radius: 4px;
+  color: var(--panel-bg);
+  cursor: pointer;
+}
+
+.field-checkbox-button:hover .checkbox-mark:not(.checked),
+.field-checkbox-button:focus-visible .checkbox-mark:not(.checked) {
+  background: var(--text-muted);
 }
 
 .field-boolean-switch {
@@ -540,7 +539,7 @@
 
 .node-picker-popover {
   position: absolute;
-  z-index: 25;
+  z-index: var(--z-popover);
   top: 26px;
   left: 0;
   min-width: 220px;
@@ -605,7 +604,14 @@
   box-shadow: none;
 }
 
-.row:hover .row-chevron-button {
+.row-wrap.has-children > .row .row-chevron-button {
+  opacity: 0.44;
+  pointer-events: auto;
+}
+
+.row:hover .row-chevron-button,
+.row-wrap.has-children > .row:hover .row-chevron-button,
+.row-wrap.has-children > .row.selected .row-chevron-button {
   opacity: 1;
   pointer-events: auto;
 }
@@ -683,7 +689,10 @@
 }
 
 .row-bullet-shape.reference {
-  border: 1px dashed var(--muted);
+  width: 13px;
+  height: 13px;
+  border: 1.5px dashed color-mix(in srgb, var(--text) 46%, transparent);
+  background: transparent;
 }
 
 .row-bullet-shape.tag {
@@ -702,16 +711,6 @@
 .row-bullet-shape.field,
 .row-bullet-shape.fieldDef {
   color: var(--muted);
-}
-
-.row-bullet-button:hover .row-bullet-shape.tag,
-.row-bullet-button:hover .row-bullet-shape.field,
-.row-bullet-button:hover .row-bullet-shape.fieldDef {
-  transform: scale(1.1);
-}
-
-.row-bullet-button:active .row-bullet-shape {
-  transform: scale(0.9);
 }
 
 .row-bullet-dot {
@@ -823,31 +822,8 @@
   background: transparent;
 }
 
-.checkbox-mark {
-  display: inline-flex;
-  inline-size: 12px;
-  block-size: 12px;
-  min-inline-size: 12px;
-  min-block-size: 12px;
-  flex: 0 0 12px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 3px;
-  background: var(--border-muted);
-  transition: background 120ms ease;
-}
-
 .done-checkbox:hover .checkbox-mark:not(.checked) {
   background: var(--text-muted);
-}
-
-.checkbox-mark.checked {
-  background: var(--semantic-success);
-}
-
-.checkbox-mark-check {
-  display: block;
-  pointer-events: none;
 }
 
 .panel-title-editor > .done-checkbox {
@@ -930,10 +906,18 @@
 }
 
 .row-editor .inline-ref {
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--inline-ref-accent, var(--primary)) 10%, transparent);
+  display: inline;
+  border-radius: 3px;
+  background: transparent;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
   color: var(--inline-ref-accent, var(--primary));
-  padding: 0 3px;
+  font-weight: 550;
+  padding: 0 1px;
+  text-decoration-line: underline;
+  text-decoration-color: color-mix(in srgb, var(--inline-ref-accent, var(--primary)) 28%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
 }
 
 .row-editor [data-heading-mark="true"] {
@@ -957,7 +941,7 @@
 
 .floating-editor-toolbar {
   position: fixed;
-  z-index: 70;
+  z-index: var(--z-editor-toolbar);
   display: inline-flex;
   align-items: center;
   gap: 2px;
@@ -965,7 +949,6 @@
   background: var(--bg);
   box-shadow: var(--shadow);
   padding: 4px;
-  transform: translateX(-50%);
 }
 
 .toolbar-icon {
@@ -993,7 +976,7 @@
   gap: var(--space-3);
   margin-left: 6px;
   min-width: 0;
-  vertical-align: -4px;
+  vertical-align: middle;
 }
 
 .tag-badge {
@@ -1114,7 +1097,7 @@
 
 .tag-context-menu {
   position: fixed;
-  z-index: 80;
+  z-index: var(--z-popover);
   min-width: 190px;
   border-radius: 8px;
   background: var(--bg);
@@ -1124,7 +1107,7 @@
 
 .node-context-menu {
   position: fixed;
-  z-index: 90;
+  z-index: var(--z-popover);
   min-width: 210px;
   max-width: 320px;
   border-radius: 8px;
@@ -1191,7 +1174,7 @@
 .batch-tag-selector-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 95;
+  z-index: var(--z-modal);
   display: flex;
   align-items: flex-start;
   justify-content: center;

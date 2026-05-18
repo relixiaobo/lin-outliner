@@ -1,3 +1,4 @@
+import type { ChangeEvent, ReactNode, RefObject } from 'react';
 import type { AgentMessageAttachmentInput } from '../../../core/agentTypes';
 import type { AgentReasoningLevel } from '../../api/types';
 import {
@@ -8,6 +9,7 @@ import {
   ICON_SIZE,
   PencilIcon,
   SendIcon,
+  SettingsIcon,
   StopIcon,
   TrashIcon,
 } from '../icons';
@@ -107,6 +109,23 @@ export function AgentComposerAttachmentButton({
   );
 }
 
+export function AgentComposerSettingsButton({
+  onClick,
+}: {
+  onClick: () => void;
+}) {
+  return (
+    <IconButton
+      className="agent-composer-tool-button agent-composer-settings-button"
+      icon={SettingsIcon}
+      label="Open settings"
+      onClick={onClick}
+      title="Agent settings"
+      variant="composerTool"
+    />
+  );
+}
+
 export function AgentComposerModelButton({
   disabled,
   modelLabel,
@@ -143,6 +162,46 @@ export function AgentComposerModelButton({
       ) : null}
       <ChevronDownIcon size={ICON_SIZE.tiny} />
     </button>
+  );
+}
+
+export function AgentComposerToolbar({
+  attachmentDisabled,
+  fileInputRef,
+  modelControl,
+  onAttachmentClick,
+  onFileInputChange,
+  onOpenSettings,
+  primaryAction,
+}: {
+  attachmentDisabled: boolean;
+  fileInputRef: RefObject<HTMLInputElement | null>;
+  modelControl: ReactNode;
+  onAttachmentClick: () => void;
+  onFileInputChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onOpenSettings: () => void;
+  primaryAction: ReactNode;
+}) {
+  return (
+    <div className="agent-composer-toolbar">
+      <input
+        ref={fileInputRef}
+        className="agent-composer-file-input"
+        multiple
+        onChange={onFileInputChange}
+        type="file"
+      />
+      <AgentComposerAttachmentButton
+        disabled={attachmentDisabled}
+        onClick={onAttachmentClick}
+      />
+      <div className="agent-composer-spacer" />
+      <div className="agent-composer-control-group">
+        {modelControl}
+        <AgentComposerSettingsButton onClick={onOpenSettings} />
+        {primaryAction}
+      </div>
+    </div>
   );
 }
 
