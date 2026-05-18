@@ -148,7 +148,9 @@ compact chip contract and must not expand the dock into a file manager.
 - Composer menu controls use shared item/switch semantics; textarea draft,
   provider updates, attachments, and queue/stop behavior stay in
   `AgentComposer`.
-- Agent settings is configuration, not a landing page.
+- Agent settings is configuration, not a landing page. Provider choice,
+  connection credentials, model behavior, and destructive actions are separate
+  sections.
 - Provider secrets are masked and never shown in full after saving.
 
 ## Refactor Sequence

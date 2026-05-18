@@ -26,6 +26,13 @@ interface DraftConfig {
   enabled: boolean;
 }
 
+interface ProviderChoice {
+  providerId: string;
+  modelId: string;
+  configured: boolean;
+  active: boolean;
+}
+
 const EMPTY_DRAFT: DraftConfig = {
   providerId: '',
   modelId: '',
@@ -113,6 +120,14 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
     ? selectedModel.supportedThinkingLevels
     : ['off'];
   const hasAnyKey = Boolean(configuredProvider?.hasApiKey || configuredProvider?.hasEnvApiKey || selectedCatalog?.hasEnvApiKey);
+  const keyStatus = configuredProvider?.hasApiKey
+    ? 'Saved key'
+    : configuredProvider?.hasEnvApiKey || selectedCatalog?.hasEnvApiKey ? 'Environment key' : 'No key';
+  const modelContext = selectedModel?.contextWindow ? `${formatTokens(selectedModel.contextWindow)} context` : 'Custom model';
+  const providerChoices = useMemo(
+    () => settings ? buildProviderChoices(settings, draft.providerId) : [],
+    [draft.providerId, settings],
+  );
 
   if (!open) return null;
 
@@ -241,150 +256,181 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
       {loading ? (
         <div className="agent-settings-empty">Loading...</div>
       ) : (
-        <>
+        <div className="agent-settings-body">
+          <section className="agent-settings-section" aria-labelledby="agent-settings-provider-heading">
+            <div className="agent-settings-section-header">
+              <h3 id="agent-settings-provider-heading">Provider</h3>
+            </div>
             <div className="agent-settings-provider-list">
-              {settings?.providers.map((provider) => (
+              {providerChoices.map((provider) => (
                 <button
                   className={`agent-settings-provider-pill ${provider.providerId === draft.providerId ? 'is-active' : ''}`}
                   key={provider.providerId}
                   onClick={() => updateProvider(provider.providerId)}
                   type="button"
                 >
-                  <span>{provider.providerId}</span>
-                  <small>{provider.modelId}</small>
+                  <span className="agent-settings-provider-title">
+                    {formatProviderName(provider.providerId)}
+                    <span className={provider.active ? 'agent-settings-provider-state is-active' : 'agent-settings-provider-state'}>
+                      {provider.active ? 'Active' : provider.configured ? 'Configured' : 'Available'}
+                    </span>
+                  </span>
+                  <small>{provider.modelId || 'No model'}</small>
                 </button>
               ))}
             </div>
+          </section>
 
-            <FormField className="agent-settings-field" label="Provider">
-              <input
-                list="agent-provider-options"
-                onChange={(event) => updateProvider(event.target.value)}
-                placeholder="anthropic"
-                value={draft.providerId}
-              />
-              <datalist id="agent-provider-options">
-                {settings?.availableProviders.map((provider) => (
-                  <option key={provider.providerId} value={provider.providerId} />
-                ))}
-              </datalist>
-            </FormField>
-
-            <FormField className="agent-settings-field" label="Model">
-              <input
-                list="agent-model-options"
-                onChange={(event) => {
-                  const modelId = event.target.value;
-                  const model = selectedModels.find((candidate) => candidate.id === modelId);
-                  const supportedLevels: AgentReasoningLevel[] = model?.supportedThinkingLevels.length
-                    ? model.supportedThinkingLevels
-                    : ['off'];
-                  setDraft((current) => ({
-                    ...current,
-                    modelId,
-                    reasoningLevel: coerceReasoningLevel(current.reasoningLevel, supportedLevels),
-                  }));
-                }}
-                placeholder="model id"
-                value={draft.modelId}
-              />
-              <datalist id="agent-model-options">
-                {selectedModels.map((model) => (
-                  <option key={model.id} value={model.id}>{model.name}</option>
-                ))}
-              </datalist>
-            </FormField>
-
-            <FormField className="agent-settings-field" label="Reasoning">
-              <select
-                onChange={(event) => {
-                  setDraft((current) => ({
-                    ...current,
-                    reasoningLevel: event.target.value as AgentReasoningLevel,
-                  }));
-                }}
-                value={coerceReasoningLevel(draft.reasoningLevel, selectedReasoningLevels)}
-              >
-                {selectedReasoningLevels.map((reasoningLevel) => (
-                  <option key={reasoningLevel} value={reasoningLevel}>
-                    {REASONING_LABELS[reasoningLevel]}
-                  </option>
-                ))}
-              </select>
-            </FormField>
-
-            <FormField className="agent-settings-field" label="Base URL">
-              <input
-                onChange={(event) => setDraft((current) => ({ ...current, baseUrl: event.target.value }))}
-                placeholder="Optional OpenAI-compatible endpoint"
-                value={draft.baseUrl}
-              />
-            </FormField>
-
-            <FormField className="agent-settings-field" label="API key">
-              <div className="agent-settings-key-row">
-                <PasswordIcon size={ICON_SIZE.menu} />
-                <input
-                  onChange={(event) => setApiKey(event.target.value)}
-                  placeholder={hasAnyKey ? 'Configured' : 'Paste key'}
-                  type="password"
-                  value={apiKey}
-                />
-              </div>
-            </FormField>
-
-            <div className="agent-settings-row">
-              <label className="agent-settings-checkbox">
-                <input
-                  checked={draft.enabled}
-                  onChange={(event) => setDraft((current) => ({ ...current, enabled: event.target.checked }))}
-                  type="checkbox"
-                />
-                <CheckboxMark checked={draft.enabled} />
-                <span>Enabled</span>
-              </label>
-              {selectedModel ? (
-                <span className="agent-settings-model-meta">
-                  {formatTokens(selectedModel.contextWindow)} context
-                </span>
-              ) : null}
+          <section className="agent-settings-section" aria-labelledby="agent-settings-connection-heading">
+            <div className="agent-settings-section-header">
+              <h3 id="agent-settings-connection-heading">Connection</h3>
+              <span>{keyStatus}</span>
             </div>
+            <div className="agent-settings-grid">
+              <FormField className="agent-settings-field" label="Provider ID">
+                <input
+                  list="agent-provider-options"
+                  onChange={(event) => updateProvider(event.target.value)}
+                  placeholder="anthropic"
+                  value={draft.providerId}
+                />
+                <datalist id="agent-provider-options">
+                  {settings?.availableProviders.map((provider) => (
+                    <option key={provider.providerId} value={provider.providerId} />
+                  ))}
+                </datalist>
+              </FormField>
+              <FormField className="agent-settings-field" label="Base URL">
+                <input
+                  onChange={(event) => setDraft((current) => ({ ...current, baseUrl: event.target.value }))}
+                  placeholder="Optional OpenAI-compatible endpoint"
+                  value={draft.baseUrl}
+                />
+              </FormField>
 
-            {error ? (
-              <div className="agent-settings-alert" role="alert">
-                <WarningIcon size={14} />
-                <span>{error}</span>
+              <FormField as="div" className="agent-settings-field agent-settings-field-wide" label="API key">
+                <div className="agent-settings-key-line">
+                  <div className="agent-settings-key-row">
+                    <PasswordIcon size={ICON_SIZE.menu} />
+                    <input
+                      aria-label="API key"
+                      onChange={(event) => setApiKey(event.target.value)}
+                      placeholder={hasAnyKey ? 'Configured' : 'Paste key'}
+                      type="password"
+                      value={apiKey}
+                    />
+                  </div>
+                  <button
+                    className="agent-settings-secondary"
+                    disabled={saving || !configuredProvider?.hasApiKey}
+                    onClick={removeApiKey}
+                    type="button"
+                  >
+                    Remove key
+                  </button>
+                </div>
+                <span className="agent-settings-field-meta">{keyStatus}</span>
+              </FormField>
+
+              <div className="agent-settings-row agent-settings-field-wide">
+                <label className="agent-settings-checkbox">
+                  <input
+                    checked={draft.enabled}
+                    onChange={(event) => setDraft((current) => ({ ...current, enabled: event.target.checked }))}
+                    type="checkbox"
+                  />
+                  <CheckboxMark checked={draft.enabled} />
+                  <span>Enabled</span>
+                </label>
               </div>
-            ) : null}
-            {notice ? <div className="agent-settings-notice">{notice}</div> : null}
+            </div>
+          </section>
 
-            <footer className="agent-settings-footer">
-              <button
-                className="agent-settings-danger"
-                disabled={saving || !configuredProvider}
-                onClick={removeProvider}
-                title="Remove provider"
-                type="button"
-              >
-                <TrashIcon size={ICON_SIZE.menu} />
-                <span>Remove</span>
-              </button>
-              <button
-                className="agent-settings-secondary"
-                disabled={saving || !configuredProvider?.hasApiKey}
-                onClick={removeApiKey}
-                type="button"
-              >
-                Remove key
-              </button>
+          <section className="agent-settings-section" aria-labelledby="agent-settings-model-heading">
+            <div className="agent-settings-section-header">
+              <h3 id="agent-settings-model-heading">Model behavior</h3>
+              <span>{modelContext}</span>
+            </div>
+            <div className="agent-settings-grid">
+              <FormField className="agent-settings-field agent-settings-field-wide" label="Model ID">
+                <input
+                  list="agent-model-options"
+                  onChange={(event) => {
+                    const modelId = event.target.value;
+                    const model = selectedModels.find((candidate) => candidate.id === modelId);
+                    const supportedLevels: AgentReasoningLevel[] = model?.supportedThinkingLevels.length
+                      ? model.supportedThinkingLevels
+                      : ['off'];
+                    setDraft((current) => ({
+                      ...current,
+                      modelId,
+                      reasoningLevel: coerceReasoningLevel(current.reasoningLevel, supportedLevels),
+                    }));
+                  }}
+                  placeholder="model id"
+                  value={draft.modelId}
+                />
+                <datalist id="agent-model-options">
+                  {selectedModels.map((model) => (
+                    <option key={model.id} value={model.id}>{model.name}</option>
+                  ))}
+                </datalist>
+              </FormField>
+
+              <FormField className="agent-settings-field" label="Reasoning">
+                <select
+                  onChange={(event) => {
+                    setDraft((current) => ({
+                      ...current,
+                      reasoningLevel: event.target.value as AgentReasoningLevel,
+                    }));
+                  }}
+                  value={coerceReasoningLevel(draft.reasoningLevel, selectedReasoningLevels)}
+                >
+                  {selectedReasoningLevels.map((reasoningLevel) => (
+                    <option key={reasoningLevel} value={reasoningLevel}>
+                      {REASONING_LABELS[reasoningLevel]}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+
+              <div className="agent-settings-model-stat">
+                <span>Context</span>
+                <strong>{modelContext}</strong>
+              </div>
+            </div>
+          </section>
+
+          {error ? (
+            <div className="agent-settings-alert" role="alert">
+              <WarningIcon size={14} />
+              <span>{error}</span>
+            </div>
+          ) : null}
+          {notice ? <div className="agent-settings-notice">{notice}</div> : null}
+
+          <footer className="agent-settings-footer">
+            <button
+              className="agent-settings-danger"
+              disabled={saving || !configuredProvider}
+              onClick={removeProvider}
+              title="Remove provider"
+              type="button"
+            >
+              <TrashIcon size={ICON_SIZE.menu} />
+              <span>Remove provider</span>
+            </button>
+            <div className="agent-settings-footer-actions">
               <button className="agent-settings-secondary" onClick={onClose} type="button">
                 Cancel
               </button>
               <button className="agent-settings-primary" disabled={saving} onClick={save} type="button">
                 {saving ? 'Saving...' : 'Save'}
               </button>
-            </footer>
-        </>
+            </div>
+          </footer>
+        </div>
       )}
     </Dialog>
   );
@@ -416,6 +462,60 @@ function resolveDraftForProvider(settings: AgentProviderSettingsView, providerId
   return resolveInitialDraft(settings);
 }
 
+function buildProviderChoices(settings: AgentProviderSettingsView, draftProviderId: string): ProviderChoice[] {
+  const activeProviderId = settings.activeProviderId
+    ?? settings.providers.find((provider) => provider.enabled)?.providerId
+    ?? settings.providers[0]?.providerId
+    ?? '';
+  const choices = new Map<string, ProviderChoice>();
+
+  for (const catalog of settings.availableProviders) {
+    const configured = settings.providers.find((provider) => provider.providerId === catalog.providerId);
+    choices.set(catalog.providerId, {
+      providerId: catalog.providerId,
+      modelId: configured?.modelId ?? catalog.models[0]?.id ?? '',
+      configured: Boolean(configured),
+      active: catalog.providerId === activeProviderId,
+    });
+  }
+
+  for (const provider of settings.providers) {
+    choices.set(provider.providerId, {
+      providerId: provider.providerId,
+      modelId: provider.modelId,
+      configured: true,
+      active: provider.providerId === activeProviderId,
+    });
+  }
+
+  if (draftProviderId && !choices.has(draftProviderId)) {
+    choices.set(draftProviderId, {
+      providerId: draftProviderId,
+      modelId: '',
+      configured: false,
+      active: draftProviderId === activeProviderId,
+    });
+  }
+
+  return [...choices.values()].sort(compareProviderChoices);
+}
+
+function compareProviderChoices(left: ProviderChoice, right: ProviderChoice): number {
+  if (left.active !== right.active) return left.active ? -1 : 1;
+  if (left.configured !== right.configured) return left.configured ? -1 : 1;
+  const leftPreferred = preferredProviderIndex(left.providerId);
+  const rightPreferred = preferredProviderIndex(right.providerId);
+  if (leftPreferred !== rightPreferred) return leftPreferred - rightPreferred;
+  return formatProviderName(left.providerId).localeCompare(formatProviderName(right.providerId), undefined, {
+    sensitivity: 'base',
+  });
+}
+
+function preferredProviderIndex(providerId: string): number {
+  const index = PREFERRED_PROVIDER_ORDER.indexOf(providerId);
+  return index >= 0 ? index : PREFERRED_PROVIDER_ORDER.length;
+}
+
 function providerToDraft(provider: AgentProviderConfigView): DraftConfig {
   return {
     providerId: provider.providerId,
@@ -445,4 +545,12 @@ function formatTokens(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1_000) return `${Math.round(value / 1_000)}K`;
   return String(value);
+}
+
+function formatProviderName(providerId: string): string {
+  return providerId
+    .split(/[-_]/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ') || providerId;
 }

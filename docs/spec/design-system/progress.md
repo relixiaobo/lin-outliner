@@ -103,6 +103,9 @@ Completion means:
 - Extracted `Dialog` for agent settings backdrop, semantic dialog surface, title
   linkage, Escape close, Tab focus trap, and focus restoration while leaving
   caller-owned content and action behavior intact.
+- Reworked agent settings information architecture into Provider, Connection,
+  and Model behavior sections; API key removal now sits with key configuration,
+  while provider removal remains the secondary destructive footer action.
 - Added e2e coverage for agent settings modal focus entry, focus cycling,
   Escape close, and trigger focus restoration.
 - Adopted `Dialog` in the command palette while preserving the search input as

@@ -607,8 +607,14 @@ Current sources:
 Visual rules:
 
 - Dialog uses level 2 elevation.
-- Provider list, fields, alerts, and footer actions use shared form/dialog
-  patterns.
+- Information architecture is sectioned as Provider, Connection, Model
+  behavior, alert/notice, and footer actions.
+- Provider choices are compact buttons that distinguish active, configured, and
+  available providers.
+- Connection owns Provider ID, Base URL, API key, key status, and enabled state.
+- Model behavior owns Model ID, reasoning level, and context metadata.
+- API key removal sits next to the API key field; provider removal stays in the
+  footer as the secondary destructive action.
 - Destructive provider removal is secondary unless the dialog is specifically in
   a destructive confirmation state.
 - API key input should clearly indicate configured state without showing secret
