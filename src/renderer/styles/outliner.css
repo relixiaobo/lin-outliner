@@ -327,11 +327,57 @@
 }
 
 .row.selected {
-  background: linear-gradient(
-    to right,
-    transparent 0 var(--row-selection-start),
-    var(--row-selected) var(--row-selection-start) 100%
-  );
+  isolation: isolate;
+}
+
+.row.selected:not(.drop-before):not(.drop-after)::before {
+  position: absolute;
+  top: 1px;
+  right: 6px;
+  bottom: 1px;
+  left: var(--row-selection-start);
+  z-index: 0;
+  border: 1px solid color-mix(in srgb, var(--row-selection-border) 34%, transparent);
+  border-radius: var(--radius-control-xs);
+  background: var(--row-selection-bg);
+  content: "";
+  pointer-events: none;
+}
+
+.row.selected > * {
+  position: relative;
+  z-index: 1;
+}
+
+.row.ref-click-selected {
+  background: transparent;
+}
+
+.row.ref-click-selected .row-content-line {
+  position: relative;
+  display: inline-block;
+  width: fit-content;
+  max-width: 100%;
+  border-radius: 4px;
+}
+
+.row.ref-click-selected .row-content-line::before {
+  position: absolute;
+  top: 1px;
+  right: -4px;
+  bottom: 1px;
+  left: -4px;
+  z-index: 0;
+  border: 1px solid var(--row-selection-border);
+  border-radius: 4px;
+  background: var(--row-selection-frame-bg);
+  content: "";
+  pointer-events: none;
+}
+
+.row.ref-click-selected .row-content-line > * {
+  position: relative;
+  z-index: 1;
 }
 
 .row.focused {

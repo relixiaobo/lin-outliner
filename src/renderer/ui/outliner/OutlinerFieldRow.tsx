@@ -181,6 +181,8 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       selectedId: props.entryId,
       selectedIds: new Set([props.entryId]),
       selectionAnchorId: props.entryId,
+      selectionRootId: props.rootId,
+      selectionSource: 'global',
     }));
   };
 
@@ -299,6 +301,8 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       selectedId: props.entryId,
       selectedIds: prev.selectedIds.has(props.entryId) ? new Set(prev.selectedIds) : new Set([props.entryId]),
       selectionAnchorId: prev.selectedIds.has(props.entryId) ? prev.selectionAnchorId ?? props.entryId : props.entryId,
+      selectionRootId: props.rootId,
+      selectionSource: 'global',
     }));
     setContextMenu({ x: event.clientX, y: event.clientY });
   };

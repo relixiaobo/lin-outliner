@@ -50,6 +50,8 @@ export const DOCUMENT_COMMANDS = [
   'add_reference',
   'set_reference_target',
   'replace_node_with_reference',
+  'convert_reference_to_inline_node',
+  'restore_inline_reference_node_to_reference',
   'ensure_date_node',
   'ensure_tag_search',
   'create_search_node',

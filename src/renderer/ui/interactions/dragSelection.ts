@@ -105,6 +105,8 @@ export function useDragSelection(options: UseDragSelectionOptions) {
         selectedId: hoverId,
         selectedIds: new Set(range),
         selectionAnchorId: startId,
+        selectionRootId: contextRef.current.rootId,
+        selectionSource: 'global',
         batchTagSelectorOpen: false,
       }));
     };

@@ -273,6 +273,8 @@ export function NodePanel(props: NodePanelProps) {
       selectedId: props.rootId,
       selectedIds: prev.selectedIds.has(props.rootId) ? new Set(prev.selectedIds) : new Set([props.rootId]),
       selectionAnchorId: prev.selectedIds.has(props.rootId) ? prev.selectionAnchorId ?? props.rootId : props.rootId,
+      selectionRootId: props.rootId,
+      selectionSource: 'global',
     }));
     setContextMenu({ x: event.clientX, y: event.clientY });
   };
@@ -288,6 +290,8 @@ export function NodePanel(props: NodePanelProps) {
       selectedId: props.rootId,
       selectedIds: prev.selectedIds.has(props.rootId) ? new Set(prev.selectedIds) : new Set([props.rootId]),
       selectionAnchorId: prev.selectedIds.has(props.rootId) ? prev.selectionAnchorId ?? props.rootId : props.rootId,
+      selectionRootId: props.rootId,
+      selectionSource: 'global',
     }));
     const rect = event.currentTarget.getBoundingClientRect();
     setContextMenu({ x: rect.left, y: rect.bottom + 4 });

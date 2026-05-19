@@ -33,6 +33,7 @@ import { buildOutlinerRows, shouldShowTrailingInput } from './row-model';
 interface UseOutlinerRowInteractionOptions {
   rowId: NodeId;
   parentId: NodeId;
+  childParentId?: NodeId;
   panelId: string;
   rootId: NodeId;
   depth: number;
@@ -50,6 +51,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
   const {
     rowId,
     parentId,
+    childParentId = rowId,
     panelId,
     rootId,
     depth,
@@ -71,6 +73,10 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     ui.selectedIds.has(rowId)
     || ui.selectedId === rowId
   );
+  const refClickSelected = selected
+    && ui.selectionSource === 'ref-click'
+    && ui.selectedIds.size <= 1;
+  const rowSelected = selected && !refClickSelected;
 
   const updateSelection = useCallback(() => {
     setUi((prev) => selectFocusState(prev, rowFocusTarget(rowId, parentId, panelId)));
@@ -85,7 +91,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
         else expandedSet.delete(rowId);
         const next = { ...prev, expanded: expandedSet };
         return shouldFocusTrailing
-          ? requestFocusState(next, focusTarget(rowId, rowId, panelId, 'trailing'), cursorEnd())
+          ? requestFocusState(next, focusTarget(childParentId, childParentId, panelId, 'trailing'), cursorEnd())
           : selectFocusState(next, rowFocusTarget(rowId, parentId, panelId));
       });
       return;
@@ -99,7 +105,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
         expanded: expandedSet,
       }, rowFocusTarget(rowId, parentId, panelId));
     });
-  }, [expanded, hasChildren, panelId, parentId, rowId, setUi]);
+  }, [childParentId, expanded, hasChildren, panelId, parentId, rowId, setUi]);
 
   const moveFocus = useCallback((direction: 1 | -1) => {
     const scopeShowsTrailingInput = (scopeParentId: NodeId) => {
@@ -108,9 +114,9 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     };
 
     if (direction === 1 && expanded) {
-      const childRows = buildOutlinerRows(byId.get(rowId), byId);
+      const childRows = buildOutlinerRows(byId.get(childParentId), byId);
       if (childRows.length === 0 && shouldShowTrailingInput(childRows)) {
-        setUi((prev) => requestFocusState(prev, focusTarget(rowId, rowId, panelId, 'trailing'), cursorEnd()));
+        setUi((prev) => requestFocusState(prev, focusTarget(childParentId, childParentId, panelId, 'trailing'), cursorEnd()));
         return;
       }
     }
@@ -144,10 +150,10 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
       rowFocusTarget(nextId, nextNode?.parentId ?? null, panelId),
       direction === 1 ? cursorStart() : cursorEnd(),
     ));
-  }, [byId, expanded, panelId, parentId, rootId, rowId, setUi, ui.expanded, ui.expandedHiddenFields]);
+  }, [byId, childParentId, expanded, panelId, parentId, rootId, rowId, setUi, ui.expanded, ui.expandedHiddenFields]);
 
   const focusLastVisibleChild = useCallback(() => {
-    const rows = flattenVisibleRows(rowId, byId, ui.expanded, ui.expandedHiddenFields);
+    const rows = flattenVisibleRows(childParentId, byId, ui.expanded, ui.expandedHiddenFields);
     const last = rows[rows.length - 1] ?? childIds[childIds.length - 1];
     if (!last) return;
     const lastNode = byId.get(last);
@@ -156,7 +162,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
       rowFocusTarget(last, lastNode?.parentId ?? rowId, panelId),
       cursorEnd(),
     ));
-  }, [byId, childIds, panelId, rowId, setUi, ui.expanded, ui.expandedHiddenFields]);
+  }, [byId, childIds, childParentId, panelId, rowId, setUi, ui.expanded, ui.expandedHiddenFields]);
 
   const collapseToSelf = useCallback(() => {
     setUi((prev) => {
@@ -200,6 +206,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     })) {
       event.preventDefault();
       event.stopPropagation();
+      event.nativeEvent.stopImmediatePropagation();
       if (document.activeElement instanceof HTMLElement) {
         document.activeElement.blur();
       }
@@ -220,50 +227,77 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
 
     event.preventDefault();
     event.stopPropagation();
+    event.nativeEvent.stopImmediatePropagation();
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
-    setUi((prev) => {
-      const rows = flattenVisibleRows(rootId, byId, prev.expanded, prev.expandedHiddenFields);
-      if (action === 'range') {
-        const anchor = prev.selectionAnchorId && rows.includes(prev.selectionAnchorId)
-          ? prev.selectionAnchorId
-          : prev.selectedId ?? rowId;
-        const from = rows.indexOf(anchor);
-        const to = rows.indexOf(rowId);
-        if (from >= 0 && to >= 0) {
-          const [start, end] = from < to ? [from, to] : [to, from];
-          return {
-            ...clearFocusState(prev),
-            focusedId: null,
-            selectedId: rowId,
-            selectedIds: new Set(rows.slice(start, end + 1)),
-            selectionAnchorId: anchor,
-          };
-        }
-      }
-      if (action === 'toggle') {
-        const selectedIds = toggleVisibleSelection(rows, prev.selectedIds, rowId);
-        const selectedId = selectedIds.has(rowId)
-          ? rowId
-          : [...selectedIds].at(-1) ?? rowId;
-        return {
-          ...clearFocusState(prev),
-          focusedId: null,
-          selectedId,
-          selectedIds,
-          selectionAnchorId: selectedIds.size > 0 ? selectedId : rowId,
+    const rows = flattenVisibleRows(rootId, byId, ui.expanded, ui.expandedHiddenFields);
+    const selectionMeta: Pick<UiState, 'selectionRootId' | 'selectionSource'> = {
+      selectionRootId: rootId,
+      selectionSource: 'global',
+    };
+    let appliedSelection: {
+      selectedId: NodeId | null;
+      selectedIds: Set<NodeId>;
+      selectionAnchorId: NodeId;
+    } | null = null;
+
+    if (action === 'range') {
+      const anchor = ui.selectionAnchorId && rows.includes(ui.selectionAnchorId)
+        ? ui.selectionAnchorId
+        : ui.selectedId ?? rowId;
+      const from = rows.indexOf(anchor);
+      const to = rows.indexOf(rowId);
+      if (from >= 0 && to >= 0) {
+        const [start, end] = from < to ? [from, to] : [to, from];
+        appliedSelection = {
+          selectedId: rowId,
+          selectedIds: new Set(rows.slice(start, end + 1)),
+          selectionAnchorId: anchor,
         };
       }
-      return {
-        ...clearFocusState(prev),
-        focusedId: null,
+    }
+    if (!appliedSelection && action === 'toggle') {
+      const selectedIds = toggleVisibleSelection(rows, ui.selectedIds, rowId);
+      const selectedId = selectedIds.has(rowId)
+        ? rowId
+        : [...selectedIds].at(-1) ?? null;
+      appliedSelection = {
+        selectedId,
+        selectedIds,
+        selectionAnchorId: selectedIds.size > 0 ? selectedId ?? rowId : rowId,
+      };
+    }
+    if (!appliedSelection) {
+      appliedSelection = {
         selectedId: rowId,
         selectedIds: new Set([rowId]),
         selectionAnchorId: rowId,
       };
+    }
+
+    const selection = appliedSelection;
+    const applySelection = (prev: UiState): UiState => ({
+      ...clearFocusState(prev),
+      focusedId: null,
+      selectedId: selection.selectedId,
+      selectedIds: new Set(selection.selectedIds),
+      selectionAnchorId: selection.selectionAnchorId,
+      ...selectionMeta,
     });
-  }, [byId, rootId, rowId, setUi, ui.selectedIds]);
+
+    setUi(applySelection);
+  }, [
+    byId,
+    rootId,
+    rowId,
+    setUi,
+    ui.expanded,
+    ui.expandedHiddenFields,
+    ui.selectedId,
+    ui.selectedIds,
+    ui.selectionAnchorId,
+  ]);
 
   const onDragStart = useCallback((event: DragEvent<HTMLElement>) => {
     event.dataTransfer.effectAllowed = 'move';
@@ -368,7 +402,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
       onDragEnd,
     },
     rowClassName(extra = '') {
-      return `row ${extra} ${selected ? 'selected' : ''} ${focused ? 'focused' : ''} ${dragId === rowId ? 'dragging' : ''} ${dropPosition ? `drop-${dropPosition}` : ''}`.trim();
+      return `row ${extra} ${rowSelected ? 'selected' : ''} ${refClickSelected ? 'ref-click-selected' : ''} ${focused ? 'focused' : ''} ${dragId === rowId ? 'dragging' : ''} ${dropPosition ? `drop-${dropPosition}` : ''}`.trim();
     },
   };
 }

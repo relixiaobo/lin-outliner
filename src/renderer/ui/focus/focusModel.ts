@@ -60,6 +60,8 @@ export function selectFocusState(state: UiState, target: FocusTarget): UiState {
     selectedId: target.nodeId,
     selectedIds: new Set([target.nodeId]),
     selectionAnchorId: target.nodeId,
+    selectionRootId: null,
+    selectionSource: null,
   };
 }
 

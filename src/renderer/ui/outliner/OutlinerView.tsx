@@ -24,6 +24,7 @@ interface OutlinerViewProps {
   dragId: NodeId | null;
   setDragId: (nodeId: NodeId | null) => void;
   rows?: OutlinerRowItem[];
+  referencePath?: readonly NodeId[];
   showViewToolbar?: boolean;
 }
 
@@ -91,6 +92,7 @@ export function OutlinerView(props: OutlinerViewProps) {
             setTrigger={props.setTrigger}
             dragId={props.dragId}
             setDragId={props.setDragId}
+            referencePath={props.referencePath ?? [props.rootId]}
           />
         )}
       />

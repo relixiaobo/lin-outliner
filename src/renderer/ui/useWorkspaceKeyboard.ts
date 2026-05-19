@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { api } from '../api/client';
 import type { NodeId } from '../api/types';
-import { flattenVisibleRows } from '../state/document';
+import { flattenVisibleRows, resolveReferenceTargetId } from '../state/document';
 import type { DocumentIndex, UiState } from '../state/document';
 import { targetIdsForRows } from './interactions/contextMenuSelection';
 import { isImeComposingEvent } from './interactions/imeKeyboard';
@@ -19,7 +19,13 @@ import {
   resolveSelectionKeyboardAction,
   shouldIgnoreSelectionKeyboardTarget,
 } from './interactions/selectionKeyboard';
-import { clearFocusState } from './focus/focusModel';
+import {
+  clearFocusState,
+  cursorOffset,
+  requestFocusState,
+  requestPendingInputState,
+  rowFocusTarget,
+} from './focus/focusModel';
 import type { CommandRunner } from './shared';
 
 async function writeClipboardText(text: string): Promise<boolean> {
@@ -39,6 +45,45 @@ async function writeClipboardText(text: string): Promise<boolean> {
     textarea.remove();
     return ok;
   }
+}
+
+function resolveKeyboardSelectionRoot(ui: UiState, index: DocumentIndex, rootId: NodeId): NodeId {
+  return ui.selectionRootId && index.byId.has(ui.selectionRootId)
+    ? ui.selectionRootId
+    : rootId;
+}
+
+function clearKeyboardSelectionState(state: UiState): UiState {
+  return {
+    ...clearFocusState(state),
+    focusedId: null,
+    selectedId: null,
+    selectedIds: new Set(),
+    selectionAnchorId: null,
+    selectionRootId: null,
+    selectionSource: null,
+    batchTagSelectorOpen: false,
+  };
+}
+
+function selectKeyboardRowsState(
+  state: UiState,
+  params: {
+    selectedId: NodeId | null;
+    selectedIds: Set<NodeId>;
+    selectionAnchorId: NodeId | null;
+    selectionRootId: NodeId;
+  },
+): UiState {
+  return {
+    ...clearFocusState(state),
+    focusedId: null,
+    selectedId: params.selectedId,
+    selectedIds: params.selectedIds,
+    selectionAnchorId: params.selectionAnchorId,
+    selectionRootId: params.selectionRootId,
+    selectionSource: 'global',
+  };
 }
 
 interface UseWorkspaceKeyboardOptions {
@@ -81,7 +126,8 @@ export function useWorkspaceKeyboard({
         })) {
           return;
         }
-        const rows = flattenVisibleRows(rootId, index.byId, ui.expanded, ui.expandedHiddenFields);
+        const selectionRootId = resolveKeyboardSelectionRoot(ui, index, rootId);
+        const rows = flattenVisibleRows(selectionRootId, index.byId, ui.expanded, ui.expandedHiddenFields);
         const orderedSelected = orderedSelectedRows(rows, ui.selectedIds);
         const anchor = resolveSelectionAnchor({
           rows,
@@ -132,7 +178,8 @@ export function useWorkspaceKeyboard({
         return;
       }
 
-      const rows = flattenVisibleRows(rootId, index.byId, ui.expanded, ui.expandedHiddenFields);
+      const selectionRootId = resolveKeyboardSelectionRoot(ui, index, rootId);
+      const rows = flattenVisibleRows(selectionRootId, index.byId, ui.expanded, ui.expandedHiddenFields);
       const orderedSelected = orderedSelectedRows(rows, ui.selectedIds);
       const anchor = resolveSelectionAnchor({
         rows,
@@ -145,21 +192,70 @@ export function useWorkspaceKeyboard({
       }
 
       event.preventDefault();
-      if (action === 'clear_selection' || action === 'enter_edit') {
+      const singleSelectedId = orderedSelected.length === 1
+        ? orderedSelected[0]
+        : ui.selectedIds.size === 1
+          ? anchor
+          : null;
+      const singleSelectedNode = singleSelectedId ? index.byId.get(singleSelectedId) : null;
+      const selectedReferenceTargetId = singleSelectedNode?.type === 'reference' && singleSelectedNode.targetId
+        ? resolveReferenceTargetId(singleSelectedNode.targetId, index.byId) ?? singleSelectedNode.targetId
+        : null;
+      const convertSelectedReferenceToInline = (char?: string) => {
+        if (!singleSelectedId || !singleSelectedNode || !selectedReferenceTargetId) return;
+        const parentId = singleSelectedNode.parentId;
+        if (!parentId) return;
+        void run(() => api.convertReferenceToInlineNode(singleSelectedId)).then((result) => {
+          if (!result || !('focus' in result)) return;
+          const inlineNodeId = result.focus?.nodeId;
+          const inlineParentId = result.focus?.parentId ?? parentId;
+          if (!inlineNodeId) return;
+          window.requestAnimationFrame(() => {
+            setUi((prev) => {
+              const target = rowFocusTarget(inlineNodeId, inlineParentId, null);
+              const placement = cursorOffset(0, 'after');
+              const next = char
+                ? requestPendingInputState(prev, target, char, placement)
+                : requestFocusState(prev, target, placement);
+              return {
+                ...next,
+                pendingReferenceConversion: {
+                  nodeId: inlineNodeId,
+                  parentId: inlineParentId,
+                  targetId: selectedReferenceTargetId,
+                },
+              };
+            });
+          });
+        });
+      };
+
+      if (action === 'convert_reference_right') {
+        convertSelectedReferenceToInline();
+        return;
+      }
+      if (action === 'clear_selection') {
+        setUi(clearKeyboardSelectionState);
+        return;
+      }
+      if (action === 'enter_edit') {
         requestEditFocus(orderedSelected[0] ?? anchor);
         return;
       }
       if (action === 'type_char') {
+        if (selectedReferenceTargetId) {
+          convertSelectedReferenceToInline(event.key);
+          return;
+        }
         appendTypedCharToRow(orderedSelected[0] ?? anchor, event.key);
         return;
       }
       if (action === 'select_all') {
-        setUi((prev) => ({
-          ...clearFocusState(prev),
-          focusedId: null,
+        setUi((prev) => selectKeyboardRowsState(prev, {
           selectedId: rows[0] ?? prev.selectedId,
           selectedIds: new Set(rows),
           selectionAnchorId: rows[0] ?? prev.selectionAnchorId,
+          selectionRootId,
         }));
         return;
       }
@@ -170,12 +266,11 @@ export function useWorkspaceKeyboard({
           anchor,
           action === 'extend_down' ? 'down' : 'up',
         );
-        setUi((prev) => ({
-          ...clearFocusState(prev),
-          focusedId: null,
+        setUi((prev) => selectKeyboardRowsState(prev, {
           selectedId: [...selectedIds].at(-1) ?? anchor,
           selectedIds,
           selectionAnchorId: anchor,
+          selectionRootId,
         }));
         return;
       }
@@ -205,26 +300,28 @@ export function useWorkspaceKeyboard({
           const previous = rows[Math.max(0, rows.indexOf(batchIds[0]) - 1)];
           void run(() => api.batchTrashNodes(batchIds)).then(() => {
             if (previous && !batchIds.includes(previous)) requestEditFocus(previous);
-            else setUi((prev) => ({
-              ...clearFocusState(prev),
-              focusedId: null,
-              selectedIds: new Set(),
-              selectionAnchorId: null,
-            }));
+            else setUi(clearKeyboardSelectionState);
           });
         });
         return;
       }
       if (action === 'batch_delete') {
+        if (
+          ui.selectionSource === 'ref-click'
+          && singleSelectedId
+          && selectedReferenceTargetId
+          && batchIds.length === 1
+          && batchIds[0] === singleSelectedId
+        ) {
+          void run(() => api.deleteNode(singleSelectedId)).then(() => {
+            setUi(clearKeyboardSelectionState);
+          });
+          return;
+        }
         const previous = rows[Math.max(0, rows.indexOf(batchIds[0]) - 1)];
         void run(() => api.batchTrashNodes(batchIds)).then(() => {
           if (previous && !batchIds.includes(previous)) requestEditFocus(previous);
-          else setUi((prev) => ({
-            ...clearFocusState(prev),
-            focusedId: null,
-            selectedIds: new Set(),
-            selectionAnchorId: null,
-          }));
+          else setUi(clearKeyboardSelectionState);
         });
         return;
       }
@@ -235,12 +332,11 @@ export function useWorkspaceKeyboard({
       if (action === 'batch_move_up' || action === 'batch_move_down') {
         const move = action === 'batch_move_up' ? api.batchMoveNodesUp : api.batchMoveNodesDown;
         void run(() => move(batchIds)).then(() => {
-          setUi((prev) => ({
-            ...clearFocusState(prev),
-            focusedId: null,
+          setUi((prev) => selectKeyboardRowsState(prev, {
             selectedId: anchor,
             selectedIds: new Set(batchIds),
             selectionAnchorId: anchor,
+            selectionRootId,
           }));
         });
         return;
@@ -280,12 +376,11 @@ export function useWorkspaceKeyboard({
             }));
           }
           if (action === 'batch_checkbox') {
-            setUi((prev) => ({
-              ...clearFocusState(prev),
-              focusedId: null,
+            setUi((prev) => selectKeyboardRowsState(prev, {
               selectedId: anchor,
               selectedIds: new Set(batchIds),
               selectionAnchorId: anchor,
+              selectionRootId,
             }));
             return;
           }

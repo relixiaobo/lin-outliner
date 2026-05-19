@@ -299,6 +299,10 @@ export class DocumentService {
         return this.core.setReferenceTarget(String(args.referenceId), String(args.targetId));
       case 'replace_node_with_reference':
         return this.core.replaceNodeWithReference(String(args.nodeId), String(args.targetId));
+      case 'convert_reference_to_inline_node':
+        return this.core.convertReferenceToInlineNode(String(args.referenceId));
+      case 'restore_inline_reference_node_to_reference':
+        return this.core.restoreInlineReferenceNodeToReference(String(args.nodeId), String(args.targetId));
       case 'ensure_date_node':
         return this.core.ensureDateNode(Number(args.year), Number(args.month), Number(args.day));
       case 'ensure_tag_search':

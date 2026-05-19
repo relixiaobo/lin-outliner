@@ -280,8 +280,11 @@ export function App() {
         clearSelection={() => setUi((prev) => ({
           ...clearFocusState(prev),
           focusedId: null,
+          selectedId: null,
           selectedIds: new Set(),
           selectionAnchorId: null,
+          selectionRootId: null,
+          selectionSource: null,
           batchTagSelectorOpen: false,
         }))}
       />

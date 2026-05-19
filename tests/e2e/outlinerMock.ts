@@ -322,6 +322,26 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       appendChild(parentId, nodeId, index);
       node.updatedAt = ++now;
     };
+    const removeNode = (nodeId: string) => {
+      const node = nodes.get(nodeId);
+      if (!node) return;
+      for (const childId of [...node.children]) removeNode(childId);
+      removeFromParent(nodeId);
+      nodes.delete(nodeId);
+    };
+    const resolveReferenceTargetId = (targetId: string) => {
+      let currentId: string | undefined = targetId;
+      const visited = new Set<string>();
+      while (currentId) {
+        if (visited.has(currentId)) return null;
+        visited.add(currentId);
+        const current = nodes.get(currentId);
+        if (!current) return null;
+        if (current.type !== 'reference') return current.id;
+        currentId = current.targetId;
+      }
+      return null;
+    };
     const projection = () => ({
       workspaceId: ids.workspace,
       rootId: ids.root,
@@ -982,16 +1002,18 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone(clearFieldValue(String(args.fieldEntryId)));
         }
         if (cmd === 'add_reference') {
-          const target = nodes.get(String(args.targetId));
+          const targetId = resolveReferenceTargetId(String(args.targetId)) ?? String(args.targetId);
+          const target = nodes.get(targetId);
           const refId = createNode(String(args.parentId), args.index as number | null, target?.content.text ?? '', {
             type: 'reference',
-            targetId: String(args.targetId),
+            targetId,
           });
           return clone(outcome({ nodeId: refId, selectAll: false }));
         }
         if (cmd === 'set_reference_target') {
           const node = nodes.get(String(args.referenceId));
-          const target = nodes.get(String(args.targetId));
+          const targetId = resolveReferenceTargetId(String(args.targetId)) ?? String(args.targetId);
+          const target = nodes.get(targetId);
           if (node && target) {
             node.type = 'reference';
             node.targetId = target.id;
@@ -1001,13 +1023,57 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'replace_node_with_reference') {
           const node = nodes.get(String(args.nodeId));
-          const target = nodes.get(String(args.targetId));
+          const targetId = resolveReferenceTargetId(String(args.targetId)) ?? String(args.targetId);
+          const target = nodes.get(targetId);
           if (node && target) {
             node.type = 'reference';
             node.targetId = target.id;
             node.content = clone(target.content);
           }
           return clone(outcome({ nodeId: String(args.nodeId), selectAll: false }));
+        }
+        if (cmd === 'convert_reference_to_inline_node') {
+          const reference = nodes.get(String(args.referenceId));
+          const targetId = reference?.targetId ? resolveReferenceTargetId(reference.targetId) : null;
+          const target = targetId ? nodes.get(targetId) : null;
+          const parentId = reference?.parentId;
+          const parent = parentId ? nodes.get(parentId) : null;
+          if (!reference || reference.type !== 'reference' || !target || !parentId || !parent) {
+            return clone(outcome());
+          }
+          const index = parent.children.indexOf(reference.id);
+          const inlineNodeId = createNode(parentId, index < 0 ? null : index, '', { showCheckbox: false });
+          const inlineNode = nodes.get(inlineNodeId);
+          if (inlineNode) {
+            inlineNode.content = {
+              text: '',
+              marks: [],
+              inlineRefs: [{ offset: 0, targetNodeId: target.id, displayName: target.content.text || undefined }],
+            };
+          }
+          removeNode(reference.id);
+          return clone(outcome({
+            nodeId: inlineNodeId,
+            parentId,
+            placement: { kind: 'text-offset', offset: 0, inlineRefBias: 'after' },
+            selectAll: false,
+          }));
+        }
+        if (cmd === 'restore_inline_reference_node_to_reference') {
+          const inlineNode = nodes.get(String(args.nodeId));
+          const targetId = resolveReferenceTargetId(String(args.targetId)) ?? String(args.targetId);
+          const target = nodes.get(targetId);
+          const parentId = inlineNode?.parentId;
+          const parent = parentId ? nodes.get(parentId) : null;
+          if (!inlineNode || !target || !parentId || !parent) return clone(outcome());
+          const index = parent.children.indexOf(inlineNode.id);
+          const refId = createNode(parentId, index < 0 ? null : index, target.content.text, {
+            type: 'reference',
+            targetId: target.id,
+            showCheckbox: false,
+          });
+          removeNode(inlineNode.id);
+          return clone(outcome({ nodeId: refId, parentId, selectAll: false }));
         }
         if (cmd === 'ensure_date_node') {
           const label = `${String(args.year).padStart(4, '0')}-${String(args.month).padStart(2, '0')}-${String(args.day).padStart(2, '0')}`;
@@ -1026,7 +1092,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             .filter((node) => node.content.text.toLowerCase().includes(query))
             .map((node) => ({ nodeId: node.id, score: 1 })));
         }
-        if (cmd === 'ensure_tag_search' || cmd === 'restore_node' || cmd === 'delete_node' || cmd === 'undo' || cmd === 'redo') {
+        if (cmd === 'delete_node') {
+          removeNode(String(args.nodeId));
+          return clone(outcome());
+        }
+        if (cmd === 'ensure_tag_search' || cmd === 'restore_node' || cmd === 'undo' || cmd === 'redo') {
           return clone(outcome());
         }
         throw new Error(`Unhandled mock invoke: ${cmd}`);
@@ -1213,7 +1283,7 @@ export async function e2eProjection(page: Page): Promise<{ nodes: Array<{
   id: string;
   parentId?: string;
   children: string[];
-  content: { text: string };
+  content: { text: string; inlineRefs: Array<{ targetNodeId: string }> };
   completedAt?: number;
   tags: string[];
   type?: string;
@@ -1238,7 +1308,7 @@ export async function e2eProjection(page: Page): Promise<{ nodes: Array<{
       id: string;
       parentId?: string;
       children: string[];
-      content: { text: string };
+      content: { text: string; inlineRefs: Array<{ targetNodeId: string }> };
       completedAt?: number;
       tags: string[];
       type?: string;

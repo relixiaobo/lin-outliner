@@ -3,6 +3,7 @@ import { isImeComposingEvent } from './imeKeyboard';
 export type SelectionKeyboardAction =
   | 'navigate_up'
   | 'navigate_down'
+  | 'convert_reference_right'
   | 'extend_up'
   | 'extend_down'
   | 'enter_edit'
@@ -68,6 +69,9 @@ export function resolveSelectionKeyboardAction(event: KeyboardEvent): SelectionK
   }
   if (event.key === 'ArrowDown' && !event.shiftKey && !mod && !event.altKey) {
     return 'navigate_down';
+  }
+  if (event.key === 'ArrowRight' && !event.shiftKey && !mod && !event.altKey) {
+    return 'convert_reference_right';
   }
   if (event.key === 'Enter' && !event.shiftKey && !mod && !event.altKey) {
     return 'enter_edit';

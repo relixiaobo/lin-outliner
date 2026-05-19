@@ -129,6 +129,7 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
               setTrigger={props.setTrigger}
               dragId={props.dragId}
               setDragId={props.setDragId}
+              referencePath={[props.entryId]}
             />
           )}
         />

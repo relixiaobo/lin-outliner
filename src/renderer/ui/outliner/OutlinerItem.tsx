@@ -10,7 +10,12 @@ import { api } from '../../api/client';
 import type { CreateNodeTree, NodeId, NodeProjection, RichText, RichTextPatch } from '../../api/types';
 import { EMPTY_RICH_TEXT, plainText } from '../../api/types';
 import type { CursorPlacement } from '../../state/document';
-import { flattenVisibleRows, type DocumentIndex, type UiState } from '../../state/document';
+import {
+  flattenVisibleRows,
+  resolveReferenceTargetId,
+  type DocumentIndex,
+  type UiState,
+} from '../../state/document';
 import { RichTextEditor, type EditorSplitPayload } from '../editor/RichTextEditor';
 import {
   deleteRichTextRange,
@@ -74,6 +79,7 @@ interface OutlinerItemProps {
   setTrigger: (trigger: TriggerState) => void;
   dragId: NodeId | null;
   setDragId: (nodeId: NodeId | null) => void;
+  referencePath: readonly NodeId[];
 }
 
 export function OutlinerItem(props: OutlinerItemProps) {
@@ -82,10 +88,20 @@ export function OutlinerItem(props: OutlinerItemProps) {
   const [draftContentRevision, setDraftContentRevision] = useState(0);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const pendingTextPatchRef = useRef<Promise<unknown>>(Promise.resolve());
-  const rowChildIds = outlinerChildren(node, props.index.byId);
+  const referenceTargetId = node?.type === 'reference' && node.targetId
+    ? resolveReferenceTargetId(node.targetId, props.index.byId)
+    : null;
+  const displayed = referenceTargetId ? props.index.byId.get(referenceTargetId) ?? node : node;
+  const childParentId = referenceTargetId ?? props.nodeId;
+  const childParentNode = props.index.byId.get(childParentId);
+  const referenceCycle = node?.type === 'reference'
+    && Boolean(referenceTargetId)
+    && props.referencePath.includes(childParentId);
+  const rowChildIds = referenceCycle ? [] : outlinerChildren(childParentNode, props.index.byId);
   const row = useOutlinerRowInteraction({
     rowId: props.nodeId,
     parentId: props.parentId,
+    childParentId,
     panelId: props.panelId,
     rootId: props.rootId,
     depth: props.depth,
@@ -98,7 +114,6 @@ export function OutlinerItem(props: OutlinerItemProps) {
     dragId: props.dragId,
     setDragId: props.setDragId,
   });
-  const displayed = node?.type === 'reference' && node.targetId ? props.index.byId.get(node.targetId) ?? node : node;
 
   useEffect(() => {
     setDraftContent(displayed?.content ?? EMPTY_RICH_TEXT);
@@ -111,8 +126,8 @@ export function OutlinerItem(props: OutlinerItemProps) {
     setDraftContentRevision((revision) => revision + 1);
   };
 
-  const targetEditId = node.type === 'reference' && node.targetId ? node.targetId : node.id;
-  const drillDownId = node.type === 'reference' && node.targetId ? node.targetId : node.id;
+  const targetEditId = referenceTargetId ?? node.id;
+  const drillDownId = referenceTargetId ?? node.id;
   const editorFocusTarget = rowFocusTarget(props.nodeId, props.parentId, props.panelId);
   const descriptionFocusTarget = focusTarget(props.nodeId, props.parentId, props.panelId, 'description');
   const requestRowFocus = (
@@ -126,10 +141,21 @@ export function OutlinerItem(props: OutlinerItemProps) {
       placement,
     ));
   };
-  const childRows = buildOutlinerRows(node, props.index.byId, {
+  const selectRow = (rowId: NodeId) => {
+    props.setUi((prev) => ({
+      ...clearFocusState(prev),
+      selectedId: rowId,
+      selectedIds: new Set([rowId]),
+      selectionAnchorId: rowId,
+      selectionRootId: props.rootId,
+      selectionSource: 'ref-click',
+    }));
+  };
+  const childRows = referenceCycle ? [] : buildOutlinerRows(childParentNode, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
   });
   const showTrailingInput = shouldShowTrailingInput(childRows);
+  const childReferencePath = [...props.referencePath, childParentId];
   const leadingVariant = node.type === 'reference'
     ? 'reference'
     : displayed.type === 'tagDef'
@@ -151,8 +177,29 @@ export function OutlinerItem(props: OutlinerItemProps) {
     || Boolean(displayed.completedAt);
   const descriptionEditing = props.ui.editingDescriptionId === targetEditId;
 
-  const commitDraft = async (_content = draftContent) => {
+  const commitDraft = async (content = draftContent) => {
     await pendingTextPatchRef.current;
+    const pendingConversion = props.ui.pendingReferenceConversion;
+    if (pendingConversion?.nodeId !== props.nodeId) return props.nodeId;
+
+    if (isOnlyInlineReference(content, pendingConversion.targetId)) {
+      const outcome = await props.run(() => api.restoreInlineReferenceNodeToReference(
+        props.nodeId,
+        pendingConversion.targetId,
+      ));
+      props.setUi((prev) => (
+        prev.pendingReferenceConversion?.nodeId === props.nodeId
+          ? { ...prev, pendingReferenceConversion: null }
+          : prev
+      ));
+      return outcome && 'focus' in outcome ? outcome.focus?.nodeId ?? null : null;
+    }
+    props.setUi((prev) => (
+      prev.pendingReferenceConversion?.nodeId === props.nodeId
+        ? { ...prev, pendingReferenceConversion: null }
+        : prev
+    ));
+    return props.nodeId;
   };
 
   const applyTextPatch = (patch: RichTextPatch) => {
@@ -219,7 +266,30 @@ export function OutlinerItem(props: OutlinerItemProps) {
         && !parentAlreadyContainsReferenceTarget(target.id),
     });
     if (action === 'tree_reference') {
-      return api.replaceNodeWithReference(props.nodeId, target.id);
+      const outcome = await api.replaceNodeWithReference(props.nodeId, target.id);
+      const referenceId = outcome.focus?.nodeId;
+      if (!referenceId) return outcome;
+      const conversionOutcome = await api.convertReferenceToInlineNode(referenceId);
+      const inlineNodeId = conversionOutcome.focus?.nodeId;
+      const inlineParentId = conversionOutcome.focus?.parentId ?? props.parentId;
+      window.requestAnimationFrame(() => {
+        if (!inlineNodeId) {
+          selectRow(referenceId);
+          return;
+        }
+        props.setUi((prev) => {
+          const targetFocus = rowFocusTarget(inlineNodeId, inlineParentId, props.panelId);
+          return {
+            ...requestFocusState(prev, targetFocus, cursorAtOffset(0, 'after')),
+            pendingReferenceConversion: {
+              nodeId: inlineNodeId,
+              parentId: inlineParentId,
+              targetId: target.id,
+            },
+          };
+        });
+      });
+      return conversionOutcome;
     }
 
     const nextContent = replaceRichTextRangeWithInlineRef(
@@ -301,7 +371,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
     }
     await commitDraft(payload.before);
     if (row.expanded && row.hasChildren) {
-      await props.run(() => api.createNode(props.nodeId, 0, payload.after.text));
+      await props.run(() => api.createNode(childParentId, 0, payload.after.text));
       return;
     }
     await props.run(() => api.createNode(props.parentId, rowIndex >= 0 ? rowIndex + 1 : null, ''));
@@ -403,16 +473,18 @@ export function OutlinerItem(props: OutlinerItemProps) {
       props.setTrigger(null);
       return;
     }
-    await commitDraft();
+    const selectionId = await commitDraft() ?? props.nodeId;
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
     props.setUi((prev) => ({
       ...clearFocusState(prev),
       focusedId: null,
-      selectedId: props.nodeId,
-      selectedIds: new Set([props.nodeId]),
-      selectionAnchorId: props.nodeId,
+      selectedId: selectionId,
+      selectedIds: new Set([selectionId]),
+      selectionAnchorId: selectionId,
+      selectionRootId: props.rootId,
+      selectionSource: 'global',
     }));
   };
 
@@ -440,6 +512,8 @@ export function OutlinerItem(props: OutlinerItemProps) {
       selectedId: props.nodeId,
       selectedIds: prev.selectedIds.has(props.nodeId) ? new Set(prev.selectedIds) : new Set([props.nodeId]),
       selectionAnchorId: prev.selectedIds.has(props.nodeId) ? prev.selectionAnchorId ?? props.nodeId : props.nodeId,
+      selectionRootId: props.rootId,
+      selectionSource: 'global',
     }));
     setContextMenu({ x: event.clientX, y: event.clientY });
   };
@@ -451,13 +525,24 @@ export function OutlinerItem(props: OutlinerItemProps) {
       || event.ctrlKey
       || event.shiftKey
       || event.altKey
-      || displayed.locked
     ) {
       return;
     }
 
     const target = event.target instanceof HTMLElement ? event.target : null;
     if (target?.closest('button, a, input, textarea, select, [data-preserve-selection]')) return;
+
+    if (node.type === 'reference') {
+      event.preventDefault();
+      event.stopPropagation();
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+      selectRow(props.nodeId);
+      return;
+    }
+
+    if (displayed.locked) return;
 
     const editor = event.currentTarget.querySelector<HTMLElement>('.ProseMirror');
     if (!editor) return;
@@ -479,12 +564,21 @@ export function OutlinerItem(props: OutlinerItemProps) {
     requestRowFocus(props.nodeId, cursorAtOffset(offset, inlineRefBias), props.parentId);
   };
 
+  const focusReferenceTargetFromDoubleClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (node.type !== 'reference' || displayed.locked) return;
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (target?.closest('button, a, input, textarea, select, [data-preserve-selection]')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    requestRowFocus(props.nodeId, cursorEnd(), props.parentId);
+  };
+
   return (
     <OutlinerRowShell
       hasChildren={row.hasChildren}
       expanded={row.expanded}
       wrapProps={row.wrapProps}
-      rowClassName={row.rowClassName()}
+      rowClassName={row.rowClassName(node.type === 'reference' ? 'reference-row' : '')}
       onSelectFromPointer={row.selectFromPointer}
       onContextMenu={openContextMenu}
       rowContent={(
@@ -503,7 +597,11 @@ export function OutlinerItem(props: OutlinerItemProps) {
           onDragStart={row.dragHandleProps.onDragStart}
           onDragEnd={row.dragHandleProps.onDragEnd}
         />
-        <div className="row-content-line" onMouseDown={focusEditorFromRowClick}>
+        <div
+          className="row-content-line"
+          onMouseDown={focusEditorFromRowClick}
+          onDoubleClick={focusReferenceTargetFromDoubleClick}
+        >
           {showDoneCheckbox && (
             <DoneCheckbox
               checked={Boolean(displayed.completedAt)}
@@ -640,7 +738,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
         <div className="children">
           <OutlinerView
             panelId={props.panelId}
-            parentId={props.nodeId}
+            parentId={childParentId}
             rootId={props.rootId}
             onRoot={props.onRoot}
             depth={0}
@@ -652,11 +750,12 @@ export function OutlinerItem(props: OutlinerItemProps) {
             setTrigger={props.setTrigger}
             dragId={props.dragId}
             setDragId={props.setDragId}
+            referencePath={childReferencePath}
           />
           {showTrailingInput && (
             <TrailingInput
               panelId={props.panelId}
-              parentId={props.nodeId}
+              parentId={childParentId}
               index={props.index}
               expanded={props.ui.expanded}
               run={props.run}
@@ -712,4 +811,12 @@ export function OutlinerItem(props: OutlinerItemProps) {
       )}
     </OutlinerRowShell>
   );
+}
+
+function isOnlyInlineReference(content: RichText, targetId: NodeId) {
+  return content.text.trim().length === 0
+    && content.marks.length === 0
+    && content.inlineRefs.length === 1
+    && content.inlineRefs[0].offset === 0
+    && content.inlineRefs[0].targetNodeId === targetId;
 }

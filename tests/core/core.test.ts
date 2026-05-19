@@ -627,10 +627,37 @@ describe('Core', () => {
 
     expect(core.state().nodes[target]).toBeDefined();
     expect(core.state().nodes[referenceId].targetId).toBe(target);
-    expect(core.state().nodes[referenceToReferenceId].targetId).toBe(referenceId);
+    expect(core.state().nodes[referenceToReferenceId].targetId).toBe(target);
     expect(core.state().nodes[inlineSource].content.inlineRefs).toEqual([
       { offset: 4, targetNodeId: target, displayName: 'Target' },
     ]);
+  });
+
+  test('reference nodes normalize targets and convert to unchanged inline atoms', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'Target'));
+    const reference = mustFocus(core.addReference(today, target, null));
+    const nestedReference = mustFocus(core.addReference(today, reference, null));
+
+    expect(core.state().nodes[nestedReference].targetId).toBe(target);
+
+    const inlineNode = mustFocus(core.convertReferenceToInlineNode(reference));
+    let state = core.state();
+    expect(state.nodes[reference]).toBeUndefined();
+    expect(state.nodes[inlineNode].parentId).toBe(today);
+    expect(state.nodes[inlineNode].content).toEqual({
+      text: '',
+      marks: [],
+      inlineRefs: [{ offset: 0, targetNodeId: target, displayName: 'Target' }],
+    });
+
+    const restoredReference = mustFocus(core.restoreInlineReferenceNodeToReference(inlineNode, target));
+    state = core.state();
+    expect(state.nodes[inlineNode]).toBeUndefined();
+    expect(state.nodes[restoredReference].type).toBe('reference');
+    expect(state.nodes[restoredReference].targetId).toBe(target);
+    expect(state.nodes[today].children).toEqual([target, restoredReference, nestedReference]);
   });
 
   test('permanent delete of an option target clears selected field references', () => {

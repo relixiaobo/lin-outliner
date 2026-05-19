@@ -18,6 +18,8 @@ export function useSelectionDismissal(setUi: Dispatch<SetStateAction<UiState>>) 
           selectedId: null,
           selectedIds: new Set(),
           selectionAnchorId: null,
+          selectionRootId: null,
+          selectionSource: null,
           batchTagSelectorOpen: false,
         };
       });

@@ -122,6 +122,10 @@ export const api = {
     command<CommandOutcome>('set_reference_target', { referenceId, targetId }),
   replaceNodeWithReference: (nodeId: string, targetId: string) =>
     command<CommandOutcome>('replace_node_with_reference', { nodeId, targetId }),
+  convertReferenceToInlineNode: (referenceId: string) =>
+    command<CommandOutcome>('convert_reference_to_inline_node', { referenceId }),
+  restoreInlineReferenceNodeToReference: (nodeId: string, targetId: string) =>
+    command<CommandOutcome>('restore_inline_reference_node_to_reference', { nodeId, targetId }),
   ensureDateNode: (year: number, month: number, day: number) =>
     command<CommandOutcome>('ensure_date_node', { year, month, day }),
   searchNodes: (query: string) => command<SearchHit[]>('search_nodes', { query }),

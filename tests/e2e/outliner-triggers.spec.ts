@@ -261,6 +261,38 @@ test.describe('outliner trigger parity', () => {
     expect(calls.map((call) => call.cmd)).not.toContain('apply_node_text_patch');
   });
 
+  test('@ in an empty row creates a tree reference and immediately enters inline conversion', async ({ page }) => {
+    await invokeMockCommand(page, 'create_node', {
+      parentId: ids.today,
+      index: null,
+      text: '',
+    });
+    const emptyRowId = await lastTodayChildId(page);
+    expect(emptyRowId).toBeTruthy();
+
+    await rowEditor(page, emptyRowId!).click();
+    await page.keyboard.type('@Zeta');
+    await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
+    await page.keyboard.press('Meta+Enter');
+
+    let inlineRowId = '';
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const zeta = projection.nodes.find((node) => node.content.text === 'Zeta');
+      inlineRowId = projection.nodes.find((node) => (
+        node.id !== emptyRowId
+        && !node.type
+        && node.content.inlineRefs.some((ref) => ref.targetNodeId === zeta?.id)
+      ))?.id ?? '';
+      return inlineRowId;
+    }).not.toBe('');
+    await expect(rowEditor(page, inlineRowId)).toBeFocused();
+
+    const calls = await commandCalls(page);
+    expect(calls.map((call) => call.cmd)).toContain('replace_node_with_reference');
+    expect(calls.map((call) => call.cmd)).toContain('convert_reference_to_inline_node');
+  });
+
   test('/ in trailing input opens slash commands without creating a temporary row', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();

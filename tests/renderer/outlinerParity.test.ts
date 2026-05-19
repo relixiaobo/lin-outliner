@@ -18,6 +18,7 @@ import {
   shouldClearSelectionOnPointerDown,
   shouldPreserveSelectionForModifierGesture,
 } from '../../src/renderer/ui/interactions/selectionDismiss';
+import { flattenVisibleRows } from '../../src/renderer/state/document';
 
 function keyboardEvent(params: Partial<KeyboardEvent>): KeyboardEvent {
   return {
@@ -67,6 +68,7 @@ describe('nodex outliner parity matrix', () => {
     ['type char', keyboardEvent({ key: 'x' }), 'type_char'],
     ['ArrowUp', keyboardEvent({ key: 'ArrowUp' }), 'navigate_up'],
     ['ArrowDown', keyboardEvent({ key: 'ArrowDown' }), 'navigate_down'],
+    ['ArrowRight', keyboardEvent({ key: 'ArrowRight' }), 'convert_reference_right'],
     ['Shift+ArrowUp', keyboardEvent({ key: 'ArrowUp', shiftKey: true }), 'extend_up'],
     ['Shift+ArrowDown', keyboardEvent({ key: 'ArrowDown', shiftKey: true }), 'extend_down'],
     ['Mod+A', keyboardEvent({ key: 'a', metaKey: true }), 'select_all'],
@@ -112,6 +114,32 @@ describe('nodex outliner parity matrix', () => {
     ]);
 
     expect(targetIdsForRows(['ref-a', 'ref-b'], byId)).toEqual(['target']);
+  });
+
+  test('expanded reference rows expose target children in visible order', () => {
+    const byId = new Map<string, any>([
+      ['root', node('root', { children: ['ref'] })],
+      ['target', node('target', { children: ['child'] })],
+      ['child', node('child', { parentId: 'target' })],
+      ['ref', node('ref', { parentId: 'root', type: 'reference', targetId: 'target' })],
+    ]);
+
+    expect(flattenVisibleRows('root', byId, new Set(['ref']))).toEqual(['ref', 'child']);
+  });
+
+  test('expanded reference rows stop when the target is already on the visible path', () => {
+    const byId = new Map<string, any>([
+      ['root', node('root', { children: ['ancestor'] })],
+      ['ancestor', node('ancestor', { parentId: 'root', children: ['child'] })],
+      ['child', node('child', { parentId: 'ancestor', children: ['ref'] })],
+      ['ref', node('ref', { parentId: 'child', type: 'reference', targetId: 'ancestor' })],
+    ]);
+
+    expect(flattenVisibleRows('root', byId, new Set(['ancestor', 'child', 'ref']))).toEqual([
+      'ancestor',
+      'child',
+      'ref',
+    ]);
   });
 
   test('context menu resolves batch rows and target rows from the same selection source', () => {
