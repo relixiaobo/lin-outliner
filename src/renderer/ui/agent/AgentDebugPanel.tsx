@@ -278,7 +278,7 @@ function useAgentDebug(sessionId: string | null) {
     const eventSessionId = sessionId ?? resolvedSessionId;
     if (!eventSessionId) return undefined;
     const unlisten = window.lin?.onAgentEvent((event: AgentRuntimeEvent) => {
-      if (event.type !== 'snapshot' && event.type !== 'error' && event.type !== 'tool_call' && event.type !== 'tool_result') {
+      if (event.type !== 'projection' && event.type !== 'error' && event.type !== 'tool_call' && event.type !== 'tool_result') {
         return;
       }
       if (event.sessionId !== eventSessionId) return;
@@ -481,10 +481,74 @@ function RoundCard({ round }: { round: AgentDebugSnapshot }) {
           <ResponseMessageRow round={round} />
         </div>
       </div>
-      <ContextDisclosure title={`Raw Provider Payload · ${formatBytes(round.wire.bytes)}`} copyText={round.wire.json}>
-        <pre>{round.wire.json}</pre>
-      </ContextDisclosure>
+      <RawProviderPayload round={round} />
     </article>
+  );
+}
+
+function RawProviderPayload({ round }: { round: AgentDebugSnapshot }) {
+  const [payload, setPayload] = useState<string | null>(round.wire.json ?? null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPayload(round.wire.json ?? null);
+    setLoading(false);
+    setError(null);
+  }, [round.id, round.wire.json]);
+
+  const loadPayload = useCallback(() => {
+    const payloadId = round.wire.payloadRef?.id;
+    if (payload || loading || !payloadId) return;
+    setLoading(true);
+    setError(null);
+    void api.agentDebugPayload(round.sessionId, payloadId)
+      .then((nextPayload) => {
+        setPayload(nextPayload ?? '');
+        if (nextPayload == null) setError('Payload is no longer available.');
+      })
+      .catch((nextError) => setError(nextError instanceof Error ? nextError.message : String(nextError)))
+      .finally(() => setLoading(false));
+  }, [loading, payload, round.sessionId, round.wire.payloadRef?.id]);
+
+  return (
+    <details
+      className="agent-debug-disclosure"
+      onToggle={(event) => {
+        if (event.currentTarget.open) loadPayload();
+      }}
+    >
+      <summary>
+        <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.menu} />
+        <span>Raw Provider Payload · {formatBytes(round.wire.bytes)}</span>
+        {payload ? (
+          <IconButton
+            className="agent-debug-copy-button"
+            icon={CopyIcon}
+            iconSize={ICON_SIZE.tiny}
+            label="Copy Raw Provider Payload"
+            onClick={(event) => {
+              event.preventDefault();
+              void copyText(payload);
+            }}
+            variant="panel"
+          />
+        ) : null}
+      </summary>
+      <div className="agent-debug-disclosure-body">
+        {payload ? (
+          <pre>{payload}</pre>
+        ) : error ? (
+          <div className="agent-debug-error">{error}</div>
+        ) : loading ? (
+          <div className="agent-debug-empty-line">Loading payload...</div>
+        ) : round.wire.payloadRef ? (
+          <div className="agent-debug-empty-line">Open this section to load the stored payload.</div>
+        ) : (
+          <div className="agent-debug-empty-line">Raw payload is unavailable.</div>
+        )}
+      </div>
+    </details>
   );
 }
 

@@ -1,20 +1,26 @@
 import { useSyncExternalStore } from 'react';
 import { api } from '../api/client';
 import type {
-  AgentConversationSnapshotEntry,
   AgentConversationMessage,
   AgentMessageAttachmentInput,
   AgentMessageBranchState,
-  AgentMessage,
   AgentRuntimeEvent,
-  AgentSnapshotState,
+  AgentToolResultWithPayloads,
   AssistantMessage,
+  ImageContent,
   TextContent,
+  ThinkingContent,
+  ToolCall,
   ToolResultMessage,
   Usage,
   UserMessage,
 } from '../../core/agentTypes';
 import type { AgentSession } from '../../core/types';
+import type {
+  AgentRenderMessageEntity,
+  AgentRenderProjection,
+} from '../../core/agentRenderProjection';
+import type { AgentPersistedContent } from '../../core/agentEventLog';
 
 export interface AgentMessageEntry {
   id: string;
@@ -29,17 +35,19 @@ export type AgentConversationEntry = AgentMessageEntry;
 
 export type AgentTurnPhase = 'idle' | 'streaming_text' | 'waiting_for_tool' | 'resuming_after_tool';
 
-const EMPTY_SNAPSHOT: AgentSnapshotState = {
+const EMPTY_PROJECTION: AgentRenderProjection = {
+  sessionId: '',
+  revision: 0,
   sessionTitle: null,
-  systemPrompt: '',
+  activeRunId: null,
+  isStreaming: false,
   model: {},
   thinkingLevel: 'off',
-  messages: [],
-  conversation: [],
-  streamingMessage: null,
-  isStreaming: false,
   pendingToolCallIds: [],
   errorMessage: null,
+  rows: [],
+  entities: { messages: {} },
+  streaming: null,
 };
 
 const EMPTY_USAGE: Usage = {
@@ -57,98 +65,54 @@ const EMPTY_USAGE: Usage = {
   },
 };
 
-function isConversationMessage(message: AgentMessage | null | undefined): message is AgentConversationMessage {
-  return message?.role === 'user' || message?.role === 'assistant';
-}
-
-function isToolResultMessage(message: AgentMessage | null | undefined): message is ToolResultMessage {
-  return message?.role === 'toolResult';
-}
-
-function messageId(message: AgentConversationMessage, index: number, streaming: boolean): string {
-  return `${streaming ? 'streaming' : 'message'}-${message.role}-${message.timestamp}-${index}`;
-}
-
-function sameConversationMessage(
-  left: AgentConversationMessage | undefined,
-  right: AgentConversationMessage | undefined,
-): boolean {
-  return !!left && !!right && left.role === right.role && left.timestamp === right.timestamp;
-}
-
 function assistantHasText(message: AssistantMessage | undefined): boolean {
   return message?.content.some((block) => block.type === 'text' && block.text.trim().length > 0) ?? false;
 }
 
 function assistantHasPendingToolCalls(
   message: AssistantMessage | undefined,
-  toolResults: Map<string, ToolResultMessage>,
+  toolResults: Map<string, AgentToolResultWithPayloads>,
 ): boolean {
   if (!message) return false;
   return message.content.some((block) => block.type === 'toolCall' && !toolResults.has(block.id));
 }
 
-function buildToolResultMap(messages: AgentMessage[]): Map<string, ToolResultMessage> {
-  const results = new Map<string, ToolResultMessage>();
-  for (const message of messages) {
-    if (isToolResultMessage(message)) {
+function buildToolResultMap(projection: AgentRenderProjection): Map<string, AgentToolResultWithPayloads> {
+  const results = new Map<string, AgentToolResultWithPayloads>();
+  for (const entity of Object.values(projection.entities.messages)) {
+    if (entity.role === 'toolResult') {
+      const message = toolResultFromEntity(entity);
       results.set(message.toolCallId, message);
     }
   }
   return results;
 }
 
-function buildEntries(snapshot: AgentSnapshotState, toolResults: Map<string, ToolResultMessage>): {
+function buildEntries(projection: AgentRenderProjection, toolResults: Map<string, AgentToolResultWithPayloads>): {
   entries: AgentConversationEntry[];
   turnPhase: AgentTurnPhase;
 } {
-  const conversation = snapshot.conversation.length > 0
-    ? snapshot.conversation
-    : snapshot.messages
-      .filter(isConversationMessage)
-      .map((message): AgentConversationSnapshotEntry => ({
-        nodeId: '',
-        message,
-        branches: null,
-      }));
-  const entries: AgentConversationEntry[] = conversation
-    .map((entry, index) => ({
-      id: entry.nodeId || messageId(entry.message, index, false),
+  const entries: AgentConversationEntry[] = [];
+  for (const row of projection.rows) {
+    const entity = projection.entities.messages[row.messageId];
+    if (!entity || (entity.role !== 'user' && entity.role !== 'assistant')) continue;
+    const streaming = projection.streaming?.messageId === entity.id;
+    const message = conversationMessageFromEntity(entity);
+    entries.push({
+      id: streaming && entity.role === 'assistant' ? activeAssistantEntryId(entries, projection) : row.id,
       kind: 'message',
-      nodeId: entry.nodeId || null,
-      message: entry.message,
-      branches: entry.branches,
-      streaming: false,
-    }));
-  const streamingMessage = isConversationMessage(snapshot.streamingMessage)
-    ? snapshot.streamingMessage
-    : null;
-  const activeAssistantId = activeAssistantEntryId(entries, snapshot);
-
-  if (streamingMessage) {
-    const lastEntry = entries[entries.length - 1];
-    const lastMessage = lastEntry?.message;
-    if (streamingMessage.role === 'assistant' && sameConversationMessage(lastMessage, streamingMessage) && lastEntry) {
-      lastEntry.id = activeAssistantId;
-      lastEntry.streaming = true;
-    } else {
-      entries.push({
-        id: streamingMessage.role === 'assistant'
-          ? activeAssistantId
-          : messageId(streamingMessage, entries.length, true),
-        kind: 'message',
-        nodeId: null,
-        message: streamingMessage,
-        branches: null,
-        streaming: true,
-      });
-    }
+      nodeId: entity.id,
+      message,
+      branches: entity.branches,
+      streaming,
+    });
   }
 
   let turnPhase: AgentTurnPhase = 'idle';
-  if (snapshot.isStreaming) {
-    if (streamingMessage?.role === 'assistant') {
-      turnPhase = assistantHasText(streamingMessage) ? 'streaming_text' : 'resuming_after_tool';
+  const streamingEntry = entries.find((entry) => entry.streaming && entry.message.role === 'assistant') as AgentMessageEntry | undefined;
+  if (projection.isStreaming) {
+    if (streamingEntry?.message.role === 'assistant') {
+      turnPhase = assistantHasText(streamingEntry.message) ? 'streaming_text' : 'resuming_after_tool';
     } else {
       const latestAssistant = [...entries]
         .reverse()
@@ -160,7 +124,7 @@ function buildEntries(snapshot: AgentSnapshotState, toolResults: Map<string, Too
   }
 
   const lastEntry = entries[entries.length - 1];
-  const shouldAppendAssistantPlaceholder = snapshot.isStreaming
+  const shouldAppendAssistantPlaceholder = projection.isStreaming
     && (
       !lastEntry
       || lastEntry.message.role !== 'assistant'
@@ -168,10 +132,10 @@ function buildEntries(snapshot: AgentSnapshotState, toolResults: Map<string, Too
 
   if (shouldAppendAssistantPlaceholder) {
     entries.push({
-      id: activeAssistantId,
+      id: activeAssistantEntryId(entries, projection),
       kind: 'message',
       nodeId: null,
-      message: createActiveAssistantPlaceholder(snapshot, entries),
+      message: createActiveAssistantPlaceholder(projection, entries),
       branches: null,
       streaming: true,
     });
@@ -180,35 +144,36 @@ function buildEntries(snapshot: AgentSnapshotState, toolResults: Map<string, Too
   return { entries, turnPhase };
 }
 
-function activeAssistantEntryId(entries: AgentMessageEntry[], snapshot: AgentSnapshotState): string {
-  return `active-assistant-${activeAssistantAnchorTimestamp(entries, snapshot)}`;
+function activeAssistantEntryId(entries: AgentMessageEntry[], projection: AgentRenderProjection): string {
+  return `active-assistant-${activeAssistantAnchorTimestamp(entries, projection)}`;
 }
 
-function activeAssistantAnchorTimestamp(entries: AgentMessageEntry[], snapshot: AgentSnapshotState): number {
+function activeAssistantAnchorTimestamp(entries: AgentMessageEntry[], projection: AgentRenderProjection): number {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index]!;
     if (entry.message.role === 'user') return entry.message.timestamp;
   }
-  for (let index = snapshot.messages.length - 1; index >= 0; index -= 1) {
-    const message = snapshot.messages[index]!;
-    if (message.role === 'user') return message.timestamp;
-  }
+  const lastUser = [...projection.rows]
+    .reverse()
+    .map((row) => projection.entities.messages[row.messageId])
+    .find((entity) => entity?.role === 'user');
+  if (lastUser) return lastUser.createdAt;
   return 0;
 }
 
 function createActiveAssistantPlaceholder(
-  snapshot: AgentSnapshotState,
+  projection: AgentRenderProjection,
   entries: AgentMessageEntry[],
 ): AssistantMessage {
   return {
     role: 'assistant',
     content: [],
-    api: snapshotModelValue(snapshot, 'api') ?? '',
-    provider: snapshotModelValue(snapshot, 'provider') ?? '',
-    model: snapshotModelValue(snapshot, 'id') ?? '',
+    api: projectionModelValue(projection, 'api') ?? '',
+    provider: projectionModelValue(projection, 'provider') ?? '',
+    model: projectionModelValue(projection, 'id') ?? '',
     usage: EMPTY_USAGE,
     stopReason: 'stop',
-    timestamp: activeAssistantAnchorTimestamp(entries, snapshot),
+    timestamp: activeAssistantAnchorTimestamp(entries, projection),
   };
 }
 
@@ -216,16 +181,109 @@ function textContent(text: string): TextContent[] {
   return [{ type: 'text', text }];
 }
 
-function snapshotModelValue(snapshot: AgentSnapshotState, key: string): string | null {
-  const value = snapshot.model[key];
+function projectionModelValue(projection: AgentRenderProjection, key: string): string | null {
+  const value = projection.model[key];
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-function sessionCost(snapshot: AgentSnapshotState): number {
-  return snapshot.messages.reduce((total, message) => {
+function sessionCost(projection: AgentRenderProjection): number {
+  return Object.values(projection.entities.messages).reduce((total, message) => {
     if (message.role !== 'assistant') return total;
     return total + (message.usage?.cost?.total ?? 0);
   }, 0);
+}
+
+function conversationMessageFromEntity(entity: AgentRenderMessageEntity): AgentConversationMessage {
+  if (entity.role === 'user') {
+    return {
+      role: 'user',
+      content: toUserContent(entity.content),
+      timestamp: entity.createdAt,
+    };
+  }
+  return {
+    role: 'assistant',
+    content: toAssistantContent(entity.content),
+    api: entity.apiId ?? '',
+    provider: entity.providerId ?? '',
+    model: entity.modelId ?? '',
+    usage: entity.usage ?? EMPTY_USAGE,
+    stopReason: normalizeStopReason(entity.stopReason),
+    errorMessage: entity.errorMessage,
+    timestamp: entity.createdAt,
+  } as AssistantMessage;
+}
+
+function toolResultFromEntity(entity: AgentRenderMessageEntity): AgentToolResultWithPayloads {
+  return {
+    role: 'toolResult',
+    toolCallId: entity.toolCallId ?? entity.id,
+    toolName: entity.toolName ?? 'unknown',
+    content: toToolResultContent(entity.content),
+    payloadRefs: payloadRefsFromContent(entity.content),
+    isError: !!entity.isError,
+    timestamp: entity.createdAt,
+  };
+}
+
+function toUserContent(content: AgentPersistedContent[]): UserMessage['content'] {
+  const parts = toVisibleContent(content);
+  return parts.length > 0 ? parts : textContent('');
+}
+
+function toToolResultContent(content: AgentPersistedContent[]): ToolResultMessage['content'] {
+  return toVisibleContent(content);
+}
+
+function toAssistantContent(content: AgentPersistedContent[]): AssistantMessage['content'] {
+  return content.flatMap((part): Array<TextContent | ThinkingContent | ToolCall> => {
+    if (part.type === 'text') return [{ type: 'text', text: part.text }];
+    if (part.type === 'thinking') return [{ type: 'thinking', thinking: part.thinking, redacted: part.redacted }];
+    if (part.type === 'toolCall') {
+      return [{
+        type: 'toolCall',
+        id: part.id,
+        name: part.name,
+        arguments: part.arguments,
+      }];
+    }
+    return [{ type: 'text', text: persistedContentSummary(part) }];
+  });
+}
+
+function toVisibleContent(content: AgentPersistedContent[]): Array<TextContent | ImageContent> {
+  const parts = content.map((part): TextContent | ImageContent => {
+    if (part.type === 'text') return { type: 'text', text: part.text };
+    return { type: 'text', text: persistedContentSummary(part) };
+  });
+  return parts.length > 0 ? parts : textContent('');
+}
+
+function persistedContentSummary(content: AgentPersistedContent): string {
+  if (content.type === 'text') return content.text;
+  if (content.type === 'thinking') return content.thinking;
+  if (content.type === 'toolCall') return `[tool:${content.name}]`;
+  if (content.type === 'image') return content.alt || content.imageRef.summary || `[image:${content.imageRef.id}]`;
+  return content.label || content.payload.summary || `[payload:${content.payload.id}]`;
+}
+
+function payloadRefsFromContent(content: AgentPersistedContent[]): AgentToolResultWithPayloads['payloadRefs'] {
+  const refs = content.flatMap((part, index) => {
+    if (part.type !== 'payload_ref') return [];
+    return [{
+      contentIndex: index,
+      payload: part.payload,
+      label: part.label,
+    }];
+  });
+  return refs.length > 0 ? refs : undefined;
+}
+
+function normalizeStopReason(value: string | undefined): AssistantMessage['stopReason'] {
+  if (value === 'stop' || value === 'length' || value === 'toolUse' || value === 'error' || value === 'aborted') {
+    return value;
+  }
+  return 'stop';
 }
 
 export interface AgentRuntimeClient {
@@ -256,7 +314,7 @@ export interface LinAgentRuntimeView {
   sessionId: string | null;
   sessionTitle: string | null;
   sessionCost: number;
-  toolResults: Map<string, ToolResultMessage>;
+  toolResults: Map<string, AgentToolResultWithPayloads>;
   turnPhase: AgentTurnPhase;
   selectSession: (targetSessionId: string) => Promise<void>;
   newSession: () => Promise<void>;
@@ -291,7 +349,7 @@ const defaultAgentRuntimeClient: AgentRuntimeClient = {
 
 export class AgentRuntimeStore {
   private readonly listeners = new Set<() => void>();
-  private snapshot: AgentSnapshotState = EMPTY_SNAPSHOT;
+  private projection: AgentRenderProjection = EMPTY_PROJECTION;
   private sessionId: string | null = null;
   private error: string | null = null;
   private restorePromise: Promise<string> | null = null;
@@ -318,7 +376,7 @@ export class AgentRuntimeStore {
     const previousSessionId = this.sessionId;
     const requestVersion = this.beginSessionRequest();
     this.sessionId = targetSessionId;
-    this.snapshot = EMPTY_SNAPSHOT;
+    this.projection = EMPTY_PROJECTION;
     this.error = null;
     this.publish();
     try {
@@ -336,7 +394,7 @@ export class AgentRuntimeStore {
     const previousSessionId = this.sessionId;
     const requestVersion = this.beginSessionRequest();
     this.sessionId = null;
-    this.snapshot = EMPTY_SNAPSHOT;
+    this.projection = EMPTY_PROJECTION;
     this.error = null;
     this.publish();
     try {
@@ -440,7 +498,7 @@ export class AgentRuntimeStore {
   reloadSession = async () => {
     const currentSessionId = this.sessionId;
     const requestVersion = this.beginSessionRequest();
-    this.snapshot = EMPTY_SNAPSHOT;
+    this.projection = EMPTY_PROJECTION;
     this.error = null;
     this.publish();
     try {
@@ -495,10 +553,8 @@ export class AgentRuntimeStore {
 
   private hydrateSession(session: AgentSession) {
     this.sessionId = session.sessionId;
-    if (session.state) {
-      this.snapshot = session.state;
-      this.error = session.state.errorMessage;
-    }
+    this.projection = session.renderProjection;
+    this.error = session.renderProjection.errorMessage;
     this.publish();
   }
 
@@ -510,7 +566,7 @@ export class AgentRuntimeStore {
         this.beginSessionRequest();
         this.sessionId = null;
         this.restorePromise = null;
-        this.snapshot = EMPTY_SNAPSHOT;
+        this.projection = EMPTY_PROJECTION;
         this.error = null;
         this.publish();
       }
@@ -525,13 +581,13 @@ export class AgentRuntimeStore {
       return;
     }
 
-    if (payload.type === 'snapshot') {
+    if (payload.type === 'projection') {
       if (!this.sessionId) {
         this.sessionId = payload.sessionId;
       }
       if (payload.sessionId !== this.sessionId) return;
-      this.snapshot = payload.state;
-      this.error = payload.state.errorMessage;
+      this.projection = payload.renderProjection;
+      this.error = payload.renderProjection.errorMessage;
       this.publish();
     }
   };
@@ -564,20 +620,20 @@ export class AgentRuntimeStore {
   }
 
   private buildView(): LinAgentRuntimeView {
-    const toolResults = buildToolResultMap(this.snapshot.messages);
-    const { entries, turnPhase } = buildEntries(this.snapshot, toolResults);
+    const toolResults = buildToolResultMap(this.projection);
+    const { entries, turnPhase } = buildEntries(this.projection, toolResults);
     return {
       entries,
       error: this.error,
-      isStreaming: this.snapshot.isStreaming,
-      modelId: snapshotModelValue(this.snapshot, 'id'),
-      providerId: snapshotModelValue(this.snapshot, 'provider'),
-      pendingToolCallIds: new Set(this.snapshot.pendingToolCallIds),
-      reasoningLevel: this.snapshot.thinkingLevel,
-      revision: `${this.sessionId ?? 'pending'}-${this.snapshot.messages.length}-${this.snapshot.pendingToolCallIds.join(',')}`,
+      isStreaming: this.projection.isStreaming,
+      modelId: projectionModelValue(this.projection, 'id'),
+      providerId: projectionModelValue(this.projection, 'provider'),
+      pendingToolCallIds: new Set(this.projection.pendingToolCallIds),
+      reasoningLevel: this.projection.thinkingLevel,
+      revision: `${this.sessionId ?? 'pending'}-${this.projection.revision}-${this.projection.rows.length}-${this.projection.pendingToolCallIds.join(',')}`,
       sessionId: this.sessionId,
-      sessionTitle: this.snapshot.sessionTitle,
-      sessionCost: sessionCost(this.snapshot),
+      sessionTitle: this.projection.sessionTitle,
+      sessionCost: sessionCost(this.projection),
       toolResults,
       turnPhase,
       selectSession: this.selectSession,

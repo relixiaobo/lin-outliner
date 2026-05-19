@@ -1,5 +1,5 @@
 import { expect, test, type Locator } from '@playwright/test';
-import { emitAgentEvent, openMockedApp } from './outlinerMock';
+import { clipboardText, emitAgentProjection, openMockedApp } from './outlinerMock';
 
 const usage = {
   input: 0,
@@ -89,21 +89,17 @@ test.describe('agent process disclosure', () => {
       content: [{ type: 'text', text: '你好，我在。' }],
     };
 
-    await emitAgentEvent(page, {
-      type: 'snapshot',
-      sessionId: 'mock-agent-session',
-      state: {
-        sessionTitle: 'Agent System',
-        systemPrompt: '',
-        model: { id: 'gpt-5.4', provider: 'openai' },
-        thinkingLevel: 'medium',
-        messages: [user],
-        conversation: [{ nodeId: 'user-node', message: user, branches: null }],
-        streamingMessage: null,
-        isStreaming: true,
-        pendingToolCallIds: [],
-        errorMessage: null,
-      },
+    await emitAgentProjection(page, 'mock-agent-session', {
+      sessionTitle: 'Agent System',
+      systemPrompt: '',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      thinkingLevel: 'medium',
+      messages: [user],
+      conversation: [{ nodeId: 'user-node', message: user, branches: null }],
+      streamingMessage: null,
+      isStreaming: true,
+      pendingToolCallIds: [],
+      errorMessage: null,
     });
 
     const assistantRows = page.locator('.agent-message-row.assistant');
@@ -114,21 +110,17 @@ test.describe('agent process disclosure', () => {
     const before = await indicator.boundingBox();
     expect(before).toBeTruthy();
 
-    await emitAgentEvent(page, {
-      type: 'snapshot',
-      sessionId: 'mock-agent-session',
-      state: {
-        sessionTitle: 'Agent System',
-        systemPrompt: '',
-        model: { id: 'gpt-5.4', provider: 'openai' },
-        thinkingLevel: 'medium',
-        messages: [user],
-        conversation: [{ nodeId: 'user-node', message: user, branches: null }],
-        streamingMessage: assistant,
-        isStreaming: true,
-        pendingToolCallIds: [],
-        errorMessage: null,
-      },
+    await emitAgentProjection(page, 'mock-agent-session', {
+      sessionTitle: 'Agent System',
+      systemPrompt: '',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      thinkingLevel: 'medium',
+      messages: [user],
+      conversation: [{ nodeId: 'user-node', message: user, branches: null }],
+      streamingMessage: assistant,
+      isStreaming: true,
+      pendingToolCallIds: [],
+      errorMessage: null,
     });
 
     await expect(assistantRows).toHaveCount(1);
@@ -149,25 +141,21 @@ test.describe('agent process disclosure', () => {
       timestamp: 1_800_000_000_300,
     };
 
-    await emitAgentEvent(page, {
-      type: 'snapshot',
-      sessionId: 'mock-agent-session',
-      state: {
-        sessionTitle: 'Agent System',
-        systemPrompt: '',
-        model: { id: 'gpt-5.4', provider: 'openai' },
-        thinkingLevel: 'medium',
-        messages: [user],
-        conversation: [{
-          nodeId: 'user-node',
-          message: user,
-          branches: { ids: ['branch-1', 'branch-2'], currentIndex: 1 },
-        }],
-        streamingMessage: null,
-        isStreaming: false,
-        pendingToolCallIds: [],
-        errorMessage: null,
-      },
+    await emitAgentProjection(page, 'mock-agent-session', {
+      sessionTitle: 'Agent System',
+      systemPrompt: '',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      thinkingLevel: 'medium',
+      messages: [user],
+      conversation: [{
+        nodeId: 'user-node',
+        message: user,
+        branches: { ids: ['branch-1', 'branch-2'], currentIndex: 1 },
+      }],
+      streamingMessage: null,
+      isStreaming: false,
+      pendingToolCallIds: [],
+      errorMessage: null,
     });
 
     const row = page.locator('.agent-message-row.user').last();
@@ -220,43 +208,39 @@ test.describe('agent process disclosure', () => {
       ],
     };
 
-    await emitAgentEvent(page, {
-      type: 'snapshot',
-      sessionId: 'mock-agent-session',
-      state: {
-        sessionTitle: 'Agent System',
-        systemPrompt: '',
-        model: { id: 'gpt-5.4', provider: 'openai' },
-        thinkingLevel: 'medium',
-        messages: [
-          assistant,
-          {
-            role: 'toolResult',
-            toolCallId: 'tool-read',
-            toolName: 'node_read',
-            content: [{ type: 'text', text: 'Alpha node content' }],
-            isError: false,
-            timestamp: 1_800_000_000_101,
-          },
-          {
-            role: 'toolResult',
-            toolCallId: 'tool-search',
-            toolName: 'node_search',
-            content: [{ type: 'text', text: '3 matches: Agent System, Tag Layout Pattern, Component Contracts' }],
-            isError: false,
-            timestamp: 1_800_000_000_102,
-          },
-        ],
-        conversation: [{
-          nodeId: 'assistant-node',
-          message: assistant,
-          branches: null,
-        }],
-        streamingMessage: null,
-        isStreaming: false,
-        pendingToolCallIds: [],
-        errorMessage: null,
-      },
+    await emitAgentProjection(page, 'mock-agent-session', {
+      sessionTitle: 'Agent System',
+      systemPrompt: '',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      thinkingLevel: 'medium',
+      messages: [
+        assistant,
+        {
+          role: 'toolResult',
+          toolCallId: 'tool-read',
+          toolName: 'node_read',
+          content: [{ type: 'text', text: 'Alpha node content' }],
+          isError: false,
+          timestamp: 1_800_000_000_101,
+        },
+        {
+          role: 'toolResult',
+          toolCallId: 'tool-search',
+          toolName: 'node_search',
+          content: [{ type: 'text', text: '3 matches: Agent System, Tag Layout Pattern, Component Contracts' }],
+          isError: false,
+          timestamp: 1_800_000_000_102,
+        },
+      ],
+      conversation: [{
+        nodeId: 'assistant-node',
+        message: assistant,
+        branches: null,
+      }],
+      streamingMessage: null,
+      isStreaming: false,
+      pendingToolCallIds: [],
+      errorMessage: null,
     });
 
     const process = page.locator('.agent-process-block').first();
@@ -288,5 +272,129 @@ test.describe('agent process disclosure', () => {
     await expect(page.locator('.agent-tool-call-section-title').filter({ hasText: 'Output' })).toBeVisible();
     await expect(page.getByText('"query": "design system"')).toBeVisible();
     await expect(page.getByText('3 matches: Agent System')).toBeVisible();
+  });
+
+  test('virtualizes long transcripts and keeps scroll navigation working', async ({ page }) => {
+    const conversation = Array.from({ length: 120 }, (_, index) => {
+      const isUser = index % 2 === 0;
+      const message = isUser
+        ? {
+            role: 'user',
+            content: [{ type: 'text', text: `User message ${index}` }],
+            timestamp: 1_800_000_001_000 + index,
+          }
+        : {
+            role: 'assistant',
+            api: 'responses',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            usage,
+            stopReason: 'stop',
+            timestamp: 1_800_000_001_000 + index,
+            content: [{ type: 'text', text: `Assistant response ${index}` }],
+          };
+      return {
+        nodeId: `message-${index}`,
+        message,
+        branches: null,
+      };
+    });
+
+    await emitAgentProjection(page, 'mock-agent-session', {
+      sessionTitle: 'Long Agent Session',
+      systemPrompt: '',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      thinkingLevel: 'medium',
+      messages: [],
+      conversation,
+      streamingMessage: null,
+      isStreaming: false,
+      pendingToolCallIds: [],
+      errorMessage: null,
+    });
+
+    await expect(page.locator('.agent-chat-transcript')).toHaveAttribute('data-virtualized', 'true');
+    await expect(page.getByText('Assistant response 119')).toBeVisible();
+    await expect.poll(() => page.locator('.agent-message-row').count()).toBeLessThan(80);
+
+    await page.locator('.agent-chat-scroll').evaluate((element) => {
+      element.scrollTop = 0;
+      element.dispatchEvent(new Event('scroll', { bubbles: true }));
+    });
+
+    await expect(page.getByText('User message 0')).toBeVisible();
+    await expect.poll(() => page.locator('.agent-message-row').count()).toBeLessThan(80);
+  });
+
+  test('copies full persisted tool output from payload refs', async ({ page }) => {
+    const assistant = {
+      role: 'assistant',
+      api: 'responses',
+      provider: 'openai',
+      model: 'gpt-5.4',
+      usage,
+      stopReason: 'stop',
+      timestamp: 1_800_000_002_000,
+      content: [
+        {
+          type: 'toolCall',
+          id: 'tool-read-large',
+          name: 'file_read',
+          arguments: { path: 'large.log' },
+        },
+        {
+          type: 'text',
+          text: 'I read the large log file.',
+        },
+      ],
+    };
+
+    await emitAgentProjection(page, 'mock-agent-session', {
+      sessionTitle: 'Agent System',
+      systemPrompt: '',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      thinkingLevel: 'medium',
+      messages: [
+        assistant,
+        {
+          role: 'toolResult',
+          toolCallId: 'tool-read-large',
+          toolName: 'file_read',
+          content: [{
+            type: 'payload_ref',
+            payload: {
+              kind: 'payload_ref',
+              id: 'payload-full-output',
+              storage: 'file',
+              mimeType: 'text/plain',
+              byteLength: 38,
+              sha256: 'payload-sha',
+              role: 'tool_output',
+              summary: 'large.log output',
+              truncated: true,
+            },
+            label: '<persisted-output>\nPreview only\n</persisted-output>',
+          }],
+          isError: false,
+          timestamp: 1_800_000_002_001,
+        },
+      ],
+      conversation: [{
+        nodeId: 'assistant-node-large-copy',
+        message: assistant,
+        branches: null,
+      }],
+      streamingMessage: null,
+      isStreaming: false,
+      pendingToolCallIds: [],
+      errorMessage: null,
+    });
+
+    const row = page.locator('.agent-message-row.assistant').last();
+    await row.hover();
+    await row.getByLabel('Copy message').click();
+
+    await expect.poll(() => clipboardText(page)).toContain('Full persisted tool output from payload');
+    expect(await clipboardText(page)).not.toContain('Preview only');
   });
 });

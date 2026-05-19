@@ -4,7 +4,8 @@ This document describes the rendering strategy for the future agent panel.
 It is an implementation reference, not a commitment that the first agent
 release must ship every optimization listed here.
 
-For the proposed pi-mono runtime architecture, see
+For the canonical event-sourced agent runtime and render projection plan, see
+`docs/spec/agent-event-log-rendering.md`. For the pi-mono runtime boundary, see
 `docs/spec/agent-pi-mono-implementation.md`.
 
 For the event log, debug data, and render projection architecture, see

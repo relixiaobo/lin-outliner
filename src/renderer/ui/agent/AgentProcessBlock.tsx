@@ -1,4 +1,4 @@
-import type { ToolCall, ToolResultMessage } from '../../../core/agentTypes';
+import type { AgentToolResultWithPayloads, ToolCall } from '../../../core/agentTypes';
 import {
   BrainIcon,
   LoaderIcon,
@@ -19,8 +19,9 @@ interface AgentProcessBlockProps {
   expandState: AgentExpandState;
   id: string;
   pendingToolCallIds: ReadonlySet<string>;
-  results: Map<string, ToolResultMessage>;
+  results: Map<string, AgentToolResultWithPayloads>;
   sealed: boolean;
+  sessionId?: string | null;
   turnActive: boolean;
   turnFailedWithoutProse: boolean;
 }
@@ -38,7 +39,7 @@ export function summarizeProcess({
   firstThinkingText: string | null;
   thinkingCount: number;
   pendingToolCallIds: ReadonlySet<string>;
-  results: Map<string, ToolResultMessage>;
+  results: Map<string, AgentToolResultWithPayloads>;
   toolCalls: ToolCall[];
   sealed: boolean;
   turnActive: boolean;
@@ -86,6 +87,7 @@ export function AgentProcessBlock({
   pendingToolCallIds,
   results,
   sealed,
+  sessionId,
   turnActive,
   turnFailedWithoutProse,
 }: AgentProcessBlockProps) {
@@ -140,6 +142,7 @@ export function AgentProcessBlock({
           id={id}
           pendingToolCallIds={pendingToolCallIds}
           results={results}
+          sessionId={sessionId}
           turnActive={turnActive}
         />
       ) : null}

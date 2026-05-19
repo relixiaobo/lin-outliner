@@ -98,6 +98,10 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
       return agentRuntime.debugHistory(String(args.sessionId));
     case 'agent_debug_totals':
       return agentRuntime.debugTotals(String(args.sessionId));
+    case 'agent_debug_payload':
+      return agentRuntime.debugPayload(String(args.sessionId), String(args.payloadId));
+    case 'agent_payload_text':
+      return agentRuntime.payloadText(String(args.sessionId), String(args.payloadId));
     case 'agent_send_message':
       return agentRuntime.sendMessage(String(args.sessionId), String(args.message ?? ''), args.attachments);
     case 'agent_edit_message':

@@ -336,12 +336,17 @@ interface AssistantMessageCompletedEvent extends AgentEventBase {
   type: 'assistant_message.completed';
   messageId: string;
   stopReason: string;
+  content: AgentPersistedContent[];
   usage?: AgentUsage;
 }
 ```
 
 Use pi-ai content block shapes at the bridge boundary, but do not make pi-ai's
 runtime message array the persisted source of truth.
+
+`assistant_message.delta` is the streaming transport. For completed turns,
+`assistant_message.completed.content` is the final canonical content for replay,
+search, debug projection, and pi-mono rehydration.
 
 ## Branching
 
@@ -609,7 +614,8 @@ It may cache:
 - user message summaries
 - tags later if needed
 
-If it is corrupt or missing, rebuild it from event logs.
+If session/search/user-message indexes are corrupt or missing, discard them and
+rebuild them from event logs.
 
 ## Streaming Strategy
 
@@ -650,7 +656,10 @@ Flush policy:
 - render projection: `requestAnimationFrame` or 16ms throttle
 - event write: immediate for user messages and terminal events
 - stream delta event writes: batched by segment
-- debug payload writes: slower batch, such as 250ms or size threshold
+- provider debug payload writes: awaited before the provider stream starts, so
+  debug snapshots and assistant completions keep stable event order
+- later non-critical debug payload writes may use a slower batch, such as 250ms
+  or size threshold
 - terminal events always flush
 
 ## Checkpoints
@@ -667,13 +676,10 @@ Create checkpoints:
 Checkpoint content:
 
 - latest included `seq`
+- latest included event id
 - latest included event file byte offset
-- active branch projection
-- compact render seed
-- pi-mono message seed
-- session index summary
-- tool result summaries
-- compaction state
+- replay state needed to rebuild active branch, render/debug projections, and
+  pi-mono messages
 
 Restore:
 
@@ -685,6 +691,9 @@ load latest checkpoint
 ```
 
 If checkpoint load fails, replay `events.jsonl` from the beginning.
+Checkpoint writes only commit when the supplied replay state matches the current
+event-log tail `seq` and event id; stale replay state must not write a byte
+offset checkpoint.
 
 ## Large Session Performance
 
@@ -703,10 +712,10 @@ Open-session policy:
 - The session list reads `session-index.json`, not every session log.
 - Opening a session loads the latest checkpoint, then replays only events after
   the checkpoint byte offset.
-- If no usable checkpoint exists, full replay runs as a recoverable background
-  rebuild and reports progress.
-- The active transcript starts from a compact render seed, then fills older
-  ranges lazily if the user scrolls upward.
+- If no usable checkpoint exists, replay falls back to the full event log; a
+  background progress UI can be added later if very large cold sessions need it.
+- The active transcript starts from the render projection and uses row
+  virtualization for long sessions.
 
 Render policy:
 

@@ -438,7 +438,7 @@
 .field-value-node-preview {
   display: block;
   width: 100%;
-  min-width: 0;
+  min-width: 24px;
   min-height: 24px;
   border-radius: var(--radius-control-xs);
   color: var(--text);
@@ -593,7 +593,7 @@
 }
 
 .typed-field-input:focus {
-  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--text) 24%, transparent);
+  box-shadow: var(--underline-focus-shadow);
 }
 
 .typed-field-color-swatch {

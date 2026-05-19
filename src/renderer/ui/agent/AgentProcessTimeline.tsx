@@ -1,4 +1,4 @@
-import type { ToolResultMessage } from '../../../core/agentTypes';
+import type { AgentToolResultWithPayloads } from '../../../core/agentTypes';
 import { AgentThinkingBody, AgentThinkingRow } from './AgentThinkingBlock';
 import { AgentToolCallBlock } from './AgentToolCallBlock';
 import type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
@@ -8,7 +8,8 @@ interface AgentProcessTimelineProps {
   expandState: AgentExpandState;
   id: string;
   pendingToolCallIds: ReadonlySet<string>;
-  results: Map<string, ToolResultMessage>;
+  results: Map<string, AgentToolResultWithPayloads>;
+  sessionId?: string | null;
   turnActive: boolean;
 }
 
@@ -18,6 +19,7 @@ export function AgentProcessTimeline({
   id,
   pendingToolCallIds,
   results,
+  sessionId,
   turnActive,
 }: AgentProcessTimelineProps) {
   const thinkingBlocks = blocks.filter(
@@ -55,6 +57,7 @@ export function AgentProcessTimeline({
               }}
               pendingToolCallIds={pendingToolCallIds}
               result={results.get(block.toolCall.id)}
+              sessionId={sessionId}
               toolCall={block.toolCall}
               turnActive={turnActive}
             />

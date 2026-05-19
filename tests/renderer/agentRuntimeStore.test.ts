@@ -4,13 +4,13 @@ import {
   type AgentRuntimeClient,
 } from '../../src/renderer/agent/runtime';
 import type {
-  AgentConversationSnapshotEntry,
   AgentRuntimeEvent,
-  AgentSnapshotState,
   AssistantMessage,
   UserMessage,
 } from '../../src/core/agentTypes';
 import type { AgentSession } from '../../src/core/types';
+import type { AgentRenderProjection } from '../../src/core/agentRenderProjection';
+import type { AgentPayloadRef, AgentPersistedContent } from '../../src/core/agentEventLog';
 
 const EMPTY_USAGE = {
   input: 0,
@@ -48,23 +48,79 @@ function assistantMessage(text: string, timestamp = 2): AssistantMessage {
   };
 }
 
-function snapshot(entries: AgentConversationSnapshotEntry[]): AgentSnapshotState {
+interface ProjectionEntry {
+  nodeId: string;
+  message: UserMessage | AssistantMessage;
+  branches: { ids: string[]; currentIndex: number } | null;
+}
+
+function projection(
+  entries: ProjectionEntry[],
+  options: { isStreaming?: boolean; streamingMessageId?: string; revision?: number } = {},
+): AgentRenderProjection {
   return {
+    sessionId: 'saved',
+    revision: options.revision ?? 1,
     sessionTitle: 'Saved conversation',
-    systemPrompt: '',
+    activeRunId: options.isStreaming ? 'run-1' : null,
+    isStreaming: !!options.isStreaming,
     model: { id: 'test-model', provider: 'test' },
     thinkingLevel: 'off',
-    messages: entries.map((entry) => entry.message),
-    conversation: entries,
-    streamingMessage: null,
-    isStreaming: false,
     pendingToolCallIds: [],
     errorMessage: null,
+    rows: entries.map((entry) => ({
+      id: `${entry.message.role}:${entry.nodeId}`,
+      kind: 'message',
+      messageId: entry.nodeId,
+    })),
+    entities: {
+      messages: Object.fromEntries(entries.map((entry) => [entry.nodeId, {
+        id: entry.nodeId,
+        role: entry.message.role,
+        status: options.streamingMessageId === entry.nodeId ? 'streaming' : 'completed',
+        parentMessageId: null,
+        content: persistedContent(entry.message),
+        createdAt: entry.message.timestamp,
+        updatedAt: entry.message.timestamp,
+        branches: entry.branches,
+        apiId: entry.message.role === 'assistant' ? entry.message.api : undefined,
+        providerId: entry.message.role === 'assistant' ? entry.message.provider : undefined,
+        modelId: entry.message.role === 'assistant' ? entry.message.model : undefined,
+        stopReason: entry.message.role === 'assistant' ? entry.message.stopReason : undefined,
+        usage: entry.message.role === 'assistant' ? entry.message.usage : undefined,
+      }])),
+    },
+    streaming: options.streamingMessageId ? {
+      messageId: options.streamingMessageId,
+      rowId: `assistant:${options.streamingMessageId}`,
+      text: entries
+        .find((entry) => entry.nodeId === options.streamingMessageId)
+        ?.message.content
+        .filter((block) => block.type === 'text')
+        .map((block) => block.text)
+        .join('') ?? '',
+      updatedAt: Date.now(),
+    } : null,
   };
 }
 
-function session(sessionId: string, state: AgentSnapshotState): AgentSession {
-  return { sessionId, state };
+function persistedContent(message: UserMessage | AssistantMessage): AgentPersistedContent[] {
+  const content = typeof message.content === 'string'
+    ? [{ type: 'text' as const, text: message.content }]
+    : message.content.map((part): AgentPersistedContent => {
+        if (part.type === 'text') return { type: 'text', text: part.text };
+        if (part.type === 'thinking') return { type: 'thinking', thinking: part.thinking, redacted: part.redacted };
+        if (part.type === 'toolCall') return { type: 'toolCall', id: part.id, name: part.name, arguments: part.arguments };
+        return { type: 'text', text: `[image:${part.mimeType}]` };
+      });
+  return content;
+}
+
+function session(sessionId: string, renderProjection: AgentRenderProjection): AgentSession {
+  return {
+    sessionId,
+    renderProjection: { ...renderProjection, sessionId },
+  };
 }
 
 function deferred<T>() {
@@ -101,11 +157,11 @@ function createFakeClient(options: {
     },
     restoreSession: async (sessionId) => {
       calls.restoreSession.push(sessionId);
-      return session(sessionId, snapshot([]));
+      return session(sessionId, projection([]));
     },
     createSession: async () => {
       calls.createSession += 1;
-      return options.createdSession ?? session('created', snapshot([]));
+      return options.createdSession ?? session('created', projection([]));
     },
     closeSession: async (sessionId) => {
       calls.closeSession.push(sessionId);
@@ -135,7 +191,7 @@ function createFakeClient(options: {
 
 describe('agent runtime store', () => {
   test('hydrates conversation from restore command response without waiting for an event', async () => {
-    const restored = session('saved', snapshot([
+    const restored = session('saved', projection([
       { nodeId: 'u1', message: userMessage('hello'), branches: null },
       { nodeId: 'a1', message: assistantMessage('hi'), branches: null },
     ]));
@@ -155,7 +211,7 @@ describe('agent runtime store', () => {
 
   test('keeps the restored session through unsubscribe and resubscribe races', async () => {
     const restore = deferred<AgentSession>();
-    const restored = session('saved', snapshot([
+    const restored = session('saved', projection([
       { nodeId: 'u1', message: userMessage('persisted'), branches: null },
     ]));
     const fake = createFakeClient({ latestSession: restore.promise });
@@ -175,10 +231,10 @@ describe('agent runtime store', () => {
   });
 
   test('closes the previous runtime session only on explicit new session', async () => {
-    const restored = session('saved', snapshot([
+    const restored = session('saved', projection([
       { nodeId: 'u1', message: userMessage('old'), branches: null },
     ]));
-    const created = session('created', snapshot([
+    const created = session('created', projection([
       { nodeId: 'u2', message: userMessage('new'), branches: null },
     ]));
     const fake = createFakeClient({ latestSession: restored, createdSession: created });
@@ -198,7 +254,7 @@ describe('agent runtime store', () => {
 
   test('keeps a stable assistant entry while a streamed turn starts producing text', async () => {
     const user = userMessage('hello', 42);
-    const restored = session('saved', snapshot([
+    const restored = session('saved', projection([
       { nodeId: 'u1', message: user, branches: null },
     ]));
     const fake = createFakeClient({ latestSession: restored });
@@ -207,14 +263,11 @@ describe('agent runtime store', () => {
     await flushMicrotasks();
 
     fake.emit({
-      type: 'snapshot',
+      type: 'projection',
       sessionId: 'saved',
       lastEventType: null,
       revision: 1,
-      state: {
-        ...snapshot([{ nodeId: 'u1', message: user, branches: null }]),
-        isStreaming: true,
-      },
+      renderProjection: projection([{ nodeId: 'u1', message: user, branches: null }], { isStreaming: true, revision: 1 }),
       timestamp: 100,
     });
 
@@ -225,15 +278,14 @@ describe('agent runtime store', () => {
     expect(pendingAssistant?.message.content).toEqual([]);
 
     fake.emit({
-      type: 'snapshot',
+      type: 'projection',
       sessionId: 'saved',
       lastEventType: null,
       revision: 2,
-      state: {
-        ...snapshot([{ nodeId: 'u1', message: user, branches: null }]),
-        streamingMessage: assistantMessage('hi', 50),
-        isStreaming: true,
-      },
+      renderProjection: projection([
+        { nodeId: 'u1', message: user, branches: null },
+        { nodeId: 'assistant-stream', message: assistantMessage('hi', 50), branches: null },
+      ], { isStreaming: true, streamingMessageId: 'assistant-stream', revision: 2 }),
       timestamp: 101,
     });
 
@@ -244,12 +296,60 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
+  test('preserves tool output payload refs for lazy renderer loading', async () => {
+    const payload: AgentPayloadRef = {
+      kind: 'payload_ref',
+      id: 'tool-output-tool-1',
+      storage: 'file',
+      mimeType: 'text/plain',
+      byteLength: 50_000,
+      sha256: 'tool-sha',
+      role: 'tool_output',
+      summary: 'file_read output: long result...',
+      truncated: true,
+    };
+    const label = '<persisted-output>\nPreview\n</persisted-output>';
+    const assistant = assistantMessage('', 2);
+    assistant.content = [{
+      type: 'toolCall',
+      id: 'tool-1',
+      name: 'file_read',
+      arguments: { path: 'notes.txt' },
+    }];
+    const restoredProjection = projection([
+      { nodeId: 'u1', message: userMessage('read file'), branches: null },
+      { nodeId: 'a1', message: assistant, branches: null },
+    ]);
+    restoredProjection.entities.messages['tool-result-1'] = {
+      id: 'tool-result-1',
+      role: 'toolResult',
+      status: 'completed',
+      parentMessageId: 'a1',
+      content: [{ type: 'payload_ref', payload, label }],
+      createdAt: 3,
+      updatedAt: 3,
+      branches: null,
+      toolCallId: 'tool-1',
+      toolName: 'file_read',
+      isError: false,
+    };
+    const fake = createFakeClient({ latestSession: session('saved', restoredProjection) });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+    await flushMicrotasks();
+
+    const result = store.getSnapshot().toolResults.get('tool-1');
+    expect(result?.content).toEqual([{ type: 'text', text: label }]);
+    expect(result?.payloadRefs).toEqual([{ contentIndex: 0, payload, label }]);
+    unsubscribe();
+  });
+
   test('ignores stale initial restore after an explicit session change', async () => {
     const restore = deferred<AgentSession>();
-    const restored = session('saved', snapshot([
+    const restored = session('saved', projection([
       { nodeId: 'u1', message: userMessage('old'), branches: null },
     ]));
-    const created = session('created', snapshot([
+    const created = session('created', projection([
       { nodeId: 'u2', message: userMessage('new'), branches: null },
     ]));
     const fake = createFakeClient({ latestSession: restore.promise, createdSession: created });

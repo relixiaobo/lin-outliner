@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ToolCall, ToolResultMessage } from '../../../core/agentTypes';
+import type { AgentToolResultPayloadPart, AgentToolResultWithPayloads, ToolCall } from '../../../core/agentTypes';
+import { api } from '../../api/client';
 import {
   CheckIcon,
   CopyIcon,
@@ -23,7 +24,8 @@ interface AgentToolCallBlockProps {
   expanded?: boolean;
   onToggle?: () => void;
   pendingToolCallIds?: ReadonlySet<string>;
-  result?: ToolResultMessage;
+  result?: AgentToolResultWithPayloads;
+  sessionId?: string | null;
   toolCall: ToolCall;
   turnActive?: boolean;
 }
@@ -32,7 +34,11 @@ export type ToolStatus = 'pending' | 'done' | 'error';
 
 type ResultPart =
   | { type: 'imagePlaceholder' }
+  | { type: 'persistedOutput'; payloadRef: AgentToolResultPayloadPart; text: string }
   | { type: 'text'; text: string };
+
+const TOOL_OUTPUT_WINDOW_HEAD_CHARS = 12_000;
+const TOOL_OUTPUT_WINDOW_TAIL_CHARS = 4_000;
 
 interface ToolEnvelopeLike {
   ok: boolean;
@@ -55,7 +61,7 @@ interface ToolEnvelopeLike {
 
 export function getToolCallStatus(
   toolCallId: string,
-  result: ToolResultMessage | undefined,
+  result: AgentToolResultWithPayloads | undefined,
   pendingToolCallIds: ReadonlySet<string> | undefined,
   turnActive: boolean | undefined,
 ): ToolStatus {
@@ -147,7 +153,7 @@ export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus): strin
   return verbByStatus([toolCall.name, `${toolCall.name}...`, toolCall.name], status);
 }
 
-function resultText(result: ToolResultMessage | undefined): string {
+function resultText(result: AgentToolResultWithPayloads | undefined): string {
   if (!result) return '';
   return result.content
     .filter((block) => block.type === 'text')
@@ -156,7 +162,7 @@ function resultText(result: ToolResultMessage | undefined): string {
     .trim();
 }
 
-export function getToolResultCopyText(result: ToolResultMessage | undefined): string {
+export function getToolResultCopyText(result: AgentToolResultWithPayloads | undefined): string {
   return resultText(result);
 }
 
@@ -165,22 +171,26 @@ function isImagePlaceholder(text: string): boolean {
   return trimmed === '[Image removed]' || trimmed.startsWith('[Image removed') || trimmed === '<image>';
 }
 
-function resultParts(result: ToolResultMessage | undefined, expanded: boolean): ResultPart[] {
+function resultParts(result: AgentToolResultWithPayloads | undefined, expanded: boolean): ResultPart[] {
   if (!result || !expanded) return [];
-  return result.content
-    .filter((block): block is Extract<ToolResultMessage['content'][number], { type: 'text' }> =>
-      block.type === 'text')
-    .map((block) =>
+  return result.content.flatMap((block, contentIndex): ResultPart[] => {
+    if (block.type !== 'text') return [];
+    const payloadRef = result.payloadRefs?.find((ref) => ref.contentIndex === contentIndex);
+    if (payloadRef) {
+      return [{ type: 'persistedOutput', payloadRef, text: block.text }];
+    }
+    return [
       isImagePlaceholder(block.text)
         ? { type: 'imagePlaceholder' }
         : { type: 'text', text: block.text },
-    );
+    ];
+  });
 }
 
-function resultImages(result: ToolResultMessage | undefined): Array<{ data: string; mimeType: string }> {
+function resultImages(result: AgentToolResultWithPayloads | undefined): Array<{ data: string; mimeType: string }> {
   if (!result) return [];
   return result.content
-    .filter((block): block is Extract<ToolResultMessage['content'][number], { type: 'image' }> =>
+    .filter((block): block is Extract<AgentToolResultWithPayloads['content'][number], { type: 'image' }> =>
       block.type === 'image')
     .map((block) => ({ data: block.data, mimeType: block.mimeType }));
 }
@@ -200,6 +210,35 @@ function jsonText(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function outputWindow(text: string): { text: string; windowed: boolean } {
+  const limit = TOOL_OUTPUT_WINDOW_HEAD_CHARS + TOOL_OUTPUT_WINDOW_TAIL_CHARS;
+  if (text.length <= limit) return { text, windowed: false };
+  const omitted = text.length - limit;
+  return {
+    text: [
+      text.slice(0, TOOL_OUTPUT_WINDOW_HEAD_CHARS),
+      '',
+      `[... ${omitted.toLocaleString()} chars omitted ...]`,
+      '',
+      text.slice(-TOOL_OUTPUT_WINDOW_TAIL_CHARS),
+    ].join('\n'),
+    windowed: true,
+  };
 }
 
 function ToolCopyButton({ ariaLabel, text }: { ariaLabel: string; text: string }) {
@@ -281,12 +320,88 @@ function ToolResultImages({ images }: { images: Array<{ data: string; mimeType: 
   );
 }
 
+function PersistedToolOutput({
+  initialText,
+  payloadRef,
+  sessionId,
+}: {
+  initialText: string;
+  payloadRef: AgentToolResultPayloadPart;
+  sessionId?: string | null;
+}) {
+  const [fullText, setFullText] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const requestRef = useRef(0);
+  const payload = payloadRef.payload;
+  const visible = outputWindow(fullText ?? initialText);
+  const canLoad = !!sessionId && (payload.mimeType.startsWith('text/') || payload.mimeType === 'application/json');
+
+  useEffect(() => () => {
+    requestRef.current += 1;
+  }, []);
+
+  async function loadFullOutput() {
+    if (!sessionId || loading) return;
+    const requestId = requestRef.current + 1;
+    requestRef.current = requestId;
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const text = await api.agentPayloadText(sessionId, payload.id);
+      if (requestId !== requestRef.current) return;
+      if (text === null) {
+        setLoadError('Payload unavailable');
+        return;
+      }
+      setFullText(text);
+    } catch (caught) {
+      if (requestId === requestRef.current) {
+        setLoadError(caught instanceof Error ? caught.message : String(caught));
+      }
+    } finally {
+      if (requestId === requestRef.current) setLoading(false);
+    }
+  }
+
+  return (
+    <div className="agent-tool-persisted-output">
+      <div className="agent-tool-persisted-meta">
+        <FileTextIcon size={14} />
+        <span>{payload.summary || 'Stored tool output'}</span>
+        <small>{formatBytes(payload.byteLength)}</small>
+      </div>
+      <pre>{visible.text}</pre>
+      <div className="agent-tool-persisted-actions">
+        <ButtonControl
+          className="agent-tool-persisted-load"
+          disabled={!canLoad || loading}
+          onClick={() => void loadFullOutput()}
+        >
+          <FileTextIcon size={ICON_SIZE.menu} />
+          <span>{fullText ? 'Reload full output' : loading ? 'Loading...' : 'Load full output'}</span>
+        </ButtonControl>
+        {fullText ? (
+          <ToolCopyButton ariaLabel="Copy full tool output" text={fullText} />
+        ) : null}
+        {visible.windowed ? (
+          <small>Windowed</small>
+        ) : null}
+        {loadError ? (
+          <small className="is-error">{loadError}</small>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function AgentToolCallBlock({
   defaultExpanded = false,
   expanded,
   onToggle,
   pendingToolCallIds,
   result,
+  sessionId,
   toolCall,
   turnActive,
 }: AgentToolCallBlockProps) {
@@ -348,6 +463,13 @@ export function AgentToolCallBlock({
                 <FileTextIcon size={14} />
                 <span>Screenshot captured</span>
               </div>
+            ) : part.type === 'persistedOutput' ? (
+              <PersistedToolOutput
+                initialText={part.text}
+                key={`payload-${part.payloadRef.payload.id}`}
+                payloadRef={part.payloadRef}
+                sessionId={sessionId}
+              />
             ) : (
               <pre key={`text-${index}`}>{part.text}</pre>
             ),

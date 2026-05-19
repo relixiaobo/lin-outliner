@@ -1,4 +1,4 @@
-import type { AgentSnapshotState } from './agentTypes';
+import type { AgentRenderProjection } from './agentRenderProjection';
 
 export type NodeId = string;
 
@@ -315,7 +315,7 @@ export interface SearchHit {
 
 export interface AgentSession {
   sessionId: string;
-  state?: AgentSnapshotState;
+  renderProjection: AgentRenderProjection;
 }
 
 export interface AgentSessionMeta {

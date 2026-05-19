@@ -143,6 +143,10 @@ export const api = {
     command<AgentDebugSnapshot[]>('agent_debug_history', { sessionId }),
   agentDebugTotals: (sessionId: string) =>
     command<AgentDebugTotals>('agent_debug_totals', { sessionId }),
+  agentDebugPayload: (sessionId: string, payloadId: string) =>
+    command<string | null>('agent_debug_payload', { sessionId, payloadId }),
+  agentPayloadText: (sessionId: string, payloadId: string) =>
+    command<string | null>('agent_payload_text', { sessionId, payloadId }),
   agentSendMessage: (sessionId: string, message: string, attachments: AgentMessageAttachmentInput[] = []) =>
     command<void>('agent_send_message', { sessionId, message, attachments }),
   agentEditMessage: (sessionId: string, nodeId: string, message: string) =>
