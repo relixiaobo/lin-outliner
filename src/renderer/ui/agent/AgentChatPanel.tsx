@@ -1,5 +1,14 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import type { AssistantMessage, ToolResultMessage } from '../../../core/agentTypes';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react';
+import type { AgentToolResultWithPayloads, AssistantMessage } from '../../../core/agentTypes';
 import type {
   AgentProviderConfigView,
   AgentProviderSettingsView,
@@ -34,6 +43,10 @@ const SUGGESTED_PROMPTS = [
   '规划 agent 接入阶段',
   '列出下一步工具设计',
 ];
+const TRANSCRIPT_ROW_GAP_PX = 14;
+const TRANSCRIPT_ROW_ESTIMATE_PX = 104;
+const TRANSCRIPT_VIRTUAL_MIN_ROWS = 40;
+const TRANSCRIPT_VIRTUAL_OVERSCAN_PX = 720;
 
 interface AgentChatPanelProps {
   onOpenDebugPanel?: (sessionId: string | null) => void;
@@ -86,6 +99,27 @@ function formatSessionTime(timestamp: number): string {
 
 type AssistantEntry = AgentMessageEntry & { message: AssistantMessage };
 
+interface AgentConversationRenderRow {
+  key: string;
+  contentKey?: string;
+  entry: AgentConversationEntry;
+  endIndex: number;
+  isLastInTurn: boolean;
+  streaming: boolean;
+  turnEnded: boolean;
+  turnPhase: AgentTurnPhase;
+}
+
+interface VirtualTranscriptItem {
+  top: number;
+  height: number;
+}
+
+interface VirtualTranscriptLayout {
+  items: VirtualTranscriptItem[];
+  totalHeight: number;
+}
+
 function getEntryRole(entry: AgentConversationEntry): 'user' | 'assistant' {
   return entry.message.role;
 }
@@ -109,20 +143,212 @@ function mergeAssistantEntries(entries: AssistantEntry[]): AgentMessageEntry {
   };
 }
 
-function toolResultCopyText(result: ToolResultMessage | undefined): string {
-  if (!result) return '';
-  return result.content
-    .filter((block) => block.type === 'text')
-    .map((block) => block.text)
-    .join('\n\n')
-    .trim();
+function buildConversationRenderRows(
+  entries: AgentConversationEntry[],
+  turnPhase: AgentTurnPhase,
+): AgentConversationRenderRow[] {
+  const rows: AgentConversationRenderRow[] = [];
+  const turnEndedByEndIndex = new Map<number, boolean>();
+  let hasUserAfter = false;
+
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    turnEndedByEndIndex.set(index, hasUserAfter || turnPhase === 'idle');
+    if (entries[index]?.message.role === 'user') hasUserAfter = true;
+  }
+
+  let index = 0;
+  while (index < entries.length) {
+    const entry = entries[index]!;
+
+    if (isAssistantEntry(entry)) {
+      const assistantEntries: AssistantEntry[] = [];
+      while (index < entries.length) {
+        const candidate = entries[index]!;
+        if (!isAssistantEntry(candidate)) break;
+        assistantEntries.push(candidate);
+        index += 1;
+      }
+
+      const stableKey = `assistant-turn-${assistantEntries[0]!.id}`;
+      const mergedEntry = assistantEntries.length >= 2
+        ? mergeAssistantEntries(assistantEntries)
+        : assistantEntries[0]!;
+      const endIndex = index - 1;
+      rows.push(buildConversationRenderRow({
+        contentKey: stableKey,
+        entry: mergedEntry,
+        endIndex,
+        key: stableKey,
+        turnEnded: turnEndedByEndIndex.get(endIndex) ?? true,
+        turnPhase,
+        totalEntryCount: entries.length,
+        nextEntry: entries[endIndex + 1],
+      }));
+      continue;
+    }
+
+    rows.push(buildConversationRenderRow({
+      entry,
+      endIndex: index,
+      key: entry.nodeId ?? `${entry.kind}-${getEntryTimestamp(entry)}-${index}`,
+      turnEnded: turnEndedByEndIndex.get(index) ?? true,
+      turnPhase,
+      totalEntryCount: entries.length,
+      nextEntry: entries[index + 1],
+    }));
+    index += 1;
+  }
+
+  return rows;
 }
 
-function buildAssistantTurnCopyText(
+function buildConversationRenderRow({
+  contentKey,
+  entry,
+  endIndex,
+  key,
+  nextEntry,
+  totalEntryCount,
+  turnEnded,
+  turnPhase,
+}: {
+  contentKey?: string;
+  entry: AgentConversationEntry;
+  endIndex: number;
+  key: string;
+  nextEntry: AgentConversationEntry | undefined;
+  totalEntryCount: number;
+  turnEnded: boolean;
+  turnPhase: AgentTurnPhase;
+}): AgentConversationRenderRow {
+  const isLastAssistantEntry = endIndex === totalEntryCount - 1 && getEntryRole(entry) === 'assistant';
+  return {
+    key,
+    contentKey,
+    entry,
+    endIndex,
+    isLastInTurn: endIndex === totalEntryCount - 1 || !nextEntry || getEntryRole(nextEntry) !== getEntryRole(entry),
+    streaming: isLastAssistantEntry && turnPhase === 'streaming_text',
+    turnEnded,
+    turnPhase: isLastAssistantEntry ? turnPhase : 'idle',
+  };
+}
+
+function estimateTranscriptRowHeight(row: AgentConversationRenderRow): number {
+  const content = row.entry.message.content;
+  if (typeof content === 'string') {
+    return Math.max(72, Math.ceil(content.length / 72) * 24 + 32);
+  }
+  const textLength = content.reduce((total, block) => {
+    if (block.type === 'text') return total + block.text.length;
+    if (block.type === 'thinking') return total + block.thinking.length;
+    return total + 48;
+  }, 0);
+  const base = row.entry.message.role === 'user' ? 64 : TRANSCRIPT_ROW_ESTIMATE_PX;
+  return Math.max(base, Math.ceil(textLength / 84) * 24 + 44);
+}
+
+function buildVirtualTranscriptLayout(
+  rows: AgentConversationRenderRow[],
+  measuredHeights: Map<string, number>,
+): VirtualTranscriptLayout {
+  const items: VirtualTranscriptItem[] = [];
+  let top = 0;
+  for (const row of rows) {
+    const height = measuredHeights.get(row.key) ?? estimateTranscriptRowHeight(row);
+    items.push({ top, height });
+    top += height + TRANSCRIPT_ROW_GAP_PX;
+  }
+  return {
+    items,
+    totalHeight: rows.length > 0 ? top - TRANSCRIPT_ROW_GAP_PX : 0,
+  };
+}
+
+function firstItemEndingAfter(items: VirtualTranscriptItem[], y: number): number {
+  let low = 0;
+  let high = items.length;
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    const item = items[mid]!;
+    if (item.top + item.height < y) low = mid + 1;
+    else high = mid;
+  }
+  return low;
+}
+
+function firstItemStartingAfter(items: VirtualTranscriptItem[], y: number): number {
+  let low = 0;
+  let high = items.length;
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    if (items[mid]!.top <= y) low = mid + 1;
+    else high = mid;
+  }
+  return low;
+}
+
+function visibleTranscriptRange(
+  layout: VirtualTranscriptLayout,
+  scrollTop: number,
+  viewportHeight: number,
+): { start: number; end: number } {
+  const minY = Math.max(0, scrollTop - TRANSCRIPT_VIRTUAL_OVERSCAN_PX);
+  const maxY = scrollTop + viewportHeight + TRANSCRIPT_VIRTUAL_OVERSCAN_PX;
+  const start = Math.max(0, firstItemEndingAfter(layout.items, minY) - 1);
+  const end = Math.min(layout.items.length, firstItemStartingAfter(layout.items, maxY) + 1);
+  return { start, end: Math.max(end, start + 1) };
+}
+
+type PayloadTextPromiseCache = Map<string, Promise<string | null>>;
+
+function payloadCopyCacheKey(sessionId: string, payloadId: string): string {
+  return `${sessionId}:${payloadId}`;
+}
+
+function loadPayloadTextForCopy(
+  sessionId: string | null,
+  payloadId: string,
+  cache: PayloadTextPromiseCache,
+): Promise<string | null> {
+  if (!sessionId) return Promise.resolve(null);
+  const key = payloadCopyCacheKey(sessionId, payloadId);
+  let pending = cache.get(key);
+  if (!pending) {
+    pending = api.agentPayloadText(sessionId, payloadId).catch(() => null);
+    cache.set(key, pending);
+  }
+  return pending;
+}
+
+async function toolResultCopyText(
+  result: AgentToolResultWithPayloads | undefined,
+  sessionId: string | null,
+  payloadTextCache: PayloadTextPromiseCache,
+): Promise<string> {
+  if (!result) return '';
+  const blocks: string[] = [];
+  for (let index = 0; index < result.content.length; index += 1) {
+    const block = result.content[index]!;
+    if (block.type !== 'text') continue;
+    const payloadRef = result.payloadRefs?.find((ref) => ref.contentIndex === index);
+    if (payloadRef) {
+      const fullText = await loadPayloadTextForCopy(sessionId, payloadRef.payload.id, payloadTextCache);
+      blocks.push(fullText ?? block.text);
+      continue;
+    }
+    blocks.push(block.text);
+  }
+  return blocks.join('\n\n').trim();
+}
+
+async function buildAssistantTurnCopyText(
   entries: AgentConversationEntry[],
   lastEntryIndex: number,
-  toolResults: Map<string, ToolResultMessage>,
-): string {
+  toolResults: Map<string, AgentToolResultWithPayloads>,
+  sessionId: string | null,
+  payloadTextCache: PayloadTextPromiseCache,
+): Promise<string> {
   let turnStart = lastEntryIndex;
   while (turnStart > 0) {
     const previous = entries[turnStart - 1]!;
@@ -143,7 +369,7 @@ function buildAssistantTurnCopyText(
       }
       if (block.type === 'toolCall') {
         parts.push(`\`\`\`tool ${block.name}\n${JSON.stringify(block.arguments ?? {}, null, 2)}\n\`\`\``);
-        const resultText = toolResultCopyText(toolResults.get(block.id));
+        const resultText = await toolResultCopyText(toolResults.get(block.id), sessionId, payloadTextCache);
         if (resultText) {
           const tag = toolResults.get(block.id)?.isError ? 'tool-error' : 'tool-result';
           parts.push(`\`\`\`${tag}\n${resultText}\n\`\`\``);
@@ -153,6 +379,46 @@ function buildAssistantTurnCopyText(
   }
 
   return parts.join('\n\n');
+}
+
+function AgentTranscriptRowShell({
+  children,
+  onMeasure,
+  rowKey,
+  style,
+  virtualized,
+}: {
+  children: ReactNode;
+  onMeasure: (rowKey: string, height: number) => void;
+  rowKey: string;
+  style?: CSSProperties;
+  virtualized: boolean;
+}) {
+  const rowRef = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    const element = rowRef.current;
+    if (!element) return;
+    const measure = () => {
+      onMeasure(rowKey, element.getBoundingClientRect().height);
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [onMeasure, rowKey]);
+
+  return (
+    <div
+      className={virtualized ? 'agent-chat-virtual-row' : 'agent-chat-flow-row'}
+      data-agent-transcript-row={rowKey}
+      ref={rowRef}
+      style={style}
+    >
+      {children}
+    </div>
+  );
 }
 
 export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
@@ -195,6 +461,52 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
   const mountedRef = useRef(false);
   const providerSettingsRequestRef = useRef(0);
   const sessionsRequestRef = useRef(0);
+  const scrollFrameRef = useRef<number | null>(null);
+  const rowHeightsRef = useRef(new Map<string, number>());
+  const copyPayloadTextCacheRef = useRef<PayloadTextPromiseCache>(new Map());
+  const [measureVersion, setMeasureVersion] = useState(0);
+  const [scrollMetrics, setScrollMetrics] = useState({ height: 0, top: 0 });
+  const conversationRows = useMemo(
+    () => buildConversationRenderRows(entries, turnPhase),
+    [entries, turnPhase],
+  );
+  const virtualLayout = useMemo(
+    () => buildVirtualTranscriptLayout(conversationRows, rowHeightsRef.current),
+    [conversationRows, measureVersion],
+  );
+  const shouldVirtualizeTranscript = conversationRows.length > TRANSCRIPT_VIRTUAL_MIN_ROWS;
+  const virtualRange = shouldVirtualizeTranscript
+    ? visibleTranscriptRange(virtualLayout, scrollMetrics.top, scrollMetrics.height)
+    : { start: 0, end: conversationRows.length };
+  const visibleConversationRows = conversationRows.slice(virtualRange.start, virtualRange.end);
+
+  const updateScrollMetrics = useCallback((element: HTMLDivElement) => {
+    const next = {
+      height: element.clientHeight,
+      top: element.scrollTop,
+    };
+    setScrollMetrics((current) => {
+      if (Math.abs(current.height - next.height) < 1 && Math.abs(current.top - next.top) < 1) {
+        return current;
+      }
+      return next;
+    });
+  }, []);
+
+  const scheduleScrollMetrics = useCallback((element: HTMLDivElement) => {
+    if (scrollFrameRef.current !== null) return;
+    scrollFrameRef.current = window.requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      updateScrollMetrics(element);
+    });
+  }, [updateScrollMetrics]);
+
+  const measureConversationRow = useCallback((rowKey: string, height: number) => {
+    const current = rowHeightsRef.current.get(rowKey);
+    if (current !== undefined && Math.abs(current - height) < 1) return;
+    rowHeightsRef.current.set(rowKey, height);
+    setMeasureVersion((version) => version + 1);
+  }, []);
 
   const loadProviderSettings = useCallback(async () => {
     const requestId = providerSettingsRequestRef.current + 1;
@@ -234,11 +546,35 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
     }
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return undefined;
+    updateScrollMetrics(element);
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(() => updateScrollMetrics(element));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [sessionId, updateScrollMetrics]);
+
+  useLayoutEffect(() => {
     const element = scrollRef.current;
     if (!element || !stickToBottomRef.current) return;
     element.scrollTop = element.scrollHeight;
-  }, [entries.length, isStreaming, revision]);
+    updateScrollMetrics(element);
+  }, [conversationRows.length, isStreaming, revision, updateScrollMetrics, virtualLayout.totalHeight]);
+
+  useEffect(() => {
+    rowHeightsRef.current.clear();
+    copyPayloadTextCacheRef.current.clear();
+    setMeasureVersion((version) => version + 1);
+  }, [sessionId]);
+
+  useEffect(() => () => {
+    if (scrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollFrameRef.current);
+      scrollFrameRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -370,92 +706,39 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
     await loadSessions();
   }
 
-  function renderConversationEntries(): ReactNode[] {
-    const rendered: ReactNode[] = [];
-
-    const turnEndedByEndIndex = new Map<number, boolean>();
-    for (let i = 0; i < entries.length; i += 1) {
-      let hasNextUserMessage = false;
-      for (let j = i + 1; j < entries.length; j += 1) {
-        const next = entries[j]!;
-        if (next.message.role === 'user') {
-          hasNextUserMessage = true;
-          break;
+  function renderConversationRow(row: AgentConversationRenderRow): ReactNode {
+    const copyAssistantTurn = row.isLastInTurn && getEntryRole(row.entry) === 'assistant'
+      ? async () => {
+          const text = await buildAssistantTurnCopyText(
+            entries,
+            row.endIndex,
+            toolResults,
+            sessionId,
+            copyPayloadTextCacheRef.current,
+          );
+          if (text) await navigator.clipboard.writeText(text);
         }
-      }
-      turnEndedByEndIndex.set(i, hasNextUserMessage || turnPhase === 'idle');
-    }
+      : undefined;
 
-    const renderEntry = (
-      entry: AgentConversationEntry,
-      startIndex: number,
-      endIndex: number,
-      key?: string,
-      contentKey?: string,
-    ) => {
-      const isLastAssistantEntry = endIndex === entries.length - 1 && getEntryRole(entry) === 'assistant';
-      const entryTurnPhase: AgentTurnPhase = isLastAssistantEntry ? turnPhase : 'idle';
-      const streaming = isLastAssistantEntry && turnPhase === 'streaming_text';
-      const isLastInTurn = endIndex === entries.length - 1
-        || getEntryRole(entries[endIndex + 1]!) !== getEntryRole(entry);
-      const copyAssistantTurn = isLastInTurn && getEntryRole(entry) === 'assistant'
-        ? async () => {
-            const text = buildAssistantTurnCopyText(entries, endIndex, toolResults);
-            if (text) await navigator.clipboard.writeText(text);
-          }
-        : undefined;
-      const entryKey = key
-        ?? entry.nodeId
-        ?? `${entry.kind}-${getEntryTimestamp(entry)}-${startIndex}`;
-
-      rendered.push(
-        <AgentMessageRow
-          busy={isStreaming}
-          contentKey={contentKey}
-          entry={entry}
-          isLastInTurn={isLastInTurn}
-          key={entryKey}
-          onCopy={copyAssistantTurn}
-          onEdit={editMessage}
-          onRegenerate={regenerateMessage}
-          onRetry={retryMessage}
-          onSwitchBranch={switchBranch}
-          pendingToolCallIds={pendingToolCallIds}
-          streaming={streaming}
-          toolResults={toolResults}
-          turnEnded={turnEndedByEndIndex.get(endIndex) ?? true}
-          turnPhase={entryTurnPhase}
-        />,
-      );
-    };
-
-    let index = 0;
-    while (index < entries.length) {
-      const entry = entries[index]!;
-
-      if (isAssistantEntry(entry)) {
-        const runStart = index;
-        const assistantEntries: AssistantEntry[] = [];
-        while (index < entries.length) {
-          const candidate = entries[index]!;
-          if (!isAssistantEntry(candidate)) break;
-          assistantEntries.push(candidate);
-          index += 1;
-        }
-
-        const stableKey = `assistant-turn-${assistantEntries[0]!.id}`;
-        const mergedEntry = assistantEntries.length >= 2
-          ? mergeAssistantEntries(assistantEntries)
-          : assistantEntries[0]!;
-        renderEntry(mergedEntry, runStart, index - 1, stableKey, stableKey);
-        continue;
-      }
-
-      renderEntry(entry, index, index);
-      index += 1;
-    }
-
-    return rendered;
+    return (
+      <AgentMessageRow
+        busy={isStreaming}
+        contentKey={row.contentKey}
+        entry={row.entry}
+        isLastInTurn={row.isLastInTurn}
+        onCopy={copyAssistantTurn}
+        onEdit={editMessage}
+        onRegenerate={regenerateMessage}
+        onRetry={retryMessage}
+        onSwitchBranch={switchBranch}
+        pendingToolCallIds={pendingToolCallIds}
+        sessionId={sessionId}
+        streaming={row.streaming}
+        toolResults={toolResults}
+        turnEnded={row.turnEnded}
+        turnPhase={row.turnPhase}
+      />
+    );
   }
 
   const visibleError = error ?? settingsError;
@@ -624,6 +907,7 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
         className="agent-chat-scroll"
         onScroll={(event) => {
           stickToBottomRef.current = shouldStickToBottom(event.currentTarget);
+          scheduleScrollMetrics(event.currentTarget);
         }}
       >
         {visibleError ? (
@@ -646,7 +930,31 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
               </ButtonControl>
             ))}
           </div>
-        ) : renderConversationEntries()}
+        ) : (
+          <div
+            className={shouldVirtualizeTranscript ? 'agent-chat-transcript is-virtual' : 'agent-chat-transcript'}
+            data-virtualized={shouldVirtualizeTranscript ? 'true' : 'false'}
+            style={shouldVirtualizeTranscript ? { height: virtualLayout.totalHeight } : undefined}
+          >
+            {visibleConversationRows.map((row, offset) => {
+              const rowIndex = virtualRange.start + offset;
+              const item = virtualLayout.items[rowIndex];
+              return (
+                <AgentTranscriptRowShell
+                  key={row.key}
+                  onMeasure={measureConversationRow}
+                  rowKey={row.key}
+                  style={shouldVirtualizeTranscript && item
+                    ? { transform: `translateY(${item.top}px)` }
+                    : undefined}
+                  virtualized={shouldVirtualizeTranscript}
+                >
+                  {renderConversationRow(row)}
+                </AgentTranscriptRowShell>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <AgentComposer

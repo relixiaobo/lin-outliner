@@ -3,7 +3,7 @@ import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
 import { plainText } from '../../api/types';
 import type { DocumentIndex, FocusRequest, UiState } from '../../state/document';
-import { clearFocusRequestState, cursorEnd, requestFocusState, rowFocusTarget } from '../focus/focusModel';
+import { clearFocusRequestState, cursorEnd, focusTarget, requestFocusState, rowFocusTarget } from '../focus/focusModel';
 import type { CommandRunner, TriggerState } from '../shared';
 import { OutlinerFieldRow } from './OutlinerFieldRow';
 import { OutlinerItem } from './OutlinerItem';
@@ -41,6 +41,17 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
       className={`field-value-outliner field-value-node-preview ${empty ? 'empty' : ''}`}
       data-field-value
       aria-label={empty ? props.placeholder : 'Field value'}
+      onMouseDown={(event) => {
+        if (!empty || event.button !== 0) return;
+        const target = event.target instanceof HTMLElement ? event.target : null;
+        if (target?.closest('button, a, input, textarea, select, [data-preserve-selection], .ProseMirror')) return;
+        event.preventDefault();
+        props.setUi((prev) => requestFocusState(
+          prev,
+          focusTarget(props.entryId, props.entryId, props.panelId, 'trailing'),
+          cursorEnd(),
+        ));
+      }}
     >
       <RowHost
         rows={rows}

@@ -63,6 +63,8 @@ export const AGENT_COMMANDS = [
   'agent_debug_snapshot',
   'agent_debug_history',
   'agent_debug_totals',
+  'agent_debug_payload',
+  'agent_payload_text',
   'agent_send_message',
   'agent_edit_message',
   'agent_regenerate_message',

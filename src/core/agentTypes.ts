@@ -9,6 +9,8 @@ import type {
   Usage,
   UserMessage,
 } from '@earendil-works/pi-ai';
+import type { AgentRenderProjection } from './agentRenderProjection';
+import type { AgentPayloadRef } from './agentEventLog';
 
 export const LIN_AGENT_EVENT_CHANNEL = 'lin-agent-event';
 
@@ -51,13 +53,24 @@ export type AgentMessageAttachmentInput = AgentImageAttachmentInput | AgentTextA
 export type AgentMessage = Message;
 export type AgentConversationMessage = UserMessage | AssistantMessage;
 
+export interface AgentToolResultPayloadPart {
+  contentIndex: number;
+  payload: AgentPayloadRef;
+  label?: string;
+}
+
+export type AgentToolResultWithPayloads = ToolResultMessage & {
+  payloadRefs?: AgentToolResultPayloadPart[];
+};
+
 export type AgentDebugSnapshotSource = 'provider_payload' | 'runtime_state';
 export type AgentDebugTurnStatus = 'running' | 'completed' | 'error' | 'aborted' | 'interrupted';
 
 export interface AgentDebugWirePayload {
-  json: string;
   bytes: number;
   hash: string;
+  json?: string;
+  payloadRef?: AgentPayloadRef;
 }
 
 export type AgentDebugMessagePart =
@@ -151,31 +164,12 @@ export interface AgentMessageBranchState {
   currentIndex: number;
 }
 
-export interface AgentConversationSnapshotEntry {
-  nodeId: string;
-  message: AgentConversationMessage;
-  branches: AgentMessageBranchState | null;
-}
-
-export interface AgentSnapshotState {
-  sessionTitle: string | null;
-  systemPrompt: string;
-  model: Record<string, unknown>;
-  thinkingLevel: string;
-  messages: AgentMessage[];
-  conversation: AgentConversationSnapshotEntry[];
-  streamingMessage: AgentMessage | null;
-  isStreaming: boolean;
-  pendingToolCallIds: string[];
-  errorMessage: string | null;
-}
-
-export interface AgentSnapshotEvent {
-  type: 'snapshot';
+export interface AgentProjectionEvent {
+  type: 'projection';
   sessionId: string;
   lastEventType: string | null;
   revision: number;
-  state: AgentSnapshotState;
+  renderProjection: AgentRenderProjection;
   timestamp: number;
 }
 
@@ -224,7 +218,7 @@ export interface AgentApprovalRequestEvent {
 }
 
 export type AgentRuntimeEvent =
-  | AgentSnapshotEvent
+  | AgentProjectionEvent
   | AgentReadyEvent
   | AgentErrorEvent
   | AgentClosedEvent

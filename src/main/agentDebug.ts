@@ -15,6 +15,7 @@ import type {
   ToolResultMessage,
   Usage,
 } from '../core/agentTypes';
+import type { AgentPayloadRef } from '../core/agentEventLog';
 
 const REMINDER_OPEN = '<system-reminder>';
 const SECRET_KEY_PATTERN = /api[_-]?key|authorization|bearer|secret|password|token/i;
@@ -22,11 +23,23 @@ const SECRET_KEY_PATTERN = /api[_-]?key|authorization|bearer|secret|password|tok
 export interface CreateAgentDebugSnapshotInput {
   payload: unknown;
   model: Model<any>;
+  wirePayload?: AgentDebugPayloadEnvelope;
+  wirePayloadRef?: AgentPayloadRef;
   queryIndex: number;
   sessionId: string;
   sessionTitle: string | null;
   source: AgentDebugSnapshot['source'];
+  capturedAt?: number;
+  id?: string;
+  status?: AgentDebugSnapshot['status'];
   turnIndex: number;
+}
+
+export interface AgentDebugPayloadEnvelope {
+  sanitizedPayload: unknown;
+  json: string;
+  bytes: number;
+  hash: string;
 }
 
 export function createEmptyDebugTotals(): AgentDebugTotals {
@@ -47,13 +60,14 @@ export function createEmptyDebugTotals(): AgentDebugTotals {
 }
 
 export function createAgentDebugSnapshot(input: CreateAgentDebugSnapshotInput): AgentDebugSnapshot {
-  const sanitizedPayload = sanitizeForDebug(input.payload);
-  const wireJson = stableJson(sanitizedPayload);
+  const envelope = input.wirePayload ?? createAgentDebugPayloadEnvelope(input.payload);
+  const sanitizedPayload = envelope.sanitizedPayload;
   const wire: AgentDebugWirePayload = {
-    json: wireJson,
-    bytes: byteLength(wireJson),
-    hash: debugHash(wireJson),
+    bytes: envelope.bytes,
+    hash: envelope.hash,
+    payloadRef: input.wirePayloadRef,
   };
+  if (!input.wirePayloadRef) wire.json = envelope.json;
 
   const extracted = extractPayload(sanitizedPayload);
   const systemPrompt = extracted.systemPrompt;
@@ -63,16 +77,16 @@ export function createAgentDebugSnapshot(input: CreateAgentDebugSnapshotInput): 
   const contextWindow = typeof input.model.contextWindow === 'number' ? input.model.contextWindow : null;
 
   return {
-    id: `${input.sessionId}:${input.turnIndex}:${Date.now()}`,
+    id: input.id ?? `${input.sessionId}:${input.turnIndex}:${Date.now()}`,
     source: input.source,
     sessionId: input.sessionId,
     sessionTitle: input.sessionTitle,
     turnIndex: input.turnIndex,
     queryIndex: input.queryIndex,
-    capturedAt: Date.now(),
+    capturedAt: input.capturedAt ?? Date.now(),
     modelId: input.model.id,
     provider: input.model.provider,
-    status: input.source === 'provider_payload' ? 'running' : 'completed',
+    status: input.status ?? (input.source === 'provider_payload' ? 'running' : 'completed'),
     wire,
     systemPrompt,
     systemPromptBytes: byteLength(systemPrompt),
@@ -95,6 +109,17 @@ export function createAgentDebugSnapshot(input: CreateAgentDebugSnapshotInput): 
     usage: null,
     responseParts: [],
     errorMessage: null,
+  };
+}
+
+export function createAgentDebugPayloadEnvelope(payload: unknown): AgentDebugPayloadEnvelope {
+  const sanitizedPayload = sanitizeForDebug(payload);
+  const json = stableJson(sanitizedPayload);
+  return {
+    sanitizedPayload,
+    json,
+    bytes: byteLength(json),
+    hash: debugHash(json),
   };
 }
 

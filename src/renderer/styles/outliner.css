@@ -412,7 +412,7 @@
 .field-value-node-preview {
   display: block;
   width: 100%;
-  min-width: 0;
+  min-width: 24px;
   min-height: 24px;
   border-radius: var(--radius-control-xs);
   color: var(--text);
@@ -532,8 +532,8 @@
   box-shadow: none;
 }
 
-.row-wrap.has-children > .row:hover .row-chevron-button,
-.row-wrap.has-children > .row:focus-within .row-chevron-button {
+.row-wrap > .row:hover .row-chevron-button,
+.row-wrap > .row:focus-within .row-chevron-button {
   opacity: 1;
   pointer-events: auto;
 }

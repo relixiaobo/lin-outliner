@@ -2,9 +2,9 @@ import { useMemo, useState, type ReactNode } from 'react';
 import type { AgentConversationEntry, AgentMessageEntry, AgentTurnPhase } from '../../agent/runtime';
 import type {
   AssistantMessage,
+  AgentToolResultWithPayloads,
   ImageContent,
   TextContent,
-  ToolResultMessage,
   UserMessage,
 } from '../../../core/agentTypes';
 import {
@@ -51,8 +51,9 @@ interface AgentMessageRowProps {
   onRetry?: (nodeId: string) => void | Promise<void>;
   onSwitchBranch?: (nodeId: string) => void | Promise<void>;
   pendingToolCallIds: ReadonlySet<string>;
+  sessionId?: string | null;
   streaming?: boolean;
-  toolResults: Map<string, ToolResultMessage>;
+  toolResults: Map<string, AgentToolResultWithPayloads>;
   turnEnded?: boolean;
   turnPhase?: AgentTurnPhase;
 }
@@ -145,8 +146,9 @@ function renderAssistantBlocks(
   contentKey: string,
   expandState: AgentExpandState,
   pendingToolCallIds: ReadonlySet<string>,
+  sessionId: string | null | undefined,
   streaming: boolean,
-  toolResults: Map<string, ToolResultMessage>,
+  toolResults: Map<string, AgentToolResultWithPayloads>,
   turnActive: boolean,
   turnEnded: boolean,
 ) {
@@ -210,6 +212,7 @@ function renderAssistantBlocks(
             onToggle={() => expandState.toggle(toolId, expandState.isExpanded(toolId, false))}
             pendingToolCallIds={pendingToolCallIds}
             result={toolResults.get(toolCall.id)}
+            sessionId={sessionId}
             toolCall={toolCall}
             turnActive={turnActive}
           />,
@@ -225,6 +228,7 @@ function renderAssistantBlocks(
             pendingToolCallIds={pendingToolCallIds}
             results={toolResults}
             sealed={segmentSealed}
+            sessionId={sessionId}
             turnActive={turnActive}
             turnFailedWithoutProse={turnFailedWithoutProse}
           />,
@@ -261,6 +265,7 @@ export function AgentMessageRow({
   onRetry,
   onSwitchBranch,
   pendingToolCallIds,
+  sessionId,
   streaming: streamingOverride,
   toolResults,
   turnEnded = false,
@@ -426,6 +431,7 @@ export function AgentMessageRow({
     assistantContentKey,
     expandState,
     pendingToolCallIds,
+    sessionId,
     streaming,
     toolResults,
     turnActive,

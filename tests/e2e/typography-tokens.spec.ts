@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { emitAgentEvent, ids, openMockedApp } from './outlinerMock';
+import { emitAgentProjection, ids, openMockedApp } from './outlinerMock';
 
 const usage = {
   input: 0,
@@ -251,24 +251,20 @@ test.describe('typography tokens', () => {
       ],
     };
 
-    await emitAgentEvent(page, {
-      type: 'snapshot',
-      sessionId: 'mock-agent-session',
-      state: {
-        sessionTitle: 'Agent System',
-        systemPrompt: '',
-        model: { id: 'gpt-5.4', provider: 'openai' },
-        thinkingLevel: 'medium',
-        messages: [user, assistant],
-        conversation: [
-          { nodeId: 'user-node', message: user, branches: null },
-          { nodeId: 'assistant-node', message: assistant, branches: null },
-        ],
-        streamingMessage: null,
-        isStreaming: false,
-        pendingToolCallIds: [],
-        errorMessage: null,
-      },
+    await emitAgentProjection(page, 'mock-agent-session', {
+      sessionTitle: 'Agent System',
+      systemPrompt: '',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      thinkingLevel: 'medium',
+      messages: [user, assistant],
+      conversation: [
+        { nodeId: 'user-node', message: user, branches: null },
+        { nodeId: 'assistant-node', message: assistant, branches: null },
+      ],
+      streamingMessage: null,
+      isStreaming: false,
+      pendingToolCallIds: [],
+      errorMessage: null,
     });
 
     await expect(page.getByText('Current outline focuses on design-system work.')).toBeVisible();

@@ -157,6 +157,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       costCacheReadUsd: 0,
       costCacheWriteUsd: 0,
     };
+    const debugPayloadJson = '{"model":"gpt-5.4","messages":[{"role":"user","content":"Summarize current outline."}]}';
     const debugSnapshot = {
       id: 'debug-snapshot-1',
       source: 'provider_payload',
@@ -169,9 +170,18 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       provider: 'openai',
       status: 'completed',
       wire: {
-        json: '{"model":"gpt-5.4","messages":[{"role":"user","content":"Summarize current outline."}]}',
         bytes: 86,
         hash: 'wireabc',
+        payloadRef: {
+          kind: 'payload_ref',
+          id: 'debug-payload-1',
+          storage: 'file',
+          mimeType: 'application/json',
+          byteLength: 86,
+          sha256: 'debug-sha',
+          role: 'debug',
+          summary: 'Provider payload round 1',
+        },
       },
       systemPrompt: 'You are Lin agent.',
       systemPromptBytes: 18,
@@ -555,7 +565,23 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       invoke: async <T,>(cmd: string, args: Record<string, unknown> = {}): Promise<T> => {
         calls.push({ cmd, args: clone(args) });
         if (cmd === 'agent_create_session' || cmd === 'agent_restore_latest_session' || cmd === 'agent_restore_session') {
-          return clone({ sessionId: 'mock-agent-session' }) as T;
+          return clone({
+            sessionId: 'mock-agent-session',
+            renderProjection: {
+              sessionId: 'mock-agent-session',
+              revision: 1,
+              sessionTitle: 'Agent System',
+              activeRunId: null,
+              isStreaming: false,
+              model: { id: 'gpt-5.4', provider: 'openai' },
+              thinkingLevel: 'medium',
+              pendingToolCallIds: [],
+              errorMessage: null,
+              rows: [],
+              entities: { messages: {} },
+              streaming: null,
+            },
+          }) as T;
         }
         if (cmd === 'agent_get_provider_settings') return clone(agentSettings) as T;
         if (cmd === 'agent_list_sessions') return clone(agentSessions) as T;
@@ -611,6 +637,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_debug_totals') {
           return clone(debugTotals) as T;
+        }
+        if (cmd === 'agent_debug_payload') {
+          return clone(String(args.payloadId) === 'debug-payload-1' ? debugPayloadJson : null) as T;
+        }
+        if (cmd === 'agent_payload_text') {
+          const payloadId = String(args.payloadId);
+          if (payloadId === 'payload-full-output') return clone('Full persisted tool output from payload') as T;
+          return clone(null) as T;
         }
         if (cmd === 'agent_queue_follow_up') return clone({ queued: true }) as T;
         if (cmd.startsWith('agent_')) return clone(undefined) as T;
@@ -930,6 +964,119 @@ export async function emitAgentEvent(page: Page, event: unknown) {
     const win = window as E2EWindow;
     win.__LIN_E2E__?.emitAgentEvent(nextEvent);
   }, event);
+}
+
+export async function emitAgentProjection(page: Page, sessionId: string, state: Record<string, any>, revision = 1) {
+  const entities: Record<string, any> = {};
+  const rows: Array<{ id: string; kind: string; messageId: string }> = [];
+
+  const persistedContent = (message: any) => {
+    const content = typeof message.content === 'string'
+      ? [{ type: 'text', text: message.content }]
+      : message.content ?? [];
+    return content.map((part: any) => {
+      if (part.type === 'text') return { type: 'text', text: part.text };
+      if (part.type === 'thinking') return { type: 'thinking', thinking: part.thinking, redacted: part.redacted };
+      if (part.type === 'toolCall') return { type: 'toolCall', id: part.id, name: part.name, arguments: part.arguments ?? {} };
+      if (part.type === 'payload_ref') return part;
+      if (part.type === 'image') return { type: 'text', text: `[image:${part.mimeType ?? 'image'}]` };
+      return { type: 'text', text: JSON.stringify(part) };
+    });
+  };
+
+  for (const entry of state.conversation ?? []) {
+    const message = entry.message;
+    const messageId = entry.nodeId;
+    rows.push({ id: `${message.role}:${messageId}`, kind: 'message', messageId });
+    entities[messageId] = {
+      id: messageId,
+      role: message.role,
+      status: 'completed',
+      parentMessageId: null,
+      content: persistedContent(message),
+      createdAt: message.timestamp,
+      updatedAt: message.timestamp,
+      branches: entry.branches ?? null,
+      apiId: message.api,
+      providerId: message.provider,
+      modelId: message.model,
+      stopReason: message.stopReason,
+      usage: message.usage,
+      errorMessage: message.errorMessage,
+    };
+  }
+
+  let streaming = null;
+  const streamingMessage = state.streamingMessage;
+  if (streamingMessage?.role === 'assistant') {
+    const messageId = 'assistant-streaming';
+    rows.push({ id: `assistant:${messageId}`, kind: 'message', messageId });
+    entities[messageId] = {
+      id: messageId,
+      role: 'assistant',
+      status: 'streaming',
+      parentMessageId: null,
+      content: persistedContent(streamingMessage),
+      createdAt: streamingMessage.timestamp,
+      updatedAt: streamingMessage.timestamp,
+      branches: null,
+      apiId: streamingMessage.api,
+      providerId: streamingMessage.provider,
+      modelId: streamingMessage.model,
+      stopReason: streamingMessage.stopReason,
+      usage: streamingMessage.usage,
+      errorMessage: streamingMessage.errorMessage,
+    };
+    streaming = {
+      messageId,
+      rowId: `assistant:${messageId}`,
+      text: persistedContent(streamingMessage)
+        .filter((part: any) => part.type === 'text')
+        .map((part: any) => part.text)
+        .join(''),
+      updatedAt: streamingMessage.timestamp,
+    };
+  }
+
+  for (const message of state.messages ?? []) {
+    if (message.role !== 'toolResult') continue;
+    const messageId = `tool-result:${message.toolCallId}`;
+    entities[messageId] = {
+      id: messageId,
+      role: 'toolResult',
+      status: 'completed',
+      parentMessageId: null,
+      content: persistedContent(message),
+      createdAt: message.timestamp,
+      updatedAt: message.timestamp,
+      branches: null,
+      toolCallId: message.toolCallId,
+      toolName: message.toolName,
+      isError: message.isError,
+    };
+  }
+
+  await emitAgentEvent(page, {
+    type: 'projection',
+    sessionId,
+    lastEventType: null,
+    revision,
+    renderProjection: {
+      sessionId,
+      revision,
+      sessionTitle: state.sessionTitle ?? null,
+      activeRunId: state.isStreaming ? 'run-e2e' : null,
+      isStreaming: !!state.isStreaming,
+      model: state.model ?? {},
+      thinkingLevel: state.thinkingLevel ?? 'off',
+      pendingToolCallIds: state.pendingToolCallIds ?? [],
+      errorMessage: state.errorMessage ?? null,
+      rows,
+      entities: { messages: entities },
+      streaming,
+    },
+    timestamp: Date.now(),
+  });
 }
 
 export async function emitDocumentEvent(page: Page, event: unknown) {

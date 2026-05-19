@@ -22,6 +22,10 @@ must execute through the Electron IPC command bridge so file access, bash execut
 document mutation, undo, approval, and workspace boundaries stay under Lin's
 control.
 
+The canonical persistence/rendering/debug model is defined in
+`docs/spec/agent-event-log-rendering.md`. pi-mono remains the execution core;
+Lin's durable state is the event log plus referenced payload files.
+
 ```txt
 pi-ai
   -> provider/model abstraction
@@ -36,7 +40,7 @@ pi-agent-core
 
 Lin Electron main process
   -> creates Agent
-  -> maps pi-mono events into Lin snapshots/events
+  -> maps pi-mono events into Lin events and render projections
   -> exposes Lin tools as AgentTool[]
   -> calls TypeScript tool gateway for local operations
 
@@ -52,7 +56,7 @@ Lin Electron main process
 Lin renderer
   -> Agent UI only
   -> sends prompt/stop/approve commands
-  -> renders shared AgentRuntimeEvent snapshots
+  -> renders shared AgentRuntimeEvent projections
 ```
 
 ## Runtime Boundary
@@ -91,7 +95,7 @@ Agent input
   -> TypeScript core / filesystem / shell
   -> tool result
   -> pi-agent-core continues loop
-  -> Electron main emits normalized snapshot/event
+  -> Electron main emits normalized event/projection
   -> renderer transcript
 ```
 
@@ -120,10 +124,18 @@ Suggested module boundary:
 
 ```txt
 src/core/agentTypes.ts
-  # shared AgentRuntimeEvent, snapshot/message DTOs, and IPC event channel
+  # shared AgentRuntimeEvent, projection/debug DTOs, and IPC event channel
+
+src/core/agentEventLog.ts
+  # shared AgentEvent, payload refs, replay reducers, branch projection, and
+  # pi-mono message projection
 
 src/main/agentRuntime.ts
-  # owns pi-agent-core sessions, command transport, and event forwarding
+  # owns pi-agent-core sessions, command transport, event append, and projection
+  # forwarding
+
+src/main/agentEventStore.ts
+  # per-session events.jsonl and payload/checkpoint path layout
 
 src/preload/index.ts
   # exposes typed command and event bridge to the renderer
@@ -150,8 +162,9 @@ Responsibilities:
 - Electron main process: start sessions, route prompts, stop runs, and manage runtime lifecycle.
 - Electron main process: resolve API keys at stream time.
 - Electron main process: execute or reject every local tool call.
-- Electron main process: subscribe to Agent events and emit normalized snapshots/events.
-- Renderer: render snapshots and send user intents.
+- Electron main process: subscribe to Agent events and emit normalized
+  event-backed render projections.
+- Renderer: render projections and send user intents.
 
 Conceptual shape:
 
@@ -635,6 +648,10 @@ Recommended strategy:
 3. Summarize old assistant text.
 4. Replace large tool outputs with summaries and stable references.
 5. Drop low-value middle turns only after summarization.
+
+Large persisted tool outputs should follow the cc-2.1 pattern: keep the full
+output outside the transcript, record a fixed preview/reference string in the
+message, and never re-decide or silently expand that payload during resume.
 
 After compaction, use the Agent wrapper to replace the underlying pi-mono
 messages. Persist both the compacted message and enough metadata to explain that

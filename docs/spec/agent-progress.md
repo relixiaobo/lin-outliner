@@ -3,13 +3,19 @@
 This document is the working checklist for Lin's local agent integration. Keep
 it current whenever a meaningful agent milestone lands or a priority changes.
 
-Last updated: 2026-05-18
+Last updated: 2026-05-19
 
 ## Current Direction
 
 Lin uses pi-mono as the current TypeScript agent core. Local document tools,
 file tools, bash, web access, validation, previews, approval, persistence, and
 undo stay inside Lin's TypeScript/Electron boundary.
+
+Agent persistence, debug, streaming, multimedia payloads, and transcript
+rendering now follow `docs/spec/agent-event-log-rendering.md`: the durable
+source of truth is the per-session event log plus referenced payloads, while
+pi-mono messages, render rows, debug timelines, indexes, and checkpoints are
+derived projections.
 
 Do not add Rust runtime code for the product agent path.
 
@@ -52,18 +58,39 @@ Do not add Rust runtime code for the product agent path.
   uploaded file metadata.
 - [x] Lin-specific stable system prompt module for agent identity, tool
   boundaries, dynamic reminder handling, and safety posture.
+- [x] Event-sourced agent runtime foundation:
+  - per-session `events.jsonl`
+  - payload directory layout
+  - replay reducer, branches, and active-path projection
+  - event-derived pi-mono `Message[]`
+  - compact render projection IPC instead of chat snapshots
+  - source image payload refs with runtime image rehydration
+  - provider debug payload refs with lazy raw JSON loading
+  - debug history/totals derived from debug events, assistant completions, and
+    debug payload refs
+  - provider debug payload capture awaited before the provider stream starts, so
+    debug snapshots and assistant completions keep stable event order
+  - debug projection restore regression coverage from event log plus payload refs
+  - large tool output payload refs with stable model-visible preview references
+  - lightweight derived session index for listing
+  - on-demand full text loading and bounded rendering for large tool output
+  - transcript row virtualization for long agent sessions
+  - payload-aware assistant turn copy for persisted tool output
+  - run-end checkpoint projection with tail replay and corrupt-checkpoint
+    fallback
+  - atomic checkpoint writes with best-effort retention of the latest three
+    valid checkpoint files per session
+  - checkpoint tail guards against stale replay state before writing byte offsets
+  - derived session/search/user-message indexes with event-log rebuild
+  - large-session regression coverage for checkpoint replay, indexes, render
+    projection, and payload-bounded JSONL
 
 ## Next Milestone
 
-Finish approval and UI/debug polish for the local tools that now execute through
-the TypeScript main-process tool gateway.
+Finish the performance and analysis projections on top of the event log.
 
-- [ ] Approval rendering for mutating local tools.
-- [ ] Debug panel visibility for local tool inputs, outputs, status, and
-  truncation.
-- [ ] Dedicated diff preview UI for `file_edit` and `file_write`.
-- [ ] Background task completion notifications surfaced in the message stream.
-- [ ] Host permission and offline/private-mode checks for web tools.
+- [ ] Add richer non-text media payload lazy loading UI in debug/render details.
+- [ ] Add payload-aware full-session export for long sessions.
 
 ## Following Milestones
 
@@ -88,6 +115,8 @@ the TypeScript main-process tool gateway.
 
 - Update this file when a milestone is completed or reprioritized.
 - Keep detailed API contracts in `docs/spec/agent-tool-design.md`.
+- Keep event/debug/render projection architecture in
+  `docs/spec/agent-event-log-rendering.md`.
 - Keep runtime architecture details in `docs/spec/agent-pi-mono-implementation.md`.
 - Keep implementation notes short here; this file is for status and next work,
   not full design.

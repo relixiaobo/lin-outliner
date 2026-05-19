@@ -1,0 +1,842 @@
+import type {
+  AgentMessage,
+  AssistantMessage,
+  ImageContent,
+  TextContent,
+  ThinkingContent,
+  ToolCall,
+  ToolResultMessage,
+  Usage,
+  UserMessage,
+} from './agentTypes';
+
+export const AGENT_EVENT_VERSION = 1;
+
+export type AgentActor =
+  | { type: 'user'; userId: string }
+  | { type: 'agent'; agentId: string }
+  | { type: 'tool'; toolName: string; toolCallId: string }
+  | { type: 'system' };
+
+export type AgentPayloadRole =
+  | 'source'
+  | 'thumbnail'
+  | 'preview'
+  | 'text_extract'
+  | 'tool_output'
+  | 'debug';
+
+export interface AgentPayloadDisplayMetadata {
+  width?: number;
+  height?: number;
+  durationMs?: number;
+  pageCount?: number;
+}
+
+export interface AgentPayloadRef {
+  kind: 'payload_ref';
+  id: string;
+  storage: 'file';
+  mimeType: string;
+  byteLength: number;
+  sha256: string;
+  role?: AgentPayloadRole;
+  summary?: string;
+  truncated?: boolean;
+  display?: AgentPayloadDisplayMetadata;
+}
+
+export type AgentPersistedContent =
+  | { type: 'text'; text: string }
+  | { type: 'thinking'; thinking: string; redacted?: boolean }
+  | { type: 'toolCall'; id: string; name: string; arguments: Record<string, unknown> }
+  | { type: 'image'; imageRef: AgentPayloadRef; alt?: string }
+  | { type: 'payload_ref'; payload: AgentPayloadRef; label?: string };
+
+export interface AgentTextDelta {
+  type: 'text_delta';
+  text: string;
+}
+
+export type AgentContentDelta = AgentTextDelta;
+
+export type AgentRunStatus = 'running' | 'completed' | 'failed' | 'cancelled';
+export type AgentMessageStatus = 'completed' | 'streaming' | 'failed';
+
+export type AgentEventType =
+  | 'session.created'
+  | 'session.renamed'
+  | 'session.settings_changed'
+  | 'debug.snapshot.created'
+  | 'branch.selected'
+  | 'user_message.created'
+  | 'user_message.edited'
+  | 'assistant_message.started'
+  | 'assistant_message.delta'
+  | 'assistant_message.completed'
+  | 'assistant_message.failed'
+  | 'thinking.delta'
+  | 'tool_call.started'
+  | 'tool_call.delta'
+  | 'tool_call.completed'
+  | 'tool_call.failed'
+  | 'tool_result.created'
+  | 'approval.requested'
+  | 'approval.resolved'
+  | 'follow_up.queued'
+  | 'follow_up.applied'
+  | 'run.started'
+  | 'run.completed'
+  | 'run.failed'
+  | 'run.cancelled'
+  | 'compaction.completed'
+  | 'payload.created'
+  | 'payload.derived'
+  | 'checkpoint.created'
+  | 'metric.recorded';
+
+export interface AgentEventBase {
+  v: typeof AGENT_EVENT_VERSION;
+  eventId: string;
+  seq: number;
+  sessionId: string;
+  type: AgentEventType;
+  createdAt: number;
+  actor: AgentActor;
+  runId?: string;
+  turnId?: string;
+  messageId?: string;
+  parentMessageId?: string | null;
+  causedByEventId?: string;
+}
+
+export interface SessionCreatedEvent extends AgentEventBase {
+  type: 'session.created';
+  title: string | null;
+}
+
+export interface SessionRenamedEvent extends AgentEventBase {
+  type: 'session.renamed';
+  title: string | null;
+}
+
+export interface SessionSettingsChangedEvent extends AgentEventBase {
+  type: 'session.settings_changed';
+  settings: Record<string, unknown>;
+}
+
+export interface DebugSnapshotCreatedEvent extends AgentEventBase {
+  type: 'debug.snapshot.created';
+  debugId: string;
+  source: 'provider_payload' | 'runtime_state';
+  queryIndex: number;
+  turnIndex: number;
+  payloadRef: AgentPayloadRef;
+  wire: {
+    bytes: number;
+    hash: string;
+  };
+  model: {
+    id: string;
+    provider: string;
+    api?: string;
+    contextWindow?: number | null;
+  };
+}
+
+export interface BranchSelectedEvent extends AgentEventBase {
+  type: 'branch.selected';
+  leafMessageId: string;
+}
+
+export interface UserMessageCreatedEvent extends AgentEventBase {
+  type: 'user_message.created';
+  messageId: string;
+  parentMessageId: string | null;
+  content: AgentPersistedContent[];
+  attachments?: AgentPayloadRef[];
+  replacesMessageId?: string;
+}
+
+export interface UserMessageEditedEvent extends AgentEventBase {
+  type: 'user_message.edited';
+  messageId: string;
+  content: AgentPersistedContent[];
+}
+
+export interface AssistantMessageStartedEvent extends AgentEventBase {
+  type: 'assistant_message.started';
+  messageId: string;
+  parentMessageId: string | null;
+  runId: string;
+  providerId: string;
+  modelId: string;
+  apiId?: string;
+}
+
+export interface AssistantMessageDeltaEvent extends AgentEventBase {
+  type: 'assistant_message.delta';
+  messageId: string;
+  delta: AgentContentDelta;
+  providerChunkCount: number;
+  startedAt: number;
+  endedAt: number;
+}
+
+export interface AssistantMessageCompletedEvent extends AgentEventBase {
+  type: 'assistant_message.completed';
+  messageId: string;
+  stopReason: AssistantMessage['stopReason'];
+  content: AgentPersistedContent[];
+  usage?: Usage;
+}
+
+export interface AssistantMessageFailedEvent extends AgentEventBase {
+  type: 'assistant_message.failed';
+  messageId: string;
+  errorMessage: string;
+}
+
+export interface ThinkingDeltaEvent extends AgentEventBase {
+  type: 'thinking.delta';
+  messageId: string;
+  delta: AgentTextDelta;
+}
+
+export interface ToolCallStartedEvent extends AgentEventBase {
+  type: 'tool_call.started';
+  toolCallId: string;
+  messageId: string;
+  name: string;
+  inputSummary: string;
+  args?: Record<string, unknown>;
+  inputRef?: AgentPayloadRef;
+}
+
+export interface ToolCallDeltaEvent extends AgentEventBase {
+  type: 'tool_call.delta';
+  toolCallId: string;
+  messageId: string;
+  delta: AgentTextDelta;
+}
+
+export interface ToolCallCompletedEvent extends AgentEventBase {
+  type: 'tool_call.completed';
+  toolCallId: string;
+  messageId: string;
+}
+
+export interface ToolCallFailedEvent extends AgentEventBase {
+  type: 'tool_call.failed';
+  toolCallId: string;
+  messageId: string;
+  errorMessage: string;
+}
+
+export interface ToolResultCreatedEvent extends AgentEventBase {
+  type: 'tool_result.created';
+  toolCallId: string;
+  toolName: string;
+  messageId: string;
+  parentMessageId: string | null;
+  isError: boolean;
+  content: AgentPersistedContent[];
+  outputSummary: string;
+  outputRef?: AgentPayloadRef;
+}
+
+export interface ApprovalRequestedEvent extends AgentEventBase {
+  type: 'approval.requested';
+  requestId: string;
+  summary: string;
+  payloadRef?: AgentPayloadRef;
+}
+
+export interface ApprovalResolvedEvent extends AgentEventBase {
+  type: 'approval.resolved';
+  requestId: string;
+  approved: boolean;
+}
+
+export interface FollowUpQueuedEvent extends AgentEventBase {
+  type: 'follow_up.queued';
+  content: AgentPersistedContent[];
+}
+
+export interface FollowUpAppliedEvent extends AgentEventBase {
+  type: 'follow_up.applied';
+  messageId: string;
+}
+
+export interface RunStartedEvent extends AgentEventBase {
+  type: 'run.started';
+  runId: string;
+}
+
+export interface RunTerminalEvent extends AgentEventBase {
+  type: 'run.completed' | 'run.failed' | 'run.cancelled';
+  runId: string;
+  errorMessage?: string;
+}
+
+export interface CompactionCompletedEvent extends AgentEventBase {
+  type: 'compaction.completed';
+  summary: string;
+  compactedThroughMessageId: string;
+  payloadRef?: AgentPayloadRef;
+}
+
+export interface PayloadCreatedEvent extends AgentEventBase {
+  type: 'payload.created';
+  payload: AgentPayloadRef;
+}
+
+export interface PayloadDerivedEvent extends AgentEventBase {
+  type: 'payload.derived';
+  sourcePayloadId: string;
+  payload: AgentPayloadRef;
+  derivation: 'thumbnail' | 'preview' | 'text_extract' | 'page_render';
+}
+
+export interface CheckpointCreatedEvent extends AgentEventBase {
+  type: 'checkpoint.created';
+  checkpointSeq: number;
+  eventByteOffset: number;
+}
+
+export interface MetricRecordedEvent extends AgentEventBase {
+  type: 'metric.recorded';
+  name: string;
+  value: number;
+  unit?: string;
+  tags?: Record<string, string>;
+}
+
+export type AgentEvent =
+  | SessionCreatedEvent
+  | SessionRenamedEvent
+  | SessionSettingsChangedEvent
+  | DebugSnapshotCreatedEvent
+  | BranchSelectedEvent
+  | UserMessageCreatedEvent
+  | UserMessageEditedEvent
+  | AssistantMessageStartedEvent
+  | AssistantMessageDeltaEvent
+  | AssistantMessageCompletedEvent
+  | AssistantMessageFailedEvent
+  | ThinkingDeltaEvent
+  | ToolCallStartedEvent
+  | ToolCallDeltaEvent
+  | ToolCallCompletedEvent
+  | ToolCallFailedEvent
+  | ToolResultCreatedEvent
+  | ApprovalRequestedEvent
+  | ApprovalResolvedEvent
+  | FollowUpQueuedEvent
+  | FollowUpAppliedEvent
+  | RunStartedEvent
+  | RunTerminalEvent
+  | CompactionCompletedEvent
+  | PayloadCreatedEvent
+  | PayloadDerivedEvent
+  | CheckpointCreatedEvent
+  | MetricRecordedEvent;
+
+export interface AgentSessionRecord {
+  id: string;
+  title: string | null;
+  createdAt: number;
+  updatedAt: number;
+  settings: Record<string, unknown>;
+}
+
+export type AgentEventMessageRole = 'user' | 'assistant' | 'toolResult';
+
+export interface AgentEventMessageRecord {
+  id: string;
+  role: AgentEventMessageRole;
+  parentMessageId: string | null;
+  replacesMessageId?: string;
+  content: AgentPersistedContent[];
+  createdAt: number;
+  updatedAt: number;
+  status: AgentMessageStatus;
+  runId?: string;
+  providerId?: string;
+  modelId?: string;
+  apiId?: string;
+  stopReason?: AssistantMessage['stopReason'];
+  usage?: Usage;
+  errorMessage?: string;
+  toolCallId?: string;
+  toolName?: string;
+  isError?: boolean;
+  attachments?: AgentPayloadRef[];
+}
+
+export interface AgentRunRecord {
+  id: string;
+  status: AgentRunStatus;
+  startedAt: number;
+  updatedAt: number;
+  errorMessage?: string;
+}
+
+export interface AgentEventReplayState {
+  session: AgentSessionRecord | null;
+  latestSeq: number;
+  latestEventId: string | null;
+  messages: Record<string, AgentEventMessageRecord>;
+  rootMessageIds: string[];
+  childrenByParentId: Record<string, string[]>;
+  selectedLeafMessageId: string | null;
+  latestMessageId: string | null;
+  payloads: Record<string, AgentPayloadRef>;
+  derivedPayloadsBySourceId: Record<string, AgentPayloadRef[]>;
+  runs: Record<string, AgentRunRecord>;
+}
+
+export interface AgentMessageBranchState {
+  ids: string[];
+  currentIndex: number;
+}
+
+export interface AgentEventConversationEntry {
+  messageId: string;
+  message: AgentEventMessageRecord;
+  branches: AgentMessageBranchState | null;
+}
+
+export function createEmptyAgentEventReplayState(): AgentEventReplayState {
+  return {
+    session: null,
+    latestSeq: 0,
+    latestEventId: null,
+    messages: {},
+    rootMessageIds: [],
+    childrenByParentId: {},
+    selectedLeafMessageId: null,
+    latestMessageId: null,
+    payloads: {},
+    derivedPayloadsBySourceId: {},
+    runs: {},
+  };
+}
+
+export function replayAgentEvents(events: readonly AgentEvent[]): AgentEventReplayState {
+  const state = createEmptyAgentEventReplayState();
+  const seenEventIds = new Set<string>();
+  for (const event of events) {
+    assertValidNextEvent(state, seenEventIds, event);
+    applyAgentEvent(state, event);
+    touchSessionUpdatedAt(state, event);
+    seenEventIds.add(event.eventId);
+    state.latestSeq = event.seq;
+    state.latestEventId = event.eventId;
+  }
+  return state;
+}
+
+export function appendAgentEventToReplayState(state: AgentEventReplayState, event: AgentEvent): AgentEventReplayState {
+  assertValidNextEvent(state, new Set(), event);
+  applyAgentEvent(state, event);
+  touchSessionUpdatedAt(state, event);
+  state.latestSeq = event.seq;
+  state.latestEventId = event.eventId;
+  return state;
+}
+
+export function getAgentEventActivePath(state: AgentEventReplayState): AgentEventMessageRecord[] {
+  const leafMessageId = state.selectedLeafMessageId ?? state.latestMessageId;
+  if (!leafMessageId) return [];
+
+  const path: AgentEventMessageRecord[] = [];
+  const visited = new Set<string>();
+  let cursorId: string | null = leafMessageId;
+  while (cursorId) {
+    if (visited.has(cursorId)) {
+      throw new Error(`Cycle in agent message chain at ${cursorId}`);
+    }
+    visited.add(cursorId);
+    const message: AgentEventMessageRecord | undefined = state.messages[cursorId];
+    if (!message) {
+      throw new Error(`Selected agent branch references missing message: ${cursorId}`);
+    }
+    path.push(message);
+    cursorId = message.parentMessageId;
+  }
+  return path.reverse();
+}
+
+export function getAgentEventMessageBranches(
+  state: AgentEventReplayState,
+  messageId: string,
+): AgentMessageBranchState | null {
+  const message = state.messages[messageId];
+  if (!message) return null;
+  const siblings = message.parentMessageId
+    ? state.childrenByParentId[message.parentMessageId] ?? []
+    : state.rootMessageIds;
+  if (siblings.length <= 1) return null;
+
+  const activePathIds = new Set(getAgentEventActivePath(state).map((item) => item.id));
+  const activeSiblingId = siblings.find((id) => activePathIds.has(id)) ?? messageId;
+  const currentIndex = siblings.indexOf(activeSiblingId);
+  return currentIndex >= 0 ? { ids: siblings.slice(), currentIndex } : null;
+}
+
+export function getAgentEventConversation(state: AgentEventReplayState): AgentEventConversationEntry[] {
+  return getAgentEventActivePath(state)
+    .filter((message) => message.role === 'user' || message.role === 'assistant')
+    .map((message) => ({
+      messageId: message.id,
+      message,
+      branches: getAgentEventMessageBranches(state, message.id),
+    }));
+}
+
+export function deriveAgentPiMessages(state: AgentEventReplayState): AgentMessage[] {
+  return getAgentEventActivePath(state)
+    .map(agentEventMessageToPiMessage)
+    .filter((message): message is AgentMessage => Boolean(message));
+}
+
+export function agentEventMessageToPiMessage(message: AgentEventMessageRecord): AgentMessage | null {
+  if (message.role === 'user') {
+    return {
+      role: 'user',
+      content: toPiUserContent(message.content),
+      timestamp: message.createdAt,
+    } satisfies UserMessage;
+  }
+  if (message.role === 'assistant') {
+    return {
+      role: 'assistant',
+      content: toPiAssistantContent(message.content),
+      api: message.apiId ?? 'unknown',
+      provider: message.providerId ?? 'unknown',
+      model: message.modelId ?? 'unknown',
+      usage: message.usage ?? EMPTY_USAGE,
+      stopReason: message.stopReason ?? (message.status === 'failed' ? 'error' : 'stop'),
+      errorMessage: message.errorMessage,
+      timestamp: message.createdAt,
+    } satisfies AssistantMessage;
+  }
+  return {
+    role: 'toolResult',
+    toolCallId: message.toolCallId ?? message.id,
+    toolName: message.toolName ?? 'unknown',
+    content: toPiContentParts(message.content),
+    isError: !!message.isError,
+    timestamp: message.createdAt,
+  } satisfies ToolResultMessage;
+}
+
+function assertValidNextEvent(
+  state: AgentEventReplayState,
+  seenEventIds: Set<string>,
+  event: AgentEvent,
+) {
+  if (event.v !== AGENT_EVENT_VERSION) {
+    throw new Error(`Unsupported agent event version: ${event.v}`);
+  }
+  if (seenEventIds.has(event.eventId)) {
+    throw new Error(`Duplicate agent event id: ${event.eventId}`);
+  }
+  if (event.seq <= state.latestSeq) {
+    throw new Error(`Agent events must be appended in increasing seq order: ${event.seq}`);
+  }
+  if (state.session && event.sessionId !== state.session.id) {
+    throw new Error(`Agent event session mismatch: ${event.sessionId}`);
+  }
+}
+
+function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
+  switch (event.type) {
+    case 'session.created':
+      state.session = {
+        id: event.sessionId,
+        title: event.title,
+        createdAt: event.createdAt,
+        updatedAt: event.createdAt,
+        settings: {},
+      };
+      return;
+    case 'session.renamed':
+      requireSession(state, event);
+      state.session!.title = event.title;
+      state.session!.updatedAt = event.createdAt;
+      return;
+    case 'session.settings_changed':
+      requireSession(state, event);
+      state.session!.settings = { ...state.session!.settings, ...event.settings };
+      state.session!.updatedAt = event.createdAt;
+      return;
+    case 'debug.snapshot.created':
+      return;
+    case 'user_message.created':
+      addMessage(state, {
+        id: event.messageId,
+        role: 'user',
+        parentMessageId: event.parentMessageId,
+        replacesMessageId: event.replacesMessageId,
+        content: cloneContent(event.content),
+        createdAt: event.createdAt,
+        updatedAt: event.createdAt,
+        status: 'completed',
+        attachments: event.attachments?.slice(),
+      });
+      state.selectedLeafMessageId = event.messageId;
+      return;
+    case 'user_message.edited': {
+      const message = requireMessage(state, event.messageId);
+      if (message.role !== 'user') throw new Error(`Cannot edit non-user agent message: ${event.messageId}`);
+      message.content = cloneContent(event.content);
+      message.updatedAt = event.createdAt;
+      return;
+    }
+    case 'assistant_message.started':
+      addMessage(state, {
+        id: event.messageId,
+        role: 'assistant',
+        parentMessageId: event.parentMessageId,
+        content: [],
+        createdAt: event.createdAt,
+        updatedAt: event.createdAt,
+        status: 'streaming',
+        runId: event.runId,
+        providerId: event.providerId,
+        modelId: event.modelId,
+        apiId: event.apiId,
+      });
+      state.selectedLeafMessageId = event.messageId;
+      return;
+    case 'assistant_message.delta': {
+      const message = requireMessage(state, event.messageId);
+      if (message.role !== 'assistant') throw new Error(`Cannot append assistant delta to ${message.role} message`);
+      applyContentDelta(message, event.delta);
+      message.updatedAt = event.endedAt;
+      return;
+    }
+    case 'assistant_message.completed': {
+      const message = requireMessage(state, event.messageId);
+      if (message.role !== 'assistant') throw new Error(`Cannot complete ${message.role} message as assistant`);
+      message.content = cloneContent(event.content);
+      message.status = 'completed';
+      message.stopReason = event.stopReason;
+      message.usage = event.usage;
+      message.updatedAt = event.createdAt;
+      return;
+    }
+    case 'assistant_message.failed': {
+      const message = requireMessage(state, event.messageId);
+      if (message.role !== 'assistant') throw new Error(`Cannot fail ${message.role} message as assistant`);
+      message.status = 'failed';
+      message.errorMessage = event.errorMessage;
+      message.updatedAt = event.createdAt;
+      return;
+    }
+    case 'tool_result.created':
+      addMessage(state, {
+        id: event.messageId,
+        role: 'toolResult',
+        parentMessageId: event.parentMessageId,
+        content: cloneContent(event.content),
+        createdAt: event.createdAt,
+        updatedAt: event.createdAt,
+        status: 'completed',
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        isError: event.isError,
+      });
+      state.selectedLeafMessageId = event.messageId;
+      return;
+    case 'branch.selected':
+      requireMessage(state, event.leafMessageId);
+      state.selectedLeafMessageId = event.leafMessageId;
+      return;
+    case 'run.started':
+      state.runs[event.runId] = {
+        id: event.runId,
+        status: 'running',
+        startedAt: event.createdAt,
+        updatedAt: event.createdAt,
+      };
+      return;
+    case 'run.completed':
+    case 'run.failed':
+    case 'run.cancelled': {
+      const run = state.runs[event.runId] ?? {
+        id: event.runId,
+        status: 'running' as const,
+        startedAt: event.createdAt,
+        updatedAt: event.createdAt,
+      };
+      run.status = event.type === 'run.completed'
+        ? 'completed'
+        : event.type === 'run.failed'
+          ? 'failed'
+          : 'cancelled';
+      run.updatedAt = event.createdAt;
+      run.errorMessage = event.errorMessage;
+      state.runs[event.runId] = run;
+      return;
+    }
+    case 'payload.created':
+      state.payloads[event.payload.id] = event.payload;
+      return;
+    case 'payload.derived': {
+      state.payloads[event.payload.id] = event.payload;
+      const derived = state.derivedPayloadsBySourceId[event.sourcePayloadId] ?? [];
+      state.derivedPayloadsBySourceId[event.sourcePayloadId] = [...derived, event.payload];
+      return;
+    }
+    case 'tool_call.started':
+      applyToolCallStarted(state, event);
+      return;
+    case 'thinking.delta':
+    case 'tool_call.delta':
+    case 'tool_call.completed':
+    case 'tool_call.failed':
+    case 'approval.requested':
+    case 'approval.resolved':
+    case 'follow_up.queued':
+    case 'follow_up.applied':
+    case 'compaction.completed':
+    case 'checkpoint.created':
+    case 'metric.recorded':
+      return;
+  }
+}
+
+function touchSessionUpdatedAt(state: AgentEventReplayState, event: AgentEvent) {
+  if (!state.session) return;
+  state.session.updatedAt = Math.max(state.session.updatedAt, event.createdAt);
+}
+
+function addMessage(state: AgentEventReplayState, message: AgentEventMessageRecord) {
+  if (state.messages[message.id]) {
+    throw new Error(`Duplicate agent message id: ${message.id}`);
+  }
+  if (message.parentMessageId && !state.messages[message.parentMessageId]) {
+    throw new Error(`Missing parent agent message: ${message.parentMessageId}`);
+  }
+  state.messages[message.id] = message;
+  if (message.parentMessageId) {
+    const siblings = state.childrenByParentId[message.parentMessageId] ?? [];
+    state.childrenByParentId[message.parentMessageId] = [...siblings, message.id];
+  } else {
+    state.rootMessageIds = [...state.rootMessageIds, message.id];
+  }
+  state.latestMessageId = message.id;
+}
+
+function requireSession(state: AgentEventReplayState, event: AgentEvent) {
+  if (!state.session) {
+    throw new Error(`Agent event requires session.created first: ${event.type}`);
+  }
+}
+
+function requireMessage(state: AgentEventReplayState, messageId: string): AgentEventMessageRecord {
+  const message = state.messages[messageId];
+  if (!message) throw new Error(`Missing agent message: ${messageId}`);
+  return message;
+}
+
+function applyContentDelta(message: AgentEventMessageRecord, delta: AgentContentDelta) {
+  if (delta.type !== 'text_delta') return;
+  const last = message.content.at(-1);
+  if (last?.type === 'text') {
+    message.content = [
+      ...message.content.slice(0, -1),
+      { type: 'text', text: `${last.text}${delta.text}` },
+    ];
+    return;
+  }
+  message.content = [...message.content, { type: 'text', text: delta.text }];
+}
+
+function applyToolCallStarted(state: AgentEventReplayState, event: ToolCallStartedEvent) {
+  const message = requireMessage(state, event.messageId);
+  if (message.role !== 'assistant') throw new Error(`Cannot attach tool call to ${message.role} message`);
+  const alreadyExists = message.content.some((part) => part.type === 'toolCall' && part.id === event.toolCallId);
+  if (alreadyExists) return;
+  message.content = [
+    ...message.content,
+    {
+      type: 'toolCall',
+      id: event.toolCallId,
+      name: event.name,
+      arguments: event.args ?? {},
+    },
+  ];
+  message.updatedAt = event.createdAt;
+}
+
+function toPiUserContent(content: AgentPersistedContent[]): UserMessage['content'] {
+  const parts = toPiContentParts(content);
+  return parts.length > 0 ? parts : [{ type: 'text', text: '' }];
+}
+
+function toPiAssistantContent(content: AgentPersistedContent[]): AssistantMessage['content'] {
+  return content
+    .flatMap((part): Array<TextContent | ThinkingContent | ToolCall> => {
+      if (part.type === 'text') return [{ type: 'text', text: part.text }];
+      if (part.type === 'thinking') return [{ type: 'thinking', thinking: part.thinking, redacted: part.redacted }];
+      if (part.type === 'toolCall') {
+        return [{
+          type: 'toolCall',
+          id: part.id,
+          name: part.name,
+          arguments: part.arguments,
+        }];
+      }
+      return [];
+    });
+}
+
+function toPiContentPart(content: AgentPersistedContent): Array<TextContent | ImageContent> {
+  if (content.type === 'text') return [{ type: 'text', text: content.text }];
+  if (content.type === 'image') {
+    return [{
+      type: 'text',
+      text: content.alt || content.imageRef.summary || `[image:${content.imageRef.id}]`,
+    }];
+  }
+  if (content.type === 'thinking') return [{ type: 'text', text: content.thinking }];
+  if (content.type === 'toolCall') return [{ type: 'text', text: `[tool:${content.name}]` }];
+  return [{
+    type: 'text',
+    text: content.label || content.payload.summary || `[payload:${content.payload.id}]`,
+  }];
+}
+
+function toPiContentParts(content: AgentPersistedContent[]): Array<TextContent | ImageContent> {
+  const parts = content.flatMap(toPiContentPart);
+  return parts.length > 0 ? parts : [{ type: 'text', text: '' }];
+}
+
+function cloneContent(content: AgentPersistedContent[]): AgentPersistedContent[] {
+  return content.map((part) => {
+    if (part.type === 'text') return { ...part };
+    if (part.type === 'thinking') return { ...part };
+    if (part.type === 'toolCall') return { ...part, arguments: { ...part.arguments } };
+    if (part.type === 'image') return { ...part, imageRef: { ...part.imageRef, display: part.imageRef.display ? { ...part.imageRef.display } : undefined } };
+    return { ...part, payload: { ...part.payload, display: part.payload.display ? { ...part.payload.display } : undefined } };
+  });
+}
+
+const EMPTY_USAGE: Usage = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 0,
+  cost: {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    total: 0,
+  },
+};

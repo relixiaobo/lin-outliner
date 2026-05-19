@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { commandCalls, emitAgentEvent, openMockedApp } from './outlinerMock';
+import { commandCalls, emitAgentProjection, openMockedApp } from './outlinerMock';
 
 async function waitForAgentSession(page: import('@playwright/test').Page) {
   await expect.poll(async () => {
@@ -283,21 +283,17 @@ test.describe('agent composer controls', () => {
   });
 
   test('switches the primary action between stop and queued follow-up while streaming', async ({ page }) => {
-    await emitAgentEvent(page, {
-      type: 'snapshot',
-      sessionId: 'mock-agent-session',
-      state: {
-        sessionTitle: 'Agent System',
-        systemPrompt: '',
-        model: { id: 'gpt-5.4', provider: 'openai' },
-        thinkingLevel: 'medium',
-        messages: [],
-        conversation: [],
-        streamingMessage: null,
-        isStreaming: true,
-        pendingToolCallIds: [],
-        errorMessage: null,
-      },
+    await emitAgentProjection(page, 'mock-agent-session', {
+      sessionTitle: 'Agent System',
+      systemPrompt: '',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      thinkingLevel: 'medium',
+      messages: [],
+      conversation: [],
+      streamingMessage: null,
+      isStreaming: true,
+      pendingToolCallIds: [],
+      errorMessage: null,
     });
 
     const stopIcon = await page.getByRole('button', { name: 'Stop agent' }).locator('svg').evaluate((icon) => {

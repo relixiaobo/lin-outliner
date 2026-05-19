@@ -233,6 +233,7 @@
 .agent-code-block pre,
 .agent-thinking-body,
 .agent-tool-call-section pre,
+.agent-tool-persisted-output pre,
 .agent-steer-preview,
 .agent-composer-input,
 .agent-composer-model-menu,
@@ -1765,10 +1766,36 @@ button:focus-visible {
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  gap: var(--space-7);
   overflow-y: auto;
   padding: var(--space-8) var(--agent-dock-inset-x) var(--space-7);
   scrollbar-width: thin;
+}
+
+.agent-chat-transcript {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: var(--space-7);
+}
+
+.agent-chat-transcript.is-virtual {
+  position: relative;
+  display: block;
+  gap: 0;
+}
+
+.agent-chat-flow-row {
+  min-width: 0;
+}
+
+.agent-chat-virtual-row {
+  position: absolute;
+  right: 0;
+  left: 0;
+  min-width: 0;
+  will-change: transform;
 }
 
 .agent-empty-state {
@@ -2490,6 +2517,69 @@ button:focus-visible {
   font-size: var(--font-meta);
   line-height: var(--line-meta);
   white-space: pre-wrap;
+}
+
+.agent-tool-persisted-output {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.agent-tool-persisted-meta,
+.agent-tool-persisted-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.agent-tool-persisted-meta span {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-tool-persisted-meta small,
+.agent-tool-persisted-actions small {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.agent-tool-persisted-actions small.is-error {
+  color: var(--danger);
+}
+
+.agent-tool-persisted-load {
+  display: inline-flex;
+  height: 24px;
+  align-items: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  cursor: pointer;
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  padding: 0 var(--space-3);
+}
+
+.agent-tool-persisted-load:hover:not(:disabled) {
+  background: var(--control-hover);
+  color: var(--text-strong);
+}
+
+.agent-tool-persisted-load:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.agent-tool-persisted-output pre {
+  max-height: 280px;
+  content-visibility: auto;
 }
 
 .agent-tool-envelope {
