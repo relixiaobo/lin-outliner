@@ -1,4 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type Dispatch, type MouseEvent, type SetStateAction } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type DragEvent,
+  type MouseEvent,
+  type SetStateAction,
+} from 'react';
 import { api } from '../api/client';
 import type { NodeId, RichText, RichTextPatch } from '../api/types';
 import { EMPTY_RICH_TEXT, plainText } from '../api/types';
@@ -111,6 +120,22 @@ export function NodePanel(props: NodePanelProps) {
   const panelRows = useMemo(() => buildOutlinerRows(rootNode, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
   }), [props.index.byId, props.ui.expandedHiddenFields, rootNode]);
+
+  const handleOutlinerDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!props.dragId) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleOutlinerDrop = (event: DragEvent<HTMLDivElement>) => {
+    if (!props.dragId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const draggedId = props.dragId;
+    props.setDragId(null);
+    if (draggedId === props.rootId) return;
+    void props.run(() => api.moveNode(draggedId, props.rootId, null));
+  };
 
   useEffect(() => {
     setTitleContent(rootNode?.content ?? EMPTY_RICH_TEXT);
@@ -528,7 +553,11 @@ export function NodePanel(props: NodePanelProps) {
           <DefinitionConfigPanel node={rootNode} index={props.index} run={props.run} />
         )}
         {showOutliner && (
-          <div className={`outliner ${rootDefinitionKind ? 'definition-template-outliner' : ''}`}>
+          <div
+            className={`outliner ${rootDefinitionKind ? 'definition-template-outliner' : ''}`}
+            onDragOver={handleOutlinerDragOver}
+            onDrop={handleOutlinerDrop}
+          >
             {definitionTemplateLabel && (
               <div className="definition-template-label">{definitionTemplateLabel}</div>
             )}

@@ -91,6 +91,29 @@ test.describe('outliner trailing input and expansion parity', () => {
     expect(today.children).toHaveLength(4);
   });
 
+  test('committed trailing input uses dimmed bullet before projection clears the editor', async ({ page }) => {
+    await delayCreateNode(page);
+    const editor = trailingEditor(page);
+    await editor.click();
+    await page.keyboard.type('Pending visual');
+
+    const darkColor = await page.locator(`[data-node-id="${ids.alpha}"] .row-bullet-shape.content`).evaluate((element) =>
+      getComputedStyle(element).color,
+    );
+    await expect(editor).toHaveText('Pending visual');
+
+    await page.keyboard.press('Enter');
+    await expect(editor).toHaveText('Pending visual');
+
+    const pendingColor = await page.locator(`[data-trailing-parent-id="${ids.today}"] .row-bullet-shape.content`).evaluate((element) =>
+      getComputedStyle(element).color,
+    );
+    expect(pendingColor).not.toBe(darkColor);
+
+    await expect.poll(async () => (await nodeByText(page, 'Pending visual'))?.parentId).toBe(ids.today);
+    await expect(editor).toBeFocused();
+  });
+
   test('blur-committed trailing text keeps the next trailing input stable when the row is focused again', async ({ page }) => {
     const editor = trailingEditor(page);
     await editor.click();

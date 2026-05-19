@@ -10,6 +10,7 @@ import {
 import { api } from '../../api/client';
 import type { NodeId } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
+import { OUTLINER_NODE_DRAG_MIME, resolveOutlinerDropMove } from '../interactions/dragDrop';
 import { flattenVisibleRows } from '../../state/document';
 import { resolveDropHoverPosition, type DropHoverPosition } from '../interactions/dropPosition';
 import {
@@ -266,7 +267,13 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
 
   const onDragStart = useCallback((event: DragEvent<HTMLElement>) => {
     event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', rowId);
+    event.dataTransfer.setData(OUTLINER_NODE_DRAG_MIME, rowId);
+    event.dataTransfer.setData('text/plain', '');
+    const rowElement = event.currentTarget.closest('.row');
+    if (rowElement) {
+      const rect = rowElement.getBoundingClientRect();
+      event.dataTransfer.setDragImage(rowElement, event.clientX - rect.left, event.clientY - rect.top);
+    }
     setDragId(rowId);
   }, [rowId, setDragId]);
 
@@ -276,49 +283,60 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
   }, [setDragId]);
 
   const onDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!dragId || dragId === rowId) return;
     event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
     const rect = event.currentTarget.getBoundingClientRect();
     setDropPosition(resolveDropHoverPosition({
       offsetY: event.clientY - rect.top,
       rowHeight: rect.height,
     }));
-  }, []);
+  }, [dragId, rowId]);
 
-  const onDrop = useCallback(async () => {
+  const onDrop = useCallback(async (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
     const position = dropPosition ?? 'before';
     setDropPosition(null);
     if (!dragId || dragId === rowId) return;
-    if (position === 'inside') {
-      setUi((prev) => {
-        const expandedSet = new Set(prev.expanded);
-        expandedSet.add(rowId);
-        return { ...prev, expanded: expandedSet };
-      });
-      try {
-        await run(() => api.moveNode(dragId, rowId, null));
-      } finally {
-        setDragId(null);
-      }
-      return;
-    }
 
     const siblings = byId.get(parentId)?.children ?? [];
     const targetIndex = siblings.indexOf(rowId);
-    const dragIndex = siblings.indexOf(dragId);
-    if (targetIndex < 0) {
+    const dragParentId = byId.get(dragId)?.parentId ?? null;
+    const dragIndex = dragParentId === parentId
+      ? siblings.indexOf(dragId)
+      : byId.get(dragParentId ?? '')?.children.indexOf(dragId) ?? -1;
+    const move = resolveOutlinerDropMove({
+      dragNodeId: dragId,
+      targetNodeId: rowId,
+      targetParentId: parentId,
+      siblingIndex: targetIndex,
+      dropPosition: position,
+      targetHasChildren: hasChildren,
+      targetIsExpanded: expanded,
+      currentParentId: dragParentId,
+      currentIndex: dragIndex,
+    });
+
+    if (!move) {
       setDragId(null);
       return;
     }
-    let insertIndex = targetIndex + (position === 'after' ? 1 : 0);
-    if (dragIndex >= 0 && dragIndex < insertIndex) {
-      insertIndex -= 1;
+
+    if (move.expandTargetId) {
+      setUi((prev) => {
+        const expandedSet = new Set(prev.expanded);
+        expandedSet.add(move.expandTargetId!);
+        return { ...prev, expanded: expandedSet };
+      });
     }
+
     try {
-      await run(() => api.moveNode(dragId, parentId, insertIndex));
+      await run(() => api.moveNode(dragId, move.parentId, move.index));
     } finally {
       setDragId(null);
     }
-  }, [byId, dragId, dropPosition, parentId, rowId, run, setDragId, setUi]);
+  }, [byId, dragId, dropPosition, expanded, hasChildren, parentId, rowId, run, setDragId, setUi]);
 
   const wrapStyle: CSSProperties = { marginLeft: depth * 28 };
 
@@ -342,7 +360,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
       style: wrapStyle,
       onDragOver,
       onDragLeave: () => setDropPosition(null),
-      onDrop: () => void onDrop(),
+      onDrop: (event: DragEvent<HTMLDivElement>) => void onDrop(event),
     },
     dragHandleProps: {
       draggable: !locked,
@@ -350,7 +368,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
       onDragEnd,
     },
     rowClassName(extra = '') {
-      return `row ${extra} ${selected ? 'selected' : ''} ${focused ? 'focused' : ''} ${dropPosition ? `drop-${dropPosition}` : ''}`.trim();
+      return `row ${extra} ${selected ? 'selected' : ''} ${focused ? 'focused' : ''} ${dragId === rowId ? 'dragging' : ''} ${dropPosition ? `drop-${dropPosition}` : ''}`.trim();
     },
   };
 }

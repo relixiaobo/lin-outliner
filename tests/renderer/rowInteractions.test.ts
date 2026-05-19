@@ -36,6 +36,7 @@ import {
   indentTargetParentId,
   previousVisibleRowId,
 } from '../../src/renderer/ui/interactions/outlinerStructure';
+import { resolveOutlinerDropMove } from '../../src/renderer/ui/interactions/dragDrop';
 import {
   buildOutlinerRows,
   hiddenFieldKey,
@@ -154,6 +155,58 @@ describe('row interaction resolvers', () => {
       { id: 'content', type: 'content' },
       { id: 'hidden:p:f', type: 'hiddenField', fieldId: 'f', label: 'Field' },
     ], { mode: 'fieldValue' })).toBe(false);
+  });
+
+  test('resolves row drag-drop moves across parents and expanded targets', () => {
+    expect(resolveOutlinerDropMove({
+      dragNodeId: 'drag',
+      targetNodeId: 'target',
+      targetParentId: 'parent-b',
+      siblingIndex: 2,
+      dropPosition: 'before',
+      targetHasChildren: false,
+      targetIsExpanded: false,
+      currentParentId: 'parent-a',
+      currentIndex: 0,
+    })).toEqual({ parentId: 'parent-b', index: 2, expandTargetId: undefined });
+
+    expect(resolveOutlinerDropMove({
+      dragNodeId: 'drag',
+      targetNodeId: 'target',
+      targetParentId: 'parent-b',
+      siblingIndex: 2,
+      dropPosition: 'after',
+      targetHasChildren: true,
+      targetIsExpanded: true,
+      currentParentId: 'parent-a',
+      currentIndex: 0,
+    })).toEqual({ parentId: 'target', index: 0, expandTargetId: undefined });
+
+    expect(resolveOutlinerDropMove({
+      dragNodeId: 'drag',
+      targetNodeId: 'target',
+      targetParentId: 'parent-b',
+      siblingIndex: 2,
+      dropPosition: 'inside',
+      targetHasChildren: false,
+      targetIsExpanded: false,
+      currentParentId: 'parent-a',
+      currentIndex: 0,
+    })).toEqual({ parentId: 'target', index: 0, expandTargetId: 'target' });
+  });
+
+  test('adjusts same-parent drag-drop indexes after source removal', () => {
+    expect(resolveOutlinerDropMove({
+      dragNodeId: 'drag',
+      targetNodeId: 'target',
+      targetParentId: 'parent',
+      siblingIndex: 3,
+      dropPosition: 'after',
+      targetHasChildren: false,
+      targetIsExpanded: false,
+      currentParentId: 'parent',
+      currentIndex: 1,
+    })).toEqual({ parentId: 'parent', index: 3, expandTargetId: undefined });
   });
 
   test('maps trailing input trigger characters to node actions', () => {

@@ -338,6 +338,10 @@
   background: transparent;
 }
 
+.row.dragging {
+  opacity: 0.42;
+}
+
 .row.drop-before::before,
 .row.drop-after::after {
   position: absolute;

@@ -224,6 +224,7 @@ export function TrailingInput(props: TrailingInputProps) {
   const [effectiveParentId, setEffectiveParentId] = useState(props.parentId);
   const [depthShift, setDepthShift] = useState(0);
   const [hasContent, setHasContent] = useState(false);
+  const [pendingCommittedVisual, setPendingCommittedVisual] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [optionsQuery, setOptionsQuery] = useState('');
   const [optionsIndex, setOptionsIndex] = useState(0);
@@ -298,8 +299,7 @@ export function TrailingInput(props: TrailingInputProps) {
     const shouldRefocus = refocusAfterProjectionRef.current;
     clearAfterProjectionRef.current = false;
     refocusAfterProjectionRef.current = false;
-    clearCommittedEditor(view, updateHasContent);
-    if (shouldRefocus) view.focus();
+    finishProjectionClear(view, shouldRefocus);
   }, [props.index.projection]);
 
   useEffect(() => {
@@ -329,6 +329,24 @@ export function TrailingInput(props: TrailingInputProps) {
     setHasContent((current) => current === nextHasContent ? current : nextHasContent);
   };
 
+  const beginProjectionClear = (focusAfterCommit: CommitFocusTarget = 'none') => {
+    clearAfterProjectionRef.current = true;
+    refocusAfterProjectionRef.current = focusAfterCommit === 'trailing';
+    setPendingCommittedVisual(true);
+  };
+
+  const cancelProjectionClear = () => {
+    clearAfterProjectionRef.current = false;
+    refocusAfterProjectionRef.current = false;
+    setPendingCommittedVisual(false);
+  };
+
+  const finishProjectionClear = (view: EditorView, shouldRefocus: boolean) => {
+    clearCommittedEditor(view, updateHasContent);
+    setPendingCommittedVisual(false);
+    if (shouldRefocus) view.focus();
+  };
+
   const createNode = async (parentId: NodeId, text: string) => (
     Promise.resolve(propsRef.current.onCreate(parentId, text))
   );
@@ -356,8 +374,7 @@ export function TrailingInput(props: TrailingInputProps) {
     if (!continueWithEmpty && rawText.trim().length === 0) return;
     const targetParentId = effectiveParentRef.current;
     committingRef.current = true;
-    clearAfterProjectionRef.current = true;
-    refocusAfterProjectionRef.current = focusAfterCommit === 'trailing';
+    beginProjectionClear(focusAfterCommit);
     let committed = false;
     let createdFocusId: NodeId | null = null;
     try {
@@ -376,8 +393,7 @@ export function TrailingInput(props: TrailingInputProps) {
       if (createdFocusId) propsRef.current.onFocusNode?.(createdFocusId);
     } finally {
       if (!committed) {
-        clearAfterProjectionRef.current = false;
-        refocusAfterProjectionRef.current = false;
+        cancelProjectionClear();
       }
       committingRef.current = false;
     }
@@ -387,7 +403,7 @@ export function TrailingInput(props: TrailingInputProps) {
     if (committingRef.current) return;
     const targetParentId = effectiveParentRef.current;
     committingRef.current = true;
-    clearAfterProjectionRef.current = true;
+    beginProjectionClear();
     let committed = false;
     try {
       const nodeId = await createNode(targetParentId, rawText);
@@ -397,7 +413,7 @@ export function TrailingInput(props: TrailingInputProps) {
         committed = true;
       }
     } finally {
-      if (!committed) clearAfterProjectionRef.current = false;
+      if (!committed) cancelProjectionClear();
       committingRef.current = false;
     }
   };
@@ -436,14 +452,12 @@ export function TrailingInput(props: TrailingInputProps) {
 
   const beginInlineTriggerCommit = () => {
     committingRef.current = true;
-    clearAfterProjectionRef.current = true;
-    refocusAfterProjectionRef.current = false;
+    beginProjectionClear();
   };
 
   const finishInlineTriggerCommit = (committed: boolean, view: EditorView) => {
     if (!committed) {
-      clearAfterProjectionRef.current = false;
-      refocusAfterProjectionRef.current = false;
+      cancelProjectionClear();
       setTrailingInputSuppression(null);
       if (!view.isDestroyed) view.focus();
     }
@@ -960,7 +974,7 @@ export function TrailingInput(props: TrailingInputProps) {
       aria-hidden={suppressTrailingInput ? true : undefined}
       style={rowStyle}
     >
-      <TrailingInputLeading hasContent={hasContent} />
+      <TrailingInputLeading hasContent={hasContent && !pendingCommittedVisual} />
       <div
         ref={mountRef}
         className={`row-editor trailing-editor ${hasContent ? '' : 'is-empty'}`}
