@@ -55,7 +55,7 @@ export function OutlinerView(props: OutlinerViewProps) {
             }}
           />
         )}
-        renderField={(row) => (
+        renderField={(row, index, rows) => (
           <OutlinerFieldRow
             panelId={props.panelId}
             entryId={row.id}
@@ -71,6 +71,8 @@ export function OutlinerView(props: OutlinerViewProps) {
             setTrigger={props.setTrigger}
             dragId={props.dragId}
             setDragId={props.setDragId}
+            isFirstInFieldGroup={rows[index - 1]?.type !== 'field'}
+            isLastInFieldGroup={rows[index + 1]?.type !== 'field'}
           />
         )}
         renderContent={(row) => (

@@ -136,8 +136,9 @@ Panel behavior:
 - Closing the active panel moves active focus to the nearest remaining panel.
 - Closing the last panel is not allowed.
 - Panel resize preserves adjacent panel total size.
-- If minimum panel widths exceed available canvas width, the canvas scrolls
-  horizontally instead of shrinking panels below minimum width.
+- Panels share available canvas width by ratio. The canvas should not become a
+  horizontal scrolling surface during normal use; panel content owns any local
+  overflow.
 
 Component dependencies:
 
@@ -561,8 +562,14 @@ Visual rules:
 - Composer remains compact and dock-native.
 - Composer, chat scroll, and dock header share the same horizontal dock inset;
   the composer right edge matches the sidebar right inset.
-- Composer bottom aligns to the workspace panel bottom edge, and the composer
-  surface radius uses the shared `--panel-radius`.
+- Composer bottom aligns to the workspace panel bottom edge. The composer is an
+  input/control surface and uses `--agent-composer-radius`, not the normal panel
+  radius.
+- Corner controls inside the composer use symmetric corner containment: the
+  attachment control's left inset equals its bottom inset, the primary action's
+  right inset equals its bottom inset, and both derive their radius from the
+  composer surface radius minus that inset. Model, attachment, send, and stop
+  controls use the same derived corner radius.
 - Textarea is the primary affordance.
 - Textarea and toolbar live in one quiet surface; do not add an internal
   divider between them.

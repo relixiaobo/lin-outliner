@@ -124,6 +124,12 @@ Completion means:
 - Realigned the agent composer geometry to the shell: the dock inset matches the
   sidebar right inset, the composer surface bottom aligns with panel bottoms,
   and its radius uses `--panel-radius`.
+- Tightened the composer corner containment rule so attachment and primary
+  action controls use matching side/bottom insets and radius derived from the
+  parent surface.
+- Raised the composer input-surface radius and unified model, attachment, send,
+  and stop controls on the same derived corner radius so the controls no longer
+  read as square or edge-bound.
 - Reworked agent debug into a compact Overview, Request Context, and Provider
   Timeline hierarchy; refresh and copy actions now use the shared icon-button
   primitive while runtime debug data remains caller-owned.
@@ -212,11 +218,22 @@ Completion means:
   backgrounds, overlay shadows, spacing aliases, min/max shell widths,
   outline-panel minimum width, radius scale, focus ring, and z-index scale.
 - Aligned sidebar and agent resize limits with the design-system tokens.
-- Changed workspace panels to honor `--outline-panel-min-width` and allow
-  horizontal canvas overflow when available width is below the panel minimums.
+- Changed workspace panels to fill canvas width by ratio, keep bounded content
+  centered in wide single-panel layouts, and avoid horizontal canvas scrolling
+  as the normal narrow-width behavior.
 - Added keyboard resizing for sidebar, agent, and panel split resize handles.
-- Updated workspace layout e2e coverage for keyboard resizing, panel minimum
-  width behavior, and horizontal overflow.
+- Updated workspace layout e2e coverage for keyboard resizing, ratio fill,
+  single-panel content centering, and horizontal overflow prevention.
+- Completed the foundation convergence pass across Milestones 1-7: typography,
+  color, radius, spacing, sizing, elevation, motion, shell/outliner/agent
+  references, the browsable design-system site, and validation now share the
+  same token contract.
+- Tokenized product CSS foundation values: product styles no longer use raw hex
+  colors outside token declarations, raw pixel radii, raw `ms` transitions, raw
+  `box-shadow` values, or raw pixel spacing in product `gap`/`padding`/`margin`
+  declarations outside tokenized geometry.
+- Added e2e/static guardrails for typography parity, foundation token usage,
+  raw hex containment, and self-referential token aliases.
 - Added a shared anchored overlay positioning hook and adopted it for trigger
   popovers and the agent composer model/reasoning menu.
 - Kept anchorless trailing trigger popovers on their row-local placement path
@@ -267,7 +284,7 @@ avoidance:
 3. **Shell and workspace layout**
    - Finish app shell, top chrome, sidebar, workspace canvas, panel surface,
      workspace tabs, resize handles, agent dock sizing, collapse states,
-     minimum widths, overflow, and responsive desktop behavior.
+     ratio-based panel fill, local overflow, and responsive desktop behavior.
 4. **Overlay infrastructure**
    - Converge command palette, trigger popovers, tag/reference/slash menus,
      options picker, node context menu, model menu, floating editor toolbar,

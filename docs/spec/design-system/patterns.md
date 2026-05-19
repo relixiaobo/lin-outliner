@@ -109,14 +109,14 @@ Rules:
 
 ## Multi-Panel Canvas Pattern
 
-- One panel fills the canvas.
-- Two panels share canvas width evenly while both panels can satisfy
-  `--outline-panel-min-width`.
-- Three or more panels share width according to persisted ratios while minimum
-  widths fit.
-- If panel minimum widths exceed available canvas width, horizontal scrolling is
-  allowed inside the workspace canvas. Do not shrink panels below the minimum
-  just to avoid scrolling.
+- One panel fills the canvas. Its content column is either bounded and centered
+  by `--panel-content-max`, or fills the panel when the panel is narrower than
+  that content width.
+- Two or more panels always share the available canvas width according to
+  persisted ratios.
+- Workspace canvas does not use horizontal scrolling as the normal layout mode.
+  Panels may shrink below their preferred resize floor when the canvas is narrow;
+  overflow belongs inside the owning panel content, not on the canvas.
 - Panels are tiled left to right.
 - Panel resize handle slots sit between panels and use `--resize-gap`.
 
@@ -130,7 +130,7 @@ Lin is desktop-first, but the shell must degrade predictably.
 - Below `960px`: collapse the agent dock by default.
 - Below `760px`: collapse the sidebar by default and show only the active panel.
 - User choices override default collapse behavior for the current window unless
-  the available width cannot satisfy minimum panel width.
+  the available width would make the active panel unusably narrow.
 
 ## Layout Specimens
 

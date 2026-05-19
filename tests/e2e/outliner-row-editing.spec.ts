@@ -5,6 +5,7 @@ import {
   nodeById,
   openMockedApp,
   row,
+  rowBody,
   rowEditor,
 } from './outlinerMock';
 
@@ -129,6 +130,29 @@ test.describe('outliner row editing parity', () => {
     await expect.poll(async () => (await nodeById(page, createdId))?.type).toBe('fieldEntry');
     expect((await todayChildren(page))[1]).toBe(createdId);
     await expect(row(page, createdId).locator('.field-name-input')).toBeVisible();
+    await expect(rowBody(page, createdId)).toHaveClass(/field-group-start/);
+    await expect(rowBody(page, createdId)).toHaveClass(/field-group-end/);
+
+    const fieldVisuals = await row(page, createdId).evaluate((element) => {
+      const grid = element.querySelector<HTMLElement>('.outliner-field-grid')!;
+      const bullet = element.querySelector<HTMLElement>('.row-bullet-shape.field')!;
+      const gridBox = grid.getBoundingClientRect();
+      const bulletBox = bullet.getBoundingClientRect();
+      const top = getComputedStyle(grid, '::before');
+      const bottom = getComputedStyle(grid, '::after');
+      const name = getComputedStyle(grid.querySelector('.field-name-input')!);
+      return {
+        bottomDividerHeight: bottom.height,
+        dividerStartX: gridBox.left + Number.parseFloat(top.left),
+        fieldIconStartX: bulletBox.left,
+        nameBoxShadow: name.boxShadow,
+        topDividerHeight: top.height,
+      };
+    });
+    expect(Math.abs(fieldVisuals.dividerStartX - fieldVisuals.fieldIconStartX)).toBeLessThanOrEqual(1);
+    expect(fieldVisuals.nameBoxShadow).toBe('none');
+    expect(fieldVisuals.topDividerHeight).toBe('1px');
+    expect(fieldVisuals.bottomDividerHeight).toBe('1px');
 
     const alphaBox = await row(page, ids.alpha).boundingBox();
     const fieldBox = await row(page, createdId).boundingBox();

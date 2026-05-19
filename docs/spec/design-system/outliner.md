@@ -90,6 +90,8 @@ and color must use the outliner contract values:
 - Panel title editor: `26px` font size, `36px` line height, `600` weight.
 - Breadcrumb: `13px` font size, `20px` line height, muted secondary color.
 - Row editor: `15px` font size, `24px` line height.
+- These values are implemented through foundation typography tokens:
+  `--font-panel-title`, `--font-content`, and `--font-description`.
 - Row minimum height: `26px`.
 - Row radius: `5px`.
 - Row padding: `1px 6px 1px 6px`.
@@ -264,6 +266,12 @@ Field behavior is not generic form behavior.
   the field row. The value slot shows a node-like preview with a bullet and
   placeholder; editing focuses the existing value child or the field's trailing
   child input.
+- Consecutive field rows form a dense field group: every field row draws a very
+  subtle top divider from the field icon axis, and the last row in a contiguous
+  field group draws the closing bottom divider. Dividers do not cross into the
+  chevron gutter.
+- Editing the field name must not add a separate underline, focus border, or
+  form-like input decoration. Field row grouping owns the only divider lines.
 - Definition configuration shares the dense row rhythm, but it remains a
   configuration surface. Definition config should not look like a separate
   settings card, and field values should not become private form controls.

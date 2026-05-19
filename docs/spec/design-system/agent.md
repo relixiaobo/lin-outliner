@@ -165,9 +165,14 @@ Contract:
 
 The composer is the bottom dock control surface. It stays bottom-aligned inside
 the dock and uses the same horizontal inset as the header and chat scroll
-content. Its bottom edge aligns with the workspace panel bottom edge, and its
-surface radius uses `--panel-radius`.
+content. Its bottom edge aligns with the workspace panel bottom edge. Because
+the composer is an input surface with corner controls, it uses the larger
+`--agent-composer-radius` instead of the normal panel radius.
 
+- Assistant prose, user bubbles, and composer input use the same primary content
+  typography as the outliner: `--font-content / --line-content`.
+- Process summaries, thinking rows, and tool summaries use
+  `--font-meta / --line-meta` so they remain subordinate to final prose.
 - Textarea is the primary affordance.
 - Auto-resize the textarea up to a bounded maximum height.
 - Enter sends unless Shift is held or IME composition is active.
@@ -176,9 +181,12 @@ surface radius uses `--panel-radius`.
   must not compete with the textarea.
 - The composer surface stays visually unified. Do not insert a divider between
   textarea and toolbar.
-- Composer surface radius uses `--panel-radius`; nested action buttons use the
-  compact control radius so the input surface and primary action read as one
-  nested control family.
+- Composer surface radius uses `--agent-composer-radius`; model, attachment,
+  send, and stop controls share `--agent-composer-corner-radius`.
+- Corner controls inside the composer follow the corner containment rule: the
+  control's horizontal inset equals its bottom inset, and its radius derives
+  from `surface radius - inset` so the corner centers align without making the
+  controls feel square.
 - Focus on the composer/input surface uses the neutral dark focus border, not
   brand/accent color.
 - Stop uses a filled square glyph in the shared primary action slot, not an

@@ -21,7 +21,7 @@ Inventory covers shipped or in-progress product UI under `src/renderer/ui`:
 | --- | --- | --- | --- |
 | App shell | `App.tsx`, `TopBar.tsx`, `Sidebar.tsx`, `WorkspaceCanvas.tsx`, `AgentDock.tsx` | `patterns.md`, `surfaces.md` | Structure and first primitives are aligned; full token, responsive, overflow, and screenshot pass is in scope for this refactor. |
 | Workspace tabs | `TopBar.tsx`, `WorkspaceTab.tsx`, `useWorkspaceTabs.ts` | `components.md`, `patterns.md` | Tab title, active state, count, and close affordance are isolated; strip layout and tab creation remain in `TopBar`. |
-| Multi-panel canvas | `WorkspaceCanvas.tsx`, `WorkspacePanelSurface.tsx`, `ResizeHandle.tsx`, `useResizableLayout.ts`, `useWorkspaceTabs.ts` | `patterns.md`, `surfaces.md` | Real tiled panels exist; panel shell, resize button structure, minimum width, overflow, and keyboard resize are isolated; responsive behavior remains. |
+| Multi-panel canvas | `WorkspaceCanvas.tsx`, `WorkspacePanelSurface.tsx`, `ResizeHandle.tsx`, `useResizableLayout.ts`, `useWorkspaceTabs.ts` | `patterns.md`, `surfaces.md` | Real tiled panels exist; panel shell, resize button structure, ratio fill, centered content bounds, and keyboard resize are isolated; responsive behavior remains. |
 | Outliner panel | `NodePanel.tsx`, `OutlinerView.tsx`, `OutlinerItem.tsx` | `surfaces.md`, `components.md` | Real product UI remains authoritative; this pass finishes heading, row, field, tag, definition, and trailing-input visual convergence. |
 | Outliner rows | `OutlinerItem.tsx`, `OutlinerRowShell.tsx`, `RowLeading.tsx`, `RowMarker.tsx`, `NodeDescriptionSurface.tsx`, `OutlinerViewChrome.tsx`, `RowHost.tsx`, `useOutlinerRowInteraction.ts` | `components.md` | Row shell, leading marker, description visuals, and view chrome are isolated; full row visual contract and behavior boundary cleanup are in scope. |
 | Editor | `RichTextEditor.tsx`, `FloatingEditorToolbar.tsx`, `editorRegistry.ts` | `components.md`, `implementation.md` | ProseMirror-based editor is core infrastructure; floating toolbar now uses shared anchored overlay positioning. |
@@ -349,7 +349,8 @@ the unified refactor branch.
 
 - Finish app shell, top chrome, sidebar, workspace tab strip, workspace canvas,
   panel surface, panel close/more actions, resize handles, agent dock placement,
-  collapse states, minimum widths, overflow, and responsive desktop behavior.
+  collapse states, ratio-based panel fill, local overflow, and responsive
+  desktop behavior.
 - Validate left/right panel insets, chevron gutter, title column, tag column,
   and More action alignment as one panel geometry system.
 

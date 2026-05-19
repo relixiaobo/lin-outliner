@@ -166,6 +166,8 @@ States:
 - Active/pressed/selected: `--control-active`.
 - Disabled: muted icon and no hover.
 - Focus-visible: visible `--focus-ring`.
+- Cursor: enabled icon buttons use `pointer`; disabled icon buttons use
+  `default`.
 
 Accessibility:
 
@@ -813,6 +815,9 @@ States:
 - Default.
 - Hover/focus-visible through the caller's surface class.
 - Disabled through native `disabled`.
+- Cursor: enabled native buttons default to `pointer`; disabled buttons use
+  `default`. Surfaces override only for text editing, resize handles, or
+  non-interactive placeholders.
 
 Non-goals:
 
@@ -843,6 +848,7 @@ States:
 - On.
 - Disabled through native `disabled`.
 - Focus-visible through the caller's surface class.
+- Cursor: enabled switches use `pointer`; disabled switches use `default`.
 
 Behavior:
 
@@ -1152,6 +1158,9 @@ Rules:
 - Reference markers use a centered dashed shape inside the fixed bullet slot.
 - Hover treatments must not scale tag, field, or reference markers in a way that
   reads as positional movement.
+- Bullet/open controls use `pointer`. Inert trailing placeholders use
+  `default`. Drag affordance should move to a dedicated drag handle before using
+  `grab`.
 - Double-click drill-down is product behavior and should remain owned by row
   interaction code.
 - `tabIndex={-1}` may remain while row editor owns keyboard navigation, but the
@@ -1181,6 +1190,12 @@ Structure:
 Rules:
 
 - Field rows use a grid, not a card or standalone form.
+- Consecutive field rows use light field-axis dividers: top divider on each
+  field row and bottom divider only on the last row in the contiguous group.
+  Dividers start at the field icon's left edge and do not enter the chevron
+  gutter.
+- Field name editing uses the same inline rhythm as rows. Do not add a
+  field-name underline, focus border, or form input chrome on click/focus.
 - Field values are represented by child nodes of the `fieldEntry`; the field row
   itself must not own a private value input.
 - Typed value behavior may specialize child-node creation or selection, but it

@@ -145,10 +145,26 @@ test.describe('agent composer controls', () => {
       const headerStyle = getComputedStyle(header);
       const surfaceStyle = getComputedStyle(surface);
       const actionButton = surface.querySelector('.agent-composer-action-button');
+      const attachmentButton = surface.querySelector('.agent-composer-tool-button');
+      const modelButton = surface.querySelector('.agent-composer-model-button');
       const actionStyle = actionButton instanceof HTMLElement ? getComputedStyle(actionButton) : null;
+      const attachmentStyle = attachmentButton instanceof HTMLElement ? getComputedStyle(attachmentButton) : null;
+      const modelStyle = modelButton instanceof HTMLElement ? getComputedStyle(modelButton) : null;
+      const actionBox = actionButton instanceof HTMLElement ? actionButton.getBoundingClientRect() : null;
+      const attachmentBox = attachmentButton instanceof HTMLElement ? attachmentButton.getBoundingClientRect() : null;
+      const rootStyle = getComputedStyle(document.documentElement);
 
       return {
+        actionBottomInset: actionBox ? surfaceBox.bottom - actionBox.bottom : null,
         actionRadius: actionStyle ? Number.parseFloat(actionStyle.borderTopLeftRadius) : null,
+        actionRightInset: actionBox ? surfaceBox.right - actionBox.right : null,
+        actionSize: actionBox ? actionBox.width : null,
+        attachmentBottomInset: attachmentBox ? surfaceBox.bottom - attachmentBox.bottom : null,
+        attachmentLeftInset: attachmentBox ? attachmentBox.left - surfaceBox.left : null,
+        attachmentRadius: attachmentStyle ? Number.parseFloat(attachmentStyle.borderTopLeftRadius) : null,
+        attachmentSize: attachmentBox ? attachmentBox.width : null,
+        expectedSurfaceRadius: Number.parseFloat(rootStyle.getPropertyValue('--agent-composer-radius')),
+        modelRadius: modelStyle ? Number.parseFloat(modelStyle.borderTopLeftRadius) : null,
         composerBottomDelta: Math.abs(panelBox.bottom - composerBox.bottom),
         composerPaddingBottom: Number.parseFloat(composerStyle.paddingBottom),
         composerPaddingLeft: Number.parseFloat(composerStyle.paddingLeft),
@@ -162,6 +178,7 @@ test.describe('agent composer controls', () => {
         surfaceBottomToPanelBottom: Math.abs(outlinePanelBox.bottom - surfaceBox.bottom),
         surfaceLeftInset: surfaceBox.left - dockBox.left,
         surfacePaddingBottom: Number.parseFloat(surfaceStyle.paddingBottom),
+        surfacePaddingLeft: Number.parseFloat(surfaceStyle.paddingLeft),
         surfacePaddingRight: Number.parseFloat(surfaceStyle.paddingRight),
         surfaceRadius: Number.parseFloat(surfaceStyle.borderTopLeftRadius),
         surfaceRightInset: dockBox.right - surfaceBox.right,
@@ -169,20 +186,31 @@ test.describe('agent composer controls', () => {
     });
 
     expect(metrics).not.toBeNull();
-    expect(metrics!.actionRadius).toBe(6);
     expect(metrics!.composerBottomDelta).toBeLessThanOrEqual(1);
     expect(metrics!.composerPaddingBottom).toBe(0);
-    expect(metrics!.composerPaddingLeft).toBe(metrics!.sidebarPaddingRight);
-    expect(metrics!.composerPaddingLeft).toBe(metrics!.composerPaddingRight);
-    expect(metrics!.headerPaddingLeft).toBe(metrics!.composerPaddingLeft);
-    expect(metrics!.headerPaddingRight).toBe(metrics!.composerPaddingRight);
-    expect(metrics!.scrollPaddingLeft).toBe(metrics!.composerPaddingLeft);
-    expect(metrics!.scrollPaddingRight).toBe(metrics!.composerPaddingRight);
+    expect(metrics!.composerPaddingLeft).toBe(0);
+    expect(metrics!.composerPaddingRight).toBe(0);
+    expect(metrics!.headerPaddingLeft).toBe(metrics!.sidebarPaddingRight);
+    expect(metrics!.headerPaddingRight).toBe(metrics!.sidebarPaddingRight);
+    expect(metrics!.scrollPaddingLeft).toBe(metrics!.sidebarPaddingRight);
+    expect(metrics!.scrollPaddingRight).toBe(metrics!.sidebarPaddingRight);
     expect(metrics!.surfaceBottomToPanelBottom).toBeLessThanOrEqual(1);
+    expect(metrics!.surfacePaddingLeft).toBe(metrics!.surfacePaddingRight);
     expect(metrics!.surfacePaddingBottom).toBe(metrics!.surfacePaddingRight);
-    expect(metrics!.surfaceRadius).toBe(metrics!.panelRadius);
-    expect(Math.abs(metrics!.surfaceLeftInset - metrics!.composerPaddingLeft)).toBeLessThanOrEqual(1);
-    expect(Math.abs(metrics!.surfaceRightInset - metrics!.composerPaddingRight)).toBeLessThanOrEqual(1);
+    expect(metrics!.surfaceRadius).toBe(metrics!.expectedSurfaceRadius);
+    expect(metrics!.surfaceRadius).toBeGreaterThan(metrics!.panelRadius);
+    expect(metrics!.actionRadius).toBe(metrics!.surfaceRadius - metrics!.surfacePaddingRight);
+    expect(metrics!.attachmentRadius).toBe(metrics!.surfaceRadius - metrics!.surfacePaddingLeft);
+    expect(metrics!.modelRadius).toBe(metrics!.actionRadius);
+    expect(metrics!.actionSize).toBe(metrics!.attachmentSize);
+    expect(Math.abs(metrics!.attachmentLeftInset! - metrics!.surfacePaddingLeft)).toBeLessThanOrEqual(1);
+    expect(Math.abs(metrics!.attachmentBottomInset! - metrics!.surfacePaddingBottom)).toBeLessThanOrEqual(1);
+    expect(Math.abs(metrics!.actionRightInset! - metrics!.surfacePaddingRight)).toBeLessThanOrEqual(1);
+    expect(Math.abs(metrics!.actionBottomInset! - metrics!.surfacePaddingBottom)).toBeLessThanOrEqual(1);
+    expect(Math.abs(metrics!.attachmentLeftInset! - metrics!.attachmentBottomInset!)).toBeLessThanOrEqual(1);
+    expect(Math.abs(metrics!.actionRightInset! - metrics!.actionBottomInset!)).toBeLessThanOrEqual(1);
+    expect(metrics!.surfaceLeftInset).toBeLessThanOrEqual(1);
+    expect(metrics!.surfaceRightInset).toBeLessThanOrEqual(1);
   });
 
   test('conversation menu stays anchored inside narrow agent surfaces', async ({ page }) => {

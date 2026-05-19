@@ -191,6 +191,7 @@ test.describe('outliner bullet parity', () => {
         chevronShellWidth: chevronShellRect.width,
         bulletLeft: bulletRect.left - rowRect.left,
         bulletShapeWidth: bulletShapeRect.width,
+        bulletCursor: getComputedStyle(bullet).cursor,
       };
     });
 
@@ -198,11 +199,19 @@ test.describe('outliner bullet parity', () => {
     expectClose(restingMetrics.chevronLeft, 6);
     expectClose(restingMetrics.bulletLeft, 25);
     expectClose(restingMetrics.chevronShellWidth, restingMetrics.bulletShapeWidth);
+    expect(restingMetrics.bulletCursor).toBe('pointer');
 
     await dailyRow.hover();
 
     await expect.poll(async () => dailyRow.locator('.row-chevron-button').evaluate((element) =>
       Number(getComputedStyle(element).opacity))).toBeGreaterThan(0.9);
+  });
+
+  test('trailing placeholder bullet keeps a neutral cursor', async ({ page }) => {
+    const cursor = await page.locator(`[data-trailing-parent-id="${ids.today}"] .row-bullet-button`).first().evaluate((element) =>
+      getComputedStyle(element).cursor);
+
+    expect(cursor).toBe('default');
   });
 });
 

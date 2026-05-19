@@ -57,6 +57,8 @@ interface OutlinerFieldRowProps {
   setTrigger: (trigger: TriggerState) => void;
   dragId: NodeId | null;
   setDragId: (nodeId: NodeId | null) => void;
+  isFirstInFieldGroup: boolean;
+  isLastInFieldGroup: boolean;
 }
 
 function resolveFieldOwnerColor(
@@ -371,7 +373,11 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       hasChildren={false}
       expanded={false}
       wrapProps={row.wrapProps}
-      rowClassName={row.rowClassName('field-row-inline')}
+      rowClassName={row.rowClassName([
+        'field-row-inline',
+        props.isFirstInFieldGroup ? 'field-group-start' : '',
+        props.isLastInFieldGroup ? 'field-group-end' : '',
+      ].filter(Boolean).join(' '))}
       onSelectFromPointer={row.selectFromPointer}
       onContextMenu={openContextMenu}
       rowContent={(

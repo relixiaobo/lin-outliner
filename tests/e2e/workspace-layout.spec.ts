@@ -45,7 +45,7 @@ test.describe('workspace layout resizing', () => {
     await expect.poll(async () => (await agent.boundingBox())?.width ?? 0).toBeLessThan(agentAfterDrag!.width - 12);
   });
 
-  test('panel split resizes by ratio and canvas supports min-width overflow', async ({ page }) => {
+  test('panel split resizes by ratio and fills the canvas without horizontal overflow', async ({ page }) => {
     await page.setViewportSize({ width: 1700, height: 900 });
     const chrome = await page.locator('.top-chrome').boundingBox();
     const activeTab = await page.locator('.workspace-tab.active').boundingBox();
@@ -114,7 +114,7 @@ test.describe('workspace layout resizing', () => {
       overflowX: getComputedStyle(element).overflowX,
       scrollWidth: element.scrollWidth,
     }));
-    expect(canvasOverflow.overflowX).toBe('auto');
+    expect(canvasOverflow.overflowX).toBe('hidden');
     expect(canvasOverflow.scrollWidth).toBeLessThanOrEqual(canvasOverflow.clientWidth + 1);
 
     await page.setViewportSize({ width: 980, height: 900 });
@@ -123,8 +123,45 @@ test.describe('workspace layout resizing', () => {
       overflowX: getComputedStyle(element).overflowX,
       scrollWidth: element.scrollWidth,
     }));
-    expect(narrowCanvasOverflow.overflowX).toBe('auto');
-    expect(narrowCanvasOverflow.scrollWidth).toBeGreaterThan(narrowCanvasOverflow.clientWidth);
+    expect(narrowCanvasOverflow.overflowX).toBe('hidden');
+    expect(narrowCanvasOverflow.scrollWidth).toBeLessThanOrEqual(narrowCanvasOverflow.clientWidth + 1);
+  });
+
+  test('single panel centers bounded content and fills when narrow', async ({ page }) => {
+    await page.setViewportSize({ width: 1900, height: 900 });
+    await page.getByTitle('New tab').click();
+
+    const panels = page.locator('.outline-panel-surface');
+    await expect(panels).toHaveCount(1);
+
+    const centeredMetrics = await page.locator('.outline-panel-surface .panel-inner').first().evaluate((inner) => {
+      const panel = inner.closest('.outline-panel-surface')!.getBoundingClientRect();
+      const innerBox = inner.getBoundingClientRect();
+      return {
+        innerWidth: innerBox.width,
+        leftGap: innerBox.left - panel.left,
+        panelWidth: panel.width,
+        rightGap: panel.right - innerBox.right,
+      };
+    });
+    expect(centeredMetrics.panelWidth).toBeGreaterThan(900);
+    expect(centeredMetrics.innerWidth).toBeLessThanOrEqual(721);
+    expect(Math.abs(centeredMetrics.leftGap - centeredMetrics.rightGap)).toBeLessThanOrEqual(2);
+
+    await page.setViewportSize({ width: 900, height: 900 });
+    const narrowMetrics = await page.locator('.outline-panel-surface .panel-inner').first().evaluate((inner) => {
+      const panel = inner.closest('.outline-panel-surface')!.getBoundingClientRect();
+      const innerBox = inner.getBoundingClientRect();
+      return {
+        innerWidth: innerBox.width,
+        leftGap: innerBox.left - panel.left,
+        panelWidth: panel.width,
+        rightGap: panel.right - innerBox.right,
+      };
+    });
+    expect(narrowMetrics.innerWidth).toBeLessThanOrEqual(narrowMetrics.panelWidth + 1);
+    expect(narrowMetrics.leftGap).toBeGreaterThanOrEqual(-1);
+    expect(narrowMetrics.rightGap).toBeGreaterThanOrEqual(-1);
   });
 
   test('workspace section renders the root node as an expandable tree', async ({ page }) => {
