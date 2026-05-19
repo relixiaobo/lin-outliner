@@ -14,6 +14,7 @@ interface RowLeadingProps {
   expanded: boolean;
   variant: RowLeadingVariant;
   fieldType?: FieldType;
+  markerClassName?: string;
   bulletColors?: string[];
   tagDefColor?: string;
   onToggleExpand: () => void;
@@ -28,6 +29,7 @@ export function RowLeading({
   expanded,
   variant,
   fieldType,
+  markerClassName,
   bulletColors = [],
   tagDefColor,
   onToggleExpand,
@@ -74,6 +76,7 @@ export function RowLeading({
           expanded={expanded}
           variant={variant}
           fieldType={fieldType}
+          className={markerClassName}
           bulletColors={bulletColors}
           tagDefColor={tagDefColor}
         />

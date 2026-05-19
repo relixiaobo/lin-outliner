@@ -43,7 +43,13 @@ import { OutlinerView } from './outliner/OutlinerView';
 import { buildOutlinerRows } from './outliner/row-model';
 import { TrailingInput } from './outliner/TrailingInput';
 import { TriggerPopover } from './outliner/TriggerPopover';
-import { createTrailingField, createTrailingTriggerNode } from './outliner/trailingTriggers';
+import {
+  applyTrailingReferenceTrigger,
+  applyTrailingTagTrigger,
+  createAndApplyTrailingTagTrigger,
+  createTrailingField,
+  executeTrailingSlashTrigger,
+} from './outliner/trailingTriggers';
 import { ButtonControl } from './primitives/ButtonControl';
 import { IconButton } from './primitives/IconButton';
 import { inlineReferenceTextColor, resolveTagColor } from './tags/tagColors';
@@ -548,13 +554,21 @@ export function NodePanel(props: NodePanelProps) {
                 parentId={props.rootId}
                 index={props.index}
                 expanded={props.ui.expanded}
+                run={props.run}
                 focusRequest={props.ui.focusRequest}
+                focusedId={props.ui.focusedId}
+                focusSurface={props.ui.focusSurface}
                 onFocusRequestConsumed={(request) => {
                   props.setUi((prev) => clearFocusRequestState(prev, request));
                 }}
                 onCreate={async (parentId, text) => {
-                  const result = await props.run(() => api.createNode(parentId, null, text));
-                  return result && 'focus' in result ? result.focus?.nodeId ?? null : null;
+                  let createdId: string | null = null;
+                  await props.run(async () => {
+                    const outcome = await api.createNode(parentId, null, text);
+                    createdId = outcome.focus?.nodeId ?? null;
+                    return outcome.projection;
+                  });
+                  return createdId;
                 }}
                 onCreateTree={(parentId, nodes) => (
                   props.run(() => api.createNodesFromTree(parentId, nodes))
@@ -565,16 +579,11 @@ export function NodePanel(props: NodePanelProps) {
                 onToggleCreated={async (nodeId) => {
                   await props.run(() => api.toggleDone(nodeId));
                 }}
-                onCreateTrigger={(params) => {
-                  return createTrailingTriggerNode({
-                    getText: params.getText,
-                    parentId: params.parentId,
-                    text: params.text,
-                    trigger: params.trigger,
-                    run: props.run,
-                    setTrigger: props.setTrigger,
-                  });
-                }}
+                onApplyTagTrigger={applyTrailingTagTrigger}
+                onCreateTagTrigger={createAndApplyTrailingTagTrigger}
+                onApplyReferenceTrigger={applyTrailingReferenceTrigger}
+                onExecuteSlashTrigger={executeTrailingSlashTrigger}
+                onOpenCommandPalette={() => props.setUi((prev) => ({ ...prev, commandOpen: true }))}
                 onCreateField={(parentId) => {
                   void createTrailingField({
                     parentId,

@@ -40,6 +40,14 @@ export type FieldType =
   | 'boolean'
   | 'color';
 
+export type FieldCardinality = 'single' | 'list';
+
+export type AutoInitStrategy =
+  | 'current_date'
+  | 'ancestor_day_node'
+  | 'ancestor_field_value'
+  | 'ancestor_supertag_ref';
+
 export type HideFieldMode =
   | 'never'
   | 'empty'
@@ -57,6 +65,7 @@ export interface TagConfigPatch {
 
 export interface FieldConfigPatch {
   fieldType?: FieldType;
+  cardinality?: FieldCardinality | null;
   sourceSupertag?: NodeId | null;
   nullable?: boolean | null;
   hideField?: HideFieldMode | null;
@@ -203,7 +212,7 @@ export interface Node {
   doneStateEnabled: boolean;
   fieldDefId?: NodeId;
   fieldType?: FieldType;
-  cardinality?: string;
+  cardinality?: FieldCardinality;
   nullable?: boolean;
   hideField?: string;
   autoInitialize?: string;

@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 import type { CommandOutcome, DocumentProjection, NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import type { CommandRunner, TriggerState } from '../shared';
@@ -26,6 +27,8 @@ interface TriggerPopoverProps {
   close: () => void;
   clearTriggerText: () => Promise<void>;
   applyReference?: (target: NodeProjection) => Promise<CommandOutcome | DocumentProjection | null | void>;
+  applyTag?: (tag: NodeProjection) => Promise<CommandOutcome | DocumentProjection | null | void>;
+  createTagAndApply?: (name: string) => Promise<CommandOutcome | DocumentProjection | null | void>;
   executeSlashCommand?: (commandId: SlashCommandId) => Promise<CommandOutcome | DocumentProjection | null | void>;
   enabledSlashCommandIds?: SlashCommandId[];
   treeReferenceParentId?: NodeId | null;
@@ -58,7 +61,6 @@ export function TriggerPopover(props: TriggerPopoverProps) {
   }, [props, existingTagIds]);
   const anchoredDropStyle = useAnchoredOverlay(menuRef, {
     anchorRect: props.trigger.anchor ?? null,
-    disabled: !props.trigger.anchor,
     layoutKey: `${props.trigger.kind}:${props.trigger.query}:${itemCount}`,
     maxHeight: 240,
     placement: 'bottom-start',
@@ -128,13 +130,14 @@ export function TriggerPopover(props: TriggerPopoverProps) {
       ? 'Reference suggestions'
       : 'Slash commands';
 
-  return (
+  return createPortal(
     <PopoverListbox
       ref={menuRef}
       label={label}
       className="trigger-popover"
       preventMouseDown={false}
       style={anchoredDropStyle}
+      onMouseDown={(event) => event.stopPropagation()}
     >
       {props.trigger.kind === '#' && (
         <TagSelector
@@ -147,6 +150,8 @@ export function TriggerPopover(props: TriggerPopoverProps) {
           run={props.run}
           close={props.close}
           clearTriggerText={props.clearTriggerText}
+          applyTag={props.applyTag}
+          createTagAndApply={props.createTagAndApply}
         />
       )}
       {props.trigger.kind === '@' && (
@@ -174,6 +179,7 @@ export function TriggerPopover(props: TriggerPopoverProps) {
           close={props.close}
         />
       )}
-    </PopoverListbox>
+    </PopoverListbox>,
+    document.body,
   );
 }

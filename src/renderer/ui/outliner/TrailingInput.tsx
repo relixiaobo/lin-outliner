@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -7,9 +8,9 @@ import {
 import { createPortal } from 'react-dom';
 import { EditorState, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
-import type { CreateNodeTree, NodeId, NodeProjection } from '../../api/types';
+import type { CommandOutcome, CreateNodeTree, DocumentProjection, NodeId, NodeProjection } from '../../api/types';
 import { EMPTY_RICH_TEXT } from '../../api/types';
-import type { CursorPlacement, DocumentIndex, FocusRequest } from '../../state/document';
+import type { CursorPlacement, DocumentIndex, FocusRequest, FocusSurface } from '../../state/document';
 import { pmSchema } from '../editor/pmSchema';
 import { richTextToDoc } from '../editor/richTextCodec';
 import { focusTarget, focusTargetMatches } from '../focus/focusModel';
@@ -21,9 +22,11 @@ import {
   resolveTrailingRowEscapeIntent,
   resolveTrailingRowUpdateAction,
 } from '../interactions/rowInteractions';
-import { filterFieldOptions, isOptionsFieldType, resolveFieldOptions } from '../interactions/fieldOptions';
+import { isOptionsFieldType } from '../fields/fieldTypeRegistry';
+import { filterFieldOptions, resolveFieldOptions } from '../interactions/fieldOptions';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { parseOutlinerPaste } from '../interactions/pasteParser';
+import type { SlashCommandId } from '../interactions/slashCommands';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import {
   PopoverBulletIcon,
@@ -32,7 +35,9 @@ import {
   PopoverListItem,
 } from './PopoverList';
 import { TrailingInputLeading } from './TrailingInputLeading';
-import type { TrailingTriggerKind } from './trailingTriggers';
+import { TriggerPopover } from './TriggerPopover';
+import type { CommandRunner, EditorTrigger } from '../shared';
+import type { TrailingInlineTrigger, TrailingSlashTrigger } from './trailingTriggers';
 
 interface TrailingInputProps {
   panelId?: string | null;
@@ -40,18 +45,40 @@ interface TrailingInputProps {
   index: DocumentIndex;
   expanded: Set<NodeId>;
   focusRequest?: FocusRequest | null;
+  focusedId?: NodeId | null;
+  focusSurface?: FocusSurface | null;
   onFocusRequestConsumed?: (request: FocusRequest) => void;
+  run: CommandRunner;
   onCreate: (parentId: NodeId, text: string) => Promise<NodeId | null> | NodeId | null | void;
   onCreateTree?: (parentId: NodeId, nodes: CreateNodeTree[]) => Promise<unknown> | unknown;
   onUpdateCreated?: (nodeId: NodeId, text: string) => Promise<void> | void;
   onToggleCreated?: (nodeId: NodeId) => Promise<void> | void;
-  onCreateTrigger?: (params: {
+  onApplyTagTrigger?: (params: {
     parentId: NodeId;
-    trigger: TrailingTriggerKind;
     text: string;
-    getText: () => string;
-  }) => Promise<unknown> | unknown;
+    trigger: TrailingInlineTrigger;
+    tagId: NodeId;
+  }) => Promise<CommandOutcome | DocumentProjection | null | void> | CommandOutcome | DocumentProjection | null | void;
+  onCreateTagTrigger?: (params: {
+    parentId: NodeId;
+    text: string;
+    trigger: TrailingInlineTrigger;
+    name: string;
+  }) => Promise<CommandOutcome | DocumentProjection | null | void> | CommandOutcome | DocumentProjection | null | void;
+  onApplyReferenceTrigger?: (params: {
+    parentId: NodeId;
+    text: string;
+    trigger: TrailingInlineTrigger;
+    target: NodeProjection;
+  }) => Promise<CommandOutcome | DocumentProjection | null | void> | CommandOutcome | DocumentProjection | null | void;
+  onExecuteSlashTrigger?: (params: {
+    parentId: NodeId;
+    text: string;
+    trigger: TrailingSlashTrigger;
+    commandId: Exclude<SlashCommandId, 'reference' | 'command_palette'>;
+  }) => Promise<CommandOutcome | DocumentProjection | null | void> | CommandOutcome | DocumentProjection | null | void;
   onCreateField?: (parentId: NodeId) => Promise<void> | void;
+  onOpenCommandPalette?: () => void;
   onExpand?: (nodeId: NodeId) => void;
   onFocusNode?: (nodeId: NodeId) => void;
   onCollapseNode?: (nodeId: NodeId) => void;
@@ -61,14 +88,34 @@ interface TrailingInputProps {
   optionField?: NodeProjection;
   onSelectOption?: (optionId: NodeId) => Promise<unknown> | unknown;
   onCreateOption?: (name: string) => Promise<unknown> | unknown;
+  continueOnEnter?: boolean;
   placeholder?: string;
 }
 
-const TRIGGER_NODE_IDLE_MS = 160;
-const PLAIN_NODE_IDLE_MS = 160;
+type CommitFocusTarget = 'none' | 'trailing' | 'created';
+
+type TrailingInputSuppression = { type: 'materialized'; nodeId: NodeId; focusObserved: boolean };
+
+function isInlineTrigger(trigger: EditorTrigger): trigger is TrailingInlineTrigger {
+  return trigger.kind === '#' || trigger.kind === '@';
+}
+
+function isSlashTrigger(trigger: EditorTrigger): trigger is TrailingSlashTrigger {
+  return trigger.kind === '/';
+}
 
 function emptyDoc() {
   return richTextToDoc(EMPTY_RICH_TEXT, pmSchema);
+}
+
+function plainTreeNode(text: string): CreateNodeTree {
+  return {
+    content: {
+      ...EMPTY_RICH_TEXT,
+      text,
+    },
+    children: [],
+  };
 }
 
 function resetEditorContent(view: EditorView) {
@@ -79,8 +126,64 @@ function resetEditorContent(view: EditorView) {
   view.dispatch(tr);
 }
 
+function replaceEditorTextRange(
+  view: EditorView,
+  fromOffset: number,
+  toOffset: number,
+  replacement: string,
+) {
+  const from = Math.max(1, Math.min(1 + fromOffset, view.state.doc.content.size - 1));
+  const to = Math.max(from, Math.min(1 + toOffset, view.state.doc.content.size - 1));
+  let tr = view.state.tr.insertText(replacement, from, to);
+  const cursor = Math.max(1, Math.min(from + replacement.length, tr.doc.content.size - 1));
+  tr = tr.setSelection(TextSelection.create(tr.doc, cursor));
+  view.dispatch(tr);
+}
+
+function clearCommittedEditor(view: EditorView, updateHasContent: (nextHasContent: boolean) => void) {
+  if (!view.isDestroyed) {
+    resetEditorContent(view);
+  }
+  updateHasContent(false);
+}
+
 function getEditorText(view: EditorView): string {
   return view.state.doc.textContent;
+}
+
+function commandFocusNodeId(result: CommandOutcome | DocumentProjection | null | void): NodeId | null {
+  if (!result || !('focus' in result)) return null;
+  return result.focus?.nodeId ?? null;
+}
+
+function isEmptyTailNode(
+  parentId: NodeId,
+  nodeId: NodeId | null | undefined,
+  byId: Map<NodeId, NodeProjection>,
+): boolean {
+  if (!nodeId) return false;
+  const parent = byId.get(parentId);
+  const node = byId.get(nodeId);
+  if (!parent || !node || node.type === 'fieldEntry') return false;
+  const lastChildId = parent.children.filter((childId) => byId.has(childId)).at(-1);
+  return (
+    lastChildId === nodeId
+    && node.children.length === 0
+    && node.content.text.length === 0
+  );
+}
+
+function caretAnchor(view: EditorView) {
+  try {
+    const rect = view.coordsAtPos(view.state.selection.from);
+    return {
+      left: rect.left,
+      top: rect.top,
+      bottom: rect.bottom,
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 function setTrailingSelection(view: EditorView, placement: CursorPlacement) {
@@ -124,6 +227,8 @@ export function TrailingInput(props: TrailingInputProps) {
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [optionsQuery, setOptionsQuery] = useState('');
   const [optionsIndex, setOptionsIndex] = useState(0);
+  const [trailingTrigger, setTrailingTrigger] = useState<EditorTrigger | null>(null);
+  const [trailingInputSuppression, setTrailingInputSuppression] = useState<TrailingInputSuppression | null>(null);
   const mountRef = useRef<HTMLDivElement | null>(null);
   const optionsMenuRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -131,10 +236,11 @@ export function TrailingInput(props: TrailingInputProps) {
   const effectiveParentRef = useRef(props.parentId);
   const depthShiftRef = useRef(0);
   const committingRef = useRef(false);
+  const clearAfterProjectionRef = useRef(false);
+  const refocusAfterProjectionRef = useRef(false);
   const composingRef = useRef(false);
   const eagerBufferRef = useRef('');
-  const triggerIdleTimerRef = useRef<number | null>(null);
-  const plainCommitTimerRef = useRef<number | null>(null);
+  const trailingTriggerRef = useRef<EditorTrigger | null>(null);
   const optionsStateRef = useRef({
     isOptionsField: false,
     optionsOpen: false,
@@ -148,6 +254,7 @@ export function TrailingInput(props: TrailingInputProps) {
   const allOptions = resolveFieldOptions(props.optionField, props.index.byId);
   const filteredOptions = filterFieldOptions(allOptions, optionsQuery);
   const canCreateOption = isOptionsField
+    && props.optionField?.fieldType === 'options'
     && Boolean(optionsQuery.trim())
     && props.optionField?.autocollectOptions !== false
     && !allOptions.some((option) => option.label.toLowerCase() === optionsQuery.trim().toLowerCase());
@@ -173,6 +280,7 @@ export function TrailingInput(props: TrailingInputProps) {
   propsRef.current = props;
   effectiveParentRef.current = effectiveParentId;
   depthShiftRef.current = depthShift;
+  trailingTriggerRef.current = trailingTrigger;
 
   useEffect(() => {
     setEffectiveParentId(props.parentId);
@@ -182,6 +290,35 @@ export function TrailingInput(props: TrailingInputProps) {
   useEffect(() => {
     setOptionsIndex(0);
   }, [optionsQuery, optionCount]);
+
+  useLayoutEffect(() => {
+    if (!clearAfterProjectionRef.current) return;
+    const view = viewRef.current;
+    if (!view || view.isDestroyed) return;
+    const shouldRefocus = refocusAfterProjectionRef.current;
+    clearAfterProjectionRef.current = false;
+    refocusAfterProjectionRef.current = false;
+    clearCommittedEditor(view, updateHasContent);
+    if (shouldRefocus) view.focus();
+  }, [props.index.projection]);
+
+  useEffect(() => {
+    setTrailingInputSuppression((current) => {
+      if (current?.type !== 'materialized') return current;
+      return isEmptyTailNode(effectiveParentId, current.nodeId, props.index.byId) ? current : null;
+    });
+  }, [effectiveParentId, props.index.byId, props.index.projection]);
+
+  useEffect(() => {
+    setTrailingInputSuppression((current) => {
+      if (current?.type !== 'materialized') return current;
+      const focused = props.focusSurface === 'row' && props.focusedId === current.nodeId;
+      if (focused) {
+        return current.focusObserved ? current : { ...current, focusObserved: true };
+      }
+      return current.focusObserved ? null : current;
+    });
+  }, [props.focusedId, props.focusSurface]);
 
   const resetEffectiveParent = () => {
     setEffectiveParentId(propsRef.current.parentId);
@@ -196,21 +333,52 @@ export function TrailingInput(props: TrailingInputProps) {
     Promise.resolve(propsRef.current.onCreate(parentId, text))
   );
 
-  const commitContent = async (view: EditorView, rawText: string, continueWithEmpty: boolean) => {
+  const createContentAndContinuation = async (parentId: NodeId, text: string) => {
+    if (propsRef.current.onCreateTree) {
+      const result = await Promise.resolve(propsRef.current.onCreateTree(parentId, [
+        plainTreeNode(text),
+        plainTreeNode(''),
+      ]));
+      return result !== null;
+    }
+    const contentId = await createNode(parentId, text);
+    const continuationId = await createNode(parentId, '');
+    return contentId != null && continuationId != null;
+  };
+
+  const commitContent = async (
+    view: EditorView,
+    rawText: string,
+    continueWithEmpty: boolean,
+    focusAfterCommit: CommitFocusTarget = 'none',
+  ) => {
     if (committingRef.current) return;
     if (!continueWithEmpty && rawText.trim().length === 0) return;
     const targetParentId = effectiveParentRef.current;
     committingRef.current = true;
-    resetEditorContent(view);
-    updateHasContent(false);
+    clearAfterProjectionRef.current = true;
+    refocusAfterProjectionRef.current = focusAfterCommit === 'trailing';
+    let committed = false;
+    let createdFocusId: NodeId | null = null;
     try {
-      if (rawText.trim().length > 0) {
-        await createNode(targetParentId, rawText);
+      const hasText = rawText.trim().length > 0;
+      if (hasText && continueWithEmpty) {
+        committed = await createContentAndContinuation(targetParentId, rawText);
+      } else if (hasText) {
+        const nodeId = await createNode(targetParentId, rawText);
+        committed = nodeId != null;
+        if (nodeId != null && focusAfterCommit === 'created') createdFocusId = nodeId;
+      } else if (continueWithEmpty) {
+        const nodeId = await createNode(targetParentId, '');
+        committed = nodeId != null;
+        if (nodeId != null && focusAfterCommit === 'created') createdFocusId = nodeId;
       }
-      if (continueWithEmpty) {
-        await createNode(targetParentId, '');
-      }
+      if (createdFocusId) propsRef.current.onFocusNode?.(createdFocusId);
     } finally {
+      if (!committed) {
+        clearAfterProjectionRef.current = false;
+        refocusAfterProjectionRef.current = false;
+      }
       committingRef.current = false;
     }
   };
@@ -219,14 +387,17 @@ export function TrailingInput(props: TrailingInputProps) {
     if (committingRef.current) return;
     const targetParentId = effectiveParentRef.current;
     committingRef.current = true;
-    resetEditorContent(view);
-    updateHasContent(false);
+    clearAfterProjectionRef.current = true;
+    let committed = false;
     try {
       const nodeId = await createNode(targetParentId, rawText);
       if (nodeId) {
         await propsRef.current.onToggleCreated?.(nodeId);
+        propsRef.current.onFocusNode?.(nodeId);
+        committed = true;
       }
     } finally {
+      if (!committed) clearAfterProjectionRef.current = false;
       committingRef.current = false;
     }
   };
@@ -242,62 +413,174 @@ export function TrailingInput(props: TrailingInputProps) {
       });
   };
 
-  const createTriggerNode = (view: EditorView, trigger: TrailingTriggerKind, text: string) => {
-    if (committingRef.current || !propsRef.current.onCreateTrigger) return;
-    committingRef.current = true;
-    eagerBufferRef.current = text;
-    resetEditorContent(view);
-    updateHasContent(false);
-    void Promise.resolve(propsRef.current.onCreateTrigger({
-      getText: () => eagerBufferRef.current,
-      parentId: effectiveParentRef.current,
-      trigger,
-      text,
-    })).finally(() => {
-      committingRef.current = false;
-      eagerBufferRef.current = '';
+  const openTrailingTrigger = (
+    view: EditorView,
+    triggerKind: EditorTrigger['kind'],
+    textOffset: number,
+  ) => {
+    const text = getEditorText(view);
+    const from = Math.max(0, text.lastIndexOf(triggerKind));
+    const to = Math.max(from + 1, Math.min(textOffset, text.length));
+    setTrailingTrigger({
+      anchor: caretAnchor(view),
+      from,
+      kind: triggerKind,
+      query: text.slice(from + 1, to),
+      to,
     });
   };
 
-  const clearTriggerIdleTimer = () => {
-    if (triggerIdleTimerRef.current === null) return;
-    window.clearTimeout(triggerIdleTimerRef.current);
-    triggerIdleTimerRef.current = null;
+  const closeTrailingTrigger = () => {
+    if (trailingTriggerRef.current) setTrailingTrigger(null);
   };
 
-  const clearPlainCommitTimer = () => {
-    if (plainCommitTimerRef.current === null) return;
-    window.clearTimeout(plainCommitTimerRef.current);
-    plainCommitTimerRef.current = null;
+  const beginInlineTriggerCommit = () => {
+    committingRef.current = true;
+    clearAfterProjectionRef.current = true;
+    refocusAfterProjectionRef.current = false;
   };
 
-  const schedulePlainNode = (view: EditorView, text: string) => {
-    clearPlainCommitTimer();
-    plainCommitTimerRef.current = window.setTimeout(() => {
-      plainCommitTimerRef.current = null;
-      if (
-        committingRef.current
-        || composingRef.current
-        || view.isDestroyed
-        || getEditorText(view) !== text
-      ) {
-        return;
-      }
-      void commitContent(view, text, false);
-    }, PLAIN_NODE_IDLE_MS);
-  };
-
-  const scheduleTriggerNode = (view: EditorView, trigger: TrailingTriggerKind, text: string) => {
-    clearTriggerIdleTimer();
-    if (trigger === '/') {
-      createTriggerNode(view, trigger, text);
-      return;
+  const finishInlineTriggerCommit = (committed: boolean, view: EditorView) => {
+    if (!committed) {
+      clearAfterProjectionRef.current = false;
+      refocusAfterProjectionRef.current = false;
+      setTrailingInputSuppression(null);
+      if (!view.isDestroyed) view.focus();
     }
-    triggerIdleTimerRef.current = window.setTimeout(() => {
-      triggerIdleTimerRef.current = null;
-      if (committingRef.current || view.isDestroyed || getEditorText(view) !== text) return;
-      createTriggerNode(view, trigger, text);
-    }, TRIGGER_NODE_IDLE_MS);
+    committingRef.current = false;
+    setTrailingTrigger(null);
+    resetEffectiveParent();
+  };
+
+  const applyTrailingTag = async (
+    tag: NodeProjection,
+    triggerOverride?: TrailingInlineTrigger | null,
+  ) => {
+    const view = viewRef.current;
+    const currentTrigger = trailingTriggerRef.current;
+    const trigger = triggerOverride ?? (currentTrigger && isInlineTrigger(currentTrigger) ? currentTrigger : null);
+    if (!view || !trigger || !propsRef.current.onApplyTagTrigger) return null;
+    const text = getEditorText(view);
+    beginInlineTriggerCommit();
+    let committed = false;
+    try {
+      const result = await propsRef.current.onApplyTagTrigger({
+        parentId: effectiveParentRef.current,
+        tagId: tag.id,
+        text,
+        trigger,
+      });
+      committed = Boolean(result);
+      const nodeId = commandFocusNodeId(result);
+      setTrailingInputSuppression(nodeId ? { type: 'materialized', nodeId, focusObserved: false } : null);
+      return result;
+    } finally {
+      finishInlineTriggerCommit(committed, view);
+    }
+  };
+
+  const createTrailingTag = async (
+    name: string,
+    triggerOverride?: TrailingInlineTrigger | null,
+  ) => {
+    const view = viewRef.current;
+    const currentTrigger = trailingTriggerRef.current;
+    const trigger = triggerOverride ?? (currentTrigger && isInlineTrigger(currentTrigger) ? currentTrigger : null);
+    if (!view || !trigger || !propsRef.current.onCreateTagTrigger) return null;
+    const text = getEditorText(view);
+    beginInlineTriggerCommit();
+    let committed = false;
+    try {
+      const result = await propsRef.current.onCreateTagTrigger({
+        name,
+        parentId: effectiveParentRef.current,
+        text,
+        trigger,
+      });
+      committed = Boolean(result);
+      const nodeId = commandFocusNodeId(result);
+      setTrailingInputSuppression(nodeId ? { type: 'materialized', nodeId, focusObserved: false } : null);
+      return result;
+    } finally {
+      finishInlineTriggerCommit(committed, view);
+    }
+  };
+
+  const applyTrailingReference = async (
+    target: NodeProjection,
+    triggerOverride?: TrailingInlineTrigger | null,
+  ) => {
+    const view = viewRef.current;
+    const currentTrigger = trailingTriggerRef.current;
+    const trigger = triggerOverride ?? (currentTrigger && isInlineTrigger(currentTrigger) ? currentTrigger : null);
+    if (!view || !trigger || !propsRef.current.onApplyReferenceTrigger) return null;
+    const text = getEditorText(view);
+    beginInlineTriggerCommit();
+    let committed = false;
+    try {
+      const result = await propsRef.current.onApplyReferenceTrigger({
+        parentId: effectiveParentRef.current,
+        target,
+        text,
+        trigger,
+      });
+      committed = Boolean(result);
+      const nodeId = commandFocusNodeId(result);
+      setTrailingInputSuppression(nodeId ? { type: 'materialized', nodeId, focusObserved: false } : null);
+      return result;
+    } finally {
+      finishInlineTriggerCommit(committed, view);
+    }
+  };
+
+  const executeTrailingSlashCommand = async (
+    commandId: SlashCommandId,
+    triggerOverride?: TrailingSlashTrigger | null,
+  ) => {
+    const view = viewRef.current;
+    const currentTrigger = trailingTriggerRef.current;
+    const trigger = triggerOverride ?? (currentTrigger && isSlashTrigger(currentTrigger)
+      ? currentTrigger
+      : null);
+    if (!view || !trigger) return null;
+
+    if (commandId === 'reference') {
+      replaceEditorTextRange(view, trigger.from, trigger.to, '@');
+      setTrailingTrigger({
+        anchor: caretAnchor(view) ?? trigger.anchor,
+        from: trigger.from,
+        kind: '@',
+        query: '',
+        to: trigger.from + 1,
+      });
+      return propsRef.current.index.projection;
+    }
+
+    if (commandId === 'command_palette') {
+      replaceEditorTextRange(view, trigger.from, trigger.to, '');
+      setTrailingTrigger(null);
+      propsRef.current.onOpenCommandPalette?.();
+      return propsRef.current.index.projection;
+    }
+
+    if (!propsRef.current.onExecuteSlashTrigger) return null;
+    const text = getEditorText(view);
+    beginInlineTriggerCommit();
+    let committed = false;
+    try {
+      const result = await propsRef.current.onExecuteSlashTrigger({
+        commandId,
+        parentId: effectiveParentRef.current,
+        text,
+        trigger,
+      });
+      committed = Boolean(result);
+      const nodeId = commandFocusNodeId(result);
+      setTrailingInputSuppression(nodeId ? { type: 'materialized', nodeId, focusObserved: false } : null);
+      return result;
+    } finally {
+      finishInlineTriggerCommit(committed, view);
+    }
   };
 
   const closeOptions = () => {
@@ -375,8 +658,6 @@ export function TrailingInput(props: TrailingInputProps) {
         const text = getEditorText(view);
         updateHasContent(text.length > 0);
         if (committingRef.current) return;
-        clearTriggerIdleTimer();
-        clearPlainCommitTimer();
 
         const optionState = optionsStateRef.current;
         const action = resolveTrailingRowUpdateAction({
@@ -387,11 +668,13 @@ export function TrailingInput(props: TrailingInputProps) {
           createField(view);
           return;
         }
-        if (action.type === 'create_trigger_node') {
-          scheduleTriggerNode(view, action.trigger as TrailingTriggerKind, action.matchText);
+        if (action.type === 'open_trigger') {
+          closeOptions();
+          openTrailingTrigger(view, action.trigger, action.textOffset);
           return;
         }
         if (action.type === 'open_options') {
+          closeTrailingTrigger();
           setOptionsOpen(true);
           setOptionsQuery(action.query);
           return;
@@ -399,9 +682,7 @@ export function TrailingInput(props: TrailingInputProps) {
         if (action.type === 'close_options') {
           closeOptions();
         }
-        if (!composingRef.current && text.trim().length > 0) {
-          schedulePlainNode(view, text);
-        }
+        closeTrailingTrigger();
       },
       handleDOMEvents: {
         paste(viewInstance, event) {
@@ -437,13 +718,14 @@ export function TrailingInput(props: TrailingInputProps) {
         },
         blur(viewInstance) {
           composingRef.current = false;
-          if (committingRef.current) return false;
+          if (committingRef.current || clearAfterProjectionRef.current) return false;
           const text = getEditorText(viewInstance);
           if (text.trim().length > 0) {
-            void commitContent(viewInstance, text, false).then(resetEffectiveParent);
+            void commitContent(viewInstance, text, false, 'none').then(resetEffectiveParent);
             return false;
           }
           updateHasContent(false);
+          closeTrailingTrigger();
           closeOptions();
           resetEffectiveParent();
           return false;
@@ -457,8 +739,24 @@ export function TrailingInput(props: TrailingInputProps) {
           queueMicrotask(() => {
             if (committingRef.current || viewInstance.isDestroyed) return;
             const text = getEditorText(viewInstance);
-            if (text.trim().length > 0) {
-              void commitContent(viewInstance, text, false);
+            updateHasContent(text.length > 0);
+            const optionState = optionsStateRef.current;
+            const action = resolveTrailingRowUpdateAction({
+              text,
+              isOptionsField: optionState.isOptionsField,
+            });
+            if (action.type === 'open_options') {
+              closeTrailingTrigger();
+              setOptionsOpen(true);
+              setOptionsQuery(action.query);
+            } else if (action.type === 'close_options') {
+              closeOptions();
+              closeTrailingTrigger();
+            } else if (action.type === 'open_trigger') {
+              closeOptions();
+              openTrailingTrigger(viewInstance, action.trigger, action.textOffset);
+            } else {
+              closeTrailingTrigger();
             }
           });
           return false;
@@ -502,6 +800,7 @@ export function TrailingInput(props: TrailingInputProps) {
           event.preventDefault();
           const text = getEditorText(viewInstance);
           const intent = resolveTrailingRowEnterIntent({
+            continueOnText: propsRef.current.continueOnEnter === true,
             hasText: text.trim().length > 0,
             optionsOpen: optionsStateRef.current.optionsOpen,
             optionCount: optionsStateRef.current.optionCount,
@@ -513,7 +812,12 @@ export function TrailingInput(props: TrailingInputProps) {
             else if (optionState.canCreateOption) createOption(viewInstance);
             return true;
           }
-          void commitContent(viewInstance, text, intent === 'create_content_and_continue' || intent === 'create_empty');
+          void commitContent(
+            viewInstance,
+            text,
+            intent === 'create_content_and_continue' || intent === 'create_empty',
+            intent === 'create_empty' ? 'created' : 'trailing',
+          );
           return true;
         }
 
@@ -615,8 +919,6 @@ export function TrailingInput(props: TrailingInputProps) {
 
     viewRef.current = view;
     return () => {
-      clearTriggerIdleTimer();
-      clearPlainCommitTimer();
       view.destroy();
       viewRef.current = null;
     };
@@ -645,14 +947,24 @@ export function TrailingInput(props: TrailingInputProps) {
       '--row-inline-indent': rowInlineIndent,
     } as CSSProperties)
     : undefined;
+  const suppressTrailingInput = trailingInputSuppression?.type === 'materialized'
+    && isEmptyTailNode(effectiveParentId, trailingInputSuppression.nodeId, props.index.byId);
+  const rowStyle: CSSProperties | undefined = suppressTrailingInput
+    ? { ...wrapStyle, display: 'none' }
+    : wrapStyle;
 
   return (
-    <div className="row control trailing-row" data-trailing-parent-id={effectiveParentId} style={wrapStyle}>
+    <div
+      className="row control trailing-row"
+      data-trailing-parent-id={effectiveParentId}
+      aria-hidden={suppressTrailingInput ? true : undefined}
+      style={rowStyle}
+    >
       <TrailingInputLeading hasContent={hasContent} />
       <div
         ref={mountRef}
-        className={`row-editor trailing-editor idle-hint ${hasContent ? '' : 'is-empty'}`}
-        data-placeholder={props.placeholder ?? "Type here or '/' for commands"}
+        className={`row-editor trailing-editor ${hasContent ? '' : 'is-empty'}`}
+        data-placeholder={props.placeholder ?? ''}
       />
       {optionsOpen && isOptionsField && createPortal(
         <PopoverListbox
@@ -689,6 +1001,31 @@ export function TrailingInput(props: TrailingInputProps) {
           )}
         </PopoverListbox>,
         document.body,
+      )}
+      {trailingTrigger && (
+        <TriggerPopover
+          trigger={{ nodeId: effectiveParentId, ...trailingTrigger }}
+          index={props.index}
+          nodeId={effectiveParentId}
+          run={props.run}
+          close={closeTrailingTrigger}
+          clearTriggerText={async () => {}}
+          applyTag={isInlineTrigger(trailingTrigger) && trailingTrigger.kind === '#'
+            ? (tag) => applyTrailingTag(tag, trailingTrigger)
+            : undefined}
+          createTagAndApply={isInlineTrigger(trailingTrigger) && trailingTrigger.kind === '#'
+            ? (name) => createTrailingTag(name, trailingTrigger)
+            : undefined}
+          applyReference={isInlineTrigger(trailingTrigger) && trailingTrigger.kind === '@'
+            ? (target) => applyTrailingReference(target, trailingTrigger)
+            : undefined}
+          executeSlashCommand={isSlashTrigger(trailingTrigger)
+            ? (commandId) => executeTrailingSlashCommand(commandId, trailingTrigger)
+            : undefined}
+          enabledSlashCommandIds={['field', 'reference', 'heading', 'checkbox', 'command_palette']}
+          treeReferenceParentId={effectiveParentId}
+          existingTagIds={[]}
+        />
       )}
       <span />
     </div>

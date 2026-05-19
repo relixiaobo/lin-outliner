@@ -70,6 +70,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       doneStateEnabled: boolean;
       fieldDefId?: string;
       fieldType?: string;
+      cardinality?: string;
       nullable?: boolean;
       hideField?: string;
       autoInitialize?: string;
@@ -364,7 +365,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       if (!field || !normalized) return outcome();
       const existing = field.children
         .map((childId) => nodes.get(childId))
-        .find((node) => node?.content.text.toLowerCase() === normalized.toLowerCase());
+        .find((node) => optionLabel(node).toLowerCase() === normalized.toLowerCase());
       if (existing) return outcome({ nodeId: existing.id, selectAll: false });
       const optionId = `option-${++sequence}`;
       makeNode(optionId, normalized, {
@@ -374,21 +375,92 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       appendChild(fieldDefId, optionId);
       return outcome({ nodeId: optionId, selectAll: false });
     };
+    const optionTargetId = (option: MockNode) => (
+      option.type === 'reference' && option.targetId ? option.targetId : option.id
+    );
+    const optionLabel = (option: MockNode | undefined) => {
+      if (!option) return '';
+      if (option.type === 'reference' && option.targetId) return nodes.get(option.targetId)?.content.text ?? option.content.text;
+      return option.content.text;
+    };
+    const removeCollectedOptionRefs = (fieldDefId: string, valueIds: readonly string[]) => {
+      const valueSet = new Set(valueIds);
+      const field = nodes.get(fieldDefId);
+      for (const childId of [...field?.children ?? []]) {
+        const child = nodes.get(childId);
+        if (child?.type === 'reference' && child.autoCollected && child.targetId && valueSet.has(child.targetId)) {
+          removeFromParent(childId);
+          nodes.delete(childId);
+        }
+      }
+    };
     const selectOption = (fieldEntryId: string, optionNodeId: string) => {
       const fieldEntry = nodes.get(fieldEntryId);
       const option = nodes.get(optionNodeId);
       if (!fieldEntry || !option) return outcome();
+      const fieldDef = fieldEntry.fieldDefId ? nodes.get(fieldEntry.fieldDefId) : undefined;
+      const isList = fieldDef?.cardinality === 'list';
+      const targetId = optionTargetId(option);
+      if (fieldEntry.children.some((childId) => childId === targetId || nodes.get(childId)?.targetId === targetId)) {
+        return outcome({ nodeId: fieldEntryId, selectAll: false });
+      }
+      if (!isList) {
+        if (fieldEntry.fieldDefId) removeCollectedOptionRefs(fieldEntry.fieldDefId, fieldEntry.children);
+        for (const childId of [...fieldEntry.children]) {
+          removeFromParent(childId);
+          nodes.delete(childId);
+        }
+      }
+      const valueId = `option-value-${++sequence}`;
+      makeNode(valueId, nodes.get(targetId)?.content.text ?? option.content.text, {
+        type: 'reference',
+        parentId: fieldEntryId,
+        targetId,
+      });
+      appendChild(fieldEntryId, valueId);
+      return outcome({ nodeId: fieldEntryId, selectAll: false });
+    };
+    const createCollectedOption = (fieldEntryId: string, name: string) => {
+      const fieldEntry = nodes.get(fieldEntryId);
+      const normalized = name.trim();
+      if (!fieldEntry?.fieldDefId || !normalized) return outcome();
+      const fieldDef = nodes.get(fieldEntry.fieldDefId);
+      if (!fieldDef) return outcome();
+      const existing = fieldDef.children
+        .map((childId) => nodes.get(childId))
+        .find((node) => optionLabel(node).toLowerCase() === normalized.toLowerCase());
+      if (existing) return selectOption(fieldEntryId, existing.id);
+      const isList = fieldDef.cardinality === 'list';
+      if (!isList) {
+        removeCollectedOptionRefs(fieldDef.id, fieldEntry.children);
+        for (const childId of [...fieldEntry.children]) {
+          removeFromParent(childId);
+          nodes.delete(childId);
+        }
+      }
+      const valueId = `option-value-${++sequence}`;
+      makeNode(valueId, normalized, {
+        parentId: fieldEntryId,
+      });
+      appendChild(fieldEntryId, valueId);
+      const optionRefId = `option-ref-${++sequence}`;
+      makeNode(optionRefId, normalized, {
+        type: 'reference',
+        parentId: fieldDef.id,
+        targetId: valueId,
+        autoCollected: true,
+      });
+      appendChild(fieldDef.id, optionRefId);
+      return outcome({ nodeId: fieldEntryId, selectAll: false });
+    };
+    const clearFieldValue = (fieldEntryId: string) => {
+      const fieldEntry = nodes.get(fieldEntryId);
+      if (!fieldEntry) return outcome();
+      if (fieldEntry.fieldDefId) removeCollectedOptionRefs(fieldEntry.fieldDefId, fieldEntry.children);
       for (const childId of [...fieldEntry.children]) {
         removeFromParent(childId);
         nodes.delete(childId);
       }
-      const valueId = `option-value-${++sequence}`;
-      makeNode(valueId, option.content.text, {
-        type: 'reference',
-        parentId: fieldEntryId,
-        targetId: optionNodeId,
-      });
-      appendChild(fieldEntryId, valueId);
       return outcome({ nodeId: fieldEntryId, selectAll: false });
     };
     const duplicateNode = (nodeId: string) => {
@@ -405,6 +477,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         targetId: node.targetId,
         fieldDefId: node.fieldDefId,
         fieldType: node.fieldType,
+        cardinality: node.cardinality,
         color: node.color,
         childSupertag: node.childSupertag,
         extends: node.extends,
@@ -438,7 +511,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     };
     const inlineField = (parentId: string, index: number | null, name: string, fieldType: string) => {
       const fieldDefId = `field-def-${++sequence}`;
-      makeNode(fieldDefId, name, { type: 'fieldDef', fieldType, parentId: ids.schema, nullable: true });
+      makeNode(fieldDefId, name, { type: 'fieldDef', fieldType, parentId: ids.schema, cardinality: 'single', nullable: true });
       appendChild(ids.schema, fieldDefId);
       const fieldEntryId = `field-entry-${++sequence}`;
       makeNode(fieldEntryId, name, { type: 'fieldEntry', parentId, fieldDefId, fieldType });
@@ -449,7 +522,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       const node = nodes.get(nodeId);
       if (!node?.parentId) return nodeId;
       const fieldDefId = `field-def-${++sequence}`;
-      makeNode(fieldDefId, name, { type: 'fieldDef', fieldType, parentId: ids.schema, nullable: true });
+      makeNode(fieldDefId, name, { type: 'fieldDef', fieldType, parentId: ids.schema, cardinality: 'single', nullable: true });
       appendChild(ids.schema, fieldDefId);
       node.type = 'fieldEntry';
       node.fieldDefId = fieldDefId;
@@ -492,6 +565,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       type: 'fieldDef',
       parentId: ids.schema,
       fieldType: 'plain',
+      cardinality: 'single',
       nullable: true,
     });
     if (options.optionsField) {
@@ -499,6 +573,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         type: 'fieldDef',
         parentId: ids.schema,
         fieldType: 'options',
+        cardinality: 'single',
         nullable: true,
         autocollectOptions: true,
       });
@@ -619,9 +694,41 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const nodeId = createNode(String(args.parentId), args.index as number | null, String(args.text ?? ''));
           return clone(outcome({ nodeId, parentId: String(args.parentId), placement: { kind: 'end' }, selectAll: false }));
         }
+        if (cmd === 'create_rich_text_node') {
+          const parentId = String(args.parentId);
+          const content = clone(args.content as RichText);
+          const nodeId = createNode(parentId, args.index as number | null, content.text);
+          const node = nodes.get(nodeId);
+          if (node) node.content = content;
+          return clone(outcome({ nodeId, parentId, placement: { kind: 'end' }, selectAll: false }));
+        }
+        if (cmd === 'create_tagged_node') {
+          const parentId = String(args.parentId);
+          const tagId = String(args.tagId);
+          const content = clone(args.content as RichText);
+          const nodeId = createNode(parentId, null, content.text, { tags: [tagId] });
+          const node = nodes.get(nodeId);
+          if (node) node.content = content;
+          return clone(outcome({ nodeId, parentId, placement: { kind: 'end' }, selectAll: false }));
+        }
+        if (cmd === 'create_tag_and_tagged_node') {
+          const parentId = String(args.parentId);
+          const content = clone(args.content as RichText);
+          const tag = createTag(String(args.name ?? ''));
+          const tagId = tag.focus?.nodeId;
+          const nodeId = createNode(parentId, null, content.text, tagId ? { tags: [tagId] } : {});
+          const node = nodes.get(nodeId);
+          if (node) node.content = content;
+          return clone(outcome({ nodeId, parentId, placement: { kind: 'end' }, selectAll: false }));
+        }
         if (cmd === 'create_nodes_from_tree') {
           const lastId = createTree(String(args.parentId), args.nodes as CreateNodeTree[]);
-          return clone(outcome(lastId ? { nodeId: lastId, selectAll: false } : undefined));
+          return clone(outcome(lastId ? {
+            nodeId: lastId,
+            parentId: String(args.parentId),
+            placement: { kind: 'end' },
+            selectAll: false,
+          } : undefined));
         }
         if (cmd === 'paste_nodes_into_node') {
           const nodeId = String(args.nodeId);
@@ -759,7 +866,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             const node = nodes.get(nodeId);
             if (node && !node.tags.includes(tagId)) node.tags.push(tagId);
           }
-          return clone(outcome());
+          return clone(outcome(cmd === 'apply_tag' ? { nodeId: String(args.nodeId), selectAll: false } : undefined));
         }
         if (cmd === 'remove_tag') {
           const node = nodes.get(String(args.nodeId));
@@ -793,6 +900,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               }
             }
             if ('sourceSupertag' in patch) setOptionalText(node, 'sourceSupertag', patch.sourceSupertag);
+            if ('cardinality' in patch) setOptionalText(node, 'cardinality', patch.cardinality);
             if ('nullable' in patch) {
               if (patch.nullable == null) delete node.nullable;
               else node.nullable = Boolean(patch.nullable);
@@ -830,8 +938,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd === 'register_collected_option') {
           return clone(registerOption(String(args.fieldDefId), String(args.name)));
         }
+        if (cmd === 'create_collected_field_option') {
+          return clone(createCollectedOption(String(args.fieldEntryId), String(args.name)));
+        }
         if (cmd === 'select_field_option') {
           return clone(selectOption(String(args.fieldEntryId), String(args.optionNodeId)));
+        }
+        if (cmd === 'clear_field_value') {
+          return clone(clearFieldValue(String(args.fieldEntryId)));
         }
         if (cmd === 'add_reference') {
           const target = nodes.get(String(args.targetId));
@@ -963,6 +1077,7 @@ export async function e2eProjection(page: Page): Promise<{ nodes: Array<{
   showCheckbox?: boolean;
   doneStateEnabled?: boolean;
   fieldType?: string;
+  cardinality?: string;
   nullable?: boolean;
   hideField?: string;
   autocollectOptions?: boolean;
@@ -987,6 +1102,7 @@ export async function e2eProjection(page: Page): Promise<{ nodes: Array<{
       showCheckbox?: boolean;
       doneStateEnabled?: boolean;
       fieldType?: string;
+      cardinality?: string;
       nullable?: boolean;
       hideField?: string;
       autocollectOptions?: boolean;

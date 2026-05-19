@@ -1,4 +1,5 @@
 import { useRef } from 'react';
+import { createPortal } from 'react-dom';
 import type { OverlayAnchorRect } from '../primitives/useAnchoredOverlay';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import {
@@ -44,7 +45,7 @@ export function FloatingEditorToolbar(props: FloatingEditorToolbarProps) {
 
   if (!props.visible) return null;
 
-  return (
+  return createPortal(
     <div
       ref={toolbarRef}
       className="floating-editor-toolbar"
@@ -63,6 +64,7 @@ export function FloatingEditorToolbar(props: FloatingEditorToolbarProps) {
           variant="toolbar"
         />
       ))}
-    </div>
+    </div>,
+    document.body,
   );
 }

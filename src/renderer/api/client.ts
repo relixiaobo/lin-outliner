@@ -31,6 +31,12 @@ export const api = {
   getProjection: () => command<DocumentProjection>('get_projection'),
   createNode: (parentId: string, index: number | null, text: string) =>
     command<CommandOutcome>('create_node', { parentId, index, text }),
+  createRichTextNode: (parentId: string, index: number | null, content: RichText) =>
+    command<CommandOutcome>('create_rich_text_node', { parentId, index, content }),
+  createTaggedNode: (parentId: string, content: RichText, tagId: string) =>
+    command<CommandOutcome>('create_tagged_node', { parentId, content, tagId }),
+  createTagAndTaggedNode: (parentId: string, content: RichText, name: string) =>
+    command<CommandOutcome>('create_tag_and_tagged_node', { parentId, content, name }),
   createNodesFromTree: (parentId: string, nodes: CreateNodeTree[]) =>
     command<CommandOutcome>('create_nodes_from_tree', { parentId, nodes }),
   pasteNodesIntoNode: (
@@ -104,8 +110,12 @@ export const api = {
     command<CommandOutcome>('create_inline_field', { parentId, index, name, fieldType }),
   registerCollectedOption: (fieldDefId: string, name: string) =>
     command<CommandOutcome>('register_collected_option', { fieldDefId, name }),
+  createCollectedFieldOption: (fieldEntryId: string, name: string) =>
+    command<CommandOutcome>('create_collected_field_option', { fieldEntryId, name }),
   selectFieldOption: (fieldEntryId: string, optionNodeId: string) =>
     command<CommandOutcome>('select_field_option', { fieldEntryId, optionNodeId }),
+  clearFieldValue: (fieldEntryId: string) =>
+    command<CommandOutcome>('clear_field_value', { fieldEntryId }),
   addReference: (parentId: string, targetId: string, index: number | null = null) =>
     command<CommandOutcome>('add_reference', { parentId, targetId, index }),
   setReferenceTarget: (referenceId: string, targetId: string) =>

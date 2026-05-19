@@ -7,6 +7,9 @@ release must ship every optimization listed here.
 For the proposed pi-mono runtime architecture, see
 `docs/spec/agent-pi-mono-implementation.md`.
 
+For the event log, debug data, and render projection architecture, see
+`docs/spec/agent-event-log-rendering.md`.
+
 ## Goals
 
 - Agent streaming must not stall outliner editing, selection, or scrolling.

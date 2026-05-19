@@ -579,7 +579,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
       <div
         ref={mountRef}
         className={editorClassName}
-        data-placeholder={props.placeholder ?? 'Type here'}
+        data-placeholder={props.placeholder ?? ''}
       />
       <FloatingEditorToolbar
         visible={toolbar.visible}

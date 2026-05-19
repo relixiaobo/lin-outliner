@@ -31,6 +31,8 @@ import {
   type CreateNodeTree,
   type DocumentProjection,
   type DocumentState,
+  type AutoInitStrategy,
+  type FieldCardinality,
   type FieldConfigPatch,
   type FieldType,
   type FilterOp,
@@ -84,6 +86,18 @@ type CoreSerializedState = SerializedLoroState;
 const DEFAULT_COMMIT_ORIGIN = 'user:implicit';
 const SYSTEM_COMMIT_ORIGIN = 'system:core';
 const AGENT_COMMIT_ORIGIN = 'agent:tool';
+const AUTO_INIT_STRATEGIES: AutoInitStrategy[] = [
+  'current_date',
+  'ancestor_day_node',
+  'ancestor_field_value',
+  'ancestor_supertag_ref',
+];
+const AUTO_INIT_PRIORITY: AutoInitStrategy[] = [
+  'ancestor_supertag_ref',
+  'current_date',
+  'ancestor_day_node',
+  'ancestor_field_value',
+];
 
 export class Core {
   private loro: LoroOutlinerDocument;
@@ -203,16 +217,52 @@ export class Core {
     });
   }
 
+  createRichTextContentNode(parentId: string, index: number | null | undefined, content: RichText): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      ensureParentMutable(state, parentId);
+      const id = this.createRichTextNodeDirect(parentId, index, content);
+      this.applyChildTagsDirect(parentId, id);
+      return focus(id, { parentId, placement: { kind: 'end' } });
+    });
+  }
+
+  createTaggedNode(parentId: string, content: RichText, tagId: string): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      ensureParentMutable(state, parentId);
+      if (state.nodes[tagId]?.type !== 'tagDef') throw CoreError.nodeNotFound(tagId);
+      const id = this.createRichTextNodeDirect(parentId, null, content);
+      this.applyChildTagsDirect(parentId, id);
+      this.applyTagDirect(id, tagId);
+      return focus(id, { parentId, placement: { kind: 'end' } });
+    });
+  }
+
+  createTagAndTaggedNode(parentId: string, content: RichText, name: string): CommandOutcome {
+    const normalized = name.trim();
+    if (!normalized) throw CoreError.invalidOperation('tag name cannot be empty');
+    return this.mutate(() => {
+      const state = this.snapshot();
+      ensureParentMutable(state, parentId);
+      const tagId = findTagByName(state, normalized) ?? this.createTagDefDirect(normalized);
+      const id = this.createRichTextNodeDirect(parentId, null, content);
+      this.applyChildTagsDirect(parentId, id);
+      this.applyTagDirect(id, tagId);
+      return focus(id, { parentId, placement: { kind: 'end' } });
+    });
+  }
+
   createNodesFromTree(parentId: string, nodes: CreateNodeTree[]): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureParentMutable(state, parentId);
-      let firstCreatedId: string | undefined;
+      let lastCreatedId: string | undefined;
       for (const node of nodes) {
         const createdId = this.insertNodeTreeDirect(parentId, node);
-        firstCreatedId ??= createdId;
+        lastCreatedId = createdId;
       }
-      return firstCreatedId ? focus(firstCreatedId) : undefined;
+      return lastCreatedId ? focus(lastCreatedId, { parentId, placement: { kind: 'end' } }) : undefined;
     });
   }
 
@@ -593,12 +643,7 @@ export class Core {
       const state = this.snapshot();
       const existing = findTagByName(state, normalized);
       if (existing) return focus(existing);
-      const id = freshId('tag');
-      const color = nextTagColor(state);
-      this.loro.createNodeWithId(id, SCHEMA_ID, undefined, 'tagDef', (node) => {
-        node.content = plainText(normalized);
-        node.color = color;
-      });
+      const id = this.createTagDefDirect(normalized);
       return focus(id);
     });
   }
@@ -666,7 +711,11 @@ export class Core {
       if (patch.autocollectOptions === true && nextFieldType !== 'options') {
         throw CoreError.invalidOperation('auto-collect options is only valid for options fields');
       }
+      if (patch.cardinality && !isFieldCardinality(patch.cardinality)) {
+        throw CoreError.invalidOperation('invalid field cardinality');
+      }
       if (patch.hideField) ensureValidHideFieldMode(patch.hideField.trim());
+      if (patch.autoInitialize) ensureValidAutoInitialize(patch.autoInitialize);
       if (nextMin !== undefined && nextMax !== undefined && nextMin > nextMax) {
         throw CoreError.invalidOperation('minimum value cannot be greater than maximum value');
       }
@@ -679,6 +728,7 @@ export class Core {
           delete current.maxValue;
         }
       }
+      if ('cardinality' in patch) setOptional(current, 'cardinality', patch.cardinality ?? undefined);
       if ('sourceSupertag' in patch) setOptional(current, 'sourceSupertag', normalizeOptionalText(patch.sourceSupertag));
       if ('nullable' in patch) setOptional(current, 'nullable', patch.nullable ?? undefined);
       if ('hideField' in patch) setOptional(current, 'hideField', normalizeOptionalText(patch.hideField));
@@ -748,8 +798,40 @@ export class Core {
     if (!normalized) throw CoreError.invalidOperation('option name cannot be empty');
     return this.mutate(() => {
       const state = this.snapshot();
-      ensureOptionsFieldDef(state, fieldDefId);
+      ensureCollectableOptionsFieldDef(state, fieldDefId);
       return focus(this.ensureOptionNodeDirect(fieldDefId, normalized));
+    });
+  }
+
+  createCollectedFieldOption(fieldEntryId: string, name: string): CommandOutcome {
+    const normalized = name.trim();
+    if (!normalized) throw CoreError.invalidOperation('option name cannot be empty');
+    return this.mutate(() => {
+      const state = this.snapshot();
+      const fieldEntry = requiredNode(state, fieldEntryId);
+      if (fieldEntry.type !== 'fieldEntry') throw CoreError.invalidOperation('options can only be created on field entries');
+      const fieldDefId = fieldEntry.fieldDefId;
+      if (!fieldDefId) throw CoreError.invalidOperation('field entry has no field definition');
+      const fieldDef = ensureCollectableOptionsFieldDef(state, fieldDefId);
+      const existingOptionId = findOptionByName(state, fieldDefId, normalized);
+      if (existingOptionId) {
+        this.selectFieldOptionDirect(fieldEntryId, fieldDefId, existingOptionId);
+        return focus(fieldEntryId);
+      }
+
+      if (fieldDef.cardinality !== 'list') {
+        this.clearFieldEntryValuesDirect(fieldEntryId, fieldDefId);
+      }
+
+      const valueId = freshId('option_value');
+      this.loro.createNodeWithId(valueId, fieldEntryId, undefined, undefined, (node) => {
+        node.content = plainText(normalized);
+      });
+      this.loro.createNodeWithId(freshId('option_ref'), fieldDefId, undefined, 'reference', (node) => {
+        node.targetId = valueId;
+        node.autoCollected = true;
+      });
+      return focus(fieldEntryId);
     });
   }
 
@@ -762,10 +844,21 @@ export class Core {
       if (!fieldDefId) throw CoreError.invalidOperation('field entry has no field definition');
       ensureOptionsFieldDef(state, fieldDefId);
       ensureOptionBelongsToField(state, fieldDefId, optionNodeId);
-      for (const childId of [...fieldEntry.children]) this.removeSubtreeDirect(childId);
-      this.loro.createNodeWithId(freshId('option_value'), fieldEntryId, undefined, 'reference', (node) => {
-        node.targetId = optionNodeId;
-      });
+      this.selectFieldOptionDirect(fieldEntryId, fieldDefId, optionNodeId);
+      return focus(fieldEntryId);
+    });
+  }
+
+  clearFieldValue(fieldEntryId: string): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      const fieldEntry = requiredNode(state, fieldEntryId);
+      if (fieldEntry.type !== 'fieldEntry') throw CoreError.invalidOperation('field values can only be cleared on field entries');
+      if (fieldEntry.fieldDefId) {
+        this.clearFieldEntryValuesDirect(fieldEntryId, fieldEntry.fieldDefId);
+      } else {
+        for (const childId of [...fieldEntry.children]) this.removeSubtreeDirect(childId);
+      }
       return focus(fieldEntryId);
     });
   }
@@ -1219,6 +1312,24 @@ export class Core {
     return id;
   }
 
+  private createRichTextNodeDirect(parentId: string, index: number | null | undefined, content: RichText, type?: NodeType) {
+    const id = freshId(type === 'reference' ? 'ref' : type === 'fieldEntry' ? 'field_entry' : 'node');
+    this.loro.createNodeWithId(id, parentId, index, type, (node) => {
+      node.content = clone(content);
+    });
+    return id;
+  }
+
+  private createTagDefDirect(name: string) {
+    const id = freshId('tag');
+    const color = nextTagColor(this.snapshot());
+    this.loro.createNodeWithId(id, SCHEMA_ID, undefined, 'tagDef', (node) => {
+      node.content = plainText(name);
+      node.color = color;
+    });
+    return id;
+  }
+
   private insertNodeTreeDirect(parentId: string, tree: CreateNodeTree, index?: number | null): string {
     const id = freshId('node');
     this.loro.createNodeWithId(id, parentId, index, undefined, (node) => {
@@ -1260,8 +1371,10 @@ export class Core {
     const state = this.snapshot();
     if (isSystemId(nodeId)) throw CoreError.lockedNode(nodeId);
     requiredNode(state, nodeId);
-    const removedIds = new Set([nodeId, ...collectDescendantsFromState(state, nodeId)]);
-    this.loro.deleteNode(nodeId);
+    const removedIds = collectSubtreeAndDependentReferences(state, nodeId);
+    for (const rootId of removalRootIds(state, removedIds)) {
+      this.loro.deleteNode(rootId);
+    }
     for (const other of Object.values(state.nodes)) {
       if (removedIds.has(other.id)) continue;
       const next = clone(other);
@@ -1325,7 +1438,8 @@ export class Core {
     const state = this.snapshot();
     if (state.nodes[tagId]?.type !== 'tagDef') throw CoreError.nodeNotFound(tagId);
     const node = clone(requiredNode(state, nodeId));
-    if (!node.tags.includes(tagId)) node.tags.push(tagId);
+    if (node.tags.includes(tagId)) return;
+    node.tags.push(tagId);
     node.updatedAt = nowMs();
     this.loro.writeNode(node);
     this.instantiateTagTemplateDirect(nodeId, tagId);
@@ -1362,7 +1476,27 @@ export class Core {
       });
     }
     if (cloneDefaults && templateOriginId) this.cloneTemplateFieldValuesDirect(id, templateOriginId);
+    if (requiredNode(this.snapshot(), id).children.length === 0) {
+      this.applyAutoInitializeDirect(nodeId, id, fieldDefId);
+    }
     return id;
+  }
+
+  private applyAutoInitializeDirect(nodeId: string, fieldEntryId: string, fieldDefId: string) {
+    const state = this.snapshot();
+    const fieldDef = state.nodes[fieldDefId];
+    if (!fieldDef?.autoInitialize) return;
+    const result = resolveAutoInit(state, nodeId, fieldDef);
+    if (!result) return;
+    if (result.kind === 'reference') {
+      this.loro.createNodeWithId(freshId('auto_value'), fieldEntryId, undefined, 'reference', (node) => {
+        node.targetId = result.targetId;
+      });
+      return;
+    }
+    this.loro.createNodeWithId(freshId('auto_value'), fieldEntryId, undefined, undefined, (node) => {
+      node.content = plainText(result.value);
+    });
   }
 
   private cloneTemplateFieldValuesDirect(fieldEntryId: string, templateOriginId: string) {
@@ -1435,6 +1569,71 @@ export class Core {
       node.autoCollected = true;
     });
     return optionId;
+  }
+
+  private selectFieldOptionDirect(fieldEntryId: string, fieldDefId: string, optionNodeId: string) {
+    const state = this.snapshot();
+    const fieldEntry = requiredNode(state, fieldEntryId);
+    const fieldDef = requiredNode(state, fieldDefId);
+    const optionTargetId = optionValueTargetId(state, optionNodeId);
+    const isList = fieldDef.cardinality === 'list';
+    const alreadySelected = fieldEntry.children.some((childId) => (
+      childId === optionTargetId || state.nodes[childId]?.targetId === optionTargetId
+    ));
+    if (alreadySelected) {
+      return;
+    }
+    if (!isList) {
+      this.clearFieldEntryValuesDirect(fieldEntryId, fieldDefId);
+    }
+    this.loro.createNodeWithId(freshId('option_value'), fieldEntryId, undefined, 'reference', (node) => {
+      node.targetId = optionTargetId;
+    });
+  }
+
+  private clearFieldEntryValuesDirect(fieldEntryId: string, fieldDefId: string) {
+    const state = this.snapshot();
+    for (const valueId of [...state.nodes[fieldEntryId]?.children ?? []]) {
+      if (this.promoteCollectedValueIfReferencedDirect(fieldEntryId, fieldDefId, valueId)) continue;
+      this.removeCollectedReferencesForFieldValuesDirect(fieldDefId, [valueId]);
+      this.removeSubtreeDirect(valueId);
+    }
+  }
+
+  private promoteCollectedValueIfReferencedDirect(fieldEntryId: string, fieldDefId: string, valueId: string) {
+    const state = this.snapshot();
+    const value = state.nodes[valueId];
+    if (!value || value.type === 'reference') return false;
+    const collectedRefIds = collectedReferenceIdsForValue(state, fieldDefId, valueId);
+    if (collectedRefIds.length === 0) return false;
+
+    const ignoredIds = new Set([
+      fieldEntryId,
+      ...collectDescendantsFromState(state, fieldEntryId),
+      ...collectedRefIds,
+    ]);
+    if (!hasExternalReferencesToTarget(state, valueId, ignoredIds)) return false;
+
+    const fieldChildren = state.nodes[fieldDefId]?.children ?? [];
+    const insertIndex = fieldChildren.findIndex((childId) => collectedRefIds.includes(childId));
+    for (const refId of collectedRefIds) this.removeSubtreeDirect(refId);
+
+    const promoted = clone(requiredNode(this.snapshot(), valueId));
+    promoted.autoCollected = true;
+    this.loro.writeNode(promoted);
+    this.loro.moveNode(valueId, fieldDefId, insertIndex >= 0 ? insertIndex : undefined);
+    return true;
+  }
+
+  private removeCollectedReferencesForFieldValuesDirect(fieldDefId: string, valueIds: readonly string[]) {
+    const state = this.snapshot();
+    const removedValueIds = new Set(valueIds);
+    for (const childId of [...state.nodes[fieldDefId]?.children ?? []]) {
+      const child = state.nodes[childId];
+      if (child?.type === 'reference' && child.autoCollected && child.targetId && removedValueIds.has(child.targetId)) {
+        this.removeSubtreeDirect(childId);
+      }
+    }
   }
 
   private refreshTagSearchChildrenDirect(searchId: string, tagId: string) {
@@ -1543,6 +1742,60 @@ function collectDescendantsFromState(state: DocumentState, nodeId: string): stri
     result.push(childId, ...collectDescendantsFromState(state, childId));
   }
   return result;
+}
+
+function collectSubtreeAndDependentReferences(state: DocumentState, nodeId: string): Set<string> {
+  const removedIds = new Set<string>();
+  const addSubtree = (id: string) => {
+    if (removedIds.has(id) || !state.nodes[id]) return;
+    removedIds.add(id);
+    for (const childId of state.nodes[id].children) addSubtree(childId);
+  };
+
+  addSubtree(nodeId);
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const node of Object.values(state.nodes)) {
+      if (removedIds.has(node.id)) continue;
+      if (node.type === 'reference' && node.targetId && removedIds.has(node.targetId)) {
+        addSubtree(node.id);
+        changed = true;
+      }
+    }
+  }
+
+  return removedIds;
+}
+
+function removalRootIds(state: DocumentState, removedIds: ReadonlySet<string>): string[] {
+  return [...removedIds].filter((id) => {
+    const parentId = state.nodes[id]?.parentId;
+    return !parentId || !removedIds.has(parentId);
+  });
+}
+
+function collectedReferenceIdsForValue(state: DocumentState, fieldDefId: string, valueId: string): string[] {
+  return (state.nodes[fieldDefId]?.children ?? []).filter((childId) => {
+    const child = state.nodes[childId];
+    return child?.type === 'reference'
+      && child.autoCollected
+      && child.targetId === valueId;
+  });
+}
+
+function hasExternalReferencesToTarget(
+  state: DocumentState,
+  targetId: string,
+  ignoredIds: ReadonlySet<string>,
+): boolean {
+  for (const node of Object.values(state.nodes)) {
+    if (ignoredIds.has(node.id)) continue;
+    if (node.type === 'reference' && node.targetId === targetId) return true;
+    if (node.content.inlineRefs.some((ref) => ref.targetNodeId === targetId)) return true;
+  }
+  return false;
 }
 
 function sameJson(left: unknown, right: unknown) {
@@ -1841,18 +2094,149 @@ function ensureOptionsFieldDef(state: DocumentState, fieldDefId: string) {
   if (fieldDef.fieldType !== 'options' && fieldDef.fieldType !== 'options_from_supertag') {
     throw CoreError.invalidOperation('field definition is not an options field');
   }
+  return fieldDef;
+}
+
+function ensureCollectableOptionsFieldDef(state: DocumentState, fieldDefId: string) {
+  const fieldDef = ensureOptionsFieldDef(state, fieldDefId);
+  if (fieldDef.fieldType !== 'options') {
+    throw CoreError.invalidOperation('only direct options fields can collect new options');
+  }
+  return fieldDef;
 }
 
 function findOptionByName(state: DocumentState, fieldDefId: string, name: string) {
   const needle = name.trim().toLowerCase();
   return state.nodes[fieldDefId]?.children.find((childId) =>
-    state.nodes[childId]?.content.text.trim().toLowerCase() === needle);
+    optionLabel(state, childId).trim().toLowerCase() === needle);
 }
 
 function ensureOptionBelongsToField(state: DocumentState, fieldDefId: string, optionNodeId: string) {
-  if (requiredNode(state, optionNodeId).parentId !== fieldDefId) {
+  const fieldDef = requiredNode(state, fieldDefId);
+  const optionNode = requiredNode(state, optionNodeId);
+  if (fieldDef.fieldType === 'options_from_supertag') {
+    const sourceSupertag = fieldDef.sourceSupertag;
+    if (
+      sourceSupertag
+      && (!optionNode.type || optionNode.type === 'codeBlock')
+      && optionNode.tags.includes(sourceSupertag)
+    ) {
+      return;
+    }
+    throw CoreError.invalidOperation('option does not match this field source tag');
+  }
+  if (optionNode.parentId !== fieldDefId) {
     throw CoreError.invalidOperation('option does not belong to this field definition');
   }
+}
+
+function optionValueTargetId(state: DocumentState, optionNodeId: string) {
+  const optionNode = requiredNode(state, optionNodeId);
+  if (optionNode.type !== 'reference') return optionNodeId;
+  if (!optionNode.targetId || !state.nodes[optionNode.targetId]) throw CoreError.nodeNotFound(optionNode.targetId ?? optionNodeId);
+  return optionNode.targetId;
+}
+
+function optionLabel(state: DocumentState, optionNodeId: string) {
+  const optionNode = state.nodes[optionNodeId];
+  if (!optionNode) return '';
+  if (optionNode.type === 'reference' && optionNode.targetId) {
+    return state.nodes[optionNode.targetId]?.content.text ?? optionNode.content.text;
+  }
+  return optionNode.content.text;
+}
+
+function isFieldCardinality(value: string): value is FieldCardinality {
+  return value === 'single' || value === 'list';
+}
+
+function ensureValidAutoInitialize(value: string) {
+  const invalid = parseAutoInitStrategies(value, { includeInvalid: true })
+    .filter((strategy) => !AUTO_INIT_STRATEGIES.includes(strategy as AutoInitStrategy));
+  if (invalid.length > 0) throw CoreError.invalidOperation('invalid auto-initialize strategy');
+}
+
+function parseAutoInitStrategies(
+  value: string | undefined,
+  options: { includeInvalid?: boolean } = {},
+): string[] {
+  if (!value) return [];
+  const strategies = value.split(',').map((strategy) => strategy.trim()).filter(Boolean);
+  return options.includeInvalid
+    ? strategies
+    : strategies.filter((strategy): strategy is AutoInitStrategy =>
+      AUTO_INIT_STRATEGIES.includes(strategy as AutoInitStrategy));
+}
+
+type AutoInitResult =
+  | { kind: 'text'; value: string }
+  | { kind: 'reference'; targetId: string };
+
+function resolveAutoInit(state: DocumentState, nodeId: string, fieldDef: Node): AutoInitResult | null {
+  const strategies = parseAutoInitStrategies(fieldDef.autoInitialize) as AutoInitStrategy[];
+  for (const strategy of AUTO_INIT_PRIORITY) {
+    if (!strategies.includes(strategy)) continue;
+    const result = resolveAutoInitStrategy(state, nodeId, fieldDef, strategy);
+    if (result) return result;
+  }
+  return null;
+}
+
+function resolveAutoInitStrategy(
+  state: DocumentState,
+  nodeId: string,
+  fieldDef: Node,
+  strategy: AutoInitStrategy,
+): AutoInitResult | null {
+  if (strategy === 'current_date') return { kind: 'text', value: formatLocalDate(new Date()) };
+  if (strategy === 'ancestor_day_node') {
+    const dayNode = ancestorsOf(state, nodeId).find((ancestor) =>
+      ancestor.tags.some((tagId) =>
+        tagId === TAG_DAY_ID || state.nodes[tagId]?.content.text.trim().toLowerCase() === 'day'));
+    const value = dayNode?.content.text.trim();
+    return value ? { kind: 'text', value } : null;
+  }
+  if (strategy === 'ancestor_field_value') {
+    for (const ancestor of ancestorsOf(state, nodeId)) {
+      const fieldEntry = ancestor.children
+        .map((childId) => state.nodes[childId])
+        .find((child) => child?.type === 'fieldEntry' && child.fieldDefId === fieldDef.id);
+      const firstValue = fieldEntry?.children.map((childId) => state.nodes[childId]).find(Boolean);
+      if (!firstValue) continue;
+      if (firstValue.type === 'reference' && firstValue.targetId) {
+        return { kind: 'reference', targetId: firstValue.targetId };
+      }
+      const value = firstValue.content.text.trim();
+      if (value) return { kind: 'text', value };
+    }
+  }
+  if (strategy === 'ancestor_supertag_ref' && fieldDef.sourceSupertag) {
+    const target = ancestorsOf(state, nodeId).find((ancestor) =>
+      ancestor.tags.includes(fieldDef.sourceSupertag!));
+    return target ? { kind: 'reference', targetId: target.id } : null;
+  }
+  return null;
+}
+
+function ancestorsOf(state: DocumentState, nodeId: string): Node[] {
+  const result: Node[] = [];
+  const visited = new Set<string>();
+  let currentId = state.nodes[nodeId]?.parentId;
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId);
+    const current = state.nodes[currentId];
+    if (!current) break;
+    result.push(current);
+    currentId = current.parentId;
+  }
+  return result;
+}
+
+function formatLocalDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function isoWeek(date: Date) {

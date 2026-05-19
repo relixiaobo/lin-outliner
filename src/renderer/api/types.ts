@@ -13,6 +13,8 @@ export type {
   CreateNodeTree,
   DocumentProjection,
   DocumentProjectionChangedEvent,
+  AutoInitStrategy,
+  FieldCardinality,
   FieldConfigPatch,
   FieldType,
   FilterOp,

@@ -102,15 +102,15 @@ test.describe('outliner navigation and page title parity', () => {
     await expect(page.locator('.panel-title-editor').first()).toContainText('2026-05-20');
   });
 
-  test('trailing empty-node hint is focused and singular instead of always visible', async ({ page }) => {
+  test('trailing empty-node hints stay hidden instead of repeating placeholder text', async ({ page }) => {
     await page.evaluate(() => {
       const fixture = document.createElement('div');
       fixture.setAttribute('data-testid', 'trailing-hint-fixture');
       fixture.innerHTML = `
-        <div class="row-editor trailing-editor idle-hint is-empty" data-placeholder="Type here or '/' for commands">
+        <div class="row-editor trailing-editor is-empty" data-placeholder="">
           <div class="ProseMirror" contenteditable="true"></div>
         </div>
-        <div class="row-editor trailing-editor idle-hint is-empty" data-placeholder="Type here or '/' for commands">
+        <div class="row-editor trailing-editor is-empty" data-placeholder="">
           <div class="ProseMirror" contenteditable="true"></div>
         </div>
       `;
@@ -120,9 +120,7 @@ test.describe('outliner navigation and page title parity', () => {
     await page.locator('[data-testid="trailing-hint-fixture"] .ProseMirror').nth(1).focus();
 
     await expect.poll(async () => page.locator('.trailing-editor.is-empty').evaluateAll((elements) =>
-      elements.filter((element) => Number(getComputedStyle(element, '::before').opacity) > 0.5).length), {
-      timeout: 4000,
-    }).toBe(1);
+      elements.filter((element) => Number(getComputedStyle(element, '::before').opacity) > 0.5).length)).toBe(0);
 
     await rowEditor(page, ids.alpha).click();
 

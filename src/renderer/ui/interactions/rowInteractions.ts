@@ -123,7 +123,7 @@ export function resolveTriggerForceCreateIntent(params: {
 export type TrailingRowUpdateAction =
   | { type: 'none' }
   | { type: 'create_field' }
-  | { type: 'create_trigger_node'; trigger: DropdownTriggerKind; matchText: string; textOffset: number }
+  | { type: 'open_trigger'; trigger: DropdownTriggerKind; matchText: string; textOffset: number }
   | { type: 'open_options'; query: string }
   | { type: 'close_options' };
 
@@ -136,9 +136,15 @@ export function resolveTrailingRowUpdateAction(params: {
 
   const triggerMatch = text.match(/(#|@|\/)([^\s#@/]*)$/u);
   if (triggerMatch) {
+    if (triggerMatch[1] === '#' && isCssHexColorToken(triggerMatch[2] ?? '')) {
+      return isOptionsField && text.length > 0
+        ? { type: 'open_options', query: text }
+        : { type: 'none' };
+    }
+    const trigger = triggerMatch[1] as DropdownTriggerKind;
     return {
-      type: 'create_trigger_node',
-      trigger: triggerMatch[1] as DropdownTriggerKind,
+      type: 'open_trigger',
+      trigger,
       matchText: text,
       textOffset: text.length,
     };
@@ -155,6 +161,7 @@ export function resolveTrailingRowUpdateAction(params: {
 
 export type TrailingRowEnterIntent =
   | 'options_confirm'
+  | 'create_content'
   | 'create_content_and_continue'
   | 'create_empty';
 
@@ -162,9 +169,11 @@ export function resolveTrailingRowEnterIntent(params: {
   optionsOpen?: boolean;
   optionCount?: number;
   hasText: boolean;
+  continueOnText?: boolean;
 }): TrailingRowEnterIntent {
   if (params.optionsOpen && (params.optionCount ?? 0) > 0) return 'options_confirm';
-  return params.hasText ? 'create_content_and_continue' : 'create_empty';
+  if (!params.hasText) return 'create_empty';
+  return params.continueOnText === true ? 'create_content_and_continue' : 'create_content';
 }
 
 export type TrailingRowBackspaceIntent =

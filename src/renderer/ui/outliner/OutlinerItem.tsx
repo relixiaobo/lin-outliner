@@ -50,7 +50,13 @@ import { OutlinerView } from './OutlinerView';
 import { IndentGuide } from './IndentGuide';
 import { RowLeading } from './RowLeading';
 import { buildOutlinerRows, shouldShowTrailingInput } from './row-model';
-import { createTrailingField, createTrailingTriggerNode } from './trailingTriggers';
+import {
+  applyTrailingReferenceTrigger,
+  applyTrailingTagTrigger,
+  createAndApplyTrailingTagTrigger,
+  createTrailingField,
+  executeTrailingSlashTrigger,
+} from './trailingTriggers';
 import { useOutlinerRowInteraction } from './useOutlinerRowInteraction';
 
 interface OutlinerItemProps {
@@ -136,6 +142,10 @@ export function OutlinerItem(props: OutlinerItemProps) {
     .filter((tag): tag is NodeProjection => Boolean(tag));
   const appliedTagColors = tagBulletColors(appliedTags);
   const tagDefColor = leadingVariant === 'tag' ? resolveTagColor(displayed).text : undefined;
+  const dimEmptyContentBullet = leadingVariant === 'content'
+    && !row.hasChildren
+    && displayed.content.text.replace(/\u200B/g, '').trim().length === 0
+    && displayed.content.inlineRefs.length === 0;
   const showDoneCheckbox = displayed.showCheckbox
     || displayed.doneStateEnabled
     || Boolean(displayed.completedAt);
@@ -484,6 +494,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
           expanded={row.expanded}
           variant={leadingVariant}
           fieldType={displayed.fieldType}
+          markerClassName={dimEmptyContentBullet ? 'dimmed' : undefined}
           bulletColors={appliedTagColors}
           tagDefColor={tagDefColor}
           onToggleExpand={row.toggleExpandOrSelect}
@@ -648,13 +659,21 @@ export function OutlinerItem(props: OutlinerItemProps) {
               parentId={props.nodeId}
               index={props.index}
               expanded={props.ui.expanded}
+              run={props.run}
               focusRequest={props.ui.focusRequest}
+              focusedId={props.ui.focusedId}
+              focusSurface={props.ui.focusSurface}
               onFocusRequestConsumed={(request) => {
                 props.setUi((prev) => clearFocusRequestState(prev, request));
               }}
               onCreate={async (parentId, text) => {
-                const result = await props.run(() => api.createNode(parentId, null, text));
-                return result && 'focus' in result ? result.focus?.nodeId ?? null : null;
+                let createdId: string | null = null;
+                await props.run(async () => {
+                  const outcome = await api.createNode(parentId, null, text);
+                  createdId = outcome.focus?.nodeId ?? null;
+                  return outcome.projection;
+                });
+                return createdId;
               }}
               onCreateTree={(parentId, nodes) => (
                 props.run(() => api.createNodesFromTree(parentId, nodes))
@@ -665,16 +684,11 @@ export function OutlinerItem(props: OutlinerItemProps) {
               onToggleCreated={async (nodeId) => {
                 await props.run(() => api.toggleDone(nodeId));
               }}
-              onCreateTrigger={(params) => {
-                return createTrailingTriggerNode({
-                  getText: params.getText,
-                  parentId: params.parentId,
-                  text: params.text,
-                  trigger: params.trigger,
-                  run: props.run,
-                  setTrigger: props.setTrigger,
-                });
-              }}
+              onApplyTagTrigger={applyTrailingTagTrigger}
+              onCreateTagTrigger={createAndApplyTrailingTagTrigger}
+              onApplyReferenceTrigger={applyTrailingReferenceTrigger}
+              onExecuteSlashTrigger={executeTrailingSlashTrigger}
+              onOpenCommandPalette={() => props.setUi((prev) => ({ ...prev, commandOpen: true }))}
               onCreateField={(parentId) => {
                 void createTrailingField({
                   parentId,

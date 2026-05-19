@@ -15,6 +15,7 @@ import {
   UserIcon,
   type AppIcon,
 } from '../icons';
+import { fieldTypeLabel as registryFieldTypeLabel } from '../fields/fieldTypeRegistry';
 
 interface FieldTypeIconProps {
   fieldType?: FieldType;
@@ -43,14 +44,5 @@ export function FieldTypeIcon({ fieldType, size = ICON_SIZE.rowGlyph }: FieldTyp
 }
 
 export function fieldTypeLabel(fieldType?: FieldType): string {
-  switch (fieldType) {
-    case 'options_from_supertag':
-      return 'options from tag';
-    case 'user':
-      return 'user';
-    case undefined:
-      return 'plain';
-    default:
-      return fieldType;
-  }
+  return registryFieldTypeLabel(fieldType);
 }

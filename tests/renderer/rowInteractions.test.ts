@@ -149,34 +149,46 @@ describe('row interaction resolvers', () => {
     expect(shouldShowTrailingInput([
       { id: 'content', type: 'content' },
       { id: 'hidden:p:f', type: 'hiddenField', fieldId: 'f', label: 'Field' },
-    ])).toBe(false);
+    ])).toBe(true);
+    expect(shouldShowTrailingInput([
+      { id: 'content', type: 'content' },
+      { id: 'hidden:p:f', type: 'hiddenField', fieldId: 'f', label: 'Field' },
+    ], { mode: 'fieldValue' })).toBe(false);
   });
 
   test('maps trailing input trigger characters to node actions', () => {
     expect(resolveTrailingRowUpdateAction({ text: '>' })).toEqual({ type: 'create_field' });
     expect(resolveTrailingRowUpdateAction({ text: '#' })).toEqual({
-      type: 'create_trigger_node',
+      type: 'open_trigger',
       trigger: '#',
       matchText: '#',
       textOffset: 1,
     });
     expect(resolveTrailingRowUpdateAction({ text: 'hello@' })).toEqual({
-      type: 'create_trigger_node',
+      type: 'open_trigger',
       trigger: '@',
       matchText: 'hello@',
       textOffset: 6,
     });
     expect(resolveTrailingRowUpdateAction({ text: '/' })).toEqual({
-      type: 'create_trigger_node',
+      type: 'open_trigger',
       trigger: '/',
       matchText: '/',
       textOffset: 1,
+    });
+    expect(resolveTrailingRowUpdateAction({ text: '#fff' })).toEqual({ type: 'none' });
+    expect(resolveTrailingRowUpdateAction({ text: '#112233' })).toEqual({ type: 'none' });
+    expect(resolveTrailingRowUpdateAction({ text: '#112233', isOptionsField: true })).toEqual({
+      type: 'open_options',
+      query: '#112233',
     });
   });
 
   test('keeps trailing navigation decisions explicit', () => {
     expect(resolveTrailingRowEnterIntent({ hasText: false })).toBe('create_empty');
-    expect(resolveTrailingRowEnterIntent({ hasText: true })).toBe('create_content_and_continue');
+    expect(resolveTrailingRowEnterIntent({ hasText: true })).toBe('create_content');
+    expect(resolveTrailingRowEnterIntent({ hasText: true, continueOnText: true })).toBe('create_content_and_continue');
+    expect(resolveTrailingRowEnterIntent({ hasText: true, continueOnText: false })).toBe('create_content');
     expect(resolveTrailingRowEnterIntent({ hasText: true, optionsOpen: true, optionCount: 2 })).toBe('options_confirm');
     expect(resolveTrailingRowBackspaceIntent({
       isEditorEmpty: false,
@@ -490,6 +502,53 @@ describe('row interaction resolvers', () => {
     expect(clampTagSelectorIndex(-1, 2)).toBe(0);
   });
 
+  test('orders tag selector candidates by relevance before raw document order', () => {
+    const nodes = [
+      makeNode('tag-hex-recent', 'E4E4E7', { type: 'tagDef', updatedAt: 40 }),
+      makeNode('tag-ui', 'ui', { type: 'tagDef', updatedAt: 10 }),
+      makeNode('tag-design', 'design', { type: 'tagDef', updatedAt: 30 }),
+      makeNode('tag-hex', '52525B', { type: 'tagDef', updatedAt: 20 }),
+    ];
+    const index = {
+      projection: {
+        workspaceId: 'root',
+        rootId: 'root',
+        dailyNotesId: 'daily',
+        schemaId: 'schema',
+        searchesId: 'searches',
+        trashId: 'trash',
+        settingsId: 'settings',
+        todayId: 'today',
+        nodes,
+      },
+      byId: new Map(nodes.map((node) => [node.id, node])),
+    };
+
+    expect(tagSelectorItems({
+      query: '',
+      index: index as any,
+      existingTagIds: [],
+    }).map((item) => item.type === 'existing' ? item.tag.content.text : `create:${item.name}`)).toEqual([
+      'design',
+      'ui',
+      'E4E4E7',
+      '52525B',
+    ]);
+    expect(tagSelectorItems({
+      query: 'des',
+      index: index as any,
+      existingTagIds: [],
+    }).map((item) => item.type === 'existing' ? item.tag.content.text : `create:${item.name}`)).toEqual([
+      'design',
+      'create:des',
+    ]);
+    expect(tagSelectorItems({
+      query: 'design',
+      index: index as any,
+      existingTagIds: ['tag-design'],
+    })).toEqual([]);
+  });
+
   test('keeps hash marker out of tag selector text labels', () => {
     const tag = makeNode('tag-person', 'person', { type: 'tagDef' });
     expect(tagSelectorItemLabel({ type: 'existing', tag: tag as any })).toBe('person');
@@ -647,8 +706,179 @@ describe('row interaction resolvers', () => {
       [value.id, value],
     ]);
     const options = resolveFieldOptions(field as any, byId);
-    expect(options).toEqual([{ id: 'opt_done', label: 'Done', autoCollected: true }]);
+    expect(options).toEqual([{ id: 'opt_done', label: 'Done', autoCollected: true, targetId: 'opt_done' }]);
     expect(resolveSelectedOptionId(value as any, options)).toBe('opt_done');
+  });
+
+  test('resolves collected option references through their target value nodes', () => {
+    const field = {
+      id: 'field_status',
+      type: 'fieldDef',
+      children: ['collected_ref'],
+      content: { text: 'Status', marks: [], inlineRefs: [] },
+      tags: [],
+      createdAt: 0,
+      updatedAt: 0,
+      locked: false,
+      showCheckbox: false,
+      doneStateEnabled: false,
+      fieldType: 'options',
+      autocollectOptions: true,
+      autoCollected: false,
+      toolbarVisible: false,
+      filterValues: [],
+    } as const;
+    const localValue = {
+      id: 'local_value',
+      parentId: 'field_entry',
+      children: [],
+      content: { text: 'Urgent', marks: [], inlineRefs: [] },
+      tags: [],
+      createdAt: 0,
+      updatedAt: 0,
+      locked: false,
+      showCheckbox: false,
+      doneStateEnabled: false,
+      autocollectOptions: false,
+      autoCollected: false,
+      toolbarVisible: false,
+      filterValues: [],
+    } as const;
+    const collectedRef = {
+      ...localValue,
+      id: 'collected_ref',
+      parentId: 'field_status',
+      type: 'reference',
+      targetId: 'local_value',
+      autoCollected: true,
+    } as const;
+    const valueRef = {
+      ...localValue,
+      id: 'value_ref',
+      type: 'reference',
+      targetId: 'local_value',
+    } as const;
+    const byId = new Map<string, any>([
+      [field.id, field],
+      [localValue.id, localValue],
+      [collectedRef.id, collectedRef],
+      [valueRef.id, valueRef],
+    ]);
+
+    const options = resolveFieldOptions(field as any, byId);
+    expect(options).toEqual([{ id: 'collected_ref', label: 'Urgent', autoCollected: true, targetId: 'local_value' }]);
+    expect(resolveSelectedOptionId(valueRef as any, options)).toBe('collected_ref');
+    expect(resolveSelectedOptionId(localValue as any, options)).toBeUndefined();
+  });
+
+  test('keeps direct option order from the field definition', () => {
+    const field = {
+      id: 'field_status',
+      type: 'fieldDef',
+      children: ['opt_beta', 'opt_alpha'],
+      content: { text: 'Status', marks: [], inlineRefs: [] },
+      tags: [],
+      createdAt: 0,
+      updatedAt: 0,
+      locked: false,
+      showCheckbox: false,
+      doneStateEnabled: false,
+      fieldType: 'options',
+      autocollectOptions: true,
+      autoCollected: false,
+      toolbarVisible: false,
+      filterValues: [],
+    } as const;
+    const beta = {
+      id: 'opt_beta',
+      parentId: 'field_status',
+      children: [],
+      content: { text: 'Beta', marks: [], inlineRefs: [] },
+      tags: [],
+      createdAt: 0,
+      updatedAt: 0,
+      locked: false,
+      showCheckbox: false,
+      doneStateEnabled: false,
+      autocollectOptions: false,
+      autoCollected: true,
+      toolbarVisible: false,
+      filterValues: [],
+    } as const;
+    const alpha = {
+      ...beta,
+      id: 'opt_alpha',
+      content: { text: 'Alpha', marks: [], inlineRefs: [] },
+    } as const;
+    const byId = new Map<string, any>([
+      [field.id, field],
+      [beta.id, beta],
+      [alpha.id, alpha],
+    ]);
+
+    expect(resolveFieldOptions(field as any, byId).map((option) => option.label)).toEqual(['Beta', 'Alpha']);
+  });
+
+  test('resolves options-from-supertag from tagged content nodes', () => {
+    const field = {
+      id: 'field_city',
+      type: 'fieldDef',
+      children: ['ignored_child_option'],
+      content: { text: 'City', marks: [], inlineRefs: [] },
+      tags: [],
+      createdAt: 0,
+      updatedAt: 0,
+      locked: false,
+      showCheckbox: false,
+      doneStateEnabled: false,
+      fieldType: 'options_from_supertag',
+      sourceSupertag: 'tag_city',
+      autocollectOptions: false,
+      autoCollected: false,
+      toolbarVisible: false,
+      filterValues: [],
+    } as const;
+    const taggedNode = {
+      id: 'node_chengdu',
+      children: [],
+      content: { text: 'Chengdu', marks: [], inlineRefs: [] },
+      tags: ['tag_city'],
+      createdAt: 0,
+      updatedAt: 0,
+      locked: false,
+      showCheckbox: false,
+      doneStateEnabled: false,
+      autocollectOptions: false,
+      autoCollected: false,
+      toolbarVisible: false,
+      filterValues: [],
+    } as const;
+    const otherTagNode = {
+      ...taggedNode,
+      id: 'node_beijing',
+      content: { text: 'Beijing', marks: [], inlineRefs: [] },
+      tags: ['tag_other'],
+    } as const;
+    const childOption = {
+      ...taggedNode,
+      id: 'ignored_child_option',
+      parentId: 'field_city',
+      content: { text: 'Child option', marks: [], inlineRefs: [] },
+      tags: [],
+    } as const;
+    const byId = new Map<string, any>([
+      [field.id, field],
+      [taggedNode.id, taggedNode],
+      [otherTagNode.id, otherTagNode],
+      [childOption.id, childOption],
+    ]);
+
+    expect(resolveFieldOptions(field as any, byId)).toEqual([{
+      id: 'node_chengdu',
+      label: 'Chengdu',
+      autoCollected: false,
+      targetId: 'node_chengdu',
+    }]);
   });
 
   test('blocks tree reference candidates that would create display cycles', () => {
@@ -704,5 +934,38 @@ describe('row interaction resolvers', () => {
     });
     expect(candidates[0]?.type).toBe('date');
     expect(candidates.at(-1)).toEqual({ type: 'create', label: 'tod' });
+  });
+
+  test('orders reference candidates by current context before untitled recent nodes', () => {
+    const nodes = [
+      makeNode('root', 'Root', { children: ['today', 'other'] }),
+      makeNode('today', 'Today', { parentId: 'root', children: ['current', 'untitled', 'sibling'] }),
+      makeNode('current', 'Current', { parentId: 'today' }),
+      makeNode('untitled', '', { parentId: 'today', updatedAt: 100 }),
+      makeNode('sibling', 'Sibling note', { parentId: 'today', updatedAt: 10 }),
+      makeNode('other', 'Other recent', { parentId: 'root', updatedAt: 200 }),
+    ];
+    const projection = {
+      workspaceId: 'root',
+      rootId: 'root',
+      dailyNotesId: 'today',
+      schemaId: 'schema',
+      searchesId: 'searches',
+      trashId: 'trash',
+      settingsId: 'settings',
+      todayId: 'today',
+      nodes,
+    };
+    const candidates = buildReferenceCandidates({
+      index: { projection, byId: new Map(nodes.map((node) => [node.id, node])) } as any,
+      currentNodeId: 'current',
+      query: '',
+    });
+    const labels = candidates
+      .filter((candidate) => candidate.type === 'node')
+      .map((candidate) => candidate.label);
+
+    expect(labels[0]).toBe('Sibling note');
+    expect(labels.indexOf('Untitled')).toBeGreaterThan(labels.indexOf('Other recent'));
   });
 });

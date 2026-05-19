@@ -234,7 +234,7 @@ test.describe('outliner field row visual parity', () => {
     await openMockedApp(page, { optionsField: true });
 
     const priorityRow = rowBody(page, ids.priorityEntry);
-    await expect(priorityRow.locator('.field-value-outliner .trailing-leading')).toHaveCount(1);
+    await expect(priorityRow.locator('.field-value-outliner .field-option-picker-leading')).toHaveCount(1);
     await expect(priorityRow.locator('.field-value-node-preview')).toHaveAttribute('aria-label', 'Select option');
 
     const metrics = await priorityRow.evaluate((element) => {

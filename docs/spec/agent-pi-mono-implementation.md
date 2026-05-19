@@ -120,10 +120,10 @@ Suggested module boundary:
 
 ```txt
 src/core/agentTypes.ts
-  # shared AgentRuntimeEvent, snapshot/message DTOs, and IPC event channel
+  # shared AgentRuntimeEvent, event-log DTOs, render projection DTOs, and IPC event channel
 
 src/main/agentRuntime.ts
-  # owns pi-agent-core sessions, command transport, and event forwarding
+  # owns pi-agent-core sessions, command transport, event logging, and projection building
 
 src/preload/index.ts
   # exposes typed command and event bridge to the renderer
@@ -150,8 +150,9 @@ Responsibilities:
 - Electron main process: start sessions, route prompts, stop runs, and manage runtime lifecycle.
 - Electron main process: resolve API keys at stream time.
 - Electron main process: execute or reject every local tool call.
-- Electron main process: subscribe to Agent events and emit normalized snapshots/events.
-- Renderer: render snapshots and send user intents.
+- Electron main process: subscribe to Agent events and append normalized Lin events.
+- Electron main process: derive render/debug/pi-mono projections from the event store.
+- Renderer: render projections and send user intents.
 
 Conceptual shape:
 
@@ -165,11 +166,12 @@ interface AgentRuntimeClient {
 }
 ```
 
-The boundary should expose Lin-owned runtime events, attachment DTOs, debug DTOs,
-and UI state. Conversation message/content types should directly reuse pi-ai
-types where possible so Lin does not maintain a parallel, shape-compatible copy
-of `TextContent`, `ImageContent`, `UserMessage`, `AssistantMessage`, or
-`ToolResultMessage`.
+The boundary should expose Lin-owned runtime events, render projections,
+attachment DTOs, debug DTOs, and UI state. Conversation content types should
+reuse pi-ai block shapes where possible so Lin does not maintain a parallel,
+shape-compatible copy of `TextContent` or `ImageContent`. Persisted conversation
+identity, branching, tool lifecycle, approvals, and debug records are Lin-owned
+event-log concepts, not pi-mono runtime state.
 
 ## Model Configuration
 
@@ -544,8 +546,9 @@ operation. The agent can then explain or propose a safer alternative.
 
 ## Event Mapping
 
-pi-mono events should be normalized into Lin events before they reach the
-renderer components.
+pi-mono events should be normalized into Lin events before they reach storage,
+debug, or renderer components. The canonical event-store architecture lives in
+`docs/spec/agent-event-log-rendering.md`.
 
 Lin event categories:
 
@@ -563,8 +566,8 @@ Lin event categories:
 - `run_failed`
 - `run_cancelled`
 
-The raw pi-mono event can be kept in the run event log for debugging, but UI
-components should render from Lin's normalized event model.
+The raw pi-mono event can be kept as a payload ref for debugging, but UI
+components should render from Lin's normalized render projection.
 
 This keeps the transcript renderer independent from pi-mono and makes future
 migration to a TypeScript agent core or another library possible.
@@ -574,15 +577,22 @@ migration to a TypeScript agent core or another library possible.
 Agent conversations are not workspace tabs. They belong to shell-level agent
 state.
 
-Persist:
+Persist the Agent Session Event Store:
 
-- Conversation metadata.
-- User and assistant messages.
-- Tool call summaries.
-- Tool result summaries.
+- Append-only normalized events.
+- Payload files referenced by event payload refs.
+
+Represent these product facts as events:
+
+- Conversation metadata changes.
+- User and assistant message lifecycle.
+- Branch selection.
+- Tool call and tool result lifecycle.
+- Approval lifecycle.
 - Run status.
 - Model/provider id used for each run.
 - References to applied document undo groups.
+- Compaction and checkpoint availability.
 
 Do not persist:
 
@@ -592,8 +602,9 @@ Do not persist:
 - Chain-of-thought or hidden reasoning.
 - Transient approval promises.
 
-Restoring a conversation should rebuild pi-mono messages through the adapter and
-call `replaceMessages` on the underlying Agent.
+Restoring a conversation should rebuild projections from the event store. When
+execution starts, derive the active-path pi-ai `Message[]` through the adapter
+and hydrate the underlying pi-agent-core `Agent`.
 
 ## Abort And Steering
 

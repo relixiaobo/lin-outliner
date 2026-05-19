@@ -1,12 +1,13 @@
 import { useCallback } from 'react';
+import { flushSync } from 'react-dom';
 import type {
   CommandOutcome,
   DocumentProjection,
-  FieldType,
   FocusHint,
   NodeId,
   NodeProjection,
 } from '../api/types';
+import { FIELD_TYPE_CONFIG_OPTIONS } from './fields/fieldTypeRegistry';
 
 export type CommandRunner = (
   operation: () => Promise<CommandOutcome | DocumentProjection>,
@@ -30,18 +31,7 @@ export type TriggerState =
   | ({ nodeId: NodeId } & EditorTrigger)
   | null;
 
-export const FIELD_TYPE_OPTIONS: FieldType[] = [
-  'plain',
-  'date',
-  'number',
-  'url',
-  'email',
-  'checkbox',
-  'boolean',
-  'options',
-  'options_from_supertag',
-  'color',
-];
+export const FIELD_TYPE_OPTIONS = FIELD_TYPE_CONFIG_OPTIONS;
 
 export function isContentNode(node: NodeProjection | undefined): boolean {
   return Boolean(node && (!node.type || node.type === 'codeBlock'));
@@ -83,11 +73,15 @@ export function useCommandRunner(
     try {
       const result = await operation();
       if ('projection' in result) {
-        setProjection(result.projection);
-        setFocus(result.focus ?? null);
+        flushSync(() => {
+          setProjection(result.projection);
+          setFocus(result.focus ?? null);
+        });
       } else {
-        setProjection(result);
-        setFocus(null);
+        flushSync(() => {
+          setProjection(result);
+          setFocus(null);
+        });
       }
       setError(null);
       return result;

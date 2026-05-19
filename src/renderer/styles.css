@@ -239,6 +239,7 @@
 .agent-composer-more-model-list,
 .agent-settings-dialog,
 .command-list,
+.trigger-popover,
 .node-picker-popover {
   scrollbar-gutter: stable;
 }
@@ -3846,8 +3847,8 @@ button:focus-visible {
 }
 
 .trigger-popover {
-  left: 26px;
-  top: 28px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .popover-item,

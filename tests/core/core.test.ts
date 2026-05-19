@@ -28,6 +28,77 @@ describe('Core', () => {
     expect(core.state().nodes[first].children).toContain(second);
   });
 
+  test('focuses the last inserted root when creating a tree batch', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const outcome = core.createNodesFromTree(today, [
+      { content: plainText('Committed text'), children: [] },
+      { content: plainText('Continuation'), children: [] },
+    ]);
+
+    expect(core.state().nodes[outcome.focus!.nodeId].content.text).toBe('Continuation');
+    expect(outcome.focus).toMatchObject({
+      parentId: today,
+      placement: { kind: 'end' },
+    });
+  });
+
+  test('creates a tagged node in one core command', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const tagId = mustFocus(core.createTag('project'));
+    const outcome = core.createTaggedNode(today, plainText('Launch'), tagId);
+    const nodeId = mustFocus(outcome);
+
+    expect(core.state().nodes[nodeId]).toMatchObject({
+      content: { text: 'Launch' },
+      parentId: today,
+      tags: [tagId],
+    });
+    expect(outcome.focus).toMatchObject({
+      parentId: today,
+      placement: { kind: 'end' },
+    });
+  });
+
+  test('creates a rich text node in one core command', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'Target'));
+    const content: RichText = {
+      text: 'See Target',
+      marks: [{ start: 0, end: 3, type: 'bold' }],
+      inlineRefs: [{ offset: 4, targetNodeId: target, displayName: 'Target' }],
+    };
+    const outcome = core.createRichTextContentNode(today, null, content);
+    const nodeId = mustFocus(outcome);
+
+    expect(core.state().nodes[nodeId]).toMatchObject({
+      content,
+      parentId: today,
+    });
+    expect(outcome.focus).toMatchObject({
+      parentId: today,
+      placement: { kind: 'end' },
+    });
+  });
+
+  test('creates a missing tag and tagged node in one core command', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const outcome = core.createTagAndTaggedNode(today, plainText(''), 'brand-new-tag');
+    const nodeId = mustFocus(outcome);
+    const tag = Object.values(core.state().nodes).find((node) =>
+      node.type === 'tagDef' && node.content.text === 'brand-new-tag');
+
+    expect(tag).toBeDefined();
+    expect(core.state().nodes[nodeId]).toMatchObject({
+      content: { text: '' },
+      parentId: today,
+      tags: [tag!.id],
+    });
+  });
+
   test('updates node metadata and clears empty view settings', () => {
     const core = Core.new();
     const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Node'));
@@ -208,6 +279,112 @@ describe('Core', () => {
     expect(core.state().nodes[valueId].type).toBe('reference');
     expect(core.state().nodes[valueId].targetId).toBe(optionId);
     expect(mustFocus(core.registerCollectedOption(fieldDefId, 'done'))).toBe(optionId);
+
+    core.clearFieldValue(fieldEntryId);
+    expect(core.state().nodes[fieldEntryId].children).toEqual([]);
+  });
+
+  test('auto-collected options keep the value local and collect a reference', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const fieldEntryId = mustFocus(core.createInlineField(today, null, 'Status', 'options'));
+    const fieldDefId = core.state().nodes[fieldEntryId].fieldDefId!;
+
+    core.createCollectedFieldOption(fieldEntryId, 'Urgent');
+
+    const valueId = core.state().nodes[fieldEntryId].children[0];
+    const value = core.state().nodes[valueId];
+    expect(value.type).toBeUndefined();
+    expect(value.content.text).toBe('Urgent');
+
+    const collectedRefId = core.state().nodes[fieldDefId].children[0];
+    const collectedRef = core.state().nodes[collectedRefId];
+    expect(collectedRef.type).toBe('reference');
+    expect(collectedRef.targetId).toBe(valueId);
+    expect(collectedRef.autoCollected).toBe(true);
+
+    core.selectFieldOption(fieldEntryId, collectedRefId);
+    expect(core.state().nodes[fieldEntryId].children).toEqual([valueId]);
+
+    core.clearFieldValue(fieldEntryId);
+    expect(core.state().nodes[fieldEntryId].children).toEqual([]);
+    expect(core.state().nodes[fieldDefId].children).toEqual([]);
+  });
+
+  test('clearing an auto-collected source preserves references by promoting the option', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const tagId = mustFocus(core.createTag('Task'));
+    const templateEntryId = mustFocus(core.createFieldDef(tagId, 'Status', 'options'));
+    const fieldDefId = core.state().nodes[templateEntryId].fieldDefId!;
+    const firstNodeId = mustFocus(core.createNode(today, null, 'First'));
+    const secondNodeId = mustFocus(core.createNode(today, null, 'Second'));
+    core.applyTag(firstNodeId, tagId);
+    core.applyTag(secondNodeId, tagId);
+    const fieldEntryFor = (nodeId: string) => {
+      const entryId = core.state().nodes[nodeId].children.find((childId) => {
+        const child = core.state().nodes[childId];
+        return child.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
+      });
+      expect(entryId).toBeDefined();
+      return entryId!;
+    };
+    const firstEntryId = fieldEntryFor(firstNodeId);
+    const secondEntryId = fieldEntryFor(secondNodeId);
+
+    core.createCollectedFieldOption(firstEntryId, 'Urgent');
+    const sourceValueId = core.state().nodes[firstEntryId].children[0];
+    const collectedRefId = core.state().nodes[fieldDefId].children[0];
+    core.selectFieldOption(secondEntryId, collectedRefId);
+    const secondValueId = core.state().nodes[secondEntryId].children[0];
+    expect(core.state().nodes[secondValueId].targetId).toBe(sourceValueId);
+
+    core.clearFieldValue(firstEntryId);
+
+    const state = core.state();
+    expect(state.nodes[firstEntryId].children).toEqual([]);
+    expect(state.nodes[sourceValueId].parentId).toBe(fieldDefId);
+    expect(state.nodes[sourceValueId].autoCollected).toBe(true);
+    expect(state.nodes[secondValueId].targetId).toBe(sourceValueId);
+    expect(state.nodes[fieldDefId].children).toEqual([sourceValueId]);
+  });
+
+  test('list options append unique values instead of replacing', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const fieldEntryId = mustFocus(core.createInlineField(today, null, 'Tags', 'options'));
+    const fieldDefId = core.state().nodes[fieldEntryId].fieldDefId!;
+    core.setFieldConfig(fieldDefId, { cardinality: 'list' });
+    const first = mustFocus(core.registerCollectedOption(fieldDefId, 'Alpha'));
+    const second = mustFocus(core.registerCollectedOption(fieldDefId, 'Beta'));
+
+    core.selectFieldOption(fieldEntryId, first);
+    core.selectFieldOption(fieldEntryId, second);
+    core.selectFieldOption(fieldEntryId, first);
+
+    const values = core.state().nodes[fieldEntryId].children.map((childId) => core.state().nodes[childId].targetId);
+    expect(values).toEqual([first, second]);
+  });
+
+  test('options from supertag selects tagged nodes instead of field children', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const sourceTagId = mustFocus(core.createTag('City'));
+    const fieldEntryId = mustFocus(core.createInlineField(today, null, 'Destination', 'options_from_supertag'));
+    const fieldDefId = core.state().nodes[fieldEntryId].fieldDefId!;
+    core.setFieldConfig(fieldDefId, {
+      fieldType: 'options_from_supertag',
+      sourceSupertag: sourceTagId,
+    });
+
+    const chengduId = mustFocus(core.createNode(today, null, 'Chengdu'));
+    core.applyTag(chengduId, sourceTagId);
+    core.selectFieldOption(fieldEntryId, chengduId);
+
+    const valueId = core.state().nodes[fieldEntryId].children[0];
+    expect(core.state().nodes[valueId].type).toBe('reference');
+    expect(core.state().nodes[valueId].targetId).toBe(chengduId);
+    expect(() => core.registerCollectedOption(fieldDefId, 'Beijing')).toThrow('direct options');
   });
 
   test('field config validates constraints and clears type-specific settings', () => {
@@ -218,14 +395,18 @@ describe('Core', () => {
 
     core.setFieldConfig(fieldId, {
       fieldType: 'number',
+      cardinality: 'list',
       nullable: false,
       hideField: 'empty',
+      autoInitialize: 'ancestor_field_value',
       minValue: 1,
       maxValue: 5,
     });
     expect(core.state().nodes[fieldId].fieldType).toBe('number');
+    expect(core.state().nodes[fieldId].cardinality).toBe('list');
     expect(core.state().nodes[fieldId].nullable).toBe(false);
     expect(core.state().nodes[fieldId].hideField).toBe('empty');
+    expect(core.state().nodes[fieldId].autoInitialize).toBe('ancestor_field_value');
     expect(core.state().nodes[fieldId].minValue).toBe(1);
     expect(core.state().nodes[fieldId].maxValue).toBe(5);
 
@@ -248,6 +429,8 @@ describe('Core', () => {
       .toThrow('auto-collect options');
     expect(() => core.setFieldConfig(fieldId, { fieldType: 'number', minValue: 10, maxValue: 1 }))
       .toThrow('minimum value');
+    expect(() => core.setFieldConfig(fieldId, { autoInitialize: 'unknown_strategy' }))
+      .toThrow('auto-initialize');
   });
 
   test('paste nodes is one undoable rich structural operation', () => {
@@ -397,6 +580,74 @@ describe('Core', () => {
     expect(core.state().nodes[today].children).toEqual([target, trigger, inlineSource]);
     expect(core.state().nodes[trigger].parentId).toBe(today);
     expect(core.state().nodes[referenceId]).toBeUndefined();
+  });
+
+  test('trashing a reference target keeps references restorable', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'Target'));
+    const referenceId = mustFocus(core.addReference(today, target, null));
+
+    core.trashNode(target);
+
+    expect(core.state().nodes[target].parentId).toBe(TRASH_ID);
+    expect(core.state().nodes[referenceId].type).toBe('reference');
+    expect(core.state().nodes[referenceId].targetId).toBe(target);
+  });
+
+  test('permanent delete removes tree references and inline references to the target', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'Target'));
+    const referenceId = mustFocus(core.addReference(today, target, null));
+    const referenceToReferenceId = mustFocus(core.addReference(today, referenceId, null));
+    const inlineSource = mustFocus(core.createNode(today, null, 'Inline source'));
+
+    core.applyNodeTextPatch(inlineSource, replaceAllRichTextPatch({
+      text: 'See target',
+      marks: [{ start: 0, end: 3, type: 'bold' }],
+      inlineRefs: [{ offset: 4, targetNodeId: target, displayName: 'Target' }],
+    }));
+
+    core.deleteNode(target);
+
+    const state = core.state();
+    expect(state.nodes[target]).toBeUndefined();
+    expect(state.nodes[referenceId]).toBeUndefined();
+    expect(state.nodes[referenceToReferenceId]).toBeUndefined();
+    expect(state.nodes[today].children).not.toContain(referenceId);
+    expect(state.nodes[today].children).not.toContain(referenceToReferenceId);
+    expect(state.nodes[inlineSource].content).toEqual({
+      text: 'See target',
+      marks: [{ start: 0, end: 3, type: 'bold' }],
+      inlineRefs: [],
+    });
+
+    core.undo();
+
+    expect(core.state().nodes[target]).toBeDefined();
+    expect(core.state().nodes[referenceId].targetId).toBe(target);
+    expect(core.state().nodes[referenceToReferenceId].targetId).toBe(referenceId);
+    expect(core.state().nodes[inlineSource].content.inlineRefs).toEqual([
+      { offset: 4, targetNodeId: target, displayName: 'Target' },
+    ]);
+  });
+
+  test('permanent delete of an option target clears selected field references', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const fieldEntryId = mustFocus(core.createInlineField(today, null, 'Status', 'options'));
+    const fieldDefId = core.state().nodes[fieldEntryId].fieldDefId!;
+    const optionId = mustFocus(core.registerCollectedOption(fieldDefId, 'Done'));
+    core.selectFieldOption(fieldEntryId, optionId);
+    const valueReferenceId = core.state().nodes[fieldEntryId].children[0];
+
+    core.deleteNode(optionId);
+
+    const state = core.state();
+    expect(state.nodes[optionId]).toBeUndefined();
+    expect(state.nodes[valueReferenceId]).toBeUndefined();
+    expect(state.nodes[fieldEntryId].children).toEqual([]);
   });
 
   test('undo restores trash operations', () => {

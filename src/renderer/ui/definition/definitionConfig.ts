@@ -1,4 +1,5 @@
-import type { FieldType, HideFieldMode, NodeProjection } from '../../api/types';
+import type { FieldCardinality, HideFieldMode, NodeProjection } from '../../api/types';
+import { FIELD_TYPE_CONFIG_OPTIONS } from '../fields/fieldTypeRegistry';
 
 export type DefinitionKind = 'tag' | 'field';
 
@@ -11,19 +12,31 @@ export type TagConfigKey =
 
 export type FieldConfigKey =
   | 'fieldType'
+  | 'cardinality'
   | 'sourceSupertag'
   | 'autocollectOptions'
+  | 'autoInitialize'
   | 'required'
   | 'hideField'
   | 'minValue'
   | 'maxValue';
 
 export type DefinitionConfigKey = TagConfigKey | FieldConfigKey;
+export type DefinitionConfigControl =
+  | 'color'
+  | 'tag'
+  | 'switch'
+  | 'fieldType'
+  | 'cardinality'
+  | 'hideField'
+  | 'autoInitialize'
+  | 'number';
 
 export interface DefinitionConfigItem {
   key: DefinitionConfigKey;
   label: string;
   kind: DefinitionKind;
+  control: DefinitionConfigControl;
   visibleWhen?: (node: NodeProjection) => boolean;
 }
 
@@ -35,58 +48,59 @@ export const HIDE_FIELD_OPTIONS: Array<{ value: HideFieldMode; label: string }> 
   { value: 'always', label: 'Always' },
 ];
 
-export const FIELD_TYPE_CONFIG_OPTIONS: FieldType[] = [
-  'plain',
-  'date',
-  'number',
-  'url',
-  'email',
-  'checkbox',
-  'boolean',
-  'options',
-  'options_from_supertag',
-  'color',
+export { FIELD_TYPE_CONFIG_OPTIONS };
+
+export const FIELD_CARDINALITY_OPTIONS: Array<{ value: FieldCardinality; label: string }> = [
+  { value: 'single', label: 'Single value' },
+  { value: 'list', label: 'List of values' },
 ];
 
 export const TAG_CONFIG_ITEMS: DefinitionConfigItem[] = [
-  { key: 'color', label: 'Color', kind: 'tag' },
-  { key: 'extends', label: 'Extend from', kind: 'tag' },
-  { key: 'showCheckbox', label: 'Show as checkbox', kind: 'tag' },
+  { key: 'color', label: 'Color', kind: 'tag', control: 'color' },
+  { key: 'extends', label: 'Extend from', kind: 'tag', control: 'tag' },
+  { key: 'showCheckbox', label: 'Show as checkbox', kind: 'tag', control: 'switch' },
   {
     key: 'doneStateEnabled',
     label: 'Done state mapping',
     kind: 'tag',
+    control: 'switch',
     visibleWhen: (node) => node.showCheckbox,
   },
-  { key: 'childSupertag', label: 'Default child supertag', kind: 'tag' },
+  { key: 'childSupertag', label: 'Default child supertag', kind: 'tag', control: 'tag' },
 ];
 
 export const FIELD_CONFIG_ITEMS: DefinitionConfigItem[] = [
-  { key: 'fieldType', label: 'Field type', kind: 'field' },
+  { key: 'fieldType', label: 'Field type', kind: 'field', control: 'fieldType' },
+  { key: 'cardinality', label: 'Cardinality', kind: 'field', control: 'cardinality' },
   {
     key: 'sourceSupertag',
     label: 'Supertag',
     kind: 'field',
+    control: 'tag',
     visibleWhen: (node) => node.fieldType === 'options_from_supertag',
   },
   {
     key: 'autocollectOptions',
     label: 'Auto-collect values',
     kind: 'field',
+    control: 'switch',
     visibleWhen: (node) => node.fieldType === 'options',
   },
-  { key: 'required', label: 'Required', kind: 'field' },
-  { key: 'hideField', label: 'Hide field', kind: 'field' },
+  { key: 'autoInitialize', label: 'Auto-initialize', kind: 'field', control: 'autoInitialize' },
+  { key: 'required', label: 'Required', kind: 'field', control: 'switch' },
+  { key: 'hideField', label: 'Hide field', kind: 'field', control: 'hideField' },
   {
     key: 'minValue',
     label: 'Minimum value',
     kind: 'field',
+    control: 'number',
     visibleWhen: (node) => node.fieldType === 'number',
   },
   {
     key: 'maxValue',
     label: 'Maximum value',
     kind: 'field',
+    control: 'number',
     visibleWhen: (node) => node.fieldType === 'number',
   },
 ];

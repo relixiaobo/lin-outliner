@@ -27,6 +27,8 @@ import {
 } from './definitionConfig';
 import {
   DefinitionColorControl,
+  DefinitionAutoInitializeControl,
+  DefinitionCardinalitySelect,
   DefinitionFieldTypeSelect,
   DefinitionHideFieldSelect,
   DefinitionNumberControl,
@@ -47,7 +49,11 @@ export function DefinitionConfigPanel({ node, index, run }: DefinitionConfigPane
   const tagOptions = useMemo(
     () => index.projection.nodes
       .filter((candidate) => candidate.type === 'tagDef' && candidate.id !== node.id)
-      .map((candidate) => ({ id: candidate.id, label: textOf(candidate) }))
+      .map((candidate) => ({
+        color: resolveTagColor(candidate).text,
+        id: candidate.id,
+        label: textOf(candidate),
+      }))
       .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' })),
     [index.projection.nodes, node.id],
   );
@@ -61,9 +67,10 @@ export function DefinitionConfigPanel({ node, index, run }: DefinitionConfigPane
 
   return (
     <section className="definition-config-panel" aria-label="Definition configuration">
-      {items.map((item) => (
+      {items.map((item, index) => (
         <DefinitionConfigRow
           key={item.key}
+          isLast={index === items.length - 1}
           item={item}
           node={node}
           tagOptions={tagOptions}
@@ -76,6 +83,7 @@ export function DefinitionConfigPanel({ node, index, run }: DefinitionConfigPane
 }
 
 function DefinitionConfigRow(props: {
+  isLast: boolean;
   item: DefinitionConfigItem;
   node: NodeProjection;
   tagOptions: TagOption[];
@@ -87,6 +95,7 @@ function DefinitionConfigRow(props: {
       configKey={props.item.key}
       control={<ConfigControl {...props} />}
       icon={<ConfigIcon item={props.item} node={props.node} />}
+      isLast={props.isLast}
       label={props.item.label}
     />
   );
@@ -102,8 +111,11 @@ function ConfigIcon({ item, node }: { item: DefinitionConfigItem; node: NodeProj
     return <CheckboxIcon size={ICON_SIZE.rowGlyph} />;
   }
   if (item.key === 'autocollectOptions') return <OptionsIcon size={ICON_SIZE.rowGlyph} />;
+  if (item.key === 'autoInitialize') return <SettingsIcon size={ICON_SIZE.rowGlyph} />;
   if (item.key === 'hideField') return <HideIcon size={ICON_SIZE.rowGlyph} />;
-  if (item.key === 'minValue' || item.key === 'maxValue') return <HashIcon size={ICON_SIZE.rowGlyph} />;
+  if (item.key === 'cardinality' || item.key === 'minValue' || item.key === 'maxValue') {
+    return <HashIcon size={ICON_SIZE.rowGlyph} />;
+  }
   return <SettingsIcon size={ICON_SIZE.rowGlyph} />;
 }
 
@@ -168,6 +180,14 @@ function ConfigControl(props: {
           onChange={(fieldType) => updateField({ fieldType })}
         />
       );
+    case 'cardinality':
+      return (
+        <DefinitionCardinalitySelect
+          label={item.label}
+          value={node.cardinality ?? 'single'}
+          onChange={(cardinality) => updateField({ cardinality })}
+        />
+      );
     case 'sourceSupertag':
       return (
         <DefinitionTagSelect
@@ -183,6 +203,15 @@ function ConfigControl(props: {
           label={item.label}
           checked={node.autocollectOptions}
           onChange={(autocollectOptions) => updateField({ autocollectOptions })}
+        />
+      );
+    case 'autoInitialize':
+      return (
+        <DefinitionAutoInitializeControl
+          label={item.label}
+          fieldType={node.fieldType ?? 'plain'}
+          value={node.autoInitialize}
+          onChange={(autoInitialize) => updateField({ autoInitialize })}
         />
       );
     case 'required':

@@ -1,6 +1,7 @@
 import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { isContentNode, textOf } from '../shared';
+import { textMatchRank } from './candidateRanking';
 import { getTreeReferenceBlockMessage, getTreeReferenceBlockReason } from './referenceRules';
 
 export type ReferenceCandidate =
@@ -31,6 +32,8 @@ const DATE_SHORTCUTS: Array<{
   { key: 'tomorrow', label: 'Tomorrow', offset: 1 },
   { key: 'yesterday', label: 'Yesterday', offset: -1 },
 ];
+
+const DEFAULT_REFERENCE_LIMIT = 24;
 
 function dateWithOffset(offset: number): Date {
   const date = new Date();
@@ -74,6 +77,30 @@ function breadcrumbFor(node: NodeProjection, byId: Map<NodeId, NodeProjection>):
   return parts.join(' / ');
 }
 
+function ancestorIds(node: NodeProjection | undefined, byId: Map<NodeId, NodeProjection>): Set<NodeId> {
+  const ids = new Set<NodeId>();
+  let currentId = node?.parentId;
+  while (currentId) {
+    ids.add(currentId);
+    const current = byId.get(currentId);
+    if (!current) break;
+    currentId = current.parentId;
+  }
+  return ids;
+}
+
+function contextRank(
+  node: NodeProjection,
+  currentNode: NodeProjection | undefined,
+  currentAncestors: Set<NodeId>,
+): number {
+  if (!currentNode) return 3;
+  if (node.parentId && node.parentId === currentNode.parentId) return 0;
+  if (currentAncestors.has(node.id)) return 1;
+  if (node.parentId && currentAncestors.has(node.parentId)) return 2;
+  return 3;
+}
+
 function nodeCandidates(
   index: DocumentIndex,
   currentNodeId: NodeId,
@@ -81,32 +108,55 @@ function nodeCandidates(
   treeReferenceParentId: NodeId | null,
 ): ReferenceCandidate[] {
   const normalized = query.trim().toLowerCase();
+  const currentNode = index.byId.get(currentNodeId);
+  const currentAncestors = ancestorIds(currentNode, index.byId);
   const candidates = index.projection.nodes
     .filter((node) => isContentNode(node) && node.id !== currentNodeId)
-    .filter((node) => {
-      if (!normalized) return true;
-      return textOf(node).toLowerCase().includes(normalized);
+    .map((node) => {
+      const label = textOf(node);
+      const rawText = node.content.text.trim();
+      const reason = treeReferenceParentId
+        ? getTreeReferenceBlockReason({
+          parentId: treeReferenceParentId,
+          targetId: node.id,
+          byId: index.byId,
+        })
+        : null;
+      return {
+        node,
+        label,
+        normalizedLabel: label.toLowerCase(),
+        disabledReason: getTreeReferenceBlockMessage(reason),
+        isUntitled: rawText.length === 0,
+        contextRank: contextRank(node, currentNode, currentAncestors),
+      };
     })
-    .sort((a, b) => {
-      if (!normalized && b.updatedAt !== a.updatedAt) return b.updatedAt - a.updatedAt;
-      return textOf(a).localeCompare(textOf(b), undefined, { sensitivity: 'base' });
+    .map((candidate) => ({
+      ...candidate,
+      rank: textMatchRank(candidate.normalizedLabel, normalized),
+    }))
+    .filter((candidate) => candidate.rank !== null)
+    .sort((left, right) => {
+      if (left.rank !== right.rank) return (left.rank ?? 0) - (right.rank ?? 0);
+      if (Boolean(left.disabledReason) !== Boolean(right.disabledReason)) {
+        return left.disabledReason ? 1 : -1;
+      }
+      if (left.isUntitled !== right.isUntitled) return left.isUntitled ? 1 : -1;
+      if (left.contextRank !== right.contextRank) return left.contextRank - right.contextRank;
+      if (normalized && left.label.length !== right.label.length) return left.label.length - right.label.length;
+      if (left.node.updatedAt !== right.node.updatedAt) return right.node.updatedAt - left.node.updatedAt;
+      return left.label.localeCompare(right.label, undefined, { sensitivity: 'base' });
     })
-    .slice(0, normalized ? 8 : 5);
+    .slice(0, DEFAULT_REFERENCE_LIMIT);
 
-  return candidates.map((node) => {
-    const reason = treeReferenceParentId
-      ? getTreeReferenceBlockReason({
-        parentId: treeReferenceParentId,
-        targetId: node.id,
-        byId: index.byId,
-      })
-      : null;
+  return candidates.map((candidate) => {
+    const { node } = candidate;
     return {
       type: 'node',
       id: node.id,
-      label: textOf(node),
+      label: candidate.label,
       breadcrumb: breadcrumbFor(node, index.byId),
-      disabledReason: getTreeReferenceBlockMessage(reason),
+      disabledReason: candidate.disabledReason,
     };
   });
 }

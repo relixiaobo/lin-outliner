@@ -76,7 +76,8 @@ function isHiddenFieldEntry(entry: NodeProjection, byId: Map<NodeId, NodeProject
   if (mode === 'empty') return value.length === 0;
   if (mode === 'not_empty') return value.length > 0;
   if (mode === 'value_is_default') {
-    const defaultValue = field?.autoInitialize?.trim() ?? '';
+    const templateEntry = entry.templateId ? byId.get(entry.templateId) : undefined;
+    const defaultValue = templateEntry ? hiddenFieldValue(templateEntry, byId).trim() : '';
     return defaultValue.length > 0 && value === defaultValue;
   }
   return false;
@@ -211,7 +212,12 @@ export function buildOutlinerRows(
   return applyViewSettings(parent, buildChildRows(parent, byId, options), byId);
 }
 
-export function shouldShowTrailingInput(rows: OutlinerRowItem[]): boolean {
+export function shouldShowTrailingInput(
+  rows: OutlinerRowItem[],
+  options: { mode?: 'body' | 'fieldValue' } = {},
+): boolean {
+  if (options.mode !== 'fieldValue') return true;
+
   const lastNodeRow = rows.filter((row) => row.type === 'field' || row.type === 'content').at(-1);
   if (!lastNodeRow) return true;
   return lastNodeRow.type === 'field';

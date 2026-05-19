@@ -116,6 +116,35 @@ test.describe('outliner row editing parity', () => {
     expect(placeholderStyle.opacity).toBe(0);
   });
 
+  test('Enter-created empty sibling uses the dimmed placeholder bullet immediately', async ({ page }) => {
+    await placeCursor(page, ids.alpha, 'end');
+    await page.keyboard.press('Enter');
+
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(4);
+    const children = await todayChildren(page);
+    const createdId = children[1];
+    expect(createdId).toBeTruthy();
+    await expect(rowEditor(page, createdId)).toBeFocused();
+
+    const colors = await page.evaluate(({ createdIdArg, alphaId }) => {
+      const createdBullet = document
+        .querySelector(`[data-node-id="${createdIdArg}"] .row-bullet-shape.content`);
+      const trailingBullet = document
+        .querySelector('.trailing-row .row-bullet-shape.content');
+      const alphaBullet = document
+        .querySelector(`[data-node-id="${alphaId}"] .row-bullet-shape.content`);
+      if (!createdBullet || !trailingBullet || !alphaBullet) throw new Error('missing bullet');
+      return {
+        alpha: getComputedStyle(alphaBullet).color,
+        created: getComputedStyle(createdBullet).color,
+        trailing: getComputedStyle(trailingBullet).color,
+      };
+    }, { alphaId: ids.alpha, createdIdArg: createdId });
+
+    expect(colors.created).toBe(colors.trailing);
+    expect(colors.created).not.toBe(colors.alpha);
+  });
+
   test('> converts the current empty row to a field row without moving it', async ({ page }) => {
     await placeCursor(page, ids.alpha, 'end');
     await page.keyboard.press('Enter');

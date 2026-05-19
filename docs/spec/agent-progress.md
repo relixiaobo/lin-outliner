@@ -13,6 +13,11 @@ undo stay inside Lin's TypeScript/Electron boundary.
 
 Do not add Rust runtime code for the product agent path.
 
+Agent optimization should follow `docs/spec/agent-event-log-rendering.md`:
+pi-mono stays the core, Lin records normalized events, React renders a coalesced
+projection, and the debug panel reads derived views without owning runtime
+truth.
+
 ## Completed
 
 - [x] pi-mono runtime integration in Electron main.
@@ -58,6 +63,8 @@ Do not add Rust runtime code for the product agent path.
 Finish approval and UI/debug polish for the local tools that now execute through
 the TypeScript main-process tool gateway.
 
+- [ ] Agent event log and render projection architecture groundwork.
+- [ ] Frame-coalesced streaming updates for the agent transcript.
 - [ ] Approval rendering for mutating local tools.
 - [ ] Debug panel visibility for local tool inputs, outputs, status, and
   truncation.
@@ -89,5 +96,7 @@ the TypeScript main-process tool gateway.
 - Update this file when a milestone is completed or reprioritized.
 - Keep detailed API contracts in `docs/spec/agent-tool-design.md`.
 - Keep runtime architecture details in `docs/spec/agent-pi-mono-implementation.md`.
+- Keep event log, debug, and render projection architecture in
+  `docs/spec/agent-event-log-rendering.md`.
 - Keep implementation notes short here; this file is for status and next work,
   not full design.

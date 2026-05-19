@@ -11,6 +11,15 @@ async function openSchema(page: import('@playwright/test').Page) {
   await row(page, ids.schema).getByRole('button', { name: 'Open' }).click();
 }
 
+async function chooseConfigOption(
+  page: import('@playwright/test').Page,
+  label: string,
+  option: string,
+) {
+  await page.getByLabel(label).click();
+  await page.getByRole('option', { name: option, exact: true }).click();
+}
+
 test.describe('definition configuration parity', () => {
   test.beforeEach(async ({ page }) => {
     await openMockedApp(page);
@@ -22,9 +31,9 @@ test.describe('definition configuration parity', () => {
 
     await expect(page.getByRole('region', { name: 'Definition configuration' })).toBeVisible();
     await page.locator('[data-config-key="color"] input[type="color"]').fill('#446655');
-    await page.getByLabel('Extend from').selectOption(ids.projectTag);
+    await chooseConfigOption(page, 'Extend from', 'project');
     await page.getByRole('switch', { name: 'Show as checkbox' }).click();
-    await page.getByLabel('Default child supertag').selectOption(ids.projectTag);
+    await chooseConfigOption(page, 'Default child supertag', 'project');
 
     await expect.poll(async () => {
       const node = await nodeById(page, ids.dayTag);
@@ -46,14 +55,16 @@ test.describe('definition configuration parity', () => {
     await openSchema(page);
     await row(page, ids.statusField).getByRole('button', { name: 'Open' }).click();
 
-    await page.getByLabel('Field type').selectOption('number');
+    await chooseConfigOption(page, 'Field type', 'number');
     await expect(page.getByLabel('Minimum value')).toBeVisible();
     await page.getByLabel('Minimum value').fill('1');
-    await page.getByLabel('Minimum value').press('Enter');
+    await page.getByLabel('Minimum value').blur();
     await page.getByLabel('Maximum value').fill('5');
-    await page.getByLabel('Maximum value').press('Enter');
+    await page.getByLabel('Maximum value').blur();
+    await chooseConfigOption(page, 'Cardinality', 'List of values');
+    await page.getByRole('switch', { name: 'Ancestor field value' }).click();
     await page.getByRole('switch', { name: 'Required' }).click();
-    await page.getByLabel('Hide field').selectOption('empty');
+    await chooseConfigOption(page, 'Hide field', 'When empty');
 
     await expect.poll(async () => {
       const node = await nodeById(page, ids.statusField);
@@ -61,6 +72,8 @@ test.describe('definition configuration parity', () => {
         fieldType: node?.fieldType,
         nullable: node?.nullable,
         hideField: node?.hideField,
+        cardinality: node?.cardinality,
+        autoInitialize: node?.autoInitialize,
         minValue: node?.minValue,
         maxValue: node?.maxValue,
       };
@@ -68,11 +81,18 @@ test.describe('definition configuration parity', () => {
       fieldType: 'number',
       nullable: false,
       hideField: 'empty',
+      cardinality: 'list',
+      autoInitialize: 'ancestor_field_value',
       minValue: 1,
       maxValue: 5,
     });
 
-    await page.getByLabel('Field type').selectOption('options');
+    await chooseConfigOption(page, 'Field type', 'options');
+    const fieldTypeValueMarker = page.locator(
+      '[data-config-key="fieldType"] .definition-config-control .field-option-picker-leading',
+    );
+    await expect(fieldTypeValueMarker.locator('.row-bullet-shape.content')).toHaveCount(1);
+    await expect(fieldTypeValueMarker.locator('svg')).toHaveCount(0);
     await expect(page.getByRole('switch', { name: 'Auto-collect values' })).toBeVisible();
     await expect(page.getByLabel('Minimum value')).toHaveCount(0);
 

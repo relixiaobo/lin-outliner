@@ -193,6 +193,12 @@ export class DocumentService {
     switch (command) {
       case 'create_node':
         return this.core.createNode(String(args.parentId), nullableNumber(args.index), String(args.text ?? ''));
+      case 'create_rich_text_node':
+        return this.core.createRichTextContentNode(String(args.parentId), nullableNumber(args.index), args.content as RichText);
+      case 'create_tagged_node':
+        return this.core.createTaggedNode(String(args.parentId), args.content as RichText, String(args.tagId));
+      case 'create_tag_and_tagged_node':
+        return this.core.createTagAndTaggedNode(String(args.parentId), args.content as RichText, String(args.name ?? ''));
       case 'create_nodes_from_tree':
         return this.core.createNodesFromTree(String(args.parentId), arrayArg(args.nodes));
       case 'paste_nodes_into_node':
@@ -281,8 +287,12 @@ export class DocumentService {
         return this.core.createInlineField(String(args.parentId), nullableNumber(args.index), String(args.name), fieldType(args.fieldType));
       case 'register_collected_option':
         return this.core.registerCollectedOption(String(args.fieldDefId), String(args.name));
+      case 'create_collected_field_option':
+        return this.core.createCollectedFieldOption(String(args.fieldEntryId), String(args.name));
       case 'select_field_option':
         return this.core.selectFieldOption(String(args.fieldEntryId), String(args.optionNodeId));
+      case 'clear_field_value':
+        return this.core.clearFieldValue(String(args.fieldEntryId));
       case 'add_reference':
         return this.core.addReference(String(args.parentId), String(args.targetId), nullableNumber(args.index));
       case 'set_reference_target':

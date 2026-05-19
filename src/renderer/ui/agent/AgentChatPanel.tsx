@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import type { AssistantMessage, ToolResultMessage } from '../../../core/agentTypes';
 import type {
   AgentProviderConfigView,
@@ -265,6 +266,7 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
       if (target instanceof Node && headerRef.current?.contains(target)) return;
+      if (target instanceof Node && historyMenuRef.current?.contains(target)) return;
       setHistoryOpen(false);
     };
     document.addEventListener('pointerdown', handlePointerDown, true);
@@ -513,7 +515,7 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
             variant="composerTool"
           />
         </div>
-        {historyOpen ? (
+        {historyOpen ? createPortal(
           <div
             ref={historyMenuRef}
             className="agent-session-menu"
@@ -615,7 +617,8 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
                 );
               })}
             </div>
-          </div>
+          </div>,
+          document.body,
         ) : null}
       </header>
 
