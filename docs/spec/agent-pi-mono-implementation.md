@@ -1,7 +1,7 @@
 # Agent Implementation With pi-mono
 
-This document describes how Lin Outliner should implement the local agent
-runtime using pi-mono as the agent core.
+This document describes Lin Outliner's current local agent runtime boundary with
+pi-mono as the agent core.
 
 The goal is to reuse pi-mono for model/provider abstraction, streaming, and the
 agent loop, while keeping Lin's local capabilities, document mutations, and
@@ -9,14 +9,14 @@ security boundaries in TypeScript.
 
 ## Decision
 
-Lin should use these pi-mono packages:
+Lin uses these pi-mono packages:
 
 - `pi-ai`: model/provider registry, message types, tool schema types, streaming,
   tool-call parsing, context overflow helpers.
 - `pi-agent-core`: stateful agent loop, tool execution orchestration, steering,
   follow-up work, abort, subscriptions, and message replacement.
 
-Lin should not directly use `pi-coding-agent` as the product agent runtime. Its
+Lin does not directly use `pi-coding-agent` as the product agent runtime. Its
 built-in terminal tools are useful implementation references, but Lin's tools
 must execute through the Electron IPC command bridge so file access, bash execution,
 document mutation, undo, approval, and workspace boundaries stay under Lin's
@@ -64,14 +64,13 @@ Lin renderer
 The agent dock remains a cross-tab shell feature. It owns conversation state and
 rendering. The outliner owns document state and panel state.
 
-Lin's current product runtime is TypeScript/Electron only. Agent tools, outliner
+Lin's product runtime is TypeScript/Electron only. Agent tools, outliner
 mutation planning, outline parsing, preview rendering data, validation, undo
-grouping, file access, bash execution, and web adapters should all be implemented
-through TypeScript modules under Electron main and `src/core`. Do not introduce a
+grouping, file access, bash execution, and web adapters are implemented through
+TypeScript modules under Electron main and `src/core`. Do not introduce a
 Rust-side parser or command bridge for the current architecture.
 
-The pi-mono Agent should not live in the renderer once real models and tools are
-enabled. The clean boundary is:
+The pi-mono Agent does not live in the renderer. The clean boundary is:
 
 - Renderer: Agent UI, input, transcript rendering, and approval controls.
 - Electron main process: AgentRuntime, local security boundary, API key storage, persistence,
@@ -105,14 +104,14 @@ possible: it only needs to implement the AgentRuntime event/command contract.
 
 ## Package Usage
 
-Install pi-mono packages as pinned dependencies. Do not use floating major or
-minor versions until Lin has its own compatibility tests around the adapter.
+pi-mono packages are pinned dependencies. Do not use floating major or minor
+versions until Lin has its own compatibility tests around the adapter.
 
 ```json
 {
   "dependencies": {
-    "@earendil-works/pi-ai": "0.x.y",
-    "@earendil-works/pi-agent-core": "0.x.y"
+    "@earendil-works/pi-ai": "0.74.0",
+    "@earendil-works/pi-agent-core": "0.74.0"
   }
 }
 ```
@@ -120,7 +119,7 @@ minor versions until Lin has its own compatibility tests around the adapter.
 If pi-mono changes package ownership or names, keep the imports behind Lin's
 own adapter modules so product code does not depend on package names directly.
 
-Suggested module boundary:
+Current module boundary:
 
 ```txt
 src/core/agentTypes.ts
@@ -151,7 +150,7 @@ types.
 
 ## Agent Runtime
 
-Lin should wrap pi-agent-core inside Electron main process. Product UI talks to
+Lin wraps pi-agent-core inside Electron main process. Product UI talks to
 Electron AgentRuntime through a renderer `useLinAgentRuntime` client, never to a raw
 pi-mono Agent.
 
@@ -170,20 +169,32 @@ Conceptual shape:
 
 ```ts
 interface AgentRuntimeClient {
+  restoreLatestSession(): Promise<AgentSession>;
+  restoreSession(sessionId: string): Promise<AgentSession>;
   createSession(): Promise<AgentSession>;
-  sendMessage(sessionId: string, message: string): Promise<void>;
+  closeSession(sessionId: string): Promise<void>;
+  sendMessage(sessionId: string, message: string, attachments?: AgentMessageAttachmentInput[]): Promise<void>;
+  editMessage(sessionId: string, nodeId: string, message: string): Promise<void>;
+  regenerateMessage(sessionId: string, nodeId: string): Promise<void>;
+  retryMessage(sessionId: string, nodeId: string): Promise<void>;
+  switchBranch(sessionId: string, nodeId: string): Promise<void>;
+  queueFollowUp(sessionId: string, message: string): Promise<{ queued: boolean }>;
+  clearFollowUp(sessionId: string): Promise<void>;
   stopSession(sessionId: string): Promise<void>;
-  resetSession(sessionId: string): Promise<void>;
-  subscribe(listener: (event: LinAgentEvent) => void): () => void;
+  onEvent(listener: (event: AgentRuntimeEvent) => void): (() => void) | null;
 }
 ```
 
-The boundary should expose Lin-owned runtime events, render projections,
+The boundary exposes Lin-owned runtime events, render projections,
 attachment DTOs, debug DTOs, and UI state. Conversation content types should
 reuse pi-ai block shapes where possible so Lin does not maintain a parallel,
 shape-compatible copy of `TextContent` or `ImageContent`. Persisted conversation
 identity, branching, tool lifecycle, approvals, and debug records are Lin-owned
 event-log concepts, not pi-mono runtime state.
+
+Session listing, rename/delete, debug history, debug payload reads, payload text
+reads, reset, and provider settings are separate Electron IPC commands that use
+the same Lin-owned DTO boundary.
 
 ## Model Configuration
 
@@ -209,8 +220,8 @@ The API key should be read at stream time through Lin's TypeScript credential pa
 should not be embedded into persisted agent messages, tool results, renderer
 state, or IPC command payloads.
 
-Lin does not need OS keychain for the first implementation. Use app-data files
-owned by TypeScript:
+Lin currently stores provider settings and secrets in app-data files owned by
+TypeScript:
 
 ```txt
 agent-providers.json
@@ -387,8 +398,8 @@ covered by `web_search` and `web_fetch`.
 
 ## Lin Tool Registry
 
-Lin should start with a compact, stable tool registry and add higher-risk tools
-only after approval, rendering, and undo are solid.
+Lin uses a compact, stable tool registry. Higher-risk tools should still be
+added only after approval, rendering, and undo behavior are solid.
 
 The detailed tool contract, parameter schema, and result envelope are defined in
 `docs/spec/agent-tool-design.md`. This document only describes how those tools
@@ -396,9 +407,9 @@ fit into the pi-mono runtime.
 
 ### P0 Tools
 
-These tools should be configured first.
+These are the active core tool surface.
 
-| Tool | Reference | TypeScript-backed? | Approval | Purpose |
+| Tool | Reference | TypeScript-backed? | Approval intent | Purpose |
 |---|---|---:|---|---|
 | `node_search` | nodex `node_search`, Lin search-node outline | Yes | No | Execute a temporary or saved search node outline without mutating document state. |
 | `node_read` | nodex `node_read` | Yes | No | Read node raw type/data, fields, and bounded children. |
@@ -423,15 +434,13 @@ belong inside `node_create` and `node_edit` semantics, not separate `node_tag`,
 
 ### P1 Tools
 
-Add these once P0 is reliable.
+Add these after the active tool surface remains reliable in real workflows.
 
 | Tool | Reference | TypeScript-backed? | Approval | Purpose |
 |---|---|---:|---|---|
 | `past_chats` | nodex `past_chats` | Yes | No | Search and read older Lin agent conversations. |
 
-`task_stop` belongs in P0 only if Lin enables `bash.run_in_background`. If Lin
-ships foreground-only `bash` first, keep `task_stop` disabled until background
-commands exist.
+`task_stop` is active because Lin's `bash` tool supports background commands.
 
 ### P2 Tools
 
@@ -470,9 +479,8 @@ Do not use:
   `node_batch`: they force the model to learn a second mini-protocol and make
   permission boundaries less clear.
 
-The first implementation should configure only the P0 tools listed above.
-Additional tools should be added by phase, not because a reference project has
-them.
+The current implementation configures the P0 tools listed above. Additional
+tools should be added by product need, not because a reference project has them.
 
 ## TypeScript Tool Commands
 
@@ -546,9 +554,10 @@ Approval flow:
 ```txt
 Tool call starts
   -> adapter asks TypeScript for preview or risk classification
-  -> AgentStore records approval row
+  -> AgentRuntime appends approval.requested
   -> tool promise waits
   -> user approves or rejects
+  -> AgentRuntime appends approval.resolved
   -> adapter resolves tool result
   -> pi-agent-core continues
 ```
@@ -556,27 +565,49 @@ Tool call starts
 Rejected tools should return a normal tool result that says the user denied the
 operation. The agent can then explain or propose a safer alternative.
 
+Approval events are part of the schema, but the current main branch has not
+enabled the approval UI/runtime pause flow yet.
+
 ## Event Mapping
 
 pi-mono events should be normalized into Lin events before they reach storage,
 debug, or renderer components. The canonical event-store architecture lives in
 `docs/spec/agent-event-log-rendering.md`.
 
-Lin event categories:
+Currently emitted event categories:
 
-- `run_started`
-- `message_started`
-- `message_delta`
-- `message_completed`
-- `tool_call_started`
-- `tool_call_delta`
-- `tool_call_completed`
-- `tool_call_failed`
-- `approval_requested`
-- `approval_resolved`
-- `run_completed`
-- `run_failed`
-- `run_cancelled`
+- `session.created`
+- `session.renamed`
+- `payload.created`
+- `debug.snapshot.created`
+- `branch.selected`
+- `user_message.created`
+- `user_message.edited`
+- `assistant_message.started`
+- `assistant_message.delta`
+- `assistant_message.completed`
+- `tool_call.started`
+- `tool_call.completed`
+- `tool_call.failed`
+- `tool_result.created`
+- `run.started`
+- `run.completed`
+- `run.failed`
+
+Schema-reserved categories for the next runtime passes:
+
+- `assistant_message.failed`
+- `thinking.delta`
+- `tool_call.delta`
+- `approval.requested`
+- `approval.resolved`
+- `follow_up.queued`
+- `follow_up.applied`
+- `run.cancelled`
+- `compaction.completed`
+- `payload.derived`
+- `checkpoint.created`
+- `metric.recorded`
 
 The raw pi-mono event can be kept as a payload ref for debugging, but UI
 components should render from Lin's normalized render projection.
@@ -600,7 +631,7 @@ Represent these product facts as events:
 - User and assistant message lifecycle.
 - Branch selection.
 - Tool call and tool result lifecycle.
-- Approval lifecycle.
+- Approval lifecycle when approval UI/runtime pause is enabled.
 - Run status.
 - Model/provider id used for each run.
 - References to applied document undo groups.
@@ -614,7 +645,7 @@ Do not persist:
 - Chain-of-thought or hidden reasoning.
 - Transient approval promises.
 
-Restoring a conversation should rebuild projections from the event store. When
+Restoring a conversation rebuilds projections from the event store. When
 execution starts, derive the active-path pi-ai `Message[]` through the adapter
 and hydrate the underlying pi-agent-core `Agent`.
 
@@ -629,9 +660,9 @@ Abort behavior:
 - Mark the run as cancelled.
 - Keep completed messages and tool results immutable.
 
-Steering should use pi-agent-core's steering support. If the user sends a new
-instruction while tools are running, Lin should queue it as a steering message
-instead of starting an unrelated run in the same conversation.
+Steering uses pi-agent-core's follow-up queue in the current runtime. If the
+user sends a new instruction while the agent is streaming, Lin queues it as a
+follow-up message instead of starting an unrelated run in the same conversation.
 
 Examples:
 
@@ -639,11 +670,13 @@ Examples:
 - "Use the active node instead."
 - "Do not run bash."
 
-Steering should be visible in the transcript as a user intervention.
+Persisted `follow_up.*` events are reserved for the next pass; current queued
+follow-up state is runtime state.
 
 ## Context Compaction
 
 Lin should treat compaction as a product policy, not as a library detail.
+Compaction is schema-reserved but not active in the current runtime.
 
 Use cases:
 
@@ -709,109 +742,60 @@ Baseline rules:
 - Group document mutations into undoable transactions.
 - Never let a renderer-only check be the final permission check.
 
-## Implementation Phases
+## Implementation Status
 
-Phase 0: nodex agent UI audit
+Landed in main:
 
-- Clone or mount the nodex repo under `.research-repos/nodex`.
-- Inventory the agent UI entry points: dock shell, header, input composer,
-  transcript, message rows, tool call rows, approval rows, error rows, model/menu
-  controls, and persistence hooks.
-- Identify which components are pure presentation and can be reused directly.
-- Identify which components assume nodex tool names, message shapes, approval
-  payloads, or outliner-specific state.
-- Produce a reuse map before implementation: copy, adapt, replace, or ignore.
-- Do not start porting UI until the hard-coded nodex tool-contract assumptions
-  are known.
+- pi-mono dependencies are pinned and isolated behind Lin's Electron main
+  runtime boundary.
+- `AgentRuntime` owns session lifecycle, prompt routing, stop/reset/branch
+  commands, pi-agent-core subscriptions, provider debug capture, event append,
+  projection emission, and checkpoint writes.
+- `useLinAgentRuntime` consumes Lin-owned `AgentRuntimeEvent` /
+  `AgentRenderProjection` data instead of pi-mono objects.
+- Agent conversations persist through the event store, not through mutable
+  pi-agent-core state.
+- Active-path pi-ai `Message[]` is derived from replay state when a session is
+  restored or a new run starts.
+- Web, outliner, file, bash, and background-task tools execute through Lin's
+  TypeScript main-process gateway.
+- Large tool output and provider debug data use event-store payload refs.
+- Session list, search, user-message history, debug history/totals, and
+  checkpoints are derived from the event store.
 
-Phase 1: pi-mono runtime + nodex UI shell
+Remaining runtime work:
 
-- Add pi-mono dependencies.
-- Create Electron main-process `AgentRuntime`.
-- Create the renderer agent runtime hook/store.
-- Reuse or adapt nodex agent UI for the dock header, input composer, transcript
-  stream, message rows, tool call cards, and error states.
-- Support one provider and one model.
-- Stream assistant text into the agent dock.
-- Support abort.
-- Persist enough conversation state to restore the UI shell.
-
-Phase 2: web search and fetch tools
-
-- Add `web_search` and `web_fetch`.
-- Render search and fetch tool calls in the transcript.
-- Add host permission and offline/private-mode checks.
-- Add HTML-to-markdown extraction, pagination, and find mode for fetched pages.
-- Keep long search/fetch results collapsed by default.
-
-Phase 3: outliner node tools
-
-- Add current UI work-context injection from system reminders.
-- Add `node_search`, `node_read`, `node_create`, `node_edit`, `node_delete`, and
-  `operation_history`.
-- Implement Lin Outline parser, search-node outline parser, validation,
-  mutation planning, and preview data.
-- Render node tool previews and approval rows using Lin `ToolPreview`.
-- Apply mutations through Electron IPC commands.
-- Group mutations into undoable transactions.
-- Keep agent state outside document projection.
-
-Phase 4: local file and bash tools
-
-- Added `file_read`, `file_glob`, `file_grep`, `file_edit`, and `file_write`
-  through a TypeScript main-process local tool gateway.
-- Expanded `file_read` with image dimensions, `.ipynb` parsing, and cc-style PDF
-  page rendering through `pdfinfo`/`pdftoppm`. When `pdftotext` can extract text
-  from the selected pages, the text is attached before rendered page images.
-  Rendered PDF pages are still attached as image blocks because pi-agent-core
-  currently supports text/image tool-result content, not native PDF document
-  blocks.
-- Switched `file_grep` to a ripgrep-backed implementation with cc-style output
-  modes, relative paths, pagination, glob/type filters, and explicit multiline
-  support.
-- `file_glob` now returns local-root-relative paths to match `file_grep` and cc
-  path ergonomics.
-- Added `bash` with timeout, background mode, output caps, and output
-  persistence under `tmp/agent-tool-outputs`. Background output files include
-  task status, exit code, timestamps, stdout, and stderr.
-- Added `task_stop` for background commands created by Lin's own `bash` tool.
-- Remaining work: approval rendering, richer diff previews, background
-  completion events, and collapsed large-output UI.
-
-Cross-phase: persistence and compaction
-
-- Persist conversations and run summaries once the UI shell is stable.
-- Restore pi-mono messages through the adapter.
-- Add context overflow detection and compaction before long-running workflows are
-  enabled by default.
-- Add tests around event normalization and tool result conversion.
+- Approval UI/runtime pause flow for risky tools.
+- Persisted follow-up and compaction events.
+- Performance metrics around replay, projection, IPC payload size, and long
+  transcript rendering.
+- Richer lazy media previews for non-text payloads in render/debug details.
+- More explicit cancellation events once pi-agent-core abort semantics are mapped
+  cleanly to Lin's `run.cancelled`.
 
 ## Testing
 
-Unit tests:
+Current coverage should stay focused on the Lin-owned boundary:
 
-- Tool argument validation.
-- Tool result normalization.
-- Event mapping from pi-mono to Lin events.
-- Context builder token and size limits.
-- Approval policy classification.
+- Event schema, replay, active path, branch selection, pi-ai message derivation,
+  render projection, event store append ordering, checkpoint replay, corrupt
+  checkpoint recovery, index rebuild, payload refs, and large-session behavior.
+- Debug projection restore from `debug.snapshot.created` events plus debug
+  payload refs.
+- Tool argument validation, local path boundaries, bash timeout/output caps,
+  node tool behavior, web tool normalization, and tool-result envelope mapping.
+- Renderer runtime hydration, projection events, branch actions, streaming view
+  state, and payload-backed copy behavior.
+- E2E coverage for composer controls, model/settings behavior, process/tool
+  disclosure, debug panel, virtualization, and bounded large-output rendering.
 
-core tests:
+Next coverage should land with the corresponding runtime features:
 
-- Path boundary enforcement.
-- Bash timeout and output truncation.
-- Outliner patch application and undo grouping.
-- Document conflict handling.
-
-Integration tests:
-
-- User asks a question and receives streamed text.
-- Agent reads active node context.
-- Agent proposes an outliner edit and waits for approval.
-- User rejects a tool call and agent continues gracefully.
-- User aborts during model streaming.
-- User aborts during a long-running bash command.
-- Large tool output does not freeze the agent dock.
+- Approval pause/resume/reject flow.
+- Persisted follow-up events.
+- Compaction events and pi-mono message replacement.
+- Explicit `run.cancelled` mapping.
+- Performance metric event emission and analysis views.
 
 ## Migration Risk
 
@@ -820,8 +804,9 @@ Using pi-mono should not make Lin dependent on pi-mono forever.
 Keep these interfaces stable:
 
 - Lin-owned `AgentEvent`.
-- Lin-owned `AgentMessage`.
-- Lin-owned `AgentToolDefinition`.
+- Lin-owned `AgentRuntimeEvent`.
+- Lin-owned `AgentRenderProjection`.
+- Lin-owned tool schemas and result envelopes.
 - Lin-owned Electron IPC command payloads.
 - Lin-owned persisted conversation schema.
 

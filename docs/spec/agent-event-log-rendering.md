@@ -1,11 +1,11 @@
 # Agent Event-Sourced Runtime
 
-This document is the canonical architecture for Lin Outliner's next agent data,
-debug, persistence, and rendering model.
+This document is the canonical architecture for Lin Outliner's current agent
+data, debug, persistence, and rendering model.
 
 ## Decision
 
-Lin should use an event-sourced agent runtime.
+Lin uses an event-sourced agent runtime.
 
 The single durable product source of truth is the **Agent Session Event Store**:
 
@@ -69,11 +69,32 @@ command
 pi-mono runtime state participates in producing new events. It is not Lin's
 persisted product state.
 
+## Implementation Snapshot
+
+The current main branch implements this architecture through these modules:
+
+- `src/main/agentRuntime.ts`: owns session lifecycle, pi-agent-core execution,
+  Lin event append, projection emission, attachment persistence, debug capture,
+  and checkpoint writes.
+- `src/main/agentEventStore.ts`: owns the filesystem event store, payload files,
+  write queues, rebuildable indexes, checkpoint replay, and checkpoint retention.
+- `src/core/agentEventLog.ts`: owns event DTOs, replay reducers, parent-linked
+  branch state, active-path derivation, and pi-ai message projection helpers.
+- `src/core/agentRenderProjection.ts`: derives the compact renderer projection
+  from replay state.
+- `src/main/agentDebugProjection.ts`: derives debug history and totals from
+  debug events, assistant completions, and debug payload refs.
+- `src/renderer/agent/runtime.ts`: adapts `AgentRenderProjection` into the
+  renderer store/view consumed by the React agent UI.
+
+The old mutable chat snapshot store is no longer part of the runtime.
+
 ## Reference Analysis
 
-### Current lin-outliner
+### Previous lin-outliner snapshot store
 
-Current storage:
+Before the event-sourced runtime, Lin stored agent sessions in one mutable
+snapshot file:
 
 ```txt
 <userData>/agent-chat-sessions.json
@@ -96,9 +117,9 @@ interface AgentChatSession {
 }
 ```
 
-This is simple and supports branches, but it is a mutable snapshot tree. It is
-not a good long-term source of truth for streaming, debug, replay, approvals,
-tool lifecycle analysis, or performance inspection.
+That model was intentionally replaced. It supported simple branch rendering, but
+it was a poor source of truth for streaming, debug replay, approvals, tool
+lifecycle analysis, performance inspection, and durable payload references.
 
 ### nodex
 
@@ -192,7 +213,7 @@ Do not copy:
 
 ## Storage Layout
 
-Recommended filesystem layout:
+Current filesystem layout:
 
 ```txt
 <userData>/agent/
@@ -204,7 +225,7 @@ Recommended filesystem layout:
         <payloadId>.txt
         <payloadId>.bin
       checkpoints/
-        <seq>.json
+        checkpoint-<seq>.json
   indexes/
     session-index.json
     search-index.json
@@ -263,13 +284,14 @@ Rules:
 
 ## Event Taxonomy
 
-Minimum event types:
+Current event schema:
 
 ```ts
 type AgentEventType =
   | 'session.created'
   | 'session.renamed'
   | 'session.settings_changed'
+  | 'debug.snapshot.created'
   | 'branch.selected'
   | 'user_message.created'
   | 'user_message.edited'
@@ -298,8 +320,11 @@ type AgentEventType =
   | 'metric.recorded';
 ```
 
-Not every event type renders in the transcript. Many exist for replay,
-inspection, indexing, or performance analysis.
+Not every schema event is emitted by the current runtime yet. Approval,
+follow-up, compaction, metric, thinking delta, tool-call delta, and derived
+payload events are schema-reserved so these features can land without changing
+the event-store model. Events that are emitted today still go through the same
+append-only rules.
 
 ## Message Model
 
@@ -312,6 +337,7 @@ interface UserMessageCreatedEvent extends AgentEventBase {
   parentMessageId: string | null;
   content: AgentPersistedContent[];
   attachments?: AgentPayloadRef[];
+  replacesMessageId?: string;
 }
 
 interface AssistantMessageStartedEvent extends AgentEventBase {
@@ -321,12 +347,13 @@ interface AssistantMessageStartedEvent extends AgentEventBase {
   runId: string;
   providerId: string;
   modelId: string;
+  apiId?: string;
 }
 
 interface AssistantMessageDeltaEvent extends AgentEventBase {
   type: 'assistant_message.delta';
   messageId: string;
-  delta: AgentTextDelta | AgentContentDelta;
+  delta: AgentContentDelta;
   providerChunkCount: number;
   startedAt: number;
   endedAt: number;
@@ -337,7 +364,7 @@ interface AssistantMessageCompletedEvent extends AgentEventBase {
   messageId: string;
   stopReason: string;
   content: AgentPersistedContent[];
-  usage?: AgentUsage;
+  usage?: Usage;
 }
 ```
 
@@ -397,13 +424,16 @@ interface ToolCallStartedEvent extends AgentEventBase {
   messageId: string;
   name: string;
   inputSummary: string;
+  args?: Record<string, unknown>;
   inputRef?: AgentPayloadRef;
 }
 
 interface ToolResultCreatedEvent extends AgentEventBase {
   type: 'tool_result.created';
   toolCallId: string;
+  toolName: string;
   messageId: string;
+  parentMessageId: string | null;
   isError: boolean;
   content: AgentPersistedContent[];
   outputSummary: string;
@@ -482,7 +512,7 @@ Rules:
 - Events carry summaries and refs.
 - Render rows never inline huge payloads.
 - Debug panel loads refs on demand.
-- Copy/export reads refs directly.
+- Copy/open actions read refs directly.
 - Payload refs are part of the authoritative event store bundle.
 
 ## Multimedia Payloads
@@ -564,7 +594,13 @@ The renderer consumes compact rows, not raw events.
 interface AgentRenderProjection {
   sessionId: string;
   revision: number;
+  sessionTitle: string | null;
   activeRunId: string | null;
+  isStreaming: boolean;
+  model: Record<string, unknown>;
+  thinkingLevel: string;
+  pendingToolCallIds: string[];
+  errorMessage: string | null;
   rows: AgentRenderRow[];
   entities: AgentRenderEntities;
   streaming: AgentStreamingRenderState | null;
@@ -583,15 +619,14 @@ Rules:
 
 Debug panel reads event-derived timelines and payload refs.
 
-It shows:
+It currently shows:
 
-- runs and turns
-- provider request/response summaries
+- provider request context and sanitized payload snapshots
 - context/token/cost metrics
-- tool input/output lifecycle
-- approval lifecycle
 - errors
-- performance metrics
+
+The schema also supports later debug views for tool lifecycle, approval
+lifecycle, and performance metrics once those event types are emitted.
 
 It must not:
 
@@ -635,7 +670,7 @@ Canonical text deltas should be coalesced into short segments:
 
 ```ts
 interface AgentTextDelta {
-  kind: 'text_delta';
+  type: 'text_delta';
   text: string;
 }
 ```
@@ -732,7 +767,7 @@ Storage policy:
 - Large outputs are payload refs, so event files remain mostly metadata.
 - Checkpoints are written after completed runs and large event-count thresholds.
 - Old checkpoints may be pruned; event logs and referenced payloads are not
-  pruned unless an explicit archive/export policy exists.
+  pruned unless an explicit retention/archive policy exists.
 
 ## Runtime Flow
 
@@ -746,7 +781,8 @@ user sends prompt
   -> create/hydrate Agent
   -> append run.started
   -> stream pi-mono
-  -> append assistant/tool/approval events
+  -> append assistant/tool events
+  -> append approval events when approval runtime is enabled
   -> append run.completed or run.failed
   -> write checkpoint
   -> update render/debug/session index projections
@@ -775,66 +811,44 @@ debug panel opens
 
 ## What Becomes Obsolete
 
-After the migration, these should not be durable truth:
+These are obsolete and must not be reintroduced as durable truth:
 
 - `agent-chat-sessions.json`
-- `AgentSnapshotState` as the main renderer contract
+- full chat snapshots as the main renderer contract
 - mutable `AgentChatSession.mapping` as persistence
 - `AgentDebugSnapshot` as independent stored truth
 - full pi-agent-core `agent.state.messages` as persistence
 
-They may exist temporarily during migration or as derived compatibility views,
-but the end state should remove them.
+The current renderer contract is `AgentRenderProjection`, carried by
+`AgentRuntimeEvent` over the `lin-agent-event` channel.
 
-## Implementation Phases
+## Implementation Status
 
-### Phase 1: Event store foundation
+### Landed
 
-- Add event types and reducers.
-- Add per-session `events.jsonl`.
-- Write `session.created`, `user_message.created`, `branch.selected`, and
-  simple assistant lifecycle events.
-- Keep current UI working through a compatibility projection.
-- Add tests for append ordering, replay, and active path derivation.
+- Per-session `events.jsonl` and payload directory layout.
+- Strict append ordering, per-session write queues, and replay reducers.
+- Parent-linked message chain with active branch projection.
+- pi-ai `Message[]` derivation from the active event path.
+- `AgentRenderProjection` IPC instead of full chat snapshots.
+- Provider debug payload refs and event-derived debug history/totals.
+- Large tool output payload refs with bounded model-visible labels.
+- Session index, search index, and user-message index as rebuildable projections.
+- Checkpoint writer/loader with tail replay, corrupt-checkpoint fallback, atomic
+  writes, stale-state guards, and best-effort retention of the latest three
+  valid checkpoints.
+- Transcript row virtualization and bounded large-output rendering.
 
-### Phase 2: pi-mono bridge from events
+### Remaining
 
-- Replace `AgentChatSession -> pi messages` with `events -> pi messages`.
-- Rebuild active-path `Message[]` from the event log.
-- Persist tool calls/results as events and reconstruct pi `ToolResultMessage`s.
-- Remove direct persistence of `agent.state.messages`.
-
-### Phase 3: render projection hot path
-
-- Replace snapshot IPC with `AgentRenderProjection`.
-- Coalesce streaming updates by frame.
-- Keep raw event/debug writes off the React hot path.
-- Add metrics for provider chunks, event segments, render flushes, IPC bytes,
-  markdown parse time, and React commit time where available.
-
-### Phase 4: debug projection and payload refs
-
-- Convert current debug snapshots into event-derived summaries.
-- Store provider payloads and long outputs as refs.
-- Add media payload ingestion and derived preview events.
-- Debug panel lazy-loads payload refs.
-- Add timeline filters by run, tool, event type, and error.
-
-### Phase 5: checkpoints and indexes
-
-- Add checkpoint writer/loader.
-- Add rebuildable session index.
-- Add search/user-message index as a projection.
-- Restore from checkpoint plus replay.
-- Verify index corruption recovery.
-
-### Phase 6: long transcript/output virtualization
-
-- Virtualize transcript rows above a threshold.
-- Virtualize large plain-text tool output.
-- Lazy-load media previews and full payloads only for visible/expanded rows.
-- Preserve scroll anchors during streaming and expansion.
-- Keep copy/export based on payload refs, not DOM.
+- Performance instrumentation events and UI-facing analysis views for replay,
+  projection, IPC bytes, render commits, and long transcript behavior.
+- Richer non-text media previews and lazy full-payload loading in render/debug
+  detail views.
+- Persisted approval/follow-up/compaction event emission for the schema-reserved
+  event types that are not yet active runtime events.
+- Optional checkpoint retention preferences if real sessions show storage
+  pressure.
 
 ## Success Criteria
 
@@ -846,8 +860,9 @@ but the end state should remove them.
 - Streaming a long assistant response does not stall outliner editing.
 - Large media and tool outputs do not enter event lines, IPC snapshots, or React
   transcript state.
-- Branching, retry, edit, tool lifecycle, approvals, and compaction are all
-  represented as events.
+- Branching, retry, edit, and tool lifecycle are represented as events; approval
+  and compaction are already reserved in the schema and should be emitted when
+  those runtime features become active.
 
 ## Non-Goals
 

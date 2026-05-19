@@ -1,8 +1,8 @@
 # Agent Chat Rendering
 
-This document describes the rendering strategy for the future agent panel.
-It is an implementation reference, not a commitment that the first agent
-release must ship every optimization listed here.
+This document describes the rendering strategy for the current agent panel.
+It is a rendering reference; the canonical persistence and data model remain in
+`docs/spec/agent-event-log-rendering.md`.
 
 For the canonical event-sourced agent runtime and render projection plan, see
 `docs/spec/agent-event-log-rendering.md`. For the pi-mono runtime boundary, see
@@ -43,7 +43,8 @@ App Shell
   -> Agent dock
 
 Agent dock
-  -> AgentStore
+  -> renderer AgentRuntimeStore
+  -> AgentRenderProjection
   -> Transcript renderer
   -> Tool call renderer
   -> Input composer
@@ -64,34 +65,31 @@ mutations through existing command paths.
 Agent state should be separate from document state.
 
 ```ts
-interface AgentState {
-  activeConversationId: string | null;
-  conversations: Map<string, AgentConversation>;
-  streaming: AgentStreamingState | null;
+interface AgentSession {
+  sessionId: string;
+  renderProjection: AgentRenderProjection;
 }
 
-interface AgentConversation {
-  id: string;
-  title: string;
-  messages: AgentMessage[];
-  runs: AgentRun[];
-  createdAt: number;
-  updatedAt: number;
-}
-
-interface AgentRun {
-  id: string;
-  conversationId: string;
-  status: 'queued' | 'running' | 'waiting_for_approval' | 'completed' | 'failed' | 'cancelled';
-  events: AgentEvent[];
-  startedAt: number;
-  finishedAt?: number;
+interface AgentRenderProjection {
+  sessionId: string;
+  revision: number;
+  sessionTitle: string | null;
+  activeRunId: string | null;
+  isStreaming: boolean;
+  model: Record<string, unknown>;
+  thinkingLevel: string;
+  pendingToolCallIds: string[];
+  errorMessage: string | null;
+  rows: AgentRenderRow[];
+  entities: AgentRenderEntities;
+  streaming: AgentStreamingRenderState | null;
 }
 ```
 
 `DocumentProjection` remains the outliner view of committed document state.
 Agent text streaming, chain-of-thought summaries, tool progress, and transient
-diff previews belong to `AgentState`, not to the projection.
+diff previews belong to the agent event store and render projection, not to the
+document projection.
 
 ## Stream Pipeline
 
@@ -99,10 +97,10 @@ Agent streaming should use a buffered pipeline:
 
 ```txt
 network/model/tool stream
-  -> append raw events to run buffer
+  -> pi-agent-core subscription
+  -> append normalized Lin events
   -> coalesce text chunks by animation frame
-  -> update only current streaming message
-  -> freeze completed blocks
+  -> emit AgentRenderProjection
   -> virtualized transcript renders visible rows
 ```
 
@@ -133,15 +131,14 @@ Messages should have a lifecycle that makes completed content cheap.
 ```ts
 type AgentMessageStatus =
   | 'streaming'
-  | 'complete'
-  | 'failed'
-  | 'cancelled';
+  | 'completed'
+  | 'failed';
 
-interface AgentTextMessage {
+interface AgentRenderMessageEntity {
   id: string;
-  role: 'user' | 'assistant' | 'system';
+  role: 'user' | 'assistant' | 'toolResult';
   status: AgentMessageStatus;
-  content: string;
+  content: AgentPersistedContent[];
   createdAt: number;
   updatedAt: number;
 }
@@ -194,8 +191,8 @@ interface ParsedStreamingMarkdown {
 
 ## Transcript Virtualization
 
-The agent transcript can become much larger than the visible panel. It should
-be virtualized from the first serious implementation.
+The agent transcript can become much larger than the visible panel. It is
+virtualized for long sessions.
 
 Minimum behavior:
 
@@ -206,20 +203,23 @@ Minimum behavior:
 - Preserve scroll position when older rows mount or unmount.
 - Keep the bottom pinned only while the user is already at the bottom.
 
-Important row types:
+Current row shape:
 
 ```ts
-type AgentRenderRow =
-  | { type: 'message'; messageId: string }
-  | { type: 'tool_call'; toolCallId: string }
-  | { type: 'tool_result'; toolCallId: string }
-  | { type: 'diff_preview'; patchId: string }
-  | { type: 'approval'; approvalId: string }
-  | { type: 'run_status'; runId: string };
+type AgentRenderRowKind = 'message' | 'tool_result';
+
+interface AgentRenderRow {
+  id: string;
+  kind: AgentRenderRowKind;
+  messageId: string;
+}
 ```
 
-The renderer should derive `AgentRenderRow[]` from the event log. Tool events
-that are noisy or long should be collapsed into a small row by default.
+Electron main derives `AgentRenderRow[]` from the event log and sends the compact
+projection to the renderer. Tool events that are noisy or long should be
+collapsed into a small row by default. Future row kinds for approvals, diff
+previews, or explicit run status should be added only when those runtime events
+are active.
 
 ## Scroll Behavior
 
@@ -258,7 +258,8 @@ Long output rules:
 
 - Do not render thousands of lines as normal DOM.
 - Use line virtualization for large plain-text outputs.
-- Provide copy/export affordances for raw output.
+- Provide copy/open affordances for raw output when the backing payload ref is
+  available.
 - Keep collapsed rows stable in height to avoid scroll jumps.
 
 ## Outliner Tool Bridge
@@ -326,7 +327,7 @@ assistant proposes edit
 
 ## React Rendering Guidelines
 
-- Keep `AgentPanel` outside the outliner subtree so agent streaming does not
+- Keep the agent dock outside the outliner subtree so agent streaming does not
   re-render outline panels.
 - Use memoized row components for completed transcript rows.
 - Keep callback props stable for virtualized rows.

@@ -8,8 +8,8 @@ Last updated: 2026-05-19
 ## Current Direction
 
 Lin uses pi-mono as the current TypeScript agent core. Local document tools,
-file tools, bash, web access, validation, previews, approval, persistence, and
-undo stay inside Lin's TypeScript/Electron boundary.
+file tools, bash, web access, validation, previews, approval policy/schema,
+persistence, and undo stay inside Lin's TypeScript/Electron boundary.
 
 Agent persistence, debug, streaming, multimedia payloads, and transcript
 rendering now follow `docs/spec/agent-event-log-rendering.md`: the durable
@@ -97,6 +97,9 @@ Finish the performance and analysis projections on top of the event log.
 - [ ] Add richer non-text media payload lazy loading UI in debug/render details.
 - [ ] Add performance instrumentation around replay, projection, IPC payload size,
   and long transcript rendering.
+- [ ] Emit and render schema-reserved runtime events that are not active yet:
+  approvals, persisted follow-ups, compaction summaries, metrics, and explicit
+  cancellation.
 - [ ] Refine checkpoint retention settings if real user sessions show unusual
   storage pressure.
 
