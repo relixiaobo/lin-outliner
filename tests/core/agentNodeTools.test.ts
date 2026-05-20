@@ -1172,6 +1172,15 @@ describe('agent node tools', () => {
     expect(isDone.instructions).toContain('DONE_LAST_DAYS');
     expect(isDone.instructions).toContain('Do not use FIELD_IS for done state');
 
+    const isChecked = await executeTool(core, 'node_search', {
+      outline: '- %%search%% Checked nodes\n  - IS_CHECKED',
+    });
+    expect(isChecked.ok).toBe(false);
+    expect(isChecked.error?.code).toBe('unsupported_search_rule');
+    expect(isChecked.instructions).toContain('Use DONE');
+    expect(isChecked.instructions).toContain('DONE_LAST_DAYS');
+    expect(isChecked.instructions).toContain('instead of AND + DATE_OVERLAPS');
+
     const dateTextField = await executeTool(core, 'node_search', {
       outline: '- %%search%% Date range\n  - DATE_OVERLAPS\n    - field:: date\n    - value:: 2026-05-14/2026-05-20',
     });

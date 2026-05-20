@@ -480,8 +480,11 @@ function referenceFromNamedField(
 }
 
 function unsupportedRuleInstructions(token: string): string {
-  if (['IS_DONE', 'COMPLETED', 'COMPLETE', 'DONE_TRUE'].includes(token)) {
-    return 'Use DONE for all completed nodes, NOT_DONE for visible unchecked checkbox nodes, or DONE_LAST_DAYS with value:: N for nodes completed recently. Do not use FIELD_IS for done state.';
+  if (['IS_DONE', 'IS_CHECKED', 'CHECKED', 'COMPLETED', 'COMPLETE', 'DONE_TRUE'].includes(token)) {
+    return 'Use DONE for all checked/completed nodes, NOT_DONE for visible unchecked checkbox nodes, TODO for nodes with a checkbox, or DONE_LAST_DAYS with value:: N for nodes completed recently. If you are searching for nodes checked during a recent period, use DONE_LAST_DAYS value:: N instead of AND + DATE_OVERLAPS. Do not use FIELD_IS for done state.';
+  }
+  if (['IS_UNCHECKED', 'UNCHECKED', 'NOT_CHECKED'].includes(token)) {
+    return 'Use NOT_DONE for visible unchecked checkbox nodes, TODO for nodes with a checkbox regardless of state, or DONE for checked/completed nodes. Do not use FIELD_IS for checkbox state.';
   }
   if (['DATE', 'DATE_RANGE', 'FIELD_DATE'].includes(token)) {
     return 'Use DATE_OVERLAPS for date field values, FOR_DATE/FOR_RELATIVE_DATE for date/calendar node matching, or CREATED_LAST_DAYS/EDITED_LAST_DAYS/DONE_LAST_DAYS for system timestamps.';
