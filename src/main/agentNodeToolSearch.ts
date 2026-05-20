@@ -19,6 +19,11 @@ import {
 } from '../core/searchEngine';
 import { parseLinOutline, type OutlineDocument, type OutlineNode, type OutlineValue } from './agentOutlineParser';
 import {
+  NODE_REFERENCE_GUIDANCE,
+  SEARCH_OPERATOR_REFERENCE,
+  SEARCH_QUERY_SHAPE_GUIDANCE,
+} from './agentNodeToolGuidance';
+import {
   checkedState,
   fieldReads,
   isInTrash,
@@ -130,21 +135,21 @@ export function resolveSearchSpecFromOutlineNode(index: ProjectionIndex, node: O
     return {
       code: 'invalid_search_node',
       error: 'Search outline root must include %%search%%.',
-      instructions: 'Use one root line like "- %%search%% Open work" followed by exactly one query root child.',
+      instructions: SEARCH_QUERY_SHAPE_GUIDANCE,
     };
   }
   if (node.fields.length > 0) {
     return {
       code: 'invalid_search_condition',
       error: 'Search node root cannot contain fields; fields belong on rule nodes.',
-      instructions: 'Put field::, tag::, target::, and value:: under a query rule child.',
+      instructions: `Put field::, tag::, target::, value::, and operand:: under a query rule child. ${SEARCH_QUERY_SHAPE_GUIDANCE}`,
     };
   }
   if (node.children.length !== 1) {
     return {
       code: 'invalid_search_condition',
       error: 'Search node must contain exactly one query root child.',
-      instructions: 'Use an AND group when the search has multiple rules.',
+      instructions: `Use an AND group when the search has multiple rules. ${SEARCH_QUERY_SHAPE_GUIDANCE}`,
     };
   }
   const query = queryExprFromOutlineNode(index, node.children[0]!);
@@ -347,7 +352,7 @@ function queryExprFromOutlineNode(index: ProjectionIndex, node: OutlineNode): Se
     return {
       code: 'unsupported_search_rule',
       error: `Unknown search rule "${node.title}".`,
-      instructions: `Use one of: ${QUERY_OPS.join(', ')}.`,
+      instructions: unsupportedRuleInstructions(token),
     };
   }
 
@@ -356,14 +361,14 @@ function queryExprFromOutlineNode(index: ProjectionIndex, node: OutlineNode): Se
     return {
       code: 'unsupported_search_rule',
       error: `Search rule "${op}" is not supported by the engine.`,
-      instructions: 'Use a currently executable query operator.',
+      instructions: `Use a currently executable query operator.\n${SEARCH_OPERATOR_REFERENCE}`,
     };
   }
   if (node.children.length > 0) {
     return {
       code: 'invalid_search_condition',
       error: `Search rule "${op}" cannot contain child rule nodes.`,
-      instructions: 'Represent rule operands as field::, tag::, target::, or value:: lines under the rule.',
+      instructions: 'Represent rule operands as field::, tag::, target::, value::, or operand:: lines under the rule, not as child rule nodes.',
     };
   }
 
@@ -376,11 +381,11 @@ function queryExprFromOutlineNode(index: ProjectionIndex, node: OutlineNode): Se
     };
   }
 
-  const fieldDefId = referenceFromNamedField(index, node, 'field', 'fieldDef');
+  const fieldDefId = referenceFromNamedField(index, node, 'field', 'fieldDef', op);
   if (isNodeToolIssue(fieldDefId)) return fieldDefId;
-  const tagDefId = referenceFromNamedField(index, node, 'tag', 'tagDef');
+  const tagDefId = referenceFromNamedField(index, node, 'tag', 'tagDef', op);
   if (isNodeToolIssue(tagDefId)) return tagDefId;
-  const targetId = referenceFromNamedField(index, node, 'target');
+  const targetId = referenceFromNamedField(index, node, 'target', undefined, op);
   if (isNodeToolIssue(targetId)) return targetId;
   const operands = valueOperandsFromRule(index, node);
   if ('error' in operands) return operands;
@@ -420,7 +425,7 @@ function missingRuleOperand(op: QueryOp, operand: string): NodeToolIssue {
   return {
     code: 'invalid_search_condition',
     error: `Search rule "${op}" is missing ${operand}.`,
-    instructions: 'Add the required operand under the rule node.',
+    instructions: `Add the required operand under the rule node. ${operandInstructionForOp(op)}`,
   };
 }
 
@@ -429,6 +434,7 @@ function referenceFromNamedField(
   node: OutlineNode,
   name: 'field' | 'tag' | 'target',
   expectedType?: NodeProjection['type'],
+  op?: QueryOp,
 ): string | undefined | NodeToolIssue {
   const values = valuesForField(node, name);
   if (values.length === 0) return undefined;
@@ -436,7 +442,7 @@ function referenceFromNamedField(
     return {
       code: 'invalid_search_condition',
       error: `Search operand "${name}" must have exactly one value.`,
-      instructions: `Use one ${name}:: reference under the rule.`,
+      instructions: `Use one ${name}:: reference under the rule. ${referenceOperandInstruction(name, op)}`,
     };
   }
   const value = values[0]!;
@@ -445,7 +451,7 @@ function referenceFromNamedField(
     return {
       code: 'invalid_search_condition',
       error: `Search operand "${name}" must be a node reference or exact node id.`,
-      instructions: `Use ${name}:: [[Display^node:...]].`,
+      instructions: referenceOperandInstruction(name, op),
     };
   }
   const target = index.nodes.get(targetId);
@@ -467,10 +473,58 @@ function referenceFromNamedField(
     return {
       code: 'invalid_search_condition',
       error: `Search operand "${name}" must reference a ${expectedType} node.`,
-      instructions: `Use ${name}:: [[Display^node:...]] with the correct node type.`,
+      instructions: `${referenceOperandInstruction(name, op)} The referenced node must have type ${expectedType}.`,
     };
   }
   return targetId;
+}
+
+function unsupportedRuleInstructions(token: string): string {
+  if (['IS_DONE', 'COMPLETED', 'COMPLETE', 'DONE_TRUE'].includes(token)) {
+    return 'Use DONE for all completed nodes, NOT_DONE for visible unchecked checkbox nodes, or DONE_LAST_DAYS with value:: N for nodes completed recently. Do not use FIELD_IS for done state.';
+  }
+  if (['DATE', 'DATE_RANGE', 'FIELD_DATE'].includes(token)) {
+    return 'Use DATE_OVERLAPS for date field values, FOR_DATE/FOR_RELATIVE_DATE for date/calendar node matching, or CREATED_LAST_DAYS/EDITED_LAST_DAYS/DONE_LAST_DAYS for system timestamps.';
+  }
+  return `Use a supported query operator.\n${SEARCH_OPERATOR_REFERENCE}`;
+}
+
+function operandInstructionForOp(op: QueryOp): string {
+  if (op === 'DONE_LAST_DAYS') return 'Use value:: N, for example value:: 7. DONE_LAST_DAYS uses the system completed timestamp, not a field.';
+  if (op === 'CREATED_LAST_DAYS' || op === 'EDITED_LAST_DAYS') return 'Use value:: N, for example value:: 7.';
+  if (op === 'DATE_OVERLAPS') return 'Use field:: [[Date field^node:...]] and value:: YYYY-MM-DD/YYYY-MM-DD. DATE_OVERLAPS searches date field values only.';
+  if (
+    op === 'FIELD_IS'
+    || op === 'FIELD_IS_NOT'
+    || op === 'FIELD_CONTAINS'
+    || op === 'LT'
+    || op === 'GT'
+    || op === 'IS_EMPTY'
+    || op === 'IS_NOT_EMPTY'
+    || op === 'HAS_FIELD'
+    || op === 'FIELD_IS_SET'
+    || op === 'FIELD_IS_NOT_SET'
+    || op === 'FIELD_IS_DEFINED'
+    || op === 'FIELD_IS_NOT_DEFINED'
+  ) {
+    return 'Use field:: [[Field^node:...]] plus value:: ... for user-defined fields. For checkbox completion state, use DONE, NOT_DONE, TODO, or DONE_LAST_DAYS instead.';
+  }
+  if (op === 'HAS_TAG') return 'Use tag:: [[#tag^node:...]].';
+  if (op === 'LINKS_TO' || op === 'CHILD_OF' || op === 'DESCENDANT_OF' || op === 'DESCENDANT_OF_WITH_REFS' || op === 'OWNED_BY') {
+    return 'Use target:: [[Node^node:...]].';
+  }
+  return SEARCH_QUERY_SHAPE_GUIDANCE;
+}
+
+function referenceOperandInstruction(name: 'field' | 'tag' | 'target', op?: QueryOp): string {
+  if (name === 'field') {
+    const base = 'Use field:: [[Field^node:...]] or an exact field definition node id. Plain field names such as "date", "done", or "Status" are not enough.';
+    if (op === 'DATE_OVERLAPS') return `${base} DATE_OVERLAPS searches date field values; for nodes completed recently use DONE_LAST_DAYS value:: N.`;
+    if (op === 'OVERDUE') return `${base} OVERDUE may omit field:: to check all date fields, or include field:: to limit the date field.`;
+    return `${base} For checkbox completion state, use DONE, NOT_DONE, TODO, or DONE_LAST_DAYS instead of FIELD_IS.`;
+  }
+  if (name === 'tag') return 'Use tag:: [[#tag^node:...]] or an exact tag definition node id. Plain tag names are not enough.';
+  return `Use target:: [[Node^node:...]] or an exact target node id. ${NODE_REFERENCE_GUIDANCE}`;
 }
 
 function valueOperandsFromRule(index: ProjectionIndex, node: OutlineNode): SearchQueryOperand[] | NodeToolIssue {

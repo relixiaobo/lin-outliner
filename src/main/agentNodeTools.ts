@@ -22,6 +22,14 @@ import {
   OPERATION_HISTORY_PARAMETERS,
 } from './agentNodeToolSchemas';
 import {
+  NODE_CREATE_DESCRIPTION,
+  NODE_DELETE_DESCRIPTION,
+  NODE_EDIT_DESCRIPTION,
+  NODE_READ_DESCRIPTION,
+  NODE_SEARCH_DESCRIPTION,
+  OPERATION_HISTORY_DESCRIPTION,
+} from './agentNodeToolGuidance';
+import {
   buildReadItem,
   normalizeReadParams,
   pageHasMore,
@@ -131,12 +139,7 @@ function createOperationHistoryTool(host: OutlinerToolHost): AgentTool<any, Tool
   return {
     name: 'operation_history',
     label: 'Operation History',
-    description: [
-      'Inspect, undo, or redo outliner operations.',
-      'Use action "list" first when you need to see recent user and agent operations before deciding what to undo or redo.',
-      'Undo/redo uses the Loro-backed operation stack. Agent calls default to the agent-origin stack so agent undo does not unexpectedly undo user work.',
-      'Use operation_id as a guard when undoing or redoing a specific visible operation.',
-    ].join('\n'),
+    description: OPERATION_HISTORY_DESCRIPTION,
     parameters: OPERATION_HISTORY_PARAMETERS,
     executionMode: 'sequential',
     execute: async (_toolCallId, rawParams: unknown) => {
@@ -168,14 +171,7 @@ function createNodeEditTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope
   return {
     name: 'node_edit',
     label: 'Node Edit',
-    description: [
-      'Edits existing Lin outliner content.',
-      'For text and child-structure edits, use node_read first, then pass exact old_string/new_string against the annotated outline. old_string "*" replaces the whole annotated outline for node_id.',
-      'The replacement outline must keep existing %%node:id%% markers for nodes that should be updated or moved. Lines without markers create new nodes.',
-      'For date field values, use YYYY-MM-DD, YYYY-MM-DDTHH:mm, or start/end with "/" such as 2026-05-20/2026-05-24. Do not use "..".',
-      'Also supports user-like move operations, merging source nodes into one surviving target, and replacing a node with a reference.',
-      'Use preview_only when the edit is large or ambiguous and you want validation before mutating the document.',
-    ].join('\n'),
+    description: NODE_EDIT_DESCRIPTION,
     parameters: NODE_EDIT_PARAMETERS,
     executionMode: 'sequential',
     execute: async (_toolCallId, rawParams: unknown) => {
@@ -206,12 +202,7 @@ function createNodeDeleteTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
   return {
     name: 'node_delete',
     label: 'Node Delete',
-    description: [
-      'Moves one or more Lin outliner nodes to Trash, or restores nodes from Trash with restore true. This is not a permanent delete.',
-      'Use node_id for one node, or node_ids for a batch that matches a user multi-selection. Children and fields move with their parent.',
-      'If both a parent and its descendant are provided, the descendant is skipped because the parent covers it.',
-      'Use preview_only to inspect affected nodes before mutating the document.',
-    ].join('\n'),
+    description: NODE_DELETE_DESCRIPTION,
     parameters: NODE_DELETE_PARAMETERS,
     executionMode: 'sequential',
     execute: async (_toolCallId, rawParams: unknown) => {
@@ -682,14 +673,7 @@ function createNodeCreateTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
   return {
     name: 'node_create',
     label: 'Node Create',
-    description: [
-      'Creates Lin outliner content under a parent. Omit parent_id to create under today, not the current UI selection.',
-      'Use outline for normal nodes, fields, tags, references, saved search nodes, and nested children in Lin Outline Format.',
-      'For date field values, use YYYY-MM-DD, YYYY-MM-DDTHH:mm, or start/end with "/" such as 2026-05-20/2026-05-24. Do not use "..".',
-      'Use target_id only when you want to create one reference node. Use duplicate_id only when you want to duplicate an existing subtree with new ids.',
-      'Insertion: after_id omitted appends, after_id null inserts first, after_id string inserts after that sibling.',
-      'Do not include %%node:id%% markers from node_read in create outlines.',
-    ].join('\n'),
+    description: NODE_CREATE_DESCRIPTION,
     parameters: NODE_CREATE_PARAMETERS,
     executionMode: 'sequential',
     execute: async (_toolCallId, rawParams: unknown) => {
@@ -841,12 +825,7 @@ function createNodeReadTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope
   return {
     name: 'node_read',
     label: 'Node Read',
-    description: [
-      'Reads Lin outliner nodes as annotated outline text with %%node:id%% markers for exact follow-up edits.',
-      'Omit node_id to read today. Use node_ids for independent nodes. Use depth, child_offset, and child_limit to bound children.',
-      'Use node_read before node_edit whenever you need exact node ids, revisions, or outline fragments.',
-      'Treat %%node:id%% as protocol metadata, not node text.',
-    ].join('\n'),
+    description: NODE_READ_DESCRIPTION,
     parameters: NODE_READ_PARAMETERS,
     executionMode: 'parallel',
     execute: async (_toolCallId, rawParams: unknown) => {
@@ -892,15 +871,7 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
   return {
     name: 'node_search',
     label: 'Node Search',
-    description: [
-      'Searches Lin outliner nodes by executing a temporary search outline or a saved search node.',
-      'Use outline for a one-off search: "- %%search%% Title" plus exactly one query root child.',
-      'Use AND, OR, and NOT as group nodes. Use QueryOp names such as STRING_MATCH, HAS_TAG, LINKS_TO, FIELD_IS, LT, and DATE_OVERLAPS as rule nodes.',
-      'Put rule operands under rules as field::, tag::, target::, value::, or operand::. field/tag/target operands must be node references or exact node ids.',
-      'Date operands use YYYY-MM-DD, YYYY-MM-DDTHH:mm, or start/end with "/" such as 2026-05-20/2026-05-24. Do not use "..".',
-      'Use search_node_id to execute a saved search node. Do not use node_search to create saved searches; use node_create with a search outline.',
-      'Returned outlines include %%node:id%% markers so you can call node_read or node_edit on exact matches.',
-    ].join('\n'),
+    description: NODE_SEARCH_DESCRIPTION,
     parameters: NODE_SEARCH_PARAMETERS,
     executionMode: 'parallel',
     execute: async (_toolCallId, rawParams: unknown) => {
@@ -928,7 +899,7 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
         !search.hasExecutableRules
       ) {
         return nodeErrorResult(errorEnvelope('node_search', 'empty_search', 'Search has no executable terms.', {
-          instructions: 'Add at least one plain keyword, tag, field, or reference condition line to the search outline.',
+          instructions: 'Add at least one executable rule such as STRING_MATCH value:: text, HAS_TAG tag:: [[#tag^node:...]], DONE, or DONE_LAST_DAYS value:: 7.',
           metrics: { durationMs: elapsed(started) },
         }));
       }

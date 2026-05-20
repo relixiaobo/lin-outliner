@@ -104,10 +104,14 @@ describe('agent node tools', () => {
     const history = tools.find((tool) => tool.name === 'operation_history')!;
 
     expect(nodeRead.description).toContain('Use node_read before node_edit');
+    expect(nodeCreate.description).toContain('Usage:');
     expect(nodeCreate.description).toContain('YYYY-MM-DDTHH:mm');
     expect(JSON.stringify(nodeCreate.parameters)).toContain("today's journal node, not the current UI selection");
-    expect(nodeSearch.description).toContain('Do not use ".."');
-    expect(JSON.stringify(nodeSearch.parameters)).toContain('Date values use YYYY-MM-DD');
+    expect(nodeSearch.description).toContain('DONE_LAST_DAYS value:: 7');
+    expect(nodeSearch.description).toContain('Do not express done state as FIELD_IS');
+    expect(nodeSearch.description).toContain('Use DATE_OVERLAPS only for values stored in a date field');
+    expect(JSON.stringify(nodeSearch.parameters)).toContain('Plain field names');
+    expect(JSON.stringify(nodeSearch.parameters)).toContain('Date field values use YYYY-MM-DD');
     expect(nodeEdit.description).toContain('old_string "*" replaces the whole annotated outline');
     expect(JSON.stringify(nodeEdit.parameters)).toContain('Date field values use YYYY-MM-DD');
     expect(JSON.stringify(nodeEdit.parameters)).toContain('Include enough surrounding lines');
@@ -1152,6 +1156,30 @@ describe('agent node tools', () => {
     });
     expect(missingField.ok).toBe(false);
     expect(missingField.error?.code).toBe('invalid_search_condition');
+    expect(missingField.instructions).toContain('Plain field names');
+    expect(missingField.instructions).toContain('DONE_LAST_DAYS');
+  });
+
+  test('node_search guides common completion and date query mistakes toward executable operators', async () => {
+    const core = Core.new();
+
+    const isDone = await executeTool(core, 'node_search', {
+      outline: '- %%search%% Done nodes\n  - IS_DONE',
+    });
+    expect(isDone.ok).toBe(false);
+    expect(isDone.error?.code).toBe('unsupported_search_rule');
+    expect(isDone.instructions).toContain('Use DONE');
+    expect(isDone.instructions).toContain('DONE_LAST_DAYS');
+    expect(isDone.instructions).toContain('Do not use FIELD_IS for done state');
+
+    const dateTextField = await executeTool(core, 'node_search', {
+      outline: '- %%search%% Date range\n  - DATE_OVERLAPS\n    - field:: date\n    - value:: 2026-05-14/2026-05-20',
+    });
+    expect(dateTextField.ok).toBe(false);
+    expect(dateTextField.error?.code).toBe('invalid_search_condition');
+    expect(dateTextField.instructions).toContain('DATE_OVERLAPS searches date field values');
+    expect(dateTextField.instructions).toContain('field definition node id');
+    expect(dateTextField.instructions).toContain('DONE_LAST_DAYS');
   });
 
   test('node_search executes outline reference conditions as links-to filters', async () => {
