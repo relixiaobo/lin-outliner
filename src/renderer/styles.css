@@ -4048,11 +4048,16 @@ button.panel-resize-handle::after {
   z-index: var(--z-popover);
   top: calc(100% + 6px);
   left: 0;
-  width: 232px;
+  width: 252px;
   border-radius: var(--radius-md);
   background: var(--overlay-bg);
   box-shadow: var(--overlay-shadow-level-2);
   padding: var(--space-5);
+}
+
+.calendar-month {
+  --calendar-day-size: 28px;
+  --calendar-day-gap: var(--space-3);
 }
 
 .calendar-month-header {
@@ -4076,10 +4081,12 @@ button.panel-resize-handle::after {
 .calendar-month-weekdays,
 .calendar-month-grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, var(--calendar-day-size));
+  justify-content: center;
 }
 
 .calendar-month-weekdays {
+  column-gap: var(--calendar-day-gap);
   margin-top: var(--space-4);
   color: var(--muted-2);
   font-size: var(--font-ui-2xs);
@@ -4089,14 +4096,14 @@ button.panel-resize-handle::after {
 }
 
 .calendar-month-grid {
-  gap: var(--space-hairline);
+  gap: var(--calendar-day-gap);
   margin-top: var(--space-2);
 }
 
 .calendar-month-day {
   position: relative;
-  width: 28px;
-  height: 28px;
+  width: var(--calendar-day-size);
+  height: var(--calendar-day-size);
   border-radius: var(--radius-control-md);
   background: transparent;
   color: var(--text-sub);
@@ -4109,8 +4116,8 @@ button.panel-resize-handle::after {
 }
 
 .calendar-month-day.is-in-range:not(.is-selected) {
-  background: color-mix(in srgb, var(--text) 10%, transparent);
-  border-radius: 0;
+  background: color-mix(in srgb, var(--text-main) 8%, transparent);
+  border-radius: var(--radius-control-md);
 }
 
 .calendar-month-day.is-today:not(.is-selected) {
@@ -4143,7 +4150,7 @@ button.panel-resize-handle::after {
 }
 
 .calendar-month-day.is-selected {
-  background: var(--text-main);
+  background: var(--surface-inverse);
   color: var(--panel-bg);
 }
 

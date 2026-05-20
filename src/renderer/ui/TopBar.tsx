@@ -37,7 +37,7 @@ interface TopBarProps {
   onNavigateBack: () => void;
   onNavigateForward: () => void;
   onOpenAppearanceSettings?: () => void;
-  onOpenProviderSettings: () => void;
+  onOpenProviderSettings: (restoreFocusTarget?: HTMLElement | null) => void;
   onSelectTab: (tabId: string, panelId?: string) => void;
   onToggleAgent: () => void;
   onToggleSidebar: () => void;
@@ -87,8 +87,9 @@ export function TopBar(props: TopBarProps) {
   }, [moreOpen]);
 
   const openProviderSettings = () => {
+    const restoreFocusTarget = moreButtonRef.current;
     setMoreOpen(false);
-    props.onOpenProviderSettings();
+    props.onOpenProviderSettings(restoreFocusTarget);
   };
 
   const openAppearanceSettings = () => {

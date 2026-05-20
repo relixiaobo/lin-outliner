@@ -71,7 +71,7 @@ describe('DateFieldControl', () => {
 
     await click(rendered, button(rendered, 'Due'));
 
-    expect(button(rendered, 'End date').getAttribute('aria-pressed')).toBe('true');
+    expect(button(rendered, 'End date').getAttribute('aria-checked')).toBe('true');
     expect(input(rendered, 'Start time').value).toBe('09:30');
     expect(input(rendered, 'End time').value).toBe('17:00');
 
@@ -150,20 +150,20 @@ async function changeInput(rendered: RenderedDateField, element: HTMLInputElemen
 }
 
 function button(rendered: RenderedDateField, ariaLabel: string): HTMLButtonElement {
-  const found = rendered.container.querySelector<HTMLButtonElement>(`button[aria-label="${ariaLabel}"]`);
+  const found = rendered.document.querySelector<HTMLButtonElement>(`button[aria-label="${ariaLabel}"]`);
   if (!found) throw new Error(`Missing button: ${ariaLabel}`);
   return found;
 }
 
 function textButton(rendered: RenderedDateField, text: string): HTMLButtonElement {
-  const found = Array.from(rendered.container.querySelectorAll<HTMLButtonElement>('button'))
+  const found = Array.from(rendered.document.querySelectorAll<HTMLButtonElement>('button'))
     .find((candidate) => candidate.textContent?.trim() === text);
   if (!found) throw new Error(`Missing text button: ${text}`);
   return found;
 }
 
 function input(rendered: RenderedDateField, ariaLabel: string): HTMLInputElement {
-  const found = rendered.container.querySelector<HTMLInputElement>(`input[aria-label="${ariaLabel}"]`);
+  const found = rendered.document.querySelector<HTMLInputElement>(`input[aria-label="${ariaLabel}"]`);
   if (!found) throw new Error(`Missing input: ${ariaLabel}`);
   return found;
 }

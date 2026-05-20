@@ -57,6 +57,7 @@ interface AgentChatPanelProps {
   userViewContext: AgentUserViewContext;
   onOpenDebugPanel?: (sessionId: string | null) => void;
   onProviderSettingsOpenChange?: (open: boolean) => void;
+  providerSettingsRestoreFocus?: () => HTMLElement | null;
   providerSettingsOpen?: boolean;
 }
 
@@ -432,6 +433,7 @@ function AgentTranscriptRowShell({
 export function AgentChatPanel({
   onOpenDebugPanel,
   onProviderSettingsOpenChange,
+  providerSettingsRestoreFocus,
   providerSettingsOpen = false,
   userViewContext,
 }: AgentChatPanelProps) {
@@ -987,6 +989,7 @@ export function AgentChatPanel({
           onProviderSettingsOpenChange?.(false);
         }}
         open={settingsDialogOpen}
+        restoreFocus={providerSettingsRestoreFocus}
       />
     </div>
   );

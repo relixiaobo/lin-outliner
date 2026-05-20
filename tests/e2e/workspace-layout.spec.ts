@@ -64,7 +64,7 @@ test.describe('workspace layout resizing', () => {
     const forwardButton = await page.getByTitle('Forward').boundingBox();
     const addTabButton = await page.getByTitle('New tab').boundingBox();
     const agentToggle = await page.getByTitle('Collapse agent').boundingBox();
-    const accountButton = await page.getByTitle('Account').boundingBox();
+    const moreButton = await page.locator('.top-chrome-right').getByRole('button', { name: 'More', exact: true }).boundingBox();
     const panels = page.locator('.outline-panel-surface');
     await expect(panels).toHaveCount(2);
     await expect(page.locator('.top-chrome')).toHaveAttribute('data-electron-drag-region', 'deep');
@@ -77,14 +77,14 @@ test.describe('workspace layout resizing', () => {
     expect(forwardButton).toBeTruthy();
     expect(addTabButton).toBeTruthy();
     expect(agentToggle).toBeTruthy();
-    expect(accountButton).toBeTruthy();
+    expect(moreButton).toBeTruthy();
     expect(firstBefore).toBeTruthy();
     expect(secondBefore).toBeTruthy();
     expect(Math.round(activeTab!.y - chrome!.y)).toBe(8);
     expect(Math.round(sidebarToggle!.y - chrome!.y)).toBe(8);
     expect(Math.round(firstBefore!.y - (chrome!.y + chrome!.height))).toBe(8);
     const chromeCenterY = activeTab!.y + activeTab!.height / 2;
-    for (const controlBox of [sidebarToggle, backButton, forwardButton, addTabButton, agentToggle, accountButton]) {
+    for (const controlBox of [sidebarToggle, backButton, forwardButton, addTabButton, agentToggle, moreButton]) {
       expect(Math.abs(chromeCenterY - (controlBox!.y + controlBox!.height / 2))).toBeLessThanOrEqual(1);
     }
 
@@ -264,6 +264,12 @@ test.describe('workspace layout resizing', () => {
       tabs.map((tab) => Math.round(tab.getBoundingClientRect().width))
     ));
     expect(new Set(tabWidths).size).toBe(1);
+    await expect.poll(async () => {
+      const backgrounds = await page.locator('.workspace-tab').evaluateAll((tabs) => (
+        tabs.map((tab) => getComputedStyle(tab).backgroundColor)
+      ));
+      return new Set(backgrounds).size;
+    }).toBeGreaterThan(1);
     const tabBackgrounds = await page.locator('.workspace-tab').evaluateAll((tabs) => (
       tabs.map((tab) => getComputedStyle(tab).backgroundColor)
     ));

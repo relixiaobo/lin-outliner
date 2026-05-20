@@ -8,6 +8,7 @@ interface DialogProps {
   labelledBy?: string;
   surfaceClassName: string;
   initialFocus?: () => HTMLElement | null;
+  restoreFocus?: () => HTMLElement | null;
   onBackdropMouseDown?: () => void;
   onEscapeKeyDown?: () => void;
 }
@@ -34,17 +35,28 @@ export function Dialog({
   labelledBy,
   onBackdropMouseDown,
   onEscapeKeyDown,
+  restoreFocus,
   surfaceClassName,
 }: DialogProps) {
   const surfaceRef = useRef<HTMLElement | null>(null);
   const initialFocusRef = useRef(initialFocus);
+  const restoreFocusRef = useRef(restoreFocus);
 
   useEffect(() => {
-    const restoreTarget = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    initialFocusRef.current = initialFocus;
+    restoreFocusRef.current = restoreFocus;
+  }, [initialFocus, restoreFocus]);
+
+  useEffect(() => {
+    const fallbackRestoreTarget = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const target = initialFocusRef.current?.() ?? surfaceRef.current;
     target?.focus({ preventScroll: true });
 
     return () => {
+      const explicitRestoreTarget = restoreFocusRef.current?.() ?? null;
+      const restoreTarget = explicitRestoreTarget && document.contains(explicitRestoreTarget)
+        ? explicitRestoreTarget
+        : fallbackRestoreTarget;
       if (restoreTarget && document.contains(restoreTarget)) {
         restoreTarget.focus({ preventScroll: true });
       }

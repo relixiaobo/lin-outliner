@@ -85,8 +85,8 @@ export function useAnchoredOverlay(
 
       const gap = options.gap ?? 6;
       const margin = options.margin ?? 8;
-      const viewportWidth = window.innerWidth;
-      const viewportHeight = window.innerHeight;
+      const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1024;
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 768;
       const maxWidth = Math.max(1, viewportWidth - margin * 2);
       const width = Math.min(options.width ?? Math.max(anchor.width ?? 0, 220), maxWidth);
       const maxHeight = Math.min(
@@ -123,12 +123,15 @@ export function useAnchoredOverlay(
       });
     };
 
+    const requestFrame = window.requestAnimationFrame ?? ((callback: FrameRequestCallback) => window.setTimeout(() => callback(Date.now()), 0));
+    const cancelFrame = window.cancelAnimationFrame ?? ((handle: number) => window.clearTimeout(handle));
+
     update();
-    const frame = window.requestAnimationFrame(update);
+    const frame = requestFrame(update);
     window.addEventListener('scroll', update, true);
     window.addEventListener('resize', update);
     return () => {
-      window.cancelAnimationFrame(frame);
+      cancelFrame(frame);
       window.removeEventListener('scroll', update, true);
       window.removeEventListener('resize', update);
     };

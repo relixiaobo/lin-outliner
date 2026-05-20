@@ -88,9 +88,13 @@ test.describe('agent composer controls', () => {
     }).toBe(true);
   });
 
-  test('keeps provider settings out of the composer controls', async ({ page }) => {
-    await expect(page.getByRole('button', { name: 'Agent settings' })).toHaveCount(1);
+  test('keeps provider settings in the top chrome more menu', async ({ page }) => {
+    await expect(page.getByRole('button', { name: 'Agent settings' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Open settings' })).toHaveCount(0);
+
+    await page.locator('.top-chrome-right').getByRole('button', { name: 'More', exact: true }).click();
+    await expect(page.getByRole('menuitem', { name: 'Provider settings' })).toBeVisible();
+    await page.keyboard.press('Escape');
 
     await page.getByRole('button', { name: 'Select model' }).click();
     await expect(page.getByRole('menuitem', { name: 'API Settings' })).toHaveCount(0);

@@ -307,8 +307,7 @@ test.describe('outliner navigation and page title parity', () => {
     await expect(page.getByRole('dialog', { name: 'Calendar' })).toBeVisible();
     await expect(page.locator('.panel-date-note-dot')).toHaveCount(0);
 
-    const countedDay = page.locator('.panel-date-calendar-day[data-note-count="3"]').first();
-    await expect(countedDay).toHaveAttribute('aria-label', /3 nodes/);
+    const countedDay = page.getByRole('button', { name: 'Go to 2026-05-13 · 3 nodes' });
     await expect(countedDay).toHaveClass(/note-density-2/);
     await expect.poll(async () => countedDay.evaluate((element) =>
       getComputedStyle(element).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
@@ -318,7 +317,7 @@ test.describe('outliner navigation and page title parity', () => {
         '.panel-date-nav-button',
         '.panel-date-nav-today',
         '.panel-date-picker-button',
-        '.panel-date-calendar-nav',
+        '.calendar-month-nav',
         '.panel-date-calendar-day',
       ];
       return selectors.map((selector) => {

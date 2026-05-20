@@ -392,6 +392,11 @@ and non-goals; product behavior stays with the owning surface.
   not use `CheckboxMark`.
 - Checkbox field values use `CheckboxMark`.
 - Boolean field values use `SwitchMark`.
+- Date field values use an anchored popover, level 1 overlay shadow, no real
+  outer border, shared calendar day states, and `SwitchMark` for range/time
+  toggles. Summary rows stay compact and neutral; they should not read as
+  stacked cards. Calendar grids use fixed square day cells with matching row
+  and column gaps; do not stretch days through `1fr` columns.
 - Definition configuration rows are dense configuration controls, not editable
   outliner rows. They may visually rhyme with field rows but must not inherit
   row selection behavior.

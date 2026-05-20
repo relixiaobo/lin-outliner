@@ -7,10 +7,7 @@ test.describe('agent settings dialog', () => {
   });
 
   test('uses modal focus behavior and restores focus on close', async ({ page }) => {
-    const trigger = page.getByRole('button', { name: 'Agent settings' });
-    await trigger.click();
-
-    const dialog = page.getByRole('dialog', { name: 'Agent settings' });
+    const { dialog, trigger } = await openAgentSettings(page);
     await expect(dialog).toBeVisible();
     await expect(dialog).toBeFocused();
     await expect(dialog).toHaveAttribute('aria-modal', 'true');
@@ -30,9 +27,7 @@ test.describe('agent settings dialog', () => {
   });
 
   test('uses the shared checkbox mark for provider enablement', async ({ page }) => {
-    await page.getByRole('button', { name: 'Agent settings' }).click();
-
-    const dialog = page.getByRole('dialog', { name: 'Agent settings' });
+    const { dialog } = await openAgentSettings(page);
     const enabled = dialog.getByLabel('Enabled');
     const mark = dialog.locator('.agent-settings-checkbox .checkbox-mark');
 
@@ -49,9 +44,7 @@ test.describe('agent settings dialog', () => {
   });
 
   test('groups provider, connection, and model settings', async ({ page }) => {
-    await page.getByRole('button', { name: 'Agent settings' }).click();
-
-    const dialog = page.getByRole('dialog', { name: 'Agent settings' });
+    const { dialog } = await openAgentSettings(page);
     await expect(dialog.getByRole('heading', { name: 'Provider' })).toBeVisible();
     await expect(dialog.getByRole('heading', { name: 'Connection' })).toBeVisible();
     await expect(dialog.getByRole('heading', { name: 'Model behavior' })).toBeVisible();
@@ -61,9 +54,7 @@ test.describe('agent settings dialog', () => {
   });
 
   test('only exposes model controls after the selected provider has a key', async ({ page }) => {
-    await page.getByRole('button', { name: 'Agent settings' }).click();
-
-    const dialog = page.getByRole('dialog', { name: 'Agent settings' });
+    const { dialog } = await openAgentSettings(page);
     await expect(dialog.getByRole('button', { name: /Anthropic/ })).toHaveCount(0);
 
     await dialog.getByLabel('Provider ID').fill('anthropic');
@@ -77,9 +68,7 @@ test.describe('agent settings dialog', () => {
   });
 
   test('saves grouped provider configuration', async ({ page }) => {
-    await page.getByRole('button', { name: 'Agent settings' }).click();
-
-    const dialog = page.getByRole('dialog', { name: 'Agent settings' });
+    const { dialog } = await openAgentSettings(page);
     await dialog.getByLabel('Base URL').fill('https://example.test/v1');
     await dialog.getByLabel('Reasoning').selectOption('high');
     await dialog.getByRole('button', { name: 'Save' }).click();
@@ -98,3 +87,12 @@ test.describe('agent settings dialog', () => {
     });
   });
 });
+
+async function openAgentSettings(page: import('@playwright/test').Page) {
+  const trigger = page.locator('.top-chrome-right').getByRole('button', { name: 'More', exact: true });
+  await trigger.click();
+  await page.getByRole('menuitem', { name: 'Provider settings' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Agent settings' });
+  await expect(dialog).toBeVisible();
+  return { dialog, trigger };
+}

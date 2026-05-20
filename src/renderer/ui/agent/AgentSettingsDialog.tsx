@@ -19,6 +19,7 @@ interface AgentSettingsDialogProps {
   open: boolean;
   onClose: () => void;
   onApplied: () => Promise<void>;
+  restoreFocus?: () => HTMLElement | null;
 }
 
 interface DraftConfig {
@@ -56,7 +57,7 @@ const REASONING_LABELS: Record<AgentReasoningLevel, string> = {
   xhigh: 'XHigh',
 };
 
-export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsDialogProps) {
+export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: AgentSettingsDialogProps) {
   const [settings, setSettings] = useState<AgentProviderSettingsView | null>(null);
   const [draft, setDraft] = useState<DraftConfig>(EMPTY_DRAFT);
   const [apiKey, setApiKey] = useState('');
@@ -251,6 +252,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
       labelledBy="agent-settings-title"
       onBackdropMouseDown={onClose}
       onEscapeKeyDown={onClose}
+      restoreFocus={restoreFocus}
       surfaceClassName="agent-settings-dialog"
     >
       <header className="agent-settings-header">

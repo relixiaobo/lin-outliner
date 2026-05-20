@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   dateFieldEndpointDate,
@@ -13,6 +14,9 @@ import {
 import { CalendarIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { CalendarMonthGrid, shiftedCalendarMonth, type CalendarMonthDay } from '../primitives/CalendarMonthGrid';
+import { SwitchControl } from '../primitives/SwitchControl';
+import { SwitchMark } from '../primitives/SwitchMark';
+import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 
 interface DateFieldControlProps {
   value: string;
@@ -27,7 +31,8 @@ const DEFAULT_TIME = '09:00';
 export function DateFieldControl({ value, placeholder, commit }: DateFieldControlProps) {
   const initial = dateDraftFromValue(value);
   const today = useMemo(() => isoLocalDate(new Date()), []);
-  const wrapRef = useRef<HTMLSpanElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
   const [includeEnd, setIncludeEnd] = useState(initial.includeEnd);
   const [startDraft, setStartDraft] = useState(initial.start);
   const [endDraft, setEndDraft] = useState(initial.end);
@@ -40,6 +45,13 @@ export function DateFieldControl({ value, placeholder, commit }: DateFieldContro
   const initialViewDate = parseIsoLocalDate(dateFieldEndpointDate(initial.start || today)) ?? new Date();
   const [viewYear, setViewYear] = useState(initialViewDate.getFullYear());
   const [viewMonth, setViewMonth] = useState(initialViewDate.getMonth());
+  const popoverStyle = useAnchoredOverlay(popoverRef, {
+    anchorRef: triggerRef,
+    disabled: !open,
+    maxHeight: 520,
+    placement: 'bottom-start',
+    width: 256,
+  });
 
   useEffect(() => {
     const next = dateDraftFromValue(value);
@@ -53,18 +65,20 @@ export function DateFieldControl({ value, placeholder, commit }: DateFieldContro
 
   useEffect(() => {
     if (!open) return;
-    const handlePointerDown = (event: MouseEvent) => {
-      if (wrapRef.current?.contains(event.target as Node)) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && triggerRef.current?.contains(target)) return;
+      if (target instanceof Node && popoverRef.current?.contains(target)) return;
       setOpen(false);
     };
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === 'Escape') setOpen(false);
     };
-    document.addEventListener('mousedown', handlePointerDown, true);
-    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    document.addEventListener('keydown', handleKeyDown, true);
     return () => {
-      document.removeEventListener('mousedown', handlePointerDown, true);
-      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+      document.removeEventListener('keydown', handleKeyDown, true);
     };
   }, [open]);
 
@@ -216,8 +230,9 @@ export function DateFieldControl({ value, placeholder, commit }: DateFieldContro
   );
 
   return (
-    <span className="typed-field-control typed-field-control-date" ref={wrapRef}>
+    <span className="typed-field-control typed-field-control-date">
       <ButtonControl
+        ref={triggerRef}
         className={`typed-field-date-trigger ${displayedValue ? '' : 'empty'}`}
         aria-expanded={open}
         aria-label={placeholder}
@@ -231,8 +246,14 @@ export function DateFieldControl({ value, placeholder, commit }: DateFieldContro
         <CalendarIcon size={13} strokeWidth={1.8} />
         <span>{displayedValue || placeholder}</span>
       </ButtonControl>
-      {open && (
-        <div className="typed-field-date-popover" role="dialog" aria-label={`${placeholder} calendar`}>
+      {open ? createPortal(
+        <div
+          ref={popoverRef}
+          className="typed-field-date-popover"
+          role="dialog"
+          aria-label={`${placeholder} calendar`}
+          style={popoverStyle}
+        >
           <div className="typed-field-date-summary">
             <DateSummaryRow
               active={editingEdge === 'start'}
@@ -276,8 +297,9 @@ export function DateFieldControl({ value, placeholder, commit }: DateFieldContro
             <ButtonControl onClick={pickToday}>Today</ButtonControl>
             <ButtonControl onClick={clearDate}>Clear</ButtonControl>
           </div>
-        </div>
-      )}
+        </div>,
+        document.body,
+      ) : null}
     </span>
   );
 }
@@ -369,14 +391,14 @@ function DateSettingRow({ checked, label, onToggle }: DateSettingRowProps) {
   return (
     <div className="typed-field-date-setting-row">
       <span>{label}</span>
-      <ButtonControl
-        aria-label={label}
-        aria-pressed={checked}
-        className={`typed-field-date-toggle ${checked ? 'checked' : ''}`}
-        onClick={onToggle}
+      <SwitchControl
+        checked={checked}
+        className="typed-field-date-toggle"
+        label={label}
+        onCheckedChange={onToggle}
       >
-        <span />
-      </ButtonControl>
+        <SwitchMark checked={checked} />
+      </SwitchControl>
     </div>
   );
 }
