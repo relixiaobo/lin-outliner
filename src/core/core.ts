@@ -15,6 +15,7 @@ import {
   type OperationStackState,
 } from './operationJournal';
 import { buildDocumentProjection } from './projection';
+import { runSearchExpr, runSearchNode, searchNodeHasRules } from './searchEngine';
 import {
   DAILY_NOTES_ID,
   SCHEMA_ID,
@@ -45,7 +46,9 @@ import {
   type RichText,
   type RichTextPatch,
   type SearchNodeConfig,
-  type SearchNodeCondition,
+  type SearchQueryExpr,
+  type SearchQueryOperand,
+  type SearchQueryRule,
   type SearchHit,
   type SplitNodeOptions,
   type SortDirection,
@@ -1002,24 +1005,19 @@ export class Core {
     });
   }
 
+  refreshSearchNodeResults(nodeId: string): CommandOutcome {
+    return this.mutate(() => {
+      this.materializeSearchNodeResultsDirect(nodeId);
+      return undefined;
+    });
+  }
+
   searchNodes(query: string): SearchHit[] {
     this.refreshStateFromLoro();
-    const q = query.trim().toLowerCase();
+    const q = query.trim();
     if (!q) return [];
-    const hits: SearchHit[] = [];
-    for (const node of Object.values(this.stateValue.nodes)) {
-      if (!isSearchCandidate(this.stateValue, node.id)) continue;
-      let score = 0;
-      const text = node.content.text.toLowerCase();
-      if (text === q) score += 100;
-      else if (text.startsWith(q)) score += 60;
-      else if (text.includes(q)) score += 30;
-      for (const tagId of node.tags) {
-        if (this.stateValue.nodes[tagId]?.content.text.toLowerCase().includes(q)) score += 15;
-      }
-      if (score > 0) hits.push({ nodeId: node.id, score });
-    }
-    return hits.sort((a, b) => b.score - a.score || a.nodeId.localeCompare(b.nodeId)).slice(0, 50);
+    const result = runSearchExpr(this.stateValue, { kind: 'rule', op: 'STRING_MATCH', text: q }, { limit: 50 });
+    return result.ok ? result.hits : [];
   }
 
   ensureTagSearch(tagId: string): CommandOutcome {
@@ -1030,19 +1028,19 @@ export class Core {
       const existing = Object.values(state.nodes).find((node) =>
         !isInTrash(state, node.id)
         && node.type === 'search'
-        && node.queryOp === 'HAS_TAG'
-        && node.queryTagDefId === tagId);
+        && searchNodeHasSingleTagQuery(state, node.id, tagId));
       const searchId = existing?.id ?? (() => {
         const id = freshId('search');
         this.loro.createNodeWithId(id, SEARCHES_ID, undefined, 'search', (node) => {
           node.content = plainText(`Everything tagged #${tag.content.text}`);
-          node.queryLogic = 'AND';
-          node.queryOp = 'HAS_TAG';
-          node.queryTagDefId = tagId;
+        });
+        this.writeSearchNodeConfigDirect(id, {
+          title: `Everything tagged #${tag.content.text}`,
+          query: { kind: 'rule', op: 'HAS_TAG', tagDefId: tagId },
         });
         return id;
       })();
-      this.refreshTagSearchChildrenDirect(searchId, tagId);
+      if (existing) this.materializeSearchNodeResultsDirect(searchId);
       return focus(searchId);
     });
   }
@@ -1253,59 +1251,104 @@ export class Core {
   private writeSearchNodeConfigDirect(nodeId: string, config: SearchNodeConfig) {
     const state = this.snapshot();
     const node = clone(requiredNode(state, nodeId));
-    const conditions = normalizeSearchConditions(config.conditions);
     node.type = 'search';
     node.content = plainText(normalizeSearchTitle(config.title));
     setOptional(node, 'viewMode', normalizeOptionalText(config.viewMode ?? null));
-    node.queryLogic = 'AND';
     delete node.queryOp;
+    delete node.queryLogic;
     delete node.queryTagDefId;
     delete node.queryFieldDefId;
     delete node.targetId;
-    node.lastRefreshedAt = nowMs();
-    const primary = conditions[0];
-    if (conditions.length === 1 && primary?.op === 'HAS_TAG' && primary.tagId) {
-      node.queryOp = 'HAS_TAG';
-      node.queryTagDefId = primary.tagId;
-    } else if (conditions.length === 1 && primary?.op === 'STRING_MATCH' && primary.text) {
-      node.queryOp = 'STRING_MATCH';
-    } else if (conditions.length === 1 && primary?.op === 'LINKS_TO' && primary.targetId) {
-      node.queryOp = 'LINKS_TO';
-      node.targetId = primary.targetId;
-    } else if (conditions.length === 1 && primary?.op === 'FIELD_CONTAINS' && primary.fieldDefId) {
-      node.queryOp = 'FIELD_CONTAINS';
-      node.queryFieldDefId = primary.fieldDefId;
-    }
     node.updatedAt = nowMs();
     this.loro.writeNode(node);
 
     const latest = this.snapshot();
     for (const childId of [...latest.nodes[nodeId]?.children ?? []]) {
-      this.removeSubtreeDirect(childId);
+      if (latest.nodes[childId]?.type === 'queryCondition') this.removeSubtreeDirect(childId);
     }
-    for (const condition of conditions) {
-      this.createSearchConditionDirect(nodeId, condition);
+    this.createSearchQueryConditionDirect(nodeId, config.query, 0);
+    this.materializeSearchNodeResultsDirect(nodeId);
+  }
+
+  private materializeSearchNodeResultsDirect(nodeId: string) {
+    const state = this.snapshot();
+    const searchNode = requiredNode(state, nodeId);
+    if (searchNode.type !== 'search') throw CoreError.invalidOperation('expected a search node');
+
+    const result = searchNodeHasRules(state, nodeId)
+      ? runSearchNode(state, nodeId)
+      : { ok: true, hits: [] } as const;
+    if (!result.ok) throw CoreError.invalidOperation(result.issue.message);
+
+    const hits = uniqueNodeIds(result.hits.map((hit) => hit.nodeId))
+      .filter((targetId) =>
+        state.nodes[targetId]
+        && !isInTrash(state, targetId)
+        && !wouldCreateReferenceCycle(state, nodeId, targetId));
+    const matchedIds = new Set(hits);
+    const existingRefs = new Map<NodeId, NodeId>();
+    for (const childId of [...searchNode.children]) {
+      const child = state.nodes[childId];
+      if (child?.type !== 'reference' || !child.targetId) continue;
+      if (existingRefs.has(child.targetId)) {
+        this.removeSubtreeDirect(childId);
+      } else {
+        existingRefs.set(child.targetId, childId);
+      }
+    }
+
+    for (const [targetId, refId] of existingRefs) {
+      if (!matchedIds.has(targetId)) this.removeSubtreeDirect(refId);
+    }
+
+    const refreshedState = this.snapshot();
+    for (const targetId of hits) {
+      if (existingRefs.has(targetId)) continue;
+      if (!refreshedState.nodes[targetId]) continue;
+      this.loro.createNodeWithId(freshId('ref'), nodeId, undefined, 'reference', (node) => {
+        node.targetId = targetId;
+      });
+    }
+
+    const latest = this.snapshot();
+    const latestSearchNode = requiredNode(latest, nodeId);
+    const resultRefIds = hits.flatMap((targetId): NodeId[] => {
+      const refId = latestSearchNode.children.find((childId) => latest.nodes[childId]?.type === 'reference'
+        && latest.nodes[childId]?.targetId === targetId);
+      return refId ? [refId] : [];
+    });
+    const queryConditionIds = latestSearchNode.children.filter((childId) => latest.nodes[childId]?.type === 'queryCondition');
+    const generatedIds = new Set([...queryConditionIds, ...resultRefIds]);
+    const otherChildIds = latestSearchNode.children.filter((childId) => !generatedIds.has(childId));
+    reorderDirectChildren(this.loro, latestSearchNode, [...queryConditionIds, ...resultRefIds, ...otherChildIds]);
+  }
+
+  private createSearchQueryConditionDirect(parentId: string, query: SearchQueryExpr, index?: number | null) {
+    const state = this.snapshot();
+    const conditionId = freshId('condition');
+    this.loro.createNodeWithId(conditionId, parentId, index, 'queryCondition', (node) => {
+      if (query.kind === 'group') {
+        node.queryLogic = query.logic;
+        node.content = plainText(query.logic);
+      } else {
+        node.queryOp = query.op;
+        node.content = plainText(query.text ?? searchRuleTitle(state, query));
+        if (query.fieldDefId) node.queryFieldDefId = query.fieldDefId;
+        if (query.tagDefId) node.queryTagDefId = query.tagDefId;
+        if (query.targetId) node.targetId = query.targetId;
+      }
+    });
+    if (query.kind === 'group') {
+      for (const child of query.children) this.createSearchQueryConditionDirect(conditionId, child);
+    } else {
+      for (const operand of query.operands ?? []) this.createSearchQueryOperandDirect(conditionId, operand);
     }
   }
 
-  private createSearchConditionDirect(parentId: string, condition: SearchNodeCondition) {
-    this.loro.createNodeWithId(freshId('condition'), parentId, undefined, 'queryCondition', (node) => {
-      node.queryLogic = 'AND';
-      node.queryOp = condition.op;
-      if (condition.op === 'HAS_TAG') {
-        node.queryTagDefId = condition.tagId;
-        const tag = condition.tagId ? this.snapshot().nodes[condition.tagId] : undefined;
-        node.content = plainText(tag?.content.text ?? condition.tagId ?? '');
-      } else if (condition.op === 'LINKS_TO') {
-        node.targetId = condition.targetId;
-        const target = condition.targetId ? this.snapshot().nodes[condition.targetId] : undefined;
-        node.content = plainText(target?.content.text ?? condition.targetId ?? '');
-      } else if (condition.op === 'FIELD_CONTAINS') {
-        node.queryFieldDefId = condition.fieldDefId;
-        node.content = plainText(condition.text ?? '');
-      } else {
-        node.content = plainText(condition.text ?? '');
-      }
+  private createSearchQueryOperandDirect(parentId: string, operand: SearchQueryOperand) {
+    this.loro.createNodeWithId(freshId(operand.targetId ? 'ref' : 'operand'), parentId, undefined, operand.targetId ? 'reference' : undefined, (node) => {
+      node.content = plainText(operand.text ?? '');
+      if (operand.targetId) node.targetId = operand.targetId;
     });
   }
 
@@ -1688,27 +1731,6 @@ export class Core {
     }
   }
 
-  private refreshTagSearchChildrenDirect(searchId: string, tagId: string) {
-    const state = this.snapshot();
-    for (const childId of [...state.nodes[searchId]?.children ?? []]) this.removeSubtreeDirect(childId);
-    const refreshed = this.snapshot();
-    const targetIds = Object.values(refreshed.nodes)
-      .filter((node) =>
-        node.id !== searchId
-        && node.id !== tagId
-        && !isSystemId(node.id)
-        && !isInTrash(refreshed, node.id)
-        && node.type !== 'search'
-        && node.tags.includes(tagId))
-      .sort((left, right) => left.content.text.localeCompare(right.content.text) || left.id.localeCompare(right.id))
-      .map((node) => node.id);
-    for (const targetId of targetIds) {
-      this.loro.createNodeWithId(freshId('ref'), searchId, undefined, 'reference', (node) => {
-        node.targetId = targetId;
-      });
-    }
-  }
-
   private ensureDateNodeDirect(year: number, month: number, day: number) {
     const date = new Date(year, month - 1, day);
     if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
@@ -1943,36 +1965,47 @@ function normalizeSearchTitle(value: string) {
   return value.trim() || 'Search';
 }
 
-function normalizeSearchConditions(conditions: SearchNodeCondition[]): SearchNodeCondition[] {
-  const result: SearchNodeCondition[] = [];
-  const seen = new Set<string>();
-  for (const condition of conditions) {
-    const normalized = condition.op === 'HAS_TAG'
-      ? condition.tagId
-        ? { op: 'HAS_TAG' as const, tagId: condition.tagId }
-        : null
-      : condition.op === 'LINKS_TO'
-        ? condition.targetId
-          ? { op: 'LINKS_TO' as const, targetId: condition.targetId }
-          : null
-      : condition.op === 'FIELD_CONTAINS'
-        ? condition.fieldDefId
-          ? { op: 'FIELD_CONTAINS' as const, fieldDefId: condition.fieldDefId, text: condition.text?.trim() ?? '' }
-          : null
-        : condition.text?.trim()
-          ? { op: 'STRING_MATCH' as const, text: condition.text.trim() }
-          : null;
-    if (!normalized) continue;
-    const key = normalized.op === 'HAS_TAG'
-      ? `tag:${normalized.tagId}`
-      : normalized.op === 'LINKS_TO'
-        ? `link:${normalized.targetId}`
-        : normalized.op === 'FIELD_CONTAINS'
-          ? `field:${normalized.fieldDefId}:${normalized.text.toLowerCase()}`
-          : `text:${normalized.text.toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push(normalized);
+function searchRuleTitle(state: DocumentState, rule: SearchQueryRule): string {
+  if (rule.tagDefId) return state.nodes[rule.tagDefId]?.content.text ?? rule.tagDefId;
+  if (rule.targetId) return state.nodes[rule.targetId]?.content.text ?? rule.targetId;
+  if (rule.fieldDefId) return state.nodes[rule.fieldDefId]?.content.text ?? rule.fieldDefId;
+  return rule.op;
+}
+
+function searchNodeHasSingleTagQuery(state: DocumentState, nodeId: string, tagId: string): boolean {
+  const node = state.nodes[nodeId];
+  const conditionIds = node?.children.filter((childId) => {
+    const child = state.nodes[childId];
+    return child?.type === 'queryCondition' && !isInTrash(state, childId);
+  }) ?? [];
+  if (conditionIds.length !== 1) return false;
+  const condition = state.nodes[conditionIds[0]!];
+  return condition?.queryOp === 'HAS_TAG' && condition.queryTagDefId === tagId;
+}
+
+function reorderDirectChildren(
+  loro: { moveNode: (nodeId: string, parentId: string, index: number | null | undefined) => void },
+  parent: Node,
+  desiredChildren: NodeId[],
+) {
+  const currentChildren = [...parent.children];
+  desiredChildren.forEach((childId, index) => {
+    if (currentChildren[index] === childId) return;
+    const currentIndex = currentChildren.indexOf(childId);
+    if (currentIndex < 0) return;
+    loro.moveNode(childId, parent.id, index);
+    currentChildren.splice(currentIndex, 1);
+    currentChildren.splice(index, 0, childId);
+  });
+}
+
+function uniqueNodeIds(nodeIds: NodeId[]): NodeId[] {
+  const seen = new Set<NodeId>();
+  const result: NodeId[] = [];
+  for (const nodeId of nodeIds) {
+    if (seen.has(nodeId)) continue;
+    seen.add(nodeId);
+    result.push(nodeId);
   }
   return result;
 }

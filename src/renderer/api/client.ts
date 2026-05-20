@@ -19,7 +19,12 @@ import type {
   TagConfigPatch,
 } from './types';
 import { replaceAllRichTextPatch } from './types';
-import type { AgentDebugSnapshot, AgentDebugTotals, AgentMessageAttachmentInput } from '../../core/agentTypes';
+import type {
+  AgentDebugSnapshot,
+  AgentDebugTotals,
+  AgentMessageAttachmentInput,
+  AgentUserViewContext,
+} from '../../core/agentTypes';
 
 function command<T>(name: string, args?: Record<string, unknown>): Promise<T> {
   if (window.lin) return window.lin.invoke<T>(name, args);
@@ -130,6 +135,8 @@ export const api = {
     command<CommandOutcome>('ensure_date_node', { year, month, day }),
   searchNodes: (query: string) => command<SearchHit[]>('search_nodes', { query }),
   ensureTagSearch: (tagId: string) => command<CommandOutcome>('ensure_tag_search', { tagId }),
+  refreshSearchNodeResults: (nodeId: string) =>
+    command<CommandOutcome>('refresh_search_node_results', { nodeId }),
   backlinks: (targetId: string) => command<Backlink[]>('backlinks', { targetId }),
   undo: () => command<CommandOutcome>('undo'),
   redo: () => command<CommandOutcome>('redo'),
@@ -151,8 +158,12 @@ export const api = {
     command<string | null>('agent_debug_payload', { sessionId, payloadId }),
   agentPayloadText: (sessionId: string, payloadId: string) =>
     command<string | null>('agent_payload_text', { sessionId, payloadId }),
-  agentSendMessage: (sessionId: string, message: string, attachments: AgentMessageAttachmentInput[] = []) =>
-    command<void>('agent_send_message', { sessionId, message, attachments }),
+  agentSendMessage: (
+    sessionId: string,
+    message: string,
+    attachments: AgentMessageAttachmentInput[] = [],
+    userViewContext?: AgentUserViewContext | null,
+  ) => command<void>('agent_send_message', { sessionId, message, attachments, userViewContext }),
   agentEditMessage: (sessionId: string, nodeId: string, message: string) =>
     command<void>('agent_edit_message', { sessionId, nodeId, message }),
   agentRegenerateMessage: (sessionId: string, nodeId: string) =>
@@ -161,8 +172,11 @@ export const api = {
     command<void>('agent_retry_message', { sessionId, nodeId }),
   agentSwitchBranch: (sessionId: string, nodeId: string) =>
     command<void>('agent_switch_branch', { sessionId, nodeId }),
-  agentQueueFollowUp: (sessionId: string, message: string) =>
-    command<{ queued: boolean }>('agent_queue_follow_up', { sessionId, message }),
+  agentQueueFollowUp: (
+    sessionId: string,
+    message: string,
+    userViewContext?: AgentUserViewContext | null,
+  ) => command<{ queued: boolean }>('agent_queue_follow_up', { sessionId, message, userViewContext }),
   agentClearFollowUp: (sessionId: string) =>
     command<void>('agent_clear_follow_up', { sessionId }),
   agentStopSession: (sessionId: string) =>

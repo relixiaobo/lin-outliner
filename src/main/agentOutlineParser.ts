@@ -210,7 +210,7 @@ function parseOutlineValue(text: string, lineNodeId?: string): OutlineValue {
 }
 
 function stripNodeMarker(text: string): { nodeId?: string; text: string } {
-  const match = /^%%node:([^%]+)%%\s*/.exec(text.trim());
+  const match = /^%%node:([^\s%]+)(?:\s+[^%]*)?%%\s*/.exec(text.trim());
   if (!match) return { text };
   return {
     nodeId: match[1]!.trim(),

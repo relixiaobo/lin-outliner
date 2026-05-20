@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
+import type { AgentUserViewContext } from '../../core/agentTypes';
 import { api } from '../api/client';
 import type { DocumentProjection, FocusHint, NodeId, NodeProjection } from '../api/types';
 import { useDocumentIndex, useUiState } from '../state/document';
@@ -23,6 +24,7 @@ import { BatchTagSelector } from './outliner/BatchTagSelector';
 import { ButtonControl } from './primitives/ButtonControl';
 import type { TriggerState } from './shared';
 import { textOf, useCommandRunner } from './shared';
+import { buildAgentUserViewContext } from './agent/userViewContext';
 import { WorkspaceCanvas } from './WorkspaceCanvas';
 import { useResizableLayout } from './useResizableLayout';
 import { useSelectionDismissal } from './useSelectionDismissal';
@@ -244,6 +246,23 @@ export function App() {
     });
   }, []);
 
+  const agentUserViewContext = useMemo<AgentUserViewContext>(() => {
+    if (!index) {
+      return {
+        activePanelId: activeTab?.activePanelId ?? null,
+        focusedPanelId: ui.focusedPanelId,
+        focusSurface: ui.focusSurface,
+        focusedNode: null,
+        nodePanels: [],
+      };
+    }
+    return buildAgentUserViewContext({
+      activeTab,
+      index,
+      ui,
+    });
+  }, [activeTab, index, ui]);
+
   if (!projection || !index) {
     return (
       <div className="app">
@@ -337,6 +356,7 @@ export function App() {
         />
 
         <AgentDock
+          userViewContext={agentUserViewContext}
           onOpenDebugPanel={openAgentDebugPanel}
           onProviderSettingsOpenChange={setProviderSettingsOpen}
           onResizeKeyDown={resizeAgentWithKeyboard}

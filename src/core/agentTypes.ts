@@ -11,6 +11,7 @@ import type {
 } from '@earendil-works/pi-ai';
 import type { AgentRenderProjection } from './agentRenderProjection';
 import type { AgentPayloadRef } from './agentEventLog';
+import type { NodeId, NodeType } from './types';
 
 export const LIN_AGENT_EVENT_CHANNEL = 'lin-agent-event';
 
@@ -52,6 +53,48 @@ export type AgentMessageAttachmentInput = AgentImageAttachmentInput | AgentTextA
 
 export type AgentMessage = Message;
 export type AgentConversationMessage = UserMessage | AssistantMessage;
+
+export interface AgentUserViewNodeContext {
+  nodeId: NodeId;
+  title: string;
+  panelId?: string | null;
+  surface?: string | null;
+}
+
+export interface AgentUserViewOutlineNodeContext {
+  nodeId: NodeId;
+  title: string;
+  depth: number;
+  focused?: boolean;
+  collapsed?: boolean;
+  childCount?: number;
+  partial?: {
+    included: number;
+    total: number;
+  };
+}
+
+export interface AgentUserViewPanelContext {
+  panelId: string;
+  rootNodeId: NodeId;
+  rootTitle: string;
+  rootType?: NodeType | 'outline';
+  active: boolean;
+  focused: boolean;
+  order: number;
+  childCount: number;
+  breadcrumb: AgentUserViewNodeContext[];
+  visibleOutline: AgentUserViewOutlineNodeContext[];
+  visibleOutlineTruncated: boolean;
+}
+
+export interface AgentUserViewContext {
+  activePanelId: string | null;
+  focusedPanelId: string | null;
+  focusSurface: string | null;
+  focusedNode: AgentUserViewNodeContext | null;
+  nodePanels: AgentUserViewPanelContext[];
+}
 
 export interface AgentToolResultPayloadPart {
   contentIndex: number;

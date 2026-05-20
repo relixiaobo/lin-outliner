@@ -16,12 +16,15 @@ export const ids = {
   priorityEntry: 'field-entry-priority',
   priorityHigh: 'option-priority-high',
   priorityLow: 'option-priority-low',
+  dueField: 'field-due',
+  dueEntry: 'field-entry-due',
   alpha: 'node-alpha',
   beta: 'node-beta',
   gamma: 'node-gamma',
 } as const;
 
 interface MockFixtureOptions {
+  dateField?: boolean;
   optionsField?: boolean;
 }
 
@@ -616,6 +619,21 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         fieldType: 'options',
       });
     }
+    if (options.dateField) {
+      makeNode(ids.dueField, 'Due', {
+        type: 'fieldDef',
+        parentId: ids.schema,
+        fieldType: 'date',
+        cardinality: 'single',
+        nullable: true,
+      });
+      makeNode(ids.dueEntry, 'Due', {
+        type: 'fieldEntry',
+        parentId: ids.today,
+        fieldDefId: ids.dueField,
+        fieldType: 'date',
+      });
+    }
     makeNode(ids.today, '2026-05-13', { parentId: ids.daily, tags: [ids.dayTag] });
     makeNode(ids.alpha, 'Alpha', { parentId: ids.today, showCheckbox: true });
     makeNode(ids.beta, 'Beta', { parentId: ids.today, showCheckbox: true });
@@ -630,8 +648,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       appendChild(ids.priorityField, ids.priorityHigh);
       appendChild(ids.priorityField, ids.priorityLow);
     }
+    if (options.dateField) appendChild(ids.schema, ids.dueField);
     appendChild(ids.daily, ids.today);
     if (options.optionsField) appendChild(ids.today, ids.priorityEntry);
+    if (options.dateField) appendChild(ids.today, ids.dueEntry);
     for (const childId of [ids.alpha, ids.beta, ids.gamma]) appendChild(ids.today, childId);
 
     Object.defineProperty(navigator, 'clipboard', {
@@ -1106,7 +1126,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           removeNode(String(args.nodeId));
           return clone(outcome());
         }
-        if (cmd === 'ensure_tag_search' || cmd === 'restore_node' || cmd === 'undo' || cmd === 'redo') {
+        if (
+          cmd === 'ensure_tag_search'
+          || cmd === 'refresh_search_node_results'
+          || cmd === 'restore_node'
+          || cmd === 'undo'
+          || cmd === 'redo'
+        ) {
           return clone(outcome());
         }
         throw new Error(`Unhandled mock invoke: ${cmd}`);

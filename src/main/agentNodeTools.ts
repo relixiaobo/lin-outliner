@@ -1,4 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
+import { normalizeDateFieldValue } from '../core/dateFieldValue';
 import {
   plainText,
   replaceAllRichTextPatch,
@@ -171,6 +172,7 @@ function createNodeEditTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope
       'Edits existing Lin outliner content.',
       'For text and child-structure edits, use node_read first, then pass exact old_string/new_string against the annotated outline. old_string "*" replaces the whole annotated outline for node_id.',
       'The replacement outline must keep existing %%node:id%% markers for nodes that should be updated or moved. Lines without markers create new nodes.',
+      'For date field values, use YYYY-MM-DD, YYYY-MM-DDTHH:mm, or start/end with "/" such as 2026-05-20/2026-05-24. Do not use "..".',
       'Also supports user-like move operations, merging source nodes into one surviving target, and replacing a node with a reference.',
       'Use preview_only when the edit is large or ambiguous and you want validation before mutating the document.',
     ].join('\n'),
@@ -683,6 +685,7 @@ function createNodeCreateTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
     description: [
       'Creates Lin outliner content under a parent. Omit parent_id to create under today, not the current UI selection.',
       'Use outline for normal nodes, fields, tags, references, saved search nodes, and nested children in Lin Outline Format.',
+      'For date field values, use YYYY-MM-DD, YYYY-MM-DDTHH:mm, or start/end with "/" such as 2026-05-20/2026-05-24. Do not use "..".',
       'Use target_id only when you want to create one reference node. Use duplicate_id only when you want to duplicate an existing subtree with new ids.',
       'Insertion: after_id omitted appends, after_id null inserts first, after_id string inserts after that sibling.',
       'Do not include %%node:id%% markers from node_read in create outlines.',
@@ -891,7 +894,10 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
     label: 'Node Search',
     description: [
       'Searches Lin outliner nodes by executing a temporary search outline or a saved search node.',
-      'Use outline for a one-off search: "- %%search%% Title" plus child condition lines. Plain child lines are keyword conditions.',
+      'Use outline for a one-off search: "- %%search%% Title" plus exactly one query root child.',
+      'Use AND, OR, and NOT as group nodes. Use QueryOp names such as STRING_MATCH, HAS_TAG, LINKS_TO, FIELD_IS, LT, and DATE_OVERLAPS as rule nodes.',
+      'Put rule operands under rules as field::, tag::, target::, value::, or operand::. field/tag/target operands must be node references or exact node ids.',
+      'Date operands use YYYY-MM-DD, YYYY-MM-DDTHH:mm, or start/end with "/" such as 2026-05-20/2026-05-24. Do not use "..".',
       'Use search_node_id to execute a saved search node. Do not use node_search to create saved searches; use node_create with a search outline.',
       'Returned outlines include %%node:id%% markers so you can call node_read or node_edit on exact matches.',
     ].join('\n'),
@@ -919,10 +925,7 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
       }
 
       if (
-        search.queryTerms.length === 0
-        && search.tagIds.length === 0
-        && search.linkTargetIds.length === 0
-        && search.fieldConditions.length === 0
+        !search.hasExecutableRules
       ) {
         return nodeErrorResult(errorEnvelope('node_search', 'empty_search', 'Search has no executable terms.', {
           instructions: 'Add at least one plain keyword, tag, field, or reference condition line to the search outline.',
@@ -931,6 +934,12 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
       }
 
       const resultIds = runSearch(index, search);
+      if ('error' in resultIds) {
+        return nodeErrorResult(errorEnvelope('node_search', resultIds.code, resultIds.error, {
+          instructions: resultIds.instructions,
+          metrics: { durationMs: elapsed(started) },
+        }));
+      }
       const total = resultIds.length;
       const pageIds = resultIds.slice(offset, offset + limit);
       const items = params.count ? undefined : pageIds.map((nodeId) => buildSearchItem(index, nodeId, search.queryTerms));
@@ -944,8 +953,6 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
         offset,
         limit,
         items,
-        unresolvedTags: search.unresolvedTagNames.length ? search.unresolvedTagNames : undefined,
-        unresolvedFields: search.unresolvedFields.length ? search.unresolvedFields : undefined,
       };
 
       return nodeToolResult(successEnvelope('node_search', data, {
@@ -1166,13 +1173,8 @@ async function applyOutlineRootToExistingNode(
 ): Promise<{ trashedNodeIds: string[]; updatedTagIds: string[] }> {
   if (root.search) {
     const spec = resolveSearchSpecFromOutlineNode(indexProjection(host.getProjection()), root);
+    if ('error' in spec) throw new Error(spec.error);
     warnings.push(...spec.warnings);
-    if (spec.unresolvedTagNames.length) {
-      throw new Error(`Search references unknown tags: ${spec.unresolvedTagNames.join(', ')}`);
-    }
-    if (spec.unresolvedFields.length) {
-      throw new Error(`Search references unknown fields: ${spec.unresolvedFields.join(', ')}`);
-    }
     await host.handle('set_search_node', {
       nodeId,
       config: searchNodeConfigFromSpec(spec),
@@ -1202,13 +1204,8 @@ async function syncOutlineNodeInPlace(
 ): Promise<string[]> {
   if (node.search) {
     const spec = resolveSearchSpecFromOutlineNode(indexProjection(host.getProjection()), node);
+    if ('error' in spec) throw new Error(spec.error);
     warnings.push(...spec.warnings);
-    if (spec.unresolvedTagNames.length) {
-      throw new Error(`Search references unknown tags: ${spec.unresolvedTagNames.join(', ')}`);
-    }
-    if (spec.unresolvedFields.length) {
-      throw new Error(`Search references unknown fields: ${spec.unresolvedFields.join(', ')}`);
-    }
     await host.handle('set_search_node', {
       nodeId,
       config: searchNodeConfigFromSpec(spec),
@@ -1302,8 +1299,9 @@ async function syncFieldValues(
   warnings: string[],
 ) {
   const index = indexProjection(host.getProjection());
+  const normalizedField = normalizeFieldValuesForEntry(index, fieldEntryId, field);
   const existingValueIds = [...requiredNode(index, fieldEntryId).children].filter((childId) => !isInTrash(index, childId));
-  const desiredValues = field.clear ? [] : field.values;
+  const desiredValues = normalizedField.clear ? [] : normalizedField.values;
   const misplacedAnnotatedValue = desiredValues.find((value) => value.nodeId && !existingValueIds.includes(value.nodeId));
   if (misplacedAnnotatedValue?.nodeId) {
     throw new Error(`Annotated field value id is not a value under ${fieldEntryId}: ${misplacedAnnotatedValue.nodeId}`);
@@ -1347,6 +1345,33 @@ async function syncFieldValues(
       desiredIndex += 1;
     }
   }
+}
+
+function normalizeFieldValuesForEntry(index: ProjectionIndex, fieldEntryId: string, field: OutlineField): OutlineField {
+  if (field.clear) return field;
+  if (fieldTypeForEntry(index, fieldEntryId) !== 'date') return field;
+
+  return {
+    ...field,
+    values: field.values.map((value) => normalizeDateOutlineValue(field.name, value)),
+  };
+}
+
+function normalizeDateOutlineValue(fieldName: string, value: OutlineValue): OutlineValue {
+  if (value.targetId) {
+    throw new Error(`Invalid date field value for "${fieldName}": date fields use text values, not node references. Use YYYY-MM-DD, YYYY-MM-DDTHH:mm, or start/end with "/" such as 2026-05-20/2026-05-24.`);
+  }
+  const normalized = normalizeDateFieldValue(value.text);
+  if (!normalized) {
+    throw new Error(`Invalid date field value for "${fieldName}": ${value.text}. Use YYYY-MM-DD, YYYY-MM-DDTHH:mm, or start/end with "/" such as 2026-05-20/2026-05-24.`);
+  }
+  return normalized === value.text ? value : { ...value, text: normalized };
+}
+
+function fieldTypeForEntry(index: ProjectionIndex, fieldEntryId: string): string {
+  const fieldEntry = requiredNode(index, fieldEntryId);
+  const fieldDef = fieldEntry.fieldDefId ? index.nodes.get(fieldEntry.fieldDefId) : undefined;
+  return fieldDef?.fieldType ?? fieldEntry.fieldType ?? 'plain';
 }
 
 async function syncNormalChildren(
@@ -1873,13 +1898,8 @@ async function createOutlineNode(
 ): Promise<string> {
   if (node.search) {
     const spec = resolveSearchSpecFromOutlineNode(indexProjection(host.getProjection()), node);
+    if ('error' in spec) throw new Error(spec.error);
     warnings.push(...spec.warnings);
-    if (spec.unresolvedTagNames.length) {
-      throw new Error(`Search references unknown tags: ${spec.unresolvedTagNames.join(', ')}`);
-    }
-    if (spec.unresolvedFields.length) {
-      throw new Error(`Search references unknown fields: ${spec.unresolvedFields.join(', ')}`);
-    }
     const createdId = focusFromOutcome(await host.handle('create_search_node', {
       parentId,
       index,
@@ -1907,8 +1927,17 @@ async function createOutlineNode(
   await setCheckboxState(host, createdId, node.checked);
 
   await applyTags(host, createdId, node.tags, tracker);
+  const reusableFieldEntries = reusableFieldEntriesForCreate(indexProjection(host.getProjection()), createdId);
   for (const field of node.fields) {
-    await createField(host, createdId, field, tracker);
+    const fieldKey = normalizedFieldNameKey(field.name);
+    const existingFieldEntryId = reusableFieldEntries.get(fieldKey);
+    if (existingFieldEntryId) {
+      reusableFieldEntries.delete(fieldKey);
+      trackMatchedNode(tracker, existingFieldEntryId);
+      await syncFieldValues(host, existingFieldEntryId, field, tracker, warnings);
+    } else {
+      await createField(host, createdId, field, tracker);
+    }
   }
   for (const child of node.children) {
     await createOutlineNode(host, child, createdId, null, tracker, warnings);
@@ -1932,6 +1961,26 @@ async function applyTags(host: OutlinerToolHost, nodeId: string, tags: string[],
     if (!existing) tracker.createdTagIds.push(tagId);
     await host.handle('apply_tag', { nodeId, tagId });
   }
+}
+
+function reusableFieldEntriesForCreate(index: ProjectionIndex, parentId: string): Map<string, string> {
+  const byName = new Map<string, string[]>();
+  for (const childId of requiredNode(index, parentId).children) {
+    const child = index.nodes.get(childId);
+    if (child?.type !== 'fieldEntry' || isInTrash(index, childId)) continue;
+    const key = normalizedFieldNameKey(fieldName(index, child));
+    byName.set(key, [...(byName.get(key) ?? []), childId]);
+  }
+
+  const reusable = new Map<string, string>();
+  for (const [key, ids] of byName) {
+    if (ids.length === 1) reusable.set(key, ids[0]!);
+  }
+  return reusable;
+}
+
+function normalizedFieldNameKey(name: string): string {
+  return name.trim().toLowerCase();
 }
 
 async function createField(

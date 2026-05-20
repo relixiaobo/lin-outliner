@@ -41,3 +41,25 @@ export type {
 } from '../../core/types';
 
 export { EMPTY_RICH_TEXT, plainText, replaceAllRichTextPatch } from '../../core/types';
+export {
+  dateFieldEndpointDate,
+  dateFieldEndpointHasTime,
+  dateFieldEndpointTime,
+  formatDateFieldEndpoint,
+  formatDateFieldInput,
+  formatDateFieldValue,
+  normalizeDateFieldValue,
+  normalizedDateFieldEndpoint,
+  orderDateFieldEndpoints,
+  parseDateFieldValue,
+  parseDateFieldValueRange,
+  type DateFieldValue,
+  type DateFieldValueRange,
+} from '../../core/dateFieldValue';
+export {
+  addLocalDays,
+  isoLocalDate,
+  offsetIsoLocalDate,
+  parseIsoLocalDate,
+  todayIsoLocalDate,
+} from '../../core/localDate';

@@ -5,6 +5,7 @@ import {
 } from '../../src/renderer/agent/runtime';
 import type {
   AgentRuntimeEvent,
+  AgentUserViewContext,
   AssistantMessage,
   UserMessage,
 } from '../../src/core/agentTypes';
@@ -148,6 +149,12 @@ function createFakeClient(options: {
     createSession: 0,
     restoreLatestSession: 0,
     restoreSession: [] as string[],
+    queueFollowUp: [] as Array<{ sessionId: string; message: string; userViewContext?: AgentUserViewContext | null }>,
+    sendMessage: [] as Array<{
+      sessionId: string;
+      message: string;
+      userViewContext?: AgentUserViewContext | null;
+    }>,
   };
 
   const client: AgentRuntimeClient = {
@@ -166,12 +173,17 @@ function createFakeClient(options: {
     closeSession: async (sessionId) => {
       calls.closeSession.push(sessionId);
     },
-    sendMessage: async () => {},
+    sendMessage: async (sessionId, message, _attachments, userViewContext) => {
+      calls.sendMessage.push({ sessionId, message, userViewContext });
+    },
     editMessage: async () => {},
     regenerateMessage: async () => {},
     retryMessage: async () => {},
     switchBranch: async () => {},
-    queueFollowUp: async () => ({ queued: true }),
+    queueFollowUp: async (sessionId, message, userViewContext) => {
+      calls.queueFollowUp.push({ sessionId, message, userViewContext });
+      return { queued: true };
+    },
     clearFollowUp: async () => {},
     stopSession: async () => {},
     onEvent: (listener) => {
@@ -341,6 +353,56 @@ describe('agent runtime store', () => {
     const result = store.getSnapshot().toolResults.get('tool-1');
     expect(result?.content).toEqual([{ type: 'text', text: label }]);
     expect(result?.payloadRefs).toEqual([{ contentIndex: 0, payload, label }]);
+    unsubscribe();
+  });
+
+  test('passes user view context through user turns and queued follow-ups', async () => {
+    const restored = session('saved', projection([]));
+    const userViewContext: AgentUserViewContext = {
+      activePanelId: 'panel-1',
+      focusedPanelId: 'panel-1',
+      focusSurface: 'row',
+      focusedNode: {
+        nodeId: 'node-1',
+        title: 'Focused node',
+        panelId: 'panel-1',
+        surface: 'row',
+      },
+      nodePanels: [{
+        panelId: 'panel-1',
+        rootNodeId: 'root-1',
+        rootTitle: 'Today',
+        rootType: 'outline',
+        active: true,
+        focused: true,
+        order: 1,
+        childCount: 3,
+        breadcrumb: [],
+        visibleOutline: [
+          { nodeId: 'root-1', title: 'Today', depth: 0 },
+          { nodeId: 'node-1', title: 'Focused node', depth: 1, focused: true },
+        ],
+        visibleOutlineTruncated: false,
+      }],
+    };
+    const fake = createFakeClient({ latestSession: restored });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+    await flushMicrotasks();
+
+    await store.getSnapshot().sendMessage('hello', [], userViewContext);
+    await store.getSnapshot().queueFollowUp('next', userViewContext);
+
+    expect(fake.calls.sendMessage).toEqual([{
+      sessionId: 'saved',
+      message: 'hello',
+      userViewContext,
+    }]);
+    expect(fake.calls.queueFollowUp).toEqual([{
+      sessionId: 'saved',
+      message: 'next',
+      userViewContext,
+    }]);
     unsubscribe();
   });
 

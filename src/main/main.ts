@@ -104,7 +104,12 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
     case 'agent_payload_text':
       return agentRuntime.payloadText(String(args.sessionId), String(args.payloadId));
     case 'agent_send_message':
-      return agentRuntime.sendMessage(String(args.sessionId), String(args.message ?? ''), args.attachments);
+      return agentRuntime.sendMessage(
+        String(args.sessionId),
+        String(args.message ?? ''),
+        args.attachments,
+        args.userViewContext,
+      );
     case 'agent_edit_message':
       return agentRuntime.editMessage(
         String(args.sessionId),
@@ -118,7 +123,11 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
     case 'agent_switch_branch':
       return agentRuntime.switchBranch(String(args.sessionId), String(args.nodeId));
     case 'agent_queue_follow_up':
-      return agentRuntime.queueFollowUp(String(args.sessionId), String(args.message ?? ''));
+      return agentRuntime.queueFollowUp(
+        String(args.sessionId),
+        String(args.message ?? ''),
+        args.userViewContext,
+      );
     case 'agent_clear_follow_up':
       return agentRuntime.clearFollowUp(String(args.sessionId));
     case 'agent_stop_session':

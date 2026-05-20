@@ -14,6 +14,7 @@ import {
   type AgentDebugTotals,
   type AgentMessage,
   type AgentRuntimeEvent,
+  type AgentUserViewContext,
   type ImageContent,
   type TextContent,
   type UserMessage,
@@ -50,6 +51,7 @@ import {
 } from './agentEventStore';
 import { getActiveProviderRuntimeConfig, getProviderApiKey, type AgentProviderRuntimeConfig } from './agentSettings';
 import type { OutlinerToolHost } from './agentNodeTools';
+import { AgentUserViewContextReminderTracker, buildUserViewContextReminder } from './agentUserViewContextReminder';
 import type { AgentSessionMeta } from '../core/types';
 import { buildAgentRenderProjection } from '../core/agentRenderProjection';
 
@@ -123,6 +125,9 @@ type AgentEventInput = {
   createdAt?: number;
   [key: string]: unknown;
 };
+type AgentUserViewPanel = AgentUserViewContext['nodePanels'][number];
+type AgentUserViewNode = NonNullable<AgentUserViewContext['focusedNode']>;
+type AgentUserViewOutlineNode = AgentUserViewPanel['visibleOutline'][number];
 
 export class AgentRuntime {
   private sessions = new Map<string, AgentSessionState>();
@@ -133,6 +138,7 @@ export class AgentRuntime {
   }>();
   private eventStore: AgentEventStore | null = null;
   private nextSessionId = 1;
+  private readonly userViewContextReminderTracker = new AgentUserViewContextReminderTracker();
 
   constructor(
     private readonly getWindow: () => BrowserWindow | null,
@@ -242,12 +248,19 @@ export class AgentRuntime {
       clearPendingProjection(session);
       this.sessions.delete(sessionId);
       this.debugProjectionCache.delete(sessionId);
+      this.userViewContextReminderTracker.reset(sessionId);
       this.emit({ type: 'closed', sessionId, timestamp: Date.now() });
     }
     await this.getEventStore().deleteSession(sessionId);
+    this.userViewContextReminderTracker.reset(sessionId);
   }
 
-  async sendMessage(sessionId: string, message: string, attachmentInput: unknown = []) {
+  async sendMessage(
+    sessionId: string,
+    message: string,
+    attachmentInput: unknown = [],
+    userViewContextInput: unknown = null,
+  ) {
     try {
       const session = await this.ensureSessionWithId(sessionId);
       const attachments = await this.materializeFileAttachments(normalizeAttachmentInputs(attachmentInput));
@@ -256,14 +269,20 @@ export class AgentRuntime {
         if (attachments.length > 0) {
           throw new Error('Attachments cannot be queued while the agent is running.');
         }
-        this.queueFollowUp(sessionId, message);
+        this.queueFollowUp(sessionId, message, userViewContextInput);
         return;
       }
       this.beginDebugQuery(session);
+      const userViewContextReminder = this.userViewContextReminderTracker.prepare(
+        sessionId,
+        normalizeAgentUserViewContext(userViewContextInput),
+      );
       const prompt = buildUserPromptMessage(message, attachments, {
         outlinerContext: buildOutlinerContextReminder(this.outlinerToolHost),
+        userViewContextReminder: userViewContextReminder.reminder,
       });
       await this.appendUserPromptEvent(sessionId, session, prompt);
+      userViewContextReminder.commit();
       await this.startRun(sessionId, session);
       await session.agent.prompt(prompt);
       await this.persistAndEmitIdle(sessionId, session);
@@ -280,6 +299,7 @@ export class AgentRuntime {
       if (session.agent.state.isStreaming) throw new Error('Cannot edit while the agent is running.');
       const target = requireEventMessage(session.eventState, nodeId);
       if (target.role !== 'user') throw new Error('Only user messages can be edited');
+      this.userViewContextReminderTracker.reset(sessionId);
       await this.appendSessionEvents(sessionId, session, [{
         type: 'user_message.created',
         actor: userActor(),
@@ -306,6 +326,7 @@ export class AgentRuntime {
       const targetId = findRegenerateTarget(session.eventState, nodeId);
       const parentId = requireEventMessage(session.eventState, targetId).parentMessageId;
       if (!parentId) throw new Error('Cannot regenerate without a parent message.');
+      this.userViewContextReminderTracker.reset(sessionId);
       await this.appendSessionEvents(sessionId, session, [{
         type: 'branch.selected',
         actor: systemActor(),
@@ -328,6 +349,7 @@ export class AgentRuntime {
       if (session.agent.state.isStreaming) throw new Error('Cannot retry while the agent is running.');
       const parentId = requireEventMessage(session.eventState, nodeId).parentMessageId;
       if (!parentId) throw new Error('Cannot retry without a parent message.');
+      this.userViewContextReminderTracker.reset(sessionId);
       await this.appendSessionEvents(sessionId, session, [{
         type: 'branch.selected',
         actor: systemActor(),
@@ -349,6 +371,7 @@ export class AgentRuntime {
       const session = await this.ensureSessionWithId(sessionId);
       if (session.agent.state.isStreaming) throw new Error('Cannot switch branches while the agent is running.');
       const leafMessageId = findLatestEventLeaf(session.eventState, nodeId).id;
+      this.userViewContextReminderTracker.reset(sessionId);
       await this.appendSessionEvents(sessionId, session, [{
         type: 'branch.selected',
         actor: systemActor(),
@@ -361,7 +384,7 @@ export class AgentRuntime {
     }
   }
 
-  queueFollowUp(sessionId: string, message: string) {
+  queueFollowUp(sessionId: string, message: string, userViewContextInput: unknown = null) {
     const session = this.sessions.get(sessionId);
     if (!session) {
       this.emitError(sessionId, `Unknown agent session: ${sessionId}`);
@@ -370,11 +393,11 @@ export class AgentRuntime {
     const text = message.trim();
     if (!text) return { queued: false };
     session.agent.clearFollowUpQueue();
-    session.agent.followUp({
-      role: 'user',
-      content: [{ type: 'text', text }],
-      timestamp: Date.now(),
-    });
+    this.userViewContextReminderTracker.reset(sessionId);
+    session.agent.followUp(buildUserPromptMessage(text, [], {
+      outlinerContext: buildOutlinerContextReminder(this.outlinerToolHost),
+      userViewContextReminder: buildUserViewContextReminder(normalizeAgentUserViewContext(userViewContextInput)),
+    }));
     this.emitProjection(sessionId, 'follow_up_queued');
     return { queued: true };
   }
@@ -397,6 +420,7 @@ export class AgentRuntime {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     session.agent.reset();
+    this.userViewContextReminderTracker.reset(sessionId);
     void (async () => {
       await this.getEventStore().deleteSession(sessionId);
       this.debugProjectionCache.delete(sessionId);
@@ -421,6 +445,7 @@ export class AgentRuntime {
     session.unsubscribe?.();
     clearPendingProjection(session);
     this.sessions.delete(sessionId);
+    this.userViewContextReminderTracker.reset(sessionId);
     this.emit({ type: 'closed', sessionId, timestamp: Date.now() });
   }
 
@@ -432,6 +457,7 @@ export class AgentRuntime {
     existing?.unsubscribe?.();
     existing?.agent.abort();
     if (existing) clearPendingProjection(existing);
+    this.userViewContextReminderTracker.reset(sessionId);
 
     const providerConfig = await getActiveProviderRuntimeConfig();
     const activePath = await this.deriveRuntimePiMessages(sessionId, eventState);
@@ -1218,12 +1244,13 @@ export class AgentRuntime {
 function buildUserPromptMessage(
   message: string,
   attachments: AgentMessageAttachmentInput[],
-  context: { outlinerContext?: string | null } = {},
+  context: { outlinerContext?: string | null; userViewContextReminder?: string | null } = {},
 ): UserMessage {
+  const timestamp = Date.now();
   const trimmed = message.trim();
   const baseText = trimmed || defaultAttachmentPrompt(attachments);
   const content: (TextContent | ImageContent)[] = [];
-  const reminders = buildTurnReminderBlocks(attachments, context);
+  const reminders = buildTurnReminderBlocks(attachments, context, new Date(timestamp));
   content.push(...reminders);
   content.push({ type: 'text', text: baseText });
 
@@ -1248,7 +1275,7 @@ function buildUserPromptMessage(
   return {
     role: 'user',
     content,
-    timestamp: Date.now(),
+    timestamp,
   };
 }
 
@@ -1338,12 +1365,17 @@ function stripDataUrlPrefix(data: string): string {
 
 function buildTurnReminderBlocks(
   attachments: AgentMessageAttachmentInput[],
-  context: { outlinerContext?: string | null },
+  context: { outlinerContext?: string | null; userViewContextReminder?: string | null },
+  now: Date,
 ): TextContent[] {
   const blocks: TextContent[] = [];
   const parts: string[] = [];
+  parts.push(buildEnvironmentContextReminder(now));
   if (context.outlinerContext) {
     parts.push(context.outlinerContext);
+  }
+  if (context.userViewContextReminder) {
+    parts.push(context.userViewContextReminder);
   }
   if (parts.length > 0) {
     blocks.push({ type: 'text', text: systemReminder(parts.join('\n\n')) });
@@ -1356,19 +1388,137 @@ function buildTurnReminderBlocks(
   return blocks;
 }
 
+function buildEnvironmentContextReminder(now: Date): string {
+  const resolved = Intl.DateTimeFormat().resolvedOptions();
+  return [
+    '<environment-context>',
+    `Current local time: ${formatLocalDateTime(now)}`,
+    `Current local date: ${formatLocalDate(now)}`,
+    `IANA time zone: ${escapeReminderText(resolved.timeZone || 'unknown')}`,
+    `UTC offset: ${formatUtcOffset(-now.getTimezoneOffset())}`,
+    `UTC time: ${now.toISOString()}`,
+    resolved.locale ? `Locale: ${escapeReminderText(resolved.locale)}` : '',
+    '</environment-context>',
+  ].filter(Boolean).join('\n');
+}
+
 function buildOutlinerContextReminder(host: OutlinerToolHost): string | null {
   try {
     const projection = host.getProjection();
     const today = projection.nodes.find((node) => node.id === projection.todayId);
     return [
-      'Current Lin outliner context:',
-      `- Today node id: ${projection.todayId}${today ? ` (${today.content.text})` : ''}`,
-      '- node_create without parent_id creates under today.',
-      '- Use node_read/node_search when you need exact node ids or current content.',
+      '<outliner-context>',
+      `Today node: %%node:${annotationReminderValue(projection.todayId)}%% ${escapeReminderText(outlineReminderText(today?.content.text, 'Today'))}`,
+      '</outliner-context>',
     ].join('\n');
   } catch {
     return null;
   }
+}
+
+function normalizeAgentUserViewContext(input: unknown): AgentUserViewContext | null {
+  if (!isRecord(input)) return null;
+  const nodePanels = Array.isArray(input.nodePanels)
+    ? input.nodePanels.slice(0, 6).map(normalizeUserViewPanel).filter((panel): panel is AgentUserViewPanel => Boolean(panel))
+    : [];
+
+  return {
+    activePanelId: nullableCompactString(input.activePanelId, 160),
+    focusedPanelId: nullableCompactString(input.focusedPanelId, 160),
+    focusSurface: nullableCompactString(input.focusSurface, 80),
+    focusedNode: normalizeUserViewNode(input.focusedNode),
+    nodePanels,
+  };
+}
+
+function normalizeUserViewPanel(input: unknown): AgentUserViewPanel | null {
+  if (!isRecord(input)) return null;
+  const panelId = compactString(input.panelId, 160);
+  const rootNodeId = compactString(input.rootNodeId, 160);
+  if (!panelId || !rootNodeId) return null;
+  const rootType = compactString(input.rootType, 80);
+  const visibleOutline = Array.isArray(input.visibleOutline)
+    ? input.visibleOutline.slice(0, 100).map(normalizeUserViewOutlineNode).filter((node): node is AgentUserViewOutlineNode => Boolean(node))
+    : [];
+  return {
+    panelId,
+    rootNodeId,
+    rootTitle: compactString(input.rootTitle, 160) || 'Untitled',
+    ...(rootType ? { rootType: rootType as AgentUserViewPanel['rootType'] } : {}),
+    active: input.active === true,
+    focused: input.focused === true,
+    order: finiteInteger(input.order, 0, 0, 100),
+    childCount: finiteInteger(input.childCount, 0, 0, 100_000),
+    breadcrumb: Array.isArray(input.breadcrumb)
+      ? input.breadcrumb.slice(0, 6).map(normalizeUserViewNode).filter((node): node is AgentUserViewNode => Boolean(node))
+      : [],
+    visibleOutline,
+    visibleOutlineTruncated: input.visibleOutlineTruncated === true,
+  };
+}
+
+function normalizeUserViewNode(input: unknown): AgentUserViewNode | null {
+  if (!isRecord(input)) return null;
+  const nodeId = compactString(input.nodeId, 160);
+  if (!nodeId) return null;
+  return {
+    nodeId,
+    title: compactString(input.title, 160) || 'Untitled',
+    panelId: nullableCompactString(input.panelId, 160),
+    surface: nullableCompactString(input.surface, 80),
+  };
+}
+
+function normalizeUserViewOutlineNode(input: unknown): AgentUserViewOutlineNode | null {
+  if (!isRecord(input)) return null;
+  const nodeId = compactString(input.nodeId, 160);
+  if (!nodeId) return null;
+  const partial = isRecord(input.partial)
+    ? {
+        included: finiteInteger(input.partial.included, 0, 0, 10_000),
+        total: finiteInteger(input.partial.total, 0, 0, 10_000),
+      }
+    : null;
+  return {
+    nodeId,
+    title: compactString(input.title, 240) || 'Untitled',
+    depth: finiteInteger(input.depth, 0, 0, 20),
+    ...(input.focused === true ? { focused: true } : {}),
+    ...(input.collapsed === true ? { collapsed: true } : {}),
+    ...(input.childCount !== undefined ? { childCount: finiteInteger(input.childCount, 0, 0, 100_000) } : {}),
+    ...(partial && partial.total > 0 ? { partial } : {}),
+  };
+}
+
+function formatLocalDateTime(date: Date): string {
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      timeZoneName: 'longOffset',
+    }).format(date);
+  } catch {
+    return date.toString();
+  }
+}
+
+function formatLocalDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function formatUtcOffset(minutesEastOfUtc: number): string {
+  const sign = minutesEastOfUtc >= 0 ? '+' : '-';
+  const absolute = Math.abs(minutesEastOfUtc);
+  const hours = String(Math.floor(absolute / 60)).padStart(2, '0');
+  const minutes = String(absolute % 60).padStart(2, '0');
+  return `UTC${sign}${hours}:${minutes}`;
 }
 
 async function materializeFileAttachment(localRoot: string, attachment: AgentFileAttachmentInput): Promise<AgentFileAttachmentInput> {
@@ -1397,6 +1547,39 @@ function stringOrFallback(value: unknown, fallback: string): string {
   if (typeof value !== 'string') return fallback;
   const trimmed = value.trim();
   return trimmed || fallback;
+}
+
+function nullableCompactString(value: unknown, maxLength: number): string | null {
+  const text = compactString(value, maxLength);
+  return text || null;
+}
+
+function compactString(value: unknown, maxLength: number): string {
+  if (typeof value !== 'string') return '';
+  const compact = value.replace(/\s+/g, ' ').trim();
+  if (!compact) return '';
+  if (compact.length <= maxLength) return compact;
+  return `${compact.slice(0, maxLength).trim()}...`;
+}
+
+function finiteInteger(value: unknown, fallback: number, min: number, max: number): number {
+  const numeric = typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : fallback;
+  return Math.min(max, Math.max(min, numeric));
+}
+
+function outlineReminderText(value: unknown, fallback = ''): string {
+  return compactString(value, 240) || fallback;
+}
+
+function annotationReminderValue(value: string): string {
+  return value.replace(/\s+/g, '_').replace(/%/g, '');
+}
+
+function escapeReminderText(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 function isUserMessage(message: unknown): message is UserMessage {

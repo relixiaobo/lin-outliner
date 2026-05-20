@@ -6,6 +6,7 @@ import type {
   AgentMessageBranchState,
   AgentRuntimeEvent,
   AgentToolResultWithPayloads,
+  AgentUserViewContext,
   AssistantMessage,
   ImageContent,
   TextContent,
@@ -291,12 +292,21 @@ export interface AgentRuntimeClient {
   restoreSession: (sessionId: string) => Promise<AgentSession>;
   createSession: () => Promise<AgentSession>;
   closeSession: (sessionId: string) => Promise<void>;
-  sendMessage: (sessionId: string, message: string, attachments?: AgentMessageAttachmentInput[]) => Promise<void>;
+  sendMessage: (
+    sessionId: string,
+    message: string,
+    attachments?: AgentMessageAttachmentInput[],
+    userViewContext?: AgentUserViewContext | null,
+  ) => Promise<void>;
   editMessage: (sessionId: string, nodeId: string, message: string) => Promise<void>;
   regenerateMessage: (sessionId: string, nodeId: string) => Promise<void>;
   retryMessage: (sessionId: string, nodeId: string) => Promise<void>;
   switchBranch: (sessionId: string, nodeId: string) => Promise<void>;
-  queueFollowUp: (sessionId: string, message: string) => Promise<{ queued: boolean }>;
+  queueFollowUp: (
+    sessionId: string,
+    message: string,
+    userViewContext?: AgentUserViewContext | null,
+  ) => Promise<{ queued: boolean }>;
   clearFollowUp: (sessionId: string) => Promise<void>;
   stopSession: (sessionId: string) => Promise<void>;
   onEvent: (listener: (event: AgentRuntimeEvent) => void) => (() => void) | null;
@@ -318,12 +328,16 @@ export interface LinAgentRuntimeView {
   turnPhase: AgentTurnPhase;
   selectSession: (targetSessionId: string) => Promise<void>;
   newSession: () => Promise<void>;
-  sendMessage: (prompt: string, attachments?: AgentMessageAttachmentInput[]) => Promise<void>;
+  sendMessage: (
+    prompt: string,
+    attachments?: AgentMessageAttachmentInput[],
+    userViewContext?: AgentUserViewContext | null,
+  ) => Promise<void>;
   editMessage: (nodeId: string, prompt: string) => Promise<void>;
   regenerateMessage: (nodeId: string) => Promise<void>;
   retryMessage: (nodeId: string) => Promise<void>;
   switchBranch: (nodeId: string) => Promise<void>;
-  queueFollowUp: (prompt: string) => Promise<boolean>;
+  queueFollowUp: (prompt: string, userViewContext?: AgentUserViewContext | null) => Promise<boolean>;
   clearFollowUp: () => Promise<void>;
   stop: () => void;
   reset: () => void;
@@ -336,12 +350,14 @@ const defaultAgentRuntimeClient: AgentRuntimeClient = {
   restoreSession: (sessionId) => api.agentRestoreSession(sessionId),
   createSession: () => api.agentCreateSession(),
   closeSession: (sessionId) => api.agentCloseSession(sessionId),
-  sendMessage: (sessionId, message, attachments = []) => api.agentSendMessage(sessionId, message, attachments),
+  sendMessage: (sessionId, message, attachments = [], userViewContext = null) =>
+    api.agentSendMessage(sessionId, message, attachments, userViewContext),
   editMessage: (sessionId, nodeId, message) => api.agentEditMessage(sessionId, nodeId, message),
   regenerateMessage: (sessionId, nodeId) => api.agentRegenerateMessage(sessionId, nodeId),
   retryMessage: (sessionId, nodeId) => api.agentRetryMessage(sessionId, nodeId),
   switchBranch: (sessionId, nodeId) => api.agentSwitchBranch(sessionId, nodeId),
-  queueFollowUp: (sessionId, message) => api.agentQueueFollowUp(sessionId, message),
+  queueFollowUp: (sessionId, message, userViewContext = null) =>
+    api.agentQueueFollowUp(sessionId, message, userViewContext),
   clearFollowUp: (sessionId) => api.agentClearFollowUp(sessionId),
   stopSession: (sessionId) => api.agentStopSession(sessionId),
   onEvent: (listener) => typeof window === 'undefined' ? null : window.lin?.onAgentEvent(listener) ?? null,
@@ -408,12 +424,16 @@ export class AgentRuntimeStore {
     }
   };
 
-  sendMessage = async (prompt: string, attachments: AgentMessageAttachmentInput[] = []) => {
+  sendMessage = async (
+    prompt: string,
+    attachments: AgentMessageAttachmentInput[] = [],
+    userViewContext: AgentUserViewContext | null = null,
+  ) => {
     const trimmed = prompt.trim();
     if (!trimmed && attachments.length === 0) return;
     try {
       const currentSessionId = await this.ensureSession();
-      await this.client.sendMessage(currentSessionId, trimmed, attachments);
+      await this.client.sendMessage(currentSessionId, trimmed, attachments, userViewContext);
     } catch (caught) {
       this.reportError(caught);
       throw caught;
@@ -461,12 +481,12 @@ export class AgentRuntimeStore {
     }
   };
 
-  queueFollowUp = async (prompt: string) => {
+  queueFollowUp = async (prompt: string, userViewContext: AgentUserViewContext | null = null) => {
     const trimmed = prompt.trim();
     if (!trimmed) return false;
     try {
       const currentSessionId = await this.ensureSession();
-      const result = await this.client.queueFollowUp(currentSessionId, trimmed);
+      const result = await this.client.queueFollowUp(currentSessionId, trimmed, userViewContext);
       return result.queued;
     } catch (caught) {
       this.reportError(caught);

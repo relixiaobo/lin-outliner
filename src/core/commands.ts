@@ -56,6 +56,7 @@ export const DOCUMENT_COMMANDS = [
   'ensure_tag_search',
   'create_search_node',
   'set_search_node',
+  'refresh_search_node_results',
   'undo',
   'redo',
 ] as const;

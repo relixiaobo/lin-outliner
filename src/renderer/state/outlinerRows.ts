@@ -173,6 +173,7 @@ function buildChildRows(
   for (const childId of parent.children) {
     const child = byId.get(childId);
     if (!child) continue;
+    if (child.type === 'queryCondition') continue;
     if (
       child.type === 'fieldEntry'
       && isHiddenFieldEntry(child, byId)

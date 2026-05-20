@@ -1,5 +1,15 @@
-import { BrowserWindow, session as electronSession, type WebContents } from 'electron';
+import {
+  BrowserWindow,
+  session as electronSession,
+  type Event as ElectronEvent,
+  type WebContents,
+  type WebContentsWillNavigateEventParams,
+  type WebContentsWillRedirectEventParams,
+} from 'electron';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { createNodeTools, type OutlinerToolHost } from './agentNodeTools';
 import { createLocalTools } from './agentLocalTools';
 import {
@@ -15,15 +25,31 @@ import {
   MAX_FETCH_BYTES,
   MAX_FETCH_CHARS,
   MAX_SEARCH_LIMIT,
-  buildWebFetchSuccessEnvelope,
+  WEB_FETCH_BROWSER_TIMEOUT_MS,
+  WEB_FETCH_MAX_REDIRECTS,
+  WEB_FETCH_RENDER_SETTLE_MS,
+  WEB_FETCH_USER_AGENT,
+  buildWebFetchSuccessEnvelopeFromPage,
+  extractFetchedPageContent,
   normalizeWebFetchParams,
   normalizeWebSearchParams,
   type FetchTextResult,
+  type NormalizedWebFetchParams,
+  type WebFetchBinaryFile,
   type WebFetchData,
   type WebSearchData,
   type WebSearchResult,
   type WebToolHint,
 } from './agentWebTools';
+import {
+  assessWebFetchFallback,
+  browserFallbackLooksUseful,
+  detectBrowserChallenge,
+  fallbackHint,
+  isPermittedWebFetchRedirect,
+  shouldTryBrowserFallbackForHttpFailure,
+} from './agentWebFetchFallback';
+import { googleSerpExtractorExpression } from './agentWebSearchSerp';
 
 const GOOGLE_SEARCH_HOME_URL = 'https://www.google.com/';
 const GOOGLE_SEARCH_INPUT_SELECTOR = 'textarea[name="q"], input[name="q"]';
@@ -32,6 +58,7 @@ const WEB_SEARCH_PARTITION = 'persist:web-search';
 const SEARCH_NAV_TIMEOUT_MS = 60_000;
 const SEARCH_RATE_INTERVAL_MS = 3_000;
 const SEARCH_RATE_BURST = 2;
+const HTTP_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 let recentSearchStarts: number[] = [];
 
 const WEB_FETCH_PARAMETERS = {
@@ -134,11 +161,11 @@ export function createAgentTools(outliner?: OutlinerToolHost, options: AgentTool
     ...(outliner ? createNodeTools(outliner) : []),
     ...createLocalTools({ localRoot: options.localFileRoot }),
     createWebSearchTool(),
-    createWebFetchTool(),
+    createWebFetchTool(options.localFileRoot),
   ];
 }
 
-function createWebFetchTool(): AgentTool<any, ToolEnvelope<WebFetchData>> {
+function createWebFetchTool(localRoot?: string): AgentTool<any, ToolEnvelope<WebFetchData>> {
   return {
     name: 'web_fetch',
     label: 'Web Fetch',
@@ -163,28 +190,10 @@ function createWebFetchTool(): AgentTool<any, ToolEnvelope<WebFetchData>> {
 
       const params = normalized.params;
       try {
-        const fetched = await fetchText(params.url, signal);
-        return agentToolResult(buildWebFetchSuccessEnvelope(fetched, params, elapsed(started)));
+        return agentToolResult(await fetchWebFetchEnvelope(params, started, signal, localRoot));
       } catch (error) {
         if (error instanceof WebToolFailure && error.hint) {
-          return agentToolResult(successEnvelope('web_fetch', {
-            url: params.url,
-            finalUrl: error.finalUrl ?? params.url,
-            statusCode: error.statusCode ?? 0,
-            statusText: error.message,
-            contentType: '',
-            byteLength: 0,
-            durationMs: elapsed(started),
-            mode: params.mode,
-            format: params.format,
-            truncated: false,
-            hint: error.hint,
-          }, {
-            instructions: error.hint.type === 'login_required'
-              ? 'Ask the user to sign in to this site, then retry web_fetch.'
-              : 'Use a browser-backed reader path when available, or try another source with web_search.',
-            metrics: { durationMs: elapsed(started) },
-          }));
+          return agentToolResult(webFetchHintEnvelope(params, error, started));
         }
         return agentToolResult(errorEnvelope('web_fetch', classifyWebError(error), errorMessage(error), {
           instructions: 'Retry once if this looks transient. If it still fails, use web_search for another source.',
@@ -193,6 +202,116 @@ function createWebFetchTool(): AgentTool<any, ToolEnvelope<WebFetchData>> {
       }
     },
   };
+}
+
+async function fetchWebFetchEnvelope(
+  params: NormalizedWebFetchParams,
+  started: number,
+  signal?: AbortSignal,
+  localRoot?: string,
+): Promise<ToolEnvelope<WebFetchData>> {
+  try {
+    const fetched = await fetchText(params.url, signal, localRoot);
+    const page = await extractFetchedPageContent(fetched, params);
+    const decision = assessWebFetchFallback(fetched, params, page);
+    if (decision.shouldFallback) {
+      const browserResult = await tryBrowserFallback(params, page, decision, signal);
+      if (browserResult) {
+        return buildWebFetchSuccessEnvelopeFromPage(
+          browserResult.fetched,
+          params,
+          elapsed(started),
+          browserResult.page,
+        );
+      }
+      return buildWebFetchSuccessEnvelopeFromPage(
+        withFetchHint(fetched, fallbackHint(decision.reason)),
+        params,
+        elapsed(started),
+        page,
+      );
+    }
+    return buildWebFetchSuccessEnvelopeFromPage(fetched, params, elapsed(started), page);
+  } catch (error) {
+    if (
+      error instanceof WebToolFailure
+      && shouldTryBrowserFallbackForHttpFailure(error.statusCode, error.hint, params.format)
+    ) {
+      try {
+        const fetched = await fetchTextWithBrowser(params.url, signal);
+        const page = await extractFetchedPageContent(fetched, params);
+        const decision = assessWebFetchFallback(fetched, params, page);
+        return buildWebFetchSuccessEnvelopeFromPage(
+          decision.shouldFallback
+            ? withFetchHint(fetched, fallbackHint(decision.reason))
+            : fetched,
+          params,
+          elapsed(started),
+          page,
+        );
+      } catch (browserError) {
+        if (browserError instanceof WebToolFailure && browserError.hint) {
+          throw browserError;
+        }
+      }
+    }
+    throw error;
+  }
+}
+
+async function tryBrowserFallback(
+  params: NormalizedWebFetchParams,
+  httpPage: Awaited<ReturnType<typeof extractFetchedPageContent>>,
+  httpDecision: ReturnType<typeof assessWebFetchFallback>,
+  signal?: AbortSignal,
+): Promise<{ fetched: FetchTextResult; page: Awaited<ReturnType<typeof extractFetchedPageContent>> } | null> {
+  try {
+    const browserFetched = await fetchTextWithBrowser(params.url, signal);
+    const browserPage = await extractFetchedPageContent(browserFetched, params);
+    const browserDecision = assessWebFetchFallback(browserFetched, params, browserPage);
+    if (!browserFallbackLooksUseful(httpPage, browserPage, httpDecision, browserDecision, params)) {
+      return null;
+    }
+    return {
+      fetched: browserDecision.shouldFallback
+        ? withFetchHint(browserFetched, fallbackHint(browserDecision.reason))
+        : browserFetched,
+      page: browserPage,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function webFetchHintEnvelope(
+  params: NormalizedWebFetchParams,
+  error: WebToolFailure,
+  started: number,
+): ToolEnvelope<WebFetchData> {
+  return successEnvelope('web_fetch', {
+    url: params.url,
+    finalUrl: error.finalUrl ?? params.url,
+    statusCode: error.statusCode ?? 0,
+    statusText: error.message,
+    contentType: '',
+    byteLength: 0,
+    durationMs: elapsed(started),
+    mode: params.mode,
+    format: params.format,
+    truncated: false,
+    hint: error.hint,
+  }, {
+    instructions: error.hint?.type === 'login_required'
+      ? 'Ask the user to sign in to this site, then retry web_fetch.'
+      : error.hint?.type === 'redirected_host'
+        ? 'Call web_fetch again with finalUrl if you trust and need the redirected host.'
+        : 'Use another source with web_search, or retry after clearing site verification in a browser.',
+    metrics: { durationMs: elapsed(started) },
+  });
+}
+
+function withFetchHint(fetched: FetchTextResult, hint: WebToolHint | undefined): FetchTextResult {
+  return hint ? { ...fetched, hint } : fetched;
 }
 
 function createWebSearchTool(): AgentTool<any, ToolEnvelope<WebSearchData>> {
@@ -292,7 +411,7 @@ function createWebSearchTool(): AgentTool<any, ToolEnvelope<WebSearchData>> {
   };
 }
 
-async function fetchText(url: string, signal?: AbortSignal): Promise<FetchTextResult> {
+async function fetchText(url: string, signal?: AbortSignal, localRoot?: string): Promise<FetchTextResult> {
   const startedUrl = url;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort('timeout'), FETCH_TIMEOUT_MS);
@@ -300,69 +419,7 @@ async function fetchText(url: string, signal?: AbortSignal): Promise<FetchTextRe
   signal?.addEventListener('abort', onAbort, { once: true });
 
   try {
-    const response = await electronSession.defaultSession.fetch(url, {
-      method: 'GET',
-      redirect: 'follow',
-      signal: controller.signal,
-      headers: {
-        'user-agent': 'Lin Outliner/0.1 web_fetch',
-        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,application/json;q=0.8,*/*;q=0.4',
-        'accept-language': 'en-US,en;q=0.9',
-      },
-    });
-
-    const finalUrl = response.url || url;
-    if (response.status === 401) {
-      throw new WebToolFailure('http_401', `authentication required for ${originOf(finalUrl)}`, {
-        finalUrl,
-        statusCode: response.status,
-        hint: {
-          type: 'login_required',
-          origin: originOf(finalUrl),
-          detectedVia: 'http_401',
-        },
-      });
-    }
-    if (!response.ok) {
-      throw new WebToolFailure('http_error', `HTTP ${response.status} ${response.statusText || ''}`.trim(), {
-        finalUrl,
-        statusCode: response.status,
-        hint: { type: 'needs_browser', reason: 'http_error' },
-      });
-    }
-
-    const contentType = response.headers.get('content-type') ?? '';
-    if (isBinaryContentType(contentType)) {
-      throw new WebToolFailure('binary_unsupported', `binary content is not supported: ${contentType}`);
-    }
-
-    const contentLength = Number(response.headers.get('content-length') ?? 0);
-    if (Number.isFinite(contentLength) && contentLength > MAX_FETCH_BYTES) {
-      throw new WebToolFailure('response_too_large', `response exceeds ${MAX_FETCH_BYTES} bytes`);
-    }
-
-    const bodyResult = await readBoundedText(response, MAX_FETCH_BYTES);
-    const startedHost = hostOf(startedUrl);
-    const finalHost = hostOf(finalUrl);
-    const redirectedHostHint = startedHost && finalHost && startedHost !== finalHost
-      ? {
-          type: 'redirected_host' as const,
-          originalUrl: startedUrl,
-          finalUrl,
-          finalHost,
-        }
-      : undefined;
-
-    return {
-      requestedUrl: startedUrl,
-      finalUrl,
-      statusCode: response.status,
-      statusText: response.statusText,
-      contentType,
-      byteLength: bodyResult.bytes,
-      body: bodyResult.text,
-      redirectedHostHint,
-    };
+    return await fetchTextWithPermittedRedirects(startedUrl, startedUrl, controller.signal, localRoot);
   } catch (error) {
     if (error instanceof WebToolFailure) throw error;
     if (controller.signal.aborted) {
@@ -378,12 +435,140 @@ async function fetchText(url: string, signal?: AbortSignal): Promise<FetchTextRe
   }
 }
 
+async function fetchTextWithPermittedRedirects(
+  currentUrl: string,
+  startedUrl: string,
+  signal: AbortSignal,
+  localRoot?: string,
+  depth = 0,
+): Promise<FetchTextResult> {
+  if (depth > WEB_FETCH_MAX_REDIRECTS) {
+    throw new WebToolFailure('too_many_redirects', `too many redirects; exceeded ${WEB_FETCH_MAX_REDIRECTS}`);
+  }
+
+  const response = await electronSession.defaultSession.fetch(currentUrl, {
+    method: 'GET',
+    redirect: 'manual',
+    signal,
+    headers: {
+      'user-agent': WEB_FETCH_USER_AGENT,
+      accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,application/json;q=0.8,*/*;q=0.4',
+      'accept-language': 'en-US,en;q=0.9',
+    },
+  });
+
+  if (HTTP_REDIRECT_STATUSES.has(response.status)) {
+    const redirectUrl = resolveRedirectUrl(currentUrl, response.headers.get('location'));
+    if (!redirectUrl) {
+      throw new WebToolFailure('invalid_redirect', `HTTP ${response.status} redirect is missing a valid Location header`, {
+        finalUrl: currentUrl,
+        statusCode: response.status,
+      });
+    }
+    if (isPermittedWebFetchRedirect(currentUrl, redirectUrl)) {
+      return await fetchTextWithPermittedRedirects(redirectUrl, startedUrl, signal, localRoot, depth + 1);
+    }
+    throw redirectedHostFailure(startedUrl, redirectUrl, response.status);
+  }
+
+  const finalUrl = response.url || currentUrl;
+  const contentType = response.headers.get('content-type') ?? '';
+  if (response.status === 401) {
+    throw new WebToolFailure('http_401', `authentication required for ${originOf(finalUrl)}`, {
+      finalUrl,
+      statusCode: response.status,
+      hint: {
+        type: 'login_required',
+        origin: originOf(finalUrl),
+        detectedVia: 'http_401',
+      },
+    });
+  }
+  if (!response.ok) {
+    const body = await readSmallErrorBody(response, contentType);
+    const reason = detectBrowserChallenge(body, finalUrl, response.statusText) ?? 'http_error';
+    throw new WebToolFailure('http_error', `HTTP ${response.status} ${response.statusText || ''}`.trim(), {
+      finalUrl,
+      statusCode: response.status,
+      hint: { type: 'needs_browser', reason },
+    });
+  }
+
+  const contentLength = Number(response.headers.get('content-length') ?? 0);
+  if (Number.isFinite(contentLength) && contentLength > MAX_FETCH_BYTES) {
+    throw new WebToolFailure('response_too_large', `response exceeds ${MAX_FETCH_BYTES} bytes`);
+  }
+
+  const bytesResult = await readBoundedBytes(response, MAX_FETCH_BYTES);
+  if (isBinaryContentType(contentType)) {
+    const binaryFile = await persistWebFetchBinary(bytesResult.bytes, contentType, finalUrl, localRoot);
+    return {
+      requestedUrl: startedUrl,
+      finalUrl,
+      statusCode: response.status,
+      statusText: response.statusText,
+      contentType,
+      byteLength: bytesResult.byteLength,
+      body: '',
+      binaryFile,
+    };
+  }
+  const body = new TextDecoder('utf-8', { fatal: false }).decode(bytesResult.bytes);
+  return {
+    requestedUrl: startedUrl,
+    finalUrl,
+    statusCode: response.status,
+    statusText: response.statusText,
+    contentType,
+    byteLength: bytesResult.byteLength,
+    body,
+  };
+}
+
+function resolveRedirectUrl(baseUrl: string, location: string | null): string | null {
+  if (!location) return null;
+  try {
+    return new URL(location, baseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+function redirectedHostFailure(startedUrl: string, redirectUrl: string, statusCode: number): WebToolFailure {
+  return new WebToolFailure('redirected_host', `redirected to a different host: ${redirectUrl}`, {
+    finalUrl: redirectUrl,
+    statusCode,
+    hint: {
+      type: 'redirected_host',
+      originalUrl: startedUrl,
+      finalUrl: redirectUrl,
+      finalHost: hostOf(redirectUrl) ?? redirectUrl,
+    },
+  });
+}
+
+async function readSmallErrorBody(response: Response, contentType: string): Promise<string> {
+  if (isBinaryContentType(contentType)) return '';
+  try {
+    return (await readBoundedText(response, Math.min(MAX_FETCH_BYTES, 512 * 1024))).text;
+  } catch {
+    return '';
+  }
+}
+
 async function readBoundedText(response: Response, maxBytes: number): Promise<{ text: string; bytes: number }> {
-  if (!response.body) return { text: '', bytes: 0 };
+  const result = await readBoundedBytes(response, maxBytes);
+  return {
+    text: new TextDecoder('utf-8', { fatal: false }).decode(result.bytes),
+    bytes: result.byteLength,
+  };
+}
+
+async function readBoundedBytes(response: Response, maxBytes: number): Promise<{ bytes: Uint8Array; byteLength: number }> {
+  if (!response.body) return { bytes: new Uint8Array(), byteLength: 0 };
   const reader = response.body.getReader();
-  const decoder = new TextDecoder('utf-8', { fatal: false });
   let total = 0;
-  let text = '';
+  const chunks: Uint8Array[] = [];
 
   while (true) {
     const { value, done } = await reader.read();
@@ -398,11 +583,221 @@ async function readBoundedText(response: Response, maxBytes: number): Promise<{ 
       }
       throw new WebToolFailure('response_too_large', `response exceeds ${maxBytes} bytes`);
     }
-    text += decoder.decode(value, { stream: true });
+    chunks.push(value);
   }
 
-  text += decoder.decode();
-  return { text, bytes: total };
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { bytes, byteLength: total };
+}
+
+async function persistWebFetchBinary(
+  bytes: Uint8Array,
+  contentType: string,
+  finalUrl: string,
+  localRoot?: string,
+): Promise<WebFetchBinaryFile> {
+  const mimeType = normalizeMimeType(contentType);
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  const extension = binaryExtension(mimeType, finalUrl);
+  const filePath = path.join(webFetchOutputDir(localRoot), `webfetch-${Date.now()}-${randomUUID()}${extension}`);
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, bytes);
+  return {
+    filePath,
+    mimeType,
+    byteLength: bytes.byteLength,
+    sha256,
+  };
+}
+
+function webFetchOutputDir(localRoot?: string): string {
+  return path.join(localRoot ?? process.cwd(), 'tmp', 'agent-web-fetch');
+}
+
+function normalizeMimeType(contentType: string): string {
+  const mimeType = contentType.split(';')[0]?.trim().toLowerCase();
+  return mimeType || 'application/octet-stream';
+}
+
+function binaryExtension(mimeType: string, finalUrl: string): string {
+  const urlExtension = extensionFromUrl(finalUrl);
+  if (urlExtension) return urlExtension;
+  switch (mimeType) {
+    case 'application/pdf':
+      return '.pdf';
+    case 'image/png':
+      return '.png';
+    case 'image/jpeg':
+    case 'image/jpg':
+      return '.jpg';
+    case 'image/gif':
+      return '.gif';
+    case 'image/webp':
+      return '.webp';
+    case 'image/svg+xml':
+      return '.svg';
+    case 'application/zip':
+      return '.zip';
+    case 'application/gzip':
+      return '.gz';
+    case 'application/x-tar':
+      return '.tar';
+    default:
+      return '.bin';
+  }
+}
+
+function extensionFromUrl(finalUrl: string): string {
+  try {
+    const ext = path.extname(new URL(finalUrl).pathname).toLowerCase();
+    return /^[.][a-z0-9]{1,12}$/.test(ext) ? ext : '';
+  } catch {
+    return '';
+  }
+}
+
+async function fetchTextWithBrowser(url: string, signal?: AbortSignal): Promise<FetchTextResult> {
+  const window = createWebFetchWindow();
+  let blockedNavigation: WebToolFailure | null = null;
+  let rejectBlockedNavigation: ((failure: WebToolFailure) => void) | undefined;
+  const blockedNavigationPromise = new Promise<never>((_resolve, reject) => {
+    rejectBlockedNavigation = reject;
+  });
+  const blockCrossHostNavigation = (targetUrl: string, event: { preventDefault(): void }) => {
+    if (isPermittedWebFetchRedirect(url, targetUrl)) return;
+    blockedNavigation = redirectedHostFailure(url, targetUrl, 0);
+    event.preventDefault();
+    try {
+      window.webContents.stop();
+    } catch {
+      // no-op
+    }
+    rejectBlockedNavigation?.(blockedNavigation);
+  };
+  const onWillRedirect = (
+    event: ElectronEvent<WebContentsWillRedirectEventParams>,
+    redirectUrl: string,
+    _isInPlace: boolean,
+    isMainFrame: boolean,
+  ) => {
+    if (!isMainFrame) return;
+    blockCrossHostNavigation(event.url || redirectUrl, event);
+  };
+  const onWillNavigate = (
+    event: ElectronEvent<WebContentsWillNavigateEventParams>,
+    navigateUrl: string,
+    _isInPlace: boolean,
+    isMainFrame: boolean,
+  ) => {
+    if (!isMainFrame) return;
+    blockCrossHostNavigation(event.url || navigateUrl, event);
+  };
+  const onAbort = () => {
+    try {
+      if (!window.isDestroyed()) {
+        window.webContents.stop();
+        window.destroy();
+      }
+    } catch {
+      // no-op
+    }
+  };
+
+  signal?.addEventListener('abort', onAbort, { once: true });
+  window.webContents.on('will-redirect', onWillRedirect);
+  window.webContents.on('will-navigate', onWillNavigate);
+
+  try {
+    await Promise.race([
+      navigateAndWait(window.webContents, url, {
+        timeoutMs: WEB_FETCH_BROWSER_TIMEOUT_MS,
+        signal,
+      }),
+      blockedNavigationPromise,
+    ]);
+    if (blockedNavigation) throw blockedNavigation;
+    await waitForRenderedPageSettled(window.webContents, signal);
+    const payload = await safeExecuteJs<{ html: string; text: string; title: string }>(
+      window.webContents,
+      `({
+        html: document.documentElement ? document.documentElement.outerHTML : "",
+        text: document.body ? document.body.innerText : "",
+        title: document.title || "",
+      })`,
+    );
+    if (!payload?.html) {
+      throw new WebToolFailure('extraction_failed', 'browser-rendered page did not expose HTML');
+    }
+    const finalUrl = window.webContents.getURL() || url;
+    const finalHost = hostOf(finalUrl);
+    const startedHost = hostOf(url);
+    if (startedHost && finalHost && !isPermittedWebFetchRedirect(url, finalUrl)) {
+      throw redirectedHostFailure(url, finalUrl, 0);
+    }
+    return {
+      requestedUrl: url,
+      finalUrl,
+      statusCode: 200,
+      statusText: 'OK',
+      contentType: 'text/html; charset=utf-8',
+      byteLength: Buffer.byteLength(payload.html, 'utf8'),
+      body: payload.html,
+    };
+  } catch (error) {
+    if (blockedNavigation) throw blockedNavigation;
+    throw error;
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+    window.webContents.off('will-redirect', onWillRedirect);
+    window.webContents.off('will-navigate', onWillNavigate);
+    if (!window.isDestroyed()) {
+      window.destroy();
+    }
+  }
+}
+
+async function waitForRenderedPageSettled(webContents: WebContents, signal?: AbortSignal): Promise<void> {
+  const started = Date.now();
+  let previousLength = -1;
+  let stableTicks = 0;
+  while (Date.now() - started < WEB_FETCH_RENDER_SETTLE_MS) {
+    if (signal?.aborted) throw new WebToolFailure('aborted', 'request aborted');
+    const state = await safeExecuteJs<{ readyState: string; textLength: number }>(
+      webContents,
+      `({
+        readyState: document.readyState,
+        textLength: document.body ? document.body.innerText.replace(/\\s+/g, " ").trim().length : 0,
+      })`,
+    );
+    const textLength = state?.textLength ?? 0;
+    const stable = previousLength >= 0 && Math.abs(textLength - previousLength) < 20;
+    stableTicks = state?.readyState === 'complete' && stable ? stableTicks + 1 : 0;
+    if (stableTicks >= 3 && (textLength > 0 || Date.now() - started > 1_000)) return;
+    previousLength = textLength;
+    await delay(250, signal);
+  }
+}
+
+function createWebFetchWindow(): BrowserWindow {
+  return new BrowserWindow({
+    x: -20_000,
+    y: -20_000,
+    width: 1280,
+    height: 900,
+    show: false,
+    title: 'Lin Outliner Web Fetch',
+    webPreferences: {
+      session: electronSession.defaultSession,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
 }
 
 type GoogleSearchOutcome =
@@ -642,64 +1037,6 @@ async function gentlyScrollSearchResults(webContents: WebContents): Promise<void
       })
     `,
   );
-}
-
-function googleSerpExtractorExpression(): string {
-  return `
-    (() => {
-      const root = document.querySelector("#search") || document.querySelector("#rso") || document;
-      const seen = new Set();
-      const results = [];
-      const normalizeHref = (href) => {
-        if (!href) return null;
-        try {
-          const url = new URL(href, "https://www.google.com");
-          if (url.pathname === "/url") {
-            return url.searchParams.get("q") || url.searchParams.get("url");
-          }
-          if (url.protocol === "http:" || url.protocol === "https:") return url.toString();
-        } catch {
-          return null;
-        }
-        return null;
-      };
-      const textOf = (node) => (node?.innerText || node?.textContent || "").replace(/\\s+/g, " ").trim();
-      for (const h3 of Array.from(root.querySelectorAll("h3"))) {
-        if (results.length >= ${MAX_SEARCH_LIMIT}) break;
-        const anchor = h3.closest("a");
-        const url = normalizeHref(anchor?.getAttribute("href"));
-        if (!url || seen.has(url)) continue;
-        try {
-          const parsed = new URL(url);
-          if (/(^|\\.)google\\.[a-z.]+$/i.test(parsed.hostname)) continue;
-          if (/(googleusercontent|webcache\\.googleusercontent|translate\\.google)/i.test(parsed.hostname)) continue;
-        } catch {
-          continue;
-        }
-        const title = textOf(h3);
-        if (!title) continue;
-        const container = anchor.closest("div");
-        const fullText = textOf(container);
-        const anchorText = textOf(anchor);
-        const remaining = anchorText && fullText.startsWith(anchorText)
-          ? fullText.slice(anchorText.length).trim()
-          : fullText;
-        seen.add(url);
-        results.push({
-          title,
-          url,
-          snippet: remaining.length > 400 ? remaining.slice(0, 400).trim() + "..." : remaining,
-          source: (() => {
-            try { return new URL(url).host; } catch { return undefined; }
-          })(),
-        });
-      }
-      return {
-        htmlLength: document.documentElement?.outerHTML?.length || 0,
-        results,
-      };
-    })()
-  `;
 }
 
 function looksLikeSearchVerificationChallenge(html: string, finalUrl: string, title = '', text = ''): boolean {

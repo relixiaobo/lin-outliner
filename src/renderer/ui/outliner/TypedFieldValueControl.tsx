@@ -1,10 +1,11 @@
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import { api } from '../../api/client';
 import type { FieldType, NodeProjection } from '../../api/types';
-import { plainText } from '../../api/types';
+import { normalizeDateFieldValue, plainText } from '../../api/types';
 import { CheckboxMark } from '../primitives/CheckboxMark';
 import { SwitchMark } from '../primitives/SwitchMark';
 import type { CommandRunner } from '../shared';
+import { DateFieldControl } from './DateFieldControl';
 
 interface TypedFieldValueControlProps {
   entryId: string;
@@ -73,6 +74,16 @@ export function TypedFieldValueControl({
     );
   }
 
+  if (fieldType === 'date') {
+    return (
+      <DateFieldControl
+        value={value}
+        placeholder={placeholder}
+        commit={commit}
+      />
+    );
+  }
+
   const inputType = inputTypeForField(fieldType);
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter') {
@@ -114,7 +125,6 @@ export function TypedFieldValueControl({
 }
 
 function inputTypeForField(fieldType: FieldType) {
-  if (fieldType === 'date') return 'date';
   if (fieldType === 'number') return 'number';
   if (fieldType === 'url') return 'url';
   if (fieldType === 'email') return 'email';
@@ -124,6 +134,7 @@ function inputTypeForField(fieldType: FieldType) {
 
 function normalizeValue(fieldType: FieldType, value: string) {
   const normalized = value.trim();
+  if (fieldType === 'date') return normalizeDateFieldValue(normalized);
   if (fieldType === 'number' && normalized && !Number.isFinite(Number(normalized))) return '';
   return normalized;
 }

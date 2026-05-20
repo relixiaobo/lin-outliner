@@ -1,17 +1,35 @@
 import { describe, expect, test } from 'bun:test';
-import { LIN_AGENT_SYSTEM_PROMPT } from '../../src/main/agentSystemPrompt';
+import { LIN_AGENT_SYSTEM_PROMPT, LIN_AGENT_SYSTEM_PROMPT_SECTIONS } from '../../src/main/agentSystemPrompt';
 
 describe('agent system prompt', () => {
+  test('is organized as stable lightweight sections', () => {
+    expect(LIN_AGENT_SYSTEM_PROMPT_SECTIONS.map((section) => section.id)).toEqual([
+      'identity',
+      'system-context',
+      'outliner',
+      'local-tools',
+      'web',
+      'communication-and-safety',
+    ]);
+    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('# Outliner');
+    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('# Web');
+    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('# Working in Lin Outliner');
+    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('Lin Outliner');
+  });
+
   test('defines Lin-specific behavior and tool boundaries', () => {
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('Lin Agent');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('local-first outliner');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('<system-reminder>');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('node_read');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('node_edit');
+    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('YYYY-MM-DDTHH:mm');
+    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('Do not use ".." for date ranges');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('file_read');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('file_edit');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('web_search');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('web_fetch');
+    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('Text attachments are included');
   });
 
   test('keeps dynamic state out of the stable prompt', () => {

@@ -54,7 +54,24 @@ describe('agent web tools', () => {
     expect(params.mode).toBe('read');
   });
 
-  test('builds read-mode paginated fetch envelopes', () => {
+  test('rejects web_fetch URLs with credentials or local hosts', () => {
+    const credentialUrl = normalizeWebFetchParams({ url: 'https://user:pass@example.com/docs' });
+    expect(credentialUrl.ok).toBe(false);
+    if (credentialUrl.ok) throw new Error('Expected credential URL rejection');
+    expect(credentialUrl.message).toContain('username or password');
+
+    const localhostUrl = normalizeWebFetchParams({ url: 'https://localhost/docs' });
+    expect(localhostUrl.ok).toBe(false);
+    if (localhostUrl.ok) throw new Error('Expected localhost URL rejection');
+    expect(localhostUrl.message).toContain('local host');
+
+    const privateUrl = normalizeWebFetchParams({ url: 'https://192.168.1.10/docs' });
+    expect(privateUrl.ok).toBe(false);
+    if (privateUrl.ok) throw new Error('Expected private IP URL rejection');
+    expect(privateUrl.message).toContain('private or local IPv4');
+  });
+
+  test('builds read-mode paginated fetch envelopes', async () => {
     const body = 'alpha beta gamma delta epsilon';
     const params = expectParams(normalizeWebFetchParams({
       url: 'https://example.com/docs/page',
@@ -62,7 +79,7 @@ describe('agent web tools', () => {
       max_chars: 11,
     }));
 
-    const envelope = buildWebFetchSuccessEnvelope(fetchedText(body, 'text/plain'), params, 5);
+    const envelope = await buildWebFetchSuccessEnvelope(fetchedText(body, 'text/plain'), params, 5);
 
     expect(envelope.ok).toBe(true);
     expect(envelope.tool).toBe('web_fetch');
@@ -79,7 +96,7 @@ describe('agent web tools', () => {
     expect(envelope.metrics?.truncated).toBe(true);
   });
 
-  test('builds find-mode match pagination envelopes', () => {
+  test('builds find-mode match pagination envelopes', async () => {
     const params = expectParams(normalizeWebFetchParams({
       url: 'https://example.com/docs/page',
       format: 'text',
@@ -88,7 +105,7 @@ describe('agent web tools', () => {
       head_limit: 2,
     }));
 
-    const envelope = buildWebFetchSuccessEnvelope(
+    const envelope = await buildWebFetchSuccessEnvelope(
       fetchedText('alpha beta gamma beta delta beta', 'text/plain'),
       params,
       8,
@@ -108,7 +125,7 @@ describe('agent web tools', () => {
     expect(envelope.metrics?.truncated).toBe(true);
   });
 
-  test('builds metadata-mode envelopes and remains pi-agent-core result compatible', () => {
+  test('builds metadata-mode envelopes and remains pi-agent-core result compatible', async () => {
     const html = [
       '<!doctype html><html lang="en"><head>',
       '<title>Lin Docs</title>',
@@ -125,7 +142,7 @@ describe('agent web tools', () => {
       format: 'metadata',
     }));
 
-    const envelope = buildWebFetchSuccessEnvelope(fetchedText(html), params, 12);
+    const envelope = await buildWebFetchSuccessEnvelope(fetchedText(html), params, 12);
     const result = agentToolResult(envelope);
     const visible = JSON.parse(result.content[0]!.type === 'text' ? result.content[0]!.text : '{}');
 
@@ -152,5 +169,67 @@ describe('agent web tools', () => {
     });
     expect(visible.version).toBeUndefined();
     expect(envelope.data!.content).toBeUndefined();
+  });
+
+  test('uses Defuddle to extract readable page content before paginating', async () => {
+    const html = [
+      '<!doctype html><html lang="en"><head>',
+      '<title>Clean Article - Example</title>',
+      '<meta name="description" content="Readable content">',
+      '</head><body>',
+      '<nav>Home Pricing Login Account Settings</nav>',
+      '<main><article>',
+      '<h1>Clean Article</h1>',
+      '<p>Alpha article paragraph with beta detail that belongs in the readable result.</p>',
+      '<p>Second paragraph with enough context for extraction.</p>',
+      '</article></main>',
+      '<aside>Related links and promotional navigation should not be part of the article body.</aside>',
+      '</body></html>',
+    ].join('');
+    const params = expectParams(normalizeWebFetchParams({
+      url: 'https://example.com/docs/page',
+      format: 'markdown',
+    }));
+
+    const envelope = await buildWebFetchSuccessEnvelope(fetchedText(html), params, 15);
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data!.content).toContain('Alpha article paragraph');
+    expect(envelope.data!.content).not.toContain('Home Pricing Login');
+    expect(envelope.data!.content).not.toContain('promotional navigation');
+  });
+
+  test('returns persisted binary metadata without decoding bytes into content', async () => {
+    const params = expectParams(normalizeWebFetchParams({
+      url: 'https://example.com/docs/file.pdf',
+      format: 'markdown',
+    }));
+    const fetched: FetchTextResult = {
+      ...fetchedText('', 'application/pdf'),
+      finalUrl: 'https://example.com/docs/file.pdf',
+      byteLength: 1234,
+      binaryFile: {
+        filePath: '/tmp/agent-web-fetch/webfetch-test.pdf',
+        mimeType: 'application/pdf',
+        byteLength: 1234,
+        sha256: 'a'.repeat(64),
+      },
+    };
+
+    const envelope = await buildWebFetchSuccessEnvelope(fetched, params, 9);
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data).toMatchObject({
+      mode: 'read',
+      format: 'markdown',
+      content: 'Binary content saved to /tmp/agent-web-fetch/webfetch-test.pdf. Use file_read on this path when you need to inspect supported files such as PDFs or images.',
+      binaryFile: {
+        filePath: '/tmp/agent-web-fetch/webfetch-test.pdf',
+        mimeType: 'application/pdf',
+        byteLength: 1234,
+      },
+      truncated: false,
+    });
+    expect(envelope.instructions).toContain('file_read');
   });
 });
