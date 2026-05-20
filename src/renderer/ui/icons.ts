@@ -70,7 +70,7 @@ export {
   Rows3 as GroupIcon,
   Search as SearchIcon,
   Settings as SettingsIcon,
-  Sparkles as AgentIcon,
+  Bot as AgentIcon,
   Sigma as FormulaIcon,
   Square as StopIcon,
   Strikethrough as StrikeIcon,

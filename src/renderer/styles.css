@@ -467,6 +467,64 @@ button:focus-visible {
   opacity: 1;
 }
 
+.top-chrome-more-menu {
+  z-index: var(--z-popover);
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  padding: var(--space-3);
+  -webkit-app-region: no-drag;
+}
+
+.top-chrome-more-item {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  border-radius: var(--radius-control-md);
+  color: var(--text-soft);
+  cursor: pointer;
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  padding: 0 var(--space-4);
+  text-align: left;
+}
+
+.top-chrome-more-item:hover:not(:disabled),
+.top-chrome-more-item:focus-visible:not(:disabled) {
+  background: var(--control-hover);
+  color: var(--text-strong);
+}
+
+.top-chrome-more-item:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+.top-chrome-more-item-icon {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  color: currentColor;
+}
+
+.top-chrome-more-item-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .tab-strip {
   gap: var(--space-3);
   overflow: hidden;

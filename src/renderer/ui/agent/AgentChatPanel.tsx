@@ -27,7 +27,6 @@ import {
   ICON_SIZE,
   NewConversationIcon,
   PencilIcon,
-  SettingsIcon,
   TrashIcon,
   WarningIcon,
 } from '../icons';
@@ -51,6 +50,8 @@ const TRANSCRIPT_VIRTUAL_OVERSCAN_PX = 720;
 
 interface AgentChatPanelProps {
   onOpenDebugPanel?: (sessionId: string | null) => void;
+  onProviderSettingsOpenChange?: (open: boolean) => void;
+  providerSettingsOpen?: boolean;
 }
 
 function shouldStickToBottom(element: HTMLDivElement): boolean {
@@ -422,7 +423,11 @@ function AgentTranscriptRowShell({
   );
 }
 
-export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
+export function AgentChatPanel({
+  onOpenDebugPanel,
+  onProviderSettingsOpenChange,
+  providerSettingsOpen = false,
+}: AgentChatPanelProps) {
   const {
     entries,
     error,
@@ -445,7 +450,6 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
     toolResults,
     turnPhase,
   } = useLinAgentRuntime();
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [providerSettings, setProviderSettings] = useState<AgentProviderSettingsView | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [steeringNote, setSteeringNote] = useState<string | null>(null);
@@ -745,6 +749,7 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
 
   const visibleError = error ?? settingsError;
   const displayTitle = sessionTitle || 'conversation';
+  const settingsDialogOpen = providerSettingsOpen;
   const historyMenuStyle = useAnchoredOverlay(historyMenuRef, {
     anchorRef: historyButtonRef,
     disabled: !historyOpen,
@@ -787,14 +792,6 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
             label="Open agent debug"
             onClick={() => onOpenDebugPanel?.(sessionId)}
             title="Open agent debug"
-            variant="composerTool"
-          />
-          <IconButton
-            className="agent-menu-button"
-            icon={SettingsIcon}
-            label="Agent settings"
-            onClick={() => setSettingsOpen(true)}
-            title="Agent settings"
             variant="composerTool"
           />
         </div>
@@ -973,8 +970,10 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
       />
       <AgentSettingsDialog
         onApplied={applySettingsDialogChanges}
-        onClose={() => setSettingsOpen(false)}
-        open={settingsOpen}
+        onClose={() => {
+          onProviderSettingsOpenChange?.(false);
+        }}
+        open={settingsDialogOpen}
       />
     </div>
   );

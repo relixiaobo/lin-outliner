@@ -1,4 +1,5 @@
-import type { CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import {
   MAC_TRAFFIC_LIGHT_POSITION,
   MAC_TRAFFIC_LIGHT_SIZE,
@@ -7,13 +8,19 @@ import {
   AddIcon,
   AgentIcon,
   BackIcon,
+  ColorIcon,
   ForwardIcon,
   ICON_SIZE,
+  MoreIcon,
+  SettingsIcon,
   SidebarCollapseIcon,
   SidebarExpandIcon,
-  UserIcon,
 } from './icons';
 import { IconButton } from './primitives/IconButton';
+import { ButtonControl } from './primitives/ButtonControl';
+import { MenuItem } from './primitives/MenuItem';
+import { MenuSurface } from './primitives/MenuSurface';
+import { useAnchoredOverlay } from './primitives/useAnchoredOverlay';
 import { WorkspaceTab, type WorkspaceTabModel } from './WorkspaceTab';
 
 export type TopBarTab = WorkspaceTabModel;
@@ -29,6 +36,8 @@ interface TopBarProps {
   onCloseTab: (tabId: string) => void;
   onNavigateBack: () => void;
   onNavigateForward: () => void;
+  onOpenAppearanceSettings?: () => void;
+  onOpenProviderSettings: () => void;
   onSelectTab: (tabId: string, panelId?: string) => void;
   onToggleAgent: () => void;
   onToggleSidebar: () => void;
@@ -46,6 +55,48 @@ const topChromeStyle: TopChromeStyle = {
 };
 
 export function TopBar(props: TopBarProps) {
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+  const moreMenuStyle = useAnchoredOverlay(moreMenuRef, {
+    anchorRef: moreButtonRef,
+    disabled: !moreOpen,
+    placement: 'bottom-end',
+    width: 220,
+  });
+
+  useEffect(() => {
+    if (!moreOpen) return undefined;
+
+    const closeOnPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && moreButtonRef.current?.contains(target)) return;
+      if (target instanceof Node && moreMenuRef.current?.contains(target)) return;
+      setMoreOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMoreOpen(false);
+    };
+
+    document.addEventListener('pointerdown', closeOnPointerDown, true);
+    document.addEventListener('keydown', closeOnEscape, true);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnPointerDown, true);
+      document.removeEventListener('keydown', closeOnEscape, true);
+    };
+  }, [moreOpen]);
+
+  const openProviderSettings = () => {
+    setMoreOpen(false);
+    props.onOpenProviderSettings();
+  };
+
+  const openAppearanceSettings = () => {
+    if (!props.onOpenAppearanceSettings) return;
+    setMoreOpen(false);
+    props.onOpenAppearanceSettings();
+  };
+
   return (
     <header
       className="top-chrome"
@@ -103,20 +154,56 @@ export function TopBar(props: TopBarProps) {
 
       <div className="top-chrome-right" aria-label="Global actions">
         <IconButton
-          aria-pressed={props.agentOpen}
           className="top-chrome-icon-button"
           icon={AgentIcon}
           label={props.agentOpen ? 'Collapse agent' : 'Expand agent'}
           onClick={props.onToggleAgent}
           title={props.agentOpen ? 'Collapse agent' : 'Expand agent'}
         />
-        <IconButton
-          className="top-chrome-icon-button"
-          disabled
-          icon={UserIcon}
-          label="Account"
-        />
+        <ButtonControl
+          ref={moreButtonRef}
+          aria-expanded={moreOpen}
+          aria-haspopup="menu"
+          aria-label="More"
+          className="icon-button icon-button-chrome top-chrome-icon-button"
+          onClick={() => setMoreOpen((open) => !open)}
+          title="More"
+        >
+          <MoreIcon size={ICON_SIZE.toolbar} />
+        </ButtonControl>
       </div>
+
+      {moreOpen ? createPortal(
+        <MenuSurface
+          ref={moreMenuRef}
+          className="top-chrome-more-menu"
+          preserveSelection
+          role="menu"
+          style={moreMenuStyle}
+        >
+          <MenuItem
+            className="top-chrome-more-item"
+            icon={<SettingsIcon size={ICON_SIZE.menu} />}
+            iconClassName="top-chrome-more-item-icon"
+            label="Provider settings"
+            labelClassName="top-chrome-more-item-label"
+            onClick={openProviderSettings}
+            role="menuitem"
+          />
+          {props.onOpenAppearanceSettings ? (
+            <MenuItem
+              className="top-chrome-more-item"
+              icon={<ColorIcon size={ICON_SIZE.menu} />}
+              iconClassName="top-chrome-more-item-icon"
+              label="Appearance settings"
+              labelClassName="top-chrome-more-item-label"
+              onClick={openAppearanceSettings}
+              role="menuitem"
+            />
+          ) : null}
+        </MenuSurface>,
+        document.body,
+      ) : null}
     </header>
   );
 }
