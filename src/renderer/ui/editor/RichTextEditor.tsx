@@ -33,6 +33,10 @@ export interface EditorSplitPayload {
   atEnd: boolean;
 }
 
+export interface EditorDescriptionTogglePayload {
+  cursorOffset: number;
+}
+
 type EditorFocusPlacement = 'start' | 'end' | 'all' | { offset: number; inlineRefBias?: 'before' | 'after' };
 
 interface RichTextEditorProps {
@@ -55,6 +59,7 @@ interface RichTextEditorProps {
   onMove?: (direction: 'up' | 'down') => void;
   onUndo?: () => void;
   onRedo?: () => void;
+  onDescriptionToggle?: (payload: EditorDescriptionTogglePayload) => void;
   onModEnter: (content: RichText) => void;
   onEscape: () => void;
   onTriggerChange: (trigger: EditorTrigger | null) => void;
@@ -403,6 +408,22 @@ export function RichTextEditor(props: RichTextEditorProps) {
         if (mod && event.key.toLowerCase() === 'y') {
           event.preventDefault();
           propsRef.current.onRedo?.();
+          return true;
+        }
+
+        if (
+          event.ctrlKey
+          && !event.metaKey
+          && !event.altKey
+          && !event.shiftKey
+          && (event.key.toLowerCase() === 'i' || event.code === 'KeyI' || event.key === 'Tab')
+          && propsRef.current.onDescriptionToggle
+        ) {
+          event.preventDefault();
+          const { from } = selectionOffsets(viewInstance);
+          propsRef.current.onDescriptionToggle({
+            cursorOffset: from,
+          });
           return true;
         }
 

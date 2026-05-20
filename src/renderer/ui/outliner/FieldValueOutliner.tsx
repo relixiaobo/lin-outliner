@@ -3,7 +3,13 @@ import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
 import { plainText } from '../../api/types';
 import type { DocumentIndex, FocusRequest, UiState } from '../../state/document';
-import { clearFocusRequestState, cursorEnd, requestFocusState, rowFocusTarget } from '../focus/focusModel';
+import {
+  clearFocusRequestState,
+  cursorEnd,
+  focusTarget,
+  requestFocusState,
+  rowFocusTarget,
+} from '../focus/focusModel';
 import { fieldTypeInteraction, isOptionsFieldType } from '../fields/fieldTypeRegistry';
 import type { CommandRunner, TriggerState } from '../shared';
 import { FieldOptionPicker } from './FieldOptionPicker';
@@ -189,6 +195,13 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
             props.setUi((prev) => requestFocusState(
               prev,
               rowFocusTarget(nodeId, targetNode?.parentId ?? props.entryId, props.panelId),
+              cursorEnd(),
+            ));
+          }}
+          onFocusDescription={(nodeId, parentId) => {
+            props.setUi((prev) => requestFocusState(
+              { ...prev, editingDescriptionId: nodeId },
+              focusTarget(nodeId, parentId, props.panelId, 'description'),
               cursorEnd(),
             ));
           }}

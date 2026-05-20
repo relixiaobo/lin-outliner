@@ -89,6 +89,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
   const [draftContentRevision, setDraftContentRevision] = useState(0);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const pendingTextPatchRef = useRef<Promise<unknown>>(Promise.resolve());
+  const descriptionReturnPlacementRef = useRef<CursorPlacement>(cursorEnd());
   const referenceTargetId = node?.type === 'reference' && node.targetId
     ? resolveReferenceTargetId(node.targetId, props.index.byId)
     : null;
@@ -628,6 +629,14 @@ export function OutlinerItem(props: OutlinerItemProps) {
             onMove={(direction) => void moveCurrentNode(direction)}
             onUndo={() => void props.run(() => api.undo())}
             onRedo={() => void props.run(() => api.redo())}
+            onDescriptionToggle={({ cursorOffset }) => {
+              descriptionReturnPlacementRef.current = cursorAtOffset(cursorOffset);
+              props.setUi((prev) => requestFocusState(
+                { ...prev, editingDescriptionId: targetEditId },
+                descriptionFocusTarget,
+                cursorEnd(),
+              ));
+            }}
             onModEnter={(content) => void handleModEnter(content)}
             onEscape={() => void exitToSelection()}
             resolveInlineReferenceColor={(targetId) => inlineReferenceTextColor(targetId, props.index)}
@@ -681,6 +690,13 @@ export function OutlinerItem(props: OutlinerItemProps) {
             onFocusTarget={(target) => {
               props.setUi((prev) => selectFocusState(prev, target));
             }}
+            onReturnToSource={() => {
+              props.setUi((prev) => requestFocusState(
+                { ...prev, editingDescriptionId: null },
+                editorFocusTarget,
+                descriptionReturnPlacementRef.current,
+              ));
+            }}
             onFocusRequestConsumed={(request) => {
               props.setUi((prev) => clearFocusRequestState(prev, request));
             }}
@@ -725,6 +741,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
           run={props.run}
           onRoot={props.onRoot}
           onEditDescription={() => {
+            descriptionReturnPlacementRef.current = cursorEnd();
             props.setUi((prev) => requestFocusState(
               { ...prev, editingDescriptionId: targetEditId },
               descriptionFocusTarget,
@@ -803,6 +820,13 @@ export function OutlinerItem(props: OutlinerItemProps) {
                 });
               }}
               onFocusNode={focusNode}
+              onFocusDescription={(nodeId, parentId) => {
+                props.setUi((prev) => requestFocusState(
+                  { ...prev, editingDescriptionId: nodeId },
+                  focusTarget(nodeId, parentId, props.panelId, 'description'),
+                  cursorEnd(),
+                ));
+              }}
               onCollapseNode={collapseNode}
               onUndo={() => void props.run(() => api.undo())}
               onRedo={() => void props.run(() => api.redo())}

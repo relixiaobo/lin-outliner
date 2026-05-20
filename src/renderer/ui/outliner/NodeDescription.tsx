@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
 import type { FocusRequest, FocusTarget, PendingInputChar } from '../../state/document';
@@ -9,7 +9,7 @@ import {
 } from '../focus/textControlFocus';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import type { CommandRunner } from '../shared';
-import { NodeDescriptionEditor, NodeDescriptionRead } from './NodeDescriptionSurface';
+import { NodeDescriptionEditor } from './NodeDescriptionSurface';
 
 interface NodeDescriptionProps {
   node: NodeProjection;
@@ -21,6 +21,7 @@ interface NodeDescriptionProps {
   focusRequest?: FocusRequest | null;
   pendingInput?: PendingInputChar | null;
   onFocusTarget?: (target: FocusTarget) => void;
+  onReturnToSource?: () => void;
   onFocusRequestConsumed?: (request: FocusRequest) => void;
   onPendingInputConsumed?: (input: PendingInputChar) => void;
 }
@@ -35,29 +36,37 @@ export function NodeDescription({
   focusRequest,
   pendingInput,
   onFocusTarget,
+  onReturnToSource,
   onFocusRequestConsumed,
   onPendingInputConsumed,
 }: NodeDescriptionProps) {
   const [draft, setDraft] = useState(node.description ?? '');
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const skipCommitRef = useRef(false);
+  const blurCommitTimerRef = useRef<number | null>(null);
   const shouldRender = editing || Boolean(node.description);
+
+  useEffect(() => () => {
+    if (blurCommitTimerRef.current !== null) {
+      window.clearTimeout(blurCommitTimerRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     setDraft(node.description ?? '');
   }, [node.id, node.description]);
 
   useEffect(() => {
+    if (editing) skipCommitRef.current = false;
+  }, [editing]);
+
+  useLayoutEffect(() => {
     if (!editing) return;
-    if (focusTarget && focusRequest && focusTargetMatches(focusRequest.target, focusTarget)) return;
-    if (focusTarget && pendingInput && focusTargetMatches(pendingInput.target, focusTarget)) return;
-    window.requestAnimationFrame(() => {
-      const input = inputRef.current;
-      if (!input) return;
-      input.focus();
-      setTextControlCursor(input, { kind: 'end' });
-    });
-  }, [editing, focusRequest, focusTarget, pendingInput]);
+    const input = inputRef.current;
+    if (!input) return;
+    input.style.height = 'auto';
+    input.style.height = `${input.scrollHeight}px`;
+  }, [draft, editing]);
 
   useEffect(() => {
     if (!focusTarget || !focusRequest || !focusTargetMatches(focusRequest.target, focusTarget)) return;
@@ -94,28 +103,25 @@ export function NodeDescription({
 
   if (!shouldRender) return null;
 
+  const persistDraft = (value = inputRef.current?.value ?? draft) => {
+    const next = value.trim();
+    if (next === (node.description ?? '')) return Promise.resolve(null);
+    return run(() => api.updateNodeDescription(targetId, next || null));
+  };
+
   const commit = () => {
     if (skipCommitRef.current) {
       skipCommitRef.current = false;
       return;
     }
-    const next = draft.trim();
-    onEditingChange(false);
-    if (next === (node.description ?? '')) return;
-    void run(() => api.updateNodeDescription(targetId, next || null));
+    if (blurCommitTimerRef.current !== null) window.clearTimeout(blurCommitTimerRef.current);
+    blurCommitTimerRef.current = window.setTimeout(() => {
+      blurCommitTimerRef.current = null;
+      void persistDraft().then(() => {
+        onEditingChange(false);
+      });
+    }, 0);
   };
-
-  if (!editing) {
-    return (
-      <NodeDescriptionRead
-        description={node.description ?? ''}
-        onEdit={() => {
-          if (focusTarget) onFocusTarget?.(focusTarget);
-          onEditingChange(true);
-        }}
-      />
-    );
-  }
 
   return (
     <NodeDescriptionEditor
@@ -126,6 +132,7 @@ export function NodeDescription({
       onCommit={commit}
       onFocus={() => {
         if (focusTarget) onFocusTarget?.(focusTarget);
+        onEditingChange(true);
       }}
       onKeyDown={(event) => {
         if (isImeComposingEvent(event)) return;
@@ -135,6 +142,21 @@ export function NodeDescription({
           setDraft(node.description ?? '');
           onEditingChange(false);
           event.currentTarget.blur();
+          return;
+        }
+        if (
+          event.ctrlKey
+          && !event.metaKey
+          && !event.altKey
+          && !event.shiftKey
+          && (event.key.toLowerCase() === 'i' || event.code === 'KeyI' || event.key === 'Tab')
+        ) {
+          event.preventDefault();
+          skipCommitRef.current = true;
+          void persistDraft().then(() => {
+            if (onReturnToSource) onReturnToSource();
+            else onEditingChange(false);
+          });
           return;
         }
         if (event.key === 'Enter' && !event.shiftKey) {

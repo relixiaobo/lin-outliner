@@ -108,6 +108,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   const [nameDraft, setNameDraft] = useState(field?.content.text ?? '');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const descriptionReturnPlacementRef = useRef(cursorEnd());
   const fieldNameFocusTarget = focusTarget(props.entryId, props.parentId, props.panelId, 'field-name');
   const descriptionFocusTarget = focusTarget(props.entryId, props.parentId, props.panelId, 'description');
 
@@ -255,6 +256,25 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   const onKeyDown = (event: KeyboardEvent<HTMLElement>, column: 'name' | 'value') => {
     if (isImeComposingEvent(event)) return;
     const mod = event.metaKey || event.ctrlKey;
+    if (
+      event.ctrlKey
+      && !event.metaKey
+      && !event.altKey
+      && !event.shiftKey
+      && (event.key.toLowerCase() === 'i' || event.code === 'KeyI' || event.key === 'Tab')
+    ) {
+      event.preventDefault();
+      const cursor = event.currentTarget instanceof HTMLInputElement
+        ? event.currentTarget.selectionStart ?? event.currentTarget.value.length
+        : 0;
+      descriptionReturnPlacementRef.current = cursorAtOffset(cursor);
+      props.setUi((prev) => requestFocusState(
+        { ...prev, editingDescriptionId: props.entryId },
+        descriptionFocusTarget,
+        cursorEnd(),
+      ));
+      return;
+    }
     if (mod && event.key.toLowerCase() === 'z') {
       event.preventDefault();
       void props.run(() => event.shiftKey ? api.redo() : api.undo());
@@ -374,6 +394,13 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       onFocusTarget={(target) => {
         props.setUi((prev) => selectFocusState(prev, target));
       }}
+      onReturnToSource={() => {
+        props.setUi((prev) => requestFocusState(
+          { ...prev, editingDescriptionId: null },
+          fieldNameFocusTarget,
+          descriptionReturnPlacementRef.current,
+        ));
+      }}
       onFocusRequestConsumed={(request) => {
         props.setUi((prev) => clearFocusRequestState(prev, request));
       }}
@@ -425,6 +452,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
           run={props.run}
           onRoot={props.onRoot}
           onEditDescription={() => {
+            descriptionReturnPlacementRef.current = cursorEnd();
             props.setUi((prev) => requestFocusState(
               { ...prev, editingDescriptionId: props.entryId },
               descriptionFocusTarget,

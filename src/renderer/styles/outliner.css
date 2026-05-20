@@ -928,36 +928,43 @@
 }
 
 .node-description {
+  appearance: none;
+  -webkit-appearance: none;
   display: block;
-  width: fit-content;
+  width: min(520px, 100%);
   max-width: min(520px, 100%);
+  box-sizing: border-box;
   margin: var(--space-hairline) 0 var(--space-1);
   border: 0;
   background: transparent;
   color: var(--muted);
+  font-family: var(--font-family-sans);
   font-size: var(--font-description);
+  font-weight: 400;
+  height: var(--line-description);
   line-height: var(--line-description);
+  min-height: var(--line-description);
+  overflow: hidden;
   padding: 0;
+  resize: none;
   text-align: left;
-}
-
-.node-description.read {
   cursor: text;
+  outline: none;
+  caret-color: var(--text-main);
 }
 
-.node-description.read:hover {
+.node-description:hover {
   color: var(--text);
 }
 
-.node-description.edit {
-  width: min(520px, 100%);
-  min-height: 22px;
-  resize: vertical;
-  outline: none;
+.node-description::placeholder {
+  color: color-mix(in srgb, var(--text-main) 22%, transparent);
+  opacity: 1;
 }
 
-.node-description.edit:focus {
-  box-shadow: var(--underline-focus-shadow);
+.node-description:focus {
+  color: var(--text-sub);
+  box-shadow: none;
 }
 
 .panel-title-editor .node-description {

@@ -347,7 +347,7 @@ export class Core {
       setOptional(node, 'description', normalizeOptionalText(description));
       node.updatedAt = nowMs();
       this.loro.writeNode(node);
-      return focus(nodeId);
+      return undefined;
     });
   }
 

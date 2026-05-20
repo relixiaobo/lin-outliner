@@ -347,6 +347,9 @@ and non-goals; product behavior stays with the owning surface.
   They do not undo or redo document operations.
 - Row editor: `16px / 26px`.
 - Description: `13px / 18px`.
+- Description editing follows the row text model: `Ctrl+I` toggles between row
+  text and description, and the editing surface stays borderless with no
+  underline or boxed focus treatment.
 - Row minimum height: `26px`.
 - Row radius: `5px`.
 - Row padding: `1px 6px`.

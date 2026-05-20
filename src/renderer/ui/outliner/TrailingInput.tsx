@@ -81,6 +81,7 @@ interface TrailingInputProps {
   onOpenCommandPalette?: () => void;
   onExpand?: (nodeId: NodeId) => void;
   onFocusNode?: (nodeId: NodeId) => void;
+  onFocusDescription?: (nodeId: NodeId, parentId: NodeId) => void;
   onCollapseNode?: (nodeId: NodeId) => void;
   onNavigateOut?: (direction: 'up' | 'down') => void;
   onUndo?: () => void;
@@ -415,6 +416,25 @@ export function TrailingInput(props: TrailingInputProps) {
     } finally {
       if (!committed) cancelProjectionClear();
       committingRef.current = false;
+    }
+  };
+
+  const createNodeAndFocusDescription = async (view: EditorView, rawText: string) => {
+    if (committingRef.current || rawText.trim().length === 0 || !propsRef.current.onFocusDescription) return;
+    const targetParentId = effectiveParentRef.current;
+    committingRef.current = true;
+    beginProjectionClear();
+    let committed = false;
+    try {
+      const nodeId = await createNode(targetParentId, rawText);
+      if (nodeId) {
+        propsRef.current.onFocusDescription(nodeId, targetParentId);
+        committed = true;
+      }
+    } finally {
+      if (!committed) cancelProjectionClear();
+      committingRef.current = false;
+      resetEffectiveParent();
     }
   };
 
@@ -807,6 +827,19 @@ export function TrailingInput(props: TrailingInputProps) {
         if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
           event.preventDefault();
           void createDoneNode(viewInstance, getEditorText(viewInstance));
+          return true;
+        }
+
+        if (
+          event.ctrlKey
+          && !event.metaKey
+          && !event.altKey
+          && !event.shiftKey
+          && (event.key.toLowerCase() === 'i' || event.code === 'KeyI' || event.key === 'Tab')
+          && getEditorText(viewInstance).trim().length > 0
+        ) {
+          event.preventDefault();
+          void createNodeAndFocusDescription(viewInstance, getEditorText(viewInstance));
           return true;
         }
 

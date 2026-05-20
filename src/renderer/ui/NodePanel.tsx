@@ -30,6 +30,7 @@ import {
   clearFocusState,
   clearPendingInputState,
   cursorEnd,
+  cursorOffset as cursorAtOffset,
   cursorStart,
   focusTarget,
   requestFocusState,
@@ -123,6 +124,7 @@ export function NodePanel(props: NodePanelProps) {
   const stickyBreadcrumbRef = useRef<HTMLDivElement | null>(null);
   const titleRowRef = useRef<HTMLDivElement | null>(null);
   const pendingTitlePatchRef = useRef<Promise<unknown>>(Promise.resolve());
+  const descriptionReturnPlacementRef = useRef(cursorEnd());
   const rootDefinitionKind = definitionKind(rootNode);
   const definitionTemplateLabel = rootNode ? definitionOutlinerLabel(rootNode) : null;
   const showOutliner = Boolean(rootNode && (!rootDefinitionKind || definitionTemplateLabel));
@@ -518,6 +520,14 @@ export function NodePanel(props: NodePanelProps) {
                 onArrowDownAtEnd={focusFirstVisibleRowOrTrailing}
                 onUndo={() => void props.run(() => api.undo())}
                 onRedo={() => void props.run(() => api.redo())}
+                onDescriptionToggle={({ cursorOffset }) => {
+                  descriptionReturnPlacementRef.current = cursorAtOffset(cursorOffset);
+                  props.setUi((prev) => requestFocusState(
+                    { ...prev, editingDescriptionId: props.rootId },
+                    descriptionFocusTarget,
+                    cursorEnd(),
+                  ));
+                }}
                 onModEnter={(content) => void handleTitleModEnter(content)}
                 resolveInlineReferenceColor={(targetId) => inlineReferenceTextColor(targetId, props.index)}
                 onEscape={() => {
@@ -575,6 +585,13 @@ export function NodePanel(props: NodePanelProps) {
               onFocusTarget={(target) => {
                 props.setUi((prev) => selectFocusState(prev, target));
               }}
+              onReturnToSource={() => {
+                props.setUi((prev) => requestFocusState(
+                  { ...prev, editingDescriptionId: null },
+                  titleFocusTarget,
+                  descriptionReturnPlacementRef.current,
+                ));
+              }}
               onFocusRequestConsumed={(request) => {
                 props.setUi((prev) => clearFocusRequestState(prev, request));
               }}
@@ -616,6 +633,7 @@ export function NodePanel(props: NodePanelProps) {
             run={props.run}
             onRoot={props.onRoot}
             onEditDescription={() => {
+              descriptionReturnPlacementRef.current = cursorEnd();
               props.setUi((prev) => requestFocusState(
                 { ...prev, editingDescriptionId: props.rootId },
                 descriptionFocusTarget,
@@ -703,6 +721,13 @@ export function NodePanel(props: NodePanelProps) {
                   });
                 }}
                 onFocusNode={focusNode}
+                onFocusDescription={(nodeId, parentId) => {
+                  props.setUi((prev) => requestFocusState(
+                    { ...prev, editingDescriptionId: nodeId },
+                    focusTarget(nodeId, parentId, props.panelId, 'description'),
+                    cursorEnd(),
+                  ));
+                }}
                 onCollapseNode={collapseNode}
                 onUndo={() => void props.run(() => api.undo())}
                 onRedo={() => void props.run(() => api.redo())}

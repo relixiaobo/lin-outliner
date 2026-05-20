@@ -808,6 +808,16 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             placement: { kind: 'preserve' },
           }));
         }
+        if (cmd === 'update_node_description') {
+          const node = nodes.get(String(args.nodeId));
+          if (node) {
+            const description = typeof args.description === 'string' ? args.description.trim() : '';
+            if (description) node.description = description;
+            else delete node.description;
+            node.updatedAt = ++now;
+          }
+          return clone(outcome());
+        }
         if (cmd === 'split_node') {
           const nodeId = String(args.nodeId);
           const node = nodes.get(nodeId);
