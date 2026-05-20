@@ -64,6 +64,10 @@ function arrayArg(value: unknown): string[] {
   return Array.isArray(value) ? value.map(String) : [];
 }
 
+function nodeRef(core: Core, nodeId: string, label?: string): string {
+  return `[[${label ?? core.state().nodes[nodeId]?.content.text ?? nodeId}^${nodeId}]]`;
+}
+
 async function executeTool<TData>(core: Core, name: string, params: unknown): Promise<ToolEnvelope<TData>> {
   const result = await executeRawTool<TData>(core, name, params);
   return result.details;
@@ -96,11 +100,16 @@ describe('agent node tools', () => {
     const nodeRead = tools.find((tool) => tool.name === 'node_read')!;
     const nodeCreate = tools.find((tool) => tool.name === 'node_create')!;
     const nodeEdit = tools.find((tool) => tool.name === 'node_edit')!;
+    const nodeSearch = tools.find((tool) => tool.name === 'node_search')!;
     const history = tools.find((tool) => tool.name === 'operation_history')!;
 
     expect(nodeRead.description).toContain('Use node_read before node_edit');
+    expect(nodeCreate.description).toContain('YYYY-MM-DDTHH:mm');
     expect(JSON.stringify(nodeCreate.parameters)).toContain("today's journal node, not the current UI selection");
+    expect(nodeSearch.description).toContain('Do not use ".."');
+    expect(JSON.stringify(nodeSearch.parameters)).toContain('Date values use YYYY-MM-DD');
     expect(nodeEdit.description).toContain('old_string "*" replaces the whole annotated outline');
+    expect(JSON.stringify(nodeEdit.parameters)).toContain('Date field values use YYYY-MM-DD');
     expect(JSON.stringify(nodeEdit.parameters)).toContain('Include enough surrounding lines');
     expect(history.description).toContain('Use action "list" first');
   });
@@ -140,6 +149,29 @@ describe('agent node tools', () => {
     const fieldEntry = core.state().nodes[fieldEntryId]!;
     expect(fieldEntry.type).toBe('fieldEntry');
     expect(fieldEntry.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual(['Active']);
+  });
+
+  test('node_create fills existing tag-template date fields with canonical values', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const tagId = mustFocus(core.createTag('event'));
+    const templateEntryId = mustFocus(core.createFieldDef(tagId, 'Date', 'date'));
+    const dateFieldDefId = core.state().nodes[templateEntryId]!.fieldDefId!;
+
+    const envelope = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      outline: '- Launch #event\n  - Date:: 2026-05-20 / 2026-05-24',
+    });
+
+    expect(envelope.ok).toBe(true);
+    const nodeId = envelope.data!.createdRootIds[0]!;
+    const dateFieldIds = core.state().nodes[nodeId]!.children.filter((childId) =>
+      core.state().nodes[childId]!.type === 'fieldEntry'
+      && core.state().nodes[childId]!.fieldDefId === dateFieldDefId);
+    expect(dateFieldIds).toHaveLength(1);
+    expect(core.state().nodes[dateFieldIds[0]!]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual([
+      '2026-05-20/2026-05-24',
+    ]);
   });
 
   test('node_create returns model-visible annotated outline while details stay complete', async () => {
@@ -306,7 +338,14 @@ describe('agent node tools', () => {
 
     const created = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
       parent_id: core.projection().searchesId,
-      outline: '- %%search%% Weather forecast %%view:list%%\n  - forecast\n  - #weather',
+      outline: [
+        '- %%search%% Weather forecast %%view:list%%',
+        '  - AND',
+        '    - STRING_MATCH',
+        '      - value:: forecast',
+        `    - HAS_TAG`,
+        `      - tag:: ${nodeRef(core, tagId, '#weather')}`,
+      ].join('\n'),
     });
 
     expect(created.ok).toBe(true);
@@ -314,7 +353,12 @@ describe('agent node tools', () => {
     const search = core.state().nodes[searchId]!;
     expect(search.type).toBe('search');
     expect(search.viewMode).toBe('list');
-    expect(search.children.map((childId) => core.state().nodes[childId]!.type)).toEqual(['queryCondition', 'queryCondition']);
+    const searchChildTypes = search.children.map((childId) => core.state().nodes[childId]!.type);
+    expect(searchChildTypes).toContain('queryCondition');
+    const resultRefs = search.children
+      .map((childId) => core.state().nodes[childId]!)
+      .filter((child) => child.type === 'reference');
+    expect(resultRefs.map((ref) => ref.targetId)).toEqual([tagged]);
 
     const results = await executeTool<{
       total: number;
@@ -328,20 +372,45 @@ describe('agent node tools', () => {
     const read = await executeTool<{ items: Array<{ outline?: string }> }>(core, 'node_read', {
       node_id: searchId,
     });
-    expect(read.data!.items[0]!.outline).toBe('- %%search%% %%view:list%% Weather forecast\n  - forecast\n  - #weather');
+    expect(read.data!.items[0]!.outline).toBe([
+      '- %%search%% %%view:list%% Weather forecast',
+      '  - AND',
+      '    - STRING_MATCH',
+      '      - value:: forecast',
+      `    - HAS_TAG`,
+      `      - tag:: ${nodeRef(core, tagId, '#weather')}`,
+    ].join('\n'));
   });
 
-  test('node_create preview validates saved search field conditions', async () => {
+  test('node_create preview validates canonical saved search rules', async () => {
     const core = Core.new();
 
     const envelope = await executeTool(core, 'node_create', {
       parent_id: core.projection().searchesId,
-      outline: '- %%search%% Invalid saved search\n  - Missing:: Value',
+      outline: '- %%search%% Invalid saved search\n  - FIELD_IS\n    - field:: Missing\n    - value:: Value',
       preview_only: true,
     });
 
     expect(envelope.ok).toBe(false);
-    expect(envelope.error?.code).toBe('unresolved_field');
+    expect(envelope.error?.code).toBe('invalid_search_condition');
+  });
+
+  test('node_search does not treat a saved search title as an implicit condition', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    core.createNode(today, null, 'Chengdu weather');
+    const searchId = mustFocus(core.createSearchNode(core.projection().searchesId, null, {
+      title: 'Chengdu',
+      query: { kind: 'group', logic: 'AND', children: [] },
+    }));
+
+    const envelope = await executeTool(core, 'node_search', {
+      search_node_id: searchId,
+      limit: 10,
+    });
+
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe('empty_search');
   });
 
   test('node_delete moves selected nodes to trash and skips covered descendants', async () => {
@@ -442,6 +511,39 @@ describe('agent node tools', () => {
     expect(core.state().nodes[oldChild]!.parentId).toBe(TRASH_ID);
     expect(core.state().nodes[oldChild]!.content.text).toBe('Old child');
     expect(core.state().nodes[root]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual(['', 'New child']);
+  });
+
+  test('node_edit validates existing date field values against the canonical format', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const tagId = mustFocus(core.createTag('event'));
+    const templateEntryId = mustFocus(core.createFieldDef(tagId, 'Date', 'date'));
+    const dateFieldDefId = core.state().nodes[templateEntryId]!.fieldDefId!;
+    const root = mustFocus(core.createNode(today, null, 'Launch'));
+    core.applyTag(root, tagId);
+    const fieldEntryId = core.state().nodes[root]!.children.find((childId) =>
+      core.state().nodes[childId]!.fieldDefId === dateFieldDefId)!;
+
+    const valid = await executeTool(core, 'node_edit', {
+      node_id: root,
+      old_string: '*',
+      new_string: `- %%node:${root}%% Launch #event\n  - %%node:${fieldEntryId}%% Date::\n    - 2026-05-20 / 2026-05-24`,
+    });
+    expect(valid.ok).toBe(true);
+    expect(core.state().nodes[fieldEntryId]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual([
+      '2026-05-20/2026-05-24',
+    ]);
+
+    const invalid = await executeTool(core, 'node_edit', {
+      node_id: root,
+      old_string: '*',
+      new_string: `- %%node:${root}%% Launch #event\n  - %%node:${fieldEntryId}%% Date::\n    - 2026-05-20..2026-05-24`,
+    });
+    expect(invalid.ok).toBe(false);
+    expect(invalid.error?.message).toContain('Invalid date field value');
+    expect(core.state().nodes[fieldEntryId]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual([
+      '2026-05-20/2026-05-24',
+    ]);
   });
 
   test('node_edit supports exact partial outline replacement', async () => {
@@ -940,7 +1042,7 @@ describe('agent node tools', () => {
       total: number;
       items?: Array<{ nodeId: string; title: string; snippet: string }>;
     }>(core, 'node_search', {
-      outline: '- %%search%% Chengdu\n  - Chengdu',
+      outline: '- %%search%% Chengdu\n  - STRING_MATCH\n    - value:: Chengdu',
       limit: 10,
     });
 
@@ -961,7 +1063,7 @@ describe('agent node tools', () => {
       total: number;
       items?: Array<{ nodeId: string; title: string }>;
     }>(core, 'node_search', {
-      outline: '- %%search%% Chengdu\n  - Chengdu',
+      outline: '- %%search%% Chengdu\n  - STRING_MATCH\n    - value:: Chengdu',
       limit: 10,
     });
     const visible = parseVisibleToolResult<{
@@ -995,7 +1097,7 @@ describe('agent node tools', () => {
       total: number;
       items?: Array<{ nodeId: string; title: string }>;
     }>(core, 'node_search', {
-      outline: '- %%search%% Weather notes %%view:list%%\n  - [[#weather]]',
+      outline: `- %%search%% Weather notes %%view:list%%\n  - HAS_TAG\n    - tag:: ${nodeRef(core, tagId, '#weather')}`,
       limit: 10,
     });
 
@@ -1005,20 +1107,51 @@ describe('agent node tools', () => {
     expect(envelope.data!.items?.map((item) => item.nodeId)).not.toContain(untagged);
   });
 
+  test('node_search executes nested canonical query groups', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const alpha = mustFocus(core.createNode(today, null, 'Alpha note'));
+    const beta = mustFocus(core.createNode(today, null, 'Beta note'));
+    const gamma = mustFocus(core.createNode(today, null, 'Gamma note'));
+
+    const envelope = await executeTool<{
+      total: number;
+      items?: Array<{ nodeId: string; title: string }>;
+    }>(core, 'node_search', {
+      outline: [
+        '- %%search%% Alpha or beta',
+        '  - AND',
+        '    - OR',
+        '      - STRING_MATCH',
+        '        - value:: Alpha',
+        '      - STRING_MATCH',
+        '        - value:: Beta',
+        '    - NOT',
+        '      - STRING_MATCH',
+        '        - value:: Gamma',
+      ].join('\n'),
+      limit: 10,
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data!.items?.map((item) => item.nodeId)).toEqual(expect.arrayContaining([alpha, beta]));
+    expect(envelope.data!.items?.map((item) => item.nodeId)).not.toContain(gamma);
+  });
+
   test('node_search rejects unresolved structured conditions instead of ignoring them', async () => {
     const core = Core.new();
 
     const missingTag = await executeTool(core, 'node_search', {
-      outline: '- %%search%% Missing tag\n  - #missing',
+      outline: '- %%search%% Missing tag\n  - HAS_TAG\n    - tag:: missing',
     });
     expect(missingTag.ok).toBe(false);
-    expect(missingTag.error?.code).toBe('unresolved_tag');
+    expect(missingTag.error?.code).toBe('invalid_search_condition');
 
     const missingField = await executeTool(core, 'node_search', {
-      outline: '- %%search%% Missing field\n  - Status:: Active',
+      outline: '- %%search%% Missing field\n  - FIELD_IS\n    - field:: Status\n    - value:: Active',
     });
     expect(missingField.ok).toBe(false);
-    expect(missingField.error?.code).toBe('unresolved_field');
+    expect(missingField.error?.code).toBe('invalid_search_condition');
   });
 
   test('node_search executes outline reference conditions as links-to filters', async () => {
@@ -1033,7 +1166,7 @@ describe('agent node tools', () => {
       total: number;
       items?: Array<{ nodeId: string; title: string }>;
     }>(core, 'node_search', {
-      outline: `- %%search%% Links to Target\n  - [[Target^${target}]]`,
+      outline: `- %%search%% Links to Target\n  - LINKS_TO\n    - target:: ${nodeRef(core, target)}`,
       limit: 10,
     });
 
@@ -1062,7 +1195,7 @@ describe('agent node tools', () => {
       total: number;
       items?: Array<{ nodeId: string; title: string }>;
     }>(core, 'node_search', {
-      outline: '- %%search%% Active tasks\n  - Status:: Active',
+      outline: `- %%search%% Active tasks\n  - FIELD_IS\n    - field:: ${nodeRef(core, statusFieldDefId)}\n    - value:: Active`,
       limit: 10,
     });
 
@@ -1071,7 +1204,7 @@ describe('agent node tools', () => {
 
     const saved = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
       parent_id: core.projection().searchesId,
-      outline: '- %%search%% Active tasks\n  - Status:: Active',
+      outline: `- %%search%% Active tasks\n  - FIELD_IS\n    - field:: ${nodeRef(core, statusFieldDefId)}\n    - value:: Active`,
     });
     expect(saved.ok).toBe(true);
 

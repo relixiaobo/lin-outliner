@@ -15,9 +15,7 @@ import type {
   NodeBacklink,
   NodeFieldRead,
   NodeRef,
-  ParsedFieldSearchCondition,
   ProjectionIndex,
-  ResolvedFieldSearchCondition,
 } from './agentNodeToolTypes';
 import { unique } from './agentNodeToolUtils';
 
@@ -217,67 +215,9 @@ export function isInTrash(index: ProjectionIndex, nodeId: string): boolean {
   return false;
 }
 
-export function resolveTagNames(index: ProjectionIndex, tagNames: string[]): { tagIds: string[]; unresolvedTagNames: string[] } {
-  const tagIds: string[] = [];
-  const unresolvedTagNames: string[] = [];
-  for (const tagName of tagNames) {
-    const normalized = tagName.toLowerCase();
-    const tag = index.projection.nodes.find((node) => node.type === 'tagDef' && node.content.text.toLowerCase() === normalized);
-    if (tag) tagIds.push(tag.id);
-    else unresolvedTagNames.push(tagName);
-  }
-  return { tagIds: unique(tagIds), unresolvedTagNames: unique(unresolvedTagNames) };
-}
-
-export function resolveFieldSearchConditions(
-  index: ProjectionIndex,
-  conditions: ParsedFieldSearchCondition[],
-): { fieldConditions: ResolvedFieldSearchCondition[]; unresolvedFields: string[] } {
-  const fieldConditions: ResolvedFieldSearchCondition[] = [];
-  const unresolvedFields: string[] = [];
-  for (const condition of conditions) {
-    const field = findFieldDefByName(index, condition.fieldName);
-    if (!field) {
-      unresolvedFields.push(condition.fieldName);
-      continue;
-    }
-    fieldConditions.push({
-      fieldName: field.content.text.trim() || condition.fieldName,
-      fieldDefId: field.id,
-      text: condition.text?.trim() || undefined,
-    });
-  }
-  return {
-    fieldConditions: uniqueFieldConditions(fieldConditions),
-    unresolvedFields: unique(unresolvedFields),
-  };
-}
-
-function uniqueFieldConditions(conditions: ResolvedFieldSearchCondition[]): ResolvedFieldSearchCondition[] {
-  const result: ResolvedFieldSearchCondition[] = [];
-  const seen = new Set<string>();
-  for (const condition of conditions) {
-    const text = condition.text?.trim() || undefined;
-    const key = `${condition.fieldDefId}:${(text ?? '').toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push({ ...condition, text });
-  }
-  return result;
-}
-
-export function fieldDefinitionName(index: ProjectionIndex, fieldDefId: string): string {
-  return index.nodes.get(fieldDefId)?.content.text.trim() || fieldDefId;
-}
-
 export function findTagByName(index: ProjectionIndex, tagName: string): NodeProjection | undefined {
   const normalized = tagName.trim().toLowerCase();
   return index.projection.nodes.find((node) => node.type === 'tagDef' && node.content.text.trim().toLowerCase() === normalized);
-}
-
-export function findFieldDefByName(index: ProjectionIndex, fieldName: string): NodeProjection | undefined {
-  const normalized = fieldName.trim().toLowerCase();
-  return index.projection.nodes.find((node) => node.type === 'fieldDef' && node.content.text.trim().toLowerCase() === normalized);
 }
 
 export function indexProjection(projection: DocumentProjection): ProjectionIndex {

@@ -1,0 +1,84 @@
+import { describe, expect, test } from 'bun:test';
+import {
+  dateFieldValueRangesInText,
+  formatDateFieldInput,
+  normalizeDateFieldValue,
+  parseDateFieldValue,
+  parseDateFieldValueRange,
+} from '../../src/core/dateFieldValue';
+
+describe('date field values', () => {
+  test('parses and normalizes single dates and date ranges', () => {
+    expect(parseDateFieldValue('2026-05-20')).toEqual({ kind: 'single', date: '2026-05-20' });
+    expect(parseDateFieldValue('2026-05-20T09:30')).toEqual({ kind: 'single', date: '2026-05-20T09:30' });
+    expect(parseDateFieldValue('2026-05-20/2026-05-24')).toEqual({
+      kind: 'range',
+      start: '2026-05-20',
+      end: '2026-05-24',
+    });
+    expect(parseDateFieldValue('2026-05-20T09:30/2026-05-24T17:00')).toEqual({
+      kind: 'range',
+      start: '2026-05-20T09:30',
+      end: '2026-05-24T17:00',
+    });
+    expect(parseDateFieldValue('2026-05-20/2026-05-20')).toEqual({
+      kind: 'range',
+      start: '2026-05-20',
+      end: '2026-05-20',
+    });
+    expect(normalizeDateFieldValue(' 2026-05-20 / 2026-05-24 ')).toBe('2026-05-20/2026-05-24');
+    expect(normalizeDateFieldValue(' 2026-05-20T09:30 / 2026-05-24T17:00 ')).toBe('2026-05-20T09:30/2026-05-24T17:00');
+    expect(normalizeDateFieldValue('2026-02-30')).toBe('');
+    expect(normalizeDateFieldValue('2026-05-20T24:00')).toBe('');
+    expect(normalizeDateFieldValue('2026-05-24/2026-05-20')).toBe('');
+    expect(normalizeDateFieldValue('2026-05-20T10:00/2026-05-20T09:00')).toBe('');
+    expect(normalizeDateFieldValue('2026-05-20..2026-05-24')).toBe('');
+  });
+
+  test('formats date input into canonical field values', () => {
+    expect(formatDateFieldInput('', '')).toBe('');
+    expect(formatDateFieldInput('2026-05-20', '')).toBe('2026-05-20');
+    expect(formatDateFieldInput('', '2026-05-24')).toBe('2026-05-24');
+    expect(formatDateFieldInput('2026-05-24', '2026-05-20')).toBe('2026-05-20/2026-05-24');
+    expect(formatDateFieldInput('2026-05-20', '2026-05-20')).toBe('2026-05-20/2026-05-20');
+    expect(formatDateFieldInput('2026-05-20T09:30', '')).toBe('2026-05-20T09:30');
+    expect(formatDateFieldInput('2026-05-20T17:00', '2026-05-20T09:30')).toBe('2026-05-20T09:30/2026-05-20T17:00');
+    expect(formatDateFieldInput('2026-05-20T12:00', '2026-05-20')).toBe('2026-05-20T12:00/2026-05-20');
+  });
+
+  test('builds local date ranges for search comparisons', () => {
+    const single = parseDateFieldValueRange('2026-05-20')!;
+    expect(single.start).toBe('2026-05-20');
+    expect(single.end).toBe('2026-05-20');
+    expect(single.endExclusiveMs).toBeGreaterThan(single.startMs);
+
+    const range = parseDateFieldValueRange('2026-05-20/2026-05-24')!;
+    expect(range.start).toBe('2026-05-20');
+    expect(range.end).toBe('2026-05-24');
+    expect(range.endExclusiveMs).toBeGreaterThan(single.endExclusiveMs);
+
+    const minute = parseDateFieldValueRange('2026-05-20T09:30')!;
+    expect(minute.start).toBe('2026-05-20T09:30');
+    expect(minute.end).toBe('2026-05-20T09:30');
+    expect(minute.endExclusiveMs - minute.startMs).toBe(60_000);
+  });
+
+  test('extracts canonical date ranges from text', () => {
+    const ranges = dateFieldValueRangesInText('Plan 2026-05-20/2026-05-24, review 2026-05-30, ship 2026-05-31T09:30');
+    expect(ranges.map((range) => [range.start, range.end])).toEqual([
+      ['2026-05-20', '2026-05-24'],
+      ['2026-05-20', '2026-05-20'],
+      ['2026-05-24', '2026-05-24'],
+      ['2026-05-30', '2026-05-30'],
+      ['2026-05-31T09:30', '2026-05-31T09:30'],
+    ]);
+  });
+
+  test('does not treat legacy double-dot text as a date field range', () => {
+    const ranges = dateFieldValueRangesInText('Plan 2026-05-20..2026-05-24');
+    expect(ranges.map((range) => [range.start, range.end])).toEqual([
+      ['2026-05-20', '2026-05-20'],
+      ['2026-05-24', '2026-05-24'],
+    ]);
+  });
+});

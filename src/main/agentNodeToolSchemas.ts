@@ -54,7 +54,7 @@ export const NODE_SEARCH_PARAMETERS = {
       type: 'string',
       minLength: 1,
       maxLength: 12000,
-      description: 'Temporary search outline. Use "- %%search%% Title" plus child condition lines such as keywords, #tags, references, or "Field:: value". This does not create a saved node.',
+      description: 'Temporary search outline. Use "- %%search%% Title" plus exactly one query root child. Query groups are AND/OR/NOT. Rule nodes are QueryOp names such as STRING_MATCH, HAS_TAG, LINKS_TO, FIELD_IS, LT, or DATE_OVERLAPS. Put operands under rules as field::, tag::, target::, value::, or operand::. Date values use YYYY-MM-DD, YYYY-MM-DDTHH:mm, or start/end with "/". This does not create a saved node.',
     },
     search_node_id: {
       type: 'string',
@@ -101,7 +101,7 @@ export const NODE_CREATE_PARAMETERS = {
       type: 'string',
       minLength: 1,
       maxLength: 60000,
-      description: 'Lin Outline Format to create. Use "- Title" with 2-space child indentation. Supports "Title - description", #tags, fields ("Field:: value"), references, search nodes, and [x] completion. Do not include %%node:id%% markers from node_read.',
+      description: 'Lin Outline Format to create. Use "- Title" with 2-space child indentation. Supports "Title - description", #tags, fields ("Field:: value"; date fields use YYYY-MM-DD, YYYY-MM-DDTHH:mm, or start/end with "/"), references, search nodes with canonical query trees, and [x] completion. Do not include %%node:id%% markers from node_read.',
     },
     target_id: {
       type: 'string',
@@ -183,7 +183,7 @@ export const NODE_EDIT_PARAMETERS = {
     },
     new_string: {
       type: 'string',
-      description: 'Replacement fragment. The full outline after replacement must parse as Lin Outline Format and may keep %%node:id%% markers for existing nodes.',
+      description: 'Replacement fragment. The full outline after replacement must parse as Lin Outline Format and may keep %%node:id%% markers for existing nodes. Date field values use YYYY-MM-DD, YYYY-MM-DDTHH:mm, or start/end with "/".',
     },
     expected_revision: {
       type: 'string',

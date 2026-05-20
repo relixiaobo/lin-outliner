@@ -1,4 +1,5 @@
-import type { Dispatch, SetStateAction } from 'react';
+import { useEffect, type Dispatch, type SetStateAction } from 'react';
+import { api } from '../../api/client';
 import type { NodeId } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
 import type { CommandRunner, TriggerState } from '../shared';
@@ -32,6 +33,13 @@ export function OutlinerView(props: OutlinerViewProps) {
   const rows = props.rows ?? buildOutlinerRows(parent, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
   });
+
+  useEffect(() => {
+    if (parent?.type !== 'search') return;
+    void api.refreshSearchNodeResults(props.parentId).catch((error) => {
+      console.error('Failed to refresh live search results', error);
+    });
+  }, [parent?.type, props.parentId, props.index.projection]);
 
   return (
     <>

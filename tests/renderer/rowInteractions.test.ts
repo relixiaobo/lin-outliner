@@ -43,6 +43,7 @@ import {
   NAME_FIELD,
   shouldShowTrailingInput,
 } from '../../src/renderer/ui/outliner/row-model';
+import { searchQuerySummaryModel } from '../../src/renderer/ui/search/SearchQuerySummaryBar';
 import { concatRichText } from '../../src/renderer/ui/editor/richTextCodec';
 
 describe('row interaction resolvers', () => {
@@ -109,6 +110,64 @@ describe('row interaction resolvers', () => {
     expect(buildOutlinerRows(parent as any, byId, {
       expandedHiddenFields: new Set([hiddenFieldKey('parent', 'hidden')]),
     })).toEqual([{ id: 'alpha', type: 'content' }]);
+  });
+
+  test('hides search query condition nodes from normal outliner rows', () => {
+    const parent = makeNode('search', 'Search', {
+      type: 'search',
+      children: ['query', 'result-ref'],
+    });
+    const byId = new Map<string, any>([
+      ['search', parent],
+      ['query', makeNode('query', 'AND', { type: 'queryCondition', parentId: 'search' })],
+      ['result-ref', makeNode('result-ref', '', { type: 'reference', parentId: 'search', targetId: 'target' })],
+    ]);
+
+    expect(buildOutlinerRows(parent as any, byId)).toEqual([
+      { id: 'result-ref', type: 'content' },
+    ]);
+  });
+
+  test('summarizes search query conditions and materialized result count', () => {
+    const search = makeNode('search', 'Open work', {
+      type: 'search',
+      children: ['group', 'result-ref'],
+    });
+    const byId = new Map<string, any>([
+      ['search', search],
+      ['group', makeNode('group', '', {
+        type: 'queryCondition',
+        parentId: 'search',
+        queryLogic: 'AND',
+        children: ['tag-rule', 'field-rule'],
+      })],
+      ['tag-rule', makeNode('tag-rule', '', {
+        type: 'queryCondition',
+        parentId: 'group',
+        queryOp: 'HAS_TAG',
+        queryTagDefId: 'tag-card',
+      })],
+      ['field-rule', makeNode('field-rule', '', {
+        type: 'queryCondition',
+        parentId: 'group',
+        queryOp: 'FIELD_IS',
+        queryFieldDefId: 'field-status',
+        children: ['field-value'],
+      })],
+      ['field-value', makeNode('field-value', 'Backlog', { parentId: 'field-rule' })],
+      ['tag-card', makeNode('tag-card', 'card', { type: 'tagDef' })],
+      ['field-status', makeNode('field-status', 'Status', { type: 'fieldDef' })],
+      ['result-ref', makeNode('result-ref', '', { type: 'reference', parentId: 'search', targetId: 'target' })],
+      ['target', makeNode('target', 'Task', { parentId: 'workspace' })],
+    ]);
+
+    expect(searchQuerySummaryModel({ byId, projection: {} } as any, 'search')).toEqual({
+      chips: [
+        { kind: 'tag', label: '#card' },
+        { kind: 'field', label: 'Status = Backlog' },
+      ],
+      resultCount: 1,
+    });
   });
 
   test('applies sort, filter, and group view settings to row models', () => {

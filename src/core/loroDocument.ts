@@ -75,7 +75,6 @@ const NODE_SCALAR_KEYS: Array<keyof Node> = [
   'queryOp',
   'queryTagDefId',
   'queryFieldDefId',
-  'lastRefreshedAt',
   'codeLanguage',
   'mediaUrl',
   'mediaAlt',

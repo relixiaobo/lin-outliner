@@ -395,10 +395,18 @@ const BASH_PARAMETERS = {
   required: ['command'],
   properties: {
     command: { type: 'string', minLength: 1, description: 'The command to execute.' },
-    description: { type: 'string', description: 'Clear, concise description of what this command does in active voice. For simple commands, keep it brief. For piped or obscure commands, add enough context to clarify what it does.' },
+    description: {
+      type: 'string',
+      description: [
+        'Clear, concise description of what this command does in active voice.',
+        'Do not use vague words like "complex" or "risk"; describe the concrete action.',
+        'For simple commands such as git, npm, or standard CLI tools, keep it brief.',
+        'For piped commands or obscure flags, add enough context to clarify what the command does.',
+      ].join('\n'),
+    },
     timeout: { type: 'integer', minimum: 1, maximum: BASH_MAX_TIMEOUT_MS, description: `Optional timeout in milliseconds. Maximum ${BASH_MAX_TIMEOUT_MS}.` },
-    run_in_background: { type: 'boolean', description: 'Set to true to run this command in the background. You do not need to use "&" at the end of the command when using this parameter.' },
-    dangerouslyDisableSandbox: { type: 'boolean', description: 'Set this to true to dangerously override sandbox mode and run commands without sandboxing. Lin accepts this parameter for compatibility but currently runs local shell commands without an extra sandbox layer.' },
+    run_in_background: { type: 'boolean', description: 'Set to true to run this command in the background. You do not need to append "&"; use file_read on the returned output path later if needed.' },
+    dangerouslyDisableSandbox: { type: 'boolean', description: 'Compatibility parameter for tools that expose sandbox overrides. Lin currently runs local shell commands without an extra sandbox layer.' },
   },
 };
 
@@ -407,7 +415,7 @@ const TASK_STOP_PARAMETERS = {
   additionalProperties: false,
   required: ['task_id'],
   properties: {
-    task_id: { type: 'string', minLength: 1, description: 'The ID of the background task to stop.' },
+    task_id: { type: 'string', minLength: 1, description: 'The ID of the background task to stop. Use the task_id returned by bash when a command runs in the background.' },
   },
 };
 
@@ -668,7 +676,7 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
       'You must use file_read before editing. This tool will error if you attempt an edit without reading the file.',
       'The edit will fail if old_string is not unique in the file. Provide more surrounding context or use replace_all to change every instance.',
       'old_string must not be empty. Use file_write to create files or rewrite an empty file.',
-      'This tool does not edit Jupyter notebooks (.ipynb); notebook cell editing will use a dedicated notebook_edit tool.',
+      'This tool does not edit Jupyter notebooks (.ipynb). There is currently no notebook cell edit tool.',
       'Use replace_all for replacing or renaming strings across the file.',
     ].join('\n'),
     parameters: FILE_EDIT_PARAMETERS,
@@ -682,7 +690,7 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
           throw new LocalToolFailure(
             'notebook_edit_required',
             'File is a Jupyter Notebook. file_edit does not edit .ipynb files.',
-            'Use file_read to inspect notebook cells. Dedicated notebook_edit support will be implemented later.',
+            'Use file_read to inspect notebook cells. Rewrite the notebook with file_write only if the user explicitly asks for a complete notebook rewrite.',
           );
         }
         if (params.old_string === params.new_string) {
@@ -859,6 +867,7 @@ function createTaskStopTool(): AgentTool<any, ToolEnvelope<TaskStopData>> {
     description: [
       'Stops a running background task by its ID.',
       'Use this tool when you need to terminate a long-running task created by bash.',
+      'Only task_id is supported; shell_id is not accepted.',
     ].join('\n'),
     parameters: TASK_STOP_PARAMETERS,
     executionMode: 'sequential',

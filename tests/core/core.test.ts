@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { Core } from '../../src/core/core';
+import { runSearchNode } from '../../src/core/searchEngine';
 import {
   SCHEMA_ID,
   TAG_DAY_ID,
@@ -514,11 +515,89 @@ describe('Core', () => {
     core.applyTag(nodeId, tagId);
     const searchId = mustFocus(core.ensureTagSearch(tagId));
     expect(core.state().nodes[searchId].type).toBe('search');
-    expect(core.state().nodes[searchId].children.length).toBe(1);
-    expect(core.state().nodes[core.state().nodes[searchId].children[0]].targetId).toBe(nodeId);
+    const searchChildren = core.state().nodes[searchId].children;
+    const conditionId = searchChildren.find((childId) => core.state().nodes[childId]!.type === 'queryCondition');
+    expect(conditionId).toBeDefined();
+    const condition = core.state().nodes[conditionId!];
+    expect(condition.type).toBe('queryCondition');
+    expect(condition.queryOp).toBe('HAS_TAG');
+    expect(condition.queryTagDefId).toBe(tagId);
+    const resultRefs = searchChildren
+      .map((childId) => core.state().nodes[childId]!)
+      .filter((child) => child.type === 'reference');
+    expect(resultRefs.map((ref) => ref.targetId)).toContain(nodeId);
+    const tagSearch = runSearchNode(core.state(), searchId);
+    expect(tagSearch.ok ? tagSearch.hits.map((hit) => hit.nodeId) : []).toContain(nodeId);
 
     const childId = mustFocus(core.createNode(nodeId, null, 'Child'));
     expect(() => core.addReference(childId, nodeId, null)).toThrow('cannot create a reference cycle');
+  });
+
+  test('saved search refresh materializes result references by diff', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const tagId = mustFocus(core.createTag('project'));
+    const alpha = mustFocus(core.createNode(today, null, 'Alpha'));
+    const beta = mustFocus(core.createNode(today, null, 'Beta'));
+    const gamma = mustFocus(core.createNode(today, null, 'Gamma'));
+    core.applyTag(alpha, tagId);
+    core.applyTag(beta, tagId);
+
+    const searchId = mustFocus(core.createSearchNode(core.projection().searchesId, null, {
+      title: 'Projects',
+      query: { kind: 'rule', op: 'HAS_TAG', tagDefId: tagId },
+    }));
+    let state = core.state();
+    const refsByTarget = Object.fromEntries(state.nodes[searchId]!.children
+      .map((childId) => state.nodes[childId]!)
+      .filter((child) => child.type === 'reference')
+      .map((ref) => [ref.targetId!, ref.id]));
+    expect(new Set(Object.keys(refsByTarget))).toEqual(new Set([alpha, beta]));
+
+    const betaRef = refsByTarget[beta]!;
+    const betaRefTargetIndex = state.nodes[searchId]!.children
+      .findIndex((childId) => state.nodes[childId]?.type === 'queryCondition') + 1;
+    core.moveNode(betaRef, searchId, betaRefTargetIndex);
+    core.removeTag(alpha, tagId);
+    core.applyTag(gamma, tagId);
+    const expectedHitOrder = runSearchNode(core.state(), searchId);
+
+    core.refreshSearchNodeResults(searchId);
+    state = core.state();
+    const refs = state.nodes[searchId]!.children
+      .map((childId) => state.nodes[childId]!)
+      .filter((child) => child.type === 'reference');
+    expect(refs.map((ref) => ref.targetId)).toEqual(expectedHitOrder.ok
+      ? expectedHitOrder.hits.map((hit) => hit.nodeId)
+      : []);
+    expect(refs.find((ref) => ref.targetId === beta)?.id).toBe(betaRef);
+    expect(state.nodes[refsByTarget[alpha]!]).toBeUndefined();
+    const afterRefresh = JSON.stringify(state);
+    core.refreshSearchNodeResults(searchId);
+    expect(JSON.stringify(core.state())).toBe(afterRefresh);
+  });
+
+  test('saved search refresh keeps result references in hit order', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const exact = mustFocus(core.createNode(today, null, 'Beta'));
+    const partial = mustFocus(core.createNode(today, null, 'Alpha Beta'));
+    const searchId = mustFocus(core.createSearchNode(core.projection().searchesId, null, {
+      title: 'Beta search',
+      query: { kind: 'rule', op: 'STRING_MATCH', text: 'Beta' },
+    }));
+
+    let refs = core.state().nodes[searchId]!.children
+      .map((childId) => core.state().nodes[childId]!)
+      .filter((child) => child.type === 'reference');
+    expect(refs.map((ref) => ref.targetId)).toEqual([exact, partial]);
+
+    core.moveNode(refs[1]!.id, searchId, 1);
+    core.refreshSearchNodeResults(searchId);
+    refs = core.state().nodes[searchId]!.children
+      .map((childId) => core.state().nodes[childId]!)
+      .filter((child) => child.type === 'reference');
+    expect(refs.map((ref) => ref.targetId)).toEqual([exact, partial]);
   });
 
   test('tag inheritance instantiates inherited fields and applies child supertags', () => {

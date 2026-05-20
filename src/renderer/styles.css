@@ -3737,8 +3737,8 @@ button:focus-visible {
 .panel-date-nav-button,
 .panel-date-nav-today,
 .panel-date-picker-button,
-.panel-date-calendar-nav,
-.panel-date-calendar-day {
+.calendar-month-nav,
+.calendar-month-day {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3774,10 +3774,10 @@ button:focus-visible {
 .panel-date-picker-button:hover,
 .panel-date-picker-button:focus-visible,
 .panel-date-picker-button[aria-expanded="true"],
-.panel-date-calendar-nav:hover,
-.panel-date-calendar-nav:focus-visible,
-.panel-date-calendar-day:hover,
-.panel-date-calendar-day:focus-visible {
+.calendar-month-nav:hover,
+.calendar-month-nav:focus-visible,
+.calendar-month-day:hover,
+.calendar-month-day:focus-visible {
   background: var(--control-hover);
   color: var(--text-sub);
 }
@@ -3808,7 +3808,7 @@ button:focus-visible {
   padding: var(--space-5);
 }
 
-.panel-date-calendar-header {
+.calendar-month-header {
   display: grid;
   height: 28px;
   grid-template-columns: 28px 1fr 28px;
@@ -3820,19 +3820,19 @@ button:focus-visible {
   text-align: center;
 }
 
-.panel-date-calendar-nav {
+.calendar-month-nav {
   width: 26px;
   height: 26px;
   border-radius: var(--radius-sm);
 }
 
-.panel-date-calendar-weekdays,
-.panel-date-calendar-grid {
+.calendar-month-weekdays,
+.calendar-month-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
 }
 
-.panel-date-calendar-weekdays {
+.calendar-month-weekdays {
   margin-top: var(--space-4);
   color: var(--muted-2);
   font-size: var(--font-ui-2xs);
@@ -3841,12 +3841,12 @@ button:focus-visible {
   text-align: center;
 }
 
-.panel-date-calendar-grid {
+.calendar-month-grid {
   gap: var(--space-hairline);
   margin-top: var(--space-2);
 }
 
-.panel-date-calendar-day {
+.calendar-month-day {
   position: relative;
   width: 28px;
   height: 28px;
@@ -3857,11 +3857,16 @@ button:focus-visible {
   line-height: var(--line-meta);
 }
 
-.panel-date-calendar-day.is-outside-month {
+.calendar-month-day.is-outside-month {
   color: color-mix(in srgb, var(--muted-2) 42%, transparent);
 }
 
-.panel-date-calendar-day.is-today:not(.is-selected) {
+.calendar-month-day.is-in-range:not(.is-selected) {
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  border-radius: 0;
+}
+
+.calendar-month-day.is-today:not(.is-selected) {
   box-shadow: var(--outline-emphasis);
 }
 
@@ -3890,7 +3895,7 @@ button:focus-visible {
   background: var(--control-hover);
 }
 
-.panel-date-calendar-day.is-selected {
+.calendar-month-day.is-selected {
   background: var(--text-main);
   color: var(--panel-bg);
 }

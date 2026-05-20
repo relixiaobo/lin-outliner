@@ -61,6 +61,7 @@ import {
 } from './outliner/trailingTriggers';
 import { ButtonControl } from './primitives/ButtonControl';
 import { IconButton } from './primitives/IconButton';
+import { SearchQuerySummaryBar } from './search/SearchQuerySummaryBar';
 import { inlineReferenceTextColor, resolveTagColor } from './tags/tagColors';
 import { TagBar } from './tags/TagBar';
 import { buildPanelBreadcrumb } from './panelBreadcrumb';
@@ -560,6 +561,13 @@ export function NodePanel(props: NodePanelProps) {
           >
             {definitionTemplateLabel && (
               <div className="definition-template-label">{definitionTemplateLabel}</div>
+            )}
+            {rootNode?.type === 'search' && (
+              <SearchQuerySummaryBar
+                index={props.index}
+                nodeId={props.rootId}
+                run={props.run}
+              />
             )}
             <OutlinerView
               panelId={props.panelId}

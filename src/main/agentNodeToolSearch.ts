@@ -1,18 +1,31 @@
-import type { NodeProjection, SearchNodeCondition, SearchNodeConfig } from '../core/types';
-import { parseLinOutline, type OutlineDocument, type OutlineField, type OutlineNode } from './agentOutlineParser';
+import {
+  QUERY_OPS,
+  type NodeProjection,
+  type QueryLogic,
+  type QueryOp,
+  type SearchNodeConfig,
+  type SearchQueryExpr,
+  type SearchQueryOperand,
+  type SearchQueryRule,
+} from '../core/types';
+import {
+  SEARCH_EXECUTABLE_QUERY_OPS,
+  runSearchExpr,
+  searchNodeHasRules,
+  searchNodeQueryTerms,
+  searchNodeToQueryExpr,
+  searchQueryHasRules,
+  searchQueryTerms,
+} from '../core/searchEngine';
+import { parseLinOutline, type OutlineDocument, type OutlineNode, type OutlineValue } from './agentOutlineParser';
 import {
   checkedState,
-  fieldDefinitionName,
   fieldReads,
   isInTrash,
-  isSearchCandidate,
   nodeKind,
   nodeTitle,
   normalChildIds,
   parentRef,
-  resolveFieldSearchConditions,
-  resolveTagNames,
-  scoreTerm,
   snippetFor,
   tagLabel,
   tagLabels,
@@ -21,13 +34,59 @@ import type {
   NodeSearchItem,
   NodeToolIssue,
   NormalizedSearchParams,
-  ParsedFieldSearchCondition,
-  ParsedSearch,
   ProjectionIndex,
-  ResolvedFieldSearchCondition,
   ResolvedSearchSpec,
 } from './agentNodeToolTypes';
-import { asRecord, clampInteger, unique } from './agentNodeToolUtils';
+import { asRecord, clampInteger } from './agentNodeToolUtils';
+
+const QUERY_LOGICS = new Set<QueryLogic>(['AND', 'OR', 'NOT']);
+const QUERY_OP_SET = new Set<QueryOp>(QUERY_OPS);
+const EXECUTABLE_QUERY_OP_SET = new Set<QueryOp>(SEARCH_EXECUTABLE_QUERY_OPS);
+
+const FIELD_OPERAND_OPS = new Set<QueryOp>([
+  'FIELD_IS',
+  'FIELD_IS_NOT',
+  'IS_EMPTY',
+  'IS_NOT_EMPTY',
+  'FIELD_CONTAINS',
+  'LT',
+  'GT',
+  'HAS_FIELD',
+  'DATE_OVERLAPS',
+  'OVERDUE',
+  'FIELD_IS_SET',
+  'FIELD_IS_NOT_SET',
+  'FIELD_IS_DEFINED',
+  'FIELD_IS_NOT_DEFINED',
+]);
+
+const VALUE_OPERAND_OPS = new Set<QueryOp>([
+  'STRING_MATCH',
+  'FIELD_IS',
+  'FIELD_IS_NOT',
+  'FIELD_CONTAINS',
+  'LT',
+  'GT',
+  'REGEXP_MATCH',
+  'IS_TYPE',
+  'FOR_DATE',
+  'FOR_RELATIVE_DATE',
+  'DATE_OVERLAPS',
+  'SIBLING_NAMED',
+  'CREATED_LAST_DAYS',
+  'EDITED_LAST_DAYS',
+  'DONE_LAST_DAYS',
+]);
+
+const TARGET_OPERAND_OPS = new Set<QueryOp>([
+  'LINKS_TO',
+  'CHILD_OF',
+  'OWNED_BY',
+  'DESCENDANT_OF',
+  'DESCENDANT_OF_WITH_REFS',
+]);
+
+const ALLOWED_RULE_FIELD_NAMES = new Set(['field', 'tag', 'target', 'value', 'operand']);
 
 export function normalizeSearchParams(rawParams: unknown): NormalizedSearchParams {
   const input = asRecord(rawParams);
@@ -66,56 +125,35 @@ export function buildSearchItem(index: ProjectionIndex, nodeId: string, queryTer
   };
 }
 
-export function resolveSearchSpecFromOutlineNode(index: ProjectionIndex, node: OutlineNode): ResolvedSearchSpec {
-  const parsed = parsedSearchFromOutlineNode(node);
-  const resolvedTags = resolveTagNames(index, parsed.tagNames);
-  const resolvedFields = resolveFieldSearchConditions(index, parsed.fieldConditions);
+export function resolveSearchSpecFromOutlineNode(index: ProjectionIndex, node: OutlineNode): ResolvedSearchSpec | NodeToolIssue {
+  if (!node.search) {
+    return {
+      code: 'invalid_search_node',
+      error: 'Search outline root must include %%search%%.',
+      instructions: 'Use one root line like "- %%search%% Open work" followed by exactly one query root child.',
+    };
+  }
+  if (node.fields.length > 0) {
+    return {
+      code: 'invalid_search_condition',
+      error: 'Search node root cannot contain fields; fields belong on rule nodes.',
+      instructions: 'Put field::, tag::, target::, and value:: under a query rule child.',
+    };
+  }
+  if (node.children.length !== 1) {
+    return {
+      code: 'invalid_search_condition',
+      error: 'Search node must contain exactly one query root child.',
+      instructions: 'Use an AND group when the search has multiple rules.',
+    };
+  }
+  const query = queryExprFromOutlineNode(index, node.children[0]!);
+  if ('error' in query) return query;
   return {
-    title: parsed.title ?? 'Search',
-    view: parsed.view,
-    queryTerms: parsed.queryTerms,
-    tagIds: resolvedTags.tagIds,
-    linkTargetIds: parsed.linkTargetIds,
-    fieldConditions: resolvedFields.fieldConditions,
-    unresolvedTagNames: resolvedTags.unresolvedTagNames,
-    unresolvedFields: resolvedFields.unresolvedFields,
-    warnings: [],
-  };
-}
-
-export function parsedSearchFromOutlineNode(node: OutlineNode): ParsedSearch {
-  const queryTerms: string[] = [];
-  const tagNames: string[] = [];
-  const linkTargetIds: string[] = [];
-  const fieldConditions: ParsedFieldSearchCondition[] = [];
-
-  for (const field of node.fields) {
-    fieldConditions.push(...fieldSearchConditionsFromOutlineField(field));
-  }
-
-  for (const child of node.children) {
-    tagNames.push(...child.tags);
-    if (child.referenceTargetId) {
-      linkTargetIds.push(child.referenceTargetId);
-    } else if (child.title.trim() && child.title !== '(untitled)') {
-      queryTerms.push(child.title.trim());
-    }
-    for (const field of child.fields) {
-      fieldConditions.push(...fieldSearchConditionsFromOutlineField(field));
-    }
-  }
-
-  if (queryTerms.length === 0 && tagNames.length === 0 && linkTargetIds.length === 0 && fieldConditions.length === 0 && node.title.trim()) {
-    queryTerms.push(node.title.trim());
-  }
-
-  return {
-    title: node.title.trim() || undefined,
+    title: node.title.trim() || 'Search',
     view: node.view,
-    queryTerms: unique(queryTerms.filter(Boolean)),
-    tagNames: unique(tagNames),
-    linkTargetIds: unique(linkTargetIds),
-    fieldConditions: uniqueParsedFieldConditions(fieldConditions),
+    query,
+    warnings: [],
   };
 }
 
@@ -123,63 +161,30 @@ export function searchNodeConfigFromSpec(spec: ResolvedSearchSpec): SearchNodeCo
   return {
     title: spec.title,
     viewMode: spec.view,
-    conditions: [
-      ...spec.queryTerms.map((text): SearchNodeCondition => ({ op: 'STRING_MATCH', text })),
-      ...spec.tagIds.map((tagId): SearchNodeCondition => ({ op: 'HAS_TAG', tagId })),
-      ...spec.linkTargetIds.map((targetId): SearchNodeCondition => ({ op: 'LINKS_TO', targetId })),
-      ...spec.fieldConditions.map((field): SearchNodeCondition => ({
-        op: 'FIELD_CONTAINS',
-        fieldDefId: field.fieldDefId,
-        text: field.text,
-      })),
-    ],
+    query: spec.query,
   };
 }
 
-export function searchSpecFromSavedSearch(index: ProjectionIndex, node: NodeProjection): ResolvedSearchSpec {
-  const queryTerms: string[] = [];
-  const tagIds: string[] = [];
-  const linkTargetIds: string[] = [];
-  const fieldConditions: ResolvedFieldSearchCondition[] = [];
-  const conditionNodes = node.children
-    .map((childId) => index.nodes.get(childId))
-    .filter((child): child is NodeProjection => child?.type === 'queryCondition' && !isInTrash(index, child.id));
-
-  for (const condition of conditionNodes) {
-    if (condition.queryOp === 'HAS_TAG' && condition.queryTagDefId) tagIds.push(condition.queryTagDefId);
-    else if (condition.queryOp === 'LINKS_TO' && condition.targetId) linkTargetIds.push(condition.targetId);
-    else if (condition.queryOp === 'FIELD_CONTAINS' && condition.queryFieldDefId) {
-      fieldConditions.push({
-        fieldDefId: condition.queryFieldDefId,
-        fieldName: fieldDefinitionName(index, condition.queryFieldDefId),
-        text: condition.content.text.trim() || undefined,
-      });
-    }
-    else if (condition.queryOp === 'STRING_MATCH' && condition.content.text.trim()) queryTerms.push(condition.content.text.trim());
+export function searchSpecFromSavedSearch(index: ProjectionIndex, node: NodeProjection): ResolvedSearchSpec | NodeToolIssue {
+  const resolved = searchNodeToQueryExpr(index.projection, node.id);
+  if (!resolved.ok) {
+    return {
+      code: resolved.issue.code,
+      error: resolved.issue.message,
+      instructions: 'Fix the saved search query tree, or recreate it from a canonical search outline.',
+    };
   }
-
-  if (conditionNodes.length === 0) {
-    if (node.queryOp === 'HAS_TAG' && node.queryTagDefId) tagIds.push(node.queryTagDefId);
-    else if (node.queryOp === 'LINKS_TO' && node.targetId) linkTargetIds.push(node.targetId);
-    else if (node.queryOp === 'FIELD_CONTAINS' && node.queryFieldDefId) {
-      fieldConditions.push({
-        fieldDefId: node.queryFieldDefId,
-        fieldName: fieldDefinitionName(index, node.queryFieldDefId),
-      });
-    }
-    else if (node.queryOp === 'STRING_MATCH' && node.content.text.trim()) queryTerms.push(node.content.text.trim());
-    else if (node.content.text.trim()) queryTerms.push(node.content.text.trim());
+  if (!resolved.query) {
+    return {
+      code: 'empty_search',
+      error: 'Saved search has no query rules.',
+      instructions: 'Add one query root child under the search node.',
+    };
   }
-
   return {
     title: node.content.text.trim() || 'Search',
     view: node.viewMode,
-    queryTerms: unique(queryTerms),
-    tagIds: unique(tagIds),
-    linkTargetIds: unique(linkTargetIds),
-    fieldConditions: uniqueFieldConditions(fieldConditions),
-    unresolvedTagNames: [],
-    unresolvedFields: [],
+    query: resolved.query,
     warnings: [],
   };
 }
@@ -190,47 +195,23 @@ export function resolveSearch(index: ProjectionIndex, params: NormalizedSearchPa
   view?: string;
   searchNodeId?: string;
   outline?: string;
+  query: SearchQueryExpr;
   queryTerms: string[];
-  tagIds: string[];
-  linkTargetIds: string[];
-  fieldConditions: ResolvedFieldSearchCondition[];
-  unresolvedTagNames: string[];
-  unresolvedFields: string[];
   warnings: string[];
+  hasExecutableRules: boolean;
 } | NodeToolIssue {
   if (params.outline) {
-    const parsed = parseSearchOutline(params.outline);
-    if ('error' in parsed) return parsed;
-    const referenceValidation = validateReferenceTargetIds(index, parsed.linkTargetIds);
-    if (referenceValidation) return referenceValidation;
-    const resolvedTags = resolveTagNames(index, parsed.tagNames);
-    const resolvedFields = resolveFieldSearchConditions(index, parsed.fieldConditions);
-    if (resolvedTags.unresolvedTagNames.length) {
-      return {
-        code: 'unresolved_tag',
-        error: `Search references unknown tags: ${resolvedTags.unresolvedTagNames.join(', ')}`,
-        instructions: 'Use a plain text search outline first, or create/apply the tag before filtering by it.',
-      };
-    }
-    if (resolvedFields.unresolvedFields.length) {
-      return {
-        code: 'unresolved_field',
-        error: `Search references unknown fields: ${resolvedFields.unresolvedFields.join(', ')}`,
-        instructions: 'Use node_read on a tagged node to inspect available field names before filtering by field.',
-      };
-    }
+    const spec = parseSearchOutline(index, params.outline);
+    if ('error' in spec) return spec;
     return {
       source: 'temporary',
-      title: parsed.title,
-      view: parsed.view,
+      title: spec.title,
+      view: spec.view,
       outline: params.outline,
-      queryTerms: parsed.queryTerms,
-      tagIds: resolvedTags.tagIds,
-      linkTargetIds: parsed.linkTargetIds,
-      fieldConditions: resolvedFields.fieldConditions,
-      unresolvedTagNames: [],
-      unresolvedFields: [],
-      warnings: [],
+      query: spec.query,
+      queryTerms: searchQueryTerms(spec.query),
+      warnings: spec.warnings,
+      hasExecutableRules: searchQueryHasRules(spec.query),
     };
   }
 
@@ -242,48 +223,32 @@ export function resolveSearch(index: ProjectionIndex, params: NormalizedSearchPa
     return { code: 'invalid_search_node', error: `Node is not a search node: ${searchNodeId}`, instructions: 'Use node_search with a temporary search outline for keyword search.' };
   }
   const spec = searchSpecFromSavedSearch(index, node);
-  const referenceValidation = validateReferenceTargetIds(index, spec.linkTargetIds);
-  if (referenceValidation) return referenceValidation;
+  if ('error' in spec) return spec;
   return {
     source: 'saved',
-    title: spec.title,
-    view: spec.view,
+    title: node.content.text.trim() || 'Search',
+    view: node.viewMode,
     searchNodeId,
-    queryTerms: spec.queryTerms,
-    tagIds: spec.tagIds,
-    linkTargetIds: spec.linkTargetIds,
-    fieldConditions: spec.fieldConditions,
-    unresolvedTagNames: spec.unresolvedTagNames,
-    unresolvedFields: spec.unresolvedFields,
+    query: spec.query,
+    queryTerms: searchNodeQueryTerms(index.projection, searchNodeId),
     warnings: spec.warnings,
+    hasExecutableRules: searchNodeHasRules(index.projection, searchNodeId),
   };
 }
 
 export function runSearch(index: ProjectionIndex, search: {
-  queryTerms: string[];
-  tagIds: string[];
-  linkTargetIds: string[];
-  fieldConditions: ResolvedFieldSearchCondition[];
-}): string[] {
-  const scored: Array<{ nodeId: string; score: number }> = [];
-  for (const node of index.projection.nodes) {
-    if (!isSearchCandidate(index, node.id)) continue;
-    if (!search.tagIds.every((tagId) => node.tags.includes(tagId))) continue;
-    if (!search.linkTargetIds.every((targetId) => nodeLinksTo(index, node, targetId))) continue;
-    if (!search.fieldConditions.every((condition) => nodeMatchesFieldCondition(index, node, condition))) continue;
-    let score = search.tagIds.length * 25 + search.linkTargetIds.length * 20 + search.fieldConditions.length * 18;
-    let matched = true;
-    for (const term of search.queryTerms) {
-      const termScore = scoreTerm(index, node, term);
-      if (termScore <= 0) {
-        matched = false;
-        break;
-      }
-      score += termScore;
-    }
-    if (matched) scored.push({ nodeId: node.id, score });
+  searchNodeId?: string;
+  query: SearchQueryExpr;
+}): string[] | NodeToolIssue {
+  const result = runSearchExpr(index.projection, search.query, { searchNodeId: search.searchNodeId });
+  if (!result.ok) {
+    return {
+      code: result.issue.code,
+      error: result.issue.message,
+      instructions: 'Fix the canonical search query tree and retry.',
+    };
   }
-  return scored.sort((left, right) => right.score - left.score || left.nodeId.localeCompare(right.nodeId)).map((hit) => hit.nodeId);
+  return result.hits.map((hit) => hit.nodeId);
 }
 
 export function validateReferenceTargetIds(index: ProjectionIndex, targetIds: string[]): NodeToolIssue | null {
@@ -314,23 +279,17 @@ export function validateSearchNodes(index: ProjectionIndex, document: OutlineDoc
   return null;
 }
 
+export function searchQueryOutlineLines(index: ProjectionIndex, node: NodeProjection, level: number): string[] {
+  const indent = '  '.repeat(level);
+  const spec = searchSpecFromSavedSearch(index, node);
+  if ('error' in spec) return [`${indent}- Invalid search query: ${spec.error}`];
+  return serializeQueryExprOutlineLines(index, spec.query, level);
+}
+
 function validateSearchNode(index: ProjectionIndex, node: OutlineNode): NodeToolIssue | null {
   if (node.search) {
     const spec = resolveSearchSpecFromOutlineNode(index, node);
-    if (spec.unresolvedTagNames.length) {
-      return {
-        code: 'unresolved_tag',
-        error: `Search references unknown tags: ${spec.unresolvedTagNames.join(', ')}`,
-        instructions: 'Create/apply the tag first, or remove the tag condition from the search node outline.',
-      };
-    }
-    if (spec.unresolvedFields.length) {
-      return {
-        code: 'unresolved_field',
-        error: `Search references unknown fields: ${spec.unresolvedFields.join(', ')}`,
-        instructions: 'Create the field definition first, or remove the field condition from the search node outline.',
-      };
-    }
+    if ('error' in spec) return spec;
   }
   for (const child of node.children) {
     const validation = validateSearchNode(index, child);
@@ -339,27 +298,7 @@ function validateSearchNode(index: ProjectionIndex, node: OutlineNode): NodeTool
   return null;
 }
 
-function nodeLinksTo(index: ProjectionIndex, node: NodeProjection, targetId: string): boolean {
-  if (node.type === 'reference' && node.targetId === targetId) return true;
-  if (node.content.inlineRefs.some((ref) => ref.targetNodeId === targetId)) return true;
-  return node.children.some((childId) => {
-    const child = index.nodes.get(childId);
-    return child?.type === 'reference' && child.targetId === targetId;
-  });
-}
-
-function nodeMatchesFieldCondition(index: ProjectionIndex, node: NodeProjection, condition: ResolvedFieldSearchCondition): boolean {
-  const fields = fieldReads(index, node, false).filter((field) => {
-    const fieldEntry = index.nodes.get(field.fieldEntryId);
-    return fieldEntry?.fieldDefId === condition.fieldDefId;
-  });
-  if (fields.length === 0) return false;
-  const text = condition.text?.trim().toLowerCase();
-  if (!text) return true;
-  return fields.some((field) => field.values.some((value) => value.text.toLowerCase().includes(text)));
-}
-
-function parseSearchOutline(outline: string): ParsedSearch | NodeToolIssue {
+function parseSearchOutline(index: ProjectionIndex, outline: string): ResolvedSearchSpec | NodeToolIssue {
   const parsed = parseLinOutline(outline);
   if (!parsed.ok) {
     return {
@@ -372,69 +311,251 @@ function parseSearchOutline(outline: string): ParsedSearch | NodeToolIssue {
     return {
       code: 'ambiguous_search',
       error: 'Search outline must contain exactly one root search node.',
-      instructions: 'Wrap all search conditions under one "- %%search%% Title" root.',
+      instructions: 'Use one root line like "- %%search%% Open work".',
     };
   }
-  return parsedSearchFromOutlineNode(parsed.document.roots[0]!);
+  return resolveSearchSpecFromOutlineNode(index, parsed.document.roots[0]!);
 }
 
-function fieldSearchConditionsFromOutlineField(field: OutlineField): ParsedFieldSearchCondition[] {
-  const fieldName = field.name.trim();
-  if (!fieldName) return [];
-  if (field.values.length === 0) return [{ fieldName }];
-  return field.values.map((value) => ({
-    fieldName,
-    text: value.text.trim() || undefined,
-  }));
+function queryExprFromOutlineNode(index: ProjectionIndex, node: OutlineNode): SearchQueryExpr | NodeToolIssue {
+  const token = node.title.trim().toUpperCase();
+  if (QUERY_LOGICS.has(token as QueryLogic)) {
+    if (node.fields.length > 0) {
+      return {
+        code: 'invalid_search_condition',
+        error: `Search group "${token}" cannot contain operand fields.`,
+        instructions: 'Put operands under rule nodes, not group nodes.',
+      };
+    }
+    if (node.children.length === 0) {
+      return {
+        code: 'invalid_search_condition',
+        error: `Search group "${token}" has no child rules.`,
+        instructions: 'Add at least one child rule under the group.',
+      };
+    }
+    const children: SearchQueryExpr[] = [];
+    for (const child of node.children) {
+      const query = queryExprFromOutlineNode(index, child);
+      if ('error' in query) return query;
+      children.push(query);
+    }
+    return { kind: 'group', logic: token as QueryLogic, children };
+  }
+
+  if (!QUERY_OP_SET.has(token as QueryOp)) {
+    return {
+      code: 'unsupported_search_rule',
+      error: `Unknown search rule "${node.title}".`,
+      instructions: `Use one of: ${QUERY_OPS.join(', ')}.`,
+    };
+  }
+
+  const op = token as QueryOp;
+  if (!EXECUTABLE_QUERY_OP_SET.has(op)) {
+    return {
+      code: 'unsupported_search_rule',
+      error: `Search rule "${op}" is not supported by the engine.`,
+      instructions: 'Use a currently executable query operator.',
+    };
+  }
+  if (node.children.length > 0) {
+    return {
+      code: 'invalid_search_condition',
+      error: `Search rule "${op}" cannot contain child rule nodes.`,
+      instructions: 'Represent rule operands as field::, tag::, target::, or value:: lines under the rule.',
+    };
+  }
+
+  const unknownField = node.fields.find((field) => !ALLOWED_RULE_FIELD_NAMES.has(normalizeFieldName(field.name)));
+  if (unknownField) {
+    return {
+      code: 'invalid_search_condition',
+      error: `Unsupported search rule operand "${unknownField.name}".`,
+      instructions: 'Use only field::, tag::, target::, value::, or operand:: under query rule nodes.',
+    };
+  }
+
+  const fieldDefId = referenceFromNamedField(index, node, 'field', 'fieldDef');
+  if (isNodeToolIssue(fieldDefId)) return fieldDefId;
+  const tagDefId = referenceFromNamedField(index, node, 'tag', 'tagDef');
+  if (isNodeToolIssue(tagDefId)) return tagDefId;
+  const targetId = referenceFromNamedField(index, node, 'target');
+  if (isNodeToolIssue(targetId)) return targetId;
+  const operands = valueOperandsFromRule(index, node);
+  if ('error' in operands) return operands;
+
+  const text = firstTextOperand(operands);
+  const rule: SearchQueryRule = {
+    kind: 'rule',
+    op,
+    ...(text ? { text } : {}),
+    ...(fieldDefId ? { fieldDefId } : {}),
+    ...(tagDefId ? { tagDefId } : {}),
+    ...(targetId ? { targetId } : {}),
+    ...(operands.length > 0 ? { operands } : {}),
+  };
+  const validation = validateRule(rule);
+  if (validation) return validation;
+  return rule;
 }
 
-function uniqueParsedFieldConditions(conditions: ParsedFieldSearchCondition[]): ParsedFieldSearchCondition[] {
-  const result: ParsedFieldSearchCondition[] = [];
+function isNodeToolIssue(value: unknown): value is NodeToolIssue {
+  return typeof value === 'object' && value !== null && 'error' in value;
+}
+
+function validateRule(rule: SearchQueryRule): NodeToolIssue | null {
+  if (FIELD_OPERAND_OPS.has(rule.op) && !rule.fieldDefId && rule.op !== 'HAS_FIELD' && rule.op !== 'OVERDUE') {
+    return missingRuleOperand(rule.op, 'field:: [[Field^node:...]]');
+  }
+  if (rule.op === 'HAS_TAG' && !rule.tagDefId) return missingRuleOperand(rule.op, 'tag:: [[#tag^node:...]]');
+  if (TARGET_OPERAND_OPS.has(rule.op) && !rule.targetId) return missingRuleOperand(rule.op, 'target:: [[Target^node:...]]');
+  if (VALUE_OPERAND_OPS.has(rule.op) && !rule.text && (!rule.operands || rule.operands.length === 0)) {
+    return missingRuleOperand(rule.op, 'value:: ...');
+  }
+  return null;
+}
+
+function missingRuleOperand(op: QueryOp, operand: string): NodeToolIssue {
+  return {
+    code: 'invalid_search_condition',
+    error: `Search rule "${op}" is missing ${operand}.`,
+    instructions: 'Add the required operand under the rule node.',
+  };
+}
+
+function referenceFromNamedField(
+  index: ProjectionIndex,
+  node: OutlineNode,
+  name: 'field' | 'tag' | 'target',
+  expectedType?: NodeProjection['type'],
+): string | undefined | NodeToolIssue {
+  const values = valuesForField(node, name);
+  if (values.length === 0) return undefined;
+  if (values.length !== 1) {
+    return {
+      code: 'invalid_search_condition',
+      error: `Search operand "${name}" must have exactly one value.`,
+      instructions: `Use one ${name}:: reference under the rule.`,
+    };
+  }
+  const value = values[0]!;
+  const targetId = value.targetId ?? (index.nodes.has(value.text.trim()) ? value.text.trim() : undefined);
+  if (!targetId) {
+    return {
+      code: 'invalid_search_condition',
+      error: `Search operand "${name}" must be a node reference or exact node id.`,
+      instructions: `Use ${name}:: [[Display^node:...]].`,
+    };
+  }
+  const target = index.nodes.get(targetId);
+  if (!target) {
+    return {
+      code: 'node_not_found',
+      error: `Search operand "${name}" references missing node: ${targetId}`,
+      instructions: 'Use node_search or node_read to locate the current node id.',
+    };
+  }
+  if (isInTrash(index, targetId)) {
+    return {
+      code: 'node_in_trash',
+      error: `Search operand "${name}" references a trashed node: ${targetId}`,
+      instructions: 'Choose a non-deleted node.',
+    };
+  }
+  if (expectedType && target.type !== expectedType) {
+    return {
+      code: 'invalid_search_condition',
+      error: `Search operand "${name}" must reference a ${expectedType} node.`,
+      instructions: `Use ${name}:: [[Display^node:...]] with the correct node type.`,
+    };
+  }
+  return targetId;
+}
+
+function valueOperandsFromRule(index: ProjectionIndex, node: OutlineNode): SearchQueryOperand[] | NodeToolIssue {
+  const values = [...valuesForField(node, 'value'), ...valuesForField(node, 'operand')];
+  const operands: SearchQueryOperand[] = [];
+  for (const value of values) {
+    const text = value.text.trim();
+    if (value.targetId) {
+      const target = index.nodes.get(value.targetId);
+      if (!target) {
+        return {
+          code: 'node_not_found',
+          error: `Search value references missing node: ${value.targetId}`,
+          instructions: 'Use node_search or node_read to locate the current node id.',
+        };
+      }
+      operands.push({ targetId: value.targetId, text: text || nodeTitle(index, target) });
+    } else if (text) {
+      operands.push({ text });
+    }
+  }
+  return uniqueOperands(operands);
+}
+
+function valuesForField(node: OutlineNode, name: string): OutlineValue[] {
+  return node.fields
+    .filter((field) => normalizeFieldName(field.name) === name)
+    .flatMap((field) => field.values);
+}
+
+function normalizeFieldName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+function firstTextOperand(operands: SearchQueryOperand[]): string | undefined {
+  return operands.map((operand) => operand.text?.trim()).find((text): text is string => Boolean(text));
+}
+
+function uniqueOperands(operands: SearchQueryOperand[]): SearchQueryOperand[] {
+  const result: SearchQueryOperand[] = [];
   const seen = new Set<string>();
-  for (const condition of conditions) {
-    const fieldName = condition.fieldName.trim();
-    if (!fieldName) continue;
-    const text = condition.text?.trim() || undefined;
-    const key = `${fieldName.toLowerCase()}:${(text ?? '').toLowerCase()}`;
+  for (const operand of operands) {
+    const text = operand.text?.trim() || undefined;
+    const key = `${operand.targetId ?? ''}:${(text ?? '').toLowerCase()}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    result.push({ fieldName, text });
+    result.push({ ...(text ? { text } : {}), ...(operand.targetId ? { targetId: operand.targetId } : {}) });
   }
   return result;
 }
 
-function uniqueFieldConditions(conditions: ResolvedFieldSearchCondition[]): ResolvedFieldSearchCondition[] {
-  const result: ResolvedFieldSearchCondition[] = [];
-  const seen = new Set<string>();
-  for (const condition of conditions) {
-    const text = condition.text?.trim() || undefined;
-    const key = `${condition.fieldDefId}:${(text ?? '').toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push({ ...condition, text });
+function serializeQueryExprOutlineLines(index: ProjectionIndex, query: SearchQueryExpr, level: number): string[] {
+  const indent = '  '.repeat(level);
+  if (query.kind === 'group') {
+    return [
+      `${indent}- ${query.logic}`,
+      ...query.children.flatMap((child) => serializeQueryExprOutlineLines(index, child, level + 1)),
+    ];
   }
-  return result;
+
+  const lines = [`${indent}- ${query.op}`];
+  if (query.fieldDefId) lines.push(`${indent}  - field:: ${nodeReference(index, query.fieldDefId)}`);
+  if (query.tagDefId) lines.push(`${indent}  - tag:: ${nodeReference(index, query.tagDefId, tagLabel(index.nodes.get(query.tagDefId)) ?? undefined)}`);
+  if (query.targetId) lines.push(`${indent}  - target:: ${nodeReference(index, query.targetId)}`);
+  const operands = query.operands?.length ? query.operands : query.text ? [{ text: query.text }] : [];
+  if (operands.length === 1) {
+    lines.push(`${indent}  - value:: ${operandText(index, operands[0]!)}`);
+  } else {
+    for (const operand of operands) lines.push(`${indent}  - value:: ${operandText(index, operand)}`);
+  }
+  return lines;
+}
+
+function operandText(index: ProjectionIndex, operand: SearchQueryOperand): string {
+  if (operand.targetId) return nodeReference(index, operand.targetId, operand.text);
+  return operand.text ?? '';
+}
+
+function nodeReference(index: ProjectionIndex, nodeId: string, label?: string): string {
+  const node = index.nodes.get(nodeId);
+  return `[[${label ?? (node ? nodeTitle(index, node) : nodeId)}^${nodeId}]]`;
 }
 
 function requiredSearchNode(index: ProjectionIndex, nodeId: string): NodeProjection {
   const node = index.nodes.get(nodeId);
   if (!node) throw new Error(`Node not found: ${nodeId}`);
   return node;
-}
-
-export function searchConditionOutlineLines(index: ProjectionIndex, node: NodeProjection, level: number): string[] {
-  const indent = '  '.repeat(level);
-  const spec = searchSpecFromSavedSearch(index, node);
-  return [
-    ...spec.queryTerms.map((term) => `${indent}- ${term}`),
-    ...spec.tagIds.map((tagId) => {
-      const tag = tagLabel(index.nodes.get(tagId)) ?? `#${tagId}`;
-      return `${indent}- ${tag}`;
-    }),
-    ...spec.linkTargetIds.map((targetId) => {
-      const target = index.nodes.get(targetId);
-      return `${indent}- [[${target ? nodeTitle(index, target) : targetId}^${targetId}]]`;
-    }),
-    ...spec.fieldConditions.map((field) => `${indent}- ${field.fieldName}:: ${field.text ?? ''}`.trimEnd()),
-  ];
 }

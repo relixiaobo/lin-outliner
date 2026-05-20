@@ -145,52 +145,84 @@ export interface RichTextPatch {
   ops: RichTextPatchOp[];
 }
 
-export interface SearchNodeCondition {
-  op: 'STRING_MATCH' | 'HAS_TAG' | 'LINKS_TO' | 'FIELD_CONTAINS';
+export interface SearchQueryOperand {
   text?: string;
-  tagId?: NodeId;
   targetId?: NodeId;
-  fieldDefId?: NodeId;
 }
+
+export interface SearchQueryRule {
+  kind: 'rule';
+  op: QueryOp;
+  text?: string;
+  fieldDefId?: NodeId;
+  tagDefId?: NodeId;
+  targetId?: NodeId;
+  operands?: SearchQueryOperand[];
+}
+
+export interface SearchQueryGroup {
+  kind: 'group';
+  logic: QueryLogic;
+  children: SearchQueryExpr[];
+}
+
+export type SearchQueryExpr = SearchQueryGroup | SearchQueryRule;
 
 export interface SearchNodeConfig {
   title: string;
   viewMode?: string | null;
-  conditions: SearchNodeCondition[];
+  query: SearchQueryExpr;
 }
 
 export type QueryLogic = 'AND' | 'OR' | 'NOT';
 
-export type QueryOp =
-  | 'HAS_TAG'
-  | 'TODO'
-  | 'DONE'
-  | 'NOT_DONE'
-  | 'FIELD_IS'
-  | 'FIELD_IS_NOT'
-  | 'IS_EMPTY'
-  | 'IS_NOT_EMPTY'
-  | 'FIELD_CONTAINS'
-  | 'LT'
-  | 'GT'
-  | 'CREATED_LAST_DAYS'
-  | 'EDITED_LAST_DAYS'
-  | 'DONE_LAST_DAYS'
-  | 'HAS_FIELD'
-  | 'LINKS_TO'
-  | 'STRING_MATCH'
-  | 'REGEXP_MATCH'
-  | 'CHILD_OF'
-  | 'IS_TYPE'
-  | 'FOR_DATE'
-  | 'FOR_RELATIVE_DATE'
-  | 'PARENTS_DESCENDANTS'
-  | 'IN_LIBRARY'
-  | 'ON_DAY_NODE'
-  | 'EDITED_BY'
-  | 'OWNED_BY'
-  | 'OVERDUE'
-  | 'HAS_MEDIA';
+export const QUERY_OPS = [
+  'HAS_TAG',
+  'TODO',
+  'DONE',
+  'NOT_DONE',
+  'FIELD_IS',
+  'FIELD_IS_NOT',
+  'IS_EMPTY',
+  'IS_NOT_EMPTY',
+  'FIELD_CONTAINS',
+  'LT',
+  'GT',
+  'CREATED_LAST_DAYS',
+  'EDITED_LAST_DAYS',
+  'DONE_LAST_DAYS',
+  'HAS_FIELD',
+  'LINKS_TO',
+  'STRING_MATCH',
+  'REGEXP_MATCH',
+  'CHILD_OF',
+  'IS_TYPE',
+  'FOR_DATE',
+  'FOR_RELATIVE_DATE',
+  'DATE_OVERLAPS',
+  'DESCENDANT_OF',
+  'DESCENDANT_OF_WITH_REFS',
+  'PARENTS_DESCENDANTS',
+  'GRANDPARENTS_DESCENDANTS',
+  'PARENTS_DESCENDANTS_WITH_REFS',
+  'GRANDPARENTS_DESCENDANTS_WITH_REFS',
+  'SIBLING_NAMED',
+  'IN_LIBRARY',
+  'ON_DAY_NODE',
+  'EDITED_BY',
+  'OWNED_BY',
+  'OVERDUE',
+  'HAS_MEDIA',
+  'HAS_AUDIO',
+  'HAS_VIDEO',
+  'HAS_IMAGE',
+  'FIELD_IS_SET',
+  'FIELD_IS_NOT_SET',
+  'FIELD_IS_DEFINED',
+  'FIELD_IS_NOT_DEFINED',
+] as const;
+
+export type QueryOp = typeof QUERY_OPS[number];
 
 export interface Node {
   id: NodeId;
@@ -234,7 +266,6 @@ export interface Node {
   queryOp?: QueryOp;
   queryTagDefId?: NodeId;
   queryFieldDefId?: NodeId;
-  lastRefreshedAt?: number;
   codeLanguage?: string;
   mediaUrl?: string;
   mediaAlt?: string;

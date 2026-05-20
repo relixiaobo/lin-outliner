@@ -3,6 +3,27 @@ import {
   type ToolEnvelope,
   type ToolMetrics,
 } from './agentToolEnvelope';
+import {
+  DEFAULT_FETCH_CHARS,
+  DEFAULT_SEARCH_LIMIT,
+  MAX_FETCH_CHARS,
+  MAX_SEARCH_LIMIT,
+} from './agentWebConstants';
+import { extractPageContent, type ExtractedPageContent } from './agentWebFetchContent';
+
+export {
+  DEFAULT_FETCH_CHARS,
+  DEFAULT_SEARCH_LIMIT,
+  FETCH_TIMEOUT_MS,
+  MAX_FETCH_BYTES,
+  MAX_FETCH_CHARS,
+  MAX_SEARCH_LIMIT,
+  WEB_FETCH_BROWSER_TIMEOUT_MS,
+  WEB_FETCH_MAX_REDIRECTS,
+  WEB_FETCH_RENDER_SETTLE_MS,
+  WEB_FETCH_USER_AGENT,
+} from './agentWebConstants';
+export { extractContent, extractMetadata } from './agentWebFetchContent';
 
 export type WebToolHint =
   | {
@@ -75,8 +96,16 @@ export interface WebFetchData {
   totalMatches?: number;
   returnedMatches?: number;
   nextMatchOffset?: number;
+  binaryFile?: WebFetchBinaryFile;
   truncated: boolean;
   hint?: WebToolHint;
+}
+
+export interface WebFetchBinaryFile {
+  filePath: string;
+  mimeType: string;
+  byteLength: number;
+  sha256: string;
 }
 
 export interface FetchTextResult {
@@ -87,6 +116,8 @@ export interface FetchTextResult {
   contentType: string;
   byteLength: number;
   body: string;
+  binaryFile?: WebFetchBinaryFile;
+  hint?: WebToolHint;
   redirectedHostHint?: WebToolHint;
 }
 
@@ -121,13 +152,6 @@ type ParamValueResult<T> =
   | { ok: false; message: string };
 
 const WEB_FETCH_FORMATS = new Set<WebFetchData['format']>(['markdown', 'text', 'raw', 'metadata']);
-
-export const FETCH_TIMEOUT_MS = 45_000;
-export const MAX_FETCH_BYTES = 10 * 1024 * 1024;
-export const DEFAULT_FETCH_CHARS = 30_000;
-export const MAX_FETCH_CHARS = 100_000;
-export const DEFAULT_SEARCH_LIMIT = 10;
-export const MAX_SEARCH_LIMIT = 20;
 
 export function normalizeWebSearchParams(rawParams: unknown): WebParamResult<NormalizedWebSearchParams> {
   const input = recordParam(rawParams);
@@ -247,6 +271,11 @@ export function normalizeWebUrl(rawUrl: unknown): WebParamResult<string> {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     return invalidUrl(`unsupported scheme: ${parsed.protocol}`);
   }
+  if (parsed.username || parsed.password) {
+    return invalidUrl('url must not include username or password credentials');
+  }
+  const host = validatePublicWebHost(parsed.hostname);
+  if (!host.ok) return invalidUrl(host.message);
 
   if (parsed.protocol === 'http:') {
     parsed.protocol = 'https:';
@@ -254,29 +283,110 @@ export function normalizeWebUrl(rawUrl: unknown): WebParamResult<string> {
   return { ok: true, params: parsed.toString() };
 }
 
-export function buildWebFetchSuccessEnvelope(
+function validatePublicWebHost(hostname: string): { ok: true } | { ok: false; message: string } {
+  const host = hostname.toLowerCase();
+  if (!host) return { ok: false, message: 'url host is required' };
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) {
+    return { ok: false, message: `local host is not supported for web_fetch: ${hostname}` };
+  }
+  if (host.includes(':')) return validateIpv6Host(host);
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) return validateIpv4Host(host);
+  if (!host.includes('.')) {
+    return { ok: false, message: `single-label host is not supported for web_fetch: ${hostname}` };
+  }
+  return { ok: true };
+}
+
+function validateIpv4Host(host: string): { ok: true } | { ok: false; message: string } {
+  const parts = host.split('.').map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return { ok: false, message: `invalid IPv4 host: ${host}` };
+  }
+  const [a, b] = parts as [number, number, number, number];
+  const blocked = a === 0
+    || a === 10
+    || a === 127
+    || (a === 169 && b === 254)
+    || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 168)
+    || a >= 224;
+  return blocked
+    ? { ok: false, message: `private or local IPv4 host is not supported for web_fetch: ${host}` }
+    : { ok: true };
+}
+
+function validateIpv6Host(host: string): { ok: true } | { ok: false; message: string } {
+  const normalized = host.replace(/^\[|\]$/g, '');
+  if (normalized === '::' || normalized === '::1') {
+    return { ok: false, message: `local IPv6 host is not supported for web_fetch: ${host}` };
+  }
+  if (/^(fc|fd|fe80):/i.test(normalized)) {
+    return { ok: false, message: `private or local IPv6 host is not supported for web_fetch: ${host}` };
+  }
+  return { ok: true };
+}
+
+export async function buildWebFetchSuccessEnvelope(
   fetched: FetchTextResult,
   params: NormalizedWebFetchParams,
   durationMs: number,
+): Promise<ToolEnvelope<WebFetchData>> {
+  const page = await extractFetchedPageContent(fetched, params);
+  return buildWebFetchSuccessEnvelopeFromPage(fetched, params, durationMs, page);
+}
+
+export async function extractFetchedPageContent(
+  fetched: FetchTextResult,
+  params: Pick<NormalizedWebFetchParams, 'format'>,
+): Promise<ExtractedPageContent> {
+  return extractPageContent(fetched.body, fetched.contentType, fetched.finalUrl, params.format);
+}
+
+export function buildWebFetchSuccessEnvelopeFromPage(
+  fetched: FetchTextResult,
+  params: NormalizedWebFetchParams,
+  durationMs: number,
+  page: ExtractedPageContent,
 ): ToolEnvelope<WebFetchData> {
-  const metadata = extractMetadata(fetched.body, fetched.finalUrl);
+  const metadata = page.metadata;
   const warnings = fetched.redirectedHostHint ? ['The URL redirected to a different host.'] : undefined;
+  const hint = fetched.hint ?? fetched.redirectedHostHint;
+
+  if (fetched.binaryFile) {
+    const content = [
+      `Binary content saved to ${fetched.binaryFile.filePath}.`,
+      'Use file_read on this path when you need to inspect supported files such as PDFs or images.',
+    ].join(' ');
+    return successEnvelope('web_fetch', baseFetchData(fetched, params, durationMs, {
+      content: params.mode === 'metadata' ? undefined : content,
+      metadata: params.mode === 'metadata' ? metadata : partialMetadata(metadata),
+      binaryFile: fetched.binaryFile,
+      matches: params.mode === 'find' ? [] : undefined,
+      totalMatches: params.mode === 'find' ? 0 : undefined,
+      returnedMatches: params.mode === 'find' ? 0 : undefined,
+      truncated: false,
+      hint,
+    }), {
+      instructions: 'Binary content was saved to disk. Use file_read with binaryFile.filePath for PDFs or images when details are needed.',
+      warnings,
+      metrics: webFetchMetrics(durationMs, fetched.byteLength),
+    });
+  }
 
   if (params.mode === 'metadata') {
     return successEnvelope('web_fetch', baseFetchData(fetched, params, durationMs, {
       title: metadata.title,
       metadata,
       truncated: false,
-      hint: fetched.redirectedHostHint,
+      hint,
     }), {
       warnings,
       metrics: webFetchMetrics(durationMs, fetched.byteLength),
     });
   }
 
-  const extracted = extractContent(fetched.body, fetched.contentType, fetched.finalUrl, params.format);
   if (params.mode === 'find') {
-    const found = findMatches(extracted, params);
+    const found = findMatches(page.content, params);
     return successEnvelope('web_fetch', baseFetchData(fetched, params, durationMs, {
       title: metadata.title,
       metadata: partialMetadata(metadata),
@@ -285,7 +395,7 @@ export function buildWebFetchSuccessEnvelope(
       returnedMatches: found.matches.length,
       nextMatchOffset: found.nextMatchOffset,
       truncated: found.nextMatchOffset !== undefined,
-      hint: fetched.redirectedHostHint,
+      hint,
     }), {
       instructions: found.matches.length === 0 ? 'Try a broader query or call web_fetch without query to read the page.' : undefined,
       warnings,
@@ -293,66 +403,21 @@ export function buildWebFetchSuccessEnvelope(
     });
   }
 
-  const page = sliceContent(extracted, params.offset, params.maxChars);
+  const sliced = sliceContent(page.content, params.offset, params.maxChars);
   return successEnvelope('web_fetch', baseFetchData(fetched, params, durationMs, {
     title: metadata.title,
-    content: page.content,
+    content: sliced.content,
     metadata: partialMetadata(metadata),
-    totalChars: extracted.length,
-    returnedChars: page.content.length,
-    nextOffset: page.nextOffset,
-    truncated: page.truncated,
-    hint: fetched.redirectedHostHint,
+    totalChars: page.content.length,
+    returnedChars: sliced.content.length,
+    nextOffset: sliced.nextOffset,
+    truncated: sliced.truncated,
+    hint,
   }), {
-    instructions: page.nextOffset !== undefined ? `Call web_fetch with offset ${page.nextOffset} to continue reading.` : undefined,
+    instructions: sliced.nextOffset !== undefined ? `Call web_fetch with offset ${sliced.nextOffset} to continue reading.` : undefined,
     warnings,
-    metrics: webFetchMetrics(durationMs, fetched.byteLength, page.truncated),
+    metrics: webFetchMetrics(durationMs, fetched.byteLength, sliced.truncated),
   });
-}
-
-export function extractContent(
-  body: string,
-  contentType: string,
-  finalUrl: string,
-  format: WebFetchData['format'],
-): string {
-  if (format === 'raw') return body;
-  if (format === 'metadata') return '';
-  if (!contentType.toLowerCase().includes('html')) {
-    return body.trim();
-  }
-  return format === 'text'
-    ? htmlToText(body)
-    : htmlToMarkdown(body, finalUrl);
-}
-
-export function extractMetadata(html: string, finalUrl: string): WebPageMetadata {
-  const language = matchFirst(html, /<html[^>]*\slang=["']?([^"'\s>]+)/i);
-  const title = cleanText(matchFirst(html, /<title[^>]*>([\s\S]*?)<\/title>/i) ?? '');
-  const description = getMetaContent(html, 'description');
-  const siteName = getMetaContent(html, 'og:site_name');
-  const canonicalUrl = absolutizeUrl(getLinkHref(html, 'canonical') ?? '', finalUrl) || finalUrl;
-  const headings = [...html.matchAll(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi)]
-    .map((match) => cleanText(stripTags(match[2] ?? '')))
-    .filter(Boolean)
-    .slice(0, 30);
-  const links = [...html.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)]
-    .map((match) => ({
-      text: cleanText(stripTags(match[2] ?? '')),
-      url: absolutizeUrl(decodeHtml(match[1] ?? ''), finalUrl),
-    }))
-    .filter((link) => link.text && link.url)
-    .slice(0, 80);
-
-  return {
-    title: title || undefined,
-    description: description || undefined,
-    canonicalUrl,
-    siteName: siteName || undefined,
-    language: language || undefined,
-    headings,
-    links,
-  };
 }
 
 export function findMatches(content: string, params: Pick<NormalizedWebFetchParams, 'query' | 'caseInsensitive' | 'context' | 'headLimit' | 'matchOffset'>): {
@@ -449,41 +514,6 @@ function webFetchMetrics(durationMs: number, outputBytes: number, truncated?: bo
     ...(truncated !== undefined ? { truncated } : {}),
     outputBytes,
   };
-}
-
-function htmlToMarkdown(html: string, baseUrl: string): string {
-  let text = html
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<noscript[\s\S]*?<\/noscript>/gi, '')
-    .replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, (_match, code) => `\n\n\`\`\`\n${decodeHtml(stripTags(code))}\n\`\`\`\n\n`)
-    .replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, (_match, value) => `\n\n# ${cleanText(stripTags(value))}\n\n`)
-    .replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, (_match, value) => `\n\n## ${cleanText(stripTags(value))}\n\n`)
-    .replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, (_match, value) => `\n\n### ${cleanText(stripTags(value))}\n\n`)
-    .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_match, value) => `\n- ${cleanText(stripTags(value))}`)
-    .replace(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_match, href, label) => {
-      const textLabel = cleanText(stripTags(label));
-      const url = absolutizeUrl(decodeHtml(href), baseUrl);
-      if (!textLabel) return '';
-      return url ? `[${textLabel}](${url})` : textLabel;
-    })
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|section|article|blockquote|tr|table|ul|ol)>/gi, '\n\n');
-
-  text = stripTags(text);
-  return cleanMarkdown(decodeHtml(text));
-}
-
-function htmlToText(html: string): string {
-  return cleanText(decodeHtml(stripTags(
-    html
-      .replace(/<!--[\s\S]*?-->/g, '')
-      .replace(/<script[\s\S]*?<\/script>/gi, '')
-      .replace(/<style[\s\S]*?<\/style>/gi, '')
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<\/(p|div|section|article|blockquote|tr|li)>/gi, '\n'),
-  )));
 }
 
 function normalizeOptionalSearchSite(value: unknown): ParamValueResult<string | undefined> {
@@ -600,75 +630,4 @@ function invalidUrl(message: string): WebParamResult<never> {
     message,
     instructions: 'Call web_fetch again with an absolute http(s) URL.',
   };
-}
-
-function getMetaContent(html: string, name: string): string | undefined {
-  const escaped = escapeRegExp(name);
-  const byName = matchFirst(
-    html,
-    new RegExp(`<meta\\b(?=[^>]*(?:name|property)=["']${escaped}["'])[^>]*content=["']([^"']*)["'][^>]*>`, 'i'),
-  );
-  if (byName) return cleanText(byName);
-  return undefined;
-}
-
-function getLinkHref(html: string, rel: string): string | undefined {
-  const escaped = escapeRegExp(rel);
-  return matchFirst(
-    html,
-    new RegExp(`<link\\b(?=[^>]*rel=["'][^"']*${escaped}[^"']*["'])[^>]*href=["']([^"']+)["'][^>]*>`, 'i'),
-  );
-}
-
-function matchFirst(input: string, pattern: RegExp): string | undefined {
-  return input.match(pattern)?.[1];
-}
-
-function stripTags(value: string): string {
-  return value.replace(/<[^>]+>/g, ' ');
-}
-
-function cleanText(value: string): string {
-  return decodeHtml(value).replace(/\s+/g, ' ').trim();
-}
-
-function cleanMarkdown(value: string): string {
-  return value
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/[ \t]{2,}/g, ' ')
-    .trim();
-}
-
-function decodeHtml(value: string): string {
-  const named: Record<string, string> = {
-    amp: '&',
-    lt: '<',
-    gt: '>',
-    quot: '"',
-    apos: "'",
-    nbsp: ' ',
-  };
-  return value.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (entity, body: string) => {
-    if (body[0] === '#') {
-      const radix = body[1]?.toLowerCase() === 'x' ? 16 : 10;
-      const raw = radix === 16 ? body.slice(2) : body.slice(1);
-      const codePoint = Number.parseInt(raw, radix);
-      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : entity;
-    }
-    return named[body.toLowerCase()] ?? entity;
-  });
-}
-
-function absolutizeUrl(url: string, baseUrl: string): string {
-  if (!url || url.startsWith('#') || url.startsWith('javascript:') || url.startsWith('mailto:')) return '';
-  try {
-    return new URL(url, baseUrl).toString();
-  } catch {
-    return '';
-  }
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

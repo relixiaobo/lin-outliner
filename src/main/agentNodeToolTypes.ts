@@ -1,5 +1,5 @@
 import type { DocumentCommand } from '../core/commands';
-import type { DocumentProjection, NodeProjection } from '../core/types';
+import type { DocumentProjection, NodeProjection, SearchQueryExpr } from '../core/types';
 import type { ToolEnvelope } from './agentToolEnvelope';
 
 export interface OutlinerToolHost {
@@ -116,8 +116,6 @@ export interface NodeSearchData {
   offset: number;
   limit: number;
   items?: NodeSearchItem[];
-  unresolvedTags?: string[];
-  unresolvedFields?: string[];
 }
 
 export interface NodeSearchItem {
@@ -345,33 +343,14 @@ export interface ProjectionIndex {
 export interface ParsedSearch {
   title?: string;
   view?: string;
-  queryTerms: string[];
-  tagNames: string[];
-  linkTargetIds: string[];
-  fieldConditions: ParsedFieldSearchCondition[];
+  query: SearchQueryExpr;
 }
 
 export interface ResolvedSearchSpec {
   title: string;
   view?: string;
-  queryTerms: string[];
-  tagIds: string[];
-  linkTargetIds: string[];
-  fieldConditions: ResolvedFieldSearchCondition[];
-  unresolvedTagNames: string[];
-  unresolvedFields: string[];
+  query: SearchQueryExpr;
   warnings: string[];
-}
-
-export interface ParsedFieldSearchCondition {
-  fieldName: string;
-  text?: string;
-}
-
-export interface ResolvedFieldSearchCondition {
-  fieldName: string;
-  fieldDefId: string;
-  text?: string;
 }
 
 export type NormalizedEditParams =

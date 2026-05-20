@@ -13,7 +13,7 @@ import {
   revisionOf,
   tagLabels,
 } from './agentNodeToolProjection';
-import { searchConditionOutlineLines } from './agentNodeToolSearch';
+import { searchQueryOutlineLines } from './agentNodeToolSearch';
 import type {
   ChildrenPage,
   NodeChildSummary,
@@ -156,7 +156,7 @@ function serializeAnnotatedOutlineNode(
     }
   }
   if (node.type === 'search') {
-    lines.push(...searchConditionOutlineLines(index, node, level + 1));
+    lines.push(...searchQueryOutlineLines(index, node, level + 1));
     return lines;
   }
   if (depth <= 0) return lines;
@@ -195,7 +195,7 @@ function serializeOutlineNode(
     }
   }
   if (node.type === 'search') {
-    lines.push(...searchConditionOutlineLines(index, node, level + 1));
+    lines.push(...searchQueryOutlineLines(index, node, level + 1));
     return lines;
   }
   if (depth <= 0) return lines;

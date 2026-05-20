@@ -328,8 +328,12 @@ Agent-facing syntax:
   - Notes
     - Prepare agenda
   - %%search%% Open tasks %%view:table%%
-    - #task
-    - Status:: Open
+    - AND
+      - HAS_TAG
+        - tag:: [[#task^node_task_tag]]
+      - FIELD_IS
+        - field:: [[Status^node_status_field]]
+        - value:: Open
 ```
 
 Rules:
@@ -348,6 +352,10 @@ Rules:
 - `Field:: value` sets a single field value.
 - `Field::` followed by indented value lines sets a multi-value field.
 - `Field::` without values clears that field in edit results.
+- Date field values use the canonical date field language from
+  `docs/spec/date-field-values.md`: `YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, or
+  `start/end` with `/`, for example `2026-05-20/2026-05-24`. Tool prompts and
+  search query operands must not teach `..` or other date range syntax.
 - Whole-line `[[Display^node:...]]` creates a reference node or reference field
   value.
 - Inline `[[Display^node:...]]` creates an inline reference inside node text or a
@@ -357,6 +365,12 @@ Rules:
 - `%%search%%` turns the node into a search node. In `node_create` this creates a
   saved search node; in `node_search` it is a temporary search node that is only
   executed and rendered.
+- A search node must contain exactly one query root child. `AND`, `OR`, and
+  `NOT` are query group nodes and may be nested. QueryOp names such as
+  `STRING_MATCH`, `HAS_TAG`, `LINKS_TO`, `FIELD_IS`, `LT`, and `DATE_OVERLAPS`
+  are rule nodes. Rule operands are represented with `field::`, `tag::`,
+  `target::`, `value::`, or `operand::` lines under the rule. `field`, `tag`,
+  and `target` operands must be exact node references or ids.
 - `%%view:table%%`, `%%view:list%%`, `%%view:cards%%`, and similar directives set
   view presentation for nodes that support views.
 
@@ -494,8 +508,8 @@ References:
 - `[[Display^node:...]]` requires the target id to exist and the target must not be in
   Trash.
 - Date references use normal node references to existing date node ids.
-- Search condition lines may use `#task` or `[[#task]]` to refer to tag
-  definition nodes.
+- Search query operands use explicit node references or exact ids for `field::`,
+  `tag::`, and `target::`.
 
 ## Outliner Tools
 
@@ -505,6 +519,9 @@ Execute a temporary or saved search node. Use this to locate nodes before
 editing and to render temporary search results without creating a real node.
 `node_search.outline` uses the same search-node outline shape that
 `node_create.outline` would use to create a saved search node.
+Date query operands use the same canonical date field value language as
+stored date fields.
+The canonical query grammar is specified in `docs/spec/search-query-grammar.md`.
 
 Parameters:
 
@@ -554,20 +571,19 @@ interface NodeSearchItem {
 Result behavior:
 
 - `outline` is a temporary search node and does not mutate document state.
-- The outline must parse as one search node root. If `%%search%%` is omitted,
-  the runtime may still treat the root as a temporary search node, but tool
-  descriptions should teach agents to include `%%search%%`.
-- Keyword search is represented as a search outline with a plain text condition,
-  for example `- %%search%% 成都天气\n  - 成都天气`. There is no separate
-  `query` parameter.
+- The outline must parse as one `%%search%%` root with exactly one query root
+  child.
+- Keyword search is represented as a `STRING_MATCH` rule, for example
+  `- %%search%% 成都天气\n  - STRING_MATCH\n    - value:: 成都天气`. There is no
+  separate `query` parameter.
 - The root title is returned as `title` and may be used for temporary UI display.
 - `%%view:table%%`, `%%view:list%%`, `%%view:cards%%`, and similar directives are
   returned as `view` and drive temporary result presentation.
-- Child lines are search conditions using the same parser as saved search nodes:
-  plain text is full-text search, tag references filter by tag, field lines
-  filter by field value, and node references filter by link relationship.
-- Unknown tag, field, or reference conditions are errors. The tool does not
-  silently drop unresolved structured conditions.
+- Child lines are the canonical query tree used by saved search nodes. Group
+  nodes are `AND`, `OR`, and `NOT`; rule nodes are QueryOp names. Rule operands
+  use `field::`, `tag::`, `target::`, `value::`, or `operand::`.
+- Invalid, missing, trashed, or wrong-type operand references are errors. The
+  tool does not silently drop unresolved structured conditions.
 - `search_node_id` executes an existing saved search node.
 - Subtree restriction, parent restriction, backlink search, and relationship
   filters should be represented as search conditions in the outline, not as
@@ -581,13 +597,13 @@ Examples:
 
 ```json
 {
-  "outline": "- %%search%% 成都天气 %%view:list%%\n  - 成都天气"
+  "outline": "- %%search%% 成都天气 %%view:list%%\n  - STRING_MATCH\n    - value:: 成都天气"
 }
 ```
 
 ```json
 {
-  "outline": "- %%search%% 今日开放任务 %%view:table%%\n  - #task\n  - Status:: Open",
+  "outline": "- %%search%% 今日开放任务 %%view:table%%\n  - AND\n    - HAS_TAG\n      - tag:: [[#task^node_task_tag]]\n    - FIELD_IS\n      - field:: [[Status^node_status_field]]\n      - value:: Open",
   "limit": 20
 }
 ```
@@ -748,8 +764,8 @@ Result behavior:
 - `target_id` creates one reference node at the requested position.
 - `duplicate_id` deep-copies the source subtree at the requested position.
 - Missing normal node tags and fields may be created by the outline application
-  layer. Search-node tag and field conditions must resolve to existing
-  definitions.
+  layer. Search-node `field::`, `tag::`, and `target::` operands must reference
+  existing nodes.
 - Search/view directives, schema-like tag/field structures, references,
   descriptions, checkboxes, and fields all come through `outline`.
 - `node_create.outline` must not contain `%%node:id%%` markers. Those markers are
@@ -1247,7 +1263,7 @@ Required checks:
   relationship.
 - Field values match field type constraints.
 - Tag and field auto-creation follows the active policy.
-- Search/view directives compile to valid internal configs.
+- Search/view directives compile to a canonical `SearchQueryExpr`.
 - `expected_revision` matches when provided.
 - Parser compatibility normalization does not silently change meaning.
 
@@ -1258,8 +1274,6 @@ interface ValidationReport {
   ok: boolean;
   errors: Array<{ code: string; message: string; span?: SourceSpan }>;
   warnings: Array<{ code: string; message: string; span?: SourceSpan }>;
-  unresolvedTags?: string[];
-  unresolvedFields?: string[];
   instructions?: string;
 }
 ```

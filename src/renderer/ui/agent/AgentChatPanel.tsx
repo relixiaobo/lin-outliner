@@ -9,7 +9,12 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
-import type { AgentToolResultWithPayloads, AssistantMessage } from '../../../core/agentTypes';
+import type {
+  AgentMessageAttachmentInput,
+  AgentToolResultWithPayloads,
+  AgentUserViewContext,
+  AssistantMessage,
+} from '../../../core/agentTypes';
 import type {
   AgentProviderConfigView,
   AgentProviderSettingsView,
@@ -50,6 +55,7 @@ const TRANSCRIPT_VIRTUAL_MIN_ROWS = 40;
 const TRANSCRIPT_VIRTUAL_OVERSCAN_PX = 720;
 
 interface AgentChatPanelProps {
+  userViewContext: AgentUserViewContext;
   onOpenDebugPanel?: (sessionId: string | null) => void;
 }
 
@@ -422,7 +428,7 @@ function AgentTranscriptRowShell({
   );
 }
 
-export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
+export function AgentChatPanel({ onOpenDebugPanel, userViewContext }: AgentChatPanelProps) {
   const {
     entries,
     error,
@@ -430,14 +436,14 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
     clearFollowUp,
     editMessage,
     pendingToolCallIds,
-    queueFollowUp,
+    queueFollowUp: queueRuntimeFollowUp,
     regenerateMessage,
     reloadSession,
     newSession,
     revision,
     retryMessage,
     selectSession,
-    sendMessage,
+    sendMessage: sendRuntimeMessage,
     sessionId,
     sessionTitle,
     switchBranch,
@@ -480,6 +486,12 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
     ? visibleTranscriptRange(virtualLayout, scrollMetrics.top, scrollMetrics.height)
     : { start: 0, end: conversationRows.length };
   const visibleConversationRows = conversationRows.slice(virtualRange.start, virtualRange.end);
+  const sendMessage = useCallback((prompt: string, attachments?: AgentMessageAttachmentInput[]) => (
+    sendRuntimeMessage(prompt, attachments, userViewContext)
+  ), [sendRuntimeMessage, userViewContext]);
+  const queueFollowUp = useCallback((prompt: string) => (
+    queueRuntimeFollowUp(prompt, userViewContext)
+  ), [queueRuntimeFollowUp, userViewContext]);
 
   const updateScrollMetrics = useCallback((element: HTMLDivElement) => {
     const next = {

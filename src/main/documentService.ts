@@ -120,24 +120,29 @@ export class DocumentService {
     if (this.transactionContext.getStore()) {
       return this.runMutation(command, args, meta);
     }
+    const mutationMeta = command === 'refresh_search_node_results' && !meta.origin
+      ? { ...meta, origin: 'system' as const, summary: meta.summary ?? 'Refreshed search node results.' }
+      : meta;
     const task = this.mutationQueue.then(async () => {
       if (command !== 'apply_node_text_patch') {
         await this.flushTextEditGroupNow();
       }
+      const before = this.core.intoState();
       const textEditMeta = command === 'apply_node_text_patch'
-        ? await this.textEditMetadata(String(args.nodeId), meta)
-        : meta;
+        ? await this.textEditMetadata(String(args.nodeId), mutationMeta)
+        : mutationMeta;
       const outcome = this.core.withOrigin(
         textEditMeta.origin ?? 'user',
         () => this.runMutation(command, args, textEditMeta),
         transactionMetadata({ ...textEditMeta, command }),
       );
+      const changed = !sameJson(before, this.core.intoState());
       if (command === 'apply_node_text_patch') {
-        this.scheduleTextEditFlush();
-      } else {
+        if (changed) this.scheduleTextEditFlush();
+      } else if (changed) {
         await this.saveCore();
       }
-      this.emitProjectionChanged(textEditMeta.origin ?? 'user');
+      if (changed) this.emitProjectionChanged(textEditMeta.origin ?? 'user');
       return outcome;
     });
     this.mutationQueue = task.then(() => undefined, () => undefined);
@@ -307,6 +312,8 @@ export class DocumentService {
         return this.core.createSearchNode(String(args.parentId), nullableNumber(args.index), args.config as SearchNodeConfig);
       case 'set_search_node':
         return this.core.setSearchNode(String(args.nodeId), args.config as SearchNodeConfig);
+      case 'refresh_search_node_results':
+        return this.core.refreshSearchNodeResults(String(args.nodeId));
       case 'undo':
         return this.core.operationHistory({
           action: 'undo',

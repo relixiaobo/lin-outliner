@@ -159,12 +159,17 @@ describe('agent local tools', () => {
     const fileRead = tools.find((tool) => tool.name === 'file_read')!;
     const fileEdit = tools.find((tool) => tool.name === 'file_edit')!;
     const bash = tools.find((tool) => tool.name === 'bash')!;
+    const taskStop = tools.find((tool) => tool.name === 'task_stop')!;
 
     expect(fileRead.description).toContain('The file_path parameter must be an absolute path');
     expect(JSON.stringify(fileRead.parameters)).toContain('The line number to start reading from');
     expect(JSON.stringify(fileRead.parameters)).toContain('Maximum 20 pages per request');
     expect(fileEdit.description).toContain('Performs exact string replacements in files');
+    expect(fileEdit.description).not.toContain('notebook_edit');
     expect(JSON.stringify(bash.parameters)).toContain('Clear, concise description');
+    expect(JSON.stringify(bash.parameters)).toContain('Do not use vague words');
+    expect(JSON.stringify(taskStop.parameters)).toContain('task_id returned by bash');
+    expect(JSON.stringify(taskStop.parameters)).not.toContain('shell_id');
   });
 
   test('file_edit applies exact replacements only after file_read', async () => {
@@ -267,7 +272,7 @@ describe('agent local tools', () => {
     });
   });
 
-  test('file_edit rejects Jupyter notebooks because notebook cells need a dedicated tool', async () => {
+  test('file_edit rejects Jupyter notebooks without suggesting a missing notebook edit tool', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const filePath = path.join(workspaceRoot, 'analysis.ipynb');
       await writeFile(filePath, JSON.stringify({
@@ -285,7 +290,8 @@ describe('agent local tools', () => {
 
       expect(edited.ok).toBe(false);
       expect(edited.error?.code).toBe('notebook_edit_required');
-      expect(edited.instructions).toContain('notebook_edit');
+      expect(edited.instructions).toContain('file_read');
+      expect(edited.instructions).not.toContain('notebook_edit');
     });
   });
 
