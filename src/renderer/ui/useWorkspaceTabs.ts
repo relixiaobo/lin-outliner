@@ -6,6 +6,7 @@ let nextWorkspaceId = 0;
 const STORAGE_KEY = 'lin-outliner:workspace-layout:v1';
 const MAX_PERSISTED_TABS = 12;
 const MAX_PERSISTED_PANELS = 4;
+const MAX_PANEL_PAGE_HISTORY = 50;
 
 function nextId(prefix: string) {
   nextWorkspaceId += 1;
@@ -32,8 +33,8 @@ function defaultTabs(initial: DocumentProjection): { activeTabId: string; tabs: 
         [secondPanelId]: 1,
       },
       panels: [
-        { id: firstPanelId, type: 'outliner', rootId: initial.todayId },
-        { id: secondPanelId, type: 'outliner', rootId: initial.rootId },
+        outlinerPanel(firstPanelId, initial.todayId),
+        outlinerPanel(secondPanelId, initial.rootId),
       ],
     }],
   };
@@ -41,6 +42,20 @@ function defaultTabs(initial: DocumentProjection): { activeTabId: string; tabs: 
 
 function isOutlinerPanel(panel: WorkspacePanelState | null | undefined): panel is OutlinePanelState {
   return panel?.type === 'outliner';
+}
+
+function outlinerPanel(id: string, rootId: NodeId): OutlinePanelState {
+  return { id, type: 'outliner', rootId, pageBackStack: [], pageForwardStack: [] };
+}
+
+function navigateOutlinerPanel(panel: OutlinePanelState, rootId: NodeId): OutlinePanelState {
+  if (panel.rootId === rootId) return panel;
+  return {
+    ...panel,
+    rootId,
+    pageBackStack: [...(panel.pageBackStack ?? []), panel.rootId].slice(-MAX_PANEL_PAGE_HISTORY),
+    pageForwardStack: [],
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -58,7 +73,13 @@ function sanitizePanel(value: unknown, nodeIds: Set<NodeId>): WorkspacePanelStat
     };
   }
   if (typeof value.rootId !== 'string' || !nodeIds.has(value.rootId)) return null;
-  return { id: value.id, type: 'outliner', rootId: value.rootId };
+  const pageBackStack = (Array.isArray(value.pageBackStack) ? value.pageBackStack : [])
+    .filter((nodeId): nodeId is NodeId => typeof nodeId === 'string' && nodeIds.has(nodeId))
+    .slice(-MAX_PANEL_PAGE_HISTORY);
+  const pageForwardStack = (Array.isArray(value.pageForwardStack) ? value.pageForwardStack : [])
+    .filter((nodeId): nodeId is NodeId => typeof nodeId === 'string' && nodeIds.has(nodeId))
+    .slice(-MAX_PANEL_PAGE_HISTORY);
+  return { id: value.id, type: 'outliner', rootId: value.rootId, pageBackStack, pageForwardStack };
 }
 
 function sanitizeTab(value: unknown, nodeIds: Set<NodeId>): WorkspaceTabState | null {
@@ -177,14 +198,14 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
           ...tab,
           activePanelId: panelId,
           panelSizes: { [panelId]: 1 },
-          panels: [{ id: panelId, type: 'outliner', rootId: nodeId }],
+          panels: [outlinerPanel(panelId, nodeId)],
         };
       }
       return {
         ...tab,
         activePanelId,
         panels: tab.panels.map((panel) => (
-          panel.id === activePanelId && isOutlinerPanel(panel) ? { ...panel, rootId: nodeId } : panel
+          panel.id === activePanelId && isOutlinerPanel(panel) ? navigateOutlinerPanel(panel, nodeId) : panel
         )),
       };
     });
@@ -200,11 +221,69 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
       ...tab,
       activePanelId: panelId,
       panels: tab.panels.map((panel) => (
-        panel.id === panelId && isOutlinerPanel(panel) ? { ...panel, rootId: nodeId } : panel
+        panel.id === panelId && isOutlinerPanel(panel) ? navigateOutlinerPanel(panel, nodeId) : panel
       )),
     }));
     focusNode(nodeId);
   }, [focusNode, updateActiveTab]);
+
+  const navigatePanelBack = useCallback((panelId: string): NodeId | null => {
+    const tab = tabs.find((candidate) => candidate.id === activeTabId);
+    const panel = tab?.panels.find((candidate) => candidate.id === panelId);
+    const previousRootId = isOutlinerPanel(panel) ? panel.pageBackStack?.at(-1) ?? null : null;
+    if (!previousRootId) return null;
+
+    setTabs((prev) => prev.map((candidateTab) => (
+      candidateTab.id !== activeTabId
+        ? candidateTab
+        : {
+          ...candidateTab,
+          activePanelId: panelId,
+          panels: candidateTab.panels.map((candidatePanel) => (
+            candidatePanel.id === panelId && isOutlinerPanel(candidatePanel)
+              ? {
+                ...candidatePanel,
+                rootId: previousRootId,
+                pageBackStack: (candidatePanel.pageBackStack ?? []).slice(0, -1),
+                pageForwardStack: [...(candidatePanel.pageForwardStack ?? []), candidatePanel.rootId]
+                  .slice(-MAX_PANEL_PAGE_HISTORY),
+              }
+              : candidatePanel
+          )),
+        }
+    )));
+    focusNode(previousRootId);
+    return previousRootId;
+  }, [activeTabId, focusNode, tabs]);
+
+  const navigatePanelForward = useCallback((panelId: string): NodeId | null => {
+    const tab = tabs.find((candidate) => candidate.id === activeTabId);
+    const panel = tab?.panels.find((candidate) => candidate.id === panelId);
+    const nextRootId = isOutlinerPanel(panel) ? panel.pageForwardStack?.at(-1) ?? null : null;
+    if (!nextRootId) return null;
+
+    setTabs((prev) => prev.map((candidateTab) => (
+      candidateTab.id !== activeTabId
+        ? candidateTab
+        : {
+          ...candidateTab,
+          activePanelId: panelId,
+          panels: candidateTab.panels.map((candidatePanel) => (
+            candidatePanel.id === panelId && isOutlinerPanel(candidatePanel)
+              ? {
+                ...candidatePanel,
+                rootId: nextRootId,
+                pageBackStack: [...(candidatePanel.pageBackStack ?? []), candidatePanel.rootId]
+                  .slice(-MAX_PANEL_PAGE_HISTORY),
+                pageForwardStack: (candidatePanel.pageForwardStack ?? []).slice(0, -1),
+              }
+              : candidatePanel
+          )),
+        }
+    )));
+    focusNode(nextRootId);
+    return nextRootId;
+  }, [activeTabId, focusNode, tabs]);
 
   const closePanel = useCallback((panelId: string) => {
     updateActiveTab((tab) => {
@@ -247,7 +326,7 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
         id: tabId,
         activePanelId: panelId,
         panelSizes: { [panelId]: 1 },
-        panels: [{ id: panelId, type: 'outliner', rootId }],
+        panels: [outlinerPanel(panelId, rootId)],
       },
     ]);
     setActiveTabId(tabId);
@@ -265,7 +344,7 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
           ...tab,
           activePanelId: lastPanel.id,
           panels: tab.panels.map((panel) => (
-            panel.id === lastPanel.id ? { id: panel.id, type: 'outliner', rootId: nodeId } : panel
+            panel.id === lastPanel.id ? outlinerPanel(panel.id, nodeId) : panel
           )),
         };
       }
@@ -278,7 +357,7 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
         },
         panels: [
           ...tab.panels,
-          { id: panelId, type: 'outliner', rootId: nodeId },
+          outlinerPanel(panelId, nodeId),
         ],
       };
     });
@@ -376,6 +455,7 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
 
   return {
     activePanel,
+    activeOutlinerPanel,
     activeTab,
     activeTabId,
     activatePanel,
@@ -384,6 +464,8 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
     createTab,
     initializeTabs,
     navigatePanelRoot,
+    navigatePanelBack,
+    navigatePanelForward,
     navigateRoot,
     openAgentDebugPanel,
     openPanel,

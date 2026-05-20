@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -37,7 +38,9 @@ import {
 } from './focus/focusModel';
 import {
   CalendarIcon,
+  ChevronLeftIcon,
   HashIcon,
+  ICON_SIZE,
   LibraryIcon,
   MoreIcon,
   SearchIcon,
@@ -66,9 +69,14 @@ import { TagBar } from './tags/TagBar';
 import { buildPanelBreadcrumb } from './panelBreadcrumb';
 import { PanelDateNavigation } from './PanelDateNavigation';
 
+const PANEL_HEADER_ICON_SIZE = 20;
+const PANEL_BREADCRUMB_ORIGIN_ICON_SIZE = 13;
+
 interface NodePanelProps {
   panelId: string;
   rootId: NodeId;
+  canGoBack: boolean;
+  onBack: () => void;
   onRoot: (nodeId: NodeId) => void;
   index: DocumentIndex;
   ui: UiState;
@@ -109,6 +117,11 @@ export function NodePanel(props: NodePanelProps) {
   const [titleContentRevision, setTitleContentRevision] = useState(0);
   const [titleTrigger, setTitleTrigger] = useState<EditorTrigger | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [breadcrumbExpanded, setBreadcrumbExpanded] = useState(false);
+  const [titleDocked, setTitleDocked] = useState(false);
+  const mainPanelRef = useRef<HTMLElement | null>(null);
+  const stickyBreadcrumbRef = useRef<HTMLDivElement | null>(null);
+  const titleRowRef = useRef<HTMLDivElement | null>(null);
   const pendingTitlePatchRef = useRef<Promise<unknown>>(Promise.resolve());
   const rootDefinitionKind = definitionKind(rootNode);
   const definitionTemplateLabel = rootNode ? definitionOutlinerLabel(rootNode) : null;
@@ -190,19 +203,19 @@ export function NodePanel(props: NodePanelProps) {
 
   const renderHeaderIcon = () => {
     if (!rootNode) return null;
-    if (props.rootId === projection.todayId) return <CalendarIcon size={20} />;
-    if (props.rootId === projection.rootId) return <LibraryIcon size={20} />;
-    if (props.rootId === projection.schemaId) return <SupertagIcon size={20} />;
-    if (props.rootId === projection.trashId) return <TrashIcon size={20} />;
-    if (props.rootId === projection.searchesId || rootNode.type === 'search') return <SearchIcon size={20} />;
+    if (props.rootId === projection.todayId) return <CalendarIcon size={PANEL_HEADER_ICON_SIZE} />;
+    if (props.rootId === projection.rootId) return <LibraryIcon size={PANEL_HEADER_ICON_SIZE} />;
+    if (props.rootId === projection.schemaId) return <SupertagIcon size={PANEL_HEADER_ICON_SIZE} />;
+    if (props.rootId === projection.trashId) return <TrashIcon size={PANEL_HEADER_ICON_SIZE} />;
+    if (props.rootId === projection.searchesId || rootNode.type === 'search') return <SearchIcon size={PANEL_HEADER_ICON_SIZE} />;
     if (rootNode.type === 'tagDef') {
       return (
         <span className="panel-header-tag-icon" style={{ background: resolveTagColor(rootNode).text }}>
-          <HashIcon size={12} />
+          <HashIcon size={ICON_SIZE.rowGlyph} />
         </span>
       );
     }
-    if (rootNode.type === 'fieldDef') return <FieldTypeIcon fieldType={rootNode.fieldType} size={20} />;
+    if (rootNode.type === 'fieldDef') return <FieldTypeIcon fieldType={rootNode.fieldType} size={PANEL_HEADER_ICON_SIZE} />;
     return null;
   };
 
@@ -222,6 +235,33 @@ export function NodePanel(props: NodePanelProps) {
     }
     return counts;
   }, [props.index.byId]);
+
+  const updateTitleDockedState = useCallback(() => {
+    const panel = mainPanelRef.current;
+    const breadcrumbEl = stickyBreadcrumbRef.current;
+    const titleRow = titleRowRef.current;
+    if (!panel || !breadcrumbEl || !titleRow) {
+      setTitleDocked(false);
+      return;
+    }
+    const threshold = Math.max(0, titleRow.offsetTop - breadcrumbEl.offsetHeight - 1);
+    const nextDocked = panel.scrollTop >= threshold;
+    setTitleDocked((prev) => (prev === nextDocked ? prev : nextDocked));
+  }, []);
+
+  useEffect(() => {
+    const panel = mainPanelRef.current;
+    if (panel) panel.scrollTop = 0;
+    setBreadcrumbExpanded(false);
+    setTitleDocked(false);
+    window.requestAnimationFrame(updateTitleDockedState);
+  }, [props.rootId, updateTitleDockedState]);
+
+  useEffect(() => {
+    const handleResize = () => updateTitleDockedState();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [updateTitleDockedState]);
 
   const selectHeader = () => {
     props.setUi((prev) => selectFocusState(prev, titleFocusTarget));
@@ -378,49 +418,79 @@ export function NodePanel(props: NodePanelProps) {
 
     return null;
   };
+  const breadcrumbNodes = breadcrumb.collapsed && breadcrumbExpanded
+    ? [breadcrumb.nodes[0], ...breadcrumb.hiddenNodes, ...breadcrumb.nodes.slice(1)]
+    : breadcrumb.nodes;
 
   return (
-    <main className="main-panel">
+    <main className="main-panel" ref={mainPanelRef} onScroll={updateTitleDockedState}>
+      {rootNode && (
+        <div className="panel-sticky-breadcrumb" ref={stickyBreadcrumbRef}>
+          <IconButton
+            className="panel-page-back-button"
+            disabled={!props.canGoBack}
+            icon={ChevronLeftIcon}
+            iconSize={14}
+            label="Previous page"
+            onClick={props.onBack}
+            title="Previous page"
+            variant="panel"
+          />
+          <nav className="panel-breadcrumb" aria-label="Panel breadcrumb">
+            <ButtonControl
+              aria-label="Open workspace root"
+              className="panel-breadcrumb-origin"
+              onClick={() => props.onRoot(projection.rootId)}
+            >
+              <LibraryIcon size={PANEL_BREADCRUMB_ORIGIN_ICON_SIZE} />
+            </ButtonControl>
+            {breadcrumbNodes.map((node, index) => {
+              const label = node.content.text || 'Untitled';
+              const showCollapsedMarker = breadcrumb.collapsed && !breadcrumbExpanded && index === 1;
+              return (
+                <span className="panel-breadcrumb-segment" key={node.id}>
+                  <span className="panel-breadcrumb-divider">/</span>
+                  {showCollapsedMarker && (
+                    <>
+                      <ButtonControl
+                        className="panel-breadcrumb-ellipsis"
+                        aria-label={`Show ${breadcrumb.hiddenNodes.length} hidden breadcrumb levels`}
+                        onClick={() => setBreadcrumbExpanded(true)}
+                        title="Show hidden breadcrumb levels"
+                      >
+                        <MoreIcon size={ICON_SIZE.rowGlyph} />
+                      </ButtonControl>
+                      <span className="panel-breadcrumb-divider">/</span>
+                    </>
+                  )}
+                  <ButtonControl
+                    className="panel-breadcrumb-button"
+                    onClick={() => props.onRoot(node.id)}
+                  >
+                    {label}
+                  </ButtonControl>
+                </span>
+              );
+            })}
+            {titleDocked && (
+              <span className="panel-breadcrumb-segment panel-breadcrumb-current">
+                <span className="panel-breadcrumb-divider">/</span>
+                <span className="panel-breadcrumb-current-label" data-current-page-title>
+                  {rootNode.content.text || 'Untitled'}
+                </span>
+              </span>
+            )}
+          </nav>
+        </div>
+      )}
       <div className="panel-inner">
         <header className="panel-header">
-          {rootNode && (
-            <nav className="panel-breadcrumb" aria-label="Panel breadcrumb">
-              <ButtonControl
-                aria-label="Open workspace root"
-                className="panel-breadcrumb-origin"
-                onClick={() => props.onRoot(projection.rootId)}
-              >
-                <LibraryIcon size={13} />
-              </ButtonControl>
-              {breadcrumb.nodes.map((node, index) => {
-                const label = node.content.text || 'Untitled';
-                const showCollapsedMarker = breadcrumb.collapsed && index === 1;
-                return (
-                  <span className="panel-breadcrumb-segment" key={node.id}>
-                    <span className="panel-breadcrumb-divider">/</span>
-                    {showCollapsedMarker && (
-                      <>
-                        <span className="panel-breadcrumb-ellipsis" aria-label="Collapsed breadcrumb levels">...</span>
-                        <span className="panel-breadcrumb-divider">/</span>
-                      </>
-                    )}
-                    <ButtonControl
-                      className="panel-breadcrumb-button"
-                      onClick={() => props.onRoot(node.id)}
-                    >
-                      {label}
-                    </ButtonControl>
-                  </span>
-                );
-              })}
-            </nav>
-          )}
           {headerIcon && (
             <div className="panel-heading-icon-row">
               <span className="panel-header-icon">{headerIcon}</span>
             </div>
           )}
-          <div className="panel-title-row">
+          <div className="panel-title-row" ref={titleRowRef}>
             <div className="panel-title-editor" aria-label="Page title" onContextMenu={openHeaderContextMenu}>
               {rootNode && showDoneCheckbox && (
                 <DoneCheckbox

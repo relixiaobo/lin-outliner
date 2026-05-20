@@ -4,6 +4,7 @@ import { fieldTypeLabel } from '../outliner/fieldTypePresentation';
 import { NodeValuePicker, type NodeValuePickerMarker } from '../outliner/NodeValuePicker';
 import { NumberInputControl } from '../primitives/NumberInputControl';
 import { SwitchControl } from '../primitives/SwitchControl';
+import { SwitchMark } from '../primitives/SwitchMark';
 import { TextInputControl } from '../primitives/TextInputControl';
 import {
   FIELD_TYPE_CONFIG_OPTIONS,
@@ -197,9 +198,7 @@ export function DefinitionSwitchControl(props: {
       label={props.label}
       onCheckedChange={props.onChange}
     >
-      <span className="definition-switch-track">
-        <span className="definition-switch-thumb" />
-      </span>
+      <SwitchMark checked={props.checked} />
       <span>{props.checked ? 'Yes' : 'No'}</span>
     </SwitchControl>
   );

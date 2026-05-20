@@ -38,6 +38,9 @@ test.describe('agent settings dialog', () => {
 
     await expect(enabled).toBeChecked();
     await expect(mark).toHaveClass(/checked/);
+    await expect(mark).toHaveCSS('width', '16px');
+    await expect(mark).toHaveCSS('height', '16px');
+    await expect(mark).toHaveCSS('border-radius', '3px');
 
     await dialog.getByText('Enabled').click();
 

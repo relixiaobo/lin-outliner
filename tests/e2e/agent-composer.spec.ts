@@ -46,9 +46,16 @@ test.describe('agent composer controls', () => {
 
     const menu = page.getByRole('menu', { name: 'Model and reasoning settings' });
     await expect(menu).toBeVisible();
+    await expect(menu).toHaveCSS('border-top-width', '0px');
     await expect(menu.getByRole('menuitem', { name: 'GPT-5.4', exact: true })).toBeVisible();
     await expect(menu.getByRole('menuitem', { name: 'Claude Sonnet 4.5', exact: true })).toHaveCount(0);
-    await expect(menu.getByRole('switch', { name: 'Thinking' })).toHaveAttribute('aria-checked', 'true');
+    const thinkingSwitch = menu.getByRole('switch', { name: 'Thinking' });
+    const thinkingSwitchMark = thinkingSwitch.locator('.switch-mark');
+    await expect(thinkingSwitch).toHaveAttribute('aria-checked', 'true');
+    await expect(thinkingSwitchMark).toHaveClass(/checked/);
+    await expect(thinkingSwitchMark).toHaveCSS('width', '30px');
+    await expect(thinkingSwitchMark).toHaveCSS('height', '18px');
+    await expect(thinkingSwitch.locator('.switch-mark-thumb')).toHaveCSS('width', '14px');
 
     await menu.getByRole('menuitem', { name: 'GPT-5.4 Mini', exact: true }).click();
     await expect.poll(async () => {
@@ -65,6 +72,7 @@ test.describe('agent composer controls', () => {
     await modelButton.click();
     await page.getByRole('button', { name: 'Thinking level' }).click();
     const thinkingLevels = page.getByRole('menu', { name: 'Thinking levels' });
+    await expect(thinkingLevels).toHaveCSS('border-top-width', '0px');
     await expect(thinkingLevels.getByRole('menuitemradio', { name: 'Medium' })).toHaveAttribute('aria-checked', 'true');
     await thinkingLevels.getByRole('menuitemradio', { name: 'High' }).click();
 
@@ -198,7 +206,7 @@ test.describe('agent composer controls', () => {
     expect(metrics!.surfacePaddingLeft).toBe(metrics!.surfacePaddingRight);
     expect(metrics!.surfacePaddingBottom).toBe(metrics!.surfacePaddingRight);
     expect(metrics!.surfaceRadius).toBe(metrics!.expectedSurfaceRadius);
-    expect(metrics!.surfaceRadius).toBeGreaterThan(metrics!.panelRadius);
+    expect(metrics!.surfaceRadius).toBe(metrics!.panelRadius);
     expect(metrics!.actionRadius).toBe(metrics!.surfaceRadius - metrics!.surfacePaddingRight);
     expect(metrics!.attachmentRadius).toBe(metrics!.surfaceRadius - metrics!.surfacePaddingLeft);
     expect(metrics!.modelRadius).toBe(metrics!.actionRadius);

@@ -16,8 +16,9 @@
   --line-ui-sm: 1.25rem;
   --font-ui-md: 0.875rem;
   --line-ui-md: 1.375rem;
-  --font-content: 0.9375rem;
-  --line-content: 1.5rem;
+  --font-content: 1rem;
+  --line-content: 1.625rem;
+  --content-control-height: var(--line-content);
   --font-description: var(--font-ui-sm);
   --line-description: 1.125rem;
   --font-heading-sm: 0.875rem;
@@ -35,12 +36,14 @@
   font-family: var(--font-family-sans);
   font-size: var(--font-scale);
   color: var(--text-main);
-  background: var(--app-bg);
+  background: var(--deck-bg);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  --app-bg: #fafafa;
+  --deck-bg: #f4f4f5;
+  --app-bg: var(--deck-bg);
   --panel-bg: #ffffff;
+  --surface-soft: #fafafa;
   --text-main: #09090b;
   --text-sub: #52525b;
   --text-muted: #a1a1aa;
@@ -66,8 +69,8 @@
   --overlay-bg: var(--panel-bg);
   --overlay-active-bg: var(--row-selected);
   --overlay-backdrop: rgba(26, 26, 26, 0.30);
-  --overlay-shadow-level-1: 0 0 0 1px var(--border-subtle), 0 4px 12px -4px rgba(0, 0, 0, 0.08);
-  --overlay-shadow-level-2: 0 0 0 1px var(--border-subtle), 0 12px 32px -8px rgba(0, 0, 0, 0.12);
+  --overlay-shadow-level-1: 0 8px 20px -12px rgba(0, 0, 0, 0.22), 0 2px 8px -4px rgba(0, 0, 0, 0.10);
+  --overlay-shadow-level-2: 0 18px 48px -20px rgba(0, 0, 0, 0.24), 0 6px 18px -10px rgba(0, 0, 0, 0.14);
   --outline-faint: inset 0 0 0 1px rgba(0, 0, 0, 0.035);
   --outline-subtle: inset 0 0 0 1px rgba(0, 0, 0, 0.055);
   --outline-muted: inset 0 0 0 1px rgba(9, 9, 11, 0.12);
@@ -122,10 +125,15 @@
   --control-size-xl: 28px;
   --control-size-2xl: 30px;
   --control-size-3xl: 32px;
+  --switch-mark-width: var(--control-size-2xl);
   --icon-size-xs: 12px;
   --icon-size-sm: 14px;
   --icon-size-md: 16px;
   --icon-size-lg: 18px;
+  --switch-mark-height: var(--icon-size-lg);
+  --switch-mark-thumb-size: var(--icon-size-sm);
+  --switch-mark-inset: var(--space-1);
+  --checkbox-mark-size: var(--icon-size-md);
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 12px;
@@ -137,8 +145,10 @@
   --radius-control-lg: 9px;
   --radius-overlay-sm: 10px;
   --radius-pill: 999px;
-  --panel-radius: var(--radius-md);
-  --agent-composer-radius: var(--radius-xl);
+  --checkbox-mark-radius: var(--radius-xs);
+  --workspace-surface-radius: var(--radius-xl);
+  --panel-radius: var(--workspace-surface-radius);
+  --agent-composer-radius: var(--workspace-surface-radius);
   --agent-composer-corner-inset: var(--space-3);
   --agent-composer-corner-radius: calc(var(--agent-composer-radius) - var(--agent-composer-corner-inset));
   --motion-fast: 120ms ease;
@@ -162,7 +172,7 @@
   --scrollbar-thumb: rgba(9, 9, 11, 0.16);
   --scrollbar-thumb-hover: rgba(9, 9, 11, 0.28);
   --agent-accent: var(--accent-brand);
-  --bg: var(--app-bg);
+  --bg: var(--surface-soft);
   --surface: var(--panel-bg);
   --surface-2: #f4f4f5;
   --border: var(--border-muted);
@@ -190,6 +200,7 @@
   --z-toast: 300;
   --row-edge: 6px;
   --row-leading-width: 42px;
+  --row-leading-height: var(--line-content);
   --row-chevron-width: 15px;
   --row-chevron-gap: var(--space-2);
   --row-bullet-width: 15px;
@@ -313,20 +324,24 @@ button:focus-visible {
 
 .checkbox-mark {
   display: inline-flex;
-  inline-size: 12px;
-  block-size: 12px;
-  min-inline-size: 12px;
-  min-block-size: 12px;
-  flex: 0 0 12px;
+  inline-size: var(--checkbox-mark-size);
+  block-size: var(--checkbox-mark-size);
+  min-inline-size: var(--checkbox-mark-size);
+  min-block-size: var(--checkbox-mark-size);
+  flex: 0 0 var(--checkbox-mark-size);
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-xs);
-  background: var(--border-muted);
-  transition: background var(--motion-fast);
+  border: 1.5px solid color-mix(in srgb, var(--text) 28%, transparent);
+  border-radius: var(--checkbox-mark-radius);
+  background: transparent;
+  color: var(--panel-bg);
+  transition: background var(--motion-fast), border-color var(--motion-fast);
 }
 
 .checkbox-mark.checked {
+  border-color: var(--semantic-success);
   background: var(--semantic-success);
+  color: var(--panel-bg);
 }
 
 .checkbox-mark-check {
@@ -334,11 +349,44 @@ button:focus-visible {
   pointer-events: none;
 }
 
+.switch-mark {
+  position: relative;
+  display: inline-flex;
+  inline-size: var(--switch-mark-width);
+  block-size: var(--switch-mark-height);
+  min-inline-size: var(--switch-mark-width);
+  min-block-size: var(--switch-mark-height);
+  flex: 0 0 var(--switch-mark-width);
+  align-items: center;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  transition: background var(--motion-fast);
+}
+
+.switch-mark.checked {
+  background: var(--semantic-success);
+}
+
+.switch-mark-thumb {
+  position: absolute;
+  inset-inline-start: var(--switch-mark-inset);
+  inline-size: var(--switch-mark-thumb-size);
+  block-size: var(--switch-mark-thumb-size);
+  border-radius: var(--radius-pill);
+  background: var(--panel-bg);
+  box-shadow: var(--shadow-thumb);
+  transition: transform var(--motion-fast);
+}
+
+.switch-mark.checked .switch-mark-thumb {
+  transform: translateX(calc(var(--switch-mark-width) - var(--switch-mark-thumb-size) - (var(--switch-mark-inset) * 2)));
+}
+
 .app {
   display: flex;
   height: 100vh;
   flex-direction: column;
-  background: var(--app-bg);
+  background: var(--deck-bg);
   color: var(--text);
 }
 
@@ -349,7 +397,7 @@ button:focus-visible {
   grid-template-columns: 182px minmax(0, 1fr) 100px;
   align-items: center;
   gap: var(--panel-gap);
-  background: var(--app-bg);
+  background: var(--deck-bg);
   padding: var(--layout-gap) var(--shell-padding-x) 0;
   -webkit-app-region: drag;
 }
@@ -363,7 +411,7 @@ button:focus-visible {
 }
 
 .top-chrome-left {
-  gap: var(--space-3);
+  gap: var(--space-5);
 }
 
 .top-chrome-right {
@@ -408,6 +456,7 @@ button:focus-visible {
 }
 
 .top-chrome-icon-button:disabled {
+  color: var(--text-disabled);
   cursor: default;
   opacity: 1;
 }
@@ -518,7 +567,7 @@ button:focus-visible {
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--agent-width);
   column-gap: var(--shell-gap);
   row-gap: 0;
-  background: var(--app-bg);
+  background: var(--deck-bg);
   padding: var(--shell-padding-top) var(--shell-padding-x) var(--shell-padding-bottom);
   transition: grid-template-columns var(--motion-layout);
 }
@@ -541,7 +590,7 @@ button:focus-visible {
 .sidebar-dock,
 .agent-dock {
   min-width: 0;
-  background: var(--app-bg);
+  background: var(--deck-bg);
 }
 
 .app-shell.sidebar-collapsed .sidebar-dock,
@@ -582,7 +631,7 @@ button:focus-visible {
   display: flex;
   width: 100%;
   min-width: 0;
-  height: 24px;
+  height: var(--control-size-md);
   align-items: center;
   border-radius: var(--radius-sm);
   color: var(--text-strong);
@@ -590,7 +639,7 @@ button:focus-visible {
   font-size: var(--font-ui-md);
   font-weight: 400;
   gap: var(--space-3);
-  line-height: var(--line-content);
+  line-height: var(--line-ui-md);
   padding: 0 var(--space-4);
   text-align: left;
 }
@@ -622,7 +671,7 @@ button:focus-visible {
 .workspace-tree-row {
   display: grid;
   min-width: 0;
-  height: 24px;
+  height: var(--control-size-md);
   grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
   border-radius: var(--radius-sm);
@@ -638,7 +687,7 @@ button:focus-visible {
 .workspace-tree-chevron-button {
   display: inline-flex;
   width: 18px;
-  height: 24px;
+  height: var(--control-size-md);
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-control-xs);
@@ -655,14 +704,14 @@ button:focus-visible {
 .workspace-tree-label {
   display: flex;
   min-width: 0;
-  height: 24px;
+  height: var(--control-size-md);
   align-items: center;
   border-radius: var(--radius-control-xs);
   color: inherit;
   cursor: pointer;
   font-size: var(--font-ui-md);
   font-weight: 400;
-  line-height: var(--line-content);
+  line-height: var(--line-ui-md);
   padding: 0 var(--space-3) 0 var(--space-1);
   text-align: left;
 }
@@ -736,8 +785,9 @@ button:focus-visible {
 .outline-panel-surface .panel-inner {
   width: min(100%, var(--panel-content-max));
   max-width: none;
+  min-height: 100%;
   margin: 0 auto;
-  padding: var(--panel-content-top) var(--panel-content-x) var(--panel-content-bottom);
+  padding: 0 var(--panel-content-x) var(--panel-content-bottom);
 }
 
 .outline-panel-surface .panel-header {
@@ -1084,7 +1134,6 @@ button:focus-visible {
   left: 50%;
   width: max-content;
   max-width: 260px;
-  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: rgba(255, 255, 255, 0.98);
   box-shadow: var(--shadow);
@@ -1401,8 +1450,47 @@ button:focus-visible {
   }
 }
 
+.panel-sticky-breadcrumb {
+  position: sticky;
+  z-index: var(--z-raised);
+  top: 0;
+  display: flex;
+  min-width: 0;
+  min-height: calc(var(--panel-content-top) + var(--control-size-md));
+  align-items: center;
+  margin: 0 0 calc(var(--space-lg) + var(--space-2));
+  background: var(--surface);
+  padding: var(--panel-content-top) var(--panel-content-x) 0;
+}
+
+.panel-page-back-button {
+  display: inline-flex;
+  width: var(--control-size-md);
+  height: var(--control-size-md);
+  flex: 0 0 var(--control-size-md);
+  align-items: center;
+  justify-content: center;
+  margin-right: var(--space-4);
+  border-radius: var(--radius-control-xs);
+  color: color-mix(in srgb, var(--text) 42%, transparent);
+  cursor: pointer;
+}
+
+.panel-page-back-button:hover:not(:disabled),
+.panel-page-back-button:focus-visible:not(:disabled) {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+.panel-page-back-button:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
 .panel-breadcrumb {
   display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
   max-width: 100%;
   align-items: center;
   gap: 0;
@@ -1410,7 +1498,7 @@ button:focus-visible {
   color: var(--text-faint);
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
-  margin: 0 0 calc(var(--space-lg) + var(--space-2));
+  margin: 0;
   white-space: nowrap;
 }
 
@@ -1465,16 +1553,21 @@ button:focus-visible {
 
 .panel-breadcrumb-ellipsis {
   display: inline-flex;
-  width: 20px;
+  width: 18px;
   height: 18px;
-  flex: 0 0 20px;
+  flex: 0 0 18px;
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--text) 6%, transparent);
   color: var(--text-faint);
-  font-weight: 600;
-  line-height: var(--line-meta);
+  cursor: pointer;
+}
+
+.panel-breadcrumb-ellipsis:hover,
+.panel-breadcrumb-ellipsis:focus-visible {
+  background: color-mix(in srgb, var(--text) 11%, transparent);
+  color: var(--text-soft);
 }
 
 .agent-dock {
@@ -1643,7 +1736,6 @@ button:focus-visible {
   width: min(326px, calc(100vw - 32px));
   max-height: min(420px, calc(100vh - 128px));
   overflow: hidden;
-  border: 1px solid var(--border);
   border-radius: var(--radius-overlay-sm);
   background: color-mix(in srgb, var(--panel-bg) 96%, transparent);
   box-shadow: var(--shadow);
@@ -2923,7 +3015,6 @@ button:focus-visible {
 .agent-composer-model-menu {
   z-index: var(--z-agent-menu);
   overflow-y: auto;
-  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   background: var(--bg);
   box-shadow: var(--shadow);
@@ -3062,7 +3153,6 @@ button:focus-visible {
   bottom: calc(100% + 6px);
   z-index: var(--z-agent-menu);
   min-width: 112px;
-  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--bg);
   box-shadow: var(--shadow);
@@ -3088,39 +3178,20 @@ button:focus-visible {
 }
 
 .agent-composer-thinking-switch {
-  position: relative;
-  width: 36px;
-  height: 20px;
-  flex: 0 0 36px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
   border-radius: var(--radius-pill);
-  background: rgba(0, 0, 0, 0.13);
   cursor: pointer;
-  transition: background var(--motion-fast);
-}
-
-.agent-composer-thinking-switch span {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  border-radius: var(--radius-pill);
-  background: var(--bg);
-  box-shadow: var(--shadow-thumb);
-  transition: transform var(--motion-fast);
-}
-
-.agent-composer-thinking-switch.is-on {
-  background: var(--surface-inverse);
-}
-
-.agent-composer-thinking-switch.is-on span {
-  transform: translateX(16px);
 }
 
 .agent-composer-thinking-switch:disabled {
   cursor: default;
   opacity: 0.5;
+}
+
+.agent-composer-thinking-switch:hover .switch-mark:not(.checked) {
+  background: color-mix(in srgb, var(--text) 18%, transparent);
 }
 
 .agent-composer-tool-button,
@@ -3276,6 +3347,20 @@ button:focus-visible {
   font-size: var(--font-meta);
   line-height: var(--line-meta);
   padding: 0 var(--space-6);
+}
+
+.panel-breadcrumb-current {
+  flex: 1 1 auto;
+}
+
+.panel-breadcrumb-current-label {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-main);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-settings-close,
@@ -3456,7 +3541,8 @@ button:focus-visible {
 }
 
 .agent-settings-checkbox:hover .checkbox-mark:not(.checked) {
-  background: var(--text-muted);
+  border-color: color-mix(in srgb, var(--text) 42%, transparent);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
 }
 
 .agent-settings-checkbox:focus-within .checkbox-mark {
@@ -3804,7 +3890,6 @@ button:focus-visible {
   top: calc(100% + 6px);
   left: 0;
   width: 232px;
-  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--overlay-bg);
   box-shadow: var(--overlay-shadow-level-2);

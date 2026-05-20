@@ -127,6 +127,47 @@ test.describe('workspace layout resizing', () => {
     expect(narrowCanvasOverflow.scrollWidth).toBeLessThanOrEqual(narrowCanvasOverflow.clientWidth + 1);
   });
 
+  test('top chrome navigation controls align and sidebar state is icon-only', async ({ page }) => {
+    const sidebarToggle = page.getByTitle('Collapse sidebar');
+    const backButton = page.getByTitle('Back');
+    const forwardButton = page.getByTitle('Forward');
+
+    const initial = await page.evaluate(() => {
+      const sidebar = document.querySelector('[title="Collapse sidebar"]');
+      const back = document.querySelector('[title="Back"]');
+      const forward = document.querySelector('[title="Forward"]');
+      if (!(sidebar instanceof HTMLElement) || !(back instanceof HTMLElement) || !(forward instanceof HTMLElement)) {
+        throw new Error('missing top chrome controls');
+      }
+      const sidebarBox = sidebar.getBoundingClientRect();
+      const backBox = back.getBoundingClientRect();
+      const forwardBox = forward.getBoundingClientRect();
+      return {
+        backCenterY: backBox.top + backBox.height / 2,
+        forwardCenterY: forwardBox.top + forwardBox.height / 2,
+        sidebarBg: getComputedStyle(sidebar).backgroundColor,
+        sidebarCenterY: sidebarBox.top + sidebarBox.height / 2,
+        sidebarIcon: sidebar.querySelector('svg')?.innerHTML ?? '',
+      };
+    });
+    expect(initial.sidebarBg).toBe('rgba(0, 0, 0, 0)');
+    expect(Math.abs(initial.sidebarCenterY - initial.backCenterY)).toBeLessThanOrEqual(1);
+    expect(Math.abs(initial.sidebarCenterY - initial.forwardCenterY)).toBeLessThanOrEqual(1);
+
+    await sidebarToggle.click();
+    await expect(page.getByTitle('Expand sidebar')).toBeVisible();
+    const collapsed = await page.evaluate(() => {
+      const sidebar = document.querySelector('[title="Expand sidebar"]');
+      if (!(sidebar instanceof HTMLElement)) throw new Error('missing collapsed sidebar control');
+      return {
+        sidebarBg: getComputedStyle(sidebar).backgroundColor,
+        sidebarIcon: sidebar.querySelector('svg')?.innerHTML ?? '',
+      };
+    });
+    expect(collapsed.sidebarBg).toBe('rgba(0, 0, 0, 0)');
+    expect(collapsed.sidebarIcon).not.toBe(initial.sidebarIcon);
+  });
+
   test('single panel centers bounded content and fills when narrow', async ({ page }) => {
     await page.setViewportSize({ width: 1900, height: 900 });
     await page.getByTitle('New tab').click();

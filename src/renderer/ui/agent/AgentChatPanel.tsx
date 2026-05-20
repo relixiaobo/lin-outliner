@@ -915,7 +915,7 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
       >
         {visibleError ? (
           <div className="agent-message-error" role="status">
-            <WarningIcon size={14} />
+            <WarningIcon size={ICON_SIZE.menu} />
             <span>{visibleError}</span>
           </div>
         ) : null}

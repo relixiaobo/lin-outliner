@@ -105,14 +105,14 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     dragId: props.dragId,
     setDragId: props.setDragId,
   });
-  const [nameDraft, setNameDraft] = useState(field?.content.text || 'Field');
+  const [nameDraft, setNameDraft] = useState(field?.content.text ?? '');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const fieldNameFocusTarget = focusTarget(props.entryId, props.parentId, props.panelId, 'field-name');
   const descriptionFocusTarget = focusTarget(props.entryId, props.parentId, props.panelId, 'description');
 
   useEffect(() => {
-    setNameDraft(field?.content.text || 'Field');
+    setNameDraft(field?.content.text ?? '');
   }, [field?.id, field?.content.text]);
 
   useEffect(() => {
@@ -157,7 +157,11 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   const fieldOwnerColor = resolveFieldOwnerColor(entry, field, props.index.byId);
 
   const commitName = async (nextName = nameDraft) => {
-    const normalized = nextName.trim() || 'Field';
+    const normalized = nextName.trim();
+    if (!normalized) {
+      setNameDraft(field?.content.text ?? '');
+      return;
+    }
     if (field && normalized !== field.content.text) {
       await props.run(async () => {
         await api.replaceNodeText(field.id, plainText(normalized));
@@ -240,6 +244,14 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     });
   };
 
+  const createSiblingAfterField = async () => {
+    await commitName();
+    const parent = props.index.byId.get(props.parentId);
+    const currentIndex = parent?.children.indexOf(props.entryId) ?? -1;
+    const insertIndex = currentIndex >= 0 ? currentIndex + 1 : null;
+    await props.run(() => api.createNode(props.parentId, insertIndex, ''));
+  };
+
   const onKeyDown = (event: KeyboardEvent<HTMLElement>, column: 'name' | 'value') => {
     if (isImeComposingEvent(event)) return;
     const mod = event.metaKey || event.ctrlKey;
@@ -280,9 +292,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     if (event.key === 'Enter') {
       event.preventDefault();
       if (column === 'name') {
-        void commitName().then(() => {
-          focusFieldValueNode();
-        });
+        void createSiblingAfterField();
       } else {
         void commitName().then(() => focusFieldValueNode());
       }
@@ -314,7 +324,8 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       data-focus-node-id={props.entryId}
       label="Field name"
       value={nameDraft}
-      title={`${nameDraft || 'Field'} (${fieldTypeLabel(fieldType)})`}
+      placeholder="Field name"
+      title={`${nameDraft || 'Field name'} (${fieldTypeLabel(fieldType)})`}
       onFocus={() => {
         props.setUi((prev) => selectFocusState(prev, fieldNameFocusTarget));
       }}

@@ -2,7 +2,8 @@ import { useEffect, useState, type KeyboardEvent } from 'react';
 import { api } from '../../api/client';
 import type { FieldType, NodeProjection } from '../../api/types';
 import { plainText } from '../../api/types';
-import { CheckIcon } from '../icons';
+import { CheckboxMark } from '../primitives/CheckboxMark';
+import { SwitchMark } from '../primitives/SwitchMark';
 import type { CommandRunner } from '../shared';
 
 interface TypedFieldValueControlProps {
@@ -40,19 +41,33 @@ export function TypedFieldValueControl({
     void run(() => api.createNode(entryId, null, normalized));
   };
 
-  if (fieldType === 'checkbox' || fieldType === 'boolean') {
+  if (fieldType === 'checkbox') {
     const checked = booleanValue(value);
     return (
       <button
         type="button"
-        className={`typed-field-boolean ${checked ? 'checked' : ''}`}
+        className={`typed-field-boolean typed-field-checkbox ${checked ? 'checked' : ''}`}
+        role="checkbox"
+        aria-checked={checked}
+        onClick={() => commit(checked ? 'false' : 'true')}
+      >
+        <CheckboxMark checked={checked} />
+        <span>{checked ? 'Yes' : 'No'}</span>
+      </button>
+    );
+  }
+
+  if (fieldType === 'boolean') {
+    const checked = booleanValue(value);
+    return (
+      <button
+        type="button"
+        className={`typed-field-boolean typed-field-boolean-value ${checked ? 'checked' : ''}`}
         role="switch"
         aria-checked={checked}
         onClick={() => commit(checked ? 'false' : 'true')}
       >
-        <span className="typed-field-boolean-box">
-          {checked && <CheckIcon size={12} />}
-        </span>
+        <SwitchMark checked={checked} />
         <span>{checked ? 'Yes' : 'No'}</span>
       </button>
     );

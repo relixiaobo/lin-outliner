@@ -544,7 +544,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       makeNode(fieldDefId, name, { type: 'fieldDef', fieldType, parentId: ids.schema, cardinality: 'single', nullable: true });
       appendChild(ids.schema, fieldDefId);
       const fieldEntryId = `field-entry-${++sequence}`;
-      makeNode(fieldEntryId, name, { type: 'fieldEntry', parentId, fieldDefId, fieldType });
+      makeNode(fieldEntryId, '', { type: 'fieldEntry', parentId, fieldDefId, fieldType });
       appendChild(parentId, fieldEntryId, index);
       return fieldEntryId;
     };

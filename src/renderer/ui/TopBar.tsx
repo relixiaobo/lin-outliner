@@ -4,7 +4,8 @@ import {
   BackIcon,
   ForwardIcon,
   ICON_SIZE,
-  SidebarIcon,
+  SidebarCollapseIcon,
+  SidebarExpandIcon,
   UserIcon,
 } from './icons';
 import { IconButton } from './primitives/IconButton';
@@ -17,8 +18,12 @@ interface TopBarProps {
   sidebarOpen: boolean;
   tabs: TopBarTab[];
   activeTabId: string | null;
+  canNavigateBack: boolean;
+  canNavigateForward: boolean;
   onCreateTab: () => void;
   onCloseTab: (tabId: string) => void;
+  onNavigateBack: () => void;
+  onNavigateForward: () => void;
   onSelectTab: (tabId: string) => void;
   onToggleAgent: () => void;
   onToggleSidebar: () => void;
@@ -33,9 +38,8 @@ export function TopBar(props: TopBarProps) {
       <div className="top-chrome-left" aria-label="Window and navigation controls">
         <div className="window-controls-spacer" aria-hidden="true" />
         <IconButton
-          aria-pressed={props.sidebarOpen}
           className="top-chrome-icon-button"
-          icon={SidebarIcon}
+          icon={props.sidebarOpen ? SidebarCollapseIcon : SidebarExpandIcon}
           label={props.sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
           onClick={props.onToggleSidebar}
           title={props.sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
@@ -43,18 +47,20 @@ export function TopBar(props: TopBarProps) {
         />
         <IconButton
           className="top-chrome-icon-button"
-          disabled
+          disabled={!props.canNavigateBack}
           icon={BackIcon}
           iconSize={ICON_SIZE.menu}
           label="Back"
+          onClick={props.onNavigateBack}
           strokeWidth={1.7}
         />
         <IconButton
           className="top-chrome-icon-button"
-          disabled
+          disabled={!props.canNavigateForward}
           icon={ForwardIcon}
           iconSize={ICON_SIZE.menu}
           label="Forward"
+          onClick={props.onNavigateForward}
           strokeWidth={1.7}
         />
       </div>

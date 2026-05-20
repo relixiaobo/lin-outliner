@@ -59,6 +59,7 @@ import {
   applyTrailingReferenceTrigger,
   applyTrailingTagTrigger,
   createAndApplyTrailingTagTrigger,
+  createPlaceholderInlineFieldAfterNode,
   createTrailingField,
   executeTrailingSlashTrigger,
 } from './trailingTriggers';
@@ -311,7 +312,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
 
     if (commandId === 'field') {
       await pendingTextPatchRef.current;
-      return api.createInlineFieldAfterNode(props.nodeId, 'Field', 'plain');
+      return createPlaceholderInlineFieldAfterNode(props.nodeId, 'plain');
     }
 
     if (commandId === 'reference') {
@@ -633,7 +634,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
             onFieldTriggerFire={() => {
               props.setTrigger(null);
               void pendingTextPatchRef.current.then(() => props.run(() => (
-                api.createInlineFieldAfterNode(props.nodeId, 'Field', 'plain')
+                createPlaceholderInlineFieldAfterNode(props.nodeId, 'plain')
               )));
             }}
             onTriggerChange={(nextTrigger) => {
@@ -788,12 +789,12 @@ export function OutlinerItem(props: OutlinerItemProps) {
               onApplyReferenceTrigger={applyTrailingReferenceTrigger}
               onExecuteSlashTrigger={executeTrailingSlashTrigger}
               onOpenCommandPalette={() => props.setUi((prev) => ({ ...prev, commandOpen: true }))}
-              onCreateField={(parentId) => {
-                void createTrailingField({
+              onCreateField={(parentId) => (
+                createTrailingField({
                   parentId,
                   run: props.run,
-                });
-              }}
+                })
+              )}
               onExpand={(nodeId) => {
                 props.setUi((prev) => {
                   const expanded = new Set(prev.expanded);

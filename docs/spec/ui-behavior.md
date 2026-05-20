@@ -7,13 +7,23 @@ keyboard or pointer change should be checked against this matrix.
 ## Layout
 
 - Single primary outliner panel.
-- Top bar contains navigation context, command palette, new node, undo, and redo.
+- Panel breadcrumb stays pinned to the top of the panel scroll container.
+- Breadcrumb uses the panel left inset. The main outline content can remain
+  centered independently on wide panels.
+- When the page title scrolls under the pinned breadcrumb, the current page
+  title appears as the final breadcrumb segment.
+- Breadcrumb back navigates the current panel to its previous node page. It does
+  not undo document operations.
+- Top bar Back/Forward controls navigate the active tab's outliner page
+  history. They do not undo or redo document operations.
 - Rows use a compact bullet/chevron leading control, restrained hover/focus
   states, and no right inspector.
 - Page titles are editable rich text.
 - The root scope always renders a trailing input so typing can continue at the
   end of the page.
 - Field entries are ordinary outline rows with field-specific value rendering.
+  Their separators stay hidden until the row is hovered or focus is inside its
+  field name/value area.
 
 ## Row State Model
 
@@ -60,8 +70,9 @@ keyboard or pointer change should be checked against this matrix.
 
 | Interaction | Expected behavior |
 | --- | --- |
-| `Enter` in field name | Commit name and focus value. |
+| `Enter` in field name | Commit name and create/focus a sibling row after the field entry. |
 | `Enter` in field value | Commit field and create a sibling row after the field entry. |
+| `>` in field value content/trailing input | Create a nested field entry inside the field value scope. |
 | `Tab` / `Shift+Tab` | Same structural indentation rules as content rows. |
 | `ArrowUp` / `ArrowDown` | Move through visible outline rows. |
 | `Escape` | Leave edit mode and select the field row. |

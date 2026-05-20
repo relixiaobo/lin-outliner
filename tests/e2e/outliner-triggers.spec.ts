@@ -3,6 +3,7 @@ import {
   commandCalls,
   e2eProjection,
   ids,
+  nodeById,
   openMockedApp,
   row,
   rowEditor,
@@ -17,6 +18,26 @@ async function lastTodayChildId(page: import('@playwright/test').Page) {
 async function todayChildren(page: import('@playwright/test').Page) {
   const projection = await e2eProjection(page);
   return projection.nodes.find((node) => node.id === ids.today)?.children ?? [];
+}
+
+async function fieldSeparatorOpacity(
+  page: import('@playwright/test').Page,
+  fieldId: string,
+  pseudo: '::before' | '::after',
+) {
+  return row(page, fieldId).locator(':scope > .row > .outliner-field-grid').evaluate((element, targetPseudo) =>
+    getComputedStyle(element, targetPseudo).opacity,
+  pseudo);
+}
+
+async function fieldSeparatorContent(
+  page: import('@playwright/test').Page,
+  fieldId: string,
+  pseudo: '::before' | '::after',
+) {
+  return row(page, fieldId).locator(':scope > .row > .outliner-field-grid').evaluate((element, targetPseudo) =>
+    getComputedStyle(element, targetPseudo).content,
+  pseudo);
 }
 
 function priorityValueEditor(page: import('@playwright/test').Page) {
@@ -106,6 +127,25 @@ async function delayMockCommands(
       return originalInvoke<T>(cmd, args);
     };
   }, { delayedCommands, delayMs });
+}
+
+async function rejectEmptyInlineFieldNames(page: import('@playwright/test').Page) {
+  await page.evaluate(() => {
+    const win = window as unknown as {
+      lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+    };
+    const originalInvoke = win.lin?.invoke;
+    if (!win.lin || !originalInvoke) return;
+    win.lin.invoke = async <T,>(cmd: string, args?: Record<string, unknown>) => {
+      if (
+        (cmd === 'create_inline_field' || cmd === 'create_inline_field_after_node')
+        && !String(args?.name ?? '').trim()
+      ) {
+        throw new Error("Error invoking remote method 'lin:invoke': CoreError: invalid operation: field name cannot be empty");
+      }
+      return originalInvoke<T>(cmd, args);
+    };
+  });
 }
 
 test.describe('outliner trigger parity', () => {
@@ -424,6 +464,287 @@ test.describe('outliner trigger parity', () => {
     }).toBe('fieldEntry');
     expect(await todayChildren(page)).toEqual([...beforeChildren, fieldId]);
     await expect(page.locator('.trigger-popover')).toHaveCount(0);
+  });
+
+  test('new field name is a placeholder and Enter creates a sibling content row', async ({ page }) => {
+    const beforeChildren = await todayChildren(page);
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+
+    const fieldId = await lastTodayChildId(page);
+    if (!fieldId) throw new Error('missing created field');
+    const fieldName = row(page, fieldId).locator('.field-name-input');
+    await expect(fieldName).toBeFocused();
+    await expect(fieldName).toHaveValue('');
+    await expect(fieldName).toHaveAttribute('placeholder', 'Field name');
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const fieldEntry = projection.nodes.find((node) => node.id === fieldId);
+      const fieldDef = projection.nodes.find((node) => node.id === fieldEntry?.fieldDefId);
+      return fieldDef?.content.text;
+    }).toBe('');
+
+    await page.keyboard.press('Enter');
+
+    await expect.poll(async () => {
+      const children = await todayChildren(page);
+      return children.length;
+    }).toBe(beforeChildren.length + 2);
+    const children = await todayChildren(page);
+    const newNodeId = children[children.indexOf(fieldId) + 1];
+    if (!newNodeId) throw new Error('missing created sibling');
+    await expect.poll(async () => (await nodeById(page, newNodeId))?.type ?? null).toBe(null);
+    await expect(rowEditor(page, newNodeId)).toBeFocused();
+  });
+
+  test('field separators appear only on field hover or focus', async ({ page }) => {
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+
+    const fieldId = await lastTodayChildId(page);
+    if (!fieldId) throw new Error('missing created field');
+    const fieldName = row(page, fieldId).locator('.field-name-input');
+    await expect(fieldName).toBeFocused();
+    await expect.poll(() => fieldSeparatorOpacity(page, fieldId, '::before')).toBe('1');
+    await expect.poll(() => fieldSeparatorOpacity(page, fieldId, '::after')).toBe('1');
+
+    await rowEditor(page, ids.alpha).click();
+    await expect.poll(() => fieldSeparatorOpacity(page, fieldId, '::before')).toBe('0');
+    await expect.poll(() => fieldSeparatorOpacity(page, fieldId, '::after')).toBe('0');
+
+    await row(page, fieldId).hover();
+    await expect.poll(() => fieldSeparatorOpacity(page, fieldId, '::before')).toBe('1');
+    await expect.poll(() => fieldSeparatorOpacity(page, fieldId, '::after')).toBe('1');
+  });
+
+  test('adjacent field rows do not double-draw their shared separator', async ({ page }) => {
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+    const firstFieldId = await lastTodayChildId(page);
+    if (!firstFieldId) throw new Error('missing first field');
+
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+    const secondFieldId = await lastTodayChildId(page);
+    if (!secondFieldId || secondFieldId === firstFieldId) throw new Error('missing second field');
+
+    await row(page, firstFieldId).hover();
+    await expect.poll(() => fieldSeparatorOpacity(page, firstFieldId, '::before')).toBe('1');
+    await expect.poll(() => fieldSeparatorContent(page, firstFieldId, '::after')).toBe('none');
+
+    await row(page, secondFieldId).hover();
+    await expect.poll(() => fieldSeparatorOpacity(page, secondFieldId, '::before')).toBe('1');
+    await expect.poll(() => fieldSeparatorOpacity(page, secondFieldId, '::after')).toBe('1');
+  });
+
+  test('nested field value separators own the active field scope', async ({ page }) => {
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+
+    const fieldId = await lastTodayChildId(page);
+    if (!fieldId) throw new Error('missing field');
+    await trailingEditor(page, fieldId).click();
+    await page.keyboard.type('>');
+
+    let nestedFieldId: string | undefined;
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      nestedFieldId = projection.nodes.find((node) => node.id === fieldId)?.children.at(-1);
+      return nestedFieldId;
+    }).not.toBeUndefined();
+    if (!nestedFieldId) throw new Error('missing nested field');
+    const nestedId = String(nestedFieldId);
+
+    await expect(row(page, nestedId).locator('.field-name-input')).toBeFocused();
+    await expect.poll(() => fieldSeparatorOpacity(page, fieldId, '::before')).toBe('0');
+    await expect.poll(() => fieldSeparatorOpacity(page, fieldId, '::after')).toBe('0');
+    await expect.poll(() => fieldSeparatorOpacity(page, nestedId, '::before')).toBe('1');
+    await expect.poll(() => fieldSeparatorOpacity(page, nestedId, '::after')).toBe('1');
+  });
+
+  test('> in field value creates a nested field row', async ({ page }) => {
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+
+    const fieldId = await lastTodayChildId(page);
+    if (!fieldId) throw new Error('missing created field');
+    const valueEditor = trailingEditor(page, fieldId);
+    await expect(valueEditor).toBeVisible();
+    await valueEditor.click();
+    await page.keyboard.type('>');
+
+    let nestedFieldId: string | undefined;
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const fieldEntry = projection.nodes.find((node) => node.id === fieldId);
+      nestedFieldId = fieldEntry?.children.at(-1);
+      const nestedField = projection.nodes.find((node) => node.id === nestedFieldId);
+      return {
+        childCount: fieldEntry?.children.length ?? 0,
+        nestedParentId: nestedField?.parentId,
+        nestedType: nestedField?.type,
+      };
+    }).toEqual({
+      childCount: 1,
+      nestedParentId: fieldId,
+      nestedType: 'fieldEntry',
+    });
+    if (!nestedFieldId) throw new Error('missing nested field');
+    await expect(row(page, nestedFieldId).locator('.field-name-input')).toBeFocused();
+  });
+
+  test('> in field value falls back cleanly when the backend still rejects empty field names', async ({ page }) => {
+    await rejectEmptyInlineFieldNames(page);
+
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+
+    const fieldId = await lastTodayChildId(page);
+    if (!fieldId) throw new Error('missing created field');
+    const valueEditor = trailingEditor(page, fieldId);
+    await expect(valueEditor).toBeVisible();
+    await valueEditor.click();
+    await page.keyboard.type('>');
+
+    let nestedFieldId: string | undefined;
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const fieldEntry = projection.nodes.find((node) => node.id === fieldId);
+      nestedFieldId = fieldEntry?.children.at(-1);
+      const nestedField = projection.nodes.find((node) => node.id === nestedFieldId);
+      const nestedFieldDef = projection.nodes.find((node) => node.id === nestedField?.fieldDefId);
+      return {
+        fieldDefName: nestedFieldDef?.content.text,
+        nestedParentId: nestedField?.parentId,
+        nestedType: nestedField?.type,
+      };
+    }).toEqual({
+      fieldDefName: '',
+      nestedParentId: fieldId,
+      nestedType: 'fieldEntry',
+    });
+    if (!nestedFieldId) throw new Error('missing nested field');
+    await expect(row(page, nestedFieldId).locator('.field-name-input')).toBeFocused();
+    await expect(page.locator('.error')).toHaveCount(0);
+  });
+
+  test('> in an existing field value row converts that value row into a nested field', async ({ page }) => {
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+
+    const fieldId = await lastTodayChildId(page);
+    if (!fieldId) throw new Error('missing created field');
+    await invokeMockCommand(page, 'create_node', {
+      parentId: fieldId,
+      index: null,
+      text: '',
+    });
+    let valueNodeId: string | undefined;
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      valueNodeId = projection.nodes.find((node) => node.parentId === fieldId)?.id;
+      return valueNodeId;
+    }).not.toBeUndefined();
+
+    if (!valueNodeId) throw new Error('missing value node');
+    const valueId = String(valueNodeId);
+    await rowEditor(page, valueId).click();
+    await page.keyboard.type('>');
+
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const valueNode = projection.nodes.find((node) => node.id === valueId);
+      return {
+        content: valueNode?.content.text,
+        parentId: valueNode?.parentId,
+        type: valueNode?.type,
+      };
+    }).toEqual({
+      content: '',
+      parentId: fieldId,
+      type: 'fieldEntry',
+    });
+    await expect(row(page, valueId).locator('.field-name-input')).toBeFocused();
+  });
+
+  test('checkbox field values use the shared checkbox mark', async ({ page }) => {
+    await invokeMockCommand(page, 'create_inline_field', {
+      parentId: ids.today,
+      index: null,
+      name: 'Done',
+      fieldType: 'checkbox',
+    });
+
+    let fieldId: string | undefined;
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      fieldId = projection.nodes.find((node) => (
+        node.parentId === ids.today
+        && node.type === 'fieldEntry'
+        && node.fieldType === 'checkbox'
+      ))?.id;
+      return fieldId;
+    }).not.toBeUndefined();
+    if (!fieldId) throw new Error('missing checkbox field');
+
+    const fieldTypeIcon = row(page, fieldId).locator(':scope > .row .row-bullet-shape.field svg');
+    await expect(row(page, fieldId).locator(':scope > .row .row-bullet-shape.field .checkbox-mark')).toHaveCount(0);
+    await expect(fieldTypeIcon).toHaveCount(1);
+    await expect(fieldTypeIcon).toHaveCSS('width', '12px');
+    await expect(fieldTypeIcon).toHaveCSS('height', '12px');
+
+    const checkbox = row(page, fieldId).getByRole('checkbox');
+    const mark = checkbox.locator('.checkbox-mark');
+    await expect(mark).toHaveCount(1);
+    await expect(checkbox.locator('.typed-field-boolean-box')).toHaveCount(0);
+    await expect(mark).not.toHaveClass(/checked/);
+    await expect(mark).toHaveCSS('width', '16px');
+    await expect(mark).toHaveCSS('height', '16px');
+    await expect(mark).toHaveCSS('border-radius', '3px');
+
+    await checkbox.click();
+    await expect(mark).toHaveClass(/checked/);
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      return projection.nodes.find((node) => node.parentId === fieldId)?.content.text;
+    }).toBe('true');
+  });
+
+  test('boolean field values use the shared switch mark', async ({ page }) => {
+    await invokeMockCommand(page, 'create_inline_field', {
+      parentId: ids.today,
+      index: null,
+      name: 'Enabled',
+      fieldType: 'boolean',
+    });
+
+    let fieldId: string | undefined;
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      fieldId = projection.nodes.find((node) => (
+        node.parentId === ids.today
+        && node.type === 'fieldEntry'
+        && node.fieldType === 'boolean'
+      ))?.id;
+      return fieldId;
+    }).not.toBeUndefined();
+    if (!fieldId) throw new Error('missing boolean field');
+
+    const fieldValueSwitch = row(page, fieldId).getByRole('switch');
+    const mark = fieldValueSwitch.locator('.switch-mark');
+    await expect(mark).toHaveCount(1);
+    await expect(fieldValueSwitch.locator('.checkbox-mark')).toHaveCount(0);
+    await expect(mark).not.toHaveClass(/checked/);
+    await expect(mark).toHaveCSS('width', '30px');
+    await expect(mark).toHaveCSS('height', '18px');
+    await expect(fieldValueSwitch.locator('.switch-mark-thumb')).toHaveCSS('width', '14px');
+
+    await fieldValueSwitch.click();
+    await expect(mark).toHaveClass(/checked/);
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      return projection.nodes.find((node) => node.parentId === fieldId)?.content.text;
+    }).toBe('true');
   });
 
 });

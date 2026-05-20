@@ -31,15 +31,7 @@ const productStyleFiles = [
   'src/renderer/styles.css',
   'src/renderer/styles/outliner.css',
 ];
-const designSystemSiteFile = 'docs/spec/design-system/index.html';
-
-function extractHtmlStyleBlocks(file: string) {
-  const text = readFileSync(file, 'utf8');
-  return [...text.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((match) => ({
-    css: match[1] ?? '',
-    startLine: text.slice(0, match.index).split('\n').length,
-  }));
-}
+const designSystemSpecFile = 'docs/spec/design-system.md';
 
 function extractCssCodeBlocks(file: string) {
   const text = readFileSync(file, 'utf8');
@@ -153,31 +145,31 @@ test.describe('typography tokens', () => {
     expect(violations).toEqual([]);
   });
 
-  test('keeps design-system site css tokenized outside token declarations', () => {
-    const violations = extractHtmlStyleBlocks(designSystemSiteFile).flatMap(({ css, startLine }) => [
+  test('keeps design-system spec css examples tokenized outside token declarations', () => {
+    const violations = extractCssCodeBlocks(designSystemSpecFile).flatMap(({ css, startLine }) => [
       ...collectCssDeclarationViolations(
-        designSystemSiteFile,
+        designSystemSpecFile,
         css,
         startLine,
         /\b(border-radius):\s*([^;]+);/,
         (value) => value.startsWith('var('),
       ),
       ...collectCssDeclarationViolations(
-        designSystemSiteFile,
+        designSystemSpecFile,
         css,
         startLine,
         /\b(transition):\s*([^;]+);/,
         (value) => !/\d+ms/.test(value),
       ),
       ...collectCssDeclarationViolations(
-        designSystemSiteFile,
+        designSystemSpecFile,
         css,
         startLine,
         /\b(box-shadow):\s*([^;]+);/,
         (value) => value.startsWith('var(') || value === 'none',
       ),
       ...collectCssDeclarationViolations(
-        designSystemSiteFile,
+        designSystemSpecFile,
         css,
         startLine,
         /(?:^|;)\s*([\w-]*color|background):\s*(#[0-9a-fA-F]{3,8})\b/,
@@ -189,8 +181,8 @@ test.describe('typography tokens', () => {
   });
 
   test('keeps foundation css token examples self-contained', () => {
-    const violations = extractCssCodeBlocks('docs/spec/design-system/foundations.md').flatMap(({ css, startLine }) => (
-      collectUndefinedTokenReferences('docs/spec/design-system/foundations.md', css, startLine)
+    const violations = extractCssCodeBlocks(designSystemSpecFile).flatMap(({ css, startLine }) => (
+      collectUndefinedTokenReferences(designSystemSpecFile, css, startLine)
     ));
 
     expect(violations).toEqual([]);
@@ -224,6 +216,20 @@ test.describe('typography tokens', () => {
         if (!match || match[1] !== match[2]) continue;
         violations.push(`${file}:${index + 1} ${line.trim()}`);
       }
+    }
+
+    expect(violations).toEqual([]);
+  });
+
+  test('keeps overlay elevation as pure shadows without outline strokes', () => {
+    const violations: string[] = [];
+    const text = readFileSync('src/renderer/styles.css', 'utf8');
+    const lines = text.split('\n');
+
+    for (const [index, line] of lines.entries()) {
+      if (!/--overlay-shadow-level-\d+:/.test(line)) continue;
+      if (!/0\s+0\s+0\s+1px/.test(line)) continue;
+      violations.push(`src/renderer/styles.css:${index + 1} ${line.trim()}`);
     }
 
     expect(violations).toEqual([]);
@@ -270,20 +276,20 @@ test.describe('typography tokens', () => {
     await expect(page.getByText('Current outline focuses on design-system work.')).toBeVisible();
 
     await expect(cssTextMetrics(page, `[data-node-id="${ids.alpha}"] .row-editor`)).resolves.toEqual({
-      fontSize: '15px',
-      lineHeight: '24px',
+      fontSize: '16px',
+      lineHeight: '26px',
     });
     await expect(cssTextMetrics(page, '.agent-assistant-content')).resolves.toEqual({
-      fontSize: '15px',
-      lineHeight: '24px',
+      fontSize: '16px',
+      lineHeight: '26px',
     });
     await expect(cssTextMetrics(page, '.agent-user-bubble')).resolves.toEqual({
-      fontSize: '15px',
-      lineHeight: '24px',
+      fontSize: '16px',
+      lineHeight: '26px',
     });
     await expect(cssTextMetrics(page, '.agent-composer-input')).resolves.toEqual({
-      fontSize: '15px',
-      lineHeight: '24px',
+      fontSize: '16px',
+      lineHeight: '26px',
     });
     await expect(cssTextMetrics(page, '.agent-process-toggle')).resolves.toEqual({
       fontSize: '12px',

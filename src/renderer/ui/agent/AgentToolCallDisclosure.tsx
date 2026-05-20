@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { AppIcon } from '../icons';
+import { ICON_SIZE, type AppIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { AgentDisclosureIndicator } from './AgentDisclosureIndicator';
 
@@ -38,7 +38,7 @@ export function AgentToolCallDisclosure({
           <AgentDisclosureIndicator
             className="agent-tool-call-icon-slot"
             expanded={expanded}
-            icon={<StatusIcon className={statusIconClassName} size={14} />}
+            icon={<StatusIcon className={statusIconClassName} size={ICON_SIZE.menu} />}
             interactive={hasDetails}
           />
           <span className="agent-tool-call-summary">{summary}</span>

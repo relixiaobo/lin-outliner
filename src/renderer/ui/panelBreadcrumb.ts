@@ -3,11 +3,12 @@ import type { DocumentIndex } from '../state/document';
 
 interface PanelBreadcrumb {
   collapsed: boolean;
+  hiddenNodes: NodeProjection[];
   nodes: NodeProjection[];
 }
 
 export function buildPanelBreadcrumb(rootNode: NodeProjection | undefined, index: DocumentIndex): PanelBreadcrumb {
-  if (!rootNode) return { collapsed: false, nodes: [] };
+  if (!rootNode) return { collapsed: false, hiddenNodes: [], nodes: [] };
 
   const hiddenAncestorIds = new Set<NodeId>([
     index.projection.workspaceId,
@@ -26,11 +27,12 @@ export function buildPanelBreadcrumb(rootNode: NodeProjection | undefined, index
 
   const visible = chain.filter((node) => !hiddenAncestorIds.has(node.id));
   if (visible.length <= 3) {
-    return { collapsed: false, nodes: visible };
+    return { collapsed: false, hiddenNodes: [], nodes: visible };
   }
 
   return {
     collapsed: true,
+    hiddenNodes: visible.slice(1, -2),
     nodes: [visible[0], ...visible.slice(-2)],
   };
 }

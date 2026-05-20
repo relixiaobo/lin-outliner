@@ -15,6 +15,7 @@ interface WorkspaceCanvasProps {
   index: DocumentIndex;
   onActivatePanel: (panel: WorkspacePanelState) => void;
   onClosePanel: (panelId: string) => void;
+  onNavigatePanelBack: (panelId: string) => void;
   onNavigatePanelRoot: (panelId: string, nodeId: NodeId) => void;
   onPanelResizeStart: (
     leftPanelId: string,
@@ -57,6 +58,8 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
               <NodePanel
                 panelId={panel.id}
                 rootId={panel.rootId}
+                canGoBack={Boolean(panel.pageBackStack?.length)}
+                onBack={() => props.onNavigatePanelBack(panel.id)}
                 onRoot={(nodeId) => props.onNavigatePanelRoot(panel.id, nodeId)}
                 index={props.index}
                 ui={props.ui}

@@ -1,3 +1,4 @@
+import type { ComponentType } from 'react';
 import type { FieldType } from '../../api/types';
 import {
   BooleanIcon,
@@ -13,7 +14,6 @@ import {
   PlainTextIcon,
   UrlIcon,
   UserIcon,
-  type AppIcon,
 } from '../icons';
 import { fieldTypeLabel as registryFieldTypeLabel } from '../fields/fieldTypeRegistry';
 
@@ -21,6 +21,8 @@ interface FieldTypeIconProps {
   fieldType?: FieldType;
   size?: number;
 }
+
+type FieldIconComponent = ComponentType<{ size?: number }>;
 
 const FIELD_TYPE_ICONS = {
   plain: PlainTextIcon,
@@ -36,7 +38,7 @@ const FIELD_TYPE_ICONS = {
   checkbox: CheckboxIcon,
   boolean: BooleanIcon,
   color: ColorIcon,
-} satisfies Record<FieldType, AppIcon>;
+} satisfies Record<FieldType, FieldIconComponent>;
 
 export function FieldTypeIcon({ fieldType, size = ICON_SIZE.rowGlyph }: FieldTypeIconProps) {
   const Icon = FIELD_TYPE_ICONS[fieldType ?? 'plain'];

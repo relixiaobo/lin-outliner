@@ -1,6 +1,7 @@
 import type { AgentToolResultWithPayloads, ToolCall } from '../../../core/agentTypes';
 import {
   BrainIcon,
+  ICON_SIZE,
   LoaderIcon,
   OptionsIcon,
   WarningIcon,
@@ -13,6 +14,8 @@ import type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessT
 import { firstLine, previewText } from './agentProcessTypes';
 
 export type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
+
+const PROCESS_STATUS_ICON_SIZE = 13;
 
 interface AgentProcessBlockProps {
   blocks: AgentProcessSegmentBlock[];
@@ -102,12 +105,12 @@ export function AgentProcessBlock({
   const defaultExpanded = liveSegment || turnFailedWithoutProse;
   const expanded = expandState.isExpanded(id, defaultExpanded);
   const processIcon = liveSegment
-    ? <LoaderIcon className="agent-process-spinner" size={12} />
+    ? <LoaderIcon className="agent-process-spinner" size={ICON_SIZE.rowGlyph} />
     : turnFailedWithoutProse
-      ? <WarningIcon size={13} />
+      ? <WarningIcon size={PROCESS_STATUS_ICON_SIZE} />
       : toolCalls.length > 0
-        ? <OptionsIcon size={13} />
-        : <BrainIcon size={13} />;
+        ? <OptionsIcon size={PROCESS_STATUS_ICON_SIZE} />
+        : <BrainIcon size={PROCESS_STATUS_ICON_SIZE} />;
 
   return (
     <div className={`agent-process-block ${turnFailedWithoutProse ? 'is-error' : ''}`}>

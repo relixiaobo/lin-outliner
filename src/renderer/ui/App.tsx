@@ -54,6 +54,7 @@ export function App() {
   }, [setUi]);
 
   const {
+    activeOutlinerPanel,
     activeTab,
     activeTabId,
     activatePanel,
@@ -61,6 +62,8 @@ export function App() {
     closeTab,
     createTab,
     initializeTabs,
+    navigatePanelBack: goPanelBack,
+    navigatePanelForward: goPanelForward,
     navigatePanelRoot: setPanelRoot,
     navigateRoot: setActivePanelRoot,
     openAgentDebugPanel,
@@ -70,6 +73,7 @@ export function App() {
     selectTab,
     tabs,
   } = useWorkspaceTabs({ focusNode });
+  const pageHistoryPanel = activeOutlinerPanel;
 
   const {
     agentWidth,
@@ -126,6 +130,26 @@ export function App() {
     setPanelRoot(panelId, nodeId);
     expandNodeInOutliner(nodeId);
   }, [expandNodeInOutliner, setPanelRoot]);
+
+  const navigatePanelBack = useCallback((panelId: string) => {
+    const nodeId = goPanelBack(panelId);
+    if (nodeId) expandNodeInOutliner(nodeId);
+  }, [expandNodeInOutliner, goPanelBack]);
+
+  const navigatePanelForward = useCallback((panelId: string) => {
+    const nodeId = goPanelForward(panelId);
+    if (nodeId) expandNodeInOutliner(nodeId);
+  }, [expandNodeInOutliner, goPanelForward]);
+
+  const navigateActivePanelBack = useCallback(() => {
+    if (!pageHistoryPanel) return;
+    navigatePanelBack(pageHistoryPanel.id);
+  }, [navigatePanelBack, pageHistoryPanel]);
+
+  const navigateActivePanelForward = useCallback(() => {
+    if (!pageHistoryPanel) return;
+    navigatePanelForward(pageHistoryPanel.id);
+  }, [navigatePanelForward, pageHistoryPanel]);
 
   const openRootInPanel = useCallback((nodeId: NodeId) => {
     openPanel(nodeId);
@@ -223,8 +247,12 @@ export function App() {
         sidebarOpen={sidebarOpen}
         tabs={topBarTabs}
         activeTabId={activeTabId}
+        canNavigateBack={Boolean(pageHistoryPanel?.pageBackStack?.length)}
+        canNavigateForward={Boolean(pageHistoryPanel?.pageForwardStack?.length)}
         onCreateTab={createTab}
         onCloseTab={closeTab}
+        onNavigateBack={navigateActivePanelBack}
+        onNavigateForward={navigateActivePanelForward}
         onSelectTab={selectTab}
         onToggleAgent={() => setAgentOpen((open) => !open)}
         onToggleSidebar={() => setSidebarOpen((open) => !open)}
@@ -253,6 +281,7 @@ export function App() {
           index={index}
           onActivatePanel={activatePanel}
           onClosePanel={closePanel}
+          onNavigatePanelBack={navigatePanelBack}
           onNavigatePanelRoot={navigatePanelRoot}
           onPanelResizeKeyDown={resizePanelPairWithKeyboard}
           onPanelResizeStart={beginPanelResize}

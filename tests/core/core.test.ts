@@ -503,6 +503,17 @@ describe('Core', () => {
     expect(core.state().nodes[fieldId]).toBeUndefined();
   });
 
+  test('inline fields can start with an empty placeholder name', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+
+    const fieldEntryId = mustFocus(core.createInlineField(today, null, '', 'plain'));
+    const fieldId = core.state().nodes[fieldEntryId].fieldDefId!;
+
+    expect(core.state().nodes[fieldEntryId].content.text).toBe('');
+    expect(core.state().nodes[fieldId].content.text).toBe('');
+  });
+
   test('date nodes, tag search, and reference cycle behavior', () => {
     const core = Core.new();
     const dayId = mustFocus(core.ensureDateNode(2026, 5, 14));

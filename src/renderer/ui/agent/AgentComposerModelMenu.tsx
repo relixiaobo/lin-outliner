@@ -21,6 +21,7 @@ import { ButtonControl } from '../primitives/ButtonControl';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 import { SwitchControl } from '../primitives/SwitchControl';
+import { SwitchMark } from '../primitives/SwitchMark';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 
 export const REASONING_LABELS: Record<AgentReasoningLevel, string> = {
@@ -183,7 +184,7 @@ export function AgentComposerModelMenu({
             label="Thinking"
             onCheckedChange={onReasoningToggle}
           >
-            <span />
+            <SwitchMark checked={reasoningEnabled} />
           </SwitchControl>
         </div>
       ) : null}

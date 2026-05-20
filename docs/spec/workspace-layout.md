@@ -3,8 +3,9 @@
 This document describes the planned app layout model for tabs, the workspace
 canvas, outline panels, the sidebar, and the agent dock.
 
-For visual tokens, density, typography, and interaction states, see
-[`design-system/`](./design-system/).
+For visual tokens, density, typography, and interaction states, see the
+single-file design-system contract:
+[`design-system.md`](./design-system.md).
 
 ## Core Model
 
@@ -53,11 +54,11 @@ Left window and navigation controls:
 - Platform window affordances when applicable.
 - Sidebar toggle.
 - Back and forward navigation.
-- Future history or workspace navigation controls.
+- Future workspace navigation controls.
 
 These controls are shell-level controls. They should not be stored inside a
 workspace tab. Back and forward navigation may operate on the active tab's
-panel history, but the controls themselves remain in the app shell.
+outliner page history, but the controls themselves remain in the app shell.
 
 Center tab strip:
 
@@ -158,6 +159,7 @@ Switching tabs changes:
 - The set of outline panels in the central canvas.
 - The active outline panel.
 - Panel widths, panel order, scroll positions, and per-panel view state.
+- Current-panel page history for node-page navigation.
 
 Switching tabs should not reset:
 
@@ -165,6 +167,8 @@ Switching tabs should not reset:
 - Agent conversation state.
 - Agent panel scroll/input state, unless a future product decision explicitly
   binds conversations to tabs.
+- Document operation undo/redo state. Panel page history is navigation history
+  only and must not change document history.
 
 ## Panel Semantics
 
@@ -179,6 +183,8 @@ interface OutlinePanelState {
   title?: string;
   width?: number;
   scrollTop?: number;
+  pageBackStack?: NodeId[];
+  pageForwardStack?: NodeId[];
   focusedId?: NodeId | null;
   selectedId?: NodeId | null;
   selectedIds?: NodeId[];
@@ -207,7 +213,7 @@ Rules:
 - Panels have minimum and maximum widths.
 - Panels resize proportionally according to their persisted ratios while every
   panel can satisfy the minimum width defined in
-  [`design-system/foundations.md`](./design-system/foundations.md).
+  [`design-system.md#foundations`](./design-system.md#foundations).
 - If panel minimum widths exceed the available canvas width, horizontal scrolling
   is allowed inside the workspace canvas. Do not shrink panels below the minimum
   just to avoid scrolling.

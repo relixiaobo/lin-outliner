@@ -63,7 +63,15 @@ test.describe('definition configuration parity', () => {
     await page.getByLabel('Maximum value').blur();
     await chooseConfigOption(page, 'Cardinality', 'List of values');
     await page.getByRole('switch', { name: 'Ancestor field value' }).click();
-    await page.getByRole('switch', { name: 'Required' }).click();
+    const requiredSwitch = page.getByRole('switch', { name: 'Required' });
+    const requiredSwitchMark = requiredSwitch.locator('.switch-mark');
+    await expect(requiredSwitchMark).toHaveCount(1);
+    await expect(requiredSwitchMark).not.toHaveClass(/checked/);
+    await expect(requiredSwitchMark).toHaveCSS('width', '30px');
+    await expect(requiredSwitchMark).toHaveCSS('height', '18px');
+    await expect(requiredSwitch.locator('.switch-mark-thumb')).toHaveCSS('width', '14px');
+    await requiredSwitch.click();
+    await expect(requiredSwitchMark).toHaveClass(/checked/);
     await chooseConfigOption(page, 'Hide field', 'When empty');
 
     await expect.poll(async () => {

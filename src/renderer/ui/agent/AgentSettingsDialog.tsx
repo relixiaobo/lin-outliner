@@ -420,7 +420,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose }: AgentSettingsD
 
           {error ? (
             <div className="agent-settings-alert" role="alert">
-              <WarningIcon size={14} />
+              <WarningIcon size={ICON_SIZE.menu} />
               <span>{error}</span>
             </div>
           ) : null}

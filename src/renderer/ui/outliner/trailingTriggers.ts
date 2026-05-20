@@ -3,6 +3,7 @@ import type { SlashCommandId } from '../interactions/slashCommands';
 import {
   plainText,
   type CommandOutcome,
+  type FieldType,
   type NodeId,
   type NodeProjection,
   type RichText,
@@ -18,6 +19,8 @@ import { textOf } from '../shared';
 export type TrailingInlineTrigger = Omit<EditorTrigger, 'kind'> & { kind: '#' | '@' };
 export type TrailingSlashTrigger = Omit<EditorTrigger, 'kind'> & { kind: '/' };
 
+const LEGACY_EMPTY_FIELD_FALLBACK_NAME = 'Field';
+
 function removeTriggerText(text: string, trigger: TrailingInlineTrigger): RichText {
   return deleteRichTextRange(plainText(text), trigger.from, trigger.to);
 }
@@ -32,6 +35,56 @@ function triggerOwnsWholeText(text: string, trigger: TrailingInlineTrigger): boo
 
 async function createNodeWithContent(parentId: NodeId, content: RichText): Promise<CommandOutcome> {
   return api.createRichTextNode(parentId, null, content);
+}
+
+function isEmptyFieldNameError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('field name cannot be empty');
+}
+
+async function clearFallbackFieldName(outcome: CommandOutcome): Promise<CommandOutcome> {
+  const fieldEntryId = outcome.focus?.nodeId;
+  const fieldEntry = outcome.projection.nodes.find((node) => node.id === fieldEntryId);
+  const fieldDefId = fieldEntry?.fieldDefId;
+  if (!fieldDefId) return outcome;
+
+  const fieldDef = outcome.projection.nodes.find((node) => node.id === fieldDefId);
+  if (!fieldDef || fieldDef.content.text === '') return outcome;
+
+  const cleared = await api.replaceNodeText(fieldDefId, plainText(''));
+  return {
+    projection: cleared.projection,
+    focus: outcome.focus,
+  };
+}
+
+export async function createPlaceholderInlineField(
+  parentId: NodeId,
+  index: number | null,
+  fieldType: FieldType,
+): Promise<CommandOutcome> {
+  try {
+    return await api.createInlineField(parentId, index, '', fieldType);
+  } catch (error) {
+    if (!isEmptyFieldNameError(error)) throw error;
+    return clearFallbackFieldName(
+      await api.createInlineField(parentId, index, LEGACY_EMPTY_FIELD_FALLBACK_NAME, fieldType),
+    );
+  }
+}
+
+export async function createPlaceholderInlineFieldAfterNode(
+  afterNodeId: NodeId,
+  fieldType: FieldType,
+): Promise<CommandOutcome> {
+  try {
+    return await api.createInlineFieldAfterNode(afterNodeId, '', fieldType);
+  } catch (error) {
+    if (!isEmptyFieldNameError(error)) throw error;
+    return clearFallbackFieldName(
+      await api.createInlineFieldAfterNode(afterNodeId, LEGACY_EMPTY_FIELD_FALLBACK_NAME, fieldType),
+    );
+  }
 }
 
 export async function applyTrailingTagTrigger(params: {
@@ -83,7 +136,7 @@ export async function executeTrailingSlashTrigger(params: {
   commandId: Exclude<SlashCommandId, 'reference' | 'command_palette'>;
 }): Promise<CommandOutcome> {
   if (params.commandId === 'field') {
-    return api.createInlineField(params.parentId, null, 'Field', 'plain');
+    return createPlaceholderInlineField(params.parentId, null, 'plain');
   }
 
   const content = removeSlashTriggerText(params.text, params.trigger);
@@ -112,5 +165,5 @@ export async function createTrailingField({
   parentId,
   run,
 }: CreateTrailingFieldParams) {
-  await run(() => api.createInlineField(parentId, null, 'Field', 'plain'));
+  await run(() => createPlaceholderInlineField(parentId, null, 'plain'));
 }

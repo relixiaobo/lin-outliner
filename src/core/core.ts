@@ -760,7 +760,6 @@ export class Core {
 
   createInlineFieldAfterNode(afterNodeId: string, name: string, fieldType: FieldType): CommandOutcome {
     const normalized = name.trim();
-    if (!normalized) throw CoreError.invalidOperation('field name cannot be empty');
     return this.mutate(() => {
       const state = this.snapshot();
       ensureNodeMovable(state, afterNodeId);
@@ -783,7 +782,6 @@ export class Core {
 
   createInlineField(parentId: string, index: number | null | undefined, name: string, fieldType: FieldType): CommandOutcome {
     const normalized = name.trim();
-    if (!normalized) throw CoreError.invalidOperation('field name cannot be empty');
     return this.mutate(() => {
       const state = this.snapshot();
       ensureParentMutable(state, parentId);

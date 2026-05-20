@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { WarningIcon } from '../icons';
+import { ICON_SIZE, WarningIcon } from '../icons';
 
 export function AgentMessageFrame({
   children,
@@ -50,7 +50,7 @@ export function AgentStreamingIndicator() {
 export function AgentMessageError({ message }: { message: string }) {
   return (
     <div className="agent-message-error">
-      <WarningIcon size={14} />
+      <WarningIcon size={ICON_SIZE.menu} />
       <span>{message}</span>
     </div>
   );

@@ -4,6 +4,8 @@ export interface OutlinePanelState {
   type: 'outliner';
   id: string;
   rootId: NodeId;
+  pageBackStack?: NodeId[];
+  pageForwardStack?: NodeId[];
 }
 
 export interface AgentDebugPanelState {

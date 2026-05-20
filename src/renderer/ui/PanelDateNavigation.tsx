@@ -12,6 +12,9 @@ interface PanelDateNavigationProps {
   run: CommandRunner;
 }
 
+const PANEL_DATE_ICON_SIZE = 13;
+const PANEL_DATE_ICON_STROKE_WIDTH = 1.8;
+
 function parseIsoDate(isoDate: string) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
   if (!match) return null;
@@ -142,7 +145,7 @@ export function PanelDateNavigation({
           className="panel-date-nav-button"
           onClick={() => void navigateToDate(offsetIsoDate(isoDate, -1))}
         >
-          <ChevronLeftIcon size={13} strokeWidth={1.8} />
+          <ChevronLeftIcon size={PANEL_DATE_ICON_SIZE} strokeWidth={PANEL_DATE_ICON_STROKE_WIDTH} />
         </ButtonControl>
         <ButtonControl
           className="panel-date-nav-today"
@@ -155,7 +158,7 @@ export function PanelDateNavigation({
           className="panel-date-nav-button"
           onClick={() => void navigateToDate(offsetIsoDate(isoDate, 1))}
         >
-          <ChevronRightIcon size={13} strokeWidth={1.8} />
+          <ChevronRightIcon size={PANEL_DATE_ICON_SIZE} strokeWidth={PANEL_DATE_ICON_STROKE_WIDTH} />
         </ButtonControl>
         <span className="panel-date-nav-divider" aria-hidden="true" />
         <ButtonControl
@@ -164,7 +167,7 @@ export function PanelDateNavigation({
           className="panel-date-picker-button"
           onClick={() => setCalendarOpen((open) => !open)}
         >
-          <CalendarIcon size={13} strokeWidth={1.8} />
+          <CalendarIcon size={PANEL_DATE_ICON_SIZE} strokeWidth={PANEL_DATE_ICON_STROKE_WIDTH} />
         </ButtonControl>
       </nav>
       {calendarOpen && (
@@ -175,7 +178,7 @@ export function PanelDateNavigation({
               className="panel-date-calendar-nav"
               onClick={() => moveMonth(-1)}
             >
-              <ChevronLeftIcon size={13} strokeWidth={1.8} />
+              <ChevronLeftIcon size={PANEL_DATE_ICON_SIZE} strokeWidth={PANEL_DATE_ICON_STROKE_WIDTH} />
             </ButtonControl>
             <span>{monthLabel(viewYear, viewMonth)}</span>
             <ButtonControl
@@ -183,7 +186,7 @@ export function PanelDateNavigation({
               className="panel-date-calendar-nav"
               onClick={() => moveMonth(1)}
             >
-              <ChevronRightIcon size={13} strokeWidth={1.8} />
+              <ChevronRightIcon size={PANEL_DATE_ICON_SIZE} strokeWidth={PANEL_DATE_ICON_STROKE_WIDTH} />
             </ButtonControl>
           </div>
           <div className="panel-date-calendar-weekdays" aria-hidden="true">

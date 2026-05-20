@@ -367,7 +367,7 @@ function PersistedToolOutput({
   return (
     <div className="agent-tool-persisted-output">
       <div className="agent-tool-persisted-meta">
-        <FileTextIcon size={14} />
+        <FileTextIcon size={ICON_SIZE.menu} />
         <span>{payload.summary || 'Stored tool output'}</span>
         <small>{formatBytes(payload.byteLength)}</small>
       </div>
@@ -460,7 +460,7 @@ export function AgentToolCallBlock({
           {!envelope ? parts.map((part, index) =>
             part.type === 'imagePlaceholder' ? (
               <div className="agent-tool-image-placeholder" key={`placeholder-${index}`}>
-                <FileTextIcon size={14} />
+                <FileTextIcon size={ICON_SIZE.menu} />
                 <span>Screenshot captured</span>
               </div>
             ) : part.type === 'persistedOutput' ? (

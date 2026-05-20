@@ -1,4 +1,4 @@
-import { BrainIcon } from '../icons';
+import { BrainIcon, ICON_SIZE } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { AgentDisclosureIndicator } from './AgentDisclosureIndicator';
 import type { AgentExpandState } from './agentProcessTypes';
@@ -25,7 +25,7 @@ export function AgentThinkingRow({
         <AgentDisclosureIndicator
           className="agent-thinking-icon"
           expanded={false}
-          icon={<BrainIcon size={12} />}
+          icon={<BrainIcon size={ICON_SIZE.rowGlyph} />}
           interactive={false}
         />
         <span className="agent-thinking-text">Thinking...</span>
@@ -44,7 +44,7 @@ export function AgentThinkingRow({
         <AgentDisclosureIndicator
           className="agent-thinking-icon"
           expanded={false}
-          icon={<BrainIcon size={12} />}
+          icon={<BrainIcon size={ICON_SIZE.rowGlyph} />}
           interactive={false}
         />
         <span className="agent-thinking-text">{trimmed}</span>
@@ -61,7 +61,7 @@ export function AgentThinkingRow({
       <AgentDisclosureIndicator
         className="agent-thinking-icon"
         expanded={expanded}
-        icon={<BrainIcon size={12} />}
+        icon={<BrainIcon size={ICON_SIZE.rowGlyph} />}
       />
       <span className="agent-thinking-text">{expanded ? trimmed : preview}</span>
     </ButtonControl>

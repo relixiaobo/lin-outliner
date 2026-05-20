@@ -171,12 +171,12 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
           onApplyReferenceTrigger={applyTrailingReferenceTrigger}
           onExecuteSlashTrigger={executeTrailingSlashTrigger}
           onOpenCommandPalette={() => props.setUi((prev) => ({ ...prev, commandOpen: true }))}
-          onCreateField={(parentId) => {
-            void createTrailingField({
+          onCreateField={(parentId) => (
+            createTrailingField({
               parentId,
               run: props.run,
-            });
-          }}
+            })
+          )}
           onExpand={(nodeId) => {
             props.setUi((prev) => {
               const expanded = new Set(prev.expanded);

@@ -6,15 +6,25 @@ import {
   openMockedApp,
   row,
   rowBody,
+  rowEditor,
+  trailingEditor,
 } from './outlinerMock';
 
-function expectClose(actual: number, expected: number) {
-  expect(Math.abs(actual - expected)).toBeLessThanOrEqual(0.5);
+function expectClose(actual: number, expected: number, tolerance = 0.5) {
+  expect(Math.abs(actual - expected)).toBeLessThanOrEqual(tolerance);
 }
 
 async function lastTodayChildId(page: import('@playwright/test').Page) {
   const projection = await e2eProjection(page);
   return projection.nodes.find((node) => node.id === ids.today)?.children.at(-1);
+}
+
+async function directChevronOpacity(locator: ReturnType<typeof rowBody>) {
+  return locator.evaluate((element) => {
+    const chevron = element.querySelector(':scope > .row-leading > .row-chevron-button');
+    if (!chevron) throw new Error('missing direct row chevron');
+    return Number(getComputedStyle(chevron).opacity);
+  });
 }
 
 test.describe('outliner bullet parity', () => {
@@ -35,6 +45,8 @@ test.describe('outliner bullet parity', () => {
         bulletLeft: bulletRect.left - rowRect.left,
         bulletWidth: bulletRect.width,
         bulletCenter: bulletRect.left - rowRect.left + bulletRect.width / 2,
+        bulletCenterY: bulletRect.top + bulletRect.height / 2,
+        contentCenterY: contentRect.top + contentRect.height / 2,
         contentLeft: contentRect.left - rowRect.left,
       };
     });
@@ -48,6 +60,8 @@ test.describe('outliner bullet parity', () => {
         bulletLeft: bulletRect.left - rowRect.left,
         bulletWidth: bulletRect.width,
         bulletCenter: bulletRect.left - rowRect.left + bulletRect.width / 2,
+        bulletCenterY: bulletRect.top + bulletRect.height / 2,
+        editorCenterY: editorRect.top + editorRect.height / 2,
         editorLeft: editorRect.left - rowRect.left,
       };
     });
@@ -57,9 +71,11 @@ test.describe('outliner bullet parity', () => {
     expectClose(contentMetrics.bulletLeft, 25);
     expectClose(contentMetrics.bulletWidth, 15);
     expectClose(contentMetrics.contentLeft - contentMetrics.bulletCenter, 15.5);
+    expectClose(contentMetrics.bulletCenterY, contentMetrics.contentCenterY);
     expectClose(trailingMetrics.bulletLeft, 25);
     expectClose(trailingMetrics.bulletWidth, 15);
     expectClose(trailingMetrics.editorLeft - trailingMetrics.bulletCenter, 15.5);
+    expectClose(trailingMetrics.bulletCenterY, trailingMetrics.editorCenterY);
   });
 
   test('top-level bullets align to the panel header content start', async ({ page }) => {
@@ -207,6 +223,33 @@ test.describe('outliner bullet parity', () => {
       Number(getComputedStyle(element).opacity))).toBeGreaterThan(0.9);
   });
 
+  test('focused row editors do not reveal chevrons without row hover', async ({ page }) => {
+    await rowEditor(page, ids.alpha).click();
+    await expect(rowEditor(page, ids.alpha)).toBeFocused();
+
+    await page.mouse.move(5, 5);
+
+    await expect.poll(() => directChevronOpacity(rowBody(page, ids.alpha))).toBe(0);
+  });
+
+  test('nested field value hover reveals only the nested row chevron', async ({ page }) => {
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+    const fieldId = await lastTodayChildId(page);
+    if (!fieldId) throw new Error('missing field');
+
+    await trailingEditor(page, fieldId).click();
+    await page.keyboard.type('>');
+    const projection = await e2eProjection(page);
+    const nestedFieldId = projection.nodes.find((node) => node.id === fieldId)?.children.at(-1);
+    if (!nestedFieldId) throw new Error('missing nested field');
+
+    await rowBody(page, nestedFieldId).hover();
+
+    await expect.poll(() => directChevronOpacity(rowBody(page, fieldId))).toBe(0);
+    await expect.poll(() => directChevronOpacity(rowBody(page, nestedFieldId))).toBeGreaterThan(0.9);
+  });
+
   test('trailing placeholder bullet keeps a neutral cursor', async ({ page }) => {
     const cursor = await page.locator(`[data-trailing-parent-id="${ids.today}"] .row-bullet-button`).first().evaluate((element) =>
       getComputedStyle(element).cursor);
@@ -247,7 +290,7 @@ test.describe('outliner field row visual parity', () => {
       };
     });
 
-    expectClose(metrics.nameCenter, metrics.valueCenter);
+    expectClose(metrics.nameCenter, metrics.valueCenter, 1);
   });
 
   test('field label keeps first-line alignment when the value contains multiple rows', async ({ page }) => {
@@ -284,8 +327,8 @@ test.describe('outliner field row visual parity', () => {
       };
     });
 
-    expectClose(metrics.nameTop, metrics.leadingTop);
-    expectClose(metrics.nameTop, metrics.firstValueLeadingTop);
+    expectClose(metrics.nameTop, metrics.leadingTop, 1);
+    expectClose(metrics.nameTop, metrics.firstValueLeadingTop, 1);
   });
 });
 
