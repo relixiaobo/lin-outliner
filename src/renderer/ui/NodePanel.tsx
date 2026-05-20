@@ -24,7 +24,7 @@ import {
 import { DefinitionConfigPanel } from './definition/DefinitionConfigPanel';
 import { definitionKind, definitionOutlinerLabel } from './definition/definitionConfig';
 import type { SlashCommandId } from './interactions/slashCommands';
-import type { CommandRunner, EditorTrigger, TriggerState } from './shared';
+import type { CommandRunner, EditorTrigger, NavigateRootOptions, TriggerState } from './shared';
 import {
   clearFocusRequestState,
   clearFocusState,
@@ -79,7 +79,7 @@ interface NodePanelProps {
   rootId: NodeId;
   canGoBack: boolean;
   onBack: () => void;
-  onRoot: (nodeId: NodeId) => void;
+  onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   index: DocumentIndex;
   ui: UiState;
   setUi: Dispatch<SetStateAction<UiState>>;
@@ -377,6 +377,11 @@ export function NodePanel(props: NodePanelProps) {
       },
     );
     replaceLocalTitleContent(nextContent);
+    props.setUi((prev) => requestFocusState(
+      prev,
+      titleFocusTarget,
+      cursorAtOffset(titleTrigger.from, 'after'),
+    ));
     return api.replaceNodeText(props.rootId, nextContent);
   };
 
@@ -531,6 +536,7 @@ export function NodePanel(props: NodePanelProps) {
                 }}
                 onModEnter={(content) => void handleTitleModEnter(content)}
                 resolveInlineReferenceColor={(targetId) => inlineReferenceTextColor(targetId, props.index)}
+                onInlineReferenceClick={(targetId) => props.onRoot(targetId, { focus: false })}
                 onEscape={() => {
                   replaceLocalTitleContent(rootNode?.content ?? EMPTY_RICH_TEXT);
                   setTitleTrigger(null);

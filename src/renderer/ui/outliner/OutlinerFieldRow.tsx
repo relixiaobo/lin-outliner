@@ -30,7 +30,7 @@ import {
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { indentTargetParentId } from '../interactions/outlinerStructure';
 import { TextInputControl } from '../primitives/TextInputControl';
-import type { CommandRunner, TriggerState } from '../shared';
+import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
 import { outlinerChildren } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
 import { fieldTypeLabel } from './fieldTypePresentation';
@@ -47,7 +47,7 @@ interface OutlinerFieldRowProps {
   entryId: NodeId;
   parentId: NodeId;
   rootId: NodeId;
-  onRoot: (nodeId: NodeId) => void;
+  onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   depth: number;
   index: DocumentIndex;
   ui: UiState;

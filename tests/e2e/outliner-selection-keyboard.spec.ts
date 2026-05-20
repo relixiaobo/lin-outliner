@@ -237,6 +237,75 @@ test.describe('outliner selection keyboard parity', () => {
     }).toBe(true);
   });
 
+  test('double-clicking a reference row enters inline conversion and keeps typed text', async ({ page }) => {
+    const { referenceId } = await createReferenceFixture(page);
+
+    await rowBody(page, referenceId).locator('.row-content-line').dblclick({ position: { x: 44, y: 12 } });
+
+    let inlineId = '';
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      inlineId = projection.nodes.find((node) => (
+        node.id !== referenceId
+        && !node.type
+        && node.content.inlineRefs.some((ref) => ref.targetNodeId === ids.alpha)
+      ))?.id ?? '';
+      return inlineId;
+    }).not.toBe('');
+    await expect(rowEditor(page, inlineId)).toBeFocused();
+    await expect(rowBody(page, inlineId)).toHaveClass(/ref-converting/);
+
+    await page.keyboard.type('!');
+    await rowEditor(page, ids.beta).click();
+
+    await expect.poll(async () => {
+      const node = await nodeById(page, inlineId);
+      return node?.content;
+    }).toMatchObject({
+      text: '!',
+      inlineRefs: [{ offset: 0, targetNodeId: ids.alpha, displayName: 'Alpha' }],
+    });
+    await expect.poll(async () => nodeById(page, referenceId)).toBeUndefined();
+  });
+
+  test('inline references inside reference rows keep reference row click semantics', async ({ page }) => {
+    const referenceId = await page.evaluate(async (ids) => {
+      const win = window as Window & {
+        lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      };
+      await win.lin?.invoke('apply_node_text_patch', {
+        nodeId: ids.alpha,
+        patch: {
+          ops: [{
+            type: 'replace_all',
+            content: {
+              text: 'See ',
+              marks: [],
+              inlineRefs: [{ offset: 4, targetNodeId: ids.beta, displayName: 'Beta' }],
+            },
+          }],
+        },
+      });
+      const reference = await win.lin?.invoke<{ focus?: { nodeId: string } }>('add_reference', {
+        parentId: ids.today,
+        targetId: ids.alpha,
+        index: null,
+      });
+      return reference?.focus?.nodeId ?? '';
+    }, ids);
+    await emitCurrentProjection(page);
+
+    const inlineRef = row(page, referenceId).locator('.inline-ref').first();
+    await expect(inlineRef).toHaveText('@Beta');
+    const titleEditor = page.locator('.panel-title-editor .ProseMirror').first();
+    const titleBefore = await titleEditor.innerText();
+    await inlineRef.click();
+
+    await expect(rowBody(page, referenceId)).toHaveClass(/ref-click-selected/);
+    await expect(rowEditor(page, referenceId)).not.toBeFocused();
+    await expect(titleEditor).toHaveText(titleBefore);
+  });
+
   test('Escape clears a clicked reference selection without entering edit mode', async ({ page }) => {
     const { referenceId } = await createReferenceFixture(page);
 

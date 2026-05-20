@@ -2,7 +2,7 @@ import { useEffect, type Dispatch, type SetStateAction } from 'react';
 import { api } from '../../api/client';
 import type { NodeId } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
-import type { CommandRunner, TriggerState } from '../shared';
+import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
 import { OutlinerFieldRow } from './OutlinerFieldRow';
 import { OutlinerItem } from './OutlinerItem';
 import { RowHost } from './RowHost';
@@ -14,7 +14,7 @@ interface OutlinerViewProps {
   panelId: string;
   parentId: NodeId;
   rootId: NodeId;
-  onRoot: (nodeId: NodeId) => void;
+  onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   depth: number;
   index: DocumentIndex;
   ui: UiState;

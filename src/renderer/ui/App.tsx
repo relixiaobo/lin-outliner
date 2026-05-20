@@ -22,7 +22,7 @@ import {
 import { useDragSelection } from './interactions/dragSelection';
 import { BatchTagSelector } from './outliner/BatchTagSelector';
 import { ButtonControl } from './primitives/ButtonControl';
-import type { TriggerState } from './shared';
+import type { NavigateRootOptions, TriggerState } from './shared';
 import { textOf, useCommandRunner } from './shared';
 import { buildAgentUserViewContext } from './agent/userViewContext';
 import { WorkspaceCanvas } from './WorkspaceCanvas';
@@ -156,13 +156,13 @@ export function App() {
     });
   }, [setUi]);
 
-  const navigateRoot = useCallback((nodeId: NodeId) => {
-    setActivePanelRoot(nodeId);
+  const navigateRoot = useCallback((nodeId: NodeId, options?: NavigateRootOptions) => {
+    setActivePanelRoot(nodeId, options);
     expandNodeInOutliner(nodeId);
   }, [expandNodeInOutliner, setActivePanelRoot]);
 
-  const navigatePanelRoot = useCallback((panelId: string, nodeId: NodeId) => {
-    setPanelRoot(panelId, nodeId);
+  const navigatePanelRoot = useCallback((panelId: string, nodeId: NodeId, options?: NavigateRootOptions) => {
+    setPanelRoot(panelId, nodeId, options);
     expandNodeInOutliner(nodeId);
   }, [expandNodeInOutliner, setPanelRoot]);
 

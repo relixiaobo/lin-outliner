@@ -1351,13 +1351,51 @@
   background: transparent;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
-  color: var(--inline-ref-accent, var(--primary));
-  font-weight: 550;
+  color: var(--inline-ref-accent, var(--semantic-info));
+  font-weight: inherit;
   padding: 0 var(--space-hairline);
-  text-decoration-line: underline;
-  text-decoration-color: color-mix(in srgb, var(--inline-ref-accent, var(--primary)) 28%, transparent);
-  text-decoration-thickness: 1px;
-  text-underline-offset: 2px;
+  text-decoration: none;
+}
+
+.row-editor .inline-ref.ProseMirror-selectednode {
+  border-radius: var(--radius-control-xs);
+  background: var(--row-selection-frame-bg);
+  box-shadow: inset 0 0 0 1px var(--row-selection-border);
+}
+
+@keyframes reference-conversion-pulse {
+  0%,
+  100% {
+    color: var(--text);
+  }
+
+  36% {
+    color: var(--inline-ref-accent, var(--semantic-info));
+  }
+}
+
+.row.ref-converting .row-editor .inline-ref {
+  animation: reference-conversion-pulse 2.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row.ref-converting .row-editor .inline-ref {
+    animation: none;
+  }
+}
+
+.row-editor .ProseMirror p:has(.inline-ref) > img.ProseMirror-separator {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  margin: 0;
+  border: 0;
+  opacity: 0;
+  overflow: hidden;
+}
+
+.row-editor .ProseMirror p:has(.inline-ref) > br.ProseMirror-trailingBreak {
+  display: none;
 }
 
 .row-editor [data-heading-mark="true"] {

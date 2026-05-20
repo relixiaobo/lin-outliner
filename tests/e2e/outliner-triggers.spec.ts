@@ -6,6 +6,7 @@ import {
   nodeById,
   openMockedApp,
   row,
+  rowBody,
   rowEditor,
   trailingEditor,
 } from './outlinerMock';
@@ -316,21 +317,60 @@ test.describe('outliner trigger parity', () => {
     await page.keyboard.press('Meta+Enter');
 
     let inlineRowId = '';
+    let zetaId = '';
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
       const zeta = projection.nodes.find((node) => node.content.text === 'Zeta');
+      zetaId = zeta?.id ?? '';
       inlineRowId = projection.nodes.find((node) => (
         node.id !== emptyRowId
         && !node.type
-        && node.content.inlineRefs.some((ref) => ref.targetNodeId === zeta?.id)
+        && node.content.inlineRefs.some((ref) => ref.targetNodeId === zetaId)
       ))?.id ?? '';
       return inlineRowId;
     }).not.toBe('');
     await expect(rowEditor(page, inlineRowId)).toBeFocused();
+    await expect(rowBody(page, inlineRowId)).toHaveClass(/ref-converting/);
+    await expect(row(page, inlineRowId).locator('.inline-ref')).toHaveCSS('animation-name', 'reference-conversion-pulse');
+
+    await page.keyboard.type('!');
+    await rowEditor(page, ids.beta).click();
+    await expect.poll(async () => {
+      const node = await nodeById(page, inlineRowId);
+      return node?.content;
+    }).toMatchObject({
+      text: '!',
+      inlineRefs: [{ offset: 0, targetNodeId: zetaId, displayName: 'Zeta' }],
+    });
 
     const calls = await commandCalls(page);
     expect(calls.map((call) => call.cmd)).toContain('replace_node_with_reference');
     expect(calls.map((call) => call.cmd)).toContain('convert_reference_to_inline_node');
+  });
+
+  test('@ inline reference insertion leaves the caret after the inserted reference', async ({ page }) => {
+    await invokeMockCommand(page, 'create_node', {
+      parentId: ids.today,
+      index: null,
+      text: 'See ',
+    });
+    const nodeId = await lastTodayChildId(page);
+    expect(nodeId).toBeTruthy();
+
+    await placeCursor(page, nodeId!, 'end');
+    await page.keyboard.type('@Al');
+    await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
+    await page.keyboard.press('Enter');
+    await expect(rowEditor(page, nodeId!)).toBeFocused();
+
+    await page.keyboard.type('!');
+    await expect.poll(async () => {
+      const node = await nodeById(page, nodeId!);
+      return node?.content;
+    }).toMatchObject({
+      text: 'See !',
+      inlineRefs: [{ offset: 4, targetNodeId: ids.alpha, displayName: 'Alpha' }],
+    });
   });
 
   test('/ in trailing input opens slash commands without creating a temporary row', async ({ page }) => {

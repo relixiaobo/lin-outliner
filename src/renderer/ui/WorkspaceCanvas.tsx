@@ -5,7 +5,7 @@ import { NodePanel } from './NodePanel';
 import { WorkspacePanelSurface } from './WorkspacePanelSurface';
 import { AgentDebugPanel } from './agent/AgentDebugPanel';
 import { ResizeHandle } from './primitives/ResizeHandle';
-import type { CommandRunner, TriggerState } from './shared';
+import type { CommandRunner, NavigateRootOptions, TriggerState } from './shared';
 import type { WorkspacePanelState, WorkspaceTabState } from './workspaceLayoutTypes';
 
 interface WorkspaceCanvasProps {
@@ -16,7 +16,7 @@ interface WorkspaceCanvasProps {
   onActivatePanel: (panel: WorkspacePanelState) => void;
   onClosePanel: (panelId: string) => void;
   onNavigatePanelBack: (panelId: string) => void;
-  onNavigatePanelRoot: (panelId: string, nodeId: NodeId) => void;
+  onNavigatePanelRoot: (panelId: string, nodeId: NodeId, options?: NavigateRootOptions) => void;
   onPanelResizeStart: (
     leftPanelId: string,
     rightPanelId: string,
@@ -60,7 +60,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 rootId={panel.rootId}
                 canGoBack={Boolean(panel.pageBackStack?.length)}
                 onBack={() => props.onNavigatePanelBack(panel.id)}
-                onRoot={(nodeId) => props.onNavigatePanelRoot(panel.id, nodeId)}
+                onRoot={(nodeId, options) => props.onNavigatePanelRoot(panel.id, nodeId, options)}
                 index={props.index}
                 ui={props.ui}
                 setUi={props.setUi}

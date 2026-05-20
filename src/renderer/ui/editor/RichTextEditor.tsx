@@ -69,6 +69,7 @@ interface RichTextEditorProps {
     children: CreateNodeTree[];
     siblingsAfter: CreateNodeTree[];
   }) => void;
+  onInlineReferenceClick?: (targetNodeId: string) => void;
   resolveInlineReferenceColor?: (targetNodeId: string) => string | undefined;
   focusTarget?: FocusTarget;
   focusRequest?: FocusRequest | null;
@@ -301,6 +302,17 @@ export function RichTextEditor(props: RichTextEditorProps) {
         beforeinput() {
           clearMatchingPendingInput();
           return false;
+        },
+        click(_viewInstance, event) {
+          const target = event.target instanceof HTMLElement
+            ? event.target.closest<HTMLElement>('[data-inline-ref]')
+            : null;
+          const targetNodeId = target?.dataset.inlineRef;
+          if (!targetNodeId || !propsRef.current.onInlineReferenceClick) return false;
+          event.preventDefault();
+          event.stopPropagation();
+          propsRef.current.onInlineReferenceClick(targetNodeId);
+          return true;
         },
         paste(viewInstance, event) {
           const onPasteOutliner = propsRef.current.onPasteOutliner;

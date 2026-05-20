@@ -878,7 +878,7 @@ button:focus-visible {
 
 .outline-panel-close {
   position: absolute;
-  z-index: var(--z-raised);
+  z-index: var(--z-resize);
   top: 8px;
   right: 8px;
   display: inline-flex;

@@ -59,4 +59,27 @@ describe('editor text patch', () => {
     expect(textOffsetToDocPos(leadingRefDoc, 0, { inlineRefBias: 'before' })).toBe(1);
     expect(textOffsetToDocPos(leadingRefDoc, 0, { inlineRefBias: 'after' })).toBe(2);
   });
+
+  test('uses full replacement for text insertion at an inline reference boundary', () => {
+    const content = {
+      text: 'See ',
+      marks: [],
+      inlineRefs: [{ offset: 4, targetNodeId: 'target', displayName: 'Target' }],
+    };
+    const doc = richTextToDoc(content);
+    const state = EditorState.create({ schema: pmSchema, doc });
+    const insertAfterRef = textOffsetToDocPos(doc, 4, { inlineRefBias: 'after' });
+    const tr = state.tr.insertText('!', insertAfterRef);
+
+    expect(richTextPatchFromTransaction(tr)).toEqual({
+      ops: [{
+        type: 'replace_all',
+        content: {
+          text: 'See !',
+          marks: [],
+          inlineRefs: [{ offset: 4, targetNodeId: 'target', displayName: 'Target' }],
+        },
+      }],
+    });
+  });
 });

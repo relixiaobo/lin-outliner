@@ -381,6 +381,9 @@ and non-goals; product behavior stays with the owning surface.
   color system.
 - Inline reference atoms stay in text flow and must not break cursor,
   split/merge, paste, or IME behavior.
+- Inline references render as text links: normal text weight, no chip surface,
+  first-supertag text color when available, otherwise semantic info color.
+  Reference nodes remain block rows with the neutral dashed reference marker.
 
 ### Fields And Definition Configuration
 

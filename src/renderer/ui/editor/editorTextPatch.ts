@@ -7,6 +7,15 @@ import { docPosToTextOffset, docToRichText } from './richTextCodec';
 const MARK_KINDS = new Set<TextMarkKind>(['bold', 'italic', 'strike', 'code', 'highlight', 'headingMark', 'link']);
 
 export function richTextPatchFromTransaction(transaction: Transaction): RichTextPatch {
+  if (needsWholeDocumentReplacement(transaction)) {
+    return {
+      ops: [{
+        type: 'replace_all',
+        content: docToRichText(transaction.doc),
+      }],
+    };
+  }
+
   const ops: RichTextPatchOp[] = [];
 
   for (let index = 0; index < transaction.steps.length; index += 1) {
@@ -50,8 +59,8 @@ export function richTextPatchFromTransaction(transaction: Transaction): RichText
           to,
           markType,
         });
-    }
   }
+}
 
   if (ops.length > 0) return { ops };
   if (!transaction.docChanged) return { ops: [] };
@@ -66,6 +75,22 @@ export function richTextPatchFromTransaction(transaction: Transaction): RichText
       ...(before.inlineRefs.length > 0 ? { deletedInlineRefs: before.inlineRefs } : {}),
     }],
   };
+}
+
+function needsWholeDocumentReplacement(transaction: Transaction) {
+  for (let index = 0; index < transaction.steps.length; index += 1) {
+    const step = transaction.steps[index];
+    const doc = transaction.docs[index];
+    if (!doc || !(step instanceof ReplaceStep)) continue;
+
+    const from = docPosToTextOffset(doc, step.from);
+    const to = docPosToTextOffset(doc, step.to);
+    const deleted = richTextFromSlice(doc.slice(step.from, step.to));
+    const inserted = richTextFromSlice(step.slice);
+    if (deleted.inlineRefs.length > 0 || inserted.inlineRefs.length > 0) return true;
+    if (from === to && docToRichText(doc).inlineRefs.some((ref) => ref.offset === from)) return true;
+  }
+  return false;
 }
 
 function richTextFromSlice(slice: Slice): RichText {

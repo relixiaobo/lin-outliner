@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DocumentProjection, NodeId } from '../api/types';
+import type { NavigateRootOptions } from './shared';
 import type { OutlinePanelState, WorkspacePanelState, WorkspaceTabState } from './workspaceLayoutTypes';
 
 let nextWorkspaceId = 0;
@@ -187,7 +188,7 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
     setTabs((prev) => prev.map((tab) => (tab.id === activeTabId ? updater(tab) : tab)));
   }, [activeTabId]);
 
-  const navigateRoot = useCallback((nodeId: NodeId) => {
+  const navigateRoot = useCallback((nodeId: NodeId, options?: NavigateRootOptions) => {
     updateActiveTab((tab) => {
       const activePanel = tab.panels.find((panel) => panel.id === tab.activePanelId);
       const targetPanel = isOutlinerPanel(activePanel) ? activePanel : tab.panels.find(isOutlinerPanel);
@@ -209,14 +210,14 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
         )),
       };
     });
-    focusNode(nodeId);
+    focusNode(options?.focus === false ? null : nodeId);
   }, [focusNode, updateActiveTab]);
 
   const activatePanel = useCallback((panel: WorkspacePanelState) => {
     updateActiveTab((tab) => ({ ...tab, activePanelId: panel.id }));
   }, [updateActiveTab]);
 
-  const navigatePanelRoot = useCallback((panelId: string, nodeId: NodeId) => {
+  const navigatePanelRoot = useCallback((panelId: string, nodeId: NodeId, options?: NavigateRootOptions) => {
     updateActiveTab((tab) => ({
       ...tab,
       activePanelId: panelId,
@@ -224,7 +225,7 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
         panel.id === panelId && isOutlinerPanel(panel) ? navigateOutlinerPanel(panel, nodeId) : panel
       )),
     }));
-    focusNode(nodeId);
+    focusNode(options?.focus === false ? null : nodeId);
   }, [focusNode, updateActiveTab]);
 
   const navigatePanelBack = useCallback((panelId: string): NodeId | null => {

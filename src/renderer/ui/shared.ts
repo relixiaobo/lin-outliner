@@ -13,6 +13,10 @@ export type CommandRunner = (
   operation: () => Promise<CommandOutcome | DocumentProjection>,
 ) => Promise<CommandOutcome | DocumentProjection | null>;
 
+export interface NavigateRootOptions {
+  focus?: boolean;
+}
+
 export interface TriggerAnchor {
   left: number;
   top: number;

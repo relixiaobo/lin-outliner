@@ -11,7 +11,7 @@ import {
   rowFocusTarget,
 } from '../focus/focusModel';
 import { fieldTypeInteraction, isOptionsFieldType } from '../fields/fieldTypeRegistry';
-import type { CommandRunner, TriggerState } from '../shared';
+import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
 import { FieldOptionPicker } from './FieldOptionPicker';
 import { OutlinerFieldRow } from './OutlinerFieldRow';
 import { OutlinerItem } from './OutlinerItem';
@@ -30,7 +30,7 @@ import { TypedFieldValueControl } from './TypedFieldValueControl';
 interface FieldValueOutlinerProps {
   panelId: string;
   entryId: NodeId;
-  onRoot: (nodeId: NodeId) => void;
+  onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   index: DocumentIndex;
   ui: UiState;
   setUi: Dispatch<SetStateAction<UiState>>;

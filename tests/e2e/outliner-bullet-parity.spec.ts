@@ -371,14 +371,21 @@ test.describe('outliner inline atom and drag visuals', () => {
       return {
         display: computed.display,
         background: computed.backgroundColor,
+        color: computed.color,
         textDecorationLine: computed.textDecorationLine,
         fontWeight: Number(computed.fontWeight),
       };
     });
     expect(styles.display).toBe('inline');
     expect(styles.background).toBe('rgba(0, 0, 0, 0)');
-    expect(styles.textDecorationLine).toContain('underline');
-    expect(styles.fontWeight).toBeGreaterThanOrEqual(500);
+    expect(styles.color).toBe('rgb(50, 136, 208)');
+    expect(styles.textDecorationLine).toBe('none');
+    expect(styles.fontWeight).toBeLessThan(500);
+
+    await inlineRef.click();
+    const titleEditor = page.locator('.panel-title-editor .ProseMirror').first();
+    await expect(titleEditor).toHaveText('Alpha');
+    await expect(titleEditor).not.toBeFocused();
   });
 
   test('drag drop indicators use the row selection axis without layout shift', async ({ page }) => {
