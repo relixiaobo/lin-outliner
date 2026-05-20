@@ -1,4 +1,8 @@
 import { expect, test } from '@playwright/test';
+import {
+  MAC_TRAFFIC_LIGHT_POSITION,
+  MAC_TRAFFIC_LIGHT_SIZE,
+} from '../../src/core/chromeGeometry';
 import { openMockedApp } from './outlinerMock';
 
 test.describe('workspace layout resizing', () => {
@@ -15,6 +19,9 @@ test.describe('workspace layout resizing', () => {
     expect(agentBefore).toBeTruthy();
 
     const sidebarHandle = page.getByRole('button', { name: 'Resize sidebar' });
+    await expect.poll(async () => sidebarHandle.evaluate((element) => (
+      getComputedStyle(element).cursor
+    ))).toBe('ew-resize');
     const sidebarHandleBox = await sidebarHandle.boundingBox();
     expect(sidebarHandleBox).toBeTruthy();
     await page.mouse.move(sidebarHandleBox!.x + sidebarHandleBox!.width / 2, sidebarHandleBox!.y + 160);
@@ -30,6 +37,9 @@ test.describe('workspace layout resizing', () => {
     await expect.poll(async () => (await sidebar.boundingBox())?.width ?? 0).toBeLessThan(sidebarAfterDrag!.width - 12);
 
     const agentHandle = page.getByRole('button', { name: 'Resize agent' });
+    await expect.poll(async () => agentHandle.evaluate((element) => (
+      getComputedStyle(element).cursor
+    ))).toBe('ew-resize');
     const agentHandleBox = await agentHandle.boundingBox();
     expect(agentHandleBox).toBeTruthy();
     await page.mouse.move(agentHandleBox!.x + agentHandleBox!.width / 2, agentHandleBox!.y + 160);
@@ -83,6 +93,12 @@ test.describe('workspace layout resizing', () => {
     const panelSlotBox = await page.locator('.panel-resize-slot').first().boundingBox();
     expect(panelHandleBox).toBeTruthy();
     expect(panelSlotBox).toBeTruthy();
+    await expect.poll(async () => panelHandle.evaluate((element) => (
+      getComputedStyle(element).cursor
+    ))).toBe('ew-resize');
+    await expect.poll(async () => page.locator('.panel-resize-slot').first().evaluate((element) => (
+      getComputedStyle(element).cursor
+    ))).toBe('ew-resize');
     expect(panelSlotBox!.width).toBe(8);
     const gapCenterBefore = (firstBefore!.x + firstBefore!.width + secondBefore!.x) / 2;
     const handleCenterBefore = panelHandleBox!.x + panelHandleBox!.width / 2;
@@ -136,26 +152,52 @@ test.describe('workspace layout resizing', () => {
       const sidebar = document.querySelector('[title="Collapse sidebar"]');
       const back = document.querySelector('[title="Back"]');
       const forward = document.querySelector('[title="Forward"]');
-      if (!(sidebar instanceof HTMLElement) || !(back instanceof HTMLElement) || !(forward instanceof HTMLElement)) {
+      const chrome = document.querySelector('.top-chrome');
+      if (
+        !(sidebar instanceof HTMLElement)
+        || !(back instanceof HTMLElement)
+        || !(forward instanceof HTMLElement)
+        || !(chrome instanceof HTMLElement)
+      ) {
         throw new Error('missing top chrome controls');
       }
       const sidebarBox = sidebar.getBoundingClientRect();
       const backBox = back.getBoundingClientRect();
       const forwardBox = forward.getBoundingClientRect();
+      const chromeBox = chrome.getBoundingClientRect();
+      const chromeStyle = getComputedStyle(chrome);
+      const trafficLightSize = Number.parseFloat(chromeStyle.getPropertyValue('--traffic-light-size'));
+      const trafficLightX = Number.parseFloat(chromeStyle.getPropertyValue('--traffic-light-x'));
+      const trafficLightY = Number.parseFloat(chromeStyle.getPropertyValue('--traffic-light-y'));
       return {
         backCenterY: backBox.top + backBox.height / 2,
+        controlCenterOffsetY: sidebarBox.top + sidebarBox.height / 2 - chromeBox.top,
         forwardCenterY: forwardBox.top + forwardBox.height / 2,
         sidebarBg: getComputedStyle(sidebar).backgroundColor,
         sidebarCenterY: sidebarBox.top + sidebarBox.height / 2,
         sidebarIcon: sidebar.querySelector('svg')?.innerHTML ?? '',
+        trafficLightCenterOffsetX: trafficLightX + trafficLightSize / 2,
+        trafficLightCenterOffsetY: trafficLightY + trafficLightSize / 2,
+        trafficLightSize,
+        trafficLightX,
+        trafficLightY,
       };
     });
     expect(initial.sidebarBg).toBe('rgba(0, 0, 0, 0)');
+    expect(initial.trafficLightSize).toBe(MAC_TRAFFIC_LIGHT_SIZE);
+    expect(initial.trafficLightX).toBe(MAC_TRAFFIC_LIGHT_POSITION.x);
+    expect(initial.trafficLightY).toBe(MAC_TRAFFIC_LIGHT_POSITION.y);
+    expect(initial.trafficLightCenterOffsetX).toBe(initial.trafficLightCenterOffsetY);
+    expect(Math.abs(initial.trafficLightCenterOffsetY - initial.controlCenterOffsetY)).toBeLessThanOrEqual(1);
     expect(Math.abs(initial.sidebarCenterY - initial.backCenterY)).toBeLessThanOrEqual(1);
     expect(Math.abs(initial.sidebarCenterY - initial.forwardCenterY)).toBeLessThanOrEqual(1);
 
     await sidebarToggle.click();
     await expect(page.getByTitle('Expand sidebar')).toBeVisible();
+    await page.mouse.move(0, 0);
+    await expect.poll(async () => page.getByTitle('Expand sidebar').evaluate((sidebar) => (
+      getComputedStyle(sidebar).backgroundColor
+    ))).toBe('rgba(0, 0, 0, 0)');
     const collapsed = await page.evaluate(() => {
       const sidebar = document.querySelector('[title="Expand sidebar"]');
       if (!(sidebar instanceof HTMLElement)) throw new Error('missing collapsed sidebar control');
@@ -218,6 +260,49 @@ test.describe('workspace layout resizing', () => {
   test('workspace tabs can be closed and restore persisted active roots', async ({ page }) => {
     await page.getByRole('button', { name: 'New tab' }).click();
     await expect(page.locator('.workspace-tab')).toHaveCount(2);
+    const tabWidths = await page.locator('.workspace-tab').evaluateAll((tabs) => (
+      tabs.map((tab) => Math.round(tab.getBoundingClientRect().width))
+    ));
+    expect(new Set(tabWidths).size).toBe(1);
+    const tabBackgrounds = await page.locator('.workspace-tab').evaluateAll((tabs) => (
+      tabs.map((tab) => getComputedStyle(tab).backgroundColor)
+    ));
+    expect(tabBackgrounds.every((background) => background !== 'rgba(0, 0, 0, 0)')).toBe(true);
+    expect(new Set(tabBackgrounds).size).toBeGreaterThan(1);
+    const activeTabChrome = await page.locator('.workspace-tab.active').evaluate((tab) => {
+      const style = getComputedStyle(tab);
+      const close = tab.querySelector('.workspace-tab-close');
+      if (!(close instanceof HTMLElement)) throw new Error('missing active tab close control');
+      const tabRect = tab.getBoundingClientRect();
+      const closeRect = close.getBoundingClientRect();
+      return {
+        borderRadius: style.borderRadius,
+        closeHeight: Math.round(closeRect.height),
+        closeRightInset: Math.round(tabRect.right - closeRect.right),
+        closeTopInset: Math.round(closeRect.top - tabRect.top),
+        closeWidth: Math.round(closeRect.width),
+        fontSize: style.fontSize,
+        lineHeight: style.lineHeight,
+      };
+    });
+    expect(activeTabChrome).toEqual({
+      borderRadius: '6px',
+      closeHeight: 20,
+      closeRightInset: 4,
+      closeTopInset: 3,
+      closeWidth: 20,
+      fontSize: '13px',
+      lineHeight: '20px',
+    });
+    const inactiveActiveSegment = page.locator('.workspace-tab:not(.active) .workspace-tab-segment.is-active').first();
+    const inactiveSegmentWeightBeforeHover = await inactiveActiveSegment.evaluate((segment) => (
+      getComputedStyle(segment).fontWeight
+    ));
+    await page.locator('.workspace-tab:not(.active)').first().hover();
+    const inactiveSegmentWeightAfterHover = await inactiveActiveSegment.evaluate((segment) => (
+      getComputedStyle(segment).fontWeight
+    ));
+    expect(inactiveSegmentWeightAfterHover).toBe(inactiveSegmentWeightBeforeHover);
 
     await page.getByRole('button', { name: 'Supertags' }).click();
     await expect(page.locator('.panel-title-editor').first()).toContainText('Schema');
@@ -239,7 +324,44 @@ test.describe('workspace layout resizing', () => {
 
     await page.locator('.sidebar-primary-nav').getByRole('button', { name: 'Search', exact: true }).click({ modifiers: ['Alt'] });
     await expect(panels).toHaveCount(4);
-    await expect(page.locator('.workspace-tab.active .workspace-tab-count')).toHaveText('4');
+    const activeTabSegments = page.locator('.workspace-tab.active .workspace-tab-segment');
+    await expect(activeTabSegments).toHaveCount(4);
+    await expect(page.locator('.workspace-tab.active .workspace-tab-count')).toHaveCount(0);
+    await expect(activeTabSegments.nth(3)).toContainText('Searches');
+    const iconSlots = await activeTabSegments.evaluateAll((segments) => (
+      segments.map((segment) => {
+        const icon = segment.querySelector('.workspace-tab-segment-icon');
+        if (!(icon instanceof HTMLElement)) throw new Error('missing tab segment icon');
+        const rect = icon.getBoundingClientRect();
+        return {
+          height: Math.round(rect.height),
+          width: Math.round(rect.width),
+        };
+      })
+    ));
+    expect(new Set(iconSlots.map((slot) => slot.width)).size).toBe(1);
+    expect(new Set(iconSlots.map((slot) => slot.height)).size).toBe(1);
+    expect(iconSlots[0]).toEqual({ height: 16, width: 16 });
+    const segmentDivider = await activeTabSegments.nth(1).evaluate((segment) => {
+      const divider = getComputedStyle(segment, '::before');
+      return {
+        backgroundColor: divider.backgroundColor,
+        height: divider.height,
+        marginLeft: divider.marginLeft,
+        marginRight: divider.marginRight,
+        width: divider.width,
+      };
+    });
+    expect(segmentDivider).toEqual({
+      backgroundColor: 'rgb(228, 228, 231)',
+      height: '12px',
+      marginLeft: '4px',
+      marginRight: '4px',
+      width: '1px',
+    });
     await expect(panels.nth(3).locator('.panel-title-editor')).toContainText('Searches');
+
+    await activeTabSegments.first().click();
+    await expect(panels.first()).toHaveClass(/active/);
   });
 });

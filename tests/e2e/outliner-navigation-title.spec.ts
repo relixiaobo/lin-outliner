@@ -72,7 +72,16 @@ test.describe('outliner navigation and page title parity', () => {
   test('top chrome navigation keeps the tab outliner context when a debug panel is active', async ({ page }) => {
     await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
     await page.getByRole('button', { name: 'Open agent debug' }).click();
-    await expect(page.locator('.workspace-tab.active')).toContainText('Agent Debug');
+    await expect(page.locator('.workspace-tab.active')).toContainText('Agent System');
+    await expect(page.locator('.workspace-tab.active .workspace-tab-segment.is-active svg')).toHaveCount(1);
+    const debugIconSlot = await page.locator('.workspace-tab.active .workspace-tab-segment.is-active .workspace-tab-segment-icon').evaluate((icon) => {
+      const rect = icon.getBoundingClientRect();
+      return {
+        height: Math.round(rect.height),
+        width: Math.round(rect.width),
+      };
+    });
+    expect(debugIconSlot).toEqual({ height: 16, width: 16 });
 
     await page.getByTitle('Back').click();
 
@@ -125,32 +134,40 @@ test.describe('outliner navigation and page title parity', () => {
     expect(Math.abs(metrics.breadcrumbTop - metrics.panelTop)).toBeLessThanOrEqual(1);
   });
 
-  test('breadcrumb uses the panel edge while content keeps its readable width', async ({ page }) => {
+  test('breadcrumb leading aligns to outliner columns when content fills the panel', async ({ page }) => {
     await page.setViewportSize({ width: 1900, height: 900 });
     await page.getByTitle('New tab').click();
     await expect(page.locator('.outline-panel-surface')).toHaveCount(1);
 
     const measure = async () => page.locator('.outline-panel-surface').first().evaluate((panel) => {
       const backControl = panel.querySelector('.panel-page-back-button')?.getBoundingClientRect();
+      const origin = panel.querySelector('.panel-breadcrumb-origin')?.getBoundingClientRect();
+      const rowChevron = panel.querySelector('.row-chevron-button')?.getBoundingClientRect();
+      const rowBullet = panel.querySelector('.row-bullet-button')?.getBoundingClientRect();
       const title = panel.querySelector('.panel-title-row')?.getBoundingClientRect();
       const panelBox = panel.getBoundingClientRect();
-      if (!backControl || !title) throw new Error('missing breadcrumb back control or title');
+      if (!backControl || !origin || !rowChevron || !rowBullet || !title) {
+        throw new Error('missing breadcrumb or outliner alignment target');
+      }
       return {
-        breadcrumbLeft: backControl.left,
-        panelLeft: panelBox.left,
-        panelPaddingX: Number.parseFloat(getComputedStyle(panel).getPropertyValue('--panel-content-x')),
+        backCenter: backControl.left + backControl.width / 2,
+        backLeft: backControl.left,
+        originCenter: origin.left + origin.width / 2,
+        rowBulletCenter: rowBullet.left + rowBullet.width / 2,
+        rowChevronCenter: rowChevron.left + rowChevron.width / 2,
         titleLeft: title.left,
+        panelLeft: panelBox.left,
       };
     });
 
     const wide = await measure();
-    expect(Math.abs(wide.breadcrumbLeft - (wide.panelLeft + wide.panelPaddingX))).toBeLessThanOrEqual(1);
-    expect(wide.titleLeft - wide.breadcrumbLeft).toBeGreaterThan(100);
+    expect(wide.backLeft - wide.panelLeft).toBeGreaterThanOrEqual(4);
+    expect(wide.titleLeft - wide.backLeft).toBeGreaterThan(100);
 
     await page.setViewportSize({ width: 900, height: 700 });
     const narrow = await measure();
-    expect(Math.abs(narrow.breadcrumbLeft - (narrow.panelLeft + narrow.panelPaddingX))).toBeLessThanOrEqual(1);
-    expect(Math.abs(narrow.titleLeft - narrow.breadcrumbLeft)).toBeLessThanOrEqual(2);
+    expect(Math.abs(narrow.backCenter - narrow.rowChevronCenter)).toBeLessThanOrEqual(1);
+    expect(Math.abs(narrow.originCenter - narrow.rowBulletCenter)).toBeLessThanOrEqual(1);
   });
 
   test('disabled navigation and breadcrumb controls use design-system affordances', async ({ page }) => {

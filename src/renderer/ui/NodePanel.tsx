@@ -426,17 +426,17 @@ export function NodePanel(props: NodePanelProps) {
     <main className="main-panel" ref={mainPanelRef} onScroll={updateTitleDockedState}>
       {rootNode && (
         <div className="panel-sticky-breadcrumb" ref={stickyBreadcrumbRef}>
-          <IconButton
-            className="panel-page-back-button"
-            disabled={!props.canGoBack}
-            icon={ChevronLeftIcon}
-            iconSize={14}
-            label="Previous page"
-            onClick={props.onBack}
-            title="Previous page"
-            variant="panel"
-          />
-          <nav className="panel-breadcrumb" aria-label="Panel breadcrumb">
+          <div className="panel-breadcrumb-leading">
+            <IconButton
+              className="panel-page-back-button"
+              disabled={!props.canGoBack}
+              icon={ChevronLeftIcon}
+              iconSize={14}
+              label="Previous page"
+              onClick={props.onBack}
+              title="Previous page"
+              variant="panel"
+            />
             <ButtonControl
               aria-label="Open workspace root"
               className="panel-breadcrumb-origin"
@@ -444,6 +444,8 @@ export function NodePanel(props: NodePanelProps) {
             >
               <LibraryIcon size={PANEL_BREADCRUMB_ORIGIN_ICON_SIZE} />
             </ButtonControl>
+          </div>
+          <nav className="panel-breadcrumb" aria-label="Panel breadcrumb">
             {breadcrumbNodes.map((node, index) => {
               const label = node.content.text || 'Untitled';
               const showCollapsedMarker = breadcrumb.collapsed && !breadcrumbExpanded && index === 1;

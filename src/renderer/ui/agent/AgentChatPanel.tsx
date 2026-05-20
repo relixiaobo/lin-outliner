@@ -765,7 +765,7 @@ export function AgentChatPanel({ onOpenDebugPanel }: AgentChatPanelProps) {
           onClick={() => setHistoryOpen((open) => !open)}
           title="Show conversations"
         >
-          <span className="agent-dock-title"># {displayTitle}</span>
+          <span className="agent-dock-title">{displayTitle}</span>
           <ChevronDownIcon
             className={historyOpen ? 'agent-title-chevron is-open' : 'agent-title-chevron'}
             size={ICON_SIZE.menu}

@@ -296,7 +296,16 @@ and non-goals; product behavior stays with the owning surface.
 - Sidebar default width is `196px`; range is `152px` to `280px`.
 - Agent dock default width is `344px`; range is `280px` to `520px`.
 - Top chrome controls are icon-first and compact.
-- Workspace tabs represent workspace canvas layouts, not agent conversations.
+- macOS traffic-light controls share the top chrome control centerline and use
+  the shared chrome geometry constants; do not tune BrowserWindow and CSS
+  positions independently.
+- Workspace tabs represent canvas layouts. Each tab may show multiple panel
+  segments; node panels use the node icon when present and otherwise a bullet,
+  while agent debug panels use the debug icon and the agent session title. Tabs
+  use a fixed width, and bullets, emoji icons, and svg icons occupy the same
+  `16px` icon slot so titles do not crowd or shift. Tab text uses the compact
+  UI scale (`13px / 20px`), and close affordances use the shared `20px` control
+  size instead of local magic numbers.
 
 ### Workspace And Panels
 
@@ -311,6 +320,11 @@ and non-goals; product behavior stays with the owning surface.
 - Top chrome sidebar toggle uses distinct expand/collapse icons. It must not
   use a selected background to indicate that the sidebar is currently open.
 - Top chrome Back/Forward disabled states use `--text-disabled`.
+- Workspace tabs stay quiet at rest: no heavy active pill treatment; active
+  panel segments use stronger text, and hover/focus supplies the interaction
+  surface.
+  Every workspace tab still keeps a very light background block so canvas-level
+  tab boundaries remain visible without competing with panel content.
 
 ### Outliner
 
@@ -318,6 +332,9 @@ and non-goals; product behavior stays with the owning surface.
 - Breadcrumb: `13px / 20px`, muted secondary color.
 - Breadcrumb back control: `24px` hit target with a `14px` icon. Disabled
   navigation controls use `--text-disabled`.
+- Breadcrumb leading alignment reuses the outliner row grid: the back control
+  is centered on the chevron column, the root icon is centered on the bullet
+  column, and breadcrumb text starts on the row content column.
 - Collapsed breadcrumb levels use an `18px` circular More icon button. It must
   expand or reveal the hidden levels; it is not a passive glyph.
 - Panel breadcrumb is sticky at the top of the panel scroll container.
@@ -393,7 +410,9 @@ and non-goals; product behavior stays with the owning surface.
 
 - Agent dock is persistent across workspace tabs and subordinate to the
   outliner workspace.
-- Header title pattern is `# conversation`.
+- Header titles use the plain conversation title without a prefix. The title
+  trigger has no hover background; it darkens text and reveals its chevron only
+  on hover, focus, or open state.
 - Agent UI uses Lin foundations: neutral text, deck gray background, white
   surfaces, sparse semantic color, low elevation, and compact controls.
 - Assistant prose, user bubbles, and composer input use

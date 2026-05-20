@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DocumentService } from './documentService';
 import { AgentRuntime } from './agentRuntime';
+import { MAC_TRAFFIC_LIGHT_POSITION } from '../core/chromeGeometry';
 import { LIN_DOCUMENT_EVENT_CHANNEL } from '../core/types';
 import {
   deleteProviderApiKey,
@@ -37,7 +38,7 @@ function createWindow() {
     minHeight: 560,
     backgroundColor: '#f7f6f1',
     titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 13, y: 8 },
+    trafficLightPosition: MAC_TRAFFIC_LIGHT_POSITION,
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,

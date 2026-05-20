@@ -255,20 +255,69 @@ test.describe('agent composer controls', () => {
       const chevronBox = chevron.getBoundingClientRect();
       const actionsBox = actions.getBoundingClientRect();
       const titleStyle = getComputedStyle(titleButton);
+      const firstAction = actions.querySelector('.agent-menu-button');
+      const actionStyle = firstAction instanceof HTMLElement ? getComputedStyle(firstAction) : null;
+      const rootStyle = getComputedStyle(document.documentElement);
+
+      function computedTokenColor(token: string) {
+        const swatch = document.createElement('span');
+        swatch.style.color = token;
+        document.body.appendChild(swatch);
+        const color = getComputedStyle(swatch).color;
+        swatch.remove();
+        return color;
+      }
 
       return {
+        actionColor: actionStyle?.color ?? null,
+        buttonBackground: titleStyle.backgroundColor,
         buttonExtraWidth: titleButtonBox.width - titleBox.width - chevronBox.width,
         buttonPaddingLeft: Number.parseFloat(titleStyle.paddingLeft),
+        chevronOpacity: getComputedStyle(chevron).opacity,
         gapToActions: actionsBox.left - titleButtonBox.right,
+        textFaint: computedTokenColor(rootStyle.getPropertyValue('--text-faint').trim()),
+        textSoft: computedTokenColor(rootStyle.getPropertyValue('--text-soft').trim()),
+        textStrong: computedTokenColor(rootStyle.getPropertyValue('--text-strong').trim()),
+        titleColor: getComputedStyle(title).color,
+        titleText: title.textContent?.trim() ?? '',
         statusDotCount: header.querySelectorAll('.agent-status-dot').length,
       };
     });
 
     expect(metrics).not.toBeNull();
     expect(metrics!.statusDotCount).toBe(0);
-    expect(metrics!.buttonPaddingLeft).toBeGreaterThanOrEqual(6);
-    expect(metrics!.buttonExtraWidth).toBeLessThanOrEqual(32);
+    expect(metrics!.titleText.startsWith('#')).toBe(false);
+    expect(metrics!.buttonBackground).toBe('rgba(0, 0, 0, 0)');
+    expect(metrics!.titleColor).toBe(metrics!.textSoft);
+    expect(metrics!.actionColor).toBe(metrics!.textFaint);
+    expect(metrics!.chevronOpacity).toBe('0');
+    expect(metrics!.buttonPaddingLeft).toBe(4);
+    expect(metrics!.buttonExtraWidth).toBeLessThanOrEqual(24);
     expect(metrics!.gapToActions).toBeGreaterThanOrEqual(8);
+
+    await page.locator('.agent-dock-title-button').hover();
+    await expect.poll(async () => page.locator('.agent-dock-header').evaluate((header) => {
+      const titleButton = header.querySelector('.agent-dock-title-button');
+      const title = header.querySelector('.agent-dock-title');
+      const chevron = header.querySelector('.agent-title-chevron');
+      if (
+        !(titleButton instanceof HTMLElement)
+        || !(title instanceof HTMLElement)
+        || !(chevron instanceof SVGElement)
+      ) {
+        return null;
+      }
+
+      return {
+        buttonBackground: getComputedStyle(titleButton).backgroundColor,
+        chevronOpacity: getComputedStyle(chevron).opacity,
+        titleColor: getComputedStyle(title).color,
+      };
+    })).toEqual({
+      buttonBackground: 'rgba(0, 0, 0, 0)',
+      chevronOpacity: '0.72',
+      titleColor: metrics!.textStrong,
+    });
   });
 
   test('keeps conversation rename geometry stable', async ({ page }) => {

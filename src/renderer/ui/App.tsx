@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { api } from '../api/client';
-import type { DocumentProjection, FocusHint, NodeId } from '../api/types';
+import type { DocumentProjection, FocusHint, NodeId, NodeProjection } from '../api/types';
 import { useDocumentIndex, useUiState } from '../state/document';
 import { AgentDock } from './AgentDock';
 import { CommandPalette } from './CommandPalette';
@@ -28,6 +28,13 @@ import { useResizableLayout } from './useResizableLayout';
 import { useSelectionDismissal } from './useSelectionDismissal';
 import { useWorkspaceKeyboard } from './useWorkspaceKeyboard';
 import { useWorkspaceTabs } from './useWorkspaceTabs';
+import type { WorkspacePanelState } from './workspaceLayoutTypes';
+
+function nodeIconOf(node: NodeProjection | undefined) {
+  if (!node || !('icon' in node)) return null;
+  const icon = (node as { icon?: unknown }).icon;
+  return typeof icon === 'string' && icon.trim() ? icon.trim() : null;
+}
 
 export function App() {
   const [projection, setProjection] = useState<DocumentProjection | null>(null);
@@ -36,6 +43,7 @@ export function App() {
   const [agentOpen, setAgentOpen] = useState(true);
   const [sidebarExpandedIds, setSidebarExpandedIds] = useState<Set<NodeId>>(() => new Set());
   const [pendingFocus, setPendingFocus] = useState<FocusHint | null>(null);
+  const [agentSessionTitles, setAgentSessionTitles] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [trigger, setTrigger] = useState<TriggerState>(null);
   const [dragId, setDragId] = useState<NodeId | null>(null);
@@ -112,6 +120,29 @@ export function App() {
       unlisten?.();
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api.agentListSessions()
+      .then((sessions) => {
+        if (cancelled) return;
+        setAgentSessionTitles(Object.fromEntries(
+          sessions
+            .map((session) => [session.id, session.title?.trim() || 'Agent Debug'] as const),
+        ));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => window.lin?.onAgentEvent((event) => {
+    if (event.type !== 'projection') return;
+    const title = event.renderProjection.sessionTitle?.trim();
+    if (!title) return;
+    setAgentSessionTitles((prev) => ({ ...prev, [event.sessionId]: title }));
+  }) ?? undefined, []);
 
   const expandNodeInOutliner = useCallback((nodeId: NodeId) => {
     setUi((prev) => {
@@ -222,17 +253,27 @@ export function App() {
     );
   }
 
+  const panelSegmentTitle = (panel: WorkspacePanelState) => {
+    if (panel.type === 'agent-debug') {
+      return panel.sessionId ? agentSessionTitles[panel.sessionId] ?? 'Agent Debug' : 'Agent Debug';
+    }
+    return textOf(index.byId.get(panel.rootId)) || 'Workspace';
+  };
   const topBarTabs: TopBarTab[] = tabs.map((tab) => {
-    const tabActivePanel = tab.panels.find((panel) => panel.id === tab.activePanelId) ?? tab.panels[0];
-    const title = tabActivePanel?.type === 'outliner'
-      ? textOf(index.byId.get(tabActivePanel.rootId)) || 'Workspace'
-      : tabActivePanel?.type === 'agent-debug'
-        ? 'Agent Debug'
-        : 'Workspace';
+    const segments = tab.panels.map((panel) => {
+      const node = panel.type === 'outliner' ? index.byId.get(panel.rootId) : undefined;
+      return {
+        active: panel.id === tab.activePanelId,
+        icon: panel.type === 'outliner' ? nodeIconOf(node) : null,
+        id: panel.id,
+        kind: panel.type === 'agent-debug' ? 'agent-debug' as const : 'node' as const,
+        title: panelSegmentTitle(panel),
+      };
+    });
     return {
       id: tab.id,
-      panelCount: tab.panels.length,
-      title,
+      segments,
+      title: segments.map((segment) => segment.title).join(', '),
     };
   });
   const appShellStyle = {

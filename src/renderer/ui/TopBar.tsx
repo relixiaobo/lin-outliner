@@ -1,3 +1,8 @@
+import type { CSSProperties } from 'react';
+import {
+  MAC_TRAFFIC_LIGHT_POSITION,
+  MAC_TRAFFIC_LIGHT_SIZE,
+} from '../../core/chromeGeometry';
 import {
   AddIcon,
   AgentIcon,
@@ -24,16 +29,28 @@ interface TopBarProps {
   onCloseTab: (tabId: string) => void;
   onNavigateBack: () => void;
   onNavigateForward: () => void;
-  onSelectTab: (tabId: string) => void;
+  onSelectTab: (tabId: string, panelId?: string) => void;
   onToggleAgent: () => void;
   onToggleSidebar: () => void;
 }
+
+type TopChromeStyle = CSSProperties & Record<
+  '--traffic-light-size' | '--traffic-light-x' | '--traffic-light-y',
+  string
+>;
+
+const topChromeStyle: TopChromeStyle = {
+  '--traffic-light-size': `${MAC_TRAFFIC_LIGHT_SIZE}px`,
+  '--traffic-light-x': `${MAC_TRAFFIC_LIGHT_POSITION.x}px`,
+  '--traffic-light-y': `${MAC_TRAFFIC_LIGHT_POSITION.y}px`,
+};
 
 export function TopBar(props: TopBarProps) {
   return (
     <header
       className="top-chrome"
       data-electron-drag-region="deep"
+      style={topChromeStyle}
     >
       <div className="top-chrome-left" aria-label="Window and navigation controls">
         <div className="window-controls-spacer" aria-hidden="true" />

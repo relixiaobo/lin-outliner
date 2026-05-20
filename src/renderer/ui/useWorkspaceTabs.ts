@@ -306,11 +306,20 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
     });
   }, [focusNode, updateActiveTab]);
 
-  const selectTab = useCallback((tabId: string) => {
-    setActiveTabId(tabId);
+  const selectTab = useCallback((tabId: string, panelId?: string) => {
     const nextTab = tabs.find((tab) => tab.id === tabId);
-    const nextPanel = nextTab?.panels.find((panel) => panel.id === nextTab.activePanelId)
+    const requestedPanel = panelId
+      ? nextTab?.panels.find((panel) => panel.id === panelId)
+      : undefined;
+    const nextPanel = requestedPanel
+      ?? nextTab?.panels.find((panel) => panel.id === nextTab.activePanelId)
       ?? nextTab?.panels[0];
+    setActiveTabId(tabId);
+    if (requestedPanel && requestedPanel.id !== nextTab?.activePanelId) {
+      setTabs((prev) => prev.map((tab) => (
+        tab.id === tabId ? { ...tab, activePanelId: requestedPanel.id } : tab
+      )));
+    }
     if (isOutlinerPanel(nextPanel)) {
       focusNode(nextPanel.rootId);
     }
