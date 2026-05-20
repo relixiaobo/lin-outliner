@@ -7,6 +7,14 @@ import {
   type FetchTextResult,
   type WebParamResult,
 } from '../../src/main/agentWebTools';
+import {
+  WEB_FETCH_DESCRIPTION,
+  WEB_FETCH_FORMAT_PARAMETER_DESCRIPTION,
+  WEB_FETCH_QUERY_PARAMETER_DESCRIPTION,
+  WEB_SEARCH_DESCRIPTION,
+  WEB_SEARCH_QUERY_PARAMETER_DESCRIPTION,
+  WEB_SEARCH_RECENCY_PARAMETER_DESCRIPTION,
+} from '../../src/main/agentWebToolGuidance';
 
 function expectParams<T>(result: WebParamResult<T>): T {
   expect(result.ok).toBe(true);
@@ -27,6 +35,23 @@ function fetchedText(body: string, contentType = 'text/html; charset=utf-8'): Fe
 }
 
 describe('agent web tools', () => {
+  test('web tool descriptions guide source discovery, verification, and fetch modes', () => {
+    expect(WEB_SEARCH_DESCRIPTION).toContain('Use web_search when you do not already have a specific URL');
+    expect(WEB_SEARCH_DESCRIPTION).toContain('Use web_fetch on result URLs when you need details');
+    expect(WEB_SEARCH_DESCRIPTION).toContain('cite the relevant result or fetched source URLs');
+    expect(WEB_SEARCH_QUERY_PARAMETER_DESCRIPTION).toContain('current year/date');
+    expect(WEB_SEARCH_RECENCY_PARAMETER_DESCRIPTION).toContain('verify publication dates');
+
+    expect(WEB_FETCH_DESCRIPTION).toContain('Use web_fetch when you already have a URL');
+    expect(WEB_FETCH_DESCRIPTION).toContain('Use query to find matching snippets');
+    expect(WEB_FETCH_DESCRIPTION).toContain('Use offset/max_chars and nextOffset');
+    expect(WEB_FETCH_DESCRIPTION).toContain('If binaryFile is returned, use file_read');
+    expect(WEB_FETCH_DESCRIPTION).not.toContain('HTTP GET');
+    expect(WEB_FETCH_DESCRIPTION).not.toContain('browser fallback');
+    expect(WEB_FETCH_FORMAT_PARAMETER_DESCRIPTION).toContain('metadata');
+    expect(WEB_FETCH_QUERY_PARAMETER_DESCRIPTION).toContain('find mode');
+  });
+
   test('normalizes and validates web_search and web_fetch args', () => {
     const invalidSearch = normalizeWebSearchParams({ query: '   ' });
     expect(invalidSearch.ok).toBe(false);

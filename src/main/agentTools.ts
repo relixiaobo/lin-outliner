@@ -42,6 +42,23 @@ import {
   type WebToolHint,
 } from './agentWebTools';
 import {
+  WEB_FETCH_CASE_INSENSITIVE_PARAMETER_DESCRIPTION,
+  WEB_FETCH_CONTEXT_PARAMETER_DESCRIPTION,
+  WEB_FETCH_DESCRIPTION,
+  WEB_FETCH_FORMAT_PARAMETER_DESCRIPTION,
+  WEB_FETCH_HEAD_LIMIT_PARAMETER_DESCRIPTION,
+  WEB_FETCH_MATCH_OFFSET_PARAMETER_DESCRIPTION,
+  WEB_FETCH_MAX_CHARS_PARAMETER_DESCRIPTION,
+  WEB_FETCH_OFFSET_PARAMETER_DESCRIPTION,
+  WEB_FETCH_QUERY_PARAMETER_DESCRIPTION,
+  WEB_FETCH_URL_PARAMETER_DESCRIPTION,
+  WEB_SEARCH_DESCRIPTION,
+  WEB_SEARCH_LIMIT_PARAMETER_DESCRIPTION,
+  WEB_SEARCH_QUERY_PARAMETER_DESCRIPTION,
+  WEB_SEARCH_RECENCY_PARAMETER_DESCRIPTION,
+  WEB_SEARCH_SITE_PARAMETER_DESCRIPTION,
+} from './agentWebToolGuidance';
+import {
   assessWebFetchFallback,
   browserFallbackLooksUseful,
   detectBrowserChallenge,
@@ -70,50 +87,50 @@ const WEB_FETCH_PARAMETERS = {
       type: 'string',
       minLength: 1,
       maxLength: 2000,
-      description: 'The absolute http(s) URL to read. Use web_search first if you do not know the URL. http:// URLs are upgraded to https://.',
+      description: WEB_FETCH_URL_PARAMETER_DESCRIPTION,
     },
     format: {
       type: 'string',
       enum: ['markdown', 'text', 'raw', 'metadata'],
-      description: 'Output format. Defaults to markdown. Use metadata when you only need title, description, headings, and links.',
+      description: WEB_FETCH_FORMAT_PARAMETER_DESCRIPTION,
     },
     offset: {
       type: 'integer',
       minimum: 0,
-      description: 'Character offset for read mode. Use nextOffset from a previous web_fetch result to continue reading. Default 0.',
+      description: WEB_FETCH_OFFSET_PARAMETER_DESCRIPTION,
     },
     max_chars: {
       type: 'integer',
       minimum: 1,
       maximum: MAX_FETCH_CHARS,
-      description: `Maximum characters returned in read mode. Default ${DEFAULT_FETCH_CHARS}, max ${MAX_FETCH_CHARS}.`,
+      description: `${WEB_FETCH_MAX_CHARS_PARAMETER_DESCRIPTION} Default ${DEFAULT_FETCH_CHARS}, max ${MAX_FETCH_CHARS}.`,
     },
     query: {
       type: 'string',
       minLength: 1,
       maxLength: 500,
-      description: 'When set, use find mode and return matching snippets from this page instead of the full page.',
+      description: WEB_FETCH_QUERY_PARAMETER_DESCRIPTION,
     },
     context: {
       type: 'integer',
       minimum: 0,
       maximum: 2000,
-      description: 'Characters before and after each query match in find mode. Default 500.',
+      description: `${WEB_FETCH_CONTEXT_PARAMETER_DESCRIPTION} Default 500.`,
     },
     head_limit: {
       type: 'integer',
       minimum: 1,
       maximum: 50,
-      description: 'Maximum matches returned in find mode. Default 10.',
+      description: `${WEB_FETCH_HEAD_LIMIT_PARAMETER_DESCRIPTION} Default 10.`,
     },
     match_offset: {
       type: 'integer',
       minimum: 0,
-      description: 'Skip the first N matches in find mode. Use nextMatchOffset from a previous result to continue. Default 0.',
+      description: WEB_FETCH_MATCH_OFFSET_PARAMETER_DESCRIPTION,
     },
     case_insensitive: {
       type: 'boolean',
-      description: 'Case-insensitive matching in find mode. Default true.',
+      description: WEB_FETCH_CASE_INSENSITIVE_PARAMETER_DESCRIPTION,
     },
   },
 };
@@ -127,25 +144,25 @@ const WEB_SEARCH_PARAMETERS = {
       type: 'string',
       minLength: 1,
       maxLength: 500,
-      description: 'The web search query. Natural language and search operators are allowed. Include relevant dates, names, or locations when freshness matters.',
+      description: WEB_SEARCH_QUERY_PARAMETER_DESCRIPTION,
     },
     limit: {
       type: 'integer',
       minimum: 1,
       maximum: MAX_SEARCH_LIMIT,
-      description: `Maximum search results to return. Default ${DEFAULT_SEARCH_LIMIT}, max ${MAX_SEARCH_LIMIT}.`,
+      description: `${WEB_SEARCH_LIMIT_PARAMETER_DESCRIPTION} Default ${DEFAULT_SEARCH_LIMIT}, max ${MAX_SEARCH_LIMIT}.`,
     },
     site: {
       type: 'string',
       minLength: 1,
       maxLength: 200,
-      description: 'Optional single host to scope the search to. Do not include "site:"; the tool adds it.',
+      description: WEB_SEARCH_SITE_PARAMETER_DESCRIPTION,
     },
     recency_days: {
       type: 'integer',
       minimum: 1,
       maximum: 3650,
-      description: 'Optional freshness hint in days. Treat as best effort and verify dates by fetching sources when freshness matters.',
+      description: WEB_SEARCH_RECENCY_PARAMETER_DESCRIPTION,
     },
   },
 };
@@ -169,13 +186,7 @@ function createWebFetchTool(localRoot?: string): AgentTool<any, ToolEnvelope<Web
   return {
     name: 'web_fetch',
     label: 'Web Fetch',
-    description: [
-      'Reads a known URL and returns extracted page content directly, not a secondary-model summary.',
-      'Use this when you already have a source URL. Use web_search first when you need to discover sources.',
-      'Use query/context/head_limit for find mode on large pages. Use offset/max_chars and nextOffset to page through read mode.',
-      'Use format="metadata" when you only need page title, description, headings, and links.',
-      'If the page requires login or blocks automated fetches, ask the user to sign in or use another source.',
-    ].join('\n'),
+    description: WEB_FETCH_DESCRIPTION,
     parameters: WEB_FETCH_PARAMETERS,
     executionMode: 'parallel',
     execute: async (_toolCallId, rawParams: unknown, signal) => {
@@ -318,12 +329,7 @@ function createWebSearchTool(): AgentTool<any, ToolEnvelope<WebSearchData>> {
   return {
     name: 'web_search',
     label: 'Web Search',
-    description: [
-      'Searches the web for current external information and source URLs.',
-      'Use this when you do not already have a specific URL, or when local knowledge may be stale.',
-      'Returns URLs, titles, and snippets. Use web_fetch on result URLs when you need evidence, details, or exact dates.',
-      'Use site for one-host searches. Use recency_days only as a freshness hint and verify dates with fetched sources.',
-    ].join('\n'),
+    description: WEB_SEARCH_DESCRIPTION,
     parameters: WEB_SEARCH_PARAMETERS,
     executionMode: 'parallel',
     execute: async (_toolCallId, rawParams: unknown, signal) => {
