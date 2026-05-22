@@ -76,7 +76,9 @@ function formatPercent(value: number | null): string {
 }
 
 function sourceLabel(snapshot: AgentDebugSnapshot): string {
-  return snapshot.source === 'provider_payload' ? 'Provider payload' : 'Runtime state';
+  if (snapshot.source === 'provider_payload') return 'Provider payload';
+  if (snapshot.source === 'provider_response') return 'Provider response';
+  return 'Runtime state';
 }
 
 function statusLabel(input: Pick<AgentDebugSnapshot, 'status'>): string {

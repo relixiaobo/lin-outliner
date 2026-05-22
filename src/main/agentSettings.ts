@@ -6,11 +6,13 @@ import {
   getProviders,
   getSupportedThinkingLevels,
 } from '@earendil-works/pi-ai';
-import type { Api, KnownProvider, Model } from '@earendil-works/pi-ai';
+import type { Api, KnownProvider, Model, SimpleStreamOptions } from '@earendil-works/pi-ai';
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type {
   AgentModelOption,
+  AgentRuntimeSettings,
+  AgentRuntimeSettingsInput,
   AgentProviderConfigInput,
   AgentProviderConfigView,
   AgentProviderOption,
@@ -32,6 +34,7 @@ interface AgentProviderConfig {
 
 interface ProviderConfigFile {
   activeProviderId?: string;
+  agent?: Partial<AgentRuntimeSettings>;
   providers: AgentProviderConfig[];
 }
 
@@ -67,6 +70,20 @@ const PREFERRED_MODEL_IDS: Record<string, string[]> = {
 };
 
 const AGENT_REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
+const AGENT_PERMISSION_MODES = ['trusted', 'restricted'] as const;
+const AGENT_CACHE_RETENTIONS = ['none', 'short', 'long'] as const;
+const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
+  permissionMode: 'trusted',
+  automaticSkillsEnabled: true,
+  slashSkillsEnabled: true,
+  compactEnabled: true,
+  additionalSkillDirectories: [],
+  additionalAgentDirectories: [],
+  providerTimeoutMs: null,
+  providerMaxRetries: null,
+  providerMaxRetryDelayMs: 60_000,
+  providerCacheRetention: 'short',
+};
 
 export interface AgentProviderRuntimeConfig extends AgentProviderConfig {
   apiKey?: string;
@@ -74,6 +91,10 @@ export interface AgentProviderRuntimeConfig extends AgentProviderConfig {
 
 export async function getProviderSettings(): Promise<AgentProviderSettingsView> {
   return toSettingsView(await readProviderFile(), await readSecretFile());
+}
+
+export async function getAgentRuntimeSettings(): Promise<AgentRuntimeSettings> {
+  return normalizeAgentRuntimeSettings((await readProviderFile()).agent);
 }
 
 export async function getActiveProviderRuntimeConfig(): Promise<AgentProviderRuntimeConfig | null> {
@@ -90,6 +111,38 @@ export async function getActiveProviderRuntimeConfig(): Promise<AgentProviderRun
     reasoningLevel: normalizeReasoningLevel(active.providerId, modelId, active.reasoningLevel),
     apiKey: secrets.keys[active.providerId] ?? getEnvApiKey(active.providerId),
   };
+}
+
+export async function updateAgentRuntimeSettings(input: AgentRuntimeSettingsInput) {
+  const file = await readProviderFile();
+  file.agent = normalizeAgentRuntimeSettings({
+    ...normalizeAgentRuntimeSettings(file.agent),
+    ...input,
+  });
+  await writeProviderFile(file);
+  return getProviderSettings();
+}
+
+export function providerStreamOptionsFromRuntimeSettings(
+  settings?: Pick<
+    AgentRuntimeSettings,
+    'providerTimeoutMs' | 'providerMaxRetries' | 'providerMaxRetryDelayMs' | 'providerCacheRetention'
+  > | null,
+): Pick<SimpleStreamOptions, 'timeoutMs' | 'maxRetries' | 'maxRetryDelayMs' | 'cacheRetention'> {
+  const options: Pick<SimpleStreamOptions, 'timeoutMs' | 'maxRetries' | 'maxRetryDelayMs' | 'cacheRetention'> = {};
+  if (settings?.providerTimeoutMs !== null && settings?.providerTimeoutMs !== undefined) {
+    options.timeoutMs = settings.providerTimeoutMs;
+  }
+  if (settings?.providerMaxRetries !== null && settings?.providerMaxRetries !== undefined) {
+    options.maxRetries = settings.providerMaxRetries;
+  }
+  if (settings?.providerMaxRetryDelayMs !== null && settings?.providerMaxRetryDelayMs !== undefined) {
+    options.maxRetryDelayMs = settings.providerMaxRetryDelayMs;
+  }
+  if (settings?.providerCacheRetention) {
+    options.cacheRetention = settings.providerCacheRetention;
+  }
+  return options;
 }
 
 export async function upsertProviderConfig(input: AgentProviderConfigInput) {
@@ -165,6 +218,7 @@ function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): AgentPro
   const availableProviders = getAvailableProviders();
   return {
     activeProviderId: file.activeProviderId,
+    agent: normalizeAgentRuntimeSettings(file.agent),
     providers: file.providers.map((provider): AgentProviderConfigView => {
       const modelId = normalizeModelId(provider.providerId, provider.modelId);
       return {
@@ -179,6 +233,57 @@ function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): AgentPro
     }),
     availableProviders,
   };
+}
+
+function normalizeAgentRuntimeSettings(input?: Partial<AgentRuntimeSettings> | null): AgentRuntimeSettings {
+  return {
+    permissionMode: isAgentPermissionMode(input?.permissionMode)
+      ? input.permissionMode
+      : DEFAULT_AGENT_RUNTIME_SETTINGS.permissionMode,
+    automaticSkillsEnabled: booleanOrDefault(input?.automaticSkillsEnabled, DEFAULT_AGENT_RUNTIME_SETTINGS.automaticSkillsEnabled),
+    slashSkillsEnabled: booleanOrDefault(input?.slashSkillsEnabled, DEFAULT_AGENT_RUNTIME_SETTINGS.slashSkillsEnabled),
+    compactEnabled: booleanOrDefault(input?.compactEnabled, DEFAULT_AGENT_RUNTIME_SETTINGS.compactEnabled),
+    additionalSkillDirectories: normalizeStringList(input?.additionalSkillDirectories),
+    additionalAgentDirectories: normalizeStringList(input?.additionalAgentDirectories),
+    providerTimeoutMs: normalizeNullablePositiveInteger(input?.providerTimeoutMs, DEFAULT_AGENT_RUNTIME_SETTINGS.providerTimeoutMs),
+    providerMaxRetries: normalizeNullableNonNegativeInteger(input?.providerMaxRetries, DEFAULT_AGENT_RUNTIME_SETTINGS.providerMaxRetries),
+    providerMaxRetryDelayMs: normalizeNullableNonNegativeInteger(
+      input?.providerMaxRetryDelayMs,
+      DEFAULT_AGENT_RUNTIME_SETTINGS.providerMaxRetryDelayMs,
+    ),
+    providerCacheRetention: isAgentCacheRetention(input?.providerCacheRetention)
+      ? input.providerCacheRetention
+      : DEFAULT_AGENT_RUNTIME_SETTINGS.providerCacheRetention,
+  };
+}
+
+function booleanOrDefault(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter(Boolean))]
+    .slice(0, 20);
+}
+
+function normalizeNullablePositiveInteger(value: unknown, fallback: number | null): number | null {
+  if (value === null) return null;
+  return normalizeInteger(value, fallback, 1);
+}
+
+function normalizeNullableNonNegativeInteger(value: unknown, fallback: number | null): number | null {
+  if (value === null) return null;
+  return normalizeInteger(value, fallback, 0);
+}
+
+function normalizeInteger(value: unknown, fallback: number | null, min: number): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  const normalized = Math.floor(value);
+  return normalized >= min ? normalized : fallback;
 }
 
 function getAvailableProviders(): AgentProviderOption[] {
@@ -254,6 +359,14 @@ function findKnownModel(providerId: string, modelId: string): Model<Api> | null 
 
 function isAgentReasoningLevel(value: unknown): value is AgentReasoningLevel {
   return typeof value === 'string' && (AGENT_REASONING_LEVELS as readonly string[]).includes(value);
+}
+
+function isAgentPermissionMode(value: unknown): value is AgentRuntimeSettings['permissionMode'] {
+  return typeof value === 'string' && (AGENT_PERMISSION_MODES as readonly string[]).includes(value);
+}
+
+function isAgentCacheRetention(value: unknown): value is AgentRuntimeSettings['providerCacheRetention'] {
+  return typeof value === 'string' && (AGENT_CACHE_RETENTIONS as readonly string[]).includes(value);
 }
 
 function modelPreferenceRank(providerId: string, modelId: string) {

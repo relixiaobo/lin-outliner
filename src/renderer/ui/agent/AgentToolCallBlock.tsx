@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AgentToolResultPayloadPart, AgentToolResultWithPayloads, ToolCall } from '../../../core/agentTypes';
+import type { AgentRenderSubagentEntity } from '../../../core/agentRenderProjection';
 import { api } from '../../api/client';
 import {
+  AgentIcon,
   CheckIcon,
   CopyIcon,
   FileTextIcon,
@@ -23,9 +25,11 @@ interface AgentToolCallBlockProps {
   defaultExpanded?: boolean;
   expanded?: boolean;
   onToggle?: () => void;
+  onOpenSubagentTranscript?: (subagentId: string) => void;
   pendingToolCallIds?: ReadonlySet<string>;
   result?: AgentToolResultWithPayloads;
   sessionId?: string | null;
+  subagent?: AgentRenderSubagentEntity;
   toolCall: ToolCall;
   turnActive?: boolean;
 }
@@ -72,6 +76,12 @@ export function getToolCallStatus(
 }
 
 function getToolIcon(toolCall: ToolCall) {
+  if (
+    toolCall.name === 'Agent'
+    || toolCall.name === 'AgentStatus'
+    || toolCall.name === 'AgentSend'
+    || toolCall.name === 'AgentStop'
+  ) return AgentIcon;
   if (toolCall.name === 'node_create') return NodeCreateToolIcon;
   if (toolCall.name === 'node_read') return FileTextIcon;
   if (toolCall.name === 'node_edit') return NodeEditToolIcon;
@@ -111,6 +121,13 @@ function verbByStatus(forms: VerbForms, status: ToolStatus): string {
 }
 
 export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus): string {
+  if (toolCall.name === 'Agent') {
+    const subject = pickSubject(toolCall.arguments, 'description', 'subagent_type');
+    return `${verbByStatus(['run subagent', 'Running subagent', 'Ran subagent'], status)}${subject ? ` ${quoteSubject(subject)}` : ''}`;
+  }
+  if (toolCall.name === 'AgentStatus') return verbByStatus(['check subagent', 'Checking subagent', 'Checked subagent'], status);
+  if (toolCall.name === 'AgentSend') return verbByStatus(['message subagent', 'Messaging subagent', 'Messaged subagent'], status);
+  if (toolCall.name === 'AgentStop') return verbByStatus(['stop subagent', 'Stopping subagent', 'Stopped subagent'], status);
   const args = toolCall.arguments;
   if (toolCall.name === 'node_create') {
     const subject = pickSubject(args, 'parentId', 'afterId');
@@ -151,6 +168,125 @@ export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus): strin
     return `${verbByStatus(['edit file', 'Editing file', 'Edited file'], status)}${subject ? ` ${quoteSubject(subject)}` : ''}`;
   }
   return verbByStatus([toolCall.name, `${toolCall.name}...`, toolCall.name], status);
+}
+
+function subagentToolStatus(subagent: AgentRenderSubagentEntity): ToolStatus {
+  if (subagent.status === 'running') return 'pending';
+  if (subagent.status === 'failed' || subagent.status === 'stopped') return 'error';
+  return 'done';
+}
+
+function formatSubagentMode(subagent: AgentRenderSubagentEntity): string {
+  return `${subagent.contextMode} · ${subagent.subagentType}`;
+}
+
+function formatSubagentDuration(subagent: AgentRenderSubagentEntity): string {
+  const end = subagent.completedAt ?? subagent.updatedAt;
+  const elapsed = Math.max(0, end - subagent.startedAt);
+  if (elapsed < 1000) return '<1s';
+  const seconds = Math.round(elapsed / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  if (minutes < 60) return rest > 0 ? `${minutes}m ${rest}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const minuteRest = minutes % 60;
+  return minuteRest > 0 ? `${hours}h ${minuteRest}m` : `${hours}h`;
+}
+
+function subagentSummary(subagent: AgentRenderSubagentEntity): string {
+  const description = subagent.description.trim() || subagent.name || subagent.id;
+  return `Subagent · ${description}`;
+}
+
+function previewText(text: string | undefined, maxLength = 520): string {
+  const normalized = (text ?? '').replace(/\s+/g, ' ').trim();
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength).trim()}...` : normalized;
+}
+
+function SubagentInlineDetails({
+  onOpenTranscript,
+  subagent,
+}: {
+  onOpenTranscript?: (subagentId: string) => void;
+  subagent: AgentRenderSubagentEntity;
+}) {
+  const result = previewText(subagent.result);
+  const error = previewText(subagent.error);
+  const prompt = previewText(subagent.prompt);
+  const canOpenTranscript = !!subagent.transcriptPayloadId && !!onOpenTranscript;
+
+  return (
+    <div className="agent-subagent-inline">
+      <dl className="agent-subagent-meta-grid">
+        <div>
+          <dt>Status</dt>
+          <dd>{subagent.status}</dd>
+        </div>
+        <div>
+          <dt>Mode</dt>
+          <dd>{formatSubagentMode(subagent)}</dd>
+        </div>
+        <div>
+          <dt>Messages</dt>
+          <dd>{subagent.transcriptMessageCount}</dd>
+        </div>
+        <div>
+          <dt>Duration</dt>
+          <dd>{formatSubagentDuration(subagent)}</dd>
+        </div>
+      </dl>
+      {subagent.name ? (
+        <section className="agent-tool-call-section">
+          <div className="agent-tool-call-section-header">
+            <div className="agent-tool-call-section-title">Name</div>
+          </div>
+          <pre>{subagent.name}</pre>
+        </section>
+      ) : null}
+      {prompt ? (
+        <section className="agent-tool-call-section">
+          <div className="agent-tool-call-section-header">
+            <div className="agent-tool-call-section-title">Prompt</div>
+            <ToolCopyButton ariaLabel="Copy subagent prompt" text={subagent.prompt} />
+          </div>
+          <pre>{prompt}</pre>
+        </section>
+      ) : null}
+      {result ? (
+        <section className="agent-tool-call-section">
+          <div className="agent-tool-call-section-header">
+            <div className="agent-tool-call-section-title">Result</div>
+            <ToolCopyButton ariaLabel="Copy subagent result" text={subagent.result ?? ''} />
+          </div>
+          <pre>{result}</pre>
+        </section>
+      ) : null}
+      {error ? (
+        <section className="agent-tool-call-section">
+          <div className="agent-tool-call-section-header">
+            <div className="agent-tool-call-section-title">
+              Error
+              <span>error</span>
+            </div>
+            <ToolCopyButton ariaLabel="Copy subagent error" text={subagent.error ?? ''} />
+          </div>
+          <pre>{error}</pre>
+        </section>
+      ) : null}
+      <div className="agent-subagent-inline-actions">
+        <ButtonControl
+          className="agent-subagent-transcript-button"
+          disabled={!canOpenTranscript}
+          onClick={() => onOpenTranscript?.(subagent.id)}
+        >
+          <FileTextIcon size={ICON_SIZE.menu} />
+          <span>{subagent.transcriptPayloadId ? 'View transcript' : 'Transcript unavailable'}</span>
+        </ButtonControl>
+        <ToolCopyButton ariaLabel="Copy subagent id" text={subagent.id} />
+      </div>
+    </div>
+  );
 }
 
 function resultText(result: AgentToolResultWithPayloads | undefined): string {
@@ -399,14 +535,16 @@ export function AgentToolCallBlock({
   defaultExpanded = false,
   expanded,
   onToggle,
+  onOpenSubagentTranscript,
   pendingToolCallIds,
   result,
   sessionId,
+  subagent,
   toolCall,
   turnActive,
 }: AgentToolCallBlockProps) {
   const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
-  const status = getToolCallStatus(toolCall.id, result, pendingToolCallIds, turnActive);
+  const status = subagent ? subagentToolStatus(subagent) : getToolCallStatus(toolCall.id, result, pendingToolCallIds, turnActive);
   const Icon = getToolIcon(toolCall);
   const StatusIcon = status === 'pending' ? LoaderIcon : Icon;
   const isExpanded = expanded ?? internalExpanded;
@@ -416,7 +554,8 @@ export function AgentToolCallBlock({
   const parts = useMemo(() => resultParts(result, isExpanded), [result, isExpanded]);
   const details = result?.details;
   const envelope = isToolEnvelope(details) ? details : null;
-  const hasDetails = inputText !== '{}' || outputText.length > 0 || envelope !== null;
+  const hasSubagentDetails = Boolean(subagent);
+  const hasDetails = hasSubagentDetails || inputText !== '{}' || outputText.length > 0 || envelope !== null;
   const hasOutputDetails = envelope !== null || parts.length > 0;
 
   function toggle() {
@@ -436,9 +575,15 @@ export function AgentToolCallBlock({
       status={status}
       statusIcon={StatusIcon}
       statusIconClassName={status === 'pending' ? 'agent-tool-call-spinner' : undefined}
-      summary={summarizeToolCall(toolCall, status)}
+      summary={subagent ? subagentSummary(subagent) : summarizeToolCall(toolCall, status)}
     >
-      {inputText !== '{}' ? (
+      {subagent ? (
+        <SubagentInlineDetails
+          onOpenTranscript={onOpenSubagentTranscript}
+          subagent={subagent}
+        />
+      ) : null}
+      {!hasSubagentDetails && inputText !== '{}' ? (
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
             <div className="agent-tool-call-section-title">Input</div>
@@ -447,7 +592,7 @@ export function AgentToolCallBlock({
           <pre>{inputText}</pre>
         </section>
       ) : null}
-      {result && hasOutputDetails ? (
+      {!hasSubagentDetails && result && hasOutputDetails ? (
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
             <div className="agent-tool-call-section-title">

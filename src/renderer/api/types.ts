@@ -1,9 +1,12 @@
 export type {
   AgentProviderConfigInput,
   AgentProviderConfigView,
+  AgentPermissionMode,
   AgentModelOption,
   AgentProviderOption,
   AgentReasoningLevel,
+  AgentRuntimeSettings,
+  AgentRuntimeSettingsInput,
   AgentProviderSecretStatus,
   AgentProviderSettingsView,
   AgentSession,

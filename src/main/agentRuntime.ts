@@ -1,8 +1,34 @@
 import { app, type BrowserWindow } from 'electron';
-import { Agent, type AgentEvent as PiAgentEvent, type StreamFn } from '@earendil-works/pi-agent-core';
-import { createAssistantMessageEventStream, getModels, streamSimple } from '@earendil-works/pi-ai';
-import type { Api, AssistantMessage, ImageContent as PiImageContent, KnownProvider, Message, Model, TextContent as PiTextContent, ToolCall, ToolResultMessage } from '@earendil-works/pi-ai';
-import { randomUUID } from 'node:crypto';
+import {
+  Agent,
+  type AfterToolCallResult,
+  type AgentEvent as PiAgentEvent,
+  type AgentLoopTurnUpdate,
+  type StreamFn,
+} from '@earendil-works/pi-agent-core';
+import {
+  cleanupSessionResources as cleanupPiSessionResources,
+  completeSimple,
+  createAssistantMessageEventStream,
+  getModels,
+  getSupportedThinkingLevels,
+  isContextOverflow,
+  streamSimple,
+} from '@earendil-works/pi-ai';
+import type {
+  Api,
+  AssistantMessage,
+  ImageContent as PiImageContent,
+  KnownProvider,
+  Message,
+  Model,
+  ProviderResponse,
+  SimpleStreamOptions,
+  TextContent as PiTextContent,
+  ToolCall,
+  ToolResultMessage,
+} from '@earendil-works/pi-ai';
+import { createHash, randomUUID } from 'node:crypto';
 import { copyFile, mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import {
@@ -28,7 +54,6 @@ import {
   type AgentEvent,
   type AgentEventMessageRecord,
   type AgentEventReplayState,
-  type AgentEventType,
   type AgentPayloadRef,
   type AgentPersistedContent,
 } from '../core/agentEventLog';
@@ -49,11 +74,54 @@ import {
 import {
   AgentEventStore,
 } from './agentEventStore';
-import { getActiveProviderRuntimeConfig, getProviderApiKey, type AgentProviderRuntimeConfig } from './agentSettings';
+import {
+  getActiveProviderRuntimeConfig,
+  getAgentRuntimeSettings,
+  getProviderApiKey,
+  providerStreamOptionsFromRuntimeSettings,
+  type AgentProviderRuntimeConfig,
+} from './agentSettings';
 import type { OutlinerToolHost } from './agentNodeTools';
 import { AgentUserViewContextReminderTracker, buildUserViewContextReminder } from './agentUserViewContextReminder';
-import type { AgentSessionMeta } from '../core/types';
+import {
+  AgentSkillRuntime,
+  createSlashSkillPrompt,
+  type SkillListingReservation,
+  type SkillTurnEffect,
+} from './agentSkills';
+import {
+  AGENT_SUBAGENT_TOOL_NAME,
+  AgentSubagentRuntime,
+  type AgentSubagentCreateInput,
+  type AgentSubagentRestoredRun,
+  type AgentSubagentRunSnapshot,
+} from './agentSubagents';
+import { executeAgentSkillShellCommand } from './agentSkillShell';
+import { evaluateAgentToolPermission } from './agentPermissions';
+import {
+  createAgentLocalWorkspaceContext,
+  type AgentLocalWorkspaceContext,
+} from './agentLocalTools';
+import {
+  assistantMessageText,
+  buildCompactSummaryRequest,
+  formatCompactSummary,
+  parseCompactSlashCommand,
+  truncateCompactMessagesForPromptTooLongRetry,
+} from './agentCompaction';
+import {
+  createToolResultBudgetState,
+  DEFAULT_MAX_TOOL_RESULT_CHARS,
+  buildPersistedToolOutputMessage,
+  restoreToolResultBudgetStateFromMessages,
+  summarizeTextPayload,
+  type ToolResultBudgetState,
+} from './agentToolOutputSlimming';
+import { AgentRuntimeContextManager, type AgentRuntimeContextEventInput } from './agentRuntimeContext';
+import type { AgentPermissionMode, AgentReasoningLevel, AgentRuntimeSettings, AgentSessionMeta } from '../core/types';
 import { buildAgentRenderProjection } from '../core/agentRenderProjection';
+import { createAbortSettledStreamFn } from './agentStreamAbort';
+import { awaitWithAbort, throwIfAborted } from './agentAwaitWithAbort';
 
 const EMPTY_USAGE = {
   input: 0,
@@ -92,8 +160,8 @@ const MAX_ATTACHMENTS = 8;
 const MAX_ATTACHMENT_NAME_LENGTH = 180;
 const MAX_TEXT_ATTACHMENT_CHARS = 120_000;
 const MAX_IMAGE_ATTACHMENT_BASE64_CHARS = Math.floor(4.5 * 1024 * 1024);
-const MAX_INLINE_TOOL_OUTPUT_CHARS = 8_000;
-const TOOL_OUTPUT_PREVIEW_CHARS = 2_000;
+const MAX_INLINE_TOOL_OUTPUT_CHARS = DEFAULT_MAX_TOOL_RESULT_CHARS;
+const COMPACT_SUMMARY_MAX_OUTPUT_TOKENS = 20_000;
 const AGENT_ATTACHMENT_DIR = 'agent-attachments';
 const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
   'image/jpeg',
@@ -102,8 +170,24 @@ const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
   'image/webp',
 ]);
 
+type CompleteSimpleFn = typeof completeSimple;
+
+interface AgentRuntimeOptions {
+  agentDataRoot?: string;
+  completeSimpleFn?: CompleteSimpleFn;
+  localFileRoot?: string;
+  permissionMode?: AgentPermissionMode;
+  runtimeSettingsLoader?: () => Promise<AgentRuntimeSettings>;
+  providerApiKeyLoader?: (providerId: string) => Promise<string | undefined> | string | undefined;
+  providerConfigLoader?: () => Promise<AgentProviderRuntimeConfig | null>;
+  providerModelResolver?: (providerConfig: AgentProviderRuntimeConfig) => Model<Api>;
+  streamFn?: StreamFn;
+}
+
 interface AgentSessionState {
   agent: Agent;
+  autoCompactConsecutiveFailures: number;
+  autoCompactInProgress: boolean;
   eventState: AgentEventReplayState;
   activeRunId: string | null;
   activeAssistantMessageId: string | null;
@@ -111,20 +195,26 @@ interface AgentSessionState {
   currentDebugQueryIndex: number;
   nextDebugQueryIndex: number;
   nextDebugTurnIndex: number;
+  lastSubmittedUserPrompt: UserMessage | null;
+  pendingSubagentNotifications: string[];
   pendingEventAppend: Promise<void>;
   pendingProjectionLastEventType: string | null;
   pendingProjectionTimer: ReturnType<typeof setTimeout> | null;
+  queuedFollowUpSkillListingReservation: SkillListingReservation | null;
+  reactiveCompactRequested: boolean;
   revision: number;
+  subagentNotificationFlushInProgress: boolean;
+  runtimeSettings: AgentRuntimeSettings;
+  skillRuntime: AgentSkillRuntime;
+  subagentRuntime: AgentSubagentRuntime;
+  localWorkspace: AgentLocalWorkspaceContext;
+  toolOutputPayloads: Map<string, { payload: AgentPayloadRef; label: string }>;
+  toolResultBudgetState: ToolResultBudgetState;
   toolCallMessageIds: Map<string, string>;
   unsubscribe: (() => void) | null;
 }
 
-type AgentEventInput = {
-  type: AgentEventType;
-  actor: AgentActor;
-  createdAt?: number;
-  [key: string]: unknown;
-};
+type AgentEventInput = AgentRuntimeContextEventInput;
 type AgentUserViewPanel = AgentUserViewContext['nodePanels'][number];
 type AgentUserViewNode = NonNullable<AgentUserViewContext['focusedNode']>;
 type AgentUserViewOutlineNode = AgentUserViewPanel['visibleOutline'][number];
@@ -139,12 +229,38 @@ export class AgentRuntime {
   private eventStore: AgentEventStore | null = null;
   private nextSessionId = 1;
   private readonly userViewContextReminderTracker = new AgentUserViewContextReminderTracker();
+  private readonly contextManager: AgentRuntimeContextManager<AgentSessionState>;
 
   constructor(
     private readonly getWindow: () => BrowserWindow | null,
     private readonly outlinerToolHost: OutlinerToolHost,
-    private readonly options: { localFileRoot?: string; agentDataRoot?: string } = {},
-  ) {}
+    private readonly options: AgentRuntimeOptions = {},
+  ) {
+    this.contextManager = new AgentRuntimeContextManager<AgentSessionState>({
+      refreshRuntimeSettings: (session) => this.refreshRuntimeSettings(session),
+      deriveRuntimePiMessages: (sessionId, eventState) => this.deriveRuntimePiMessages(sessionId, eventState),
+      appendSessionEvents: async (sessionId, session, inputs) => {
+        await this.appendSessionEvents(sessionId, session, inputs);
+      },
+      appendCompactionRootEvent: (sessionId, session, prompt, summary, compactedThroughMessageId, preservedMessages) => (
+        this.appendCompactionRootEvent(sessionId, session, prompt, summary, compactedThroughMessageId, preservedMessages)
+      ),
+      persistToolOutputPayload: (sessionId, toolCallId, toolName, text) => (
+        this.persistToolOutputPayload(sessionId, toolCallId, toolName, text)
+      ),
+      captureDebugPayload: (sessionId, payload, model) => this.captureDebugPayload(sessionId, payload, model),
+      captureDebugResponse: (sessionId, response, model) => this.captureDebugResponse(sessionId, response, model),
+      emitError: (sessionId, message) => this.emitError(sessionId, message),
+      getActiveProviderConfig: () => this.getActiveProviderConfig(),
+      getProviderApiKey: (providerId) => this.getProviderApiKey(providerId),
+      resolveProviderModel: (providerConfig) => this.resolveProviderModel(providerConfig),
+      startReactiveRetryRun: async (sessionId, session) => {
+        this.beginDebugQuery(session);
+        await this.startRun(sessionId, session);
+      },
+      completeSimpleFn: this.options.completeSimpleFn,
+    });
+  }
 
   ready() {
     this.emit({ type: 'ready', sessionId: null, timestamp: Date.now() });
@@ -216,6 +332,34 @@ export class AgentRuntime {
     return bytes.toString('utf8');
   }
 
+  async subagentStatus(
+    sessionId: string,
+    agentId: string,
+    options: { wait?: boolean; timeoutMs?: number } = {},
+  ) {
+    const session = await this.ensureSessionWithId(sessionId);
+    return session.subagentRuntime.status({
+      agent_id: agentId,
+      wait: options.wait === true,
+      timeout_ms: options.timeoutMs,
+    });
+  }
+
+  async subagentSend(sessionId: string, agentId: string, message: string) {
+    const session = await this.ensureSessionWithId(sessionId);
+    return session.subagentRuntime.send({
+      agent_id: agentId,
+      message,
+    });
+  }
+
+  async subagentStop(sessionId: string, agentId: string) {
+    const session = await this.ensureSessionWithId(sessionId);
+    return session.subagentRuntime.stop({
+      agent_id: agentId,
+    });
+  }
+
   async renameSession(sessionId: string, title: string) {
     const normalized = title.trim() || 'Untitled';
     const session = this.sessions.get(sessionId);
@@ -251,6 +395,7 @@ export class AgentRuntime {
       this.userViewContextReminderTracker.reset(sessionId);
       this.emit({ type: 'closed', sessionId, timestamp: Date.now() });
     }
+    this.cleanupProviderSessionResources(sessionId);
     await this.getEventStore().deleteSession(sessionId);
     this.userViewContextReminderTracker.reset(sessionId);
   }
@@ -269,22 +414,51 @@ export class AgentRuntime {
         if (attachments.length > 0) {
           throw new Error('Attachments cannot be queued while the agent is running.');
         }
-        this.queueFollowUp(sessionId, message, userViewContextInput);
+        await this.steerSession(sessionId, message);
         return;
       }
+      const runtimeSettings = await this.refreshRuntimeSettings(session);
+      const compactCommand = attachments.length === 0 && runtimeSettings.compactEnabled
+        ? parseCompactSlashCommand(message)
+        : null;
+      if (compactCommand) {
+        await this.compactSession(sessionId, session, compactCommand.instructions);
+        return;
+      }
+      session.skillRuntime.resetRunPermissionRules();
       this.beginDebugQuery(session);
       const userViewContextReminder = this.userViewContextReminderTracker.prepare(
         sessionId,
         normalizeAgentUserViewContext(userViewContextInput),
       );
-      const prompt = buildUserPromptMessage(message, attachments, {
-        outlinerContext: buildOutlinerContextReminder(this.outlinerToolHost),
+      const now = new Date();
+      const outlinerContext = buildOutlinerContextReminder(this.outlinerToolHost);
+      const turnContextReminder = joinReminderParts([
+        buildEnvironmentContextReminder(now),
+        outlinerContext,
+        userViewContextReminder.reminder,
+      ]);
+      const slashSkillPrompt = attachments.length === 0 && runtimeSettings.slashSkillsEnabled
+        ? await createSlashSkillPrompt(session.skillRuntime, message, turnContextReminder)
+        : null;
+      const skillListingReminder = slashSkillPrompt
+        ? null
+        : await this.buildSkillListingReminder(session);
+      const agentListingReminder = slashSkillPrompt
+        ? null
+        : await this.buildAgentListingReminder(session);
+      const prompt = slashSkillPrompt ?? buildUserPromptMessage(message, attachments, {
+        outlinerContext,
         userViewContextReminder: userViewContextReminder.reminder,
-      });
+        skillListingReminder,
+        agentListingReminder,
+      }, now);
+      session.lastSubmittedUserPrompt = prompt;
       await this.appendUserPromptEvent(sessionId, session, prompt);
       userViewContextReminder.commit();
       await this.startRun(sessionId, session);
       await session.agent.prompt(prompt);
+      await this.contextManager.runReactiveCompactRetryIfNeeded(sessionId, session);
       await this.persistAndEmitIdle(sessionId, session);
     } catch (error) {
       this.emitError(sessionId, error instanceof Error ? error.message : String(error));
@@ -310,9 +484,11 @@ export class AgentRuntime {
       }]);
       session.agent.state.messages = await this.deriveRuntimePiMessages(sessionId, session.eventState) as never;
       this.emitProjection(sessionId, 'message_edited');
+      session.skillRuntime.resetRunPermissionRules();
       this.beginDebugQuery(session);
       await this.startRun(sessionId, session);
       await session.agent.continue();
+      await this.contextManager.runReactiveCompactRetryIfNeeded(sessionId, session);
       await this.persistAndEmitIdle(sessionId, session);
     } catch (error) {
       this.emitError(sessionId, error instanceof Error ? error.message : String(error));
@@ -334,9 +510,11 @@ export class AgentRuntime {
       }]);
       session.agent.state.messages = await this.deriveRuntimePiMessages(sessionId, session.eventState) as never;
       this.emitProjection(sessionId, 'message_regenerate_started');
+      session.skillRuntime.resetRunPermissionRules();
       this.beginDebugQuery(session);
       await this.startRun(sessionId, session);
       await continueFromActivePath(session.agent);
+      await this.contextManager.runReactiveCompactRetryIfNeeded(sessionId, session);
       await this.persistAndEmitIdle(sessionId, session);
     } catch (error) {
       this.emitError(sessionId, error instanceof Error ? error.message : String(error));
@@ -357,9 +535,11 @@ export class AgentRuntime {
       }]);
       session.agent.state.messages = await this.deriveRuntimePiMessages(sessionId, session.eventState) as never;
       this.emitProjection(sessionId, 'message_retry_started');
+      session.skillRuntime.resetRunPermissionRules();
       this.beginDebugQuery(session);
       await this.startRun(sessionId, session);
       await continueFromActivePath(session.agent);
+      await this.contextManager.runReactiveCompactRetryIfNeeded(sessionId, session);
       await this.persistAndEmitIdle(sessionId, session);
     } catch (error) {
       this.emitError(sessionId, error instanceof Error ? error.message : String(error));
@@ -384,7 +564,7 @@ export class AgentRuntime {
     }
   }
 
-  queueFollowUp(sessionId: string, message: string, userViewContextInput: unknown = null) {
+  async queueFollowUp(sessionId: string, message: string, userViewContextInput: unknown = null) {
     const session = this.sessions.get(sessionId);
     if (!session) {
       this.emitError(sessionId, `Unknown agent session: ${sessionId}`);
@@ -392,20 +572,53 @@ export class AgentRuntime {
     }
     const text = message.trim();
     if (!text) return { queued: false };
+    this.releaseQueuedFollowUpSkillListing(session);
     session.agent.clearFollowUpQueue();
     this.userViewContextReminderTracker.reset(sessionId);
+    await this.refreshRuntimeSettings(session);
+    const skillListingReservation = await this.reserveSkillListingReminder(session);
+    session.queuedFollowUpSkillListingReservation = skillListingReservation;
     session.agent.followUp(buildUserPromptMessage(text, [], {
       outlinerContext: buildOutlinerContextReminder(this.outlinerToolHost),
       userViewContextReminder: buildUserViewContextReminder(normalizeAgentUserViewContext(userViewContextInput)),
+      skillListingReminder: skillListingReservation?.text ?? null,
+      agentListingReminder: await this.buildAgentListingReminder(session),
     }));
     this.emitProjection(sessionId, 'follow_up_queued');
     return { queued: true };
+  }
+
+  steerSession(sessionId: string, message: string) {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      this.emitError(sessionId, `Unknown agent session: ${sessionId}`);
+      return { queued: false };
+    }
+    const text = message.trim();
+    if (!text) return { queued: false };
+    if (!session.agent.state.isStreaming) return { queued: false };
+    session.agent.clearSteeringQueue();
+    session.agent.steer({
+      role: 'user',
+      timestamp: Date.now(),
+      content: [{ type: 'text', text }],
+    });
+    this.emitProjection(sessionId, 'steer_queued');
+    return { queued: true };
+  }
+
+  clearSteer(sessionId: string) {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    session.agent.clearSteeringQueue();
+    this.emitProjection(sessionId, 'steer_cleared');
   }
 
   clearFollowUp(sessionId: string) {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     session.agent.clearFollowUpQueue();
+    this.releaseQueuedFollowUpSkillListing(session);
     this.emitProjection(sessionId, 'follow_up_cleared');
   }
 
@@ -413,6 +626,7 @@ export class AgentRuntime {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     session.agent.abort();
+    session.skillRuntime.resetRunPermissionRules();
     this.emitProjection(sessionId, 'stop_requested');
   }
 
@@ -420,6 +634,7 @@ export class AgentRuntime {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     session.agent.reset();
+    this.cleanupProviderSessionResources(sessionId);
     this.userViewContextReminderTracker.reset(sessionId);
     void (async () => {
       await this.getEventStore().deleteSession(sessionId);
@@ -434,6 +649,16 @@ export class AgentRuntime {
       for (const event of events) appendAgentEventToReplayState(eventState, event);
       session.eventState = eventState;
       session.agent.state.messages = [];
+      session.autoCompactConsecutiveFailures = 0;
+      session.lastSubmittedUserPrompt = null;
+      session.pendingSubagentNotifications.length = 0;
+      session.queuedFollowUpSkillListingReservation = null;
+      session.reactiveCompactRequested = false;
+      session.localWorkspace.readFileState.clear();
+      session.toolOutputPayloads.clear();
+      session.toolResultBudgetState = createToolResultBudgetState();
+      await this.refreshRuntimeSettings(session);
+      session.skillRuntime.resetSessionState();
       this.emitProjection(sessionId, 'session_reset');
     })().catch((error) => this.emitError(sessionId, error instanceof Error ? error.message : String(error)));
   }
@@ -446,6 +671,7 @@ export class AgentRuntime {
     clearPendingProjection(session);
     this.sessions.delete(sessionId);
     this.userViewContextReminderTracker.reset(sessionId);
+    this.cleanupProviderSessionResources(sessionId);
     this.emit({ type: 'closed', sessionId, timestamp: Date.now() });
   }
 
@@ -457,38 +683,149 @@ export class AgentRuntime {
     existing?.unsubscribe?.();
     existing?.agent.abort();
     if (existing) clearPendingProjection(existing);
+    if (existing) this.cleanupProviderSessionResources(sessionId);
     this.userViewContextReminderTracker.reset(sessionId);
 
-    const providerConfig = await getActiveProviderRuntimeConfig();
+    const providerConfig = await this.getActiveProviderConfig();
+    const runtimeSettings = await this.getRuntimeSettings();
     const activePath = await this.deriveRuntimePiMessages(sessionId, eventState);
+    const sessionRef: { current: AgentSessionState | null } = { current: null };
+    const agentRef: { current: Agent | null } = { current: null };
+    const skillRuntime = new AgentSkillRuntime({
+      localRoot: this.options.localFileRoot,
+      additionalSkillDirectories: runtimeSettings.additionalSkillDirectories,
+      sessionId,
+      executeSkillShell: async ({ command, skill }) => {
+        const activeSettings = await this.getRuntimeSettings();
+        return executeAgentSkillShellCommand({
+          command,
+          localRoot: this.options.localFileRoot,
+          permissionMode: this.options.permissionMode ?? activeSettings.permissionMode,
+          allowedTools: skill.allowedTools,
+        });
+      },
+      executeForkedSkill: async ({ skill, renderedContent, parentToolCallId }) => {
+        const current = sessionRef.current;
+        if (!current) throw new Error('Cannot run forked skill before the agent session is ready.');
+        const data = await current.subagentRuntime.invokeSkillSubagent({
+          skillName: skill.name,
+          description: skill.description,
+          renderedContent,
+          agent: skill.agent,
+          model: skill.model,
+          effort: skill.effort,
+          allowedTools: skill.allowedTools,
+        }, undefined, parentToolCallId);
+        return {
+          agentId: data.agent_id,
+          subagentType: data.subagent_type,
+          status: data.status,
+          result: data.result,
+          error: data.error,
+        };
+      },
+    });
+    skillRuntime.restoreInvokedSkillsFromMessages(activePath);
+    const localWorkspace = createAgentLocalWorkspaceContext(this.options.localFileRoot, skillRuntime);
+    const subagentRuntime = new AgentSubagentRuntime({
+      sessionId,
+      localRoot: this.options.localFileRoot,
+      additionalAgentDirectories: runtimeSettings.additionalAgentDirectories,
+      host: {
+        createChildAgent: (input) => {
+          if (!providerConfig) throw new Error('No enabled agent provider is configured.');
+          return this.createSubagentAgent(providerConfig, input);
+        },
+        getParentMessages: () => agentRef.current?.state.messages as AgentMessage[] ?? activePath,
+        getParentSystemPrompt: () => agentRef.current?.state.systemPrompt ?? LIN_AGENT_SYSTEM_PROMPT,
+        getRuntimeSettings: () => this.getRuntimeSettings(),
+        persistSubagentRun: (snapshot) => {
+          const current = sessionRef.current;
+          if (!current) return Promise.resolve();
+          return this.persistSubagentRun(sessionId, current, snapshot);
+        },
+        notifySubagentRun: (snapshot) => {
+          const current = sessionRef.current;
+          if (!current) return Promise.resolve();
+          return this.notifySubagentRun(sessionId, current, snapshot);
+        },
+        persistToolOutputPayload: (toolCallId, toolName, text) => (
+          this.persistToolOutputPayload(sessionId, toolCallId, toolName, text)
+        ),
+        completeCompactSummary: (compactSessionId, messages, model, customInstructions, signal) => (
+          this.completeCompactSummary(compactSessionId, messages, model, customInstructions, signal)
+        ),
+      },
+    });
+    subagentRuntime.restoreListedAgentsFromMessages(activePath);
     const agent = providerConfig
-      ? createConfiguredAgent(sessionId, providerConfig, activePath, this.outlinerToolHost, this.options.localFileRoot, async (payload, model) => {
+      ? createConfiguredAgent(sessionId, providerConfig, activePath, this.outlinerToolHost, {
+          localFileRoot: this.options.localFileRoot,
+          localWorkspace,
+          model: this.resolveProviderModel(providerConfig),
+          permissionMode: this.options.permissionMode,
+          runtimeSettingsLoader: () => this.getRuntimeSettings(),
+          skillToolEnabled: runtimeSettings.automaticSkillsEnabled,
+          skillRuntime,
+          subagentRuntime,
+          streamFn: this.options.streamFn,
+          providerApiKeyLoader: this.options.providerApiKeyLoader,
+          afterToolResult: (toolCallId, toolName, result, isError) => {
+            const current = sessionRef.current;
+            if (!current) return undefined;
+            return this.contextManager.afterToolResultForModelContext(sessionId, current, toolCallId, toolName, result, isError);
+          },
+        }, async (payload, model) => {
           try {
             await this.captureDebugPayload(sessionId, payload, model);
           } catch (error) {
             this.emitError(sessionId, error instanceof Error ? error.message : String(error));
           }
           return undefined;
+        }, async (response, model) => {
+          try {
+            await this.captureDebugResponse(sessionId, response, model);
+          } catch (error) {
+            this.emitError(sessionId, error instanceof Error ? error.message : String(error));
+          }
         })
       : createConfigurationErrorAgent(sessionId, 'No enabled agent provider is configured.', activePath);
+    agentRef.current = agent;
 
     const debugCounters = await this.loadDebugCounters(sessionId);
     const session: AgentSessionState = {
       agent,
+      autoCompactConsecutiveFailures: 0,
+      autoCompactInProgress: false,
       eventState,
       activeRunId: null,
       activeAssistantMessageId: null,
       activeAssistantText: '',
       currentDebugQueryIndex: 0,
+      lastSubmittedUserPrompt: null,
       nextDebugQueryIndex: debugCounters.nextQueryIndex,
       nextDebugTurnIndex: debugCounters.nextTurnIndex,
+      pendingSubagentNotifications: [],
       pendingEventAppend: Promise.resolve(),
       pendingProjectionLastEventType: null,
       pendingProjectionTimer: null,
+      queuedFollowUpSkillListingReservation: null,
+      reactiveCompactRequested: false,
       revision: 0,
+      subagentNotificationFlushInProgress: false,
+      runtimeSettings,
+      skillRuntime,
+      subagentRuntime,
+      localWorkspace,
+      toolOutputPayloads: new Map(),
+      toolResultBudgetState: restoreToolResultBudgetStateFromMessages(getAgentEventActivePath(eventState)),
       toolCallMessageIds: new Map(),
       unsubscribe: null,
     };
+    sessionRef.current = session;
+    await this.markInterruptedSubagentsOnRestore(sessionId, session);
+    session.subagentRuntime.restorePersistedRuns(await this.loadPersistedSubagentRuns(sessionId, session.eventState));
+    agent.transformContext = async (_messages, signal) => this.contextManager.prepareModelContext(sessionId, session, signal);
 
     session.unsubscribe = agent.subscribe(async (event) => {
       await this.handlePiAgentEvent(sessionId, session, event);
@@ -526,19 +863,350 @@ export class AgentRuntime {
     session.nextDebugQueryIndex += 1;
   }
 
-  private async captureDebugPayload(sessionId: string, payload: unknown, model: Model<any>) {
+  private async buildSkillListingReminder(session: AgentSessionState): Promise<string | null> {
+    return (await this.reserveSkillListingReminder(session))?.text ?? null;
+  }
+
+  private async buildAgentListingReminder(session: AgentSessionState): Promise<string | null> {
+    return session.subagentRuntime.reserveAgentListingReminderText(
+      session.agent.state.model.contextWindow,
+    );
+  }
+
+  private async reserveSkillListingReminder(session: AgentSessionState) {
+    if (!session.runtimeSettings.automaticSkillsEnabled) return null;
+    return session.skillRuntime.reserveSkillListingReminderText(
+      session.agent.state.model.contextWindow,
+    );
+  }
+
+  private releaseQueuedFollowUpSkillListing(session: AgentSessionState): void {
+    if (!session.queuedFollowUpSkillListingReservation) return;
+    session.skillRuntime.releaseSkillListingReservation(session.queuedFollowUpSkillListingReservation);
+    session.queuedFollowUpSkillListingReservation = null;
+  }
+
+  private async refreshRuntimeSettings(session: AgentSessionState): Promise<AgentRuntimeSettings> {
+    const runtimeSettings = await this.getRuntimeSettings();
+    session.runtimeSettings = runtimeSettings;
+    session.skillRuntime.updateAdditionalSkillDirectories(runtimeSettings.additionalSkillDirectories);
+    this.applyRuntimeToolSettings(session);
+    return runtimeSettings;
+  }
+
+  private applyRuntimeToolSettings(session: AgentSessionState): void {
+    session.subagentRuntime.updateAdditionalAgentDirectories(session.runtimeSettings.additionalAgentDirectories);
+    session.agent.state.tools = createAgentTools(this.outlinerToolHost, {
+      localFileRoot: this.options.localFileRoot,
+      localWorkspace: session.localWorkspace,
+      skillRuntime: session.skillRuntime,
+      skillToolEnabled: session.runtimeSettings.automaticSkillsEnabled,
+      subagentRuntime: session.subagentRuntime,
+    });
+  }
+
+  private createSubagentAgent(providerConfig: AgentProviderRuntimeConfig, input: AgentSubagentCreateInput): Agent {
+    const inheritedModel = this.resolveProviderModel(providerConfig);
+    const model = input.model
+      ? resolveSkillModelOverride(input.model, providerConfig, inheritedModel)
+      : inheritedModel;
+    const thinkingLevel = input.effort
+      ? resolveSkillEffortOverride(input.effort, model, providerConfig.reasoningLevel)
+      : providerConfig.reasoningLevel;
+    return createConfiguredAgent(input.sessionId, providerConfig, input.messages, this.outlinerToolHost, {
+      localFileRoot: this.options.localFileRoot,
+      localWorkspace: input.localWorkspace,
+      model,
+      thinkingLevel,
+      permissionMode: input.permissionMode ?? this.options.permissionMode,
+      runtimeSettingsLoader: () => this.getRuntimeSettings(),
+      skillToolEnabled: true,
+      skillRuntime: input.skillRuntime,
+      subagentRuntime: input.subagentRuntime,
+      streamFn: this.options.streamFn,
+      providerApiKeyLoader: this.options.providerApiKeyLoader,
+      systemPrompt: input.systemPrompt,
+      allowedTools: input.allowedTools,
+      disallowedTools: input.disallowedTools,
+      preapprovedToolRules: input.preapprovedToolRules,
+      afterToolResult: input.afterToolResult,
+    }, async (payload, modelForPayload) => {
+      try {
+        await this.captureDebugPayload(input.sessionId, payload, modelForPayload);
+      } catch {
+        // Subagent sidechain persistence is intentionally isolated from parent UI errors.
+      }
+      return undefined;
+    }, async (response, modelForResponse) => {
+      try {
+        await this.captureDebugResponse(input.sessionId, response, modelForResponse);
+      } catch {
+        // Subagent sidechain persistence is intentionally isolated from parent UI errors.
+      }
+    });
+  }
+
+  private async loadPersistedSubagentRuns(
+    sessionId: string,
+    eventState: AgentEventReplayState,
+  ): Promise<AgentSubagentRestoredRun[]> {
+    const runs: AgentSubagentRestoredRun[] = [];
+    for (const record of Object.values(eventState.subagents ?? {})) {
+      const payloadId = record.transcriptPayloadId;
+      const payload = payloadId ? eventState.payloads[payloadId] : undefined;
+      const transcriptMessages = payload
+        ? await this.readSubagentTranscriptPayload(sessionId, payload)
+        : [];
+      runs.push({ record, transcriptMessages });
+    }
+    return runs;
+  }
+
+  private async markInterruptedSubagentsOnRestore(
+    sessionId: string,
+    session: AgentSessionState,
+  ): Promise<void> {
+    const runningRuns = Object.values(session.eventState.subagents ?? {})
+      .filter((run) => run.status === 'running');
+    if (runningRuns.length === 0) return;
+
+    await this.appendSessionEvents(sessionId, session, runningRuns.map((run): AgentEventInput => ({
+      type: 'subagent_run.updated',
+      actor: systemActor(),
+      subagentRunId: run.id,
+      status: 'failed',
+      completedAt: Date.now(),
+      error: 'Subagent was interrupted before session restore.',
+      transcriptMessageCount: run.transcriptMessageCount,
+    })));
+  }
+
+  private async readSubagentTranscriptPayload(
+    sessionId: string,
+    payload: AgentPayloadRef,
+  ): Promise<AgentMessage[]> {
+    try {
+      const raw = await this.getEventStore().readPayload(sessionId, payload);
+      const parsed = JSON.parse(raw.toString('utf8')) as unknown;
+      if (!isRecord(parsed) || parsed.v !== 1 || !Array.isArray(parsed.messages)) return [];
+      return parsed.messages.filter(isRecordableRuntimeMessage).map((message) => JSON.parse(JSON.stringify(message)) as AgentMessage);
+    } catch {
+      return [];
+    }
+  }
+
+  private async persistSubagentRun(
+    sessionId: string,
+    session: AgentSessionState,
+    snapshot: AgentSubagentRunSnapshot,
+  ): Promise<void> {
+    const actor = snapshot.parentToolCallId
+      ? toolActor(AGENT_SUBAGENT_TOOL_NAME, snapshot.parentToolCallId)
+      : systemActor();
+    const exists = Boolean(session.eventState.subagents[snapshot.id]);
+    const existingRun = session.eventState.subagents[snapshot.id];
+    const transcriptEnvelope = {
+      v: 1,
+      runId: snapshot.id,
+      messageCount: snapshot.transcriptMessages.length,
+      messages: snapshot.transcriptMessages,
+    };
+    const transcriptData = JSON.stringify(transcriptEnvelope);
+    const transcriptSha = createHash('sha256').update(transcriptData).digest('hex');
+    const existingPayload = existingRun?.transcriptPayloadId
+      ? session.eventState.payloads[existingRun.transcriptPayloadId]
+      : undefined;
+    const payload = existingPayload?.sha256 === transcriptSha
+      ? undefined
+      : await this.getEventStore().writePayload(sessionId, {
+          id: `subagent-transcript-${snapshot.id}-${snapshot.transcriptMessages.length}-${transcriptSha.slice(0, 12)}`,
+          data: transcriptData,
+          mimeType: 'application/json',
+          role: 'subagent_transcript',
+          summary: `Subagent ${snapshot.subagentType} transcript (${snapshot.transcriptMessages.length} messages)`,
+        });
+    await this.appendSessionEvents(sessionId, session, [
+      ...(payload ? [{
+        type: 'payload.created' as const,
+        actor,
+        payload,
+      }] : []),
+      exists
+        ? {
+            type: 'subagent_run.updated',
+            actor,
+            subagentRunId: snapshot.id,
+            status: snapshot.status,
+            completedAt: snapshot.completedAt,
+            result: snapshot.result,
+            error: snapshot.error,
+            transcriptPayload: payload,
+            transcriptMessageCount: snapshot.transcriptMessages.length,
+          }
+        : {
+            type: 'subagent_run.started',
+            actor,
+            subagentRunId: snapshot.id,
+            parentToolCallId: snapshot.parentToolCallId,
+            name: snapshot.name,
+            description: snapshot.description,
+            prompt: snapshot.prompt,
+            subagentType: snapshot.subagentType,
+            contextMode: snapshot.contextMode,
+            transcriptPayload: payload,
+            transcriptMessageCount: snapshot.transcriptMessages.length,
+          },
+    ]);
+    this.emitProjection(sessionId, exists ? 'subagent_run.updated' : 'subagent_run.started', 'coalesce');
+  }
+
+  private async notifySubagentRun(
+    sessionId: string,
+    session: AgentSessionState,
+    snapshot: AgentSubagentRunSnapshot,
+  ): Promise<void> {
+    if (snapshot.status === 'running') return;
+    session.pendingSubagentNotifications.push(formatSubagentNotification(snapshot));
+    void this.flushSubagentNotifications(sessionId, session).catch((error) => {
+      this.emitError(sessionId, error instanceof Error ? error.message : String(error));
+    });
+  }
+
+  private async flushSubagentNotifications(sessionId: string, session: AgentSessionState): Promise<void> {
+    if (session.subagentNotificationFlushInProgress) return;
+    if (session.pendingSubagentNotifications.length === 0) return;
+    if (session.activeRunId || session.agent.state.isStreaming) return;
+
+    session.subagentNotificationFlushInProgress = true;
+    try {
+      while (session.pendingSubagentNotifications.length > 0) {
+        if (session.activeRunId || session.agent.state.isStreaming) break;
+        const notifications = session.pendingSubagentNotifications.splice(0);
+        const prompt: UserMessage = {
+          role: 'user',
+          timestamp: Date.now(),
+          content: [{ type: 'text', text: systemReminder(notifications.join('\n\n')) }],
+        };
+        session.skillRuntime.resetRunPermissionRules();
+        this.beginDebugQuery(session);
+        session.lastSubmittedUserPrompt = prompt;
+        await this.appendSystemPromptEvent(sessionId, session, prompt);
+        await this.startRun(sessionId, session);
+        await session.agent.prompt(prompt);
+        await this.contextManager.runReactiveCompactRetryIfNeeded(sessionId, session);
+        await this.persistAndEmitIdle(sessionId, session, { flushSubagentNotifications: false });
+      }
+    } catch (error) {
+      this.emitError(sessionId, error instanceof Error ? error.message : String(error));
+    } finally {
+      session.subagentNotificationFlushInProgress = false;
+    }
+  }
+
+  private async persistToolOutputPayload(
+    sessionId: string,
+    toolCallId: string,
+    toolName: string,
+    text: string,
+  ): Promise<{ payload: AgentPayloadRef; label: string }> {
+    const payload = await this.getEventStore().writePayload(sessionId, {
+      id: `tool-output-${toolCallId}`,
+      data: text,
+      mimeType: 'text/plain',
+      role: 'tool_output',
+      summary: summarizeTextPayload(text, `${toolName} output`),
+      truncated: true,
+    });
+    return {
+      payload,
+      label: buildPersistedToolOutputMessage(payload, text),
+    };
+  }
+
+  private async completeCompactSummary(
+    sessionId: string,
+    messages: readonly AgentMessage[],
+    modelOverride?: Model<Api>,
+    customInstructions?: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    throwIfAborted(signal);
+    const providerConfig = await this.getActiveProviderConfig();
+    throwIfAborted(signal);
+    if (!providerConfig) throw new Error('No enabled agent provider is configured.');
+    const model = modelOverride ?? this.resolveProviderModel(providerConfig);
+    const apiKey = providerConfig.apiKey ?? await this.getProviderApiKey(providerConfig.providerId);
+    const runtimeSettings = await this.getRuntimeSettings();
+    let messagesToSummarize = [...messages];
+
+    for (let attempt = 0; ; attempt += 1) {
+      throwIfAborted(signal);
+      const request = buildCompactSummaryRequest(messagesToSummarize, customInstructions);
+      const response = await awaitWithAbort((this.options.completeSimpleFn ?? completeSimple)(model, {
+        messages: [request],
+        tools: [],
+      }, {
+        ...providerStreamOptionsFromRuntimeSettings(runtimeSettings),
+        apiKey,
+        maxTokens: Math.min(model.maxTokens ?? COMPACT_SUMMARY_MAX_OUTPUT_TOKENS, COMPACT_SUMMARY_MAX_OUTPUT_TOKENS),
+        sessionId,
+        signal,
+        onPayload: async (payload, payloadModel) => {
+          try {
+            await this.captureDebugPayload(sessionId, payload, payloadModel);
+          } catch {
+            // Subagent compact debug capture must not break the child run.
+          }
+          return undefined;
+        },
+        onResponse: async (responsePayload, responseModel) => {
+          try {
+            await this.captureDebugResponse(sessionId, responsePayload, responseModel);
+          } catch {
+            // Subagent compact debug capture must not break the child run.
+          }
+        },
+      }), { signal });
+
+      const canRetry = (response.stopReason === 'error' || response.stopReason === 'aborted')
+        && isContextOverflow(response, model.contextWindow)
+        && attempt < 3;
+      if (canRetry) {
+        const errorText = response.errorMessage ?? assistantMessageText(response);
+        const truncated = truncateCompactMessagesForPromptTooLongRetry(messagesToSummarize, errorText);
+        if (truncated) {
+          messagesToSummarize = truncated;
+          continue;
+        }
+      }
+      if (response.stopReason === 'error' || response.stopReason === 'aborted') {
+        throw new Error(response.errorMessage || 'Compaction failed.');
+      }
+      const summary = formatCompactSummary(assistantMessageText(response));
+      if (!summary) throw new Error('Compaction failed: no summary text returned.');
+      return summary;
+    }
+  }
+
+  private async captureDebugPayload(
+    sessionId: string,
+    payload: unknown,
+    model: Model<any>,
+    source: AgentDebugSnapshot['source'] = 'provider_payload',
+  ) {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     this.beginDebugQuery(session);
     const turnIndex = session.nextDebugTurnIndex;
     const debugId = `debug-${randomUUID()}`;
     const envelope = createAgentDebugPayloadEnvelope(payload);
+    const sourceLabel = source === 'provider_response' ? 'Provider response' : 'Provider payload';
     const payloadRef = await this.getEventStore().writePayload(sessionId, {
       id: `${debugId}-payload`,
       data: envelope.json,
       mimeType: 'application/json',
       role: 'debug',
-      summary: `Provider payload round ${turnIndex}`,
+      summary: `${sourceLabel} round ${turnIndex}`,
     });
     await this.appendSessionEvents(sessionId, session, [{
       type: 'payload.created',
@@ -550,7 +1218,7 @@ export class AgentRuntime {
       actor: systemActor(),
       runId: session.activeRunId ?? undefined,
       debugId,
-      source: 'provider_payload',
+      source,
       queryIndex: session.currentDebugQueryIndex,
       turnIndex,
       payloadRef,
@@ -562,6 +1230,13 @@ export class AgentRuntime {
     }]);
     session.nextDebugTurnIndex += 1;
     this.debugProjectionCache.delete(sessionId);
+  }
+
+  private async captureDebugResponse(sessionId: string, response: ProviderResponse, model: Model<any>) {
+    await this.captureDebugPayload(sessionId, {
+      status: response.status,
+      headers: response.headers,
+    }, model, 'provider_response');
   }
 
   private getRuntimeDebugSnapshot(sessionId: string, session: AgentSessionState) {
@@ -613,9 +1288,16 @@ export class AgentRuntime {
     };
   }
 
-  private async persistAndEmitIdle(sessionId: string, session: AgentSessionState) {
+  private async persistAndEmitIdle(
+    sessionId: string,
+    session: AgentSessionState,
+    options: { flushSubagentNotifications?: boolean } = {},
+  ) {
     session.agent.state.messages = await this.deriveRuntimePiMessages(sessionId, session.eventState) as never;
     this.emitProjection(sessionId, 'agent_idle');
+    if (options.flushSubagentNotifications !== false) {
+      await this.flushSubagentNotifications(sessionId, session);
+    }
   }
 
   private reserveSessionId(sessionId: string) {
@@ -650,7 +1332,7 @@ export class AgentRuntime {
       model: clone(session.agent.state.model) as unknown as Record<string, unknown>,
       thinkingLevel: session.agent.state.thinkingLevel,
       pendingToolCallIds: Array.from(session.agent.state.pendingToolCalls),
-      errorMessage: session.agent.state.errorMessage ?? null,
+      errorMessage: latestAssistantWasAborted(session) ? null : session.agent.state.errorMessage ?? null,
     });
   }
 
@@ -707,6 +1389,30 @@ export class AgentRuntime {
   private getEventStore() {
     this.eventStore ??= new AgentEventStore(this.options.agentDataRoot ?? path.join(app.getPath('userData'), 'agent'));
     return this.eventStore;
+  }
+
+  private getActiveProviderConfig() {
+    return this.options.providerConfigLoader?.() ?? getActiveProviderRuntimeConfig();
+  }
+
+  private getRuntimeSettings() {
+    return this.options.runtimeSettingsLoader?.() ?? getAgentRuntimeSettings();
+  }
+
+  private cleanupProviderSessionResources(sessionId: string) {
+    try {
+      cleanupPiSessionResources(sessionId);
+    } catch (error) {
+      this.emitError(sessionId, error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  private getProviderApiKey(providerId: string) {
+    return this.options.providerApiKeyLoader?.(providerId) ?? getProviderApiKey(providerId);
+  }
+
+  private resolveProviderModel(providerConfig: AgentProviderRuntimeConfig) {
+    return this.options.providerModelResolver?.(providerConfig) ?? resolveModel(providerConfig);
   }
 
   private async listEventSessions(): Promise<AgentSessionMeta[]> {
@@ -798,17 +1504,212 @@ export class AgentRuntime {
     await this.appendSessionEvents(sessionId, session, inputs);
   }
 
+  private async appendSystemPromptEvent(sessionId: string, session: AgentSessionState, prompt: UserMessage) {
+    const messageId = this.createMessageId('user');
+    const persisted = await this.persistPiUserContent(sessionId, prompt.content, {
+      imageSummary: 'System notification attachment',
+    });
+    const actor = systemActor();
+    await this.appendSessionEvents(sessionId, session, [
+      ...persisted.payloads.map((payload): AgentEventInput => ({
+        type: 'payload.created',
+        actor,
+        payload,
+      })),
+      {
+        type: 'user_message.created',
+        actor,
+        createdAt: prompt.timestamp,
+        messageId,
+        parentMessageId: session.eventState.selectedLeafMessageId,
+        content: persisted.content,
+        attachments: persisted.payloads.length > 0 ? persisted.payloads : undefined,
+      },
+      {
+        type: 'branch.selected',
+        actor,
+        leafMessageId: messageId,
+      },
+    ]);
+  }
+
+  private async appendCompactionRootEvent(
+    sessionId: string,
+    session: AgentSessionState,
+    prompt: UserMessage,
+    summary: string,
+    compactedThroughMessageId: string,
+    preservedMessages: readonly AgentMessage[] = [],
+  ) {
+    const messageId = this.createMessageId('user');
+    const persisted = await this.persistPiUserContent(sessionId, prompt.content, {
+      imageSummary: 'Compaction attachment',
+    });
+    let leafMessageId = messageId;
+    const inputs: AgentEventInput[] = [
+      ...persisted.payloads.map((payload): AgentEventInput => ({
+        type: 'payload.created',
+        actor: systemActor(),
+        payload,
+      })),
+      {
+        type: 'compaction.completed',
+        actor: systemActor(),
+        summary,
+        compactedThroughMessageId,
+      },
+      {
+        type: 'user_message.created',
+        actor: systemActor(),
+        createdAt: prompt.timestamp,
+        messageId,
+        parentMessageId: null,
+        content: persisted.content,
+        attachments: persisted.payloads.length > 0 ? persisted.payloads : undefined,
+      },
+    ];
+
+    for (const message of preservedMessages) {
+      const clone = await this.buildPreservedMessageEvents(sessionId, message, leafMessageId);
+      inputs.push(...clone.inputs);
+      leafMessageId = clone.messageId;
+    }
+
+    inputs.push(
+      {
+        type: 'branch.selected',
+        actor: systemActor(),
+        leafMessageId,
+      },
+    );
+
+    await this.appendSessionEvents(sessionId, session, inputs);
+  }
+
+  private async buildPreservedMessageEvents(
+    sessionId: string,
+    message: AgentMessage,
+    parentMessageId: string,
+  ): Promise<{ messageId: string; inputs: AgentEventInput[] }> {
+    if (message.role === 'assistant') {
+      const messageId = this.createMessageId('assistant');
+      const runId = randomUUID();
+      return {
+        messageId,
+        inputs: [
+          {
+            type: 'assistant_message.started',
+            actor: agentActor(),
+            runId,
+            messageId,
+            parentMessageId,
+            providerId: message.provider,
+            modelId: message.model,
+            apiId: message.api,
+            createdAt: message.timestamp,
+          },
+          {
+            type: 'assistant_message.completed',
+            actor: agentActor(),
+            runId,
+            messageId,
+            stopReason: message.stopReason,
+            content: fromPiAssistantContent(message.content),
+            usage: message.usage,
+            createdAt: message.timestamp,
+          },
+        ],
+      };
+    }
+
+    if (message.role === 'toolResult') {
+      const messageId = this.createMessageId('tool-result');
+      const persisted = await this.persistPiUserContent(sessionId, message.content, {
+        imageSummary: `${message.toolName} image output`,
+        textPayloadRole: 'tool_output',
+        textSummary: `${message.toolName} output`,
+        textPayloadIdPrefix: `tool-output-${message.toolCallId}-${messageId}`,
+      });
+      const outputRef = persisted.payloads.find((payload) => payload.role === 'tool_output') ?? persisted.payloads[0];
+      const actor = toolActor(message.toolName, message.toolCallId);
+      return {
+        messageId,
+        inputs: [
+          ...persisted.payloads.map((payload): AgentEventInput => ({
+            type: 'payload.created',
+            actor,
+            payload,
+            createdAt: message.timestamp,
+          })),
+          {
+            type: 'tool_result.created',
+            actor,
+            messageId,
+            parentMessageId,
+            toolCallId: message.toolCallId,
+            toolName: message.toolName,
+            isError: message.isError,
+            content: persisted.content,
+            outputSummary: summarizeToolResult(message),
+            outputRef,
+            createdAt: message.timestamp,
+          },
+        ],
+      };
+    }
+
+    const messageId = this.createMessageId('user');
+    const persisted = await this.persistPiUserContent(sessionId, message.content, {
+      imageSummary: 'Compaction preserved attachment',
+    });
+    return {
+      messageId,
+      inputs: [
+        ...persisted.payloads.map((payload): AgentEventInput => ({
+          type: 'payload.created',
+          actor: userActor(),
+          payload,
+          createdAt: message.timestamp,
+        })),
+        {
+          type: 'user_message.created',
+          actor: userActor(),
+          messageId,
+          parentMessageId,
+          content: persisted.content,
+          attachments: persisted.payloads.length > 0 ? persisted.payloads : undefined,
+          createdAt: message.timestamp,
+        },
+      ],
+    };
+  }
+
   private async startRun(sessionId: string, session: AgentSessionState) {
     const runId = randomUUID();
     session.activeRunId = runId;
     session.activeAssistantMessageId = null;
     session.activeAssistantText = '';
     session.toolCallMessageIds.clear();
+    session.toolOutputPayloads.clear();
     await this.appendSessionEvents(sessionId, session, [{
       type: 'run.started',
       actor: systemActor(),
       runId,
     }]);
+  }
+
+  private async compactSession(sessionId: string, session: AgentSessionState, customInstructions?: string) {
+    try {
+      await this.contextManager.compactSession(sessionId, session, {
+        trigger: 'manual',
+        customInstructions,
+        updateAgentState: true,
+      });
+      session.skillRuntime.resetRunPermissionRules();
+      this.emitProjection(sessionId, 'session_compacted');
+    } finally {
+      session.currentDebugQueryIndex = 0;
+    }
   }
 
   private async handlePiAgentEvent(sessionId: string, session: AgentSessionState, event: PiAgentEvent) {
@@ -825,6 +1726,7 @@ export class AgentRuntime {
         if (!isDuplicateTailUserMessage(session.eventState, event.message)) {
           await this.appendUserPromptEvent(sessionId, session, event.message);
         }
+        session.queuedFollowUpSkillListingReservation = null;
         return;
       }
       if (isAssistantMessage(event.message)) {
@@ -851,15 +1753,23 @@ export class AgentRuntime {
 
     if (event.type === 'agent_end' && session.activeRunId) {
       const errorMessage = session.agent.state.errorMessage ?? null;
+      const terminalAssistant = [...event.messages].reverse().find(isAssistantMessage);
+      const cancelled = terminalAssistant?.stopReason === 'aborted';
+      const contextOverflow = terminalAssistant
+        ? isContextOverflow(terminalAssistant, session.agent.state.model.contextWindow)
+        : false;
       await this.appendSessionEvents(sessionId, session, [{
-        type: errorMessage ? 'run.failed' : 'run.completed',
+        type: cancelled ? 'run.cancelled' : errorMessage ? 'run.failed' : 'run.completed',
         actor: systemActor(),
         runId: session.activeRunId,
-        errorMessage: errorMessage ?? undefined,
+        errorMessage: cancelled ? undefined : errorMessage ?? undefined,
       }]);
       session.activeRunId = null;
       session.activeAssistantMessageId = null;
       session.activeAssistantText = '';
+      session.skillRuntime.resetRunPermissionRules();
+      session.reactiveCompactRequested = Boolean(!cancelled && contextOverflow);
+      if (!session.reactiveCompactRequested) session.lastSubmittedUserPrompt = null;
       await this.getEventStore().maybeWriteCheckpoint(sessionId, session.eventState, { force: true });
     }
   }
@@ -918,13 +1828,22 @@ export class AgentRuntime {
 
   private async appendToolResultMessage(sessionId: string, session: AgentSessionState, message: ToolResultMessage) {
     const actor = toolActor(message.toolName, message.toolCallId);
-    const persisted = await this.persistPiUserContent(sessionId, message.content, {
-      imageSummary: `${message.toolName} image output`,
-      textPayloadRole: 'tool_output',
-      textSummary: `${message.toolName} output`,
-      textPayloadIdPrefix: `tool-output-${message.toolCallId}`,
-    });
-    const outputRef = persisted.payloads.find((payload) => payload.role === 'tool_output') ?? persisted.payloads[0];
+    const prePersisted = session.toolOutputPayloads.get(message.toolCallId);
+    session.toolOutputPayloads.delete(message.toolCallId);
+    const persisted = prePersisted
+      ? {
+          content: [{ type: 'payload_ref', payload: prePersisted.payload, label: prePersisted.label }] satisfies AgentPersistedContent[],
+          payloads: [prePersisted.payload],
+        }
+      : await this.persistPiUserContent(sessionId, message.content, {
+          imageSummary: `${message.toolName} image output`,
+          textPayloadRole: 'tool_output',
+          textSummary: `${message.toolName} output`,
+          textPayloadIdPrefix: `tool-output-${message.toolCallId}`,
+        });
+    const outputRef = prePersisted?.payload
+      ?? persisted.payloads.find((payload) => payload.role === 'tool_output')
+      ?? persisted.payloads[0];
     await this.appendSessionEvents(sessionId, session, [
       ...persisted.payloads.map((payload): AgentEventInput => ({
         type: 'payload.created',
@@ -1244,13 +2163,19 @@ export class AgentRuntime {
 function buildUserPromptMessage(
   message: string,
   attachments: AgentMessageAttachmentInput[],
-  context: { outlinerContext?: string | null; userViewContextReminder?: string | null } = {},
+  context: {
+    outlinerContext?: string | null;
+    userViewContextReminder?: string | null;
+    skillListingReminder?: string | null;
+    agentListingReminder?: string | null;
+  } = {},
+  now = new Date(),
 ): UserMessage {
-  const timestamp = Date.now();
+  const timestamp = now.getTime();
   const trimmed = message.trim();
   const baseText = trimmed || defaultAttachmentPrompt(attachments);
   const content: (TextContent | ImageContent)[] = [];
-  const reminders = buildTurnReminderBlocks(attachments, context, new Date(timestamp));
+  const reminders = buildTurnReminderBlocks(attachments, context, now);
   content.push(...reminders);
   content.push({ type: 'text', text: baseText });
 
@@ -1365,20 +2290,24 @@ function stripDataUrlPrefix(data: string): string {
 
 function buildTurnReminderBlocks(
   attachments: AgentMessageAttachmentInput[],
-  context: { outlinerContext?: string | null; userViewContextReminder?: string | null },
+  context: {
+    outlinerContext?: string | null;
+    userViewContextReminder?: string | null;
+    skillListingReminder?: string | null;
+    agentListingReminder?: string | null;
+  },
   now: Date,
 ): TextContent[] {
   const blocks: TextContent[] = [];
-  const parts: string[] = [];
-  parts.push(buildEnvironmentContextReminder(now));
-  if (context.outlinerContext) {
-    parts.push(context.outlinerContext);
-  }
-  if (context.userViewContextReminder) {
-    parts.push(context.userViewContextReminder);
-  }
-  if (parts.length > 0) {
-    blocks.push({ type: 'text', text: systemReminder(parts.join('\n\n')) });
+  const reminder = joinReminderParts([
+    buildEnvironmentContextReminder(now),
+    context.outlinerContext,
+    context.userViewContextReminder,
+    context.skillListingReminder,
+    context.agentListingReminder,
+  ]);
+  if (reminder) {
+    blocks.push({ type: 'text', text: systemReminder(reminder) });
   }
 
   const marker = serializeAgentAttachmentMarker(attachments);
@@ -1386,6 +2315,13 @@ function buildTurnReminderBlocks(
     blocks.push({ type: 'text', text: systemReminder(marker) });
   }
   return blocks;
+}
+
+function joinReminderParts(parts: Array<string | null | undefined>): string | null {
+  const filtered = parts
+    .map((part) => part?.trim())
+    .filter((part): part is string => Boolean(part));
+  return filtered.length > 0 ? filtered.join('\n\n') : null;
 }
 
 function buildEnvironmentContextReminder(now: Date): string {
@@ -1718,38 +2654,13 @@ function summarizeToolResult(message: ToolResultMessage): string {
   return summarizeJson(message.content);
 }
 
-function summarizeTextPayload(text: string, prefix: string): string {
-  const normalized = text.replace(/\s+/g, ' ').trim();
-  const preview = normalized.length > 240 ? `${normalized.slice(0, 240).trim()}...` : normalized;
-  return preview ? `${prefix}: ${preview}` : prefix;
-}
-
-function buildPersistedToolOutputMessage(payload: AgentPayloadRef, text: string): string {
-  const preview = text.slice(0, TOOL_OUTPUT_PREVIEW_CHARS);
-  const clipped = text.length > preview.length;
-  return [
-    '<persisted-output>',
-    `Output too large (${formatByteSize(payload.byteLength)}). Full output saved as payload: ${payload.id}`,
-    '',
-    `Preview (first ${TOOL_OUTPUT_PREVIEW_CHARS} chars):`,
-    clipped ? `${preview}\n...` : preview,
-    '</persisted-output>',
-  ].join('\n');
-}
-
-function formatByteSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
 function isTextPayloadMimeType(mimeType: string): boolean {
   const normalized = mimeType.toLowerCase();
   return normalized.startsWith('text/') || normalized === 'application/json';
 }
 
 function isTextPayloadRole(role: AgentPayloadRef['role']): boolean {
-  return role === 'tool_output' || role === 'text_extract' || role === 'preview';
+  return role === 'tool_output' || role === 'text_extract' || role === 'preview' || role === 'subagent_transcript';
 }
 
 function summarizeJson(value: unknown): string {
@@ -1763,6 +2674,10 @@ function summarizeJson(value: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isRecordableRuntimeMessage(message: unknown): message is AgentMessage {
+  return isUserMessage(message) || isAssistantMessage(message) || isToolResultMessage(message);
 }
 
 function clearPendingProjection(session: AgentSessionState) {
@@ -1792,6 +2707,36 @@ function canContinueFromMessage(message: AgentMessage | undefined): boolean {
   return message?.role === 'user' || message?.role === 'toolResult';
 }
 
+function latestAssistantWasAborted(session: AgentSessionState): boolean {
+  const latest = getAgentEventActivePath(session.eventState)
+    .filter((message) => message.role === 'assistant')
+    .at(-1);
+  return latest?.stopReason === 'aborted';
+}
+
+function createProviderConfiguredStreamFn(
+  sourceFn: StreamFn,
+  runtimeSettingsLoader?: () => Promise<AgentRuntimeSettings>,
+): StreamFn {
+  return createAbortSettledStreamFn(async (model, context, options = {}) => {
+    const runtimeSettings = await loadRuntimeSettingsForStream(runtimeSettingsLoader);
+    return sourceFn(model, context, {
+      ...options,
+      ...providerStreamOptionsFromRuntimeSettings(runtimeSettings),
+    } satisfies SimpleStreamOptions);
+  });
+}
+
+async function loadRuntimeSettingsForStream(
+  runtimeSettingsLoader?: () => Promise<AgentRuntimeSettings>,
+): Promise<AgentRuntimeSettings | undefined> {
+  try {
+    return await runtimeSettingsLoader?.();
+  } catch {
+    return undefined;
+  }
+}
+
 async function continueFromActivePath(agent: Agent) {
   if (!canContinueFromMessage(agent.state.messages.at(-1) as AgentMessage | undefined)) {
     throw new Error('Cannot continue without a trailing user or tool result message.');
@@ -1804,29 +2749,225 @@ function createConfiguredAgent(
   providerConfig: AgentProviderRuntimeConfig,
   messages: AgentMessage[] = [],
   outlinerToolHost: OutlinerToolHost,
-  localFileRoot?: string,
+  options: {
+    localFileRoot?: string;
+    model?: Model<Api>;
+    thinkingLevel?: AgentReasoningLevel;
+    systemPrompt?: string;
+    permissionMode?: AgentPermissionMode;
+    providerApiKeyLoader?: (providerId: string) => Promise<string | undefined> | string | undefined;
+    runtimeSettingsLoader?: () => Promise<AgentRuntimeSettings>;
+    skillToolEnabled?: boolean;
+    skillRuntime?: AgentSkillRuntime;
+    subagentRuntime?: AgentSubagentRuntime;
+    localWorkspace?: AgentLocalWorkspaceContext;
+    allowedTools?: string[];
+    disallowedTools?: string[];
+    preapprovedToolRules?: string[];
+    streamFn?: StreamFn;
+    afterToolResult?: (
+      toolCallId: string,
+      toolName: string,
+      result: unknown,
+      isError: boolean,
+    ) => Promise<AfterToolCallResult | undefined> | AfterToolCallResult | undefined;
+  } = {},
   onPayload?: (payload: unknown, model: Model<any>) => unknown | undefined | Promise<unknown | undefined>,
+  onResponse?: (response: ProviderResponse, model: Model<any>) => void | Promise<void>,
 ) {
-  const model = resolveModel(providerConfig);
-  return new Agent({
+  const model = options.model ?? resolveModel(providerConfig);
+  const localFileRoot = options.localFileRoot;
+  const skillRuntime = options.skillRuntime;
+  let activeLoopModel = model;
+  let activeThinkingLevel = options.thinkingLevel ?? providerConfig.reasoningLevel;
+  let agent: Agent;
+  agent = new Agent({
     initialState: {
-      systemPrompt: LIN_AGENT_SYSTEM_PROMPT,
+      systemPrompt: options.systemPrompt ?? LIN_AGENT_SYSTEM_PROMPT,
       model,
-      thinkingLevel: providerConfig.reasoningLevel,
-      tools: createAgentTools(outlinerToolHost, { localFileRoot }),
+      thinkingLevel: activeThinkingLevel,
+      tools: createAgentTools(outlinerToolHost, {
+        localFileRoot,
+        localWorkspace: options.localWorkspace,
+        skillRuntime,
+        skillToolEnabled: options.skillToolEnabled,
+        subagentRuntime: options.subagentRuntime,
+        allowedTools: options.allowedTools,
+        disallowedTools: options.disallowedTools,
+      }),
       messages,
     },
-    streamFn: streamSimple as StreamFn,
+    streamFn: createProviderConfiguredStreamFn(options.streamFn ?? streamSimple as StreamFn, options.runtimeSettingsLoader),
     onPayload: async (payload, payloadModel) => onPayload?.(payload, payloadModel),
+    onResponse: async (response, responseModel) => onResponse?.(response, responseModel),
     getApiKey: async (provider) => {
       if (provider === providerConfig.providerId) {
-        return providerConfig.apiKey ?? getProviderApiKey(provider);
+        return providerConfig.apiKey ?? options.providerApiKeyLoader?.(provider) ?? getProviderApiKey(provider);
       }
-      return getProviderApiKey(provider);
+      return options.providerApiKeyLoader?.(provider) ?? getProviderApiKey(provider);
     },
-    afterToolCall: async ({ result, isError }) => toolEnvelopeAfterToolCall(result.details, isError),
+    beforeToolCall: async ({ toolCall, args }) => {
+      const runtimeSettings = await options.runtimeSettingsLoader?.();
+      const decision = evaluateAgentToolPermission({
+        toolName: toolCall.name,
+        args,
+        policy: {
+          mode: options.permissionMode ?? runtimeSettings?.permissionMode,
+          workspaceRoot: localFileRoot,
+          preapprovedToolRules: [
+            ...(skillRuntime?.getActivePermissionRules() ?? []),
+            ...(options.preapprovedToolRules ?? []),
+          ],
+        },
+      });
+      if (decision.allow) return undefined;
+      return { block: true, reason: decision.reason };
+    },
+    afterToolCall: async ({ toolCall, result, isError }) => {
+      if (skillRuntime) {
+        for (const message of skillRuntime.drainSteeringMessages()) {
+          agent.steer(message);
+        }
+      }
+      const envelopeUpdate = toolEnvelopeAfterToolCall(result.details, isError);
+      const slimmedUpdate = await options.afterToolResult?.(toolCall.id, toolCall.name, result, envelopeUpdate?.isError ?? isError);
+      if (!envelopeUpdate) return slimmedUpdate;
+      if (!slimmedUpdate) return envelopeUpdate;
+      return {
+        ...envelopeUpdate,
+        ...slimmedUpdate,
+        content: slimmedUpdate.content ?? envelopeUpdate.content,
+        details: slimmedUpdate.details ?? envelopeUpdate.details,
+        isError: slimmedUpdate.isError ?? envelopeUpdate.isError,
+        terminate: slimmedUpdate.terminate ?? envelopeUpdate.terminate,
+      };
+    },
+    steeringMode: 'all',
+    prepareNextTurn: skillRuntime
+      ? async () => {
+          const update = resolveSkillTurnUpdate(
+            skillRuntime.consumePendingTurnEffect(),
+            providerConfig,
+            activeLoopModel,
+            activeThinkingLevel,
+          );
+          if (update?.model) activeLoopModel = update.model as Model<Api>;
+          if (update?.thinkingLevel !== undefined) activeThinkingLevel = update.thinkingLevel as AgentReasoningLevel;
+          return update;
+        }
+      : undefined,
     sessionId,
   });
+  agent.subscribe((event) => {
+    if (event.type !== 'agent_start') return;
+    activeLoopModel = agent.state.model as Model<Api>;
+    activeThinkingLevel = agent.state.thinkingLevel as AgentReasoningLevel;
+  });
+  return agent;
+}
+
+const AGENT_REASONING_LEVELS = new Set<AgentReasoningLevel>(['off', 'minimal', 'low', 'medium', 'high', 'xhigh']);
+
+function resolveSkillTurnUpdate(
+  effect: SkillTurnEffect | null,
+  providerConfig: AgentProviderRuntimeConfig,
+  currentModel: Model<Api>,
+  currentThinkingLevel: AgentReasoningLevel,
+): AgentLoopTurnUpdate | undefined {
+  if (!effect) return undefined;
+
+  const nextModel = effect.model
+    ? resolveSkillModelOverride(effect.model, providerConfig, currentModel)
+    : currentModel;
+  const nextThinkingLevel = effect.effort
+    ? resolveSkillEffortOverride(effect.effort, nextModel, currentThinkingLevel)
+    : currentThinkingLevel;
+
+  const update: AgentLoopTurnUpdate = {};
+  if (nextModel !== currentModel) update.model = nextModel;
+  if (nextThinkingLevel !== currentThinkingLevel) update.thinkingLevel = nextThinkingLevel;
+  return update.model || update.thinkingLevel !== undefined ? update : undefined;
+}
+
+function resolveSkillModelOverride(
+  modelInput: string,
+  providerConfig: AgentProviderRuntimeConfig,
+  currentModel: Model<Api>,
+): Model<Api> {
+  const requested = modelInput.trim();
+  if (!requested || requested === 'inherit' || requested === currentModel.id) return currentModel;
+
+  const parsed = parseProviderQualifiedModel(requested);
+  const providerId = parsed?.providerId ?? providerConfig.providerId;
+  const modelId = parsed?.modelId ?? requested;
+  const knownModel = findKnownModel(providerId, modelId);
+  if (knownModel) {
+    return providerId === providerConfig.providerId && providerConfig.baseUrl
+      ? { ...knownModel, baseUrl: providerConfig.baseUrl }
+      : knownModel;
+  }
+
+  if (providerId === providerConfig.providerId && providerConfig.baseUrl) {
+    return createOpenAICompatibleModel({ ...providerConfig, modelId });
+  }
+
+  return currentModel;
+}
+
+function parseProviderQualifiedModel(value: string): { providerId: string; modelId: string } | null {
+  const separator = value.includes('/') ? '/' : value.includes(':') ? ':' : null;
+  if (!separator) return null;
+  const [providerId, ...rest] = value.split(separator);
+  const modelId = rest.join(separator);
+  if (!providerId?.trim() || !modelId.trim()) return null;
+  return { providerId: providerId.trim(), modelId: modelId.trim() };
+}
+
+function resolveSkillEffortOverride(
+  effortInput: string,
+  model: Model<Api>,
+  currentThinkingLevel: AgentReasoningLevel,
+): AgentReasoningLevel {
+  const requested = effortInput.trim().toLowerCase();
+  if (!AGENT_REASONING_LEVELS.has(requested as AgentReasoningLevel)) return currentThinkingLevel;
+  const level = requested as AgentReasoningLevel;
+  const supported = getSupportedThinkingLevels(model).filter((item): item is AgentReasoningLevel => (
+    AGENT_REASONING_LEVELS.has(item as AgentReasoningLevel)
+  ));
+  if (supported.includes(level)) return level;
+  if (supported.includes('off')) return 'off';
+  return supported[0] ?? currentThinkingLevel;
+}
+
+function formatSubagentNotification(snapshot: AgentSubagentRunSnapshot): string {
+  const summary = snapshot.status === 'completed'
+    ? `Subagent "${snapshot.description}" completed.`
+    : snapshot.status === 'failed'
+      ? `Subagent "${snapshot.description}" failed.`
+      : `Subagent "${snapshot.description}" was stopped.`;
+  return [
+    '<subagent-notification>',
+    `<agent_id>${escapeXml(snapshot.id)}</agent_id>`,
+    snapshot.name ? `<name>${escapeXml(snapshot.name)}</name>` : null,
+    `<description>${escapeXml(snapshot.description)}</description>`,
+    `<subagent_type>${escapeXml(snapshot.subagentType)}</subagent_type>`,
+    `<context_mode>${escapeXml(snapshot.contextMode)}</context_mode>`,
+    `<status>${escapeXml(snapshot.status)}</status>`,
+    `<summary>${escapeXml(summary)}</summary>`,
+    `<transcript_message_count>${snapshot.transcriptMessages.length}</transcript_message_count>`,
+    snapshot.result ? `<result>${escapeXml(snapshot.result)}</result>` : null,
+    snapshot.error ? `<error>${escapeXml(snapshot.error)}</error>` : null,
+    '</subagent-notification>',
+  ].filter((line): line is string => line !== null).join('\n');
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
 }
 
 function createConfigurationErrorAgent(sessionId: string, message: string, messages: AgentMessage[] = []) {

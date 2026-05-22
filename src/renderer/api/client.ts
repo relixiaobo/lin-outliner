@@ -3,6 +3,7 @@ import type {
   AgentProviderConfigInput,
   AgentProviderSecretStatus,
   AgentProviderSettingsView,
+  AgentRuntimeSettingsInput,
   AgentSession,
   AgentSessionMeta,
   CommandOutcome,
@@ -23,6 +24,7 @@ import type {
   AgentDebugSnapshot,
   AgentDebugTotals,
   AgentMessageAttachmentInput,
+  AgentSubagentActionResult,
   AgentUserViewContext,
 } from '../../core/agentTypes';
 
@@ -164,6 +166,12 @@ export const api = {
     command<string | null>('agent_debug_payload', { sessionId, payloadId }),
   agentPayloadText: (sessionId: string, payloadId: string) =>
     command<string | null>('agent_payload_text', { sessionId, payloadId }),
+  agentSubagentStatus: (sessionId: string, agentId: string, options: { wait?: boolean; timeoutMs?: number } = {}) =>
+    command<AgentSubagentActionResult>('agent_subagent_status', { sessionId, agentId, ...options }),
+  agentSubagentSend: (sessionId: string, agentId: string, message: string) =>
+    command<AgentSubagentActionResult>('agent_subagent_send', { sessionId, agentId, message }),
+  agentSubagentStop: (sessionId: string, agentId: string) =>
+    command<AgentSubagentActionResult>('agent_subagent_stop', { sessionId, agentId }),
   agentSendMessage: (
     sessionId: string,
     message: string,
@@ -185,6 +193,10 @@ export const api = {
   ) => command<{ queued: boolean }>('agent_queue_follow_up', { sessionId, message, userViewContext }),
   agentClearFollowUp: (sessionId: string) =>
     command<void>('agent_clear_follow_up', { sessionId }),
+  agentSteerSession: (sessionId: string, message: string) =>
+    command<{ queued: boolean }>('agent_steer_session', { sessionId, message }),
+  agentClearSteer: (sessionId: string) =>
+    command<void>('agent_clear_steer', { sessionId }),
   agentStopSession: (sessionId: string) =>
     command<void>('agent_stop_session', { sessionId }),
   agentResetSession: (sessionId: string) =>
@@ -193,6 +205,8 @@ export const api = {
     command<void>('agent_close_session', { sessionId }),
   agentGetProviderSettings: () =>
     command<AgentProviderSettingsView>('agent_get_provider_settings'),
+  agentUpdateRuntimeSettings: (settings: AgentRuntimeSettingsInput) =>
+    command<AgentProviderSettingsView>('agent_update_runtime_settings', { settings }),
   agentUpsertProviderConfig: (provider: AgentProviderConfigInput) =>
     command<AgentProviderSettingsView>('agent_upsert_provider_config', { provider }),
   agentDeleteProviderConfig: (providerId: string) =>

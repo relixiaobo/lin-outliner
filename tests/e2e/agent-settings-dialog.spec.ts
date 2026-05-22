@@ -29,7 +29,8 @@ test.describe('agent settings dialog', () => {
   test('uses the shared checkbox mark for provider enablement', async ({ page }) => {
     const { dialog } = await openAgentSettings(page);
     const enabled = dialog.getByLabel('Enabled');
-    const mark = dialog.locator('.agent-settings-checkbox .checkbox-mark');
+    const enabledLabel = enabled.locator('xpath=..');
+    const mark = enabledLabel.locator('.checkbox-mark');
 
     await expect(enabled).toBeChecked();
     await expect(mark).toHaveClass(/checked/);
@@ -37,7 +38,7 @@ test.describe('agent settings dialog', () => {
     await expect(mark).toHaveCSS('height', '16px');
     await expect(mark).toHaveCSS('border-radius', '3px');
 
-    await dialog.getByText('Enabled').click();
+    await enabledLabel.click();
 
     await expect(enabled).not.toBeChecked();
     await expect(mark).not.toHaveClass(/checked/);
@@ -48,6 +49,7 @@ test.describe('agent settings dialog', () => {
     await expect(dialog.getByRole('heading', { name: 'Provider' })).toBeVisible();
     await expect(dialog.getByRole('heading', { name: 'Connection' })).toBeVisible();
     await expect(dialog.getByRole('heading', { name: 'Model behavior' })).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'Agent behavior' })).toBeVisible();
     await expect(dialog.getByRole('button', { name: 'OpenAI Active gpt-5.4' })).toBeVisible();
     await expect(dialog.getByLabel('API key')).toHaveAttribute('placeholder', 'Configured');
     await expect(dialog.getByRole('button', { name: 'Remove key' })).toBeEnabled();
@@ -83,6 +85,29 @@ test.describe('agent settings dialog', () => {
         reasoningLevel: 'high',
         baseUrl: 'https://example.test/v1',
         enabled: true,
+      },
+    });
+  });
+
+  test('saves agent behavior settings', async ({ page }) => {
+    const { dialog } = await openAgentSettings(page);
+    await dialog.getByLabel('Permission mode').selectOption('restricted');
+    await dialog.getByText('Automatic skills').click();
+    await dialog.getByText('Slash skills').click();
+    await dialog.getByText('Compact command').click();
+    await dialog.getByLabel('Additional skill directories').fill('~/skills, .agents/team-skills');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_update_runtime_settings')?.args;
+    }).toMatchObject({
+      settings: {
+        permissionMode: 'restricted',
+        automaticSkillsEnabled: false,
+        slashSkillsEnabled: false,
+        compactEnabled: false,
+        additionalSkillDirectories: ['~/skills', '.agents/team-skills'],
       },
     });
   });

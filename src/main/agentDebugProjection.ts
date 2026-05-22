@@ -71,7 +71,9 @@ export async function deriveAgentDebugProjectionFromEvents(input: {
       turnIndex: event.turnIndex,
     });
 
-    const completed = nextAssistantCompletionForDebugEvent(event, completedAssistantEvents, usedAssistantCompletions);
+    const completed = event.source === 'provider_payload'
+      ? nextAssistantCompletionForDebugEvent(event, completedAssistantEvents, usedAssistantCompletions)
+      : null;
     if (completed) {
       usedAssistantCompletions.add(completed.eventId);
       patchDebugSnapshotWithAssistant(snapshot, {
@@ -193,7 +195,7 @@ function debugTotalsFromHistory(history: readonly AgentDebugSnapshot[]): AgentDe
   const queries = new Set<number>();
   for (const snapshot of history) {
     queries.add(snapshot.queryIndex);
-    totals.rounds += 1;
+    if (snapshot.source === 'provider_payload') totals.rounds += 1;
     if (snapshot.usage) addUsageToDebugTotals(totals, snapshot.usage);
   }
   totals.queries = queries.size;

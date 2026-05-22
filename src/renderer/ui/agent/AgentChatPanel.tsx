@@ -25,6 +25,7 @@ import { api } from '../../api/client';
 import { useLinAgentRuntime } from '../../agent/runtime';
 import type { AgentConversationEntry, AgentMessageEntry, AgentTurnPhase } from '../../agent/runtime';
 import {
+  AgentIcon,
   CheckIcon,
   ChevronDownIcon,
   CloseIcon,
@@ -38,6 +39,7 @@ import {
 import { AgentComposer } from './AgentComposer';
 import { AgentSettingsDialog } from './AgentSettingsDialog';
 import { AgentMessageRow } from './AgentMessageRow';
+import { AgentSubagentDetailsPanel } from './AgentSubagentDetailsPanel';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
 import { TextInputControl } from '../primitives/TextInputControl';
@@ -441,10 +443,9 @@ export function AgentChatPanel({
     entries,
     error,
     isStreaming,
-    clearFollowUp,
+    clearSteer,
     editMessage,
     pendingToolCallIds,
-    queueFollowUp: queueRuntimeFollowUp,
     regenerateMessage,
     reloadSession,
     newSession,
@@ -454,6 +455,10 @@ export function AgentChatPanel({
     sendMessage: sendRuntimeMessage,
     sessionId,
     sessionTitle,
+    steer: steerRuntime,
+    subagentRunIds,
+    subagents,
+    subagentsByParentToolCallId,
     switchBranch,
     stop,
     toolResults,
@@ -467,6 +472,7 @@ export function AgentChatPanel({
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
+  const [selectedSubagentId, setSelectedSubagentId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLElement>(null);
   const historyButtonRef = useRef<HTMLButtonElement>(null);
@@ -484,6 +490,11 @@ export function AgentChatPanel({
     () => buildConversationRenderRows(entries, turnPhase),
     [entries, turnPhase],
   );
+  const runningSubagentIds = useMemo(
+    () => subagentRunIds.filter((id) => subagents[id]?.status === 'running'),
+    [subagentRunIds, subagents],
+  );
+  const selectedSubagent = selectedSubagentId ? subagents[selectedSubagentId] ?? null : null;
   const virtualLayout = useMemo(
     () => buildVirtualTranscriptLayout(conversationRows, rowHeightsRef.current),
     [conversationRows, measureVersion],
@@ -496,9 +507,6 @@ export function AgentChatPanel({
   const sendMessage = useCallback((prompt: string, attachments?: AgentMessageAttachmentInput[]) => (
     sendRuntimeMessage(prompt, attachments, userViewContext)
   ), [sendRuntimeMessage, userViewContext]);
-  const queueFollowUp = useCallback((prompt: string) => (
-    queueRuntimeFollowUp(prompt, userViewContext)
-  ), [queueRuntimeFollowUp, userViewContext]);
 
   const updateScrollMetrics = useCallback((element: HTMLDivElement) => {
     const next = {
@@ -613,6 +621,10 @@ export function AgentChatPanel({
   }, [isStreaming]);
 
   useEffect(() => {
+    if (selectedSubagentId && !subagents[selectedSubagentId]) setSelectedSubagentId(null);
+  }, [selectedSubagentId, subagents]);
+
+  useEffect(() => {
     if (historyOpen) void loadSessions();
   }, [historyOpen, loadSessions]);
 
@@ -683,7 +695,7 @@ export function AgentChatPanel({
     if (!trimmed) return;
     const combined = steeringNote ? `${steeringNote}\n${trimmed}` : trimmed;
     setSteeringNote(combined);
-    const queued = await queueFollowUp(combined);
+    const queued = await steerRuntime(combined);
     if (!queued) {
       setSteeringNote(null);
     }
@@ -691,7 +703,7 @@ export function AgentChatPanel({
 
   async function handleCancelSteer() {
     setSteeringNote(null);
-    await clearFollowUp();
+    await clearSteer();
   }
 
   async function handleNewSession() {
@@ -749,12 +761,14 @@ export function AgentChatPanel({
         isLastInTurn={row.isLastInTurn}
         onCopy={copyAssistantTurn}
         onEdit={editMessage}
+        onOpenSubagentTranscript={setSelectedSubagentId}
         onRegenerate={regenerateMessage}
         onRetry={retryMessage}
         onSwitchBranch={switchBranch}
         pendingToolCallIds={pendingToolCallIds}
         sessionId={sessionId}
         streaming={row.streaming}
+        subagentsByParentToolCallId={subagentsByParentToolCallId}
         toolResults={toolResults}
         turnEnded={row.turnEnded}
         turnPhase={row.turnPhase}
@@ -801,6 +815,16 @@ export function AgentChatPanel({
             title="New conversation"
             variant="composerTool"
           />
+          {runningSubagentIds.length > 0 ? (
+            <ButtonControl
+              className="agent-subagent-running-button"
+              onClick={() => setSelectedSubagentId(runningSubagentIds[0] ?? null)}
+              title="Show running subagents"
+            >
+              <AgentIcon size={ICON_SIZE.menu} />
+              <span>{runningSubagentIds.length}</span>
+            </ButtonControl>
+          ) : null}
           <IconButton
             className="agent-menu-button"
             icon={DebugIcon}
@@ -990,6 +1014,12 @@ export function AgentChatPanel({
         }}
         open={settingsDialogOpen}
         restoreFocus={providerSettingsRestoreFocus}
+      />
+      <AgentSubagentDetailsPanel
+        onClose={() => setSelectedSubagentId(null)}
+        sessionId={sessionId}
+        subagent={selectedSubagent}
+        subagentsByParentToolCallId={subagentsByParentToolCallId}
       />
     </div>
   );

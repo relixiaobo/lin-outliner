@@ -214,7 +214,9 @@ Model configuration should include:
 - Optional base URL.
 - Optional API protocol override for OpenAI-compatible providers.
 - Reasoning level if the selected model supports it.
-- Temperature and max token defaults.
+- Runtime agent settings: permission mode, skill toggles, compact toggle,
+  additional skill/agent directories, provider timeout, provider retry count,
+  provider retry-delay cap, and prompt cache retention.
 
 The API key should be read at stream time through Lin's TypeScript credential path. It
 should not be embedded into persisted agent messages, tool results, renderer
@@ -226,6 +228,7 @@ TypeScript:
 ```txt
 agent-providers.json
   -> activeProviderId
+  -> agent: runtime agent settings
   -> providers: providerId, modelId, baseUrl, enabled
 
 agent-secrets.json
@@ -239,7 +242,7 @@ through Electron AgentRuntime or the TypeScript tool/provider gateway.
 
 ## System Prompt
 
-Lin follows the same prompt layering principle as cc-2.1:
+Lin follows the prompt layering principle used by stable agent runtimes:
 
 - The stable system prompt defines identity, tool boundaries, communication
   rules, and safety posture.
@@ -300,11 +303,13 @@ entire document unless the user explicitly asks for whole-document work.
 User prompt
   -> context.ts builds active outliner context
   -> runtime sends messages to Agent
-  -> transformContext can inject reminders or compact old messages
+  -> transformContext applies tool-output budget, microcompact, and auto compact
 ```
 
-Use pi-mono's context overflow helper for detection, but keep Lin's compaction
-policy separate so it can preserve outliner-specific anchors.
+Lin uses pi-mono's `transformContext` hook for request-time context shaping and
+the runtime's `afterToolCall` hook for immediate large-result persistence. The
+compaction policy stays in Lin so it can preserve outliner-specific anchors,
+skills state, and event-log replay semantics.
 
 ## Tool Model
 
@@ -325,9 +330,9 @@ and versionable.
 
 ## Reference Tool Sets
 
-Lin should use nodex as the outliner reference and cc-2.1 as the local tool
-reference. Lin should still keep its own lower snake case tool names because the
-runtime, permission model, and UI are Lin-owned.
+Lin should use nodex as the outliner reference and a proven local-tool runtime
+as the local tool reference. Lin should still keep its own lower snake case tool
+names because the runtime, permission model, and UI are Lin-owned.
 
 nodex tools:
 
@@ -352,30 +357,23 @@ adapter/runtime layer and should not appear in the model-facing tool
 description. Lin code should use neutral parser names such as
 `lin_outline_parser`.
 
-cc-2.1 core tools:
+Reference local and agent tool roles:
 
-- `Bash`
-- `Read`
-- `Edit`
-- `Write`
-- `Glob`
-- `Grep`
-- `WebFetch`
-- `WebSearch`
-- `TodoWrite`
-- `Skill`
-- `AskUserQuestion`
-- `Agent`
-- `TaskStop`
-- `EnterPlanMode`
-- `ExitPlanMode`
-- `ListMcpResources`
-- `ReadMcpResource`
+- shell execution
+- file read, edit, write, glob, and grep
+- web fetch and web search
+- task planning
+- skill invocation
+- user question
+- subagent execution
+- task stop
+- plan mode
+- MCP resource listing and reading
 
-cc-2.1 is the strongest reference for tool contracts, permission checks, and
-tool pool filtering. For local tools, Lin should copy the role boundaries,
-descriptions, argument schemas, and model-visible action payloads as closely as
-possible. Runtime details can keep Lin's common `ToolResult` envelope, but
+The reference runtime is useful for tool contracts, permission checks, and tool
+pool filtering. For local tools, Lin should copy the role boundaries,
+descriptions, argument schemas, and model-visible action payloads where they fit.
+Runtime details can keep Lin's common `ToolResult` envelope, but
 `node_*` model-visible output should use the discriminated node protocol from
 `agent-tool-design.md` rather than exposing the envelope directly:
 
@@ -385,11 +383,11 @@ adapter maps envelope errors (`details.ok === false`) to
 `ToolResultMessage.isError = true`.
 
 - Dedicated file tools should be preferred over shell commands.
-- `Read` is the freshness prerequisite for `Edit` and existing-file `Write`.
-- `Edit` is exact string replacement, not a custom patch protocol.
-- `Glob` finds paths; `Grep` searches contents.
-- `Bash` runs commands and can background long-running work.
-- `TaskStop` only stops a background task; it is not a generic process manager.
+- `file_read` is the freshness prerequisite for `file_edit` and existing-file `file_write`.
+- `file_edit` is exact string replacement, not a custom patch protocol.
+- `file_glob` finds paths; `file_grep` searches contents.
+- `bash` runs commands and can background long-running work.
+- `task_stop` only stops a background task; it is not a generic process manager.
 - Large command output should be persisted and then read through the file tool.
 
 Lin should not configure `AskUserQuestion` for v1. The assistant can ask the
@@ -414,18 +412,18 @@ These are the active core tool surface.
 | `node_search` | nodex `node_search`, Lin search-node outline | Yes | No | Execute a temporary or saved search node outline without mutating document state. |
 | `node_read` | nodex `node_read` | Yes | No | Read node raw type/data, fields, and bounded children. |
 | `node_create` | nodex `node_create`, Lin outline parser | Yes | Usually yes | Create outline trees, references, search/view nodes, schema nodes, or duplicates. |
-| `node_edit` | cc `Edit`, nodex `node_edit`, Lin outline parser | Yes | Usually yes | Edit a known node's annotated outline by exact replacement, or perform explicit move, merge, or reference replacement. |
+| `node_edit` | nodex `node_edit`, Lin outline parser | Yes | Usually yes | Edit a known node's annotated outline by exact replacement, or perform explicit move, merge, or reference replacement. |
 | `node_delete` | nodex `node_delete` | Yes | Usually yes | Trash or restore nodes. |
 | `operation_history` | nodex `undo`, Lin history | Yes | Depends | List, undo, or redo user and agent operations. |
-| `file_read` | cc `Read` | Yes | Usually no | Read files with bounded output and freshness tracking. |
-| `file_glob` | cc `Glob` | Yes | No | Find files by path pattern. |
-| `file_grep` | cc `Grep` | Yes | No | Search file contents with bounded output. |
-| `file_edit` | cc `Edit` | Yes | Yes | Perform exact string replacement after reading the file. |
-| `file_write` | cc `Write` | Yes | Yes | Create files or rewrite whole files. |
-| `bash` | cc `Bash` | Yes | Usually yes | Run local commands with timeout, approval, and output limits. |
-| `task_stop` | cc `TaskStop` | Yes | Usually yes | Stop background commands created by `bash`. |
-| `web_search` | cc `WebSearch`, lin-agent `WebSearch` | Optional | Depends | Search the web for current external information. |
-| `web_fetch` | cc `WebFetch`, lin-agent `WebFetch` | Optional | Depends | Fetch and read a specific URL with pagination or snippet search. |
+| `file_read` | local file read role | Yes | Usually no | Read files with bounded output and freshness tracking. |
+| `file_glob` | local file glob role | Yes | No | Find files by path pattern. |
+| `file_grep` | local file grep role | Yes | No | Search file contents with bounded output. |
+| `file_edit` | local exact edit role | Yes | Yes | Perform exact string replacement after reading the file. |
+| `file_write` | local file write role | Yes | Yes | Create files or rewrite whole files. |
+| `bash` | shell execution role | Yes | Usually yes | Run local commands with timeout, approval, and output limits. |
+| `task_stop` | background task stop role | Yes | Usually yes | Stop background commands created by `bash`. |
+| `web_search` | web search role | Optional | Depends | Search the web for current external information. |
+| `web_fetch` | web fetch role | Optional | Depends | Fetch and read a specific URL with pagination or snippet search. |
 
 P0 intentionally follows nodex's compact outliner surface instead of exposing
 one tool per UI command. Tag, field, reference, move, and merge behavior
@@ -449,12 +447,12 @@ These should wait until the product needs them.
 | Tool | Reference | TypeScript-backed? | Approval | Purpose |
 |---|---|---:|---|---|
 | `browser` | nodex `browser` | Yes | Usually yes | Control an embedded browser tab if Lin adds one. |
-| `mcp_list_resources` | cc `ListMcpResources` | Yes | No | Discover MCP resources. |
-| `mcp_read_resource` | cc `ReadMcpResource` | Yes | No | Read MCP resources. |
-| `mcp_call_tool` | cc MCP tools | Yes | Depends | Call configured MCP server tools. |
-| `todo_write` | cc `TodoWrite` | No | No | Maintain internal task plans if agent planning needs a tool. |
-| `skill` | cc `Skill` | Partly | Depends | Load and invoke local skill folders. |
-| `sub_agent` | cc `Agent` | Mixed | Depends | Spawn child agents. Not needed for Lin v1. |
+| `mcp_list_resources` | MCP resource discovery | Yes | No | Discover MCP resources. |
+| `mcp_read_resource` | MCP resource reading | Yes | No | Read MCP resources. |
+| `mcp_call_tool` | MCP tool calls | Yes | Depends | Call configured MCP server tools. |
+| `todo_write` | task planning | No | No | Maintain internal task plans if agent planning needs a tool. |
+| `skill` | skill invocation | Partly | Depends | Load and invoke local skill folders. |
+| `sub_agent` | child agent execution | Mixed | Depends | Spawn child agents. Not needed for Lin v1. |
 
 Do not configure browser, MCP, or sub-agent tools in the first release unless
 there is a specific user-facing workflow. A larger tool pool increases prompt
@@ -473,8 +471,8 @@ Lin should use lower snake case tool names for all Lin-owned tools:
 
 Do not use:
 
-- cc-style `Read` / `Edit` / `Write`: those names are canonical inside Claude
-  Code, but Lin should make the local capability explicit.
+- legacy `Read` / `Edit` / `Write` aliases: Lin should make the local
+  capability explicit with lower snake case names.
 - generic mutation tools such as `outliner_write`, `outliner_apply_patch`, or
   `node_batch`: they force the model to learn a second mini-protocol and make
   permission boundaries less clear.
@@ -660,9 +658,10 @@ Abort behavior:
 - Mark the run as cancelled.
 - Keep completed messages and tool results immutable.
 
-Steering uses pi-agent-core's follow-up queue in the current runtime. If the
-user sends a new instruction while the agent is streaming, Lin queues it as a
-follow-up message instead of starting an unrelated run in the same conversation.
+Steering uses pi-agent-core's steering queue in the current runtime. If the user
+sends a new instruction while the agent is streaming, Lin queues it as steer
+input for the active run instead of starting an unrelated run in the same
+conversation.
 
 Examples:
 
@@ -670,13 +669,18 @@ Examples:
 - "Use the active node instead."
 - "Do not run bash."
 
-Persisted `follow_up.*` events are reserved for the next pass; current queued
-follow-up state is runtime state.
+Follow-up remains a separate queue for work that should run after the current
+run stops naturally. Persisted `follow_up.*` events are reserved for a later
+pass; current queued follow-up and steer state are runtime state.
 
 ## Context Compaction
 
 Lin should treat compaction as a product policy, not as a library detail.
-Compaction is schema-reserved but not active in the current runtime.
+Compaction is active in the runtime and has three entry points:
+
+- manual `/compact [instructions]`
+- proactive auto compact before a model call when estimated context crosses the configured threshold
+- reactive compact after a provider context-length error, followed by a retry
 
 Use cases:
 
@@ -684,15 +688,19 @@ Use cases:
 - Tool outputs are large.
 - The user switches from local file work back to outliner work.
 
-Recommended strategy:
+Runtime strategy:
 
-1. Keep the latest user request and active tool results intact.
-2. Keep document anchors such as node ids, titles, and paths.
-3. Summarize old assistant text.
-4. Replace large tool outputs with summaries and stable references.
-5. Drop low-value middle turns only after summarization.
+1. Persist single large tool outputs immediately after tool execution and send the model a fixed `<persisted-output>` preview.
+2. Before each model call, enforce a per-tool-batch aggregate budget for fresh tool results only.
+3. Never retroactively replace already-seen unreplaced tool results; that would change a cached prefix.
+4. Time-based microcompact may clear old compactable tool results when the cache is expected to be cold.
+5. Auto/reactive compact uses the same no-tools summary path as manual compact.
+6. If the summary request itself hits a provider context limit, retry by dropping the oldest API-round groups before giving up.
+7. Reactive compact preserves the latest user/tool tail after the compact root so the retry continues from the same pending work.
+8. After compacting, restore recently read full text files within a bounded budget and reset file-edit freshness to only those restored files.
+9. When deduplicating restored files against the preserved reactive tail, treat `file_unchanged` results as stubs, not as visible file content.
 
-Large persisted tool outputs should follow the cc-2.1 pattern: keep the full
+Large persisted tool outputs should follow the stable agent-runtime pattern: keep the full
 output outside the transcript, record a fixed preview/reference string in the
 message, and never re-decide or silently expand that payload during resume.
 
@@ -759,14 +767,15 @@ Landed in main:
   restored or a new run starts.
 - Web, outliner, file, bash, and background-task tools execute through Lin's
   TypeScript main-process gateway.
-- Large tool output and provider debug data use event-store payload refs.
+- Large tool output and provider request/response debug data use event-store
+  payload refs.
 - Session list, search, user-message history, debug history/totals, and
   checkpoints are derived from the event store.
 
 Remaining runtime work:
 
 - Approval UI/runtime pause flow for risky tools.
-- Persisted follow-up and compaction events.
+- Persisted follow-up events.
 - Performance metrics around replay, projection, IPC payload size, and long
   transcript rendering.
 - Richer lazy media previews for non-text payloads in render/debug details.

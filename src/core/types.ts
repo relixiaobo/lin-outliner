@@ -358,6 +358,34 @@ export interface AgentSessionMeta {
 }
 
 export type AgentReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+export type AgentPermissionMode = 'trusted' | 'restricted';
+export type AgentCacheRetention = 'none' | 'short' | 'long';
+
+export interface AgentRuntimeSettings {
+  permissionMode: AgentPermissionMode;
+  automaticSkillsEnabled: boolean;
+  slashSkillsEnabled: boolean;
+  compactEnabled: boolean;
+  additionalSkillDirectories: string[];
+  additionalAgentDirectories: string[];
+  providerTimeoutMs: number | null;
+  providerMaxRetries: number | null;
+  providerMaxRetryDelayMs: number | null;
+  providerCacheRetention: AgentCacheRetention;
+}
+
+export interface AgentRuntimeSettingsInput {
+  permissionMode?: AgentPermissionMode;
+  automaticSkillsEnabled?: boolean;
+  slashSkillsEnabled?: boolean;
+  compactEnabled?: boolean;
+  additionalSkillDirectories?: string[];
+  additionalAgentDirectories?: string[];
+  providerTimeoutMs?: number | null;
+  providerMaxRetries?: number | null;
+  providerMaxRetryDelayMs?: number | null;
+  providerCacheRetention?: AgentCacheRetention;
+}
 
 export interface AgentProviderConfigInput {
   providerId: string;
@@ -397,6 +425,7 @@ export interface AgentProviderSettingsView {
   activeProviderId?: string;
   providers: AgentProviderConfigView[];
   availableProviders: AgentProviderOption[];
+  agent: AgentRuntimeSettings;
 }
 
 export interface AgentProviderSecretStatus {

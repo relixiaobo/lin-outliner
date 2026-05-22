@@ -3,7 +3,11 @@ import { spawnSync } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createLocalTools } from '../../src/main/agentLocalTools';
+import {
+  createAgentLocalWorkspaceContext,
+  createLocalTools,
+  restorePostCompactReadFiles,
+} from '../../src/main/agentLocalTools';
 import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
 
 const localToolSets = new Map<string, ReturnType<typeof createLocalTools>>();
@@ -118,7 +122,7 @@ describe('agent local tools', () => {
     });
   });
 
-  test('file_read offset uses cc-style one-based line numbers', async () => {
+  test('file_read offset uses one-based line numbers', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const filePath = path.join(workspaceRoot, 'notes.txt');
       await writeFile(filePath, 'alpha\nbeta\ngamma\n', 'utf8');
@@ -149,12 +153,75 @@ describe('agent local tools', () => {
 
       expect(first.ok).toBe(true);
       expect(second.ok).toBe(true);
+      expect(second.status).toBe('unchanged');
       expect(second.data).toEqual({ type: 'file_unchanged', file: { filePath } });
       expect(second.instructions).toContain('unchanged');
     });
   });
 
-  test('local tool schemas use cc-style descriptions for model guidance', () => {
+  test('file tools notify path skills only after successful file operations', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const filePath = path.join(workspaceRoot, 'notes.txt');
+      await writeFile(filePath, 'alpha\n', 'utf8');
+      const touched: string[] = [];
+      const skillRuntime = {
+        notifyFileTouched: async (paths: string[]) => {
+          touched.push(...paths);
+        },
+      };
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, skillRuntime as any);
+      const tools = createLocalTools({ workspace });
+      const fileRead = tools.find((tool) => tool.name === 'file_read')!;
+      const fileEdit = tools.find((tool) => tool.name === 'file_edit')!;
+
+      await (fileEdit.execute as any)('edit-fail', {
+        file_path: filePath,
+        old_string: 'alpha',
+        new_string: 'beta',
+      });
+      expect(touched).toEqual([]);
+
+      await (fileRead.execute as any)('read-ok', { file_path: filePath });
+      expect(touched).toEqual([filePath]);
+      touched.length = 0;
+
+      await (fileEdit.execute as any)('edit-ok', {
+        file_path: filePath,
+        old_string: 'alpha',
+        new_string: 'beta',
+      });
+      expect(touched).toEqual([filePath]);
+    });
+  });
+
+  test('post-compact restore keeps only restored files in read freshness state', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const restoredPath = path.join(workspaceRoot, 'restored.txt');
+      const skippedPath = path.join(workspaceRoot, 'skipped.txt');
+      await writeFile(restoredPath, 'restored content\n', 'utf8');
+      await writeFile(skippedPath, 'skipped content\n', 'utf8');
+
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot);
+      const tools = createLocalTools({ workspace });
+      const fileRead = tools.find((tool) => tool.name === 'file_read')!;
+      await (fileRead.execute as any)('read-1', { file_path: restoredPath });
+      await (fileRead.execute as any)('read-2', { file_path: skippedPath });
+
+      const restored = await restorePostCompactReadFiles(workspace, {
+        maxFiles: 5,
+        maxCharsPerFile: 10_000,
+        maxTotalChars: 20_000,
+        preservedFilePaths: new Set([skippedPath]),
+      });
+
+      expect(restored.map((file) => file.filePath)).toEqual([restoredPath]);
+      expect(restored[0]!.content).toContain('restored content');
+      expect(workspace.readFileState.has(restoredPath)).toBe(true);
+      expect(workspace.readFileState.has(skippedPath)).toBe(false);
+    });
+  });
+
+  test('local tool schemas use operational descriptions for model guidance', () => {
     const tools = createLocalTools({ localRoot: process.cwd() });
     const fileRead = tools.find((tool) => tool.name === 'file_read')!;
     const fileEdit = tools.find((tool) => tool.name === 'file_edit')!;
@@ -565,7 +632,7 @@ describe('agent local tools', () => {
     });
   });
 
-  test('bash treats cc-style semantic non-zero exits as successful tool results', async () => {
+  test('bash treats semantic non-zero exits as successful tool results', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const filePath = path.join(workspaceRoot, 'notes.txt');
       await writeFile(filePath, 'alpha\n', 'utf8');

@@ -16,7 +16,7 @@ import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
 import { REASONING_LABELS } from './AgentComposerModelMenu';
 
-export function AgentQueuedFollowUp({
+export function AgentQueuedSteer({
   note,
   onCancel,
   onEdit,
@@ -31,17 +31,17 @@ export function AgentQueuedFollowUp({
         <IconButton
           className="agent-message-action-button"
           icon={PencilIcon}
-          label="Edit queued follow-up"
+          label="Edit queued steer"
           onClick={onEdit}
-          title="Edit queued follow-up"
+          title="Edit queued steer"
           variant="message"
         />
         <IconButton
           className="agent-message-action-button"
           icon={TrashIcon}
-          label="Cancel queued follow-up"
+          label="Cancel queued steer"
           onClick={onCancel}
-          title="Cancel queued follow-up"
+          title="Cancel queued steer"
           variant="message"
         />
       </div>
@@ -215,8 +215,8 @@ export function AgentComposerPrimaryAction({
       className="agent-composer-action-button"
       disabled={!canSubmit}
       icon={SendIcon}
-      label={isStreaming ? 'Queue follow-up' : 'Send message'}
-      title={isStreaming ? 'Queue follow-up' : 'Send'}
+      label={isStreaming ? 'Steer agent' : 'Send message'}
+      title={isStreaming ? 'Steer agent' : 'Send'}
       type="submit"
       variant="composerAction"
     />

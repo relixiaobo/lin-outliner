@@ -74,9 +74,9 @@ permission behavior harder to reason about.
 - Use `bash` for shell execution.
 - Use `task_stop` for stopping background commands created by `bash`.
 - Use `web_*` for network read tools.
-- Local file tools should mirror cc-2.1's `Read`, `Edit`, `Write`, `Glob`,
-  and `Grep` roles, while keeping Lin's lower snake case names.
-- The local tool list is intentionally smaller than cc-2.1's full registry.
+- Local file tools should mirror proven read, edit, write, glob, and grep roles,
+  while keeping Lin's lower snake case names.
+- The local tool list is intentionally smaller than broader terminal-first tool registries.
   Compatibility aliases and history-shaped tools such as `KillShell`,
   `TaskOutput`, and old agent-output readers are not exposed; background output
   should be surfaced through runtime events or persisted paths that can be read
@@ -92,8 +92,8 @@ should be written as operational guidance, not as implementation notes:
 - Say when to use the tool and when to use a neighboring tool instead.
 - Describe the exact model-facing input contract, including defaults and
   pagination/preview behavior.
-- Keep wording close to proven references: nodex for `node_*`, cc-2.1 for
-  local file/bash tools, and a search/fetch split for `web_*`.
+- Keep wording close to proven references: nodex for `node_*`, dedicated local
+  file/bash tools, and a search/fetch split for `web_*`.
 - Avoid exposing internal implementation details unless the model must act on
   them, such as `%%node:id%%` markers, `operation_id` guards, or `nextOffset`.
 - Do not promise capabilities that are not implemented.
@@ -785,7 +785,7 @@ Example:
 
 ### `node_edit`
 
-Edit existing outliner content. The content edit path mirrors cc-style exact
+Edit existing outliner content. The content edit path uses exact
 replacement: read the node, copy an exact fragment from the returned annotated
 outline, and replace it with a new annotated fragment.
 
@@ -1290,25 +1290,23 @@ interface ValidationReport {
 ## Local File Tools
 
 File tools are for local files under the configured local file root. They must not mutate the outliner
-document. The design mirrors cc-2.1's dedicated local tools:
+document. The design keeps dedicated tools for each local file role:
 
-- `file_read` maps to cc `Read`.
-- `file_edit` maps to cc `Edit`.
-- `file_write` maps to cc `Write`.
-- `file_glob` maps to cc `Glob`.
-- `file_grep` maps to cc `Grep`.
+- `file_read` inspects file content.
+- `file_edit` applies exact replacements.
+- `file_write` creates files or rewrites already-read files.
+- `file_glob` lists matching files.
+- `file_grep` searches file content.
 
 The model-facing descriptions, parameters, and `data` payloads should stay as
-close to cc-2.1 as possible. Lin keeps lower snake case names and wraps the
-payload in the common `ToolResult` envelope, but should not invent a second
-filesystem protocol.
+close to the proven local-tool shape as possible. Lin keeps lower snake case
+names and wraps the payload in the common `ToolResult` envelope, but should not
+invent a second filesystem protocol.
 
 For local tools, the model-facing descriptions should intentionally follow the
-cc-2.1 wording and usage nudges. The agent already performs well with that
-contract, so Lin should preserve the same habits: use dedicated file/search
-tools before `bash`, read before edit/write, use exact string replacement, and
-background long-running commands through the tool parameter instead of shell
-syntax.
+same operational habits: use dedicated file/search tools before `bash`, read
+before edit/write, use exact string replacement, and background long-running
+commands through the tool parameter instead of shell syntax.
 
 The important design rule is that `bash` is not the filesystem API. Agents
 should use dedicated tools for reading, editing, writing, listing, and searching
@@ -1320,14 +1318,14 @@ Path rules:
 - Search tools use `path` as an optional search root.
 - Model-facing `file_path` input values should be absolute paths. Search outputs
   such as `file_glob.filenames` and `file_grep.filenames` are local-root-relative
-  to save tokens and match cc path ergonomics.
+  to save tokens and keep path output compact.
 - TypeScript must enforce the configured local file root unless the user explicitly
   grants a broader root.
 
 ## Per-Turn Context And Attachments
 
 Dynamic context should be sent with the latest user turn, not baked into the
-stable system prompt. This follows the cc-2.1/lin-agent pattern:
+stable system prompt. This follows the agent runtime pattern:
 
 - Stable identity, behavior, and tool policy live in the system prompt.
 - Turn-specific state lives in one or more leading text parts wrapped in
@@ -1455,9 +1453,9 @@ Result behavior:
 - Image reads return dimensions when they can be determined, attach the image
   block for the model to inspect, and omit base64 from the model-visible JSON so
   text output stays compact.
-- PDF reads support cc-style `pages` ranges such as `"3"` and `"1-5"`, with a
+- PDF reads support `pages` ranges such as `"3"` and `"1-5"`, with a
   maximum of 20 pages per request. PDFs over 10 pages require an explicit range.
-  The implementation uses the cc page-extraction path: `pdfinfo` determines
+  The implementation uses the local page-extraction path: `pdfinfo` determines
   page count, `pdftoppm` renders selected pages as JPEGs, and those page images
   are attached to the tool result for the model. If `pdftotext` is available and
   the selected pages contain embedded text, that extracted text is attached as a
@@ -1465,7 +1463,7 @@ Result behavior:
   images, while text PDFs remain searchable and token-efficient.
 - Lin currently does not send native PDF document blocks because `pi-agent-core`
   exposes text/image tool-result content only. If pi-ai adds document content,
-  small PDFs can adopt cc's `type: "pdf"` base64 document-block path.
+  small PDFs can adopt a `type: "pdf"` base64 document-block path.
 - Notebook reads parse `.ipynb` cells and outputs into a compact text rendering
   plus structured cell metadata.
 - Binary files should return a typed result only when Lin supports the media
@@ -1499,7 +1497,7 @@ interface FileGlobData {
 
 Result behavior:
 
-- Results should be sorted by modified time, newest first, matching cc `Glob`.
+- Results should be sorted by modified time, newest first.
 - Returned filenames are local-root-relative, matching `file_grep` and saving
   model tokens.
 - TypeScript should cap result count and set `truncated` when needed.
@@ -1549,18 +1547,18 @@ interface FileGrepData {
 Result behavior:
 
 - Default to `files_with_matches` so broad searches stay cheap.
-- Results paths are local-root-relative to reduce tokens and match cc-style
+- Results paths are local-root-relative to reduce tokens and keep
   output.
 - `content` mode should include file paths and line numbers when useful.
 - Multiline search should be explicit because it is more expensive.
 - TypeScript must enforce hard output caps even when `head_limit` is `0`. If Lin needs
-  to expose hard-cap truncation beyond cc's `appliedLimit`, put it in the common
+  to expose hard-cap truncation beyond `appliedLimit`, put it in the common
   `ToolResult.metrics`, not inside `FileGrepData`.
 
 ### `file_edit`
 
-Apply exact string replacements. This follows cc `Edit`: it is intentionally
-not a mini patch language.
+Apply exact string replacements. This is intentionally not a mini patch
+language.
 
 Parameters:
 
@@ -1645,8 +1643,8 @@ Result behavior:
 
 ### `bash`
 
-Run a local command. This follows cc `Bash`: it is for shell execution, not file
-reading, file editing, or content search.
+Run a local command. It is for shell execution, not file reading, file editing,
+or content search.
 
 Parameters:
 
@@ -1705,8 +1703,8 @@ Result behavior:
 
 ### `task_stop`
 
-Stop a background command created by `bash`. This follows cc `TaskStop`: it is
-not a generic process manager and does not provide status/read/wait operations.
+Stop a background command created by `bash`. It is not a generic process
+manager and does not provide status/read/wait operations.
 
 Parameters:
 

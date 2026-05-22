@@ -699,18 +699,22 @@ function applyAgentEventToSearchIndex(index: AgentEventSearchIndex, event: Agent
     return;
   }
 
-  if (event.type === 'tool_result.created') {
+  if (event.type === 'tool_result.created' || event.type === 'tool_result.replaced') {
+    const key = searchIndexKey(event.sessionId, event.messageId);
+    const current = index.messages[key];
     const content = indexDetailsFromContent([
       ...event.content,
       { type: 'text', text: event.outputSummary },
     ]);
     const outputPayloadIds = event.outputRef ? [event.outputRef.id] : [];
-    index.messages[searchIndexKey(event.sessionId, event.messageId)] = {
+    index.messages[key] = {
       sessionId: event.sessionId,
       messageId: event.messageId,
       role: 'toolResult',
-      parentMessageId: event.parentMessageId,
-      createdAt: event.createdAt,
+      parentMessageId: event.type === 'tool_result.created'
+        ? event.parentMessageId
+        : current?.parentMessageId ?? null,
+      createdAt: current?.createdAt ?? event.createdAt,
       updatedAt: event.createdAt,
       latestSeq: event.seq,
       text: content.text,

@@ -1,4 +1,5 @@
 import type { AgentToolResultWithPayloads, ToolCall } from '../../../core/agentTypes';
+import type { AgentRenderSubagentEntity } from '../../../core/agentRenderProjection';
 import {
   BrainIcon,
   ICON_SIZE,
@@ -21,10 +22,12 @@ interface AgentProcessBlockProps {
   blocks: AgentProcessSegmentBlock[];
   expandState: AgentExpandState;
   id: string;
+  onOpenSubagentTranscript?: (subagentId: string) => void;
   pendingToolCallIds: ReadonlySet<string>;
   results: Map<string, AgentToolResultWithPayloads>;
   sealed: boolean;
   sessionId?: string | null;
+  subagentsByParentToolCallId?: Map<string, AgentRenderSubagentEntity>;
   turnActive: boolean;
   turnFailedWithoutProse: boolean;
 }
@@ -87,10 +90,12 @@ export function AgentProcessBlock({
   blocks,
   expandState,
   id,
+  onOpenSubagentTranscript,
   pendingToolCallIds,
   results,
   sealed,
   sessionId,
+  subagentsByParentToolCallId,
   turnActive,
   turnFailedWithoutProse,
 }: AgentProcessBlockProps) {
@@ -143,9 +148,11 @@ export function AgentProcessBlock({
           blocks={blocks}
           expandState={expandState}
           id={id}
+          onOpenSubagentTranscript={onOpenSubagentTranscript}
           pendingToolCallIds={pendingToolCallIds}
           results={results}
           sessionId={sessionId}
+          subagentsByParentToolCallId={subagentsByParentToolCallId}
           turnActive={turnActive}
         />
       ) : null}
