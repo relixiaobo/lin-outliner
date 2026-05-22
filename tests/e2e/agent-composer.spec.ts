@@ -38,6 +38,25 @@ test.describe('agent composer controls', () => {
     await expect(page.getByText('notes.txt')).toHaveCount(0);
   });
 
+  test('passes slash commands through for runtime compact and skill handling', async ({ page }) => {
+    const input = page.getByLabel('Agent message');
+    await input.fill('/compact keep only current project decisions');
+    await page.getByRole('button', { name: 'Send message' }).click();
+
+    await input.fill('/auto-skill runtime-check');
+    await page.getByRole('button', { name: 'Send message' }).click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls
+        .filter((call) => call.cmd === 'agent_send_message')
+        .map((call) => call.args.message);
+    }).toEqual([
+      '/compact keep only current project decisions',
+      '/auto-skill runtime-check',
+    ]);
+  });
+
   test('uses shared menu semantics for model and reasoning controls', async ({ page }) => {
     const modelButton = page.getByRole('button', { name: 'Select model' });
     await expect(modelButton).toHaveAttribute('aria-expanded', 'false');
@@ -343,7 +362,7 @@ test.describe('agent composer controls', () => {
     expect(Math.abs(after!.height - before!.height)).toBeLessThanOrEqual(1);
   });
 
-  test('switches the primary action between stop and queued follow-up while streaming', async ({ page }) => {
+  test('switches the primary action between stop and steer while streaming', async ({ page }) => {
     await emitAgentProjection(page, 'mock-agent-session', {
       sessionTitle: 'Agent System',
       systemPrompt: '',
@@ -374,15 +393,123 @@ test.describe('agent composer controls', () => {
     }).toBe(true);
 
     await page.getByLabel('Agent message').fill('Compare tag layout stability.');
-    await page.getByRole('button', { name: 'Queue follow-up' }).click();
+    await page.getByRole('button', { name: 'Steer agent' }).click();
 
     await expect.poll(async () => {
       const calls = await commandCalls(page);
-      return calls.find((call) => call.cmd === 'agent_queue_follow_up')?.args;
+      return calls.find((call) => call.cmd === 'agent_steer_session')?.args;
     }).toMatchObject({
       message: 'Compare tag layout stability.',
       sessionId: 'mock-agent-session',
     });
     await expect(page.getByText('Compare tag layout stability.')).toBeVisible();
+  });
+
+  test('opens subagent details and expands nested tool calls', async ({ page }) => {
+    const usage = {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0,
+      },
+    };
+
+    await emitAgentProjection(page, 'mock-agent-session', {
+      sessionTitle: 'Agent System',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      conversation: [
+        {
+          nodeId: 'agent-user-subagent',
+          message: {
+            role: 'user',
+            timestamp: 1_800_000_000_500,
+            content: [{ type: 'text', text: 'Use a subagent to inspect the UI.' }],
+          },
+          branches: null,
+        },
+        {
+          nodeId: 'agent-assistant-subagent',
+          message: {
+            role: 'assistant',
+            timestamp: 1_800_000_000_700,
+            api: 'openai-completions',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            usage,
+            stopReason: 'toolUse',
+            content: [{
+              type: 'toolCall',
+              id: 'tool-agent-1',
+              name: 'Agent',
+              arguments: {
+                description: 'Inspect subagent UI',
+                prompt: 'Inspect the current UI.',
+              },
+            }],
+          },
+          branches: null,
+        },
+      ],
+      subagents: [{
+        id: 'subagent-1',
+        description: 'Inspect subagent UI',
+        prompt: 'Inspect the current UI.',
+        subagentType: 'explorer',
+        contextMode: 'fork',
+        status: 'running',
+        startedAt: 1_800_000_000_800,
+        updatedAt: 1_800_000_001_200,
+        transcriptPayloadId: 'subagent-transcript-1',
+        transcriptMessageCount: 4,
+        parentToolCallId: 'tool-agent-1',
+      }],
+    });
+
+    await expect(page.getByText('Subagent · Inspect subagent UI')).toBeVisible();
+    await page.getByText('Subagent · Inspect subagent UI').click();
+    await expect(page.getByText('fork · explorer')).toBeVisible();
+
+    await page.getByRole('button', { name: 'View transcript' }).click();
+    const details = page.getByRole('complementary', { name: 'Subagent details' });
+    await expect(details).toBeVisible();
+    await expect(details.getByText('Timeline (4)')).toBeVisible();
+    await expect(details.getByText('Inspect the current UI.')).toBeVisible();
+    await expect(details.getByText('Read node "today"')).toBeVisible();
+
+    await details.getByText('Read node "today"').click();
+    await expect(details.getByText('Daily note content from subagent.')).toBeVisible();
+
+    await details.getByLabel('Subagent follow-up').fill('Continue with layout risks.');
+    await details.getByRole('button', { name: 'Send' }).click();
+    await details.getByRole('button', { name: 'Stop' }).click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.filter((call) => call.cmd === 'agent_subagent_send' || call.cmd === 'agent_subagent_stop')
+        .map((call) => ({ cmd: call.cmd, args: call.args }));
+    }).toEqual([
+      {
+        cmd: 'agent_subagent_send',
+        args: {
+          agentId: 'subagent-1',
+          message: 'Continue with layout risks.',
+          sessionId: 'mock-agent-session',
+        },
+      },
+      {
+        cmd: 'agent_subagent_stop',
+        args: {
+          agentId: 'subagent-1',
+          sessionId: 'mock-agent-session',
+        },
+      },
+    ]);
   });
 });

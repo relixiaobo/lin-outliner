@@ -63,6 +63,17 @@ describe('agent debug projection', () => {
         role: 'debug',
         summary: 'Provider payload round 1',
       });
+      const responseEnvelope = createAgentDebugPayloadEnvelope({
+        status: 200,
+        headers: { 'x-request-id': 'req-1' },
+      });
+      const responsePayloadRef = await store.writePayload(sessionId, {
+        id: 'debug-response-1',
+        data: responseEnvelope.json,
+        mimeType: 'application/json',
+        role: 'debug',
+        summary: 'Provider response round 2',
+      });
 
       await store.appendEvents(sessionId, [
         { ...base(1, 'session.created'), title: 'Restored debug session' },
@@ -79,8 +90,20 @@ describe('agent debug projection', () => {
           wire: { bytes: envelope.bytes, hash: envelope.hash },
           model: { id: 'gpt-test', provider: 'openai', api: 'responses', contextWindow: 128_000 },
         },
+        { ...base(5, 'payload.created'), payload: responsePayloadRef },
         {
-          ...base(5, 'assistant_message.started', agentActor),
+          ...base(6, 'debug.snapshot.created'),
+          runId: 'run-1',
+          debugId: 'debug-response-1',
+          source: 'provider_response',
+          queryIndex: 1,
+          turnIndex: 2,
+          payloadRef: responsePayloadRef,
+          wire: { bytes: responseEnvelope.bytes, hash: responseEnvelope.hash },
+          model: { id: 'gpt-test', provider: 'openai', api: 'responses', contextWindow: 128_000 },
+        },
+        {
+          ...base(7, 'assistant_message.started', agentActor),
           runId: 'run-1',
           messageId: 'assistant-1',
           parentMessageId: null,
@@ -89,14 +112,14 @@ describe('agent debug projection', () => {
           apiId: 'responses',
         },
         {
-          ...base(6, 'assistant_message.completed', agentActor),
+          ...base(8, 'assistant_message.completed', agentActor),
           runId: 'run-1',
           messageId: 'assistant-1',
           stopReason: 'stop',
           content: [{ type: 'text', text: 'Restored debug response.' }],
           usage,
         },
-        { ...base(7, 'run.completed'), runId: 'run-1' },
+        { ...base(9, 'run.completed'), runId: 'run-1' },
       ]);
 
       const restoredStore = new AgentEventStore(store.paths(sessionId).rootDir);
@@ -106,13 +129,17 @@ describe('agent debug projection', () => {
         sessionId,
       });
 
-      expect(projection.history).toHaveLength(1);
+      expect(projection.history).toHaveLength(2);
       expect(projection.history[0]?.id).toBe('debug-1');
       expect(projection.history[0]?.sessionTitle).toBe('Restored debug session');
       expect(projection.history[0]?.status).toBe('completed');
       expect(projection.history[0]?.wire.json).toBeUndefined();
       expect(projection.history[0]?.messages[0]?.summary).toContain('Summarize the restored session');
       expect(projection.history[0]?.responseParts).toEqual([{ kind: 'text', body: 'Restored debug response.' }]);
+      expect(projection.history[1]?.source).toBe('provider_response');
+      expect(projection.history[1]?.status).toBe('completed');
+      expect(projection.history[1]?.responseParts).toEqual([]);
+      expect(projection.history[1]?.usage).toBeNull();
       expect(projection.totals).toMatchObject({
         queries: 1,
         rounds: 1,

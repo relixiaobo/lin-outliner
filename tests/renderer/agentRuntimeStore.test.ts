@@ -10,8 +10,9 @@ import type {
   UserMessage,
 } from '../../src/core/agentTypes';
 import type { AgentSession } from '../../src/core/types';
-import type { AgentRenderProjection } from '../../src/core/agentRenderProjection';
+import type { AgentRenderProjection, AgentRenderSubagentEntity } from '../../src/core/agentRenderProjection';
 import type { AgentPayloadRef, AgentPersistedContent } from '../../src/core/agentEventLog';
+import { systemReminder } from '../../src/core/agentAttachments';
 
 const EMPTY_USAGE = {
   input: 0,
@@ -57,7 +58,13 @@ interface ProjectionEntry {
 
 function projection(
   entries: ProjectionEntry[],
-  options: { isStreaming?: boolean; streamingMessageId?: string; revision?: number } = {},
+  options: {
+    isStreaming?: boolean;
+    revision?: number;
+    streamingMessageId?: string;
+    subagents?: Record<string, AgentRenderSubagentEntity>;
+    subagentRunIds?: string[];
+  } = {},
 ): AgentRenderProjection {
   return {
     sessionId: 'saved',
@@ -74,6 +81,7 @@ function projection(
       kind: 'message',
       messageId: entry.nodeId,
     })),
+    subagentRunIds: options.subagentRunIds ?? Object.keys(options.subagents ?? {}),
     entities: {
       messages: Object.fromEntries(entries.map((entry) => [entry.nodeId, {
         id: entry.nodeId,
@@ -90,6 +98,7 @@ function projection(
         stopReason: entry.message.role === 'assistant' ? entry.message.stopReason : undefined,
         usage: entry.message.role === 'assistant' ? entry.message.usage : undefined,
       }])),
+      subagents: options.subagents ?? {},
     },
     streaming: options.streamingMessageId ? {
       messageId: options.streamingMessageId,
@@ -150,6 +159,7 @@ function createFakeClient(options: {
     restoreLatestSession: 0,
     restoreSession: [] as string[],
     queueFollowUp: [] as Array<{ sessionId: string; message: string; userViewContext?: AgentUserViewContext | null }>,
+    steerSession: [] as Array<{ sessionId: string; message: string }>,
     sendMessage: [] as Array<{
       sessionId: string;
       message: string;
@@ -185,6 +195,11 @@ function createFakeClient(options: {
       return { queued: true };
     },
     clearFollowUp: async () => {},
+    steerSession: async (sessionId, message) => {
+      calls.steerSession.push({ sessionId, message });
+      return { queued: true };
+    },
+    clearSteer: async () => {},
     stopSession: async () => {},
     onEvent: (listener) => {
       listeners.add(listener);
@@ -218,6 +233,21 @@ describe('agent runtime store', () => {
     expect(store.getSnapshot().entries.map((entry) => entry.nodeId))
       .toEqual(['u1', 'a1']);
     expect(fake.calls.closeSession).toEqual([]);
+    unsubscribe();
+  });
+
+  test('filters hidden system reminder user rows from the visible conversation', async () => {
+    const restored = session('saved', projection([
+      { nodeId: 'system-notification', message: userMessage(systemReminder('Background subagent completed.')), branches: null },
+      { nodeId: 'a1', message: assistantMessage('handled notification'), branches: null },
+    ]));
+    const fake = createFakeClient({ latestSession: restored });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+
+    await flushMicrotasks();
+
+    expect(store.getSnapshot().entries.map((entry) => entry.nodeId)).toEqual(['a1']);
     unsubscribe();
   });
 
@@ -356,6 +386,57 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
+  test('indexes subagents by parent tool call id for renderer lookup', async () => {
+    const subagent = {
+      id: 'subagent-1',
+      description: 'Inspect subagent UI',
+      prompt: 'Inspect the current UI.',
+      subagentType: 'explorer',
+      contextMode: 'fork',
+      status: 'completed',
+      startedAt: 100,
+      updatedAt: 250,
+      completedAt: 250,
+      result: 'Found the relevant UI path.',
+      transcriptPayloadId: 'subagent-transcript-1',
+      transcriptMessageCount: 4,
+      parentToolCallId: 'tool-agent-1',
+    } satisfies AgentRenderSubagentEntity;
+    const restored = session('saved', projection([
+      { nodeId: 'u1', message: userMessage('inspect'), branches: null },
+      {
+        nodeId: 'a1',
+        message: {
+          ...assistantMessage('', 2),
+          content: [{
+            type: 'toolCall',
+            id: 'tool-agent-1',
+            name: 'Agent',
+            arguments: {
+              description: 'Inspect subagent UI',
+              prompt: 'Inspect the current UI.',
+            },
+          }],
+        },
+        branches: null,
+      },
+    ], {
+      subagents: { [subagent.id]: subagent },
+      subagentRunIds: [subagent.id],
+    }));
+    const fake = createFakeClient({ latestSession: restored });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+
+    await flushMicrotasks();
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.subagentRunIds).toEqual(['subagent-1']);
+    expect(snapshot.subagents['subagent-1']).toEqual(subagent);
+    expect(snapshot.subagentsByParentToolCallId.get('tool-agent-1')).toEqual(subagent);
+    unsubscribe();
+  });
+
   test('passes user view context through user turns and queued follow-ups', async () => {
     const restored = session('saved', projection([]));
     const userViewContext: AgentUserViewContext = {
@@ -392,6 +473,7 @@ describe('agent runtime store', () => {
 
     await store.getSnapshot().sendMessage('hello', [], userViewContext);
     await store.getSnapshot().queueFollowUp('next', userViewContext);
+    await store.getSnapshot().steer('correct course');
 
     expect(fake.calls.sendMessage).toEqual([{
       sessionId: 'saved',
@@ -402,6 +484,10 @@ describe('agent runtime store', () => {
       sessionId: 'saved',
       message: 'next',
       userViewContext,
+    }]);
+    expect(fake.calls.steerSession).toEqual([{
+      sessionId: 'saved',
+      message: 'correct course',
     }]);
     unsubscribe();
   });

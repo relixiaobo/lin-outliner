@@ -102,6 +102,18 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const documentListeners: Array<(event: unknown) => void> = [];
     const agentSettings = {
       activeProviderId: 'openai',
+      agent: {
+        permissionMode: 'trusted',
+        automaticSkillsEnabled: true,
+        slashSkillsEnabled: true,
+        compactEnabled: true,
+        additionalSkillDirectories: [],
+        additionalAgentDirectories: [],
+        providerTimeoutMs: null,
+        providerMaxRetries: null,
+        providerMaxRetryDelayMs: 60_000,
+        providerCacheRetention: 'short',
+      },
       providers: [{
         providerId: 'openai',
         modelId: 'gpt-5.4',
@@ -162,6 +174,75 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       costCacheWriteUsd: 0,
     };
     const debugPayloadJson = '{"model":"gpt-5.4","messages":[{"role":"user","content":"Summarize current outline."}]}';
+    const subagentTranscriptJson = JSON.stringify({
+      v: 1,
+      runId: 'subagent-1',
+      messageCount: 4,
+      messages: [
+        {
+          role: 'user',
+          timestamp: now - 500,
+          content: [{ type: 'text', text: 'Inspect the current UI.' }],
+        },
+        {
+          role: 'assistant',
+          timestamp: now - 400,
+          api: 'openai-completions',
+          provider: 'openai',
+          model: 'gpt-5.4',
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              total: 0,
+            },
+          },
+          stopReason: 'toolUse',
+          content: [
+            { type: 'thinking', thinking: 'Read the visible outline before summarizing.', redacted: false },
+            { type: 'toolCall', id: 'subagent-tool-read-1', name: 'node_read', arguments: { nodeId: 'today' } },
+          ],
+        },
+        {
+          role: 'toolResult',
+          toolCallId: 'subagent-tool-read-1',
+          toolName: 'node_read',
+          timestamp: now - 300,
+          content: [{ type: 'text', text: 'Daily note content from subagent.' }],
+          isError: false,
+        },
+        {
+          role: 'assistant',
+          timestamp: now - 200,
+          api: 'openai-completions',
+          provider: 'openai',
+          model: 'gpt-5.4',
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              total: 0,
+            },
+          },
+          stopReason: 'stop',
+          content: [{ type: 'text', text: 'The subagent finished inspecting the UI.' }],
+        },
+      ],
+    });
     const debugSnapshot = {
       id: 'debug-snapshot-1',
       source: 'provider_payload',
@@ -693,7 +774,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               pendingToolCallIds: [],
               errorMessage: null,
               rows: [],
-              entities: { messages: {} },
+              subagentRunIds: [],
+              entities: { messages: {}, subagents: {} },
               streaming: null,
             },
           }) as T;
@@ -740,6 +822,47 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           }
           return clone(agentSettings) as T;
         }
+        if (cmd === 'agent_update_runtime_settings') {
+          const settings = args.settings as {
+            permissionMode?: string;
+            automaticSkillsEnabled?: boolean;
+            slashSkillsEnabled?: boolean;
+            compactEnabled?: boolean;
+            additionalSkillDirectories?: string[];
+            additionalAgentDirectories?: string[];
+            providerTimeoutMs?: number | null;
+            providerMaxRetries?: number | null;
+            providerMaxRetryDelayMs?: number | null;
+            providerCacheRetention?: string;
+          };
+          agentSettings.agent = {
+            permissionMode: settings.permissionMode === 'restricted' ? 'restricted' : 'trusted',
+            automaticSkillsEnabled: settings.automaticSkillsEnabled ?? agentSettings.agent.automaticSkillsEnabled,
+            slashSkillsEnabled: settings.slashSkillsEnabled ?? agentSettings.agent.slashSkillsEnabled,
+            compactEnabled: settings.compactEnabled ?? agentSettings.agent.compactEnabled,
+            additionalSkillDirectories: Array.isArray(settings.additionalSkillDirectories)
+              ? settings.additionalSkillDirectories.map(String)
+              : agentSettings.agent.additionalSkillDirectories,
+            additionalAgentDirectories: Array.isArray(settings.additionalAgentDirectories)
+              ? settings.additionalAgentDirectories.map(String)
+              : agentSettings.agent.additionalAgentDirectories,
+            providerTimeoutMs: typeof settings.providerTimeoutMs === 'number' || settings.providerTimeoutMs === null
+              ? settings.providerTimeoutMs
+              : agentSettings.agent.providerTimeoutMs,
+            providerMaxRetries: typeof settings.providerMaxRetries === 'number' || settings.providerMaxRetries === null
+              ? settings.providerMaxRetries
+              : agentSettings.agent.providerMaxRetries,
+            providerMaxRetryDelayMs: typeof settings.providerMaxRetryDelayMs === 'number' || settings.providerMaxRetryDelayMs === null
+              ? settings.providerMaxRetryDelayMs
+              : agentSettings.agent.providerMaxRetryDelayMs,
+            providerCacheRetention: settings.providerCacheRetention === 'none' || settings.providerCacheRetention === 'long'
+              ? settings.providerCacheRetention
+              : settings.providerCacheRetention === 'short'
+                ? 'short'
+                : agentSettings.agent.providerCacheRetention,
+          };
+          return clone(agentSettings) as T;
+        }
         if (cmd === 'agent_set_active_provider') {
           agentSettings.activeProviderId = String(args.providerId);
           return clone(agentSettings) as T;
@@ -759,9 +882,52 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd === 'agent_payload_text') {
           const payloadId = String(args.payloadId);
           if (payloadId === 'payload-full-output') return clone('Full persisted tool output from payload') as T;
+          if (payloadId === 'subagent-transcript-1') return clone(subagentTranscriptJson) as T;
           return clone(null) as T;
         }
+        if (cmd === 'agent_subagent_status') {
+          return clone({
+            status: 'running',
+            agent_id: String(args.agentId),
+            description: 'Inspect subagent UI',
+            prompt: 'Inspect the current UI.',
+            subagent_type: 'explorer',
+            context_mode: 'fork',
+            started_at: now - 500,
+            updated_at: now,
+            transcript_message_count: 4,
+          }) as T;
+        }
+        if (cmd === 'agent_subagent_send') {
+          return clone({
+            status: 'queued',
+            agent_id: String(args.agentId),
+            description: 'Inspect subagent UI',
+            prompt: 'Inspect the current UI.',
+            subagent_type: 'explorer',
+            context_mode: 'fork',
+            started_at: now - 500,
+            updated_at: now,
+            transcript_message_count: 4,
+            instructions: 'Message queued for the running background agent.',
+          }) as T;
+        }
+        if (cmd === 'agent_subagent_stop') {
+          return clone({
+            status: 'stopped',
+            agent_id: String(args.agentId),
+            description: 'Inspect subagent UI',
+            prompt: 'Inspect the current UI.',
+            subagent_type: 'explorer',
+            context_mode: 'fork',
+            started_at: now - 500,
+            updated_at: now,
+            completed_at: now,
+            transcript_message_count: 4,
+          }) as T;
+        }
         if (cmd === 'agent_queue_follow_up') return clone({ queued: true }) as T;
+        if (cmd === 'agent_steer_session') return clone({ queued: true }) as T;
         if (cmd.startsWith('agent_')) return clone(undefined) as T;
         if (cmd === 'init_workspace' || cmd === 'get_projection') return clone(projection());
         if (cmd === 'create_node') {
@@ -1203,6 +1369,12 @@ export async function emitAgentProjection(page: Page, sessionId: string, state: 
       return { type: 'text', text: JSON.stringify(part) };
     });
   };
+  const rawSubagents = state.subagents ?? {};
+  const subagents = Array.isArray(rawSubagents)
+    ? Object.fromEntries(rawSubagents.map((subagent: any) => [subagent.id, subagent]))
+    : rawSubagents;
+  const subagentRunIds = state.subagentRunIds
+    ?? (Array.isArray(rawSubagents) ? rawSubagents.map((subagent: any) => subagent.id) : Object.keys(subagents));
 
   for (const entry of state.conversation ?? []) {
     const message = entry.message;
@@ -1292,7 +1464,8 @@ export async function emitAgentProjection(page: Page, sessionId: string, state: 
       pendingToolCallIds: state.pendingToolCallIds ?? [],
       errorMessage: state.errorMessage ?? null,
       rows,
-      entities: { messages: entities },
+      subagentRunIds,
+      entities: { messages: entities, subagents },
       streaming,
     },
     timestamp: Date.now(),

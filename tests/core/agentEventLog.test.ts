@@ -348,6 +348,128 @@ describe('agent event log', () => {
     expect(toolResult.content).toEqual([{ type: 'text', text: replacement }]);
   });
 
+  test('tracks subagent sidechain metadata without adding it to the active conversation', () => {
+    const transcriptPayload: AgentPayloadRef = {
+      kind: 'payload_ref',
+      id: 'subagent-transcript-1',
+      storage: 'file',
+      mimeType: 'application/json',
+      byteLength: 128,
+      sha256: 'subagent-sha',
+      role: 'subagent_transcript',
+      summary: 'Subagent transcript',
+    };
+    const updatedPayload: AgentPayloadRef = {
+      ...transcriptPayload,
+      id: 'subagent-transcript-2',
+      byteLength: 256,
+      sha256: 'subagent-sha-2',
+    };
+    const events: AgentEvent[] = [
+      { ...base(1, 'session.created'), title: 'Untitled' },
+      { ...base(2, 'payload.created'), payload: transcriptPayload },
+      {
+        ...base(3, 'subagent_run.started', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
+        subagentRunId: 'subagent-1',
+        parentToolCallId: 'tool-agent-1',
+        name: 'research',
+        description: 'research docs',
+        prompt: 'Research this.',
+        subagentType: 'general',
+        contextMode: 'fresh',
+        transcriptPayload,
+        transcriptMessageCount: 1,
+      },
+      { ...base(4, 'payload.created'), payload: updatedPayload },
+      {
+        ...base(5, 'subagent_run.updated', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
+        subagentRunId: 'subagent-1',
+        status: 'completed',
+        completedAt: 1_700_000_000_100,
+        result: 'Done.',
+        transcriptPayload: updatedPayload,
+        transcriptMessageCount: 3,
+      },
+      {
+        ...base(6, 'subagent_run.updated', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
+        subagentRunId: 'subagent-1',
+        status: 'running',
+        transcriptPayload: updatedPayload,
+        transcriptMessageCount: 4,
+      },
+    ];
+
+    const state = replayAgentEvents(events);
+
+    expect(getAgentEventActivePath(state)).toEqual([]);
+    expect(deriveAgentPiMessages(state)).toEqual([]);
+    expect(state.subagents['subagent-1']).toMatchObject({
+      id: 'subagent-1',
+      name: 'research',
+      status: 'completed',
+      result: 'Done.',
+      transcriptPayloadId: 'subagent-transcript-2',
+      transcriptMessageCount: 4,
+      parentToolCallId: 'tool-agent-1',
+    });
+  });
+
+  test('applies tool result replacement events to replayed pi messages', () => {
+    const payload: AgentPayloadRef = {
+      kind: 'payload_ref',
+      id: 'tool-output-tool-1',
+      storage: 'file',
+      mimeType: 'text/plain',
+      byteLength: 80_000,
+      sha256: 'tool-sha',
+      role: 'tool_output',
+      summary: 'bash output',
+      truncated: true,
+    };
+    const replacement = '<persisted-output>\nPreview\n</persisted-output>';
+    const events: AgentEvent[] = [
+      { ...base(1, 'session.created'), title: 'Untitled' },
+      {
+        ...base(2, 'assistant_message.started', agentActor),
+        runId: 'run-1',
+        messageId: 'assistant-1',
+        parentMessageId: null,
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        ...base(3, 'assistant_message.completed', agentActor),
+        messageId: 'assistant-1',
+        stopReason: 'toolUse',
+        content: [{ type: 'toolCall', id: 'tool-1', name: 'bash', arguments: {} }],
+      },
+      {
+        ...base(4, 'tool_result.created', { type: 'tool', toolName: 'bash', toolCallId: 'tool-1' }),
+        messageId: 'tool-result-1',
+        parentMessageId: 'assistant-1',
+        toolCallId: 'tool-1',
+        toolName: 'bash',
+        isError: false,
+        content: [{ type: 'text', text: 'large original output' }],
+        outputSummary: 'large original output',
+      },
+      { ...base(5, 'payload.created'), payload },
+      {
+        ...base(6, 'tool_result.replaced'),
+        messageId: 'tool-result-1',
+        toolCallId: 'tool-1',
+        content: [{ type: 'payload_ref', payload, label: replacement }],
+        outputSummary: 'bash output',
+        outputRef: payload,
+      },
+    ];
+
+    const toolResult = deriveAgentPiMessages(replayAgentEvents(events))[1];
+    expect(toolResult?.role).toBe('toolResult');
+    if (toolResult?.role !== 'toolResult') throw new Error('Expected tool result');
+    expect(toolResult.content).toEqual([{ type: 'text', text: replacement }]);
+  });
+
   test('rejects non-monotonic event sequences', () => {
     expect(() => replayAgentEvents([
       { ...base(2, 'session.created'), title: 'Untitled' },

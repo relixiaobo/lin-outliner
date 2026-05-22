@@ -18,7 +18,7 @@ import {
   AgentComposerModelButton,
   AgentComposerPrimaryAction,
   AgentComposerToolbar,
-  AgentQueuedFollowUp,
+  AgentQueuedSteer,
 } from './AgentComposerControls';
 import {
   AgentComposerModelMenu,
@@ -386,7 +386,7 @@ export function AgentComposer({
       }}
     >
       {steeringNote ? (
-        <AgentQueuedFollowUp
+        <AgentQueuedSteer
           note={steeringNote}
           onCancel={() => void onCancelSteer()}
           onEdit={() => void editSteer()}

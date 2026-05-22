@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { api } from '../api/client';
+import { isSystemReminderBlock } from '../../core/agentAttachments';
 import type {
   AgentConversationMessage,
   AgentMessageAttachmentInput,
@@ -20,6 +21,7 @@ import type { AgentSession } from '../../core/types';
 import type {
   AgentRenderMessageEntity,
   AgentRenderProjection,
+  AgentRenderSubagentEntity,
 } from '../../core/agentRenderProjection';
 import type { AgentPersistedContent } from '../../core/agentEventLog';
 
@@ -47,7 +49,8 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
   pendingToolCallIds: [],
   errorMessage: null,
   rows: [],
-  entities: { messages: {} },
+  subagentRunIds: [],
+  entities: { messages: {}, subagents: {} },
   streaming: null,
 };
 
@@ -97,6 +100,7 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
   for (const row of projection.rows) {
     const entity = projection.entities.messages[row.messageId];
     if (!entity || (entity.role !== 'user' && entity.role !== 'assistant')) continue;
+    if (entity.role === 'user' && isHiddenOnlySystemReminder(entity)) continue;
     const streaming = projection.streaming?.messageId === entity.id;
     const message = conversationMessageFromEntity(entity);
     entries.push({
@@ -143,6 +147,11 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
   }
 
   return { entries, turnPhase };
+}
+
+function isHiddenOnlySystemReminder(entity: AgentRenderMessageEntity): boolean {
+  return entity.content.length > 0
+    && entity.content.every((part) => part.type === 'text' && isSystemReminderBlock(part.text));
 }
 
 function activeAssistantEntryId(entries: AgentMessageEntry[], projection: AgentRenderProjection): string {
@@ -308,6 +317,8 @@ export interface AgentRuntimeClient {
     userViewContext?: AgentUserViewContext | null,
   ) => Promise<{ queued: boolean }>;
   clearFollowUp: (sessionId: string) => Promise<void>;
+  steerSession: (sessionId: string, message: string) => Promise<{ queued: boolean }>;
+  clearSteer: (sessionId: string) => Promise<void>;
   stopSession: (sessionId: string) => Promise<void>;
   onEvent: (listener: (event: AgentRuntimeEvent) => void) => (() => void) | null;
 }
@@ -324,6 +335,9 @@ export interface LinAgentRuntimeView {
   sessionId: string | null;
   sessionTitle: string | null;
   sessionCost: number;
+  subagentRunIds: string[];
+  subagents: Record<string, AgentRenderSubagentEntity>;
+  subagentsByParentToolCallId: Map<string, AgentRenderSubagentEntity>;
   toolResults: Map<string, AgentToolResultWithPayloads>;
   turnPhase: AgentTurnPhase;
   selectSession: (targetSessionId: string) => Promise<void>;
@@ -339,6 +353,8 @@ export interface LinAgentRuntimeView {
   switchBranch: (nodeId: string) => Promise<void>;
   queueFollowUp: (prompt: string, userViewContext?: AgentUserViewContext | null) => Promise<boolean>;
   clearFollowUp: () => Promise<void>;
+  steer: (prompt: string) => Promise<boolean>;
+  clearSteer: () => Promise<void>;
   stop: () => void;
   reset: () => void;
   reloadSession: () => Promise<void>;
@@ -359,6 +375,8 @@ const defaultAgentRuntimeClient: AgentRuntimeClient = {
   queueFollowUp: (sessionId, message, userViewContext = null) =>
     api.agentQueueFollowUp(sessionId, message, userViewContext),
   clearFollowUp: (sessionId) => api.agentClearFollowUp(sessionId),
+  steerSession: (sessionId, message) => api.agentSteerSession(sessionId, message),
+  clearSteer: (sessionId) => api.agentClearSteer(sessionId),
   stopSession: (sessionId) => api.agentStopSession(sessionId),
   onEvent: (listener) => typeof window === 'undefined' ? null : window.lin?.onAgentEvent(listener) ?? null,
 };
@@ -504,6 +522,29 @@ export class AgentRuntimeStore {
     }
   };
 
+  steer = async (prompt: string) => {
+    const trimmed = prompt.trim();
+    if (!trimmed) return false;
+    try {
+      const currentSessionId = await this.ensureSession();
+      const result = await this.client.steerSession(currentSessionId, trimmed);
+      return result.queued;
+    } catch (caught) {
+      this.reportError(caught);
+      throw caught;
+    }
+  };
+
+  clearSteer = async () => {
+    if (!this.sessionId) return;
+    try {
+      await this.client.clearSteer(this.sessionId);
+    } catch (caught) {
+      this.reportError(caught);
+      throw caught;
+    }
+  };
+
   stop = () => {
     if (!this.sessionId) return;
     void this.client.stopSession(this.sessionId).catch((caught) => {
@@ -642,6 +683,11 @@ export class AgentRuntimeStore {
   private buildView(): LinAgentRuntimeView {
     const toolResults = buildToolResultMap(this.projection);
     const { entries, turnPhase } = buildEntries(this.projection, toolResults);
+    const subagents = this.projection.entities.subagents ?? {};
+    const subagentsByParentToolCallId = new Map<string, AgentRenderSubagentEntity>();
+    for (const subagent of Object.values(subagents)) {
+      if (subagent.parentToolCallId) subagentsByParentToolCallId.set(subagent.parentToolCallId, subagent);
+    }
     return {
       entries,
       error: this.error,
@@ -654,6 +700,9 @@ export class AgentRuntimeStore {
       sessionId: this.sessionId,
       sessionTitle: this.projection.sessionTitle,
       sessionCost: sessionCost(this.projection),
+      subagentRunIds: this.projection.subagentRunIds,
+      subagents,
+      subagentsByParentToolCallId,
       toolResults,
       turnPhase,
       selectSession: this.selectSession,
@@ -665,6 +714,8 @@ export class AgentRuntimeStore {
       switchBranch: this.switchBranch,
       queueFollowUp: this.queueFollowUp,
       clearFollowUp: this.clearFollowUp,
+      steer: this.steer,
+      clearSteer: this.clearSteer,
       stop: this.stop,
       reset: this.reset,
       reloadSession: this.reloadSession,

@@ -1,4 +1,5 @@
 import type { AgentToolResultWithPayloads } from '../../../core/agentTypes';
+import type { AgentRenderSubagentEntity } from '../../../core/agentRenderProjection';
 import { AgentThinkingBody, AgentThinkingRow } from './AgentThinkingBlock';
 import { AgentToolCallBlock } from './AgentToolCallBlock';
 import type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
@@ -7,9 +8,11 @@ interface AgentProcessTimelineProps {
   blocks: AgentProcessSegmentBlock[];
   expandState: AgentExpandState;
   id: string;
+  onOpenSubagentTranscript?: (subagentId: string) => void;
   pendingToolCallIds: ReadonlySet<string>;
   results: Map<string, AgentToolResultWithPayloads>;
   sessionId?: string | null;
+  subagentsByParentToolCallId?: Map<string, AgentRenderSubagentEntity>;
   turnActive: boolean;
 }
 
@@ -17,9 +20,11 @@ export function AgentProcessTimeline({
   blocks,
   expandState,
   id,
+  onOpenSubagentTranscript,
   pendingToolCallIds,
   results,
   sessionId,
+  subagentsByParentToolCallId,
   turnActive,
 }: AgentProcessTimelineProps) {
   const thinkingBlocks = blocks.filter(
@@ -55,9 +60,11 @@ export function AgentProcessTimeline({
                 const toolId = `tool:${block.toolCall.id}`;
                 expandState.toggle(toolId, expandState.isExpanded(toolId, false));
               }}
+              onOpenSubagentTranscript={onOpenSubagentTranscript}
               pendingToolCallIds={pendingToolCallIds}
               result={results.get(block.toolCall.id)}
               sessionId={sessionId}
+              subagent={subagentsByParentToolCallId?.get(block.toolCall.id)}
               toolCall={block.toolCall}
               turnActive={turnActive}
             />

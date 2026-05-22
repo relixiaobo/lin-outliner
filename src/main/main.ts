@@ -12,10 +12,11 @@ import {
   getProviderSettings,
   setActiveProvider,
   setProviderApiKey,
+  updateAgentRuntimeSettings,
   upsertProviderConfig,
 } from './agentSettings';
 import { isAgentCommand, isDocumentCommand, type AgentCommand } from '../core/commands';
-import type { AgentProviderConfigInput } from '../core/types';
+import type { AgentProviderConfigInput, AgentRuntimeSettingsInput } from '../core/types';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const documentService = new DocumentService();
@@ -103,6 +104,15 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
       return agentRuntime.debugPayload(String(args.sessionId), String(args.payloadId));
     case 'agent_payload_text':
       return agentRuntime.payloadText(String(args.sessionId), String(args.payloadId));
+    case 'agent_subagent_status':
+      return agentRuntime.subagentStatus(String(args.sessionId), String(args.agentId), {
+        wait: args.wait === true,
+        timeoutMs: typeof args.timeoutMs === 'number' ? args.timeoutMs : undefined,
+      });
+    case 'agent_subagent_send':
+      return agentRuntime.subagentSend(String(args.sessionId), String(args.agentId), String(args.message ?? ''));
+    case 'agent_subagent_stop':
+      return agentRuntime.subagentStop(String(args.sessionId), String(args.agentId));
     case 'agent_send_message':
       return agentRuntime.sendMessage(
         String(args.sessionId),
@@ -130,6 +140,13 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
       );
     case 'agent_clear_follow_up':
       return agentRuntime.clearFollowUp(String(args.sessionId));
+    case 'agent_steer_session':
+      return agentRuntime.steerSession(
+        String(args.sessionId),
+        String(args.message ?? ''),
+      );
+    case 'agent_clear_steer':
+      return agentRuntime.clearSteer(String(args.sessionId));
     case 'agent_stop_session':
       return agentRuntime.stopSession(String(args.sessionId));
     case 'agent_reset_session':
@@ -138,6 +155,8 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
       return agentRuntime.closeSession(String(args.sessionId));
     case 'agent_get_provider_settings':
       return getProviderSettings();
+    case 'agent_update_runtime_settings':
+      return updateAgentRuntimeSettings(args.settings as AgentRuntimeSettingsInput);
     case 'agent_upsert_provider_config':
       return upsertProviderConfig(args.provider as AgentProviderConfigInput);
     case 'agent_delete_provider_config':

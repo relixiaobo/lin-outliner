@@ -24,6 +24,7 @@ export type AgentPayloadRole =
   | 'preview'
   | 'text_extract'
   | 'tool_output'
+  | 'subagent_transcript'
   | 'debug';
 
 export interface AgentPayloadDisplayMetadata {
@@ -62,6 +63,7 @@ export type AgentContentDelta = AgentTextDelta;
 
 export type AgentRunStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 export type AgentMessageStatus = 'completed' | 'streaming' | 'failed';
+export type AgentSubagentRunStatus = 'running' | 'completed' | 'failed' | 'stopped';
 
 export type AgentEventType =
   | 'session.created'
@@ -81,6 +83,7 @@ export type AgentEventType =
   | 'tool_call.completed'
   | 'tool_call.failed'
   | 'tool_result.created'
+  | 'tool_result.replaced'
   | 'approval.requested'
   | 'approval.resolved'
   | 'follow_up.queued'
@@ -89,6 +92,8 @@ export type AgentEventType =
   | 'run.completed'
   | 'run.failed'
   | 'run.cancelled'
+  | 'subagent_run.started'
+  | 'subagent_run.updated'
   | 'compaction.completed'
   | 'payload.created'
   | 'payload.derived'
@@ -128,7 +133,7 @@ export interface SessionSettingsChangedEvent extends AgentEventBase {
 export interface DebugSnapshotCreatedEvent extends AgentEventBase {
   type: 'debug.snapshot.created';
   debugId: string;
-  source: 'provider_payload' | 'runtime_state';
+  source: 'provider_payload' | 'provider_response' | 'runtime_state';
   queryIndex: number;
   turnIndex: number;
   payloadRef: AgentPayloadRef;
@@ -245,6 +250,15 @@ export interface ToolResultCreatedEvent extends AgentEventBase {
   outputRef?: AgentPayloadRef;
 }
 
+export interface ToolResultReplacedEvent extends AgentEventBase {
+  type: 'tool_result.replaced';
+  toolCallId: string;
+  messageId: string;
+  content: AgentPersistedContent[];
+  outputSummary: string;
+  outputRef?: AgentPayloadRef;
+}
+
 export interface ApprovalRequestedEvent extends AgentEventBase {
   type: 'approval.requested';
   requestId: string;
@@ -277,6 +291,30 @@ export interface RunTerminalEvent extends AgentEventBase {
   type: 'run.completed' | 'run.failed' | 'run.cancelled';
   runId: string;
   errorMessage?: string;
+}
+
+export interface SubagentRunStartedEvent extends AgentEventBase {
+  type: 'subagent_run.started';
+  subagentRunId: string;
+  parentToolCallId?: string;
+  name?: string;
+  description: string;
+  prompt: string;
+  subagentType: string;
+  contextMode: 'fresh' | 'fork';
+  transcriptPayload?: AgentPayloadRef;
+  transcriptMessageCount: number;
+}
+
+export interface SubagentRunUpdatedEvent extends AgentEventBase {
+  type: 'subagent_run.updated';
+  subagentRunId: string;
+  status: AgentSubagentRunStatus;
+  completedAt?: number;
+  result?: string;
+  error?: string;
+  transcriptPayload?: AgentPayloadRef;
+  transcriptMessageCount: number;
 }
 
 export interface CompactionCompletedEvent extends AgentEventBase {
@@ -330,12 +368,15 @@ export type AgentEvent =
   | ToolCallCompletedEvent
   | ToolCallFailedEvent
   | ToolResultCreatedEvent
+  | ToolResultReplacedEvent
   | ApprovalRequestedEvent
   | ApprovalResolvedEvent
   | FollowUpQueuedEvent
   | FollowUpAppliedEvent
   | RunStartedEvent
   | RunTerminalEvent
+  | SubagentRunStartedEvent
+  | SubagentRunUpdatedEvent
   | CompactionCompletedEvent
   | PayloadCreatedEvent
   | PayloadDerivedEvent
@@ -382,6 +423,24 @@ export interface AgentRunRecord {
   errorMessage?: string;
 }
 
+export interface AgentSubagentRunRecord {
+  id: string;
+  name?: string;
+  description: string;
+  prompt: string;
+  subagentType: string;
+  contextMode: 'fresh' | 'fork';
+  status: AgentSubagentRunStatus;
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  result?: string;
+  error?: string;
+  transcriptPayloadId?: string;
+  transcriptMessageCount: number;
+  parentToolCallId?: string;
+}
+
 export interface AgentEventReplayState {
   session: AgentSessionRecord | null;
   latestSeq: number;
@@ -394,6 +453,7 @@ export interface AgentEventReplayState {
   payloads: Record<string, AgentPayloadRef>;
   derivedPayloadsBySourceId: Record<string, AgentPayloadRef[]>;
   runs: Record<string, AgentRunRecord>;
+  subagents: Record<string, AgentSubagentRunRecord>;
 }
 
 export interface AgentMessageBranchState {
@@ -420,6 +480,7 @@ export function createEmptyAgentEventReplayState(): AgentEventReplayState {
     payloads: {},
     derivedPayloadsBySourceId: {},
     runs: {},
+    subagents: {},
   };
 }
 
@@ -651,6 +712,16 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       });
       state.selectedLeafMessageId = event.messageId;
       return;
+    case 'tool_result.replaced': {
+      const message = requireMessage(state, event.messageId);
+      if (message.role !== 'toolResult') throw new Error(`Cannot replace ${message.role} message as tool result`);
+      if (message.toolCallId !== event.toolCallId) {
+        throw new Error(`Tool result replacement id mismatch: ${event.toolCallId}`);
+      }
+      message.content = cloneContent(event.content);
+      message.updatedAt = event.createdAt;
+      return;
+    }
     case 'branch.selected':
       requireMessage(state, event.leafMessageId);
       state.selectedLeafMessageId = event.leafMessageId;
@@ -680,6 +751,42 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       run.updatedAt = event.createdAt;
       run.errorMessage = event.errorMessage;
       state.runs[event.runId] = run;
+      return;
+    }
+    case 'subagent_run.started':
+      state.subagents ??= {};
+      state.subagents[event.subagentRunId] = {
+        id: event.subagentRunId,
+        name: event.name,
+        description: event.description,
+        prompt: event.prompt,
+        subagentType: event.subagentType,
+        contextMode: event.contextMode,
+        status: 'running',
+        startedAt: event.createdAt,
+        updatedAt: event.createdAt,
+        transcriptPayloadId: event.transcriptPayload?.id,
+        transcriptMessageCount: event.transcriptMessageCount,
+        parentToolCallId: event.parentToolCallId,
+      };
+      if (event.transcriptPayload) state.payloads[event.transcriptPayload.id] = event.transcriptPayload;
+      return;
+    case 'subagent_run.updated': {
+      state.subagents ??= {};
+      const run = state.subagents[event.subagentRunId];
+      if (!run) return;
+      const currentIsTerminal = run.status !== 'running';
+      const incomingIsRunning = event.status === 'running';
+      if (!currentIsTerminal || !incomingIsRunning) {
+        run.status = event.status;
+        run.completedAt = event.completedAt;
+        run.result = event.result;
+        run.error = event.error;
+      }
+      run.updatedAt = event.createdAt;
+      run.transcriptPayloadId = event.transcriptPayload?.id ?? run.transcriptPayloadId;
+      run.transcriptMessageCount = event.transcriptMessageCount;
+      if (event.transcriptPayload) state.payloads[event.transcriptPayload.id] = event.transcriptPayload;
       return;
     }
     case 'payload.created':

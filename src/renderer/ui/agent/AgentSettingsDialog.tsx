@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AgentModelOption,
+  AgentPermissionMode,
   AgentProviderConfigView,
   AgentProviderOption,
   AgentProviderSettingsView,
@@ -28,6 +29,11 @@ interface DraftConfig {
   reasoningLevel: AgentReasoningLevel;
   baseUrl: string;
   enabled: boolean;
+  permissionMode: AgentPermissionMode;
+  automaticSkillsEnabled: boolean;
+  slashSkillsEnabled: boolean;
+  compactEnabled: boolean;
+  additionalSkillDirectoriesText: string;
 }
 
 interface ProviderChoice {
@@ -45,6 +51,11 @@ const EMPTY_DRAFT: DraftConfig = {
   reasoningLevel: 'off',
   baseUrl: '',
   enabled: true,
+  permissionMode: 'trusted',
+  automaticSkillsEnabled: true,
+  slashSkillsEnabled: true,
+  compactEnabled: true,
+  additionalSkillDirectoriesText: '',
 };
 
 const PREFERRED_PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'openrouter'];
@@ -145,13 +156,14 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
   function updateProvider(providerId: string) {
     const existing = settings?.providers.find((provider) => provider.providerId === providerId);
     const catalog = providerCatalog.get(providerId);
-    setDraft({
+    setDraft((current) => ({
+      ...current,
       providerId,
       modelId: existing?.modelId ?? catalog?.models[0]?.id ?? '',
       reasoningLevel: existing?.reasoningLevel ?? defaultReasoningLevel(catalog?.models[0]),
       baseUrl: existing?.baseUrl ?? '',
       enabled: existing?.enabled ?? true,
-    });
+    }));
     setApiKey('');
     setNotice(null);
     setError(null);
@@ -180,6 +192,13 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
         reasoningLevel: coerceReasoningLevel(draft.reasoningLevel, selectedReasoningLevels),
         baseUrl: draft.baseUrl.trim() || null,
         enabled: draft.enabled,
+      });
+      next = await api.agentUpdateRuntimeSettings({
+        permissionMode: draft.permissionMode,
+        automaticSkillsEnabled: draft.automaticSkillsEnabled,
+        slashSkillsEnabled: draft.slashSkillsEnabled,
+        compactEnabled: draft.compactEnabled,
+        additionalSkillDirectories: parseSkillDirectoryInput(draft.additionalSkillDirectoriesText),
       });
       next = await api.agentSetActiveProvider(providerId);
       if (apiKey.trim()) {
@@ -420,6 +439,67 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
             )}
           </section>
 
+          <section className="agent-settings-section" aria-labelledby="agent-settings-behavior-heading">
+            <div className="agent-settings-section-header">
+              <h3 id="agent-settings-behavior-heading">Agent behavior</h3>
+              <span>{draft.permissionMode === 'trusted' ? 'Trusted workspace' : 'Restricted tools'}</span>
+            </div>
+            <div className="agent-settings-grid">
+              <FormField className="agent-settings-field" label="Permission mode">
+                <SelectControl
+                  label="Permission mode"
+                  onChange={(event) => setDraft((current) => ({
+                    ...current,
+                    permissionMode: event.target.value === 'restricted' ? 'restricted' : 'trusted',
+                  }))}
+                  value={draft.permissionMode}
+                >
+                  <option value="trusted">Trusted</option>
+                  <option value="restricted">Restricted</option>
+                </SelectControl>
+              </FormField>
+
+              <FormField className="agent-settings-field agent-settings-field-wide" label="Additional skill directories">
+                <TextInputControl
+                  label="Additional skill directories"
+                  onChange={(event) => setDraft((current) => ({
+                    ...current,
+                    additionalSkillDirectoriesText: event.target.value,
+                  }))}
+                  placeholder="Optional paths, comma separated"
+                  value={draft.additionalSkillDirectoriesText}
+                />
+                <span className="agent-settings-field-meta">
+                  Default directories stay enabled: ~/.agents/skills and .agents/skills.
+                </span>
+              </FormField>
+
+              <div className="agent-settings-row agent-settings-field-wide">
+                <CheckboxControl
+                  checked={draft.automaticSkillsEnabled}
+                  className="agent-settings-checkbox"
+                  onCheckedChange={(automaticSkillsEnabled) => setDraft((current) => ({ ...current, automaticSkillsEnabled }))}
+                >
+                  <span>Automatic skills</span>
+                </CheckboxControl>
+                <CheckboxControl
+                  checked={draft.slashSkillsEnabled}
+                  className="agent-settings-checkbox"
+                  onCheckedChange={(slashSkillsEnabled) => setDraft((current) => ({ ...current, slashSkillsEnabled }))}
+                >
+                  <span>Slash skills</span>
+                </CheckboxControl>
+                <CheckboxControl
+                  checked={draft.compactEnabled}
+                  className="agent-settings-checkbox"
+                  onCheckedChange={(compactEnabled) => setDraft((current) => ({ ...current, compactEnabled }))}
+                >
+                  <span>Compact command</span>
+                </CheckboxControl>
+              </div>
+            </div>
+          </section>
+
           {error ? (
             <div className="agent-settings-alert" role="alert">
               <WarningIcon size={ICON_SIZE.menu} />
@@ -456,7 +536,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
 function resolveInitialDraft(settings: AgentProviderSettingsView): DraftConfig {
   const active = resolveUsableActiveProvider(settings);
   const existing = active ?? settings.providers[0];
-  if (existing) return providerToDraft(existing);
+  if (existing) return providerToDraft(existing, settings);
 
   const preferredCatalog = PREFERRED_PROVIDER_ORDER
     .map((providerId) => settings.availableProviders.find((provider) => provider.providerId === providerId))
@@ -467,12 +547,13 @@ function resolveInitialDraft(settings: AgentProviderSettingsView): DraftConfig {
     reasoningLevel: defaultReasoningLevel(preferredCatalog?.models[0]),
     baseUrl: '',
     enabled: true,
+    ...runtimeSettingsToDraft(settings),
   };
 }
 
 function resolveDraftForProvider(settings: AgentProviderSettingsView, providerId: string): DraftConfig {
   const existing = settings.providers.find((provider) => provider.providerId === providerId);
-  if (existing) return providerToDraft(existing);
+  if (existing) return providerToDraft(existing, settings);
   return resolveInitialDraft(settings);
 }
 
@@ -551,14 +632,36 @@ function preferredProviderIndex(providerId: string): number {
   return index >= 0 ? index : PREFERRED_PROVIDER_ORDER.length;
 }
 
-function providerToDraft(provider: AgentProviderConfigView): DraftConfig {
+function providerToDraft(provider: AgentProviderConfigView, settings: AgentProviderSettingsView): DraftConfig {
   return {
     providerId: provider.providerId,
     modelId: provider.modelId,
     reasoningLevel: provider.reasoningLevel,
     baseUrl: provider.baseUrl ?? '',
     enabled: provider.enabled,
+    ...runtimeSettingsToDraft(settings),
   };
+}
+
+function runtimeSettingsToDraft(settings: AgentProviderSettingsView): Pick<
+  DraftConfig,
+  'permissionMode' | 'automaticSkillsEnabled' | 'slashSkillsEnabled' | 'compactEnabled' | 'additionalSkillDirectoriesText'
+> {
+  return {
+    permissionMode: settings.agent.permissionMode,
+    automaticSkillsEnabled: settings.agent.automaticSkillsEnabled,
+    slashSkillsEnabled: settings.agent.slashSkillsEnabled,
+    compactEnabled: settings.agent.compactEnabled,
+    additionalSkillDirectoriesText: settings.agent.additionalSkillDirectories.join(', '),
+  };
+}
+
+function parseSkillDirectoryInput(value: string): string[] {
+  return [...new Set(value
+    .split(/[,\n]/g)
+    .map((item) => item.trim())
+    .filter(Boolean))]
+    .slice(0, 20);
 }
 
 function defaultReasoningLevel(model: AgentModelOption | undefined): AgentReasoningLevel {

@@ -4,6 +4,7 @@ import {
   type AgentEventMessageRecord,
   type AgentEventReplayState,
   type AgentPersistedContent,
+  type AgentSubagentRunRecord,
 } from './agentEventLog';
 
 export type AgentRenderRowKind = 'message' | 'tool_result';
@@ -46,8 +47,27 @@ export interface AgentStreamingRenderState {
   updatedAt: number;
 }
 
+export interface AgentRenderSubagentEntity {
+  id: string;
+  name?: string;
+  description: string;
+  prompt: string;
+  subagentType: string;
+  contextMode: AgentSubagentRunRecord['contextMode'];
+  status: AgentSubagentRunRecord['status'];
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  result?: string;
+  error?: string;
+  transcriptPayloadId?: string;
+  transcriptMessageCount: number;
+  parentToolCallId?: string;
+}
+
 export interface AgentRenderEntities {
   messages: Record<string, AgentRenderMessageEntity>;
+  subagents: Record<string, AgentRenderSubagentEntity>;
 }
 
 export interface AgentRenderProjection {
@@ -61,6 +81,7 @@ export interface AgentRenderProjection {
   pendingToolCallIds: string[];
   errorMessage: string | null;
   rows: AgentRenderRow[];
+  subagentRunIds: string[];
   entities: AgentRenderEntities;
   streaming: AgentStreamingRenderState | null;
 }
@@ -84,7 +105,7 @@ export function buildAgentRenderProjection(
   }
 
   const activePath = getAgentEventActivePath(state);
-  const entities: AgentRenderEntities = { messages: {} };
+  const entities: AgentRenderEntities = { messages: {}, subagents: {} };
   const rows: AgentRenderRow[] = [];
   let streaming: AgentStreamingRenderState | null = null;
 
@@ -107,6 +128,13 @@ export function buildAgentRenderProjection(
     }
   }
 
+  const subagentRunIds = Object.values(state.subagents ?? {})
+    .sort((left, right) => left.startedAt - right.startedAt || left.id.localeCompare(right.id))
+    .map((run) => {
+      entities.subagents[run.id] = toRenderSubagentEntity(run);
+      return run.id;
+    });
+
   return {
     sessionId: state.session.id,
     revision: options.revision,
@@ -118,6 +146,7 @@ export function buildAgentRenderProjection(
     pendingToolCallIds: options.pendingToolCallIds ?? [],
     errorMessage: options.errorMessage ?? null,
     rows,
+    subagentRunIds,
     entities,
     streaming,
   };
@@ -146,6 +175,10 @@ function toRenderMessageEntity(
     toolName: message.toolName,
     isError: message.isError,
   };
+}
+
+function toRenderSubagentEntity(run: AgentSubagentRunRecord): AgentRenderSubagentEntity {
+  return { ...run };
 }
 
 function textFromContent(content: AgentPersistedContent[]): string {

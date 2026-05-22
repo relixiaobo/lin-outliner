@@ -3,7 +3,7 @@
 This document is the working checklist for Lin's local agent integration. Keep
 it current whenever a meaningful agent milestone lands or a priority changes.
 
-Last updated: 2026-05-19
+Last updated: 2026-05-22
 
 ## Current Direction
 
@@ -28,7 +28,7 @@ truth.
 
 - [x] pi-mono runtime integration in Electron main.
 - [x] Agent UI dock, composer, model/reasoning settings, API settings, message
-  stream rendering, stop/follow-up behavior, and debug panel.
+  stream rendering, stop/steer/follow-up behavior, and debug panel.
 - [x] Loro-native document core with projection, operation journal, rollback on
   failed transactions, grouped text patches, and serialized workspace state.
 - [x] Outliner agent tools:
@@ -40,7 +40,7 @@ truth.
   - `operation_history`
 - [x] Lin Outline parser shared by create, edit, and search flows.
 - [x] Agent node tool docs, return value docs, and command protocol updates.
-- [x] Local cc-style tool roles wired into the agent runtime:
+- [x] Local agent tool roles wired into the agent runtime:
   - `file_read`
   - `file_glob`
   - `file_grep`
@@ -49,10 +49,10 @@ truth.
   - `bash`
   - `task_stop`
 - [x] Local tool capability parity pass:
-  - `file_read` image dimensions, cc-style PDF text extraction via `pdftotext`,
+  - `file_read` image dimensions, PDF text extraction via `pdftotext`,
     PDF page rendering via `pdftoppm`, and notebook parsing
   - `file_glob` and `file_grep` return local-root-relative paths
-  - `file_grep` backed by ripgrep with cc-style output modes
+  - `file_grep` backed by ripgrep with paginated output modes
   - `file_edit` narrowed to exact non-empty replacements after a full read
     with compact local hunks
   - `bash` background task output files with live status headers
@@ -73,8 +73,8 @@ truth.
   - provider debug payload refs with lazy raw JSON loading
   - debug history/totals derived from debug events, assistant completions, and
     debug payload refs
-  - provider debug payload capture awaited before the provider stream starts, so
-    debug snapshots and assistant completions keep stable event order
+  - provider request debug payload capture awaited before the provider stream
+    starts, plus provider response metadata capture before body consumption
   - debug projection restore regression coverage from event log plus payload refs
   - large tool output payload refs with stable model-visible preview references
   - lightweight derived session index for listing
@@ -89,17 +89,28 @@ truth.
   - derived session/search/user-message indexes with event-log rebuild
   - large-session regression coverage for checkpoint replay, indexes, render
     projection, and payload-bounded JSONL
+- [x] Agent skills, compaction, and subagents:
+  - automatic and slash skill loading from `.agents/skills`
+  - path-conditional and dynamically discovered skills with gitignore guards
+  - embedded skill shell expansion through the shared permission layer
+  - manual, automatic, and reactive compaction with prompt-too-large retry
+  - stable tool-output slimming and recent file-context restore across compact
+  - same-session `Agent`, `AgentStatus`, `AgentSend`, and `AgentStop`
+  - fresh and fork subagents with sidechain transcripts and background
+    notifications
+  - skill `context: fork` routed through the subagent runtime
+  - provider overflow detection, response debug capture, stream option pass-through,
+    and session resource cleanup via pi-ai
 
 ## Next Milestone
 
-Finish the performance and analysis projections on top of the event log.
+Finish runtime polish on top of the event log and subagent foundation.
 
 - [ ] Add richer non-text media payload lazy loading UI in debug/render details.
 - [ ] Add performance instrumentation around replay, projection, IPC payload size,
   and long transcript rendering.
 - [ ] Emit and render schema-reserved runtime events that are not active yet:
-  approvals, persisted follow-ups, compaction summaries, metrics, and explicit
-  cancellation.
+  approvals, persisted follow-ups, metrics, and explicit cancellation details.
 - [ ] Refine checkpoint retention settings if real user sessions show unusual
   storage pressure.
 

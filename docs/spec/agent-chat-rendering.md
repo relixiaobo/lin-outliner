@@ -24,7 +24,7 @@ For the event log, debug data, and render projection architecture, see
 
 ## Non-Goals
 
-- Do not copy terminal-specific rendering from Claude Code. Lin Outliner is an
+- Do not copy terminal-specific rendering from terminal-first agents. Lin Outliner is an
   Electron and React application, not a terminal UI.
 - Do not put agent stream state into `DocumentProjection`.
 - Do not make the agent panel a child of a single outline panel.
@@ -81,6 +81,7 @@ interface AgentRenderProjection {
   pendingToolCallIds: string[];
   errorMessage: string | null;
   rows: AgentRenderRow[];
+  subagentRunIds: string[];
   entities: AgentRenderEntities;
   streaming: AgentStreamingRenderState | null;
 }
@@ -155,7 +156,7 @@ Rules:
 
 ## Incremental Markdown
 
-Streaming markdown should follow the Claude Code principle: split content at
+Streaming markdown should split content at
 the last safe block boundary. Stable prefix content is parsed once. Only the
 currently growing suffix is re-parsed.
 
@@ -220,6 +221,10 @@ projection to the renderer. Tool events that are noisy or long should be
 collapsed into a small row by default. Future row kinds for approvals, diff
 previews, or explicit run status should be added only when those runtime events
 are active.
+
+Subagent sidechain state is exposed through `subagentRunIds` and
+`entities.subagents`. The full sidechain transcript stays behind payload refs
+and is loaded only when the user opens the subagent details panel.
 
 ## Scroll Behavior
 

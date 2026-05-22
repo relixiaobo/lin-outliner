@@ -25,9 +25,11 @@ For agent work:
 
 1. `agent-event-log-rendering.md`
 2. `agent-pi-mono-implementation.md`
-3. `agent-tool-design.md`
-4. `agent-chat-rendering.md`
-5. `agent-progress.md`
+3. `agent-skills.md`
+4. `agent-subagent-runtime-plan.md`
+5. `agent-tool-design.md`
+6. `agent-chat-rendering.md`
+7. `agent-progress.md`
 
 ## Canonical Documents
 
@@ -41,6 +43,8 @@ For agent work:
 | `outliner-parity-matrix.md` | Detailed nodex parity checklist and test mapping. | Checking exact nodex-style selection/editing parity. |
 | `agent-event-log-rendering.md` | Canonical event-sourced agent data, debug, persistence, and render projection architecture. | Changing agent state, event store, debug, persistence, replay, or render projection. |
 | `agent-pi-mono-implementation.md` | pi-mono runtime boundary and Electron integration. | Changing provider loop, runtime execution, approvals, keys, streaming, or pi-mono adapter behavior. |
+| `agent-skills.md` | Skill discovery, loading, slash invocation, compaction restore, and permission preapproval behavior. | Changing agent skills, `/compact`, runtime permission policy, or skill settings. |
+| `agent-subagent-runtime-plan.md` | Same-session Agent/subagent runtime, cc-2.1 alignment, non-goals, tools, implementation status, and tests. | Changing subagents, fork/fresh agent runs, background subagents, sidechain transcripts, or skill `context: fork`. |
 | `agent-tool-design.md` | Public agent tool protocol and tool behavior contracts. | Adding or changing agent tools. |
 
 ## Supporting Documents

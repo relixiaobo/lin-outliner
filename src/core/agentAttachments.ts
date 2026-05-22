@@ -173,6 +173,10 @@ export function isHiddenAgentContextBlock(text: string): boolean {
   return trimmed.startsWith(SYSTEM_REMINDER_START) || trimmed.startsWith(USER_ATTACHMENTS_START);
 }
 
+export function isSystemReminderBlock(text: string): boolean {
+  return text.trimStart().startsWith(SYSTEM_REMINDER_START);
+}
+
 function extractAgentAttachmentMarker(text: string): string | null {
   const start = text.indexOf(USER_ATTACHMENTS_START);
   if (start < 0) return null;

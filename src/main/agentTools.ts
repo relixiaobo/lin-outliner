@@ -11,7 +11,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createNodeTools, type OutlinerToolHost } from './agentNodeTools';
-import { createLocalTools } from './agentLocalTools';
+import { createLocalTools, type AgentLocalWorkspaceContext } from './agentLocalTools';
+import { createSkillTool, type AgentSkillRuntime } from './agentSkills';
+import { createAgentSubagentTools, normalizeAgentToolNames, type AgentSubagentRuntime } from './agentSubagents';
 import {
   agentToolResult,
   errorEnvelope,
@@ -171,15 +173,39 @@ export type { ToolEnvelope } from './agentToolEnvelope';
 
 export interface AgentToolsOptions {
   localFileRoot?: string;
+  localWorkspace?: AgentLocalWorkspaceContext;
+  skillRuntime?: AgentSkillRuntime;
+  skillToolEnabled?: boolean;
+  subagentRuntime?: AgentSubagentRuntime;
+  allowedTools?: string[];
+  disallowedTools?: string[];
 }
 
 export function createAgentTools(outliner?: OutlinerToolHost, options: AgentToolsOptions = {}): AgentTool<any>[] {
-  return [
+  const tools = [
     ...(outliner ? createNodeTools(outliner) : []),
-    ...createLocalTools({ localRoot: options.localFileRoot }),
+    ...createLocalTools({ localRoot: options.localFileRoot, workspace: options.localWorkspace, skillRuntime: options.skillRuntime }),
     createWebSearchTool(),
     createWebFetchTool(options.localFileRoot),
+    ...(options.skillRuntime && options.skillToolEnabled !== false ? [createSkillTool(options.skillRuntime)] : []),
+    ...(options.subagentRuntime ? createAgentSubagentTools(options.subagentRuntime) : []),
   ];
+  return filterAgentTools(tools, options.allowedTools, options.disallowedTools);
+}
+
+function filterAgentTools(
+  tools: AgentTool<any>[],
+  allowedRules: readonly string[] | undefined,
+  disallowedRules: readonly string[] | undefined,
+): AgentTool<any>[] {
+  const allowed = normalizeAgentToolNames(allowedRules);
+  const disallowed = normalizeAgentToolNames(disallowedRules);
+  return tools.filter((tool) => {
+    const name = tool.name.toLowerCase();
+    if (allowed && !allowed.includes('*') && !allowed.includes(name)) return false;
+    if (disallowed?.includes('*') || disallowed?.includes(name)) return false;
+    return true;
+  });
 }
 
 function createWebFetchTool(localRoot?: string): AgentTool<any, ToolEnvelope<WebFetchData>> {

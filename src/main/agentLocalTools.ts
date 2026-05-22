@@ -10,15 +10,21 @@ import {
   successEnvelope,
   type ToolEnvelope,
 } from './agentToolEnvelope';
+import type { AgentSkillRuntime } from './agentSkills';
 
 interface LocalToolOptions {
   localRoot?: string;
+  workspace?: AgentLocalWorkspaceContext;
+  skillRuntime?: AgentSkillRuntime;
 }
 
-interface WorkspaceContext {
+export interface AgentLocalWorkspaceContext {
   root: string;
   readFileState: Map<string, ReadFileState>;
+  skillRuntime?: AgentSkillRuntime;
 }
+
+type WorkspaceContext = AgentLocalWorkspaceContext;
 
 interface FileReadParams {
   file_path: string;
@@ -197,6 +203,30 @@ interface BashData {
   completedAt?: string;
 }
 
+export interface LocalBashRunResult {
+  stdout: string;
+  stderr: string;
+  interrupted: boolean;
+  isError: boolean;
+  errorMessage?: string;
+  rawOutputPath?: string;
+  isImage?: boolean;
+  backgroundTaskId?: string;
+  backgroundedByUser?: boolean;
+  assistantAutoBackgrounded?: boolean;
+  dangerouslyDisableSandbox?: boolean;
+  returnCodeInterpretation?: string;
+  noOutputExpected?: boolean;
+  structuredContent?: unknown[];
+  persistedOutputPath?: string;
+  persistedOutputSize?: number;
+  command?: string;
+  taskStatus?: BackgroundTaskStatus;
+  exitCode?: number | null;
+  startedAt?: string;
+  completedAt?: string;
+}
+
 interface TaskStopParams {
   task_id: string;
 }
@@ -210,10 +240,18 @@ interface TaskStopData {
   outputPath: string;
 }
 
-interface ReadFileState {
+export interface PostCompactRestoredFile {
+  filePath: string;
+  content: string;
+  totalChars: number;
+  truncated: boolean;
+}
+
+export interface ReadFileState {
   content: string;
   mtimeMs: number;
   isPartialView: boolean;
+  accessedAt: number;
   offset?: number;
   limit?: number;
   encoding?: TextEncoding;
@@ -247,7 +285,7 @@ interface BackgroundTask {
   outputWriteChain?: Promise<void>;
 }
 
-type BackgroundTaskStatus = 'running' | 'completed' | 'failed' | 'stopped';
+export type BackgroundTaskStatus = 'running' | 'completed' | 'failed' | 'stopped';
 
 interface ImageDimensions {
   width: number;
@@ -420,10 +458,7 @@ const TASK_STOP_PARAMETERS = {
 };
 
 export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>[] {
-  const workspace = {
-    root: path.resolve(options.localRoot ?? process.cwd()),
-    readFileState: new Map<string, ReadFileState>(),
-  };
+  const workspace = options.workspace ?? createWorkspaceContext(options.localRoot, options.skillRuntime);
   return [
     createFileReadTool(workspace),
     createFileGlobTool(workspace),
@@ -433,6 +468,96 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
     createBashTool(workspace),
     createTaskStopTool(),
   ];
+}
+
+export async function runLocalBashCommand(
+  options: { localRoot?: string; command: string; timeout?: number; signal?: AbortSignal },
+): Promise<LocalBashRunResult> {
+  const workspace = createWorkspaceContext(options.localRoot);
+  const params = normalizeBashParams({
+    command: options.command,
+    timeout: options.timeout,
+    run_in_background: false,
+  });
+  const result = await runForegroundCommand(workspace, params, options.signal);
+  const interpretation = interpretCommandResult(result.command ?? params.command, result.exitCode);
+  const interrupted = result.interrupted;
+  const isError = interrupted || interpretation.isError;
+  return {
+    ...result,
+    interrupted,
+    isError,
+    errorMessage: isError
+      ? (result.returnCodeInterpretation ?? interpretation.message ?? 'Command failed.')
+      : undefined,
+    returnCodeInterpretation: result.returnCodeInterpretation ?? interpretation.message,
+  };
+}
+
+function createWorkspaceContext(localRoot?: string, skillRuntime?: AgentSkillRuntime): WorkspaceContext {
+  return {
+    root: path.resolve(localRoot ?? process.cwd()),
+    readFileState: new Map<string, ReadFileState>(),
+    skillRuntime,
+  };
+}
+
+export function createAgentLocalWorkspaceContext(localRoot?: string, skillRuntime?: AgentSkillRuntime): AgentLocalWorkspaceContext {
+  return createWorkspaceContext(localRoot, skillRuntime);
+}
+
+export async function restorePostCompactReadFiles(
+  workspace: AgentLocalWorkspaceContext,
+  options: {
+    maxFiles: number;
+    maxCharsPerFile: number;
+    maxTotalChars: number;
+    preservedFilePaths?: ReadonlySet<string>;
+  },
+): Promise<PostCompactRestoredFile[]> {
+  const preservedFilePaths = options.preservedFilePaths ?? new Set<string>();
+  const candidates = [...workspace.readFileState.entries()]
+    .filter(([filePath, state]) => !state.isPartialView && !preservedFilePaths.has(filePath))
+    .sort((left, right) => right[1].accessedAt - left[1].accessedAt)
+    .slice(0, Math.max(0, options.maxFiles));
+
+  workspace.readFileState.clear();
+  const restored: PostCompactRestoredFile[] = [];
+  let usedChars = 0;
+  for (const [filePath] of candidates) {
+    if (usedChars >= options.maxTotalChars) break;
+    try {
+      const current = await readWorkspaceText(filePath);
+      const remaining = options.maxTotalChars - usedChars;
+      const limit = Math.max(0, Math.min(options.maxCharsPerFile, remaining));
+      if (limit <= 0) break;
+      const content = current.content.slice(0, limit);
+      const truncated = content.length < current.content.length;
+      workspace.readFileState.set(filePath, {
+        content: current.content,
+        mtimeMs: current.mtimeMs,
+        isPartialView: false,
+        accessedAt: Date.now(),
+        encoding: current.encoding,
+        lineEndings: current.lineEndings,
+        hasBom: current.hasBom,
+      });
+      restored.push({
+        filePath,
+        content,
+        totalChars: current.content.length,
+        truncated,
+      });
+      usedChars += content.length;
+    } catch {
+      // Missing, binary, oversized, or otherwise unreadable files are skipped.
+    }
+  }
+  return restored;
+}
+
+async function notifySuccessfulFileTouch(workspace: WorkspaceContext, filePath: string): Promise<void> {
+  await workspace.skillRuntime?.notifyFileTouched([filePath]);
 }
 
 function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelope<FileReadData>> {
@@ -475,6 +600,7 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
               dimensions: readImageDimensions(buffer, imageType),
             },
           };
+          await notifySuccessfulFileTouch(workspace, filePath);
           return agentToolResult(successEnvelope('file_read', data, { metrics: metrics(started, visibleFileRead(data)) }), visibleFileRead(data), [{
             type: 'image',
             data: data.file.base64,
@@ -498,6 +624,7 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
                 text: `Extracted text from PDF pages ${parts.file.pages.firstPage}-${parts.file.pages.lastPage} of ${filePath}${extractedText.truncated ? ' (truncated)' : ''}:\n\n${extractedText.text}`,
               }]
             : [];
+          await notifySuccessfulFileTouch(workspace, filePath);
           return agentToolResult(successEnvelope('file_read', parts, {
             instructions: extractedText
               ? 'PDF text was extracted for searchable content, and pages were also rendered as images for visual layout inspection.'
@@ -516,6 +643,7 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
             content,
             mtimeMs: fileStat.mtimeMs,
             isPartialView: false,
+            accessedAt: Date.now(),
             encoding: decoded.encoding,
             lineEndings: decoded.lineEndings,
             hasBom: decoded.hasBom,
@@ -532,6 +660,7 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
               originalSize: buffer.byteLength,
             },
           };
+          await notifySuccessfulFileTouch(workspace, filePath);
           return agentToolResult(successEnvelope('file_read', data, { metrics: metrics(started, data) }));
         }
         if (fileStat.size > MAX_TEXT_FILE_BYTES) {
@@ -555,11 +684,14 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
           previousRead.limit === limit &&
           previousRead.mtimeMs === fileStat.mtimeMs
         ) {
+          previousRead.accessedAt = Date.now();
           const data: FileReadUnchangedData = {
             type: 'file_unchanged',
             file: { filePath },
           };
+          await notifySuccessfulFileTouch(workspace, filePath);
           return agentToolResult(successEnvelope('file_read', data, {
+            status: 'unchanged',
             instructions: 'The file is unchanged since the previous full file_read result. Use the earlier content already in context instead of reading it again.',
             metrics: metrics(started, data),
           }));
@@ -571,6 +703,7 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
           content,
           mtimeMs: fileStat.mtimeMs,
           isPartialView: partial,
+          accessedAt: Date.now(),
           offset: requestedOffset,
           limit,
           encoding: decoded.encoding,
@@ -588,6 +721,7 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
           },
         };
         const nextOffset = startLine + selected.length;
+        await notifySuccessfulFileTouch(workspace, filePath);
         return agentToolResult(successEnvelope('file_read', data, {
           instructions: partial ? `Call file_read with offset ${nextOffset} to continue, or read the whole file before editing it.` : undefined,
           metrics: { ...metrics(started, data), truncated: partial },
@@ -713,6 +847,7 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
               userModified: false,
               replaceAll: params.replace_all === true,
             };
+            await notifySuccessfulFileTouch(workspace, filePath);
             return agentToolResult(successEnvelope('file_edit', data, {
               status: 'unchanged',
               instructions: 'The requested replacement already appears to be present.',
@@ -733,6 +868,7 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
           content: nextContent,
           mtimeMs: nextStat.mtimeMs,
           isPartialView: false,
+          accessedAt: Date.now(),
           encoding: current.encoding,
           lineEndings: current.lineEndings,
           hasBom: current.hasBom,
@@ -746,6 +882,7 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
           userModified: false,
           replaceAll: params.replace_all === true,
         };
+        await notifySuccessfulFileTouch(workspace, filePath);
         return agentToolResult(successEnvelope('file_edit', data, { metrics: metrics(started, data) }), visibleFileEdit(data));
       } catch (error) {
         return localErrorResult('file_edit', error, started);
@@ -781,6 +918,7 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
         const originalContent = original?.content ?? null;
         if (originalContent === params.content) {
           const data: FileWriteData = { type: 'update', filePath, content: params.content, structuredPatch: [], originalFile: originalContent };
+          await notifySuccessfulFileTouch(workspace, filePath);
           return agentToolResult(successEnvelope('file_write', data, {
             status: 'unchanged',
             instructions: 'The file already has the requested content.',
@@ -795,6 +933,7 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
           content: params.content,
           mtimeMs: nextStat.mtimeMs,
           isPartialView: false,
+          accessedAt: Date.now(),
           encoding: metadata.encoding,
           lineEndings: metadata.lineEndings,
           hasBom: metadata.hasBom,
@@ -806,6 +945,7 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
           structuredPatch: originalContent === null ? [] : structuredPatch(originalContent, params.content),
           originalFile: originalContent,
         };
+        await notifySuccessfulFileTouch(workspace, filePath);
         return agentToolResult(successEnvelope('file_write', data, { metrics: metrics(started, data) }), visibleFileWrite(data));
       } catch (error) {
         return localErrorResult('file_write', error, started);

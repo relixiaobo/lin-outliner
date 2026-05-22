@@ -106,7 +106,24 @@ export type AgentToolResultWithPayloads = ToolResultMessage & {
   payloadRefs?: AgentToolResultPayloadPart[];
 };
 
-export type AgentDebugSnapshotSource = 'provider_payload' | 'runtime_state';
+export interface AgentSubagentActionResult {
+  status: 'completed' | 'async_launched' | 'queued' | 'running' | 'failed' | 'stopped';
+  agent_id: string;
+  name?: string;
+  description: string;
+  prompt: string;
+  subagent_type: string;
+  context_mode: 'fresh' | 'fork';
+  result?: string;
+  error?: string;
+  started_at: number;
+  updated_at: number;
+  completed_at?: number;
+  transcript_message_count: number;
+  instructions?: string;
+}
+
+export type AgentDebugSnapshotSource = 'provider_payload' | 'provider_response' | 'runtime_state';
 export type AgentDebugTurnStatus = 'running' | 'completed' | 'error' | 'aborted' | 'interrupted';
 
 export interface AgentDebugWirePayload {

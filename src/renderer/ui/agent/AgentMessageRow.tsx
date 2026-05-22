@@ -7,6 +7,7 @@ import type {
   TextContent,
   UserMessage,
 } from '../../../core/agentTypes';
+import type { AgentRenderSubagentEntity } from '../../../core/agentRenderProjection';
 import {
   isHiddenAgentContextBlock,
   parseAgentAttachmentMarkerBlock,
@@ -49,10 +50,12 @@ interface AgentMessageRowProps {
   onCopy?: () => void | Promise<void>;
   onRegenerate?: (nodeId: string) => void | Promise<void>;
   onRetry?: (nodeId: string) => void | Promise<void>;
+  onOpenSubagentTranscript?: (subagentId: string) => void;
   onSwitchBranch?: (nodeId: string) => void | Promise<void>;
   pendingToolCallIds: ReadonlySet<string>;
   sessionId?: string | null;
   streaming?: boolean;
+  subagentsByParentToolCallId?: Map<string, AgentRenderSubagentEntity>;
   toolResults: Map<string, AgentToolResultWithPayloads>;
   turnEnded?: boolean;
   turnPhase?: AgentTurnPhase;
@@ -145,9 +148,11 @@ function renderAssistantBlocks(
   message: AssistantMessage,
   contentKey: string,
   expandState: AgentExpandState,
+  onOpenSubagentTranscript: ((subagentId: string) => void) | undefined,
   pendingToolCallIds: ReadonlySet<string>,
   sessionId: string | null | undefined,
   streaming: boolean,
+  subagentsByParentToolCallId: Map<string, AgentRenderSubagentEntity> | undefined,
   toolResults: Map<string, AgentToolResultWithPayloads>,
   turnActive: boolean,
   turnEnded: boolean,
@@ -210,9 +215,11 @@ function renderAssistantBlocks(
             expanded={expandState.isExpanded(toolId, false)}
             key={toolId}
             onToggle={() => expandState.toggle(toolId, expandState.isExpanded(toolId, false))}
+            onOpenSubagentTranscript={onOpenSubagentTranscript}
             pendingToolCallIds={pendingToolCallIds}
             result={toolResults.get(toolCall.id)}
             sessionId={sessionId}
+            subagent={subagentsByParentToolCallId?.get(toolCall.id)}
             toolCall={toolCall}
             turnActive={turnActive}
           />,
@@ -225,10 +232,12 @@ function renderAssistantBlocks(
             expandState={expandState}
             id={segmentId}
             key={segmentId}
+            onOpenSubagentTranscript={onOpenSubagentTranscript}
             pendingToolCallIds={pendingToolCallIds}
             results={toolResults}
             sealed={segmentSealed}
             sessionId={sessionId}
+            subagentsByParentToolCallId={subagentsByParentToolCallId}
             turnActive={turnActive}
             turnFailedWithoutProse={turnFailedWithoutProse}
           />,
@@ -263,10 +272,12 @@ export function AgentMessageRow({
   onEdit,
   onRegenerate,
   onRetry,
+  onOpenSubagentTranscript,
   onSwitchBranch,
   pendingToolCallIds,
   sessionId,
   streaming: streamingOverride,
+  subagentsByParentToolCallId,
   toolResults,
   turnEnded = false,
   turnPhase = 'idle',
@@ -430,9 +441,11 @@ export function AgentMessageRow({
     message,
     assistantContentKey,
     expandState,
+    onOpenSubagentTranscript,
     pendingToolCallIds,
     sessionId,
     streaming,
+    subagentsByParentToolCallId,
     toolResults,
     turnActive,
     turnEnded,

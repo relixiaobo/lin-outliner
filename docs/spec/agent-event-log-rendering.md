@@ -181,19 +181,19 @@ Adapt for Lin Outliner:
 - derive conversation rows from events instead of storing a collapsed message
   list as truth
 
-### cc-2.1
+### Reference Shape
 
-cc-2.1 uses per-session JSONL transcripts under project directories:
+Some terminal-first agents use per-session JSONL transcripts under project directories:
 
 ```txt
-~/.claude/projects/<sanitized-cwd>/<sessionId>.jsonl
+~/.agents/projects/<sanitized-cwd>/<sessionId>.jsonl
 ```
 
 Each transcript entry is append-only. Conversation messages carry `uuid` and
 `parentUuid`; metadata is also appended as entries. Resume rebuilds the
 conversation chain from the file.
 
-Keep from cc-2.1:
+Keep from the reference implementation:
 
 - per-session JSONL
 - parent-linked message chain
@@ -305,6 +305,7 @@ type AgentEventType =
   | 'tool_call.completed'
   | 'tool_call.failed'
   | 'tool_result.created'
+  | 'tool_result.replaced'
   | 'approval.requested'
   | 'approval.resolved'
   | 'follow_up.queued'
@@ -313,6 +314,8 @@ type AgentEventType =
   | 'run.completed'
   | 'run.failed'
   | 'run.cancelled'
+  | 'subagent_run.started'
+  | 'subagent_run.updated'
   | 'compaction.completed'
   | 'payload.created'
   | 'payload.derived'
@@ -321,9 +324,9 @@ type AgentEventType =
 ```
 
 Not every schema event is emitted by the current runtime yet. Approval,
-follow-up, compaction, metric, thinking delta, tool-call delta, and derived
-payload events are schema-reserved so these features can land without changing
-the event-store model. Events that are emitted today still go through the same
+follow-up, metric, thinking delta, tool-call delta, and derived payload events
+remain schema-reserved so these features can land without changing the
+event-store model. Events that are emitted today still go through the same
 append-only rules.
 
 ## Message Model
@@ -439,6 +442,15 @@ interface ToolResultCreatedEvent extends AgentEventBase {
   outputSummary: string;
   outputRef?: AgentPayloadRef;
 }
+
+interface ToolResultReplacedEvent extends AgentEventBase {
+  type: 'tool_result.replaced';
+  toolCallId: string;
+  messageId: string;
+  content: AgentPersistedContent[];
+  outputSummary: string;
+  outputRef?: AgentPayloadRef;
+}
 ```
 
 The pi-mono projection reconstructs pi-ai messages as:
@@ -475,6 +487,7 @@ type AgentPayloadRole =
   | 'preview'
   | 'text_extract'
   | 'tool_output'
+  | 'subagent_transcript'
   | 'debug';
 
 interface AgentPayloadDisplayMetadata {
@@ -622,6 +635,7 @@ Debug panel reads event-derived timelines and payload refs.
 It currently shows:
 
 - provider request context and sanitized payload snapshots
+- provider response status/header snapshots
 - context/token/cost metrics
 - errors
 
@@ -691,8 +705,11 @@ Flush policy:
 - render projection: `requestAnimationFrame` or 16ms throttle
 - event write: immediate for user messages and terminal events
 - stream delta event writes: batched by segment
-- provider debug payload writes: awaited before the provider stream starts, so
-  debug snapshots and assistant completions keep stable event order
+- provider request debug payload writes: awaited before the provider stream
+  starts, so request snapshots and assistant completions keep stable event order
+- provider response debug payload writes: captured after HTTP response metadata is
+  available and before the response body is consumed; they do not bind usage or
+  assistant content in debug totals
 - later non-critical debug payload writes may use a slower batch, such as 250ms
   or size threshold
 - terminal events always flush
