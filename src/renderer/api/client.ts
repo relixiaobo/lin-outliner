@@ -123,10 +123,16 @@ export const api = {
     command<CommandOutcome>('clear_field_value', { fieldEntryId }),
   addReference: (parentId: string, targetId: string, index: number | null = null) =>
     command<CommandOutcome>('add_reference', { parentId, targetId, index }),
+  addReferenceConversion: (parentId: string, targetId: string, index: number | null = null) =>
+    command<CommandOutcome>('add_reference_conversion', { parentId, targetId, index }),
   setReferenceTarget: (referenceId: string, targetId: string) =>
     command<CommandOutcome>('set_reference_target', { referenceId, targetId }),
   replaceNodeWithReference: (nodeId: string, targetId: string) =>
     command<CommandOutcome>('replace_node_with_reference', { nodeId, targetId }),
+  replaceNodeWithReferenceConversion: (nodeId: string, targetId: string) =>
+    command<CommandOutcome>('replace_node_with_reference_conversion', { nodeId, targetId }),
+  replaceNodeWithInlineReference: (nodeId: string, targetId: string) =>
+    command<CommandOutcome>('replace_node_with_inline_reference', { nodeId, targetId }),
   convertReferenceToInlineNode: (referenceId: string) =>
     command<CommandOutcome>('convert_reference_to_inline_node', { referenceId }),
   restoreInlineReferenceNodeToReference: (nodeId: string, targetId: string) =>

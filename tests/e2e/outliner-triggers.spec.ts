@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator } from '@playwright/test';
 import {
   commandCalls,
   e2eProjection,
@@ -71,6 +71,16 @@ async function activeCaretRect(page: import('@playwright/test').Page) {
       top: rect.top,
     };
   });
+}
+
+async function dispatchCompositionEvent(locator: Locator, type: 'compositionstart' | 'compositionend', data = '') {
+  await locator.evaluate((element, eventInit) => {
+    element.dispatchEvent(new CompositionEvent(eventInit.type, {
+      bubbles: true,
+      cancelable: true,
+      data: eventInit.data,
+    }));
+  }, { type, data });
 }
 
 async function expectTriggerPopoverAnchoredToCaret(page: import('@playwright/test').Page, label: string) {
@@ -227,8 +237,9 @@ test.describe('outliner trigger parity', () => {
     await expect(row(page, createdRowId!).locator('.tag-badge-label')).toContainText('project');
   });
 
-  test('@ in trailing input creates the final reference row without a temporary row', async ({ page }) => {
+  test('@ in trailing input creates a focused reference conversion row', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
+    const beforeCalls = (await commandCalls(page)).length;
     await trailingEditor(page).click();
     await page.keyboard.type('@Zeta');
 
@@ -243,26 +254,73 @@ test.describe('outliner trigger parity', () => {
     await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
     const createdRowId = await lastTodayChildId(page);
     expect(createdRowId).toBeTruthy();
+    let zetaId = '';
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
-      return projection.nodes.find((node) => node.id === createdRowId)?.type;
-    }).toBe('reference');
-    await expect(row(page, createdRowId!)).toContainText('Zeta');
+      zetaId = projection.nodes.find((node) => (
+        node.id !== createdRowId
+        && node.type !== 'reference'
+        && node.content.text === 'Zeta'
+      ))?.id ?? '';
+      const created = projection.nodes.find((node) => node.id === createdRowId);
+      return Boolean(
+        zetaId
+        && !created?.type
+        && created?.content.text === ''
+        && created.content.inlineRefs.some((ref) => ref.targetNodeId === zetaId),
+      );
+    }).toBe(true);
+    await expect(rowEditor(page, createdRowId!)).toBeFocused();
+    await expect(rowBody(page, createdRowId!)).toHaveClass(/ref-converting/);
+    await expect(row(page, createdRowId!).locator('.row-bullet-shape.reference')).toHaveCount(1);
+
+    const titleEditor = page.locator('.panel-title-editor .ProseMirror').first();
+    const titleBeforeInlineRefClick = await titleEditor.textContent();
+    await row(page, createdRowId!).locator('.inline-ref').click();
+    await expect(titleEditor).toHaveText(titleBeforeInlineRefClick ?? '');
+    await expect(row(page, createdRowId!)).toHaveCount(1);
+    await expect(rowEditor(page, createdRowId!)).toBeFocused();
+
+    let calls = (await commandCalls(page)).slice(beforeCalls).map((call) => call.cmd);
+    expect(calls).toContain('create_node');
+    expect(calls).toContain('add_reference_conversion');
+    expect(calls).not.toContain('add_reference');
+    expect(calls).not.toContain('convert_reference_to_inline_node');
+    expect(calls).not.toContain('create_rich_text_node');
+
+    await page.keyboard.type('!');
+    await expect.poll(async () => nodeById(page, createdRowId!)).toMatchObject({
+      content: {
+        text: '!',
+        inlineRefs: [{ offset: 0, targetNodeId: zetaId, displayName: 'Zeta' }],
+      },
+    });
+    await expect(rowEditor(page, createdRowId!)).toBeFocused();
+
+    calls = (await commandCalls(page)).slice(beforeCalls).map((call) => call.cmd);
+    expect(calls.filter((cmd) => cmd === 'add_reference_conversion')).toHaveLength(1);
   });
 
-  test('@ in trailing input keeps the draft visible until the reference row materializes', async ({ page }) => {
-    await delayMockCommands(page, ['add_reference']);
+  test('@ in trailing input keeps the draft visible until the conversion row materializes', async ({ page }) => {
+    await invokeMockCommand(page, 'create_node', {
+      parentId: ids.root,
+      index: null,
+      text: 'RemoteTarget',
+    });
+    await delayMockCommands(page, ['add_reference_conversion']);
     const beforeChildren = await todayChildren(page);
+    const beforeCalls = (await commandCalls(page)).length;
 
     await trailingEditor(page).click();
-    await page.keyboard.type('@Alpha');
+    await page.keyboard.type('@RemoteTarget');
     await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
+    await expect(page.getByRole('option', { name: /RemoteTarget Workspace \/ Root/ })).toBeVisible();
     await page.keyboard.press('Enter');
 
     await page.waitForTimeout(40);
     await expect(page.locator('.trigger-popover')).toHaveCount(0);
     await expect(trailingEditor(page)).toBeVisible();
-    await expect(trailingEditor(page)).toHaveText('@Alpha');
+    await expect(trailingEditor(page)).toHaveText('@RemoteTarget');
     expect(await todayChildren(page)).toEqual(beforeChildren);
 
     await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
@@ -270,39 +328,84 @@ test.describe('outliner trigger parity', () => {
     expect(createdRowId).toBeTruthy();
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
-      return projection.nodes.find((node) => node.id === createdRowId)?.type;
-    }).toBe('reference');
-    await expect(row(page, createdRowId!)).toContainText('Alpha');
+      const created = projection.nodes.find((node) => node.id === createdRowId);
+      return {
+        inlineTargetText: projection.nodes.find((node) => (
+          node.id === created?.content.inlineRefs[0]?.targetNodeId
+        ))?.content.text ?? '',
+        text: created?.content.text ?? null,
+        type: created?.type ?? null,
+      };
+    }).toEqual({ inlineTargetText: 'RemoteTarget', text: '', type: null });
+    await expect(rowBody(page, createdRowId!)).toHaveClass(/ref-converting/);
+    await expect(rowEditor(page, createdRowId!)).toBeFocused();
+    await expect(row(page, createdRowId!)).toContainText('RemoteTarget');
+
+    const calls = (await commandCalls(page)).slice(beforeCalls).map((call) => call.cmd);
+    expect(calls).toContain('add_reference_conversion');
+    expect(calls).not.toContain('add_reference');
+    expect(calls).not.toContain('convert_reference_to_inline_node');
+    expect(calls).not.toContain('create_rich_text_node');
   });
 
-  test('@ inline trigger creates one rich text node and keeps the draft visible while pending', async ({ page }) => {
-    await delayMockCommands(page, ['create_rich_text_node']);
+  test('@ existing different-parent reference in trailing input can continue as inline text', async ({ page }) => {
+    await invokeMockCommand(page, 'create_node', {
+      parentId: ids.root,
+      index: null,
+      text: 'RemoteTarget',
+    });
+    const targetId = (await e2eProjection(page)).nodes.find((node) => node.content.text === 'RemoteTarget')?.id;
+    expect(targetId).toBeTruthy();
+    const beforeChildren = await todayChildren(page);
+
+    await trailingEditor(page).click();
+    await page.keyboard.type('@RemoteTarget');
+    await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('test');
+
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+    const createdRowId = await lastTodayChildId(page);
+    expect(createdRowId).toBeTruthy();
+    await expect.poll(async () => nodeById(page, createdRowId!)).toMatchObject({
+      content: {
+        text: 'test',
+        inlineRefs: [{ offset: 0, targetNodeId: targetId, displayName: 'RemoteTarget' }],
+      },
+    });
+    await expect.poll(async () => (await nodeById(page, createdRowId!))?.type ?? null).toBe(null);
+    await expect(rowEditor(page, createdRowId!)).toBeFocused();
+  });
+
+  test('@ inline trigger in materialized trailing text keeps one real row and inserts the inline reference', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     const beforeCalls = (await commandCalls(page)).length;
 
     await trailingEditor(page).click();
     await page.keyboard.type('See @Alpha');
     await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
-    await page.keyboard.press('Enter');
-
-    await page.waitForTimeout(40);
-    await expect(page.locator('.trigger-popover')).toHaveCount(0);
-    await expect(trailingEditor(page)).toBeVisible();
-    await expect(trailingEditor(page)).toHaveText('See @Alpha');
-    expect(await todayChildren(page)).toEqual(beforeChildren);
-
     await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
     const createdRowId = await lastTodayChildId(page);
     expect(createdRowId).toBeTruthy();
+    await page.keyboard.press('Enter');
+
+    await expect(page.locator('.trigger-popover')).toHaveCount(0);
     await expect(row(page, createdRowId!)).toContainText('See');
     await expect(row(page, createdRowId!)).toContainText('Alpha');
+    await expect.poll(async () => nodeById(page, createdRowId!)).toMatchObject({
+      content: {
+        text: 'See ',
+        inlineRefs: [{ offset: 4, targetNodeId: ids.alpha, displayName: 'Alpha' }],
+      },
+    });
+    await expect(rowEditor(page, createdRowId!)).toBeFocused();
+    await expect(trailingEditor(page)).toBeVisible();
     const calls = (await commandCalls(page)).slice(beforeCalls);
-    expect(calls.map((call) => call.cmd)).toContain('create_rich_text_node');
-    expect(calls.map((call) => call.cmd)).not.toContain('create_node');
-    expect(calls.map((call) => call.cmd)).not.toContain('apply_node_text_patch');
+    expect(calls.map((call) => call.cmd)).toContain('create_node');
+    expect(calls.map((call) => call.cmd)).not.toContain('create_rich_text_node');
   });
 
-  test('@ in an empty row creates a tree reference and immediately enters inline conversion', async ({ page }) => {
+  test('@ in an empty row creates an inline reference conversion row', async ({ page }) => {
     await invokeMockCommand(page, 'create_node', {
       parentId: ids.today,
       index: null,
@@ -316,24 +419,39 @@ test.describe('outliner trigger parity', () => {
     await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
     await page.keyboard.press('Meta+Enter');
 
-    let inlineRowId = '';
     let zetaId = '';
+    let inlineRowId = '';
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
-      const zeta = projection.nodes.find((node) => node.content.text === 'Zeta');
+      const zeta = projection.nodes.find((node) => (
+        node.id !== emptyRowId
+        && node.type !== 'reference'
+        && node.content.text === 'Zeta'
+      ));
       zetaId = zeta?.id ?? '';
       inlineRowId = projection.nodes.find((node) => (
         node.id !== emptyRowId
         && !node.type
+        && node.content.text === ''
         && node.content.inlineRefs.some((ref) => ref.targetNodeId === zetaId)
       ))?.id ?? '';
-      return inlineRowId;
-    }).not.toBe('');
+      return Boolean(zetaId && inlineRowId);
+    }).toBe(true);
+    await expect(rowEditor(page, inlineRowId)).toBeFocused();
+    await expect(rowBody(page, inlineRowId)).toHaveClass(/ref-converting/);
+    await expect(row(page, inlineRowId).locator('.row-bullet-shape.reference')).toHaveCount(1);
+
+    let calls = await commandCalls(page);
+    expect(calls.map((call) => call.cmd)).toContain('replace_node_with_reference_conversion');
+    expect(calls.map((call) => call.cmd)).not.toContain('replace_node_with_reference');
+    expect(calls.map((call) => call.cmd)).not.toContain('convert_reference_to_inline_node');
+    expect(calls.map((call) => call.cmd)).not.toContain('replace_node_with_inline_reference');
+
+    await page.keyboard.type('!');
     await expect(rowEditor(page, inlineRowId)).toBeFocused();
     await expect(rowBody(page, inlineRowId)).toHaveClass(/ref-converting/);
     await expect(row(page, inlineRowId).locator('.inline-ref')).toHaveCSS('animation-name', 'reference-conversion-pulse');
 
-    await page.keyboard.type('!');
     await rowEditor(page, ids.beta).click();
     await expect.poll(async () => {
       const node = await nodeById(page, inlineRowId);
@@ -343,9 +461,233 @@ test.describe('outliner trigger parity', () => {
       inlineRefs: [{ offset: 0, targetNodeId: zetaId, displayName: 'Zeta' }],
     });
 
+    calls = await commandCalls(page);
+    expect(calls.map((call) => call.cmd)).toContain('replace_node_with_reference_conversion');
+    expect(calls.map((call) => call.cmd)).not.toContain('replace_node_with_reference');
+    expect(calls.map((call) => call.cmd)).not.toContain('convert_reference_to_inline_node');
+    expect(calls.map((call) => call.cmd)).not.toContain('replace_node_with_inline_reference');
+  });
+
+  test('@ reference conversion restores the reference node when continued text is deleted', async ({ page }) => {
+    await invokeMockCommand(page, 'create_node', {
+      parentId: ids.root,
+      index: null,
+      text: 'RemoteTarget',
+    });
+    const targetId = (await e2eProjection(page)).nodes.find((node) => node.content.text === 'RemoteTarget')?.id;
+    expect(targetId).toBeTruthy();
+    const beforeCalls = (await commandCalls(page)).length;
+
+    await trailingEditor(page).click();
+    await page.keyboard.type('@RemoteTarget');
+    await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
+    await expect(page.getByRole('option', { name: /RemoteTarget Workspace \/ Root/ })).toBeVisible();
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('!');
+
+    let inlineRowId = '';
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      inlineRowId = projection.nodes.find((node) => (
+        !node.type
+        && node.content.text === '!'
+        && node.content.inlineRefs.some((ref) => ref.targetNodeId === targetId)
+      ))?.id ?? '';
+      return inlineRowId;
+    }).not.toBe('');
+    await expect(rowEditor(page, inlineRowId)).toBeFocused();
+
+    await page.keyboard.press('Backspace');
+    await expect.poll(async () => nodeById(page, inlineRowId)).toMatchObject({
+      content: {
+        text: '',
+        inlineRefs: [{ offset: 0, targetNodeId: targetId, displayName: 'RemoteTarget' }],
+      },
+    });
+    await expect(rowEditor(page, inlineRowId)).toBeFocused();
+    await expect(rowBody(page, inlineRowId)).toHaveClass(/ref-converting/);
+
+    await rowEditor(page, ids.beta).click();
+
+    let restoredReferenceId = '';
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      restoredReferenceId = projection.nodes.find((node) => (
+        node.type === 'reference'
+        && node.targetId === targetId
+        && node.parentId === ids.today
+      ))?.id ?? '';
+      return Boolean(
+        restoredReferenceId
+        && !projection.nodes.some((node) => node.id === inlineRowId),
+      );
+    }).toBe(true);
+    await expect(rowBody(page, restoredReferenceId)).toHaveClass(/reference-row/);
+    await expect(rowBody(page, restoredReferenceId)).not.toHaveClass(/ref-converting/);
+    await expect(rowEditor(page, restoredReferenceId)).not.toBeFocused();
+
+    const calls = (await commandCalls(page)).slice(beforeCalls).map((call) => call.cmd);
+    expect(calls).toContain('add_reference_conversion');
+    expect(calls).not.toContain('add_reference');
+    expect(calls).not.toContain('convert_reference_to_inline_node');
+    expect(calls).not.toContain('create_rich_text_node');
+    expect(calls).toContain('restore_inline_reference_node_to_reference');
+    expect(calls.filter((cmd) => cmd === 'restore_inline_reference_node_to_reference')).toHaveLength(1);
+  });
+
+  test('@ existing different-parent reference keeps continued typing on the inline conversion row', async ({ page }) => {
+    await invokeMockCommand(page, 'create_node', {
+      parentId: ids.root,
+      index: null,
+      text: 'RemoteTarget',
+    });
+    const projectionWithTarget = await e2eProjection(page);
+    const targetId = projectionWithTarget.nodes.find((node) => node.content.text === 'RemoteTarget')?.id;
+    expect(targetId).toBeTruthy();
+    await invokeMockCommand(page, 'create_node', {
+      parentId: ids.today,
+      index: null,
+      text: '',
+    });
+    const emptyRowId = await lastTodayChildId(page);
+    expect(emptyRowId).toBeTruthy();
+
+    await rowEditor(page, emptyRowId!).click();
+    await page.keyboard.type('@RemoteTarget');
+    await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('test');
+
+    let inlineRowId = '';
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      inlineRowId = projection.nodes.find((node) => (
+        node.id !== emptyRowId
+        && !node.type
+        && node.content.inlineRefs.some((ref) => ref.targetNodeId === targetId)
+      ))?.id ?? '';
+      return inlineRowId;
+    }).not.toBe('');
+    await expect.poll(async () => nodeById(page, inlineRowId)).toMatchObject({
+      content: {
+        text: 'test',
+        inlineRefs: [{ offset: 0, targetNodeId: targetId, displayName: 'RemoteTarget' }],
+      },
+    });
+    await expect(rowEditor(page, inlineRowId)).toBeFocused();
+  });
+
+  test('@ existing different-parent reference focuses a real inline editor for IME continuation', async ({ page }) => {
+    await invokeMockCommand(page, 'create_node', {
+      parentId: ids.root,
+      index: null,
+      text: 'RemoteTarget',
+    });
+    const projectionWithTarget = await e2eProjection(page);
+    const targetId = projectionWithTarget.nodes.find((node) => node.content.text === 'RemoteTarget')?.id;
+    expect(targetId).toBeTruthy();
+    await delayMockCommands(page, ['add_reference_conversion'], 220);
+
+    await trailingEditor(page).click();
+    await page.keyboard.type('@RemoteTarget');
+    await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
+    await page.keyboard.press('Enter');
+
+    let inlineRowId = '';
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      inlineRowId = projection.nodes.find((node) => (
+        !node.type
+        && node.content.inlineRefs.some((ref) => ref.targetNodeId === targetId)
+      ))?.id ?? '';
+      return inlineRowId;
+    }).not.toBe('');
+    await expect(rowEditor(page, inlineRowId)).toBeFocused();
+
+    const editor = rowEditor(page, inlineRowId);
+    const patchCountBeforeComposition = (await commandCalls(page))
+      .filter((call) => call.cmd === 'apply_node_text_patch').length;
+    await dispatchCompositionEvent(editor, 'compositionstart');
+    await page.keyboard.insertText('嗯么');
+    await expect.poll(async () => (await commandCalls(page))
+      .filter((call) => call.cmd === 'apply_node_text_patch').length).toBe(patchCountBeforeComposition);
+    await dispatchCompositionEvent(editor, 'compositionend', '嗯么');
+
+    await expect.poll(async () => nodeById(page, inlineRowId)).toMatchObject({
+      content: {
+        text: '嗯么',
+        inlineRefs: [{ offset: 0, targetNodeId: targetId, displayName: 'RemoteTarget' }],
+      },
+    });
+    await expect(rowEditor(page, inlineRowId)).toBeFocused();
+  });
+
+  test('@ same-parent reference keeps continued typing on the inline row', async ({ page }) => {
+    await invokeMockCommand(page, 'create_node', {
+      parentId: ids.today,
+      index: null,
+      text: '',
+    });
+    const emptyRowId = await lastTodayChildId(page);
+    expect(emptyRowId).toBeTruthy();
+
+    await rowEditor(page, emptyRowId!).click();
+    await page.keyboard.type('@Al');
+    await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('test');
+
+    await expect.poll(async () => nodeById(page, ids.alpha)).toMatchObject({
+      content: { text: 'Alpha' },
+    });
+    await expect.poll(async () => nodeById(page, emptyRowId!)).toMatchObject({
+      content: {
+        text: 'test',
+        inlineRefs: [{ offset: 0, targetNodeId: ids.alpha, displayName: 'Alpha' }],
+      },
+    });
+    await expect(rowEditor(page, emptyRowId!)).toBeFocused();
+
     const calls = await commandCalls(page);
-    expect(calls.map((call) => call.cmd)).toContain('replace_node_with_reference');
-    expect(calls.map((call) => call.cmd)).toContain('convert_reference_to_inline_node');
+    expect(calls.map((call) => call.cmd)).not.toContain('replace_node_with_reference');
+    expect(calls.map((call) => call.cmd)).not.toContain('replace_node_with_inline_reference');
+    expect(calls.map((call) => call.cmd)).not.toContain('convert_reference_to_inline_node');
+  });
+
+  test('@ same-parent reference keeps IME text after the inline reference', async ({ page }) => {
+    await invokeMockCommand(page, 'create_node', {
+      parentId: ids.today,
+      index: null,
+      text: '',
+    });
+    const emptyRowId = await lastTodayChildId(page);
+    expect(emptyRowId).toBeTruthy();
+
+    const editor = rowEditor(page, emptyRowId!);
+    await editor.click();
+    await page.keyboard.type('@Al');
+    await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
+    await page.keyboard.press('Enter');
+    await expect(editor).toBeFocused();
+
+    const patchCountBeforeComposition = (await commandCalls(page))
+      .filter((call) => call.cmd === 'apply_node_text_patch').length;
+    await dispatchCompositionEvent(editor, 'compositionstart');
+    await page.keyboard.insertText('你好');
+    await expect.poll(async () => (await commandCalls(page))
+      .filter((call) => call.cmd === 'apply_node_text_patch').length).toBe(patchCountBeforeComposition);
+    await dispatchCompositionEvent(editor, 'compositionend', '你好');
+
+    await expect.poll(async () => nodeById(page, ids.alpha)).toMatchObject({
+      content: { text: 'Alpha' },
+    });
+    await expect.poll(async () => nodeById(page, emptyRowId!)).toMatchObject({
+      content: {
+        text: '你好',
+        inlineRefs: [{ offset: 0, targetNodeId: ids.alpha, displayName: 'Alpha' }],
+      },
+    });
+    await expect(row(page, emptyRowId!).locator('.inline-ref')).toHaveText('Alpha');
   });
 
   test('@ inline reference insertion leaves the caret after the inserted reference', async ({ page }) => {
@@ -416,9 +758,20 @@ test.describe('outliner trigger parity', () => {
     expect(createdRowId).toBeTruthy();
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
-      return projection.nodes.find((node) => node.id === createdRowId)?.type;
-    }).toBe('reference');
-    await expect(row(page, createdRowId!)).toContainText('Zeta');
+      const created = projection.nodes.find((node) => node.id === createdRowId);
+      return Boolean(
+        !created?.type
+        && created?.content.inlineRefs.some((ref) => (
+          projection.nodes.some((node) => (
+          node.id === ref.targetNodeId
+          && node.type !== 'reference'
+          && node.content.text === 'Zeta'
+          ))
+        )),
+      );
+    }).toBe(true);
+    await expect(rowEditor(page, createdRowId!)).toBeFocused();
+    await expect(rowBody(page, createdRowId!)).toHaveClass(/ref-converting/);
   });
 
   test('@ and # suggestion popovers anchor to the caret inside transformed outliner rows', async ({ page }) => {

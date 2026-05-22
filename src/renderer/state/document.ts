@@ -43,6 +43,7 @@ export interface UiState {
   focusRequest: FocusRequest | null;
   pendingInputChar: PendingInputChar | null;
   pendingReferenceConversion: PendingReferenceConversion | null;
+  pendingReferenceTypeAhead: PendingReferenceTypeAhead | null;
   expanded: Set<NodeId>;
   expandedHiddenFields: Set<string>;
   editingDescriptionId: NodeId | null;
@@ -73,6 +74,12 @@ export interface PendingReferenceConversion {
   targetId: NodeId;
 }
 
+export interface PendingReferenceTypeAhead {
+  nodeId: NodeId;
+  parentId: NodeId;
+  targetId: NodeId;
+}
+
 export function useUiState() {
   return useState<UiState>({
     focusedId: null,
@@ -87,6 +94,7 @@ export function useUiState() {
     focusRequest: null,
     pendingInputChar: null,
     pendingReferenceConversion: null,
+    pendingReferenceTypeAhead: null,
     expanded: new Set<NodeId>(),
     expandedHiddenFields: new Set<string>(),
     editingDescriptionId: null,

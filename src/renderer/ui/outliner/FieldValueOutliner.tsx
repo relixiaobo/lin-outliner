@@ -67,7 +67,6 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
     && valueInteraction !== 'optionPicker'
     && valueInteraction !== 'reserved',
   );
-
   return (
     <div
       className={`field-value-outliner field-value-node-preview ${empty ? 'empty' : ''}`}
@@ -166,15 +165,25 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
           onCreateTree={(parentId, nodes) => (
             props.run(() => api.createNodesFromTree(parentId, nodes))
           )}
+          onIndentNode={(nodeId) => (
+            props.run(() => api.indentNode(nodeId))
+          )}
           onUpdateCreated={async (nodeId, text) => {
             await props.run(() => api.replaceNodeText(nodeId, plainText(text)));
           }}
+          materializeOnInput
           onToggleCreated={async (nodeId) => {
             await props.run(() => api.toggleDone(nodeId));
           }}
           onApplyTagTrigger={applyTrailingTagTrigger}
           onCreateTagTrigger={createAndApplyTrailingTagTrigger}
           onApplyReferenceTrigger={applyTrailingReferenceTrigger}
+          onReferenceConversionCreated={({ nodeId, parentId, targetId }) => {
+            props.setUi((prev) => ({
+              ...prev,
+              pendingReferenceConversion: { nodeId, parentId, targetId },
+            }));
+          }}
           onExecuteSlashTrigger={executeTrailingSlashTrigger}
           onOpenCommandPalette={() => props.setUi((prev) => ({ ...prev, commandOpen: true }))}
           onCreateField={(parentId) => (

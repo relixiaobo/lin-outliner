@@ -2,7 +2,12 @@ import { describe, expect, test } from 'bun:test';
 import { EditorState } from 'prosemirror-state';
 import { richTextPatchFromTransaction } from '../../src/renderer/ui/editor/editorTextPatch';
 import { pmSchema } from '../../src/renderer/ui/editor/pmSchema';
-import { richTextToDoc, textOffsetToDocPos } from '../../src/renderer/ui/editor/richTextCodec';
+import {
+  docToRichText,
+  INLINE_REF_TEXT_SENTINEL,
+  richTextToDoc,
+  textOffsetToDocPos,
+} from '../../src/renderer/ui/editor/richTextCodec';
 import { plainText } from '../../src/renderer/api/types';
 
 describe('editor text patch', () => {
@@ -56,8 +61,8 @@ describe('editor text patch', () => {
       inlineRefs: [{ offset: 0, targetNodeId: 'target', displayName: 'Target' }],
     });
 
-    expect(textOffsetToDocPos(leadingRefDoc, 0, { inlineRefBias: 'before' })).toBe(1);
-    expect(textOffsetToDocPos(leadingRefDoc, 0, { inlineRefBias: 'after' })).toBe(2);
+    expect(textOffsetToDocPos(leadingRefDoc, 0, { inlineRefBias: 'before' })).toBe(2);
+    expect(textOffsetToDocPos(leadingRefDoc, 0, { inlineRefBias: 'after' })).toBe(3);
   });
 
   test('uses full replacement for text insertion at an inline reference boundary', () => {
@@ -81,5 +86,20 @@ describe('editor text patch', () => {
         },
       }],
     });
+  });
+
+  test('ignores internal IME composition anchors around inline references', () => {
+    const content = {
+      text: '',
+      marks: [],
+      inlineRefs: [{ offset: 0, targetNodeId: 'target', displayName: 'Target' }],
+    };
+    const doc = richTextToDoc(content);
+    const state = EditorState.create({ schema: pmSchema, doc });
+    const insertAfterRef = textOffsetToDocPos(doc, 0, { inlineRefBias: 'after' });
+    const tr = state.tr.insertText(INLINE_REF_TEXT_SENTINEL, insertAfterRef);
+
+    expect(richTextPatchFromTransaction(tr)).toEqual({ ops: [] });
+    expect(docToRichText(tr.doc)).toEqual(content);
   });
 });

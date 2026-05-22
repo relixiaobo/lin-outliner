@@ -213,6 +213,7 @@ export function App() {
 
   const applyOutcomeFocus = useCallback((focus: FocusHint | null) => {
     if (!focus) return;
+    if (focus.placement?.kind === 'preserve') return;
     setUi((prev) => requestFocusState(
       prev,
       focusTarget(focus.nodeId, focus.parentId ?? null, null, focus.surface ?? 'row'),

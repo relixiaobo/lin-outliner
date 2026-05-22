@@ -364,7 +364,7 @@ test.describe('outliner inline atom and drag visuals', () => {
     });
 
     const inlineRef = row(page, ids.beta).locator('.inline-ref').first();
-    await expect(inlineRef).toHaveText('@Alpha');
+    await expect(inlineRef).toHaveText('Alpha');
 
     const styles = await inlineRef.evaluate((element) => {
       const computed = getComputedStyle(element);
@@ -372,6 +372,7 @@ test.describe('outliner inline atom and drag visuals', () => {
         display: computed.display,
         background: computed.backgroundColor,
         color: computed.color,
+        cursor: computed.cursor,
         textDecorationLine: computed.textDecorationLine,
         fontWeight: Number(computed.fontWeight),
       };
@@ -379,8 +380,20 @@ test.describe('outliner inline atom and drag visuals', () => {
     expect(styles.display).toBe('inline');
     expect(styles.background).toBe('rgba(0, 0, 0, 0)');
     expect(styles.color).toBe('rgb(50, 136, 208)');
+    expect(styles.cursor).toBe('auto');
     expect(styles.textDecorationLine).toBe('none');
     expect(styles.fontWeight).toBeLessThan(500);
+
+    await inlineRef.hover();
+    const hoverStyles = await inlineRef.evaluate((element) => {
+      const computed = getComputedStyle(element);
+      return {
+        cursor: computed.cursor,
+        textDecorationLine: computed.textDecorationLine,
+      };
+    });
+    expect(hoverStyles.cursor).toBe('pointer');
+    expect(hoverStyles.textDecorationLine).toContain('underline');
 
     await inlineRef.click();
     const titleEditor = page.locator('.panel-title-editor .ProseMirror').first();

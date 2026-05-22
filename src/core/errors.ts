@@ -27,6 +27,10 @@ export class CoreError extends Error {
     return new CoreError('ReferenceCycle', 'cannot create a reference cycle');
   }
 
+  static duplicateChildReference() {
+    return new CoreError('DuplicateChildReference', 'node already exists in this list');
+  }
+
   static noPreviousSibling() {
     return new CoreError('NoPreviousSibling', 'no previous sibling is available');
   }
@@ -39,4 +43,3 @@ export class CoreError extends Error {
     return new CoreError('InvalidOperation', `invalid operation: ${message}`);
   }
 }
-

@@ -300,10 +300,16 @@ export class DocumentService {
         return this.core.clearFieldValue(String(args.fieldEntryId));
       case 'add_reference':
         return this.core.addReference(String(args.parentId), String(args.targetId), nullableNumber(args.index));
+      case 'add_reference_conversion':
+        return this.core.addReferenceConversion(String(args.parentId), String(args.targetId), nullableNumber(args.index));
       case 'set_reference_target':
         return this.core.setReferenceTarget(String(args.referenceId), String(args.targetId));
       case 'replace_node_with_reference':
         return this.core.replaceNodeWithReference(String(args.nodeId), String(args.targetId));
+      case 'replace_node_with_reference_conversion':
+        return this.core.replaceNodeWithReferenceConversion(String(args.nodeId), String(args.targetId));
+      case 'replace_node_with_inline_reference':
+        return this.core.replaceNodeWithInlineReference(String(args.nodeId), String(args.targetId));
       case 'convert_reference_to_inline_node':
         return this.core.convertReferenceToInlineNode(String(args.referenceId));
       case 'restore_inline_reference_node_to_reference':

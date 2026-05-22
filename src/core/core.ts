@@ -413,6 +413,7 @@ export class Core {
       const state = this.snapshot();
       ensureNodeMovable(state, nodeId);
       ensureParentMutable(state, parentId);
+      ensureParentCanContainChildInstance(state, parentId, childInstanceTargetId(state, nodeId), nodeId);
       this.loro.moveNode(nodeId, parentId, index);
       this.touchNodeDirect(nodeId);
       return focus(nodeId);
@@ -429,6 +430,7 @@ export class Core {
       if (!index) throw CoreError.noPreviousSibling();
       const newParentId = requiredNode(state, parentId).children[index - 1];
       ensureParentMutable(state, newParentId);
+      ensureParentCanContainChildInstance(state, newParentId, childInstanceTargetId(state, nodeId), nodeId);
       this.loro.moveNode(nodeId, newParentId, undefined);
       return focus(nodeId);
     });
@@ -444,6 +446,7 @@ export class Core {
       if (!grandParentId) throw CoreError.noParent();
       ensureParentMutable(state, grandParentId);
       const parentIndex = childIndex(state, grandParentId, parentId) ?? 0;
+      ensureParentCanContainChildInstance(state, grandParentId, childInstanceTargetId(state, nodeId), nodeId);
       this.loro.moveNode(nodeId, grandParentId, parentIndex + 1);
       return focus(nodeId);
     });
@@ -475,6 +478,7 @@ export class Core {
         ? node.trashedFromParentId
         : WORKSPACE_ID;
       const index = node.trashedFromIndex;
+      ensureParentCanContainChildInstance(state, parentId, childInstanceTargetId(state, nodeId), nodeId);
       delete node.trashedFromParentId;
       delete node.trashedFromIndex;
       this.loro.writeNode(node);
@@ -531,6 +535,7 @@ export class Core {
           if (!index) continue;
           const newParentId = requiredNode(state, parentId).children[index - 1];
           ensureParentMutable(state, newParentId);
+          ensureParentCanContainChildInstance(state, newParentId, childInstanceTargetId(state, nodeId), nodeId);
           this.loro.moveNode(nodeId, newParentId, undefined);
         } catch (error) {
           if (error instanceof CoreError) throw error;
@@ -553,6 +558,7 @@ export class Core {
         if (!grandParentId) continue;
         ensureParentMutable(state, grandParentId);
         const parentIndex = childIndex(state, grandParentId, parentId) ?? 0;
+        ensureParentCanContainChildInstance(state, grandParentId, childInstanceTargetId(state, nodeId), nodeId);
         this.loro.moveNode(nodeId, grandParentId, parentIndex + 1);
       }
       return undefined;
@@ -870,11 +876,27 @@ export class Core {
       ensureParentMutable(state, parentId);
       const resolvedTargetId = resolveReferenceTargetId(state, targetId);
       if (wouldCreateReferenceCycle(state, parentId, resolvedTargetId)) throw CoreError.referenceCycle();
+      ensureParentCanContainChildInstance(state, parentId, resolvedTargetId);
       const id = freshId('ref');
       this.loro.createNodeWithId(id, parentId, index, 'reference', (node) => {
         node.targetId = resolvedTargetId;
       });
       return focus(id);
+    });
+  }
+
+  addReferenceConversion(parentId: string, targetId: string, index?: number | null): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      ensureParentMutable(state, parentId);
+      const resolvedTargetId = resolveReferenceTargetId(state, targetId);
+      if (wouldCreateReferenceCycle(state, parentId, resolvedTargetId)) throw CoreError.referenceCycle();
+      ensureParentCanContainChildInstance(state, parentId, resolvedTargetId);
+      const inlineNodeId = this.createInlineReferenceNodeDirect(state, parentId, index, resolvedTargetId);
+      return focus(inlineNodeId, {
+        parentId,
+        placement: { kind: 'text-offset', offset: 0, inlineRefBias: 'after' },
+      });
     });
   }
 
@@ -889,6 +911,7 @@ export class Core {
       if (!parentId) throw CoreError.noParent();
       ensureParentMutable(state, parentId);
       if (wouldCreateReferenceCycle(state, parentId, resolvedTargetId)) throw CoreError.referenceCycle();
+      ensureParentCanContainChildInstance(state, parentId, resolvedTargetId, referenceId);
       current.targetId = resolvedTargetId;
       current.updatedAt = nowMs();
       this.loro.writeNode(current);
@@ -906,6 +929,10 @@ export class Core {
       if (!parentId) throw CoreError.noParent();
       ensureParentMutable(state, parentId);
       if (wouldCreateReferenceCycle(state, parentId, resolvedTargetId)) throw CoreError.referenceCycle();
+      if (current.id === resolvedTargetId) {
+        throw CoreError.invalidOperation('cannot replace a node with a reference to itself');
+      }
+      ensureParentCanContainChildInstance(state, parentId, resolvedTargetId, nodeId);
       if (current.type === 'reference') {
         current.targetId = resolvedTargetId;
         current.updatedAt = nowMs();
@@ -925,6 +952,58 @@ export class Core {
     });
   }
 
+  replaceNodeWithReferenceConversion(nodeId: string, targetId: string): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      ensureNodeMovable(state, nodeId);
+      const resolvedTargetId = resolveReferenceTargetId(state, targetId);
+      const current = clone(requiredNode(state, nodeId));
+      if (current.type === 'reference') throw CoreError.invalidOperation('expected a content node');
+      const parentId = current.parentId;
+      if (!parentId) throw CoreError.noParent();
+      ensureParentMutable(state, parentId);
+      if (wouldCreateReferenceCycle(state, parentId, resolvedTargetId)) throw CoreError.referenceCycle();
+      if (current.id === resolvedTargetId) {
+        throw CoreError.invalidOperation('cannot replace a node with a reference to itself');
+      }
+      ensureParentCanContainChildInstance(state, parentId, resolvedTargetId, nodeId);
+      const index = childIndex(state, parentId, nodeId) ?? 0;
+      const inlineNodeId = this.createInlineReferenceNodeDirect(state, parentId, index, resolvedTargetId);
+      current.trashedFromParentId = parentId;
+      current.trashedFromIndex = index;
+      this.loro.writeNode(current);
+      this.loro.moveNode(nodeId, TRASH_ID, undefined);
+      return focus(inlineNodeId, {
+        parentId,
+        placement: { kind: 'text-offset', offset: 0, inlineRefBias: 'after' },
+      });
+    });
+  }
+
+  replaceNodeWithInlineReference(nodeId: string, targetId: string): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      ensureNodeMovable(state, nodeId);
+      const resolvedTargetId = resolveReferenceTargetId(state, targetId);
+      const current = clone(requiredNode(state, nodeId));
+      if (current.type === 'reference') throw CoreError.invalidOperation('expected a content node');
+      const parentId = current.parentId;
+      if (!parentId) throw CoreError.noParent();
+      ensureParentMutable(state, parentId);
+      if (wouldCreateReferenceCycle(state, parentId, resolvedTargetId)) throw CoreError.referenceCycle();
+      const index = childIndex(state, parentId, nodeId) ?? 0;
+      const inlineNodeId = this.createInlineReferenceNodeDirect(state, parentId, index, resolvedTargetId);
+      current.trashedFromParentId = parentId;
+      current.trashedFromIndex = index;
+      this.loro.writeNode(current);
+      this.loro.moveNode(nodeId, TRASH_ID, undefined);
+      return focus(inlineNodeId, {
+        parentId,
+        placement: { kind: 'text-offset', offset: 0, inlineRefBias: 'after' },
+      });
+    });
+  }
+
   convertReferenceToInlineNode(referenceId: string): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
@@ -938,16 +1017,7 @@ export class Core {
       if (!parentId) throw CoreError.noParent();
       ensureParentMutable(state, parentId);
       const index = childIndex(state, parentId, referenceId) ?? 0;
-      const target = requiredNode(state, targetId);
-      const inlineNodeId = this.createRichTextNodeDirect(parentId, index, {
-        text: '',
-        marks: [],
-        inlineRefs: [{
-          offset: 0,
-          targetNodeId: targetId,
-          displayName: target.content.text || undefined,
-        }],
-      });
+      const inlineNodeId = this.createInlineReferenceNodeDirect(state, parentId, index, targetId);
       this.removeSubtreeDirect(referenceId);
       return focus(inlineNodeId, {
         parentId,
@@ -969,6 +1039,7 @@ export class Core {
         throw CoreError.invalidOperation('node is not an unchanged inline reference');
       }
       if (wouldCreateReferenceCycle(state, parentId, resolvedTargetId)) throw CoreError.referenceCycle();
+      ensureParentCanContainChildInstance(state, parentId, resolvedTargetId, nodeId);
       const index = childIndex(state, parentId, nodeId) ?? 0;
       const referenceId = freshId('ref');
       this.loro.createNodeWithId(referenceId, parentId, index, 'reference', (reference) => {
@@ -1413,6 +1484,24 @@ export class Core {
       node.content = clone(content);
     });
     return id;
+  }
+
+  private createInlineReferenceNodeDirect(
+    state: DocumentState,
+    parentId: string,
+    index: number | null | undefined,
+    targetId: string,
+  ) {
+    const target = requiredNode(state, targetId);
+    return this.createRichTextNodeDirect(parentId, index, {
+      text: '',
+      marks: [],
+      inlineRefs: [{
+        offset: 0,
+        targetNodeId: targetId,
+        displayName: target.content.text || undefined,
+      }],
+    });
   }
 
   private createTagDefDirect(name: string) {
@@ -2351,6 +2440,31 @@ function wouldCreateReferenceCycle(state: DocumentState, parentId: string, targe
   return false;
 }
 
+function childInstanceTargetId(state: DocumentState, nodeId: string) {
+  const node = requiredNode(state, nodeId);
+  return node.type === 'reference' && node.targetId
+    ? resolveReferenceTargetId(state, node.targetId)
+    : node.id;
+}
+
+function ensureParentCanContainChildInstance(
+  state: DocumentState,
+  parentId: string,
+  targetId: string,
+  excludeNodeId?: string,
+) {
+  const parent = requiredNode(state, parentId);
+  for (const childId of parent.children) {
+    if (childId === excludeNodeId) continue;
+    const child = state.nodes[childId];
+    if (!child || child.parentId === TRASH_ID) continue;
+    const childTargetId = child.type === 'reference' && child.targetId
+      ? resolveReferenceTargetId(state, child.targetId)
+      : child.id;
+    if (childTargetId === targetId) throw CoreError.duplicateChildReference();
+  }
+}
+
 function resolveReferenceTargetId(state: DocumentState, targetId: string) {
   let currentId = targetId;
   const visited = new Set<string>();
@@ -2366,7 +2480,9 @@ function resolveReferenceTargetId(state: DocumentState, targetId: string) {
 }
 
 function isOnlyInlineReference(content: RichText, targetId: string) {
-  if (content.text.trim().length > 0) return false;
+  const textEmpty = content.text.replace(/\u200B/g, '').trim().length === 0;
+  if (textEmpty && content.inlineRefs.length === 0) return true;
+  if (!textEmpty) return false;
   if (content.marks.length > 0) return false;
   return content.inlineRefs.length === 1
     && content.inlineRefs[0].offset === 0

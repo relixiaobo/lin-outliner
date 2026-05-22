@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import {
   clipboardText,
+  commandCalls,
   e2eProjection,
   emitDocumentEvent,
   ids,
@@ -26,17 +27,24 @@ async function createReferenceFixture(page: import('@playwright/test').Page) {
     const win = window as Window & {
       lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
     };
+    const target = await win.lin?.invoke<{ focus?: { nodeId: string } }>('create_node', {
+      parentId: ids.root,
+      index: null,
+      text: 'Reference Alpha',
+    });
+    const targetId = target?.focus?.nodeId ?? '';
     const child = await win.lin?.invoke<{ focus?: { nodeId: string } }>('create_node', {
-      parentId: ids.alpha,
+      parentId: targetId,
       index: null,
       text: 'Alpha child',
     });
     const reference = await win.lin?.invoke<{ focus?: { nodeId: string } }>('add_reference', {
       parentId: ids.today,
-      targetId: ids.alpha,
+      targetId,
       index: null,
     });
     return {
+      targetId,
       childId: child?.focus?.nodeId ?? '',
       referenceId: reference?.focus?.nodeId ?? '',
     };
@@ -203,10 +211,15 @@ test.describe('outliner selection keyboard parity', () => {
 
     await expect(row(page, childId)).toBeVisible();
     await expect(row(page, childId)).toContainText('Alpha child');
+
+    const guideBackground = await row(page, referenceId).locator('> .indent-guide .indent-guide-line').evaluate((element) =>
+      getComputedStyle(element).backgroundImage,
+    );
+    expect(guideBackground).toContain('repeating-linear-gradient');
   });
 
   test('ArrowRight converts a selected reference row to an unchanged inline reference and blur restores it', async ({ page }) => {
-    const { referenceId } = await createReferenceFixture(page);
+    const { referenceId, targetId } = await createReferenceFixture(page);
 
     await rowBody(page, referenceId).click();
     await expect(rowBody(page, referenceId)).toHaveClass(/ref-click-selected/);
@@ -219,7 +232,7 @@ test.describe('outliner selection keyboard parity', () => {
       inlineId = projection.nodes.find((node) => (
         node.id !== referenceId
         && !node.type
-        && node.content.inlineRefs.some((ref) => ref.targetNodeId === ids.alpha)
+        && node.content.inlineRefs.some((ref) => ref.targetNodeId === targetId)
       ))?.id ?? '';
       return inlineId;
     }).not.toBe('');
@@ -233,42 +246,99 @@ test.describe('outliner selection keyboard parity', () => {
     }).toBe(false);
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
-      return projection.nodes.some((node) => node.type === 'reference' && node.targetId === ids.alpha);
+      return projection.nodes.some((node) => node.type === 'reference' && node.targetId === targetId);
     }).toBe(true);
   });
 
-  test('double-clicking a reference row enters inline conversion and keeps typed text', async ({ page }) => {
-    const { referenceId } = await createReferenceFixture(page);
+  test('double-clicking a reference row edits the target node in place', async ({ page }) => {
+    const { referenceId, targetId } = await createReferenceFixture(page);
+    const beforeCalls = (await commandCalls(page)).length;
 
-    await rowBody(page, referenceId).locator('.row-content-line').dblclick({ position: { x: 44, y: 12 } });
+    await rowBody(page, referenceId).locator('.row-content-line').dblclick({ position: { x: 140, y: 12 } });
 
-    let inlineId = '';
-    await expect.poll(async () => {
-      const projection = await e2eProjection(page);
-      inlineId = projection.nodes.find((node) => (
-        node.id !== referenceId
-        && !node.type
-        && node.content.inlineRefs.some((ref) => ref.targetNodeId === ids.alpha)
-      ))?.id ?? '';
-      return inlineId;
-    }).not.toBe('');
-    await expect(rowEditor(page, inlineId)).toBeFocused();
-    await expect(rowBody(page, inlineId)).toHaveClass(/ref-converting/);
+    await expect(rowEditor(page, referenceId)).toBeFocused();
+    await expect(rowBody(page, referenceId)).not.toHaveClass(/ref-converting/);
 
+    await page.keyboard.press('End');
     await page.keyboard.type('!');
     await rowEditor(page, ids.beta).click();
 
-    await expect.poll(async () => {
-      const node = await nodeById(page, inlineId);
-      return node?.content;
-    }).toMatchObject({
-      text: '!',
-      inlineRefs: [{ offset: 0, targetNodeId: ids.alpha, displayName: 'Alpha' }],
+    await expect.poll(async () => nodeById(page, targetId)).toMatchObject({
+      content: { text: 'Reference Alpha!' },
     });
-    await expect.poll(async () => nodeById(page, referenceId)).toBeUndefined();
+    await expect.poll(async () => nodeById(page, referenceId)).toMatchObject({
+      type: 'reference',
+      targetId,
+    });
+    const calls = (await commandCalls(page)).slice(beforeCalls).map((call) => call.cmd);
+    expect(calls).not.toContain('convert_reference_to_inline_node');
   });
 
-  test('inline references inside reference rows keep reference row click semantics', async ({ page }) => {
+  test('clicking inside an editing reference row keeps the reference editor active', async ({ page }) => {
+    const { referenceId } = await createReferenceFixture(page);
+    const contentLine = rowBody(page, referenceId).locator('.row-content-line');
+
+    await contentLine.dblclick({ position: { x: 140, y: 12 } });
+    await expect(rowEditor(page, referenceId)).toBeFocused();
+    await expect(rowBody(page, referenceId)).toHaveClass(/focused/);
+
+    await rowEditor(page, referenceId).click({ position: { x: 12, y: 8 } });
+
+    await expect(rowEditor(page, referenceId)).toBeFocused();
+    await expect(rowBody(page, referenceId)).toHaveClass(/focused/);
+    await expect(rowBody(page, referenceId)).not.toHaveClass(/ref-click-selected/);
+
+    const lineBox = await contentLine.boundingBox();
+    if (!lineBox) throw new Error('Expected reference content line to be visible');
+    await contentLine.click({ position: { x: lineBox.width - 12, y: 12 } });
+
+    await expect(rowEditor(page, referenceId)).toBeFocused();
+    await expect(rowBody(page, referenceId)).toHaveClass(/focused/);
+    await expect(rowBody(page, referenceId)).not.toHaveClass(/ref-click-selected/);
+
+    await rowEditor(page, ids.beta).click({ position: { x: 8, y: 8 } });
+
+    await expect(rowEditor(page, referenceId)).not.toBeFocused();
+    await expect(rowEditor(page, ids.beta)).toBeFocused();
+  });
+
+  test('reference selection and edit affordances frame the whole reference row', async ({ page }) => {
+    const { referenceId } = await createReferenceFixture(page);
+
+    await rowBody(page, referenceId).click();
+    await expect(rowBody(page, referenceId)).toHaveClass(/ref-click-selected/);
+    const selectedFrame = await rowBody(page, referenceId).evaluate((element) => {
+      const rowRect = element.getBoundingClientRect();
+      const editorRect = element.querySelector('.row-editor')?.getBoundingClientRect();
+      const frameStyle = getComputedStyle(element, '::before');
+      return {
+        content: frameStyle.content,
+        borderStyle: frameStyle.borderTopStyle,
+        frameLeft: Number.parseFloat(frameStyle.left),
+        editorLeft: editorRect ? editorRect.left - rowRect.left : 0,
+        rowWidth: rowRect.width,
+      };
+    });
+    expect(selectedFrame.content).not.toBe('none');
+    expect(selectedFrame.borderStyle).toBe('solid');
+    expect(selectedFrame.frameLeft).toBeLessThan(selectedFrame.editorLeft);
+
+    await rowBody(page, referenceId).locator('.row-content-line').dblclick({ position: { x: 80, y: 12 } });
+    await expect(rowEditor(page, referenceId)).toBeFocused();
+    const editingFrame = await rowBody(page, referenceId).evaluate((element) => {
+      const frameStyle = getComputedStyle(element, '::before');
+      return {
+        content: frameStyle.content,
+        borderStyle: frameStyle.borderTopStyle,
+        rowWidth: element.getBoundingClientRect().width,
+      };
+    });
+    expect(editingFrame.content).not.toBe('none');
+    expect(editingFrame.borderStyle).toBe('solid');
+    expect(editingFrame.rowWidth).toBeGreaterThan(selectedFrame.rowWidth);
+  });
+
+  test('inline references inside reference rows navigate to the referenced node', async ({ page }) => {
     const referenceId = await page.evaluate(async (ids) => {
       const win = window as Window & {
         lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
@@ -296,14 +366,46 @@ test.describe('outliner selection keyboard parity', () => {
     await emitCurrentProjection(page);
 
     const inlineRef = row(page, referenceId).locator('.inline-ref').first();
-    await expect(inlineRef).toHaveText('@Beta');
+    await expect(inlineRef).toHaveText('Beta');
     const titleEditor = page.locator('.panel-title-editor .ProseMirror').first();
-    const titleBefore = await titleEditor.innerText();
     await inlineRef.click();
 
-    await expect(rowBody(page, referenceId)).toHaveClass(/ref-click-selected/);
-    await expect(rowEditor(page, referenceId)).not.toBeFocused();
-    await expect(titleEditor).toHaveText(titleBefore);
+    await expect(titleEditor).toHaveText('Beta');
+    await expect(titleEditor).not.toBeFocused();
+  });
+
+  test('IME typing after a selected reference continues in the real inline editor', async ({ page }) => {
+    const { targetId, referenceId } = await createReferenceFixture(page);
+
+    await row(page, referenceId).click();
+    await page.evaluate(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key: 'Process',
+        keyCode: 229,
+        which: 229,
+      }));
+    });
+
+    let inlineRowId = '';
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      inlineRowId = projection.nodes.find((node) => (
+        !node.type
+        && node.content.inlineRefs.some((ref) => ref.targetNodeId === targetId)
+      ))?.id ?? '';
+      return inlineRowId;
+    }).not.toBe('');
+    await expect(rowEditor(page, inlineRowId)).toBeFocused();
+    await page.keyboard.insertText('你好');
+    await expect.poll(async () => nodeById(page, inlineRowId)).toMatchObject({
+      content: {
+        text: '你好',
+        inlineRefs: [{ offset: 0, targetNodeId: targetId, displayName: 'Reference Alpha' }],
+      },
+    });
+    await expect(rowEditor(page, inlineRowId)).toBeFocused();
   });
 
   test('Escape clears a clicked reference selection without entering edit mode', async ({ page }) => {
@@ -319,7 +421,7 @@ test.describe('outliner selection keyboard parity', () => {
   });
 
   test('Backspace removes a selected reference row instead of trashing the target', async ({ page }) => {
-    const { referenceId } = await createReferenceFixture(page);
+    const { referenceId, targetId } = await createReferenceFixture(page);
 
     await rowBody(page, referenceId).click();
     await page.keyboard.press('Backspace');
@@ -329,11 +431,11 @@ test.describe('outliner selection keyboard parity', () => {
       const projection = await e2eProjection(page);
       return projection.nodes.some((node) => node.id === referenceId);
     }).toBe(false);
-    await expect(row(page, ids.alpha)).toBeVisible();
+    await expect.poll(async () => (await nodeById(page, targetId))?.parentId).not.toBe(ids.trash);
   });
 
   test('Backspace batch-deletes mixed content and reference rows without touching the target', async ({ page }) => {
-    const { referenceId } = await createReferenceFixture(page);
+    const { referenceId, targetId } = await createReferenceFixture(page);
 
     await multiSelect(page, [ids.beta, referenceId]);
     await page.keyboard.press('Backspace');
@@ -342,6 +444,6 @@ test.describe('outliner selection keyboard parity', () => {
     await expect(row(page, referenceId)).toHaveCount(0);
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.trash);
     await expect.poll(async () => (await nodeById(page, referenceId))?.parentId).toBe(ids.trash);
-    await expect(row(page, ids.alpha)).toBeVisible();
+    await expect.poll(async () => (await nodeById(page, targetId))?.parentId).not.toBe(ids.trash);
   });
 });

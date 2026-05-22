@@ -37,8 +37,13 @@ in `src/core`.
 - `register_collected_option`
 - `select_field_option`
 - `add_reference`
+- `add_reference_conversion`
 - `set_reference_target`
 - `replace_node_with_reference`
+- `replace_node_with_reference_conversion`
+- `replace_node_with_inline_reference`
+- `convert_reference_to_inline_node`
+- `restore_inline_reference_node_to_reference`
 - `ensure_date_node`
 - `ensure_tag_search`
 - `create_search_node`

@@ -1,4 +1,5 @@
 import { isCssHexColorToken } from '../../../core/textSyntax';
+import type { TreeReferenceBlockReason } from './referenceRules';
 
 export type EditorTriggerKind = '#' | '@' | '/' | '>';
 export type DropdownTriggerKind = Exclude<EditorTriggerKind, '>'>;
@@ -84,24 +85,29 @@ export function resolveContentRowBackspaceAtStartIntent(params: {
   return params.hasChildren ? 'block_delete_parent' : 'delete_empty';
 }
 
-export type ReferenceSelectionAction = 'tree_reference' | 'inline_reference';
+export type ReferenceSelectionAction = 'tree_reference' | 'inline_reference' | 'blocked';
 
 export function resolveReferenceSelectionAction(params: {
   text: string;
   inlineRefCount: number;
   triggerFrom: number;
   triggerTo: number;
-  canCreateTreeReference: boolean;
+  treeBlockReason: TreeReferenceBlockReason | null;
+  sourceIsReference: boolean;
 }): ReferenceSelectionAction {
-  if (!params.canCreateTreeReference || params.inlineRefCount > 0) {
-    return 'inline_reference';
-  }
-
   const beforeTrigger = params.text.slice(0, params.triggerFrom);
   const afterTrigger = params.text.slice(params.triggerTo);
-  return beforeTrigger.trim() === '' && afterTrigger.trim() === ''
-    ? 'tree_reference'
-    : 'inline_reference';
+  const ownsWholeRow = beforeTrigger.trim() === '' && afterTrigger.trim() === '';
+  if (!ownsWholeRow || params.inlineRefCount > 0 || params.sourceIsReference) {
+    return 'inline_reference';
+  }
+  if (params.treeBlockReason === 'already_in_parent') {
+    return 'inline_reference';
+  }
+  if (params.treeBlockReason) {
+    return 'blocked';
+  }
+  return 'tree_reference';
 }
 
 export type TriggerForceCreateIntent =

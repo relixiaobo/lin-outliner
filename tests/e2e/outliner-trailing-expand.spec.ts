@@ -28,6 +28,56 @@ async function delayCreateNode(page: Parameters<typeof trailingEditor>[0], delay
   }, delayMs);
 }
 
+async function delayCreateAndUpdate(page: Parameters<typeof trailingEditor>[0], delayMs = 80) {
+  await page.evaluate((delay) => {
+    const win = window as unknown as {
+      lin?: {
+        invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+      };
+    };
+    const originalInvoke = win.lin?.invoke;
+    if (!win.lin || !originalInvoke) return;
+    win.lin.invoke = async <T,>(cmd: string, args: Record<string, unknown> = {}) => {
+      if (cmd === 'create_node' || cmd === 'create_nodes_from_tree' || cmd === 'apply_node_text_patch') {
+        await new Promise((resolve) => window.setTimeout(resolve, delay));
+      }
+      return originalInvoke<T>(cmd, args);
+    };
+  }, delayMs);
+}
+
+async function watchTrailingFocus(page: Parameters<typeof trailingEditor>[0], parentId = ids.today) {
+  await page.evaluate((targetParentId) => {
+    const win = window as unknown as {
+      __linTrailingRefocusSeen?: boolean;
+      __linTrailingRefocusCleanup?: () => void;
+    };
+    win.__linTrailingRefocusSeen = false;
+    win.__linTrailingRefocusCleanup?.();
+    const activeElement = document.activeElement;
+    const handler = (event: FocusEvent) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      const trailing = target.closest(`[data-trailing-parent-id="${targetParentId}"]`);
+      if (trailing && target !== activeElement) win.__linTrailingRefocusSeen = true;
+    };
+    document.addEventListener('focusin', handler, true);
+    win.__linTrailingRefocusCleanup = () => document.removeEventListener('focusin', handler, true);
+  }, parentId);
+}
+
+async function expectNoTrailingRefocus(page: Parameters<typeof trailingEditor>[0]) {
+  expect(await page.evaluate(() => {
+    const win = window as unknown as {
+      __linTrailingRefocusSeen?: boolean;
+      __linTrailingRefocusCleanup?: () => void;
+    };
+    win.__linTrailingRefocusCleanup?.();
+    win.__linTrailingRefocusCleanup = undefined;
+    return Boolean(win.__linTrailingRefocusSeen);
+  })).toBe(false);
+}
+
 async function watchTextGap(page: Parameters<typeof trailingEditor>[0], text: string) {
   await page.evaluate((expectedText) => {
     const win = window as unknown as {
@@ -58,6 +108,11 @@ async function expectNoTextGap(page: Parameters<typeof trailingEditor>[0]) {
   })).toBe(false);
 }
 
+async function nodesWithText(page: Parameters<typeof trailingEditor>[0], text: string) {
+  const projection = await e2eProjection(page);
+  return projection.nodes.filter((node) => node.content.text === text);
+}
+
 async function dispatchCompositionEvent(locator: ReturnType<typeof trailingEditor>, type: 'compositionstart' | 'compositionend', data = '') {
   await locator.evaluate((element, eventInit) => {
     const target = element.querySelector('.ProseMirror') ?? element;
@@ -74,47 +129,89 @@ test.describe('outliner trailing input and expansion parity', () => {
     await openMockedApp(page);
   });
 
-  test('plain typing stays in trailing input until Enter commits it', async ({ page }) => {
+  test('typing in the panel trailing input materializes a real node and keeps the panel trailing input', async ({ page }) => {
     const editor = trailingEditor(page);
     await editor.click();
     await page.keyboard.type('Delta');
 
-    await expect(editor).toHaveText('Delta');
-    expect(await nodeByText(page, 'Delta')).toBeUndefined();
-    await page.keyboard.press('Enter');
-
     await expect.poll(async () => (await nodeByText(page, 'Delta'))?.parentId).toBe(ids.today);
-    await expect(editor).toBeFocused();
+    const created = await nodeByText(page, 'Delta');
+    expect(created?.id).toBeTruthy();
+    await expect(rowEditor(page, created!.id)).toBeFocused();
+    await expect(trailingEditor(page)).toBeVisible();
+    await expect(trailingEditor(page)).not.toBeFocused();
+
+    await page.keyboard.press('Enter');
 
     const projection = await e2eProjection(page);
     const today = projection.nodes.find((node) => node.id === ids.today)!;
-    expect(today.children).toHaveLength(4);
+    expect(today.children).toHaveLength(5);
+    const continuationId = today.children.at(-1)!;
+    const continuation = projection.nodes.find((node) => node.id === continuationId)!;
+    expect(continuation.content.text).toBe('');
+    await expect(rowEditor(page, continuationId)).toBeFocused();
+    await expect(trailingEditor(page)).toBeVisible();
   });
 
-  test('committed trailing input uses dimmed bullet before projection clears the editor', async ({ page }) => {
+  test('plain trailing input materializes from the first key without rendering transient text', async ({ page }) => {
+    await delayCreateNode(page);
+    const text = 'Pending visual';
+    const editor = trailingEditor(page);
+    await editor.click();
+    await page.keyboard.type(text);
+
+    await expect(editor).toHaveText('');
+
+    await expect.poll(async () => (await nodeByText(page, text))?.parentId).toBe(ids.today);
+    const created = await nodeByText(page, text);
+    expect(created?.id).toBeTruthy();
+    await expect(rowEditor(page, created!.id)).toBeFocused();
+    await expect(trailingEditor(page)).toBeVisible();
+    await expect(trailingEditor(page)).not.toBeFocused();
+  });
+
+  test('fast typing in the panel trailing input stays on one materialized node', async ({ page }) => {
+    await delayCreateAndUpdate(page);
+    const text = 'helo';
+    const editor = trailingEditor(page);
+    await editor.click();
+    await watchTrailingFocus(page);
+    await page.keyboard.type(text, { delay: 0 });
+
+    await expect.poll(async () => (await nodeByText(page, text))?.parentId).toBe(ids.today);
+    const created = await nodeByText(page, text);
+    expect(created?.id).toBeTruthy();
+    const projection = await e2eProjection(page);
+    const typedTexts = ['h', 'he', 'hel', text, 'e', 'el', 'elo', 'l', 'lo', 'o'];
+    const typedFragments = projection.nodes.filter((node) => (
+      typedTexts.includes(node.content.text)
+    ));
+    expect(typedFragments.map((node) => node.content.text)).toEqual([text]);
+    expect(created!.children).toEqual([]);
+    await expect(rowEditor(page, created!.id)).toBeFocused();
+    await expect(trailingEditor(page)).toBeVisible();
+    await expect(trailingEditor(page)).not.toBeFocused();
+    await expectNoTrailingRefocus(page);
+  });
+
+  test('duplicate trailing input text materializes into a second real node', async ({ page }) => {
+    await trailingEditor(page).click();
+    await page.keyboard.type('Repeat');
+    await expect.poll(async () => (await nodesWithText(page, 'Repeat')).length).toBe(1);
+
     await delayCreateNode(page);
     const editor = trailingEditor(page);
     await editor.click();
-    await page.keyboard.type('Pending visual');
+    await page.keyboard.type('Repeat');
+    await expect(editor).toHaveText('');
 
-    const darkColor = await page.locator(`[data-node-id="${ids.alpha}"] .row-bullet-shape.content`).evaluate((element) =>
-      getComputedStyle(element).color,
-    );
-    await expect(editor).toHaveText('Pending visual');
-
-    await page.keyboard.press('Enter');
-    await expect(editor).toHaveText('Pending visual');
-
-    const pendingColor = await page.locator(`[data-trailing-parent-id="${ids.today}"] .row-bullet-shape.content`).evaluate((element) =>
-      getComputedStyle(element).color,
-    );
-    expect(pendingColor).not.toBe(darkColor);
-
-    await expect.poll(async () => (await nodeByText(page, 'Pending visual'))?.parentId).toBe(ids.today);
-    await expect(editor).toBeFocused();
+    await expect.poll(async () => (await nodesWithText(page, 'Repeat')).length).toBe(2);
+    const repeated = await nodesWithText(page, 'Repeat');
+    await expect(rowEditor(page, repeated.at(-1)!.id)).toBeFocused();
   });
 
-  test('blur-committed trailing text keeps the next trailing input stable when the row is focused again', async ({ page }) => {
+  test('blur during trailing materialization does not steal focus back from the clicked row', async ({ page }) => {
+    await delayCreateNode(page);
     const editor = trailingEditor(page);
     await editor.click();
     await page.keyboard.type('Focus stable');
@@ -123,6 +220,7 @@ test.describe('outliner trailing input and expansion parity', () => {
     await expect.poll(async () => (await nodeByText(page, 'Focus stable'))?.parentId).toBe(ids.today);
     const created = await nodeByText(page, 'Focus stable');
     expect(created?.id).toBeTruthy();
+    await expect(rowEditor(page, ids.alpha)).toBeFocused();
     await expect(trailingEditor(page)).toBeVisible();
 
     await rowEditor(page, created!.id).click();
@@ -141,13 +239,11 @@ test.describe('outliner trailing input and expansion parity', () => {
     await expect(editor).toHaveText(text);
     await watchTextGap(page, text);
 
-    await page.keyboard.press('Enter');
-    await expect(editor).toHaveText(text);
     await expect.poll(async () => (await nodeByText(page, text))?.parentId).toBe(ids.today);
     await expectNoTextGap(page);
   });
 
-  test('IME committed text stays in trailing input until Enter commits it', async ({ page }) => {
+  test('IME committed text materializes and Enter on the created row creates a real empty continuation', async ({ page }) => {
     const editor = trailingEditor(page);
     const text = '中文真实行';
 
@@ -156,18 +252,20 @@ test.describe('outliner trailing input and expansion parity', () => {
     await page.keyboard.insertText(text);
     await dispatchCompositionEvent(editor, 'compositionend', text);
 
-    await expect(editor).toHaveText(text);
-    expect(await nodeByText(page, text)).toBeUndefined();
+    await expect.poll(async () => (await nodeByText(page, text))?.parentId).toBe(ids.today);
+    const created = await nodeByText(page, text);
+    expect(created?.id).toBeTruthy();
+    await expect(rowEditor(page, created!.id)).toBeFocused();
     await page.keyboard.press('Enter');
 
-    await expect.poll(async () => (await nodeByText(page, text))?.parentId).toBe(ids.today);
-    await expect(editor).toBeFocused();
     const projection = await e2eProjection(page);
     const today = projection.nodes.find((node) => node.id === ids.today)!;
-    expect(today.children).toHaveLength(4);
+    expect(today.children).toHaveLength(5);
+    const continuationId = today.children.at(-1)!;
+    await expect(rowEditor(page, continuationId)).toBeFocused();
   });
 
-  test('IME committed text stays visible while empty field value commit is pending', async ({ page }) => {
+  test('field value text stays visible while immediate materialization is pending', async ({ page }) => {
     await delayCreateNode(page);
     const text = '字段中文';
 
@@ -180,7 +278,6 @@ test.describe('outliner trailing input and expansion parity', () => {
     await page.keyboard.insertText(text);
     await expect(valueEditor).toHaveText(text);
 
-    await page.keyboard.press('Enter');
     await expect(valueEditor).toHaveText(text);
     await expect.poll(async () => (await nodeByText(page, text))?.content.text).toBe(text);
     const projection = await e2eProjection(page);
@@ -189,7 +286,7 @@ test.describe('outliner trailing input and expansion parity', () => {
     expect(fieldEntry.children).toEqual([valueNode.id]);
   });
 
-  test('IME committed field value stays in trailing input until Enter commits it', async ({ page }) => {
+  test('IME committed field value materializes without Enter', async ({ page }) => {
     const text = '字段真实值';
 
     await trailingEditor(page).click();
@@ -202,10 +299,6 @@ test.describe('outliner trailing input and expansion parity', () => {
     await page.keyboard.insertText(text);
     await watchTextGap(page, text);
     await dispatchCompositionEvent(valueEditor, 'compositionend', text);
-
-    await expect(valueEditor).toHaveText(text);
-    expect(await nodeByText(page, text)).toBeUndefined();
-    await page.keyboard.press('Enter');
 
     await expect.poll(async () => (await nodeByText(page, text))?.content.text).toBe(text);
     await expectNoTextGap(page);
@@ -245,6 +338,7 @@ test.describe('outliner trailing input and expansion parity', () => {
     const created = projection.nodes.find((node) => node.id === createdId)!;
     expect(created.content.text).toBe('');
     await expect(rowEditor(page, createdId)).toBeFocused();
+    await expect(trailingEditor(page)).toBeVisible();
   });
 
   test('Tab and Shift+Tab in trailing input choose the parent for the next node without collapsing state', async ({ page }) => {
@@ -252,27 +346,85 @@ test.describe('outliner trailing input and expansion parity', () => {
     await page.keyboard.press('Tab');
     await page.keyboard.type('Nested');
 
-    await expect(page.locator('.trailing-editor .ProseMirror:focus')).toHaveText('Nested');
-    expect(await nodeByText(page, 'Nested')).toBeUndefined();
-    await page.locator('.main-panel').first().click({ position: { x: 120, y: 520 } });
     await expect.poll(async () => (await nodeByText(page, 'Nested'))?.parentId).toBe(ids.gamma);
+    const nested = await nodeByText(page, 'Nested');
+    expect(nested?.id).toBeTruthy();
+    await expect(rowEditor(page, nested!.id)).toBeFocused();
     await expect(page.getByText('Nested')).toBeVisible();
-    await expect.poll(async () => (await nodeByText(page, 'Nested'))?.parentId).toBe(ids.gamma);
     await expect(row(page, ids.gamma).getByRole('button', { name: 'Collapse' })).toBeVisible();
-    await expect(page.getByText('Nested')).toBeVisible();
 
     await trailingEditor(page).click();
     await page.keyboard.press('Tab');
     await page.keyboard.press('Shift+Tab');
     await page.keyboard.type('topagain');
 
-    await expect(trailingEditor(page)).toHaveText('topagain');
-    await page.locator('.main-panel').first().click({ position: { x: 120, y: 520 } });
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
       const full = projection.nodes.find((node) => node.content.text === 'topagain');
       return full?.parentId === ids.today;
     }).toBe(true);
+    const topAgain = await nodeByText(page, 'topagain');
+    expect(topAgain?.id).toBeTruthy();
+    await expect(rowEditor(page, topAgain!.id)).toBeFocused();
+  });
+
+  test('Enter then Tab after trailing materialization creates a child from the real empty sibling', async ({ page }) => {
+    await trailingEditor(page).click();
+    await page.keyboard.type('Fresh parent');
+    await expect.poll(async () => (await nodeByText(page, 'Fresh parent'))?.parentId).toBe(ids.today);
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Tab');
+    await page.keyboard.type('Fresh child');
+
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const parent = projection.nodes.find((node) => node.content.text === 'Fresh parent');
+      const child = projection.nodes.find((node) => node.content.text === 'Fresh child');
+      return Boolean(parent && child && child.parentId === parent.id);
+    }).toBe(true);
+    const child = await nodeByText(page, 'Fresh child');
+    expect(child?.id).toBeTruthy();
+    await expect(rowEditor(page, child!.id)).toBeFocused();
+  });
+
+  test('Tab with trailing text commits it directly as a child node', async ({ page }) => {
+    await trailingEditor(page).click();
+    await page.keyboard.type('你好');
+    await page.keyboard.press('Enter');
+
+    await expect.poll(async () => (await nodesWithText(page, '你好')).length).toBe(1);
+    const parentId = (await nodesWithText(page, '你好'))[0]!.id;
+
+    await page.keyboard.type('你好');
+    await page.keyboard.press('Tab');
+
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const parent = projection.nodes.find((node) => node.id === parentId);
+      const child = projection.nodes.find((node) => (
+        node.parentId === parentId
+        && node.content.text === '你好'
+      ));
+      return Boolean(parent && child);
+    }).toBe(true);
+
+    const parent = (await e2eProjection(page)).nodes.find((node) => node.id === parentId)!;
+    const childId = parent.children[0]!;
+    await expect(rowEditor(page, childId)).toBeFocused();
+    await expect(page.locator(`[data-trailing-parent-id="${parentId}"] .ProseMirror:focus`)).toHaveCount(0);
+  });
+
+  test('Tab while trailing input is materializing indents the created real node', async ({ page }) => {
+    await delayCreateNode(page);
+    await trailingEditor(page).click();
+    await page.keyboard.type('Buffered child');
+    await page.keyboard.press('Tab');
+
+    await expect.poll(async () => (await nodeByText(page, 'Buffered child'))?.parentId).toBe(ids.gamma);
+    const child = await nodeByText(page, 'Buffered child');
+    expect(child?.id).toBeTruthy();
+    await expect(rowEditor(page, child!.id)).toBeFocused();
+    await expect(trailingEditor(page, ids.gamma)).toHaveCount(0);
   });
 
   test('Backspace in an empty trailing input focuses the last visible node above it', async ({ page }) => {
@@ -282,7 +434,7 @@ test.describe('outliner trailing input and expansion parity', () => {
     await expect(rowEditor(page, ids.gamma)).toBeFocused();
   });
 
-  test('expanding a leaf with the chevron focuses its child trailing input and Backspace collapses back to the leaf', async ({ page }) => {
+  test('expanding a leaf with the chevron shows its empty child trailing input', async ({ page }) => {
     await rowBody(page, ids.gamma).hover();
     await row(page, ids.gamma).locator('.row-chevron-button').click();
 
@@ -292,5 +444,20 @@ test.describe('outliner trailing input and expansion parity', () => {
 
     await expect(rowEditor(page, ids.gamma)).toBeFocused();
     await expect(trailingEditor(page, ids.gamma)).toHaveCount(0);
+  });
+
+  test('typing in an empty child trailing input materializes the first real child without adding another child trailing input', async ({ page }) => {
+    await rowBody(page, ids.gamma).hover();
+    await row(page, ids.gamma).locator('.row-chevron-button').click();
+
+    await expect(trailingEditor(page, ids.gamma)).toBeFocused();
+    await page.keyboard.type('Leaf child');
+
+    await expect.poll(async () => (await nodeByText(page, 'Leaf child'))?.parentId).toBe(ids.gamma);
+    const child = await nodeByText(page, 'Leaf child');
+    expect(child?.id).toBeTruthy();
+    await expect(rowEditor(page, child!.id)).toBeFocused();
+    await expect(trailingEditor(page, ids.gamma)).toHaveCount(0);
+    await expect(trailingEditor(page)).toBeVisible();
   });
 });

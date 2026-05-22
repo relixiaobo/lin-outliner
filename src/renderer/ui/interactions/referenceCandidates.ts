@@ -126,7 +126,7 @@ function nodeCandidates(
         node,
         label,
         normalizedLabel: label.toLowerCase(),
-        disabledReason: getTreeReferenceBlockMessage(reason),
+        disabledReason: reason === 'already_in_parent' ? null : getTreeReferenceBlockMessage(reason),
         isUntitled: rawText.length === 0,
         contextRank: contextRank(node, currentNode, currentAncestors),
       };

@@ -42,7 +42,7 @@ export const pmSchema = new Schema({
         return [
           'span',
           attrs,
-          `@${node.attrs.displayName || node.attrs.targetNodeId || '...'}`,
+          node.attrs.displayName || node.attrs.targetNodeId || '...',
         ];
       },
     },

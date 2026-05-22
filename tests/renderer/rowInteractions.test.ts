@@ -32,6 +32,10 @@ import {
 } from '../../src/renderer/ui/interactions/contextMenuSelection';
 import { resolveSelectionKeyboardAction } from '../../src/renderer/ui/interactions/selectionKeyboard';
 import {
+  matchesShortcutEvent,
+  shortcutDefinitionsForScope,
+} from '../../src/renderer/ui/interactions/shortcutRegistry';
+import {
   expandIndentTargets,
   indentTargetParentId,
   previousVisibleRowId,
@@ -518,7 +522,8 @@ describe('row interaction resolvers', () => {
       inlineRefCount: 0,
       triggerFrom: 0,
       triggerTo: 5,
-      canCreateTreeReference: true,
+      treeBlockReason: null,
+      sourceIsReference: false,
     })).toBe('tree_reference');
 
     expect(resolveReferenceSelectionAction({
@@ -526,7 +531,8 @@ describe('row interaction resolvers', () => {
       inlineRefCount: 0,
       triggerFrom: 4,
       triggerTo: 9,
-      canCreateTreeReference: true,
+      treeBlockReason: null,
+      sourceIsReference: false,
     })).toBe('inline_reference');
 
     expect(resolveReferenceSelectionAction({
@@ -534,7 +540,35 @@ describe('row interaction resolvers', () => {
       inlineRefCount: 1,
       triggerFrom: 0,
       triggerTo: 5,
-      canCreateTreeReference: true,
+      treeBlockReason: null,
+      sourceIsReference: false,
+    })).toBe('inline_reference');
+
+    expect(resolveReferenceSelectionAction({
+      text: '@node',
+      inlineRefCount: 0,
+      triggerFrom: 0,
+      triggerTo: 5,
+      treeBlockReason: 'already_in_parent',
+      sourceIsReference: false,
+    })).toBe('inline_reference');
+
+    expect(resolveReferenceSelectionAction({
+      text: '@node',
+      inlineRefCount: 0,
+      triggerFrom: 0,
+      triggerTo: 5,
+      treeBlockReason: 'would_create_display_cycle',
+      sourceIsReference: false,
+    })).toBe('blocked');
+
+    expect(resolveReferenceSelectionAction({
+      text: '@node',
+      inlineRefCount: 0,
+      triggerFrom: 0,
+      triggerTo: 5,
+      treeBlockReason: null,
+      sourceIsReference: true,
     })).toBe('inline_reference');
   });
 
@@ -745,7 +779,14 @@ describe('row interaction resolvers', () => {
 
   test('resolves selected inline reference shortcut actions', () => {
     const keyboard = (key: string, init: Partial<KeyboardEvent> = {}) => (
-      ({ key, ...init } as KeyboardEvent)
+      ({
+        key,
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        ...init,
+      } as KeyboardEvent)
     );
     expect(resolveSelectedReferenceShortcut(keyboard('Backspace'))).toBe('delete');
     expect(resolveSelectedReferenceShortcut(keyboard('Delete'))).toBe('delete');
@@ -753,6 +794,26 @@ describe('row interaction resolvers', () => {
     expect(resolveSelectedReferenceShortcut(keyboard('x'))).toBe('convert_printable');
     expect(resolveSelectedReferenceShortcut(keyboard('x', { metaKey: true }))).toBeNull();
     expect(resolveSelectedReferenceShortcut(keyboard('Escape'))).toBe('escape');
+  });
+
+  test('central shortcut registry maps editor and trailing commands', () => {
+    const keyboard = (key: string, init: Partial<KeyboardEvent> = {}) => (
+      ({
+        key,
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        ...init,
+      } as KeyboardEvent)
+    );
+    expect(shortcutDefinitionsForScope('editor').map((shortcut) => shortcut.id)).toContain('editor.description');
+    expect(matchesShortcutEvent(keyboard('z', { metaKey: true }), 'editor.undo')).toBe(true);
+    expect(matchesShortcutEvent(keyboard('z', { metaKey: true, shiftKey: true }), 'editor.redo')).toBe(true);
+    expect(matchesShortcutEvent(keyboard('y', { ctrlKey: true }), 'trailing.redo')).toBe(true);
+    expect(matchesShortcutEvent(keyboard('y', { metaKey: true }), 'global.redo')).toBe(true);
+    expect(matchesShortcutEvent(keyboard('i', { ctrlKey: true }), 'trailing.description')).toBe(true);
+    expect(matchesShortcutEvent(keyboard('i', { metaKey: true }), 'trailing.description')).toBe(false);
   });
 
   test('ignores shortcut resolvers during IME composition', () => {
@@ -1025,6 +1086,86 @@ describe('row interaction resolvers', () => {
       targetId: 'parent',
       byId,
     })).toBe('would_create_display_cycle');
+  });
+
+  test('blocks tree reference candidates already present in the parent list', () => {
+    const parent = {
+      id: 'parent',
+      children: ['target', 'draft'],
+      content: { text: 'Parent', marks: [], inlineRefs: [] },
+      tags: [],
+      createdAt: 0,
+      updatedAt: 0,
+      locked: false,
+      showCheckbox: false,
+      doneStateEnabled: false,
+      autocollectOptions: false,
+      autoCollected: false,
+      toolbarVisible: false,
+      filterValues: [],
+    };
+    const target = {
+      ...parent,
+      id: 'target',
+      parentId: 'parent',
+      children: [],
+      content: { text: 'Target', marks: [], inlineRefs: [] },
+    };
+    const draft = {
+      ...target,
+      id: 'draft',
+      content: { text: '', marks: [], inlineRefs: [] },
+    };
+    const byId = new Map<string, any>([
+      [parent.id, parent],
+      [target.id, target],
+      [draft.id, draft],
+    ]);
+
+    expect(getTreeReferenceBlockReason({
+      parentId: 'parent',
+      targetId: 'target',
+      byId,
+    })).toBe('already_in_parent');
+  });
+
+  test('only disables cycle candidates when evaluating a tree reference insertion', () => {
+    const parent = makeNode('parent', 'Parent', { children: ['child'] });
+    const child = makeNode('child', 'Child', { parentId: 'parent', children: ['draft'] });
+    const draft = makeNode('draft', 'See ', { parentId: 'child' });
+    const nodes = [parent, child, draft];
+    const index = {
+      projection: {
+        workspaceId: 'root',
+        rootId: 'parent',
+        dailyNotesId: 'daily',
+        schemaId: 'schema',
+        searchesId: 'searches',
+        trashId: 'trash',
+        settingsId: 'settings',
+        todayId: 'today',
+        nodes,
+      },
+      byId: new Map(nodes.map((node) => [node.id, node])),
+    } as any;
+
+    const inlineCandidates = buildReferenceCandidates({
+      index,
+      currentNodeId: 'draft',
+      query: 'parent',
+      treeReferenceParentId: null,
+    });
+    const inlineParent = inlineCandidates.find((candidate) => candidate.type === 'node' && candidate.id === 'parent');
+    expect(inlineParent).toMatchObject({ disabledReason: null });
+
+    const treeCandidates = buildReferenceCandidates({
+      index,
+      currentNodeId: 'draft',
+      query: 'parent',
+      treeReferenceParentId: 'child',
+    });
+    const treeParent = treeCandidates.find((candidate) => candidate.type === 'node' && candidate.id === 'parent');
+    expect(treeParent).toMatchObject({ disabledReason: 'Would create a display cycle' });
   });
 
   test('reference candidates include date shortcuts and create option', () => {

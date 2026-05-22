@@ -114,3 +114,31 @@ keyboard or pointer change should be checked against this matrix.
 - `>` creates a field row only when the content is exactly the bare trigger.
 - Trigger menus must route `ArrowUp`, `ArrowDown`, `Enter`, and `Escape` before
   normal outliner navigation.
+
+## Reference And Inline Reference Matrix
+
+Tana is the behavior reference for the data model: a reference is a mirror of
+the original node, and the same node ID cannot appear twice as a child in the
+same list. Lin enforces the same block-instance invariant in core. Inline
+references are text atoms, not child block instances, so they do not participate
+in that sibling uniqueness rule.
+
+| Interaction | Expected behavior | Test coverage |
+| --- | --- | --- |
+| Add a reference to a target in a different parent | Create a reference row that renders the target's text and children. Expanding the reference row shows target children. | `core.test.ts`, `outliner-selection-keyboard.spec.ts` |
+| Add or move a reference where the same target already appears as a sibling | Reject the tree reference. UI selection falls back to inline reference where appropriate. | `core.test.ts`, `rowInteractions.test.ts`, `outliner-triggers.spec.ts` |
+| Empty row `@Target` when tree reference is valid | Replace the draft row atomically with an inline-reference conversion row. The row pulses, focuses after the inline atom, and restores to a tree reference only if it remains unchanged on blur. | `core.test.ts`, `outliner-triggers.spec.ts`, `outliner-selection-keyboard.spec.ts` |
+| Empty row `@Target` when the target is already in the same parent | Insert an inline reference in the same row. Continue typing appends text after the inline atom. The original target is not renamed or moved. | `core.test.ts`, `rowInteractions.test.ts`, `outliner-triggers.spec.ts` |
+| Continue typing after a pending reference conversion | If any normal text is added, keep the inline-reference row and do not restore it to a tree reference on blur. | `outliner-triggers.spec.ts`, `outliner-selection-keyboard.spec.ts` |
+| Continue typing Chinese or other IME text after an inline reference | Text commits after the inline atom and the caret remains after the committed text. Internal zero-width anchors may exist in the editor DOM but must not persist into `RichText` or generate patches. | `editorTextPatch.test.ts`, `outliner-triggers.spec.ts` |
+| Inline reference inside normal text | Render as text-like link, not a chip. It stays in text flow and preserves cursor offset through split, merge, patch, and IME paths. | `editorTextPatch.test.ts`, `outliner-bullet-parity.spec.ts` |
+| Click an inline reference in a normal row | Drill/open the referenced node without focusing the editor title. | `outliner-bullet-parity.spec.ts` |
+| Click an inline reference displayed inside a reference row | Open the inline reference target. The reference row itself still uses single-click selection outside inline references. | `outliner-selection-keyboard.spec.ts` |
+| Click a reference row | Select the reference link row; do not enter text edit mode. | `outliner-selection-keyboard.spec.ts` |
+| Double-click a reference row or press ArrowRight on a selected reference row | Convert the reference row to an inline-reference conversion row. If unchanged and valid on blur, restore to a reference row. If text is added, keep it as inline text. | `outliner-selection-keyboard.spec.ts` |
+| Backspace/Delete a selected reference row | Delete/trash the reference link itself. The target node remains. Mixed normal-node/reference selections use normal batch block deletion. | `outliner-selection-keyboard.spec.ts` |
+| Toggle checkbox/done on a reference row | Apply the done state to the target node, because the reference displays the target. | `outliner-parity.test.ts`, `outliner-selection-keyboard.spec.ts` |
+| Permanently delete a target node | Remove tree references and inline references to that target. Undo restores both. | `core.test.ts` |
+| Trash a target node | Keep references restorable; the reference still points at the trashed target until restore or permanent delete. | `core.test.ts` |
+| Reference to a reference | Normalize to the effective target. Nested reference nodes should not point to reference nodes. | `core.test.ts` |
+| Agent/tool `replace_with_reference_to` | Replace or retarget a block reference through core commands, subject to the same duplicate and cycle constraints. | `agentNodeTools.test.ts` |

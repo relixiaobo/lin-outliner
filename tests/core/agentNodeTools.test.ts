@@ -274,7 +274,8 @@ describe('agent node tools', () => {
   test('node_create creates reference nodes with insertion points', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
-    const targetId = mustFocus(core.createNode(today, null, 'Canonical'));
+    const targetParentId = mustFocus(core.createNode(today, null, 'Canonical source'));
+    const targetId = mustFocus(core.createNode(targetParentId, null, 'Canonical'));
     const afterId = mustFocus(core.createNode(today, null, 'Before ref'));
 
     const envelope = await executeTool<{
@@ -287,7 +288,7 @@ describe('agent node tools', () => {
     const refId = envelope.data!.createdRootIds[0]!;
     expect(core.state().nodes[refId]!.type).toBe('reference');
     expect(core.state().nodes[refId]!.targetId).toBe(targetId);
-    expect(core.state().nodes[today]!.children).toEqual([targetId, afterId, refId]);
+    expect(core.state().nodes[today]!.children).toEqual([targetParentId, afterId, refId]);
   });
 
   test('node_create rejects references to trashed targets before mutation', async () => {
@@ -679,7 +680,8 @@ describe('agent node tools', () => {
   test('node_edit replaces a node with a reference', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
-    const target = mustFocus(core.createNode(today, null, 'Canonical'));
+    const targetParent = mustFocus(core.createNode(today, null, 'Canonical source'));
+    const target = mustFocus(core.createNode(targetParent, null, 'Canonical'));
     const duplicate = mustFocus(core.createNode(today, null, 'Duplicate'));
 
     const envelope = await executeTool<{
@@ -701,8 +703,9 @@ describe('agent node tools', () => {
   test('node_edit retargets an existing reference without replacing its node id', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
-    const firstTarget = mustFocus(core.createNode(today, null, 'First canonical'));
-    const secondTarget = mustFocus(core.createNode(today, null, 'Second canonical'));
+    const targetParent = mustFocus(core.createNode(today, null, 'Canonical source'));
+    const firstTarget = mustFocus(core.createNode(targetParent, null, 'First canonical'));
+    const secondTarget = mustFocus(core.createNode(targetParent, null, 'Second canonical'));
     const referenceId = mustFocus(core.addReference(today, firstTarget, null));
 
     const envelope = await executeTool<{
@@ -781,7 +784,8 @@ describe('agent node tools', () => {
     const today = core.projection().todayId;
     const target = mustFocus(core.createNode(today, null, 'Target'));
     const source = mustFocus(core.createNode(today, null, 'Source'));
-    const referenceId = mustFocus(core.addReference(today, source, null));
+    const referenceParent = mustFocus(core.createNode(today, null, 'External references'));
+    const referenceId = mustFocus(core.addReference(referenceParent, source, null));
 
     const envelope = await executeTool<{
       merge?: { redirectedReferences: number };

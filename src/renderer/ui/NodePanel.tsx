@@ -365,7 +365,9 @@ export function NodePanel(props: NodePanelProps) {
   };
 
   const applyTitleInlineReference = async (target: { id: NodeId; content: RichText }) => {
-    if (!titleTrigger || !rootNode) return;
+    if (!titleTrigger || !rootNode) {
+      return;
+    }
     await pendingTitlePatchRef.current;
     const nextContent = replaceRichTextRangeWithInlineRef(
       titleContent,
@@ -710,15 +712,26 @@ export function NodePanel(props: NodePanelProps) {
                 onCreateTree={(parentId, nodes) => (
                   props.run(() => api.createNodesFromTree(parentId, nodes))
                 )}
+                onIndentNode={(nodeId) => (
+                  props.run(() => api.indentNode(nodeId))
+                )}
                 onUpdateCreated={async (nodeId, text) => {
                   await props.run(() => api.replaceNodeText(nodeId, plainText(text)));
                 }}
+                materializeOnInput
+                continueOnEnter
                 onToggleCreated={async (nodeId) => {
                   await props.run(() => api.toggleDone(nodeId));
                 }}
                 onApplyTagTrigger={applyTrailingTagTrigger}
                 onCreateTagTrigger={createAndApplyTrailingTagTrigger}
                 onApplyReferenceTrigger={applyTrailingReferenceTrigger}
+                onReferenceConversionCreated={({ nodeId, parentId, targetId }) => {
+                  props.setUi((prev) => ({
+                    ...prev,
+                    pendingReferenceConversion: { nodeId, parentId, targetId },
+                  }));
+                }}
                 onExecuteSlashTrigger={executeTrailingSlashTrigger}
                 onOpenCommandPalette={() => props.setUi((prev) => ({ ...prev, commandOpen: true }))}
                 onCreateField={(parentId) => {

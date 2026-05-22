@@ -29,7 +29,7 @@ function removeSlashTriggerText(text: string, trigger: TrailingSlashTrigger): Ri
   return deleteRichTextRange(plainText(text), trigger.from, trigger.to);
 }
 
-function triggerOwnsWholeText(text: string, trigger: TrailingInlineTrigger): boolean {
+export function triggerOwnsWholeText(text: string, trigger: Pick<EditorTrigger, 'from' | 'to'>): boolean {
   return text.slice(0, trigger.from).trim() === '' && text.slice(trigger.to).trim() === '';
 }
 
@@ -112,9 +112,10 @@ export async function applyTrailingReferenceTrigger(params: {
   text: string;
   trigger: TrailingInlineTrigger;
   target: NodeProjection;
+  forceInline?: boolean;
 }): Promise<CommandOutcome> {
-  if (triggerOwnsWholeText(params.text, params.trigger)) {
-    return api.addReference(params.parentId, params.target.id);
+  if (!params.forceInline && triggerOwnsWholeText(params.text, params.trigger)) {
+    return api.addReferenceConversion(params.parentId, params.target.id);
   }
 
   const content = replaceRichTextRangeWithInlineRef(

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { api } from '../api/client';
 import type { NodeId } from '../api/types';
@@ -7,6 +7,7 @@ import type { DocumentIndex, UiState } from '../state/document';
 import { targetIdsForRows } from './interactions/contextMenuSelection';
 import { isImeComposingEvent } from './interactions/imeKeyboard';
 import { expandIndentTargets } from './interactions/outlinerStructure';
+import { armReferenceTypeAhead } from './interactions/referenceTypeAhead';
 import {
   extendSelection,
   navigationTarget,
@@ -19,11 +20,11 @@ import {
   resolveSelectionKeyboardAction,
   shouldIgnoreSelectionKeyboardTarget,
 } from './interactions/selectionKeyboard';
+import { matchesShortcutEvent } from './interactions/shortcutRegistry';
 import {
   clearFocusState,
   cursorOffset,
   requestFocusState,
-  requestPendingInputState,
   rowFocusTarget,
 } from './focus/focusModel';
 import type { CommandRunner } from './shared';
@@ -111,10 +112,18 @@ export function useWorkspaceKeyboard({
   setUi,
   ui,
 }: UseWorkspaceKeyboardOptions) {
+  const latestStateRef = useRef({ index, rootId, ui });
+  latestStateRef.current = { index, rootId, ui };
+
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      const {
+        index: currentIndex,
+        rootId: currentRootId,
+        ui: currentUi,
+      } = latestStateRef.current;
       const focusSelectedRowForTextInput = () => {
-        if (!rootId || !index || ui.focusedId || ui.selectedIds.size === 0) return;
+        if (!currentRootId || !currentIndex || currentUi.focusedId || currentUi.selectedIds.size === 0) return;
         if (
           event.target instanceof HTMLElement
           && event.target.closest('[data-preserve-selection]')
@@ -122,20 +131,43 @@ export function useWorkspaceKeyboard({
           return;
         }
         if (shouldIgnoreSelectionKeyboardTarget(event.target, {
-          allowContentEditable: ui.selectedIds.size > 1,
+          allowContentEditable: currentUi.selectedIds.size > 1,
         })) {
           return;
         }
-        const selectionRootId = resolveKeyboardSelectionRoot(ui, index, rootId);
-        const rows = flattenVisibleRows(selectionRootId, index.byId, ui.expanded, ui.expandedHiddenFields);
-        const orderedSelected = orderedSelectedRows(rows, ui.selectedIds);
+        const selectionRootId = resolveKeyboardSelectionRoot(currentUi, currentIndex, currentRootId);
+        const rows = flattenVisibleRows(selectionRootId, currentIndex.byId, currentUi.expanded, currentUi.expandedHiddenFields);
+        const orderedSelected = orderedSelectedRows(rows, currentUi.selectedIds);
         const anchor = resolveSelectionAnchor({
           rows,
-          selectedIds: ui.selectedIds,
-          selectedId: ui.selectedId,
-          selectionAnchorId: ui.selectionAnchorId,
+          selectedIds: currentUi.selectedIds,
+          selectedId: currentUi.selectedId,
+          selectionAnchorId: currentUi.selectionAnchorId,
         });
         if (!anchor) return;
+        const singleSelectedId = orderedSelected.length === 1
+          ? orderedSelected[0]
+          : currentUi.selectedIds.size === 1
+            ? anchor
+            : null;
+        const singleSelectedNode = singleSelectedId ? currentIndex.byId.get(singleSelectedId) : null;
+        const selectedReferenceTargetId = singleSelectedNode?.type === 'reference' && singleSelectedNode.targetId
+          ? resolveReferenceTargetId(singleSelectedNode.targetId, currentIndex.byId) ?? singleSelectedNode.targetId
+          : null;
+        if (singleSelectedId && singleSelectedNode && selectedReferenceTargetId) {
+          const parentId = singleSelectedNode.parentId;
+          if (!parentId) return;
+          armReferenceTypeAhead({
+            referenceId: singleSelectedId,
+            parentId,
+            targetId: selectedReferenceTargetId,
+            panelId: null,
+            selectionRootId,
+            run,
+            setUi,
+          });
+          return;
+        }
         requestEditFocus(orderedSelected[0] ?? anchor);
       };
 
@@ -149,27 +181,31 @@ export function useWorkspaceKeyboard({
       ) {
         return;
       }
-      const mod = event.metaKey || event.ctrlKey;
-      if (mod && event.key.toLowerCase() === 'k') {
+      if (matchesShortcutEvent(event, 'global.command_palette')) {
         event.preventDefault();
         setCommandOpen(true);
         return;
       }
-      if (mod && event.key.toLowerCase() === 'm') {
+      if (matchesShortcutEvent(event, 'global.open_agent_panel')) {
         event.preventDefault();
         onOpenPanel();
         return;
       }
-      if (mod && event.key.toLowerCase() === 'z') {
+      if (matchesShortcutEvent(event, 'global.redo')) {
         event.preventDefault();
-        void run(() => event.shiftKey ? api.redo() : api.undo());
+        void run(() => api.redo());
         return;
       }
-      if (!rootId || !index || ui.focusedId || ui.selectedIds.size === 0) {
+      if (matchesShortcutEvent(event, 'global.undo')) {
+        event.preventDefault();
+        void run(() => api.undo());
+        return;
+      }
+      if (!currentRootId || !currentIndex || currentUi.focusedId || currentUi.selectedIds.size === 0) {
         return;
       }
       if (shouldIgnoreSelectionKeyboardTarget(event.target, {
-        allowContentEditable: ui.selectedIds.size > 1,
+        allowContentEditable: currentUi.selectedIds.size > 1,
       })) {
         return;
       }
@@ -178,14 +214,14 @@ export function useWorkspaceKeyboard({
         return;
       }
 
-      const selectionRootId = resolveKeyboardSelectionRoot(ui, index, rootId);
-      const rows = flattenVisibleRows(selectionRootId, index.byId, ui.expanded, ui.expandedHiddenFields);
-      const orderedSelected = orderedSelectedRows(rows, ui.selectedIds);
+      const selectionRootId = resolveKeyboardSelectionRoot(currentUi, currentIndex, currentRootId);
+      const rows = flattenVisibleRows(selectionRootId, currentIndex.byId, currentUi.expanded, currentUi.expandedHiddenFields);
+      const orderedSelected = orderedSelectedRows(rows, currentUi.selectedIds);
       const anchor = resolveSelectionAnchor({
         rows,
-        selectedIds: ui.selectedIds,
-        selectedId: ui.selectedId,
-        selectionAnchorId: ui.selectionAnchorId,
+        selectedIds: currentUi.selectedIds,
+        selectedId: currentUi.selectedId,
+        selectionAnchorId: currentUi.selectionAnchorId,
       });
       if (!anchor) {
         return;
@@ -194,14 +230,14 @@ export function useWorkspaceKeyboard({
       event.preventDefault();
       const singleSelectedId = orderedSelected.length === 1
         ? orderedSelected[0]
-        : ui.selectedIds.size === 1
+        : currentUi.selectedIds.size === 1
           ? anchor
           : null;
-      const singleSelectedNode = singleSelectedId ? index.byId.get(singleSelectedId) : null;
+      const singleSelectedNode = singleSelectedId ? currentIndex.byId.get(singleSelectedId) : null;
       const selectedReferenceTargetId = singleSelectedNode?.type === 'reference' && singleSelectedNode.targetId
-        ? resolveReferenceTargetId(singleSelectedNode.targetId, index.byId) ?? singleSelectedNode.targetId
+        ? resolveReferenceTargetId(singleSelectedNode.targetId, currentIndex.byId) ?? singleSelectedNode.targetId
         : null;
-      const convertSelectedReferenceToInline = (char?: string) => {
+      const convertSelectedReferenceToInline = () => {
         if (!singleSelectedId || !singleSelectedNode || !selectedReferenceTargetId) return;
         const parentId = singleSelectedNode.parentId;
         if (!parentId) return;
@@ -213,12 +249,8 @@ export function useWorkspaceKeyboard({
           window.requestAnimationFrame(() => {
             setUi((prev) => {
               const target = rowFocusTarget(inlineNodeId, inlineParentId, null);
-              const placement = cursorOffset(0, 'after');
-              const next = char
-                ? requestPendingInputState(prev, target, char, placement)
-                : requestFocusState(prev, target, placement);
               return {
-                ...next,
+                ...requestFocusState(prev, target, cursorOffset(0, 'after')),
                 pendingReferenceConversion: {
                   nodeId: inlineNodeId,
                   parentId: inlineParentId,
@@ -244,7 +276,18 @@ export function useWorkspaceKeyboard({
       }
       if (action === 'type_char') {
         if (selectedReferenceTargetId) {
-          convertSelectedReferenceToInline(event.key);
+          const parentId = singleSelectedNode?.parentId;
+          if (!singleSelectedId || !parentId) return;
+          armReferenceTypeAhead({
+            referenceId: singleSelectedId,
+            parentId,
+            targetId: selectedReferenceTargetId,
+            panelId: null,
+            selectionRootId,
+            initialText: event.key,
+            run,
+            setUi,
+          });
           return;
         }
         appendTypedCharToRow(orderedSelected[0] ?? anchor, event.key);
@@ -262,7 +305,7 @@ export function useWorkspaceKeyboard({
       if (action === 'extend_up' || action === 'extend_down') {
         const selectedIds = extendSelection(
           rows,
-          ui.selectedIds,
+          currentUi.selectedIds,
           anchor,
           action === 'extend_down' ? 'down' : 'up',
         );
@@ -277,7 +320,7 @@ export function useWorkspaceKeyboard({
       if (action === 'navigate_up' || action === 'navigate_down') {
         const next = navigationTarget(
           rows,
-          ui.selectedIds,
+          currentUi.selectedIds,
           anchor,
           action === 'navigate_down' ? 'down' : 'up',
         );
@@ -287,10 +330,10 @@ export function useWorkspaceKeyboard({
         return;
       }
 
-      const batchIds = selectedRootIds(orderedSelected.length > 0 ? orderedSelected : [anchor], index.byId);
-      const batchTargetIds = targetIdsForRows(batchIds, index.byId);
+      const batchIds = selectedRootIds(orderedSelected.length > 0 ? orderedSelected : [anchor], currentIndex.byId);
+      const batchTargetIds = targetIdsForRows(batchIds, currentIndex.byId);
       if (action === 'batch_copy' || action === 'batch_cut') {
-        const clipboardText = serializeSelectedRows(rows, ui.selectedIds, index.byId);
+        const clipboardText = serializeSelectedRows(rows, currentUi.selectedIds, currentIndex.byId);
         void writeClipboardText(clipboardText).then((ok) => {
           if (!ok) {
             setError('Could not write selection to clipboard.');
@@ -307,7 +350,7 @@ export function useWorkspaceKeyboard({
       }
       if (action === 'batch_delete') {
         if (
-          ui.selectionSource === 'ref-click'
+          currentUi.selectionSource === 'ref-click'
           && singleSelectedId
           && selectedReferenceTargetId
           && batchIds.length === 1
@@ -365,14 +408,14 @@ export function useWorkspaceKeyboard({
         if (action === 'batch_indent') {
           setUi((prev) => ({
             ...prev,
-            expanded: expandIndentTargets(prev.expanded, batchIds, index.byId),
+            expanded: expandIndentTargets(prev.expanded, batchIds, currentIndex.byId),
           }));
         }
         void run(() => batchOperation(operationIds)).then((result) => {
           if (result && action === 'batch_indent') {
             setUi((prev) => ({
               ...prev,
-              expanded: expandIndentTargets(prev.expanded, batchIds, index.byId),
+              expanded: expandIndentTargets(prev.expanded, batchIds, currentIndex.byId),
             }));
           }
           if (action === 'batch_checkbox') {

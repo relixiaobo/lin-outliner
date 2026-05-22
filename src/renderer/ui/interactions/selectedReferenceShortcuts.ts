@@ -1,4 +1,5 @@
 import { isImeComposingEvent } from './imeKeyboard';
+import { matchesShortcutEvent } from './shortcutRegistry';
 
 export type SelectedReferenceShortcutAction =
   | 'delete'
@@ -6,20 +7,13 @@ export type SelectedReferenceShortcutAction =
   | 'convert_printable'
   | 'escape';
 
-function isPrintableKey(event: KeyboardEvent): boolean {
-  return event.key.length === 1
-    && !event.ctrlKey
-    && !event.metaKey
-    && !event.altKey;
-}
-
 export function resolveSelectedReferenceShortcut(
   event: KeyboardEvent,
 ): SelectedReferenceShortcutAction | null {
   if (isImeComposingEvent(event)) return null;
-  if (event.key === 'Backspace' || event.key === 'Delete') return 'delete';
-  if (event.key === 'ArrowRight') return 'convert_arrow_right';
-  if (event.key === 'Escape') return 'escape';
-  if (isPrintableKey(event)) return 'convert_printable';
+  if (matchesShortcutEvent(event, 'selected_reference.delete')) return 'delete';
+  if (matchesShortcutEvent(event, 'selected_reference.convert_arrow_right')) return 'convert_arrow_right';
+  if (matchesShortcutEvent(event, 'selected_reference.escape')) return 'escape';
+  if (matchesShortcutEvent(event, 'selected_reference.convert_printable')) return 'convert_printable';
   return null;
 }

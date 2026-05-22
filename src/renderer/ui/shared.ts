@@ -9,8 +9,13 @@ import type {
 } from '../api/types';
 import { FIELD_TYPE_CONFIG_OPTIONS } from './fields/fieldTypeRegistry';
 
+export interface CommandRunnerOptions {
+  applyFocus?: boolean;
+}
+
 export type CommandRunner = (
   operation: () => Promise<CommandOutcome | DocumentProjection>,
+  options?: CommandRunnerOptions,
 ) => Promise<CommandOutcome | DocumentProjection | null>;
 
 export interface NavigateRootOptions {
@@ -73,13 +78,13 @@ export function useCommandRunner(
   setFocus: (focus: FocusHint | null) => void,
   setError: (message: string | null) => void,
 ): CommandRunner {
-  return useCallback(async (operation) => {
+  return useCallback(async (operation, options) => {
     try {
       const result = await operation();
       if ('projection' in result) {
         flushSync(() => {
           setProjection(result.projection);
-          setFocus(result.focus ?? null);
+          setFocus(options?.applyFocus === false ? null : result.focus ?? null);
         });
       } else {
         flushSync(() => {

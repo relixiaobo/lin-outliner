@@ -5,6 +5,7 @@ export type TreeReferenceBlockReason =
   | 'missing_parent'
   | 'missing_target'
   | 'self_parent'
+  | 'already_in_parent'
   | 'would_create_display_cycle';
 
 function effectiveNodeId(
@@ -57,6 +58,10 @@ export function getTreeReferenceBlockReason(params: {
   const effectiveTargetId = effectiveNodeId(targetId, byId);
   if (!effectiveTargetId || !byId.has(effectiveTargetId)) return 'missing_target';
   if (parentId === effectiveTargetId) return 'self_parent';
+  const parent = byId.get(parentId);
+  if (parent?.children.some((childId) => effectiveNodeId(childId, byId) === effectiveTargetId)) {
+    return 'already_in_parent';
+  }
   if (canReachInDisplayGraph(effectiveTargetId, parentId, byId)) {
     return 'would_create_display_cycle';
   }
@@ -66,6 +71,7 @@ export function getTreeReferenceBlockReason(params: {
 export function getTreeReferenceBlockMessage(reason: TreeReferenceBlockReason | null): string | null {
   if (!reason) return null;
   if (reason === 'self_parent') return 'Cannot reference this node here';
+  if (reason === 'already_in_parent') return 'Already in this list';
   if (reason === 'would_create_display_cycle') return 'Would create a display cycle';
   return 'Unavailable here';
 }

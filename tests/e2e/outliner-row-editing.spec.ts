@@ -7,6 +7,7 @@ import {
   row,
   rowBody,
   rowEditor,
+  trailingEditor,
 } from './outlinerMock';
 
 async function todayChildren(page: Page) {
@@ -116,7 +117,7 @@ test.describe('outliner row editing parity', () => {
     expect(placeholderStyle.opacity).toBe(0);
   });
 
-  test('Enter-created empty sibling uses the dimmed placeholder bullet immediately', async ({ page }) => {
+  test('Enter-created empty sibling uses the real node bullet immediately', async ({ page }) => {
     await placeCursor(page, ids.alpha, 'end');
     await page.keyboard.press('Enter');
 
@@ -141,8 +142,8 @@ test.describe('outliner row editing parity', () => {
       };
     }, { alphaId: ids.alpha, createdIdArg: createdId });
 
-    expect(colors.created).toBe(colors.trailing);
-    expect(colors.created).not.toBe(colors.alpha);
+    expect(colors.created).toBe(colors.alpha);
+    expect(colors.created).not.toBe(colors.trailing);
   });
 
   test('> converts the current empty row to a field row without moving it', async ({ page }) => {
@@ -282,6 +283,27 @@ test.describe('outliner row editing parity', () => {
 
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.today);
     await expect(rowEditor(page, ids.beta)).toBeFocused();
+  });
+
+  test('Tab on an Enter-created empty sibling makes it a child without adding child trailing input', async ({ page }) => {
+    await placeCursor(page, ids.alpha, 'end');
+    await page.keyboard.press('Enter');
+
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(4);
+    const createdId = (await todayChildren(page))[1];
+    expect(createdId).toBeTruthy();
+    await expect(rowEditor(page, createdId)).toBeFocused();
+
+    await page.keyboard.press('Tab');
+
+    await expect.poll(async () => (await nodeById(page, createdId))?.parentId).toBe(ids.alpha);
+    await expect.poll(async () => (await todayChildren(page))).toEqual([ids.alpha, ids.beta, ids.gamma]);
+    await expect(rowEditor(page, createdId)).toBeFocused();
+    await expect(trailingEditor(page, ids.alpha)).toHaveCount(0);
+    await expect(trailingEditor(page)).toBeVisible();
+
+    const alpha = await nodeById(page, ids.alpha);
+    expect(alpha?.children).toEqual([createdId]);
   });
 
   test('Arrow navigation at editor boundaries moves focus through visible rows', async ({ page }) => {

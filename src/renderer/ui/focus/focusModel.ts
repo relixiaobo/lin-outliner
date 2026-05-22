@@ -62,6 +62,7 @@ export function selectFocusState(state: UiState, target: FocusTarget): UiState {
     selectionAnchorId: target.nodeId,
     selectionRootId: null,
     selectionSource: null,
+    pendingReferenceTypeAhead: null,
   };
 }
 
@@ -86,6 +87,7 @@ export function clearFocusState(state: UiState): UiState {
     focusSurface: null,
     focusRequest: null,
     pendingInputChar: null,
+    pendingReferenceTypeAhead: null,
   };
 }
 

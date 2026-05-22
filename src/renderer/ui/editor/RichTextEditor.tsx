@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toggleMark } from 'prosemirror-commands';
+import type { Node as PMNode } from 'prosemirror-model';
 import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
-import type { CreateNodeTree, RichText, RichTextPatch } from '../../api/types';
+import { replaceAllRichTextPatch, type CreateNodeTree, type RichText, type RichTextPatch } from '../../api/types';
 import type { FocusRequest, FocusTarget, PendingInputChar, CursorPlacement } from '../../state/document';
 import type { EditorTrigger, TriggerAnchor } from '../shared';
 import {
@@ -12,12 +13,14 @@ import {
 import { resolveSelectedReferenceShortcut } from '../interactions/selectedReferenceShortcuts';
 import { parseOutlinerPaste } from '../interactions/pasteParser';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
+import { matchesShortcutEvent } from '../interactions/shortcutRegistry';
 import { FloatingEditorToolbar, type ToolbarMark } from './FloatingEditorToolbar';
 import type { OverlayAnchorRect } from '../primitives/useAnchoredOverlay';
 import {
   concatRichText,
   docPosToTextOffset,
   docToRichText,
+  INLINE_REF_TEXT_SENTINEL,
   richTextToDoc,
   richTextEquals,
   sliceRichText,
@@ -78,18 +81,30 @@ interface RichTextEditorProps {
   onPendingInputConsumed?: (input: PendingInputChar) => void;
 }
 
-function setEditorSelection(view: EditorView, placement: EditorFocusPlacement) {
-  const content = docToRichText(view.state.doc);
+function editorSelectionForPlacement(doc: PMNode, placement: EditorFocusPlacement) {
+  const content = docToRichText(doc);
   const start = 1;
-  const end = Math.max(1, view.state.doc.content.size - 1);
+  const end = Math.max(1, doc.content.size - 1);
   const pos = typeof placement === 'object'
-    ? textOffsetToDocPos(view.state.doc, placement.offset, { inlineRefBias: placement.inlineRefBias })
+    ? textOffsetToDocPos(doc, placement.offset, { inlineRefBias: placement.inlineRefBias })
     : placement === 'start'
       ? start
-      : textOffsetToDocPos(view.state.doc, content.text.length, { inlineRefBias: 'after' });
-  const selection = placement === 'all'
-    ? TextSelection.create(view.state.doc, start, end)
-    : TextSelection.create(view.state.doc, pos);
+      : textOffsetToDocPos(doc, content.text.length, { inlineRefBias: 'after' });
+  return placement === 'all'
+    ? TextSelection.create(doc, start, end)
+    : TextSelection.create(doc, pos);
+}
+
+function editorPlacementFromCursorPlacement(placement: CursorPlacement): EditorFocusPlacement | null {
+  if (placement.kind === 'preserve') return null;
+  if (placement.kind === 'text-offset') {
+    return { offset: placement.offset, inlineRefBias: placement.inlineRefBias };
+  }
+  return placement.kind;
+}
+
+function setEditorSelection(view: EditorView, placement: EditorFocusPlacement) {
+  const selection = editorSelectionForPlacement(view.state.doc, placement);
   view.dispatch(view.state.tr.setSelection(selection));
 }
 
@@ -102,6 +117,10 @@ function setEditorCursorPlacement(view: EditorView, placement: CursorPlacement) 
   setEditorSelection(view, placement.kind);
 }
 
+function focusEditorDom(view: EditorView) {
+  view.dom.focus({ preventScroll: true });
+}
+
 function selectionOffsets(view: EditorView) {
   const from = docPosToTextOffset(view.state.doc, view.state.selection.from);
   const to = docPosToTextOffset(view.state.doc, view.state.selection.to);
@@ -112,6 +131,43 @@ function selectedInlineReferencePosition(view: EditorView): number | null {
   const selection = view.state.selection;
   if (!(selection instanceof NodeSelection)) return null;
   return selection.node.type.name === 'inlineReference' ? selection.from : null;
+}
+
+function hasInlineReferenceType(node: PMNode | null | undefined): boolean {
+  return node?.type.name === 'inlineReference';
+}
+
+function hasTextCompositionAnchor(node: PMNode | null | undefined): boolean {
+  return Boolean(node?.isText);
+}
+
+function ensureImeCompositionAnchor(view: EditorView) {
+  const { selection } = view.state;
+  if (selection instanceof NodeSelection && selection.node.type.name === 'inlineReference') {
+    const position = selection.from + selection.node.nodeSize;
+    let tr = view.state.tr.insertText(INLINE_REF_TEXT_SENTINEL, position, position);
+    tr = tr.setSelection(TextSelection.create(tr.doc, position + INLINE_REF_TEXT_SENTINEL.length));
+    view.dispatch(tr);
+    return true;
+  }
+
+  if (!selection.empty) return false;
+
+  const position = selection.from;
+  const resolved = view.state.doc.resolve(position);
+  if (hasInlineReferenceType(resolved.nodeBefore) && !hasTextCompositionAnchor(resolved.nodeAfter)) {
+    let tr = view.state.tr.insertText(INLINE_REF_TEXT_SENTINEL, position, position);
+    tr = tr.setSelection(TextSelection.create(tr.doc, position + INLINE_REF_TEXT_SENTINEL.length));
+    view.dispatch(tr);
+    return true;
+  }
+  if (hasInlineReferenceType(resolved.nodeAfter) && !hasTextCompositionAnchor(resolved.nodeBefore)) {
+    let tr = view.state.tr.insertText(INLINE_REF_TEXT_SENTINEL, position, position);
+    tr = tr.setSelection(TextSelection.create(tr.doc, position + INLINE_REF_TEXT_SENTINEL.length));
+    view.dispatch(tr);
+    return true;
+  }
+  return false;
 }
 
 function activeMarksForSelection(view: EditorView): Set<ToolbarMark> {
@@ -194,6 +250,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
   const lastContentRevisionRef = useRef(props.contentRevision ?? 0);
   const fieldTriggerFiredRef = useRef(false);
   const composingRef = useRef(false);
+  const compositionDocChangedRef = useRef(false);
   const [isEmpty, setIsEmpty] = useState(() => props.content.text.trim().length === 0 && props.content.inlineRefs.length === 0);
   const [toolbar, setToolbar] = useState({
     visible: false,
@@ -213,10 +270,19 @@ export function RichTextEditor(props: RichTextEditorProps) {
 
   propsRef.current = props;
 
-  const initialState = useMemo(() => EditorState.create({
-    doc: richTextToDoc(props.content, pmSchema, props.resolveInlineReferenceColor),
-    schema: pmSchema,
-  }), []);
+  const initialState = useMemo(() => {
+    const doc = richTextToDoc(props.content, pmSchema, props.resolveInlineReferenceColor);
+    const initialPlacement = props.focusTarget
+      && props.focusRequest
+      && focusTargetMatches(props.focusRequest.target, props.focusTarget)
+      ? editorPlacementFromCursorPlacement(props.focusRequest.placement)
+      : null;
+    return EditorState.create({
+      doc,
+      schema: pmSchema,
+      ...(initialPlacement ? { selection: editorSelectionForPlacement(doc, initialPlacement) } : {}),
+    });
+  }, []);
 
   const updateToolbar = (view: EditorView) => {
     const anchorRect = toolbarAnchor(view);
@@ -247,6 +313,19 @@ export function RichTextEditor(props: RichTextEditorProps) {
     } else if (updateAction.type !== 'create_field') {
       fieldTriggerFiredRef.current = false;
     }
+  };
+
+  const flushCompositionChanges = (view: EditorView) => {
+    if (!compositionDocChangedRef.current) return;
+    compositionDocChangedRef.current = false;
+
+    const nextContent = docToRichText(view.state.doc);
+    setIsEmpty(isEmptyDoc(view.state.doc));
+    if (richTextEquals(nextContent, lastExternalContentRef.current)) return;
+
+    lastExternalContentRef.current = nextContent;
+    propsRef.current.onChange(nextContent);
+    propsRef.current.onPatch(replaceAllRichTextPatch(nextContent));
   };
 
   const clearMatchingPendingInput = () => {
@@ -284,6 +363,11 @@ export function RichTextEditor(props: RichTextEditorProps) {
         if (transaction.docChanged) {
           const nextContent = docToRichText(nextState.doc);
           setIsEmpty(nextContent.text.replace(/\u200B/g, '').trim().length === 0 && nextContent.inlineRefs.length === 0);
+          if (composing) {
+            compositionDocChangedRef.current = true;
+            return;
+          }
+          compositionDocChangedRef.current = false;
           lastExternalContentRef.current = nextContent;
           propsRef.current.onChange(nextContent);
           const patch = richTextPatchFromTransaction(transaction);
@@ -299,8 +383,12 @@ export function RichTextEditor(props: RichTextEditorProps) {
           }
           return false;
         },
-        beforeinput() {
+        beforeinput(viewInstance, event) {
           clearMatchingPendingInput();
+          const inputEvent = event as InputEvent;
+          if (inputEvent.inputType === 'insertCompositionText') {
+            ensureImeCompositionAnchor(viewInstance);
+          }
           return false;
         },
         click(_viewInstance, event) {
@@ -360,20 +448,24 @@ export function RichTextEditor(props: RichTextEditorProps) {
         },
         blur() {
           composingRef.current = false;
+          flushCompositionChanges(view);
           propsRef.current.onCommit(docToRichText(view.state.doc));
           propsRef.current.onTriggerChange(null);
           window.setTimeout(() => updateToolbar(view), 0);
           return false;
         },
-        compositionstart() {
+        compositionstart(viewInstance) {
           composingRef.current = true;
+          compositionDocChangedRef.current = false;
           clearMatchingPendingInput();
+          ensureImeCompositionAnchor(viewInstance);
           return false;
         },
         compositionend(viewInstance) {
           composingRef.current = false;
           queueMicrotask(() => {
             if (viewInstance.isDestroyed) return;
+            flushCompositionChanges(viewInstance);
             updateTrigger(viewInstance);
             handleContentUpdateAction(docToRichText(viewInstance.state.doc));
           });
@@ -400,7 +492,15 @@ export function RichTextEditor(props: RichTextEditorProps) {
           }
           if (action === 'convert_printable') {
             event.preventDefault();
-            viewInstance.dispatch(viewInstance.state.tr.insertText(event.key));
+            const selectedNode = viewInstance.state.selection instanceof NodeSelection
+              ? viewInstance.state.selection.node
+              : null;
+            const position = selectedNode
+              ? selectedRefPos + selectedNode.nodeSize
+              : selectedRefPos;
+            let tr = viewInstance.state.tr.setSelection(TextSelection.create(viewInstance.state.doc, position));
+            tr = tr.insertText(event.key);
+            viewInstance.dispatch(tr);
             return true;
           }
           if (action === 'escape') {
@@ -410,25 +510,20 @@ export function RichTextEditor(props: RichTextEditorProps) {
           }
         }
 
-        if (mod && event.key.toLowerCase() === 'z') {
-          event.preventDefault();
-          if (event.shiftKey) propsRef.current.onRedo?.();
-          else propsRef.current.onUndo?.();
-          return true;
-        }
-
-        if (mod && event.key.toLowerCase() === 'y') {
+        if (matchesShortcutEvent(event, 'editor.redo')) {
           event.preventDefault();
           propsRef.current.onRedo?.();
           return true;
         }
 
+        if (matchesShortcutEvent(event, 'editor.undo')) {
+          event.preventDefault();
+          propsRef.current.onUndo?.();
+          return true;
+        }
+
         if (
-          event.ctrlKey
-          && !event.metaKey
-          && !event.altKey
-          && !event.shiftKey
-          && (event.key.toLowerCase() === 'i' || event.code === 'KeyI' || event.key === 'Tab')
+          matchesShortcutEvent(event, 'editor.description')
           && propsRef.current.onDescriptionToggle
         ) {
           event.preventDefault();
@@ -459,15 +554,18 @@ export function RichTextEditor(props: RichTextEditorProps) {
           event.preventDefault();
           return toggleMark(pmSchema.marks.highlight)(viewInstance.state, viewInstance.dispatch);
         }
-        if (mod && event.key === 'Enter') {
+        if (matchesShortcutEvent(event, 'editor.checkbox')) {
           event.preventDefault();
           propsRef.current.onModEnter(docToRichText(viewInstance.state.doc));
           return true;
         }
-        if (mod && event.shiftKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+        if (
+          matchesShortcutEvent(event, 'editor.move_up')
+          || matchesShortcutEvent(event, 'editor.move_down')
+        ) {
           if (!propsRef.current.onMove) return false;
           event.preventDefault();
-          propsRef.current.onMove(event.key === 'ArrowUp' ? 'up' : 'down');
+          propsRef.current.onMove(matchesShortcutEvent(event, 'editor.move_up') ? 'up' : 'down');
           return true;
         }
         if (event.key === 'Enter' && !event.shiftKey) {
@@ -552,11 +650,13 @@ export function RichTextEditor(props: RichTextEditorProps) {
     const contentRevision = props.contentRevision ?? 0;
     const contentRevisionChanged = contentRevision !== lastContentRevisionRef.current;
     lastContentRevisionRef.current = contentRevision;
-    if (
-      view.hasFocus()
-      && !contentRevisionChanged
-      && !richTextEquals(props.content, docToRichText(view.state.doc))
-    ) return;
+    if (view.hasFocus() && (composingRef.current || view.composing)) return;
+    const currentContent = docToRichText(view.state.doc);
+    if (view.hasFocus() && richTextEquals(props.content, currentContent)) {
+      lastExternalContentRef.current = props.content;
+      return;
+    }
+    if (view.hasFocus() && !contentRevisionChanged) return;
     const nextDoc = richTextToDoc(props.content, pmSchema, props.resolveInlineReferenceColor);
     if (nextDoc.eq(view.state.doc)) return;
     const nextState = EditorState.create({ doc: nextDoc, schema: pmSchema });
@@ -579,7 +679,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
     if (!view || view.isDestroyed || !request || !target) return;
     if (!focusTargetMatches(request.target, target)) return;
 
-    view.focus();
+    focusEditorDom(view);
     setEditorCursorPlacement(view, request.placement);
     updateToolbar(view);
     if (!composingRef.current && !view.composing) updateTrigger(view);
@@ -594,7 +694,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
     if (!focusTargetMatches(input.target, target)) return;
     if (props.readOnly || composingRef.current || view.composing) return;
 
-    view.focus();
+    focusEditorDom(view);
     const insertFrom = view.state.selection.from;
     let tr = view.state.tr.insertText(input.char);
     const maxPos = tr.doc.content.size - 1;

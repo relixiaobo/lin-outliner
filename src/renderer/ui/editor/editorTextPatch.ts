@@ -2,11 +2,21 @@ import type { Mark, Node as PMNode, Slice } from 'prosemirror-model';
 import type { Transaction } from 'prosemirror-state';
 import { AddMarkStep, RemoveMarkStep, ReplaceStep } from 'prosemirror-transform';
 import type { InlineRef, RichText, RichTextPatch, RichTextPatchOp, TextMarkKind } from '../../api/types';
-import { docPosToTextOffset, docToRichText } from './richTextCodec';
+import { docPosToTextOffset, docToRichText, INLINE_REF_TEXT_SENTINEL, richTextEquals } from './richTextCodec';
 
 const MARK_KINDS = new Set<TextMarkKind>(['bold', 'italic', 'strike', 'code', 'highlight', 'headingMark', 'link']);
 
+function isEmptyRichText(content: RichText): boolean {
+  return content.text.length === 0
+    && content.inlineRefs.length === 0
+    && content.marks.length === 0;
+}
+
 export function richTextPatchFromTransaction(transaction: Transaction): RichTextPatch {
+  if (richTextEquals(docToRichText(transaction.before), docToRichText(transaction.doc))) {
+    return { ops: [] };
+  }
+
   if (needsWholeDocumentReplacement(transaction)) {
     return {
       ops: [{
@@ -28,6 +38,8 @@ export function richTextPatchFromTransaction(transaction: Transaction): RichText
       const to = docPosToTextOffset(doc, step.to);
       const deleted = richTextFromSlice(doc.slice(step.from, step.to));
       const content = richTextFromSlice(step.slice);
+      const isNoop = from === to && isEmptyRichText(content) && isEmptyRichText(deleted);
+      if (isNoop) continue;
       ops.push({
         type: 'replace',
         from,
@@ -87,6 +99,7 @@ function needsWholeDocumentReplacement(transaction: Transaction) {
     const to = docPosToTextOffset(doc, step.to);
     const deleted = richTextFromSlice(doc.slice(step.from, step.to));
     const inserted = richTextFromSlice(step.slice);
+    if (isEmptyRichText(deleted) && isEmptyRichText(inserted)) continue;
     if (deleted.inlineRefs.length > 0 || inserted.inlineRefs.length > 0) return true;
     if (from === to && docToRichText(doc).inlineRefs.some((ref) => ref.offset === from)) return true;
   }
@@ -101,7 +114,8 @@ function richTextFromSlice(slice: Slice): RichText {
 
 function collectNode(node: PMNode, content: RichText) {
   if (node.isText) {
-    const text = node.text ?? '';
+    const text = (node.text ?? '').replaceAll(INLINE_REF_TEXT_SENTINEL, '');
+    if (text.length === 0) return;
     const start = content.text.length;
     content.text += text;
     for (const mark of node.marks) {

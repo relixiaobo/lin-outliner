@@ -261,11 +261,23 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (op.type === 'replace') {
           const from = Math.max(0, Math.min(next.text.length, op.from));
           const to = Math.max(from, Math.min(next.text.length, op.to));
+          const removedRefs = op.deletedInlineRefs ?? [];
+          const removesRef = (ref: RichText['inlineRefs'][number]) => removedRefs.some((candidate) =>
+            candidate.offset === ref.offset
+            && candidate.targetNodeId === ref.targetNodeId
+            && (candidate.displayName === undefined || candidate.displayName === ref.displayName));
+          const delta = op.content.text.length - (to - from);
           next = {
             text: `${next.text.slice(0, from)}${op.content.text}${next.text.slice(to)}`,
             marks: clone(op.content.marks),
             inlineRefs: [
-              ...next.inlineRefs.filter((ref) => ref.offset < from || ref.offset > to),
+              ...next.inlineRefs
+                .filter((ref) => !removesRef(ref))
+                .flatMap((ref) => {
+                  if (ref.offset <= from) return [ref];
+                  if (ref.offset > to) return [{ ...ref, offset: ref.offset + delta }];
+                  return [];
+                }),
               ...op.content.inlineRefs.map((ref) => ({ ...ref, offset: from + ref.offset })),
             ],
           };
@@ -1040,6 +1052,27 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           });
           return clone(outcome({ nodeId: refId, selectAll: false }));
         }
+        if (cmd === 'add_reference_conversion') {
+          const parentId = String(args.parentId);
+          const targetId = resolveReferenceTargetId(String(args.targetId)) ?? String(args.targetId);
+          const target = nodes.get(targetId);
+          if (!target) return clone(outcome());
+          const inlineNodeId = createNode(parentId, args.index as number | null, '', { showCheckbox: false });
+          const inlineNode = nodes.get(inlineNodeId);
+          if (inlineNode) {
+            inlineNode.content = {
+              text: '',
+              marks: [],
+              inlineRefs: [{ offset: 0, targetNodeId: target.id, displayName: target.content.text || undefined }],
+            };
+          }
+          return clone(outcome({
+            nodeId: inlineNodeId,
+            parentId,
+            placement: { kind: 'text-offset', offset: 0, inlineRefBias: 'after' },
+            selectAll: false,
+          }));
+        }
         if (cmd === 'set_reference_target') {
           const node = nodes.get(String(args.referenceId));
           const targetId = resolveReferenceTargetId(String(args.targetId)) ?? String(args.targetId);
@@ -1061,6 +1094,56 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             node.content = clone(target.content);
           }
           return clone(outcome({ nodeId: String(args.nodeId), selectAll: false }));
+        }
+        if (cmd === 'replace_node_with_reference_conversion') {
+          const node = nodes.get(String(args.nodeId));
+          const targetId = resolveReferenceTargetId(String(args.targetId)) ?? String(args.targetId);
+          const target = nodes.get(targetId);
+          const parentId = node?.parentId;
+          const parent = parentId ? nodes.get(parentId) : null;
+          if (!node || !target || !parentId || !parent) return clone(outcome());
+          const index = parent.children.indexOf(node.id);
+          const inlineNodeId = createNode(parentId, index < 0 ? null : index, '', { showCheckbox: false });
+          const inlineNode = nodes.get(inlineNodeId);
+          if (inlineNode) {
+            inlineNode.content = {
+              text: '',
+              marks: [],
+              inlineRefs: [{ offset: 0, targetNodeId: target.id, displayName: target.content.text || undefined }],
+            };
+          }
+          removeNode(node.id);
+          return clone(outcome({
+            nodeId: inlineNodeId,
+            parentId,
+            placement: { kind: 'text-offset', offset: 0, inlineRefBias: 'after' },
+            selectAll: false,
+          }));
+        }
+        if (cmd === 'replace_node_with_inline_reference') {
+          const node = nodes.get(String(args.nodeId));
+          const targetId = resolveReferenceTargetId(String(args.targetId)) ?? String(args.targetId);
+          const target = nodes.get(targetId);
+          const parentId = node?.parentId;
+          const parent = parentId ? nodes.get(parentId) : null;
+          if (!node || !target || !parentId || !parent) return clone(outcome());
+          const index = parent.children.indexOf(node.id);
+          const inlineNodeId = createNode(parentId, index < 0 ? null : index, '', { showCheckbox: false });
+          const inlineNode = nodes.get(inlineNodeId);
+          if (inlineNode) {
+            inlineNode.content = {
+              text: '',
+              marks: [],
+              inlineRefs: [{ offset: 0, targetNodeId: target.id, displayName: target.content.text || undefined }],
+            };
+          }
+          removeNode(node.id);
+          return clone(outcome({
+            nodeId: inlineNodeId,
+            parentId,
+            placement: { kind: 'text-offset', offset: 0, inlineRefBias: 'after' },
+            selectAll: false,
+          }));
         }
         if (cmd === 'convert_reference_to_inline_node') {
           const reference = nodes.get(String(args.referenceId));

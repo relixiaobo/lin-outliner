@@ -646,7 +646,8 @@ describe('Core', () => {
   test('replace node with reference creates backlinks and remains undoable', () => {
     const core = Core.new();
     const today = core.projection().todayId;
-    const target = mustFocus(core.createNode(today, null, 'Target'));
+    const targetParent = mustFocus(core.createNode(today, null, 'Targets'));
+    const target = mustFocus(core.createNode(targetParent, null, 'Target'));
     const trigger = mustFocus(core.createNode(today, null, '@Target'));
     const inlineSource = mustFocus(core.createNode(today, null, 'Inline'));
 
@@ -660,14 +661,14 @@ describe('Core', () => {
     expect(core.state().nodes[referenceId].type).toBe('reference');
     expect(core.state().nodes[referenceId].targetId).toBe(target);
     expect(core.state().nodes[trigger].parentId).toBe(TRASH_ID);
-    expect(core.state().nodes[today].children).toEqual([target, referenceId, inlineSource]);
+    expect(core.state().nodes[today].children).toEqual([targetParent, referenceId, inlineSource]);
     expect(core.backlinks(target)).toEqual(expect.arrayContaining([
       { sourceId: today, referenceId, kind: 'tree' },
       { sourceId: inlineSource, referenceId: inlineSource, kind: 'inline' },
     ]));
 
     core.undo();
-    expect(core.state().nodes[today].children).toEqual([target, trigger, inlineSource]);
+    expect(core.state().nodes[today].children).toEqual([targetParent, trigger, inlineSource]);
     expect(core.state().nodes[trigger].parentId).toBe(today);
     expect(core.state().nodes[referenceId]).toBeUndefined();
   });
@@ -675,7 +676,8 @@ describe('Core', () => {
   test('trashing a reference target keeps references restorable', () => {
     const core = Core.new();
     const today = core.projection().todayId;
-    const target = mustFocus(core.createNode(today, null, 'Target'));
+    const targetParent = mustFocus(core.createNode(today, null, 'Targets'));
+    const target = mustFocus(core.createNode(targetParent, null, 'Target'));
     const referenceId = mustFocus(core.addReference(today, target, null));
 
     core.trashNode(target);
@@ -688,9 +690,11 @@ describe('Core', () => {
   test('permanent delete removes tree references and inline references to the target', () => {
     const core = Core.new();
     const today = core.projection().todayId;
-    const target = mustFocus(core.createNode(today, null, 'Target'));
+    const targetParent = mustFocus(core.createNode(today, null, 'Targets'));
+    const target = mustFocus(core.createNode(targetParent, null, 'Target'));
     const referenceId = mustFocus(core.addReference(today, target, null));
-    const referenceToReferenceId = mustFocus(core.addReference(today, referenceId, null));
+    const otherReferenceParent = mustFocus(core.createNode(today, null, 'Other references'));
+    const referenceToReferenceId = mustFocus(core.addReference(otherReferenceParent, referenceId, null));
     const inlineSource = mustFocus(core.createNode(today, null, 'Inline source'));
 
     core.applyNodeTextPatch(inlineSource, replaceAllRichTextPatch({
@@ -726,9 +730,11 @@ describe('Core', () => {
   test('reference nodes normalize targets and convert to unchanged inline atoms', () => {
     const core = Core.new();
     const today = core.projection().todayId;
-    const target = mustFocus(core.createNode(today, null, 'Target'));
+    const targetParent = mustFocus(core.createNode(today, null, 'Targets'));
+    const nestedReferenceParent = mustFocus(core.createNode(today, null, 'Nested references'));
+    const target = mustFocus(core.createNode(targetParent, null, 'Target'));
     const reference = mustFocus(core.addReference(today, target, null));
-    const nestedReference = mustFocus(core.addReference(today, reference, null));
+    const nestedReference = mustFocus(core.addReference(nestedReferenceParent, reference, null));
 
     expect(core.state().nodes[nestedReference].targetId).toBe(target);
 
@@ -747,7 +753,98 @@ describe('Core', () => {
     expect(state.nodes[inlineNode]).toBeUndefined();
     expect(state.nodes[restoredReference].type).toBe('reference');
     expect(state.nodes[restoredReference].targetId).toBe(target);
-    expect(state.nodes[today].children).toEqual([target, restoredReference, nestedReference]);
+    expect(state.nodes[today].children).toEqual([targetParent, nestedReferenceParent, restoredReference]);
+    expect(state.nodes[nestedReferenceParent].children).toEqual([nestedReference]);
+
+    const emptyRestoreParent = mustFocus(core.createNode(today, null, 'Empty restore parent'));
+    const secondReference = mustFocus(core.addReference(emptyRestoreParent, target, null));
+    const secondInlineNode = mustFocus(core.convertReferenceToInlineNode(secondReference));
+    core.applyNodeTextPatch(secondInlineNode, replaceAllRichTextPatch({ text: '', marks: [], inlineRefs: [] }));
+    const restoredFromEmpty = mustFocus(core.restoreInlineReferenceNodeToReference(secondInlineNode, target));
+    state = core.state();
+    expect(state.nodes[secondInlineNode]).toBeUndefined();
+    expect(state.nodes[restoredFromEmpty].parentId).toBe(emptyRestoreParent);
+    expect(state.nodes[restoredFromEmpty].type).toBe('reference');
+    expect(state.nodes[restoredFromEmpty].targetId).toBe(target);
+  });
+
+  test('creates reference conversion rows atomically for whole-row @ insertion', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const targetParent = mustFocus(core.createNode(today, null, 'Targets'));
+    const target = mustFocus(core.createNode(targetParent, null, 'Target'));
+    const conversionParent = mustFocus(core.createNode(today, null, 'Conversions'));
+
+    const added = mustFocus(core.addReferenceConversion(conversionParent, target, null));
+    let state = core.state();
+    expect(state.nodes[added].parentId).toBe(conversionParent);
+    expect(state.nodes[added].type).toBeUndefined();
+    expect(state.nodes[added].content).toEqual({
+      text: '',
+      marks: [],
+      inlineRefs: [{ offset: 0, targetNodeId: target, displayName: 'Target' }],
+    });
+
+    const draft = mustFocus(core.createNode(conversionParent, null, '@Target'));
+    const replaced = mustFocus(core.replaceNodeWithReferenceConversion(draft, target));
+    state = core.state();
+    expect(state.nodes[draft].parentId).toBe(TRASH_ID);
+    expect(state.nodes[replaced].parentId).toBe(conversionParent);
+    expect(state.nodes[replaced].type).toBeUndefined();
+    expect(state.nodes[replaced].content).toEqual({
+      text: '',
+      marks: [],
+      inlineRefs: [{ offset: 0, targetNodeId: target, displayName: 'Target' }],
+    });
+    expect(state.nodes[conversionParent].children).toEqual([added, replaced]);
+  });
+
+  test('blocks duplicate block instances of the same reference target in one parent', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'Target'));
+    const draft = mustFocus(core.createNode(today, null, '@Target'));
+
+    expect(() => core.addReference(today, target, null)).toThrow('node already exists in this list');
+    expect(() => core.replaceNodeWithReference(draft, target)).toThrow('node already exists in this list');
+  });
+
+  test('replaces a draft row with an inline reference conversion atomically', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'Target'));
+    const draft = mustFocus(core.createNode(today, null, ''));
+    const outcome = core.replaceNodeWithInlineReference(draft, target);
+    const inlineNode = mustFocus(outcome);
+    const state = core.state();
+
+    expect(outcome.focus).toMatchObject({
+      nodeId: inlineNode,
+      parentId: today,
+      placement: { kind: 'text-offset', offset: 0, inlineRefBias: 'after' },
+    });
+    expect(state.nodes[draft].parentId).toBe(TRASH_ID);
+    expect(state.nodes[inlineNode].parentId).toBe(today);
+    expect(state.nodes[inlineNode].content).toEqual({
+      text: '',
+      marks: [],
+      inlineRefs: [{ offset: 0, targetNodeId: target, displayName: 'Target' }],
+    });
+    expect(state.nodes[target].content.text).toBe('Target');
+  });
+
+  test('blocks restoring a same-parent inline reference into a tree reference', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'Target'));
+    const draft = mustFocus(core.createNode(today, null, ''));
+    const inlineNode = mustFocus(core.replaceNodeWithInlineReference(draft, target));
+
+    expect(() => core.restoreInlineReferenceNodeToReference(inlineNode, target))
+      .toThrow('node already exists in this list');
+    expect(core.state().nodes[inlineNode].content.inlineRefs).toEqual([
+      { offset: 0, targetNodeId: target, displayName: 'Target' },
+    ]);
   });
 
   test('permanent delete of an option target clears selected field references', () => {
@@ -958,6 +1055,20 @@ describe('Core', () => {
       ops: [{ type: 'replace', from: 11, to: 11, content: { text: '', marks: [], inlineRefs: [] }, deletedInlineRefs: [{ offset: 11, targetNodeId: target, displayName: 'Target' }] }],
     });
     expect(core.state().nodes[nodeId]!.content.inlineRefs).toEqual([]);
+
+    core.applyNodeTextPatch(nodeId, replaceAllRichTextPatch({
+      text: '!',
+      marks: [],
+      inlineRefs: [{ offset: 0, targetNodeId: target, displayName: 'Target' }],
+    }));
+    core.applyNodeTextPatch(nodeId, {
+      ops: [{ type: 'replace', from: 0, to: 1, content: plainText('') }],
+    });
+    expect(core.state().nodes[nodeId]!.content).toEqual({
+      text: '',
+      marks: [],
+      inlineRefs: [{ offset: 0, targetNodeId: target, displayName: 'Target' }],
+    });
   });
 
   test('groups continuous text patches into one Loro undo item and one journal entry', () => {

@@ -653,7 +653,7 @@ function replaceRichTextRange(text: LoroText, op: Extract<RichTextPatchOp, { typ
   const current = richTextFromDelta(text.toDelta());
   const from = clampTextOffset(op.from, current.text.length);
   const to = Math.max(from, clampTextOffset(op.to, current.text.length));
-  const start = toInternalTextOffset(from, current.inlineRefs, false);
+  const start = toInternalTextOffset(from, current.inlineRefs, true);
   const end = toInternalTextOffset(to, current.inlineRefs, false);
   const encoded = encodeRichText(op.content);
   text.splice(start, Math.max(0, end - start), encoded.text);

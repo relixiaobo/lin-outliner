@@ -8,6 +8,7 @@ import {
 import { createPortal } from 'react-dom';
 import { EditorState, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
+import { api } from '../../api/client';
 import type { CommandOutcome, CreateNodeTree, DocumentProjection, NodeId, NodeProjection } from '../../api/types';
 import { EMPTY_RICH_TEXT } from '../../api/types';
 import type { CursorPlacement, DocumentIndex, FocusRequest, FocusSurface } from '../../state/document';
@@ -22,9 +23,11 @@ import {
   resolveTrailingRowEscapeIntent,
   resolveTrailingRowUpdateAction,
 } from '../interactions/rowInteractions';
+import { getTreeReferenceBlockReason } from '../interactions/referenceRules';
 import { isOptionsFieldType } from '../fields/fieldTypeRegistry';
 import { filterFieldOptions, resolveFieldOptions } from '../interactions/fieldOptions';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
+import { matchesShortcutEvent } from '../interactions/shortcutRegistry';
 import { parseOutlinerPaste } from '../interactions/pasteParser';
 import type { SlashCommandId } from '../interactions/slashCommands';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
@@ -37,7 +40,7 @@ import {
 import { TrailingInputLeading } from './TrailingInputLeading';
 import { TriggerPopover } from './TriggerPopover';
 import type { CommandRunner, EditorTrigger } from '../shared';
-import type { TrailingInlineTrigger, TrailingSlashTrigger } from './trailingTriggers';
+import { triggerOwnsWholeText, type TrailingInlineTrigger, type TrailingSlashTrigger } from './trailingTriggers';
 
 interface TrailingInputProps {
   panelId?: string | null;
@@ -51,6 +54,7 @@ interface TrailingInputProps {
   run: CommandRunner;
   onCreate: (parentId: NodeId, text: string) => Promise<NodeId | null> | NodeId | null | void;
   onCreateTree?: (parentId: NodeId, nodes: CreateNodeTree[]) => Promise<unknown> | unknown;
+  onIndentNode?: (nodeId: NodeId) => Promise<unknown> | unknown;
   onUpdateCreated?: (nodeId: NodeId, text: string) => Promise<void> | void;
   onToggleCreated?: (nodeId: NodeId) => Promise<void> | void;
   onApplyTagTrigger?: (params: {
@@ -70,7 +74,13 @@ interface TrailingInputProps {
     text: string;
     trigger: TrailingInlineTrigger;
     target: NodeProjection;
+    forceInline?: boolean;
   }) => Promise<CommandOutcome | DocumentProjection | null | void> | CommandOutcome | DocumentProjection | null | void;
+  onReferenceConversionCreated?: (params: {
+    nodeId: NodeId;
+    parentId: NodeId;
+    targetId: NodeId;
+  }) => void;
   onExecuteSlashTrigger?: (params: {
     parentId: NodeId;
     text: string;
@@ -90,12 +100,29 @@ interface TrailingInputProps {
   onSelectOption?: (optionId: NodeId) => Promise<unknown> | unknown;
   onCreateOption?: (name: string) => Promise<unknown> | unknown;
   continueOnEnter?: boolean;
+  materializeOnInput?: boolean;
   placeholder?: string;
 }
 
 type CommitFocusTarget = 'none' | 'trailing' | 'created';
+type CommitOptions = {
+  materializeInput?: boolean;
+  renderBufferDuringMaterialize?: boolean;
+};
 
-type TrailingInputSuppression = { type: 'materialized'; nodeId: NodeId; focusObserved: boolean };
+type TrailingInputSuppression =
+  | {
+    type: 'materializing';
+    parentId: NodeId;
+    previousTailId: NodeId | null;
+  }
+  | { type: 'materialized'; nodeId: NodeId; focusObserved: boolean };
+
+type MaterializedHandoff = {
+  nodeId: NodeId;
+  text: string;
+  flushing: boolean;
+};
 
 function isInlineTrigger(trigger: EditorTrigger): trigger is TrailingInlineTrigger {
   return trigger.kind === '#' || trigger.kind === '@';
@@ -148,6 +175,15 @@ function clearCommittedEditor(view: EditorView, updateHasContent: (nextHasConten
   updateHasContent(false);
 }
 
+function replaceEditorText(view: EditorView, text: string) {
+  const docTo = Math.max(1, view.state.doc.content.size - 1);
+  let tr = view.state.tr.insertText(text, 1, docTo);
+  const maxPos = tr.doc.content.size - 1;
+  tr = tr.setMeta('addToHistory', false);
+  tr = tr.setSelection(TextSelection.create(tr.doc, Math.max(1, Math.min(1 + text.length, maxPos))));
+  view.dispatch(tr);
+}
+
 function getEditorText(view: EditorView): string {
   return view.state.doc.textContent;
 }
@@ -155,6 +191,18 @@ function getEditorText(view: EditorView): string {
 function commandFocusNodeId(result: CommandOutcome | DocumentProjection | null | void): NodeId | null {
   if (!result || !('focus' in result)) return null;
   return result.focus?.nodeId ?? null;
+}
+
+function commandFocusParentId(result: CommandOutcome | DocumentProjection | null | void): NodeId | null {
+  if (!result || !('focus' in result)) return null;
+  return result.focus?.parentId ?? null;
+}
+
+function commandProjection(result: unknown): DocumentProjection | null {
+  if (!result || typeof result !== 'object') return null;
+  if ('projection' in result) return (result as CommandOutcome).projection;
+  if ('nodes' in result) return result as DocumentProjection;
+  return null;
 }
 
 function isEmptyTailNode(
@@ -172,6 +220,25 @@ function isEmptyTailNode(
     && node.children.length === 0
     && node.content.text.length === 0
   );
+}
+
+function lastContentChildId(parentId: NodeId, byId: Map<NodeId, NodeProjection>): NodeId | null {
+  const parent = byId.get(parentId);
+  return parent?.children.filter((childId) => byId.has(childId)).at(-1) ?? null;
+}
+
+function hasNewTailNodeAfter(
+  parentId: NodeId,
+  previousTailId: NodeId | null,
+  byId: Map<NodeId, NodeProjection>,
+): boolean {
+  const parent = byId.get(parentId);
+  if (!parent) return false;
+  const children = parent.children.filter((childId) => byId.has(childId));
+  const previousTailIndex = previousTailId ? children.indexOf(previousTailId) : -1;
+  if (previousTailId && previousTailIndex < 0) return false;
+  const startIndex = previousTailId ? previousTailIndex + 1 : 0;
+  return children.length > startIndex;
 }
 
 function caretAnchor(view: EditorView) {
@@ -209,6 +276,10 @@ function isPlainPrintableKey(event: KeyboardEvent): boolean {
   );
 }
 
+function isTrailingTriggerKey(key: string): boolean {
+  return key === '>' || key === '#' || key === '@' || key === '/';
+}
+
 function lastVisibleDescendant(
   parentId: NodeId,
   index: DocumentIndex,
@@ -241,7 +312,20 @@ export function TrailingInput(props: TrailingInputProps) {
   const clearAfterProjectionRef = useRef(false);
   const refocusAfterProjectionRef = useRef(false);
   const composingRef = useRef(false);
+  const committedVisualTextRef = useRef('');
   const eagerBufferRef = useRef('');
+  const materializingInputRef = useRef(false);
+  const postCommitIndentRef = useRef(false);
+  const postCommitEnterRef = useRef(false);
+  const eagerBufferVisibleRef = useRef(false);
+  const renderMaterializeBufferRef = useRef(true);
+  const materializedBaseTextRef = useRef('');
+  const commitEagerBufferAfterSettleRef = useRef(false);
+  const focusEagerBufferAfterSettleRef = useRef(false);
+  const skipCreatedFocusAfterCommitRef = useRef(false);
+  const blurFocusTargetRef = useRef<HTMLElement | null>(null);
+  const blurFocusNodeIdRef = useRef<NodeId | null>(null);
+  const materializedHandoffRef = useRef<MaterializedHandoff | null>(null);
   const trailingTriggerRef = useRef<EditorTrigger | null>(null);
   const optionsStateRef = useRef({
     isOptionsField: false,
@@ -261,6 +345,13 @@ export function TrailingInput(props: TrailingInputProps) {
     && props.optionField?.autocollectOptions !== false
     && !allOptions.some((option) => option.label.toLowerCase() === optionsQuery.trim().toLowerCase());
   const optionCount = filteredOptions.length + (canCreateOption ? 1 : 0);
+  const trailingText = viewRef.current ? getEditorText(viewRef.current) : '';
+  const treeReferenceParentId = trailingTrigger
+    && isInlineTrigger(trailingTrigger)
+    && trailingTrigger.kind === '@'
+    && triggerOwnsWholeText(trailingText, trailingTrigger)
+    ? effectiveParentId
+    : null;
   const optionsMenuStyle = useAnchoredOverlay(optionsMenuRef, {
     anchorRef: mountRef,
     disabled: !optionsOpen || !isOptionsField,
@@ -285,6 +376,8 @@ export function TrailingInput(props: TrailingInputProps) {
   trailingTriggerRef.current = trailingTrigger;
 
   useEffect(() => {
+    effectiveParentRef.current = props.parentId;
+    depthShiftRef.current = 0;
     setEffectiveParentId(props.parentId);
     setDepthShift(0);
   }, [props.parentId]);
@@ -295,57 +388,220 @@ export function TrailingInput(props: TrailingInputProps) {
 
   useLayoutEffect(() => {
     if (!clearAfterProjectionRef.current) return;
+    if (committingRef.current) return;
     const view = viewRef.current;
     if (!view || view.isDestroyed) return;
-    const shouldRefocus = refocusAfterProjectionRef.current;
-    clearAfterProjectionRef.current = false;
-    refocusAfterProjectionRef.current = false;
-    finishProjectionClear(view, shouldRefocus);
+    finishProjectionClearIfPending(view);
   }, [props.index.projection]);
 
   useEffect(() => {
     setTrailingInputSuppression((current) => {
       if (current?.type !== 'materialized') return current;
+      if (materializedHandoffRef.current?.nodeId === current.nodeId) return current;
+      if (!current.focusObserved) return current;
       return isEmptyTailNode(effectiveParentId, current.nodeId, props.index.byId) ? current : null;
     });
   }, [effectiveParentId, props.index.byId, props.index.projection]);
 
   useEffect(() => {
-    setTrailingInputSuppression((current) => {
-      if (current?.type !== 'materialized') return current;
-      const focused = props.focusSurface === 'row' && props.focusedId === current.nodeId;
-      if (focused) {
-        return current.focusObserved ? current : { ...current, focusObserved: true };
+    if (trailingInputSuppression?.type !== 'materialized') return;
+    const focused = props.focusSurface === 'row' && props.focusedId === trailingInputSuppression.nodeId;
+    if (!focused) {
+      if (trailingInputSuppression.focusObserved) {
+        clearMaterializedHandoff();
+        setTrailingInputSuppression(null);
       }
-      return current.focusObserved ? null : current;
-    });
-  }, [props.focusedId, props.focusSurface]);
+      return;
+    }
+    if (trailingInputSuppression.focusObserved) return;
+
+    let frame = 0;
+    let attempts = 0;
+    const observeFocusedRow = () => {
+      const rowElement = document.querySelector<HTMLElement>(
+        `[data-node-id="${CSS.escape(trailingInputSuppression.nodeId)}"] .ProseMirror`,
+      );
+      const activeElement = document.activeElement;
+      if (rowElement && activeElement instanceof HTMLElement && rowElement.contains(activeElement)) {
+        setTrailingInputSuppression((current) => (
+          current?.type === 'materialized' && current.nodeId === trailingInputSuppression.nodeId
+            ? { ...current, focusObserved: true }
+            : current
+        ));
+        return;
+      }
+      attempts += 1;
+      if (attempts < 5) frame = window.requestAnimationFrame(observeFocusedRow);
+    };
+    frame = window.requestAnimationFrame(observeFocusedRow);
+    return () => window.cancelAnimationFrame(frame);
+  }, [props.focusedId, props.focusSurface, trailingInputSuppression]);
 
   const resetEffectiveParent = () => {
+    effectiveParentRef.current = propsRef.current.parentId;
+    depthShiftRef.current = 0;
     setEffectiveParentId(propsRef.current.parentId);
     setDepthShift(0);
+  };
+
+  const setTrailingParent = (parentId: NodeId, depthShiftValue: number) => {
+    effectiveParentRef.current = parentId;
+    depthShiftRef.current = depthShiftValue;
+    setEffectiveParentId(parentId);
+    setDepthShift(depthShiftValue);
   };
 
   const updateHasContent = (nextHasContent: boolean) => {
     setHasContent((current) => current === nextHasContent ? current : nextHasContent);
   };
 
-  const beginProjectionClear = (focusAfterCommit: CommitFocusTarget = 'none') => {
+  const clearMaterializedHandoff = (handoff = materializedHandoffRef.current) => {
+    if (!handoff || materializedHandoffRef.current === handoff) {
+      materializedHandoffRef.current = null;
+    }
+  };
+
+  const flushMaterializedHandoffBuffer = () => {
+    const handoff = materializedHandoffRef.current;
+    if (!handoff || handoff.flushing) return;
+    handoff.flushing = true;
+    void (async () => {
+      try {
+        while (materializedHandoffRef.current === handoff && eagerBufferRef.current.length > 0) {
+          const bufferedText = eagerBufferRef.current;
+          eagerBufferRef.current = '';
+          eagerBufferVisibleRef.current = false;
+          handoff.text += bufferedText;
+          committedVisualTextRef.current = handoff.text;
+          await propsRef.current.onUpdateCreated?.(handoff.nodeId, handoff.text);
+        }
+      } finally {
+        handoff.flushing = false;
+        if (materializedHandoffRef.current !== handoff) return;
+        if (eagerBufferRef.current.length > 0) {
+          flushMaterializedHandoffBuffer();
+        }
+      }
+    })();
+  };
+
+  const updateMaterializedHandoffText = (handoff: MaterializedHandoff, text: string) => {
+    handoff.text = text;
+    committedVisualTextRef.current = text;
+    void propsRef.current.onUpdateCreated?.(handoff.nodeId, text);
+  };
+
+  const handleMaterializedHandoffKey = (event: KeyboardEvent) => {
+    const handoff = materializedHandoffRef.current;
+    if (!handoff) return false;
+    if (isPlainPrintableKey(event)) {
+      event.preventDefault();
+      eagerBufferRef.current += event.key;
+      flushMaterializedHandoffBuffer();
+      return true;
+    }
+    if (event.key === 'Backspace') {
+      event.preventDefault();
+      if (eagerBufferRef.current.length > 0) {
+        eagerBufferRef.current = eagerBufferRef.current.slice(0, -1);
+      } else if (handoff.text.length > 0) {
+        updateMaterializedHandoffText(handoff, handoff.text.slice(0, -1));
+      }
+      return true;
+    }
+    if (!event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      propsRef.current.onFocusNode?.(handoff.nodeId);
+      return true;
+    }
+    return false;
+  };
+
+  const beginProjectionClear = (
+    focusAfterCommit: CommitFocusTarget = 'none',
+    committedVisualText = '',
+  ) => {
     clearAfterProjectionRef.current = true;
     refocusAfterProjectionRef.current = focusAfterCommit === 'trailing';
+    committedVisualTextRef.current = committedVisualText;
     setPendingCommittedVisual(true);
   };
 
   const cancelProjectionClear = () => {
     clearAfterProjectionRef.current = false;
     refocusAfterProjectionRef.current = false;
+    committedVisualTextRef.current = '';
     setPendingCommittedVisual(false);
   };
 
+  const pendingBufferedText = (view: EditorView) => {
+    if (eagerBufferRef.current.length > 0) return eagerBufferRef.current;
+    const text = getEditorText(view);
+    const committedText = committedVisualTextRef.current;
+    return committedText && text.startsWith(committedText)
+      ? text.slice(committedText.length)
+      : text;
+  };
+
   const finishProjectionClear = (view: EditorView, shouldRefocus: boolean) => {
+    const bufferedText = pendingBufferedText(view);
     clearCommittedEditor(view, updateHasContent);
+    eagerBufferRef.current = '';
+    eagerBufferVisibleRef.current = false;
+    committedVisualTextRef.current = '';
+    if (bufferedText.length > 0) {
+      replaceEditorText(view, bufferedText);
+      updateHasContent(true);
+      shouldRefocus = true;
+    }
     setPendingCommittedVisual(false);
     if (shouldRefocus) view.focus();
+  };
+
+  const finishProjectionClearIfPending = (view: EditorView | null = viewRef.current) => {
+    if (!clearAfterProjectionRef.current || !view || view.isDestroyed) return;
+    const shouldRefocus = refocusAfterProjectionRef.current;
+    clearAfterProjectionRef.current = false;
+    refocusAfterProjectionRef.current = false;
+    finishProjectionClear(view, shouldRefocus);
+  };
+
+  const consumePendingTextForExternalHandoff = (view: EditorView) => {
+    const bufferedText = pendingBufferedText(view);
+    eagerBufferRef.current = '';
+    eagerBufferVisibleRef.current = false;
+    committedVisualTextRef.current = '';
+    resetEditorContent(view);
+    updateHasContent(false);
+    return bufferedText;
+  };
+
+  const renderEagerBuffer = (view: EditorView) => {
+    const visibleText = materializingInputRef.current
+      ? `${committedVisualTextRef.current}${eagerBufferRef.current}`
+      : eagerBufferRef.current;
+    replaceEditorText(view, visibleText);
+    eagerBufferVisibleRef.current = true;
+    updateHasContent(visibleText.length > 0);
+  };
+
+  const appendCommittingBufferKey = (view: EditorView, key: string) => {
+    eagerBufferRef.current += key;
+    if (renderMaterializeBufferRef.current) {
+      renderEagerBuffer(view);
+    }
+  };
+
+  const removeCommittingBufferKey = (view: EditorView) => {
+    if (eagerBufferRef.current.length > 0) {
+      eagerBufferRef.current = eagerBufferRef.current.slice(0, -1);
+    } else if (materializedBaseTextRef.current.length > 0) {
+      materializedBaseTextRef.current = materializedBaseTextRef.current.slice(0, -1);
+      committedVisualTextRef.current = materializedBaseTextRef.current;
+    }
+    if (renderMaterializeBufferRef.current) {
+      renderEagerBuffer(view);
+    }
   };
 
   const createNode = async (parentId: NodeId, text: string) => (
@@ -358,11 +614,23 @@ export function TrailingInput(props: TrailingInputProps) {
         plainTreeNode(text),
         plainTreeNode(''),
       ]));
-      return result !== null;
+      const continuationId = commandFocusNodeId(result as CommandOutcome | DocumentProjection | null | void);
+      const projection = commandProjection(result);
+      const parent = projection?.nodes.find((candidate) => candidate.id === parentId);
+      const continuationIndex = continuationId ? parent?.children.indexOf(continuationId) ?? -1 : -1;
+      return {
+        committed: result != null,
+        contentId: continuationIndex > 0 ? parent?.children[continuationIndex - 1] ?? null : null,
+        continuationId,
+      };
     }
-    const contentId = await createNode(parentId, text);
-    const continuationId = await createNode(parentId, '');
-    return contentId != null && continuationId != null;
+    const contentId = await createNode(parentId, text) ?? null;
+    const continuationId = await createNode(parentId, '') ?? null;
+    return {
+      committed: contentId != null && continuationId != null,
+      contentId,
+      continuationId,
+    };
   };
 
   const commitContent = async (
@@ -370,33 +638,198 @@ export function TrailingInput(props: TrailingInputProps) {
     rawText: string,
     continueWithEmpty: boolean,
     focusAfterCommit: CommitFocusTarget = 'none',
+    parentOverride?: NodeId,
+    options: CommitOptions = {},
   ) => {
     if (committingRef.current) return;
     if (!continueWithEmpty && rawText.trim().length === 0) return;
-    const targetParentId = effectiveParentRef.current;
+    const materializeInput = options.materializeInput === true;
+    const renderBufferDuringMaterialize = options.renderBufferDuringMaterialize !== false;
+    const targetParentId = parentOverride ?? effectiveParentRef.current;
+    if (materializeInput) {
+      setTrailingInputSuppression({
+        type: 'materializing',
+        parentId: targetParentId,
+        previousTailId: lastContentChildId(targetParentId, propsRef.current.index.byId),
+      });
+    }
     committingRef.current = true;
-    beginProjectionClear(focusAfterCommit);
+    materializingInputRef.current = materializeInput;
+    renderMaterializeBufferRef.current = renderBufferDuringMaterialize;
+    materializedBaseTextRef.current = materializeInput ? rawText : '';
+    beginProjectionClear(focusAfterCommit, rawText);
     let committed = false;
     let createdFocusId: NodeId | null = null;
+    let createdContentId: NodeId | null = null;
+    let continuationId: NodeId | null = null;
     try {
       const hasText = rawText.trim().length > 0;
       if (hasText && continueWithEmpty) {
-        committed = await createContentAndContinuation(targetParentId, rawText);
+        const result = await createContentAndContinuation(targetParentId, rawText);
+        committed = result.committed;
+        createdContentId = result.contentId;
+        continuationId = result.continuationId;
+        if (focusAfterCommit === 'created') createdFocusId = continuationId;
       } else if (hasText) {
         const nodeId = await createNode(targetParentId, rawText);
         committed = nodeId != null;
+        createdContentId = nodeId ?? null;
         if (nodeId != null && focusAfterCommit === 'created') createdFocusId = nodeId;
       } else if (continueWithEmpty) {
         const nodeId = await createNode(targetParentId, '');
         committed = nodeId != null;
         if (nodeId != null && focusAfterCommit === 'created') createdFocusId = nodeId;
       }
-      if (createdFocusId) propsRef.current.onFocusNode?.(createdFocusId);
+      if (committed && materializeInput && createdContentId) {
+        const materializedNodeId = createdContentId;
+        setTrailingInputSuppression({
+          type: 'materialized',
+          nodeId: materializedNodeId,
+          focusObserved: skipCreatedFocusAfterCommitRef.current,
+        });
+        let materializedText = materializedBaseTextRef.current;
+        if (skipCreatedFocusAfterCommitRef.current) {
+          clearMaterializedHandoff();
+        } else {
+          clearMaterializedHandoff();
+          materializedHandoffRef.current = {
+            nodeId: materializedNodeId,
+            text: materializedText,
+            flushing: false,
+          };
+        }
+        if (materializedText !== rawText) {
+          await propsRef.current.onUpdateCreated?.(materializedNodeId, materializedText);
+          committedVisualTextRef.current = materializedText;
+        }
+        const flushMaterializedBuffer = async () => {
+          while (eagerBufferRef.current.length > 0) {
+            const bufferedText = eagerBufferRef.current;
+            eagerBufferRef.current = '';
+            eagerBufferVisibleRef.current = false;
+            materializedText += bufferedText;
+            if (materializedHandoffRef.current?.nodeId === materializedNodeId) {
+              materializedHandoffRef.current.text = materializedText;
+            }
+            committedVisualTextRef.current = materializedText;
+            await propsRef.current.onUpdateCreated?.(materializedNodeId, materializedText);
+          }
+        };
+
+        await flushMaterializedBuffer();
+        let materializedParentId = targetParentId;
+        if (postCommitIndentRef.current) {
+          const targetParent = propsRef.current.index.byId.get(targetParentId);
+          const previousSiblingId = targetParent?.children
+            .filter((childId) => childId !== createdContentId && propsRef.current.index.byId.has(childId))
+            .at(-1);
+          if (previousSiblingId) {
+            propsRef.current.onExpand?.(previousSiblingId);
+            await propsRef.current.onIndentNode?.(materializedNodeId);
+            materializedParentId = previousSiblingId;
+            await flushMaterializedBuffer();
+          }
+        }
+        if (postCommitEnterRef.current) {
+          await flushMaterializedBuffer();
+          continuationId = await createNode(materializedParentId, '') ?? null;
+          createdFocusId = continuationId ?? materializedNodeId;
+        } else {
+          createdFocusId = materializedNodeId;
+        }
+        resetEffectiveParent();
+      }
+      const shouldCommitBuffered = commitEagerBufferAfterSettleRef.current
+        && eagerBufferRef.current.trim().length > 0;
+      if (!materializeInput && committed && postCommitIndentRef.current && createdContentId) {
+        propsRef.current.onExpand?.(createdContentId);
+        if (continuationId) {
+          await propsRef.current.onIndentNode?.(continuationId);
+          if (shouldCommitBuffered) {
+            const bufferedText = eagerBufferRef.current;
+            eagerBufferRef.current = '';
+            eagerBufferVisibleRef.current = false;
+            await propsRef.current.onUpdateCreated?.(continuationId, bufferedText);
+            committedVisualTextRef.current = getEditorText(view);
+            if (focusEagerBufferAfterSettleRef.current) {
+              createdFocusId = continuationId;
+            }
+          } else {
+            createdFocusId = continuationId;
+          }
+        }
+        if (!shouldCommitBuffered) {
+          setTrailingParent(createdContentId, depthShiftRef.current + 1);
+        }
+      }
+      if (
+        !materializeInput
+        && committed
+        && shouldCommitBuffered
+        && !continuationId
+      ) {
+        const bufferedText = eagerBufferRef.current;
+        const bufferedParentId = postCommitIndentRef.current && createdContentId
+          ? createdContentId
+          : effectiveParentRef.current;
+        eagerBufferRef.current = '';
+        eagerBufferVisibleRef.current = false;
+        const bufferedNodeId = await createNode(bufferedParentId, bufferedText);
+        committedVisualTextRef.current = getEditorText(view);
+        if (focusEagerBufferAfterSettleRef.current && bufferedNodeId) {
+          createdFocusId = bufferedNodeId;
+        }
+      }
+      if (createdFocusId && !skipCreatedFocusAfterCommitRef.current) propsRef.current.onFocusNode?.(createdFocusId);
     } finally {
       if (!committed) {
         cancelProjectionClear();
+        if (materializeInput) setTrailingInputSuppression(null);
       }
+      const restoreBlurFocusTarget = skipCreatedFocusAfterCommitRef.current
+        ? blurFocusTargetRef.current
+        : null;
+      const restoreBlurFocusNodeId = skipCreatedFocusAfterCommitRef.current
+        ? blurFocusNodeIdRef.current
+        : null;
+      materializingInputRef.current = false;
+      renderMaterializeBufferRef.current = true;
+      materializedBaseTextRef.current = '';
+      postCommitIndentRef.current = false;
+      postCommitEnterRef.current = false;
+      commitEagerBufferAfterSettleRef.current = false;
+      focusEagerBufferAfterSettleRef.current = false;
+      skipCreatedFocusAfterCommitRef.current = false;
+      blurFocusTargetRef.current = null;
+      blurFocusNodeIdRef.current = null;
       committingRef.current = false;
+      if (committed && materializeInput) flushMaterializedHandoffBuffer();
+      if (committed) {
+        if (materializeInput) {
+          window.requestAnimationFrame(() => {
+            finishProjectionClearIfPending(view);
+            const restoreFocusTarget = () => {
+              const activeElement = document.activeElement;
+              const currentFocusTarget = restoreBlurFocusNodeId
+                ? [...document.querySelectorAll<HTMLElement>('[data-node-id]')]
+                  .find((element) => element.dataset.nodeId === restoreBlurFocusNodeId)
+                  ?.querySelector<HTMLElement>('.ProseMirror') ?? restoreBlurFocusTarget
+                : restoreBlurFocusTarget;
+              if (
+                currentFocusTarget
+                && document.contains(currentFocusTarget)
+                && activeElement !== currentFocusTarget
+              ) {
+                currentFocusTarget.focus();
+              }
+            };
+            restoreFocusTarget();
+            window.requestAnimationFrame(restoreFocusTarget);
+          });
+        } else {
+          finishProjectionClearIfPending(view);
+        }
+      }
     }
   };
 
@@ -404,7 +837,7 @@ export function TrailingInput(props: TrailingInputProps) {
     if (committingRef.current) return;
     const targetParentId = effectiveParentRef.current;
     committingRef.current = true;
-    beginProjectionClear();
+    beginProjectionClear('none', rawText);
     let committed = false;
     try {
       const nodeId = await createNode(targetParentId, rawText);
@@ -416,6 +849,7 @@ export function TrailingInput(props: TrailingInputProps) {
     } finally {
       if (!committed) cancelProjectionClear();
       committingRef.current = false;
+      if (committed) finishProjectionClearIfPending(view);
     }
   };
 
@@ -423,7 +857,7 @@ export function TrailingInput(props: TrailingInputProps) {
     if (committingRef.current || rawText.trim().length === 0 || !propsRef.current.onFocusDescription) return;
     const targetParentId = effectiveParentRef.current;
     committingRef.current = true;
-    beginProjectionClear();
+    beginProjectionClear('none', rawText);
     let committed = false;
     try {
       const nodeId = await createNode(targetParentId, rawText);
@@ -434,6 +868,7 @@ export function TrailingInput(props: TrailingInputProps) {
     } finally {
       if (!committed) cancelProjectionClear();
       committingRef.current = false;
+      if (committed) finishProjectionClearIfPending(view);
       resetEffectiveParent();
     }
   };
@@ -470,9 +905,9 @@ export function TrailingInput(props: TrailingInputProps) {
     if (trailingTriggerRef.current) setTrailingTrigger(null);
   };
 
-  const beginInlineTriggerCommit = () => {
+  const beginInlineTriggerCommit = (committedVisualText: string) => {
     committingRef.current = true;
-    beginProjectionClear();
+    beginProjectionClear('none', committedVisualText);
   };
 
   const finishInlineTriggerCommit = (committed: boolean, view: EditorView) => {
@@ -484,6 +919,7 @@ export function TrailingInput(props: TrailingInputProps) {
     committingRef.current = false;
     setTrailingTrigger(null);
     resetEffectiveParent();
+    if (committed) finishProjectionClearIfPending(view);
   };
 
   const applyTrailingTag = async (
@@ -495,7 +931,7 @@ export function TrailingInput(props: TrailingInputProps) {
     const trigger = triggerOverride ?? (currentTrigger && isInlineTrigger(currentTrigger) ? currentTrigger : null);
     if (!view || !trigger || !propsRef.current.onApplyTagTrigger) return null;
     const text = getEditorText(view);
-    beginInlineTriggerCommit();
+    beginInlineTriggerCommit(text);
     let committed = false;
     try {
       const result = await propsRef.current.onApplyTagTrigger({
@@ -522,7 +958,7 @@ export function TrailingInput(props: TrailingInputProps) {
     const trigger = triggerOverride ?? (currentTrigger && isInlineTrigger(currentTrigger) ? currentTrigger : null);
     if (!view || !trigger || !propsRef.current.onCreateTagTrigger) return null;
     const text = getEditorText(view);
-    beginInlineTriggerCommit();
+    beginInlineTriggerCommit(text);
     let committed = false;
     try {
       const result = await propsRef.current.onCreateTagTrigger({
@@ -547,20 +983,62 @@ export function TrailingInput(props: TrailingInputProps) {
     const view = viewRef.current;
     const currentTrigger = trailingTriggerRef.current;
     const trigger = triggerOverride ?? (currentTrigger && isInlineTrigger(currentTrigger) ? currentTrigger : null);
-    if (!view || !trigger || !propsRef.current.onApplyReferenceTrigger) return null;
+    if (!view || !trigger || !propsRef.current.onApplyReferenceTrigger) {
+      return null;
+    }
     const text = getEditorText(view);
-    beginInlineTriggerCommit();
+    const blockReason = getTreeReferenceBlockReason({
+      parentId: effectiveParentRef.current,
+      targetId: target.id,
+      byId: propsRef.current.index.byId,
+    });
+    const forceInline = blockReason === 'already_in_parent';
+    const createsInlineConversion = !forceInline && triggerOwnsWholeText(text, trigger);
+    beginInlineTriggerCommit(text);
     let committed = false;
     try {
-      const result = await propsRef.current.onApplyReferenceTrigger({
+      let result = await propsRef.current.onApplyReferenceTrigger({
         parentId: effectiveParentRef.current,
         target,
         text,
         trigger,
+        forceInline,
       });
       committed = Boolean(result);
       const nodeId = commandFocusNodeId(result);
       setTrailingInputSuppression(nodeId ? { type: 'materialized', nodeId, focusObserved: false } : null);
+      if (createsInlineConversion && nodeId) {
+        const parentId = commandFocusParentId(result) ?? effectiveParentRef.current;
+        const pendingText = consumePendingTextForExternalHandoff(view);
+        if (pendingText.length > 0) {
+          const projection = commandProjection(result);
+          const createdNode = projection?.nodes.find((node) => node.id === nodeId);
+          if (createdNode) {
+            const patched = await api.replaceNodeText(nodeId, {
+              ...createdNode.content,
+              text: pendingText,
+            });
+            result = {
+              projection: patched.projection,
+              focus: {
+                nodeId,
+                parentId,
+                selectAll: false,
+                placement: {
+                  kind: 'text-offset',
+                  offset: pendingText.length,
+                  inlineRefBias: 'after',
+                },
+              },
+            };
+          }
+        }
+        propsRef.current.onReferenceConversionCreated?.({
+          nodeId,
+          parentId,
+          targetId: target.id,
+        });
+      }
       return result;
     } finally {
       finishInlineTriggerCommit(committed, view);
@@ -599,7 +1077,7 @@ export function TrailingInput(props: TrailingInputProps) {
 
     if (!propsRef.current.onExecuteSlashTrigger) return null;
     const text = getEditorText(view);
-    beginInlineTriggerCommit();
+    beginInlineTriggerCommit(text);
     let committed = false;
     try {
       const result = await propsRef.current.onExecuteSlashTrigger({
@@ -654,16 +1132,30 @@ export function TrailingInput(props: TrailingInputProps) {
     const lastChildId = children.filter((childId) => propsRef.current.index.byId.has(childId)).at(-1);
     if (!lastChildId) return;
     propsRef.current.onExpand?.(lastChildId);
-    setEffectiveParentId(lastChildId);
-    setDepthShift((current) => current + 1);
+    setTrailingParent(lastChildId, depthShiftRef.current + 1);
+  };
+
+  const indentedParentForCurrentScope = () => {
+    const currentParentId = effectiveParentRef.current;
+    const children = propsRef.current.index.byId.get(currentParentId)?.children ?? [];
+    return children.filter((childId) => propsRef.current.index.byId.has(childId)).at(-1) ?? null;
+  };
+
+  const commitTextAsIndentedChild = async (view: EditorView) => {
+    const text = getEditorText(view);
+    if (text.trim().length === 0) return false;
+    const targetParentId = indentedParentForCurrentScope();
+    if (!targetParentId) return false;
+    propsRef.current.onExpand?.(targetParentId);
+    await commitContent(view, text, false, 'created', targetParentId);
+    return true;
   };
 
   const outdentEffectiveParent = () => {
     if (effectiveParentRef.current === propsRef.current.parentId || depthShiftRef.current <= 0) return;
     const parentId = propsRef.current.index.byId.get(effectiveParentRef.current)?.parentId;
     if (!parentId) return;
-    setEffectiveParentId(parentId);
-    setDepthShift((current) => Math.max(0, current - 1));
+    setTrailingParent(parentId, Math.max(0, depthShiftRef.current - 1));
   };
 
   const focusLastVisible = () => {
@@ -678,6 +1170,25 @@ export function TrailingInput(props: TrailingInputProps) {
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount) return;
+
+    const rememberPendingFocusTarget = (event: PointerEvent) => {
+      if (materializedHandoffRef.current && event.target instanceof Node && mount.contains(event.target)) {
+        clearMaterializedHandoff();
+        setTrailingInputSuppression(null);
+      }
+      if (!committingRef.current || !materializingInputRef.current) return;
+      if (event.target instanceof Node && !mount.contains(event.target)) {
+        skipCreatedFocusAfterCommitRef.current = true;
+      }
+      const target = event.target instanceof HTMLElement
+        ? event.target.closest<HTMLElement>('.ProseMirror')
+        : null;
+      if (target) {
+        blurFocusTargetRef.current = target;
+        blurFocusNodeIdRef.current = target.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId ?? null;
+      }
+    };
+    document.addEventListener('pointerdown', rememberPendingFocusTarget, true);
 
     const view = new EditorView(mount, {
       state: EditorState.create({
@@ -717,6 +1228,15 @@ export function TrailingInput(props: TrailingInputProps) {
           closeOptions();
         }
         closeTrailingTrigger();
+        if (
+          propsRef.current.materializeOnInput
+          && !optionState.isOptionsField
+          && action.type === 'none'
+          && text.trim().length > 0
+          && !composingRef.current
+        ) {
+          void commitContent(view, text, false, 'created', undefined, { materializeInput: true });
+        }
       },
       handleDOMEvents: {
         paste(viewInstance, event) {
@@ -743,6 +1263,10 @@ export function TrailingInput(props: TrailingInputProps) {
           return true;
         },
         focus() {
+          if (!committingRef.current && materializedHandoffRef.current) {
+            clearMaterializedHandoff();
+            setTrailingInputSuppression(null);
+          }
           if (optionsStateRef.current.isOptionsField) {
             setOptionsOpen(true);
             setOptionsQuery('');
@@ -750,9 +1274,28 @@ export function TrailingInput(props: TrailingInputProps) {
           }
           return false;
         },
-        blur(viewInstance) {
+        blur(viewInstance, event) {
           composingRef.current = false;
-          if (committingRef.current || clearAfterProjectionRef.current) return false;
+          if (committingRef.current) {
+            const relatedTarget = (event as FocusEvent).relatedTarget;
+            const explicitFocusTarget = relatedTarget instanceof HTMLElement
+              ? relatedTarget.closest<HTMLElement>('.ProseMirror')
+                ?? relatedTarget.closest<HTMLElement>('button, [href], input, textarea, select, [tabindex]:not([tabindex="-1"])')
+              : null;
+            if (explicitFocusTarget) {
+              skipCreatedFocusAfterCommitRef.current = true;
+              blurFocusTargetRef.current = explicitFocusTarget;
+              blurFocusNodeIdRef.current = explicitFocusTarget.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId ?? null;
+            }
+            const bufferedText = pendingBufferedText(viewInstance);
+            if (bufferedText.trim().length > 0) {
+              eagerBufferRef.current = bufferedText;
+              commitEagerBufferAfterSettleRef.current = true;
+              refocusAfterProjectionRef.current = false;
+            }
+            return false;
+          }
+          if (clearAfterProjectionRef.current) return false;
           const text = getEditorText(viewInstance);
           if (text.trim().length > 0) {
             void commitContent(viewInstance, text, false, 'none').then(resetEffectiveParent);
@@ -791,6 +1334,14 @@ export function TrailingInput(props: TrailingInputProps) {
               openTrailingTrigger(viewInstance, action.trigger, action.textOffset);
             } else {
               closeTrailingTrigger();
+              if (
+                propsRef.current.materializeOnInput
+                && !optionState.isOptionsField
+                && action.type === 'none'
+                && text.trim().length > 0
+              ) {
+                void commitContent(viewInstance, text, false, 'created', undefined, { materializeInput: true });
+              }
             }
           });
           return false;
@@ -798,44 +1349,96 @@ export function TrailingInput(props: TrailingInputProps) {
       },
       handleKeyDown(viewInstance, event) {
         if (isImeComposingEvent(event) || composingRef.current) return false;
-        const mod = event.metaKey || event.ctrlKey;
-
+        if (!committingRef.current && handleMaterializedHandoffKey(event)) return true;
         if (committingRef.current) {
+          if (event.key === 'Enter' && !event.shiftKey && materializingInputRef.current) {
+            event.preventDefault();
+            postCommitEnterRef.current = true;
+            const bufferedText = pendingBufferedText(viewInstance);
+            if (bufferedText.trim().length > 0) {
+              eagerBufferRef.current = bufferedText;
+            }
+            return true;
+          }
+          if (event.key === 'Tab' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+            event.preventDefault();
+            if (!event.shiftKey) {
+              postCommitIndentRef.current = true;
+              const bufferedText = pendingBufferedText(viewInstance);
+              if (bufferedText.trim().length > 0) {
+                eagerBufferRef.current = bufferedText;
+                if (!materializingInputRef.current) {
+                  commitEagerBufferAfterSettleRef.current = true;
+                  focusEagerBufferAfterSettleRef.current = true;
+                  refocusAfterProjectionRef.current = false;
+                }
+              }
+              if (!materializingInputRef.current) {
+                resetEditorContent(viewInstance);
+                eagerBufferVisibleRef.current = false;
+                updateHasContent(false);
+                setPendingCommittedVisual(false);
+              }
+            }
+            return true;
+          }
           if (isPlainPrintableKey(event)) {
             event.preventDefault();
-            eagerBufferRef.current += event.key;
+            appendCommittingBufferKey(viewInstance, event.key);
+            if (postCommitIndentRef.current) {
+              commitEagerBufferAfterSettleRef.current = true;
+              focusEagerBufferAfterSettleRef.current = true;
+              refocusAfterProjectionRef.current = false;
+            }
           } else if (event.key === 'Backspace') {
             event.preventDefault();
-            eagerBufferRef.current = eagerBufferRef.current.slice(0, -1);
+            removeCommittingBufferKey(viewInstance);
+            if (postCommitIndentRef.current) {
+              commitEagerBufferAfterSettleRef.current = eagerBufferRef.current.trim().length > 0;
+              focusEagerBufferAfterSettleRef.current = eagerBufferRef.current.trim().length > 0;
+              refocusAfterProjectionRef.current = false;
+            }
           }
           return true;
         }
 
-        if (mod && event.key.toLowerCase() === 'z') {
+        if (
+          propsRef.current.materializeOnInput
+          && !optionsStateRef.current.isOptionsField
+          && getEditorText(viewInstance).length === 0
+          && isPlainPrintableKey(event)
+          && !isTrailingTriggerKey(event.key)
+        ) {
           event.preventDefault();
-          if (event.shiftKey) propsRef.current.onRedo?.();
-          else propsRef.current.onUndo?.();
+          closeOptions();
+          closeTrailingTrigger();
+          void commitContent(viewInstance, event.key, false, 'created', undefined, {
+            materializeInput: true,
+            renderBufferDuringMaterialize: false,
+          });
           return true;
         }
 
-        if (mod && event.key.toLowerCase() === 'y') {
+        if (matchesShortcutEvent(event, 'trailing.redo')) {
           event.preventDefault();
           propsRef.current.onRedo?.();
           return true;
         }
 
-        if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+        if (matchesShortcutEvent(event, 'trailing.undo')) {
+          event.preventDefault();
+          propsRef.current.onUndo?.();
+          return true;
+        }
+
+        if (matchesShortcutEvent(event, 'trailing.checkbox')) {
           event.preventDefault();
           void createDoneNode(viewInstance, getEditorText(viewInstance));
           return true;
         }
 
         if (
-          event.ctrlKey
-          && !event.metaKey
-          && !event.altKey
-          && !event.shiftKey
-          && (event.key.toLowerCase() === 'i' || event.code === 'KeyI' || event.key === 'Tab')
+          matchesShortcutEvent(event, 'trailing.description')
           && getEditorText(viewInstance).trim().length > 0
         ) {
           event.preventDefault();
@@ -863,7 +1466,7 @@ export function TrailingInput(props: TrailingInputProps) {
             viewInstance,
             text,
             intent === 'create_content_and_continue' || intent === 'create_empty',
-            intent === 'create_empty' ? 'created' : 'trailing',
+            intent === 'create_content_and_continue' || intent === 'create_empty' ? 'created' : 'trailing',
           );
           return true;
         }
@@ -871,7 +1474,11 @@ export function TrailingInput(props: TrailingInputProps) {
         if (event.key === 'Tab') {
           event.preventDefault();
           if (event.shiftKey) outdentEffectiveParent();
-          else indentEffectiveParent();
+          else {
+            void commitTextAsIndentedChild(viewInstance).then((committed) => {
+              if (!committed) indentEffectiveParent();
+            });
+          }
           return true;
         }
 
@@ -966,6 +1573,7 @@ export function TrailingInput(props: TrailingInputProps) {
 
     viewRef.current = view;
     return () => {
+      document.removeEventListener('pointerdown', rememberPendingFocusTarget, true);
       view.destroy();
       viewRef.current = null;
     };
@@ -994,10 +1602,31 @@ export function TrailingInput(props: TrailingInputProps) {
       '--row-inline-indent': rowInlineIndent,
     } as CSSProperties)
     : undefined;
-  const suppressTrailingInput = trailingInputSuppression?.type === 'materialized'
-    && isEmptyTailNode(effectiveParentId, trailingInputSuppression.nodeId, props.index.byId);
+  const suppressTrailingInput = trailingInputSuppression?.type === 'materializing'
+    ? (
+      trailingInputSuppression.parentId === effectiveParentId
+      && hasNewTailNodeAfter(
+        trailingInputSuppression.parentId,
+        trailingInputSuppression.previousTailId,
+        props.index.byId,
+      )
+    )
+    : trailingInputSuppression?.type === 'materialized'
+      && (
+        !trailingInputSuppression.focusObserved
+        || isEmptyTailNode(effectiveParentId, trailingInputSuppression.nodeId, props.index.byId)
+      );
   const rowStyle: CSSProperties | undefined = suppressTrailingInput
-    ? { ...wrapStyle, display: 'none' }
+    ? {
+      ...wrapStyle,
+      minHeight: 0,
+      height: 0,
+      overflow: 'hidden',
+      opacity: 0,
+      pointerEvents: 'none',
+      paddingTop: 0,
+      paddingBottom: 0,
+    }
     : wrapStyle;
 
   return (
@@ -1070,7 +1699,7 @@ export function TrailingInput(props: TrailingInputProps) {
             ? (commandId) => executeTrailingSlashCommand(commandId, trailingTrigger)
             : undefined}
           enabledSlashCommandIds={['field', 'reference', 'heading', 'checkbox', 'command_palette']}
-          treeReferenceParentId={effectiveParentId}
+          treeReferenceParentId={treeReferenceParentId}
           existingTagIds={[]}
         />
       )}

@@ -28,7 +28,7 @@ import {
   rowFocusTarget,
   selectFocusState,
 } from '../focus/focusModel';
-import { buildOutlinerRows, shouldShowTrailingInput } from './row-model';
+import { buildOutlinerRows } from './row-model';
 
 interface UseOutlinerRowInteractionOptions {
   rowId: NodeId;
@@ -108,14 +108,11 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
   }, [childParentId, expanded, hasChildren, panelId, parentId, rowId, setUi]);
 
   const moveFocus = useCallback((direction: 1 | -1) => {
-    const scopeShowsTrailingInput = (scopeParentId: NodeId) => {
-      if (scopeParentId === rootId) return true;
-      return shouldShowTrailingInput(buildOutlinerRows(byId.get(scopeParentId), byId));
-    };
+    const scopeShowsTrailingInput = (scopeParentId: NodeId) => scopeParentId === rootId;
 
     if (direction === 1 && expanded) {
       const childRows = buildOutlinerRows(byId.get(childParentId), byId);
-      if (childRows.length === 0 && shouldShowTrailingInput(childRows)) {
+      if (childRows.length === 0) {
         setUi((prev) => requestFocusState(prev, focusTarget(childParentId, childParentId, panelId, 'trailing'), cursorEnd()));
         return;
       }
@@ -150,7 +147,18 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
       rowFocusTarget(nextId, nextNode?.parentId ?? null, panelId),
       direction === 1 ? cursorStart() : cursorEnd(),
     ));
-  }, [byId, childParentId, expanded, panelId, parentId, rootId, rowId, setUi, ui.expanded, ui.expandedHiddenFields]);
+  }, [
+    byId,
+    childParentId,
+    expanded,
+    panelId,
+    parentId,
+    rootId,
+    rowId,
+    setUi,
+    ui.expanded,
+    ui.expandedHiddenFields,
+  ]);
 
   const focusLastVisibleChild = useCallback(() => {
     const rows = flattenVisibleRows(childParentId, byId, ui.expanded, ui.expandedHiddenFields);

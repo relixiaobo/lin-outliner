@@ -1,4 +1,5 @@
 import { isImeComposingEvent } from './imeKeyboard';
+import { matchesShortcutEvent } from './shortcutRegistry';
 
 export type SelectionKeyboardAction =
   | 'navigate_up'
@@ -24,62 +25,61 @@ export type SelectionKeyboardAction =
 export function resolveSelectionKeyboardAction(event: KeyboardEvent): SelectionKeyboardAction | null {
   if (isImeComposingEvent(event)) return null;
 
-  const mod = event.metaKey || event.ctrlKey;
-  if (mod && event.shiftKey && !event.altKey && event.key === 'ArrowUp') {
+  if (matchesShortcutEvent(event, 'selection.move_up')) {
     return 'batch_move_up';
   }
-  if (mod && event.shiftKey && !event.altKey && event.key === 'ArrowDown') {
+  if (matchesShortcutEvent(event, 'selection.move_down')) {
     return 'batch_move_down';
   }
-  if (event.shiftKey && !mod && !event.altKey && event.key === 'ArrowUp') {
+  if (matchesShortcutEvent(event, 'selection.extend_up')) {
     return 'extend_up';
   }
-  if (event.shiftKey && !mod && !event.altKey && event.key === 'ArrowDown') {
+  if (matchesShortcutEvent(event, 'selection.extend_down')) {
     return 'extend_down';
   }
-  if (mod && event.key.toLowerCase() === 'a' && !event.shiftKey && !event.altKey) {
+  if (matchesShortcutEvent(event, 'selection.select_all')) {
     return 'select_all';
   }
-  if (mod && event.key.toLowerCase() === 'c' && !event.shiftKey && !event.altKey) {
+  if (matchesShortcutEvent(event, 'selection.copy')) {
     return 'batch_copy';
   }
-  if (mod && event.key.toLowerCase() === 'x' && !event.shiftKey && !event.altKey) {
+  if (matchesShortcutEvent(event, 'selection.cut')) {
     return 'batch_cut';
   }
-  if (mod && event.key.toLowerCase() === 'd' && event.shiftKey && !event.altKey) {
+  if (matchesShortcutEvent(event, 'selection.duplicate')) {
     return 'batch_duplicate';
   }
-  if (mod && event.key === 'Enter' && !event.shiftKey && !event.altKey) {
+  if (matchesShortcutEvent(event, 'selection.checkbox')) {
     return 'batch_checkbox';
   }
-  if (event.key === 'Backspace' || event.key === 'Delete') {
-    if (!mod && !event.shiftKey && !event.altKey) return 'batch_delete';
+  if (matchesShortcutEvent(event, 'selection.delete')) {
+    return 'batch_delete';
   }
-  if (event.key === 'Tab' && event.shiftKey && !mod && !event.altKey) {
+  if (matchesShortcutEvent(event, 'selection.outdent')) {
     return 'batch_outdent';
   }
-  if (event.key === 'Tab' && !event.shiftKey && !mod && !event.altKey) {
+  if (matchesShortcutEvent(event, 'selection.indent')) {
     return 'batch_indent';
   }
-  if (event.key === '#' && !mod && !event.altKey) {
+  if (matchesShortcutEvent(event, 'selection.apply_tag')) {
     return 'batch_apply_tag';
   }
-  if (event.key === 'ArrowUp' && !event.shiftKey && !mod && !event.altKey) {
+  if (matchesShortcutEvent(event, 'selection.navigate_up')) {
     return 'navigate_up';
   }
-  if (event.key === 'ArrowDown' && !event.shiftKey && !mod && !event.altKey) {
+  if (matchesShortcutEvent(event, 'selection.navigate_down')) {
     return 'navigate_down';
   }
-  if (event.key === 'ArrowRight' && !event.shiftKey && !mod && !event.altKey) {
+  if (matchesShortcutEvent(event, 'selection.convert_reference_right')) {
     return 'convert_reference_right';
   }
-  if (event.key === 'Enter' && !event.shiftKey && !mod && !event.altKey) {
+  if (matchesShortcutEvent(event, 'selection.enter_edit')) {
     return 'enter_edit';
   }
-  if (event.key === 'Escape') {
+  if (matchesShortcutEvent(event, 'selection.clear')) {
     return 'clear_selection';
   }
-  if (event.key.length === 1 && !mod && !event.altKey) {
+  if (matchesShortcutEvent(event, 'selection.type_char')) {
     return 'type_char';
   }
 

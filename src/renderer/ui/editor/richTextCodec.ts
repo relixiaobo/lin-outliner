@@ -3,6 +3,8 @@ import type { InlineRef, RichText, TextMark, TextMarkKind } from '../../api/type
 import { EMPTY_RICH_TEXT } from '../../api/types';
 import { pmSchema } from './pmSchema';
 
+export const INLINE_REF_TEXT_SENTINEL = '\u200B';
+
 const MARK_NAMES: Record<TextMarkKind, string> = {
   bold: 'bold',
   italic: 'italic',
@@ -26,6 +28,25 @@ function marksForRange(schema: Schema, marks: TextMark[], start: number, end: nu
     .filter((mark) => mark.start < end && mark.end > start)
     .map((mark) => markToPm(schema, mark))
     .filter((mark): mark is Mark => Boolean(mark));
+}
+
+function visibleText(text: string): string {
+  return text.replaceAll(INLINE_REF_TEXT_SENTINEL, '');
+}
+
+function visibleTextLength(text: string): number {
+  return visibleText(text).length;
+}
+
+function rawOffsetForVisibleOffset(text: string, targetOffset: number): number {
+  const target = Math.max(0, targetOffset);
+  let visibleOffset = 0;
+  for (let rawOffset = 0; rawOffset < text.length; rawOffset += 1) {
+    if (text[rawOffset] === INLINE_REF_TEXT_SENTINEL) continue;
+    if (visibleOffset === target) return rawOffset;
+    visibleOffset += 1;
+  }
+  return text.length;
 }
 
 function sortedBoundaries(text: string, marks: TextMark[], inlineRefs: InlineRef[]): number[] {
@@ -61,12 +82,18 @@ export function richTextToDoc(
   const pushRefs = (offset: number) => {
     const refs = refsByOffset.get(offset);
     if (!refs) return;
+    if (offset === 0) {
+      paragraphChildren.push(schema.text(INLINE_REF_TEXT_SENTINEL));
+    }
     for (const ref of refs) {
       paragraphChildren.push(schema.nodes.inlineReference.create({
         targetNodeId: ref.targetNodeId,
         displayName: ref.displayName ?? '',
         color: resolveInlineReferenceColor?.(ref.targetNodeId) ?? '',
       }));
+    }
+    if (offset === text.length) {
+      paragraphChildren.push(schema.text(INLINE_REF_TEXT_SENTINEL));
     }
   };
 
@@ -94,7 +121,9 @@ export function docToRichText(doc: PMNode): RichText {
   let offset = 0;
   paragraph.forEach((child) => {
     if (child.isText) {
-      const text = child.text ?? '';
+      const rawText = child.text ?? '';
+      const text = visibleText(rawText);
+      if (text.length === 0) return;
       textParts.push(text);
       for (const mark of child.marks) {
         const type = TEXT_MARK_KINDS.get(mark.type.name);
@@ -245,9 +274,11 @@ export function replaceRichTextRangeWithText(
   start: number,
   end: number,
   replacement: string,
+  options: { inlineRefBias?: 'before' | 'after' } = {},
 ): RichText {
   const next = deleteRichTextRange(content, start, end);
   const offset = Math.max(0, Math.min(next.text.length, start));
+  const keepBoundaryRefsBeforeText = start === end && options.inlineRefBias === 'after';
   return {
     text: `${next.text.slice(0, offset)}${replacement}${next.text.slice(offset)}`,
     marks: next.marks
@@ -260,7 +291,9 @@ export function replaceRichTextRangeWithText(
     inlineRefs: next.inlineRefs
       .map((ref) => ({
         ...ref,
-        offset: ref.offset >= offset ? ref.offset + replacement.length : ref.offset,
+        offset: ref.offset > offset || (ref.offset === offset && !keepBoundaryRefsBeforeText)
+          ? ref.offset + replacement.length
+          : ref.offset,
       })),
   };
 }
@@ -304,14 +337,15 @@ export function textOffsetToDocPos(
       return;
     }
     const textLength = child.text?.length ?? 0;
+    const visibleLength = visibleTextLength(child.text ?? '');
     if (
-      clampedOffset < textSeen + textLength
-      || (clampedOffset === textSeen + textLength && inlineRefBias === 'before')
+      clampedOffset < textSeen + visibleLength
+      || (clampedOffset === textSeen + visibleLength && inlineRefBias === 'before')
     ) {
-      found = childStart + (clampedOffset - textSeen);
+      found = childStart + rawOffsetForVisibleOffset(child.text ?? '', clampedOffset - textSeen);
       return;
     }
-    textSeen += textLength;
+    textSeen += visibleLength;
   });
 
   if (found !== null) return found;
@@ -322,7 +356,7 @@ export function textOffsetToDocPos(
     paragraph.forEach((child, childOffset) => {
       const childStart = 1 + childOffset;
       if (child.isText) {
-        textBeforeChild += child.text?.length ?? 0;
+        textBeforeChild += visibleTextLength(child.text ?? '');
         return;
       }
       if (textBeforeChild === clampedOffset && afterRefsAtOffset === null) {
@@ -352,12 +386,14 @@ export function docPosToTextOffset(doc: PMNode, docPos: number): number {
       return;
     }
     if (child.isText) {
-      const textLength = child.text?.length ?? 0;
+      const text = child.text ?? '';
+      const visibleLength = visibleTextLength(text);
       if (docPos <= childEnd) {
-        found = textSeen + Math.max(0, Math.min(textLength, docPos - childStart));
+        const rawOffset = Math.max(0, Math.min(text.length, docPos - childStart));
+        found = textSeen + visibleTextLength(text.slice(0, rawOffset));
         return;
       }
-      textSeen += textLength;
+      textSeen += visibleLength;
     }
   });
 
