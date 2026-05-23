@@ -247,6 +247,16 @@ test.describe('workspace layout resizing', () => {
     expect(narrowMetrics.rightGap).toBeGreaterThanOrEqual(-1);
   });
 
+  test('primary navigation opens the recents saved search', async ({ page }) => {
+    const recentsButton = page.getByRole('button', { name: 'Recents' });
+    await expect(recentsButton).toBeEnabled();
+
+    await recentsButton.click();
+
+    await expect(page.locator('.outline-panel-surface.active-panel .panel-title-editor')).toContainText('Recents');
+    await expect(page.locator('.sidebar-nav-item.active')).toContainText('Recents');
+  });
+
   test('workspace section renders the true root outline', async ({ page }) => {
     const rootButton = page.getByRole('button', { name: 'Open Root' });
     await expect(rootButton).toBeVisible();

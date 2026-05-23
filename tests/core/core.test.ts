@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { Core } from '../../src/core/core';
 import { runSearchNode } from '../../src/core/searchEngine';
 import {
+  RECENTS_ID,
   SCHEMA_ID,
   TAG_DAY_ID,
   TRASH_ID,
@@ -17,6 +18,28 @@ function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T) {
 }
 
 describe('Core', () => {
+  test('initializes Recents as a saved search node', () => {
+    const core = Core.new();
+    const projection = core.projection();
+    const state = core.state();
+    const recents = state.nodes[projection.recentsId];
+    expect(projection.recentsId).toBe(RECENTS_ID);
+    expect(recents).toMatchObject({
+      type: 'search',
+      parentId: projection.searchesId,
+      content: { text: 'Recents' },
+      sortField: 'updatedAt',
+      sortDirection: 'desc',
+    });
+    const condition = recents.children
+      .map((childId) => state.nodes[childId])
+      .find((node) => node?.type === 'queryCondition');
+    expect(condition).toMatchObject({
+      queryOp: 'EDITED_LAST_DAYS',
+      content: { text: '30' },
+    });
+  });
+
   test('creates and moves nodes', () => {
     const core = Core.new();
     const today = core.projection().todayId;

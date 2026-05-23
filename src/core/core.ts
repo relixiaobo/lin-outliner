@@ -17,8 +17,12 @@ import {
 import { buildDocumentProjection } from './projection';
 import { runSearchExpr, runSearchNode, searchNodeHasRules } from './searchEngine';
 import {
+  AREAS_ID,
   DAILY_NOTES_ID,
   LIBRARY_ID,
+  PROJECTS_ID,
+  RECENTS_ID,
+  RESOURCES_ID,
   SCHEMA_ID,
   SEARCHES_ID,
   SETTINGS_ID,
@@ -1326,6 +1330,10 @@ export class Core {
     node.type = 'search';
     node.content = plainText(normalizeSearchTitle(config.title));
     setOptional(node, 'viewMode', normalizeOptionalText(config.viewMode ?? null));
+    setOptional(node, 'sortField', normalizeOptionalText(config.sortField ?? null));
+    node.sortDirection = config.sortDirection === 'asc' || config.sortDirection === 'desc'
+      ? config.sortDirection
+      : undefined;
     delete node.queryOp;
     delete node.queryLogic;
     delete node.queryTagDefId;
@@ -1427,22 +1435,51 @@ export class Core {
   private ensureSystemNodesDirect() {
     const now = nowMs();
     this.ensureSystemNodeDirect(WORKSPACE_ID, undefined, undefined, 'Lin Outliner', true, now);
-    this.ensureSystemNodeDirect(LIBRARY_ID, undefined, WORKSPACE_ID, 'Library', true, now);
     this.ensureSystemNodeDirect(DAILY_NOTES_ID, undefined, WORKSPACE_ID, 'Daily notes', true, now);
+    this.ensureSystemNodeDirect(PROJECTS_ID, undefined, WORKSPACE_ID, 'Projects', true, now);
+    this.ensureSystemNodeDirect(AREAS_ID, undefined, WORKSPACE_ID, 'Areas', true, now);
+    this.ensureSystemNodeDirect(RESOURCES_ID, undefined, WORKSPACE_ID, 'Resources', true, now);
+    this.ensureSystemNodeDirect(LIBRARY_ID, undefined, WORKSPACE_ID, 'Library', true, now);
     this.ensureSystemNodeDirect(SCHEMA_ID, undefined, WORKSPACE_ID, 'Schema', true, now);
-    this.ensureSystemNodeDirect(SEARCHES_ID, undefined, WORKSPACE_ID, 'Searches', true, now);
+    this.ensureSystemNodeDirect(SEARCHES_ID, undefined, WORKSPACE_ID, 'Saved searches', true, now);
+    this.ensureSystemNodeDirect(RECENTS_ID, 'search', SEARCHES_ID, 'Recents', true, now);
     this.ensureSystemNodeDirect(TRASH_ID, undefined, WORKSPACE_ID, 'Trash', true, now);
     this.ensureSystemNodeDirect(SETTINGS_ID, undefined, WORKSPACE_ID, 'Settings', true, now);
     this.ensureSystemNodeDirect(TAG_DAY_ID, 'tagDef', SCHEMA_ID, 'day', true, now);
     this.ensureSystemNodeDirect(TAG_WEEK_ID, 'tagDef', SCHEMA_ID, 'week', true, now);
     this.ensureSystemNodeDirect(TAG_YEAR_ID, 'tagDef', SCHEMA_ID, 'year', true, now);
-    [LIBRARY_ID, DAILY_NOTES_ID, SCHEMA_ID, SEARCHES_ID, TRASH_ID, SETTINGS_ID].forEach((id, index) => {
+    [DAILY_NOTES_ID, PROJECTS_ID, AREAS_ID, RESOURCES_ID, LIBRARY_ID, SEARCHES_ID, TRASH_ID].forEach((id, index) => {
       this.loro.moveNode(id, WORKSPACE_ID, index);
     });
+    this.loro.moveNode(RECENTS_ID, SEARCHES_ID, 0);
     [TAG_DAY_ID, TAG_WEEK_ID, TAG_YEAR_ID].forEach((id, index) => {
       this.loro.moveNode(id, SCHEMA_ID, index);
     });
+    this.ensureRecentsSearchDirect();
     this.moveLegacyWorkspaceNodesToLibraryDirect();
+  }
+
+  private ensureRecentsSearchDirect() {
+    const state = this.snapshot();
+    const recents = state.nodes[RECENTS_ID];
+    if (!recents) return;
+    const queryCondition = recents.children
+      .map((childId) => state.nodes[childId])
+      .find((node) => node?.type === 'queryCondition');
+    const alreadyConfigured = recents.type === 'search'
+      && recents.content.text === 'Recents'
+      && recents.sortField === 'updatedAt'
+      && recents.sortDirection === 'desc'
+      && queryCondition?.queryOp === 'EDITED_LAST_DAYS'
+      && queryCondition.content.text === '30';
+    if (alreadyConfigured) return;
+    this.writeSearchNodeConfigDirect(RECENTS_ID, {
+      title: 'Recents',
+      viewMode: 'list',
+      sortField: 'updatedAt',
+      sortDirection: 'desc',
+      query: { kind: 'rule', op: 'EDITED_LAST_DAYS', text: '30' },
+    });
   }
 
   private moveLegacyWorkspaceNodesToLibraryDirect() {
@@ -1452,8 +1489,12 @@ export class Core {
     const systemRootIds = new Set([
       LIBRARY_ID,
       DAILY_NOTES_ID,
+      PROJECTS_ID,
+      AREAS_ID,
+      RESOURCES_ID,
       SCHEMA_ID,
       SEARCHES_ID,
+      RECENTS_ID,
       TRASH_ID,
       SETTINGS_ID,
     ]);
@@ -2206,6 +2247,9 @@ function isSystemId(nodeId: string) {
   return [
     WORKSPACE_ID,
     DAILY_NOTES_ID,
+    PROJECTS_ID,
+    AREAS_ID,
+    RESOURCES_ID,
     SCHEMA_ID,
     SEARCHES_ID,
     TRASH_ID,

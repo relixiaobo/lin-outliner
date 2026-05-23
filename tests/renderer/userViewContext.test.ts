@@ -30,6 +30,7 @@ function projection(nodes: NodeProjection[]): DocumentProjection {
     dailyNotesId: 'daily-notes',
     schemaId: 'schema',
     searchesId: 'searches',
+    recentsId: 'recents',
     trashId: 'trash',
     settingsId: 'settings',
     todayId: 'today',

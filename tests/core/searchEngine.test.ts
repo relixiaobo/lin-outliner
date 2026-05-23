@@ -85,6 +85,29 @@ describe('core search engine', () => {
     expect(anyTagged.ok ? anyTagged.hits.map((hit) => hit.nodeId) : []).not.toContain(other);
   });
 
+  test('sorts saved search hits by explicit timestamp sort settings', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const older = mustFocus(core.createNode(today, null, 'match older'));
+    const newer = mustFocus(core.createNode(today, null, 'match newer'));
+    const searchId = mustFocus(core.createSearchNode(core.projection().searchesId, null, {
+      title: 'Recently edited',
+      sortField: 'updatedAt',
+      sortDirection: 'desc',
+      query: { kind: 'rule', op: 'STRING_MATCH', text: 'match' },
+    }));
+    const state = core.state();
+    state.nodes[older]!.updatedAt = 1;
+    state.nodes[newer]!.updatedAt = 2;
+
+    const descending = runSearchNode(state, searchId);
+    expect(descending.ok ? descending.hits.map((hit) => hit.nodeId) : []).toEqual([newer, older]);
+
+    state.nodes[searchId]!.sortDirection = 'asc';
+    const ascending = runSearchNode(state, searchId);
+    expect(ascending.ok ? ascending.hits.map((hit) => hit.nodeId) : []).toEqual([older, newer]);
+  });
+
   test('converts nested saved search conditions to QueryExpr', () => {
     const core = Core.new();
     const searchId = mustFocus(core.createNode(core.projection().searchesId, null, 'Search'));

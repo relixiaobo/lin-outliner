@@ -1,8 +1,12 @@
 import { LoroDoc, LoroList, LoroText, UndoManager, type LoroMap, type LoroTree, type LoroTreeNode, type TreeID, type Value } from 'loro-crdt';
 import { CoreError } from './errors';
 import {
+  AREAS_ID,
   DAILY_NOTES_ID,
   LIBRARY_ID,
+  PROJECTS_ID,
+  RECENTS_ID,
+  RESOURCES_ID,
   SCHEMA_ID,
   SEARCHES_ID,
   SETTINGS_ID,
@@ -437,18 +441,23 @@ function ensureSystemNodes(state: DocumentState) {
   state.workspaceId = WORKSPACE_ID;
   state.rootId = WORKSPACE_ID;
   ensureNode(state, WORKSPACE_ID, undefined, undefined, 'Lin Outliner', true, now);
-  ensureNode(state, LIBRARY_ID, undefined, WORKSPACE_ID, 'Library', true, now);
   ensureNode(state, DAILY_NOTES_ID, undefined, WORKSPACE_ID, 'Daily notes', true, now);
+  ensureNode(state, PROJECTS_ID, undefined, WORKSPACE_ID, 'Projects', true, now);
+  ensureNode(state, AREAS_ID, undefined, WORKSPACE_ID, 'Areas', true, now);
+  ensureNode(state, RESOURCES_ID, undefined, WORKSPACE_ID, 'Resources', true, now);
+  ensureNode(state, LIBRARY_ID, undefined, WORKSPACE_ID, 'Library', true, now);
   ensureNode(state, SCHEMA_ID, undefined, WORKSPACE_ID, 'Schema', true, now);
-  ensureNode(state, SEARCHES_ID, undefined, WORKSPACE_ID, 'Searches', true, now);
+  ensureNode(state, SEARCHES_ID, undefined, WORKSPACE_ID, 'Saved searches', true, now);
+  ensureNode(state, RECENTS_ID, 'search', SEARCHES_ID, 'Recents', true, now);
   ensureNode(state, TRASH_ID, undefined, WORKSPACE_ID, 'Trash', true, now);
   ensureNode(state, SETTINGS_ID, undefined, WORKSPACE_ID, 'Settings', true, now);
   ensureNode(state, TAG_DAY_ID, 'tagDef', SCHEMA_ID, 'day', true, now);
   ensureNode(state, TAG_WEEK_ID, 'tagDef', SCHEMA_ID, 'week', true, now);
   ensureNode(state, TAG_YEAR_ID, 'tagDef', SCHEMA_ID, 'year', true, now);
-  for (const id of [LIBRARY_ID, DAILY_NOTES_ID, SCHEMA_ID, SEARCHES_ID, TRASH_ID, SETTINGS_ID]) {
+  for (const id of [DAILY_NOTES_ID, PROJECTS_ID, AREAS_ID, RESOURCES_ID, LIBRARY_ID, SCHEMA_ID, SEARCHES_ID, TRASH_ID, SETTINGS_ID]) {
     attachChildOnce(state, WORKSPACE_ID, id, undefined);
   }
+  attachChildOnce(state, SEARCHES_ID, RECENTS_ID, 0);
   for (const id of [TAG_DAY_ID, TAG_WEEK_ID, TAG_YEAR_ID]) {
     attachChildOnce(state, SCHEMA_ID, id, undefined);
   }
@@ -462,8 +471,12 @@ function moveLegacyWorkspaceNodesToLibrary(state: DocumentState) {
   const systemRootIds = new Set([
     LIBRARY_ID,
     DAILY_NOTES_ID,
+    PROJECTS_ID,
+    AREAS_ID,
+    RESOURCES_ID,
     SCHEMA_ID,
     SEARCHES_ID,
+    RECENTS_ID,
     TRASH_ID,
     SETTINGS_ID,
   ]);

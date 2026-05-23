@@ -115,7 +115,7 @@ export function CommandPalette(props: CommandPaletteProps) {
     },
     {
       id: props.projection.searchesId,
-      label: 'Searches',
+      label: 'Saved searches',
       icon: SearchIcon,
       kind: 'navigate',
       typeLabel: 'Navigate',

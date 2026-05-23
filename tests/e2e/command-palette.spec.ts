@@ -7,7 +7,7 @@ test.describe('command palette', () => {
   });
 
   test('uses dialog focus behavior and restores focus on close', async ({ page }) => {
-    const trigger = page.locator('.sidebar-primary-nav').getByRole('button', { name: 'Search', exact: true });
+    const trigger = page.locator('.sidebar-primary-nav').getByRole('button', { name: 'Library', exact: true });
     await trigger.focus();
     await page.keyboard.press('Meta+K');
 

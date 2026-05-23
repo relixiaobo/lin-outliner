@@ -294,6 +294,11 @@ and non-goals; product behavior stays with the owning surface.
 - Top chrome, sidebar dock, workspace canvas, and agent dock use `--deck-bg`.
 - Shell gaps and insets use `--layout-gap`.
 - Sidebar default width is `196px`; range is `152px` to `280px`.
+- Sidebar rows use one quiet navigation grammar: `24px` row height,
+  `6px` radius, tokenized icon slots, neutral selected fill, and no bespoke
+  high-contrast active treatment. Workspace root is a clickable row with a
+  compact avatar; root children keep the chevron before the icon/text slot and
+  use lighter chevron color.
 - Agent dock default width is `344px`; range is `280px` to `520px`.
 - Top chrome controls are icon-first and compact.
 - macOS traffic-light controls share the top chrome control centerline and use

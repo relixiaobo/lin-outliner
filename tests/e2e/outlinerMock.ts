@@ -5,8 +5,12 @@ export const ids = {
   root: 'root',
   library: 'library',
   daily: 'daily',
+  projects: 'projects',
+  areas: 'areas',
+  resources: 'resources',
   schema: 'schema',
   searches: 'searches',
+  recents: 'recents',
   trash: 'trash',
   settings: 'settings',
   today: 'today',
@@ -86,6 +90,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       toolbarVisible: boolean;
       filterValues: string[];
       targetId?: string;
+      sortField?: string;
+      sortDirection?: string;
     };
     type CreateNodeTree = {
       content: RichText;
@@ -446,6 +452,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       dailyNotesId: ids.daily,
       schemaId: ids.schema,
       searchesId: ids.searches,
+      recentsId: ids.recents,
       trashId: ids.trash,
       settingsId: ids.settings,
       todayId: ids.today,
@@ -682,10 +689,20 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 
     makeNode(ids.workspace, 'Workspace', { locked: true });
     makeNode(ids.root, 'Root', { parentId: ids.workspace, locked: true });
-    makeNode(ids.library, 'Library', { parentId: ids.root, locked: true });
     makeNode(ids.daily, 'Daily Notes', { parentId: ids.root, locked: true });
+    makeNode(ids.projects, 'Projects', { parentId: ids.root, locked: true });
+    makeNode(ids.areas, 'Areas', { parentId: ids.root, locked: true });
+    makeNode(ids.resources, 'Resources', { parentId: ids.root, locked: true });
+    makeNode(ids.library, 'Library', { parentId: ids.root, locked: true });
     makeNode(ids.schema, 'Schema', { parentId: ids.root, locked: true });
-    makeNode(ids.searches, 'Searches', { parentId: ids.root, locked: true });
+    makeNode(ids.searches, 'Saved searches', { parentId: ids.root, locked: true });
+    makeNode(ids.recents, 'Recents', {
+      type: 'search',
+      parentId: ids.searches,
+      locked: true,
+      sortField: 'updatedAt',
+      sortDirection: 'desc',
+    });
     makeNode(ids.trash, 'Trash', { parentId: ids.root, locked: true });
     makeNode(ids.settings, 'Settings', { parentId: ids.root, locked: true });
     makeNode(ids.dayTag, 'day', { type: 'tagDef', parentId: ids.schema, color: 'gray' });
@@ -735,7 +752,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     makeNode(ids.beta, 'Beta', { parentId: ids.today, showCheckbox: true });
     makeNode(ids.gamma, 'Gamma', { parentId: ids.today, showCheckbox: true });
     appendChild(ids.workspace, ids.root);
-    for (const childId of [ids.library, ids.daily, ids.schema, ids.searches, ids.trash, ids.settings]) appendChild(ids.root, childId);
+    for (const childId of [ids.daily, ids.projects, ids.areas, ids.resources, ids.library, ids.schema, ids.searches, ids.trash, ids.settings]) appendChild(ids.root, childId);
+    appendChild(ids.searches, ids.recents);
     appendChild(ids.schema, ids.dayTag);
     appendChild(ids.schema, ids.projectTag);
     appendChild(ids.schema, ids.statusField);

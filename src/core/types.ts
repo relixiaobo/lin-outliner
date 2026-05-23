@@ -5,8 +5,12 @@ export type NodeId = string;
 export const WORKSPACE_ID = 'workspace';
 export const LIBRARY_ID = 'library';
 export const DAILY_NOTES_ID = 'daily-notes';
+export const PROJECTS_ID = 'projects';
+export const AREAS_ID = 'areas';
+export const RESOURCES_ID = 'resources';
 export const SCHEMA_ID = 'schema';
 export const SEARCHES_ID = 'searches';
+export const RECENTS_ID = 'recents';
 export const TRASH_ID = 'trash';
 export const SETTINGS_ID = 'settings';
 export const TAG_DAY_ID = 'tag:day';
@@ -172,6 +176,8 @@ export type SearchQueryExpr = SearchQueryGroup | SearchQueryRule;
 export interface SearchNodeConfig {
   title: string;
   viewMode?: string | null;
+  sortField?: string | null;
+  sortDirection?: SortDirection | null;
   query: SearchQueryExpr;
 }
 
@@ -298,6 +304,7 @@ export interface DocumentProjection {
   dailyNotesId: NodeId;
   schemaId: NodeId;
   searchesId: NodeId;
+  recentsId: NodeId;
   trashId: NodeId;
   settingsId: NodeId;
   todayId: NodeId;

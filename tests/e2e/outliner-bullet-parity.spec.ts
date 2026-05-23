@@ -116,7 +116,7 @@ test.describe('outliner bullet parity', () => {
   });
 
   test('tag definition bullet uses nodex hash glyph', async ({ page }) => {
-    await page.getByRole('button', { name: 'Supertags' }).click();
+    await page.getByRole('button', { name: 'Schema' }).click();
 
     const tagBullet = row(page, ids.projectTag).locator('.row-bullet-shape.tag').first();
     await expect(tagBullet.locator('.row-bullet-tag-glyph')).toHaveText('#');

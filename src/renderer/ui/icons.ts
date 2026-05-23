@@ -64,6 +64,7 @@ export {
   PanelLeftClose as SidebarCollapseIcon,
   PanelLeftOpen as SidebarExpandIcon,
   Pencil as PencilIcon,
+  Pin as PinIcon,
   Plus as AddIcon,
   Redo2 as RedoIcon,
   RefreshCw as RefreshIcon,

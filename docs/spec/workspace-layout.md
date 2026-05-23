@@ -112,7 +112,18 @@ outliner through tools, using the active tab as default context.
 Sidebar dock:
 
 The cross-tab navigation surface on the left side. It exposes global entry
-points such as Today, Search, Supertags, Library, Recents, and workspace roots.
+points such as Today, Library, Recents, and Schema, followed by pinned nodes
+and the current workspace root outline. Recents is a saved search node rather
+than bespoke sidebar logic; the root outline renders real user-facing root
+children such as Daily notes, Projects, Areas, Resources, Library, Saved
+searches, and Trash. The current workspace root itself is a clickable row with
+a compact avatar. Sidebar rows share one content axis for text and icons; tree
+chevrons sit in the auxiliary gutter before that axis, so they never push the
+main content inward. The content axis keeps a generous inset from the sidebar
+edge, while chevrons keep a small safety inset in the gutter. Sidebar rows use
+a slightly roomier navigation rhythm than dense controls, with a 28px row
+height and 16px icon slots. Chevrons stay low-contrast, with neutral
+hover/active fill on the row.
 
 ## Visual Layering
 

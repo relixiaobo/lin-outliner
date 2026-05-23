@@ -1,9 +1,14 @@
 import {
+  AREAS_ID,
   DAILY_NOTES_ID,
   LIBRARY_ID,
+  PROJECTS_ID,
+  RECENTS_ID,
+  RESOURCES_ID,
   SCHEMA_ID,
   SEARCHES_ID,
   SETTINGS_ID,
+  type SortDirection,
   TAG_DAY_ID,
   TAG_WEEK_ID,
   TAG_YEAR_ID,
@@ -40,8 +45,12 @@ const SYSTEM_IDS = new Set([
   WORKSPACE_ID,
   LIBRARY_ID,
   DAILY_NOTES_ID,
+  PROJECTS_ID,
+  AREAS_ID,
+  RESOURCES_ID,
   SCHEMA_ID,
   SEARCHES_ID,
+  RECENTS_ID,
   TRASH_ID,
   SETTINGS_ID,
   TAG_DAY_ID,
@@ -201,8 +210,26 @@ export function runSearchExpr(
     if (evaluation.match) scored.push({ nodeId: node.id, score: evaluation.score });
   }
 
-  const sorted = scored.sort((left, right) => right.score - left.score || left.nodeId.localeCompare(right.nodeId));
+  const sorted = sortSearchHits(scored, evalIndex.nodes, contextSearchNode);
   return { ok: true, hits: typeof options.limit === 'number' ? sorted.slice(0, options.limit) : sorted };
+}
+
+function sortSearchHits(hits: SearchHit[], nodes: Map<NodeId, SearchNode>, searchNode: SearchNode): SearchHit[] {
+  const direction: SortDirection = searchNode.sortDirection === 'asc' ? 'asc' : 'desc';
+  const factor = direction === 'asc' ? 1 : -1;
+  if (searchNode.sortField === 'createdAt' || searchNode.sortField === 'updatedAt') {
+    const field = searchNode.sortField;
+    return hits.sort((left, right) => {
+      const leftNode = nodes.get(left.nodeId);
+      const rightNode = nodes.get(right.nodeId);
+      const leftValue = leftNode?.[field] ?? 0;
+      const rightValue = rightNode?.[field] ?? 0;
+      return (leftValue - rightValue) * factor
+        || right.score - left.score
+        || left.nodeId.localeCompare(right.nodeId);
+    });
+  }
+  return hits.sort((left, right) => right.score - left.score || left.nodeId.localeCompare(right.nodeId));
 }
 
 export function runSearchNode(

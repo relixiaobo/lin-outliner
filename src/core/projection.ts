@@ -1,6 +1,7 @@
 import {
   DAILY_NOTES_ID,
   LIBRARY_ID,
+  RECENTS_ID,
   SCHEMA_ID,
   SEARCHES_ID,
   SETTINGS_ID,
@@ -19,6 +20,7 @@ export function buildDocumentProjection(state: DocumentState, todayId: string): 
     dailyNotesId: DAILY_NOTES_ID,
     schemaId: SCHEMA_ID,
     searchesId: SEARCHES_ID,
+    recentsId: RECENTS_ID,
     trashId: TRASH_ID,
     settingsId: SETTINGS_ID,
     todayId,
