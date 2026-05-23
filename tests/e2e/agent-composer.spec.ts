@@ -57,6 +57,34 @@ test.describe('agent composer controls', () => {
     ]);
   });
 
+  test('shows compact boundaries with expandable summaries', async ({ page }) => {
+    await emitAgentProjection(page, 'mock-agent-session', {
+      sessionTitle: 'Agent System',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      conversation: [{
+        kind: 'compaction',
+        compaction: {
+          id: 'compact-1',
+          messageId: 'compact-root',
+          summary: 'Primary Request and Intent\n\nContinue implementing the compact UI boundary.',
+          compactedThroughMessageId: 'assistant-before-compact',
+          trigger: 'manual',
+          createdAt: 1_800_000_000_000,
+        },
+      }],
+    });
+
+    const compactToggle = page.getByRole('button', { name: /Conversation compacted/ });
+    await expect(compactToggle).toBeVisible();
+    await expect(page.locator('.agent-user-bubble', { hasText: 'Conversation compacted.' })).toHaveCount(0);
+    await expect(page.getByText('Primary Request and Intent')).toHaveCount(0);
+
+    await compactToggle.click();
+
+    await expect(page.getByText('Primary Request and Intent')).toBeVisible();
+    await expect(page.getByText('Continue implementing the compact UI boundary.')).toBeVisible();
+  });
+
   test('uses shared menu semantics for model and reasoning controls', async ({ page }) => {
     const modelButton = page.getByRole('button', { name: 'Select model' });
     await expect(modelButton).toHaveAttribute('aria-expanded', 'false');

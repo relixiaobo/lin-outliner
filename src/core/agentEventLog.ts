@@ -64,6 +64,7 @@ export type AgentContentDelta = AgentTextDelta;
 export type AgentRunStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 export type AgentMessageStatus = 'completed' | 'streaming' | 'failed';
 export type AgentSubagentRunStatus = 'running' | 'completed' | 'failed' | 'stopped';
+export type AgentCompactionTrigger = 'manual' | 'auto' | 'reactive';
 
 export type AgentEventType =
   | 'session.created'
@@ -319,8 +320,10 @@ export interface SubagentRunUpdatedEvent extends AgentEventBase {
 
 export interface CompactionCompletedEvent extends AgentEventBase {
   type: 'compaction.completed';
+  messageId: string;
   summary: string;
   compactedThroughMessageId: string;
+  trigger: AgentCompactionTrigger;
   payloadRef?: AgentPayloadRef;
 }
 
@@ -441,6 +444,16 @@ export interface AgentSubagentRunRecord {
   parentToolCallId?: string;
 }
 
+export interface AgentCompactionRecord {
+  id: string;
+  messageId: string;
+  summary: string;
+  compactedThroughMessageId: string;
+  trigger: AgentCompactionTrigger;
+  createdAt: number;
+  payloadRef?: AgentPayloadRef;
+}
+
 export interface AgentEventReplayState {
   session: AgentSessionRecord | null;
   latestSeq: number;
@@ -454,6 +467,7 @@ export interface AgentEventReplayState {
   derivedPayloadsBySourceId: Record<string, AgentPayloadRef[]>;
   runs: Record<string, AgentRunRecord>;
   subagents: Record<string, AgentSubagentRunRecord>;
+  compactionsByMessageId: Record<string, AgentCompactionRecord>;
 }
 
 export interface AgentMessageBranchState {
@@ -481,6 +495,7 @@ export function createEmptyAgentEventReplayState(): AgentEventReplayState {
     derivedPayloadsBySourceId: {},
     runs: {},
     subagents: {},
+    compactionsByMessageId: {},
   };
 }
 
@@ -801,6 +816,18 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
     case 'tool_call.started':
       applyToolCallStarted(state, event);
       return;
+    case 'compaction.completed':
+      state.compactionsByMessageId[event.messageId] = {
+        id: event.eventId,
+        messageId: event.messageId,
+        summary: event.summary,
+        compactedThroughMessageId: event.compactedThroughMessageId,
+        trigger: event.trigger,
+        createdAt: event.createdAt,
+        payloadRef: event.payloadRef,
+      };
+      if (event.payloadRef) state.payloads[event.payloadRef.id] = event.payloadRef;
+      return;
     case 'thinking.delta':
     case 'tool_call.delta':
     case 'tool_call.completed':
@@ -809,7 +836,6 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
     case 'approval.resolved':
     case 'follow_up.queued':
     case 'follow_up.applied':
-    case 'compaction.completed':
     case 'checkpoint.created':
     case 'metric.recorded':
       return;

@@ -242,8 +242,8 @@ export class AgentRuntime {
       appendSessionEvents: async (sessionId, session, inputs) => {
         await this.appendSessionEvents(sessionId, session, inputs);
       },
-      appendCompactionRootEvent: (sessionId, session, prompt, summary, compactedThroughMessageId, preservedMessages) => (
-        this.appendCompactionRootEvent(sessionId, session, prompt, summary, compactedThroughMessageId, preservedMessages)
+      appendCompactionRootEvent: (sessionId, session, prompt, summary, compactedThroughMessageId, trigger, preservedMessages) => (
+        this.appendCompactionRootEvent(sessionId, session, prompt, summary, compactedThroughMessageId, trigger, preservedMessages)
       ),
       persistToolOutputPayload: (sessionId, toolCallId, toolName, text) => (
         this.persistToolOutputPayload(sessionId, toolCallId, toolName, text)
@@ -1539,6 +1539,7 @@ export class AgentRuntime {
     prompt: UserMessage,
     summary: string,
     compactedThroughMessageId: string,
+    trigger: 'manual' | 'auto' | 'reactive',
     preservedMessages: readonly AgentMessage[] = [],
   ) {
     const messageId = this.createMessageId('user');
@@ -1555,8 +1556,10 @@ export class AgentRuntime {
       {
         type: 'compaction.completed',
         actor: systemActor(),
+        messageId,
         summary,
         compactedThroughMessageId,
+        trigger,
       },
       {
         type: 'user_message.created',

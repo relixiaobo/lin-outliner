@@ -1,19 +1,28 @@
 import {
   getAgentEventActivePath,
   getAgentEventMessageBranches,
+  type AgentCompactionRecord,
+  type AgentCompactionTrigger,
   type AgentEventMessageRecord,
   type AgentEventReplayState,
   type AgentPersistedContent,
   type AgentSubagentRunRecord,
 } from './agentEventLog';
 
-export type AgentRenderRowKind = 'message' | 'tool_result';
+export type AgentRenderRowKind = 'message' | 'tool_result' | 'compaction';
 
-export interface AgentRenderRow {
-  id: string;
-  kind: AgentRenderRowKind;
-  messageId: string;
-}
+export type AgentRenderRow =
+  | {
+      id: string;
+      kind: 'message' | 'tool_result';
+      messageId: string;
+    }
+  | {
+      id: string;
+      kind: 'compaction';
+      messageId: string;
+      compactionId: string;
+    };
 
 export interface AgentRenderBranchState {
   ids: string[];
@@ -65,9 +74,19 @@ export interface AgentRenderSubagentEntity {
   parentToolCallId?: string;
 }
 
+export interface AgentRenderCompactionEntity {
+  id: string;
+  messageId: string;
+  summary: string;
+  compactedThroughMessageId: string;
+  trigger: AgentCompactionTrigger;
+  createdAt: number;
+}
+
 export interface AgentRenderEntities {
   messages: Record<string, AgentRenderMessageEntity>;
   subagents: Record<string, AgentRenderSubagentEntity>;
+  compactions: Record<string, AgentRenderCompactionEntity>;
 }
 
 export interface AgentRenderProjection {
@@ -105,11 +124,24 @@ export function buildAgentRenderProjection(
   }
 
   const activePath = getAgentEventActivePath(state);
-  const entities: AgentRenderEntities = { messages: {}, subagents: {} };
+  const entities: AgentRenderEntities = { messages: {}, subagents: {}, compactions: {} };
   const rows: AgentRenderRow[] = [];
   let streaming: AgentStreamingRenderState | null = null;
 
   for (const message of activePath) {
+    const compaction = compactionForMessage(state, message);
+    if (compaction) {
+      entities.messages[message.id] = toRenderMessageEntity(state, message);
+      entities.compactions[compaction.id] = toRenderCompactionEntity(compaction);
+      rows.push({
+        id: `compaction:${message.id}`,
+        kind: 'compaction',
+        messageId: message.id,
+        compactionId: compaction.id,
+      });
+      continue;
+    }
+
     const rowId = `${message.role}:${message.id}`;
     rows.push({
       id: rowId,
@@ -179,6 +211,25 @@ function toRenderMessageEntity(
 
 function toRenderSubagentEntity(run: AgentSubagentRunRecord): AgentRenderSubagentEntity {
   return { ...run };
+}
+
+function toRenderCompactionEntity(record: AgentCompactionRecord): AgentRenderCompactionEntity {
+  return {
+    id: record.id,
+    messageId: record.messageId,
+    summary: record.summary,
+    compactedThroughMessageId: record.compactedThroughMessageId,
+    trigger: record.trigger,
+    createdAt: record.createdAt,
+  };
+}
+
+function compactionForMessage(
+  state: AgentEventReplayState,
+  message: AgentEventMessageRecord,
+): AgentCompactionRecord | null {
+  if (message.role !== 'user') return null;
+  return state.compactionsByMessageId[message.id] ?? null;
 }
 
 function textFromContent(content: AgentPersistedContent[]): string {

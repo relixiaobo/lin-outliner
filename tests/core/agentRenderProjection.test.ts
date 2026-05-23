@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { replayAgentEvents, type AgentActor, type AgentEvent, type AgentPayloadRef } from '../../src/core/agentEventLog';
 import { buildAgentRenderProjection } from '../../src/core/agentRenderProjection';
+import { systemReminder } from '../../src/core/agentAttachments';
 
 const sessionId = 'session-render';
 const systemActor: AgentActor = { type: 'system' };
@@ -89,6 +90,42 @@ describe('agent render projection', () => {
     expect(projection.entities.messages['user-edited']?.branches).toEqual({
       ids: ['user-original', 'user-edited'],
       currentIndex: 1,
+    });
+  });
+
+  test('projects compaction as a boundary row instead of a user bubble', () => {
+    const state = replayAgentEvents([
+      { ...base(1, 'session.created'), title: 'Compaction' },
+      {
+        ...base(2, 'compaction.completed'),
+        messageId: 'compact-root',
+        summary: 'Kept the important implementation details.',
+        compactedThroughMessageId: 'assistant-before-compact',
+        trigger: 'manual',
+      },
+      {
+        ...base(3, 'user_message.created', systemActor),
+        messageId: 'compact-root',
+        parentMessageId: null,
+        content: [
+          { type: 'text', text: 'Conversation compacted.' },
+          { type: 'text', text: systemReminder('Kept the important implementation details.') },
+        ],
+      },
+    ]);
+
+    const projection = buildAgentRenderProjection(state, { revision: 1 });
+
+    expect(projection.rows).toEqual([{
+      id: 'compaction:compact-root',
+      kind: 'compaction',
+      messageId: 'compact-root',
+      compactionId: 'event-2',
+    }]);
+    expect(projection.entities.compactions['event-2']).toMatchObject({
+      messageId: 'compact-root',
+      summary: 'Kept the important implementation details.',
+      trigger: 'manual',
     });
   });
 

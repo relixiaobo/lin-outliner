@@ -790,7 +790,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               errorMessage: null,
               rows: [],
               subagentRunIds: [],
-              entities: { messages: {}, subagents: {} },
+              entities: { messages: {}, subagents: {}, compactions: {} },
               streaming: null,
             },
           }) as T;
@@ -1440,7 +1440,8 @@ export async function emitAgentEvent(page: Page, event: unknown) {
 
 export async function emitAgentProjection(page: Page, sessionId: string, state: Record<string, any>, revision = 1) {
   const entities: Record<string, any> = {};
-  const rows: Array<{ id: string; kind: string; messageId: string }> = [];
+  const compactions: Record<string, any> = {};
+  const rows: Array<{ id: string; kind: string; messageId: string; compactionId?: string }> = [];
 
   const persistedContent = (message: any) => {
     const content = typeof message.content === 'string'
@@ -1463,6 +1464,31 @@ export async function emitAgentProjection(page: Page, sessionId: string, state: 
     ?? (Array.isArray(rawSubagents) ? rawSubagents.map((subagent: any) => subagent.id) : Object.keys(subagents));
 
   for (const entry of state.conversation ?? []) {
+    if (entry.kind === 'compaction') {
+      const compaction = entry.compaction;
+      const messageId = compaction.messageId ?? entry.nodeId ?? `compact-${compaction.id}`;
+      rows.push({ id: `compaction:${messageId}`, kind: 'compaction', messageId, compactionId: compaction.id });
+      entities[messageId] = {
+        id: messageId,
+        role: 'user',
+        status: 'completed',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Conversation compacted.' }],
+        createdAt: compaction.createdAt,
+        updatedAt: compaction.createdAt,
+        branches: null,
+      };
+      compactions[compaction.id] = {
+        compactedThroughMessageId: compaction.compactedThroughMessageId ?? messageId,
+        createdAt: compaction.createdAt,
+        id: compaction.id,
+        messageId,
+        summary: compaction.summary,
+        trigger: compaction.trigger ?? 'manual',
+      };
+      continue;
+    }
+
     const message = entry.message;
     const messageId = entry.nodeId;
     rows.push({ id: `${message.role}:${messageId}`, kind: 'message', messageId });
@@ -1551,7 +1577,7 @@ export async function emitAgentProjection(page: Page, sessionId: string, state: 
       errorMessage: state.errorMessage ?? null,
       rows,
       subagentRunIds,
-      entities: { messages: entities, subagents },
+      entities: { messages: entities, subagents, compactions },
       streaming,
     },
     timestamp: Date.now(),

@@ -99,6 +99,7 @@ function projection(
         usage: entry.message.role === 'assistant' ? entry.message.usage : undefined,
       }])),
       subagents: options.subagents ?? {},
+      compactions: {},
     },
     streaming: options.streamingMessageId ? {
       messageId: options.streamingMessageId,
@@ -248,6 +249,49 @@ describe('agent runtime store', () => {
     await flushMicrotasks();
 
     expect(store.getSnapshot().entries.map((entry) => entry.nodeId)).toEqual(['a1']);
+    unsubscribe();
+  });
+
+  test('keeps compaction rows as visible boundary entries with summaries', async () => {
+    const restoredProjection = projection([]);
+    restoredProjection.rows = [{
+      id: 'compaction:compact-root',
+      kind: 'compaction',
+      messageId: 'compact-root',
+      compactionId: 'compact-1',
+    }];
+    restoredProjection.entities.messages['compact-root'] = {
+      id: 'compact-root',
+      role: 'user',
+      status: 'completed',
+      parentMessageId: null,
+      content: [
+        { type: 'text', text: 'Conversation compacted.' },
+        { type: 'text', text: systemReminder('Hidden compact summary.') },
+      ],
+      createdAt: 10,
+      updatedAt: 10,
+      branches: null,
+    };
+    restoredProjection.entities.compactions['compact-1'] = {
+      id: 'compact-1',
+      messageId: 'compact-root',
+      summary: 'Visible compact summary.',
+      compactedThroughMessageId: 'a1',
+      trigger: 'auto',
+      createdAt: 10,
+    };
+    const fake = createFakeClient({ latestSession: session('saved', restoredProjection) });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+
+    await flushMicrotasks();
+
+    expect(store.getSnapshot().entries).toEqual([{
+      id: 'compaction:compact-root',
+      kind: 'compaction',
+      compaction: restoredProjection.entities.compactions['compact-1'],
+    }]);
     unsubscribe();
   });
 

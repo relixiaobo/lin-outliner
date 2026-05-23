@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import type { AgentConversationEntry, AgentMessageEntry, AgentTurnPhase } from '../../agent/runtime';
+import type { AgentMessageEntry, AgentTurnPhase } from '../../agent/runtime';
 import type {
   AssistantMessage,
   AgentToolResultWithPayloads,
@@ -44,7 +44,7 @@ import {
 interface AgentMessageRowProps {
   busy?: boolean;
   contentKey?: string;
-  entry: AgentConversationEntry;
+  entry: AgentMessageEntry;
   isLastInTurn?: boolean;
   onEdit?: (nodeId: string, message: string) => void | Promise<void>;
   onCopy?: () => void | Promise<void>;

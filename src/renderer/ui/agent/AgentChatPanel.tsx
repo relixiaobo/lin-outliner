@@ -23,7 +23,12 @@ import type {
 } from '../../api/types';
 import { api } from '../../api/client';
 import { useLinAgentRuntime } from '../../agent/runtime';
-import type { AgentConversationEntry, AgentMessageEntry, AgentTurnPhase } from '../../agent/runtime';
+import type {
+  AgentCompactionEntry,
+  AgentConversationEntry,
+  AgentMessageEntry,
+  AgentTurnPhase,
+} from '../../agent/runtime';
 import {
   AgentIcon,
   CheckIcon,
@@ -39,6 +44,7 @@ import {
 import { AgentComposer } from './AgentComposer';
 import { AgentSettingsDialog } from './AgentSettingsDialog';
 import { AgentMessageRow } from './AgentMessageRow';
+import { AgentMarkdown } from './AgentMarkdown';
 import { AgentSubagentDetailsPanel } from './AgentSubagentDetailsPanel';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
@@ -131,16 +137,20 @@ interface VirtualTranscriptLayout {
   totalHeight: number;
 }
 
-function getEntryRole(entry: AgentConversationEntry): 'user' | 'assistant' {
-  return entry.message.role;
+function getEntryRole(entry: AgentConversationEntry): 'user' | 'assistant' | 'system' {
+  return entry.kind === 'compaction' ? 'system' : entry.message.role;
 }
 
 function getEntryTimestamp(entry: AgentConversationEntry): number {
-  return entry.message.timestamp;
+  return entry.kind === 'compaction' ? entry.compaction.createdAt : entry.message.timestamp;
 }
 
 function isAssistantEntry(entry: AgentConversationEntry): entry is AssistantEntry {
-  return entry.message.role === 'assistant';
+  return entry.kind === 'message' && entry.message.role === 'assistant';
+}
+
+function isTurnBoundaryEntry(entry: AgentConversationEntry): boolean {
+  return entry.kind === 'compaction' || entry.message.role === 'user';
 }
 
 function mergeAssistantEntries(entries: AssistantEntry[]): AgentMessageEntry {
@@ -164,7 +174,7 @@ function buildConversationRenderRows(
 
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     turnEndedByEndIndex.set(index, hasUserAfter || turnPhase === 'idle');
-    if (entries[index]?.message.role === 'user') hasUserAfter = true;
+    if (entries[index] && isTurnBoundaryEntry(entries[index]!)) hasUserAfter = true;
   }
 
   let index = 0;
@@ -201,7 +211,9 @@ function buildConversationRenderRows(
     rows.push(buildConversationRenderRow({
       entry,
       endIndex: index,
-      key: entry.nodeId ?? `${entry.kind}-${getEntryTimestamp(entry)}-${index}`,
+      key: entry.kind === 'compaction'
+        ? entry.id
+        : entry.nodeId ?? `${entry.kind}-${getEntryTimestamp(entry)}-${index}`,
       turnEnded: turnEndedByEndIndex.get(index) ?? true,
       turnPhase,
       totalEntryCount: entries.length,
@@ -246,6 +258,7 @@ function buildConversationRenderRow({
 }
 
 function estimateTranscriptRowHeight(row: AgentConversationRenderRow): number {
+  if (row.entry.kind === 'compaction') return 72;
   const content = row.entry.message.content;
   if (typeof content === 'string') {
     return Math.max(72, Math.ceil(content.length / 72) * 24 + 32);
@@ -363,13 +376,14 @@ async function buildAssistantTurnCopyText(
   let turnStart = lastEntryIndex;
   while (turnStart > 0) {
     const previous = entries[turnStart - 1]!;
-    if (previous.message.role === 'user') break;
+    if (isTurnBoundaryEntry(previous)) break;
     turnStart -= 1;
   }
 
   const parts: string[] = [];
   for (let i = turnStart; i <= lastEntryIndex; i += 1) {
     const entry = entries[i]!;
+    if (entry.kind !== 'message') continue;
     if (entry.message.role !== 'assistant') continue;
 
     for (const block of entry.message.content) {
@@ -390,6 +404,42 @@ async function buildAssistantTurnCopyText(
   }
 
   return parts.join('\n\n');
+}
+
+function compactTriggerLabel(trigger: AgentCompactionEntry['compaction']['trigger']): string {
+  if (trigger === 'manual') return 'Manual compact';
+  if (trigger === 'auto') return 'Auto compact';
+  return 'Context retry';
+}
+
+function AgentCompactionBoundary({ entry }: { entry: AgentCompactionEntry }) {
+  const [expanded, setExpanded] = useState(false);
+  const summary = entry.compaction.summary.trim();
+
+  return (
+    <section className="agent-compaction-boundary" aria-label="Conversation compacted">
+      <div className="agent-compaction-line" aria-hidden="true" />
+      <button
+        aria-expanded={expanded}
+        className="agent-compaction-toggle"
+        onClick={() => setExpanded((open) => !open)}
+        type="button"
+      >
+        <ChevronDownIcon
+          className={expanded ? 'agent-compaction-chevron is-expanded' : 'agent-compaction-chevron'}
+          size={ICON_SIZE.tiny}
+        />
+        <span>Conversation compacted</span>
+        <small>{compactTriggerLabel(entry.compaction.trigger)}</small>
+      </button>
+      <div className="agent-compaction-line" aria-hidden="true" />
+      {expanded && summary ? (
+        <div className="agent-compaction-summary">
+          <AgentMarkdown keyPrefix={`compact-${entry.compaction.id}`} text={summary} />
+        </div>
+      ) : null}
+    </section>
+  );
 }
 
 function AgentTranscriptRowShell({
@@ -740,6 +790,10 @@ export function AgentChatPanel({
   }
 
   function renderConversationRow(row: AgentConversationRenderRow): ReactNode {
+    if (row.entry.kind === 'compaction') {
+      return <AgentCompactionBoundary entry={row.entry} />;
+    }
+
     const copyAssistantTurn = row.isLastInTurn && getEntryRole(row.entry) === 'assistant'
       ? async () => {
           const text = await buildAssistantTurnCopyText(

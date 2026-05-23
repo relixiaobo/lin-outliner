@@ -957,6 +957,7 @@ function normalizeCheckpoint(value: unknown, sessionId: string): AgentEventCheck
   if (state.latestEventId !== latestEventId) return null;
   if (!isRecord(state.session) || state.session.id !== sessionId) return null;
   if (!isRecord(state.messages) || !isRecord(state.payloads) || !isRecord(state.runs)) return null;
+  if (!isRecord(state.subagents) || !isRecord(state.compactionsByMessageId)) return null;
   if (!Array.isArray(state.rootMessageIds)) return null;
   if (!isRecord(state.childrenByParentId) || !isRecord(state.derivedPayloadsBySourceId)) return null;
 

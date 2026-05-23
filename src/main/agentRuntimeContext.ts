@@ -12,6 +12,7 @@ import type { AgentMessage, UserMessage } from '../core/agentTypes';
 import {
   getAgentEventActivePath,
   type AgentActor,
+  type AgentCompactionTrigger,
   type AgentEventReplayState,
   type AgentEventType,
   type AgentPayloadRef,
@@ -100,6 +101,7 @@ export interface AgentRuntimeContextHost<TSession extends AgentRuntimeContextSes
     prompt: UserMessage,
     summary: string,
     compactedThroughMessageId: string,
+    trigger: AgentCompactionTrigger,
     preservedMessages: readonly AgentMessage[],
   ): Promise<void>;
   persistToolOutputPayload(
@@ -248,6 +250,7 @@ export class AgentRuntimeContextManager<TSession extends AgentRuntimeContextSess
       compactMessage,
       summary,
       compactedThroughMessageId,
+      options.trigger,
       compactPlan.messagesToKeep,
     );
     const postCompactMessages = await this.host.deriveRuntimePiMessages(sessionId, session.eventState);

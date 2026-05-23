@@ -207,7 +207,7 @@ Minimum behavior:
 Current row shape:
 
 ```ts
-type AgentRenderRowKind = 'message' | 'tool_result';
+type AgentRenderRowKind = 'message' | 'tool_result' | 'compaction';
 
 interface AgentRenderRow {
   id: string;
@@ -221,6 +221,12 @@ projection to the renderer. Tool events that are noisy or long should be
 collapsed into a small row by default. Future row kinds for approvals, diff
 previews, or explicit run status should be added only when those runtime events
 are active.
+
+Compaction rows render as transcript boundaries rather than user messages. The
+row shows `Conversation compacted`, labels whether the trigger was manual,
+automatic, or context-retry, and keeps the compact summary behind an explicit
+expand affordance. The hidden post-compact reminders stay in model context and
+are not rendered as normal chat content.
 
 Subagent sidechain state is exposed through `subagentRunIds` and
 `entities.subagents`. The full sidechain transcript stays behind payload refs

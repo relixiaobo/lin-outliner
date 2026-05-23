@@ -19,6 +19,7 @@ import type {
 } from '../../core/agentTypes';
 import type { AgentSession } from '../../core/types';
 import type {
+  AgentRenderCompactionEntity,
   AgentRenderMessageEntity,
   AgentRenderProjection,
   AgentRenderSubagentEntity,
@@ -34,7 +35,13 @@ export interface AgentMessageEntry {
   streaming: boolean;
 }
 
-export type AgentConversationEntry = AgentMessageEntry;
+export interface AgentCompactionEntry {
+  id: string;
+  kind: 'compaction';
+  compaction: AgentRenderCompactionEntity;
+}
+
+export type AgentConversationEntry = AgentMessageEntry | AgentCompactionEntry;
 
 export type AgentTurnPhase = 'idle' | 'streaming_text' | 'waiting_for_tool' | 'resuming_after_tool';
 
@@ -50,7 +57,7 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
   errorMessage: null,
   rows: [],
   subagentRunIds: [],
-  entities: { messages: {}, subagents: {} },
+  entities: { messages: {}, subagents: {}, compactions: {} },
   streaming: null,
 };
 
@@ -98,6 +105,18 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
 } {
   const entries: AgentConversationEntry[] = [];
   for (const row of projection.rows) {
+    if (row.kind === 'compaction') {
+      const compaction = projection.entities.compactions[row.compactionId];
+      if (compaction) {
+        entries.push({
+          id: row.id,
+          kind: 'compaction',
+          compaction,
+        });
+      }
+      continue;
+    }
+
     const entity = projection.entities.messages[row.messageId];
     if (!entity || (entity.role !== 'user' && entity.role !== 'assistant')) continue;
     if (entity.role === 'user' && isHiddenOnlySystemReminder(entity)) continue;
@@ -114,14 +133,17 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
   }
 
   let turnPhase: AgentTurnPhase = 'idle';
-  const streamingEntry = entries.find((entry) => entry.streaming && entry.message.role === 'assistant') as AgentMessageEntry | undefined;
+  const streamingEntry = entries.find((entry): entry is AgentMessageEntry => (
+    entry.kind === 'message' && entry.streaming && entry.message.role === 'assistant'
+  ));
   if (projection.isStreaming) {
     if (streamingEntry?.message.role === 'assistant') {
       turnPhase = assistantHasText(streamingEntry.message) ? 'streaming_text' : 'resuming_after_tool';
     } else {
       const latestAssistant = [...entries]
         .reverse()
-        .find((entry) => entry.message.role === 'assistant')?.message as AssistantMessage | undefined;
+        .find((entry): entry is AgentMessageEntry => entry.kind === 'message' && entry.message.role === 'assistant')
+        ?.message as AssistantMessage | undefined;
       turnPhase = assistantHasPendingToolCalls(latestAssistant, toolResults)
         ? 'waiting_for_tool'
         : 'resuming_after_tool';
@@ -132,6 +154,7 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
   const shouldAppendAssistantPlaceholder = projection.isStreaming
     && (
       !lastEntry
+      || lastEntry.kind !== 'message'
       || lastEntry.message.role !== 'assistant'
     );
 
@@ -154,14 +177,14 @@ function isHiddenOnlySystemReminder(entity: AgentRenderMessageEntity): boolean {
     && entity.content.every((part) => part.type === 'text' && isSystemReminderBlock(part.text));
 }
 
-function activeAssistantEntryId(entries: AgentMessageEntry[], projection: AgentRenderProjection): string {
+function activeAssistantEntryId(entries: AgentConversationEntry[], projection: AgentRenderProjection): string {
   return `active-assistant-${activeAssistantAnchorTimestamp(entries, projection)}`;
 }
 
-function activeAssistantAnchorTimestamp(entries: AgentMessageEntry[], projection: AgentRenderProjection): number {
+function activeAssistantAnchorTimestamp(entries: AgentConversationEntry[], projection: AgentRenderProjection): number {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index]!;
-    if (entry.message.role === 'user') return entry.message.timestamp;
+    if (entry.kind === 'message' && entry.message.role === 'user') return entry.message.timestamp;
   }
   const lastUser = [...projection.rows]
     .reverse()
@@ -173,7 +196,7 @@ function activeAssistantAnchorTimestamp(entries: AgentMessageEntry[], projection
 
 function createActiveAssistantPlaceholder(
   projection: AgentRenderProjection,
-  entries: AgentMessageEntry[],
+  entries: AgentConversationEntry[],
 ): AssistantMessage {
   return {
     role: 'assistant',

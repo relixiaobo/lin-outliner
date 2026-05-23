@@ -105,13 +105,15 @@ If the compact summary request itself exceeds the provider context limit, Lin re
 
 After compacting, Lin restores the most recent full text file reads into a hidden reminder with bounded per-file and total size. File-edit freshness state is cleared and rebuilt only for restored files, matching the model-visible context after compact.
 
-After compaction, the active event-log branch becomes a new root user message with:
+After compaction, the model-context branch becomes a new root user message with:
 
-- visible text: `Conversation compacted.`
+- visible marker text: `Conversation compacted.`
 - hidden compact summary reminder
 - hidden invoked skills reminder
 - hidden listed-skills state reminder
 - hidden restored file context reminder, when recent file reads fit the restore budget
+
+The renderer does not show this root as a normal user bubble. `compaction.completed` is projected as a dedicated compact boundary row with the trigger (`manual`, `auto`, or `reactive`) and an expandable summary. The hidden reminders remain model-only context.
 
 The listed-skills state reminder is intentionally tiny. It prevents a restored compacted session from re-injecting the full skill listing after app restart.
 

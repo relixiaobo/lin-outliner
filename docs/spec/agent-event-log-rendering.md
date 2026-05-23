@@ -625,6 +625,11 @@ Rules:
 - Completed rows are immutable by identity.
 - Only the active streaming row changes during token streaming.
 - Render flushes are coalesced to at most one per animation frame.
+- `compaction.completed` events become dedicated compaction rows keyed by the
+  compact root message, with summary and trigger metadata in
+  `entities.compactions`.
+- The compact root user message remains available for pi-mono projection but is
+  not rendered as a normal user bubble.
 - Long output rows are collapsed by default.
 - Large details are refs, not row payloads.
 
