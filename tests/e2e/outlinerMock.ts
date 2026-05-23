@@ -3,6 +3,7 @@ import { expect, type Page } from '@playwright/test';
 export const ids = {
   workspace: 'workspace',
   root: 'root',
+  library: 'library',
   daily: 'daily',
   schema: 'schema',
   searches: 'searches',
@@ -441,6 +442,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const projection = () => ({
       workspaceId: ids.workspace,
       rootId: ids.root,
+      libraryId: ids.library,
       dailyNotesId: ids.daily,
       schemaId: ids.schema,
       searchesId: ids.searches,
@@ -678,13 +680,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       if (Number.isFinite(parsed)) (node as Record<string, unknown>)[key] = parsed;
     };
 
-    makeNode(ids.workspace, 'Workspace');
-    makeNode(ids.root, 'Root', { parentId: ids.workspace });
-    makeNode(ids.daily, 'Daily Notes', { parentId: ids.root });
-    makeNode(ids.schema, 'Schema', { parentId: ids.root });
-    makeNode(ids.searches, 'Searches', { parentId: ids.root });
-    makeNode(ids.trash, 'Trash', { parentId: ids.root });
-    makeNode(ids.settings, 'Settings', { parentId: ids.root });
+    makeNode(ids.workspace, 'Workspace', { locked: true });
+    makeNode(ids.root, 'Root', { parentId: ids.workspace, locked: true });
+    makeNode(ids.library, 'Library', { parentId: ids.root, locked: true });
+    makeNode(ids.daily, 'Daily Notes', { parentId: ids.root, locked: true });
+    makeNode(ids.schema, 'Schema', { parentId: ids.root, locked: true });
+    makeNode(ids.searches, 'Searches', { parentId: ids.root, locked: true });
+    makeNode(ids.trash, 'Trash', { parentId: ids.root, locked: true });
+    makeNode(ids.settings, 'Settings', { parentId: ids.root, locked: true });
     makeNode(ids.dayTag, 'day', { type: 'tagDef', parentId: ids.schema, color: 'gray' });
     makeNode(ids.projectTag, 'project', { type: 'tagDef', parentId: ids.schema, color: '#5e8e65' });
     makeNode(ids.statusField, 'Status', {
@@ -732,7 +735,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     makeNode(ids.beta, 'Beta', { parentId: ids.today, showCheckbox: true });
     makeNode(ids.gamma, 'Gamma', { parentId: ids.today, showCheckbox: true });
     appendChild(ids.workspace, ids.root);
-    for (const childId of [ids.daily, ids.schema, ids.searches, ids.trash, ids.settings]) appendChild(ids.root, childId);
+    for (const childId of [ids.library, ids.daily, ids.schema, ids.searches, ids.trash, ids.settings]) appendChild(ids.root, childId);
     appendChild(ids.schema, ids.dayTag);
     appendChild(ids.schema, ids.projectTag);
     appendChild(ids.schema, ids.statusField);

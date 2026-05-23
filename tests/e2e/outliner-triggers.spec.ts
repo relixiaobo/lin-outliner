@@ -184,7 +184,8 @@ test.describe('outliner trigger parity', () => {
     expect(createdRowId).toBeTruthy();
     await expect(row(page, createdRowId!).locator('.tag-badge-label')).toContainText('project');
     await expect(rowEditor(page, createdRowId!)).toBeFocused();
-    await expect(page.locator(`[data-trailing-parent-id="${ids.today}"]`)).toBeHidden();
+    await expect(trailingEditor(page)).toBeVisible();
+    await expect(trailingEditor(page)).not.toBeFocused();
     await page.keyboard.type('Task');
     await expect(rowEditor(page, createdRowId!)).toHaveText('Task');
     await expect(page.locator(`[data-trailing-parent-id="${ids.today}"]`)).toBeVisible();
@@ -259,6 +260,7 @@ test.describe('outliner trigger parity', () => {
       const projection = await e2eProjection(page);
       zetaId = projection.nodes.find((node) => (
         node.id !== createdRowId
+        && node.parentId === ids.library
         && node.type !== 'reference'
         && node.content.text === 'Zeta'
       ))?.id ?? '';
@@ -274,12 +276,18 @@ test.describe('outliner trigger parity', () => {
     await expect(rowBody(page, createdRowId!)).toHaveClass(/ref-converting/);
     await expect(row(page, createdRowId!).locator('.row-bullet-shape.reference')).toHaveCount(1);
 
-    const titleEditor = page.locator('.panel-title-editor .ProseMirror').first();
-    const titleBeforeInlineRefClick = await titleEditor.textContent();
-    await row(page, createdRowId!).locator('.inline-ref').click();
-    await expect(titleEditor).toHaveText(titleBeforeInlineRefClick ?? '');
-    await expect(row(page, createdRowId!)).toHaveCount(1);
-    await expect(rowEditor(page, createdRowId!)).toBeFocused();
+    const conversionInlineRef = row(page, createdRowId!).locator('.inline-ref').first();
+    await conversionInlineRef.hover();
+    await expect.poll(async () => conversionInlineRef.evaluate((element) => {
+      const computed = getComputedStyle(element);
+      return {
+        cursor: computed.cursor,
+        textDecorationLine: computed.textDecorationLine,
+      };
+    })).toEqual({
+      cursor: 'text',
+      textDecorationLine: 'none',
+    });
 
     let calls = (await commandCalls(page)).slice(beforeCalls).map((call) => call.cmd);
     expect(calls).toContain('create_node');
@@ -301,9 +309,57 @@ test.describe('outliner trigger parity', () => {
     expect(calls.filter((cmd) => cmd === 'add_reference_conversion')).toHaveLength(1);
   });
 
+  test('@ reference conversion clicks restore and select like a reference row', async ({ page }) => {
+    const beforeCalls = (await commandCalls(page)).length;
+    await trailingEditor(page).click();
+    await page.keyboard.type('@Zeta');
+    await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
+    await page.keyboard.press('Meta+Enter');
+
+    let zetaId = '';
+    let inlineRowId = '';
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      zetaId = projection.nodes.find((node) => (
+        node.parentId === ids.library
+        && node.type !== 'reference'
+        && node.content.text === 'Zeta'
+      ))?.id ?? '';
+      inlineRowId = projection.nodes.find((node) => (
+        !node.type
+        && node.content.text === ''
+        && node.content.inlineRefs.some((ref) => ref.targetNodeId === zetaId)
+      ))?.id ?? '';
+      return Boolean(zetaId && inlineRowId);
+    }).toBe(true);
+    await expect(rowEditor(page, inlineRowId)).toBeFocused();
+    await expect(rowBody(page, inlineRowId)).toHaveClass(/ref-converting/);
+
+    await row(page, inlineRowId).locator('.inline-ref').click();
+
+    let restoredReferenceId = '';
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      restoredReferenceId = projection.nodes.find((node) => (
+        node.type === 'reference'
+        && node.targetId === zetaId
+        && node.parentId === ids.today
+      ))?.id ?? '';
+      return Boolean(
+        restoredReferenceId
+        && !projection.nodes.some((node) => node.id === inlineRowId),
+      );
+    }).toBe(true);
+    await expect(rowBody(page, restoredReferenceId)).toHaveClass(/ref-click-selected/);
+    await expect(rowBody(page, restoredReferenceId)).not.toHaveClass(/ref-converting/);
+    await expect(rowEditor(page, restoredReferenceId)).not.toBeFocused();
+    const calls = (await commandCalls(page)).slice(beforeCalls).map((call) => call.cmd);
+    expect(calls).toContain('restore_inline_reference_node_to_reference');
+  });
+
   test('@ in trailing input keeps the draft visible until the conversion row materializes', async ({ page }) => {
     await invokeMockCommand(page, 'create_node', {
-      parentId: ids.root,
+      parentId: ids.library,
       index: null,
       text: 'RemoteTarget',
     });
@@ -314,7 +370,7 @@ test.describe('outliner trigger parity', () => {
     await trailingEditor(page).click();
     await page.keyboard.type('@RemoteTarget');
     await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
-    await expect(page.getByRole('option', { name: /RemoteTarget Workspace \/ Root/ })).toBeVisible();
+    await expect(page.getByRole('option', { name: 'RemoteTarget', exact: true })).toBeVisible();
     await page.keyboard.press('Enter');
 
     await page.waitForTimeout(40);
@@ -350,7 +406,7 @@ test.describe('outliner trigger parity', () => {
 
   test('@ existing different-parent reference in trailing input can continue as inline text', async ({ page }) => {
     await invokeMockCommand(page, 'create_node', {
-      parentId: ids.root,
+      parentId: ids.library,
       index: null,
       text: 'RemoteTarget',
     });
@@ -377,19 +433,21 @@ test.describe('outliner trigger parity', () => {
     await expect(rowEditor(page, createdRowId!)).toBeFocused();
   });
 
-  test('@ inline trigger in materialized trailing text keeps one real row and inserts the inline reference', async ({ page }) => {
+  test('@ inline trigger in trailing text commits one rich text row with the inline reference', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     const beforeCalls = (await commandCalls(page)).length;
 
     await trailingEditor(page).click();
     await page.keyboard.type('See @Alpha');
     await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
-    await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
-    const createdRowId = await lastTodayChildId(page);
-    expect(createdRowId).toBeTruthy();
+    expect(await todayChildren(page)).toEqual(beforeChildren);
+
     await page.keyboard.press('Enter');
 
     await expect(page.locator('.trigger-popover')).toHaveCount(0);
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+    const createdRowId = await lastTodayChildId(page);
+    expect(createdRowId).toBeTruthy();
     await expect(row(page, createdRowId!)).toContainText('See');
     await expect(row(page, createdRowId!)).toContainText('Alpha');
     await expect.poll(async () => nodeById(page, createdRowId!)).toMatchObject({
@@ -401,8 +459,8 @@ test.describe('outliner trigger parity', () => {
     await expect(rowEditor(page, createdRowId!)).toBeFocused();
     await expect(trailingEditor(page)).toBeVisible();
     const calls = (await commandCalls(page)).slice(beforeCalls);
-    expect(calls.map((call) => call.cmd)).toContain('create_node');
-    expect(calls.map((call) => call.cmd)).not.toContain('create_rich_text_node');
+    expect(calls.map((call) => call.cmd)).toContain('create_rich_text_node');
+    expect(calls.map((call) => call.cmd)).not.toContain('create_node');
   });
 
   test('@ in an empty row creates an inline reference conversion row', async ({ page }) => {
@@ -425,6 +483,7 @@ test.describe('outliner trigger parity', () => {
       const projection = await e2eProjection(page);
       const zeta = projection.nodes.find((node) => (
         node.id !== emptyRowId
+        && node.parentId === ids.library
         && node.type !== 'reference'
         && node.content.text === 'Zeta'
       ));
@@ -470,7 +529,7 @@ test.describe('outliner trigger parity', () => {
 
   test('@ reference conversion restores the reference node when continued text is deleted', async ({ page }) => {
     await invokeMockCommand(page, 'create_node', {
-      parentId: ids.root,
+      parentId: ids.library,
       index: null,
       text: 'RemoteTarget',
     });
@@ -481,7 +540,7 @@ test.describe('outliner trigger parity', () => {
     await trailingEditor(page).click();
     await page.keyboard.type('@RemoteTarget');
     await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
-    await expect(page.getByRole('option', { name: /RemoteTarget Workspace \/ Root/ })).toBeVisible();
+    await expect(page.getByRole('option', { name: 'RemoteTarget', exact: true })).toBeVisible();
     await page.keyboard.press('Enter');
     await page.keyboard.type('!');
 
@@ -537,7 +596,7 @@ test.describe('outliner trigger parity', () => {
 
   test('@ existing different-parent reference keeps continued typing on the inline conversion row', async ({ page }) => {
     await invokeMockCommand(page, 'create_node', {
-      parentId: ids.root,
+      parentId: ids.library,
       index: null,
       text: 'RemoteTarget',
     });
@@ -579,7 +638,7 @@ test.describe('outliner trigger parity', () => {
 
   test('@ existing different-parent reference focuses a real inline editor for IME continuation', async ({ page }) => {
     await invokeMockCommand(page, 'create_node', {
-      parentId: ids.root,
+      parentId: ids.library,
       index: null,
       text: 'RemoteTarget',
     });
@@ -764,6 +823,7 @@ test.describe('outliner trigger parity', () => {
         && created?.content.inlineRefs.some((ref) => (
           projection.nodes.some((node) => (
           node.id === ref.targetNodeId
+          && node.parentId === ids.library
           && node.type !== 'reference'
           && node.content.text === 'Zeta'
           ))

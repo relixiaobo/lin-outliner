@@ -11,12 +11,20 @@ import { FIELD_TYPE_CONFIG_OPTIONS } from './fields/fieldTypeRegistry';
 
 export interface CommandRunnerOptions {
   applyFocus?: boolean;
+  applyProjection?: boolean;
 }
 
 export type CommandRunner = (
   operation: () => Promise<CommandOutcome | DocumentProjection>,
   options?: CommandRunnerOptions,
 ) => Promise<CommandOutcome | DocumentProjection | null>;
+
+export interface CommandRunnerLifecycle {
+  onLocalCommandStart?: () => void;
+  onLocalCommandSettled?: () => void;
+}
+
+const EMPTY_COMMAND_RUNNER_LIFECYCLE: CommandRunnerLifecycle = {};
 
 export interface NavigateRootOptions {
   focus?: boolean;
@@ -77,10 +85,16 @@ export function useCommandRunner(
   setProjection: (projection: DocumentProjection) => void,
   setFocus: (focus: FocusHint | null) => void,
   setError: (message: string | null) => void,
+  lifecycle: CommandRunnerLifecycle = EMPTY_COMMAND_RUNNER_LIFECYCLE,
 ): CommandRunner {
   return useCallback(async (operation, options) => {
+    lifecycle.onLocalCommandStart?.();
     try {
       const result = await operation();
+      if (options?.applyProjection === false) {
+        setError(null);
+        return result;
+      }
       if ('projection' in result) {
         flushSync(() => {
           setProjection(result.projection);
@@ -97,6 +111,8 @@ export function useCommandRunner(
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       return null;
+    } finally {
+      lifecycle.onLocalCommandSettled?.();
     }
-  }, [setError, setFocus, setProjection]);
+  }, [lifecycle, setError, setFocus, setProjection]);
 }

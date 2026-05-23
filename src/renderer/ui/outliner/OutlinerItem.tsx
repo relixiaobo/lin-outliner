@@ -23,6 +23,7 @@ import {
   markWholeTextAsHeading,
   replaceRichTextRangeWithInlineRef,
   replaceRichTextRangeWithText,
+  richTextEquals,
 } from '../editor/richTextCodec';
 import { indentTargetParentId, previousVisibleRowId } from '../interactions/outlinerStructure';
 import { getTreeReferenceBlockReason } from '../interactions/referenceRules';
@@ -93,6 +94,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
   const [draftContentRevision, setDraftContentRevision] = useState(0);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const draftContentRef = useRef<RichText>(node?.content ?? EMPTY_RICH_TEXT);
+  const localDraftSyncRef = useRef<{ nodeId: NodeId; content: RichText } | null>(null);
   const pendingTextPatchRef = useRef<Promise<unknown>>(Promise.resolve());
   const restoredReferenceConversionNodeRef = useRef<NodeId | null>(null);
   const descriptionReturnPlacementRef = useRef<CursorPlacement>(cursorEnd());
@@ -122,16 +124,31 @@ export function OutlinerItem(props: OutlinerItemProps) {
     dragId: props.dragId,
     setDragId: props.setDragId,
   });
+  const rowEditorFocused = props.ui.focusedId === props.nodeId
+    && props.ui.focusSurface === 'row'
+    && props.ui.focusedPanelId === props.panelId;
 
   useEffect(() => {
     const nextContent = displayed?.content ?? EMPTY_RICH_TEXT;
+    const pendingLocalDraft = localDraftSyncRef.current;
+    if (pendingLocalDraft) {
+      if (pendingLocalDraft.nodeId !== displayed?.id) {
+        localDraftSyncRef.current = null;
+      } else if (richTextEquals(nextContent, pendingLocalDraft.content)) {
+        localDraftSyncRef.current = null;
+      } else {
+        return;
+      }
+    }
+    if (rowEditorFocused) return;
     draftContentRef.current = nextContent;
     setDraftContent(nextContent);
-  }, [displayed?.id, displayed?.content, displayed?.targetId]);
+  }, [displayed?.id, displayed?.content, displayed?.targetId, rowEditorFocused]);
 
   if (!node || !displayed) return null;
 
   const replaceLocalDraftContent = (content: RichText) => {
+    localDraftSyncRef.current = { nodeId: targetEditId, content };
     draftContentRef.current = content;
     setDraftContent(content);
     setDraftContentRevision((revision) => revision + 1);
@@ -282,7 +299,9 @@ export function OutlinerItem(props: OutlinerItemProps) {
 
   const applyTextPatch = (patch: RichTextPatch) => {
     pendingTextPatchRef.current = pendingTextPatchRef.current.then(() =>
-      props.run(() => api.applyNodeTextPatch(targetEditId, patch)));
+      props.run(() => api.applyNodeTextPatch(targetEditId, patch), {
+        applyFocus: false,
+      }));
     void pendingTextPatchRef.current;
   };
 
@@ -297,6 +316,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
   };
 
   const handleEditorChange = (content: RichText) => {
+    localDraftSyncRef.current = { nodeId: targetEditId, content };
     draftContentRef.current = content;
     setDraftContent(content);
   };
@@ -306,6 +326,8 @@ export function OutlinerItem(props: OutlinerItemProps) {
     children: CreateNodeTree[];
     siblingsAfter: CreateNodeTree[];
   }) => {
+    localDraftSyncRef.current = { nodeId: targetEditId, content: payload.content };
+    draftContentRef.current = payload.content;
     setDraftContent(payload.content);
     if (payload.children.length > 0) {
       props.setUi((prev) => {
@@ -649,6 +671,20 @@ export function OutlinerItem(props: OutlinerItemProps) {
 
     const target = event.target instanceof HTMLElement ? event.target : null;
     if (target?.closest('button, a, input, textarea, select, [data-preserve-selection]')) return;
+    const pendingConversion = props.ui.pendingReferenceConversion;
+    if (
+      pendingConversion?.nodeId === props.nodeId
+      && isOnlyInlineReference(draftContentRef.current, pendingConversion.targetId)
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.type !== 'click') return;
+      const content = draftContentRef.current;
+      void restorePendingReferenceConversion(content).then((result) => {
+        if (result.restored) selectRow(result.nodeId);
+      });
+      return;
+    }
     const clickedInlineReference = Boolean(target?.closest('[data-inline-ref], .inline-ref'));
     if (clickedInlineReference) return;
     const editor = event.currentTarget.querySelector<HTMLElement>('.ProseMirror');
@@ -930,19 +966,18 @@ export function OutlinerItem(props: OutlinerItemProps) {
                   const outcome = await api.createNode(parentId, null, text);
                   createdId = outcome.focus?.nodeId ?? null;
                   return outcome.projection;
-                });
+                }, { applyFocus: false });
                 return createdId;
               }}
               onCreateTree={(parentId, nodes) => (
-                props.run(() => api.createNodesFromTree(parentId, nodes))
+                props.run(() => api.createNodesFromTree(parentId, nodes), { applyFocus: false })
               )}
               onIndentNode={(nodeId) => (
-                props.run(() => api.indentNode(nodeId))
+                props.run(() => api.indentNode(nodeId), { applyFocus: false })
               )}
               onUpdateCreated={async (nodeId, text) => {
-                await props.run(() => api.replaceNodeText(nodeId, plainText(text)));
+                await props.run(() => api.replaceNodeText(nodeId, plainText(text)), { applyFocus: false });
               }}
-              materializeOnInput
               continueOnEnter
               onToggleCreated={async (nodeId) => {
                 await props.run(() => api.toggleDone(nodeId));

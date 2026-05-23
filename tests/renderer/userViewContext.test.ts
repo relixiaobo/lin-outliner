@@ -26,6 +26,7 @@ function projection(nodes: NodeProjection[]): DocumentProjection {
   return {
     workspaceId: 'workspace',
     rootId: 'root',
+    libraryId: 'root',
     dailyNotesId: 'daily-notes',
     schemaId: 'schema',
     searchesId: 'searches',

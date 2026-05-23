@@ -20,6 +20,7 @@ import {
   markWholeTextAsHeading,
   replaceRichTextRangeWithInlineRef,
   replaceRichTextRangeWithText,
+  richTextEquals,
 } from './editor/richTextCodec';
 import { DefinitionConfigPanel } from './definition/DefinitionConfigPanel';
 import { definitionKind, definitionOutlinerLabel } from './definition/definitionConfig';
@@ -125,6 +126,7 @@ export function NodePanel(props: NodePanelProps) {
   const stickyBreadcrumbRef = useRef<HTMLDivElement | null>(null);
   const titleRowRef = useRef<HTMLDivElement | null>(null);
   const pendingTitlePatchRef = useRef<Promise<unknown>>(Promise.resolve());
+  const localTitleSyncRef = useRef<{ nodeId: NodeId; content: RichText } | null>(null);
   const descriptionReturnPlacementRef = useRef(cursorEnd());
   const rootDefinitionKind = definitionKind(rootNode);
   const definitionTemplateLabel = rootNode ? definitionOutlinerLabel(rootNode) : null;
@@ -133,6 +135,9 @@ export function NodePanel(props: NodePanelProps) {
   const breadcrumb = buildPanelBreadcrumb(rootNode, props.index);
   const titleFocusTarget = focusTarget(props.rootId, null, props.panelId, 'panel-title');
   const descriptionFocusTarget = focusTarget(props.rootId, null, props.panelId, 'description');
+  const titleEditorFocused = props.ui.focusedId === props.rootId
+    && props.ui.focusSurface === 'panel-title'
+    && props.ui.focusedPanelId === props.panelId;
   const panelRows = useMemo(() => buildOutlinerRows(rootNode, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
   }), [props.index.byId, props.ui.expandedHiddenFields, rootNode]);
@@ -154,9 +159,21 @@ export function NodePanel(props: NodePanelProps) {
   };
 
   useEffect(() => {
-    setTitleContent(rootNode?.content ?? EMPTY_RICH_TEXT);
+    const nextContent = rootNode?.content ?? EMPTY_RICH_TEXT;
+    const pendingLocalTitle = localTitleSyncRef.current;
+    if (pendingLocalTitle) {
+      if (pendingLocalTitle.nodeId !== rootNode?.id) {
+        localTitleSyncRef.current = null;
+      } else if (richTextEquals(nextContent, pendingLocalTitle.content)) {
+        localTitleSyncRef.current = null;
+      } else {
+        return;
+      }
+    }
+    if (titleEditorFocused) return;
+    setTitleContent(nextContent);
     setTitleTrigger(null);
-  }, [rootNode?.id, rootNode?.content]);
+  }, [rootNode?.id, rootNode?.content, titleEditorFocused]);
 
   const focusFirstVisibleRowOrTrailing = () => {
     const rows = flattenVisibleRows(
@@ -183,6 +200,7 @@ export function NodePanel(props: NodePanelProps) {
   };
 
   const replaceLocalTitleContent = (content: RichText) => {
+    localTitleSyncRef.current = { nodeId: props.rootId, content };
     setTitleContent(content);
     setTitleContentRevision((revision) => revision + 1);
   };
@@ -207,7 +225,7 @@ export function NodePanel(props: NodePanelProps) {
   const renderHeaderIcon = () => {
     if (!rootNode) return null;
     if (props.rootId === projection.todayId) return <CalendarIcon size={PANEL_HEADER_ICON_SIZE} />;
-    if (props.rootId === projection.rootId) return <LibraryIcon size={PANEL_HEADER_ICON_SIZE} />;
+    if (props.rootId === projection.libraryId) return <LibraryIcon size={PANEL_HEADER_ICON_SIZE} />;
     if (props.rootId === projection.schemaId) return <SupertagIcon size={PANEL_HEADER_ICON_SIZE} />;
     if (props.rootId === projection.trashId) return <TrashIcon size={PANEL_HEADER_ICON_SIZE} />;
     if (props.rootId === projection.searchesId || rootNode.type === 'search') return <SearchIcon size={PANEL_HEADER_ICON_SIZE} />;
@@ -285,8 +303,15 @@ export function NodePanel(props: NodePanelProps) {
 
   const applyTitlePatch = (patch: RichTextPatch) => {
     pendingTitlePatchRef.current = pendingTitlePatchRef.current.then(() =>
-      props.run(() => api.applyNodeTextPatch(props.rootId, patch)));
+      props.run(() => api.applyNodeTextPatch(props.rootId, patch), {
+        applyFocus: false,
+      }));
     void pendingTitlePatchRef.current;
+  };
+
+  const handleTitleChange = (content: RichText) => {
+    localTitleSyncRef.current = { nodeId: props.rootId, content };
+    setTitleContent(content);
   };
 
   const blurActiveElement = () => {
@@ -448,9 +473,9 @@ export function NodePanel(props: NodePanelProps) {
               variant="panel"
             />
             <ButtonControl
-              aria-label="Open workspace root"
+              aria-label="Open library"
               className="panel-breadcrumb-origin"
-              onClick={() => props.onRoot(projection.rootId)}
+              onClick={() => props.onRoot(projection.libraryId)}
             >
               <LibraryIcon size={PANEL_BREADCRUMB_ORIGIN_ICON_SIZE} />
             </ButtonControl>
@@ -518,7 +543,7 @@ export function NodePanel(props: NodePanelProps) {
                 readOnly={rootNode?.locked}
                 completed={Boolean(rootNode?.completedAt)}
                 onFocus={selectHeader}
-                onChange={setTitleContent}
+                onChange={handleTitleChange}
                 onPatch={applyTitlePatch}
                 onCommit={(content) => void commitTitle(content)}
                 onEnter={handleTitleEnter}
@@ -706,19 +731,18 @@ export function NodePanel(props: NodePanelProps) {
                     const outcome = await api.createNode(parentId, null, text);
                     createdId = outcome.focus?.nodeId ?? null;
                     return outcome.projection;
-                  });
+                  }, { applyFocus: false });
                   return createdId;
                 }}
                 onCreateTree={(parentId, nodes) => (
-                  props.run(() => api.createNodesFromTree(parentId, nodes))
+                  props.run(() => api.createNodesFromTree(parentId, nodes), { applyFocus: false })
                 )}
                 onIndentNode={(nodeId) => (
-                  props.run(() => api.indentNode(nodeId))
+                  props.run(() => api.indentNode(nodeId), { applyFocus: false })
                 )}
                 onUpdateCreated={async (nodeId, text) => {
-                  await props.run(() => api.replaceNodeText(nodeId, plainText(text)));
+                  await props.run(() => api.replaceNodeText(nodeId, plainText(text)), { applyFocus: false });
                 }}
-                materializeOnInput
                 continueOnEnter
                 onToggleCreated={async (nodeId) => {
                   await props.run(() => api.toggleDone(nodeId));

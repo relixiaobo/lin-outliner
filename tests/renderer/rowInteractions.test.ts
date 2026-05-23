@@ -623,6 +623,7 @@ describe('row interaction resolvers', () => {
       projection: {
         workspaceId: 'root',
         rootId: 'root',
+        libraryId: 'root',
         dailyNotesId: 'daily',
         schemaId: 'schema',
         searchesId: 'searches',
@@ -659,6 +660,7 @@ describe('row interaction resolvers', () => {
       projection: {
         workspaceId: 'root',
         rootId: 'root',
+        libraryId: 'root',
         dailyNotesId: 'daily',
         schemaId: 'schema',
         searchesId: 'searches',
@@ -1138,6 +1140,7 @@ describe('row interaction resolvers', () => {
       projection: {
         workspaceId: 'root',
         rootId: 'parent',
+        libraryId: 'parent',
         dailyNotesId: 'daily',
         schemaId: 'schema',
         searchesId: 'searches',
@@ -1172,6 +1175,7 @@ describe('row interaction resolvers', () => {
     const projection = {
       workspaceId: 'root',
       rootId: 'root',
+      libraryId: 'root',
       dailyNotesId: 'daily',
       schemaId: 'schema',
       searchesId: 'searches',
@@ -1201,6 +1205,7 @@ describe('row interaction resolvers', () => {
     const projection = {
       workspaceId: 'root',
       rootId: 'root',
+      libraryId: 'root',
       dailyNotesId: 'today',
       schemaId: 'schema',
       searchesId: 'searches',

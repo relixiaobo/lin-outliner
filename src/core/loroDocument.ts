@@ -2,6 +2,7 @@ import { LoroDoc, LoroList, LoroText, UndoManager, type LoroMap, type LoroTree, 
 import { CoreError } from './errors';
 import {
   DAILY_NOTES_ID,
+  LIBRARY_ID,
   SCHEMA_ID,
   SEARCHES_ID,
   SETTINGS_ID,
@@ -436,6 +437,7 @@ function ensureSystemNodes(state: DocumentState) {
   state.workspaceId = WORKSPACE_ID;
   state.rootId = WORKSPACE_ID;
   ensureNode(state, WORKSPACE_ID, undefined, undefined, 'Lin Outliner', true, now);
+  ensureNode(state, LIBRARY_ID, undefined, WORKSPACE_ID, 'Library', true, now);
   ensureNode(state, DAILY_NOTES_ID, undefined, WORKSPACE_ID, 'Daily notes', true, now);
   ensureNode(state, SCHEMA_ID, undefined, WORKSPACE_ID, 'Schema', true, now);
   ensureNode(state, SEARCHES_ID, undefined, WORKSPACE_ID, 'Searches', true, now);
@@ -444,11 +446,34 @@ function ensureSystemNodes(state: DocumentState) {
   ensureNode(state, TAG_DAY_ID, 'tagDef', SCHEMA_ID, 'day', true, now);
   ensureNode(state, TAG_WEEK_ID, 'tagDef', SCHEMA_ID, 'week', true, now);
   ensureNode(state, TAG_YEAR_ID, 'tagDef', SCHEMA_ID, 'year', true, now);
-  for (const id of [DAILY_NOTES_ID, SCHEMA_ID, SEARCHES_ID, TRASH_ID, SETTINGS_ID]) {
+  for (const id of [LIBRARY_ID, DAILY_NOTES_ID, SCHEMA_ID, SEARCHES_ID, TRASH_ID, SETTINGS_ID]) {
     attachChildOnce(state, WORKSPACE_ID, id, undefined);
   }
   for (const id of [TAG_DAY_ID, TAG_WEEK_ID, TAG_YEAR_ID]) {
     attachChildOnce(state, SCHEMA_ID, id, undefined);
+  }
+  moveLegacyWorkspaceNodesToLibrary(state);
+}
+
+function moveLegacyWorkspaceNodesToLibrary(state: DocumentState) {
+  const root = state.nodes[WORKSPACE_ID];
+  const library = state.nodes[LIBRARY_ID];
+  if (!root || !library) return;
+  const systemRootIds = new Set([
+    LIBRARY_ID,
+    DAILY_NOTES_ID,
+    SCHEMA_ID,
+    SEARCHES_ID,
+    TRASH_ID,
+    SETTINGS_ID,
+  ]);
+  const legacyIds = root.children.filter((childId) => !systemRootIds.has(childId) && Boolean(state.nodes[childId]));
+  if (legacyIds.length === 0) return;
+  root.children = root.children.filter((childId) => !legacyIds.includes(childId));
+  for (const childId of legacyIds) {
+    library.children = library.children.filter((id) => id !== childId);
+    library.children.push(childId);
+    state.nodes[childId]!.parentId = LIBRARY_ID;
   }
 }
 

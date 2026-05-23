@@ -98,12 +98,12 @@ export function CommandPalette(props: CommandPaletteProps) {
       action: () => openNode(props.projection.todayId),
     },
     {
-      id: props.projection.rootId,
-      label: 'Workspace',
+      id: props.projection.libraryId,
+      label: 'Library',
       icon: LibraryIcon,
       kind: 'navigate',
       typeLabel: 'Navigate',
-      action: () => openNode(props.projection.rootId),
+      action: () => openNode(props.projection.libraryId),
     },
     {
       id: props.projection.schemaId,

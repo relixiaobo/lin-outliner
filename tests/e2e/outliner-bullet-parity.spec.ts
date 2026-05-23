@@ -169,9 +169,9 @@ test.describe('outliner bullet parity', () => {
   });
 
   test('collapsed content bullets use fill only without an outer border', async ({ page }) => {
-    await page.getByRole('button', { name: 'Library' }).click();
+    await page.getByRole('button', { name: 'Daily Notes', exact: true }).first().click();
 
-    const collapsedBullet = row(page, ids.daily).locator('.row-bullet-shape.content.has-children.collapsed').first();
+    const collapsedBullet = row(page, ids.today).locator('.row-bullet-shape.content.has-children.collapsed').first();
     await expect(collapsedBullet).toBeVisible();
 
     const borderWidths = await collapsedBullet.evaluate((element) => {
@@ -187,9 +187,9 @@ test.describe('outliner bullet parity', () => {
   });
 
   test('parent chevrons are hover-only and do not duplicate the child bullet state', async ({ page }) => {
-    await page.getByRole('button', { name: 'Library' }).click();
+    await page.getByRole('button', { name: 'Daily Notes', exact: true }).first().click();
 
-    const dailyRow = rowBody(page, ids.daily);
+    const dailyRow = rowBody(page, ids.today);
     const restingMetrics = await dailyRow.evaluate((element) => {
       const rowRect = element.getBoundingClientRect();
       const chevron = element.querySelector('.row-chevron-button');

@@ -159,19 +159,18 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
               const outcome = await api.createNode(parentId, null, text);
               createdId = outcome.focus?.nodeId ?? null;
               return outcome.projection;
-            });
+            }, { applyFocus: false });
             return createdId;
           }}
           onCreateTree={(parentId, nodes) => (
-            props.run(() => api.createNodesFromTree(parentId, nodes))
+            props.run(() => api.createNodesFromTree(parentId, nodes), { applyFocus: false })
           )}
           onIndentNode={(nodeId) => (
-            props.run(() => api.indentNode(nodeId))
+            props.run(() => api.indentNode(nodeId), { applyFocus: false })
           )}
           onUpdateCreated={async (nodeId, text) => {
-            await props.run(() => api.replaceNodeText(nodeId, plainText(text)));
+            await props.run(() => api.replaceNodeText(nodeId, plainText(text)), { applyFocus: false });
           }}
-          materializeOnInput
           onToggleCreated={async (nodeId) => {
             await props.run(() => api.toggleDone(nodeId));
           }}

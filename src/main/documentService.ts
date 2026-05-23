@@ -106,7 +106,7 @@ export class DocumentService {
       case 'init_workspace':
         return this.initWorkspace();
       case 'get_projection':
-        return this.getProjection();
+        return this.mutationQueue.then(() => this.getProjection());
       case 'search_nodes':
         return this.core.searchNodes(String(args.query ?? ''));
       case 'backlinks':

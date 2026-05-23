@@ -51,8 +51,19 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [trigger, setTrigger] = useState<TriggerState>(null);
   const [dragId, setDragId] = useState<NodeId | null>(null);
+  const pendingLocalUserCommandsRef = useRef(0);
+  const ignoreLocalUserEventsThroughRef = useRef(0);
   const index = useDocumentIndex(projection);
-  const run = useCommandRunner(setProjection, setPendingFocus, setError);
+  const commandRunnerLifecycle = useMemo(() => ({
+    onLocalCommandStart: () => {
+      pendingLocalUserCommandsRef.current += 1;
+    },
+    onLocalCommandSettled: () => {
+      pendingLocalUserCommandsRef.current = Math.max(0, pendingLocalUserCommandsRef.current - 1);
+      ignoreLocalUserEventsThroughRef.current = Date.now();
+    },
+  }), []);
+  const run = useCommandRunner(setProjection, setPendingFocus, setError, commandRunnerLifecycle);
 
   const setCommandOpen = useCallback((commandOpen: boolean) => {
     setUi((prev) => ({ ...prev, commandOpen }));
@@ -109,7 +120,7 @@ export function App() {
         const next = requestFocusState(prev, rowFocusTarget(initialFocusId, null, null), cursorEnd());
         return {
           ...next,
-          expanded: new Set([...next.expanded, initial.rootId]),
+          expanded: new Set([...next.expanded, initial.libraryId]),
         };
       });
       return initial;
@@ -118,7 +129,18 @@ export function App() {
 
   useEffect(() => {
     const unlisten = window.lin?.onDocumentEvent((event) => {
-      if (event.type === 'projection_changed') setProjection(event.projection);
+      if (event.type !== 'projection_changed') return;
+      // Local commands apply their returned projection through run(); delayed user events can still carry intermediate state.
+      const isLocalUserCommandEvent = event.origin === 'user'
+        && (
+          pendingLocalUserCommandsRef.current > 0
+          || (
+            typeof event.timestamp === 'number'
+            && event.timestamp <= ignoreLocalUserEventsThroughRef.current
+          )
+        );
+      if (isLocalUserCommandEvent) return;
+      setProjection(event.projection);
     });
     return () => {
       unlisten?.();

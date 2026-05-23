@@ -35,7 +35,7 @@ function defaultTabs(initial: DocumentProjection): { activeTabId: string; tabs: 
       },
       panels: [
         outlinerPanel(firstPanelId, initial.todayId),
-        outlinerPanel(secondPanelId, initial.rootId),
+        outlinerPanel(secondPanelId, initial.libraryId),
       ],
     }],
   };

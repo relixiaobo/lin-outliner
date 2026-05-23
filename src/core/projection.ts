@@ -1,5 +1,6 @@
 import {
   DAILY_NOTES_ID,
+  LIBRARY_ID,
   SCHEMA_ID,
   SEARCHES_ID,
   SETTINGS_ID,
@@ -14,6 +15,7 @@ export function buildDocumentProjection(state: DocumentState, todayId: string): 
   return {
     workspaceId: state.workspaceId,
     rootId: state.rootId,
+    libraryId: LIBRARY_ID,
     dailyNotesId: DAILY_NOTES_ID,
     schemaId: SCHEMA_ID,
     searchesId: SEARCHES_ID,

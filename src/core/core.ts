@@ -18,6 +18,7 @@ import { buildDocumentProjection } from './projection';
 import { runSearchExpr, runSearchNode, searchNodeHasRules } from './searchEngine';
 import {
   DAILY_NOTES_ID,
+  LIBRARY_ID,
   SCHEMA_ID,
   SEARCHES_ID,
   SETTINGS_ID,
@@ -1426,6 +1427,7 @@ export class Core {
   private ensureSystemNodesDirect() {
     const now = nowMs();
     this.ensureSystemNodeDirect(WORKSPACE_ID, undefined, undefined, 'Lin Outliner', true, now);
+    this.ensureSystemNodeDirect(LIBRARY_ID, undefined, WORKSPACE_ID, 'Library', true, now);
     this.ensureSystemNodeDirect(DAILY_NOTES_ID, undefined, WORKSPACE_ID, 'Daily notes', true, now);
     this.ensureSystemNodeDirect(SCHEMA_ID, undefined, WORKSPACE_ID, 'Schema', true, now);
     this.ensureSystemNodeDirect(SEARCHES_ID, undefined, WORKSPACE_ID, 'Searches', true, now);
@@ -1434,12 +1436,31 @@ export class Core {
     this.ensureSystemNodeDirect(TAG_DAY_ID, 'tagDef', SCHEMA_ID, 'day', true, now);
     this.ensureSystemNodeDirect(TAG_WEEK_ID, 'tagDef', SCHEMA_ID, 'week', true, now);
     this.ensureSystemNodeDirect(TAG_YEAR_ID, 'tagDef', SCHEMA_ID, 'year', true, now);
-    [DAILY_NOTES_ID, SCHEMA_ID, SEARCHES_ID, TRASH_ID, SETTINGS_ID].forEach((id, index) => {
+    [LIBRARY_ID, DAILY_NOTES_ID, SCHEMA_ID, SEARCHES_ID, TRASH_ID, SETTINGS_ID].forEach((id, index) => {
       this.loro.moveNode(id, WORKSPACE_ID, index);
     });
     [TAG_DAY_ID, TAG_WEEK_ID, TAG_YEAR_ID].forEach((id, index) => {
       this.loro.moveNode(id, SCHEMA_ID, index);
     });
+    this.moveLegacyWorkspaceNodesToLibraryDirect();
+  }
+
+  private moveLegacyWorkspaceNodesToLibraryDirect() {
+    const state = this.snapshot();
+    const root = state.nodes[WORKSPACE_ID];
+    if (!root || !state.nodes[LIBRARY_ID]) return;
+    const systemRootIds = new Set([
+      LIBRARY_ID,
+      DAILY_NOTES_ID,
+      SCHEMA_ID,
+      SEARCHES_ID,
+      TRASH_ID,
+      SETTINGS_ID,
+    ]);
+    for (const childId of [...root.children]) {
+      if (systemRootIds.has(childId)) continue;
+      if (state.nodes[childId]) this.loro.moveNode(childId, LIBRARY_ID, undefined);
+    }
   }
 
   private ensureSystemNodeDirect(

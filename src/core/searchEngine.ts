@@ -1,5 +1,6 @@
 import {
   DAILY_NOTES_ID,
+  LIBRARY_ID,
   SCHEMA_ID,
   SEARCHES_ID,
   SETTINGS_ID,
@@ -37,6 +38,7 @@ type SearchNode = Node | NodeProjection;
 
 const SYSTEM_IDS = new Set([
   WORKSPACE_ID,
+  LIBRARY_ID,
   DAILY_NOTES_ID,
   SCHEMA_ID,
   SEARCHES_ID,
@@ -137,6 +139,7 @@ export type SearchRunResult =
 
 interface SearchIndex {
   rootId: NodeId;
+  libraryId: NodeId;
   nodes: Map<NodeId, SearchNode>;
   allNodes: SearchNode[];
 }
@@ -277,6 +280,7 @@ function indexSearchDocument(document: SearchDocument): SearchIndex {
     : Object.values(document.nodes);
   return {
     rootId: document.rootId,
+    libraryId: 'libraryId' in document ? document.libraryId : LIBRARY_ID,
     allNodes,
     nodes: new Map(allNodes.map((node) => [node.id, node])),
   };
@@ -586,7 +590,7 @@ function evaluateLeaf(index: SearchIndex, candidate: SearchNode, conditionNode: 
     return { ok: true, match: Boolean(sibling && isDescendantOf(index, candidate.id, sibling.id)), score: 16 };
   }
 
-  if (op === 'IN_LIBRARY') return { ok: true, match: candidate.parentId === index.rootId, score: 12 };
+  if (op === 'IN_LIBRARY') return { ok: true, match: candidate.parentId === index.libraryId, score: 12 };
 
   if (op === 'ON_DAY_NODE') return { ok: true, match: Boolean(candidate.parentId && isDayNode(index, candidate.parentId)), score: 12 };
 

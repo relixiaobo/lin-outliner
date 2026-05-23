@@ -40,7 +40,7 @@ export function Sidebar(props: SidebarProps) {
     today: props.projection.todayId,
     search: props.projection.searchesId,
     supertags: props.projection.schemaId,
-    library: props.projection.rootId,
+    library: props.projection.libraryId,
     recents: null,
   } satisfies Record<typeof primaryNavItems[number]['key'], NodeId | null>;
 
@@ -120,7 +120,7 @@ export function Sidebar(props: SidebarProps) {
       <div className="sidebar-section">
         <div className="sidebar-section-title">Workspace</div>
         <div className="workspace-tree" aria-label="Workspace tree">
-          {(props.index.byId.get(props.projection.rootId)?.children ?? []).map((childId) => (
+          {(props.index.byId.get(props.projection.libraryId)?.children ?? []).map((childId) => (
             renderWorkspaceTree(childId)
           ))}
         </div>

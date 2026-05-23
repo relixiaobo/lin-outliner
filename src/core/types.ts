@@ -3,6 +3,7 @@ import type { AgentRenderProjection } from './agentRenderProjection';
 export type NodeId = string;
 
 export const WORKSPACE_ID = 'workspace';
+export const LIBRARY_ID = 'library';
 export const DAILY_NOTES_ID = 'daily-notes';
 export const SCHEMA_ID = 'schema';
 export const SEARCHES_ID = 'searches';
@@ -293,6 +294,7 @@ export const LIN_DOCUMENT_EVENT_CHANNEL = 'lin-document-event';
 export interface DocumentProjection {
   workspaceId: NodeId;
   rootId: NodeId;
+  libraryId: NodeId;
   dailyNotesId: NodeId;
   schemaId: NodeId;
   searchesId: NodeId;

@@ -1436,6 +1436,11 @@
   text-underline-offset: 0.12em;
 }
 
+.row.ref-converting .row-editor .inline-ref:hover {
+  cursor: text;
+  text-decoration-line: none;
+}
+
 .row-editor .inline-ref.ProseMirror-selectednode {
   border-radius: var(--radius-control-xs);
   background: var(--row-selection-frame-bg);

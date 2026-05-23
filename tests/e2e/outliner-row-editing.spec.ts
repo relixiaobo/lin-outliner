@@ -90,6 +90,67 @@ async function pasteIntoFocusedEditor(page: Page, text: string) {
   }, text);
 }
 
+async function delayTextPatchCommands(page: Page, delayMs = 80) {
+  await page.evaluate((delay) => {
+    const win = window as unknown as {
+      lin?: {
+        invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+      };
+    };
+    const originalInvoke = win.lin?.invoke;
+    if (!win.lin || !originalInvoke) return;
+    win.lin.invoke = async <T,>(cmd: string, args: Record<string, unknown> = {}) => {
+      if (cmd === 'apply_node_text_patch') {
+        await new Promise((resolve) => window.setTimeout(resolve, delay));
+      }
+      return originalInvoke<T>(cmd, args);
+    };
+  }, delayMs);
+}
+
+async function watchRowTextReplay(page: Page, nodeId: string, expectedText: string) {
+  await page.evaluate(({ expected, id }) => {
+    const win = window as unknown as {
+      __linRowTextReplays?: string[];
+      __linRowTextReplayCleanup?: () => void;
+    };
+    win.__linRowTextReplays = [];
+    win.__linRowTextReplayCleanup?.();
+    const target = document.querySelector(`[data-node-id="${id}"] .ProseMirror`);
+    if (!target) throw new Error('Missing row editor');
+    let sawExpected = false;
+    const scan = () => {
+      const text = target.textContent ?? '';
+      if (text === expected) {
+        sawExpected = true;
+        return;
+      }
+      if (
+        sawExpected
+        && text !== expected
+      ) {
+        win.__linRowTextReplays?.push(text);
+      }
+    };
+    const observer = new MutationObserver(scan);
+    observer.observe(target, { childList: true, characterData: true, subtree: true });
+    scan();
+    win.__linRowTextReplayCleanup = () => observer.disconnect();
+  }, { expected: expectedText, id: nodeId });
+}
+
+async function expectNoRowTextReplay(page: Page) {
+  expect(await page.evaluate(() => {
+    const win = window as unknown as {
+      __linRowTextReplays?: string[];
+      __linRowTextReplayCleanup?: () => void;
+    };
+    win.__linRowTextReplayCleanup?.();
+    win.__linRowTextReplayCleanup = undefined;
+    return win.__linRowTextReplays ?? [];
+  })).toEqual([]);
+}
+
 test.describe('outliner row editing parity', () => {
   test.beforeEach(async ({ page }) => {
     await openMockedApp(page);
@@ -257,6 +318,21 @@ test.describe('outliner row editing parity', () => {
 
     await page.keyboard.type('Y');
     await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe('AlXYpha');
+  });
+
+  test('delayed ordinary row text patches do not replay partial text after focus moves away', async ({ page }) => {
+    await delayTextPatchCommands(page, 80);
+    const text = 'ordinaryfastinputguard';
+
+    await selectEditorContents(page, ids.alpha);
+    await watchRowTextReplay(page, ids.alpha, text);
+    await page.keyboard.type(text, { delay: 0 });
+    await expect(rowEditor(page, ids.alpha)).toHaveText(text);
+
+    await trailingEditor(page).click();
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe(text);
+    await page.waitForTimeout(120);
+    await expectNoRowTextReplay(page);
   });
 
   test('Backspace at the start of an empty row deletes it and returns focus upward', async ({ page }) => {

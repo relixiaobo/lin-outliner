@@ -74,7 +74,7 @@ export function ReferenceSelector(props: ReferenceSelectorProps) {
   const createAndSelect = (label: string) => {
     props.close();
     void props.run(async () => {
-      const created = await api.createNode(props.index.projection.rootId, null, label);
+      const created = await api.createNode(props.index.projection.libraryId, null, label);
       const targetId = created.focus?.nodeId;
       const target = targetId ? nodeFromOutcome(created, targetId) : undefined;
       if (!target) return created;
