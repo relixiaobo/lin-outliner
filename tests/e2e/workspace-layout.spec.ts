@@ -3,7 +3,7 @@ import {
   MAC_TRAFFIC_LIGHT_POSITION,
   MAC_TRAFFIC_LIGHT_SIZE,
 } from '../../src/core/chromeGeometry';
-import { openMockedApp } from './outlinerMock';
+import { e2eProjection, emitDocumentEvent, ids, openMockedApp } from './outlinerMock';
 
 test.describe('workspace layout resizing', () => {
   test.beforeEach(async ({ page }) => {
@@ -247,14 +247,143 @@ test.describe('workspace layout resizing', () => {
     expect(narrowMetrics.rightGap).toBeGreaterThanOrEqual(-1);
   });
 
-  test('workspace section renders the root node as an expandable tree', async ({ page }) => {
-    const workspaceTree = page.getByLabel('Workspace tree');
-    await expect(workspaceTree).not.toContainText('Root');
+  test('workspace section renders the true root outline', async ({ page }) => {
+    const rootButton = page.getByRole('button', { name: 'Open Root' });
+    await expect(rootButton).toBeVisible();
+    await rootButton.click();
+    await expect(page.locator('.outline-panel-surface.active-panel .panel-title-editor')).toContainText('Root');
+
+    const workspaceTree = page.getByLabel('Workspace root tree');
     await expect(workspaceTree).toContainText('Daily Notes');
-    await expect(workspaceTree).toContainText('Schema');
+    await expect(workspaceTree).toContainText('Projects');
+    await expect(workspaceTree).toContainText('Areas');
+    await expect(workspaceTree).toContainText('Resources');
+    await expect(workspaceTree).toContainText('Library');
+    await expect(workspaceTree).toContainText('Saved searches');
+    await expect(workspaceTree).toContainText('Trash');
+    await expect(workspaceTree).not.toContainText('Schema');
+    await expect(workspaceTree).not.toContainText('Settings');
+    const sidebarMetrics = await workspaceTree.evaluate((tree) => {
+      const primaryIcon = document.querySelector('.sidebar-primary-nav .sidebar-nav-icon');
+      const pinnedTitle = document.querySelector('.sidebar-section-title');
+      const pinnedEmptyIcon = document.querySelector('.sidebar-empty-icon');
+      const rootAvatar = document.querySelector('.sidebar-root-avatar');
+      const firstRow = tree.querySelector('.workspace-tree-row');
+      const firstChevron = firstRow?.querySelector('.workspace-tree-chevron-button');
+      const firstContent = firstRow?.querySelector('.workspace-tree-label-icon, .workspace-tree-label-text');
+      const plainContent = Array.from(tree.querySelectorAll('.workspace-tree-label-text'))
+        .find((element) => element.textContent?.trim() === 'Projects');
+      const sidebarDock = document.querySelector('.sidebar-dock');
+      if (!primaryIcon
+        || !(pinnedTitle instanceof HTMLElement)
+        || !pinnedEmptyIcon
+        || !(rootAvatar instanceof HTMLElement)
+        || !(firstChevron instanceof HTMLElement)
+        || !firstContent
+        || !plainContent
+        || !(sidebarDock instanceof HTMLElement)
+        || !(firstRow instanceof HTMLElement)) {
+        throw new Error('missing sidebar root alignment nodes');
+      }
+      const primaryIconBox = primaryIcon.getBoundingClientRect();
+      const pinnedTitleBox = pinnedTitle.getBoundingClientRect();
+      const pinnedEmptyIconBox = pinnedEmptyIcon.getBoundingClientRect();
+      const rootAvatarBox = rootAvatar.getBoundingClientRect();
+      const firstChevronBox = firstChevron.getBoundingClientRect();
+      const firstContentBox = firstContent.getBoundingClientRect();
+      const plainContentBox = plainContent.getBoundingClientRect();
+      const sidebarDockBox = sidebarDock.getBoundingClientRect();
+      const pinnedTitleStyle = getComputedStyle(pinnedTitle);
+      const rowStyle = getComputedStyle(firstRow);
+      const chevronStyle = getComputedStyle(firstChevron);
+      const contentStyle = getComputedStyle(firstContent);
+      return {
+        chevronColor: chevronStyle.color,
+        chevronLeft: firstChevronBox.left,
+        chevronRight: firstChevronBox.right,
+        contentColor: contentStyle.color,
+        contentLeft: firstContentBox.left,
+        pinnedEmptyIconLeft: pinnedEmptyIconBox.left,
+        pinnedTitleLeft: pinnedTitleBox.left + Number.parseFloat(pinnedTitleStyle.paddingLeft),
+        plainContentLeft: plainContentBox.left,
+        primaryIconLeft: primaryIconBox.left,
+        rootAvatarLeft: rootAvatarBox.left,
+        rowRight: firstRow.getBoundingClientRect().right,
+        rowHeight: firstRow.getBoundingClientRect().height,
+        rowRadius: rowStyle.borderRadius,
+        sidebarLeft: sidebarDockBox.left,
+        sidebarRight: sidebarDockBox.right,
+      };
+    });
+    const expectedLeft = sidebarMetrics.contentLeft;
+    expect(Math.abs(sidebarMetrics.primaryIconLeft - expectedLeft)).toBeLessThanOrEqual(1);
+    expect(Math.abs(sidebarMetrics.pinnedTitleLeft - expectedLeft)).toBeLessThanOrEqual(1);
+    expect(Math.abs(sidebarMetrics.pinnedEmptyIconLeft - expectedLeft)).toBeLessThanOrEqual(1);
+    expect(Math.abs(sidebarMetrics.rootAvatarLeft - expectedLeft)).toBeLessThanOrEqual(1);
+    expect(Math.abs(sidebarMetrics.plainContentLeft - expectedLeft)).toBeLessThanOrEqual(1);
+    expect(sidebarMetrics.contentLeft - sidebarMetrics.sidebarLeft).toBeGreaterThanOrEqual(20);
+    expect(sidebarMetrics.contentLeft - sidebarMetrics.sidebarLeft).toBeLessThanOrEqual(26);
+    expect(Math.abs(
+      (sidebarMetrics.contentLeft - sidebarMetrics.sidebarLeft)
+      - (sidebarMetrics.sidebarRight - sidebarMetrics.rowRight),
+    )).toBeLessThanOrEqual(1);
+    expect(sidebarMetrics.chevronLeft - sidebarMetrics.sidebarLeft).toBeGreaterThanOrEqual(4);
+    expect(sidebarMetrics.chevronRight).toBeLessThanOrEqual(sidebarMetrics.contentLeft);
+    expect(sidebarMetrics.chevronColor).not.toBe(sidebarMetrics.contentColor);
+    expect(sidebarMetrics.rowHeight).toBe(28);
+    expect(sidebarMetrics.rowRadius).toBe('6px');
 
     await workspaceTree.getByRole('button', { name: 'Expand Daily Notes' }).click();
     await expect(workspaceTree).toContainText('2026-05-13');
+  });
+
+  test('workspace tree renders reference nodes by target title', async ({ page }) => {
+    const fixture = await page.evaluate(async (ids) => {
+      const win = window as Window & {
+        lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      };
+      const target = await win.lin?.invoke<{ focus?: { nodeId: string } }>('create_node', {
+        parentId: ids.library,
+        index: null,
+        text: 'Reference target',
+      });
+      const targetId = target?.focus?.nodeId ?? '';
+      const child = await win.lin?.invoke<{ focus?: { nodeId: string } }>('create_node', {
+        parentId: targetId,
+        index: null,
+        text: 'Target child',
+      });
+      const reference = await win.lin?.invoke<{ focus?: { nodeId: string } }>('add_reference', {
+        parentId: ids.today,
+        targetId,
+        index: null,
+      });
+      return {
+        childId: child?.focus?.nodeId ?? '',
+        referenceId: reference?.focus?.nodeId ?? '',
+      };
+    }, ids);
+    await emitDocumentEvent(page, {
+      type: 'projection_changed',
+      origin: 'test',
+      projection: await e2eProjection(page),
+      timestamp: Date.now(),
+    });
+
+    const workspaceTree = page.getByLabel('Workspace root tree');
+    await workspaceTree.getByRole('button', { name: 'Expand Daily Notes' }).click();
+    await workspaceTree.getByRole('button', { name: 'Expand 2026-05-13' }).click();
+
+    await expect(workspaceTree).toContainText('Reference target');
+    await expect(workspaceTree).not.toContainText('@node:');
+
+    const referenceRow = workspaceTree.locator('.workspace-tree-row').filter({ hasText: 'Reference target' });
+    await expect(referenceRow.locator('.workspace-tree-reference-marker')).toHaveCount(0);
+    await referenceRow.getByRole('button', { name: 'Expand Reference target' }).click();
+    await expect(workspaceTree).toContainText('Target child');
+
+    expect(fixture.referenceId).toBeTruthy();
+    expect(fixture.childId).toBeTruthy();
   });
 
   test('workspace tabs can be closed and restore persisted active roots', async ({ page }) => {
@@ -310,7 +439,7 @@ test.describe('workspace layout resizing', () => {
     ));
     expect(inactiveSegmentWeightAfterHover).toBe(inactiveSegmentWeightBeforeHover);
 
-    await page.getByRole('button', { name: 'Supertags' }).click();
+    await page.getByRole('button', { name: 'Schema' }).click();
     await expect(page.locator('.panel-title-editor').first()).toContainText('Schema');
 
     await page.reload();
@@ -328,12 +457,12 @@ test.describe('workspace layout resizing', () => {
     await page.keyboard.press('Meta+M');
     await expect(panels).toHaveCount(3);
 
-    await page.locator('.sidebar-primary-nav').getByRole('button', { name: 'Search', exact: true }).click({ modifiers: ['Alt'] });
+    await page.locator('.sidebar-primary-nav').getByRole('button', { name: 'Recents', exact: true }).click({ modifiers: ['Alt'] });
     await expect(panels).toHaveCount(4);
     const activeTabSegments = page.locator('.workspace-tab.active .workspace-tab-segment');
     await expect(activeTabSegments).toHaveCount(4);
     await expect(page.locator('.workspace-tab.active .workspace-tab-count')).toHaveCount(0);
-    await expect(activeTabSegments.nth(3)).toContainText('Searches');
+    await expect(activeTabSegments.nth(3)).toContainText('Recents');
     const iconSlots = await activeTabSegments.evaluateAll((segments) => (
       segments.map((segment) => {
         const icon = segment.querySelector('.workspace-tab-segment-icon');
@@ -365,7 +494,7 @@ test.describe('workspace layout resizing', () => {
       marginRight: '4px',
       width: '1px',
     });
-    await expect(panels.nth(3).locator('.panel-title-editor')).toContainText('Searches');
+    await expect(panels.nth(3).locator('.panel-title-editor')).toContainText('Recents');
 
     await activeTabSegments.first().click();
     await expect(panels.first()).toHaveClass(/active/);

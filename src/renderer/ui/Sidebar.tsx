@@ -1,15 +1,18 @@
-import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import type { DocumentProjection, NodeId, NodeProjection } from '../api/types';
-import type { DocumentIndex } from '../state/document';
+import { resolveReferenceTargetId, type DocumentIndex } from '../state/document';
 import {
   CalendarIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   ICON_SIZE,
   LibraryIcon,
+  PinIcon,
   RecentsIcon,
   SearchIcon,
   SupertagIcon,
+  TrashIcon,
+  type AppIcon,
 } from './icons';
 import { ButtonControl } from './primitives/ButtonControl';
 import { ResizeHandle } from './primitives/ResizeHandle';
@@ -17,10 +20,9 @@ import { textOf } from './shared';
 
 const primaryNavItems = [
   { label: 'Today', key: 'today', icon: CalendarIcon },
-  { label: 'Search', key: 'search', icon: SearchIcon },
-  { label: 'Supertags', key: 'supertags', icon: SupertagIcon },
   { label: 'Library', key: 'library', icon: LibraryIcon },
   { label: 'Recents', key: 'recents', icon: RecentsIcon },
+  { label: 'Schema', key: 'schema', icon: SupertagIcon },
 ] as const;
 
 interface SidebarProps {
@@ -38,22 +40,35 @@ interface SidebarProps {
 export function Sidebar(props: SidebarProps) {
   const navTargets = {
     today: props.projection.todayId,
-    search: props.projection.searchesId,
-    supertags: props.projection.schemaId,
     library: props.projection.libraryId,
-    recents: null,
+    recents: props.projection.recentsId,
+    schema: props.projection.schemaId,
   } satisfies Record<typeof primaryNavItems[number]['key'], NodeId | null>;
+  const rootNode = props.index.byId.get(props.projection.rootId);
+  const hiddenRootNodeIds = new Set<NodeId>([props.projection.schemaId, props.projection.settingsId]);
+  const rootChildren = rootNode?.children
+    .map((childId) => props.index.byId.get(childId))
+    .filter((child): child is NodeProjection => (
+      Boolean(child && child.parentId === rootNode.id && !hiddenRootNodeIds.has(child.id))
+    )) ?? [];
+  const pinnedNodeIds: NodeId[] = [];
+  const rootLabel = rootNode ? textOf(rootNode) || 'Untitled' : '';
+  const rootActive = rootNode ? props.rootId === rootNode.id : false;
 
-  const renderWorkspaceTree = (nodeId: NodeId, depth = 0) => {
+  const renderWorkspaceTree = (nodeId: NodeId, depth = 0, parentPath: readonly NodeId[] = [props.projection.rootId]) => {
     const node = props.index.byId.get(nodeId);
     if (!node) return null;
-    const children = node.children
-      .map((childId) => props.index.byId.get(childId))
-      .filter((child): child is NodeProjection => Boolean(child && child.parentId === node.id));
+    const presentation = sidebarNodePresentation(node, props.index.byId);
+    const childParent = presentation.childParent;
+    const childParentId = childParent.id;
+    const referenceCycle = parentPath.includes(childParentId);
+    const children = referenceCycle ? [] : sidebarChildren(childParent, props.index.byId);
     const hasChildren = children.length > 0;
     const expanded = props.expandedIds.has(node.id);
-    const active = props.rootId === node.id;
-    const label = textOf(node) || 'Untitled';
+    const active = props.rootId === node.id || props.rootId === presentation.navigateId;
+    const label = presentation.label;
+    const nodeIcon = renderSidebarNodeIcon(childParent, props.projection);
+    const childPath = referenceCycle ? parentPath : [...parentPath, childParentId];
 
     return (
       <div className="workspace-tree-branch" key={node.id}>
@@ -74,18 +89,19 @@ export function Sidebar(props: SidebarProps) {
             )}
           </ButtonControl>
           <ButtonControl
-            className="workspace-tree-label"
+            className={`workspace-tree-label ${nodeIcon ? 'has-icon' : 'no-icon'}`}
             onClick={(event) => {
-              if (event.altKey) props.onOpenPanel(node.id);
-              else props.onNavigateRoot(node.id);
+              if (event.altKey) props.onOpenPanel(presentation.navigateId);
+              else props.onNavigateRoot(presentation.navigateId);
             }}
           >
-            <span>{label}</span>
+            {nodeIcon}
+            <span className="workspace-tree-label-text">{label}</span>
           </ButtonControl>
         </div>
         {hasChildren && expanded && (
           <div className="workspace-tree-children">
-            {children.map((child) => renderWorkspaceTree(child.id, depth + 1))}
+            {children.map((child) => renderWorkspaceTree(child.id, depth + 1, childPath))}
           </div>
         )}
       </div>
@@ -118,13 +134,43 @@ export function Sidebar(props: SidebarProps) {
       </nav>
 
       <div className="sidebar-section">
-        <div className="sidebar-section-title">Workspace</div>
-        <div className="workspace-tree" aria-label="Workspace tree">
-          {(props.index.byId.get(props.projection.libraryId)?.children ?? []).map((childId) => (
-            renderWorkspaceTree(childId)
-          ))}
-        </div>
+        <div className="sidebar-section-title">Pinned</div>
+        {pinnedNodeIds.length === 0 ? (
+          <div className="sidebar-empty-row">
+            <PinIcon className="sidebar-empty-icon" size={ICON_SIZE.menu} strokeWidth={1.7} />
+            <span>Drag to pin nodes</span>
+          </div>
+        ) : (
+          <div className="workspace-tree" aria-label="Pinned nodes">
+            {pinnedNodeIds.map((nodeId) => renderWorkspaceTree(nodeId))}
+          </div>
+        )}
       </div>
+
+      {rootNode && (
+        <div className="sidebar-section sidebar-root-section">
+          <div className="sidebar-root-row">
+            <ButtonControl
+              aria-label={`Open ${rootLabel}`}
+              className={`sidebar-root-button ${rootActive ? 'active' : ''}`}
+              onClick={(event) => {
+                if (event.altKey) props.onOpenPanel(rootNode.id);
+                else props.onNavigateRoot(rootNode.id);
+              }}
+            >
+              <span className="sidebar-root-avatar" aria-hidden="true">
+                {rootAvatar(rootNode, rootLabel)}
+              </span>
+              <span className="sidebar-root-label">{rootLabel}</span>
+            </ButtonControl>
+          </div>
+          <div className="workspace-tree" aria-label="Workspace root tree">
+            {rootChildren.map((child) => (
+              renderWorkspaceTree(child.id)
+            ))}
+          </div>
+        </div>
+      )}
       <ResizeHandle
         className="dock-resize-handle sidebar-resize-handle"
         label="Resize sidebar"
@@ -134,4 +180,86 @@ export function Sidebar(props: SidebarProps) {
       />
     </aside>
   );
+}
+
+interface SidebarNodePresentation {
+  childParent: NodeProjection;
+  label: string;
+  navigateId: NodeId;
+}
+
+function sidebarNodePresentation(
+  node: NodeProjection,
+  byId: Map<NodeId, NodeProjection>,
+): SidebarNodePresentation {
+  const target = referenceTargetNode(node, byId);
+  const displayed = target ?? node;
+  const fallbackLabel = node.type === 'reference' && node.targetId ? 'Missing reference' : 'Untitled';
+
+  return {
+    childParent: displayed,
+    label: displayed.content.text || fallbackLabel,
+    navigateId: displayed.id,
+  };
+}
+
+function referenceTargetNode(
+  node: NodeProjection,
+  byId: Map<NodeId, NodeProjection>,
+): NodeProjection | null {
+  if (node.type !== 'reference' || !node.targetId) return null;
+  const targetId = resolveReferenceTargetId(node.targetId, byId);
+  return targetId ? byId.get(targetId) ?? null : null;
+}
+
+function sidebarChildren(
+  parent: NodeProjection,
+  byId: Map<NodeId, NodeProjection>,
+): NodeProjection[] {
+  return parent.children
+    .map((childId) => byId.get(childId))
+    .filter((child): child is NodeProjection => Boolean(
+      child
+      && child.parentId === parent.id
+      && child.type !== 'queryCondition',
+    ));
+}
+
+function renderSidebarNodeIcon(node: NodeProjection, projection: DocumentProjection): ReactNode {
+  const icon = nodeIconOf(node);
+  if (icon) {
+    return (
+      <span className="workspace-tree-label-icon workspace-tree-label-emoji" aria-hidden="true">
+        {icon}
+      </span>
+    );
+  }
+
+  const SystemIcon = systemIconForNode(node.id, projection);
+  if (!SystemIcon) return null;
+  return (
+    <SystemIcon
+      aria-hidden="true"
+      className="workspace-tree-label-icon"
+      size={ICON_SIZE.menu}
+      strokeWidth={1.75}
+    />
+  );
+}
+
+function systemIconForNode(nodeId: NodeId, projection: DocumentProjection): AppIcon | null {
+  if (nodeId === projection.dailyNotesId) return CalendarIcon;
+  if (nodeId === projection.libraryId) return LibraryIcon;
+  if (nodeId === projection.searchesId) return SearchIcon;
+  if (nodeId === projection.trashId) return TrashIcon;
+  return null;
+}
+
+function nodeIconOf(node: NodeProjection) {
+  const icon = (node as { icon?: unknown }).icon;
+  return typeof icon === 'string' && icon.trim() ? icon.trim() : null;
+}
+
+function rootAvatar(node: NodeProjection, label: string) {
+  return nodeIconOf(node) ?? Array.from(label.trim())[0]?.toUpperCase() ?? 'L';
 }
