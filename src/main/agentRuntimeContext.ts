@@ -232,6 +232,7 @@ export class AgentRuntimeContextManager<TSession extends AgentRuntimeContextSess
       const response = await this.completeCompactSummaryWithRetries(sessionId, model, apiKey, {
         messagesToSummarize: compactPlan.messagesToSummarize,
         customInstructions: options.customInstructions,
+        mode: compactPlan.messagesToKeep.length > 0 ? 'up_to' : 'full',
         signal: options.signal,
         runtimeSettings,
       });
@@ -252,6 +253,7 @@ export class AgentRuntimeContextManager<TSession extends AgentRuntimeContextSess
         session.skillRuntime.createSkillListingStateReminder(),
         session.subagentRuntime?.createAgentListingStateReminder() ?? null,
         createPostCompactRestoredFilesReminder(restoredFiles),
+        { recentMessagesPreserved: compactPlan.messagesToKeep.length > 0 },
       );
       await this.host.appendCompactionRootEvent(
         sessionId,
@@ -412,6 +414,7 @@ export class AgentRuntimeContextManager<TSession extends AgentRuntimeContextSess
     options: {
       messagesToSummarize: AgentMessage[];
       customInstructions?: string;
+      mode?: 'full' | 'up_to';
       runtimeSettings: AgentRuntimeSettings;
       signal?: AbortSignal;
     },
@@ -419,7 +422,9 @@ export class AgentRuntimeContextManager<TSession extends AgentRuntimeContextSess
     let messagesToSummarize = options.messagesToSummarize;
     for (let attempt = 0; ; attempt += 1) {
       throwIfAborted(options.signal);
-      const request = buildCompactSummaryRequest(messagesToSummarize, options.customInstructions);
+      const request = buildCompactSummaryRequest(messagesToSummarize, options.customInstructions, {
+        mode: options.mode,
+      });
       const response = await awaitWithAbort((this.host.completeSimpleFn ?? completeSimple)(model, {
         messages: [request],
         tools: [],

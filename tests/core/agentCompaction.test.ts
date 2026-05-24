@@ -77,15 +77,36 @@ describe('agent compaction', () => {
     expect(texts[3]).toContain('Listed skill state');
   });
 
+  test('marks post-compact summary when recent messages remain verbatim', () => {
+    const message = createPostCompactMessage('<summary>Older context</summary>', null, null, null, null, {
+      recentMessagesPreserved: true,
+    });
+    const texts = Array.isArray(message.content) ? message.content.map((part) => part.type === 'text' ? part.text : '') : [];
+
+    expect(texts[1]).toContain('Older context');
+    expect(texts[1]).toContain('Recent messages after this summary are preserved verbatim');
+  });
+
   test('builds one no-tools summary request containing the transcript', () => {
     const request = buildCompactSummaryRequest([user('Summarize me')], 'keep errors');
     const text = Array.isArray(request.content) ? request.content[0]?.type === 'text' ? request.content[0].text : '' : request.content;
 
     expect(text).toContain('Do NOT call any tools');
+    expect(text).toContain('Lin Outliner');
+    expect(text).toContain('Files, Nodes, and Code Sections');
     expect(text).toContain('Additional Instructions');
     expect(text).toContain('keep errors');
     expect(text).toContain('<conversation>');
     expect(text).toContain('Summarize me');
+  });
+
+  test('builds up-to prompt for reactive compact with preserved newer messages', () => {
+    const request = buildCompactSummaryRequest([user('Older context')], undefined, { mode: 'up_to' });
+    const text = Array.isArray(request.content) ? request.content[0]?.type === 'text' ? request.content[0].text : '' : request.content;
+
+    expect(text).toContain('newer messages that build on this context will follow after your summary verbatim');
+    expect(text).toContain('You do not see those newer messages here');
+    expect(text).toContain('Older context');
   });
 
   test('truncates oldest API-round groups for compact prompt-too-long retry', () => {

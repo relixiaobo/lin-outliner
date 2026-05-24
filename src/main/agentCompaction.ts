@@ -9,31 +9,67 @@ const DEFAULT_TRANSCRIPT_CHAR_BUDGET = 360_000;
 const COMPACT_PTL_RETRY_MARKER = '[earlier conversation truncated for compaction retry]';
 const TOKEN_BYTES_ESTIMATE = 4;
 
+export type CompactPromptMode = 'full' | 'up_to';
+
 const NO_TOOLS_PREAMBLE = `CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.
 
 - Do NOT use file, shell, web, skill, or any other tool.
 - You already have all the context you need in the transcript below.
+- Tool calls are unavailable for this compact request and would fail the task.
 - Your entire response must be plain text: an <analysis> block followed by a <summary> block.
 `;
 
-const COMPACT_PROMPT_BODY = `Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.
-This summary must preserve technical details, code patterns, file paths, architectural decisions, errors, fixes, and the current state needed to continue development work without losing context.
+const DETAILED_ANALYSIS_INSTRUCTIONS = `Before providing your final summary, wrap your analysis in <analysis> tags. In your analysis, chronologically inspect the transcript and identify:
 
-Before providing your final summary, wrap your analysis in <analysis> tags. In your analysis, chronologically inspect the conversation and identify the user's requests, decisions made, files read or changed, exact implementation details, test results, errors, fixes, and the work immediately in progress.
+- The user's explicit requests, decisions, corrections, and preferences.
+- The assistant's actions, tool results, edits, and reasoning-relevant outcomes.
+- Lin Outliner workspace context: outline nodes, document structure, selected/focused content, schemas, searches, settings, or UI state when relevant.
+- Files, code, commands, tests, errors, and architectural decisions when the work involves implementation.
+- The exact current state needed to continue without asking the user to restate context.
 
-Your final summary must be wrapped in <summary> tags and include:
+Double-check that the summary distinguishes completed work from pending work and does not invent details not present in the transcript.`;
 
-1. Primary Request and Intent
-2. Key Technical Concepts
-3. Files and Code Sections
-4. Errors and fixes
-5. Problem Solving
-6. All user messages
-7. Pending Tasks
-8. Current Work
-9. Optional Next Step
+const SUMMARY_SECTIONS = `Your final summary must be wrapped in <summary> tags and include:
+
+1. Primary Request and Intent: capture the user's explicit requests and the latest intent.
+2. Key Context and Decisions: preserve important decisions, constraints, preferences, outline/workspace context, and technical concepts.
+3. Files, Nodes, and Code Sections: list relevant files, outline nodes, schemas, searches, settings, code sections, or UI areas examined or changed, with why they matter.
+4. Errors and Fixes: list errors, failed attempts, user corrections, and how they were handled.
+5. Problem Solving: document solved problems, reasoning outcomes, and ongoing troubleshooting.
+6. All User Messages: list all non-tool user messages in order, preserving intent changes and feedback.
+7. Pending Tasks: list tasks the user explicitly asked for that are not completed.
+8. Current Work: describe precisely what was being worked on immediately before compaction.
+9. Optional Next Step: include only the next step that directly follows from the most recent explicit user request; do not revive old or unrelated tasks.`;
+
+const UP_TO_SUMMARY_SECTIONS = `Your final summary must be wrapped in <summary> tags and include:
+
+1. Primary Request and Intent: capture the user's explicit requests and intent from the shown transcript.
+2. Key Context and Decisions: preserve important decisions, constraints, preferences, outline/workspace context, and technical concepts.
+3. Files, Nodes, and Code Sections: list relevant files, outline nodes, schemas, searches, settings, code sections, or UI areas examined or changed, with why they matter.
+4. Errors and Fixes: list errors, failed attempts, user corrections, and how they were handled.
+5. Problem Solving: document solved problems, reasoning outcomes, and ongoing troubleshooting.
+6. All User Messages: list all non-tool user messages from the shown transcript in order.
+7. Pending Tasks: list tasks from the shown transcript that may still matter after newer preserved messages.
+8. Work Completed: describe what was accomplished by the end of the shown transcript.
+9. Context for Continuing Work: summarize the state, decisions, and assumptions needed to understand the preserved newer messages that will follow.`;
+
+const FULL_COMPACT_PROMPT_BODY = `Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.
+This summary is for Lin Outliner, where work may involve outline editing, knowledge organization, UI state, agent skills/subagents, tools, files, code, tests, and product decisions. Preserve whichever of these are relevant.
+
+${DETAILED_ANALYSIS_INSTRUCTIONS}
+
+${SUMMARY_SECTIONS}
 
 If there is a next step, make sure it follows directly from the most recent explicit user request.`;
+
+const UP_TO_COMPACT_PROMPT_BODY = `Your task is to create a detailed summary of the transcript shown below. This summary will be placed at the start of a continuing session, and newer messages that build on this context will follow after your summary verbatim. You do not see those newer messages here.
+Summarize thoroughly so that the assistant can read your summary plus the preserved newer messages and continue naturally.
+
+This summary is for Lin Outliner, where work may involve outline editing, knowledge organization, UI state, agent skills/subagents, tools, files, code, tests, and product decisions. Preserve whichever of these are relevant.
+
+${DETAILED_ANALYSIS_INSTRUCTIONS}
+
+${UP_TO_SUMMARY_SECTIONS}`;
 
 export function parseCompactSlashCommand(input: string): { instructions: string } | null {
   const match = COMPACT_COMMAND_PATTERN.exec(input.trim());
@@ -41,13 +77,17 @@ export function parseCompactSlashCommand(input: string): { instructions: string 
   return { instructions: (match[1] ?? '').trim() };
 }
 
-export function buildCompactPrompt(customInstructions?: string): string {
+export function buildCompactPrompt(
+  customInstructions?: string,
+  mode: CompactPromptMode = 'full',
+): string {
   const instructions = customInstructions?.trim();
+  const body = mode === 'up_to' ? UP_TO_COMPACT_PROMPT_BODY : FULL_COMPACT_PROMPT_BODY;
   return [
     NO_TOOLS_PREAMBLE,
-    COMPACT_PROMPT_BODY,
+    body,
     instructions ? `Additional Instructions:\n${instructions}` : null,
-    'REMINDER: Do NOT call any tools. Respond with plain text only: an <analysis> block followed by a <summary> block.',
+    'REMINDER: Do NOT call any tools. Respond with plain text only: an <analysis> block followed by a <summary> block. Tool calls are unavailable and would fail this compact request.',
   ].filter(Boolean).join('\n\n');
 }
 
@@ -75,10 +115,11 @@ export function buildCompactSummaryRequest(
   customInstructions?: string,
   options: {
     charBudget?: number;
+    mode?: CompactPromptMode;
   } = {},
 ): UserMessage {
   const { transcript, truncated } = buildCompactionTranscript(messages, options.charBudget);
-  const compactPrompt = buildCompactPrompt(customInstructions);
+  const compactPrompt = buildCompactPrompt(customInstructions, options.mode);
   const truncationNote = truncated
     ? '\n\nThe transcript was too large, so the oldest rendered text was truncated before this compact request.'
     : '';
@@ -152,12 +193,13 @@ export function formatCompactSummary(summary: string): string {
   return formatted.replace(/\n{3,}/g, '\n\n').trim();
 }
 
-export function compactSummaryReminder(summary: string): string {
+export function compactSummaryReminder(summary: string, recentMessagesPreserved = false): string {
   return systemReminder([
     'This session is being continued from a previous conversation that was compacted. The summary below covers the earlier portion of the conversation.',
     formatCompactSummary(summary),
+    recentMessagesPreserved ? 'Recent messages after this summary are preserved verbatim in the conversation context.' : null,
     'Continue from where the session left off. Do not ask the user to restate context that is present in this summary.',
-  ].join('\n\n'));
+  ].filter(Boolean).join('\n\n'));
 }
 
 export function createPostCompactMessage(
@@ -166,10 +208,13 @@ export function createPostCompactMessage(
   skillListingStateReminder?: UserMessage | null,
   agentListingStateReminder?: UserMessage | null,
   restoredFilesReminder?: UserMessage | null,
+  options: {
+    recentMessagesPreserved?: boolean;
+  } = {},
 ): UserMessage {
   const content: TextContent[] = [
     { type: 'text', text: 'Conversation compacted.' },
-    { type: 'text', text: compactSummaryReminder(summary) },
+    { type: 'text', text: compactSummaryReminder(summary, !!options.recentMessagesPreserved) },
   ];
   const invokedSkillText = firstText(invokedSkillsReminder);
   if (invokedSkillText) content.push({ type: 'text', text: invokedSkillText });
