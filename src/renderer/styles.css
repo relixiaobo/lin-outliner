@@ -107,7 +107,7 @@
   --sidebar-min-width: 152px;
   --sidebar-max-width: 280px;
   --sidebar-collapsed-width: 0px;
-  --sidebar-section-gap: 30px;
+  --sidebar-section-gap: var(--space-xl);
   --agent-width: 344px;
   --agent-min-width: 280px;
   --agent-max-width: 520px;
@@ -728,15 +728,13 @@ button:focus-visible {
   display: flex;
   flex-direction: column;
   --sidebar-row-height: var(--control-size-xl);
-  --sidebar-tree-chevron-width: 18px;
-  --sidebar-tree-chevron-start: var(--space-1);
+  --sidebar-tree-chevron-width: var(--icon-size-md);
+  --sidebar-tree-chevron-start: 0px;
   --sidebar-tree-icon-size: var(--icon-size-md);
-  --sidebar-tree-indent: 10px;
-  --sidebar-content-start: 20px;
-  --sidebar-outer-gutter: calc(var(--space-2) + var(--sidebar-content-start));
-  --sidebar-item-gap: var(--space-2);
+  --sidebar-tree-indent: var(--space-5);
+  --sidebar-content-start: var(--space-8);
   gap: var(--sidebar-section-gap);
-  padding: calc(var(--space-8) + var(--space-2)) var(--sidebar-outer-gutter) 0 var(--space-2);
+  padding: calc(var(--space-8) + var(--space-2)) 0 0 var(--space-2);
 }
 
 .sidebar-primary-nav,
@@ -768,15 +766,14 @@ button:focus-visible {
   cursor: pointer;
   font-size: var(--font-ui-md);
   font-weight: 400;
-  gap: var(--sidebar-item-gap);
+  gap: var(--space-2);
   line-height: var(--line-ui-md);
   padding: 0 var(--space-4) 0 var(--sidebar-content-start);
   text-align: left;
 }
 
-.sidebar-nav-item:hover:not(:disabled),
-.sidebar-nav-item.active {
-  background: var(--row-selected);
+.sidebar-nav-item:hover:not(:disabled) {
+  background: var(--control-hover);
 }
 
 .sidebar-nav-item:disabled {
@@ -806,7 +803,7 @@ button:focus-visible {
   display: flex;
   height: var(--sidebar-row-height);
   align-items: center;
-  gap: var(--sidebar-item-gap);
+  gap: var(--space-2);
   color: var(--text-faint);
   font-size: var(--font-ui-md);
   line-height: var(--line-ui-md);
@@ -848,9 +845,7 @@ button:focus-visible {
   text-align: left;
 }
 
-.sidebar-root-button:hover,
-.sidebar-root-button.active {
-  background: var(--row-selected);
+.sidebar-root-button:hover {
   color: var(--text-body);
 }
 
@@ -873,7 +868,7 @@ button:focus-visible {
 .sidebar-root-label {
   grid-column: 3;
   min-width: 0;
-  margin-left: var(--sidebar-item-gap);
+  margin-left: var(--space-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -890,9 +885,8 @@ button:focus-visible {
   padding-left: calc(var(--sidebar-content-start) + var(--tree-depth, 0) * var(--sidebar-tree-indent));
 }
 
-.workspace-tree-row:hover,
-.workspace-tree-row.active {
-  background: var(--row-selected);
+.workspace-tree-row:hover {
+  color: var(--text-strong);
 }
 
 .workspace-tree-chevron-button {
@@ -930,7 +924,7 @@ button:focus-visible {
   cursor: pointer;
   font-size: var(--font-ui-md);
   font-weight: 400;
-  gap: var(--sidebar-item-gap);
+  gap: var(--space-2);
   line-height: var(--line-ui-md);
   padding: 0 var(--space-3) 0 0;
   text-align: left;

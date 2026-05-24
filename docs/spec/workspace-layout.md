@@ -119,11 +119,14 @@ children such as Daily notes, Projects, Areas, Resources, Library, Saved
 searches, and Trash. The current workspace root itself is a clickable row with
 a compact avatar. Sidebar rows share one content axis for text and icons; tree
 chevrons sit in the auxiliary gutter before that axis, so they never push the
-main content inward. The content axis keeps a generous inset from the sidebar
-edge, while chevrons keep a small safety inset in the gutter. Sidebar rows use
-a slightly roomier navigation rhythm than dense controls, with a 28px row
-height and 16px icon slots. Chevrons stay low-contrast, with neutral
-hover/active fill on the row.
+main content inward. The content axis starts `20px` from the sidebar edge;
+rows extend to the sidebar edge so the only visual gap to the canvas is the
+standard shell gap. Chevrons use a compact `16px` hit area that starts `4px`
+from the sidebar edge. Sidebar rows use a slightly roomier navigation rhythm
+than dense controls, with a 28px row height and 16px icon slots. Chevrons stay
+low-contrast. Primary sidebar entries use the shared neutral control hover fill;
+the workspace root outline stays background-free on hover and only deepens the
+row text/icon color.
 
 ## Visual Layering
 

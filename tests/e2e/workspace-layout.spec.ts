@@ -248,13 +248,20 @@ test.describe('workspace layout resizing', () => {
   });
 
   test('primary navigation opens the recents saved search', async ({ page }) => {
-    const recentsButton = page.getByRole('button', { name: 'Recents' });
+    const recentsButton = page.locator('.sidebar-primary-nav')
+      .getByRole('button', { name: 'Recents', exact: true });
     await expect(recentsButton).toBeEnabled();
 
     await recentsButton.click();
 
     await expect(page.locator('.outline-panel-surface.active-panel .panel-title-editor')).toContainText('Recents');
     await expect(page.locator('.sidebar-nav-item.active')).toContainText('Recents');
+    await page.mouse.move(0, 0);
+    await expect.poll(async () => recentsButton.evaluate((item) => getComputedStyle(item).backgroundColor))
+      .toBe('rgba(0, 0, 0, 0)');
+    await recentsButton.hover();
+    await expect.poll(async () => recentsButton.evaluate((item) => getComputedStyle(item).backgroundColor))
+      .not.toBe('rgba(0, 0, 0, 0)');
   });
 
   test('workspace section renders the true root outline', async ({ page }) => {
@@ -284,6 +291,7 @@ test.describe('workspace layout resizing', () => {
       const plainContent = Array.from(tree.querySelectorAll('.workspace-tree-label-text'))
         .find((element) => element.textContent?.trim() === 'Projects');
       const sidebarDock = document.querySelector('.sidebar-dock');
+      const activePanel = document.querySelector('.outline-panel-surface.active-panel');
       if (!primaryIcon
         || !(pinnedTitle instanceof HTMLElement)
         || !pinnedEmptyIcon
@@ -292,6 +300,7 @@ test.describe('workspace layout resizing', () => {
         || !firstContent
         || !plainContent
         || !(sidebarDock instanceof HTMLElement)
+        || !(activePanel instanceof HTMLElement)
         || !(firstRow instanceof HTMLElement)) {
         throw new Error('missing sidebar root alignment nodes');
       }
@@ -303,6 +312,7 @@ test.describe('workspace layout resizing', () => {
       const firstContentBox = firstContent.getBoundingClientRect();
       const plainContentBox = plainContent.getBoundingClientRect();
       const sidebarDockBox = sidebarDock.getBoundingClientRect();
+      const activePanelBox = activePanel.getBoundingClientRect();
       const pinnedTitleStyle = getComputedStyle(pinnedTitle);
       const rowStyle = getComputedStyle(firstRow);
       const chevronStyle = getComputedStyle(firstChevron);
@@ -311,10 +321,12 @@ test.describe('workspace layout resizing', () => {
         chevronColor: chevronStyle.color,
         chevronLeft: firstChevronBox.left,
         chevronRight: firstChevronBox.right,
+        chevronWidth: firstChevronBox.width,
         contentColor: contentStyle.color,
         contentLeft: firstContentBox.left,
         pinnedEmptyIconLeft: pinnedEmptyIconBox.left,
         pinnedTitleLeft: pinnedTitleBox.left + Number.parseFloat(pinnedTitleStyle.paddingLeft),
+        panelLeft: activePanelBox.left,
         plainContentLeft: plainContentBox.left,
         primaryIconLeft: primaryIconBox.left,
         rootAvatarLeft: rootAvatarBox.left,
@@ -331,17 +343,35 @@ test.describe('workspace layout resizing', () => {
     expect(Math.abs(sidebarMetrics.pinnedEmptyIconLeft - expectedLeft)).toBeLessThanOrEqual(1);
     expect(Math.abs(sidebarMetrics.rootAvatarLeft - expectedLeft)).toBeLessThanOrEqual(1);
     expect(Math.abs(sidebarMetrics.plainContentLeft - expectedLeft)).toBeLessThanOrEqual(1);
-    expect(sidebarMetrics.contentLeft - sidebarMetrics.sidebarLeft).toBeGreaterThanOrEqual(20);
-    expect(sidebarMetrics.contentLeft - sidebarMetrics.sidebarLeft).toBeLessThanOrEqual(26);
-    expect(Math.abs(
-      (sidebarMetrics.contentLeft - sidebarMetrics.sidebarLeft)
-      - (sidebarMetrics.sidebarRight - sidebarMetrics.rowRight),
-    )).toBeLessThanOrEqual(1);
-    expect(sidebarMetrics.chevronLeft - sidebarMetrics.sidebarLeft).toBeGreaterThanOrEqual(4);
+    expect(Math.abs((sidebarMetrics.contentLeft - sidebarMetrics.sidebarLeft) - 20)).toBeLessThanOrEqual(1);
+    expect(Math.abs(sidebarMetrics.sidebarRight - sidebarMetrics.rowRight)).toBeLessThanOrEqual(1);
+    expect(Math.abs((sidebarMetrics.panelLeft - sidebarMetrics.sidebarRight) - 8)).toBeLessThanOrEqual(1);
+    expect(Math.abs((sidebarMetrics.chevronLeft - sidebarMetrics.sidebarLeft) - 4)).toBeLessThanOrEqual(1);
+    expect(Math.round(sidebarMetrics.chevronWidth)).toBe(16);
     expect(sidebarMetrics.chevronRight).toBeLessThanOrEqual(sidebarMetrics.contentLeft);
     expect(sidebarMetrics.chevronColor).not.toBe(sidebarMetrics.contentColor);
     expect(sidebarMetrics.rowHeight).toBe(28);
     expect(sidebarMetrics.rowRadius).toBe('6px');
+
+    const todayNav = page.locator('.sidebar-primary-nav .sidebar-nav-item').filter({ hasText: 'Today' });
+    const navBackgroundBefore = await todayNav.evaluate((item) => getComputedStyle(item).backgroundColor);
+    await todayNav.hover();
+    await expect.poll(async () => todayNav.evaluate((item) => getComputedStyle(item).backgroundColor))
+      .not.toBe(navBackgroundBefore);
+
+    const firstWorkspaceRow = workspaceTree.locator('.workspace-tree-row').first();
+    const treeRowBefore = await firstWorkspaceRow.evaluate((row) => {
+      const style = getComputedStyle(row);
+      return {
+        background: style.backgroundColor,
+        color: style.color,
+      };
+    });
+    await firstWorkspaceRow.hover();
+    await expect.poll(async () => firstWorkspaceRow.evaluate((row) => getComputedStyle(row).backgroundColor))
+      .toBe(treeRowBefore.background);
+    await expect.poll(async () => firstWorkspaceRow.evaluate((row) => getComputedStyle(row).color))
+      .not.toBe(treeRowBefore.color);
 
     await workspaceTree.getByRole('button', { name: 'Expand Daily Notes' }).click();
     await expect(workspaceTree).toContainText('2026-05-13');
