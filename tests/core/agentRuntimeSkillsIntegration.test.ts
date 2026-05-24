@@ -98,6 +98,42 @@ function projectionTexts(projection: AgentRenderProjection) {
   return projection.rows.map((row) => textFromContent(projection.entities.messages[row.messageId]?.content));
 }
 
+function latestProjectedCompaction(events: AgentRuntimeEvent[]) {
+  for (const event of [...events].reverse()) {
+    if (event.type !== 'projection') continue;
+    for (const row of event.renderProjection.rows) {
+      if (row.kind !== 'compaction') continue;
+      return event.renderProjection.entities.compactions[row.compactionId] ?? null;
+    }
+  }
+  return null;
+}
+
+function latestActiveProjectedCompaction(events: AgentRuntimeEvent[]) {
+  for (const event of [...events].reverse()) {
+    if (event.type === 'projection') return event.renderProjection.activeCompaction;
+  }
+  return null;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, reject, resolve };
+}
+
+async function waitFor(condition: () => boolean, timeoutMs = 1000) {
+  const start = Date.now();
+  while (!condition()) {
+    if (Date.now() - start > timeoutMs) throw new Error('Timed out waiting for condition.');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 function createWindowSink() {
   const events: AgentRuntimeEvent[] = [];
   return {
@@ -389,6 +425,55 @@ describe('agent runtime skill integration', () => {
     expect(compactRootText).toContain('AUTO_SKILL_BODY');
     expect(compactRootText).toContain('The following skills have already been listed to the agent in this session');
     expect(compactRootText).toContain('- auto-skill');
+  });
+
+  test('projects manual compact as active while the summary request is running', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-compact-active-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-compact-active-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const script = scriptedStream(
+      [fauxAssistantMessage(fauxText('Ready to compact.'))],
+      () => undefined,
+    );
+    const compactResponse = deferred<AssistantMessage>();
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+        completeSimpleFn: async (model) => normalizeAssistantMessage(await compactResponse.promise, model as Model<Api>),
+      },
+    );
+
+    const created = await runtime.createSession();
+    await runtime.sendMessage(created.sessionId, 'Create compactable context.');
+
+    const compactPromise = runtime.sendMessage(created.sessionId, '/compact');
+    await waitFor(() => latestActiveProjectedCompaction(sink.events)?.trigger === 'manual');
+    expect(latestActiveProjectedCompaction(sink.events)).toMatchObject({ trigger: 'manual' });
+
+    compactResponse.resolve(fauxAssistantMessage('<analysis>manual compact</analysis><summary>Manual compact summary.</summary>'));
+    await compactPromise;
+
+    expect(latestActiveProjectedCompaction(sink.events)).toBeNull();
+    expect(latestProjectedCompaction(sink.events)).toMatchObject({
+      summary: 'Manual compact summary.',
+      trigger: 'manual',
+    });
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
   });
 
   test('runs context-fork skills through a sidechain subagent and returns only the result to the parent', async () => {
@@ -1004,6 +1089,10 @@ describe('agent runtime skill integration', () => {
     expect(contextTexts[1]).toContain('Conversation compacted.');
     expect(contextTexts[1]).toContain('Auto compact summary.');
     expect(contextTexts[1]!.length).toBeLessThan(20_000);
+    expect(latestProjectedCompaction(sink.events)).toMatchObject({
+      summary: 'Auto compact summary.',
+      trigger: 'auto',
+    });
   });
 
   test('reactively compacts and retries after a prompt-too-long model error', async () => {
@@ -1062,6 +1151,10 @@ describe('agent runtime skill integration', () => {
     expect(contextTexts[1]).toContain('Conversation compacted.');
     expect(contextTexts[1]).toContain('Reactive compact summary.');
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(latestProjectedCompaction(sink.events)).toMatchObject({
+      summary: 'Reactive compact summary.',
+      trigger: 'reactive',
+    });
   });
 
   test('retries compact summary requests that hit the provider context limit', async () => {

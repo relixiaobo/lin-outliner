@@ -2241,6 +2241,16 @@ button.panel-resize-handle::after {
   color: var(--text-body);
 }
 
+.agent-compaction-toggle.is-active {
+  cursor: default;
+}
+
+.agent-compaction-toggle.is-active:hover,
+.agent-compaction-toggle.is-active:focus-visible {
+  background: transparent;
+  color: var(--text-muted);
+}
+
 .agent-compaction-chevron {
   flex: 0 0 auto;
   transition: transform var(--motion-fast);

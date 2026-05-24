@@ -83,6 +83,12 @@ export interface AgentRenderCompactionEntity {
   createdAt: number;
 }
 
+export interface AgentRenderActiveCompaction {
+  id: string;
+  trigger: AgentCompactionTrigger;
+  startedAt: number;
+}
+
 export interface AgentRenderEntities {
   messages: Record<string, AgentRenderMessageEntity>;
   subagents: Record<string, AgentRenderSubagentEntity>;
@@ -94,6 +100,7 @@ export interface AgentRenderProjection {
   revision: number;
   sessionTitle: string | null;
   activeRunId: string | null;
+  activeCompaction: AgentRenderActiveCompaction | null;
   isStreaming: boolean;
   model: Record<string, unknown>;
   thinkingLevel: string;
@@ -108,6 +115,7 @@ export interface AgentRenderProjection {
 export interface BuildAgentRenderProjectionOptions {
   revision: number;
   activeRunId?: string | null;
+  activeCompaction?: AgentRenderActiveCompaction | null;
   isStreaming?: boolean;
   model?: Record<string, unknown>;
   thinkingLevel?: string;
@@ -172,6 +180,7 @@ export function buildAgentRenderProjection(
     revision: options.revision,
     sessionTitle: state.session.title,
     activeRunId: options.activeRunId ?? null,
+    activeCompaction: options.activeCompaction ?? null,
     isStreaming: options.isStreaming ?? !!streaming,
     model: options.model ?? {},
     thinkingLevel: options.thinkingLevel ?? 'off',

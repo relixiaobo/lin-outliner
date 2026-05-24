@@ -36,6 +36,7 @@ import {
   CloseIcon,
   DebugIcon,
   ICON_SIZE,
+  LoaderIcon,
   NewConversationIcon,
   PencilIcon,
   TrashIcon,
@@ -142,7 +143,8 @@ function getEntryRole(entry: AgentConversationEntry): 'user' | 'assistant' | 'sy
 }
 
 function getEntryTimestamp(entry: AgentConversationEntry): number {
-  return entry.kind === 'compaction' ? entry.compaction.createdAt : entry.message.timestamp;
+  if (entry.kind !== 'compaction') return entry.message.timestamp;
+  return entry.status === 'active' ? entry.compaction.startedAt : entry.compaction.createdAt;
 }
 
 function isAssistantEntry(entry: AgentConversationEntry): entry is AssistantEntry {
@@ -407,31 +409,40 @@ async function buildAssistantTurnCopyText(
 }
 
 function compactTriggerLabel(trigger: AgentCompactionEntry['compaction']['trigger']): string {
-  if (trigger === 'manual') return 'Manual compact';
-  if (trigger === 'auto') return 'Auto compact';
-  return 'Context retry';
+  if (trigger === 'manual') return 'Manual';
+  if (trigger === 'auto') return 'Auto';
+  return 'Retry';
 }
 
 function AgentCompactionBoundary({ entry }: { entry: AgentCompactionEntry }) {
   const [expanded, setExpanded] = useState(false);
-  const summary = entry.compaction.summary.trim();
+  const isActive = entry.status === 'active';
+  const summary = entry.status === 'completed' ? entry.compaction.summary.trim() : '';
 
   return (
-    <section className="agent-compaction-boundary" aria-label="Conversation compacted">
+    <section className="agent-compaction-boundary" aria-label={isActive ? 'Compacting conversation' : 'Conversation compacted'}>
       <div className="agent-compaction-line" aria-hidden="true" />
-      <button
-        aria-expanded={expanded}
-        className="agent-compaction-toggle"
-        onClick={() => setExpanded((open) => !open)}
-        type="button"
-      >
-        <ChevronDownIcon
-          className={expanded ? 'agent-compaction-chevron is-expanded' : 'agent-compaction-chevron'}
-          size={ICON_SIZE.tiny}
-        />
-        <span>Conversation compacted</span>
-        <small>{compactTriggerLabel(entry.compaction.trigger)}</small>
-      </button>
+      {isActive ? (
+        <div className="agent-compaction-toggle is-active" role="status">
+          <LoaderIcon className="agent-tool-call-spinner" size={ICON_SIZE.tiny} />
+          <span>Compacting</span>
+          <small>{compactTriggerLabel(entry.compaction.trigger)}</small>
+        </div>
+      ) : (
+        <button
+          aria-expanded={expanded}
+          className="agent-compaction-toggle"
+          onClick={() => setExpanded((open) => !open)}
+          type="button"
+        >
+          <ChevronDownIcon
+            className={expanded ? 'agent-compaction-chevron is-expanded' : 'agent-compaction-chevron'}
+            size={ICON_SIZE.tiny}
+          />
+          <span>Compacted</span>
+          <small>{compactTriggerLabel(entry.compaction.trigger)}</small>
+        </button>
+      )}
       <div className="agent-compaction-line" aria-hidden="true" />
       {expanded && summary ? (
         <div className="agent-compaction-summary">

@@ -51,6 +51,7 @@ import {
   createEmptyAgentEventReplayState,
   getAgentEventActivePath,
   type AgentActor,
+  type AgentCompactionTrigger,
   type AgentEvent,
   type AgentEventMessageRecord,
   type AgentEventReplayState,
@@ -119,7 +120,7 @@ import {
 } from './agentToolOutputSlimming';
 import { AgentRuntimeContextManager, type AgentRuntimeContextEventInput } from './agentRuntimeContext';
 import type { AgentPermissionMode, AgentReasoningLevel, AgentRuntimeSettings, AgentSessionMeta } from '../core/types';
-import { buildAgentRenderProjection } from '../core/agentRenderProjection';
+import { buildAgentRenderProjection, type AgentRenderActiveCompaction } from '../core/agentRenderProjection';
 import { createAbortSettledStreamFn } from './agentStreamAbort';
 import { awaitWithAbort, throwIfAborted } from './agentAwaitWithAbort';
 
@@ -190,6 +191,7 @@ interface AgentSessionState {
   autoCompactInProgress: boolean;
   eventState: AgentEventReplayState;
   activeRunId: string | null;
+  activeCompaction: AgentRenderActiveCompaction | null;
   activeAssistantMessageId: string | null;
   activeAssistantText: string;
   currentDebugQueryIndex: number;
@@ -254,6 +256,10 @@ export class AgentRuntime {
       getActiveProviderConfig: () => this.getActiveProviderConfig(),
       getProviderApiKey: (providerId) => this.getProviderApiKey(providerId),
       resolveProviderModel: (providerConfig) => this.resolveProviderModel(providerConfig),
+      beginCompaction: (sessionId, session, trigger) => this.beginCompaction(sessionId, session, trigger),
+      finishCompaction: (sessionId, session, compactionId, lastEventType) => {
+        this.finishCompaction(sessionId, session, compactionId, lastEventType);
+      },
       startReactiveRetryRun: async (sessionId, session) => {
         this.beginDebugQuery(session);
         await this.startRun(sessionId, session);
@@ -799,6 +805,7 @@ export class AgentRuntime {
       autoCompactInProgress: false,
       eventState,
       activeRunId: null,
+      activeCompaction: null,
       activeAssistantMessageId: null,
       activeAssistantText: '',
       currentDebugQueryIndex: 0,
@@ -1328,12 +1335,40 @@ export class AgentRuntime {
     return buildAgentRenderProjection(session.eventState, {
       revision: session.revision,
       activeRunId: session.activeRunId,
+      activeCompaction: session.activeCompaction,
       isStreaming: session.agent.state.isStreaming,
       model: clone(session.agent.state.model) as unknown as Record<string, unknown>,
       thinkingLevel: session.agent.state.thinkingLevel,
       pendingToolCallIds: Array.from(session.agent.state.pendingToolCalls),
       errorMessage: latestAssistantWasAborted(session) ? null : session.agent.state.errorMessage ?? null,
     });
+  }
+
+  private beginCompaction(
+    sessionId: string,
+    session: AgentSessionState,
+    trigger: AgentCompactionTrigger,
+  ): string {
+    const activeCompaction = {
+      id: randomUUID(),
+      trigger,
+      startedAt: Date.now(),
+    };
+    session.activeCompaction = activeCompaction;
+    this.emitProjection(sessionId, 'compaction.started');
+    return activeCompaction.id;
+  }
+
+  private finishCompaction(
+    sessionId: string,
+    session: AgentSessionState,
+    compactionId: string,
+    lastEventType: string,
+  ) {
+    if (session.activeCompaction?.id === compactionId) {
+      session.activeCompaction = null;
+    }
+    this.emitProjection(sessionId, lastEventType);
   }
 
   private emitProjection(
@@ -1709,7 +1744,6 @@ export class AgentRuntime {
         updateAgentState: true,
       });
       session.skillRuntime.resetRunPermissionRules();
-      this.emitProjection(sessionId, 'session_compacted');
     } finally {
       session.currentDebugQueryIndex = 0;
     }

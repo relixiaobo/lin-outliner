@@ -116,6 +116,8 @@ export interface AgentRuntimeContextHost<TSession extends AgentRuntimeContextSes
   getActiveProviderConfig(): Promise<AgentProviderRuntimeConfig | null>;
   getProviderApiKey(providerId: string): Promise<string | undefined> | string | undefined;
   resolveProviderModel(providerConfig: AgentProviderRuntimeConfig): Model<Api>;
+  beginCompaction(sessionId: string, session: TSession, trigger: AgentCompactionTrigger): string;
+  finishCompaction(sessionId: string, session: TSession, compactionId: string, lastEventType: string): void;
   startReactiveRetryRun(sessionId: string, session: TSession): Promise<void>;
   completeSimpleFn?: CompleteSimpleFn;
 }
@@ -192,71 +194,81 @@ export class AgentRuntimeContextManager<TSession extends AgentRuntimeContextSess
       signal?: AbortSignal;
     },
   ): Promise<AgentMessage[]> {
-    throwIfAborted(options.signal);
-    let activeMessages = await this.host.deriveRuntimePiMessages(sessionId, session.eventState);
-    throwIfAborted(options.signal);
-    if (options.trigger === 'reactive') {
-      const liveMessages = session.agent.state.messages as AgentMessage[];
-      if (liveMessages.length > activeMessages.length) activeMessages = liveMessages;
-    }
-    const compactedThroughMessageId = session.eventState.selectedLeafMessageId ?? session.eventState.latestMessageId;
-    if (!compactedThroughMessageId || activeMessages.length < 2) {
-      throw new Error('Not enough messages to compact.');
-    }
+    let activeCompactionId: string | null = null;
+    try {
+      throwIfAborted(options.signal);
+      let activeMessages = await this.host.deriveRuntimePiMessages(sessionId, session.eventState);
+      throwIfAborted(options.signal);
+      if (options.trigger === 'reactive') {
+        const liveMessages = session.agent.state.messages as AgentMessage[];
+        if (liveMessages.length > activeMessages.length) activeMessages = liveMessages;
+      }
+      const compactedThroughMessageId = session.eventState.selectedLeafMessageId ?? session.eventState.latestMessageId;
+      if (!compactedThroughMessageId || activeMessages.length < 2) {
+        throw new Error('Not enough messages to compact.');
+      }
 
-    const runtimeSettings = await this.host.refreshRuntimeSettings(session);
-    const providerConfig = await this.host.getActiveProviderConfig();
-    if (!providerConfig) throw new Error('No enabled agent provider is configured.');
-    const model = this.host.resolveProviderModel(providerConfig);
-    const apiKey = providerConfig.apiKey ?? await this.host.getProviderApiKey(providerConfig.providerId);
-    const compactPlan = options.trigger === 'reactive'
-      ? splitReactiveCompactMessages(activeMessages)
-      : { messagesToSummarize: activeMessages, messagesToKeep: [] as AgentMessage[] };
-    if (
-      options.trigger === 'reactive'
-      && compactPlan.messagesToKeep.length === 0
-      && session.lastSubmittedUserPrompt
-    ) {
-      compactPlan.messagesToKeep.push(session.lastSubmittedUserPrompt);
+      const runtimeSettings = await this.host.refreshRuntimeSettings(session);
+      const providerConfig = await this.host.getActiveProviderConfig();
+      if (!providerConfig) throw new Error('No enabled agent provider is configured.');
+      const model = this.host.resolveProviderModel(providerConfig);
+      const apiKey = providerConfig.apiKey ?? await this.host.getProviderApiKey(providerConfig.providerId);
+      const compactPlan = options.trigger === 'reactive'
+        ? splitReactiveCompactMessages(activeMessages)
+        : { messagesToSummarize: activeMessages, messagesToKeep: [] as AgentMessage[] };
+      if (
+        options.trigger === 'reactive'
+        && compactPlan.messagesToKeep.length === 0
+        && session.lastSubmittedUserPrompt
+      ) {
+        compactPlan.messagesToKeep.push(session.lastSubmittedUserPrompt);
+      }
+
+      activeCompactionId = this.host.beginCompaction(sessionId, session, options.trigger);
+      const response = await this.completeCompactSummaryWithRetries(sessionId, model, apiKey, {
+        messagesToSummarize: compactPlan.messagesToSummarize,
+        customInstructions: options.customInstructions,
+        signal: options.signal,
+        runtimeSettings,
+      });
+      throwIfAborted(options.signal);
+      const summary = formatCompactSummary(assistantMessageText(response));
+      if (!summary) throw new Error('Compaction failed: no summary text returned.');
+
+      session.skillRuntime.restoreInvokedSkillsFromMessages(activeMessages);
+      const restoredFiles = await restorePostCompactReadFiles(session.localWorkspace, {
+        maxFiles: POST_COMPACT_MAX_FILES_TO_RESTORE,
+        maxCharsPerFile: POST_COMPACT_MAX_CHARS_PER_FILE,
+        maxTotalChars: POST_COMPACT_TOTAL_RESTORED_FILE_CHARS,
+        preservedFilePaths: collectPreservedFileReadPaths(compactPlan.messagesToKeep),
+      });
+      const compactMessage = createPostCompactMessage(
+        summary,
+        session.skillRuntime.createInvokedSkillsReminder(),
+        session.skillRuntime.createSkillListingStateReminder(),
+        session.subagentRuntime?.createAgentListingStateReminder() ?? null,
+        createPostCompactRestoredFilesReminder(restoredFiles),
+      );
+      await this.host.appendCompactionRootEvent(
+        sessionId,
+        session,
+        compactMessage,
+        summary,
+        compactedThroughMessageId,
+        options.trigger,
+        compactPlan.messagesToKeep,
+      );
+      const postCompactMessages = await this.host.deriveRuntimePiMessages(sessionId, session.eventState);
+      session.toolResultBudgetState = restoreToolResultBudgetStateFromMessages(getAgentEventActivePath(session.eventState));
+      if (options.updateAgentState) session.agent.state.messages = postCompactMessages as never;
+      this.host.finishCompaction(sessionId, session, activeCompactionId, 'compaction.completed');
+      activeCompactionId = null;
+      return postCompactMessages;
+    } finally {
+      if (activeCompactionId) {
+        this.host.finishCompaction(sessionId, session, activeCompactionId, 'compaction.finished');
+      }
     }
-
-    const response = await this.completeCompactSummaryWithRetries(sessionId, model, apiKey, {
-      messagesToSummarize: compactPlan.messagesToSummarize,
-      customInstructions: options.customInstructions,
-      signal: options.signal,
-      runtimeSettings,
-    });
-    throwIfAborted(options.signal);
-    const summary = formatCompactSummary(assistantMessageText(response));
-    if (!summary) throw new Error('Compaction failed: no summary text returned.');
-
-    session.skillRuntime.restoreInvokedSkillsFromMessages(activeMessages);
-    const restoredFiles = await restorePostCompactReadFiles(session.localWorkspace, {
-      maxFiles: POST_COMPACT_MAX_FILES_TO_RESTORE,
-      maxCharsPerFile: POST_COMPACT_MAX_CHARS_PER_FILE,
-      maxTotalChars: POST_COMPACT_TOTAL_RESTORED_FILE_CHARS,
-      preservedFilePaths: collectPreservedFileReadPaths(compactPlan.messagesToKeep),
-    });
-    const compactMessage = createPostCompactMessage(
-      summary,
-      session.skillRuntime.createInvokedSkillsReminder(),
-      session.skillRuntime.createSkillListingStateReminder(),
-      session.subagentRuntime?.createAgentListingStateReminder() ?? null,
-      createPostCompactRestoredFilesReminder(restoredFiles),
-    );
-    await this.host.appendCompactionRootEvent(
-      sessionId,
-      session,
-      compactMessage,
-      summary,
-      compactedThroughMessageId,
-      options.trigger,
-      compactPlan.messagesToKeep,
-    );
-    const postCompactMessages = await this.host.deriveRuntimePiMessages(sessionId, session.eventState);
-    session.toolResultBudgetState = restoreToolResultBudgetStateFromMessages(getAgentEventActivePath(session.eventState));
-    if (options.updateAgentState) session.agent.state.messages = postCompactMessages as never;
-    return postCompactMessages;
   }
 
   async runReactiveCompactRetryIfNeeded(sessionId: string, session: TSession): Promise<void> {

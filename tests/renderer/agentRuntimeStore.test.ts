@@ -10,7 +10,11 @@ import type {
   UserMessage,
 } from '../../src/core/agentTypes';
 import type { AgentSession } from '../../src/core/types';
-import type { AgentRenderProjection, AgentRenderSubagentEntity } from '../../src/core/agentRenderProjection';
+import type {
+  AgentRenderActiveCompaction,
+  AgentRenderProjection,
+  AgentRenderSubagentEntity,
+} from '../../src/core/agentRenderProjection';
 import type { AgentPayloadRef, AgentPersistedContent } from '../../src/core/agentEventLog';
 import { systemReminder } from '../../src/core/agentAttachments';
 
@@ -62,6 +66,7 @@ function projection(
     isStreaming?: boolean;
     revision?: number;
     streamingMessageId?: string;
+    activeCompaction?: AgentRenderActiveCompaction | null;
     subagents?: Record<string, AgentRenderSubagentEntity>;
     subagentRunIds?: string[];
   } = {},
@@ -71,6 +76,7 @@ function projection(
     revision: options.revision ?? 1,
     sessionTitle: 'Saved conversation',
     activeRunId: options.isStreaming ? 'run-1' : null,
+    activeCompaction: options.activeCompaction ?? null,
     isStreaming: !!options.isStreaming,
     model: { id: 'test-model', provider: 'test' },
     thinkingLevel: 'off',
@@ -290,8 +296,35 @@ describe('agent runtime store', () => {
     expect(store.getSnapshot().entries).toEqual([{
       id: 'compaction:compact-root',
       kind: 'compaction',
+      status: 'completed',
       compaction: restoredProjection.entities.compactions['compact-1'],
     }]);
+    unsubscribe();
+  });
+
+  test('keeps active compaction as a visible boundary entry', async () => {
+    const restoredProjection = projection([
+      { nodeId: 'u1', message: userMessage('compact this'), branches: null },
+    ], {
+      isStreaming: true,
+      activeCompaction: {
+        id: 'active-compact-1',
+        trigger: 'manual',
+        startedAt: 20,
+      },
+    });
+    const fake = createFakeClient({ latestSession: session('saved', restoredProjection) });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+
+    await flushMicrotasks();
+
+    expect(store.getSnapshot().entries.at(-1)).toEqual({
+      id: 'active-compaction:active-compact-1',
+      kind: 'compaction',
+      status: 'active',
+      compaction: restoredProjection.activeCompaction,
+    });
     unsubscribe();
   });
 

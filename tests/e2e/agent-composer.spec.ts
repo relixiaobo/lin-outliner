@@ -57,7 +57,23 @@ test.describe('agent composer controls', () => {
     ]);
   });
 
-  test('shows compact boundaries with expandable summaries', async ({ page }) => {
+  test('shows compact progress before expandable summaries', async ({ page }) => {
+    await emitAgentProjection(page, 'mock-agent-session', {
+      sessionTitle: 'Agent System',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      activeCompaction: {
+        id: 'active-compact-1',
+        trigger: 'manual',
+        startedAt: 1_800_000_000_000,
+      },
+    });
+
+    const compactStatus = page.locator('.agent-compaction-toggle.is-active');
+    await expect(compactStatus).toBeVisible();
+    await expect(compactStatus).toContainText('Compacting');
+    await expect(compactStatus).toContainText('Manual');
+    await expect(page.getByRole('button', { name: /Compacted/ })).toHaveCount(0);
+
     await emitAgentProjection(page, 'mock-agent-session', {
       sessionTitle: 'Agent System',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -72,10 +88,12 @@ test.describe('agent composer controls', () => {
           createdAt: 1_800_000_000_000,
         },
       }],
-    });
+    }, 2);
 
-    const compactToggle = page.getByRole('button', { name: /Conversation compacted/ });
+    await expect(compactStatus).toHaveCount(0);
+    const compactToggle = page.getByRole('button', { name: /Compacted/ });
     await expect(compactToggle).toBeVisible();
+    await expect(compactToggle).toContainText('Manual');
     await expect(page.locator('.agent-user-bubble', { hasText: 'Conversation compacted.' })).toHaveCount(0);
     await expect(page.getByText('Primary Request and Intent')).toHaveCount(0);
 

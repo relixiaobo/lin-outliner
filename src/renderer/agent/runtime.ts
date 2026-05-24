@@ -19,6 +19,7 @@ import type {
 } from '../../core/agentTypes';
 import type { AgentSession } from '../../core/types';
 import type {
+  AgentRenderActiveCompaction,
   AgentRenderCompactionEntity,
   AgentRenderMessageEntity,
   AgentRenderProjection,
@@ -35,11 +36,21 @@ export interface AgentMessageEntry {
   streaming: boolean;
 }
 
-export interface AgentCompactionEntry {
+export interface AgentCompletedCompactionEntry {
   id: string;
   kind: 'compaction';
+  status: 'completed';
   compaction: AgentRenderCompactionEntity;
 }
+
+export interface AgentActiveCompactionEntry {
+  id: string;
+  kind: 'compaction';
+  status: 'active';
+  compaction: AgentRenderActiveCompaction;
+}
+
+export type AgentCompactionEntry = AgentCompletedCompactionEntry | AgentActiveCompactionEntry;
 
 export type AgentConversationEntry = AgentMessageEntry | AgentCompactionEntry;
 
@@ -50,6 +61,7 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
   revision: 0,
   sessionTitle: null,
   activeRunId: null,
+  activeCompaction: null,
   isStreaming: false,
   model: {},
   thinkingLevel: 'off',
@@ -111,6 +123,7 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
         entries.push({
           id: row.id,
           kind: 'compaction',
+          status: 'completed',
           compaction,
         });
       }
@@ -129,6 +142,15 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
       message,
       branches: entity.branches,
       streaming,
+    });
+  }
+
+  if (projection.activeCompaction) {
+    entries.push({
+      id: `active-compaction:${projection.activeCompaction.id}`,
+      kind: 'compaction',
+      status: 'active',
+      compaction: projection.activeCompaction,
     });
   }
 
@@ -151,7 +173,8 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
   }
 
   const lastEntry = entries[entries.length - 1];
-  const shouldAppendAssistantPlaceholder = projection.isStreaming
+  const shouldAppendAssistantPlaceholder = !projection.activeCompaction
+    && projection.isStreaming
     && (
       !lastEntry
       || lastEntry.kind !== 'message'
