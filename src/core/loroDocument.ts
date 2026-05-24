@@ -442,9 +442,6 @@ function ensureSystemNodes(state: DocumentState) {
   state.rootId = WORKSPACE_ID;
   ensureNode(state, WORKSPACE_ID, undefined, undefined, 'Lin Outliner', true, now);
   ensureNode(state, DAILY_NOTES_ID, undefined, WORKSPACE_ID, 'Daily notes', true, now);
-  ensureNode(state, PROJECTS_ID, undefined, WORKSPACE_ID, 'Projects', true, now);
-  ensureNode(state, AREAS_ID, undefined, WORKSPACE_ID, 'Areas', true, now);
-  ensureNode(state, RESOURCES_ID, undefined, WORKSPACE_ID, 'Resources', true, now);
   ensureNode(state, LIBRARY_ID, undefined, WORKSPACE_ID, 'Library', true, now);
   ensureNode(state, SCHEMA_ID, undefined, WORKSPACE_ID, 'Schema', true, now);
   ensureNode(state, SEARCHES_ID, undefined, WORKSPACE_ID, 'Saved searches', true, now);
@@ -454,14 +451,56 @@ function ensureSystemNodes(state: DocumentState) {
   ensureNode(state, TAG_DAY_ID, 'tagDef', SCHEMA_ID, 'day', true, now);
   ensureNode(state, TAG_WEEK_ID, 'tagDef', SCHEMA_ID, 'week', true, now);
   ensureNode(state, TAG_YEAR_ID, 'tagDef', SCHEMA_ID, 'year', true, now);
-  for (const id of [DAILY_NOTES_ID, PROJECTS_ID, AREAS_ID, RESOURCES_ID, LIBRARY_ID, SCHEMA_ID, SEARCHES_ID, TRASH_ID, SETTINGS_ID]) {
+  for (const id of [DAILY_NOTES_ID, LIBRARY_ID, SCHEMA_ID, SEARCHES_ID, TRASH_ID, SETTINGS_ID]) {
     attachChildOnce(state, WORKSPACE_ID, id, undefined);
   }
   attachChildOnce(state, SEARCHES_ID, RECENTS_ID, 0);
   for (const id of [TAG_DAY_ID, TAG_WEEK_ID, TAG_YEAR_ID]) {
     attachChildOnce(state, SCHEMA_ID, id, undefined);
   }
+  migrateLegacyParaNodes(state);
   moveLegacyWorkspaceNodesToLibrary(state);
+}
+
+const LEGACY_PARA_NODE_NAMES = new Map([
+  [PROJECTS_ID, 'Projects'],
+  [AREAS_ID, 'Areas'],
+  [RESOURCES_ID, 'Resources'],
+]);
+
+function migrateLegacyParaNodes(state: DocumentState) {
+  const library = state.nodes[LIBRARY_ID];
+  if (!library) return;
+  for (const [id, title] of LEGACY_PARA_NODE_NAMES) {
+    const node = state.nodes[id];
+    if (!node) continue;
+    detachFromParent(state, id);
+    if (isDisposableLegacyParaNode(node, title)) {
+      delete state.nodes[id];
+      continue;
+    }
+    node.locked = false;
+    node.parentId = LIBRARY_ID;
+    library.children = library.children.filter((childId) => childId !== id);
+    library.children.push(id);
+  }
+}
+
+function isDisposableLegacyParaNode(node: Node, title: string) {
+  return node.type === undefined
+    && node.children.length === 0
+    && node.content.text === title
+    && node.content.marks.length === 0
+    && node.content.inlineRefs.length === 0
+    && node.tags.length === 0
+    && node.filterValues.length === 0
+    && !node.description;
+}
+
+function detachFromParent(state: DocumentState, nodeId: string) {
+  const parentId = state.nodes[nodeId]?.parentId;
+  const parent = parentId ? state.nodes[parentId] : undefined;
+  if (parent) parent.children = parent.children.filter((childId) => childId !== nodeId);
 }
 
 function moveLegacyWorkspaceNodesToLibrary(state: DocumentState) {
@@ -471,9 +510,6 @@ function moveLegacyWorkspaceNodesToLibrary(state: DocumentState) {
   const systemRootIds = new Set([
     LIBRARY_ID,
     DAILY_NOTES_ID,
-    PROJECTS_ID,
-    AREAS_ID,
-    RESOURCES_ID,
     SCHEMA_ID,
     SEARCHES_ID,
     RECENTS_ID,

@@ -272,9 +272,9 @@ test.describe('workspace layout resizing', () => {
 
     const workspaceTree = page.getByLabel('Workspace root tree');
     await expect(workspaceTree).toContainText('Daily Notes');
-    await expect(workspaceTree).toContainText('Projects');
-    await expect(workspaceTree).toContainText('Areas');
-    await expect(workspaceTree).toContainText('Resources');
+    await expect(workspaceTree).not.toContainText('Projects');
+    await expect(workspaceTree).not.toContainText('Areas');
+    await expect(workspaceTree).not.toContainText('Resources');
     await expect(workspaceTree).toContainText('Library');
     await expect(workspaceTree).toContainText('Saved searches');
     await expect(workspaceTree).toContainText('Trash');
@@ -288,8 +288,6 @@ test.describe('workspace layout resizing', () => {
       const firstRow = tree.querySelector('.workspace-tree-row');
       const firstChevron = firstRow?.querySelector('.workspace-tree-chevron-button');
       const firstContent = firstRow?.querySelector('.workspace-tree-label-icon, .workspace-tree-label-text');
-      const plainContent = Array.from(tree.querySelectorAll('.workspace-tree-label-text'))
-        .find((element) => element.textContent?.trim() === 'Projects');
       const sidebarDock = document.querySelector('.sidebar-dock');
       const activePanel = document.querySelector('.outline-panel-surface.active-panel');
       if (!primaryIcon
@@ -298,7 +296,6 @@ test.describe('workspace layout resizing', () => {
         || !(rootAvatar instanceof HTMLElement)
         || !(firstChevron instanceof HTMLElement)
         || !firstContent
-        || !plainContent
         || !(sidebarDock instanceof HTMLElement)
         || !(activePanel instanceof HTMLElement)
         || !(firstRow instanceof HTMLElement)) {
@@ -310,7 +307,6 @@ test.describe('workspace layout resizing', () => {
       const rootAvatarBox = rootAvatar.getBoundingClientRect();
       const firstChevronBox = firstChevron.getBoundingClientRect();
       const firstContentBox = firstContent.getBoundingClientRect();
-      const plainContentBox = plainContent.getBoundingClientRect();
       const sidebarDockBox = sidebarDock.getBoundingClientRect();
       const activePanelBox = activePanel.getBoundingClientRect();
       const pinnedTitleStyle = getComputedStyle(pinnedTitle);
@@ -327,7 +323,6 @@ test.describe('workspace layout resizing', () => {
         pinnedEmptyIconLeft: pinnedEmptyIconBox.left,
         pinnedTitleLeft: pinnedTitleBox.left + Number.parseFloat(pinnedTitleStyle.paddingLeft),
         panelLeft: activePanelBox.left,
-        plainContentLeft: plainContentBox.left,
         primaryIconLeft: primaryIconBox.left,
         rootAvatarLeft: rootAvatarBox.left,
         rowRight: firstRow.getBoundingClientRect().right,
@@ -342,7 +337,6 @@ test.describe('workspace layout resizing', () => {
     expect(Math.abs(sidebarMetrics.pinnedTitleLeft - expectedLeft)).toBeLessThanOrEqual(1);
     expect(Math.abs(sidebarMetrics.pinnedEmptyIconLeft - expectedLeft)).toBeLessThanOrEqual(1);
     expect(Math.abs(sidebarMetrics.rootAvatarLeft - expectedLeft)).toBeLessThanOrEqual(1);
-    expect(Math.abs(sidebarMetrics.plainContentLeft - expectedLeft)).toBeLessThanOrEqual(1);
     expect(Math.abs((sidebarMetrics.contentLeft - sidebarMetrics.sidebarLeft) - 20)).toBeLessThanOrEqual(1);
     expect(Math.abs(sidebarMetrics.sidebarRight - sidebarMetrics.rowRight)).toBeLessThanOrEqual(1);
     expect(Math.abs((sidebarMetrics.panelLeft - sidebarMetrics.sidebarRight) - 8)).toBeLessThanOrEqual(1);

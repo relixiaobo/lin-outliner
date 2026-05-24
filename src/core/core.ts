@@ -1436,9 +1436,6 @@ export class Core {
     const now = nowMs();
     this.ensureSystemNodeDirect(WORKSPACE_ID, undefined, undefined, 'Lin Outliner', true, now);
     this.ensureSystemNodeDirect(DAILY_NOTES_ID, undefined, WORKSPACE_ID, 'Daily notes', true, now);
-    this.ensureSystemNodeDirect(PROJECTS_ID, undefined, WORKSPACE_ID, 'Projects', true, now);
-    this.ensureSystemNodeDirect(AREAS_ID, undefined, WORKSPACE_ID, 'Areas', true, now);
-    this.ensureSystemNodeDirect(RESOURCES_ID, undefined, WORKSPACE_ID, 'Resources', true, now);
     this.ensureSystemNodeDirect(LIBRARY_ID, undefined, WORKSPACE_ID, 'Library', true, now);
     this.ensureSystemNodeDirect(SCHEMA_ID, undefined, WORKSPACE_ID, 'Schema', true, now);
     this.ensureSystemNodeDirect(SEARCHES_ID, undefined, WORKSPACE_ID, 'Saved searches', true, now);
@@ -1448,13 +1445,14 @@ export class Core {
     this.ensureSystemNodeDirect(TAG_DAY_ID, 'tagDef', SCHEMA_ID, 'day', true, now);
     this.ensureSystemNodeDirect(TAG_WEEK_ID, 'tagDef', SCHEMA_ID, 'week', true, now);
     this.ensureSystemNodeDirect(TAG_YEAR_ID, 'tagDef', SCHEMA_ID, 'year', true, now);
-    [DAILY_NOTES_ID, PROJECTS_ID, AREAS_ID, RESOURCES_ID, LIBRARY_ID, SEARCHES_ID, TRASH_ID].forEach((id, index) => {
+    [DAILY_NOTES_ID, LIBRARY_ID, SEARCHES_ID, TRASH_ID].forEach((id, index) => {
       this.loro.moveNode(id, WORKSPACE_ID, index);
     });
     this.loro.moveNode(RECENTS_ID, SEARCHES_ID, 0);
     [TAG_DAY_ID, TAG_WEEK_ID, TAG_YEAR_ID].forEach((id, index) => {
       this.loro.moveNode(id, SCHEMA_ID, index);
     });
+    this.migrateLegacyParaRootNodesDirect();
     this.ensureRecentsSearchDirect();
     this.moveLegacyWorkspaceNodesToLibraryDirect();
   }
@@ -1489,9 +1487,6 @@ export class Core {
     const systemRootIds = new Set([
       LIBRARY_ID,
       DAILY_NOTES_ID,
-      PROJECTS_ID,
-      AREAS_ID,
-      RESOURCES_ID,
       SCHEMA_ID,
       SEARCHES_ID,
       RECENTS_ID,
@@ -1501,6 +1496,23 @@ export class Core {
     for (const childId of [...root.children]) {
       if (systemRootIds.has(childId)) continue;
       if (state.nodes[childId]) this.loro.moveNode(childId, LIBRARY_ID, undefined);
+    }
+  }
+
+  private migrateLegacyParaRootNodesDirect() {
+    for (const [id, title] of LEGACY_PARA_NODE_NAMES) {
+      if (!this.loro.hasNode(id)) continue;
+      const state = this.snapshot();
+      const node = state.nodes[id];
+      if (!node) continue;
+      if (isDisposableLegacyParaNode(node, title)) {
+        this.loro.deleteNode(id);
+        continue;
+      }
+      const migrated = clone(node);
+      migrated.locked = false;
+      this.loro.writeNode(migrated);
+      this.loro.moveNode(id, LIBRARY_ID, undefined);
     }
   }
 
@@ -2243,13 +2255,27 @@ function isInTrash(state: DocumentState, nodeId: string) {
   return nodeId === TRASH_ID || isDescendant(state, nodeId, TRASH_ID);
 }
 
+const LEGACY_PARA_NODE_NAMES = new Map([
+  [PROJECTS_ID, 'Projects'],
+  [AREAS_ID, 'Areas'],
+  [RESOURCES_ID, 'Resources'],
+]);
+
+function isDisposableLegacyParaNode(node: Node, title: string) {
+  return node.type === undefined
+    && node.children.length === 0
+    && node.content.text === title
+    && node.content.marks.length === 0
+    && node.content.inlineRefs.length === 0
+    && node.tags.length === 0
+    && node.filterValues.length === 0
+    && !node.description;
+}
+
 function isSystemId(nodeId: string) {
   return [
     WORKSPACE_ID,
     DAILY_NOTES_ID,
-    PROJECTS_ID,
-    AREAS_ID,
-    RESOURCES_ID,
     SCHEMA_ID,
     SEARCHES_ID,
     TRASH_ID,

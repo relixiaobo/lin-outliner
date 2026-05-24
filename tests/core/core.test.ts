@@ -1,11 +1,20 @@
 import { describe, expect, test } from 'bun:test';
 import { Core } from '../../src/core/core';
+import { LoroOutlinerDocument } from '../../src/core/loroDocument';
 import { runSearchNode } from '../../src/core/searchEngine';
 import {
+  AREAS_ID,
+  DAILY_NOTES_ID,
+  LIBRARY_ID,
+  PROJECTS_ID,
   RECENTS_ID,
+  RESOURCES_ID,
   SCHEMA_ID,
+  SEARCHES_ID,
+  SETTINGS_ID,
   TAG_DAY_ID,
   TRASH_ID,
+  WORKSPACE_ID,
   plainText,
   replaceAllRichTextPatch,
   type CreateNodeTree,
@@ -38,6 +47,63 @@ describe('Core', () => {
       queryOp: 'EDITED_LAST_DAYS',
       content: { text: '30' },
     });
+  });
+
+  test('initializes root without PARA buckets', () => {
+    const core = Core.new();
+    const state = core.state();
+    const root = state.nodes[core.projection().rootId]!;
+
+    expect(root.children).toEqual([
+      DAILY_NOTES_ID,
+      LIBRARY_ID,
+      SCHEMA_ID,
+      SEARCHES_ID,
+      TRASH_ID,
+      SETTINGS_ID,
+    ]);
+    expect(state.nodes[PROJECTS_ID]).toBeUndefined();
+    expect(state.nodes[AREAS_ID]).toBeUndefined();
+    expect(state.nodes[RESOURCES_ID]).toBeUndefined();
+  });
+
+  test('migrates legacy PARA root nodes without losing content', () => {
+    const legacy = new LoroOutlinerDocument();
+    legacy.createNodeWithId(WORKSPACE_ID, undefined, undefined, undefined, (node) => {
+      node.content = plainText('Lin Outliner');
+      node.locked = true;
+    });
+    legacy.createNodeWithId(LIBRARY_ID, WORKSPACE_ID, undefined, undefined, (node) => {
+      node.content = plainText('Library');
+      node.locked = true;
+    });
+    legacy.createNodeWithId(PROJECTS_ID, WORKSPACE_ID, undefined, undefined, (node) => {
+      node.content = plainText('Projects');
+      node.locked = true;
+    });
+    legacy.createNodeWithId(RESOURCES_ID, WORKSPACE_ID, undefined, undefined, (node) => {
+      node.content = plainText('Resources');
+      node.description = 'Legacy resource bucket';
+      node.locked = true;
+    });
+    legacy.createNodeWithId('legacy-resource-child', RESOURCES_ID, undefined, undefined, (node) => {
+      node.content = plainText('Saved reference');
+    });
+
+    const restored = Core.fromState(legacy.serialize('__legacy__'));
+    const state = restored.state();
+
+    expect(state.nodes[PROJECTS_ID]).toBeUndefined();
+    expect(state.nodes[RESOURCES_ID]).toMatchObject({
+      parentId: LIBRARY_ID,
+      locked: false,
+      content: { text: 'Resources' },
+      children: ['legacy-resource-child'],
+    });
+    expect(state.nodes['legacy-resource-child']?.parentId).toBe(RESOURCES_ID);
+    expect(state.nodes[WORKSPACE_ID]!.children).not.toContain(PROJECTS_ID);
+    expect(state.nodes[WORKSPACE_ID]!.children).not.toContain(RESOURCES_ID);
+    expect(state.nodes[LIBRARY_ID]!.children).toContain(RESOURCES_ID);
   });
 
   test('creates and moves nodes', () => {

@@ -690,9 +690,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     makeNode(ids.workspace, 'Workspace', { locked: true });
     makeNode(ids.root, 'Root', { parentId: ids.workspace, locked: true });
     makeNode(ids.daily, 'Daily Notes', { parentId: ids.root, locked: true });
-    makeNode(ids.projects, 'Projects', { parentId: ids.root, locked: true });
-    makeNode(ids.areas, 'Areas', { parentId: ids.root, locked: true });
-    makeNode(ids.resources, 'Resources', { parentId: ids.root, locked: true });
     makeNode(ids.library, 'Library', { parentId: ids.root, locked: true });
     makeNode(ids.schema, 'Schema', { parentId: ids.root, locked: true });
     makeNode(ids.searches, 'Saved searches', { parentId: ids.root, locked: true });
@@ -752,7 +749,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     makeNode(ids.beta, 'Beta', { parentId: ids.today, showCheckbox: true });
     makeNode(ids.gamma, 'Gamma', { parentId: ids.today, showCheckbox: true });
     appendChild(ids.workspace, ids.root);
-    for (const childId of [ids.daily, ids.projects, ids.areas, ids.resources, ids.library, ids.schema, ids.searches, ids.trash, ids.settings]) appendChild(ids.root, childId);
+    for (const childId of [ids.daily, ids.library, ids.schema, ids.searches, ids.trash, ids.settings]) appendChild(ids.root, childId);
     appendChild(ids.searches, ids.recents);
     appendChild(ids.schema, ids.dayTag);
     appendChild(ids.schema, ids.projectTag);
