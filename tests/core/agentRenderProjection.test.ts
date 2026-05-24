@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { replayAgentEvents, type AgentActor, type AgentEvent, type AgentPayloadRef } from '../../src/core/agentEventLog';
+import { replayAgentEvents, type AgentActor, type AgentEvent } from '../../src/core/agentEventLog';
 import { buildAgentRenderProjection } from '../../src/core/agentRenderProjection';
 import { systemReminder } from '../../src/core/agentAttachments';
 
@@ -58,6 +58,7 @@ describe('agent render projection', () => {
       { id: 'user:user-1', kind: 'message', messageId: 'user-1' },
       { id: 'assistant:assistant-1', kind: 'message', messageId: 'assistant-1' },
     ]);
+    expect(projection.transcriptRows).toEqual(projection.rows);
     expect(projection.entities.messages['assistant-1']?.status).toBe('streaming');
     expect(projection.streaming).toMatchObject({
       messageId: 'assistant-1',
@@ -97,14 +98,34 @@ describe('agent render projection', () => {
     const state = replayAgentEvents([
       { ...base(1, 'session.created'), title: 'Compaction' },
       {
-        ...base(2, 'compaction.completed'),
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'user-before-compact',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Old question' }],
+      },
+      {
+        ...base(3, 'assistant_message.started', agentActor),
+        runId: 'run-before-compact',
+        messageId: 'assistant-before-compact',
+        parentMessageId: 'user-before-compact',
+        providerId: 'test-provider',
+        modelId: 'test-model',
+      },
+      {
+        ...base(4, 'assistant_message.completed', agentActor),
+        messageId: 'assistant-before-compact',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Old answer' }],
+      },
+      {
+        ...base(5, 'compaction.completed'),
         messageId: 'compact-root',
         summary: 'Kept the important implementation details.',
         compactedThroughMessageId: 'assistant-before-compact',
         trigger: 'manual',
       },
       {
-        ...base(3, 'user_message.created', systemActor),
+        ...base(6, 'user_message.created', systemActor),
         messageId: 'compact-root',
         parentMessageId: null,
         content: [
@@ -120,13 +141,118 @@ describe('agent render projection', () => {
       id: 'compaction:compact-root',
       kind: 'compaction',
       messageId: 'compact-root',
-      compactionId: 'event-2',
+      compactionId: 'event-5',
     }]);
-    expect(projection.entities.compactions['event-2']).toMatchObject({
+    expect(projection.transcriptRows).toEqual([
+      { id: 'archived:user:user-before-compact', kind: 'message', messageId: 'user-before-compact', archived: true },
+      { id: 'archived:assistant:assistant-before-compact', kind: 'message', messageId: 'assistant-before-compact', archived: true },
+      { id: 'compaction:compact-root', kind: 'compaction', messageId: 'compact-root', compactionId: 'event-5' },
+    ]);
+    expect(projection.entities.compactions['event-5']).toMatchObject({
       messageId: 'compact-root',
       summary: 'Kept the important implementation details.',
       trigger: 'manual',
     });
+  });
+
+  test('reconstructs consecutive compact boundaries as one transcript timeline', () => {
+    const state = replayAgentEvents([
+      { ...base(1, 'session.created'), title: 'Nested compaction' },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'u1',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'First question' }],
+      },
+      {
+        ...base(3, 'assistant_message.started', agentActor),
+        runId: 'run-1',
+        messageId: 'a1',
+        parentMessageId: 'u1',
+        providerId: 'test-provider',
+        modelId: 'test-model',
+      },
+      {
+        ...base(4, 'assistant_message.completed', agentActor),
+        messageId: 'a1',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'First answer' }],
+      },
+      {
+        ...base(5, 'compaction.completed'),
+        messageId: 'compact-1',
+        summary: 'First compact summary.',
+        compactedThroughMessageId: 'a1',
+        trigger: 'manual',
+      },
+      {
+        ...base(6, 'user_message.created', systemActor),
+        messageId: 'compact-1',
+        parentMessageId: null,
+        content: [
+          { type: 'text', text: 'Conversation compacted.' },
+          { type: 'text', text: systemReminder('First compact summary.') },
+        ],
+      },
+      {
+        ...base(7, 'user_message.created', userActor),
+        messageId: 'u2',
+        parentMessageId: 'compact-1',
+        content: [{ type: 'text', text: 'Second question' }],
+      },
+      {
+        ...base(8, 'assistant_message.started', agentActor),
+        runId: 'run-2',
+        messageId: 'a2',
+        parentMessageId: 'u2',
+        providerId: 'test-provider',
+        modelId: 'test-model',
+      },
+      {
+        ...base(9, 'assistant_message.completed', agentActor),
+        messageId: 'a2',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Second answer' }],
+      },
+      {
+        ...base(10, 'compaction.completed'),
+        messageId: 'compact-2',
+        summary: 'Second compact summary.',
+        compactedThroughMessageId: 'a2',
+        trigger: 'manual',
+      },
+      {
+        ...base(11, 'user_message.created', systemActor),
+        messageId: 'compact-2',
+        parentMessageId: null,
+        content: [
+          { type: 'text', text: 'Conversation compacted.' },
+          { type: 'text', text: systemReminder('Second compact summary.') },
+        ],
+      },
+      {
+        ...base(12, 'user_message.created', userActor),
+        messageId: 'u3',
+        parentMessageId: 'compact-2',
+        content: [{ type: 'text', text: 'Current question' }],
+      },
+    ]);
+
+    const projection = buildAgentRenderProjection(state, { revision: 1 });
+
+    expect(projection.rows.map((row) => row.id)).toEqual([
+      'compaction:compact-2',
+      'user:u3',
+    ]);
+    expect(projection.transcriptRows.map((row) => row.id)).toEqual([
+      'archived:user:u1',
+      'archived:assistant:a1',
+      'archived:compaction:compact-1',
+      'archived:user:u2',
+      'archived:assistant:a2',
+      'compaction:compact-2',
+      'user:u3',
+    ]);
   });
 
   test('keeps large media details as payload refs in message entities', () => {

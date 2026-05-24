@@ -244,8 +244,24 @@ export class AgentRuntime {
       appendSessionEvents: async (sessionId, session, inputs) => {
         await this.appendSessionEvents(sessionId, session, inputs);
       },
-      appendCompactionRootEvent: (sessionId, session, prompt, summary, compactedThroughMessageId, trigger, preservedMessages) => (
-        this.appendCompactionRootEvent(sessionId, session, prompt, summary, compactedThroughMessageId, trigger, preservedMessages)
+      appendCompactionRootEvent: (
+        sessionId,
+        session,
+        prompt,
+        summary,
+        compactedThroughMessageId,
+        trigger,
+        preservedMessages,
+      ) => (
+        this.appendCompactionRootEvent(
+          sessionId,
+          session,
+          prompt,
+          summary,
+          compactedThroughMessageId,
+          trigger,
+          preservedMessages,
+        )
       ),
       persistToolOutputPayload: (sessionId, toolCallId, toolName, text) => (
         this.persistToolOutputPayload(sessionId, toolCallId, toolName, text)
@@ -2697,7 +2713,10 @@ function isTextPayloadMimeType(mimeType: string): boolean {
 }
 
 function isTextPayloadRole(role: AgentPayloadRef['role']): boolean {
-  return role === 'tool_output' || role === 'text_extract' || role === 'preview' || role === 'subagent_transcript';
+  return role === 'tool_output'
+    || role === 'text_extract'
+    || role === 'preview'
+    || role === 'subagent_transcript';
 }
 
 function summarizeJson(value: unknown): string {

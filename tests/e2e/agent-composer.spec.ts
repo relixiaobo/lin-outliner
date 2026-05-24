@@ -77,16 +77,63 @@ test.describe('agent composer controls', () => {
     await emitAgentProjection(page, 'mock-agent-session', {
       sessionTitle: 'Agent System',
       model: { id: 'gpt-5.4', provider: 'openai' },
-      conversation: [{
-        kind: 'compaction',
-        compaction: {
-          id: 'compact-1',
-          messageId: 'compact-root',
-          summary: 'Primary Request and Intent\n\nContinue implementing the compact UI boundary.',
-          compactedThroughMessageId: 'assistant-before-compact',
-          trigger: 'manual',
-          createdAt: 1_800_000_000_000,
+      conversation: [
+        {
+          nodeId: 'user-before-compact',
+          message: {
+            role: 'user',
+            timestamp: 1_800_000_000_000 - 800,
+            content: [{ type: 'text', text: 'Previous user request before compact.' }],
+          },
         },
+        {
+          nodeId: 'assistant-before-compact',
+          message: {
+            role: 'assistant',
+            timestamp: 1_800_000_000_000 - 700,
+            api: 'openai-completions',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            usage: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              totalTokens: 0,
+              cost: {
+                input: 0,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                total: 0,
+              },
+            },
+            stopReason: 'stop',
+            content: [
+              { type: 'text', text: 'Previous assistant response before compact.' },
+              { type: 'toolCall', id: 'compact-archive-tool-1', name: 'node_read', arguments: { nodeId: 'node-alpha' } },
+            ],
+          },
+        },
+        {
+          kind: 'compaction',
+          compaction: {
+            id: 'compact-1',
+            messageId: 'compact-root',
+            summary: 'Primary Request and Intent\n\nContinue implementing the compact UI boundary.',
+            compactedThroughMessageId: 'assistant-before-compact',
+            trigger: 'manual',
+            createdAt: 1_800_000_000_000,
+          },
+        },
+      ],
+      messages: [{
+        role: 'toolResult',
+        toolCallId: 'compact-archive-tool-1',
+        toolName: 'node_read',
+        timestamp: 1_800_000_000_000 - 650,
+        content: [{ type: 'text', text: 'Previous tool result before compact.' }],
+        isError: false,
       }],
     }, 2);
 
@@ -96,6 +143,10 @@ test.describe('agent composer controls', () => {
     await expect(compactToggle).toContainText('Manual');
     await expect(page.locator('.agent-user-bubble', { hasText: 'Conversation compacted.' })).toHaveCount(0);
     await expect(page.getByText('Primary Request and Intent')).toHaveCount(0);
+    await expect(page.getByText('Previous user request before compact.')).toBeVisible();
+    await expect(page.getByText('Previous assistant response before compact.')).toBeVisible();
+    await page.getByRole('button', { name: /Read node/ }).click();
+    await expect(page.getByText(/Previous tool result before compact/)).toBeVisible();
 
     await compactToggle.click();
 

@@ -324,7 +324,6 @@ export interface CompactionCompletedEvent extends AgentEventBase {
   summary: string;
   compactedThroughMessageId: string;
   trigger: AgentCompactionTrigger;
-  payloadRef?: AgentPayloadRef;
 }
 
 export interface PayloadCreatedEvent extends AgentEventBase {
@@ -451,7 +450,6 @@ export interface AgentCompactionRecord {
   compactedThroughMessageId: string;
   trigger: AgentCompactionTrigger;
   createdAt: number;
-  payloadRef?: AgentPayloadRef;
 }
 
 export interface AgentEventReplayState {
@@ -824,9 +822,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         compactedThroughMessageId: event.compactedThroughMessageId,
         trigger: event.trigger,
         createdAt: event.createdAt,
-        payloadRef: event.payloadRef,
       };
-      if (event.payloadRef) state.payloads[event.payloadRef.id] = event.payloadRef;
       return;
     case 'thinking.delta':
     case 'tool_call.delta':

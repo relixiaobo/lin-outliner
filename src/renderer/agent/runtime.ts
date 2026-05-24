@@ -68,6 +68,7 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
   pendingToolCallIds: [],
   errorMessage: null,
   rows: [],
+  transcriptRows: [],
   subagentRunIds: [],
   entities: { messages: {}, subagents: {}, compactions: {} },
   streaming: null,
@@ -116,7 +117,8 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
   turnPhase: AgentTurnPhase;
 } {
   const entries: AgentConversationEntry[] = [];
-  for (const row of projection.rows) {
+  const rows = projection.transcriptRows;
+  for (const row of rows) {
     if (row.kind === 'compaction') {
       const compaction = projection.entities.compactions[row.compactionId];
       if (compaction) {
@@ -138,9 +140,9 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
     entries.push({
       id: streaming && entity.role === 'assistant' ? activeAssistantEntryId(entries, projection) : row.id,
       kind: 'message',
-      nodeId: entity.id,
+      nodeId: row.archived ? null : entity.id,
       message,
-      branches: entity.branches,
+      branches: row.archived ? null : entity.branches,
       streaming,
     });
   }
@@ -742,7 +744,7 @@ export class AgentRuntimeStore {
       providerId: projectionModelValue(this.projection, 'provider'),
       pendingToolCallIds: new Set(this.projection.pendingToolCallIds),
       reasoningLevel: this.projection.thinkingLevel,
-      revision: `${this.sessionId ?? 'pending'}-${this.projection.revision}-${this.projection.rows.length}-${this.projection.pendingToolCallIds.join(',')}`,
+      revision: `${this.sessionId ?? 'pending'}-${this.projection.revision}-${this.projection.rows.length}-${this.projection.transcriptRows.length}-${this.projection.pendingToolCallIds.join(',')}`,
       sessionId: this.sessionId,
       sessionTitle: this.projection.sessionTitle,
       sessionCost: sessionCost(this.projection),

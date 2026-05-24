@@ -410,13 +410,21 @@ describe('agent runtime skill integration', () => {
     const compactionEvent = rawEvents
       .split('\n')
       .filter(Boolean)
-      .map((line) => JSON.parse(line) as { type?: string; summary?: string })
+      .map((line) => JSON.parse(line) as {
+        type?: string;
+        summary?: string;
+      })
       .find((event) => event.type === 'compaction.completed');
     expect(compactionEvent?.summary).toBe('Kept the skill outcome.');
 
     const restored = await runtime.restoreSession(created.sessionId);
     expect(restored.renderProjection.rows).toHaveLength(1);
+    expect(restored.renderProjection.transcriptRows.length).toBeGreaterThan(restored.renderProjection.rows.length);
     const [rootRow] = restored.renderProjection.rows;
+    const compactEntity = rootRow?.kind === 'compaction'
+      ? restored.renderProjection.entities.compactions[rootRow.compactionId]
+      : null;
+    expect(compactEntity?.summary).toBe('Kept the skill outcome.');
     const rootMessage = restored.renderProjection.entities.messages[rootRow!.messageId]!;
     const compactRootText = textFromContent(rootMessage.content);
     expect(compactRootText).toContain('Conversation compacted.');

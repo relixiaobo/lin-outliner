@@ -24,7 +24,6 @@ import type {
 import { api } from '../../api/client';
 import { useLinAgentRuntime } from '../../agent/runtime';
 import type {
-  AgentCompactionEntry,
   AgentConversationEntry,
   AgentMessageEntry,
   AgentTurnPhase,
@@ -36,16 +35,15 @@ import {
   CloseIcon,
   DebugIcon,
   ICON_SIZE,
-  LoaderIcon,
   NewConversationIcon,
   PencilIcon,
   TrashIcon,
   WarningIcon,
 } from '../icons';
+import { AgentCompactionBoundary } from './AgentCompactionBoundary';
 import { AgentComposer } from './AgentComposer';
 import { AgentSettingsDialog } from './AgentSettingsDialog';
 import { AgentMessageRow } from './AgentMessageRow';
-import { AgentMarkdown } from './AgentMarkdown';
 import { AgentSubagentDetailsPanel } from './AgentSubagentDetailsPanel';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
@@ -406,51 +404,6 @@ async function buildAssistantTurnCopyText(
   }
 
   return parts.join('\n\n');
-}
-
-function compactTriggerLabel(trigger: AgentCompactionEntry['compaction']['trigger']): string {
-  if (trigger === 'manual') return 'Manual';
-  if (trigger === 'auto') return 'Auto';
-  return 'Retry';
-}
-
-function AgentCompactionBoundary({ entry }: { entry: AgentCompactionEntry }) {
-  const [expanded, setExpanded] = useState(false);
-  const isActive = entry.status === 'active';
-  const summary = entry.status === 'completed' ? entry.compaction.summary.trim() : '';
-
-  return (
-    <section className="agent-compaction-boundary" aria-label={isActive ? 'Compacting conversation' : 'Conversation compacted'}>
-      <div className="agent-compaction-line" aria-hidden="true" />
-      {isActive ? (
-        <div className="agent-compaction-toggle is-active" role="status">
-          <LoaderIcon className="agent-tool-call-spinner" size={ICON_SIZE.tiny} />
-          <span>Compacting</span>
-          <small>{compactTriggerLabel(entry.compaction.trigger)}</small>
-        </div>
-      ) : (
-        <button
-          aria-expanded={expanded}
-          className="agent-compaction-toggle"
-          onClick={() => setExpanded((open) => !open)}
-          type="button"
-        >
-          <ChevronDownIcon
-            className={expanded ? 'agent-compaction-chevron is-expanded' : 'agent-compaction-chevron'}
-            size={ICON_SIZE.tiny}
-          />
-          <span>Compacted</span>
-          <small>{compactTriggerLabel(entry.compaction.trigger)}</small>
-        </button>
-      )}
-      <div className="agent-compaction-line" aria-hidden="true" />
-      {expanded && summary ? (
-        <div className="agent-compaction-summary">
-          <AgentMarkdown keyPrefix={`compact-${entry.compaction.id}`} text={summary} />
-        </div>
-      ) : null}
-    </section>
-  );
 }
 
 function AgentTranscriptRowShell({

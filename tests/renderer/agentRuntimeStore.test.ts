@@ -71,6 +71,11 @@ function projection(
     subagentRunIds?: string[];
   } = {},
 ): AgentRenderProjection {
+  const rows = entries.map((entry) => ({
+    id: `${entry.message.role}:${entry.nodeId}`,
+    kind: 'message' as const,
+    messageId: entry.nodeId,
+  }));
   return {
     sessionId: 'saved',
     revision: options.revision ?? 1,
@@ -82,11 +87,8 @@ function projection(
     thinkingLevel: 'off',
     pendingToolCallIds: [],
     errorMessage: null,
-    rows: entries.map((entry) => ({
-      id: `${entry.message.role}:${entry.nodeId}`,
-      kind: 'message',
-      messageId: entry.nodeId,
-    })),
+    rows,
+    transcriptRows: rows,
     subagentRunIds: options.subagentRunIds ?? Object.keys(options.subagents ?? {}),
     entities: {
       messages: Object.fromEntries(entries.map((entry) => [entry.nodeId, {
@@ -266,6 +268,7 @@ describe('agent runtime store', () => {
       messageId: 'compact-root',
       compactionId: 'compact-1',
     }];
+    restoredProjection.transcriptRows = restoredProjection.rows;
     restoredProjection.entities.messages['compact-root'] = {
       id: 'compact-root',
       role: 'user',

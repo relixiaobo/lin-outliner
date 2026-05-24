@@ -203,8 +203,8 @@ export class AgentRuntimeContextManager<TSession extends AgentRuntimeContextSess
         const liveMessages = session.agent.state.messages as AgentMessage[];
         if (liveMessages.length > activeMessages.length) activeMessages = liveMessages;
       }
-      const compactedThroughMessageId = session.eventState.selectedLeafMessageId ?? session.eventState.latestMessageId;
-      if (!compactedThroughMessageId || activeMessages.length < 2) {
+      const selectedLeafMessageId = session.eventState.selectedLeafMessageId ?? session.eventState.latestMessageId;
+      if (!selectedLeafMessageId || activeMessages.length < 2) {
         throw new Error('Not enough messages to compact.');
       }
 
@@ -223,6 +223,10 @@ export class AgentRuntimeContextManager<TSession extends AgentRuntimeContextSess
       ) {
         compactPlan.messagesToKeep.push(session.lastSubmittedUserPrompt);
       }
+      const compactedThroughMessageId = compactedThroughMessageIdForPlan(
+        getAgentEventActivePath(session.eventState),
+        compactPlan.messagesToSummarize.length,
+      ) ?? selectedLeafMessageId;
 
       activeCompactionId = this.host.beginCompaction(sessionId, session, options.trigger);
       const response = await this.completeCompactSummaryWithRetries(sessionId, model, apiKey, {
@@ -466,6 +470,15 @@ export function autoCompactThreshold(model: Model<Api>): number {
   const reservedOutput = Math.min(model.maxTokens ?? 8192, AUTO_COMPACT_RESERVED_OUTPUT_TOKENS);
   const effectiveWindow = Math.max(0, contextWindow - reservedOutput);
   return effectiveWindow - AUTO_COMPACT_BUFFER_TOKENS;
+}
+
+function compactedThroughMessageIdForPlan(
+  activePath: readonly { id: string }[],
+  summarizedMessageCount: number,
+): string | null {
+  if (activePath.length === 0 || summarizedMessageCount <= 0) return null;
+  const index = Math.min(activePath.length, summarizedMessageCount) - 1;
+  return activePath[index]?.id ?? null;
 }
 
 async function continueFromActivePath(agent: AgentRuntimeContextSession['agent']) {

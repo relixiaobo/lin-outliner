@@ -2277,6 +2277,12 @@ button.panel-resize-handle::after {
   padding: var(--space-2) 0 var(--space-2) var(--space-5);
 }
 
+.agent-compaction-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .agent-user-content {
   display: flex;
   max-width: min(88%, 520px);

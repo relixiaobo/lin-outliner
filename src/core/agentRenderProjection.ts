@@ -16,12 +16,14 @@ export type AgentRenderRow =
       id: string;
       kind: 'message' | 'tool_result';
       messageId: string;
+      archived?: boolean;
     }
   | {
       id: string;
       kind: 'compaction';
       messageId: string;
       compactionId: string;
+      archived?: boolean;
     };
 
 export interface AgentRenderBranchState {
@@ -107,6 +109,7 @@ export interface AgentRenderProjection {
   pendingToolCallIds: string[];
   errorMessage: string | null;
   rows: AgentRenderRow[];
+  transcriptRows: AgentRenderRow[];
   subagentRunIds: string[];
   entities: AgentRenderEntities;
   streaming: AgentStreamingRenderState | null;
@@ -133,31 +136,12 @@ export function buildAgentRenderProjection(
 
   const activePath = getAgentEventActivePath(state);
   const entities: AgentRenderEntities = { messages: {}, subagents: {}, compactions: {} };
-  const rows: AgentRenderRow[] = [];
+  const rows = buildActiveRows(state, activePath, entities);
+  const transcriptRows = buildTranscriptRows(state, activePath, entities);
   let streaming: AgentStreamingRenderState | null = null;
 
   for (const message of activePath) {
-    const compaction = compactionForMessage(state, message);
-    if (compaction) {
-      entities.messages[message.id] = toRenderMessageEntity(state, message);
-      entities.compactions[compaction.id] = toRenderCompactionEntity(compaction);
-      rows.push({
-        id: `compaction:${message.id}`,
-        kind: 'compaction',
-        messageId: message.id,
-        compactionId: compaction.id,
-      });
-      continue;
-    }
-
     const rowId = `${message.role}:${message.id}`;
-    rows.push({
-      id: rowId,
-      kind: message.role === 'toolResult' ? 'tool_result' : 'message',
-      messageId: message.id,
-    });
-    entities.messages[message.id] = toRenderMessageEntity(state, message);
-
     if (message.role === 'assistant' && message.status === 'streaming') {
       streaming = {
         messageId: message.id,
@@ -187,10 +171,139 @@ export function buildAgentRenderProjection(
     pendingToolCallIds: options.pendingToolCallIds ?? [],
     errorMessage: options.errorMessage ?? null,
     rows,
+    transcriptRows,
     subagentRunIds,
     entities,
     streaming,
   };
+}
+
+function buildActiveRows(
+  state: AgentEventReplayState,
+  activePath: readonly AgentEventMessageRecord[],
+  entities: AgentRenderEntities,
+): AgentRenderRow[] {
+  const rows: AgentRenderRow[] = [];
+  for (const message of activePath) {
+    appendActiveRow(state, rows, entities, message);
+  }
+  return rows;
+}
+
+function buildTranscriptRows(
+  state: AgentEventReplayState,
+  activePath: readonly AgentEventMessageRecord[],
+  entities: AgentRenderEntities,
+): AgentRenderRow[] {
+  const rows: AgentRenderRow[] = [];
+  const expandingCompactions = new Set<string>();
+  for (const message of activePath) {
+    appendTranscriptRow(state, rows, entities, message, {
+      archived: false,
+      expandingCompactions,
+    });
+  }
+  return rows;
+}
+
+function appendActiveRow(
+  state: AgentEventReplayState,
+  rows: AgentRenderRow[],
+  entities: AgentRenderEntities,
+  message: AgentEventMessageRecord,
+) {
+  const compaction = compactionForMessage(state, message);
+  if (compaction) {
+    appendCompactionRow(rows, entities, state, message, compaction, false);
+    return;
+  }
+  appendMessageRow(rows, entities, state, message, false);
+}
+
+function appendTranscriptRow(
+  state: AgentEventReplayState,
+  rows: AgentRenderRow[],
+  entities: AgentRenderEntities,
+  message: AgentEventMessageRecord,
+  options: {
+    archived: boolean;
+    expandingCompactions: Set<string>;
+  },
+) {
+  const compaction = compactionForMessage(state, message);
+  if (!compaction) {
+    appendMessageRow(rows, entities, state, message, options.archived);
+    return;
+  }
+
+  if (!options.expandingCompactions.has(compaction.messageId)) {
+    options.expandingCompactions.add(compaction.messageId);
+    for (const compactedMessage of pathToMessage(state, compaction.compactedThroughMessageId)) {
+      if (compactedMessage.id === message.id) continue;
+      appendTranscriptRow(state, rows, entities, compactedMessage, {
+        archived: true,
+        expandingCompactions: options.expandingCompactions,
+      });
+    }
+    options.expandingCompactions.delete(compaction.messageId);
+  }
+
+  appendCompactionRow(rows, entities, state, message, compaction, options.archived);
+}
+
+function appendMessageRow(
+  rows: AgentRenderRow[],
+  entities: AgentRenderEntities,
+  state: AgentEventReplayState,
+  message: AgentEventMessageRecord,
+  archived: boolean,
+) {
+  const prefix = archived ? 'archived:' : '';
+  rows.push({
+    id: `${prefix}${message.role}:${message.id}`,
+    kind: message.role === 'toolResult' ? 'tool_result' : 'message',
+    messageId: message.id,
+    archived: archived || undefined,
+  });
+  entities.messages[message.id] = toRenderMessageEntity(state, message);
+}
+
+function appendCompactionRow(
+  rows: AgentRenderRow[],
+  entities: AgentRenderEntities,
+  state: AgentEventReplayState,
+  message: AgentEventMessageRecord,
+  compaction: AgentCompactionRecord,
+  archived: boolean,
+) {
+  const prefix = archived ? 'archived:' : '';
+  rows.push({
+    id: `${prefix}compaction:${message.id}`,
+    kind: 'compaction',
+    messageId: message.id,
+    compactionId: compaction.id,
+    archived: archived || undefined,
+  });
+  entities.messages[message.id] = toRenderMessageEntity(state, message);
+  entities.compactions[compaction.id] = toRenderCompactionEntity(compaction);
+}
+
+function pathToMessage(
+  state: AgentEventReplayState,
+  leafMessageId: string,
+): AgentEventMessageRecord[] {
+  const path: AgentEventMessageRecord[] = [];
+  const visited = new Set<string>();
+  let cursorId: string | null = leafMessageId;
+  while (cursorId) {
+    if (visited.has(cursorId)) return path.reverse();
+    visited.add(cursorId);
+    const message: AgentEventMessageRecord | undefined = state.messages[cursorId];
+    if (!message) return path.reverse();
+    path.push(message);
+    cursorId = message.parentMessageId;
+  }
+  return path.reverse();
 }
 
 function toRenderMessageEntity(
