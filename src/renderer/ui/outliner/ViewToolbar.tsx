@@ -34,6 +34,7 @@ import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import type { CommandRunner } from '../shared';
 import {
   collectViewFieldChoices,
+  DONE_FIELD,
   NAME_FIELD,
   REF_COUNT_FIELD,
   type ViewConfig,
@@ -494,6 +495,7 @@ function FilterSection({
     const label = choices.find((choice) => choice.id === editingField)?.label ?? 'Field';
     return (
       <FilterRuleEditor
+        boolean={editingField === DONE_FIELD}
         label={label}
         rule={ruleByField.get(editingField)}
         run={run}
@@ -560,17 +562,25 @@ function FilterSection({
 }
 
 function FilterRuleEditor({
+  boolean,
   label,
   rule,
   run,
   onBack,
 }: {
+  boolean: boolean;
   label: string;
   rule: ViewConfig['filterRules'][number] | undefined;
   run: CommandRunner;
   onBack: () => void;
 }) {
   const needsValue = rule ? !VALUELESS_OPERATORS.has(rule.operator) : true;
+  // A done/checkbox field stores 'true' | 'false', so it is a binary choice
+  // rather than a free-text match.
+  const selectedBool = rule && rule.operator === 'is'
+    ? (rule.values.map((value) => value.trim().toLowerCase()).includes('true') ? 'true'
+      : rule.values.map((value) => value.trim().toLowerCase()).includes('false') ? 'false' : null)
+    : null;
   return (
     <div className="view-toolbar-filter-editor">
       <ButtonControl className="view-toolbar-filter-back" onClick={onBack}>
@@ -579,35 +589,52 @@ function FilterRuleEditor({
       </ButtonControl>
       {rule ? (
         <div className="view-toolbar-rules">
-          <div className="view-toolbar-rule view-toolbar-rule-filter">
-            <SelectControl
-              label="Filter operator"
-              value={rule.operator}
-              onChange={(event) => {
-                void run(() => api.updateFilterRule(rule.id, { operator: event.currentTarget.value as FilterOperator }));
-              }}
-            >
-              {FILTER_OPERATORS.map((operator) => (
-                <option key={operator.id} value={operator.id}>{operator.label}</option>
-              ))}
-            </SelectControl>
-            {needsValue && (
-              <TextInputControl
-                defaultValue={rule.values.join(', ')}
-                label="Filter values"
-                placeholder="value"
-                onBlur={(event) => {
-                  void run(() => api.updateFilterRule(rule.id, { values: normalizeValues(event.currentTarget.value) }));
-                }}
-                onKeyDown={(event) => {
-                  if (isImeComposingEvent(event)) return;
-                  if (event.key !== 'Enter') return;
-                  event.preventDefault();
-                  event.currentTarget.blur();
-                }}
+          {boolean ? (
+            <div className="view-toolbar-options">
+              <OptionRow
+                label="Done"
+                selected={selectedBool === 'true'}
+                variant="radio"
+                onSelect={() => void run(() => api.updateFilterRule(rule.id, { operator: 'is', values: ['true'] }))}
               />
-            )}
-          </div>
+              <OptionRow
+                label="Not done"
+                selected={selectedBool === 'false'}
+                variant="radio"
+                onSelect={() => void run(() => api.updateFilterRule(rule.id, { operator: 'is', values: ['false'] }))}
+              />
+            </div>
+          ) : (
+            <div className="view-toolbar-rule view-toolbar-rule-filter">
+              <SelectControl
+                label="Filter operator"
+                value={rule.operator}
+                onChange={(event) => {
+                  void run(() => api.updateFilterRule(rule.id, { operator: event.currentTarget.value as FilterOperator }));
+                }}
+              >
+                {FILTER_OPERATORS.map((operator) => (
+                  <option key={operator.id} value={operator.id}>{operator.label}</option>
+                ))}
+              </SelectControl>
+              {needsValue && (
+                <TextInputControl
+                  defaultValue={rule.values.join(', ')}
+                  label="Filter values"
+                  placeholder="value"
+                  onBlur={(event) => {
+                    void run(() => api.updateFilterRule(rule.id, { values: normalizeValues(event.currentTarget.value) }));
+                  }}
+                  onKeyDown={(event) => {
+                    if (isImeComposingEvent(event)) return;
+                    if (event.key !== 'Enter') return;
+                    event.preventDefault();
+                    event.currentTarget.blur();
+                  }}
+                />
+              )}
+            </div>
+          )}
           <div className="view-toolbar-rule-actions">
             <ButtonControl
               aria-label="Remove filter rule"
