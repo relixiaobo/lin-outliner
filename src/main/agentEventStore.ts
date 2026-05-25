@@ -15,7 +15,7 @@ import { appendAgentEventToReplayState, replayAgentEvents } from '../core/agentE
 const EVENT_LOG_FILE = 'events.jsonl';
 const SESSION_INDEX_FILE = 'session-index.json';
 const SEARCH_INDEX_FILE = 'search-index.json';
-const CHECKPOINT_VERSION = 1;
+const CHECKPOINT_VERSION = 2;
 const SEARCH_INDEX_VERSION = 1;
 const DEFAULT_CHECKPOINT_EVENT_INTERVAL = 100;
 const MAX_CHECKPOINTS_PER_SESSION = 3;
@@ -252,6 +252,19 @@ export class AgentEventStore {
     return Object.values(index.userMessages)
       .filter((entry) => !sessionId || entry.sessionId === sessionId)
       .sort((left, right) => right.createdAt - left.createdAt);
+  }
+
+  async listMessageIndexEntries(): Promise<AgentEventSearchIndexEntry[]> {
+    const index = await this.getSearchIndex();
+    return Object.values(index.messages)
+      .sort((left, right) => right.updatedAt - left.updatedAt);
+  }
+
+  async findMessageIndexEntry(messageId: string): Promise<AgentEventSearchIndexEntry | null> {
+    const index = await this.getSearchIndex();
+    return Object.values(index.messages)
+      .filter((entry) => entry.messageId === messageId)
+      .sort((left, right) => right.updatedAt - left.updatedAt)[0] ?? null;
   }
 
   async searchMessages(

@@ -1,5 +1,5 @@
 ---
-status: draft
+status: in-progress
 priority: P1
 owner: relixiaobo
 created: 2026-05-21
@@ -28,7 +28,7 @@ context.
 
 The middle layer ("list messages in a session") exists only to support a
 human's chronological scan. The agent never benefits from it: every L1 call
-either follows an L0 hit (already has the messageId) or precedes an L2
+either follows an L0 hit (already has the `message_id`) or precedes an L2
 (could go direct from search). Dropping L1 gives us a cleaner contract with
 no behavior loss.
 
@@ -42,16 +42,18 @@ to consume. Rejected:
 - Current-session exclusion via filename conventions is fragile.
 - File paths leak into agent replies as ugly citations.
 
-But we keep what file tools do well — **internally we drive ripgrep against
-the existing search index** to inherit its quality (fuzzy, regex,
-case-insensitive, CJK) without re-implementing search.
+For v1, search semantics stay inside the event-store service layer. We use the
+existing normalized search index with token-AND matching, then apply semantic
+visibility filtering. Ripgrep remains a possible future helper for snippet
+highlighting or regex mode, but it does not define v1 recall semantics.
 
 ## Goal
 
-- Single tool, two modes. Search returns hits with anchors; read returns
-  the exchange around an anchor.
-- Always-on active-branch filtering. Never return content the user has
-  edited away.
+- Single tool, three modes. Recent returns user-message anchors for overview;
+  search returns keyword hits; read returns the exchange around an anchor.
+- Always-on visible-transcript filtering. Never return sibling-branch
+  content the user has edited away, while still allowing compacted originals
+  that remain visible through transcript expansion.
 - Self-correcting errors. Wrong message IDs and missing sessions return a
   structured result the model can act on without retry.
 - Bounded output. Hard caps on every dimension, always silently clamped.
@@ -76,19 +78,23 @@ case-insensitive, CJK) without re-implementing search.
 
 ```ts
 interface PastChatsParams {
+  // Recent overview mode — pass `recent: true`.
+  recent?: boolean;
+
   // Search mode — pass `query`.
   query?: string;
   after?: string;                     // ISO 8601, inclusive
   before?: string;                    // ISO 8601, inclusive
-  sessionIds?: string[];              // narrow to specific sessions
-  limit?: number;                     // default 10, max 20
-  includeCurrentSession?: boolean;    // default false
+  session_ids?: string[];             // narrow to specific sessions
+  limit?: number;                     // search default 10/max 20; recent default 20/max 50
+  include_current_session?: boolean;  // default false
+  max_message_chars?: number;         // recent default 360, max 1200
 
-  // Read mode — pass `messageId`.
-  messageId?: string;
-  beforeContext?: number;             // default 1, max 5
-  afterContext?: number;              // default 4, max 20
-  maxChars?: number;                  // default 2000, max 8000
+  // Read mode — pass `message_id`.
+  message_id?: string;
+  before_context?: number;            // default 1, max 5
+  after_context?: number;             // default 4, max 20
+  max_chars?: number;                 // default 2000, max 8000
 }
 ```
 
@@ -96,25 +102,49 @@ Mode is inferred from parameter presence:
 
 | Input | Mode |
 | --- | --- |
-| `query` present, `messageId` absent | `search` |
-| `messageId` present, `query` absent | `read` |
-| Both present | `error: AMBIGUOUS_MODE` |
-| Neither present | `error: MISSING_QUERY_OR_MESSAGE_ID` |
+| `recent: true`, no `query` or `message_id` | `recent` |
+| `query` present, no `recent` or `message_id` | `search` |
+| `message_id` present, no `recent` or `query` | `read` |
+| More than one mode selector | `error: AMBIGUOUS_MODE` |
+| No mode selector | `error: MISSING_QUERY_OR_MESSAGE_ID` |
 
-`query` is a free-text string passed verbatim to ripgrep (`-i` case-
-insensitive, fixed-string by default, `-F`). Regex is opt-in via a future
-`regex: true` flag.
+`query` is a free-text string normalized the same way as the existing
+event-store search index. v1 uses token-AND matching over `normalizedText`.
+Regex is opt-in via a future `regex: true` flag.
 
 ### Result
+
+The tool returns the same `ToolEnvelope` shape as the file, web, and node
+tools. `content[0].text` is the compact model-visible JSON envelope;
+`details.data` carries the complete TypeScript result below for runtime/UI
+consumers. Public tool parameters and the compact model-visible summary use
+snake_case; the internal TypeScript result types stay camelCase.
 
 A discriminated union with `mode` discriminator, including error mode so the
 model can self-correct without raising an exception:
 
 ```ts
 type PastChatsResult =
+  | PastChatsRecentResult
   | PastChatsSearchResult
   | PastChatsReadResult
   | PastChatsErrorResult;
+
+interface PastChatsRecentResult {
+  mode: 'recent';
+  items: Array<{
+    messageId: string;
+    sessionId: string;
+    sessionTitle: string | null;
+    createdAt: string;                // ISO
+    text: string;                     // user message text with system reminders stripped
+    totalChars: number;
+    textTruncated: boolean;
+    hasAttachments: boolean;
+  }>;
+  totalItems: number;                 // before limit truncation
+  truncated: boolean;                 // totalItems > limit
+}
 
 interface PastChatsSearchResult {
   mode: 'search';
@@ -167,35 +197,30 @@ artifact in this design — it converts the model's default "I don't remember"
 into proactive recall. Do not soften it.
 
 ```text
-Recall content from past Lin agent conversations. Call this BEFORE saying
-you don't remember something.
+Recall content from past Lin agent conversations. Call this BEFORE saying you don't remember something.
 
 When to call:
-- User says "last time", "before", "previously", "you said", "remember",
-  "we discussed", "I told you" — and the reference is NOT to something
-  earlier in this same conversation.
-- User references a prior decision or preference you don't have in
-  current context.
+- User says "last time", "before", "previously", "you said", "remember", "we discussed", "I told you" - and the reference is NOT to something earlier in this same conversation.
+- User references a prior decision or preference you don't have in current context.
 - User asks "have we ever discussed X".
 
-Two modes (chosen by parameters):
+Three modes (chosen by parameters):
 
-SEARCH — pass `query` plus optional `after`/`before`/`sessionIds`/`limit`.
-  Returns hits across past sessions with [m_xxx] anchors.
+RECENT - pass recent: true plus optional after/before/session_ids/limit/max_message_chars.
+  Returns recent visible user messages only, with message_id anchors. System reminders are stripped. Use this when the user asks what you discussed before but gives no concrete keywords.
 
-READ — pass `messageId` from a search hit, plus optional `beforeContext`/
-  `afterContext`/`maxChars`. Returns the conversation around that message.
+SEARCH - pass query plus optional after/before/session_ids/limit.
+  Returns hits across past sessions with [message_id] anchors.
+  Search is keyword recall, not a topic inventory. Do not search generic meta phrases like "conversation history topics discussed"; use concrete words, names, decisions, file paths, or concepts from the user's request.
 
-Typical flow: SEARCH to find relevant messages, then READ the most
-relevant hit for full context. Do NOT summarize from search snippets
-alone — snippets are for navigation, not citation.
+READ - pass message_id from a search hit, plus optional before_context/after_context/max_chars.
+  Returns the conversation around that message.
 
-Important: the user does NOT see your tool output. You must restate any
-recalled facts in your reply. You may use [m_xxx] anchors when referring
-back to specific moments.
+Typical flow: SEARCH to find relevant messages, then READ the most relevant hit for full context. Do NOT summarize from search snippets alone - snippets are for navigation, not citation.
 
-After compaction of the current session, pass `includeCurrentSession: true`
-to recall earlier turns that are no longer in your working context.
+Important: the user does NOT see your tool output. You must restate any recalled facts in your reply. You may use message_id anchors when referring back to specific moments.
+
+After compaction of the current session, pass include_current_session: true to recall earlier turns that are no longer in your working context.
 ```
 
 ## Internal Design
@@ -211,8 +236,8 @@ to recall earlier turns that are no longer in your working context.
               ▼
 ┌────────────────────────────────────────────────────────────┐
 │ AgentPastChatsService (src/main/agentPastChats.ts)         │
-│   • search(): index lookup → ripgrep → semantic filter     │
-│   • read(): replay → active path → window assembly         │
+│   • search(): index lookup → token-AND → semantic filter   │
+│   • read(): replay → visible transcript → window assembly  │
 │   • single source of visibility rules                      │
 └────────────────────────────────────────────────────────────┘
               │
@@ -226,58 +251,72 @@ to recall earlier turns that are no longer in your working context.
 
 ### Search path
 
-1. Load search-index.json (already in-memory after first read).
-2. Filter by `sessionIds`/`after`/`before` over `AgentEventSearchIndexEntry`.
-3. Pipe candidate `normalizedText` strings to ripgrep via stdin:
-   `rg -i -F --json --max-count=1 <query>`. Capture matched entries.
-4. For each session with hits, compute active path
+1. Load `search-index.json` through `AgentEventStore`.
+2. Filter by `session_ids`/`after`/`before` over `AgentEventSearchIndexEntry`.
+3. Match normalized query terms against `normalizedText` with token-AND
+   semantics.
+4. For each session with hits, compute the visible transcript message set
    (cached by `(sessionId, latestEventId)`).
-5. Drop hits whose `messageId` is not on the session's active path.
-6. Drop hits from current session unless `includeCurrentSession`.
-7. Sort by `updatedAt` desc, clamp to `limit`, build snippets (200 chars
+5. Drop hits whose message id is not visible in that transcript set. For user
+   messages, re-read visible content and strip `<system-reminder>` blocks
+   before snippet generation.
+6. Drop hits from current session unless `include_current_session`.
+7. Sort by session recency and message `updatedAt` desc, clamp to `limit`, build snippets (200 chars
    centered on first match, `<mark>` around query terms).
 
-Why ripgrep: file_grep already depends on it. We get fuzzy-tolerant fixed-
-string match, case-insensitive search, CJK handling, and regex (when we
-opt in) without bundling a JS search library or maintaining our own
-normalizer beyond what the index already stores.
+Why not ripgrep for v1 semantics: `rg -F` is fixed-string matching, not fuzzy,
+and `--max-count=1` over stdin stops at the first matching input stream line.
+That is narrower than Lin's existing token-AND search. Keeping recall semantics
+inside the service avoids a second query language and makes branch/compaction
+filtering explicit.
+
+### Recent path
+
+1. Load `userMessages` from `search-index.json`.
+2. Filter by `session_ids`/`after`/`before` and current-session exclusion.
+3. Replay only candidate sessions and keep messages on the visible transcript.
+4. Drop compaction boundary/system-generated user rows and strip
+   `<system-reminder>...</system-reminder>` from user text.
+5. Clamp each item at `max_message_chars`, include `messageId`, and sort by
+   user message `createdAt` desc.
+
+Recent output is navigation, not evidence. The model should call
+`past_chats(message_id=...)` before relying on details.
 
 ### Read path
 
-1. Resolve `messageId` → `sessionId` via search-index (O(1) lookup).
-2. If session is current and `includeCurrentSession` is not requested
+1. Resolve `message_id` → `sessionId` via search-index (O(1) lookup).
+2. If session is current and `include_current_session` is not requested
    → `SESSION_IS_CURRENT`.
 3. If session is deleted → `SESSION_NOT_FOUND` (no leak of existence
    beyond search hits the caller already saw).
 4. `eventStore.replay(sessionId)` → state.
-5. Compute active path from `selectedLeafMessageId`. If `messageId` is not
-   on active path → `NOT_ON_ACTIVE_BRANCH` with `nearbyMessageIds` =
-   active-path messages within ±10 of the anchor's position-in-path.
-6. Take `beforeContext` user-role messages before the anchor and
-   `afterContext` messages after (any role, until next user message that
-   pushes us past `afterContext`).
-7. For each message: if it's a tool call/result, use the persisted
-   `outputSummary` from the payload (already stored). Otherwise read text
+5. Compute the visible transcript path. If `message_id` is not visible
+   → `NOT_ON_ACTIVE_BRANCH` with `nearbyMessageIds` = nearby visible messages.
+6. Take `before_context` user-role messages before the anchor and
+   `after_context` messages after (any role, until next user message that
+   pushes us past `after_context`).
+7. For each message: if it's a tool result, use the replayed
+   `outputSummary` stored on `AgentEventMessageRecord`. Otherwise read text
    from `content[]`.
-8. Concatenate and clamp at `maxChars`. Set `outputTruncated` true if
+8. Concatenate and clamp at `max_chars`. Set `outputTruncated` true if
    clipped. Per-message `messageTruncated` if a single message was clipped.
 
-### Active path computation
+### Visible transcript computation
 
 ```ts
-function activePath(state: AgentEventReplayState): Set<string> {
-  const ids = new Set<string>();
-  let cursor = state.selectedLeafMessageId;
-  while (cursor) {
-    ids.add(cursor);
-    cursor = state.messages[cursor]?.parentMessageId ?? null;
-  }
-  return ids;
-}
+getAgentEventVisibleTranscript(state): Array<{
+  message: AgentEventMessageRecord;
+  archived: boolean;
+}>
 ```
 
-Cached per process keyed by `(sessionId, state.latestEventId)`. Cache
-invalidates implicitly when a new event lands (latestEventId changes).
+This helper lives in `src/core/agentEventLog.ts` and is shared by the renderer
+and `past_chats`. It follows the active branch, expands compaction boundaries
+back to the compacted-through message, and still excludes sibling branches
+that were edited away. Cached per process keyed by `(sessionId,
+state.latestEventId)`. Cache invalidates implicitly when a new event lands
+(`latestEventId` changes).
 
 ### Current-session injection
 
@@ -289,29 +328,77 @@ way to spoof the current session and bypass the exclusion.
 
 | Rule | Strength | Where |
 | --- | --- | --- |
-| Exclude deleted sessions | Hard | search + read |
-| Exclude current session | Soft (override `includeCurrentSession`) | search |
-| Only active branch | Hard (v1) | search + read |
+| Exclude deleted sessions | Hard | recent + search + read |
+| Exclude current session | Soft (override `include_current_session`) | recent + search + read |
+| Only visible transcript branch | Hard (v1) | recent + search + read |
 | No exposure of session existence beyond search hits | Hard | read returns `SESSION_NOT_FOUND` for unknown IDs without distinguishing "never existed" vs "deleted" |
 
 All enforcement lives in `AgentPastChatsService`. The tool wrapper does
 only parameter validation and result formatting.
 
+## Storage Discipline
+
+`past_chats` does not introduce another chat-history store.
+
+- No transcript Markdown files.
+- No mutable chat snapshot JSON.
+- No expansion of large payloads into recent/search/read output.
+- Search and session indexes remain rebuildable derived caches.
+- Checkpoints remain bounded derived caches; the checkpoint version is bumped
+  when replay state gains fields such as `outputSummary`.
+
 ## Limits
 
 | Limit | Default | Max | Behavior |
 | --- | ---: | ---: | --- |
+| recent `limit` | 20 | 50 | silently clamp |
+| recent `max_message_chars` | 360 | 1200 | silently clamp |
 | search `limit` | 10 | 20 | silently clamp |
 | search snippet chars | 200 | 200 | not configurable |
-| read `beforeContext` | 1 | 5 | silently clamp |
-| read `afterContext` | 4 | 20 | silently clamp |
-| read `maxChars` | 2000 | 8000 | silently clamp |
+| read `before_context` | 1 | 5 | silently clamp |
+| read `after_context` | 4 | 20 | silently clamp |
+| read `max_chars` | 2000 | 8000 | silently clamp |
 | tool output total chars | — | 16000 | hard cap; signal truncation |
 
 Silently clamp = no error; values coerced into range. The tool result
 records the effective values when relevant.
 
-## Model-Facing Output (the `content[0].text` Markdown)
+## Model-Facing Output
+
+`content[0].text` is standard JSON:
+
+```json
+{
+  "ok": true,
+  "tool": "past_chats",
+  "status": "success",
+  "data": {
+    "mode": "search",
+    "total_hits": 7,
+    "returned_hits": 7,
+    "truncated": false,
+    "message_ids": ["m_abc123", "m_def456"]
+  },
+  "instructions": "Call past_chats with message_id from a hit to read full context before relying on it."
+}
+```
+
+The readable transcript/search text is appended as `content[1].text`.
+
+### Recent example
+
+```markdown
+Found 3 recent user messages:
+
+[m_abc123] s_x9q2 - "Agent past chats" - 2026-05-25 08:12
+> 用户发送的内容，通常更能代表，并且也更精简...
+> [truncated 360/912 chars; call past_chats with message_id for full context]
+
+[m_def456] s_b3k1 - "Tool API polish" - 2026-05-24 17:41
+> 好的，把工具 API 风格打磨到更统一
+
+Next: call past_chats with message_id from one item for full context.
+```
 
 ### Search example
 
@@ -329,7 +416,7 @@ Found 7 hits for "OAuth":
 
 …4 more hits. Pass limit=20 to see more or refine query.
 
-Next: call past_chats(messageId=<one of these>) for full context.
+Next: call past_chats(message_id=<one of these>) for full context.
 ```
 
 ### Read example
@@ -354,7 +441,7 @@ OAuth 2 — easier integration with modern providers, better RFC clarity…
 [m_jkl012] Assistant · 14:34
 For Node: `oidc-client-ts`. For Python: `authlib`…
 
-— Truncated at 2000/4200 chars. Call past_chats(messageId=m_abc123, maxChars=6000).
+— Truncated at 2000/4200 chars. Call past_chats(message_id=m_abc123, max_chars=6000).
 ```
 
 ### Error example
@@ -373,17 +460,24 @@ messages on the active branch:
 The structured `mode: 'error'` result is always also returned so runtime
 code can render specifically.
 
+### Empty search example
+
+```markdown
+No matching past chat messages found for this query.
+This does not prove there is no chat history or that history was not saved. Retry with concrete names, decisions, file paths, or exact words from the user request. If the user gave no concrete terms, ask for a keyword instead of guessing.
+```
+
 ## Implementation Map
 
 | Day | Work |
 | --: | --- |
-| 1 | `src/main/agentPastChats.ts` service skeleton: search (no ripgrep yet, token-AND), read with active-path filter, error shapes. Tests for active-path logic. |
-| 2 | Wire ripgrep: spawn process, stdin pipe, JSON output parsing. Add unit tests for fuzzy and CJK queries. |
-| 3 | `src/main/agentPastChatsTool.ts` wrapper: param validation, mode inference, currentSessionId injection from runtime context, Markdown formatter. |
-| 4 | Index normalization upgrade: `normalizeIndexText` adds NFC + diacritic stripping + CJK char split. Schema bump search-index version to force one-time rebuild. |
-| 5 | Tool registration in `agentTools.ts`. System-prompt nudges (none needed if tool description is sufficient — verify with deterministic E2E). |
-| 6 | E2E with mock LLM exercising "user references prior" → search → read → reply. Add to existing agent test suite. |
-| 7 | Doc updates: remove old sketch from `agent-tool-design.md`; flip this plan's `status` to `in-progress`. |
+| 1 | Shared `getAgentEventVisibleTranscript()` helper plus `outputSummary` on replayed tool-result messages. |
+| 2 | `src/main/agentPastChats.ts`: token-AND search, visible transcript filter, read windows, structured errors. |
+| 3 | `src/main/agentPastChatsTool.ts`: param validation, mode inference, currentSessionId injection, Markdown formatter. |
+| 4 | Tool registration in `agentTools.ts` and runtime current-session wiring. |
+| 5 | Core tests for branch filtering, current-session exclusion, compaction recall, summarized tool output, and wrapper errors. |
+| 6 | E2E with mock LLM exercising "user references prior" → search → read → reply. |
+| 7 | Optional search refinements: better CJK tokenization, diacritic stripping, regex/ripgrep mode, or relevance ranking if usage shows recall failures. |
 
 Total: ~5–7 dev days for a contractually complete v1.
 
@@ -391,8 +485,11 @@ Total: ~5–7 dev days for a contractually complete v1.
 
 Core service tests (in `tests/core/agentPastChats.test.ts`):
 
-- Search returns active-branch messages only when sibling branches exist.
-- Search excludes current session unless `includeCurrentSession: true`.
+- Recent returns visible user-message anchors for overview navigation.
+- Recent excludes current session unless `include_current_session: true`.
+- Recent strips system reminders and truncates long user messages.
+- Search returns visible-transcript messages only when sibling branches exist.
+- Search excludes current session unless `include_current_session: true`.
 - Search excludes deleted sessions.
 - Search clamps `limit > 20` to 20 silently.
 - Search hits are sorted by `updatedAt` desc.
@@ -400,16 +497,20 @@ Core service tests (in `tests/core/agentPastChats.test.ts`):
 - Read returns NOT_ON_ACTIVE_BRANCH with nearbyMessageIds when target is
   on a sibling branch.
 - Read returns SESSION_IS_CURRENT for the current session unless
-  `includeCurrentSession`.
-- Read clamps `beforeContext > 5` and `afterContext > 20` silently.
+  `include_current_session`.
+- Read clamps `before_context > 5` and `after_context > 20` silently.
 - Read includes tool-call messages with summarized output, not raw payload.
 - Read returns SESSION_NOT_FOUND for unknown message IDs without
   distinguishing "never existed" from "deleted".
 
 Tool wrapper tests:
 
-- AMBIGUOUS_MODE when both `query` and `messageId` are present.
+- AMBIGUOUS_MODE when both `query` and `message_id` are present.
 - MISSING_QUERY_OR_MESSAGE_ID when neither is present.
+- Recent model-visible output uses snake_case fields and points follow-up to
+  `message_id`.
+- Empty search output instructs the model not to claim this is the first
+  conversation or that history was not saved.
 - Markdown formatter produces stable anchor format `[m_xxx]`.
 - Markdown formatter caps total output at 16000 chars.
 - Snippet `<mark>` highlighting covers all query terms.
@@ -417,7 +518,7 @@ Tool wrapper tests:
 E2E (`tests/e2e/agent-past-chats.spec.ts`):
 
 - Mock LLM that, on seeing "last time", calls `past_chats(query=...)`
-  → receives hits → calls `past_chats(messageId=...)` → cites the
+  → receives hits → calls `past_chats(message_id=...)` → cites the
   recalled fact in its final reply. Assert exact tool call sequence.
 
 ## Decision Log
@@ -432,12 +533,13 @@ lin-agent references, with rationale:
   field instead of inferring from result shape.
 - **Errors as `mode: 'error'`, not exceptions.** Models self-correct
   better from structured errors than from thrown failures.
-- **ripgrep, not fuzzysort, not embeddings.** ripgrep is already in the
-  process tree for `file_grep`, gives fuzzy-tolerant fixed-string match
-  and CJK out of the box, no JS dependency. Embeddings deferred until a
-  real recall failure surfaces in usage.
-- **`messageId` not `messageTs`.** Lin has message branching; messageId
-  is stable across branch operations, timestamps are not.
+- **Token-AND v1, not ripgrep/fuzzysort/embeddings.** The existing search
+  index already provides normalized text and predictable token-AND semantics.
+  Ripgrep is deferred to optional regex/snippet support because fixed-string
+  `rg` is not fuzzy and is easy to wire incorrectly over stdin. Embeddings
+  are deferred until a real recall failure surfaces in usage.
+- **`message_id` not `message_ts`.** Lin has message branching; message ids
+  are stable across branch operations, timestamps are not.
 - **`<mark>` highlighting in snippets.** Models read structured Markdown
   efficiently; the `<mark>` tag is a strong signal of "this matched".
 - **`[m_xxx]` anchors in Markdown.** A short stable identifier the model
@@ -447,7 +549,7 @@ lin-agent references, with rationale:
   semantic operation grep cannot express; materializing would still
   require a service layer for filtering, so the file-system layer adds
   cost without saving design.
-- **`includeCurrentSession` exists.** After compaction, the model may
+- **`include_current_session` exists.** After compaction, the model may
   legitimately need to read original content from its own session.
 
 ## Future Work (post v1)
@@ -458,10 +560,10 @@ lin-agent references, with rationale:
   density, role match (user vs assistant), and recency-weighted blend.
 - **Citation UI**: render `[m_xxx]` anchors in assistant messages as
   clickable jumps to the source session and message.
-- **Embedding rerank**: only invoked when ripgrep returns fewer than N
-  hits. Cached per query. Out of scope for v1.
-- **Cross-branch read**: `branch: 'all'` parameter on read. Currently
-  every read is active-branch-only; no real workflow has surfaced for
+- **Embedding rerank**: only invoked when lexical search returns too few or too
+  many weak hits. Cached per query. Out of scope for v1.
+- **Cross-branch read**: `branch: 'all'` parameter on read. Currently every
+  read is visible-transcript-only; no real workflow has surfaced for
   cross-branch recall yet.
 
 ## References

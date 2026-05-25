@@ -414,6 +414,7 @@ export interface AgentEventMessageRecord {
   toolCallId?: string;
   toolName?: string;
   isError?: boolean;
+  outputSummary?: string;
   attachments?: AgentPayloadRef[];
 }
 
@@ -479,6 +480,11 @@ export interface AgentEventConversationEntry {
   branches: AgentMessageBranchState | null;
 }
 
+export interface AgentEventVisibleTranscriptEntry {
+  message: AgentEventMessageRecord;
+  archived: boolean;
+}
+
 export function createEmptyAgentEventReplayState(): AgentEventReplayState {
   return {
     session: null,
@@ -540,6 +546,17 @@ export function getAgentEventActivePath(state: AgentEventReplayState): AgentEven
     cursorId = message.parentMessageId;
   }
   return path.reverse();
+}
+
+export function getAgentEventVisibleTranscript(
+  state: AgentEventReplayState,
+): AgentEventVisibleTranscriptEntry[] {
+  const entries: AgentEventVisibleTranscriptEntry[] = [];
+  const expandingCompactions = new Set<string>();
+  for (const message of getAgentEventActivePath(state)) {
+    appendVisibleTranscriptEntry(state, entries, expandingCompactions, message, false);
+  }
+  return entries;
 }
 
 export function getAgentEventMessageBranches(
@@ -722,6 +739,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         toolCallId: event.toolCallId,
         toolName: event.toolName,
         isError: event.isError,
+        outputSummary: event.outputSummary,
       });
       state.selectedLeafMessageId = event.messageId;
       return;
@@ -733,6 +751,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       }
       message.content = cloneContent(event.content);
       message.updatedAt = event.createdAt;
+      message.outputSummary = event.outputSummary;
       return;
     }
     case 'branch.selected':
@@ -858,6 +877,44 @@ function addMessage(state: AgentEventReplayState, message: AgentEventMessageReco
     state.rootMessageIds = [...state.rootMessageIds, message.id];
   }
   state.latestMessageId = message.id;
+}
+
+function appendVisibleTranscriptEntry(
+  state: AgentEventReplayState,
+  entries: AgentEventVisibleTranscriptEntry[],
+  expandingCompactions: Set<string>,
+  message: AgentEventMessageRecord,
+  archived: boolean,
+) {
+  const compaction = message.role === 'user' ? state.compactionsByMessageId[message.id] ?? null : null;
+  if (compaction && !expandingCompactions.has(compaction.messageId)) {
+    expandingCompactions.add(compaction.messageId);
+    for (const compactedMessage of pathToMessage(state, compaction.compactedThroughMessageId)) {
+      if (compactedMessage.id === message.id) continue;
+      appendVisibleTranscriptEntry(state, entries, expandingCompactions, compactedMessage, true);
+    }
+    expandingCompactions.delete(compaction.messageId);
+  }
+
+  entries.push({ message, archived });
+}
+
+function pathToMessage(
+  state: AgentEventReplayState,
+  leafMessageId: string,
+): AgentEventMessageRecord[] {
+  const path: AgentEventMessageRecord[] = [];
+  const visited = new Set<string>();
+  let cursorId: string | null = leafMessageId;
+  while (cursorId) {
+    if (visited.has(cursorId)) return path.reverse();
+    visited.add(cursorId);
+    const message: AgentEventMessageRecord | undefined = state.messages[cursorId];
+    if (!message) return path.reverse();
+    path.push(message);
+    cursorId = message.parentMessageId;
+  }
+  return path.reverse();
 }
 
 function requireSession(state: AgentEventReplayState, event: AgentEvent) {
