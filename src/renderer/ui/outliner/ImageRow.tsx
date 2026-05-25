@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { assetUrl } from '../../../core/assets';
 import { api } from '../../api/client';
 import { DescriptionIcon, ExpandIcon, ICON_SIZE, OpenIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
@@ -18,7 +19,7 @@ interface ImageRowProps {
 /**
  * Presentational body for an `image` node, rendered inside the focusable
  * `BlockNodeRow` shell (which owns focus and keyboard navigation). Bytes load
- * via the `lin-asset://` protocol. A hover toolbar offers a caption (the node's
+ * via the `asset://` protocol. A hover toolbar offers a caption (the node's
  * `description` field), fullscreen preview, and "open original" (the OS default
  * app — an Electron capability); double-clicking the image also opens the
  * lightbox. The caption renders below the image as a `NodeDescription` and is
@@ -29,7 +30,7 @@ export function ImageRow(props: ImageRowProps) {
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const lightboxRef = useRef<HTMLDivElement | null>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
-  const src = `lin-asset://${props.assetId}`;
+  const src = assetUrl(props.assetId);
   const hasIntrinsicSize = typeof props.width === 'number' && typeof props.height === 'number';
 
   // Move focus into the lightbox while open (and restore it on close) so its

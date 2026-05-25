@@ -11,7 +11,7 @@ updated: 2026-05-25
 > **Progress (branch `cc/asset-subsystem-images`).** `AssetService`
 > (`src/main/assetService.ts`) ingests buffers/paths, sniffs MIME from magic
 > bytes, probes PNG/JPEG/GIF/WebP/BMP dimensions, and writes `<id>.<ext>` +
-> `<id>.meta.json` sidecars under `<userData>/assets/`. The `lin-asset://`
+> `<id>.meta.json` sidecars under `<userData>/assets/`. The `asset://`
 > privileged protocol is registered in `main.ts` and served from the sidecar
 > MIME. IPC commands `ingest_asset` / `lookup_asset` / `delete_asset` /
 > `pick_image_files` are routed via `ASSET_COMMANDS`. **Deferred to follow-ups:**
@@ -21,7 +21,7 @@ updated: 2026-05-25
 Local-first asset store for binary content (images, files, banner art, future
 audio/video). Loro stores stable asset IDs; the actual bytes live on disk in
 the user data directory. The renderer loads assets through a custom
-`lin-asset://` protocol served by the Electron main process.
+`asset://` protocol served by the Electron main process.
 
 This plan blocks `image-rendering.md`, `file-attachments.md`, and the
 metadata-cached variant of `embed-strategy.md`.
@@ -40,7 +40,7 @@ metadata-cached variant of `embed-strategy.md`.
 
 - Add an `AssetService` in `src/main/` that owns asset files under
   `<userData>/assets/<id>.<ext>` plus a metadata sidecar.
-- Register a `lin-asset://<id>` custom protocol so the renderer can load
+- Register a `asset://<id>` custom protocol so the renderer can load
   assets with regular `<img>`/`<video>`/`<a>` tags.
 - Provide IPC commands for asset ingest (paste, drag from Finder, file
   picker), lookup by id, and explicit deletion.
@@ -95,11 +95,11 @@ Register in main process before the first `BrowserWindow`:
 
 ```ts
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'lin-asset', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true, bypassCSP: false } },
+  { scheme: 'asset', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true, bypassCSP: false } },
 ]);
 // then in app.whenReady:
-protocol.handle('lin-asset', async (req) => {
-  const id = new URL(req.url).hostname; // lin-asset://<id>
+protocol.handle('asset', async (req) => {
+  const id = new URL(req.url).hostname; // asset://<id>
   return assetService.serve(id);
 });
 ```
@@ -107,7 +107,7 @@ protocol.handle('lin-asset', async (req) => {
 Renderer usage:
 
 ```tsx
-<img src={`lin-asset://${node.assetId}`} alt={node.mediaAlt ?? ''} />
+<img src={`asset://${node.assetId}`} alt={node.mediaAlt ?? ''} />
 ```
 
 `serve(id)` streams the file with the recorded MIME. Missing assets return
@@ -176,7 +176,7 @@ path.
 1. New file `src/main/assetService.ts`: AssetService class with `ingest`,
    `serve`, `lookup`, `delete`, plus sidecar read/write helpers and the
    startup index rebuild.
-2. Register `lin-asset` scheme + protocol handler in `src/main/main.ts`
+2. Register `asset` scheme + protocol handler in `src/main/main.ts`
    before window creation.
 3. Wire IPC dispatch in `src/main/documentService.ts` (or a new asset
    dispatcher).

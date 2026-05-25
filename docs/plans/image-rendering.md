@@ -89,7 +89,7 @@ New `ImageRow.tsx` (or branch inside `OutlinerItem.tsx`) for `type ===
 
 ```tsx
 <img
-  src={`lin-asset://${node.assetId}`}
+  src={`asset://${node.assetId}`}
   alt={node.mediaAlt ?? ''}
   width={node.imageWidth}
   height={node.imageHeight}
@@ -140,7 +140,7 @@ asset GC plan (in `asset-subsystem.md` V2) handles eventual cleanup.
 3. Renderer interaction: paste/drop/slash handlers calling
    `ingest_asset` + `create_image_node`.
 4. New `ImageRow.tsx` rendered when `node.type === 'image'`.
-5. E2E test: paste image → verify `<img>` with `lin-asset://` src renders.
+5. E2E test: paste image → verify `<img>` with `asset://` src renders.
 
 ## Test plan
 

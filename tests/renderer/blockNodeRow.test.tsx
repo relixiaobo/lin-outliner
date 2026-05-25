@@ -121,7 +121,7 @@ describe('BlockNodeRow', () => {
   test('renders the image body and a caption affordance', () => {
     const { rendered } = render();
     const img = rendered.document.querySelector('img');
-    expect(img?.getAttribute('src')).toBe('lin-asset://abc123');
+    expect(img?.getAttribute('src')).toBe('asset://abc123');
     expect(rendered.document.querySelector('button[aria-label="Add caption"]')).not.toBeNull();
   });
 
