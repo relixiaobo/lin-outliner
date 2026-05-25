@@ -2577,17 +2577,17 @@ button.panel-resize-handle::after {
   cursor: zoom-in;
 }
 
+/* Hidden until the image is hovered, then three independent, background-less
+   icon buttons (same grammar as the chrome icon buttons): each gains a
+   `--control-hover` fill only on its own hover/focus — no shared pill. */
 .outliner-image-toolbar {
   position: absolute;
   top: var(--space-2);
   right: var(--space-2);
   display: flex;
   gap: var(--space-1);
-  padding: 2px;
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--surface-overlay, #1f1f1f) 78%, transparent);
   opacity: 0;
-  transition: opacity 120ms ease;
+  transition: opacity var(--motion-fast);
   line-height: 1;
 }
 
@@ -2600,14 +2600,21 @@ button.panel-resize-handle::after {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: var(--control-size-lg);
+  height: var(--control-size-lg);
   border-radius: var(--radius-sm);
-  color: #fff;
+  color: var(--text-soft);
+  cursor: pointer;
+  transition: background var(--motion-fast), color var(--motion-fast);
 }
 
 .outliner-image-tool:hover {
-  background: rgba(255, 255, 255, 0.18);
+  background: var(--control-hover);
+  color: var(--text-main);
+}
+
+.outliner-image-tool:focus-visible {
+  box-shadow: var(--focus-ring-shadow);
 }
 
 .outliner-image--missing {
@@ -2640,10 +2647,19 @@ button.panel-resize-handle::after {
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
 }
 
-/* Row text under an image reads as a caption. */
-.row-content-line--image .ProseMirror {
-  font-size: 0.85em;
-  color: var(--text-muted);
+/* Block nodes (image today; attachments / embeds later) replace the row's text
+   editor with a focusable, caret-less body. Their caption is the node's
+   `description`, added on demand via the hover toolbar and rendered below as
+   `.node-description`. The shell shows a neutral focus ring on keyboard focus
+   so arrow-key navigation reads as landing on the block. */
+.block-node-row {
+  display: block;
+  outline: none;
+}
+
+.block-node-row:focus-visible .outliner-image-el {
+  border-color: var(--focus-border);
+  box-shadow: var(--focus-ring-shadow);
 }
 
 .code-block {

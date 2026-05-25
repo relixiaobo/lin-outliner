@@ -8,14 +8,35 @@ updated: 2026-05-25
 
 # Image Rendering
 
-> **Progress (branch `cc/asset-subsystem-images`).** `image` nodes now carry an
-> `assetId` (plus `imageWidth`/`imageHeight`/`mediaAlt`) and render through
-> `ImageRow.tsx`, shown above the row's normal text editor so caption text and
-> keyboard navigation keep working. Core command `createImageNode` +
-> `create_image_node` IPC. Ingest paths shipped: clipboard paste (image items)
-> and the `/image` slash command (native file picker). **Deferred:**
-> drag-from-Finder, inline alt-text editing affordance, and the `mediaUrl`
-> migration (no real `mediaUrl` image nodes exist yet).
+> **Progress (branch `cc/asset-subsystem-images`).** `image` nodes carry an
+> `assetId` (plus `imageWidth`/`imageHeight`/`mediaAlt`).
+>
+> **Architecture.** Non-text "block" nodes (image today; attachments / embeds /
+> media players later) render through a shared focusable shell,
+> `BlockNodeRow.tsx`, which *replaces* the row's text editor (the way
+> `CodeBlockRow` does) rather than sitting beside a hidden one. The shell owns
+> the one shared interaction contract — focus-request handshake and
+> caret-less keyboard nav (↑↓ move, Enter opens a sibling, Backspace removes the
+> block, Tab indents, Esc/Shift+Arrow exit to selection) — and dispatches the
+> presentational body by `node.type` in `renderBlockBody`. `isBlockNodeType`
+> gates the row in `OutlinerItem`. Adding a type later = one `case` + one view
+> component; `OutlinerItem` is untouched. The image view is `ImageRow.tsx`
+> (purely presentational: `<img>` + hover toolbar + lightbox).
+>
+> **Caption.** A block node's caption is its `description` field, added on demand
+> via the toolbar's "Add caption" button and rendered below as a
+> `NodeDescription` — there is no always-visible caption line and no hidden text
+> editor. The hover toolbar (caption / fullscreen / open-original) follows the
+> design-system floating-control grammar: inverse surface, overlay shadow, no
+> outer border, tokenized sizes.
+>
+> Core commands `createImageNode` + `setNodeImage` (convert in place) with
+> `create_image_node` / `set_node_image` IPC. Ingest paths shipped: clipboard
+> paste (image items) and the `/image` slash command (native file picker); both
+> land the image on the current row when it is plain and childless rather than
+> spawning an empty sibling. **Deferred:** drag-from-Finder, inline alt-text
+> editing affordance, and the `mediaUrl` migration (no real `mediaUrl` image
+> nodes exist yet).
 
 Render `image`-type nodes inline in the outliner using the asset subsystem.
 Today the `image` NodeType exists in `src/core/types.ts` and the

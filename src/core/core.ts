@@ -265,9 +265,10 @@ export class Core {
   }
 
   /**
-   * Convert a plain content node into an image node in place, keeping its text
-   * as the caption. Used when pasting/dropping an image onto an existing row so
-   * the image lands on that row rather than spawning a sibling.
+   * Convert a plain content node into an image node in place. Used when
+   * pasting/dropping an image onto an existing row so the image lands on that
+   * row rather than spawning a sibling. Any existing row text is preserved in
+   * `content` (it is not shown for image nodes — the caption is `description`).
    */
   setNodeImage(
     nodeId: string,

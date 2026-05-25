@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../api/client';
-import { ExpandIcon, ICON_SIZE, OpenIcon } from '../icons';
+import { DescriptionIcon, ExpandIcon, ICON_SIZE, OpenIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 
 interface ImageRowProps {
@@ -9,13 +9,20 @@ interface ImageRowProps {
   alt?: string;
   width?: number;
   height?: number;
+  /** Whether the node already carries a caption (its `description` field). */
+  hasCaption?: boolean;
+  /** Open the caption editor (the node's `description`). */
+  onAddCaption?: () => void;
 }
 
 /**
- * Image element for `image` nodes, rendered above the row's text editor (which
- * serves as the caption). Bytes load via the `lin-asset://` protocol. A hover
- * toolbar offers fullscreen preview and "open original" (the OS default app —
- * an Electron capability); clicking the image also opens the lightbox.
+ * Presentational body for an `image` node, rendered inside the focusable
+ * `BlockNodeRow` shell (which owns focus and keyboard navigation). Bytes load
+ * via the `lin-asset://` protocol. A hover toolbar offers a caption (the node's
+ * `description` field), fullscreen preview, and "open original" (the OS default
+ * app — an Electron capability); double-clicking the image also opens the
+ * lightbox. The caption renders below the image as a `NodeDescription` and is
+ * added on demand, not always shown.
  */
 export function ImageRow(props: ImageRowProps) {
   const [failed, setFailed] = useState(false);
@@ -57,19 +64,28 @@ export function ImageRow(props: ImageRowProps) {
           className="outliner-image-toolbar"
           onMouseDown={(event) => event.stopPropagation()}
         >
+          {props.onAddCaption && (
+            <ButtonControl
+              aria-label={props.hasCaption ? 'Edit caption' : 'Add caption'}
+              className="outliner-image-tool"
+              onClick={() => props.onAddCaption?.()}
+            >
+              <DescriptionIcon size={ICON_SIZE.toolbar} />
+            </ButtonControl>
+          )}
           <ButtonControl
             aria-label="Expand image"
             className="outliner-image-tool"
             onClick={() => setLightboxOpen(true)}
           >
-            <ExpandIcon size={ICON_SIZE.menu} />
+            <ExpandIcon size={ICON_SIZE.toolbar} />
           </ButtonControl>
           <ButtonControl
             aria-label="Open original"
             className="outliner-image-tool"
             onClick={() => void api.openAsset(props.assetId)}
           >
-            <OpenIcon size={ICON_SIZE.menu} />
+            <OpenIcon size={ICON_SIZE.toolbar} />
           </ButtonControl>
         </div>
       </div>

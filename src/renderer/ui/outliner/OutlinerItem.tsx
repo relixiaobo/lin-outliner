@@ -50,8 +50,8 @@ import {
 import { renderedTextRightEdge, resolveTextOffsetFromPoint } from '../interactions/domCaret';
 import { TagBar } from '../tags/TagBar';
 import { inlineReferenceTextColor, resolveTagColor, tagBulletColors } from '../tags/tagColors';
+import { BlockNodeRow, isBlockNodeType } from './BlockNodeRow';
 import { CodeBlockRow } from './CodeBlockRow';
-import { ImageRow } from './ImageRow';
 import { TrailingInput } from './TrailingInput';
 import { TriggerPopover } from './TriggerPopover';
 import { DoneCheckbox } from './DoneCheckbox';
@@ -215,7 +215,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
   const descriptionEditing = props.ui.editingDescriptionId === targetEditId;
   const referenceLikeRow = node.type === 'reference' || pendingReferenceConversion;
   const isCodeBlock = displayed.type === 'codeBlock' && !referenceLikeRow;
-  const isImage = displayed.type === 'image' && !referenceLikeRow && Boolean(displayed.assetId);
+  const isBlockNode = !referenceLikeRow && isBlockNodeType(displayed);
   const editorContentRevision = pendingReferenceConversion
     ? displayed.updatedAt
     : draftContentRevision;
@@ -364,12 +364,13 @@ export function OutlinerItem(props: OutlinerItemProps) {
     }
   };
 
-  const handlePasteImage = async (images: PastedImage[]) => {
-    await commitDraft();
-    const assets = await ingestPastedImages(images);
+  // Land images "here": convert the current row into the first image when it is
+  // a plain, childless content row (the row the cursor/trigger is in) rather
+  // than spawning an empty row beside the image; remaining images become
+  // siblings. Used by both clipboard paste and the `/image` slash command.
+  // Focus lands on the new image block via its `BlockNodeRow` shell.
+  const landImagesOnCurrentRow = async (assets: AssetMetadata[]) => {
     if (assets.length === 0) return;
-    // Land the image on the current row when it is a plain, childless content
-    // row (the row the cursor is in), rather than spawning a sibling below it.
     const canConvertInPlace = !referenceLikeRow
       && (!displayed.type || displayed.type === 'image')
       && !row.hasChildren;
@@ -384,6 +385,12 @@ export function OutlinerItem(props: OutlinerItemProps) {
     } else {
       await insertImagesFromAssets(assets);
     }
+  };
+
+  const handlePasteImage = async (images: PastedImage[]) => {
+    await commitDraft();
+    const assets = await ingestPastedImages(images);
+    await landImagesOnCurrentRow(assets);
   };
 
   const applyReference = async (target: NodeProjection) => {
@@ -501,7 +508,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
       replaceLocalDraftContent(withoutTrigger);
       await api.replaceNodeText(targetEditId, withoutTrigger);
       const assets = await api.pickImageFiles();
-      await insertImagesFromAssets(assets);
+      await landImagesOnCurrentRow(assets);
       return api.getProjection();
     }
 
@@ -554,6 +561,24 @@ export function OutlinerItem(props: OutlinerItemProps) {
     const siblings = props.index.byId.get(props.parentId)?.children ?? [];
     const rowIndex = siblings.indexOf(props.nodeId);
     await props.run(() => api.createNode(props.parentId, rowIndex >= 0 ? rowIndex + 1 : null, ''));
+  };
+
+  // Enter on a block node (image/attachment/embed) opens a fresh text sibling
+  // below it, the way Enter on a code block does.
+  const handleBlockExit = async () => {
+    const siblings = props.index.byId.get(props.parentId)?.children ?? [];
+    const rowIndex = siblings.indexOf(props.nodeId);
+    await props.run(() => api.createNode(props.parentId, rowIndex >= 0 ? rowIndex + 1 : null, ''));
+  };
+
+  // Open the caption editor — a block node's caption is its `description`.
+  const openCaptionEditor = () => {
+    descriptionReturnPlacementRef.current = cursorEnd();
+    props.setUi((prev) => requestFocusState(
+      { ...prev, editingDescriptionId: targetEditId },
+      descriptionFocusTarget,
+      cursorEnd(),
+    ));
   };
 
   const handleSetCodeLanguage = (language: string) => {
@@ -849,7 +874,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
           onDragEnd={row.dragHandleProps.onDragEnd}
         />
         <div
-          className={isImage ? 'row-content-line row-content-line--image' : 'row-content-line'}
+          className={isBlockNode ? 'row-content-line row-content-line--block' : 'row-content-line'}
           onMouseDownCapture={referenceLikeRow ? selectReferenceLikeRowFromPointer : undefined}
           onMouseDown={referenceLikeRow ? undefined : focusEditorFromRowClick}
           onClickCapture={referenceLikeRow ? selectReferenceLikeRowFromPointer : undefined}
@@ -861,15 +886,28 @@ export function OutlinerItem(props: OutlinerItemProps) {
               onToggle={() => void props.run(() => api.toggleDone(targetEditId))}
             />
           )}
-          {isImage && (
-            <ImageRow
-              assetId={displayed.assetId!}
-              alt={displayed.mediaAlt || draftContent.text || undefined}
-              width={displayed.imageWidth}
-              height={displayed.imageHeight}
+          {isBlockNode ? (
+            <BlockNodeRow
+              node={displayed}
+              readOnly={displayed.locked}
+              onFocus={row.updateSelection}
+              onArrowUp={() => row.moveFocus(-1)}
+              onArrowDown={() => row.moveFocus(1)}
+              onEnter={() => void handleBlockExit()}
+              onBackspace={() => void handleBackspaceAtStart(true)}
+              onEscape={() => void exitToSelection()}
+              onShiftArrow={() => void exitToSelection()}
+              onTab={(shiftKey) => void handleTab(shiftKey, 0)}
+              onUndo={() => void props.run(() => api.undo())}
+              onRedo={() => void props.run(() => api.redo())}
+              onAddCaption={openCaptionEditor}
+              focusTarget={editorFocusTarget}
+              focusRequest={props.ui.focusRequest}
+              onFocusRequestConsumed={(request) => {
+                props.setUi((prev) => clearFocusRequestState(prev, request));
+              }}
             />
-          )}
-          {isCodeBlock ? (
+          ) : isCodeBlock ? (
             <CodeBlockRow
               nodeId={props.nodeId}
               text={draftContent.text}
@@ -902,7 +940,6 @@ export function OutlinerItem(props: OutlinerItemProps) {
             nodeId={props.nodeId}
             content={draftContent}
             contentRevision={editorContentRevision}
-            placeholder={isImage ? 'Add caption' : undefined}
             readOnly={displayed.locked}
             completed={Boolean(displayed.completedAt)}
             onFocus={row.updateSelection}
