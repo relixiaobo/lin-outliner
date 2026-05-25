@@ -1,4 +1,5 @@
 export type {
+  AssetMetadata,
   AgentProviderConfigInput,
   AgentProviderConfigView,
   AgentPermissionMode,

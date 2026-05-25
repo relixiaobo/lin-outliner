@@ -1,5 +1,5 @@
 ---
-status: draft
+status: in-progress
 priority: P0
 owner: relixiaobo
 created: 2026-05-25
@@ -7,6 +7,16 @@ updated: 2026-05-25
 ---
 
 # Asset Subsystem
+
+> **Progress (branch `cc/asset-subsystem-images`).** `AssetService`
+> (`src/main/assetService.ts`) ingests buffers/paths, sniffs MIME from magic
+> bytes, probes PNG/JPEG/GIF/WebP/BMP dimensions, and writes `<id>.<ext>` +
+> `<id>.meta.json` sidecars under `<userData>/assets/`. The `lin-asset://`
+> privileged protocol is registered in `main.ts` and served from the sidecar
+> MIME. IPC commands `ingest_asset` / `lookup_asset` / `delete_asset` /
+> `pick_image_files` are routed via `ASSET_COMMANDS`. **Deferred to follow-ups:**
+> `index.json` rebuild (sidecars are read on demand instead), garbage
+> collection, and drag-from-Finder ingest.
 
 Local-first asset store for binary content (images, files, banner art, future
 audio/video). Loro stores stable asset IDs; the actual bytes live on disk in

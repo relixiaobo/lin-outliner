@@ -8,7 +8,7 @@ import {
 } from 'react';
 import { flushSync } from 'react-dom';
 import { api } from '../../api/client';
-import type { CreateNodeTree, NodeId, NodeProjection, RichText, RichTextPatch } from '../../api/types';
+import type { AssetMetadata, CreateNodeTree, NodeId, NodeProjection, RichText, RichTextPatch } from '../../api/types';
 import { EMPTY_RICH_TEXT, plainText, replaceAllRichTextPatch } from '../../api/types';
 import type { CursorPlacement } from '../../state/document';
 import {
@@ -26,6 +26,7 @@ import {
   richTextEquals,
 } from '../editor/richTextCodec';
 import { indentTargetParentId, previousVisibleRowId } from '../interactions/outlinerStructure';
+import { appendImageNodes, ingestPastedImages, shouldConvertRowToImage, type PastedImage } from '../interactions/imagePaste';
 import { getTreeReferenceBlockReason } from '../interactions/referenceRules';
 import { armReferenceTypeAhead } from '../interactions/referenceTypeAhead';
 import {
@@ -49,6 +50,7 @@ import {
 import { renderedTextRightEdge, resolveTextOffsetFromPoint } from '../interactions/domCaret';
 import { TagBar } from '../tags/TagBar';
 import { inlineReferenceTextColor, resolveTagColor, tagBulletColors } from '../tags/tagColors';
+import { BlockNodeRow, isBlockNodeType } from './BlockNodeRow';
 import { CodeBlockRow } from './CodeBlockRow';
 import { TrailingInput } from './TrailingInput';
 import { TriggerPopover } from './TriggerPopover';
@@ -213,6 +215,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
   const descriptionEditing = props.ui.editingDescriptionId === targetEditId;
   const referenceLikeRow = node.type === 'reference' || pendingReferenceConversion;
   const isCodeBlock = displayed.type === 'codeBlock' && !referenceLikeRow;
+  const isBlockNode = !referenceLikeRow && isBlockNodeType(displayed);
   const editorContentRevision = pendingReferenceConversion
     ? displayed.updatedAt
     : draftContentRevision;
@@ -346,6 +349,56 @@ export function OutlinerItem(props: OutlinerItemProps) {
     ));
   };
 
+  const insertImagesFromAssets = async (assets: AssetMetadata[]) => {
+    if (assets.length === 0) return;
+    const siblings = props.index.byId.get(props.parentId)?.children ?? [];
+    const rowIndex = siblings.indexOf(props.nodeId);
+    let insertIndex = rowIndex >= 0 ? rowIndex + 1 : null;
+    for (const asset of assets) {
+      await props.run(() => api.createImageNode(props.parentId, insertIndex, {
+        assetId: asset.id,
+        width: asset.imageWidth,
+        height: asset.imageHeight,
+      }));
+      if (insertIndex !== null) insertIndex += 1;
+    }
+  };
+
+  // Land images "here": convert the current row into the first image when it is
+  // a plain, *empty*, childless row (so no typed text is buried under an image
+  // body that never renders it) rather than spawning an empty row beside the
+  // image; remaining images become siblings. Used by both clipboard paste and
+  // the `/image` slash command. Focus lands on the new image block via its
+  // `BlockNodeRow` shell.
+  const landImagesOnCurrentRow = async (assets: AssetMetadata[]) => {
+    if (assets.length === 0) return;
+    const draft = draftContentRef.current;
+    const rowTextEmpty = draft.text.trim().length === 0 && draft.inlineRefs.length === 0;
+    const canConvertInPlace = shouldConvertRowToImage({
+      referenceLikeRow,
+      nodeType: displayed.type,
+      hasChildren: row.hasChildren,
+      rowTextEmpty,
+    });
+    if (canConvertInPlace) {
+      const [first, ...rest] = assets;
+      await props.run(() => api.setNodeImage(targetEditId, {
+        assetId: first.id,
+        width: first.imageWidth,
+        height: first.imageHeight,
+      }));
+      await insertImagesFromAssets(rest);
+    } else {
+      await insertImagesFromAssets(assets);
+    }
+  };
+
+  const handlePasteImage = async (images: PastedImage[]) => {
+    await commitDraft();
+    const assets = await ingestPastedImages(images);
+    await landImagesOnCurrentRow(assets);
+  };
+
   const applyReference = async (target: NodeProjection) => {
     const trigger = props.trigger?.nodeId === props.nodeId ? props.trigger : null;
     if (!trigger) {
@@ -455,6 +508,16 @@ export function OutlinerItem(props: OutlinerItemProps) {
       return api.setCodeBlock(targetEditId);
     }
 
+    if (commandId === 'image') {
+      await pendingTextPatchRef.current;
+      const withoutTrigger = deleteRichTextRange(draftContent, trigger.from, trigger.to);
+      replaceLocalDraftContent(withoutTrigger);
+      await api.replaceNodeText(targetEditId, withoutTrigger);
+      const assets = await api.pickImageFiles();
+      await landImagesOnCurrentRow(assets);
+      return api.getProjection();
+    }
+
     if (commandId === 'command_palette') {
       await applyTextWithoutTrigger();
       props.setUi((prev) => ({ ...prev, commandOpen: true }));
@@ -504,6 +567,24 @@ export function OutlinerItem(props: OutlinerItemProps) {
     const siblings = props.index.byId.get(props.parentId)?.children ?? [];
     const rowIndex = siblings.indexOf(props.nodeId);
     await props.run(() => api.createNode(props.parentId, rowIndex >= 0 ? rowIndex + 1 : null, ''));
+  };
+
+  // Enter on a block node (image/attachment/embed) opens a fresh text sibling
+  // below it, the way Enter on a code block does.
+  const handleBlockExit = async () => {
+    const siblings = props.index.byId.get(props.parentId)?.children ?? [];
+    const rowIndex = siblings.indexOf(props.nodeId);
+    await props.run(() => api.createNode(props.parentId, rowIndex >= 0 ? rowIndex + 1 : null, ''));
+  };
+
+  // Open the caption editor — a block node's caption is its `description`.
+  const openCaptionEditor = () => {
+    descriptionReturnPlacementRef.current = cursorEnd();
+    props.setUi((prev) => requestFocusState(
+      { ...prev, editingDescriptionId: targetEditId },
+      descriptionFocusTarget,
+      cursorEnd(),
+    ));
   };
 
   const handleSetCodeLanguage = (language: string) => {
@@ -799,7 +880,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
           onDragEnd={row.dragHandleProps.onDragEnd}
         />
         <div
-          className="row-content-line"
+          className={isBlockNode ? 'row-content-line row-content-line--block' : 'row-content-line'}
           onMouseDownCapture={referenceLikeRow ? selectReferenceLikeRowFromPointer : undefined}
           onMouseDown={referenceLikeRow ? undefined : focusEditorFromRowClick}
           onClickCapture={referenceLikeRow ? selectReferenceLikeRowFromPointer : undefined}
@@ -811,7 +892,31 @@ export function OutlinerItem(props: OutlinerItemProps) {
               onToggle={() => void props.run(() => api.toggleDone(targetEditId))}
             />
           )}
-          {isCodeBlock ? (
+          {isBlockNode ? (
+            <BlockNodeRow
+              node={displayed}
+              readOnly={displayed.locked}
+              onFocus={row.updateSelection}
+              onArrowUp={() => row.moveFocus(-1)}
+              onArrowDown={() => row.moveFocus(1)}
+              onEnter={() => void handleBlockExit()}
+              // Backspace removes a childless block; a block with children is a
+              // no-op (block_delete_parent), matching plain rows so a Backspace
+              // never silently trashes a subtree.
+              onBackspace={() => void handleBackspaceAtStart(true)}
+              onEscape={() => void exitToSelection()}
+              onShiftArrow={() => void exitToSelection()}
+              onTab={(shiftKey) => void handleTab(shiftKey, 0)}
+              onUndo={() => void props.run(() => api.undo())}
+              onRedo={() => void props.run(() => api.redo())}
+              onAddCaption={openCaptionEditor}
+              focusTarget={editorFocusTarget}
+              focusRequest={props.ui.focusRequest}
+              onFocusRequestConsumed={(request) => {
+                props.setUi((prev) => clearFocusRequestState(prev, request));
+              }}
+            />
+          ) : isCodeBlock ? (
             <CodeBlockRow
               nodeId={props.nodeId}
               text={draftContent.text}
@@ -884,6 +989,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
               }
             }}
             onPasteOutliner={node.type === 'reference' ? undefined : handlePasteOutliner}
+            onPasteImage={node.type === 'reference' ? undefined : (images) => void handlePasteImage(images)}
             onInlineReferenceClick={pendingReferenceConversion
               ? undefined
               : (targetId) => props.onRoot(targetId, { focus: false })}
@@ -957,7 +1063,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
           clearTriggerText={applyTextWithoutTrigger}
           applyReference={applyReference}
           executeSlashCommand={executeSlashCommand}
-          enabledSlashCommandIds={['field', 'reference', 'heading', 'checkbox', 'code', 'command_palette']}
+          enabledSlashCommandIds={['field', 'reference', 'heading', 'checkbox', 'code', 'image', 'command_palette']}
           treeReferenceParentId={triggerOwnsWholeDraft ? props.parentId : null}
           existingTagIds={displayed.tags}
         />
@@ -1035,6 +1141,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
               onCreateTree={(parentId, nodes) => (
                 props.run(() => api.createNodesFromTree(parentId, nodes), { applyFocus: false })
               )}
+              onPasteImages={(parentId, images) => appendImageNodes(parentId, images, props.run)}
               onIndentNode={(nodeId) => (
                 props.run(() => api.indentNode(nodeId), { applyFocus: false })
               )}

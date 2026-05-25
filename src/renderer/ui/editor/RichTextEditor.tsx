@@ -16,6 +16,7 @@ import {
   isPlainSingleParagraph,
   parseClipboardPaste,
 } from '../interactions/pasteParser';
+import { clipboardImageFiles, readPastedImages, type PastedImage } from '../interactions/imagePaste';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { matchesShortcutEvent } from '../interactions/shortcutRegistry';
 import { FloatingEditorToolbar, type ToolbarMark } from './FloatingEditorToolbar';
@@ -76,6 +77,7 @@ interface RichTextEditorProps {
     children: CreateNodeTree[];
     siblingsAfter: CreateNodeTree[];
   }) => void;
+  onPasteImage?: (images: PastedImage[]) => void;
   onInlineReferenceClick?: (targetNodeId: string) => void;
   resolveInlineReferenceColor?: (targetNodeId: string) => string | undefined;
   focusTarget?: FocusTarget;
@@ -410,6 +412,18 @@ export function RichTextEditor(props: RichTextEditorProps) {
           if (propsRef.current.readOnly) return false;
 
           const clipboardEvent = event as ClipboardEvent;
+
+          // Image files (e.g. a pasted screenshot) become image nodes. Take
+          // priority over text so a clipboard carrying both an image and its
+          // filename text does not fall through to the text path.
+          const onPasteImage = propsRef.current.onPasteImage;
+          const imageFiles = clipboardImageFiles(clipboardEvent.clipboardData);
+          if (onPasteImage && imageFiles.length > 0) {
+            clipboardEvent.preventDefault();
+            void readPastedImages(imageFiles).then((images) => onPasteImage(images));
+            return true;
+          }
+
           const plainText = clipboardEvent.clipboardData?.getData('text/plain') ?? '';
           const htmlText = clipboardEvent.clipboardData?.getData('text/html') ?? '';
 

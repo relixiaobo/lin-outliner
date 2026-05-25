@@ -11,6 +11,7 @@ import {
   rowFocusTarget,
 } from '../focus/focusModel';
 import { fieldTypeInteraction, isOptionsFieldType } from '../fields/fieldTypeRegistry';
+import { appendImageNodes } from '../interactions/imagePaste';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
 import { FieldOptionPicker } from './FieldOptionPicker';
 import { OutlinerFieldRow } from './OutlinerFieldRow';
@@ -165,6 +166,7 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
           onCreateTree={(parentId, nodes) => (
             props.run(() => api.createNodesFromTree(parentId, nodes), { applyFocus: false })
           )}
+          onPasteImages={(parentId, images) => appendImageNodes(parentId, images, props.run)}
           onIndentNode={(nodeId) => (
             props.run(() => api.indentNode(nodeId), { applyFocus: false })
           )}

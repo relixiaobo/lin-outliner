@@ -69,6 +69,7 @@
   --overlay-bg: var(--panel-bg);
   --overlay-active-bg: var(--row-selected);
   --overlay-backdrop: rgba(26, 26, 26, 0.30);
+  --overlay-backdrop-strong: rgba(0, 0, 0, 0.82);
   --overlay-shadow-level-1: 0 8px 20px -12px rgba(0, 0, 0, 0.22), 0 2px 8px -4px rgba(0, 0, 0, 0.10);
   --overlay-shadow-level-2: 0 18px 48px -20px rgba(0, 0, 0, 0.24), 0 6px 18px -10px rgba(0, 0, 0, 0.14);
   --outline-faint: inset 0 0 0 1px rgba(0, 0, 0, 0.035);
@@ -2556,6 +2557,113 @@ button.panel-resize-handle::after {
    read-only, bounded-height <pre>; the outliner row is an editable textarea
    layered over a Shiki highlight layer with a language <select>. */
 .agent-code-block,
+.outliner-image {
+  margin: var(--space-1) 0;
+  user-select: none;
+}
+
+.outliner-image-frame {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  line-height: 0;
+}
+
+.outliner-image-el {
+  display: block;
+  max-width: min(100%, 720px);
+  height: auto;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  cursor: zoom-in;
+}
+
+/* Hidden until the image is hovered, then three independent, background-less
+   icon buttons (same grammar as the chrome icon buttons): each gains a
+   `--control-hover` fill only on its own hover/focus — no shared pill. */
+.outliner-image-toolbar {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  display: flex;
+  gap: var(--space-1);
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+  line-height: 1;
+}
+
+.outliner-image-frame:hover .outliner-image-toolbar,
+.outliner-image-toolbar:focus-within {
+  opacity: 1;
+}
+
+.outliner-image-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-size-lg);
+  height: var(--control-size-lg);
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  cursor: pointer;
+  transition: background var(--motion-fast), color var(--motion-fast);
+}
+
+.outliner-image-tool:hover {
+  background: var(--control-hover);
+  color: var(--text-main);
+}
+
+.outliner-image-tool:focus-visible {
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.outliner-image--missing {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: var(--font-meta);
+}
+
+.outliner-image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4vmin;
+  background: var(--overlay-backdrop-strong);
+  cursor: zoom-out;
+  outline: none;
+}
+
+.outliner-image-lightbox-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: var(--radius-md);
+  box-shadow: var(--overlay-shadow-level-2);
+}
+
+/* Block nodes (image today; attachments / embeds later) replace the row's text
+   editor with a focusable, caret-less body. Their caption is the node's
+   `description`, added on demand via the hover toolbar and rendered below as
+   `.node-description`. The shell shows a neutral focus ring on keyboard focus
+   so arrow-key navigation reads as landing on the block. */
+.block-node-row {
+  display: block;
+  outline: none;
+}
+
+.block-node-row:focus-visible .outliner-image-el {
+  border-color: var(--focus-border);
+  box-shadow: var(--focus-ring-shadow);
+}
+
 .code-block {
   overflow: hidden;
   border: 1px solid var(--border-subtle);

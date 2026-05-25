@@ -694,10 +694,12 @@ describe('row interaction resolvers', () => {
       'heading',
       'checkbox',
       'code',
+      'image',
       'command_palette',
     ]);
     expect(filterSlashCommands('ref').map((command) => command.id)).toEqual(['reference']);
     expect(filterSlashCommands('code').map((command) => command.id)).toEqual(['code']);
+    expect(filterSlashCommands('image').map((command) => command.id)).toEqual(['image']);
     expect(filterSlashCommands('>')[0]?.id).toBe('field');
   });
 

@@ -27,6 +27,7 @@ import { getTreeReferenceBlockReason } from '../interactions/referenceRules';
 import { isOptionsFieldType } from '../fields/fieldTypeRegistry';
 import { filterFieldOptions, resolveFieldOptions } from '../interactions/fieldOptions';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
+import { clipboardImageFiles, readPastedImages, type PastedImage } from '../interactions/imagePaste';
 import { matchesShortcutEvent } from '../interactions/shortcutRegistry';
 import { parseClipboardPaste } from '../interactions/pasteParser';
 import type { SlashCommandId } from '../interactions/slashCommands';
@@ -54,6 +55,7 @@ interface TrailingInputProps {
   run: CommandRunner;
   onCreate: (parentId: NodeId, text: string) => Promise<NodeId | null> | NodeId | null | void;
   onCreateTree?: (parentId: NodeId, nodes: CreateNodeTree[]) => Promise<unknown> | unknown;
+  onPasteImages?: (parentId: NodeId, images: PastedImage[]) => Promise<unknown> | unknown;
   onIndentNode?: (nodeId: NodeId) => Promise<unknown> | unknown;
   onUpdateCreated?: (nodeId: NodeId, text: string) => Promise<void> | void;
   onToggleCreated?: (nodeId: NodeId) => Promise<void> | void;
@@ -85,7 +87,7 @@ interface TrailingInputProps {
     parentId: NodeId;
     text: string;
     trigger: TrailingSlashTrigger;
-    commandId: Exclude<SlashCommandId, 'reference' | 'command_palette'>;
+    commandId: Exclude<SlashCommandId, 'reference' | 'command_palette' | 'image'>;
   }) => Promise<CommandOutcome | DocumentProjection | null | void> | CommandOutcome | DocumentProjection | null | void;
   onCreateField?: (parentId: NodeId) => Promise<void> | void;
   onOpenCommandPalette?: () => void;
@@ -800,6 +802,10 @@ export function TrailingInput(props: TrailingInputProps) {
       return propsRef.current.index.projection;
     }
 
+    // Image insertion is an in-row slash command only; the trailing "new row"
+    // affordance does not offer it.
+    if (commandId === 'image') return null;
+
     if (!propsRef.current.onExecuteSlashTrigger) return null;
     const text = getEditorText(view);
     beginInlineTriggerCommit(text);
@@ -951,6 +957,20 @@ export function TrailingInput(props: TrailingInputProps) {
       handleDOMEvents: {
         paste(viewInstance, event) {
           const clipboardEvent = event as ClipboardEvent;
+
+          // Pasted image files (e.g. a screenshot) become image nodes appended
+          // under the current parent. Takes priority over the text path.
+          const onPasteImages = propsRef.current.onPasteImages;
+          const imageFiles = clipboardImageFiles(clipboardEvent.clipboardData);
+          if (onPasteImages && imageFiles.length > 0) {
+            clipboardEvent.preventDefault();
+            const parentId = effectiveParentRef.current;
+            resetEditorContent(viewInstance);
+            updateHasContent(false);
+            void readPastedImages(imageFiles).then((images) => onPasteImages(parentId, images));
+            return true;
+          }
+
           const pastedText = clipboardEvent.clipboardData?.getData('text/plain') ?? '';
           const pastedHtml = clipboardEvent.clipboardData?.getData('text/html') ?? '';
 
