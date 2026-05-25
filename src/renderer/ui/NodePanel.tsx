@@ -57,6 +57,7 @@ import { NodeDescription } from './outliner/NodeDescription';
 import { OutlinerView } from './outliner/OutlinerView';
 import { buildOutlinerRows } from './outliner/row-model';
 import { TrailingInput } from './outliner/TrailingInput';
+import { appendImageNodes } from './interactions/imagePaste';
 import { TriggerPopover } from './outliner/TriggerPopover';
 import {
   applyTrailingReferenceTrigger,
@@ -777,6 +778,7 @@ export function NodePanel(props: NodePanelProps) {
                 onCreateTree={(parentId, nodes) => (
                   props.run(() => api.createNodesFromTree(parentId, nodes), { applyFocus: false })
                 )}
+                onPasteImages={(parentId, images) => appendImageNodes(parentId, images, props.run)}
                 onIndentNode={(nodeId) => (
                   props.run(() => api.indentNode(nodeId), { applyFocus: false })
                 )}

@@ -4,7 +4,9 @@ import { join } from 'node:path';
 import type { AssetIngestInput, AssetMetadata } from '../core/types';
 
 const META_SUFFIX = '.meta.json';
-const NANOID_ALPHABET = 'useandom26T198340PXJACKVERYMINDBUSHWOLFGQZbfghjklqvwyzrict';
+// Lowercase + digits only: ids land in `lin-asset://<id>` URLs whose hostname
+// the URL parser lowercases, so a mixed-case id would never match its file.
+const NANOID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
 
 /**
  * Owns binary asset files under a single directory. The document references

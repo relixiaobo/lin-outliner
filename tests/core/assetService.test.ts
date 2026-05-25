@@ -62,6 +62,18 @@ describe('AssetService', () => {
     });
   });
 
+  test('ingested ids survive lin-asset:// URL hostname normalization (lowercasing)', async () => {
+    // The protocol handler reads the id from `new URL(req.url).hostname`, which
+    // lowercases. Ids must therefore be lowercase so they still resolve.
+    for (let i = 0; i < 8; i += 1) {
+      const meta = await service.ingest({ kind: 'buffer', data: pngBytes(4, 4) });
+      const hostname = new URL(`lin-asset://${meta.id}`).hostname;
+      expect(hostname).toBe(meta.id);
+      const response = await service.serve(hostname);
+      expect(response.status).toBe(200);
+    }
+  });
+
   test('serve streams the bytes with the recorded MIME and 404s missing assets', async () => {
     const meta = await service.ingest({ kind: 'buffer', data: pngBytes(10, 10) });
     const ok = await service.serve(meta.id);
