@@ -7,6 +7,12 @@ This file exists in two synchronized copies:
 
 Keep them identical. When updating one, update the other in the same commit.
 
+## Communication Language
+
+Reply to the user in Chinese in chat. Keep everything written into the
+repository in English — code, identifiers, comments, documentation, and
+commit messages. This applies to both agents.
+
 ## Stack Constraints
 
 This repository is a TypeScript/Electron product. Do not introduce Rust,
