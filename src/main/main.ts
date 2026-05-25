@@ -99,8 +99,16 @@ function registerIpc() {
 
 async function handleAssetCommand(command: AssetCommand, args: Record<string, unknown>) {
   switch (command) {
-    case 'ingest_asset':
+    case 'ingest_asset': {
+      // Only the buffer path is exposed to the renderer. Path ingest is an
+      // arbitrary-local-file read primitive, so it stays main-process-only
+      // (used internally by pick_image_files); the renderer can never name a
+      // path to read back through lin-asset://.
+      if ((args as { kind?: unknown }).kind !== 'buffer') {
+        throw new Error('ingest_asset accepts only kind:"buffer" over IPC');
+      }
       return assetService.ingest(args as unknown as AssetIngestInput);
+    }
     case 'lookup_asset':
       return assetService.lookup(String(args.id));
     case 'delete_asset':

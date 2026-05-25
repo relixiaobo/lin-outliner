@@ -26,7 +26,7 @@ import {
   richTextEquals,
 } from '../editor/richTextCodec';
 import { indentTargetParentId, previousVisibleRowId } from '../interactions/outlinerStructure';
-import { appendImageNodes, ingestPastedImages, type PastedImage } from '../interactions/imagePaste';
+import { appendImageNodes, ingestPastedImages, shouldConvertRowToImage, type PastedImage } from '../interactions/imagePaste';
 import { getTreeReferenceBlockReason } from '../interactions/referenceRules';
 import { armReferenceTypeAhead } from '../interactions/referenceTypeAhead';
 import {
@@ -365,15 +365,21 @@ export function OutlinerItem(props: OutlinerItemProps) {
   };
 
   // Land images "here": convert the current row into the first image when it is
-  // a plain, childless content row (the row the cursor/trigger is in) rather
-  // than spawning an empty row beside the image; remaining images become
-  // siblings. Used by both clipboard paste and the `/image` slash command.
-  // Focus lands on the new image block via its `BlockNodeRow` shell.
+  // a plain, *empty*, childless row (so no typed text is buried under an image
+  // body that never renders it) rather than spawning an empty row beside the
+  // image; remaining images become siblings. Used by both clipboard paste and
+  // the `/image` slash command. Focus lands on the new image block via its
+  // `BlockNodeRow` shell.
   const landImagesOnCurrentRow = async (assets: AssetMetadata[]) => {
     if (assets.length === 0) return;
-    const canConvertInPlace = !referenceLikeRow
-      && (!displayed.type || displayed.type === 'image')
-      && !row.hasChildren;
+    const draft = draftContentRef.current;
+    const rowTextEmpty = draft.text.trim().length === 0 && draft.inlineRefs.length === 0;
+    const canConvertInPlace = shouldConvertRowToImage({
+      referenceLikeRow,
+      nodeType: displayed.type,
+      hasChildren: row.hasChildren,
+      rowTextEmpty,
+    });
     if (canConvertInPlace) {
       const [first, ...rest] = assets;
       await props.run(() => api.setNodeImage(targetEditId, {
@@ -894,6 +900,9 @@ export function OutlinerItem(props: OutlinerItemProps) {
               onArrowUp={() => row.moveFocus(-1)}
               onArrowDown={() => row.moveFocus(1)}
               onEnter={() => void handleBlockExit()}
+              // Backspace removes a childless block; a block with children is a
+              // no-op (block_delete_parent), matching plain rows so a Backspace
+              // never silently trashes a subtree.
               onBackspace={() => void handleBackspaceAtStart(true)}
               onEscape={() => void exitToSelection()}
               onShiftArrow={() => void exitToSelection()}

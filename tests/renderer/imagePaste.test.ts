@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { clipboardImageFiles, readPastedImages } from '../../src/renderer/ui/interactions/imagePaste';
+import { clipboardImageFiles, readPastedImages, shouldConvertRowToImage } from '../../src/renderer/ui/interactions/imagePaste';
 
 function fileItem(file: File): DataTransferItem {
   return { kind: 'file', type: file.type, getAsFile: () => file } as unknown as DataTransferItem;
@@ -50,6 +50,28 @@ describe('clipboardImageFiles', () => {
 
   test('returns empty for a null DataTransfer', () => {
     expect(clipboardImageFiles(null)).toEqual([]);
+  });
+});
+
+describe('shouldConvertRowToImage', () => {
+  const base = { referenceLikeRow: false, nodeType: undefined as string | undefined, hasChildren: false, rowTextEmpty: true };
+
+  test('converts a plain, empty, childless row in place', () => {
+    expect(shouldConvertRowToImage(base)).toBe(true);
+  });
+
+  test('inserts as a sibling when the row already has text (never buries it)', () => {
+    expect(shouldConvertRowToImage({ ...base, rowTextEmpty: false })).toBe(false);
+  });
+
+  test('always converts an existing image row, even if it carries hidden text', () => {
+    expect(shouldConvertRowToImage({ ...base, nodeType: 'image', rowTextEmpty: false })).toBe(true);
+  });
+
+  test('never converts reference rows, rows with children, or non-image typed rows', () => {
+    expect(shouldConvertRowToImage({ ...base, referenceLikeRow: true })).toBe(false);
+    expect(shouldConvertRowToImage({ ...base, hasChildren: true })).toBe(false);
+    expect(shouldConvertRowToImage({ ...base, nodeType: 'codeBlock' })).toBe(false);
   });
 });
 

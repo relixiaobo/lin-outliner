@@ -96,6 +96,12 @@ function keydown(rendered: Rendered, element: Element, key: string, init: Partia
   });
 }
 
+function click(rendered: Rendered, element: Element) {
+  act(() => {
+    element.dispatchEvent(new rendered.window.Event('click', { bubbles: true, cancelable: true }));
+  });
+}
+
 function shell(rendered: Rendered): HTMLElement {
   const el = rendered.document.querySelector<HTMLElement>('.block-node-row');
   if (!el) throw new Error('missing block-node-row');
@@ -166,6 +172,20 @@ describe('BlockNodeRow', () => {
     expect(calls.backspace ?? 0).toBe(0);
     expect(calls.tab ?? 0).toBe(0);
     expect(calls.arrowDown).toBe(1);
+  });
+
+  test('lightbox Escape closes the lightbox without exiting the row', () => {
+    const { rendered, calls } = render();
+    const expand = rendered.document.querySelector<HTMLElement>('button[aria-label="Expand image"]');
+    if (!expand) throw new Error('missing expand button');
+    click(rendered, expand);
+    const lightbox = rendered.document.querySelector<HTMLElement>('.outliner-image-lightbox');
+    expect(lightbox).not.toBeNull();
+
+    keydown(rendered, lightbox!, 'Escape');
+    expect(rendered.document.querySelector('.outliner-image-lightbox')).toBeNull();
+    // The same Esc must not also reach the shell and exit the row.
+    expect(calls.escape ?? 0).toBe(0);
   });
 
   test('consumes a focus request aimed at its target', () => {

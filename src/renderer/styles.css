@@ -69,6 +69,7 @@
   --overlay-bg: var(--panel-bg);
   --overlay-active-bg: var(--row-selected);
   --overlay-backdrop: rgba(26, 26, 26, 0.30);
+  --overlay-backdrop-strong: rgba(0, 0, 0, 0.82);
   --overlay-shadow-level-1: 0 8px 20px -12px rgba(0, 0, 0, 0.22), 0 2px 8px -4px rgba(0, 0, 0, 0.10);
   --overlay-shadow-level-2: 0 18px 48px -20px rgba(0, 0, 0, 0.24), 0 6px 18px -10px rgba(0, 0, 0, 0.14);
   --outline-faint: inset 0 0 0 1px rgba(0, 0, 0, 0.035);
@@ -2624,19 +2625,20 @@ button.panel-resize-handle::after {
   border: 1px dashed var(--border-subtle);
   border-radius: var(--radius-md);
   color: var(--text-muted);
-  font-size: 0.85em;
+  font-size: var(--font-meta);
 }
 
 .outliner-image-lightbox {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: var(--z-modal);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 4vmin;
-  background: rgba(0, 0, 0, 0.82);
+  background: var(--overlay-backdrop-strong);
   cursor: zoom-out;
+  outline: none;
 }
 
 .outliner-image-lightbox-img {
@@ -2644,7 +2646,7 @@ button.panel-resize-handle::after {
   max-height: 100%;
   object-fit: contain;
   border-radius: var(--radius-md);
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--overlay-shadow-level-2);
 }
 
 /* Block nodes (image today; attachments / embeds later) replace the row's text

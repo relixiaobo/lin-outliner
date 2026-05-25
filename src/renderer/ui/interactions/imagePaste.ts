@@ -46,7 +46,29 @@ export async function ingestPastedImages(images: PastedImage[]): Promise<AssetMe
   return assets;
 }
 
-/** Ingest images and create `image` nodes appended under `parentId`. */
+/**
+ * Decide whether a dropped/pasted image should convert the current row in
+ * place (vs. insert as a sibling). Converting an existing `image` row is always
+ * fine — it has no visible text to lose. A plain row converts only when it is
+ * empty, so we never bury typed text that the image row would not render.
+ * Reference rows and rows with children never convert.
+ */
+export function shouldConvertRowToImage(row: {
+  referenceLikeRow: boolean;
+  nodeType: string | undefined;
+  hasChildren: boolean;
+  rowTextEmpty: boolean;
+}): boolean {
+  if (row.referenceLikeRow || row.hasChildren) return false;
+  if (row.nodeType === 'image') return true;
+  return !row.nodeType && row.rowTextEmpty;
+}
+
+/**
+ * Ingest images and create `image` nodes appended under `parentId`. Used by the
+ * trailing inputs; focus lands on the new image block (via its `BlockNodeRow`),
+ * matching the inline paste path.
+ */
 export async function appendImageNodes(parentId: NodeId, images: PastedImage[], run: CommandRunner): Promise<void> {
   const assets = await ingestPastedImages(images);
   for (const asset of assets) {
@@ -54,6 +76,6 @@ export async function appendImageNodes(parentId: NodeId, images: PastedImage[], 
       assetId: asset.id,
       width: asset.imageWidth,
       height: asset.imageHeight,
-    }), { applyFocus: false });
+    }));
   }
 }

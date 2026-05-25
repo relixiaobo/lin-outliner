@@ -83,16 +83,26 @@ export class AssetService {
 
   /** Serve an asset for the `lin-asset://<id>` protocol handler. */
   async serve(id: string): Promise<Response> {
-    const safe = sanitizeId(id);
+    let safe: string;
+    try {
+      safe = sanitizeId(id);
+    } catch {
+      // A malformed id is a miss, not a transport failure — answer 404 so the
+      // renderer shows its placeholder instead of an ERR_FAILED.
+      return notFoundResponse();
+    }
     const metadata = await this.lookup(safe);
     const file = await this.findAssetFile(safe);
-    if (!file) {
-      return new Response('Asset not found', { status: 404, headers: { 'content-type': 'text/plain' } });
-    }
+    if (!file) return notFoundResponse();
+    // Whole-file read is fine for images; large media (video/audio) will need a
+    // streaming/range response — a follow-up when those types land.
     const bytes = await readFile(join(this.root, file));
     return new Response(bytes, {
       status: 200,
       headers: {
+        // SVGs are served here only to be drawn in <img>, where scripts do not
+        // execute. If an asset is ever rendered via <object>/<iframe> or direct
+        // navigation, sanitize the SVG or add CSP/Content-Disposition first.
         'content-type': metadata?.mimeType ?? 'application/octet-stream',
         'cache-control': 'private, max-age=31536000, immutable',
       },
@@ -124,6 +134,10 @@ export class AssetService {
     await writeFile(tmp, data);
     await rename(tmp, path);
   }
+}
+
+function notFoundResponse(): Response {
+  return new Response('Asset not found', { status: 404, headers: { 'content-type': 'text/plain' } });
 }
 
 function nanoid(size = 21): string {

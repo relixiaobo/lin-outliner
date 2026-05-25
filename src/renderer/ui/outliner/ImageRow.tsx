@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../api/client';
 import { DescriptionIcon, ExpandIcon, ICON_SIZE, OpenIcon } from '../icons';
@@ -27,16 +27,21 @@ interface ImageRowProps {
 export function ImageRow(props: ImageRowProps) {
   const [failed, setFailed] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
+  const lightboxRef = useRef<HTMLDivElement | null>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
   const src = `lin-asset://${props.assetId}`;
   const hasIntrinsicSize = typeof props.width === 'number' && typeof props.height === 'number';
 
+  // Move focus into the lightbox while open (and restore it on close) so its
+  // own Esc handler closes it without the same keydown also reaching the
+  // BlockNodeRow shell behind it (which would exit the row to selection).
   useEffect(() => {
     if (!lightboxOpen) return undefined;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setLightboxOpen(false);
+    restoreFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    lightboxRef.current?.focus({ preventScroll: true });
+    return () => {
+      restoreFocusRef.current?.focus({ preventScroll: true });
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
   }, [lightboxOpen]);
 
   if (failed) {
@@ -91,9 +96,18 @@ export function ImageRow(props: ImageRowProps) {
       </div>
       {lightboxOpen && createPortal(
         <div
+          ref={lightboxRef}
           className="outliner-image-lightbox"
           role="dialog"
           aria-modal="true"
+          tabIndex={-1}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              event.stopPropagation();
+              setLightboxOpen(false);
+            }
+          }}
           onClick={() => setLightboxOpen(false)}
         >
           <img className="outliner-image-lightbox-img" src={src} alt={props.alt ?? ''} />

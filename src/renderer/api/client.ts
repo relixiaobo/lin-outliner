@@ -84,8 +84,8 @@ export const api = {
     nodeId: string,
     options: { assetId: string; width?: number | null; height?: number | null },
   ) => command<CommandOutcome>('set_node_image', { nodeId, ...options }),
-  ingestAssetFromPath: (path: string) =>
-    command<AssetMetadata>('ingest_asset', { kind: 'path', path }),
+  // Renderer ingest is buffer-only by design; path ingest is a main-process
+  // primitive (see pick_image_files) and is intentionally not exposed here.
   ingestAssetFromData: (data: Uint8Array, mimeType?: string, originalFilename?: string) =>
     command<AssetMetadata>('ingest_asset', { kind: 'buffer', data, mimeType, originalFilename }),
   lookupAsset: (id: string) => command<AssetMetadata | null>('lookup_asset', { id }),
