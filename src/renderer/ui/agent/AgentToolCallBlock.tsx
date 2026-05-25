@@ -11,6 +11,7 @@ import {
   LoaderIcon,
   NodeCreateToolIcon,
   NodeEditToolIcon,
+  RecentsIcon,
   RestoreIcon,
   SearchIcon,
   TerminalIcon,
@@ -75,7 +76,7 @@ export function getToolCallStatus(
   return result.isError ? 'error' : 'done';
 }
 
-function getToolIcon(toolCall: ToolCall) {
+export function getToolIcon(toolCall: ToolCall) {
   if (
     toolCall.name === 'Agent'
     || toolCall.name === 'AgentStatus'
@@ -85,6 +86,12 @@ function getToolIcon(toolCall: ToolCall) {
   if (toolCall.name === 'node_create') return NodeCreateToolIcon;
   if (toolCall.name === 'node_read') return FileTextIcon;
   if (toolCall.name === 'node_edit') return NodeEditToolIcon;
+  if (toolCall.name === 'past_chats') {
+    const mode = pastChatsMode(toolCall.arguments);
+    if (mode === 'read') return FileTextIcon;
+    if (mode === 'search') return SearchIcon;
+    return RecentsIcon;
+  }
   if (toolCall.name === 'node_search' || toolCall.name === 'web_search') return SearchIcon;
   if (toolCall.name === 'node_delete') {
     return toolCall.arguments.restore === true ? RestoreIcon : TrashIcon;
@@ -103,6 +110,14 @@ function pickSubject(args: Record<string, unknown>, ...keys: string[]): string |
     }
   }
   return null;
+}
+
+type PastChatsMode = 'recent' | 'search' | 'read';
+
+function pastChatsMode(args: Record<string, unknown>): PastChatsMode {
+  if (pickSubject(args, 'message_id')) return 'read';
+  if (pickSubject(args, 'query')) return 'search';
+  return 'recent';
 }
 
 function quoteSubject(subject: string): string {
@@ -129,6 +144,18 @@ export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus): strin
   if (toolCall.name === 'AgentSend') return verbByStatus(['message subagent', 'Messaging subagent', 'Messaged subagent'], status);
   if (toolCall.name === 'AgentStop') return verbByStatus(['stop subagent', 'Stopping subagent', 'Stopped subagent'], status);
   const args = toolCall.arguments;
+  if (toolCall.name === 'past_chats') {
+    const mode = pastChatsMode(args);
+    if (mode === 'read') {
+      const subject = pickSubject(args, 'message_id');
+      return `${verbByStatus(['read past chat', 'Reading past chat', 'Read past chat'], status)}${subject ? ` ${quoteSubject(subject)}` : ''}`;
+    }
+    if (mode === 'search') {
+      const subject = pickSubject(args, 'query');
+      return `${verbByStatus(['search past chats', 'Searching past chats', 'Searched past chats'], status)}${subject ? ` ${quoteSubject(subject)}` : ''}`;
+    }
+    return verbByStatus(['list recent past chat messages', 'Listing recent past chat messages', 'Listed recent past chat messages'], status);
+  }
   if (toolCall.name === 'node_create') {
     const subject = pickSubject(args, 'parentId', 'afterId');
     const target = subject ? ` under ${quoteSubject(subject)}` : '';
