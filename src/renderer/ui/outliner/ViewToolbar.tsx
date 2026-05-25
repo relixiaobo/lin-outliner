@@ -43,7 +43,6 @@ import {
   CREATED_FIELD,
   DONE_AT_FIELD,
   DONE_FIELD,
-  fieldChoiceLabel,
   NAME_FIELD,
   REF_COUNT_FIELD,
   TAGS_FIELD,
