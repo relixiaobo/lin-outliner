@@ -34,6 +34,9 @@ Ordered by priority; lower items may depend on higher ones.
 - **file-attachments** (P1) — `attachment` node type for arbitrary local files.
 - **floating-toolbar-polish** (P3) — heading-mark toggle + `#` selection
   extract in the floating editor toolbar.
+- **view-toolbar-name-filter** (P3) — quick incremental name filter as the
+  view toolbar's first control (Tana-style); needs backend/data-model support.
+  Optional follow-ons: `is_not` for options filters; relative-date operands.
 - **embed-strategy** (P3) — decide live iframe vs cached-metadata embeds.
 - **past-chats-output-polish** (P3) — minor cleanups deferred from PR #7:
   (1) drop the now-redundant `returned_items` / `returned_hits` / `message_count`
@@ -44,6 +47,12 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **view-toolbar-redesign** (P2) — per-node view toolbar reworked against
+  Tana: inline panels → anchored popovers (no row-list shift), removed the
+  fake Table/Cards/Calendar "View as" switcher, progressive type-aware filter
+  editors (boolean/options/date/number/text), date-aware `rowMatchesFilter`,
+  field-semantic group labels / sort directions / active-state summary, plus
+  token-correct controls (PR #9).
 - **paste-handling** (P2) — structure-aware clipboard paste: inline marks,
   fenced code → `codeBlock`, rich HTML routing, single-line URL linking
   (PR #5).
