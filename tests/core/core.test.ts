@@ -139,6 +139,38 @@ describe('Core', () => {
     });
   });
 
+  test('materializes a codeBlock tree node with its language', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const outcome = core.createNodesFromTree(today, [
+      {
+        content: { text: 'const x = 1\nconst y = 2', marks: [], inlineRefs: [] },
+        children: [],
+        type: 'codeBlock',
+        codeLanguage: 'TypeScript',
+      },
+    ]);
+    const nodeId = outcome.focus!.nodeId;
+
+    expect(core.state().nodes[nodeId]).toMatchObject({
+      type: 'codeBlock',
+      codeLanguage: 'typescript',
+      content: { text: 'const x = 1\nconst y = 2' },
+    });
+  });
+
+  test('ignores non-codeBlock types when materializing a paste tree', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const outcome = core.createNodesFromTree(today, [
+      { content: plainText('plain row'), children: [], type: 'reference', codeLanguage: 'ts' },
+    ]);
+    const node = core.state().nodes[outcome.focus!.nodeId];
+
+    expect(node.type).toBeUndefined();
+    expect(node.codeLanguage).toBeUndefined();
+  });
+
   test('creates a tagged node in one core command', () => {
     const core = Core.new();
     const today = core.projection().todayId;

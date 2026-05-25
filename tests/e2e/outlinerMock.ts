@@ -506,7 +506,15 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       tree.forEach((item, offset) => {
         const nodeId = createNode(parentId, index === null ? null : index + offset, item.content.text);
         const node = nodes.get(nodeId);
-        if (node) node.content = clone(item.content);
+        if (node) {
+          node.content = clone(item.content);
+          if (item.type === 'codeBlock') {
+            node.type = 'codeBlock';
+            const lang = item.codeLanguage?.trim().toLowerCase();
+            if (lang) node.codeLanguage = lang;
+            else delete node.codeLanguage;
+          }
+        }
         if (item.children.length > 0) createTree(nodeId, item.children);
         lastId = nodeId;
       });
