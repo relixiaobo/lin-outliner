@@ -20,6 +20,7 @@ import {
   WarningIcon,
 } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { highlightCode, plainCodeHtml } from '../editor/shikiHighlighter';
 import { AgentToolCallDisclosure } from './AgentToolCallDisclosure';
 
 interface AgentToolCallBlockProps {
@@ -44,25 +45,6 @@ type ResultPart =
 
 const TOOL_OUTPUT_WINDOW_HEAD_CHARS = 12_000;
 const TOOL_OUTPUT_WINDOW_TAIL_CHARS = 4_000;
-
-interface ToolEnvelopeLike {
-  ok: boolean;
-  tool: string;
-  version: number;
-  status: string;
-  data?: unknown;
-  error?: {
-    code?: string;
-    message?: string;
-    recoverable?: boolean;
-    details?: unknown;
-  };
-  nextStep?: string;
-  fallback?: string;
-  hint?: unknown;
-  warnings?: string[];
-  metrics?: unknown;
-}
 
 export function getToolCallStatus(
   toolCallId: string,
@@ -358,13 +340,31 @@ function resultImages(result: AgentToolResultWithPayloads | undefined): Array<{ 
     .map((block) => ({ data: block.data, mimeType: block.mimeType }));
 }
 
-function isToolEnvelope(value: unknown): value is ToolEnvelopeLike {
-  if (!value || typeof value !== 'object') return false;
-  const candidate = value as Partial<ToolEnvelopeLike>;
-  return candidate.version === 1
-    && typeof candidate.ok === 'boolean'
-    && typeof candidate.tool === 'string'
-    && typeof candidate.status === 'string';
+function isJsonText(text: string): boolean {
+  const trimmed = text.trim();
+  if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) return false;
+  try {
+    JSON.parse(trimmed);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Read-only JSON surface for tool input/output. Renders plain text first, then
+// upgrades to the shared Shiki highlight once it resolves (json is preloaded).
+function HighlightedJson({ code }: { code: string }) {
+  const [html, setHtml] = useState(() => plainCodeHtml(code));
+  useEffect(() => {
+    let cancelled = false;
+    void highlightCode(code, 'json').then((next) => {
+      if (!cancelled) setHtml(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [code]);
+  return <div className="agent-tool-code" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 function jsonText(value: unknown): string {
@@ -433,37 +433,6 @@ function ToolCopyButton({ ariaLabel, text }: { ariaLabel: string; text: string }
     >
       <CopyStateIcon size={ICON_SIZE.menu} />
     </ButtonControl>
-  );
-}
-
-function ToolEnvelopeOutput({ envelope }: { envelope: ToolEnvelopeLike }) {
-  const notes = [
-    envelope.error?.message,
-    ...(envelope.warnings ?? []),
-    envelope.nextStep ? `Next: ${envelope.nextStep}` : null,
-    envelope.fallback ? `Fallback: ${envelope.fallback}` : null,
-  ].filter((note): note is string => typeof note === 'string' && note.trim().length > 0);
-
-  return (
-    <div className="agent-tool-envelope">
-      <div className={`agent-tool-status-line ${envelope.ok ? 'is-ok' : 'is-error'}`}>
-        <span>{envelope.status}</span>
-        <span>{envelope.tool}</span>
-      </div>
-      {notes.length > 0 ? (
-        <div className="agent-tool-notes">
-          {notes.map((note, index) => (
-            <div key={`note-${index}`}>{note}</div>
-          ))}
-        </div>
-      ) : null}
-      {envelope.data !== undefined ? (
-        <pre>{jsonText(envelope.data)}</pre>
-      ) : null}
-      {envelope.hint !== undefined ? (
-        <pre>{jsonText(envelope.hint)}</pre>
-      ) : null}
-    </div>
   );
 }
 
@@ -579,11 +548,9 @@ export function AgentToolCallBlock({
   const outputText = useMemo(() => resultText(result), [result]);
   const images = useMemo(() => resultImages(result), [result]);
   const parts = useMemo(() => resultParts(result, isExpanded), [result, isExpanded]);
-  const details = result?.details;
-  const envelope = isToolEnvelope(details) ? details : null;
   const hasSubagentDetails = Boolean(subagent);
-  const hasDetails = hasSubagentDetails || inputText !== '{}' || outputText.length > 0 || envelope !== null;
-  const hasOutputDetails = envelope !== null || parts.length > 0;
+  const hasDetails = hasSubagentDetails || inputText !== '{}' || outputText.length > 0;
+  const hasOutputDetails = parts.length > 0;
 
   function toggle() {
     if (onToggle) {
@@ -616,7 +583,7 @@ export function AgentToolCallBlock({
             <div className="agent-tool-call-section-title">Input</div>
             <ToolCopyButton ariaLabel="Copy tool input" text={inputText} />
           </div>
-          <pre>{inputText}</pre>
+          <HighlightedJson code={inputText} />
         </section>
       ) : null}
       {!hasSubagentDetails && result && hasOutputDetails ? (
@@ -628,8 +595,7 @@ export function AgentToolCallBlock({
             </div>
             <ToolCopyButton ariaLabel="Copy tool output" text={outputText} />
           </div>
-          {envelope ? <ToolEnvelopeOutput envelope={envelope} /> : null}
-          {!envelope ? parts.map((part, index) =>
+          {parts.map((part, index) =>
             part.type === 'imagePlaceholder' ? (
               <div className="agent-tool-image-placeholder" key={`placeholder-${index}`}>
                 <FileTextIcon size={ICON_SIZE.menu} />
@@ -642,10 +608,12 @@ export function AgentToolCallBlock({
                 payloadRef={part.payloadRef}
                 sessionId={sessionId}
               />
+            ) : isJsonText(part.text) ? (
+              <HighlightedJson code={part.text} key={`text-${index}`} />
             ) : (
               <pre key={`text-${index}`}>{part.text}</pre>
             ),
-          ) : null}
+          )}
         </section>
       ) : null}
     </AgentToolCallDisclosure>
