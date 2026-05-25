@@ -12,11 +12,11 @@ import {
 } from '../interactions/rowInteractions';
 import { resolveSelectedReferenceShortcut } from '../interactions/selectedReferenceShortcuts';
 import {
-  detectSingleLineUrl,
   isPlainSingleParagraph,
   parseClipboardPaste,
 } from '../interactions/pasteParser';
-import { clipboardImageFiles, imageUrlFromText, readPastedImages, type PastedImage } from '../interactions/imagePaste';
+import { readPastedImages, type PastedImage } from '../interactions/imagePaste';
+import { classifyMediaPaste } from '../interactions/clipboardPaste';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { matchesShortcutEvent } from '../interactions/shortcutRegistry';
 import { FloatingEditorToolbar, type ToolbarMark } from './FloatingEditorToolbar';
@@ -415,33 +415,29 @@ export function RichTextEditor(props: RichTextEditorProps) {
 
           const clipboardEvent = event as ClipboardEvent;
 
-          // Image files (e.g. a pasted screenshot) become image nodes. Take
-          // priority over text so a clipboard carrying both an image and its
-          // filename text does not fall through to the text path.
+          // Image / media-URL / single-line-URL front-matter is classified by
+          // the same helper the trailing input uses, so the two stay in
+          // lock-step. Only the application below differs (edit in place here;
+          // create a node in the trailing input).
+          const { from, to } = selectionOffsets(viewInstance);
+          const mediaPaste = classifyMediaPaste(clipboardEvent.clipboardData, { hasSelection: from !== to });
+
           const onPasteImage = propsRef.current.onPasteImage;
-          const imageFiles = clipboardImageFiles(clipboardEvent.clipboardData);
-          if (onPasteImage && imageFiles.length > 0) {
+          if (mediaPaste?.kind === 'images' && onPasteImage) {
             clipboardEvent.preventDefault();
-            void readPastedImages(imageFiles).then((images) => onPasteImage(images));
+            void readPastedImages(mediaPaste.files).then((images) => onPasteImage(images));
+            return true;
+          }
+
+          const onPasteMediaUrl = propsRef.current.onPasteMediaUrl;
+          if (mediaPaste?.kind === 'mediaUrl' && onPasteMediaUrl) {
+            clipboardEvent.preventDefault();
+            onPasteMediaUrl(mediaPaste.url);
             return true;
           }
 
           const plainText = clipboardEvent.clipboardData?.getData('text/plain') ?? '';
           const htmlText = clipboardEvent.clipboardData?.getData('text/html') ?? '';
-
-          // A lone remote image URL pasted with no active selection becomes a
-          // remote image node. With a selection, fall through so the URL links
-          // the selected text instead.
-          const onPasteMediaUrl = propsRef.current.onPasteMediaUrl;
-          const pastedImageUrl = imageUrlFromText(plainText);
-          if (onPasteMediaUrl && pastedImageUrl) {
-            const { from, to } = selectionOffsets(viewInstance);
-            if (from === to) {
-              clipboardEvent.preventDefault();
-              onPasteMediaUrl(pastedImageUrl);
-              return true;
-            }
-          }
 
           const setContent = (nextContent: RichText) => {
             const nextDoc = richTextToDoc(
@@ -457,11 +453,10 @@ export function RichTextEditor(props: RichTextEditorProps) {
 
           // A single-line URL becomes a link: wrap the selection if there is
           // one, otherwise insert the URL as link-marked text.
-          const url = detectSingleLineUrl(plainText);
-          if (url) {
+          if (mediaPaste?.kind === 'linkUrl') {
+            const url = mediaPaste.url;
             clipboardEvent.preventDefault();
             const current = docToRichText(viewInstance.state.doc);
-            const { from, to } = selectionOffsets(viewInstance);
             let nextContent: RichText;
             if (from !== to) {
               nextContent = {
@@ -507,7 +502,6 @@ export function RichTextEditor(props: RichTextEditorProps) {
           }
 
           const current = docToRichText(viewInstance.state.doc);
-          const { from, to } = selectionOffsets(viewInstance);
           const before = sliceRichText(current, 0, from);
           const after = sliceRichText(current, to, current.text.length);
           const nextContent = concatRichText(before, first.content, after);
