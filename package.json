@@ -7,6 +7,8 @@
   "type": "module",
   "scripts": {
     "dev": "electron-vite dev",
+    "dev:cc": "ELECTRON_USER_DATA_DIR=\"$HOME/.lin-outliner-cc\" electron-vite dev",
+    "dev:codex": "ELECTRON_USER_DATA_DIR=\"$HOME/.lin-outliner-codex\" electron-vite dev",
     "build": "tsc --noEmit && electron-vite build",
     "preview": "vite preview",
     "app:dev": "electron-vite dev",

@@ -18,6 +18,10 @@ import {
 import { isAgentCommand, isDocumentCommand, type AgentCommand } from '../core/commands';
 import type { AgentProviderConfigInput, AgentRuntimeSettingsInput } from '../core/types';
 
+if (process.env.ELECTRON_USER_DATA_DIR) {
+  app.setPath('userData', process.env.ELECTRON_USER_DATA_DIR);
+}
+
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const documentService = new DocumentService();
 let mainWindow: BrowserWindow | null = null;
