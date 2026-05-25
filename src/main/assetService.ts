@@ -63,6 +63,12 @@ export class AssetService {
     }
   }
 
+  /** Absolute path to the stored asset bytes, or null if missing. */
+  async pathFor(id: string): Promise<string | null> {
+    const file = await this.findAssetFile(sanitizeId(id));
+    return file ? join(this.root, file) : null;
+  }
+
   async delete(id: string): Promise<void> {
     const safe = sanitizeId(id);
     this.metaCache.delete(id);

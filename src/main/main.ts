@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, protocol } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, protocol, shell } from 'electron';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DocumentService } from './documentService';
@@ -117,6 +117,16 @@ async function handleAssetCommand(command: AssetCommand, args: Record<string, un
         : await dialog.showOpenDialog(options);
       if (result.canceled) return [];
       return Promise.all(result.filePaths.map((path) => assetService.ingest({ kind: 'path', path })));
+    }
+    case 'open_asset': {
+      const path = await assetService.pathFor(String(args.id));
+      if (path) await shell.openPath(path);
+      return { opened: Boolean(path) };
+    }
+    case 'reveal_asset': {
+      const path = await assetService.pathFor(String(args.id));
+      if (path) shell.showItemInFolder(path);
+      return { revealed: Boolean(path) };
     }
     default:
       throw new Error(`Unknown asset command: ${command}`);

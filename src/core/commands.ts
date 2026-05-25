@@ -122,6 +122,8 @@ export const ASSET_COMMANDS = [
   'lookup_asset',
   'delete_asset',
   'pick_image_files',
+  'open_asset',
+  'reveal_asset',
 ] as const;
 
 export type DocumentCommand = typeof DOCUMENT_COMMANDS[number];

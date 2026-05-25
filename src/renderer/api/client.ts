@@ -87,6 +87,8 @@ export const api = {
   lookupAsset: (id: string) => command<AssetMetadata | null>('lookup_asset', { id }),
   deleteAsset: (id: string) => command<void>('delete_asset', { id }),
   pickImageFiles: () => command<AssetMetadata[]>('pick_image_files'),
+  openAsset: (id: string) => command<{ opened: boolean }>('open_asset', { id }),
+  revealAsset: (id: string) => command<{ revealed: boolean }>('reveal_asset', { id }),
   setViewToolbarVisible: (nodeId: string, visible: boolean) =>
     command<CommandOutcome>('set_view_toolbar_visible', { nodeId, visible }),
   setViewMode: (nodeId: string, mode: ViewMode) =>

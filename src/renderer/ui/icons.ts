@@ -52,6 +52,7 @@ export {
   ListChecks as OptionsIcon,
   ListPlus as AddChildIcon,
   Loader2 as LoaderIcon,
+  Maximize2 as ExpandIcon,
   Mail as EmailIcon,
   MessageCirclePlus as NewConversationIcon,
   MoreHorizontal as MoreIcon,

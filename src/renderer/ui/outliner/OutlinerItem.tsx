@@ -832,7 +832,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
           onDragEnd={row.dragHandleProps.onDragEnd}
         />
         <div
-          className="row-content-line"
+          className={isImage ? 'row-content-line row-content-line--image' : 'row-content-line'}
           onMouseDownCapture={referenceLikeRow ? selectReferenceLikeRowFromPointer : undefined}
           onMouseDown={referenceLikeRow ? undefined : focusEditorFromRowClick}
           onClickCapture={referenceLikeRow ? selectReferenceLikeRowFromPointer : undefined}

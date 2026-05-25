@@ -2561,12 +2561,53 @@ button.panel-resize-handle::after {
   user-select: none;
 }
 
+.outliner-image-frame {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  line-height: 0;
+}
+
 .outliner-image-el {
   display: block;
-  max-width: min(100%, 640px);
+  max-width: min(100%, 720px);
   height: auto;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-subtle);
+  cursor: zoom-in;
+}
+
+.outliner-image-toolbar {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  display: flex;
+  gap: var(--space-1);
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-overlay, #1f1f1f) 78%, transparent);
+  opacity: 0;
+  transition: opacity 120ms ease;
+  line-height: 1;
+}
+
+.outliner-image-frame:hover .outliner-image-toolbar,
+.outliner-image-toolbar:focus-within {
+  opacity: 1;
+}
+
+.outliner-image-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  color: #fff;
+}
+
+.outliner-image-tool:hover {
+  background: rgba(255, 255, 255, 0.18);
 }
 
 .outliner-image--missing {
@@ -2577,6 +2618,32 @@ button.panel-resize-handle::after {
   border-radius: var(--radius-md);
   color: var(--text-muted);
   font-size: 0.85em;
+}
+
+.outliner-image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4vmin;
+  background: rgba(0, 0, 0, 0.82);
+  cursor: zoom-out;
+}
+
+.outliner-image-lightbox-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: var(--radius-md);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+}
+
+/* Row text under an image reads as a caption. */
+.row-content-line--image .ProseMirror {
+  font-size: 0.85em;
+  color: var(--text-muted);
 }
 
 .code-block {
