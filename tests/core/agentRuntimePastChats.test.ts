@@ -291,8 +291,10 @@ describe('agent runtime past chats integration', () => {
     ]);
     expect(toolResults.map((message) => message.toolName)).toEqual(['past_chats', 'past_chats']);
     expect(contextText).toContain('"past_chats"');
-    expect(contextText).toContain('message_ids');
+    // Self-contained search result reaches the model with snippets...
+    expect(contextText).toContain('snippet');
     expect(contextText).toContain('"past-user-focus"');
+    // ...and the read result carries the full message text inline (no markdown block).
     expect(contextText).toContain('Cobalt blue is the recorded focus-ring choice.');
     expect(finalAssistantText).toBe('We chose cobalt blue for focus rings.');
   });

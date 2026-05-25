@@ -307,12 +307,14 @@ describe('agent past chats', () => {
         ok: false,
         tool: 'past_chats',
         status: 'error',
+        error: { code: 'AMBIGUOUS_MODE' },
         data: {
           mode: 'error',
           code: 'AMBIGUOUS_MODE',
         },
       });
-      expect(result.content[1]?.text).toContain('Error: AMBIGUOUS_MODE');
+      // Single self-contained block: no parallel markdown rendering.
+      expect(result.content).toHaveLength(1);
     });
   });
 
@@ -339,8 +341,9 @@ describe('agent past chats', () => {
         mode: 'search',
         total_hits: 1,
         returned_hits: 1,
-        message_ids: ['user-api'],
+        hits: [{ message_id: 'user-api' }],
       });
+      expect(visible.data.hits[0].snippet).toContain('sqlite');
       expect(visible.data.totalHits).toBeUndefined();
       expect(visible.data.messageIds).toBeUndefined();
       expect(visible.instructions).toContain('message_id');
@@ -379,7 +382,7 @@ describe('agent past chats', () => {
       });
       expect(visible.data.items[0].text).toContain('Review the');
       expect(visible.instructions).toContain('message_id');
-      expect(result.content[1]?.text).toContain('Next: call past_chats with message_id');
+      expect(result.content).toHaveLength(1);
     });
   });
 
@@ -401,12 +404,11 @@ describe('agent past chats', () => {
           mode: 'search',
           total_hits: 0,
           returned_hits: 0,
-          message_ids: [],
+          hits: [],
         },
       });
       expect(visible.instructions).toContain('Do not claim this is the first conversation');
-      expect(result.content[1]?.text).toContain('does not prove there is no chat history');
-      expect(result.content[1]?.text).toContain('ask for a keyword');
+      expect(result.content).toHaveLength(1);
     });
   });
 });

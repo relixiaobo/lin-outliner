@@ -3537,38 +3537,27 @@ button.panel-resize-handle::after {
   content-visibility: auto;
 }
 
-.agent-tool-envelope {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-4);
+/* Highlighted JSON for tool input/output. The bordered container matches the
+   outliner code block; the Shiki <pre> inside owns scrolling and code metrics. */
+.agent-tool-code {
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
 }
 
-.agent-tool-status-line {
-  display: inline-flex;
-  width: fit-content;
-  max-width: 100%;
-  gap: var(--space-3);
-  border-radius: var(--radius-pill);
-  background: rgba(0, 0, 0, 0.045);
-  color: var(--text-soft);
-  font-size: var(--font-ui-xs);
-  line-height: var(--line-ui-xs-relaxed);
-  padding: 2px var(--space-4);
-}
-
-.agent-tool-status-line.is-error {
-  background: color-mix(in srgb, var(--danger) 9%, transparent);
-  color: var(--danger);
-}
-
-.agent-tool-notes {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  color: var(--text-soft);
+.agent-tool-code pre.shiki {
+  margin: 0;
+  padding: var(--space-4) var(--space-5);
+  max-height: 280px;
+  overflow: auto;
+  font-family: var(--font-family-mono);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
+  white-space: pre;
+  tab-size: 2;
+  background: transparent !important;
+  color: var(--text-strong);
 }
 
 .agent-tool-image-list {
