@@ -2551,27 +2551,38 @@ button.panel-resize-handle::after {
   padding: var(--space-hairline) var(--space-2);
 }
 
-.agent-code-block {
+/* Code surfaces — the agent transcript block and the outliner code row share
+   one look. Only the functional differences diverge: the agent block is a
+   read-only, bounded-height <pre>; the outliner row is an editable textarea
+   layered over a Shiki highlight layer with a language <select>. */
+.agent-code-block,
+.code-block {
   overflow: hidden;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.42);
+  background: var(--surface-soft);
 }
 
-.agent-code-header {
+.code-block {
+  margin: var(--space-1) 0;
+}
+
+.agent-code-header,
+.code-block-chrome {
   display: flex;
-  height: 30px;
+  height: 28px;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
   border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-faint);
+  padding: 0 var(--space-3) 0 var(--space-4);
+  color: var(--text-soft);
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
-  padding: 0 var(--space-5);
 }
 
-.agent-code-copy {
+.agent-code-copy,
+.code-block-copy {
   display: inline-flex;
   width: 24px;
   height: 24px;
@@ -2582,26 +2593,99 @@ button.panel-resize-handle::after {
   cursor: pointer;
 }
 
-.agent-code-copy:hover:not(:disabled) {
+.agent-code-copy:hover:not(:disabled),
+.code-block-copy:hover:not(:disabled) {
   background: var(--control-hover);
   color: var(--text-strong);
 }
 
-.agent-code-copy:disabled {
+.agent-code-copy:disabled,
+.code-block-copy:disabled {
   cursor: default;
   opacity: 0.4;
 }
 
+.code-block-language {
+  font-family: var(--font-family-sans);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  color: var(--text-soft);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+}
+
+.code-block-language:hover:not(:disabled) {
+  background: var(--control-hover);
+  color: var(--text-strong);
+}
+
+/* Shared code text metrics across every text-bearing surface. */
+.agent-code-block pre,
+.code-block-sizer,
+.code-block-highlight pre.shiki,
+.code-block-textarea {
+  margin: 0;
+  padding: var(--space-4) var(--space-5);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  white-space: pre;
+  tab-size: 2;
+  border: 0;
+}
+
+.agent-code-block pre.shiki,
+.code-block-highlight pre.shiki {
+  background: transparent !important;
+}
+
+/* Agent transcript code is read-only and scrolls within a bounded height. */
 .agent-code-block pre {
   max-height: 280px;
   overflow: auto;
-  margin: 0;
   color: var(--text-strong);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: var(--font-meta);
-  line-height: var(--line-meta);
-  padding: var(--space-5) var(--space-6);
-  white-space: pre;
+}
+
+/* Outliner code rows are editable: a transparent textarea over the highlight
+   layer, sized by a hidden <pre> so the height stays exact while Shiki resolves. */
+.code-block-editor {
+  position: relative;
+}
+
+.code-block-sizer {
+  visibility: hidden;
+  pointer-events: none;
+  overflow: hidden;
+  min-height: var(--line-meta);
+}
+
+.code-block-highlight {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.code-block-highlight pre.shiki {
+  color: var(--text-strong);
+}
+
+.code-block-textarea {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  resize: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text-strong);
+  outline: none;
 }
 
 .agent-markdown-table-wrap {

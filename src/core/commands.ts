@@ -13,6 +13,8 @@ export const DOCUMENT_COMMANDS = [
   'apply_node_text_patch',
   'update_node_description',
   'set_node_checkbox_visible',
+  'set_code_block',
+  'set_code_language',
   'set_view_toolbar_visible',
   'set_view_mode',
   'add_sort_rule',

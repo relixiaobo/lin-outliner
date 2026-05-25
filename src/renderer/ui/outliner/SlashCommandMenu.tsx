@@ -4,6 +4,7 @@ import { api } from '../../api/client';
 import {
   AddChildIcon,
   CheckboxIcon,
+  CodeIcon,
   CommandIcon,
   FieldIcon,
   HeadingIcon,
@@ -33,6 +34,7 @@ function slashCommandIcon(command: SlashCommandDefinition): ReactNode {
   if (command.id === 'reference') return <ReferenceIcon size={ICON_SIZE.menu} />;
   if (command.id === 'heading') return <HeadingIcon size={ICON_SIZE.menu} />;
   if (command.id === 'checkbox') return <CheckboxIcon size={ICON_SIZE.menu} />;
+  if (command.id === 'code') return <CodeIcon size={ICON_SIZE.menu} />;
   if (command.id === 'command_palette') return <CommandIcon size={ICON_SIZE.menu} />;
   return <AddChildIcon size={ICON_SIZE.menu} />;
 }

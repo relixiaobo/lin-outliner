@@ -370,6 +370,25 @@ export class Core {
     });
   }
 
+  setCodeBlock(nodeId: string, codeLanguage?: string): CommandOutcome {
+    return this.patchNode(nodeId, (node) => {
+      if (node.type !== undefined && node.type !== 'codeBlock') {
+        throw CoreError.invalidOperation('only plain content nodes can become code blocks');
+      }
+      node.type = 'codeBlock';
+      setOptional(node, 'codeLanguage', normalizeCodeLanguage(codeLanguage));
+    });
+  }
+
+  setCodeLanguage(nodeId: string, codeLanguage: string): CommandOutcome {
+    return this.patchNode(nodeId, (node) => {
+      if (node.type !== 'codeBlock') {
+        throw CoreError.invalidOperation('node is not a code block');
+      }
+      setOptional(node, 'codeLanguage', normalizeCodeLanguage(codeLanguage));
+    });
+  }
+
   setViewToolbarVisible(nodeId: string, visible: boolean): CommandOutcome {
     return this.mutate(() => {
       this.patchViewDefDirect(nodeId, (viewDef) => {
@@ -2345,6 +2364,11 @@ function ensureValidHideFieldMode(mode: string) {
 
 function normalizeOptionalText(value: string | null | undefined): string | undefined {
   const normalized = value?.trim();
+  return normalized ? normalized : undefined;
+}
+
+function normalizeCodeLanguage(value: string | null | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
   return normalized ? normalized : undefined;
 }
 

@@ -1189,6 +1189,44 @@ describe('Core', () => {
     expect(core.state().nodes[nodeId]!.content.text).toBe('');
   });
 
+  test('converts a plain node into a code block and edits its text', () => {
+    const core = Core.new();
+    const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'const x = 1'));
+
+    core.setCodeBlock(nodeId, 'TypeScript');
+    expect(core.state().nodes[nodeId]).toMatchObject({
+      type: 'codeBlock',
+      codeLanguage: 'typescript',
+      content: { text: 'const x = 1' },
+    });
+
+    core.applyNodeTextPatch(nodeId, replaceAllRichTextPatch(plainText('const x = 1\nconst y = 2')));
+    expect(core.state().nodes[nodeId]!.content.text).toBe('const x = 1\nconst y = 2');
+    expect(core.state().nodes[nodeId]!.type).toBe('codeBlock');
+  });
+
+  test('changes and clears a code block language', () => {
+    const core = Core.new();
+    const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'code'));
+    core.setCodeBlock(nodeId);
+    expect(core.state().nodes[nodeId]!.codeLanguage).toBeUndefined();
+
+    core.setCodeLanguage(nodeId, 'Python');
+    expect(core.state().nodes[nodeId]!.codeLanguage).toBe('python');
+
+    core.setCodeLanguage(nodeId, '');
+    expect(core.state().nodes[nodeId]!.codeLanguage).toBeUndefined();
+  });
+
+  test('rejects invalid code block conversions', () => {
+    const core = Core.new();
+    const plainId = mustFocus(core.createNode(core.projection().todayId, null, 'plain'));
+    expect(() => core.setCodeLanguage(plainId, 'ts')).toThrow();
+
+    const tagId = mustFocus(core.createTag('topic'));
+    expect(() => core.setCodeBlock(tagId)).toThrow();
+  });
+
   test('state serializes and restores the Loro-backed projection', () => {
     const core = Core.new();
     const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Plain'));

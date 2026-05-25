@@ -34,7 +34,7 @@ items above.
 | [`asset-subsystem.md`](asset-subsystem.md) | draft | P0 | Local content-addressed asset store + `lin-asset://` protocol. Blocks image/attachment/embed work. |
 | [`image-rendering.md`](image-rendering.md) | draft | P1 | Render `image` nodes inline using the asset subsystem. Paste/drag/clipboard ingestion. |
 | [`file-attachments.md`](file-attachments.md) | draft | P1 | New `attachment` node type for arbitrary local files (PDF, audio, video, generic). Goes beyond nodex parity. |
-| [`code-block-editor.md`](code-block-editor.md) | draft | P2 | Dedicated `codeBlock` editor with language selection and syntax highlighting. |
+| [`code-block-editor.md`](code-block-editor.md) | done | P2 | Dedicated `codeBlock` editor with language selection and syntax highlighting. |
 | [`floating-toolbar-polish.md`](floating-toolbar-polish.md) | draft | P3 | Add heading-mark toggle and `#` selection-extract to the floating editor toolbar. |
 | [`embed-strategy.md`](embed-strategy.md) | draft | P3 | Decide between live iframe embeds, locally-cached metadata embeds, or removing the embed schema fields. |
 | [`agent-past-chats.md`](agent-past-chats.md) | in-progress | P1 | Single `past_chats` tool (recent + search + read modes) backed by the event store, user-message/search indexes, and visible transcript filtering. Foundational agent infrastructure. |

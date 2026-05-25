@@ -3,6 +3,7 @@ export type SlashCommandId =
   | 'reference'
   | 'heading'
   | 'checkbox'
+  | 'code'
   | 'command_palette';
 
 export interface SlashCommandDefinition {
@@ -39,6 +40,12 @@ export const SLASH_COMMANDS: readonly SlashCommandDefinition[] = [
     label: 'Checkbox',
     keywords: ['checkbox', 'todo', 'done', 'check'],
     shortcutHint: 'Cmd+Enter',
+    enabled: true,
+  },
+  {
+    id: 'code',
+    label: 'Code block',
+    keywords: ['code', 'codeblock', 'snippet', 'pre', 'monospace'],
     enabled: true,
   },
   {
