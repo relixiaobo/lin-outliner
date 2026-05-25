@@ -189,113 +189,252 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: 30px;
+  min-height: var(--control-size-2xl);
 }
 
 .view-toolbar-pill {
+  position: relative;
   display: inline-flex;
-  width: 30px;
-  height: 30px;
+  width: var(--control-size-2xl);
+  height: var(--control-size-2xl);
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-control);
-  background: rgba(26, 26, 26, 0.035);
+  border-radius: var(--radius-control-xs);
+  background: transparent;
   color: var(--muted);
 }
 
 .view-toolbar-pill:hover,
 .view-toolbar-pill.is-active {
-  background: rgba(26, 26, 26, 0.07);
+  background: var(--control-hover);
   color: var(--text);
 }
 
-.view-toolbar-panel {
-  display: flex;
-  width: min(720px, calc(100% - var(--row-selection-start)));
-  flex-direction: column;
-  gap: var(--space-3);
-  margin-top: var(--space-3);
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  padding: var(--space-4) 0;
+.view-toolbar-pill.is-open {
+  background: var(--control-active);
+  color: var(--text);
 }
 
-.view-toolbar-panel-title,
-.view-toolbar-row,
-.view-toolbar-add-field {
-  display: flex;
-  min-height: 28px;
+/* Neutral count badge marks an active rule-based dimension (sort/filter)
+   without leaning on brand color, per the design-system active-state rule. */
+.view-toolbar-pill-count {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  display: inline-flex;
+  min-width: 14px;
+  height: 14px;
   align-items: center;
-  gap: var(--space-3);
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  background: var(--text-main);
+  padding: 0 3px;
+  color: var(--panel-bg);
+  font-size: var(--font-ui-2xs);
+  font-weight: 600;
+  line-height: 1;
 }
 
-.view-toolbar-panel-title {
-  color: var(--muted);
+/* Anchored config popover; shares the shared overlay surface look. Positioning
+   (fixed left/top/width/maxHeight) is supplied inline by useAnchoredOverlay. */
+.view-toolbar-popover {
+  z-index: var(--z-popover);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  padding: var(--space-3);
+}
+
+.view-toolbar-popover-title {
+  padding: var(--space-2) var(--space-4) var(--space-3);
+  color: var(--text);
   font-size: var(--font-ui-sm);
   font-weight: 600;
 }
 
-.view-toolbar-row-label {
-  width: 64px;
-  flex: 0 0 auto;
-  color: var(--muted);
-  font-size: var(--font-ui-xs);
-  text-align: right;
+.view-toolbar-options {
+  display: flex;
+  flex-direction: column;
 }
 
-.view-toolbar-filter-row {
+.view-toolbar-option-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.view-toolbar-option-section {
+  padding: var(--space-3) var(--space-4) calc(var(--space-2) + var(--space-hairline));
+  color: var(--muted-2);
+  font-size: var(--font-meta);
+  font-weight: 500;
+}
+
+.view-toolbar-option {
+  display: flex;
+  width: 100%;
+  min-height: 30px;
+  align-items: center;
+  gap: var(--space-4);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: var(--space-2) var(--space-4);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--motion-fast);
+}
+
+.view-toolbar-option:hover {
+  background: var(--control-hover);
+}
+
+.view-toolbar-option-label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-size: var(--font-ui-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Single-select marker for view mode / group by. Neutral dark dot keeps it
+   visually distinct from the success-filled multi-select CheckboxMark. */
+.view-toolbar-radio {
+  width: var(--icon-size-md);
+  height: var(--icon-size-md);
+  flex: 0 0 var(--icon-size-md);
+  border-radius: var(--radius-pill);
+  box-shadow: inset 0 0 0 1.5px var(--border-strong);
+}
+
+.view-toolbar-radio.checked {
+  box-shadow: inset 0 0 0 1.5px var(--text-main);
+  background: radial-gradient(circle at center, var(--text-main) 0 3.5px, transparent 4px);
+}
+
+.view-toolbar-rules {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: 0 var(--space-2) var(--space-2);
+}
+
+.view-toolbar-rule {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.view-toolbar-rule-filter {
   flex-wrap: wrap;
 }
 
-.view-toolbar select,
-.view-toolbar input {
-  min-width: 0;
-  height: 24px;
-  border: 0;
-  outline: none;
-  background: transparent;
+.view-toolbar-rule-label {
+  width: 52px;
+  flex: 0 0 auto;
   color: var(--muted);
+  font-size: var(--font-ui-xs);
+}
+
+.view-toolbar-popover select,
+.view-toolbar-popover input {
+  min-width: 0;
+  height: 26px;
+  border: 1px solid var(--border-subtle);
+  outline: none;
+  border-radius: var(--radius-control-xs);
+  background: var(--surface-soft);
+  padding: 0 var(--space-3);
+  color: var(--text);
   font: inherit;
   font-size: var(--font-ui-sm);
 }
 
-.view-toolbar input {
-  width: 120px;
-  color: var(--text);
+.view-toolbar-rule select {
+  flex: 1 1 auto;
 }
 
-.view-toolbar-icon {
+.view-toolbar-rule input {
+  flex: 1 1 96px;
+}
+
+.view-toolbar-rule-direction {
   display: inline-flex;
-  width: 22px;
-  height: 22px;
+  height: 26px;
+  flex: 0 0 auto;
   align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-control-xs);
-  color: var(--muted);
-}
-
-.view-toolbar-icon:hover {
-  background: var(--row-hover);
-  color: var(--text);
-}
-
-.view-toolbar-remove,
-.view-toolbar-danger {
-  min-height: 24px;
+  gap: var(--space-2);
   border-radius: var(--radius-control-xs);
   padding: 0 var(--space-3);
   color: var(--muted);
   font-size: var(--font-ui-sm);
 }
 
-.view-toolbar-remove:hover {
-  background: var(--row-hover);
+.view-toolbar-rule-direction:hover {
+  background: var(--control-hover);
   color: var(--text);
 }
 
-.view-toolbar-danger {
-  align-self: flex-start;
+.view-toolbar-rule-remove {
+  display: inline-flex;
+  width: var(--control-size-md);
+  height: var(--control-size-md);
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-control-xs);
+  color: var(--muted);
+}
+
+.view-toolbar-rule-remove:hover {
+  background: var(--control-hover);
   color: var(--danger);
+}
+
+.view-toolbar-rule-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-1);
+}
+
+.view-toolbar-add-field {
+  display: inline-flex;
+  height: 26px;
+  align-items: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-control-xs);
+  padding: 0 var(--space-3);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.view-toolbar-add-field:hover {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+.view-toolbar-add-field select {
+  height: 24px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+}
+
+.view-toolbar-reset {
+  height: 26px;
+  border-radius: var(--radius-control-xs);
+  padding: 0 var(--space-3);
+  color: var(--danger);
+  font-size: var(--font-ui-sm);
+}
+
+.view-toolbar-reset:hover {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
 .search-query-summary-bar {

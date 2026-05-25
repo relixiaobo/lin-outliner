@@ -1,29 +1,40 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  forwardRef,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '../../api/client';
 import type { FilterOperator, NodeProjection, SortDirection, ViewMode } from '../../api/types';
 import type { DocumentIndex, ToolbarDropdownRequest, ToolbarDropdownSection } from '../../state/document';
 import {
-	  FieldIcon,
-	  FilterIcon,
-	  GroupIcon,
-	  ICON_SIZE,
-	  MoreIcon,
-	  SearchIcon,
-	  SortAscIcon,
-	  SortDescIcon,
-	  TableIcon,
+  AddIcon,
+  CloseIcon,
+  FieldIcon,
+  FilterIcon,
+  GroupIcon,
+  ICON_SIZE,
+  SortAscIcon,
+  SortDescIcon,
+  TableIcon,
 } from '../icons';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { CheckboxMark } from '../primitives/CheckboxMark';
 import { SelectControl } from '../primitives/SelectControl';
 import { TextInputControl } from '../primitives/TextInputControl';
+import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import type { CommandRunner } from '../shared';
 import {
-	  collectViewFieldChoices,
-	  fieldChoiceLabel,
-	  NAME_FIELD,
-	  type ViewConfig,
-	} from './row-model';
+  collectViewFieldChoices,
+  NAME_FIELD,
+  REF_COUNT_FIELD,
+  type ViewConfig,
+} from './row-model';
 
 interface ViewToolbarProps {
   node: NodeProjection;
@@ -35,6 +46,7 @@ interface ViewToolbarProps {
 }
 
 type OpenSection = ToolbarDropdownSection | null;
+type FieldChoice = { id: string; label: string; section: 'System fields' | 'Fields' };
 
 const VIEW_MODES: Array<{ id: ViewMode; label: string }> = [
   { id: 'list', label: 'List' },
@@ -56,11 +68,39 @@ const FILTER_OPERATORS: Array<{ id: FilterOperator; label: string }> = [
   { id: 'before', label: 'Before' },
 ];
 
+// Fields that never make sense to group by: the row text itself and a derived count.
+const GROUP_FIELD_DENYLIST = new Set([NAME_FIELD, REF_COUNT_FIELD]);
+
+const SECTION_TITLES: Record<ToolbarDropdownSection, string> = {
+  view: 'View as',
+  display: 'Display',
+  group: 'Group by',
+  sort: 'Sort by',
+  filter: 'Filter by',
+};
+
+// Field pickers and option lists stay compact; the rule editors (sort/filter)
+// need room for the field/operator/value controls.
+const SECTION_WIDTHS: Record<ToolbarDropdownSection, number> = {
+  view: 240,
+  display: 264,
+  group: 264,
+  sort: 520,
+  filter: 560,
+};
+
 function normalizeValues(raw: string): string[] {
   return raw
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean);
+}
+
+function bySection(choices: FieldChoice[]): Array<{ section: FieldChoice['section']; items: FieldChoice[] }> {
+  const order: FieldChoice['section'][] = ['System fields', 'Fields'];
+  return order
+    .map((section) => ({ section, items: choices.filter((choice) => choice.section === section) }))
+    .filter((group) => group.items.length > 0);
 }
 
 export function ViewToolbar({
@@ -73,6 +113,28 @@ export function ViewToolbar({
 }: ViewToolbarProps) {
   const [open, setOpen] = useState<OpenSection>(null);
   const choices = useMemo(() => collectViewFieldChoices(node, index.byId), [node, index.byId]);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<HTMLButtonElement>(null);
+  const displayRef = useRef<HTMLButtonElement>(null);
+  const groupRef = useRef<HTMLButtonElement>(null);
+  const sortRef = useRef<HTMLButtonElement>(null);
+  const filterRef = useRef<HTMLButtonElement>(null);
+  const buttonRefs: Record<ToolbarDropdownSection, RefObject<HTMLButtonElement | null>> = {
+    view: viewRef,
+    display: displayRef,
+    group: groupRef,
+    sort: sortRef,
+    filter: filterRef,
+  };
+
+  const menuStyle = useAnchoredOverlay(menuRef, {
+    anchorRef: open ? buttonRefs[open] : undefined,
+    disabled: !open,
+    placement: 'bottom-start',
+    width: open ? SECTION_WIDTHS[open] : undefined,
+    layoutKey: `${open ?? ''}:${view.sortRules.length}:${view.filterRules.length}:${view.displayFields.length}`,
+  });
 
   useEffect(() => {
     if (!dropdownRequest || dropdownRequest.nodeId !== node.id) return;
@@ -80,232 +142,430 @@ export function ViewToolbar({
     onDropdownRequestConsumed(dropdownRequest);
   }, [dropdownRequest, node.id, onDropdownRequestConsumed]);
 
-  const toggle = (section: Exclude<OpenSection, null>) => {
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (toolbarRef.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
+      setOpen(null);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(null);
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown, true);
+    };
+  }, [open]);
+
+  const toggle = (section: ToolbarDropdownSection) => {
     setOpen((current) => (current === section ? null : section));
   };
 
+  const visibleDisplayCount = view.displayFields.filter((field) => field.visible).length;
+
   return (
-    <div className="view-toolbar" aria-label="View toolbar">
+    <div className="view-toolbar" aria-label="View toolbar" ref={toolbarRef}>
       <div className="view-toolbar-button-row">
-        <ToolbarButton active={open === 'view'} label="View as" onClick={() => toggle('view')}>
+        <ToolbarButton
+          ref={viewRef}
+          active={view.viewMode !== 'list'}
+          label="View as"
+          open={open === 'view'}
+          onClick={() => toggle('view')}
+        >
           <TableIcon size={ICON_SIZE.menu} />
         </ToolbarButton>
-        <ToolbarButton active={open === 'display'} label="Display" onClick={() => toggle('display')}>
+        <ToolbarButton
+          ref={displayRef}
+          active={visibleDisplayCount > 0}
+          label="Display"
+          open={open === 'display'}
+          onClick={() => toggle('display')}
+        >
           <FieldIcon size={ICON_SIZE.menu} />
         </ToolbarButton>
-        <ToolbarButton active={open === 'group'} label="Group by" onClick={() => toggle('group')}>
+        <ToolbarButton
+          ref={groupRef}
+          active={view.groupField != null}
+          label="Group by"
+          open={open === 'group'}
+          onClick={() => toggle('group')}
+        >
           <GroupIcon size={ICON_SIZE.menu} />
         </ToolbarButton>
-        <ToolbarButton active={open === 'sort'} label="Sort by" onClick={() => toggle('sort')}>
+        <ToolbarButton
+          ref={sortRef}
+          active={view.sortRules.length > 0}
+          badge={view.sortRules.length}
+          label="Sort by"
+          open={open === 'sort'}
+          onClick={() => toggle('sort')}
+        >
           {view.sortRules[0]?.direction === 'desc' ? (
             <SortDescIcon size={ICON_SIZE.menu} />
           ) : (
             <SortAscIcon size={ICON_SIZE.menu} />
           )}
         </ToolbarButton>
-        <ToolbarButton active={open === 'filter'} label="Filter by" onClick={() => toggle('filter')}>
+        <ToolbarButton
+          ref={filterRef}
+          active={view.filterRules.length > 0}
+          badge={view.filterRules.length}
+          label="Filter by"
+          open={open === 'filter'}
+          onClick={() => toggle('filter')}
+        >
           <FilterIcon size={ICON_SIZE.menu} />
         </ToolbarButton>
       </div>
 
-      {open === 'view' && (
-        <ToolbarPanel title="View as">
-          <SelectControl
-            value={view.viewMode}
-            label="View mode"
-            onChange={(event) => {
-              void run(() => api.setViewMode(node.id, event.currentTarget.value as ViewMode));
-            }}
-          >
-            {VIEW_MODES.map((mode) => (
-              <option key={mode.id} value={mode.id}>{mode.label}</option>
-            ))}
-          </SelectControl>
-        </ToolbarPanel>
-      )}
-
-      {open === 'sort' && (
-        <ToolbarPanel title="Sort by">
-          {view.sortRules.map((rule, index) => (
-            <div className="view-toolbar-row" key={rule.id}>
-              <span className="view-toolbar-row-label">{index === 0 ? 'Sort by' : 'Then by'}</span>
-              <SelectControl
-                value={rule.field}
-                label="Sort field"
-                onChange={(event) => {
-                  void run(() => api.updateSortRule(rule.id, event.currentTarget.value, rule.direction));
-                }}
-              >
-                {choices.map((choice) => (
-                  <option key={choice.id} value={choice.id}>{choice.label}</option>
-                ))}
-              </SelectControl>
-              <ButtonControl
-                className="view-toolbar-icon"
-                title={rule.direction === 'desc' ? 'Descending' : 'Ascending'}
-                onClick={() => {
-                  const next: SortDirection = rule.direction === 'desc' ? 'asc' : 'desc';
-                  void run(() => api.updateSortRule(rule.id, rule.field, next));
-                }}
-              >
-                {rule.direction === 'desc' ? (
-                  <SortDescIcon size={ICON_SIZE.menu} />
-                ) : (
-                  <SortAscIcon size={ICON_SIZE.menu} />
-                )}
-              </ButtonControl>
-              <ButtonControl className="view-toolbar-remove" onClick={() => void run(() => api.removeSortRule(rule.id))}>
-                Remove
-              </ButtonControl>
-            </div>
-          ))}
-          <AddFieldSelect
-            label={view.sortRules.length > 0 ? 'Add sort' : 'Sort field'}
-            choices={choices}
-            onSelect={(field) => void run(() => api.addSortRule(node.id, field, 'asc'))}
-          />
-          {view.sortRules.length > 0 && (
-            <ButtonControl className="view-toolbar-danger" onClick={() => void run(() => api.clearSortRules(node.id))}>
-              Reset sort
-            </ButtonControl>
+      {open && createPortal(
+        <div
+          ref={menuRef}
+          aria-label={SECTION_TITLES[open]}
+          className="view-toolbar-popover"
+          role="dialog"
+          style={menuStyle}
+        >
+          <div className="view-toolbar-popover-title">{SECTION_TITLES[open]}</div>
+          {open === 'view' && (
+            <ViewModeSection node={node} run={run} view={view} />
           )}
-        </ToolbarPanel>
-      )}
-
-      {open === 'filter' && (
-        <ToolbarPanel title="Filter by">
-          {view.filterRules.map((rule) => (
-            <div className="view-toolbar-row view-toolbar-filter-row" key={rule.id}>
-              <SelectControl
-                value={rule.field}
-                label="Filter field"
-                onChange={(event) => {
-                  void run(() => api.updateFilterRule(rule.id, { field: event.currentTarget.value }));
-                }}
-              >
-                {choices.map((choice) => (
-                  <option key={choice.id} value={choice.id}>{choice.label}</option>
-                ))}
-              </SelectControl>
-              <SelectControl
-                value={rule.operator}
-                label="Filter operator"
-                onChange={(event) => {
-                  void run(() => api.updateFilterRule(rule.id, { operator: event.currentTarget.value as FilterOperator }));
-                }}
-              >
-                {FILTER_OPERATORS.map((operator) => (
-                  <option key={operator.id} value={operator.id}>{operator.label}</option>
-                ))}
-              </SelectControl>
-              <TextInputControl
-                defaultValue={rule.values.join(', ')}
-                placeholder="value"
-                label="Filter values"
-                onBlur={(event) => {
-                  void run(() => api.updateFilterRule(rule.id, { values: normalizeValues(event.currentTarget.value) }));
-                }}
-                onKeyDown={(event) => {
-                  if (isImeComposingEvent(event)) return;
-                  if (event.key !== 'Enter') return;
-                  event.preventDefault();
-                  event.currentTarget.blur();
-                }}
-              />
-              <ButtonControl className="view-toolbar-remove" onClick={() => void run(() => api.removeFilterRule(rule.id))}>
-                Remove
-              </ButtonControl>
-            </div>
-          ))}
-          <AddFieldSelect
-            label={view.filterRules.length > 0 ? 'Add filter' : 'Filter field'}
-            choices={choices}
-            onSelect={(field) => void run(() => api.addFilterRule(node.id, field, 'contains', [], 'any'))}
-          />
-          {view.filterRules.length > 0 && (
-            <ButtonControl className="view-toolbar-danger" onClick={() => void run(() => api.clearFilterRules(node.id))}>
-              Reset filters
-            </ButtonControl>
+          {open === 'display' && (
+            <DisplaySection choices={choices} node={node} run={run} view={view} />
           )}
-        </ToolbarPanel>
-      )}
-
-      {open === 'group' && (
-        <ToolbarPanel title="Group by">
-          <SelectControl
-            value={view.groupField ?? ''}
-            label="Group field"
-            onChange={(event) => {
-              void run(() => api.setGroupField(node.id, event.currentTarget.value || null));
-            }}
-          >
-            <option value="">No grouping</option>
-            {choices.map((choice) => (
-              <option key={choice.id} value={choice.id}>{choice.label}</option>
-            ))}
-          </SelectControl>
-        </ToolbarPanel>
-      )}
-
-      {open === 'display' && (
-        <ToolbarPanel title="Display">
-          {view.displayFields.map((field) => (
-            <div className="view-toolbar-row" key={field.id}>
-              <span className="view-toolbar-row-label">{fieldChoiceLabel(field.field, index.byId)}</span>
-              <ButtonControl
-                className="view-toolbar-remove"
-                onClick={() => void run(() => api.updateDisplayField(field.id, { visible: !field.visible }))}
-              >
-                {field.visible ? 'Hide' : 'Show'}
-              </ButtonControl>
-              <ButtonControl className="view-toolbar-remove" onClick={() => void run(() => api.removeDisplayField(field.id))}>
-                Remove
-              </ButtonControl>
-            </div>
-          ))}
-          <AddFieldSelect
-            label={view.displayFields.length > 0 ? 'Add field' : 'Display field'}
-            choices={choices}
-            onSelect={(field) => void run(() => api.addDisplayField(node.id, field))}
-          />
-        </ToolbarPanel>
+          {open === 'group' && (
+            <GroupSection choices={choices} node={node} run={run} view={view} />
+          )}
+          {open === 'sort' && (
+            <SortSection choices={choices} node={node} run={run} view={view} />
+          )}
+          {open === 'filter' && (
+            <FilterSection choices={choices} node={node} run={run} view={view} />
+          )}
+        </div>,
+        document.body,
       )}
     </div>
   );
 }
 
-function ToolbarButton({
-  active,
-  label,
-  children,
-  onClick,
-}: {
+const ToolbarButton = forwardRef<HTMLButtonElement, {
   active: boolean;
+  badge?: number;
   label: string;
-  children: ReactNode;
+  open: boolean;
   onClick: () => void;
-}) {
+  children: ReactNode;
+}>(function ToolbarButton({ active, badge, label, open, onClick, children }, ref) {
+  const classes = [
+    'view-toolbar-pill',
+    open ? 'is-open' : '',
+    active && !open ? 'is-active' : '',
+  ].filter(Boolean).join(' ');
   return (
     <ButtonControl
+      ref={ref}
+      aria-expanded={open}
       aria-label={label}
-      className={`view-toolbar-pill ${active ? 'is-active' : ''}`}
+      className={classes}
       title={label}
       onClick={onClick}
     >
       {children}
+      {badge && badge > 0 ? <span className="view-toolbar-pill-count">{badge}</span> : null}
     </ButtonControl>
+  );
+});
+
+function ViewModeSection({
+  node,
+  run,
+  view,
+}: {
+  node: NodeProjection;
+  run: CommandRunner;
+  view: ViewConfig;
+}) {
+  return (
+    <div className="view-toolbar-options">
+      {VIEW_MODES.map((mode) => (
+        <OptionRow
+          key={mode.id}
+          label={mode.label}
+          selected={view.viewMode === mode.id}
+          variant="radio"
+          onSelect={() => void run(() => api.setViewMode(node.id, mode.id))}
+        />
+      ))}
+    </div>
   );
 }
 
-function ToolbarPanel({ title, children }: { title: string; children: ReactNode }) {
+function DisplaySection({
+  choices,
+  node,
+  run,
+  view,
+}: {
+  choices: FieldChoice[];
+  node: NodeProjection;
+  run: CommandRunner;
+  view: ViewConfig;
+}) {
+  // Name is the row text itself and is always shown, so it is not a toggle here.
+  const displayable = choices.filter((choice) => choice.id !== NAME_FIELD);
+  const byField = new Map(view.displayFields.map((field) => [field.field, field]));
+  const groups = bySection(displayable);
   return (
-    <div className="view-toolbar-panel">
-      <div className="view-toolbar-panel-title">
-        <SearchIcon size={ICON_SIZE.menu} />
-        <span>{title}</span>
-      </div>
-      {children}
+    <div className="view-toolbar-options">
+      {groups.map((group) => (
+        <div className="view-toolbar-option-group" key={group.section}>
+          <div className="view-toolbar-option-section">{group.section}</div>
+          {group.items.map((choice) => {
+            const entry = byField.get(choice.id);
+            const checked = Boolean(entry && entry.visible);
+            return (
+              <OptionRow
+                key={choice.id}
+                label={choice.label}
+                selected={checked}
+                variant="checkbox"
+                onSelect={() => {
+                  if (entry) {
+                    void run(() => api.removeDisplayField(entry.id));
+                  } else {
+                    void run(() => api.addDisplayField(node.id, choice.id));
+                  }
+                }}
+              />
+            );
+          })}
+        </div>
+      ))}
     </div>
+  );
+}
+
+function GroupSection({
+  choices,
+  node,
+  run,
+  view,
+}: {
+  choices: FieldChoice[];
+  node: NodeProjection;
+  run: CommandRunner;
+  view: ViewConfig;
+}) {
+  const groupable = choices.filter((choice) => !GROUP_FIELD_DENYLIST.has(choice.id));
+  const groups = bySection(groupable);
+  const current = view.groupField ?? '';
+  return (
+    <div className="view-toolbar-options">
+      <OptionRow
+        label="No grouping"
+        selected={current === ''}
+        variant="radio"
+        onSelect={() => void run(() => api.setGroupField(node.id, null))}
+      />
+      {groups.map((group) => (
+        <div className="view-toolbar-option-group" key={group.section}>
+          <div className="view-toolbar-option-section">{group.section}</div>
+          {group.items.map((choice) => (
+            <OptionRow
+              key={choice.id}
+              label={choice.label}
+              selected={current === choice.id}
+              variant="radio"
+              onSelect={() => void run(() => api.setGroupField(node.id, choice.id))}
+            />
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SortSection({
+  choices,
+  node,
+  run,
+  view,
+}: {
+  choices: FieldChoice[];
+  node: NodeProjection;
+  run: CommandRunner;
+  view: ViewConfig;
+}) {
+  return (
+    <div className="view-toolbar-rules">
+      {view.sortRules.map((rule, index) => (
+        <div className="view-toolbar-rule" key={rule.id}>
+          <span className="view-toolbar-rule-label">{index === 0 ? 'Sort by' : 'Then by'}</span>
+          <SelectControl
+            label="Sort field"
+            value={rule.field}
+            onChange={(event) => {
+              void run(() => api.updateSortRule(rule.id, event.currentTarget.value, rule.direction));
+            }}
+          >
+            {choices.map((choice) => (
+              <option key={choice.id} value={choice.id}>{choice.label}</option>
+            ))}
+          </SelectControl>
+          <ButtonControl
+            className="view-toolbar-rule-direction"
+            title={rule.direction === 'desc' ? 'Descending' : 'Ascending'}
+            onClick={() => {
+              const next: SortDirection = rule.direction === 'desc' ? 'asc' : 'desc';
+              void run(() => api.updateSortRule(rule.id, rule.field, next));
+            }}
+          >
+            {rule.direction === 'desc' ? (
+              <SortDescIcon size={ICON_SIZE.menu} />
+            ) : (
+              <SortAscIcon size={ICON_SIZE.menu} />
+            )}
+            <span>{rule.direction === 'desc' ? 'Descending' : 'Ascending'}</span>
+          </ButtonControl>
+          <ButtonControl
+            aria-label="Remove sort rule"
+            className="view-toolbar-rule-remove"
+            title="Remove"
+            onClick={() => void run(() => api.removeSortRule(rule.id))}
+          >
+            <CloseIcon size={ICON_SIZE.menu} />
+          </ButtonControl>
+        </div>
+      ))}
+      <div className="view-toolbar-rule-actions">
+        <AddFieldSelect
+          choices={choices}
+          label={view.sortRules.length > 0 ? 'Add sort' : 'Sort field'}
+          onSelect={(field) => void run(() => api.addSortRule(node.id, field, 'asc'))}
+        />
+        {view.sortRules.length > 0 && (
+          <ButtonControl
+            className="view-toolbar-reset"
+            onClick={() => void run(() => api.clearSortRules(node.id))}
+          >
+            Reset
+          </ButtonControl>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FilterSection({
+  choices,
+  node,
+  run,
+  view,
+}: {
+  choices: FieldChoice[];
+  node: NodeProjection;
+  run: CommandRunner;
+  view: ViewConfig;
+}) {
+  return (
+    <div className="view-toolbar-rules">
+      {view.filterRules.map((rule) => (
+        <div className="view-toolbar-rule view-toolbar-rule-filter" key={rule.id}>
+          <SelectControl
+            label="Filter field"
+            value={rule.field}
+            onChange={(event) => {
+              void run(() => api.updateFilterRule(rule.id, { field: event.currentTarget.value }));
+            }}
+          >
+            {choices.map((choice) => (
+              <option key={choice.id} value={choice.id}>{choice.label}</option>
+            ))}
+          </SelectControl>
+          <SelectControl
+            label="Filter operator"
+            value={rule.operator}
+            onChange={(event) => {
+              void run(() => api.updateFilterRule(rule.id, { operator: event.currentTarget.value as FilterOperator }));
+            }}
+          >
+            {FILTER_OPERATORS.map((operator) => (
+              <option key={operator.id} value={operator.id}>{operator.label}</option>
+            ))}
+          </SelectControl>
+          <TextInputControl
+            defaultValue={rule.values.join(', ')}
+            label="Filter values"
+            placeholder="value"
+            onBlur={(event) => {
+              void run(() => api.updateFilterRule(rule.id, { values: normalizeValues(event.currentTarget.value) }));
+            }}
+            onKeyDown={(event) => {
+              if (isImeComposingEvent(event)) return;
+              if (event.key !== 'Enter') return;
+              event.preventDefault();
+              event.currentTarget.blur();
+            }}
+          />
+          <ButtonControl
+            aria-label="Remove filter rule"
+            className="view-toolbar-rule-remove"
+            title="Remove"
+            onClick={() => void run(() => api.removeFilterRule(rule.id))}
+          >
+            <CloseIcon size={ICON_SIZE.menu} />
+          </ButtonControl>
+        </div>
+      ))}
+      <div className="view-toolbar-rule-actions">
+        <AddFieldSelect
+          choices={choices}
+          label={view.filterRules.length > 0 ? 'Add filter' : 'Filter field'}
+          onSelect={(field) => void run(() => api.addFilterRule(node.id, field, 'contains', [], 'any'))}
+        />
+        {view.filterRules.length > 0 && (
+          <ButtonControl
+            className="view-toolbar-reset"
+            onClick={() => void run(() => api.clearFilterRules(node.id))}
+          >
+            Reset
+          </ButtonControl>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function OptionRow({
+  label,
+  selected,
+  variant,
+  onSelect,
+}: {
+  label: ReactNode;
+  selected: boolean;
+  variant: 'checkbox' | 'radio';
+  onSelect: () => void;
+}) {
+  return (
+    <ButtonControl
+      aria-pressed={selected}
+      className={`view-toolbar-option ${selected ? 'is-selected' : ''}`}
+      onClick={onSelect}
+    >
+      {variant === 'checkbox' ? (
+        <CheckboxMark checked={selected} />
+      ) : (
+        <span className={selected ? 'view-toolbar-radio checked' : 'view-toolbar-radio'} aria-hidden="true" />
+      )}
+      <span className="view-toolbar-option-label">{label}</span>
+    </ButtonControl>
   );
 }
 
@@ -315,15 +575,15 @@ function AddFieldSelect({
   onSelect,
 }: {
   label: string;
-  choices: Array<{ id: string; label: string }>;
+  choices: FieldChoice[];
   onSelect: (field: string) => void;
 }) {
   return (
     <label className="view-toolbar-add-field">
-      <MoreIcon size={ICON_SIZE.menu} />
+      <AddIcon size={ICON_SIZE.menu} />
       <SelectControl
-        value=""
         label={label}
+        value=""
         onChange={(event) => {
           const field = event.currentTarget.value || NAME_FIELD;
           onSelect(field);
