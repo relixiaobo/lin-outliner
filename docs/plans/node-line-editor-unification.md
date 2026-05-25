@@ -8,11 +8,18 @@ updated: 2026-05-25
 
 # Node-line Editor Unification
 
-> **Progress (branch `cc/node-line-editor-unification`).** Phase 1 shipped: a
-> shared `classifyMediaPaste` helper (`src/renderer/ui/interactions/clipboardPaste.ts`)
-> now classifies the media/URL front-matter of a paste for both editors;
-> `RichTextEditor` and `TrailingInput` call it instead of each detecting image
-> files / image URLs / link URLs themselves.
+> **Progress.** Phase 1 shipped (PR #11): a shared `classifyMediaPaste` helper
+> classifies the media/URL front-matter of a paste for both editors.
+>
+> Phase 2a in progress (branch `cc/node-line-editor-core`): a shared
+> `src/renderer/ui/editor/nodeLineView.ts` now owns the view helpers both
+> editors had duplicated — `caretAnchor`, `selectionTextOffsets`, and a unified
+> `selectionForPlacement` / `applyCursorPlacement` for resolving a
+> `CursorPlacement` on the single-paragraph node-line doc. `RichTextEditor` and
+> `TrailingInput` both delegate to it (the trailing input's bespoke
+> `setTrailingSelection` and its inline-ref-blind `1 + offset` math are gone;
+> the shared inline-ref-aware version reduces to the same thing for plain text,
+> pinned by `tests/renderer/nodeLineView.test.ts`).
 
 A node line — one editable line of node text — is rendered by **two
 independent ProseMirror `EditorView` instances**:
@@ -74,7 +81,8 @@ rather than manual synchronization.
 | Phase | Content | Risk |
 |-------|---------|------|
 | **1. Shared paste classifier** ✅ | `classifyMediaPaste` for the image / media-URL / link-URL front-matter; both editors call it. Behavior-preserving. | low |
-| **2. `useNodeLineEditor` core + `resolveTargetId`** | Build the view + plugins + keymap + trigger pipeline + IME + focus once; both editors become thin wrappers. Includes unifying trigger detection (see finding below) and routing trigger application through `resolveTargetId`, deleting the trailing input's bespoke `onApply*Trigger` props. The large, high-risk PR. | high |
+| **2a. Shared view helpers** ✅ | `nodeLineView.ts`: `caretAnchor`, `selectionTextOffsets`, unified `selectionForPlacement` / `applyCursorPlacement`. Both editors delegate. Behavior-preserving (equivalence pinned by headless unit tests). | low |
+| **2b. `useNodeLineEditor` core + `resolveTargetId`** | Build the view + plugins + keymap + trigger pipeline + IME + focus once; both editors become thin wrappers. Includes unifying trigger detection (see finding below) and routing trigger application through `resolveTargetId`, deleting the trailing input's bespoke `onApply*Trigger` props. The large, high-risk PR. | high |
 
 ### Finding: trigger detection is not a safe standalone extraction
 
