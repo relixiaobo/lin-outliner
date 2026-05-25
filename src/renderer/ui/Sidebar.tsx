@@ -256,7 +256,7 @@ function systemIconForNode(nodeId: NodeId, projection: DocumentProjection): AppI
 }
 
 function nodeIconOf(node: NodeProjection) {
-  const icon = (node as { icon?: unknown }).icon;
+  const icon = node.icon;
   return typeof icon === 'string' && icon.trim() ? icon.trim() : null;
 }
 

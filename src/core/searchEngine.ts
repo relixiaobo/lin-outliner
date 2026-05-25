@@ -204,15 +204,17 @@ export function runSearchExpr(
     if (evaluation.match) scored.push({ nodeId: node.id, score: evaluation.score });
   }
 
-  const sorted = sortSearchHits(scored, evalIndex.nodes, contextSearchNode);
+  const sorted = sortSearchHits(scored, evalIndex, contextSearchNode);
   return { ok: true, hits: typeof options.limit === 'number' ? sorted.slice(0, options.limit) : sorted };
 }
 
-function sortSearchHits(hits: SearchHit[], nodes: Map<NodeId, SearchNode>, searchNode: SearchNode): SearchHit[] {
-  const direction: SortDirection = searchNode.sortDirection === 'asc' ? 'asc' : 'desc';
+function sortSearchHits(hits: SearchHit[], index: SearchIndex, searchNode: SearchNode): SearchHit[] {
+  const sortRule = searchNodeSortRule(index, searchNode);
+  const nodes = index.nodes;
+  const direction: SortDirection = sortRule?.direction === 'asc' ? 'asc' : 'desc';
   const factor = direction === 'asc' ? 1 : -1;
-  if (searchNode.sortField === 'createdAt' || searchNode.sortField === 'updatedAt') {
-    const field = searchNode.sortField;
+  if (sortRule?.field === 'sys:createdAt' || sortRule?.field === 'sys:updatedAt') {
+    const field = sortRule.field === 'sys:createdAt' ? 'createdAt' : 'updatedAt';
     return hits.sort((left, right) => {
       const leftNode = nodes.get(left.nodeId);
       const rightNode = nodes.get(right.nodeId);
@@ -224,6 +226,18 @@ function sortSearchHits(hits: SearchHit[], nodes: Map<NodeId, SearchNode>, searc
     });
   }
   return hits.sort((left, right) => right.score - left.score || left.nodeId.localeCompare(right.nodeId));
+}
+
+function searchNodeSortRule(index: SearchIndex, searchNode: SearchNode): { field: string; direction: SortDirection } | null {
+  const viewDef = searchNode.children
+    .map((childId) => index.nodes.get(childId))
+    .find((child) => child?.type === 'viewDef');
+  const sortRule = viewDef?.children
+    .map((childId) => index.nodes.get(childId))
+    .find((child) => child?.type === 'sortRule' && child.sortField);
+  return sortRule?.sortField
+    ? { field: sortRule.sortField, direction: sortRule.sortDirection === 'desc' ? 'desc' : 'asc' }
+    : null;
 }
 
 export function runSearchNode(
@@ -734,8 +748,6 @@ function virtualNode(
     doneStateEnabled: false,
     autocollectOptions: false,
     autoCollected: false,
-    toolbarVisible: false,
-    filterValues: [],
   };
 }
 

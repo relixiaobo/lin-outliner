@@ -459,6 +459,12 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
               cursorEnd(),
             ));
           }}
+          onOpenViewSection={(nodeId, section) => {
+            props.setUi((prev) => ({
+              ...prev,
+              toolbarDropdownRequest: { nodeId, section, nonce: Date.now() },
+            }));
+          }}
           onClose={() => setContextMenu(null)}
         />
       )}

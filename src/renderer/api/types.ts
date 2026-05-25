@@ -20,11 +20,13 @@ export type {
   FieldCardinality,
   FieldConfigPatch,
   FieldType,
-  FilterOp,
+  FilterOperator,
+  FilterValueLogic,
   FocusPlacement,
   FocusHint,
   FocusSurface,
   HideFieldMode,
+  IconKind,
   InlineRef,
   InlineRefCursorBias,
   NodeId,
@@ -41,6 +43,8 @@ export type {
   TagConfigPatch,
   TextMark,
   TextMarkKind,
+  ViewFieldRef,
+  ViewMode,
 } from '../../core/types';
 
 export { EMPTY_RICH_TEXT, plainText, replaceAllRichTextPatch } from '../../core/types';

@@ -33,8 +33,8 @@ import { useWorkspaceTabs } from './useWorkspaceTabs';
 import type { WorkspacePanelState } from './workspaceLayoutTypes';
 
 function nodeIconOf(node: NodeProjection | undefined) {
-  if (!node || !('icon' in node)) return null;
-  const icon = (node as { icon?: unknown }).icon;
+  if (!node) return null;
+  const icon = node.icon;
   return typeof icon === 'string' && icon.trim() ? icon.trim() : null;
 }
 

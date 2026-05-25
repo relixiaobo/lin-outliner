@@ -13,7 +13,7 @@ import {
   revisionOf,
   tagLabels,
 } from './agentNodeToolProjection';
-import { searchQueryOutlineLines } from './agentNodeToolSearch';
+import { searchQueryOutlineLines, searchViewModeOf } from './agentNodeToolSearch';
 import type {
   ChildrenPage,
   NodeChildSummary,
@@ -209,7 +209,8 @@ function serializeOutlineNode(
 function outlineNodeText(index: ProjectionIndex, node: NodeProjection): string {
   const parts: string[] = [];
   if (node.type === 'search') parts.push('%%search%%');
-  if (node.viewMode) parts.push(`%%view:${node.viewMode}%%`);
+  const viewMode = node.type === 'search' ? searchViewModeOf(index, node) : node.viewMode;
+  if (viewMode) parts.push(`%%view:${viewMode}%%`);
   if (node.completedAt) parts.push('[x]');
   else if (node.showCheckbox) parts.push('[ ]');
   parts.push((referenceText(index, node) ?? node.content.text) || '(untitled)');

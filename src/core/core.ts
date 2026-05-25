@@ -41,8 +41,11 @@ import {
   type FieldCardinality,
   type FieldConfigPatch,
   type FieldType,
-  type FilterOp,
+  type DisplayPlacement,
+  type FilterOperator,
+  type FilterValueLogic,
   type FocusHint,
+  type IconKind,
   type Node,
   type NodeId,
   type NodeType,
@@ -59,6 +62,8 @@ import {
   type SortDirection,
   type TagConfigPatch,
   type TextMark,
+  type ViewFieldRef,
+  type ViewMode,
 } from './types';
 
 type Mutator = () => FocusHint | undefined;
@@ -365,41 +370,205 @@ export class Core {
     });
   }
 
-  setNodeToolbarVisible(nodeId: string, visible: boolean): CommandOutcome {
-    return this.patchNode(nodeId, (node) => {
-      node.toolbarVisible = visible;
+  setViewToolbarVisible(nodeId: string, visible: boolean): CommandOutcome {
+    return this.mutate(() => {
+      this.patchViewDefDirect(nodeId, (viewDef) => {
+        viewDef.toolbarVisible = visible;
+      });
+      return focus(nodeId);
     });
   }
 
-  setNodeSort(nodeId: string, field: string | null | undefined, direction?: SortDirection | null): CommandOutcome {
-    return this.patchNode(nodeId, (node) => {
-      setOptional(node, 'sortField', normalizeOptionalText(field));
-      if (node.sortField) node.sortDirection = direction ?? 'asc';
-      else delete node.sortDirection;
+  setViewMode(nodeId: string, mode: ViewMode): CommandOutcome {
+    return this.mutate(() => {
+      this.patchViewDefDirect(nodeId, (viewDef) => {
+        viewDef.viewMode = mode;
+      });
+      return focus(nodeId);
     });
   }
 
-  setNodeFilter(
+  addSortRule(nodeId: string, field: ViewFieldRef, direction: SortDirection = 'asc'): CommandOutcome {
+    return this.mutate(() => {
+      const viewDefId = this.ensureViewDefDirect(nodeId);
+      this.loro.createNodeWithId(freshId('sort'), viewDefId, undefined, 'sortRule', (node) => {
+        node.sortField = normalizeRequiredText(field, 'sort field');
+        node.sortDirection = direction === 'desc' ? 'desc' : 'asc';
+      });
+      return focus(nodeId);
+    });
+  }
+
+  updateSortRule(ruleId: string, field: ViewFieldRef, direction: SortDirection = 'asc'): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      const node = clone(requiredNode(state, ruleId));
+      if (node.type !== 'sortRule') throw CoreError.invalidOperation('expected a sort rule');
+      node.sortField = normalizeRequiredText(field, 'sort field');
+      node.sortDirection = direction === 'desc' ? 'desc' : 'asc';
+      node.updatedAt = nowMs();
+      this.loro.writeNode(node);
+      return focus(ruleId);
+    });
+  }
+
+  removeSortRule(ruleId: string): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      const node = requiredNode(state, ruleId);
+      if (node.type !== 'sortRule') throw CoreError.invalidOperation('expected a sort rule');
+      const parentId = node.parentId;
+      this.removeSubtreeDirect(ruleId);
+      return parentId ? focus(parentId) : undefined;
+    });
+  }
+
+  clearSortRules(nodeId: string): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      for (const rule of this.viewDefChildren(state, nodeId, 'sortRule')) this.removeSubtreeDirect(rule.id);
+      return focus(nodeId);
+    });
+  }
+
+  addFilterRule(
     nodeId: string,
-    field: string | null | undefined,
-    op?: FilterOp | null,
+    field: ViewFieldRef,
+    operator: FilterOperator = 'contains',
     values: string[] = [],
+    valueLogic: FilterValueLogic = 'any',
   ): CommandOutcome {
-    return this.patchNode(nodeId, (node) => {
-      setOptional(node, 'filterField', normalizeOptionalText(field));
-      if (node.filterField) {
-        node.filterOp = op ?? 'all';
+    return this.mutate(() => {
+      const viewDefId = this.ensureViewDefDirect(nodeId);
+      this.loro.createNodeWithId(freshId('filter'), viewDefId, undefined, 'filterRule', (node) => {
+        node.filterField = normalizeRequiredText(field, 'filter field');
+        node.filterOperator = normalizeFilterOperator(operator);
+        node.filterValueLogic = valueLogic === 'all' ? 'all' : 'any';
         node.filterValues = normalizeTextList(values);
-      } else {
-        delete node.filterOp;
-        node.filterValues = [];
-      }
+      });
+      return focus(nodeId);
     });
   }
 
-  setNodeGroup(nodeId: string, field: string | null | undefined): CommandOutcome {
-    return this.patchNode(nodeId, (node) => {
-      setOptional(node, 'groupField', normalizeOptionalText(field));
+  updateFilterRule(
+    ruleId: string,
+    patch: {
+      field?: ViewFieldRef | null;
+      operator?: FilterOperator | null;
+      values?: string[] | null;
+      valueLogic?: FilterValueLogic | null;
+    },
+  ): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      const node = clone(requiredNode(state, ruleId));
+      if (node.type !== 'filterRule') throw CoreError.invalidOperation('expected a filter rule');
+      if (patch.field !== undefined && patch.field !== null) node.filterField = normalizeRequiredText(patch.field, 'filter field');
+      if (patch.operator !== undefined && patch.operator !== null) node.filterOperator = normalizeFilterOperator(patch.operator);
+      if (patch.valueLogic !== undefined && patch.valueLogic !== null) node.filterValueLogic = patch.valueLogic === 'all' ? 'all' : 'any';
+      if (patch.values !== undefined && patch.values !== null) node.filterValues = normalizeTextList(patch.values);
+      node.updatedAt = nowMs();
+      this.loro.writeNode(node);
+      return focus(ruleId);
+    });
+  }
+
+  removeFilterRule(ruleId: string): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      const node = requiredNode(state, ruleId);
+      if (node.type !== 'filterRule') throw CoreError.invalidOperation('expected a filter rule');
+      const parentId = node.parentId;
+      this.removeSubtreeDirect(ruleId);
+      return parentId ? focus(parentId) : undefined;
+    });
+  }
+
+  clearFilterRules(nodeId: string): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      for (const rule of this.viewDefChildren(state, nodeId, 'filterRule')) this.removeSubtreeDirect(rule.id);
+      return focus(nodeId);
+    });
+  }
+
+  setGroupField(nodeId: string, field: ViewFieldRef | null | undefined): CommandOutcome {
+    return this.mutate(() => {
+      this.patchViewDefDirect(nodeId, (viewDef) => {
+        setOptional(viewDef, 'groupField', normalizeOptionalText(field));
+      });
+      return focus(nodeId);
+    });
+  }
+
+  addDisplayField(nodeId: string, field: ViewFieldRef): CommandOutcome {
+    return this.mutate(() => {
+      const viewDefId = this.ensureViewDefDirect(nodeId);
+      this.loro.createNodeWithId(freshId('display'), viewDefId, undefined, 'displayField', (node) => {
+        node.displayField = normalizeRequiredText(field, 'display field');
+        node.displayVisible = true;
+      });
+      return focus(nodeId);
+    });
+  }
+
+  updateDisplayField(
+    displayFieldId: string,
+    patch: {
+      field?: ViewFieldRef | null;
+      visible?: boolean | null;
+      width?: number | null;
+      order?: number | null;
+      label?: string | null;
+      placement?: DisplayPlacement | null;
+    },
+  ): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      const node = clone(requiredNode(state, displayFieldId));
+      if (node.type !== 'displayField') throw CoreError.invalidOperation('expected a display field');
+      if (patch.field !== undefined && patch.field !== null) node.displayField = normalizeRequiredText(patch.field, 'display field');
+      if (patch.visible !== undefined && patch.visible !== null) node.displayVisible = patch.visible;
+      if (patch.width !== undefined) setOptional(node, 'displayWidth', patch.width ?? undefined);
+      if (patch.order !== undefined) setOptional(node, 'displayOrder', patch.order ?? undefined);
+      if (patch.label !== undefined) setOptional(node, 'displayLabel', normalizeOptionalText(patch.label));
+      if (patch.placement !== undefined) setOptional(node, 'displayPlacement', normalizeOptionalText(patch.placement) as DisplayPlacement | undefined);
+      node.updatedAt = nowMs();
+      this.loro.writeNode(node);
+      return focus(displayFieldId);
+    });
+  }
+
+  removeDisplayField(displayFieldId: string): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      const node = requiredNode(state, displayFieldId);
+      if (node.type !== 'displayField') throw CoreError.invalidOperation('expected a display field');
+      const parentId = node.parentId;
+      this.removeSubtreeDirect(displayFieldId);
+      return parentId ? focus(parentId) : undefined;
+    });
+  }
+
+  setNodeIcon(nodeId: string, icon: string | null | undefined, iconKind?: IconKind | null): CommandOutcome {
+    return this.patchNodeAppearance(nodeId, (node) => {
+      setOptional(node, 'icon', normalizeOptionalText(icon));
+      if (node.icon) node.iconKind = iconKind ?? 'emoji';
+      else delete node.iconKind;
+    });
+  }
+
+  setNodeBanner(nodeId: string, assetId: string | null | undefined, position?: { x?: number | null; y?: number | null } | null): CommandOutcome {
+    return this.patchNodeAppearance(nodeId, (node) => {
+      setOptional(node, 'bannerAssetId', normalizeOptionalText(assetId));
+      if (node.bannerAssetId) {
+        if (position?.x !== undefined) setOptional(node, 'bannerPositionX', position.x ?? undefined);
+        if (position?.y !== undefined) setOptional(node, 'bannerPositionY', position.y ?? undefined);
+      } else {
+        delete node.bannerPositionX;
+        delete node.bannerPositionY;
+        delete node.bannerAlt;
+      }
     });
   }
 
@@ -1200,6 +1369,52 @@ export class Core {
     });
   }
 
+  private patchNodeAppearance(nodeId: string, patch: (node: Node) => void): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      const node = clone(requiredNode(state, nodeId));
+      patch(node);
+      node.updatedAt = nowMs();
+      this.loro.writeNode(node);
+      return focus(nodeId);
+    });
+  }
+
+  private ensureViewDefDirect(nodeId: string): NodeId {
+    const state = this.snapshot();
+    requiredNode(state, nodeId);
+    const existing = state.nodes[nodeId]?.children
+      .map((childId) => state.nodes[childId])
+      .find((child): child is Node => child?.type === 'viewDef');
+    if (existing) return existing.id;
+    const viewDefId = freshId('view');
+    this.loro.createNodeWithId(viewDefId, nodeId, 0, 'viewDef', (node) => {
+      node.viewMode = 'list';
+      node.toolbarVisible = false;
+    });
+    return viewDefId;
+  }
+
+  private patchViewDefDirect(nodeId: string, patch: (viewDef: Node) => void) {
+    const viewDefId = this.ensureViewDefDirect(nodeId);
+    const state = this.snapshot();
+    const viewDef = clone(requiredNode(state, viewDefId));
+    if (viewDef.type !== 'viewDef') throw CoreError.invalidOperation('expected a view definition');
+    patch(viewDef);
+    viewDef.updatedAt = nowMs();
+    this.loro.writeNode(viewDef);
+  }
+
+  private viewDefChildren(state: DocumentState, nodeId: string, type: NodeType): Node[] {
+    const viewDef = state.nodes[nodeId]?.children
+      .map((childId) => state.nodes[childId])
+      .find((child): child is Node => child?.type === 'viewDef');
+    if (!viewDef) return [];
+    return viewDef.children
+      .map((childId) => state.nodes[childId])
+      .filter((child): child is Node => child?.type === type);
+  }
+
   private mutate(mutator: Mutator): CommandOutcome {
     if (this.activeTransaction) {
       const focusHint = mutator();
@@ -1329,11 +1544,6 @@ export class Core {
     const node = clone(requiredNode(state, nodeId));
     node.type = 'search';
     node.content = plainText(normalizeSearchTitle(config.title));
-    setOptional(node, 'viewMode', normalizeOptionalText(config.viewMode ?? null));
-    setOptional(node, 'sortField', normalizeOptionalText(config.sortField ?? null));
-    node.sortDirection = config.sortDirection === 'asc' || config.sortDirection === 'desc'
-      ? config.sortDirection
-      : undefined;
     delete node.queryOp;
     delete node.queryLogic;
     delete node.queryTagDefId;
@@ -1464,19 +1674,33 @@ export class Core {
     const queryCondition = recents.children
       .map((childId) => state.nodes[childId])
       .find((node) => node?.type === 'queryCondition');
+    const viewDef = recents.children
+      .map((childId) => state.nodes[childId])
+      .find((node) => node?.type === 'viewDef');
+    const sortRule = viewDef?.children
+      .map((childId) => state.nodes[childId])
+      .find((node) => node?.type === 'sortRule');
     const alreadyConfigured = recents.type === 'search'
       && recents.content.text === 'Recents'
-      && recents.sortField === 'updatedAt'
-      && recents.sortDirection === 'desc'
+      && viewDef?.viewMode === 'list'
+      && sortRule?.sortField === 'sys:updatedAt'
+      && sortRule.sortDirection === 'desc'
       && queryCondition?.queryOp === 'EDITED_LAST_DAYS'
       && queryCondition.content.text === '30';
     if (alreadyConfigured) return;
     this.writeSearchNodeConfigDirect(RECENTS_ID, {
       title: 'Recents',
-      viewMode: 'list',
-      sortField: 'updatedAt',
-      sortDirection: 'desc',
       query: { kind: 'rule', op: 'EDITED_LAST_DAYS', text: '30' },
+    });
+    this.patchViewDefDirect(RECENTS_ID, (node) => {
+      node.viewMode = 'list';
+    });
+    const latest = this.snapshot();
+    for (const rule of this.viewDefChildren(latest, RECENTS_ID, 'sortRule')) this.removeSubtreeDirect(rule.id);
+    const viewDefId = this.ensureViewDefDirect(RECENTS_ID);
+    this.loro.createNodeWithId(freshId('sort'), viewDefId, undefined, 'sortRule', (node) => {
+      node.sortField = 'sys:updatedAt';
+      node.sortDirection = 'desc';
     });
   }
 
@@ -2124,6 +2348,27 @@ function normalizeOptionalText(value: string | null | undefined): string | undef
   return normalized ? normalized : undefined;
 }
 
+function normalizeRequiredText(value: string, label: string): string {
+  const normalized = normalizeOptionalText(value);
+  if (!normalized) throw CoreError.invalidOperation(`${label} is required`);
+  return normalized;
+}
+
+function normalizeFilterOperator(value: FilterOperator): FilterOperator {
+  return [
+    'is',
+    'is_not',
+    'contains',
+    'not_contains',
+    'is_empty',
+    'is_not_empty',
+    'gt',
+    'lt',
+    'before',
+    'after',
+  ].includes(value) ? value : 'contains';
+}
+
 function normalizeSearchTitle(value: string) {
   return value.trim() || 'Search';
 }
@@ -2268,7 +2513,7 @@ function isDisposableLegacyParaNode(node: Node, title: string) {
     && node.content.marks.length === 0
     && node.content.inlineRefs.length === 0
     && node.tags.length === 0
-    && node.filterValues.length === 0
+    && (node.filterValues?.length ?? 0) === 0
     && !node.description;
 }
 

@@ -76,6 +76,7 @@ export {
   Square as StopIcon,
   Strikethrough as StrikeIcon,
   TableProperties as FieldIcon,
+  Table2 as TableIcon,
   Terminal as TerminalIcon,
   ToggleLeft as BooleanIcon,
   Trash2 as TrashIcon,

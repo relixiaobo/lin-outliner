@@ -5,18 +5,26 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { DocumentCommand } from '../core/commands';
 import { Core, type CoreTransactionMetadata, type OperationHistoryQuery } from '../core/core';
+import { CoreError } from '../core/errors';
 import type {
   DocumentProjectionChangedEvent,
+  DisplayPlacement,
   FieldConfigPatch,
   FieldType,
-  FilterOp,
+  FilterOperator,
+  FilterValueLogic,
   FocusPlacement,
+  IconKind,
   RichText,
   RichTextPatch,
   SearchNodeConfig,
   SortDirection,
   TagConfigPatch,
+  ViewMode,
 } from '../core/types';
+import { parseLinOutline } from './agentOutlineParser';
+import { indexProjection } from './agentNodeToolProjection';
+import { resolveSearchSpecFromOutlineNode } from './agentNodeToolSearch';
 
 const WORKSPACE_FILE = 'workspace.loro.json';
 
@@ -225,19 +233,61 @@ export class DocumentService {
         return this.core.updateNodeDescription(String(args.nodeId), nullableString(args.description));
       case 'set_node_checkbox_visible':
         return this.core.setNodeCheckboxVisible(String(args.nodeId), Boolean(args.visible));
-      case 'set_node_toolbar_visible':
-        return this.core.setNodeToolbarVisible(String(args.nodeId), Boolean(args.visible));
-      case 'set_node_sort':
-        return this.core.setNodeSort(String(args.nodeId), nullableString(args.field), sortDirection(args.direction));
-      case 'set_node_filter':
-        return this.core.setNodeFilter(
+      case 'set_view_toolbar_visible':
+        return this.core.setViewToolbarVisible(String(args.nodeId), Boolean(args.visible));
+      case 'set_view_mode':
+        return this.core.setViewMode(String(args.nodeId), viewMode(args.mode));
+      case 'add_sort_rule':
+        return this.core.addSortRule(String(args.nodeId), String(args.field), sortDirection(args.direction) ?? 'asc');
+      case 'update_sort_rule':
+        return this.core.updateSortRule(String(args.ruleId), String(args.field), sortDirection(args.direction) ?? 'asc');
+      case 'remove_sort_rule':
+        return this.core.removeSortRule(String(args.ruleId));
+      case 'clear_sort_rules':
+        return this.core.clearSortRules(String(args.nodeId));
+      case 'add_filter_rule':
+        return this.core.addFilterRule(
           String(args.nodeId),
-          nullableString(args.field),
-          filterOp(args.op),
+          String(args.field),
+          filterOperator(args.operator),
           arrayArg(args.values),
+          filterValueLogic(args.valueLogic),
         );
-      case 'set_node_group':
-        return this.core.setNodeGroup(String(args.nodeId), nullableString(args.field));
+      case 'update_filter_rule':
+        return this.core.updateFilterRule(String(args.ruleId), {
+          field: nullableString(args.field),
+          operator: args.operator === undefined ? undefined : filterOperator(args.operator),
+          values: args.values === undefined ? undefined : arrayArg(args.values),
+          valueLogic: args.valueLogic === undefined ? undefined : filterValueLogic(args.valueLogic),
+        });
+      case 'remove_filter_rule':
+        return this.core.removeFilterRule(String(args.ruleId));
+      case 'clear_filter_rules':
+        return this.core.clearFilterRules(String(args.nodeId));
+      case 'set_group_field':
+        return this.core.setGroupField(String(args.nodeId), nullableString(args.field));
+      case 'add_display_field':
+        return this.core.addDisplayField(String(args.nodeId), String(args.field));
+      case 'update_display_field':
+        return this.core.updateDisplayField(String(args.displayFieldId), {
+          field: nullableString(args.field),
+          visible: args.visible === undefined ? undefined : Boolean(args.visible),
+          width: nullableNumber(args.width),
+          order: nullableNumber(args.order),
+          label: nullableString(args.label),
+          placement: displayPlacement(args.placement),
+        });
+      case 'remove_display_field':
+        return this.core.removeDisplayField(String(args.displayFieldId));
+      case 'set_node_icon':
+        return this.core.setNodeIcon(String(args.nodeId), nullableString(args.icon), iconKind(args.iconKind));
+      case 'set_node_banner':
+        return this.core.setNodeBanner(String(args.nodeId), nullableString(args.assetId), {
+          x: nullableNumber(args.positionX),
+          y: nullableNumber(args.positionY),
+        });
+      case 'set_search_query_outline':
+        return this.setSearchQueryOutline(String(args.nodeId), String(args.queryOutline ?? ''));
       case 'merge_node_into':
         return this.core.mergeNodeInto(String(args.nodeId), String(args.targetId));
       case 'move_node':
@@ -353,6 +403,35 @@ export class DocumentService {
     }
   }
 
+  private setSearchQueryOutline(nodeId: string, queryOutline: string) {
+    const projection = this.core.projection();
+    const searchNode = projection.nodes.find((node) => node.id === nodeId);
+    if (!searchNode) throw CoreError.nodeNotFound(nodeId);
+    if (searchNode.type !== 'search') throw CoreError.invalidOperation('expected a search node');
+
+    const trimmed = queryOutline.trim();
+    if (!trimmed) throw CoreError.invalidOperation('search query cannot be empty');
+
+    const outline = [
+      '- %%search%% Query',
+      ...trimmed.split('\n').map((line) => `  ${line}`),
+    ].join('\n');
+    const parsed = parseLinOutline(outline, { annotations: 'forbid' });
+    if (!parsed.ok) {
+      throw CoreError.invalidOperation(`${parsed.error.message} Line ${parsed.error.line}, column ${parsed.error.column}.`);
+    }
+
+    const root = parsed.document.roots[0];
+    if (!root) throw CoreError.invalidOperation('search query cannot be empty');
+    const spec = resolveSearchSpecFromOutlineNode(indexProjection(projection), root);
+    if ('error' in spec) throw CoreError.invalidOperation(spec.error);
+
+    return this.core.setSearchNode(nodeId, {
+      title: searchNode.content.text.trim() || 'Search',
+      query: spec.query,
+    });
+  }
+
   private async saveCore() {
     const path = workspacePath();
     await mkdir(dirname(path), { recursive: true });
@@ -431,10 +510,39 @@ function sortDirection(value: unknown): SortDirection | null {
   throw new Error(`invalid sort direction: ${String(value)}`);
 }
 
-function filterOp(value: unknown): FilterOp | null {
-  if (value === null || value === undefined) return null;
-  if (value === 'all' || value === 'any') return value;
-  throw new Error(`invalid filter operator: ${String(value)}`);
+function viewMode(value: unknown): ViewMode {
+  if (value === 'table' || value === 'cards' || value === 'calendar') return value;
+  return 'list';
+}
+
+function filterOperator(value: unknown): FilterOperator {
+  if (
+    value === 'is'
+    || value === 'is_not'
+    || value === 'contains'
+    || value === 'not_contains'
+    || value === 'is_empty'
+    || value === 'is_not_empty'
+    || value === 'gt'
+    || value === 'lt'
+    || value === 'before'
+    || value === 'after'
+  ) return value;
+  return 'contains';
+}
+
+function filterValueLogic(value: unknown): FilterValueLogic {
+  return value === 'all' ? 'all' : 'any';
+}
+
+function iconKind(value: unknown): IconKind | null {
+  if (value === 'emoji' || value === 'image' || value === 'generated') return value;
+  return null;
+}
+
+function displayPlacement(value: unknown): DisplayPlacement | null {
+  if (value === 'title' || value === 'body' || value === 'footer' || value === 'hidden') return value;
+  return null;
 }
 
 function fieldType(value: unknown): FieldType {

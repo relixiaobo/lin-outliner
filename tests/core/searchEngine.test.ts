@@ -92,10 +92,9 @@ describe('core search engine', () => {
     const newer = mustFocus(core.createNode(today, null, 'match newer'));
     const searchId = mustFocus(core.createSearchNode(core.projection().searchesId, null, {
       title: 'Recently edited',
-      sortField: 'updatedAt',
-      sortDirection: 'desc',
       query: { kind: 'rule', op: 'STRING_MATCH', text: 'match' },
     }));
+    core.addSortRule(searchId, 'sys:updatedAt', 'desc');
     const state = core.state();
     state.nodes[older]!.updatedAt = 1;
     state.nodes[newer]!.updatedAt = 2;
@@ -103,7 +102,13 @@ describe('core search engine', () => {
     const descending = runSearchNode(state, searchId);
     expect(descending.ok ? descending.hits.map((hit) => hit.nodeId) : []).toEqual([newer, older]);
 
-    state.nodes[searchId]!.sortDirection = 'asc';
+    const viewDef = state.nodes[searchId]!.children
+      .map((childId) => state.nodes[childId])
+      .find((node) => node?.type === 'viewDef')!;
+    const sortRule = viewDef.children
+      .map((childId) => state.nodes[childId])
+      .find((node) => node?.type === 'sortRule')!;
+    sortRule.sortDirection = 'asc';
     const ascending = runSearchNode(state, searchId);
     expect(ascending.ok ? ascending.hits.map((hit) => hit.nodeId) : []).toEqual([older, newer]);
   });

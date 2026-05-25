@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../api/client';
 import type { CommandOutcome, NodeId, NodeProjection } from '../../api/types';
-import type { DocumentIndex } from '../../state/document';
+import type { DocumentIndex, ToolbarDropdownSection } from '../../state/document';
 import {
   commonTagIdsForTargets,
   resolveActiveNodeSelection,
@@ -15,6 +15,9 @@ import {
   CopyIcon,
   DescriptionIcon,
   DuplicateIcon,
+  FieldIcon,
+  FilterIcon,
+  GroupIcon,
   HideToolbarIcon,
   ICON_SIZE,
   MoveDownIcon,
@@ -23,8 +26,11 @@ import {
   OpenIcon,
   RestoreIcon,
   ShowToolbarIcon,
+  SortAscIcon,
   SupertagIcon,
+  TableIcon,
   TrashIcon,
+  ColorIcon,
 } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { MenuItem } from '../primitives/MenuItem';
@@ -34,6 +40,7 @@ import { overlayAnchorFromPoint, useAnchoredOverlay } from '../primitives/useAnc
 import type { CommandRunner } from '../shared';
 import { textOf } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
+import { readViewConfig } from './row-model';
 
 interface NodeContextMenuProps {
   x: number;
@@ -46,6 +53,7 @@ interface NodeContextMenuProps {
   run: CommandRunner;
   onRoot: (nodeId: NodeId) => void;
   onEditDescription: () => void;
+  onOpenViewSection: (nodeId: NodeId, section: ToolbarDropdownSection) => void;
   onClose: () => void;
 }
 
@@ -66,7 +74,7 @@ async function writeClipboardText(text: string): Promise<void> {
 }
 
 export function NodeContextMenu(props: NodeContextMenuProps) {
-  const [mode, setMode] = useState<'main' | 'tag' | 'move'>('main');
+  const [mode, setMode] = useState<'main' | 'tag' | 'move' | 'appearance'>('main');
   const [query, setQuery] = useState('');
   const menuRef = useRef<HTMLDivElement | null>(null);
   const menuAnchor = useMemo(() => overlayAnchorFromPoint(props.x, props.y), [props.x, props.y]);
@@ -78,6 +86,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     width: mode === 'main' ? 240 : 280,
   });
   const target = props.index.byId.get(props.targetId) ?? props.node;
+  const view = readViewConfig(target, props.index.byId);
   const trashed = isNodeInTrash(props.index, props.node.id);
   const activeSelection = useMemo(() => resolveActiveNodeSelection({
     nodeId: props.node.id,
@@ -147,6 +156,12 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     props.onClose();
   };
 
+  const openViewSection = (section: ToolbarDropdownSection) => {
+    void props.run(() => api.setViewToolbarVisible(props.targetId, true)).then(() => {
+      props.onOpenViewSection(props.targetId, section);
+    });
+  };
+
   const item = (
     label: string,
     icon: ReactNode,
@@ -196,12 +211,26 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
         }}
         role="menuitem"
       />
-      {item(target.description ? 'Edit description' : 'Add description', <DescriptionIcon size={ICON_SIZE.menu} />, props.onEditDescription)}
+      <div className="node-context-separator" role="separator" />
+      {item('View as', <TableIcon size={ICON_SIZE.menu} />, () => openViewSection('view'))}
       {item(
-        target.toolbarVisible ? 'Hide view toolbar' : 'Show view toolbar',
-        target.toolbarVisible ? <HideToolbarIcon size={ICON_SIZE.menu} /> : <ShowToolbarIcon size={ICON_SIZE.menu} />,
-        () => void props.run(() => api.setNodeToolbarVisible(props.targetId, !target.toolbarVisible)),
+        view.toolbarVisible ? 'Hide view toolbar' : 'Show view toolbar',
+        view.toolbarVisible ? <HideToolbarIcon size={ICON_SIZE.menu} /> : <ShowToolbarIcon size={ICON_SIZE.menu} />,
+        () => void props.run(() => api.setViewToolbarVisible(props.targetId, !view.toolbarVisible)).then(props.onClose),
       )}
+      {item('Filter by', <FilterIcon size={ICON_SIZE.menu} />, () => openViewSection('filter'))}
+      {item('Sort by', <SortAscIcon size={ICON_SIZE.menu} />, () => openViewSection('sort'))}
+      {item('Group by', <GroupIcon size={ICON_SIZE.menu} />, () => openViewSection('group'))}
+      {item('Display', <FieldIcon size={ICON_SIZE.menu} />, () => openViewSection('display'))}
+      <MenuItem
+        className="node-context-item"
+        icon={<ColorIcon size={ICON_SIZE.menu} />}
+        label="Appearance"
+        onClick={() => setMode('appearance')}
+        role="menuitem"
+      />
+      <div className="node-context-separator" role="separator" />
+      {item(target.description ? 'Edit description' : 'Add description', <DescriptionIcon size={ICON_SIZE.menu} />, props.onEditDescription)}
       <div className="node-context-separator" role="separator" />
       {item('Copy text', <CopyIcon size={ICON_SIZE.menu} />, () => void writeClipboardText(textOf(target)))}
       {item('Copy node id', <CopyIcon size={ICON_SIZE.menu} />, () => void writeClipboardText(props.targetId))}
@@ -295,17 +324,73 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     </>
   );
 
+  const renderAppearanceMode = () => (
+    <>
+      <div className="node-context-subhead">
+        <ButtonControl onClick={() => setMode('main')}>Back</ButtonControl>
+        <span>Appearance</span>
+      </div>
+      <MenuItem
+        className="node-context-item"
+        icon={<ColorIcon size={ICON_SIZE.menu} />}
+        label="Set icon"
+        onClick={() => {
+          const icon = window.prompt('Icon', target.icon ?? '');
+          if (icon === null) return;
+          void props.run(() => api.setNodeIcon(props.targetId, icon.trim() || null, icon.trim() ? 'emoji' : null));
+          props.onClose();
+        }}
+      />
+      <MenuItem
+        className="node-context-item"
+        icon={<ColorIcon size={ICON_SIZE.menu} />}
+        label="Generate icon"
+        onClick={() => {
+          void props.run(() => api.setNodeIcon(props.targetId, '✨', 'generated'));
+          props.onClose();
+        }}
+      />
+      <div className="node-context-separator" role="separator" />
+      <MenuItem
+        className="node-context-item"
+        icon={<FieldIcon size={ICON_SIZE.menu} />}
+        label="Upload banner image"
+        onClick={() => {
+          const assetId = window.prompt('Banner asset id or path', target.bannerAssetId ?? '');
+          if (assetId === null) return;
+          void props.run(() => api.setNodeBanner(props.targetId, assetId.trim() || null));
+          props.onClose();
+        }}
+      />
+      <MenuItem
+        className="node-context-item"
+        icon={<ColorIcon size={ICON_SIZE.menu} />}
+        label="Generate banner image"
+        onClick={() => {
+          void props.run(() => api.setNodeBanner(props.targetId, `generated:${props.targetId}`));
+          props.onClose();
+        }}
+      />
+    </>
+  );
+
   return createPortal(
     <MenuSurface
       ref={menuRef}
-      aria-label={mode === 'main' ? 'Node actions' : mode === 'tag' ? 'Add tag' : 'Move node'}
+      aria-label={mode === 'main' ? 'Node actions' : mode === 'tag' ? 'Add tag' : mode === 'appearance' ? 'Appearance' : 'Move node'}
       className="node-context-menu"
       preserveSelection
       role={mode === 'main' ? 'menu' : 'dialog'}
       style={menuStyle}
       onMouseDown={(event) => event.stopPropagation()}
     >
-      {mode === 'main' ? renderMain() : mode === 'tag' ? renderTagMode() : renderMoveMode()}
+      {mode === 'main'
+        ? renderMain()
+        : mode === 'tag'
+          ? renderTagMode()
+          : mode === 'appearance'
+            ? renderAppearanceMode()
+            : renderMoveMode()}
     </MenuSurface>,
     document.body,
   );

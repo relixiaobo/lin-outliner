@@ -37,9 +37,15 @@ describe('Core', () => {
       type: 'search',
       parentId: projection.searchesId,
       content: { text: 'Recents' },
-      sortField: 'updatedAt',
-      sortDirection: 'desc',
     });
+    const viewDef = recents.children
+      .map((childId) => state.nodes[childId])
+      .find((node) => node?.type === 'viewDef');
+    expect(viewDef).toMatchObject({ viewMode: 'list' });
+    const sortRule = viewDef?.children
+      .map((childId) => state.nodes[childId])
+      .find((node) => node?.type === 'sortRule');
+    expect(sortRule).toMatchObject({ sortField: 'sys:updatedAt', sortDirection: 'desc' });
     const condition = recents.children
       .map((childId) => state.nodes[childId])
       .find((node) => node?.type === 'queryCondition');
@@ -194,34 +200,36 @@ describe('Core', () => {
     const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Node'));
 
     core.updateNodeDescription(nodeId, '  Description  ');
-    core.setNodeToolbarVisible(nodeId, true);
-    core.setNodeSort(nodeId, '__name', 'desc');
-    core.setNodeFilter(nodeId, '__name', 'any', [' alpha ', 'Alpha', '']);
-    core.setNodeGroup(nodeId, '__name');
+    core.setViewToolbarVisible(nodeId, true);
+    core.addSortRule(nodeId, 'sys:name', 'desc');
+    core.addFilterRule(nodeId, 'sys:name', 'contains', [' alpha ', 'Alpha', ''], 'any');
+    core.setGroupField(nodeId, 'sys:name');
 
     let node = core.state().nodes[nodeId];
+    let viewDef = node.children.map((childId) => core.state().nodes[childId]).find((child) => child?.type === 'viewDef')!;
+    let sortRule = viewDef.children.map((childId) => core.state().nodes[childId]).find((child) => child?.type === 'sortRule')!;
+    let filterRule = viewDef.children.map((childId) => core.state().nodes[childId]).find((child) => child?.type === 'filterRule')!;
     expect(node.description).toBe('Description');
-    expect(node.toolbarVisible).toBe(true);
-    expect(node.sortField).toBe('__name');
-    expect(node.sortDirection).toBe('desc');
-    expect(node.filterField).toBe('__name');
-    expect(node.filterOp).toBe('any');
-    expect(node.filterValues).toEqual(['alpha']);
-    expect(node.groupField).toBe('__name');
+    expect(viewDef.toolbarVisible).toBe(true);
+    expect(sortRule.sortField).toBe('sys:name');
+    expect(sortRule.sortDirection).toBe('desc');
+    expect(filterRule.filterField).toBe('sys:name');
+    expect(filterRule.filterOperator).toBe('contains');
+    expect(filterRule.filterValueLogic).toBe('any');
+    expect(filterRule.filterValues).toEqual(['alpha']);
+    expect(viewDef.groupField).toBe('sys:name');
 
     core.updateNodeDescription(nodeId, '');
-    core.setNodeSort(nodeId, null, 'desc');
-    core.setNodeFilter(nodeId, null, 'any', ['x']);
-    core.setNodeGroup(nodeId, ' ');
+    core.clearSortRules(nodeId);
+    core.clearFilterRules(nodeId);
+    core.setGroupField(nodeId, null);
 
     node = core.state().nodes[nodeId];
+    viewDef = node.children.map((childId) => core.state().nodes[childId]).find((child) => child?.type === 'viewDef')!;
     expect(node.description).toBeUndefined();
-    expect(node.sortField).toBeUndefined();
-    expect(node.sortDirection).toBeUndefined();
-    expect(node.filterField).toBeUndefined();
-    expect(node.filterOp).toBeUndefined();
-    expect(node.filterValues).toEqual([]);
-    expect(node.groupField).toBeUndefined();
+    expect(viewDef.children.map((childId) => core.state().nodes[childId]?.type)).not.toContain('sortRule');
+    expect(viewDef.children.map((childId) => core.state().nodes[childId]?.type)).not.toContain('filterRule');
+    expect(viewDef.groupField).toBeUndefined();
   });
 
   test('toggle done enables and preserves checkbox affordance', () => {

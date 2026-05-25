@@ -165,7 +165,6 @@ export function resolveSearchSpecFromOutlineNode(index: ProjectionIndex, node: O
 export function searchNodeConfigFromSpec(spec: ResolvedSearchSpec): SearchNodeConfig {
   return {
     title: spec.title,
-    viewMode: spec.view,
     query: spec.query,
   };
 }
@@ -188,7 +187,7 @@ export function searchSpecFromSavedSearch(index: ProjectionIndex, node: NodeProj
   }
   return {
     title: node.content.text.trim() || 'Search',
-    view: node.viewMode,
+    view: searchViewModeOf(index, node),
     query: resolved.query,
     warnings: [],
   };
@@ -232,13 +231,20 @@ export function resolveSearch(index: ProjectionIndex, params: NormalizedSearchPa
   return {
     source: 'saved',
     title: node.content.text.trim() || 'Search',
-    view: node.viewMode,
+    view: searchViewModeOf(index, node),
     searchNodeId,
     query: spec.query,
     queryTerms: searchNodeQueryTerms(index.projection, searchNodeId),
     warnings: spec.warnings,
     hasExecutableRules: searchNodeHasRules(index.projection, searchNodeId),
   };
+}
+
+export function searchViewModeOf(index: ProjectionIndex, node: NodeProjection): string | undefined {
+  const viewDef = node.children
+    .map((childId) => index.nodes.get(childId))
+    .find((child) => child?.type === 'viewDef');
+  return viewDef?.viewMode;
 }
 
 export function runSearch(index: ProjectionIndex, search: {

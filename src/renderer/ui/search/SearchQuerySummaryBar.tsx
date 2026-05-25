@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { api } from '../../api/client';
 import type { NodeId, NodeProjection, QueryLogic, QueryOp } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import {
+  CloseIcon,
   FieldIcon,
   FilterIcon,
   HashIcon,
@@ -11,6 +12,7 @@ import {
   SearchIcon,
   type AppIcon,
 } from '../icons';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
 import type { CommandRunner } from '../shared';
 
@@ -30,6 +32,10 @@ interface SearchQuerySummaryBarProps {
   index: DocumentIndex;
   nodeId: NodeId;
   run: CommandRunner;
+}
+
+interface SearchQueryBuilderPanelProps extends SearchQuerySummaryBarProps {
+  onClose: () => void;
 }
 
 const FIELD_VALUE_OPS = new Set<QueryOp>(['FIELD_IS', 'FIELD_IS_NOT', 'FIELD_CONTAINS', 'LT', 'GT', 'DATE_OVERLAPS']);
@@ -56,6 +62,129 @@ const TEXT_OPS = new Set<QueryOp>([
   'DONE_LAST_DAYS',
 ]);
 
+export function SearchQueryBuilderPanel({ index, nodeId, run, onClose }: SearchQueryBuilderPanelProps) {
+  const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const searchNode = index.byId.get(nodeId);
+  const readOnly = Boolean(searchNode?.locked);
+  const initialText = useMemo(() => searchQueryOutlineText(index, nodeId), [index, nodeId]);
+  const model = useMemo(() => searchQuerySummaryModel(index, nodeId), [index, nodeId]);
+  const [draft, setDraft] = useState(initialText);
+
+  useEffect(() => {
+    setDraft(initialText);
+    setLocalError(null);
+  }, [initialText, nodeId]);
+
+  const dirty = draft !== initialText;
+  const rows = Math.min(12, Math.max(5, draft.split('\n').length + 1));
+
+  const save = async () => {
+    if (readOnly || saving || !draft.trim()) return;
+    setSaving(true);
+    setLocalError(null);
+    try {
+      const result = await run(() => api.setSearchQueryOutline(nodeId, draft), { applyFocus: false });
+      if (!result) setLocalError('Could not save query.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const refresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await run(() => api.refreshSearchNodeResults(nodeId), { applyFocus: false });
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+      event.preventDefault();
+      void save();
+      return;
+    }
+    if (event.key === 'Escape' && !dirty) {
+      event.preventDefault();
+      onClose();
+    }
+  };
+
+  return (
+    <section className="search-query-builder-panel" data-search-query-builder>
+      <div className="search-query-builder-header">
+        <div className="search-query-builder-title">
+          <FilterIcon size={14} />
+          <span>Query</span>
+          {model && (
+            <span className="search-query-builder-count">
+              {model.resultCount} {model.resultCount === 1 ? 'result' : 'results'}
+            </span>
+          )}
+        </div>
+        <div className="search-query-builder-actions">
+          <IconButton
+            className={`search-query-refresh-button ${refreshing ? 'is-refreshing' : ''}`}
+            disabled={refreshing}
+            icon={RefreshIcon}
+            label="Refresh search results"
+            onClick={() => void refresh()}
+            title="Refresh"
+            variant="toolbar"
+          />
+          <IconButton
+            className="search-query-refresh-button"
+            icon={CloseIcon}
+            label="Close query"
+            onClick={onClose}
+            title="Close"
+            variant="toolbar"
+          />
+        </div>
+      </div>
+      <textarea
+        className="search-query-builder-textarea"
+        aria-label="Search query"
+        value={draft}
+        rows={rows}
+        readOnly={readOnly}
+        spellCheck={false}
+        placeholder={'- STRING_MATCH\n  - value:: keyword'}
+        onChange={(event) => setDraft(event.currentTarget.value)}
+        onKeyDown={handleKeyDown}
+      />
+      <div className="search-query-builder-footer">
+        <span className="search-query-builder-status">
+          {localError ?? (readOnly ? 'Locked' : dirty ? 'Unsaved changes' : 'Saved')}
+        </span>
+        <div className="search-query-builder-buttons">
+          <ButtonControl
+            className="search-query-builder-button"
+            disabled={readOnly || !dirty || saving}
+            onClick={() => {
+              setDraft(initialText);
+              setLocalError(null);
+            }}
+          >
+            Reset
+          </ButtonControl>
+          <ButtonControl
+            className="search-query-builder-button search-query-builder-save"
+            disabled={readOnly || !dirty || saving || !draft.trim()}
+            onClick={() => void save()}
+          >
+            {saving ? 'Saving' : 'Save'}
+          </ButtonControl>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function searchQuerySummaryModel(index: DocumentIndex, nodeId: NodeId): SearchQuerySummaryModel | null {
   const searchNode = index.byId.get(nodeId);
   if (!searchNode || searchNode.type !== 'search') return null;
@@ -72,6 +201,17 @@ export function searchQuerySummaryModel(index: DocumentIndex, nodeId: NodeId): S
       return child?.type === 'reference' && Boolean(child.targetId);
     }).length,
   };
+}
+
+export function searchQueryOutlineText(index: DocumentIndex, nodeId: NodeId): string {
+  const searchNode = index.byId.get(nodeId);
+  if (!searchNode || searchNode.type !== 'search') return '';
+
+  const queryRoots = directConditionChildren(index, searchNode);
+  const roots = queryRoots.length > 0
+    ? queryRoots
+    : searchNode.queryLogic || searchNode.queryOp ? [searchNode] : [];
+  return roots.flatMap((condition) => conditionOutlineLines(index, condition, 0)).join('\n');
 }
 
 export function SearchQuerySummaryBar({ index, nodeId, run }: SearchQuerySummaryBarProps) {
@@ -125,6 +265,47 @@ function SearchQueryChip({ chip }: { chip: SearchQuerySummaryChip }) {
       <span className="search-query-chip-label">{chip.label}</span>
     </span>
   );
+}
+
+function conditionOutlineLines(index: DocumentIndex, condition: NodeProjection, level: number): string[] {
+  const indent = '  '.repeat(level);
+  if (condition.queryLogic) {
+    return [
+      `${indent}- ${condition.queryLogic}`,
+      ...directConditionChildren(index, condition).flatMap((child) => conditionOutlineLines(index, child, level + 1)),
+    ];
+  }
+
+  if (!condition.queryOp) return [];
+  const lines = [`${indent}- ${condition.queryOp}`];
+  if (condition.queryFieldDefId) lines.push(`${indent}  - field:: ${nodeReference(index, condition.queryFieldDefId)}`);
+  if (condition.queryTagDefId) lines.push(`${indent}  - tag:: ${nodeReference(index, condition.queryTagDefId, tagName(index, condition.queryTagDefId))}`);
+  if (condition.targetId) lines.push(`${indent}  - target:: ${nodeReference(index, condition.targetId)}`);
+  for (const operand of operandOutlineTexts(index, condition)) {
+    lines.push(`${indent}  - value:: ${operand}`);
+  }
+  return lines;
+}
+
+function operandOutlineTexts(index: DocumentIndex, condition: NodeProjection): string[] {
+  const operands = condition.children.flatMap((childId): string[] => {
+    const child = index.byId.get(childId);
+    if (!child || child.type === 'queryCondition') return [];
+    const text = operandOutlineText(index, child);
+    return text ? [text] : [];
+  });
+  if (operands.length > 0) return uniqueLabels(operands);
+
+  const text = condition.content.text.trim();
+  if (condition.queryOp && TEXT_OPS.has(condition.queryOp) && text && text !== condition.queryOp) return [text];
+  return [];
+}
+
+function operandOutlineText(index: DocumentIndex, node: NodeProjection): string {
+  if (node.type === 'reference' && node.targetId) return nodeReference(index, node.targetId, node.content.text.trim() || undefined);
+  const inlineRef = node.content.inlineRefs[0];
+  if (inlineRef) return nodeReference(index, inlineRef.targetNodeId, inlineRef.displayName);
+  return node.content.text.trim();
 }
 
 function conditionChips(index: DocumentIndex, condition: NodeProjection, depth: number): SearchQuerySummaryChip[] {
@@ -311,6 +492,10 @@ function chipIcon(kind: SearchQueryChipKind): AppIcon {
 
 function nodeTitle(index: DocumentIndex, nodeId: NodeId): string {
   return index.byId.get(nodeId)?.content.text.trim() || 'Untitled';
+}
+
+function nodeReference(index: DocumentIndex, nodeId: NodeId, label?: string): string {
+  return `[[${label ?? nodeTitle(index, nodeId)}^${nodeId}]]`;
 }
 
 function tagName(index: DocumentIndex, tagId: NodeId): string {

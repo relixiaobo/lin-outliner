@@ -67,7 +67,7 @@ export function outlinerChildren(
   if (!node) return [];
   return node.children.filter((childId) => {
     const child = byId.get(childId);
-    return Boolean(child) && child?.type !== 'queryCondition';
+    return Boolean(child) && !['queryCondition', 'viewDef', 'sortRule', 'filterRule', 'displayField'].includes(child?.type ?? '');
   });
 }
 

@@ -51,6 +51,12 @@ const NODE_SCALAR_KEYS: Array<keyof Node> = [
   'completedAt',
   'locked',
   'color',
+  'icon',
+  'iconKind',
+  'bannerAssetId',
+  'bannerPositionX',
+  'bannerPositionY',
+  'bannerAlt',
   'showCheckbox',
   'templateId',
   'childSupertag',
@@ -74,8 +80,15 @@ const NODE_SCALAR_KEYS: Array<keyof Node> = [
   'sortDirection',
   'groupField',
   'filterField',
-  'filterOp',
+  'filterOperator',
+  'filterValueLogic',
   'filterValues',
+  'displayField',
+  'displayVisible',
+  'displayWidth',
+  'displayOrder',
+  'displayLabel',
+  'displayPlacement',
   'queryLogic',
   'queryOp',
   'queryTagDefId',
@@ -313,6 +326,7 @@ export class LoroOutlinerDocument {
       const parentTreeNode = treeNode.parent();
       const parentId = parentTreeNode ? readString(parentTreeNode.data.get('id')) : undefined;
       const content = readRichText(data);
+      const filterValues = data.get('filterValues');
       const node = normalizeNode({
         id,
         type: readString(data.get('type')) as NodeType | undefined,
@@ -327,9 +341,8 @@ export class LoroOutlinerDocument {
         doneStateEnabled: readBoolean(data.get('doneStateEnabled')) ?? false,
         autocollectOptions: readBoolean(data.get('autocollectOptions')) ?? false,
         autoCollected: readBoolean(data.get('autoCollected')) ?? false,
-        toolbarVisible: readBoolean(data.get('toolbarVisible')) ?? false,
-        filterValues: readStringList(data.get('filterValues')),
       } as Node);
+      if (filterValues !== undefined) node.filterValues = readStringList(filterValues);
 
       for (const key of NODE_SCALAR_KEYS) {
         if ([
@@ -341,7 +354,6 @@ export class LoroOutlinerDocument {
           'doneStateEnabled',
           'autocollectOptions',
           'autoCollected',
-          'toolbarVisible',
           'filterValues',
         ].includes(key)) continue;
         const value = data.get(key);
@@ -432,7 +444,6 @@ function normalizeNode(node: Node): Node {
       inlineRefs: node.content?.inlineRefs ?? [],
     },
     tags: node.tags ?? [],
-    filterValues: node.filterValues ?? [],
   };
 }
 
@@ -493,7 +504,7 @@ function isDisposableLegacyParaNode(node: Node, title: string) {
     && node.content.marks.length === 0
     && node.content.inlineRefs.length === 0
     && node.tags.length === 0
-    && node.filterValues.length === 0
+    && (node.filterValues?.length ?? 0) === 0
     && !node.description;
 }
 

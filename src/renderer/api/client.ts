@@ -11,13 +11,16 @@ import type {
   DocumentProjection,
   FieldConfigPatch,
   FieldType,
-  FilterOp,
+  FilterOperator,
+  FilterValueLogic,
+  IconKind,
   RichText,
   RichTextPatch,
   SearchHit,
   SplitNodeOptions,
   SortDirection,
   TagConfigPatch,
+  ViewMode,
 } from './types';
 import { replaceAllRichTextPatch } from './types';
 import type {
@@ -67,18 +70,47 @@ export const api = {
     command<CommandOutcome>('update_node_description', { nodeId, description }),
   setNodeCheckboxVisible: (nodeId: string, visible: boolean) =>
     command<CommandOutcome>('set_node_checkbox_visible', { nodeId, visible }),
-  setNodeToolbarVisible: (nodeId: string, visible: boolean) =>
-    command<CommandOutcome>('set_node_toolbar_visible', { nodeId, visible }),
-  setNodeSort: (nodeId: string, field: string | null, direction: SortDirection | null = null) =>
-    command<CommandOutcome>('set_node_sort', { nodeId, field, direction }),
-  setNodeFilter: (
+  setViewToolbarVisible: (nodeId: string, visible: boolean) =>
+    command<CommandOutcome>('set_view_toolbar_visible', { nodeId, visible }),
+  setViewMode: (nodeId: string, mode: ViewMode) =>
+    command<CommandOutcome>('set_view_mode', { nodeId, mode }),
+  addSortRule: (nodeId: string, field: string, direction: SortDirection = 'asc') =>
+    command<CommandOutcome>('add_sort_rule', { nodeId, field, direction }),
+  updateSortRule: (ruleId: string, field: string, direction: SortDirection = 'asc') =>
+    command<CommandOutcome>('update_sort_rule', { ruleId, field, direction }),
+  removeSortRule: (ruleId: string) =>
+    command<CommandOutcome>('remove_sort_rule', { ruleId }),
+  clearSortRules: (nodeId: string) =>
+    command<CommandOutcome>('clear_sort_rules', { nodeId }),
+  addFilterRule: (
     nodeId: string,
-    field: string | null,
-    op: FilterOp | null = null,
+    field: string,
+    operator: FilterOperator = 'contains',
     values: string[] = [],
-  ) => command<CommandOutcome>('set_node_filter', { nodeId, field, op, values }),
-  setNodeGroup: (nodeId: string, field: string | null) =>
-    command<CommandOutcome>('set_node_group', { nodeId, field }),
+    valueLogic: FilterValueLogic = 'any',
+  ) => command<CommandOutcome>('add_filter_rule', { nodeId, field, operator, values, valueLogic }),
+  updateFilterRule: (
+    ruleId: string,
+    patch: { field?: string | null; operator?: FilterOperator | null; values?: string[] | null; valueLogic?: FilterValueLogic | null },
+  ) => command<CommandOutcome>('update_filter_rule', { ruleId, ...patch }),
+  removeFilterRule: (ruleId: string) =>
+    command<CommandOutcome>('remove_filter_rule', { ruleId }),
+  clearFilterRules: (nodeId: string) =>
+    command<CommandOutcome>('clear_filter_rules', { nodeId }),
+  setGroupField: (nodeId: string, field: string | null) =>
+    command<CommandOutcome>('set_group_field', { nodeId, field }),
+  addDisplayField: (nodeId: string, field: string) =>
+    command<CommandOutcome>('add_display_field', { nodeId, field }),
+  updateDisplayField: (
+    displayFieldId: string,
+    patch: { field?: string | null; visible?: boolean | null; width?: number | null; order?: number | null; label?: string | null; placement?: string | null },
+  ) => command<CommandOutcome>('update_display_field', { displayFieldId, ...patch }),
+  removeDisplayField: (displayFieldId: string) =>
+    command<CommandOutcome>('remove_display_field', { displayFieldId }),
+  setNodeIcon: (nodeId: string, icon: string | null, iconKind: IconKind | null = null) =>
+    command<CommandOutcome>('set_node_icon', { nodeId, icon, iconKind }),
+  setNodeBanner: (nodeId: string, assetId: string | null, position?: { x?: number | null; y?: number | null }) =>
+    command<CommandOutcome>('set_node_banner', { nodeId, assetId, positionX: position?.x, positionY: position?.y }),
   mergeNodeInto: (nodeId: string, targetId: string) =>
     command<CommandOutcome>('merge_node_into', { nodeId, targetId }),
   moveNode: (nodeId: string, parentId: string, index: number | null = null) =>
@@ -143,6 +175,8 @@ export const api = {
     command<CommandOutcome>('ensure_date_node', { year, month, day }),
   searchNodes: (query: string) => command<SearchHit[]>('search_nodes', { query }),
   ensureTagSearch: (tagId: string) => command<CommandOutcome>('ensure_tag_search', { tagId }),
+  setSearchQueryOutline: (nodeId: string, queryOutline: string) =>
+    command<CommandOutcome>('set_search_query_outline', { nodeId, queryOutline }),
   refreshSearchNodeResults: (nodeId: string) =>
     command<CommandOutcome>('refresh_search_node_results', { nodeId }),
   backlinks: (targetId: string) => command<Backlink[]>('backlinks', { targetId }),

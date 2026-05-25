@@ -1150,6 +1150,7 @@ async function applyOutlineRootToExistingNode(
       nodeId,
       config: searchNodeConfigFromSpec(spec),
     });
+    await applySearchViewSpec(host, nodeId, spec.view);
     const current = indexProjection(host.getProjection()).nodes.get(nodeId);
     if ((current?.description ?? null) !== (root.description ?? null)) {
       await host.handle('update_node_description', { nodeId, description: root.description ?? null });
@@ -1181,6 +1182,7 @@ async function syncOutlineNodeInPlace(
       nodeId,
       config: searchNodeConfigFromSpec(spec),
     });
+    await applySearchViewSpec(host, nodeId, spec.view);
     const latest = indexProjection(host.getProjection());
     const current = requiredNode(latest, nodeId);
     trackMatchedNode(tracker, nodeId);
@@ -1876,6 +1878,7 @@ async function createOutlineNode(
       index,
       config: searchNodeConfigFromSpec(spec),
     }));
+    await applySearchViewSpec(host, createdId, spec.view);
     tracker.createdNodeIds.push(createdId);
     const createdSearch = indexProjection(host.getProjection()).nodes.get(createdId);
     if (createdSearch) tracker.createdNodeIds.push(...createdSearch.children);
@@ -1922,6 +1925,11 @@ async function createPlainNode(host: OutlinerToolHost, parentId: string, index: 
 
 async function addReference(host: OutlinerToolHost, parentId: string, targetId: string, index: number | null): Promise<string> {
   return focusFromOutcome(await host.handle('add_reference', { parentId, targetId, index }));
+}
+
+async function applySearchViewSpec(host: OutlinerToolHost, nodeId: string, view: string | undefined) {
+  if (!view) return;
+  await host.handle('set_view_mode', { nodeId, mode: view });
 }
 
 async function applyTags(host: OutlinerToolHost, nodeId: string, tags: string[], tracker: MutationTracker) {

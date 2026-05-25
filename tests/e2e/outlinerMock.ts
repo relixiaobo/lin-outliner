@@ -87,12 +87,31 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       minValue?: number;
       maxValue?: number;
       sourceSupertag?: string;
-      toolbarVisible: boolean;
-      filterValues: string[];
-      targetId?: string;
-      sortField?: string;
-      sortDirection?: string;
-    };
+	      icon?: string;
+	      iconKind?: string;
+	      bannerAssetId?: string;
+	      bannerPositionX?: number;
+	      bannerPositionY?: number;
+	      bannerAlt?: string;
+	      viewMode?: string;
+	      toolbarVisible?: boolean;
+	      groupField?: string;
+	      sortField?: string;
+	      sortDirection?: string;
+	      filterField?: string;
+	      filterOperator?: string;
+	      filterValueLogic?: string;
+	      filterValues?: string[];
+	      displayField?: string;
+	      displayVisible?: boolean;
+	      displayWidth?: number;
+	      displayOrder?: number;
+	      displayLabel?: string;
+	      displayPlacement?: string;
+	      queryLogic?: string;
+	      queryOp?: string;
+	      targetId?: string;
+	    };
     type CreateNodeTree = {
       content: RichText;
       children: CreateNodeTree[];
@@ -391,14 +410,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         createdAt: ++now,
         updatedAt: now,
         locked: false,
-        showCheckbox: false,
-        doneStateEnabled: false,
-        autocollectOptions: false,
-        autoCollected: false,
-        toolbarVisible: false,
-        filterValues: [],
-        ...overrides,
-      });
+	        showCheckbox: false,
+	        doneStateEnabled: false,
+	        autocollectOptions: false,
+	        autoCollected: false,
+	        ...overrides,
+	      });
       return nodes.get(id)!;
     };
     const appendChild = (parentId: string, childId: string, index: number | null = null) => {
@@ -588,18 +605,38 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       appendChild(fieldDef.id, optionRefId);
       return outcome({ nodeId: fieldEntryId, selectAll: false });
     };
-    const clearFieldValue = (fieldEntryId: string) => {
-      const fieldEntry = nodes.get(fieldEntryId);
-      if (!fieldEntry) return outcome();
+	    const clearFieldValue = (fieldEntryId: string) => {
+	      const fieldEntry = nodes.get(fieldEntryId);
+	      if (!fieldEntry) return outcome();
       if (fieldEntry.fieldDefId) removeCollectedOptionRefs(fieldEntry.fieldDefId, fieldEntry.children);
       for (const childId of [...fieldEntry.children]) {
         removeFromParent(childId);
         nodes.delete(childId);
-      }
-      return outcome({ nodeId: fieldEntryId, selectAll: false });
-    };
-    const duplicateNode = (nodeId: string) => {
-      const node = nodes.get(nodeId);
+	      }
+	      return outcome({ nodeId: fieldEntryId, selectAll: false });
+	    };
+	    const setSearchQueryOutline = (nodeId: string, queryOutline: string) => {
+	      const search = nodes.get(nodeId);
+	      if (!search || search.type !== 'search') return;
+	      for (const childId of [...search.children]) {
+	        if (nodes.get(childId)?.type === 'queryCondition') removeNode(childId);
+	      }
+	      const firstLine = queryOutline
+	        .split('\n')
+	        .map((line) => line.trim())
+	        .find(Boolean);
+	      if (!firstLine) return;
+	      const title = firstLine.replace(/^-\s*/, '').trim();
+	      const conditionId = `condition-${++sequence}`;
+	      makeNode(conditionId, title, {
+	        type: 'queryCondition',
+	        parentId: nodeId,
+	        ...(title === 'AND' || title === 'OR' || title === 'NOT' ? { queryLogic: title } : { queryOp: title }),
+	      });
+	      appendChild(nodeId, conditionId, 0);
+	    };
+	    const duplicateNode = (nodeId: string) => {
+	      const node = nodes.get(nodeId);
       if (!node?.parentId) return null;
       const cloneId = `${nodeId}-copy-${++sequence}`;
       makeNode(cloneId, node.content.text, {
@@ -678,28 +715,59 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       }
       (node as Record<string, unknown>)[key] = normalized;
     };
-    const setOptionalNumber = (node: MockNode, key: keyof MockNode, value: unknown) => {
-      if (value == null || value === '') {
-        delete (node as Record<string, unknown>)[key];
-        return;
-      }
-      const parsed = Number(value);
-      if (Number.isFinite(parsed)) (node as Record<string, unknown>)[key] = parsed;
-    };
+	    const setOptionalNumber = (node: MockNode, key: keyof MockNode, value: unknown) => {
+	      if (value == null || value === '') {
+	        delete (node as Record<string, unknown>)[key];
+	        return;
+	      }
+	      const parsed = Number(value);
+	      if (Number.isFinite(parsed)) (node as Record<string, unknown>)[key] = parsed;
+	    };
+	    const directChildOfType = (parentId: string, type: string) => nodes.get(parentId)?.children
+	      .map((childId) => nodes.get(childId))
+	      .find((node): node is MockNode => Boolean(node) && node.type === type);
+	    const directChildrenOfType = (parentId: string, type: string) => nodes.get(parentId)?.children
+	      .map((childId) => nodes.get(childId))
+	      .filter((node): node is MockNode => Boolean(node) && node.type === type) ?? [];
+	    const ensureViewDef = (nodeId: string) => {
+	      const existing = directChildOfType(nodeId, 'viewDef');
+	      if (existing) return existing;
+	      const viewId = `view-${++sequence}`;
+	      const view = makeNode(viewId, '', {
+	        type: 'viewDef',
+	        parentId: nodeId,
+	        viewMode: 'list',
+	        toolbarVisible: false,
+	      });
+	      appendChild(nodeId, viewId, 0);
+	      return view;
+	    };
 
-    makeNode(ids.workspace, 'Workspace', { locked: true });
+	    makeNode(ids.workspace, 'Workspace', { locked: true });
     makeNode(ids.root, 'Root', { parentId: ids.workspace, locked: true });
     makeNode(ids.daily, 'Daily Notes', { parentId: ids.root, locked: true });
     makeNode(ids.library, 'Library', { parentId: ids.root, locked: true });
     makeNode(ids.schema, 'Schema', { parentId: ids.root, locked: true });
     makeNode(ids.searches, 'Saved searches', { parentId: ids.root, locked: true });
-    makeNode(ids.recents, 'Recents', {
-      type: 'search',
-      parentId: ids.searches,
-      locked: true,
-      sortField: 'updatedAt',
-      sortDirection: 'desc',
-    });
+	    makeNode(ids.recents, 'Recents', {
+	      type: 'search',
+	      parentId: ids.searches,
+	      locked: true,
+	    });
+	    makeNode('recents-view', '', { type: 'viewDef', parentId: ids.recents, viewMode: 'list', children: ['recents-sort'] });
+	    makeNode('recents-sort', '', {
+	      type: 'sortRule',
+	      parentId: 'recents-view',
+	      sortField: 'sys:updatedAt',
+	      sortDirection: 'desc',
+	    });
+	    makeNode('recents-query', '30', {
+	      type: 'queryCondition',
+	      parentId: ids.recents,
+	      queryOp: 'EDITED_LAST_DAYS',
+	      children: ['recents-query-value'],
+	    });
+	    makeNode('recents-query-value', '30', { parentId: 'recents-query' });
     makeNode(ids.trash, 'Trash', { parentId: ids.root, locked: true });
     makeNode(ids.settings, 'Settings', { parentId: ids.root, locked: true });
     makeNode(ids.dayTag, 'day', { type: 'tagDef', parentId: ids.schema, color: 'gray' });
@@ -750,7 +818,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     makeNode(ids.gamma, 'Gamma', { parentId: ids.today, showCheckbox: true });
     appendChild(ids.workspace, ids.root);
     for (const childId of [ids.daily, ids.library, ids.schema, ids.searches, ids.trash, ids.settings]) appendChild(ids.root, childId);
-    appendChild(ids.searches, ids.recents);
+	    appendChild(ids.searches, ids.recents);
+	    appendChild(ids.recents, 'recents-query');
+	    appendChild(ids.recents, 'recents-view');
+	    appendChild('recents-view', 'recents-sort');
+	    appendChild('recents-query', 'recents-query-value');
     appendChild(ids.schema, ids.dayTag);
     appendChild(ids.schema, ids.projectTag);
     appendChild(ids.schema, ids.statusField);
@@ -1380,12 +1452,141 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const nodeId = existing?.id ?? createNode(ids.daily, null, label, { tags: [ids.dayTag], showCheckbox: false });
           return clone(outcome({ nodeId, selectAll: false }));
         }
-        if (cmd === 'set_node_toolbar_visible') {
-          const node = nodes.get(String(args.nodeId));
-          if (node) node.toolbarVisible = Boolean(args.visible);
-          return clone(outcome());
-        }
-        if (cmd === 'search_nodes') {
+	        if (cmd === 'set_view_toolbar_visible') {
+	          if (nodes.has(String(args.nodeId))) ensureViewDef(String(args.nodeId)).toolbarVisible = Boolean(args.visible);
+	          return clone(outcome());
+	        }
+	        if (cmd === 'set_view_mode') {
+	          if (nodes.has(String(args.nodeId))) ensureViewDef(String(args.nodeId)).viewMode = String(args.mode ?? 'list');
+	          return clone(outcome());
+	        }
+	        if (cmd === 'add_sort_rule') {
+	          const view = nodes.has(String(args.nodeId)) ? ensureViewDef(String(args.nodeId)) : null;
+	          if (view) {
+	            const ruleId = `sort-${++sequence}`;
+	            makeNode(ruleId, '', {
+	              type: 'sortRule',
+	              parentId: view.id,
+	              sortField: String(args.field ?? 'sys:name'),
+	              sortDirection: args.direction === 'desc' ? 'desc' : 'asc',
+	            });
+	            appendChild(view.id, ruleId);
+	          }
+	          return clone(outcome());
+	        }
+	        if (cmd === 'update_sort_rule') {
+	          const rule = nodes.get(String(args.ruleId));
+	          if (rule?.type === 'sortRule') {
+	            rule.sortField = String(args.field ?? rule.sortField ?? 'sys:name');
+	            rule.sortDirection = args.direction === 'desc' ? 'desc' : 'asc';
+	          }
+	          return clone(outcome());
+	        }
+	        if (cmd === 'remove_sort_rule') {
+	          removeNode(String(args.ruleId));
+	          return clone(outcome());
+	        }
+	        if (cmd === 'clear_sort_rules') {
+	          const view = directChildOfType(String(args.nodeId), 'viewDef');
+	          if (view) for (const rule of directChildrenOfType(view.id, 'sortRule')) removeNode(rule.id);
+	          return clone(outcome());
+	        }
+	        if (cmd === 'add_filter_rule') {
+	          const view = nodes.has(String(args.nodeId)) ? ensureViewDef(String(args.nodeId)) : null;
+	          if (view) {
+	            const ruleId = `filter-${++sequence}`;
+	            makeNode(ruleId, '', {
+	              type: 'filterRule',
+	              parentId: view.id,
+	              filterField: String(args.field ?? 'sys:name'),
+	              filterOperator: String(args.operator ?? 'contains'),
+	              filterValueLogic: args.valueLogic === 'all' ? 'all' : 'any',
+	              filterValues: Array.isArray(args.values) ? args.values.map(String) : [],
+	            });
+	            appendChild(view.id, ruleId);
+	          }
+	          return clone(outcome());
+	        }
+	        if (cmd === 'update_filter_rule') {
+	          const rule = nodes.get(String(args.ruleId));
+	          if (rule?.type === 'filterRule') {
+	            if (args.field != null) rule.filterField = String(args.field);
+	            if (args.operator != null) rule.filterOperator = String(args.operator);
+	            if (args.valueLogic != null) rule.filterValueLogic = args.valueLogic === 'all' ? 'all' : 'any';
+	            if (Array.isArray(args.values)) rule.filterValues = args.values.map(String);
+	          }
+	          return clone(outcome());
+	        }
+	        if (cmd === 'remove_filter_rule') {
+	          removeNode(String(args.ruleId));
+	          return clone(outcome());
+	        }
+	        if (cmd === 'clear_filter_rules') {
+	          const view = directChildOfType(String(args.nodeId), 'viewDef');
+	          if (view) for (const rule of directChildrenOfType(view.id, 'filterRule')) removeNode(rule.id);
+	          return clone(outcome());
+	        }
+	        if (cmd === 'set_group_field') {
+	          if (nodes.has(String(args.nodeId))) {
+	            const view = ensureViewDef(String(args.nodeId));
+	            if (args.field == null || args.field === '') delete view.groupField;
+	            else view.groupField = String(args.field);
+	          }
+	          return clone(outcome());
+	        }
+	        if (cmd === 'add_display_field') {
+	          const view = nodes.has(String(args.nodeId)) ? ensureViewDef(String(args.nodeId)) : null;
+	          if (view) {
+	            const displayId = `display-${++sequence}`;
+	            makeNode(displayId, '', {
+	              type: 'displayField',
+	              parentId: view.id,
+	              displayField: String(args.field ?? 'sys:name'),
+	              displayVisible: true,
+	            });
+	            appendChild(view.id, displayId);
+	          }
+	          return clone(outcome());
+	        }
+	        if (cmd === 'update_display_field') {
+	          const display = nodes.get(String(args.displayFieldId));
+	          if (display?.type === 'displayField') {
+	            if (args.field != null) display.displayField = String(args.field);
+	            if (args.visible != null) display.displayVisible = Boolean(args.visible);
+	            if (args.width != null) setOptionalNumber(display, 'displayWidth', args.width);
+	            if (args.label != null) setOptionalText(display, 'displayLabel', args.label);
+	            if (args.placement != null) display.displayPlacement = String(args.placement);
+	          }
+	          return clone(outcome());
+	        }
+	        if (cmd === 'remove_display_field') {
+	          removeNode(String(args.displayFieldId));
+	          return clone(outcome());
+	        }
+	        if (cmd === 'set_node_icon') {
+	          const node = nodes.get(String(args.nodeId));
+	          if (node) {
+	            setOptionalText(node, 'icon', args.icon);
+	            if (args.iconKind == null || args.iconKind === '') delete node.iconKind;
+	            else node.iconKind = String(args.iconKind);
+	          }
+	          return clone(outcome());
+	        }
+	        if (cmd === 'set_node_banner') {
+	          const node = nodes.get(String(args.nodeId));
+	          if (node) {
+	            setOptionalText(node, 'bannerAssetId', args.assetId);
+	            const position = args.position && typeof args.position === 'object' ? args.position as Record<string, unknown> : {};
+	            if (position.x != null) setOptionalNumber(node, 'bannerPositionX', position.x);
+	            if (position.y != null) setOptionalNumber(node, 'bannerPositionY', position.y);
+	          }
+	          return clone(outcome());
+	        }
+	        if (cmd === 'set_search_query_outline') {
+	          setSearchQueryOutline(String(args.nodeId), String(args.queryOutline ?? ''));
+	          return clone(outcome({ nodeId: String(args.nodeId), selectAll: false }));
+	        }
+	        if (cmd === 'search_nodes') {
           const query = String(args.query ?? '').toLowerCase();
           return clone([...nodes.values()]
             .filter((node) => node.content.text.toLowerCase().includes(query))

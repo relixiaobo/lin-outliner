@@ -4790,6 +4790,11 @@ button.panel-resize-handle::after {
   color: var(--text);
 }
 
+.panel-title-more-button.is-active {
+  background: var(--tab-active-bg);
+  color: var(--text);
+}
+
 .panel-header-tag-icon {
   display: inline-flex;
   width: 20px;

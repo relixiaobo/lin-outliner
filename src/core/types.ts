@@ -27,6 +27,8 @@ export type NodeType =
   | 'fieldDef'
   | 'viewDef'
   | 'sortRule'
+  | 'filterRule'
+  | 'displayField'
   | 'search'
   | 'queryCondition';
 
@@ -81,7 +83,30 @@ export interface FieldConfigPatch {
 }
 
 export type SortDirection = 'asc' | 'desc';
-export type FilterOp = 'all' | 'any';
+export type ViewMode = 'list' | 'table' | 'cards' | 'calendar';
+export type ViewSystemField =
+  | 'sys:name'
+  | 'sys:createdAt'
+  | 'sys:updatedAt'
+  | 'sys:done'
+  | 'sys:doneAt'
+  | 'sys:tags'
+  | 'sys:refCount';
+export type ViewFieldRef = ViewSystemField | NodeId;
+export type FilterOperator =
+  | 'is'
+  | 'is_not'
+  | 'contains'
+  | 'not_contains'
+  | 'is_empty'
+  | 'is_not_empty'
+  | 'gt'
+  | 'lt'
+  | 'before'
+  | 'after';
+export type FilterValueLogic = 'all' | 'any';
+export type DisplayPlacement = 'title' | 'body' | 'footer' | 'hidden';
+export type IconKind = 'emoji' | 'image' | 'generated';
 export type TextMarkKind = 'bold' | 'italic' | 'strike' | 'code' | 'highlight' | 'headingMark' | 'link';
 
 export interface TextMark {
@@ -175,9 +200,6 @@ export type SearchQueryExpr = SearchQueryGroup | SearchQueryRule;
 
 export interface SearchNodeConfig {
   title: string;
-  viewMode?: string | null;
-  sortField?: string | null;
-  sortDirection?: SortDirection | null;
   query: SearchQueryExpr;
 }
 
@@ -244,6 +266,12 @@ export interface Node {
   completedAt?: number;
   locked: boolean;
   color?: string;
+  icon?: string;
+  iconKind?: IconKind;
+  bannerAssetId?: string;
+  bannerPositionX?: number;
+  bannerPositionY?: number;
+  bannerAlt?: string;
   showCheckbox: boolean;
   templateId?: NodeId;
   childSupertag?: NodeId;
@@ -261,14 +289,21 @@ export interface Node {
   maxValue?: number;
   sourceSupertag?: NodeId;
   targetId?: NodeId;
-  viewMode?: string;
-  toolbarVisible: boolean;
-  sortField?: string;
+  viewMode?: ViewMode;
+  toolbarVisible?: boolean;
+  groupField?: ViewFieldRef;
+  sortField?: ViewFieldRef;
   sortDirection?: SortDirection;
-  groupField?: string;
-  filterField?: string;
-  filterOp?: FilterOp;
-  filterValues: string[];
+  filterField?: ViewFieldRef;
+  filterOperator?: FilterOperator;
+  filterValueLogic?: FilterValueLogic;
+  filterValues?: string[];
+  displayField?: ViewFieldRef;
+  displayVisible?: boolean;
+  displayWidth?: number;
+  displayOrder?: number;
+  displayLabel?: string;
+  displayPlacement?: DisplayPlacement;
   queryLogic?: QueryLogic;
   queryOp?: QueryOp;
   queryTagDefId?: NodeId;
@@ -476,7 +511,5 @@ export function createNodeRecord(
     doneStateEnabled: false,
     autocollectOptions: false,
     autoCollected: false,
-    toolbarVisible: false,
-    filterValues: [],
   };
 }

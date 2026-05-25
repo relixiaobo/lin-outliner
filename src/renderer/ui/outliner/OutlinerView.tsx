@@ -6,7 +6,7 @@ import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared
 import { OutlinerFieldRow } from './OutlinerFieldRow';
 import { OutlinerItem } from './OutlinerItem';
 import { RowHost } from './RowHost';
-import { buildOutlinerRows, hiddenFieldKey, type OutlinerRowItem } from './row-model';
+import { buildOutlinerRows, hiddenFieldKey, readViewConfig, type OutlinerRowItem } from './row-model';
 import { ViewToolbar } from './ViewToolbar';
 import { HiddenFieldReveal, ViewGroupHeading } from './OutlinerViewChrome';
 
@@ -31,6 +31,7 @@ interface OutlinerViewProps {
 
 export function OutlinerView(props: OutlinerViewProps) {
   const parent = props.index.byId.get(props.parentId);
+  const view = readViewConfig(parent, props.index.byId);
   const rows = props.rows ?? buildOutlinerRows(parent, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
   });
@@ -44,8 +45,21 @@ export function OutlinerView(props: OutlinerViewProps) {
 
   return (
     <>
-      {props.showViewToolbar !== false && parent?.toolbarVisible && (
-        <ViewToolbar node={parent} index={props.index} run={props.run} />
+      {props.showViewToolbar !== false && parent && view.toolbarVisible && (
+        <ViewToolbar
+          node={parent}
+          view={view}
+          index={props.index}
+          run={props.run}
+          dropdownRequest={props.ui.toolbarDropdownRequest}
+          onDropdownRequestConsumed={(request) => {
+            props.setUi((prev) => (
+              prev.toolbarDropdownRequest === request
+                ? { ...prev, toolbarDropdownRequest: null }
+                : prev
+            ));
+          }}
+        />
       )}
       <RowHost
         rows={rows}

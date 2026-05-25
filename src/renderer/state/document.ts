@@ -49,6 +49,7 @@ export interface UiState {
   editingDescriptionId: NodeId | null;
   commandOpen: boolean;
   batchTagSelectorOpen: boolean;
+  toolbarDropdownRequest: ToolbarDropdownRequest | null;
 }
 
 export interface FocusTarget {
@@ -80,6 +81,14 @@ export interface PendingReferenceTypeAhead {
   targetId: NodeId;
 }
 
+export type ToolbarDropdownSection = 'view' | 'sort' | 'filter' | 'group' | 'display';
+
+export interface ToolbarDropdownRequest {
+  nodeId: NodeId;
+  section: ToolbarDropdownSection;
+  nonce: number;
+}
+
 export function useUiState() {
   return useState<UiState>({
     focusedId: null,
@@ -100,6 +109,7 @@ export function useUiState() {
     editingDescriptionId: null,
     commandOpen: false,
     batchTagSelectorOpen: false,
+    toolbarDropdownRequest: null,
   });
 }
 

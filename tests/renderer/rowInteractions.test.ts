@@ -47,7 +47,7 @@ import {
   NAME_FIELD,
   shouldShowTrailingInput,
 } from '../../src/renderer/ui/outliner/row-model';
-import { searchQuerySummaryModel } from '../../src/renderer/ui/search/SearchQuerySummaryBar';
+import { searchQueryOutlineText, searchQuerySummaryModel } from '../../src/renderer/ui/search/SearchQuerySummaryBar';
 import { concatRichText } from '../../src/renderer/ui/editor/richTextCodec';
 
 describe('row interaction resolvers', () => {
@@ -59,14 +59,12 @@ describe('row interaction resolvers', () => {
     createdAt: 0,
     updatedAt: 0,
     locked: false,
-    showCheckbox: false,
-    doneStateEnabled: false,
-    autocollectOptions: false,
-    autoCollected: false,
-    toolbarVisible: false,
-    filterValues: [],
-    ...overrides,
-  });
+	    showCheckbox: false,
+	    doneStateEnabled: false,
+	    autocollectOptions: false,
+	    autoCollected: false,
+	    ...overrides,
+	  });
 
   test('builds view rows with hidden field reveal placeholders', () => {
     const parent = makeNode('parent', 'Parent', { children: ['field'] });
@@ -86,22 +84,32 @@ describe('row interaction resolvers', () => {
     })).toEqual([{ id: 'field', type: 'field' }]);
   });
 
-  test('keeps panel fields in the normal body row model', () => {
-    const parent = makeNode('parent', 'Parent', {
-      children: ['status', 'beta', 'alpha', 'hidden'],
-      filterField: NAME_FIELD,
-      filterOp: 'any',
-      filterValues: ['Alpha'],
-      sortField: NAME_FIELD,
-      sortDirection: 'asc',
-    });
-    const statusDef = makeNode('status-def', 'Status', { type: 'fieldDef' });
-    const hiddenDef = makeNode('hidden-def', 'Archive', { type: 'fieldDef', hideField: 'always' });
-    const byId = new Map<string, any>([
-      ['parent', parent],
-      ['status-def', statusDef],
-      ['hidden-def', hiddenDef],
-      ['status', makeNode('status', '', { type: 'fieldEntry', parentId: 'parent', fieldDefId: 'status-def' })],
+	  test('keeps panel fields in the normal body row model', () => {
+	    const parent = makeNode('parent', 'Parent', {
+	      children: ['view', 'status', 'beta', 'alpha', 'hidden'],
+	    });
+	    const statusDef = makeNode('status-def', 'Status', { type: 'fieldDef' });
+	    const hiddenDef = makeNode('hidden-def', 'Archive', { type: 'fieldDef', hideField: 'always' });
+	    const byId = new Map<string, any>([
+	      ['parent', parent],
+	      ['view', makeNode('view', '', { type: 'viewDef', parentId: 'parent', children: ['filter', 'sort'] })],
+	      ['filter', makeNode('filter', '', {
+	        type: 'filterRule',
+	        parentId: 'view',
+	        filterField: NAME_FIELD,
+	        filterOperator: 'contains',
+	        filterValueLogic: 'any',
+	        filterValues: ['Alpha'],
+	      })],
+	      ['sort', makeNode('sort', '', {
+	        type: 'sortRule',
+	        parentId: 'view',
+	        sortField: NAME_FIELD,
+	        sortDirection: 'asc',
+	      })],
+	      ['status-def', statusDef],
+	      ['hidden-def', hiddenDef],
+	      ['status', makeNode('status', '', { type: 'fieldEntry', parentId: 'parent', fieldDefId: 'status-def' })],
       ['hidden', makeNode('hidden', '', { type: 'fieldEntry', parentId: 'parent', fieldDefId: 'hidden-def' })],
       ['alpha', makeNode('alpha', 'Alpha', { parentId: 'parent' })],
       ['beta', makeNode('beta', 'Beta', { parentId: 'parent' })],
@@ -165,41 +173,63 @@ describe('row interaction resolvers', () => {
       ['target', makeNode('target', 'Task', { parentId: 'workspace' })],
     ]);
 
-    expect(searchQuerySummaryModel({ byId, projection: {} } as any, 'search')).toEqual({
-      chips: [
-        { kind: 'tag', label: '#card' },
-        { kind: 'field', label: 'Status = Backlog' },
-      ],
-      resultCount: 1,
-    });
-  });
+	    expect(searchQuerySummaryModel({ byId, projection: {} } as any, 'search')).toEqual({
+	      chips: [
+	        { kind: 'tag', label: '#card' },
+	        { kind: 'field', label: 'Status = Backlog' },
+	      ],
+	      resultCount: 1,
+	    });
+	    expect(searchQueryOutlineText({ byId, projection: {} } as any, 'search')).toBe([
+	      '- AND',
+	      '  - HAS_TAG',
+	      '    - tag:: [[#card^tag-card]]',
+	      '  - FIELD_IS',
+	      '    - field:: [[Status^field-status]]',
+	      '    - value:: Backlog',
+	    ].join('\n'));
+	  });
 
-  test('applies sort, filter, and group view settings to row models', () => {
-    const parent = makeNode('parent', 'Parent', {
-      children: ['b', 'a', 'c'],
-      sortField: NAME_FIELD,
-      sortDirection: 'asc',
-      filterField: NAME_FIELD,
-      filterOp: 'any',
-      filterValues: ['a', 'g'],
-      groupField: NAME_FIELD,
-    });
-    const byId = new Map<string, any>([
-      ['parent', parent],
-      ['a', makeNode('a', 'Alpha', { parentId: 'parent' })],
-      ['b', makeNode('b', 'Beta', { parentId: 'parent' })],
-      ['c', makeNode('c', 'Gamma', { parentId: 'parent' })],
+	  test('applies sort, filter, and group view settings to row models', () => {
+	    const parent = makeNode('parent', 'Parent', {
+	      children: ['view', 'b', 'a', 'c'],
+	    });
+	    const byId = new Map<string, any>([
+	      ['parent', parent],
+	      ['view', makeNode('view', '', {
+	        type: 'viewDef',
+	        parentId: 'parent',
+	        children: ['sort', 'filter'],
+	        groupField: NAME_FIELD,
+	      })],
+	      ['sort', makeNode('sort', '', {
+	        type: 'sortRule',
+	        parentId: 'view',
+	        sortField: NAME_FIELD,
+	        sortDirection: 'asc',
+	      })],
+	      ['filter', makeNode('filter', '', {
+	        type: 'filterRule',
+	        parentId: 'view',
+	        filterField: NAME_FIELD,
+	        filterOperator: 'contains',
+	        filterValueLogic: 'any',
+	        filterValues: ['a', 'g'],
+	      })],
+	      ['a', makeNode('a', 'Alpha', { parentId: 'parent' })],
+	      ['b', makeNode('b', 'Beta', { parentId: 'parent' })],
+	      ['c', makeNode('c', 'Gamma', { parentId: 'parent' })],
     ]);
 
-    expect(buildOutlinerRows(parent as any, byId)).toEqual([
-      { id: 'group:parent:__name:Alpha', type: 'group', label: 'Alpha' },
-      { id: 'a', type: 'content' },
-      { id: 'group:parent:__name:Beta', type: 'group', label: 'Beta' },
-      { id: 'b', type: 'content' },
-      { id: 'group:parent:__name:Gamma', type: 'group', label: 'Gamma' },
-      { id: 'c', type: 'content' },
-    ]);
-  });
+	    expect(buildOutlinerRows(parent as any, byId)).toEqual([
+	      { id: 'group:parent:sys:name:alpha', type: 'group', label: 'Alpha' },
+	      { id: 'a', type: 'content' },
+	      { id: 'group:parent:sys:name:beta', type: 'group', label: 'Beta' },
+	      { id: 'b', type: 'content' },
+	      { id: 'group:parent:sys:name:gamma', type: 'group', label: 'Gamma' },
+	      { id: 'c', type: 'content' },
+	    ]);
+	  });
 
   test('trailing input ignores non-node rows when deciding placement', () => {
     expect(shouldShowTrailingInput([

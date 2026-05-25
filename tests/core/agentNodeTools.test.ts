@@ -40,6 +40,7 @@ function hostFor(core: Core): OutlinerToolHost {
       if (command === 'replace_node_with_reference') return core.replaceNodeWithReference(String(args.nodeId), String(args.targetId));
       if (command === 'create_search_node') return core.createSearchNode(String(args.parentId), nullableNumber(args.index), args.config as any);
       if (command === 'set_search_node') return core.setSearchNode(String(args.nodeId), args.config as any);
+      if (command === 'set_view_mode') return core.setViewMode(String(args.nodeId), String(args.mode) as any);
       if (command === 'undo') return core.operationHistory({ action: 'undo', origin: meta.origin === 'agent' ? 'agent' : 'all' });
       if (command === 'redo') return core.operationHistory({ action: 'redo', origin: meta.origin === 'agent' ? 'agent' : 'all' });
       throw new Error(`unsupported test command: ${command}`);
@@ -357,7 +358,10 @@ describe('agent node tools', () => {
     const searchId = created.data!.createdRootIds[0]!;
     const search = core.state().nodes[searchId]!;
     expect(search.type).toBe('search');
-    expect(search.viewMode).toBe('list');
+    const viewDef = search.children
+      .map((childId) => core.state().nodes[childId]!)
+      .find((child) => child.type === 'viewDef');
+    expect(viewDef?.viewMode).toBe('list');
     const searchChildTypes = search.children.map((childId) => core.state().nodes[childId]!.type);
     expect(searchChildTypes).toContain('queryCondition');
     const resultRefs = search.children

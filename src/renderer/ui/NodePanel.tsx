@@ -43,6 +43,7 @@ import {
   ChevronLeftIcon,
   HashIcon,
   ICON_SIZE,
+  FilterIcon,
   LibraryIcon,
   MoreIcon,
   SearchIcon,
@@ -66,7 +67,7 @@ import {
 } from './outliner/trailingTriggers';
 import { ButtonControl } from './primitives/ButtonControl';
 import { IconButton } from './primitives/IconButton';
-import { SearchQuerySummaryBar } from './search/SearchQuerySummaryBar';
+import { SearchQueryBuilderPanel } from './search/SearchQuerySummaryBar';
 import { inlineReferenceTextColor, resolveTagColor } from './tags/tagColors';
 import { TagBar } from './tags/TagBar';
 import { buildPanelBreadcrumb } from './panelBreadcrumb';
@@ -122,6 +123,7 @@ export function NodePanel(props: NodePanelProps) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [breadcrumbExpanded, setBreadcrumbExpanded] = useState(false);
   const [titleDocked, setTitleDocked] = useState(false);
+  const [searchQueryOpen, setSearchQueryOpen] = useState(false);
   const mainPanelRef = useRef<HTMLElement | null>(null);
   const stickyBreadcrumbRef = useRef<HTMLDivElement | null>(null);
   const titleRowRef = useRef<HTMLDivElement | null>(null);
@@ -131,7 +133,7 @@ export function NodePanel(props: NodePanelProps) {
   const rootDefinitionKind = definitionKind(rootNode);
   const definitionTemplateLabel = rootNode ? definitionOutlinerLabel(rootNode) : null;
   const showOutliner = Boolean(rootNode && (!rootDefinitionKind || definitionTemplateLabel));
-  const showTrailingInput = Boolean(rootNode && showOutliner);
+  const showTrailingInput = Boolean(rootNode && showOutliner && rootNode.type !== 'search');
   const breadcrumb = buildPanelBreadcrumb(rootNode, props.index);
   const titleFocusTarget = focusTarget(props.rootId, null, props.panelId, 'panel-title');
   const descriptionFocusTarget = focusTarget(props.rootId, null, props.panelId, 'description');
@@ -174,6 +176,10 @@ export function NodePanel(props: NodePanelProps) {
     setTitleContent(nextContent);
     setTitleTrigger(null);
   }, [rootNode?.id, rootNode?.content, titleEditorFocused]);
+
+  useEffect(() => {
+    setSearchQueryOpen(false);
+  }, [props.rootId]);
 
   const focusFirstVisibleRowOrTrailing = () => {
     const rows = flattenVisibleRows(
@@ -377,6 +383,27 @@ export function NodePanel(props: NodePanelProps) {
         event.stopPropagation();
       }}
       title="More"
+      variant="panel"
+    />
+  ) : null;
+
+  const headerSearchQueryButton = rootNode?.type === 'search' ? (
+    <IconButton
+      className={`panel-title-more-button ${searchQueryOpen ? 'is-active' : ''}`}
+      icon={FilterIcon}
+      iconSize={14}
+      label={searchQueryOpen ? 'Hide query' : 'Show query'}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        blurActiveElement();
+        setSearchQueryOpen((open) => !open);
+      }}
+      onMouseDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      title={searchQueryOpen ? 'Hide query' : 'Show query'}
       variant="panel"
     />
   ) : null;
@@ -599,7 +626,12 @@ export function NodePanel(props: NodePanelProps) {
                 />
               )}
             </div>
-            {!hasTitleTags && headerMoreButton}
+            {!hasTitleTags && (
+              <>
+                {headerSearchQueryButton}
+                {headerMoreButton}
+              </>
+            )}
           </div>
           {rootNode && (
             <NodeDescription
@@ -643,8 +675,17 @@ export function NodePanel(props: NodePanelProps) {
                 run={props.run}
                 onRoot={props.onRoot}
               />
+              {headerSearchQueryButton}
               {headerMoreButton}
             </div>
+          )}
+          {rootNode?.type === 'search' && searchQueryOpen && (
+            <SearchQueryBuilderPanel
+              index={props.index}
+              nodeId={props.rootId}
+              run={props.run}
+              onClose={() => setSearchQueryOpen(false)}
+            />
           )}
           {panelIsoDate && (
             <PanelDateNavigation
@@ -674,6 +715,12 @@ export function NodePanel(props: NodePanelProps) {
                 cursorEnd(),
               ));
             }}
+            onOpenViewSection={(nodeId, section) => {
+              props.setUi((prev) => ({
+                ...prev,
+                toolbarDropdownRequest: { nodeId, section, nonce: Date.now() },
+              }));
+            }}
             onClose={() => setContextMenu(null)}
           />
         )}
@@ -688,13 +735,6 @@ export function NodePanel(props: NodePanelProps) {
           >
             {definitionTemplateLabel && (
               <div className="definition-template-label">{definitionTemplateLabel}</div>
-            )}
-            {rootNode?.type === 'search' && (
-              <SearchQuerySummaryBar
-                index={props.index}
-                nodeId={props.rootId}
-                run={props.run}
-              />
             )}
             <OutlinerView
               panelId={props.panelId}

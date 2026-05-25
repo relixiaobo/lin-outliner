@@ -1,6 +1,20 @@
-import type { NodeId, NodeProjection } from '../api/types';
+import type { FilterOperator, NodeId, NodeProjection, SortDirection, ViewMode } from '../api/types';
 
-export const NAME_FIELD = '__name';
+export const NAME_FIELD = 'sys:name';
+export const CREATED_FIELD = 'sys:createdAt';
+export const UPDATED_FIELD = 'sys:updatedAt';
+export const DONE_FIELD = 'sys:done';
+export const DONE_AT_FIELD = 'sys:doneAt';
+export const TAGS_FIELD = 'sys:tags';
+export const REF_COUNT_FIELD = 'sys:refCount';
+
+const INTERNAL_NODE_TYPES = new Set<NodeProjection['type']>([
+  'queryCondition',
+  'viewDef',
+  'sortRule',
+  'filterRule',
+  'displayField',
+]);
 
 export type OutlinerRowItem =
   | { id: NodeId; type: 'field' }
@@ -12,8 +26,96 @@ export interface RowBuildOptions {
   expandedHiddenFields?: Set<string>;
 }
 
+export interface ViewSortRule {
+  id: NodeId;
+  field: string;
+  direction: SortDirection;
+}
+
+export interface ViewFilterRule {
+  id: NodeId;
+  field: string;
+  operator: FilterOperator;
+  valueLogic: 'all' | 'any';
+  values: string[];
+}
+
+export interface ViewDisplayField {
+  id: NodeId;
+  field: string;
+  visible: boolean;
+  width?: number;
+  label?: string;
+  placement?: string;
+}
+
+export interface ViewConfig {
+  viewDefId: NodeId | null;
+  viewMode: ViewMode;
+  toolbarVisible: boolean;
+  groupField: string | null;
+  sortRules: ViewSortRule[];
+  filterRules: ViewFilterRule[];
+  displayFields: ViewDisplayField[];
+}
+
 export function hiddenFieldKey(parentId: NodeId, fieldEntryId: NodeId): string {
   return `${parentId}:${fieldEntryId}`;
+}
+
+export function readViewConfig(parent: NodeProjection | undefined, byId: Map<NodeId, NodeProjection>): ViewConfig {
+  const viewDef = directChildren(parent, byId).find((child) => child.type === 'viewDef');
+  if (!viewDef) {
+    return {
+      viewDefId: null,
+      viewMode: 'list',
+      toolbarVisible: false,
+      groupField: null,
+      sortRules: [],
+      filterRules: [],
+      displayFields: [],
+    };
+  }
+
+  const viewChildren = directChildren(viewDef, byId);
+  return {
+    viewDefId: viewDef.id,
+    viewMode: viewDef.viewMode ?? 'list',
+    toolbarVisible: Boolean(viewDef.toolbarVisible),
+    groupField: viewDef.groupField ?? null,
+    sortRules: viewChildren
+      .filter((child) => child.type === 'sortRule' && child.sortField)
+      .map((child) => ({
+        id: child.id,
+        field: child.sortField!,
+        direction: child.sortDirection === 'desc' ? 'desc' : 'asc',
+      })),
+    filterRules: viewChildren
+      .filter((child) => child.type === 'filterRule' && child.filterField)
+      .map((child) => ({
+        id: child.id,
+        field: child.filterField!,
+        operator: child.filterOperator ?? 'contains',
+        valueLogic: child.filterValueLogic ?? 'any',
+        values: child.filterValues ?? [],
+      })),
+    displayFields: viewChildren
+      .filter((child) => child.type === 'displayField' && child.displayField)
+      .map((child) => ({
+        id: child.id,
+        field: child.displayField!,
+        visible: child.displayVisible !== false,
+        width: child.displayWidth,
+        label: child.displayLabel,
+        placement: child.displayPlacement,
+      })),
+  };
+}
+
+function directChildren(parent: NodeProjection | undefined, byId: Map<NodeId, NodeProjection>): NodeProjection[] {
+  return parent?.children
+    .map((childId) => byId.get(childId))
+    .filter((child): child is NodeProjection => Boolean(child)) ?? [];
 }
 
 function nodeTitle(node: NodeProjection | undefined): string {
@@ -37,27 +139,50 @@ function childText(node: NodeProjection | undefined, byId: Map<NodeId, NodeProje
   const displayed = displayNode(node, byId);
   const own = displayed.content.text;
   if (own) return own;
-  return node.children
+  return displayed.children
     .map((childId) => childText(byId.get(childId), byId))
     .filter(Boolean)
     .join(' ');
 }
 
-function fieldValueFor(rowNode: NodeProjection, fieldId: string, byId: Map<NodeId, NodeProjection>): string {
-  if (fieldId === NAME_FIELD) {
-    return childText(rowNode, byId);
+function fieldValuesFor(rowNode: NodeProjection, fieldId: string, byId: Map<NodeId, NodeProjection>): string[] {
+  const displayed = displayNode(rowNode, byId);
+  if (fieldId === NAME_FIELD) return [childText(displayed, byId)].filter(Boolean);
+  if (fieldId === CREATED_FIELD) return [String(displayed.createdAt)];
+  if (fieldId === UPDATED_FIELD) return [String(displayed.updatedAt)];
+  if (fieldId === DONE_FIELD) return [displayed.completedAt ? 'true' : 'false'];
+  if (fieldId === DONE_AT_FIELD) return displayed.completedAt ? [String(displayed.completedAt)] : [];
+  if (fieldId === TAGS_FIELD) {
+    return displayed.tags.map((tagId) => byId.get(tagId)?.content.text || tagId);
+  }
+  if (fieldId === REF_COUNT_FIELD) {
+    let count = 0;
+    for (const node of byId.values()) {
+      if (node.type === 'reference' && node.targetId === displayed.id) count += 1;
+    }
+    return [String(count)];
   }
 
-  const fieldEntry = rowNode.children
+  const fieldEntry = displayed.children
     .map((childId) => byId.get(childId))
     .find((child) => child?.type === 'fieldEntry' && child.fieldDefId === fieldId);
-  if (!fieldEntry) return '';
+  if (!fieldEntry) return [];
 
-  const valueText = fieldEntry.children
+  const values = fieldEntry.children
     .map((childId) => childText(byId.get(childId), byId))
-    .filter(Boolean)
-    .join(' ');
-  return valueText || childText(fieldEntry, byId);
+    .filter(Boolean);
+  return values.length > 0 ? values : [childText(fieldEntry, byId)].filter(Boolean);
+}
+
+function fieldTextFor(rowNode: NodeProjection, fieldId: string, byId: Map<NodeId, NodeProjection>): string {
+  return fieldValuesFor(rowNode, fieldId, byId).join(' ');
+}
+
+function fieldNumberFor(rowNode: NodeProjection, fieldId: string, byId: Map<NodeId, NodeProjection>): number | null {
+  const value = fieldValuesFor(rowNode, fieldId, byId)[0];
+  if (value === undefined) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
 function hiddenFieldValue(entry: NodeProjection, byId: Map<NodeId, NodeProjection>): string {
@@ -83,82 +208,128 @@ function isHiddenFieldEntry(entry: NodeProjection, byId: Map<NodeId, NodeProject
   return false;
 }
 
-function rowSortText(row: OutlinerRowItem, byId: Map<NodeId, NodeProjection>, fieldId: string): string {
-  if (row.type !== 'content' && row.type !== 'field') return '';
-  const node = byId.get(row.id);
-  return node ? fieldValueFor(node, fieldId, byId).toLocaleLowerCase() : '';
+function compareRowsByField(
+  left: OutlinerRowItem,
+  right: OutlinerRowItem,
+  byId: Map<NodeId, NodeProjection>,
+  fieldId: string,
+): number {
+  if (left.type !== 'content' && left.type !== 'field') return 1;
+  if (right.type !== 'content' && right.type !== 'field') return -1;
+  const leftNode = byId.get(left.id);
+  const rightNode = byId.get(right.id);
+  if (!leftNode || !rightNode) return 0;
+
+  if ([CREATED_FIELD, UPDATED_FIELD, DONE_AT_FIELD, REF_COUNT_FIELD].includes(fieldId)) {
+    const leftNumber = fieldNumberFor(leftNode, fieldId, byId) ?? Number.POSITIVE_INFINITY;
+    const rightNumber = fieldNumberFor(rightNode, fieldId, byId) ?? Number.POSITIVE_INFINITY;
+    return leftNumber - rightNumber;
+  }
+  if (fieldId === DONE_FIELD) {
+    const leftDone = displayNode(leftNode, byId).completedAt ? 1 : 0;
+    const rightDone = displayNode(rightNode, byId).completedAt ? 1 : 0;
+    return leftDone - rightDone;
+  }
+
+  const leftText = fieldTextFor(leftNode, fieldId, byId).toLocaleLowerCase();
+  const rightText = fieldTextFor(rightNode, fieldId, byId).toLocaleLowerCase();
+  return leftText.localeCompare(rightText, undefined, { numeric: true, sensitivity: 'base' });
 }
 
 function filterRows(
-  parent: NodeProjection,
+  view: ViewConfig,
   rows: OutlinerRowItem[],
   byId: Map<NodeId, NodeProjection>,
 ): OutlinerRowItem[] {
-  const fieldId = parent.filterField;
-  const values = parent.filterValues.map((value) => value.trim().toLocaleLowerCase()).filter(Boolean);
-  if (!fieldId || values.length === 0) return rows;
-
-  const op = parent.filterOp ?? 'all';
+  if (view.filterRules.length === 0) return rows;
   return rows.filter((row) => {
     if (row.type !== 'content' && row.type !== 'field') return true;
     const node = byId.get(row.id);
     if (!node) return false;
-    const haystack = fieldValueFor(node, fieldId, byId).toLocaleLowerCase();
-    return op === 'any'
-      ? values.some((value) => haystack.includes(value))
-      : values.every((value) => haystack.includes(value));
+    return view.filterRules.every((rule) => rowMatchesFilter(node, rule, byId));
   });
 }
 
+function rowMatchesFilter(node: NodeProjection, rule: ViewFilterRule, byId: Map<NodeId, NodeProjection>): boolean {
+  const values = fieldValuesFor(node, rule.field, byId);
+  const normalizedValues = values.map((value) => value.toLocaleLowerCase());
+  const expected = rule.values.map((value) => value.trim().toLocaleLowerCase()).filter(Boolean);
+
+  if (rule.operator === 'is_empty') return values.length === 0 || values.every((value) => !value.trim());
+  if (rule.operator === 'is_not_empty') return values.some((value) => value.trim());
+  if (expected.length === 0) return true;
+
+  const compareOne = (target: string) => {
+    if (rule.operator === 'is') return normalizedValues.includes(target);
+    if (rule.operator === 'is_not') return !normalizedValues.includes(target);
+    if (rule.operator === 'contains') return normalizedValues.some((value) => value.includes(target));
+    if (rule.operator === 'not_contains') return normalizedValues.every((value) => !value.includes(target));
+    const numericTarget = Number(target);
+    const numericValues = normalizedValues.map(Number).filter(Number.isFinite);
+    if (rule.operator === 'gt' || rule.operator === 'after') return numericValues.some((value) => value > numericTarget);
+    if (rule.operator === 'lt' || rule.operator === 'before') return numericValues.some((value) => value < numericTarget);
+    return true;
+  };
+
+  return rule.valueLogic === 'all'
+    ? expected.every(compareOne)
+    : expected.some(compareOne);
+}
+
 function sortRows(
-  parent: NodeProjection,
+  view: ViewConfig,
   rows: OutlinerRowItem[],
   byId: Map<NodeId, NodeProjection>,
 ): OutlinerRowItem[] {
-  const fieldId = parent.sortField;
-  if (!fieldId) return rows;
-
-  const direction = parent.sortDirection ?? 'asc';
+  if (view.sortRules.length === 0) return rows;
   const sortedRows = [...rows];
-  sortedRows.sort((a, b) => {
-    if (a.type === 'hiddenField' || a.type === 'group') return 1;
-    if (b.type === 'hiddenField' || b.type === 'group') return -1;
-    const left = rowSortText(a, byId, fieldId);
-    const right = rowSortText(b, byId, fieldId);
-    const result = left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' });
-    return direction === 'desc' ? -result : result;
+  sortedRows.sort((left, right) => {
+    for (const rule of view.sortRules) {
+      const result = compareRowsByField(left, right, byId, rule.field);
+      if (result !== 0) return rule.direction === 'desc' ? -result : result;
+    }
+    return 0;
   });
   return sortedRows;
 }
 
 function groupRows(
   parent: NodeProjection,
+  view: ViewConfig,
   rows: OutlinerRowItem[],
   byId: Map<NodeId, NodeProjection>,
 ): OutlinerRowItem[] {
-  const fieldId = parent.groupField;
+  const fieldId = view.groupField;
   if (!fieldId) return rows;
 
-  const result: OutlinerRowItem[] = [];
-  let currentGroup: string | null = null;
+  const groups = new Map<string, { label: string; rows: OutlinerRowItem[] }>();
+  const passthrough: OutlinerRowItem[] = [];
   for (const row of rows) {
     if (row.type !== 'content' && row.type !== 'field') {
-      result.push(row);
+      passthrough.push(row);
       continue;
     }
-
     const node = byId.get(row.id);
-    const value = node ? fieldValueFor(node, fieldId, byId).trim() : '';
-    const group = value || 'No group';
-    if (group !== currentGroup) {
-      currentGroup = group;
-      result.push({
-        id: `group:${parent.id}:${fieldId}:${group}`,
-        type: 'group',
-        label: group,
-      });
-    }
-    result.push(row);
+    const values = node ? fieldValuesFor(node, fieldId, byId).map((value) => value.trim()).filter(Boolean) : [];
+    const label = values.length > 0 ? values.sort((a, b) => a.localeCompare(b)).join(', ') : '(Empty)';
+    const key = label.toLocaleLowerCase();
+    const group = groups.get(key) ?? { label, rows: [] };
+    group.rows.push(row);
+    groups.set(key, group);
+  }
+
+  const result = [...passthrough];
+  for (const [key, group] of [...groups.entries()].sort((left, right) => {
+    if (left[0] === '(empty)') return 1;
+    if (right[0] === '(empty)') return -1;
+    return left[1].label.localeCompare(right[1].label);
+  })) {
+    result.push({
+      id: `group:${parent.id}:${fieldId}:${key}`,
+      type: 'group',
+      label: group.label,
+    });
+    result.push(...group.rows);
   }
   return result;
 }
@@ -173,7 +344,7 @@ function buildChildRows(
   for (const childId of parent.children) {
     const child = byId.get(childId);
     if (!child) continue;
-    if (child.type === 'queryCondition') continue;
+    if (child.type && INTERNAL_NODE_TYPES.has(child.type)) continue;
     if (
       child.type === 'fieldEntry'
       && isHiddenFieldEntry(child, byId)
@@ -201,7 +372,8 @@ function applyViewSettings(
   rows: OutlinerRowItem[],
   byId: Map<NodeId, NodeProjection>,
 ): OutlinerRowItem[] {
-  return groupRows(parent, sortRows(parent, filterRows(parent, rows, byId), byId), byId);
+  const view = readViewConfig(parent, byId);
+  return groupRows(parent, view, sortRows(view, filterRows(view, rows, byId), byId), byId);
 }
 
 export function buildOutlinerRows(
@@ -226,29 +398,44 @@ export function shouldShowTrailingInput(
 
 export function fieldChoiceLabel(fieldId: string, byId: Map<NodeId, NodeProjection>): string {
   if (fieldId === NAME_FIELD) return 'Name';
+  if (fieldId === CREATED_FIELD) return 'Created';
+  if (fieldId === UPDATED_FIELD) return 'Last edited';
+  if (fieldId === DONE_FIELD) return 'Done';
+  if (fieldId === DONE_AT_FIELD) return 'Done time';
+  if (fieldId === TAGS_FIELD) return 'Tags';
+  if (fieldId === REF_COUNT_FIELD) return 'References';
   return nodeTitle(byId.get(fieldId)) || 'Field';
 }
 
 export function collectViewFieldChoices(
   parent: NodeProjection,
   byId: Map<NodeId, NodeProjection>,
-): Array<{ id: string; label: string }> {
-  const choices = new Map<string, string>([[NAME_FIELD, 'Name']]);
+): Array<{ id: string; label: string; section: 'System fields' | 'Fields' }> {
+  const choices = new Map<string, { label: string; section: 'System fields' | 'Fields' }>([
+    [NAME_FIELD, { label: 'Name', section: 'System fields' }],
+    [CREATED_FIELD, { label: 'Created', section: 'System fields' }],
+    [UPDATED_FIELD, { label: 'Last edited', section: 'System fields' }],
+    [DONE_FIELD, { label: 'Done', section: 'System fields' }],
+    [DONE_AT_FIELD, { label: 'Done time', section: 'System fields' }],
+    [TAGS_FIELD, { label: 'Tags', section: 'System fields' }],
+    [REF_COUNT_FIELD, { label: 'References', section: 'System fields' }],
+  ]);
   for (const childId of parent.children) {
     const child = byId.get(childId);
     if (!child) continue;
-    for (const nestedId of child.children) {
+    const displayed = displayNode(child, byId);
+    for (const nestedId of displayed.children) {
       const nested = byId.get(nestedId);
       if (nested?.type !== 'fieldEntry' || !nested.fieldDefId) continue;
-      choices.set(nested.fieldDefId, fieldChoiceLabel(nested.fieldDefId, byId));
+      choices.set(nested.fieldDefId, { label: fieldChoiceLabel(nested.fieldDefId, byId), section: 'Fields' });
     }
   }
   for (const node of byId.values()) {
     if (node.type === 'fieldDef') {
-      choices.set(node.id, fieldChoiceLabel(node.id, byId));
+      choices.set(node.id, { label: fieldChoiceLabel(node.id, byId), section: 'Fields' });
     }
   }
   return [...choices.entries()]
-    .map(([id, label]) => ({ id, label }))
-    .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
+    .map(([id, choice]) => ({ id, ...choice }))
+    .sort((a, b) => a.section.localeCompare(b.section) || a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
 }

@@ -6,7 +6,7 @@ import type {
 } from '../../../core/agentTypes';
 import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
-import { buildOutlinerRows } from '../../state/outlinerRows';
+import { buildOutlinerRows, readViewConfig } from '../../state/outlinerRows';
 import { buildPanelBreadcrumb } from '../panelBreadcrumb';
 import type { WorkspaceTabState } from '../workspaceLayoutTypes';
 
@@ -135,7 +135,8 @@ function outlineTextForNode(node: NodeProjection, index: DocumentIndex): string 
 
   const parts: string[] = [];
   if (node.type === 'search') parts.push('%%search%%');
-  if (node.viewMode) parts.push(`%%view:${node.viewMode}%%`);
+  const viewMode = node.type === 'search' ? readViewConfig(node, index.byId).viewMode : node.viewMode;
+  if (viewMode) parts.push(`%%view:${viewMode}%%`);
   if (node.completedAt) parts.push('[x]');
   else if (node.showCheckbox) parts.push('[ ]');
   parts.push(referenceText(node, index) ?? titleForNode(node));
