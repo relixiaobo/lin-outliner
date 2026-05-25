@@ -1986,10 +1986,11 @@ Example read result data:
 ### `past_chats`
 
 Canonical contract lives in [`../plans/agent-past-chats.md`](../plans/agent-past-chats.md).
-The plan supersedes any earlier sketch of this tool. One tool, two modes
-(`search`/`read`) selected by parameters, internally backed by the
-existing event store plus ripgrep. Update this section to point at the
-spec entry instead of the plan once implementation lands.
+The plan supersedes any earlier sketch of this tool. One tool, three modes
+(`recent`/`search`/`read`) selected by parameters, internally backed by the
+existing event store, user-message/search indexes, and visible transcript
+filtering. Move the final stable contract into this spec once the
+implementation PR lands.
 
 ## Mapping to Current Lin Commands
 

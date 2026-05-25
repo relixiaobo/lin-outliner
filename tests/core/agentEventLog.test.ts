@@ -4,6 +4,7 @@ import {
   getAgentEventActivePath,
   getAgentEventConversation,
   getAgentEventMessageBranches,
+  getAgentEventVisibleTranscript,
   replayAgentEvents,
   type AgentActor,
   type AgentEvent,
@@ -190,6 +191,76 @@ describe('agent event log', () => {
     });
   });
 
+  test('expands compacted active-path history for visible transcript reads', () => {
+    const state = replayAgentEvents([
+      { ...base(1, 'session.created'), title: 'Compaction' },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'user-before-compact',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Old question' }],
+      },
+      {
+        ...base(3, 'assistant_message.started', agentActor),
+        runId: 'run-before-compact',
+        messageId: 'assistant-before-compact',
+        parentMessageId: 'user-before-compact',
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        ...base(4, 'assistant_message.completed', agentActor),
+        messageId: 'assistant-before-compact',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Old answer' }],
+      },
+      {
+        ...base(5, 'user_message.created', userActor),
+        messageId: 'user-edited-away',
+        parentMessageId: null,
+        replacesMessageId: 'user-before-compact',
+        content: [{ type: 'text', text: 'Sibling branch' }],
+      },
+      {
+        ...base(6, 'branch.selected'),
+        leafMessageId: 'assistant-before-compact',
+      },
+      {
+        ...base(7, 'compaction.completed'),
+        messageId: 'compact-root',
+        summary: 'Summary',
+        compactedThroughMessageId: 'assistant-before-compact',
+        trigger: 'manual',
+      },
+      {
+        ...base(8, 'user_message.created', systemActor),
+        messageId: 'compact-root',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Conversation compacted.' }],
+      },
+      {
+        ...base(9, 'user_message.created', userActor),
+        messageId: 'user-after-compact',
+        parentMessageId: 'compact-root',
+        content: [{ type: 'text', text: 'New question' }],
+      },
+    ]);
+
+    expect(getAgentEventActivePath(state).map((message) => message.id)).toEqual([
+      'compact-root',
+      'user-after-compact',
+    ]);
+    expect(getAgentEventVisibleTranscript(state).map((entry) => ({
+      id: entry.message.id,
+      archived: entry.archived,
+    }))).toEqual([
+      { id: 'user-before-compact', archived: true },
+      { id: 'assistant-before-compact', archived: true },
+      { id: 'compact-root', archived: false },
+      { id: 'user-after-compact', archived: false },
+    ]);
+  });
+
   test('keeps multimedia as payload refs with derived previews', () => {
     const source: AgentPayloadRef = {
       kind: 'payload_ref',
@@ -342,7 +413,9 @@ describe('agent event log', () => {
       },
     ];
 
-    const toolResult = deriveAgentPiMessages(replayAgentEvents(events))[1];
+    const state = replayAgentEvents(events);
+    expect(state.messages['tool-result-1']?.outputSummary).toBe(payload.summary);
+    const toolResult = deriveAgentPiMessages(state)[1];
     expect(toolResult?.role).toBe('toolResult');
     if (toolResult?.role !== 'toolResult') throw new Error('Expected tool result');
     expect(toolResult.content).toEqual([{ type: 'text', text: replacement }]);
@@ -464,7 +537,9 @@ describe('agent event log', () => {
       },
     ];
 
-    const toolResult = deriveAgentPiMessages(replayAgentEvents(events))[1];
+    const state = replayAgentEvents(events);
+    expect(state.messages['tool-result-1']?.outputSummary).toBe('bash output');
+    const toolResult = deriveAgentPiMessages(state)[1];
     expect(toolResult?.role).toBe('toolResult');
     if (toolResult?.role !== 'toolResult') throw new Error('Expected tool result');
     expect(toolResult.content).toEqual([{ type: 'text', text: replacement }]);

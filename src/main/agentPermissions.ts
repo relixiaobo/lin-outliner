@@ -45,6 +45,7 @@ const RESTRICTED_BASE_ALLOWED_TOOLS = new Set([
   'file_grep',
   'web_search',
   'web_fetch',
+  'past_chats',
   'skill',
   'task_stop',
 ]);
@@ -66,6 +67,8 @@ const TOOL_ALIASES = new Map<string, string>([
   ['web_fetch', 'web_fetch'],
   ['websearch', 'web_search'],
   ['web_search', 'web_search'],
+  ['pastchats', 'past_chats'],
+  ['past_chats', 'past_chats'],
   ['skill', 'skill'],
   ['task_stop', 'task_stop'],
 ]);
@@ -239,7 +242,7 @@ function classifyToolAccess(toolName: string): AgentPermissionAccess {
   if (toolName === 'bash') return 'execute';
   if (toolName === 'task_stop') return 'control';
   if (toolName === 'file_edit' || toolName === 'file_write') return 'write';
-  if (toolName === 'file_read' || toolName === 'file_glob' || toolName === 'file_grep' || toolName === 'web_fetch' || toolName === 'web_search') return 'read';
+  if (toolName === 'file_read' || toolName === 'file_glob' || toolName === 'file_grep' || toolName === 'web_fetch' || toolName === 'web_search' || toolName === 'past_chats') return 'read';
   return 'unknown';
 }
 

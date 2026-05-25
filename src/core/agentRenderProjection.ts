@@ -1,6 +1,7 @@
 import {
   getAgentEventActivePath,
   getAgentEventMessageBranches,
+  getAgentEventVisibleTranscript,
   type AgentCompactionRecord,
   type AgentCompactionTrigger,
   type AgentEventMessageRecord,
@@ -137,7 +138,7 @@ export function buildAgentRenderProjection(
   const activePath = getAgentEventActivePath(state);
   const entities: AgentRenderEntities = { messages: {}, subagents: {}, compactions: {} };
   const rows = buildActiveRows(state, activePath, entities);
-  const transcriptRows = buildTranscriptRows(state, activePath, entities);
+  const transcriptRows = buildTranscriptRows(state, entities);
   let streaming: AgentStreamingRenderState | null = null;
 
   for (const message of activePath) {
@@ -192,16 +193,16 @@ function buildActiveRows(
 
 function buildTranscriptRows(
   state: AgentEventReplayState,
-  activePath: readonly AgentEventMessageRecord[],
   entities: AgentRenderEntities,
 ): AgentRenderRow[] {
   const rows: AgentRenderRow[] = [];
-  const expandingCompactions = new Set<string>();
-  for (const message of activePath) {
-    appendTranscriptRow(state, rows, entities, message, {
-      archived: false,
-      expandingCompactions,
-    });
+  for (const entry of getAgentEventVisibleTranscript(state)) {
+    const compaction = compactionForMessage(state, entry.message);
+    if (compaction) {
+      appendCompactionRow(rows, entities, state, entry.message, compaction, entry.archived);
+      continue;
+    }
+    appendMessageRow(rows, entities, state, entry.message, entry.archived);
   }
   return rows;
 }
@@ -218,37 +219,6 @@ function appendActiveRow(
     return;
   }
   appendMessageRow(rows, entities, state, message, false);
-}
-
-function appendTranscriptRow(
-  state: AgentEventReplayState,
-  rows: AgentRenderRow[],
-  entities: AgentRenderEntities,
-  message: AgentEventMessageRecord,
-  options: {
-    archived: boolean;
-    expandingCompactions: Set<string>;
-  },
-) {
-  const compaction = compactionForMessage(state, message);
-  if (!compaction) {
-    appendMessageRow(rows, entities, state, message, options.archived);
-    return;
-  }
-
-  if (!options.expandingCompactions.has(compaction.messageId)) {
-    options.expandingCompactions.add(compaction.messageId);
-    for (const compactedMessage of pathToMessage(state, compaction.compactedThroughMessageId)) {
-      if (compactedMessage.id === message.id) continue;
-      appendTranscriptRow(state, rows, entities, compactedMessage, {
-        archived: true,
-        expandingCompactions: options.expandingCompactions,
-      });
-    }
-    options.expandingCompactions.delete(compaction.messageId);
-  }
-
-  appendCompactionRow(rows, entities, state, message, compaction, options.archived);
 }
 
 function appendMessageRow(
@@ -286,24 +256,6 @@ function appendCompactionRow(
   });
   entities.messages[message.id] = toRenderMessageEntity(state, message);
   entities.compactions[compaction.id] = toRenderCompactionEntity(compaction);
-}
-
-function pathToMessage(
-  state: AgentEventReplayState,
-  leafMessageId: string,
-): AgentEventMessageRecord[] {
-  const path: AgentEventMessageRecord[] = [];
-  const visited = new Set<string>();
-  let cursorId: string | null = leafMessageId;
-  while (cursorId) {
-    if (visited.has(cursorId)) return path.reverse();
-    visited.add(cursorId);
-    const message: AgentEventMessageRecord | undefined = state.messages[cursorId];
-    if (!message) return path.reverse();
-    path.push(message);
-    cursorId = message.parentMessageId;
-  }
-  return path.reverse();
 }
 
 function toRenderMessageEntity(

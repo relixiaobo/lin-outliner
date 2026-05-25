@@ -1,0 +1,524 @@
+import {
+  getAgentEventVisibleTranscript,
+  type AgentEventMessageRecord,
+  type AgentPersistedContent,
+} from '../core/agentEventLog';
+import type {
+  AgentEventSearchIndexEntry,
+  AgentEventSessionIndexEntry,
+  AgentEventStore,
+} from './agentEventStore';
+
+const DEFAULT_SEARCH_LIMIT = 10;
+const MAX_SEARCH_LIMIT = 20;
+const SEARCH_SNIPPET_CHARS = 200;
+const DEFAULT_RECENT_LIMIT = 20;
+const MAX_RECENT_LIMIT = 50;
+const DEFAULT_RECENT_MESSAGE_CHARS = 360;
+const MAX_RECENT_MESSAGE_CHARS = 1_200;
+const DEFAULT_BEFORE_CONTEXT = 1;
+const MAX_BEFORE_CONTEXT = 5;
+const DEFAULT_AFTER_CONTEXT = 4;
+const MAX_AFTER_CONTEXT = 20;
+const DEFAULT_READ_CHARS = 2_000;
+const MAX_READ_CHARS = 8_000;
+const MAX_QUERY_TERMS = 12;
+
+export type PastChatsRole = 'user' | 'assistant' | 'toolResult';
+
+export interface PastChatsSearchParams {
+  query: string;
+  after?: string;
+  before?: string;
+  sessionIds?: string[];
+  limit?: number;
+  includeCurrentSession?: boolean;
+}
+
+export interface PastChatsReadParams {
+  messageId: string;
+  beforeContext?: number;
+  afterContext?: number;
+  maxChars?: number;
+  includeCurrentSession?: boolean;
+}
+
+export interface PastChatsRecentParams {
+  after?: string;
+  before?: string;
+  sessionIds?: string[];
+  limit?: number;
+  maxMessageChars?: number;
+  includeCurrentSession?: boolean;
+}
+
+export interface PastChatsRequestContext {
+  currentSessionId?: string | null;
+}
+
+export type PastChatsResult =
+  | PastChatsRecentResult
+  | PastChatsSearchResult
+  | PastChatsReadResult
+  | PastChatsErrorResult;
+
+export interface PastChatsRecentResult {
+  mode: 'recent';
+  items: PastChatsRecentItem[];
+  totalItems: number;
+  truncated: boolean;
+}
+
+export interface PastChatsRecentItem {
+  messageId: string;
+  sessionId: string;
+  sessionTitle: string | null;
+  createdAt: string;
+  text: string;
+  totalChars: number;
+  textTruncated: boolean;
+  hasAttachments: boolean;
+}
+
+export interface PastChatsSearchResult {
+  mode: 'search';
+  hits: PastChatsSearchHit[];
+  totalHits: number;
+  truncated: boolean;
+}
+
+export interface PastChatsSearchHit {
+  messageId: string;
+  sessionId: string;
+  sessionTitle: string | null;
+  role: PastChatsRole;
+  createdAt: string;
+  snippet: string;
+}
+
+export interface PastChatsReadResult {
+  mode: 'read';
+  session: { id: string; title: string | null; createdAt: string; updatedAt: string };
+  anchorMessageId: string;
+  messages: PastChatsReadMessage[];
+  totalChars: number;
+  outputTruncated: boolean;
+}
+
+export interface PastChatsReadMessage {
+  messageId: string;
+  role: PastChatsRole;
+  createdAt: string;
+  text: string;
+  toolName?: string;
+  isError?: boolean;
+  messageTruncated?: boolean;
+}
+
+export type PastChatsErrorCode =
+  | 'AMBIGUOUS_MODE'
+  | 'MISSING_QUERY_OR_MESSAGE_ID'
+  | 'SESSION_NOT_FOUND'
+  | 'NOT_ON_ACTIVE_BRANCH'
+  | 'SESSION_IS_CURRENT';
+
+export interface PastChatsErrorResult {
+  mode: 'error';
+  code: PastChatsErrorCode;
+  message: string;
+  nearbyMessageIds?: string[];
+}
+
+interface VisibleSessionCacheEntry {
+  latestEventId: string | null;
+  messageIds: Set<string>;
+  messageById: Map<string, AgentEventMessageRecord>;
+  messages: AgentEventMessageRecord[];
+  compactionMessageIds: Set<string>;
+}
+
+export class AgentPastChatsService {
+  private readonly visibleSessionCache = new Map<string, VisibleSessionCacheEntry>();
+
+  constructor(private readonly eventStore: AgentEventStore) {}
+
+  async search(
+    params: PastChatsSearchParams,
+    context: PastChatsRequestContext = {},
+  ): Promise<PastChatsResult> {
+    const terms = normalizeQueryTerms(params.query);
+    if (terms.length === 0) {
+      return pastChatsError('MISSING_QUERY_OR_MESSAGE_ID', 'Pass a non-empty query or message_id.');
+    }
+
+    const limit = clampInteger(params.limit, DEFAULT_SEARCH_LIMIT, 1, MAX_SEARCH_LIMIT);
+    const sessionIds = stringSet(params.sessionIds);
+    const after = parseDateFilter(params.after);
+    const before = parseDateFilter(params.before);
+    const sessions = await this.sessionMetaById();
+    const currentSessionId = context.currentSessionId ?? null;
+    const candidates = (await this.eventStore.listMessageIndexEntries())
+      .filter((entry) => sessions.has(entry.sessionId))
+      .filter((entry) => !sessionIds || sessionIds.has(entry.sessionId))
+      .filter((entry) => params.includeCurrentSession || entry.sessionId !== currentSessionId)
+      .filter((entry) => after === null || entry.createdAt >= after)
+      .filter((entry) => before === null || entry.createdAt <= before)
+      .filter((entry) => terms.every((term) => entry.normalizedText.includes(term)));
+
+    const visibleHits: Array<{ entry: AgentEventSearchIndexEntry; text: string }> = [];
+    for (const entry of candidates) {
+      const visible = await this.visibleSessionMessages(entry.sessionId);
+      if (!visible.messageIds.has(entry.messageId)) continue;
+      const text = searchResultText(entry, visible.messageById.get(entry.messageId));
+      if (!terms.every((term) => normalizeText(text).includes(term))) continue;
+      visibleHits.push({ entry, text });
+    }
+
+    visibleHits.sort((left, right) => {
+      const leftSession = sessions.get(left.entry.sessionId)?.updatedAt ?? left.entry.updatedAt;
+      const rightSession = sessions.get(right.entry.sessionId)?.updatedAt ?? right.entry.updatedAt;
+      return rightSession - leftSession || right.entry.updatedAt - left.entry.updatedAt;
+    });
+
+    const selected = visibleHits.slice(0, limit);
+    return {
+      mode: 'search',
+      hits: selected.map(({ entry, text }) => ({
+        messageId: entry.messageId,
+        sessionId: entry.sessionId,
+        sessionTitle: sessions.get(entry.sessionId)?.title ?? null,
+        role: entry.role,
+        createdAt: isoTime(entry.createdAt),
+        snippet: buildSnippet(text, terms),
+      })),
+      totalHits: visibleHits.length,
+      truncated: visibleHits.length > selected.length,
+    };
+  }
+
+  async recent(
+    params: PastChatsRecentParams = {},
+    context: PastChatsRequestContext = {},
+  ): Promise<PastChatsResult> {
+    const limit = clampInteger(params.limit, DEFAULT_RECENT_LIMIT, 1, MAX_RECENT_LIMIT);
+    const maxMessageChars = clampInteger(
+      params.maxMessageChars,
+      DEFAULT_RECENT_MESSAGE_CHARS,
+      1,
+      MAX_RECENT_MESSAGE_CHARS,
+    );
+    const sessionIds = stringSet(params.sessionIds);
+    const after = parseDateFilter(params.after);
+    const before = parseDateFilter(params.before);
+    const sessions = await this.sessionMetaById();
+    const currentSessionId = context.currentSessionId ?? null;
+    const candidates = (await this.eventStore.listUserMessageIndexEntries())
+      .filter((entry) => sessions.has(entry.sessionId))
+      .filter((entry) => !sessionIds || sessionIds.has(entry.sessionId))
+      .filter((entry) => params.includeCurrentSession || entry.sessionId !== currentSessionId)
+      .filter((entry) => after === null || entry.createdAt >= after)
+      .filter((entry) => before === null || entry.createdAt <= before);
+
+    const items: Array<PastChatsRecentItem & { sortAt: number }> = [];
+    for (const entry of candidates) {
+      const visible = await this.visibleSessionMessages(entry.sessionId);
+      if (!visible.messageIds.has(entry.messageId)) continue;
+      if (visible.compactionMessageIds.has(entry.messageId)) continue;
+      const message = visible.messageById.get(entry.messageId);
+      if (!message || message.role !== 'user') continue;
+      const text = cleanUserMessageText(contentText(message.content));
+      if (!text) continue;
+      const session = sessions.get(entry.sessionId);
+      items.push({
+        messageId: entry.messageId,
+        sessionId: entry.sessionId,
+        sessionTitle: session?.title ?? null,
+        createdAt: isoTime(entry.createdAt),
+        text: truncateForDisplay(text, maxMessageChars),
+        totalChars: text.length,
+        textTruncated: text.length > maxMessageChars,
+        hasAttachments: entry.hasAttachments,
+        sortAt: entry.createdAt,
+      });
+    }
+
+    items.sort((left, right) => right.sortAt - left.sortAt);
+    const selected = items.slice(0, limit);
+    return {
+      mode: 'recent',
+      items: selected.map(({ sortAt: _sortAt, ...item }) => item),
+      totalItems: items.length,
+      truncated: items.length > selected.length,
+    };
+  }
+
+  async read(
+    params: PastChatsReadParams,
+    context: PastChatsRequestContext = {},
+  ): Promise<PastChatsResult> {
+    const messageId = params.messageId.trim();
+    if (!messageId) {
+      return pastChatsError('MISSING_QUERY_OR_MESSAGE_ID', 'Pass a non-empty query or message_id.');
+    }
+
+    const indexEntry = await this.eventStore.findMessageIndexEntry(messageId);
+    if (!indexEntry) {
+      return pastChatsError('SESSION_NOT_FOUND', `No visible session was found for message ${messageId}.`);
+    }
+
+    const currentSessionId = context.currentSessionId ?? null;
+    if (!params.includeCurrentSession && indexEntry.sessionId === currentSessionId) {
+      return pastChatsError('SESSION_IS_CURRENT', 'That message is in the current session. Use current context unless the session was compacted.');
+    }
+
+    const sessions = await this.sessionMetaById();
+    const session = sessions.get(indexEntry.sessionId);
+    if (!session) {
+      return pastChatsError('SESSION_NOT_FOUND', `No visible session was found for message ${messageId}.`);
+    }
+
+    const visible = await this.visibleSessionMessages(indexEntry.sessionId);
+    const anchorIndex = visible.messages.findIndex((message) => message.id === messageId);
+    if (anchorIndex < 0) {
+      return pastChatsError(
+        'NOT_ON_ACTIVE_BRANCH',
+        `The message ${messageId} was edited away or is on a non-active branch.`,
+        { nearbyMessageIds: nearbyMessageIds(visible.messages, indexEntry) },
+      );
+    }
+
+    const beforeContext = clampInteger(params.beforeContext, DEFAULT_BEFORE_CONTEXT, 0, MAX_BEFORE_CONTEXT);
+    const afterContext = clampInteger(params.afterContext, DEFAULT_AFTER_CONTEXT, 0, MAX_AFTER_CONTEXT);
+    const maxChars = clampInteger(params.maxChars, DEFAULT_READ_CHARS, 1, MAX_READ_CHARS);
+    const windowMessages = readWindow(visible.messages, anchorIndex, beforeContext, afterContext);
+    const assembled = clampReadMessages(windowMessages, maxChars);
+
+    return {
+      mode: 'read',
+      session: {
+        id: session.id,
+        title: session.title,
+        createdAt: isoTime(session.createdAt),
+        updatedAt: isoTime(session.updatedAt),
+      },
+      anchorMessageId: messageId,
+      messages: assembled.messages,
+      totalChars: assembled.totalChars,
+      outputTruncated: assembled.outputTruncated,
+    };
+  }
+
+  private async sessionMetaById(): Promise<Map<string, AgentEventSessionIndexEntry>> {
+    return new Map((await this.eventStore.listSessionIndexEntries()).map((entry) => [entry.id, entry]));
+  }
+
+  private async visibleSessionMessages(sessionId: string): Promise<VisibleSessionCacheEntry> {
+    const state = await this.eventStore.replay(sessionId);
+    const cached = this.visibleSessionCache.get(sessionId);
+    if (cached && cached.latestEventId === state.latestEventId) return cached;
+    const messages = getAgentEventVisibleTranscript(state).map((entry) => entry.message);
+    const next = {
+      latestEventId: state.latestEventId,
+      messageIds: new Set(messages.map((message) => message.id)),
+      messageById: new Map(messages.map((message) => [message.id, message])),
+      messages,
+      compactionMessageIds: new Set(Object.keys(state.compactionsByMessageId)),
+    };
+    this.visibleSessionCache.set(sessionId, next);
+    return next;
+  }
+}
+
+export function pastChatsError(
+  code: PastChatsErrorCode,
+  message: string,
+  options: { nearbyMessageIds?: string[] } = {},
+): PastChatsErrorResult {
+  return {
+    mode: 'error',
+    code,
+    message,
+    nearbyMessageIds: options.nearbyMessageIds,
+  };
+}
+
+function readWindow(
+  messages: readonly AgentEventMessageRecord[],
+  anchorIndex: number,
+  beforeContext: number,
+  afterContext: number,
+): AgentEventMessageRecord[] {
+  let start = anchorIndex;
+  if (beforeContext > 0) {
+    let seenUsers = 0;
+    for (let index = anchorIndex - 1; index >= 0; index -= 1) {
+      if (messages[index]?.role !== 'user') continue;
+      seenUsers += 1;
+      start = index;
+      if (seenUsers >= beforeContext) break;
+    }
+  }
+  const end = Math.min(messages.length, anchorIndex + 1 + afterContext);
+  return messages.slice(start, end);
+}
+
+function clampReadMessages(messages: readonly AgentEventMessageRecord[], maxChars: number): {
+  messages: PastChatsReadMessage[];
+  totalChars: number;
+  outputTruncated: boolean;
+} {
+  const full = messages.map((message) => ({
+    message,
+    text: messageText(message),
+  }));
+  const totalChars = full.reduce((sum, item) => sum + item.text.length, 0);
+  let remaining = maxChars;
+  let outputTruncated = totalChars > maxChars;
+  const out: PastChatsReadMessage[] = [];
+
+  for (const item of full) {
+    if (remaining <= 0) {
+      outputTruncated = true;
+      break;
+    }
+    const truncated = item.text.length > remaining;
+    const text = truncated ? item.text.slice(0, remaining).trimEnd() : item.text;
+    remaining -= text.length;
+    out.push({
+      messageId: item.message.id,
+      role: item.message.role,
+      createdAt: isoTime(item.message.createdAt),
+      text,
+      toolName: item.message.toolName,
+      isError: item.message.isError,
+      messageTruncated: truncated || undefined,
+    });
+    if (truncated) break;
+  }
+
+  return { messages: out, totalChars, outputTruncated };
+}
+
+function messageText(message: AgentEventMessageRecord): string {
+  if (message.role === 'toolResult' && message.outputSummary?.trim()) {
+    return message.outputSummary.trim();
+  }
+  if (message.role === 'user') {
+    return cleanUserMessageText(contentText(message.content));
+  }
+  return contentText(message.content);
+}
+
+function searchResultText(entry: AgentEventSearchIndexEntry, message: AgentEventMessageRecord | undefined): string {
+  if (entry.role === 'user' && message) {
+    return cleanUserMessageText(contentText(message.content));
+  }
+  return entry.text || entry.preview;
+}
+
+function contentText(content: readonly AgentPersistedContent[]): string {
+  return content
+    .map((part) => {
+      if (part.type === 'text') return part.text;
+      if (part.type === 'thinking') return part.redacted ? '[thinking]' : '[thinking]';
+      if (part.type === 'toolCall') return `[tool:${part.name} ${summarizeJson(part.arguments)}]`;
+      if (part.type === 'image') return part.alt ?? part.imageRef.summary ?? `[image:${part.imageRef.id}]`;
+      return part.label ?? part.payload.summary ?? `[payload:${part.payload.id}]`;
+    })
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+}
+
+function cleanUserMessageText(text: string): string {
+  return text
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function truncateForDisplay(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  if (maxChars <= 3) return '.'.repeat(maxChars);
+  return `${text.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+}
+
+function nearbyMessageIds(
+  visibleMessages: readonly AgentEventMessageRecord[],
+  indexEntry: AgentEventSearchIndexEntry,
+): string[] {
+  const byTime = visibleMessages.findIndex((message) => message.createdAt >= indexEntry.createdAt);
+  const center = byTime >= 0 ? byTime : visibleMessages.length;
+  return visibleMessages
+    .slice(Math.max(0, center - 5), Math.min(visibleMessages.length, center + 5))
+    .map((message) => message.id);
+}
+
+function buildSnippet(text: string, terms: readonly string[]): string {
+  const normalized = normalizeText(text);
+  let matchIndex = -1;
+  let matchTerm = '';
+  for (const term of terms) {
+    const index = normalized.indexOf(term);
+    if (index >= 0 && (matchIndex < 0 || index < matchIndex)) {
+      matchIndex = index;
+      matchTerm = term;
+    }
+  }
+
+  const source = text.replace(/\s+/g, ' ').trim();
+  if (matchIndex < 0) return source.slice(0, SEARCH_SNIPPET_CHARS);
+  const half = Math.floor((SEARCH_SNIPPET_CHARS - matchTerm.length) / 2);
+  const start = Math.max(0, matchIndex - half);
+  const end = Math.min(source.length, start + SEARCH_SNIPPET_CHARS);
+  const prefix = start > 0 ? '...' : '';
+  const suffix = end < source.length ? '...' : '';
+  return `${prefix}${highlightTerms(source.slice(start, end), terms)}${suffix}`;
+}
+
+function highlightTerms(text: string, terms: readonly string[]): string {
+  let highlighted = text;
+  for (const term of [...terms].sort((left, right) => right.length - left.length)) {
+    if (!term) continue;
+    highlighted = highlighted.replace(new RegExp(escapeRegExp(term), 'gi'), (match) => `<mark>${match}</mark>`);
+  }
+  return highlighted;
+}
+
+function normalizeQueryTerms(query: string): string[] {
+  return [...new Set(normalizeText(query).split(/\s+/).filter(Boolean))].slice(0, MAX_QUERY_TERMS);
+}
+
+function normalizeText(text: string): string {
+  return text.replace(/\s+/g, ' ').trim().normalize('NFKC').toLocaleLowerCase();
+}
+
+function stringSet(values: readonly string[] | undefined): Set<string> | null {
+  const normalized = values?.map((value) => value.trim()).filter(Boolean) ?? [];
+  return normalized.length > 0 ? new Set(normalized) : null;
+}
+
+function parseDateFilter(value: string | undefined): number | null {
+  if (!value?.trim()) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function clampInteger(value: number | undefined, fallback: number, min: number, max: number): number {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(value)));
+}
+
+function summarizeJson(value: unknown): string {
+  const text = JSON.stringify(value);
+  if (!text) return '';
+  return text.length > 180 ? `${text.slice(0, 180).trimEnd()}...` : text;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isoTime(value: number): string {
+  return new Date(value).toISOString();
+}

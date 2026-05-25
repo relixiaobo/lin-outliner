@@ -60,7 +60,7 @@ import {
 } from '../core/agentEventLog';
 import { serializeAgentAttachmentMarker, serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
 import { toolEnvelopeAfterToolCall } from './agentToolEnvelope';
-import { createAgentTools } from './agentTools';
+import { createAgentTools, type AgentToolsOptions } from './agentTools';
 import { LIN_AGENT_SYSTEM_PROMPT } from './agentSystemPrompt';
 import {
   cloneDebug,
@@ -75,6 +75,7 @@ import {
 import {
   AgentEventStore,
 } from './agentEventStore';
+import { AgentPastChatsService } from './agentPastChats';
 import {
   getActiveProviderRuntimeConfig,
   getAgentRuntimeSettings,
@@ -229,6 +230,7 @@ export class AgentRuntime {
     totals: AgentDebugTotals;
   }>();
   private eventStore: AgentEventStore | null = null;
+  private pastChatsService: AgentPastChatsService | null = null;
   private nextSessionId = 1;
   private readonly userViewContextReminderTracker = new AgentUserViewContextReminderTracker();
   private readonly contextManager: AgentRuntimeContextManager<AgentSessionState>;
@@ -790,6 +792,10 @@ export class AgentRuntime {
           skillToolEnabled: runtimeSettings.automaticSkillsEnabled,
           skillRuntime,
           subagentRuntime,
+          pastChats: {
+            service: this.getPastChatsService(),
+            currentSessionId: () => sessionId,
+          },
           streamFn: this.options.streamFn,
           providerApiKeyLoader: this.options.providerApiKeyLoader,
           afterToolResult: (toolCallId, toolName, result, isError) => {
@@ -925,6 +931,10 @@ export class AgentRuntime {
       skillRuntime: session.skillRuntime,
       skillToolEnabled: session.runtimeSettings.automaticSkillsEnabled,
       subagentRuntime: session.subagentRuntime,
+      pastChats: {
+        service: this.getPastChatsService(),
+        currentSessionId: () => session.eventState.session?.id ?? null,
+      },
     });
   }
 
@@ -1440,6 +1450,11 @@ export class AgentRuntime {
   private getEventStore() {
     this.eventStore ??= new AgentEventStore(this.options.agentDataRoot ?? path.join(app.getPath('userData'), 'agent'));
     return this.eventStore;
+  }
+
+  private getPastChatsService() {
+    this.pastChatsService ??= new AgentPastChatsService(this.getEventStore());
+    return this.pastChatsService;
   }
 
   private getActiveProviderConfig() {
@@ -2816,6 +2831,7 @@ function createConfiguredAgent(
     skillToolEnabled?: boolean;
     skillRuntime?: AgentSkillRuntime;
     subagentRuntime?: AgentSubagentRuntime;
+    pastChats?: AgentToolsOptions['pastChats'];
     localWorkspace?: AgentLocalWorkspaceContext;
     allowedTools?: string[];
     disallowedTools?: string[];
@@ -2848,6 +2864,7 @@ function createConfiguredAgent(
         skillRuntime,
         skillToolEnabled: options.skillToolEnabled,
         subagentRuntime: options.subagentRuntime,
+        pastChats: options.pastChats,
         allowedTools: options.allowedTools,
         disallowedTools: options.disallowedTools,
       }),
