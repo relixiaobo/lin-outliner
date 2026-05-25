@@ -9,7 +9,7 @@ import {
 import { flushSync } from 'react-dom';
 import { api } from '../../api/client';
 import type { CreateNodeTree, NodeId, NodeProjection, RichText, RichTextPatch } from '../../api/types';
-import { EMPTY_RICH_TEXT, plainText } from '../../api/types';
+import { EMPTY_RICH_TEXT, plainText, replaceAllRichTextPatch } from '../../api/types';
 import type { CursorPlacement } from '../../state/document';
 import {
   flattenVisibleRows,
@@ -49,6 +49,7 @@ import {
 import { renderedTextRightEdge, resolveTextOffsetFromPoint } from '../interactions/domCaret';
 import { TagBar } from '../tags/TagBar';
 import { inlineReferenceTextColor, resolveTagColor, tagBulletColors } from '../tags/tagColors';
+import { CodeBlockRow } from './CodeBlockRow';
 import { TrailingInput } from './TrailingInput';
 import { TriggerPopover } from './TriggerPopover';
 import { DoneCheckbox } from './DoneCheckbox';
@@ -211,6 +212,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
     || Boolean(displayed.completedAt);
   const descriptionEditing = props.ui.editingDescriptionId === targetEditId;
   const referenceLikeRow = node.type === 'reference' || pendingReferenceConversion;
+  const isCodeBlock = displayed.type === 'codeBlock' && !referenceLikeRow;
   const editorContentRevision = pendingReferenceConversion
     ? displayed.updatedAt
     : draftContentRevision;
@@ -445,6 +447,14 @@ export function OutlinerItem(props: OutlinerItemProps) {
       return api.toggleDone(targetEditId);
     }
 
+    if (commandId === 'code') {
+      await pendingTextPatchRef.current;
+      const withoutTrigger = deleteRichTextRange(draftContent, trigger.from, trigger.to);
+      replaceLocalDraftContent(withoutTrigger);
+      await api.replaceNodeText(targetEditId, withoutTrigger);
+      return api.setCodeBlock(targetEditId);
+    }
+
     if (commandId === 'command_palette') {
       await applyTextWithoutTrigger();
       props.setUi((prev) => ({ ...prev, commandOpen: true }));
@@ -481,6 +491,23 @@ export function OutlinerItem(props: OutlinerItemProps) {
     setDraftContent(content);
     await commitDraft(content);
     await props.run(() => api.cycleDoneState(targetEditId));
+  };
+
+  const handleCodeBlockTextChange = (text: string) => {
+    const content = plainText(text);
+    handleEditorChange(content);
+    applyTextPatch(replaceAllRichTextPatch(content));
+  };
+
+  const handleCodeBlockExit = async () => {
+    await commitDraft();
+    const siblings = props.index.byId.get(props.parentId)?.children ?? [];
+    const rowIndex = siblings.indexOf(props.nodeId);
+    await props.run(() => api.createNode(props.parentId, rowIndex >= 0 ? rowIndex + 1 : null, ''));
+  };
+
+  const handleSetCodeLanguage = (language: string) => {
+    void props.run(() => api.setCodeLanguage(targetEditId, language), { applyFocus: false });
   };
 
   const handleBackspaceAtStart = async (isEmpty: boolean) => {
@@ -784,6 +811,35 @@ export function OutlinerItem(props: OutlinerItemProps) {
               onToggle={() => void props.run(() => api.toggleDone(targetEditId))}
             />
           )}
+          {isCodeBlock ? (
+            <CodeBlockRow
+              nodeId={props.nodeId}
+              text={draftContent.text}
+              language={displayed.codeLanguage}
+              readOnly={displayed.locked}
+              onFocus={row.updateSelection}
+              onTextChange={handleCodeBlockTextChange}
+              onCommit={(text) => void commitDraft(plainText(text))}
+              onSetLanguage={handleSetCodeLanguage}
+              onExitToNewRow={() => void handleCodeBlockExit()}
+              onBackspaceAtStart={() => void handleBackspaceAtStart(true)}
+              onArrowUpAtStart={() => row.moveFocus(-1)}
+              onArrowDownAtEnd={() => row.moveFocus(1)}
+              onShiftArrow={() => void exitToSelection()}
+              onEscape={() => void exitToSelection()}
+              onUndo={() => void props.run(() => api.undo())}
+              onRedo={() => void props.run(() => api.redo())}
+              focusTarget={editorFocusTarget}
+              focusRequest={props.ui.focusRequest}
+              pendingInput={props.ui.pendingInputChar}
+              onFocusRequestConsumed={(request) => {
+                props.setUi((prev) => clearFocusRequestState(prev, request));
+              }}
+              onPendingInputConsumed={(input) => {
+                props.setUi((prev) => clearPendingInputState(prev, input));
+              }}
+            />
+          ) : (
           <RichTextEditor
             nodeId={props.nodeId}
             content={draftContent}
@@ -841,6 +897,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
               props.setUi((prev) => clearPendingInputState(prev, input));
             }}
           />
+          )}
           {displayed.tags.length > 0 && (
             <TagBar
               nodeId={targetEditId}
@@ -900,7 +957,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
           clearTriggerText={applyTextWithoutTrigger}
           applyReference={applyReference}
           executeSlashCommand={executeSlashCommand}
-          enabledSlashCommandIds={['field', 'reference', 'heading', 'checkbox', 'command_palette']}
+          enabledSlashCommandIds={['field', 'reference', 'heading', 'checkbox', 'code', 'command_palette']}
           treeReferenceParentId={triggerOwnsWholeDraft ? props.parentId : null}
           existingTagIds={displayed.tags}
         />

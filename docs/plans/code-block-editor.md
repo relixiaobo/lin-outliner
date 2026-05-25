@@ -1,5 +1,5 @@
 ---
-status: draft
+status: done
 priority: P2
 owner: relixiaobo
 created: 2026-05-25
@@ -14,6 +14,63 @@ from a normal text row. nodex ships `editor/CodeBlockEditor.tsx`; lin does
 not. This is one of the cleanest unaddressed gaps from the nodex comparison.
 
 Independent of the asset subsystem.
+
+## Shipped (v1)
+
+- `set_code_block` / `set_code_language` core commands (`src/core/core.ts`),
+  registered in `commands.ts`, `documentService.ts`, and the renderer
+  `api` client. Conversion is guarded to plain content nodes; language is
+  normalized (trim + lowercase, empty clears).
+- `src/renderer/ui/outliner/CodeBlockRow.tsx`: a transparent `<textarea>`
+  layered over a Shiki highlight layer (hidden sizer keeps the height exact
+  while highlighting resolves async). Language `<select>` + copy button chrome.
+- Keyboard: Enter = code newline with auto-indent; Cmd+Enter exits to a new
+  sibling row; Tab / Shift+Tab indent / outdent (2 spaces); Backspace on an
+  empty block trashes it; Up/Down at first/last line leave the block; Escape
+  exits to selection; Cmd+Z / Cmd+Shift+Z route to app undo/redo.
+- `OutlinerItem.tsx` dispatches `CodeBlockRow` for `codeBlock` rows (not
+  reference rows); text persists through the existing `apply_node_text_patch`
+  flow as plain `RichText`.
+- `/code` slash command (in-row + trailing) in `slashCommands.ts`,
+  `SlashCommandMenu.tsx`, `trailingTriggers.ts`.
+- Long lines scroll horizontally (no wrap): the layers are `white-space: pre`
+  and the highlight layer scroll-syncs to the textarea's `scrollLeft/Top`.
+- Cross-row block selection across code blocks: selection is the app-managed
+  row model (`selectedIds`), so codeBlock rows already participate in pointer
+  drag-select and window-level Shift+Arrow. Shift+Arrow inside the block
+  extends the textarea's own multi-line selection, but at the first/last line
+  it exits into the row selection (`onShiftArrow` → `exitToSelection`), so a
+  selection can span the code block and neighbouring ProseMirror rows.
+- Shared Shiki module `src/renderer/ui/editor/shikiHighlighter.ts` (JS regex
+  engine, single `github-light` theme, default language set + lazy-loaded
+  bundled languages). The agent transcript `AgentCodeBlock` was migrated onto
+  the same module, so both surfaces share one highlighter (fulfilling the
+  original "one toolchain" intent — the agent block previously had no
+  highlighting at all).
+- Shared, token-compliant CSS: the agent transcript block and the outliner
+  code row now use grouped selectors for the container, header, copy button,
+  and code text metrics (`--surface-soft` background, `--font-family-mono`,
+  `--font-meta`/`--line-meta`, `--space-*` padding). Only the functional
+  differences diverge — the agent block is a read-only bounded-height `<pre>`;
+  the outliner row is an editable textarea over the highlight layer with a
+  language `<select>`.
+- Tests: core unit coverage for the new commands; e2e
+  (`tests/e2e/outliner-code-block.spec.ts`) for `/code` creation, in-row
+  conversion, language picking, multi-line Enter, Cmd+Enter exit, horizontal
+  scroll (no wrap), and cross-row block selection via Shift+Arrow.
+
+## Deferred to v2
+
+- Line numbers and folding.
+- `/code-ts` / `?lang=ts` slash shortcuts (v1 picks language from the dropdown,
+  defaulting to plain text).
+- Dark theme (Shiki dual-theme) once the app gains a dark mode. **Will become
+  required when dark mode lands** — code blocks are the only surface still
+  pinned to `github-light`; ship it in the dark-mode PR.
+- Native character-level text selection dragging across the code block /
+  ProseMirror boundary. The app has no native cross-row text selection at all
+  (cross-row selection is always the block model), so this is out of scope by
+  design rather than a code-block-specific gap.
 
 ## Goal
 

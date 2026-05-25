@@ -111,6 +111,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	      queryLogic?: string;
 	      queryOp?: string;
 	      targetId?: string;
+	      codeLanguage?: string;
 	    };
     type CreateNodeTree = {
       content: RichText;
@@ -1595,6 +1596,32 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd === 'delete_node') {
           removeNode(String(args.nodeId));
           return clone(outcome());
+        }
+        if (cmd === 'set_code_block') {
+          const node = nodes.get(String(args.nodeId));
+          if (node) {
+            node.type = 'codeBlock';
+            const lang = typeof args.codeLanguage === 'string' ? args.codeLanguage.trim().toLowerCase() : '';
+            if (lang) node.codeLanguage = lang;
+            else delete node.codeLanguage;
+            node.updatedAt = ++now;
+          }
+          return clone(outcome({
+            nodeId: String(args.nodeId),
+            parentId: node?.parentId ?? null,
+            placement: { kind: 'end' },
+            selectAll: false,
+          }));
+        }
+        if (cmd === 'set_code_language') {
+          const node = nodes.get(String(args.nodeId));
+          if (node) {
+            const lang = typeof args.codeLanguage === 'string' ? args.codeLanguage.trim().toLowerCase() : '';
+            if (lang) node.codeLanguage = lang;
+            else delete node.codeLanguage;
+            node.updatedAt = ++now;
+          }
+          return clone(outcome({ nodeId: String(args.nodeId), selectAll: false }));
         }
         if (
           cmd === 'ensure_tag_search'

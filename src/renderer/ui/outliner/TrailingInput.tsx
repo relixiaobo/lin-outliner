@@ -1338,7 +1338,7 @@ export function TrailingInput(props: TrailingInputProps) {
           executeSlashCommand={isSlashTrigger(trailingTrigger)
             ? (commandId) => executeTrailingSlashCommand(commandId, trailingTrigger)
             : undefined}
-          enabledSlashCommandIds={['field', 'reference', 'heading', 'checkbox', 'command_palette']}
+          enabledSlashCommandIds={['field', 'reference', 'heading', 'checkbox', 'code', 'command_palette']}
           treeReferenceParentId={treeReferenceParentId}
           existingTagIds={[]}
         />

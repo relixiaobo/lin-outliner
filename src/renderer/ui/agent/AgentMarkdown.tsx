@@ -13,6 +13,7 @@ import remarkGfm from 'remark-gfm';
 import remend from 'remend';
 import { CheckIcon, CopyIcon, ICON_SIZE } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { highlightCode, plainCodeHtml } from '../editor/shikiHighlighter';
 
 interface AgentMarkdownProps {
   keyPrefix: string;
@@ -32,17 +33,26 @@ function splitMarkdownBlocks(text: string): string[] {
 }
 
 function AgentCodeBlock({
-  className,
   code,
   lang,
 }: {
-  className?: string;
   code: string;
   lang: string;
 }) {
   const [copied, setCopied] = useState(false);
   const resetTimerRef = useRef<number | null>(null);
+  const [html, setHtml] = useState(() => plainCodeHtml(code));
   const CopyStateIcon = copied ? CheckIcon : CopyIcon;
+
+  useEffect(() => {
+    let cancelled = false;
+    void highlightCode(code, lang).then((next) => {
+      if (!cancelled) setHtml(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [code, lang]);
 
   useEffect(() => () => {
     if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current);
@@ -73,7 +83,7 @@ function AgentCodeBlock({
           <CopyStateIcon size={ICON_SIZE.menu} />
         </ButtonControl>
       </div>
-      <pre><code className={className}>{code}</code></pre>
+      <div className="agent-code-body" dangerouslySetInnerHTML={{ __html: html }} />
     </div>
   );
 }
@@ -92,7 +102,6 @@ const MARKDOWN_COMPONENTS = {
     if (lang || rawCode.includes('\n')) {
       return (
         <AgentCodeBlock
-          className={className}
           code={rawCode.replace(/\n$/, '')}
           lang={lang}
         />

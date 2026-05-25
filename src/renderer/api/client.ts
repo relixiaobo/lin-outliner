@@ -70,6 +70,10 @@ export const api = {
     command<CommandOutcome>('update_node_description', { nodeId, description }),
   setNodeCheckboxVisible: (nodeId: string, visible: boolean) =>
     command<CommandOutcome>('set_node_checkbox_visible', { nodeId, visible }),
+  setCodeBlock: (nodeId: string, codeLanguage?: string) =>
+    command<CommandOutcome>('set_code_block', { nodeId, codeLanguage: codeLanguage ?? null }),
+  setCodeLanguage: (nodeId: string, codeLanguage: string) =>
+    command<CommandOutcome>('set_code_language', { nodeId, codeLanguage }),
   setViewToolbarVisible: (nodeId: string, visible: boolean) =>
     command<CommandOutcome>('set_view_toolbar_visible', { nodeId, visible }),
   setViewMode: (nodeId: string, mode: ViewMode) =>

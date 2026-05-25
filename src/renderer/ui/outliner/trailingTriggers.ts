@@ -153,6 +153,13 @@ export async function executeTrailingSlashTrigger(params: {
     return api.cycleDoneState(nodeId);
   }
 
+  if (params.commandId === 'code') {
+    const created = await createNodeWithContent(params.parentId, content);
+    const nodeId = created.focus?.nodeId;
+    if (!nodeId) return created;
+    return api.setCodeBlock(nodeId);
+  }
+
   const exhaustive: never = params.commandId;
   throw new Error(`Unsupported trailing slash command: ${exhaustive}`);
 }

@@ -233,6 +233,10 @@ export class DocumentService {
         return this.core.updateNodeDescription(String(args.nodeId), nullableString(args.description));
       case 'set_node_checkbox_visible':
         return this.core.setNodeCheckboxVisible(String(args.nodeId), Boolean(args.visible));
+      case 'set_code_block':
+        return this.core.setCodeBlock(String(args.nodeId), nullableString(args.codeLanguage) ?? undefined);
+      case 'set_code_language':
+        return this.core.setCodeLanguage(String(args.nodeId), String(args.codeLanguage ?? ''));
       case 'set_view_toolbar_visible':
         return this.core.setViewToolbarVisible(String(args.nodeId), Boolean(args.visible));
       case 'set_view_mode':
