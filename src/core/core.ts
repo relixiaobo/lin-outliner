@@ -1833,8 +1833,14 @@ export class Core {
 
   private insertNodeTreeDirect(parentId: string, tree: CreateNodeTree, index?: number | null): string {
     const id = freshId('node');
-    this.loro.createNodeWithId(id, parentId, index, undefined, (node) => {
+    // Paste trees may carry a node type; only `codeBlock` is honored so the
+    // materialization surface stays narrow and predictable.
+    const type = tree.type === 'codeBlock' ? 'codeBlock' : undefined;
+    this.loro.createNodeWithId(id, parentId, index, type, (node) => {
       node.content = clone(tree.content);
+      if (type === 'codeBlock') {
+        setOptional(node, 'codeLanguage', normalizeCodeLanguage(tree.codeLanguage));
+      }
     });
     this.applyChildTagsDirect(parentId, id);
     for (const child of tree.children) this.insertNodeTreeDirect(id, child);

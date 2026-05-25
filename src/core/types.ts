@@ -375,6 +375,10 @@ export interface CommandOutcome {
 export interface CreateNodeTree {
   content: RichText;
   children: CreateNodeTree[];
+  /** Optional node type for the materialized node. Paste only emits `codeBlock`. */
+  type?: NodeType;
+  /** Language hint for `codeBlock` trees; ignored for other types. */
+  codeLanguage?: string;
 }
 
 export interface Backlink {

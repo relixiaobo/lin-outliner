@@ -75,6 +75,10 @@ Reference sources:
 | ArrowUp/Down at editor boundary | Move focus to previous/next visible row. | `moveFocus`. | `outliner-row-editing.spec.ts` |
 | Escape while editing | Exit to single selected-row mode. | `exitToSelection`. | `outliner-row-editing.spec.ts` |
 | Multiline paste in row editor | Replace selected text with first pasted row, create parsed child rows under the current node, and create remaining parsed rows as following siblings. | `paste_nodes_into_node` keeps the paste as one core undo step. | `rowInteractions.test.ts`, `outliner-row-editing.spec.ts`, core tests |
+| Inline markdown on paste | Pasted `**bold**`, `*italic*`, `~~strike~~`, `==highlight==`, `` `code` `` and `[text](url)` become the matching marks. Underscore variants are intentionally ignored to keep snake_case intact. | `parseInlineMarkdown` maps to `TextMarkKind`. | `pasteParser.test.ts`, `outliner-paste-format.spec.ts` |
+| Fenced code on paste | A ` ``` ` fence (markdown or HTML `<pre>`) becomes a `codeBlock` row; the fence language is normalized through the shared language alias map. | `parseMarkdownBlocks` / `htmlToTrees` emit a typed `CreateNodeTree`; `insertNodeTreeDirect` materializes it. | `pasteParser.test.ts`, `core.test.ts`, `outliner-paste-format.spec.ts` |
+| Rich HTML on paste | When the clipboard carries genuine HTML structure (and the plain text is not strong markdown), headings, lists, paragraphs, `<pre>` and inline formatting are mapped into rows. | `parseClipboardPaste` routes to `htmlToTrees` via `DOMParser`; falls back to markdown when no DOM. | `outliner-paste-format.spec.ts` |
+| Single-line URL on paste | A lone URL wraps the current selection as a link, or inserts a link-marked URL when there is no selection. | `detectSingleLineUrl` + `link` mark with `href`. | `pasteParser.test.ts`, `outliner-paste-format.spec.ts` |
 | IME composition in row editor | Do not convert `>` into fields or open trigger menus until composition ends. | Rich text editor defers trigger/update actions during composition. | `rowInteractions.test.ts` |
 
 ## Context And Batch Operations

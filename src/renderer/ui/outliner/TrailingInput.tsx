@@ -28,7 +28,7 @@ import { isOptionsFieldType } from '../fields/fieldTypeRegistry';
 import { filterFieldOptions, resolveFieldOptions } from '../interactions/fieldOptions';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { matchesShortcutEvent } from '../interactions/shortcutRegistry';
-import { parseOutlinerPaste } from '../interactions/pasteParser';
+import { parseClipboardPaste } from '../interactions/pasteParser';
 import type { SlashCommandId } from '../interactions/slashCommands';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import {
@@ -952,10 +952,18 @@ export function TrailingInput(props: TrailingInputProps) {
         paste(viewInstance, event) {
           const clipboardEvent = event as ClipboardEvent;
           const pastedText = clipboardEvent.clipboardData?.getData('text/plain') ?? '';
-          if (!pastedText.includes('\n')) return false;
+          const pastedHtml = clipboardEvent.clipboardData?.getData('text/html') ?? '';
 
-          const parsed = parseOutlinerPaste(pastedText);
+          const parsed = parseClipboardPaste(pastedText, pastedHtml);
           if (parsed.length === 0) return false;
+          // Only take over for genuinely structured paste; a single plain line
+          // should keep flowing into the trailing editor for further editing.
+          const structured =
+            pastedText.includes('\n') ||
+            parsed.length > 1 ||
+            parsed[0].children.length > 0 ||
+            parsed[0].type !== undefined;
+          if (!structured) return false;
 
           clipboardEvent.preventDefault();
           if (committingRef.current) return true;

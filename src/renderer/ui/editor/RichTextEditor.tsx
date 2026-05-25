@@ -11,7 +11,11 @@ import {
   resolveEditorTriggerText,
 } from '../interactions/rowInteractions';
 import { resolveSelectedReferenceShortcut } from '../interactions/selectedReferenceShortcuts';
-import { parseOutlinerPaste } from '../interactions/pasteParser';
+import {
+  detectSingleLineUrl,
+  isPlainSingleParagraph,
+  parseClipboardPaste,
+} from '../interactions/pasteParser';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { matchesShortcutEvent } from '../interactions/shortcutRegistry';
 import { FloatingEditorToolbar, type ToolbarMark } from './FloatingEditorToolbar';
@@ -403,36 +407,81 @@ export function RichTextEditor(props: RichTextEditorProps) {
           return true;
         },
         paste(viewInstance, event) {
-          const onPasteOutliner = propsRef.current.onPasteOutliner;
-          if (!onPasteOutliner || propsRef.current.readOnly) return false;
+          if (propsRef.current.readOnly) return false;
 
           const clipboardEvent = event as ClipboardEvent;
           const plainText = clipboardEvent.clipboardData?.getData('text/plain') ?? '';
-          if (!plainText.includes('\n')) return false;
+          const htmlText = clipboardEvent.clipboardData?.getData('text/html') ?? '';
 
-          const parsed = parseOutlinerPaste(plainText);
+          const setContent = (nextContent: RichText) => {
+            const nextDoc = richTextToDoc(
+              nextContent,
+              pmSchema,
+              propsRef.current.resolveInlineReferenceColor,
+            );
+            viewInstance.updateState(EditorState.create({ doc: nextDoc, schema: pmSchema }));
+            lastExternalContentRef.current = nextContent;
+            propsRef.current.onChange(nextContent);
+            propsRef.current.onTriggerChange(null);
+          };
+
+          // A single-line URL becomes a link: wrap the selection if there is
+          // one, otherwise insert the URL as link-marked text.
+          const url = detectSingleLineUrl(plainText);
+          if (url) {
+            clipboardEvent.preventDefault();
+            const current = docToRichText(viewInstance.state.doc);
+            const { from, to } = selectionOffsets(viewInstance);
+            let nextContent: RichText;
+            if (from !== to) {
+              nextContent = {
+                ...current,
+                marks: [...current.marks, { start: from, end: to, type: 'link', attrs: { href: url } }],
+              };
+            } else {
+              const display = plainText.trim();
+              const linkText: RichText = {
+                text: display,
+                marks: [{ start: 0, end: display.length, type: 'link', attrs: { href: url } }],
+                inlineRefs: [],
+              };
+              const before = sliceRichText(current, 0, from);
+              const after = sliceRichText(current, from, current.text.length);
+              nextContent = concatRichText(concatRichText(before, linkText), after);
+            }
+            setContent(nextContent);
+            propsRef.current.onPatch(replaceAllRichTextPatch(nextContent));
+            return true;
+          }
+
+          const onPasteOutliner = propsRef.current.onPasteOutliner;
+          if (!onPasteOutliner) return false;
+
+          const parsed = parseClipboardPaste(plainText, htmlText);
           if (parsed.length === 0) return false;
+          // Plain single-line text gains nothing over the browser's paste.
+          if (!plainText.includes('\n') && isPlainSingleParagraph(parsed)) return false;
 
           clipboardEvent.preventDefault();
           const first = parsed[0];
+
+          // A typed first block (e.g. a code block) can't live inside this
+          // ProseMirror row, so keep the row and insert everything after it.
+          if (first.type !== undefined) {
+            onPasteOutliner({
+              content: docToRichText(viewInstance.state.doc),
+              children: [],
+              siblingsAfter: parsed,
+            });
+            return true;
+          }
+
           const current = docToRichText(viewInstance.state.doc);
           const { from, to } = selectionOffsets(viewInstance);
           const before = sliceRichText(current, 0, from);
           const after = sliceRichText(current, to, current.text.length);
           const nextContent = concatRichText(before, first.content, after);
-          const nextDoc = richTextToDoc(
-            nextContent,
-            pmSchema,
-            propsRef.current.resolveInlineReferenceColor,
-          );
-          const nextState = EditorState.create({
-            doc: nextDoc,
-            schema: pmSchema,
-          });
-          viewInstance.updateState(nextState);
-          lastExternalContentRef.current = nextContent;
-          propsRef.current.onChange(nextContent);
-          propsRef.current.onTriggerChange(null);
+          setContent(nextContent);
           onPasteOutliner({
             content: nextContent,
             children: first.children,
