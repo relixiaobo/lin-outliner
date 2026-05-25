@@ -27,7 +27,8 @@ import { getTreeReferenceBlockReason } from '../interactions/referenceRules';
 import { isOptionsFieldType } from '../fields/fieldTypeRegistry';
 import { filterFieldOptions, resolveFieldOptions } from '../interactions/fieldOptions';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
-import { clipboardImageFiles, imageUrlFromText, readPastedImages, type PastedImage } from '../interactions/imagePaste';
+import { readPastedImages, type PastedImage } from '../interactions/imagePaste';
+import { classifyMediaPaste } from '../interactions/clipboardPaste';
 import { matchesShortcutEvent } from '../interactions/shortcutRegistry';
 import { parseClipboardPaste } from '../interactions/pasteParser';
 import type { SlashCommandId } from '../interactions/slashCommands';
@@ -959,34 +960,35 @@ export function TrailingInput(props: TrailingInputProps) {
         paste(viewInstance, event) {
           const clipboardEvent = event as ClipboardEvent;
 
-          // Pasted image files (e.g. a screenshot) become image nodes appended
-          // under the current parent. Takes priority over the text path.
+          // Image / media-URL front-matter is classified by the same helper the
+          // inline editor uses, so the two stay in lock-step. The trailing input
+          // has no selection, and (unlike the inline editor) lets a lone link
+          // URL flow into the editor as text, so it ignores the `linkUrl` intent
+          // and falls through to the structured path below.
+          const mediaPaste = classifyMediaPaste(clipboardEvent.clipboardData, { hasSelection: false });
+
           const onPasteImages = propsRef.current.onPasteImages;
-          const imageFiles = clipboardImageFiles(clipboardEvent.clipboardData);
-          if (onPasteImages && imageFiles.length > 0) {
+          if (mediaPaste?.kind === 'images' && onPasteImages) {
             clipboardEvent.preventDefault();
             const parentId = effectiveParentRef.current;
             resetEditorContent(viewInstance);
             updateHasContent(false);
-            void readPastedImages(imageFiles).then((images) => onPasteImages(parentId, images));
+            void readPastedImages(mediaPaste.files).then((images) => onPasteImages(parentId, images));
+            return true;
+          }
+
+          const onPasteMediaUrl = propsRef.current.onPasteMediaUrl;
+          if (mediaPaste?.kind === 'mediaUrl' && onPasteMediaUrl) {
+            clipboardEvent.preventDefault();
+            const parentId = effectiveParentRef.current;
+            resetEditorContent(viewInstance);
+            updateHasContent(false);
+            void Promise.resolve(onPasteMediaUrl(parentId, mediaPaste.url));
             return true;
           }
 
           const pastedText = clipboardEvent.clipboardData?.getData('text/plain') ?? '';
           const pastedHtml = clipboardEvent.clipboardData?.getData('text/html') ?? '';
-
-          // A lone remote image URL becomes a remote image node under the
-          // parent, mirroring the image-file path above.
-          const onPasteMediaUrl = propsRef.current.onPasteMediaUrl;
-          const mediaUrl = imageUrlFromText(pastedText);
-          if (onPasteMediaUrl && mediaUrl) {
-            clipboardEvent.preventDefault();
-            const parentId = effectiveParentRef.current;
-            resetEditorContent(viewInstance);
-            updateHasContent(false);
-            void Promise.resolve(onPasteMediaUrl(parentId, mediaUrl));
-            return true;
-          }
 
           const parsed = parseClipboardPaste(pastedText, pastedHtml);
           if (parsed.length === 0) return false;
