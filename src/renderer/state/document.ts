@@ -81,7 +81,7 @@ export interface PendingReferenceTypeAhead {
   targetId: NodeId;
 }
 
-export type ToolbarDropdownSection = 'view' | 'sort' | 'filter' | 'group' | 'display';
+export type ToolbarDropdownSection = 'sort' | 'filter' | 'group' | 'display';
 
 export interface ToolbarDropdownRequest {
   nodeId: NodeId;

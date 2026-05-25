@@ -28,7 +28,6 @@ import {
   ShowToolbarIcon,
   SortAscIcon,
   SupertagIcon,
-  TableIcon,
   TrashIcon,
   ColorIcon,
 } from '../icons';
@@ -212,7 +211,6 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
         role="menuitem"
       />
       <div className="node-context-separator" role="separator" />
-      {item('View as', <TableIcon size={ICON_SIZE.menu} />, () => openViewSection('view'))}
       {item(
         view.toolbarVisible ? 'Hide view toolbar' : 'Show view toolbar',
         view.toolbarVisible ? <HideToolbarIcon size={ICON_SIZE.menu} /> : <ShowToolbarIcon size={ICON_SIZE.menu} />,
