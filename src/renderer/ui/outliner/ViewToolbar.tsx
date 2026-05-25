@@ -9,22 +9,27 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../api/client';
-import type { FilterOperator, NodeProjection, SortDirection, ViewMode } from '../../api/types';
+import type { FilterOperator, NodeProjection, SortDirection } from '../../api/types';
 import type { DocumentIndex, ToolbarDropdownRequest, ToolbarDropdownSection } from '../../state/document';
 import {
   AddIcon,
+  CalendarIcon,
   CheckIcon,
+  CheckboxIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   CloseIcon,
   FieldIcon,
   FilterIcon,
   GroupIcon,
+  HashIcon,
   ICON_SIZE,
+  OptionsIcon,
+  PlainTextIcon,
   SortAscIcon,
   SortDescIcon,
-  TableIcon,
 } from '../icons';
+import type { ComponentType } from 'react';
 import { resolveFieldOptions, type FieldOption } from '../interactions/fieldOptions';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { ButtonControl } from '../primitives/ButtonControl';
@@ -38,6 +43,7 @@ import {
   CREATED_FIELD,
   DONE_AT_FIELD,
   DONE_FIELD,
+  fieldChoiceLabel,
   NAME_FIELD,
   REF_COUNT_FIELD,
   TAGS_FIELD,
@@ -67,6 +73,37 @@ const OPERATORS_BY_KIND: Record<'text' | 'date' | 'number', FilterOperator[]> = 
   number: ['is', 'gt', 'lt', 'is_empty', 'is_not_empty'],
 };
 
+type IconComponent = ComponentType<{ size?: number; className?: string }>;
+const KIND_ICONS: Record<FilterKind, IconComponent> = {
+  boolean: CheckboxIcon,
+  date: CalendarIcon,
+  number: HashIcon,
+  options: OptionsIcon,
+  text: PlainTextIcon,
+};
+
+// Field-type glyph shown beside a field name so date/text/option fields read
+// apart at a glance.
+function FieldKindIcon({ fieldId, byId }: { fieldId: string; byId: DocumentIndex['byId'] }) {
+  const Icon = fieldId === TAGS_FIELD ? HashIcon : KIND_ICONS[filterFieldKind(fieldId, byId)];
+  return <Icon className="view-toolbar-field-kind" size={ICON_SIZE.menu} />;
+}
+
+// Sort direction reads in the field's own terms: A→Z for text, 1→9 for
+// numbers, Old→New for dates, rather than an abstract "Ascending".
+const SORT_DIRECTION_LABELS: Record<FilterKind, { asc: string; desc: string }> = {
+  boolean: { asc: 'Unchecked → Checked', desc: 'Checked → Unchecked' },
+  date: { asc: 'Old → New', desc: 'New → Old' },
+  number: { asc: '1 → 9', desc: '9 → 1' },
+  options: { asc: 'A → Z', desc: 'Z → A' },
+  text: { asc: 'A → Z', desc: 'Z → A' },
+};
+
+function sortDirectionLabel(fieldId: string, byId: DocumentIndex['byId'], direction: SortDirection): string {
+  const labels = SORT_DIRECTION_LABELS[filterFieldKind(fieldId, byId)];
+  return direction === 'desc' ? labels.desc : labels.asc;
+}
+
 interface ViewToolbarProps {
   node: NodeProjection;
   view: ViewConfig;
@@ -76,15 +113,12 @@ interface ViewToolbarProps {
   onDropdownRequestConsumed: (request: ToolbarDropdownRequest) => void;
 }
 
-type OpenSection = ToolbarDropdownSection | null;
+// Every dropdown section maps to a real view operation. The fake
+// Table/Cards/Calendar "View as" switcher was removed: only the list view
+// renders, so offering modes that do nothing would be misleading.
+type ToolbarSection = ToolbarDropdownSection;
+type OpenSection = ToolbarSection | null;
 type FieldChoice = { id: string; label: string; section: 'System fields' | 'Fields' };
-
-const VIEW_MODES: Array<{ id: ViewMode; label: string }> = [
-  { id: 'list', label: 'List' },
-  { id: 'table', label: 'Table' },
-  { id: 'cards', label: 'Cards' },
-  { id: 'calendar', label: 'Calendar' },
-];
 
 const FILTER_OPERATORS: Array<{ id: FilterOperator; label: string }> = [
   { id: 'contains', label: 'Contains' },
@@ -105,8 +139,7 @@ const GROUP_FIELD_DENYLIST = new Set([NAME_FIELD, REF_COUNT_FIELD]);
 // Operators that match on presence alone, so the value input is hidden for them.
 const VALUELESS_OPERATORS = new Set<FilterOperator>(['is_empty', 'is_not_empty']);
 
-const SECTION_TITLES: Record<ToolbarDropdownSection, string> = {
-  view: 'View as',
+const SECTION_TITLES: Record<ToolbarSection, string> = {
   display: 'Display',
   group: 'Group by',
   sort: 'Sort by',
@@ -115,8 +148,7 @@ const SECTION_TITLES: Record<ToolbarDropdownSection, string> = {
 
 // Field pickers and option lists stay compact; the rule editors (sort/filter)
 // need room for the field/operator/value controls.
-const SECTION_WIDTHS: Record<ToolbarDropdownSection, number> = {
-  view: 240,
+const SECTION_WIDTHS: Record<ToolbarSection, number> = {
   display: 264,
   group: 264,
   sort: 520,
@@ -137,6 +169,24 @@ function bySection(choices: FieldChoice[]): Array<{ section: FieldChoice['sectio
     .filter((group) => group.items.length > 0);
 }
 
+// One muted line restating what the view is currently doing, so the active
+// state is legible without opening each menu. Empty when the view is default.
+function summarizeView(view: ViewConfig, choices: FieldChoice[]): string {
+  const labelOf = (fieldId: string) => choices.find((choice) => choice.id === fieldId)?.label ?? fieldId;
+  const parts: string[] = [];
+  if (view.groupField) parts.push(`Grouped by ${labelOf(view.groupField)}`);
+  if (view.sortRules.length > 0) {
+    const [first] = view.sortRules;
+    const arrow = first.direction === 'desc' ? '↓' : '↑';
+    const more = view.sortRules.length > 1 ? ` +${view.sortRules.length - 1}` : '';
+    parts.push(`Sorted by ${labelOf(first.field)} ${arrow}${more}`);
+  }
+  if (view.filterRules.length > 0) {
+    parts.push(`${view.filterRules.length} filter${view.filterRules.length > 1 ? 's' : ''}`);
+  }
+  return parts.join(' · ');
+}
+
 export function ViewToolbar({
   node,
   view,
@@ -149,13 +199,11 @@ export function ViewToolbar({
   const choices = useMemo(() => collectViewFieldChoices(node, index.byId), [node, index.byId]);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const viewRef = useRef<HTMLButtonElement>(null);
   const displayRef = useRef<HTMLButtonElement>(null);
   const groupRef = useRef<HTMLButtonElement>(null);
   const sortRef = useRef<HTMLButtonElement>(null);
   const filterRef = useRef<HTMLButtonElement>(null);
-  const buttonRefs: Record<ToolbarDropdownSection, RefObject<HTMLButtonElement | null>> = {
-    view: viewRef,
+  const buttonRefs: Record<ToolbarSection, RefObject<HTMLButtonElement | null>> = {
     display: displayRef,
     group: groupRef,
     sort: sortRef,
@@ -195,24 +243,19 @@ export function ViewToolbar({
     };
   }, [open]);
 
-  const toggle = (section: ToolbarDropdownSection) => {
+  const toggle = (section: ToolbarSection) => {
     setOpen((current) => (current === section ? null : section));
   };
 
   const visibleDisplayCount = view.displayFields.filter((field) => field.visible).length;
+  const summary = useMemo(
+    () => summarizeView(view, choices),
+    [view, choices],
+  );
 
   return (
     <div className="view-toolbar" aria-label="View toolbar" ref={toolbarRef}>
       <div className="view-toolbar-button-row">
-        <ToolbarButton
-          ref={viewRef}
-          active={view.viewMode !== 'list'}
-          label="View as"
-          open={open === 'view'}
-          onClick={() => toggle('view')}
-        >
-          <TableIcon size={ICON_SIZE.menu} />
-        </ToolbarButton>
         <ToolbarButton
           ref={displayRef}
           active={visibleDisplayCount > 0}
@@ -257,6 +300,8 @@ export function ViewToolbar({
         </ToolbarButton>
       </div>
 
+      {summary && <div className="view-toolbar-summary">{summary}</div>}
+
       {open && createPortal(
         <div
           ref={menuRef}
@@ -266,17 +311,14 @@ export function ViewToolbar({
           style={menuStyle}
         >
           <div className="view-toolbar-popover-title">{SECTION_TITLES[open]}</div>
-          {open === 'view' && (
-            <ViewModeSection node={node} run={run} view={view} />
-          )}
           {open === 'display' && (
-            <DisplaySection choices={choices} node={node} run={run} view={view} />
+            <DisplaySection byId={index.byId} choices={choices} node={node} run={run} view={view} />
           )}
           {open === 'group' && (
-            <GroupSection choices={choices} node={node} run={run} view={view} />
+            <GroupSection byId={index.byId} choices={choices} node={node} run={run} view={view} />
           )}
           {open === 'sort' && (
-            <SortSection choices={choices} node={node} run={run} view={view} />
+            <SortSection byId={index.byId} choices={choices} node={node} run={run} view={view} />
           )}
           {open === 'filter' && (
             <FilterSection choices={choices} index={index} node={node} run={run} view={view} />
@@ -316,36 +358,14 @@ const ToolbarButton = forwardRef<HTMLButtonElement, {
   );
 });
 
-function ViewModeSection({
-  node,
-  run,
-  view,
-}: {
-  node: NodeProjection;
-  run: CommandRunner;
-  view: ViewConfig;
-}) {
-  return (
-    <div className="view-toolbar-options">
-      {VIEW_MODES.map((mode) => (
-        <OptionRow
-          key={mode.id}
-          label={mode.label}
-          selected={view.viewMode === mode.id}
-          variant="radio"
-          onSelect={() => void run(() => api.setViewMode(node.id, mode.id))}
-        />
-      ))}
-    </div>
-  );
-}
-
 function DisplaySection({
+  byId,
   choices,
   node,
   run,
   view,
 }: {
+  byId: DocumentIndex['byId'];
   choices: FieldChoice[];
   node: NodeProjection;
   run: CommandRunner;
@@ -366,6 +386,7 @@ function DisplaySection({
             return (
               <OptionRow
                 key={choice.id}
+                icon={<FieldKindIcon byId={byId} fieldId={choice.id} />}
                 label={choice.label}
                 selected={checked}
                 variant="checkbox"
@@ -386,11 +407,13 @@ function DisplaySection({
 }
 
 function GroupSection({
+  byId,
   choices,
   node,
   run,
   view,
 }: {
+  byId: DocumentIndex['byId'];
   choices: FieldChoice[];
   node: NodeProjection;
   run: CommandRunner;
@@ -413,6 +436,7 @@ function GroupSection({
           {group.items.map((choice) => (
             <OptionRow
               key={choice.id}
+              icon={<FieldKindIcon byId={byId} fieldId={choice.id} />}
               label={choice.label}
               selected={current === choice.id}
               variant="radio"
@@ -426,11 +450,13 @@ function GroupSection({
 }
 
 function SortSection({
+  byId,
   choices,
   node,
   run,
   view,
 }: {
+  byId: DocumentIndex['byId'];
   choices: FieldChoice[];
   node: NodeProjection;
   run: CommandRunner;
@@ -438,7 +464,9 @@ function SortSection({
 }) {
   return (
     <div className="view-toolbar-rules">
-      {view.sortRules.map((rule, index) => (
+      {view.sortRules.map((rule, index) => {
+        const directionLabel = sortDirectionLabel(rule.field, byId, rule.direction);
+        return (
         <div className="view-toolbar-rule" key={rule.id}>
           <span className="view-toolbar-rule-label">{index === 0 ? 'Sort by' : 'Then by'}</span>
           <SelectControl
@@ -454,7 +482,7 @@ function SortSection({
           </SelectControl>
           <ButtonControl
             className="view-toolbar-rule-direction"
-            title={rule.direction === 'desc' ? 'Descending' : 'Ascending'}
+            title={directionLabel}
             onClick={() => {
               const next: SortDirection = rule.direction === 'desc' ? 'asc' : 'desc';
               void run(() => api.updateSortRule(rule.id, rule.field, next));
@@ -465,7 +493,7 @@ function SortSection({
             ) : (
               <SortAscIcon size={ICON_SIZE.menu} />
             )}
-            <span>{rule.direction === 'desc' ? 'Descending' : 'Ascending'}</span>
+            <span>{directionLabel}</span>
           </ButtonControl>
           <ButtonControl
             aria-label="Remove sort rule"
@@ -476,7 +504,8 @@ function SortSection({
             <CloseIcon size={ICON_SIZE.menu} />
           </ButtonControl>
         </div>
-      ))}
+        );
+      })}
       <div className="view-toolbar-rule-actions">
         <AddFieldSelect
           choices={choices}
@@ -572,6 +601,7 @@ function FilterSection({
                 className="view-toolbar-option view-toolbar-filter-field"
                 onClick={() => openField(choice.id)}
               >
+                <FieldKindIcon byId={index.byId} fieldId={choice.id} />
                 <span className="view-toolbar-option-label">{choice.label}</span>
                 {ruleByField.has(choice.id) ? (
                   <CheckIcon className="view-toolbar-field-check" size={ICON_SIZE.menu} />
@@ -751,11 +781,13 @@ function OperatorFilterBody({ kind, rule, run }: { kind: FilterKind; rule: Filte
 
 function OptionRow({
   label,
+  icon,
   selected,
   variant,
   onSelect,
 }: {
   label: ReactNode;
+  icon?: ReactNode;
   selected: boolean;
   variant: 'checkbox' | 'radio';
   onSelect: () => void;
@@ -771,6 +803,7 @@ function OptionRow({
       ) : (
         <span className={selected ? 'view-toolbar-radio checked' : 'view-toolbar-radio'} aria-hidden="true" />
       )}
+      {icon}
       <span className="view-toolbar-option-label">{label}</span>
     </ButtonControl>
   );

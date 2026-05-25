@@ -329,6 +329,56 @@ function sortRows(
   return sortedRows;
 }
 
+function isBooleanGroupField(fieldId: string, byId: Map<NodeId, NodeProjection>): boolean {
+  if (fieldId === DONE_FIELD) return true;
+  const fieldType = byId.get(fieldId)?.fieldType;
+  return fieldType === 'checkbox' || fieldType === 'boolean';
+}
+
+const GROUP_DATE_FORMAT = new Intl.DateTimeFormat(undefined, {
+  year: 'numeric',
+  month: 'short',
+  day: 'numeric',
+});
+
+function localDayKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+// Turns a row's raw field values into a display bucket. boolean → Done/Yes
+// wording, date → one bucket per calendar day, everything else → the sorted
+// values joined. sortKey orders the headers (chronological for dates, empty last).
+function groupBucket(
+  fieldId: string,
+  values: string[],
+  byId: Map<NodeId, NodeProjection>,
+): { key: string; label: string; sortKey: string } {
+  const trimmed = values.map((value) => value.trim()).filter(Boolean);
+  if (trimmed.length === 0) return { key: '(empty)', label: '(Empty)', sortKey: '￿' };
+
+  if (isBooleanGroupField(fieldId, byId)) {
+    const isTrue = trimmed[0].toLocaleLowerCase() === 'true';
+    const [onLabel, offLabel] = fieldId === DONE_FIELD ? ['Done', 'Not done'] : ['Yes', 'No'];
+    return { key: isTrue ? 'true' : 'false', label: isTrue ? onLabel : offLabel, sortKey: isTrue ? '0' : '1' };
+  }
+
+  if (isDateFilterField(fieldId, byId)) {
+    const span = dateFilterSpan(trimmed[0]);
+    if (span) {
+      const date = new Date(span.startMs);
+      const dayKey = localDayKey(date);
+      return { key: dayKey, label: GROUP_DATE_FORMAT.format(date), sortKey: dayKey };
+    }
+  }
+
+  const label = trimmed.sort((a, b) => a.localeCompare(b)).join(', ');
+  const key = label.toLocaleLowerCase();
+  return { key, label, sortKey: key };
+}
+
 function groupRows(
   parent: NodeProjection,
   view: ViewConfig,
@@ -338,7 +388,7 @@ function groupRows(
   const fieldId = view.groupField;
   if (!fieldId) return rows;
 
-  const groups = new Map<string, { label: string; rows: OutlinerRowItem[] }>();
+  const groups = new Map<string, { label: string; sortKey: string; rows: OutlinerRowItem[] }>();
   const passthrough: OutlinerRowItem[] = [];
   for (const row of rows) {
     if (row.type !== 'content' && row.type !== 'field') {
@@ -346,20 +396,17 @@ function groupRows(
       continue;
     }
     const node = byId.get(row.id);
-    const values = node ? fieldValuesFor(node, fieldId, byId).map((value) => value.trim()).filter(Boolean) : [];
-    const label = values.length > 0 ? values.sort((a, b) => a.localeCompare(b)).join(', ') : '(Empty)';
-    const key = label.toLocaleLowerCase();
-    const group = groups.get(key) ?? { label, rows: [] };
+    const values = node ? fieldValuesFor(node, fieldId, byId) : [];
+    const bucket = groupBucket(fieldId, values, byId);
+    const group = groups.get(bucket.key) ?? { label: bucket.label, sortKey: bucket.sortKey, rows: [] };
     group.rows.push(row);
-    groups.set(key, group);
+    groups.set(bucket.key, group);
   }
 
   const result = [...passthrough];
-  for (const [key, group] of [...groups.entries()].sort((left, right) => {
-    if (left[0] === '(empty)') return 1;
-    if (right[0] === '(empty)') return -1;
-    return left[1].label.localeCompare(right[1].label);
-  })) {
+  for (const [key, group] of [...groups.entries()].sort((left, right) =>
+    left[1].sortKey.localeCompare(right[1].sortKey),
+  )) {
     result.push({
       id: `group:${parent.id}:${fieldId}:${key}`,
       type: 'group',

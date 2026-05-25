@@ -192,6 +192,15 @@
   min-height: var(--control-size-2xl);
 }
 
+/* Restates the active group/sort/filter dimensions in words, so the view's
+   state reads at a glance without opening each menu. */
+.view-toolbar-summary {
+  padding: var(--space-hairline) var(--space-1) 0;
+  color: var(--muted-2);
+  font-size: var(--font-meta);
+  line-height: 1.4;
+}
+
 .view-toolbar-pill {
   position: relative;
   display: inline-flex;
@@ -297,6 +306,12 @@
   font-size: var(--font-ui-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Field-type glyph that precedes a field name in display/group/filter lists. */
+.view-toolbar-field-kind {
+  flex: none;
+  color: var(--muted-2);
 }
 
 /* Single-select marker for view mode / group by. Neutral dark dot keeps it

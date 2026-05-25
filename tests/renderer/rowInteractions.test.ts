@@ -43,6 +43,7 @@ import {
 import { resolveOutlinerDropMove } from '../../src/renderer/ui/interactions/dragDrop';
 import {
   buildOutlinerRows,
+  DONE_FIELD,
   hiddenFieldKey,
   NAME_FIELD,
   shouldShowTrailingInput,
@@ -257,6 +258,47 @@ describe('row interaction resolvers', () => {
 
 	    expect(buildOutlinerRows(parent as any, byId)).toEqual([
 	      { id: 'late', type: 'content' },
+	    ]);
+	  });
+
+	  test('groups a custom date field into one bucket per calendar day with readable labels', () => {
+	    const fmt = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+	    const parent = makeNode('parent', 'Parent', { children: ['view', 'a', 'b', 'c'] });
+	    const byId = new Map<string, any>([
+	      ['parent', parent],
+	      ['view', makeNode('view', '', { type: 'viewDef', parentId: 'parent', children: [], groupField: 'date-def' })],
+	      ['date-def', makeNode('date-def', 'Due', { type: 'fieldDef', fieldType: 'date' })],
+	      ['a', makeNode('a', 'A', { parentId: 'parent', children: ['a-date'] })],
+	      ['a-date', makeNode('a-date', '2026-06-01', { type: 'fieldEntry', parentId: 'a', fieldDefId: 'date-def' })],
+	      ['b', makeNode('b', 'B', { parentId: 'parent', children: ['b-date'] })],
+	      ['b-date', makeNode('b-date', '2026-06-01', { type: 'fieldEntry', parentId: 'b', fieldDefId: 'date-def' })],
+	      ['c', makeNode('c', 'C', { parentId: 'parent', children: ['c-date'] })],
+	      ['c-date', makeNode('c-date', '2026-06-02', { type: 'fieldEntry', parentId: 'c', fieldDefId: 'date-def' })],
+	    ]);
+
+	    expect(buildOutlinerRows(parent as any, byId)).toEqual([
+	      { id: 'group:parent:date-def:2026-06-01', type: 'group', label: fmt.format(new Date(2026, 5, 1)) },
+	      { id: 'a', type: 'content' },
+	      { id: 'b', type: 'content' },
+	      { id: 'group:parent:date-def:2026-06-02', type: 'group', label: fmt.format(new Date(2026, 5, 2)) },
+	      { id: 'c', type: 'content' },
+	    ]);
+	  });
+
+	  test('groups the done field into Done / Not done buckets', () => {
+	    const parent = makeNode('parent', 'Parent', { children: ['view', 'done1', 'open1'] });
+	    const byId = new Map<string, any>([
+	      ['parent', parent],
+	      ['view', makeNode('view', '', { type: 'viewDef', parentId: 'parent', children: [], groupField: DONE_FIELD })],
+	      ['done1', makeNode('done1', 'Done one', { parentId: 'parent', completedAt: 1000 })],
+	      ['open1', makeNode('open1', 'Open one', { parentId: 'parent' })],
+	    ]);
+
+	    expect(buildOutlinerRows(parent as any, byId)).toEqual([
+	      { id: 'group:parent:sys:done:true', type: 'group', label: 'Done' },
+	      { id: 'done1', type: 'content' },
+	      { id: 'group:parent:sys:done:false', type: 'group', label: 'Not done' },
+	      { id: 'open1', type: 'content' },
 	    ]);
 	  });
 
