@@ -90,3 +90,8 @@ export async function appendImageNodes(parentId: NodeId, images: PastedImage[], 
     }));
   }
 }
+
+/** Create a remote (mediaUrl-backed) image node appended under `parentId`. */
+export async function appendRemoteImageNode(parentId: NodeId, url: string, run: CommandRunner): Promise<void> {
+  await run(() => api.createImageNode(parentId, null, { mediaUrl: url }));
+}

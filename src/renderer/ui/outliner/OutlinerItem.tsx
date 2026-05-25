@@ -26,7 +26,7 @@ import {
   richTextEquals,
 } from '../editor/richTextCodec';
 import { indentTargetParentId, previousVisibleRowId } from '../interactions/outlinerStructure';
-import { appendImageNodes, ingestPastedImages, shouldConvertRowToImage, type PastedImage } from '../interactions/imagePaste';
+import { appendImageNodes, appendRemoteImageNode, ingestPastedImages, shouldConvertRowToImage, type PastedImage } from '../interactions/imagePaste';
 import { getTreeReferenceBlockReason } from '../interactions/referenceRules';
 import { armReferenceTypeAhead } from '../interactions/referenceTypeAhead';
 import {
@@ -1164,6 +1164,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
                 props.run(() => api.createNodesFromTree(parentId, nodes), { applyFocus: false })
               )}
               onPasteImages={(parentId, images) => appendImageNodes(parentId, images, props.run)}
+              onPasteMediaUrl={(parentId, url) => appendRemoteImageNode(parentId, url, props.run)}
               onIndentNode={(nodeId) => (
                 props.run(() => api.indentNode(nodeId), { applyFocus: false })
               )}
