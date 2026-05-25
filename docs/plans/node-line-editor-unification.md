@@ -73,14 +73,41 @@ rather than manual synchronization.
 
 | Phase | Content | Risk |
 |-------|---------|------|
-| **0. Characterization tests** | Pin current paste/keymap/trigger behavior of both editors before changing code, as proof the refactor preserves behavior. | none |
 | **1. Shared paste classifier** ✅ | `classifyMediaPaste` for the image / media-URL / link-URL front-matter; both editors call it. Behavior-preserving. | low |
-| **2. Unify trigger detection** | Extract `/` `#` reference detection into one module emitting a single `Trigger`; application unchanged for now. | low–med |
-| **3. `useNodeLineEditor` core + `resolveTargetId`** | Build the view + plugins + IME + focus once; both editors become thin wrappers. The large PR — lands after 1+2 shrink the surface. | high |
-| **4. Collapse trigger application** | Route trigger application through `resolveTargetId`; delete the trailing input's bespoke `onApply*Trigger` props. | med |
+| **2. `useNodeLineEditor` core + `resolveTargetId`** | Build the view + plugins + keymap + trigger pipeline + IME + focus once; both editors become thin wrappers. Includes unifying trigger detection (see finding below) and routing trigger application through `resolveTargetId`, deleting the trailing input's bespoke `onApply*Trigger` props. The large, high-risk PR. | high |
 
-Order: shrink the surface (1, 2) → swap the skeleton (3) → clean up (4); low
-risk before high; guard the inline editor (highest-traffic path) most.
+### Finding: trigger detection is not a safe standalone extraction
+
+The original plan had a separate low-risk "unify trigger detection" phase. On
+inspection that is wrong — the two trigger systems are different *designs*, not
+drifted duplicates:
+
+| | inline (`RichTextEditor`) | trailing (`TrailingInput`) |
+|---|---|---|
+| detection | cursor-aware (`resolveEditorTriggerText`, looks around `cursorOffset`) | whole-text (`resolveTrailingRowUpdateAction` + `lastIndexOf`) |
+| popover UI | delegated up to `NodePanel` via `onTriggerChange` (detection only) | owns its own `TriggerPopover` |
+| application | done by the parent | done in-component, with create-node-first semantics |
+| extra scope | — | option-fields, `create_field` (inline has neither) |
+
+The only literally-duplicated module-level helper is `caretAnchor`. So there
+is **no safe middle ground** between Phase 1 and the core: unifying triggers
+*is* the core rewrite (a behavior reconciliation, not a mechanical extraction),
+and must be verified with the app running.
+
+### Safety net
+
+Behavior preservation for Phase 2 is covered by existing Playwright e2e specs —
+`outliner-triggers`, `outliner-paste-format`, `outliner-row-editing`,
+`outliner-trailing-expand`. These run against a built app (main agent / CI),
+not the dev agent's `bun test`.
+
+### Staging decision (2026-05-25)
+
+Paused after Phase 1. Phase 1 (PR #11) is a clean, self-contained, independently
+mergeable win. Phase 2 is deferred until PR #10 (media URL sources) and PR #11
+merge to `main` — to avoid a three-deep branch stack — and until the main agent
+can run e2e + visually verify, since the dev agent cannot. Resume by branching
+fresh from `main` for the core rewrite.
 
 ## Known divergences to reconcile (deliberate, deferred)
 
