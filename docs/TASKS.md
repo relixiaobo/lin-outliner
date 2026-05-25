@@ -27,11 +27,15 @@ workflow.
 
 Ordered by priority; lower items may depend on higher ones.
 
-- **asset-subsystem** (P0) — local content-addressed asset store +
-  `lin-asset://` protocol. Blocks image / attachment / embed work.
-- **image-rendering** (P1) — render `image` nodes inline; paste/drag ingestion
-  (depends on asset-subsystem).
-- **file-attachments** (P1) — `attachment` node type for arbitrary local files.
+- **file-attachments** (P1) — `attachment` node type for arbitrary local files
+  (plugs into `BlockNodeRow` via `renderBlockBody` + `isBlockNodeType`).
+- **media-types** (P2) — audio/video players + PDF thumbnail on the
+  `BlockNodeRow` shell; `serve()` needs a streaming/range response for large
+  media (current whole-file read is image-only).
+- **asset-gc** (P2) — asset `index.json` rebuild + garbage collection for
+  orphaned assets; drag-from-Finder ingest; inline alt-text editing.
+- **agent-image-awareness** (P2) — surface `image` nodes in the agent
+  projection so the agent can read/insert them.
 - **floating-toolbar-polish** (P3) — heading-mark toggle + `#` selection
   extract in the floating editor toolbar.
 - **view-toolbar-name-filter** (P3) — quick incremental name filter as the
@@ -47,6 +51,13 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **asset-subsystem + image-rendering** (P0/P1) — local asset store
+  (`assetService`: ingest/lookup/serve/delete, MIME sniff, dimension probe,
+  path-traversal-safe ids) behind a privileged `lin-asset://` protocol, plus
+  inline `image` nodes on a reusable focusable `BlockNodeRow` shell (the
+  foundation future media types plug into via `renderBlockBody` +
+  `isBlockNodeType`). Clipboard paste + `/image` picker ingest; hover toolbar
+  (caption / lightbox / open-original); caption = node description (PR #8).
 - **view-toolbar-redesign** (P2) — per-node view toolbar reworked against
   Tana: inline panels → anchored popovers (no row-list shift), removed the
   fake Table/Cards/Calendar "View as" switcher, progressive type-aware filter
