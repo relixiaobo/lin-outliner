@@ -13,6 +13,9 @@ import type { FilterOperator, NodeProjection, SortDirection, ViewMode } from '..
 import type { DocumentIndex, ToolbarDropdownRequest, ToolbarDropdownSection } from '../../state/document';
 import {
   AddIcon,
+  CheckIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   CloseIcon,
   FieldIcon,
   FilterIcon,
@@ -70,6 +73,9 @@ const FILTER_OPERATORS: Array<{ id: FilterOperator; label: string }> = [
 
 // Fields that never make sense to group by: the row text itself and a derived count.
 const GROUP_FIELD_DENYLIST = new Set([NAME_FIELD, REF_COUNT_FIELD]);
+
+// Operators that match on presence alone, so the value input is hidden for them.
+const VALUELESS_OPERATORS = new Set<FilterOperator>(['is_empty', 'is_not_empty']);
 
 const SECTION_TITLES: Record<ToolbarDropdownSection, string> = {
   view: 'View as',
@@ -462,6 +468,10 @@ function SortSection({
   );
 }
 
+// Progressive field menu (Tana-style): the popover first lists filterable
+// fields; picking one drills into an operator/value editor for that field. We
+// model one filter rule per field and look the rule up by field, so a freshly
+// added rule resolves without threading the new rule id back through the command.
 function FilterSection({
   choices,
   node,
@@ -473,71 +483,147 @@ function FilterSection({
   run: CommandRunner;
   view: ViewConfig;
 }) {
+  const [editingField, setEditingField] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const ruleByField = useMemo(
+    () => new Map(view.filterRules.map((rule) => [rule.field, rule])),
+    [view.filterRules],
+  );
+
+  if (editingField) {
+    const label = choices.find((choice) => choice.id === editingField)?.label ?? 'Field';
+    return (
+      <FilterRuleEditor
+        label={label}
+        rule={ruleByField.get(editingField)}
+        run={run}
+        onBack={() => setEditingField(null)}
+      />
+    );
+  }
+
+  const normalized = query.trim().toLowerCase();
+  const matches = normalized
+    ? choices.filter((choice) => choice.label.toLowerCase().includes(normalized))
+    : choices;
+
+  const openField = (field: string) => {
+    if (!ruleByField.has(field)) {
+      void run(() => api.addFilterRule(node.id, field, 'contains', [], 'any'));
+    }
+    setEditingField(field);
+  };
+
   return (
-    <div className="view-toolbar-rules">
-      {view.filterRules.map((rule) => (
-        <div className="view-toolbar-rule view-toolbar-rule-filter" key={rule.id}>
-          <SelectControl
-            label="Filter field"
-            value={rule.field}
-            onChange={(event) => {
-              void run(() => api.updateFilterRule(rule.id, { field: event.currentTarget.value }));
-            }}
-          >
-            {choices.map((choice) => (
-              <option key={choice.id} value={choice.id}>{choice.label}</option>
+    <div className="view-toolbar-filter">
+      <input
+        autoFocus
+        className="view-toolbar-filter-search"
+        placeholder="Filter field"
+        spellCheck={false}
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+      />
+      <div className="view-toolbar-options">
+        {matches.length === 0 && <div className="view-toolbar-empty">No matching fields</div>}
+        {bySection(matches).map((group) => (
+          <div className="view-toolbar-option-group" key={group.section}>
+            <div className="view-toolbar-option-section">{group.section}</div>
+            {group.items.map((choice) => (
+              <ButtonControl
+                key={choice.id}
+                className="view-toolbar-option view-toolbar-filter-field"
+                onClick={() => openField(choice.id)}
+              >
+                <span className="view-toolbar-option-label">{choice.label}</span>
+                {ruleByField.has(choice.id) ? (
+                  <CheckIcon className="view-toolbar-field-check" size={ICON_SIZE.menu} />
+                ) : null}
+                <ChevronRightIcon className="view-toolbar-field-chevron" size={ICON_SIZE.menu} />
+              </ButtonControl>
             ))}
-          </SelectControl>
-          <SelectControl
-            label="Filter operator"
-            value={rule.operator}
-            onChange={(event) => {
-              void run(() => api.updateFilterRule(rule.id, { operator: event.currentTarget.value as FilterOperator }));
-            }}
-          >
-            {FILTER_OPERATORS.map((operator) => (
-              <option key={operator.id} value={operator.id}>{operator.label}</option>
-            ))}
-          </SelectControl>
-          <TextInputControl
-            defaultValue={rule.values.join(', ')}
-            label="Filter values"
-            placeholder="value"
-            onBlur={(event) => {
-              void run(() => api.updateFilterRule(rule.id, { values: normalizeValues(event.currentTarget.value) }));
-            }}
-            onKeyDown={(event) => {
-              if (isImeComposingEvent(event)) return;
-              if (event.key !== 'Enter') return;
-              event.preventDefault();
-              event.currentTarget.blur();
-            }}
-          />
-          <ButtonControl
-            aria-label="Remove filter rule"
-            className="view-toolbar-rule-remove"
-            title="Remove"
-            onClick={() => void run(() => api.removeFilterRule(rule.id))}
-          >
-            <CloseIcon size={ICON_SIZE.menu} />
-          </ButtonControl>
-        </div>
-      ))}
-      <div className="view-toolbar-rule-actions">
-        <AddFieldSelect
-          choices={choices}
-          label={view.filterRules.length > 0 ? 'Add filter' : 'Filter field'}
-          onSelect={(field) => void run(() => api.addFilterRule(node.id, field, 'contains', [], 'any'))}
-        />
-        {view.filterRules.length > 0 && (
+          </div>
+        ))}
+      </div>
+      {view.filterRules.length > 0 && (
+        <div className="view-toolbar-rule-actions">
           <ButtonControl
             className="view-toolbar-reset"
             onClick={() => void run(() => api.clearFilterRules(node.id))}
           >
             Reset
           </ButtonControl>
-        )}
-      </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FilterRuleEditor({
+  label,
+  rule,
+  run,
+  onBack,
+}: {
+  label: string;
+  rule: ViewConfig['filterRules'][number] | undefined;
+  run: CommandRunner;
+  onBack: () => void;
+}) {
+  const needsValue = rule ? !VALUELESS_OPERATORS.has(rule.operator) : true;
+  return (
+    <div className="view-toolbar-filter-editor">
+      <ButtonControl className="view-toolbar-filter-back" onClick={onBack}>
+        <ChevronLeftIcon size={ICON_SIZE.menu} />
+        <span>{label}</span>
+      </ButtonControl>
+      {rule ? (
+        <div className="view-toolbar-rules">
+          <div className="view-toolbar-rule view-toolbar-rule-filter">
+            <SelectControl
+              label="Filter operator"
+              value={rule.operator}
+              onChange={(event) => {
+                void run(() => api.updateFilterRule(rule.id, { operator: event.currentTarget.value as FilterOperator }));
+              }}
+            >
+              {FILTER_OPERATORS.map((operator) => (
+                <option key={operator.id} value={operator.id}>{operator.label}</option>
+              ))}
+            </SelectControl>
+            {needsValue && (
+              <TextInputControl
+                defaultValue={rule.values.join(', ')}
+                label="Filter values"
+                placeholder="value"
+                onBlur={(event) => {
+                  void run(() => api.updateFilterRule(rule.id, { values: normalizeValues(event.currentTarget.value) }));
+                }}
+                onKeyDown={(event) => {
+                  if (isImeComposingEvent(event)) return;
+                  if (event.key !== 'Enter') return;
+                  event.preventDefault();
+                  event.currentTarget.blur();
+                }}
+              />
+            )}
+          </div>
+          <div className="view-toolbar-rule-actions">
+            <ButtonControl
+              aria-label="Remove filter rule"
+              className="view-toolbar-reset"
+              onClick={() => {
+                void run(() => api.removeFilterRule(rule.id));
+                onBack();
+              }}
+            >
+              Remove filter
+            </ButtonControl>
+          </div>
+        </div>
+      ) : (
+        <div className="view-toolbar-empty">Adding filter…</div>
+      )}
     </div>
   );
 }
