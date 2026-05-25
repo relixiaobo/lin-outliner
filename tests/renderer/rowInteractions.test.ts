@@ -231,6 +231,35 @@ describe('row interaction resolvers', () => {
 	    ]);
 	  });
 
+	  test('filters a custom date field by after using parsed dates, not string compare', () => {
+	    const parent = makeNode('parent', 'Parent', { children: ['view', 'early', 'late'] });
+	    const byId = new Map<string, any>([
+	      ['parent', parent],
+	      ['view', makeNode('view', '', {
+	        type: 'viewDef',
+	        parentId: 'parent',
+	        children: ['filter'],
+	      })],
+	      ['filter', makeNode('filter', '', {
+	        type: 'filterRule',
+	        parentId: 'view',
+	        filterField: 'date-def',
+	        filterOperator: 'after',
+	        filterValueLogic: 'any',
+	        filterValues: ['2026-01-01'],
+	      })],
+	      ['date-def', makeNode('date-def', 'Due', { type: 'fieldDef', fieldType: 'date' })],
+	      ['early', makeNode('early', 'Early', { parentId: 'parent', children: ['early-date'] })],
+	      ['early-date', makeNode('early-date', '2025-06-01', { type: 'fieldEntry', parentId: 'early', fieldDefId: 'date-def' })],
+	      ['late', makeNode('late', 'Late', { parentId: 'parent', children: ['late-date'] })],
+	      ['late-date', makeNode('late-date', '2026-06-01', { type: 'fieldEntry', parentId: 'late', fieldDefId: 'date-def' })],
+	    ]);
+
+	    expect(buildOutlinerRows(parent as any, byId)).toEqual([
+	      { id: 'late', type: 'content' },
+	    ]);
+	  });
+
   test('trailing input ignores non-node rows when deciding placement', () => {
     expect(shouldShowTrailingInput([
       { id: 'group:a', type: 'group', label: 'A' },

@@ -1,4 +1,4 @@
-import type { FilterOperator, NodeId, NodeProjection, SortDirection, ViewMode } from '../api/types';
+import { parseDateFieldValueRange, type FilterOperator, type NodeId, type NodeProjection, type SortDirection, type ViewMode } from '../api/types';
 
 export const NAME_FIELD = 'sys:name';
 export const CREATED_FIELD = 'sys:createdAt';
@@ -250,6 +250,38 @@ function filterRows(
   });
 }
 
+function isDateFilterField(fieldId: string, byId: Map<NodeId, NodeProjection>): boolean {
+  if (fieldId === CREATED_FIELD || fieldId === UPDATED_FIELD || fieldId === DONE_AT_FIELD) return true;
+  return byId.get(fieldId)?.fieldType === 'date';
+}
+
+// Resolves a date filter operand to an absolute [start, endExclusive) span. Handles
+// both system date fields (stored as epoch-ms strings) and custom date fields
+// (ISO local dates/ranges), so after/before/is compare uniformly across them.
+function dateFilterSpan(value: string): { startMs: number; endExclusiveMs: number } | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (/^-?\d+$/.test(trimmed)) {
+    const ms = Number(trimmed);
+    return Number.isFinite(ms) ? { startMs: ms, endExclusiveMs: ms + 1 } : null;
+  }
+  return parseDateFieldValueRange(trimmed);
+}
+
+function rowMatchesDateFilter(rule: ViewFilterRule, values: string[], expected: string[]): boolean {
+  const fieldSpans = values.map(dateFilterSpan).filter((span): span is { startMs: number; endExclusiveMs: number } => span !== null);
+  if (fieldSpans.length === 0) return false;
+  const matchOne = (target: string) => {
+    const span = dateFilterSpan(target);
+    if (!span) return false;
+    if (rule.operator === 'before') return fieldSpans.some((field) => field.startMs < span.startMs);
+    if (rule.operator === 'after') return fieldSpans.some((field) => field.startMs >= span.endExclusiveMs);
+    const within = fieldSpans.some((field) => field.startMs >= span.startMs && field.startMs < span.endExclusiveMs);
+    return rule.operator === 'is_not' ? !within : within;
+  };
+  return rule.valueLogic === 'all' ? expected.every(matchOne) : expected.some(matchOne);
+}
+
 function rowMatchesFilter(node: NodeProjection, rule: ViewFilterRule, byId: Map<NodeId, NodeProjection>): boolean {
   const values = fieldValuesFor(node, rule.field, byId);
   const normalizedValues = values.map((value) => value.toLocaleLowerCase());
@@ -258,6 +290,10 @@ function rowMatchesFilter(node: NodeProjection, rule: ViewFilterRule, byId: Map<
   if (rule.operator === 'is_empty') return values.length === 0 || values.every((value) => !value.trim());
   if (rule.operator === 'is_not_empty') return values.some((value) => value.trim());
   if (expected.length === 0) return true;
+
+  if (isDateFilterField(rule.field, byId)) {
+    return rowMatchesDateFilter(rule, values, rule.values.map((value) => value.trim()).filter(Boolean));
+  }
 
   const compareOne = (target: string) => {
     if (rule.operator === 'is') return normalizedValues.includes(target);

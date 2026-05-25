@@ -25,6 +25,7 @@ import {
   SortDescIcon,
   TableIcon,
 } from '../icons';
+import { resolveFieldOptions, type FieldOption } from '../interactions/fieldOptions';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { CheckboxMark } from '../primitives/CheckboxMark';
@@ -34,11 +35,37 @@ import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import type { CommandRunner } from '../shared';
 import {
   collectViewFieldChoices,
+  CREATED_FIELD,
+  DONE_AT_FIELD,
   DONE_FIELD,
   NAME_FIELD,
   REF_COUNT_FIELD,
+  TAGS_FIELD,
+  UPDATED_FIELD,
   type ViewConfig,
 } from './row-model';
+
+type FilterKind = 'boolean' | 'date' | 'number' | 'options' | 'text';
+
+function filterFieldKind(fieldId: string, byId: DocumentIndex['byId']): FilterKind {
+  if (fieldId === DONE_FIELD) return 'boolean';
+  if (fieldId === CREATED_FIELD || fieldId === UPDATED_FIELD || fieldId === DONE_AT_FIELD) return 'date';
+  if (fieldId === REF_COUNT_FIELD) return 'number';
+  if (fieldId === NAME_FIELD || fieldId === TAGS_FIELD) return 'text';
+  const fieldType = byId.get(fieldId)?.fieldType;
+  if (fieldType === 'checkbox' || fieldType === 'boolean') return 'boolean';
+  if (fieldType === 'date') return 'date';
+  if (fieldType === 'number') return 'number';
+  if (fieldType === 'options' || fieldType === 'options_from_supertag') return 'options';
+  return 'text';
+}
+
+// Operators offered per field kind; text keeps the full set.
+const OPERATORS_BY_KIND: Record<'text' | 'date' | 'number', FilterOperator[]> = {
+  text: ['contains', 'not_contains', 'is', 'is_not', 'is_empty', 'is_not_empty'],
+  date: ['is', 'after', 'before', 'is_empty', 'is_not_empty'],
+  number: ['is', 'gt', 'lt', 'is_empty', 'is_not_empty'],
+};
 
 interface ViewToolbarProps {
   node: NodeProjection;
@@ -252,7 +279,7 @@ export function ViewToolbar({
             <SortSection choices={choices} node={node} run={run} view={view} />
           )}
           {open === 'filter' && (
-            <FilterSection choices={choices} node={node} run={run} view={view} />
+            <FilterSection choices={choices} index={index} node={node} run={run} view={view} />
           )}
         </div>,
         document.body,
@@ -475,11 +502,13 @@ function SortSection({
 // added rule resolves without threading the new rule id back through the command.
 function FilterSection({
   choices,
+  index,
   node,
   run,
   view,
 }: {
   choices: FieldChoice[];
+  index: DocumentIndex;
   node: NodeProjection;
   run: CommandRunner;
   view: ViewConfig;
@@ -493,10 +522,16 @@ function FilterSection({
 
   if (editingField) {
     const label = choices.find((choice) => choice.id === editingField)?.label ?? 'Field';
+    const kind = filterFieldKind(editingField, index.byId);
+    const options = kind === 'options'
+      ? resolveFieldOptions(index.byId.get(editingField), index.byId)
+      : [];
     return (
       <FilterRuleEditor
-        boolean={editingField === DONE_FIELD}
+        field={editingField}
+        kind={kind}
         label={label}
+        options={options}
         rule={ruleByField.get(editingField)}
         run={run}
         onBack={() => setEditingField(null)}
@@ -562,25 +597,22 @@ function FilterSection({
 }
 
 function FilterRuleEditor({
-  boolean,
+  field,
+  kind,
   label,
+  options,
   rule,
   run,
   onBack,
 }: {
-  boolean: boolean;
+  field: string;
+  kind: FilterKind;
   label: string;
+  options: FieldOption[];
   rule: ViewConfig['filterRules'][number] | undefined;
   run: CommandRunner;
   onBack: () => void;
 }) {
-  const needsValue = rule ? !VALUELESS_OPERATORS.has(rule.operator) : true;
-  // A done/checkbox field stores 'true' | 'false', so it is a binary choice
-  // rather than a free-text match.
-  const selectedBool = rule && rule.operator === 'is'
-    ? (rule.values.map((value) => value.trim().toLowerCase()).includes('true') ? 'true'
-      : rule.values.map((value) => value.trim().toLowerCase()).includes('false') ? 'false' : null)
-    : null;
   return (
     <div className="view-toolbar-filter-editor">
       <ButtonControl className="view-toolbar-filter-back" onClick={onBack}>
@@ -589,51 +621,12 @@ function FilterRuleEditor({
       </ButtonControl>
       {rule ? (
         <div className="view-toolbar-rules">
-          {boolean ? (
-            <div className="view-toolbar-options">
-              <OptionRow
-                label="Done"
-                selected={selectedBool === 'true'}
-                variant="radio"
-                onSelect={() => void run(() => api.updateFilterRule(rule.id, { operator: 'is', values: ['true'] }))}
-              />
-              <OptionRow
-                label="Not done"
-                selected={selectedBool === 'false'}
-                variant="radio"
-                onSelect={() => void run(() => api.updateFilterRule(rule.id, { operator: 'is', values: ['false'] }))}
-              />
-            </div>
+          {kind === 'boolean' ? (
+            <BooleanFilterBody field={field} rule={rule} run={run} />
+          ) : kind === 'options' ? (
+            <OptionsFilterBody options={options} rule={rule} run={run} />
           ) : (
-            <div className="view-toolbar-rule view-toolbar-rule-filter">
-              <SelectControl
-                label="Filter operator"
-                value={rule.operator}
-                onChange={(event) => {
-                  void run(() => api.updateFilterRule(rule.id, { operator: event.currentTarget.value as FilterOperator }));
-                }}
-              >
-                {FILTER_OPERATORS.map((operator) => (
-                  <option key={operator.id} value={operator.id}>{operator.label}</option>
-                ))}
-              </SelectControl>
-              {needsValue && (
-                <TextInputControl
-                  defaultValue={rule.values.join(', ')}
-                  label="Filter values"
-                  placeholder="value"
-                  onBlur={(event) => {
-                    void run(() => api.updateFilterRule(rule.id, { values: normalizeValues(event.currentTarget.value) }));
-                  }}
-                  onKeyDown={(event) => {
-                    if (isImeComposingEvent(event)) return;
-                    if (event.key !== 'Enter') return;
-                    event.preventDefault();
-                    event.currentTarget.blur();
-                  }}
-                />
-              )}
-            </div>
+            <OperatorFilterBody kind={kind} rule={rule} run={run} />
           )}
           <div className="view-toolbar-rule-actions">
             <ButtonControl
@@ -651,6 +644,107 @@ function FilterRuleEditor({
       ) : (
         <div className="view-toolbar-empty">Adding filter…</div>
       )}
+    </div>
+  );
+}
+
+type FilterRule = ViewConfig['filterRules'][number];
+
+// Boolean / checkbox fields store 'true' | 'false', so they are a binary choice.
+function BooleanFilterBody({ field, rule, run }: { field: string; rule: FilterRule; run: CommandRunner }) {
+  const lowered = rule.operator === 'is' ? rule.values.map((value) => value.trim().toLowerCase()) : [];
+  const selected = lowered.includes('true') ? 'true' : lowered.includes('false') ? 'false' : null;
+  const [onLabel, offLabel] = field === DONE_FIELD ? ['Done', 'Not done'] : ['Yes', 'No'];
+  return (
+    <div className="view-toolbar-options">
+      <OptionRow
+        label={onLabel}
+        selected={selected === 'true'}
+        variant="radio"
+        onSelect={() => void run(() => api.updateFilterRule(rule.id, { operator: 'is', values: ['true'] }))}
+      />
+      <OptionRow
+        label={offLabel}
+        selected={selected === 'false'}
+        variant="radio"
+        onSelect={() => void run(() => api.updateFilterRule(rule.id, { operator: 'is', values: ['false'] }))}
+      />
+    </div>
+  );
+}
+
+// Options fields filter by selecting one or more of the field's defined options.
+function OptionsFilterBody({ options, rule, run }: { options: FieldOption[]; rule: FilterRule; run: CommandRunner }) {
+  if (options.length === 0) return <div className="view-toolbar-empty">No options</div>;
+  const selected = new Set(rule.values.map((value) => value.trim().toLowerCase()));
+  return (
+    <div className="view-toolbar-options">
+      {options.map((option) => {
+        const checked = selected.has(option.label.trim().toLowerCase());
+        return (
+          <OptionRow
+            key={option.id}
+            label={option.label}
+            selected={checked}
+            variant="checkbox"
+            onSelect={() => {
+              const next = checked
+                ? rule.values.filter((value) => value.trim().toLowerCase() !== option.label.trim().toLowerCase())
+                : [...rule.values, option.label];
+              void run(() => api.updateFilterRule(rule.id, { operator: 'is', valueLogic: 'any', values: next }));
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+// Date / number / text: an operator plus a kind-appropriate value control.
+function OperatorFilterBody({ kind, rule, run }: { kind: FilterKind; rule: FilterRule; run: CommandRunner }) {
+  const allowed = OPERATORS_BY_KIND[kind === 'date' ? 'date' : kind === 'number' ? 'number' : 'text'];
+  const operators = FILTER_OPERATORS.filter((operator) => allowed.includes(operator.id));
+  const needsValue = !VALUELESS_OPERATORS.has(rule.operator);
+  const dateValue = /^\d{4}-\d{2}-\d{2}/.test(rule.values[0] ?? '') ? rule.values[0]!.slice(0, 10) : '';
+  return (
+    <div className="view-toolbar-rule view-toolbar-rule-filter">
+      <SelectControl
+        label="Filter operator"
+        value={rule.operator}
+        onChange={(event) => {
+          void run(() => api.updateFilterRule(rule.id, { operator: event.currentTarget.value as FilterOperator }));
+        }}
+      >
+        {operators.map((operator) => (
+          <option key={operator.id} value={operator.id}>{operator.label}</option>
+        ))}
+      </SelectControl>
+      {needsValue && kind === 'date' ? (
+        <input
+          aria-label="Filter date"
+          className="view-toolbar-date-input"
+          type="date"
+          value={dateValue}
+          onChange={(event) => {
+            void run(() => api.updateFilterRule(rule.id, { values: event.currentTarget.value ? [event.currentTarget.value] : [] }));
+          }}
+        />
+      ) : needsValue ? (
+        <TextInputControl
+          defaultValue={rule.values.join(', ')}
+          label="Filter values"
+          placeholder="value"
+          onBlur={(event) => {
+            void run(() => api.updateFilterRule(rule.id, { values: normalizeValues(event.currentTarget.value) }));
+          }}
+          onKeyDown={(event) => {
+            if (isImeComposingEvent(event)) return;
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            event.currentTarget.blur();
+          }}
+        />
+      ) : null}
     </div>
   );
 }
