@@ -239,14 +239,16 @@ export class DocumentService {
         return this.core.setCodeLanguage(String(args.nodeId), String(args.codeLanguage ?? ''));
       case 'create_image_node':
         return this.core.createImageNode(String(args.parentId), nullableNumber(args.index), {
-          assetId: String(args.assetId ?? ''),
+          assetId: nullableString(args.assetId) ?? undefined,
+          mediaUrl: nullableString(args.mediaUrl) ?? undefined,
           width: nullableNumber(args.width),
           height: nullableNumber(args.height),
           alt: nullableString(args.alt),
         });
       case 'set_node_image':
         return this.core.setNodeImage(String(args.nodeId), {
-          assetId: String(args.assetId ?? ''),
+          assetId: nullableString(args.assetId) ?? undefined,
+          mediaUrl: nullableString(args.mediaUrl) ?? undefined,
           width: nullableNumber(args.width),
           height: nullableNumber(args.height),
         });

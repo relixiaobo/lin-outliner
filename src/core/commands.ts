@@ -125,6 +125,7 @@ export const ASSET_COMMANDS = [
   'pick_image_files',
   'open_asset',
   'reveal_asset',
+  'open_external_url',
 ] as const;
 
 export type DocumentCommand = typeof DOCUMENT_COMMANDS[number];

@@ -45,6 +45,22 @@ describe('Core.createImageNode', () => {
     const libraryId = core.projection().libraryId;
     expect(() => core.createImageNode(libraryId, null, { assetId: '   ' })).toThrow();
   });
+
+  test('creates a remote image node from a mediaUrl (no assetId)', () => {
+    const core = Core.new();
+    const libraryId = core.projection().libraryId;
+    const id = mustFocus(core.createImageNode(libraryId, null, { mediaUrl: 'https://example.com/cat.png' }));
+    const node = core.projection().nodes.find((entry) => entry.id === id);
+    expect(node).toMatchObject({ type: 'image', mediaUrl: 'https://example.com/cat.png' });
+    expect(node?.assetId).toBeUndefined();
+  });
+
+  test('rejects supplying both an assetId and a mediaUrl, or neither', () => {
+    const core = Core.new();
+    const libraryId = core.projection().libraryId;
+    expect(() => core.createImageNode(libraryId, null, { assetId: 'a', mediaUrl: 'https://x/y.png' })).toThrow();
+    expect(() => core.createImageNode(libraryId, null, {})).toThrow();
+  });
 });
 
 describe('Core.setNodeImage', () => {
@@ -74,5 +90,17 @@ describe('Core.setNodeImage', () => {
     const id = mustFocus(core.createNode(libraryId, null, 'code'));
     core.setCodeBlock(id);
     expect(() => core.setNodeImage(id, { assetId: 'asset-x' })).toThrow();
+  });
+
+  test('converting to a remote source clears a prior local assetId', () => {
+    const core = Core.new();
+    const libraryId = core.projection().libraryId;
+    const id = mustFocus(core.createImageNode(libraryId, null, { assetId: 'asset-local' }));
+
+    core.setNodeImage(id, { mediaUrl: 'https://example.com/pic.jpg' });
+
+    const node = core.projection().nodes.find((entry) => entry.id === id);
+    expect(node?.mediaUrl).toBe('https://example.com/pic.jpg');
+    expect(node?.assetId).toBeUndefined();
   });
 });

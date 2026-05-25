@@ -34,9 +34,24 @@ updated: 2026-05-25
 > `create_image_node` / `set_node_image` IPC. Ingest paths shipped: clipboard
 > paste (image items) and the `/image` slash command (native file picker); both
 > land the image on the current row when it is plain and childless rather than
-> spawning an empty sibling. **Deferred:** drag-from-Finder, inline alt-text
-> editing affordance, and the `mediaUrl` migration (no real `mediaUrl` image
-> nodes exist yet).
+> spawning an empty sibling.
+>
+> **Dual source (local + remote).** An image node's source is exactly one of a
+> local `assetId` (served via the `asset://` privileged protocol — renamed from
+> `lin-asset://`; the bare id is what persists, so no migration) or a remote
+> `mediaUrl`. `mediaSource(node)` resolves either into a `{ src, isRemote }` the
+> view loads; `isBlockNodeType` accepts either. Pasting a lone remote image URL
+> (no active selection) creates a remote image node (`imageUrlFromText` +
+> `onPasteMediaUrl`). "Open original" routes to the OS app for local, the
+> browser for remote (`open_external_url`, http(s)-only). `ingest_asset` over
+> IPC is buffer-only (path ingest stays main-process-internal).
+>
+> **Deferred:** drag-from-Finder; inline alt-text editing; remote-media
+> autodetect by content-type (HEAD) rather than extension; and **a
+> Content-Security-Policy** — none ships today, and direct remote `<img>`/
+> `<video>` is inert (no script execution), but a CSP (`img-src`/`media-src`
+> `asset:`/`https:`, `script-src 'self'`) should be added and verified against a
+> packaged build, since dev (HMR) and prod (`file://`) need different directives.
 
 Render `image`-type nodes inline in the outliner using the asset subsystem.
 Today the `image` NodeType exists in `src/core/types.ts` and the

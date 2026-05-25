@@ -399,6 +399,27 @@ export function OutlinerItem(props: OutlinerItemProps) {
     await landImagesOnCurrentRow(assets);
   };
 
+  // A pasted remote image URL: same land-here logic as a local image, but the
+  // node is backed by `mediaUrl` instead of an ingested asset.
+  const handlePasteMediaUrl = async (url: string) => {
+    await commitDraft();
+    const draft = draftContentRef.current;
+    const rowTextEmpty = draft.text.trim().length === 0 && draft.inlineRefs.length === 0;
+    const convertInPlace = shouldConvertRowToImage({
+      referenceLikeRow,
+      nodeType: displayed.type,
+      hasChildren: row.hasChildren,
+      rowTextEmpty,
+    });
+    if (convertInPlace) {
+      await props.run(() => api.setNodeImage(targetEditId, { mediaUrl: url }));
+    } else {
+      const siblings = props.index.byId.get(props.parentId)?.children ?? [];
+      const rowIndex = siblings.indexOf(props.nodeId);
+      await props.run(() => api.createImageNode(props.parentId, rowIndex >= 0 ? rowIndex + 1 : null, { mediaUrl: url }));
+    }
+  };
+
   const applyReference = async (target: NodeProjection) => {
     const trigger = props.trigger?.nodeId === props.nodeId ? props.trigger : null;
     if (!trigger) {
@@ -990,6 +1011,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
             }}
             onPasteOutliner={node.type === 'reference' ? undefined : handlePasteOutliner}
             onPasteImage={node.type === 'reference' ? undefined : (images) => void handlePasteImage(images)}
+            onPasteMediaUrl={node.type === 'reference' ? undefined : (url) => void handlePasteMediaUrl(url)}
             onInlineReferenceClick={pendingReferenceConversion
               ? undefined
               : (targetId) => props.onRoot(targetId, { focus: false })}

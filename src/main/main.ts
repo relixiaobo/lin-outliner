@@ -137,6 +137,15 @@ async function handleAssetCommand(command: AssetCommand, args: Record<string, un
       if (path) shell.showItemInFolder(path);
       return { revealed: Boolean(path) };
     }
+    case 'open_external_url': {
+      // Opens a remote media node's source in the OS default browser. Only
+      // http(s) is allowed so a node can never smuggle a file:// or other
+      // scheme into shell.openExternal.
+      const url = String(args.url);
+      if (!/^https?:\/\//i.test(url)) return { opened: false };
+      await shell.openExternal(url);
+      return { opened: true };
+    }
     default:
       throw new Error(`Unknown asset command: ${command}`);
   }

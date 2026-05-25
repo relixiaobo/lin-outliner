@@ -6,8 +6,23 @@ import {
 } from 'react';
 import type { NodeProjection } from '../../api/types';
 import type { FocusRequest, FocusTarget } from '../../state/document';
+import { assetUrl } from '../../../core/assets';
 import { focusTargetMatches } from '../focus/focusModel';
 import { ImageRow } from './ImageRow';
+
+/**
+ * Resolve a media node's source. It is exactly one of a local `assetId` (served
+ * via `asset://`) or a remote `mediaUrl` (loaded directly). Returns the URL to
+ * load plus whether it is remote (which changes "open original" and intrinsic
+ * sizing). `null` means the node has no usable source yet.
+ */
+export function mediaSource(
+  node: Pick<NodeProjection, 'assetId' | 'mediaUrl'>,
+): { src: string; isRemote: boolean } | null {
+  if (node.assetId) return { src: assetUrl(node.assetId), isRemote: false };
+  if (node.mediaUrl) return { src: node.mediaUrl, isRemote: true };
+  return null;
+}
 
 /**
  * Node types whose body is a non-text block (an image today; attachments,
@@ -19,10 +34,10 @@ import { ImageRow } from './ImageRow';
  * Returns false for types it cannot render yet (e.g. an `image` without an
  * `assetId`), so the caller can fall back to the normal text editor.
  */
-export function isBlockNodeType(node: Pick<NodeProjection, 'type' | 'assetId'>): boolean {
+export function isBlockNodeType(node: Pick<NodeProjection, 'type' | 'assetId' | 'mediaUrl'>): boolean {
   switch (node.type) {
     case 'image':
-      return Boolean(node.assetId);
+      return Boolean(node.assetId || node.mediaUrl);
     default:
       return false;
   }
@@ -55,11 +70,15 @@ export interface BlockNodeRowProps {
 function renderBlockBody(props: BlockNodeRowProps): ReactNode {
   const { node } = props;
   switch (node.type) {
-    case 'image':
-      if (!node.assetId) return null;
+    case 'image': {
+      const source = mediaSource(node);
+      if (!source) return null;
       return (
         <ImageRow
+          src={source.src}
+          isRemote={source.isRemote}
           assetId={node.assetId}
+          mediaUrl={node.mediaUrl}
           alt={node.mediaAlt || node.description || undefined}
           width={node.imageWidth}
           height={node.imageHeight}
@@ -67,6 +86,7 @@ function renderBlockBody(props: BlockNodeRowProps): ReactNode {
           onAddCaption={props.onAddCaption}
         />
       );
+    }
     default:
       return null;
   }
