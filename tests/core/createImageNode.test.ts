@@ -46,3 +46,33 @@ describe('Core.createImageNode', () => {
     expect(() => core.createImageNode(libraryId, null, { assetId: '   ' })).toThrow();
   });
 });
+
+describe('Core.setNodeImage', () => {
+  test('converts a plain content row into an image in place, keeping its text as caption', () => {
+    const core = Core.new();
+    const libraryId = core.projection().libraryId;
+    const id = mustFocus(core.createNode(libraryId, null, 'My caption'));
+
+    core.setNodeImage(id, { assetId: 'asset-x', width: 100, height: 50 });
+
+    const node = core.projection().nodes.find((entry) => entry.id === id);
+    expect(node).toMatchObject({
+      type: 'image',
+      assetId: 'asset-x',
+      imageWidth: 100,
+      imageHeight: 50,
+      content: { text: 'My caption' },
+    });
+    // No sibling was created — the row count under Library is unchanged.
+    const library = core.projection().nodes.find((entry) => entry.id === libraryId);
+    expect(library?.children).toEqual([id]);
+  });
+
+  test('refuses to convert a non-plain node (e.g. a code block)', () => {
+    const core = Core.new();
+    const libraryId = core.projection().libraryId;
+    const id = mustFocus(core.createNode(libraryId, null, 'code'));
+    core.setCodeBlock(id);
+    expect(() => core.setNodeImage(id, { assetId: 'asset-x' })).toThrow();
+  });
+});

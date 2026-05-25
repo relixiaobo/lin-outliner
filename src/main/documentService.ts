@@ -244,6 +244,12 @@ export class DocumentService {
           height: nullableNumber(args.height),
           alt: nullableString(args.alt),
         });
+      case 'set_node_image':
+        return this.core.setNodeImage(String(args.nodeId), {
+          assetId: String(args.assetId ?? ''),
+          width: nullableNumber(args.width),
+          height: nullableNumber(args.height),
+        });
       case 'set_view_toolbar_visible':
         return this.core.setViewToolbarVisible(String(args.nodeId), Boolean(args.visible));
       case 'set_view_mode':

@@ -264,6 +264,30 @@ export class Core {
     });
   }
 
+  /**
+   * Convert a plain content node into an image node in place, keeping its text
+   * as the caption. Used when pasting/dropping an image onto an existing row so
+   * the image lands on that row rather than spawning a sibling.
+   */
+  setNodeImage(
+    nodeId: string,
+    options: { assetId: string; width?: number | null; height?: number | null },
+  ): CommandOutcome {
+    const assetId = options.assetId.trim();
+    if (!assetId) throw CoreError.invalidOperation('image node requires an assetId');
+    return this.patchNode(nodeId, (node) => {
+      if (node.type !== undefined && node.type !== 'image') {
+        throw CoreError.invalidOperation('only plain content nodes can become images');
+      }
+      node.type = 'image';
+      node.assetId = assetId;
+      if (options.width != null) node.imageWidth = options.width;
+      else delete node.imageWidth;
+      if (options.height != null) node.imageHeight = options.height;
+      else delete node.imageHeight;
+    });
+  }
+
   createTaggedNode(parentId: string, content: RichText, tagId: string): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();

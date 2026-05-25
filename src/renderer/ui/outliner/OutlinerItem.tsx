@@ -366,7 +366,24 @@ export function OutlinerItem(props: OutlinerItemProps) {
 
   const handlePasteImage = async (images: PastedImage[]) => {
     await commitDraft();
-    await insertImagesFromAssets(await ingestPastedImages(images));
+    const assets = await ingestPastedImages(images);
+    if (assets.length === 0) return;
+    // Land the image on the current row when it is a plain, childless content
+    // row (the row the cursor is in), rather than spawning a sibling below it.
+    const canConvertInPlace = !referenceLikeRow
+      && (!displayed.type || displayed.type === 'image')
+      && !row.hasChildren;
+    if (canConvertInPlace) {
+      const [first, ...rest] = assets;
+      await props.run(() => api.setNodeImage(targetEditId, {
+        assetId: first.id,
+        width: first.imageWidth,
+        height: first.imageHeight,
+      }));
+      await insertImagesFromAssets(rest);
+    } else {
+      await insertImagesFromAssets(assets);
+    }
   };
 
   const applyReference = async (target: NodeProjection) => {
@@ -885,6 +902,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
             nodeId={props.nodeId}
             content={draftContent}
             contentRevision={editorContentRevision}
+            placeholder={isImage ? 'Add caption' : undefined}
             readOnly={displayed.locked}
             completed={Boolean(displayed.completedAt)}
             onFocus={row.updateSelection}

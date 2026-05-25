@@ -80,6 +80,10 @@ export const api = {
     index: number | null,
     options: { assetId: string; width?: number | null; height?: number | null; alt?: string | null },
   ) => command<CommandOutcome>('create_image_node', { parentId, index, ...options }),
+  setNodeImage: (
+    nodeId: string,
+    options: { assetId: string; width?: number | null; height?: number | null },
+  ) => command<CommandOutcome>('set_node_image', { nodeId, ...options }),
   ingestAssetFromPath: (path: string) =>
     command<AssetMetadata>('ingest_asset', { kind: 'path', path }),
   ingestAssetFromData: (data: Uint8Array, mimeType?: string, originalFilename?: string) =>

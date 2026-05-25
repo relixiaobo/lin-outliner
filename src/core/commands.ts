@@ -16,6 +16,7 @@ export const DOCUMENT_COMMANDS = [
   'set_code_block',
   'set_code_language',
   'create_image_node',
+  'set_node_image',
   'set_view_toolbar_visible',
   'set_view_mode',
   'add_sort_rule',
