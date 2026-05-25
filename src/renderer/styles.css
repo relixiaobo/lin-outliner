@@ -2556,6 +2556,29 @@ button.panel-resize-handle::after {
    read-only, bounded-height <pre>; the outliner row is an editable textarea
    layered over a Shiki highlight layer with a language <select>. */
 .agent-code-block,
+.outliner-image {
+  margin: var(--space-1) 0;
+  user-select: none;
+}
+
+.outliner-image-el {
+  display: block;
+  max-width: min(100%, 640px);
+  height: auto;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+}
+
+.outliner-image--missing {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
 .code-block {
   overflow: hidden;
   border: 1px solid var(--border-subtle);

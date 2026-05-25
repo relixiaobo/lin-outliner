@@ -85,7 +85,7 @@ interface TrailingInputProps {
     parentId: NodeId;
     text: string;
     trigger: TrailingSlashTrigger;
-    commandId: Exclude<SlashCommandId, 'reference' | 'command_palette'>;
+    commandId: Exclude<SlashCommandId, 'reference' | 'command_palette' | 'image'>;
   }) => Promise<CommandOutcome | DocumentProjection | null | void> | CommandOutcome | DocumentProjection | null | void;
   onCreateField?: (parentId: NodeId) => Promise<void> | void;
   onOpenCommandPalette?: () => void;
@@ -799,6 +799,10 @@ export function TrailingInput(props: TrailingInputProps) {
       propsRef.current.onOpenCommandPalette?.();
       return propsRef.current.index.projection;
     }
+
+    // Image insertion is an in-row slash command only; the trailing "new row"
+    // affordance does not offer it.
+    if (commandId === 'image') return null;
 
     if (!propsRef.current.onExecuteSlashTrigger) return null;
     const text = getEditorText(view);

@@ -1,4 +1,5 @@
 import type {
+  AssetMetadata,
   Backlink,
   AgentProviderConfigInput,
   AgentProviderSecretStatus,
@@ -74,6 +75,18 @@ export const api = {
     command<CommandOutcome>('set_code_block', { nodeId, codeLanguage: codeLanguage ?? null }),
   setCodeLanguage: (nodeId: string, codeLanguage: string) =>
     command<CommandOutcome>('set_code_language', { nodeId, codeLanguage }),
+  createImageNode: (
+    parentId: string,
+    index: number | null,
+    options: { assetId: string; width?: number | null; height?: number | null; alt?: string | null },
+  ) => command<CommandOutcome>('create_image_node', { parentId, index, ...options }),
+  ingestAssetFromPath: (path: string) =>
+    command<AssetMetadata>('ingest_asset', { kind: 'path', path }),
+  ingestAssetFromData: (data: Uint8Array, mimeType?: string, originalFilename?: string) =>
+    command<AssetMetadata>('ingest_asset', { kind: 'buffer', data, mimeType, originalFilename }),
+  lookupAsset: (id: string) => command<AssetMetadata | null>('lookup_asset', { id }),
+  deleteAsset: (id: string) => command<void>('delete_asset', { id }),
+  pickImageFiles: () => command<AssetMetadata[]>('pick_image_files'),
   setViewToolbarVisible: (nodeId: string, visible: boolean) =>
     command<CommandOutcome>('set_view_toolbar_visible', { nodeId, visible }),
   setViewMode: (nodeId: string, mode: ViewMode) =>

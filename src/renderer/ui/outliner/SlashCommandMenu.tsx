@@ -9,6 +9,7 @@ import {
   FieldIcon,
   HeadingIcon,
   ICON_SIZE,
+  ImageIcon,
   ReferenceIcon,
 } from '../icons';
 import {
@@ -35,6 +36,7 @@ function slashCommandIcon(command: SlashCommandDefinition): ReactNode {
   if (command.id === 'heading') return <HeadingIcon size={ICON_SIZE.menu} />;
   if (command.id === 'checkbox') return <CheckboxIcon size={ICON_SIZE.menu} />;
   if (command.id === 'code') return <CodeIcon size={ICON_SIZE.menu} />;
+  if (command.id === 'image') return <ImageIcon size={ICON_SIZE.menu} />;
   if (command.id === 'command_palette') return <CommandIcon size={ICON_SIZE.menu} />;
   return <AddChildIcon size={ICON_SIZE.menu} />;
 }

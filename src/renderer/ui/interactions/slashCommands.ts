@@ -4,6 +4,7 @@ export type SlashCommandId =
   | 'heading'
   | 'checkbox'
   | 'code'
+  | 'image'
   | 'command_palette';
 
 export interface SlashCommandDefinition {
@@ -46,6 +47,12 @@ export const SLASH_COMMANDS: readonly SlashCommandDefinition[] = [
     id: 'code',
     label: 'Code block',
     keywords: ['code', 'codeblock', 'snippet', 'pre', 'monospace'],
+    enabled: true,
+  },
+  {
+    id: 'image',
+    label: 'Image',
+    keywords: ['image', 'picture', 'photo', 'img', 'media'],
     enabled: true,
   },
   {

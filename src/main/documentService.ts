@@ -237,6 +237,13 @@ export class DocumentService {
         return this.core.setCodeBlock(String(args.nodeId), nullableString(args.codeLanguage) ?? undefined);
       case 'set_code_language':
         return this.core.setCodeLanguage(String(args.nodeId), String(args.codeLanguage ?? ''));
+      case 'create_image_node':
+        return this.core.createImageNode(String(args.parentId), nullableNumber(args.index), {
+          assetId: String(args.assetId ?? ''),
+          width: nullableNumber(args.width),
+          height: nullableNumber(args.height),
+          alt: nullableString(args.alt),
+        });
       case 'set_view_toolbar_visible':
         return this.core.setViewToolbarVisible(String(args.nodeId), Boolean(args.visible));
       case 'set_view_mode':

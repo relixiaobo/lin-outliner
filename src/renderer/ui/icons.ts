@@ -41,6 +41,7 @@ export {
   Heading1 as HeadingIcon,
   Highlighter as HighlightIcon,
   Home as HomeIcon,
+  Image as ImageIcon,
   Eye as ShowIcon,
   EyeOff as HideIcon,
   Italic as ItalicIcon,

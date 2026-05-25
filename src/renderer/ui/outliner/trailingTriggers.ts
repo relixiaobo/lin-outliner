@@ -134,7 +134,7 @@ export async function executeTrailingSlashTrigger(params: {
   parentId: NodeId;
   text: string;
   trigger: TrailingSlashTrigger;
-  commandId: Exclude<SlashCommandId, 'reference' | 'command_palette'>;
+  commandId: Exclude<SlashCommandId, 'reference' | 'command_palette' | 'image'>;
 }): Promise<CommandOutcome> {
   if (params.commandId === 'field') {
     return createPlaceholderInlineField(params.parentId, null, 'plain');

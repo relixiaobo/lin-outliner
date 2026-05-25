@@ -8,7 +8,7 @@ import {
 } from 'react';
 import { flushSync } from 'react-dom';
 import { api } from '../../api/client';
-import type { CreateNodeTree, NodeId, NodeProjection, RichText, RichTextPatch } from '../../api/types';
+import type { AssetMetadata, CreateNodeTree, NodeId, NodeProjection, RichText, RichTextPatch } from '../../api/types';
 import { EMPTY_RICH_TEXT, plainText, replaceAllRichTextPatch } from '../../api/types';
 import type { CursorPlacement } from '../../state/document';
 import {
@@ -50,6 +50,7 @@ import { renderedTextRightEdge, resolveTextOffsetFromPoint } from '../interactio
 import { TagBar } from '../tags/TagBar';
 import { inlineReferenceTextColor, resolveTagColor, tagBulletColors } from '../tags/tagColors';
 import { CodeBlockRow } from './CodeBlockRow';
+import { ImageRow } from './ImageRow';
 import { TrailingInput } from './TrailingInput';
 import { TriggerPopover } from './TriggerPopover';
 import { DoneCheckbox } from './DoneCheckbox';
@@ -213,6 +214,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
   const descriptionEditing = props.ui.editingDescriptionId === targetEditId;
   const referenceLikeRow = node.type === 'reference' || pendingReferenceConversion;
   const isCodeBlock = displayed.type === 'codeBlock' && !referenceLikeRow;
+  const isImage = displayed.type === 'image' && !referenceLikeRow && Boolean(displayed.assetId);
   const editorContentRevision = pendingReferenceConversion
     ? displayed.updatedAt
     : draftContentRevision;
@@ -346,6 +348,30 @@ export function OutlinerItem(props: OutlinerItemProps) {
     ));
   };
 
+  const insertImagesFromAssets = async (assets: AssetMetadata[]) => {
+    if (assets.length === 0) return;
+    const siblings = props.index.byId.get(props.parentId)?.children ?? [];
+    const rowIndex = siblings.indexOf(props.nodeId);
+    let insertIndex = rowIndex >= 0 ? rowIndex + 1 : null;
+    for (const asset of assets) {
+      await props.run(() => api.createImageNode(props.parentId, insertIndex, {
+        assetId: asset.id,
+        width: asset.imageWidth,
+        height: asset.imageHeight,
+      }));
+      if (insertIndex !== null) insertIndex += 1;
+    }
+  };
+
+  const handlePasteImage = async (images: Array<{ data: Uint8Array; mimeType?: string; name?: string }>) => {
+    await commitDraft();
+    const assets: AssetMetadata[] = [];
+    for (const image of images) {
+      assets.push(await api.ingestAssetFromData(image.data, image.mimeType, image.name));
+    }
+    await insertImagesFromAssets(assets);
+  };
+
   const applyReference = async (target: NodeProjection) => {
     const trigger = props.trigger?.nodeId === props.nodeId ? props.trigger : null;
     if (!trigger) {
@@ -453,6 +479,16 @@ export function OutlinerItem(props: OutlinerItemProps) {
       replaceLocalDraftContent(withoutTrigger);
       await api.replaceNodeText(targetEditId, withoutTrigger);
       return api.setCodeBlock(targetEditId);
+    }
+
+    if (commandId === 'image') {
+      await pendingTextPatchRef.current;
+      const withoutTrigger = deleteRichTextRange(draftContent, trigger.from, trigger.to);
+      replaceLocalDraftContent(withoutTrigger);
+      await api.replaceNodeText(targetEditId, withoutTrigger);
+      const assets = await api.pickImageFiles();
+      await insertImagesFromAssets(assets);
+      return api.getProjection();
     }
 
     if (commandId === 'command_palette') {
@@ -811,6 +847,14 @@ export function OutlinerItem(props: OutlinerItemProps) {
               onToggle={() => void props.run(() => api.toggleDone(targetEditId))}
             />
           )}
+          {isImage && (
+            <ImageRow
+              assetId={displayed.assetId!}
+              alt={displayed.mediaAlt || draftContent.text || undefined}
+              width={displayed.imageWidth}
+              height={displayed.imageHeight}
+            />
+          )}
           {isCodeBlock ? (
             <CodeBlockRow
               nodeId={props.nodeId}
@@ -884,6 +928,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
               }
             }}
             onPasteOutliner={node.type === 'reference' ? undefined : handlePasteOutliner}
+            onPasteImage={node.type === 'reference' ? undefined : (images) => void handlePasteImage(images)}
             onInlineReferenceClick={pendingReferenceConversion
               ? undefined
               : (targetId) => props.onRoot(targetId, { focus: false })}
@@ -957,7 +1002,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
           clearTriggerText={applyTextWithoutTrigger}
           applyReference={applyReference}
           executeSlashCommand={executeSlashCommand}
-          enabledSlashCommandIds={['field', 'reference', 'heading', 'checkbox', 'code', 'command_palette']}
+          enabledSlashCommandIds={['field', 'reference', 'heading', 'checkbox', 'code', 'image', 'command_palette']}
           treeReferenceParentId={triggerOwnsWholeDraft ? props.parentId : null}
           existingTagIds={displayed.tags}
         />

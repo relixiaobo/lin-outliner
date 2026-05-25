@@ -1,5 +1,5 @@
 ---
-status: draft
+status: in-progress
 priority: P1
 owner: relixiaobo
 created: 2026-05-25
@@ -7,6 +7,15 @@ updated: 2026-05-25
 ---
 
 # Image Rendering
+
+> **Progress (branch `cc/asset-subsystem-images`).** `image` nodes now carry an
+> `assetId` (plus `imageWidth`/`imageHeight`/`mediaAlt`) and render through
+> `ImageRow.tsx`, shown above the row's normal text editor so caption text and
+> keyboard navigation keep working. Core command `createImageNode` +
+> `create_image_node` IPC. Ingest paths shipped: clipboard paste (image items)
+> and the `/image` slash command (native file picker). **Deferred:**
+> drag-from-Finder, inline alt-text editing affordance, and the `mediaUrl`
+> migration (no real `mediaUrl` image nodes exist yet).
 
 Render `image`-type nodes inline in the outliner using the asset subsystem.
 Today the `image` NodeType exists in `src/core/types.ts` and the

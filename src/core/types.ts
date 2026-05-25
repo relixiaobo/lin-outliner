@@ -309,6 +309,7 @@ export interface Node {
   queryTagDefId?: NodeId;
   queryFieldDefId?: NodeId;
   codeLanguage?: string;
+  assetId?: string;
   mediaUrl?: string;
   mediaAlt?: string;
   imageWidth?: number;
@@ -352,6 +353,29 @@ export interface DocumentProjectionChangedEvent {
   projection: DocumentProjection;
   timestamp: number;
 }
+
+/**
+ * Metadata sidecar for a stored asset. The bytes live on disk under the user
+ * data directory; the document only ever references the stable `id`.
+ */
+export interface AssetMetadata {
+  id: string;
+  mimeType: string;
+  byteSize: number;
+  originalFilename?: string;
+  createdAt: number;
+  imageWidth?: number;
+  imageHeight?: number;
+}
+
+/**
+ * Input to the asset ingest command. Either a path the main process reads
+ * (drag-from-Finder, file picker) or raw bytes carried over IPC (clipboard
+ * paste). All ingest paths converge here.
+ */
+export type AssetIngestInput =
+  | { kind: 'path'; path: string }
+  | { kind: 'buffer'; data: Uint8Array; mimeType?: string; originalFilename?: string };
 
 export interface FocusHint {
   nodeId: NodeId;

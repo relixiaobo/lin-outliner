@@ -240,6 +240,30 @@ export class Core {
     });
   }
 
+  createImageNode(
+    parentId: string,
+    index: number | null | undefined,
+    options: { assetId: string; width?: number | null; height?: number | null; alt?: string | null },
+  ): CommandOutcome {
+    const assetId = options.assetId.trim();
+    if (!assetId) throw CoreError.invalidOperation('image node requires an assetId');
+    return this.mutate(() => {
+      const state = this.snapshot();
+      ensureParentMutable(state, parentId);
+      const id = freshId('image');
+      this.loro.createNodeWithId(id, parentId, index, 'image', (node) => {
+        node.content = plainText('');
+        node.assetId = assetId;
+        if (options.width != null) node.imageWidth = options.width;
+        if (options.height != null) node.imageHeight = options.height;
+        const alt = options.alt?.trim();
+        if (alt) node.mediaAlt = alt;
+      });
+      this.applyChildTagsDirect(parentId, id);
+      return focus(id, { parentId, placement: { kind: 'end' } });
+    });
+  }
+
   createTaggedNode(parentId: string, content: RichText, tagId: string): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();

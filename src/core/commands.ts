@@ -15,6 +15,7 @@ export const DOCUMENT_COMMANDS = [
   'set_node_checkbox_visible',
   'set_code_block',
   'set_code_language',
+  'create_image_node',
   'set_view_toolbar_visible',
   'set_view_mode',
   'add_sort_rule',
@@ -116,12 +117,21 @@ export const AGENT_COMMANDS = [
   'agent_get_provider_secret_status',
 ] as const;
 
+export const ASSET_COMMANDS = [
+  'ingest_asset',
+  'lookup_asset',
+  'delete_asset',
+  'pick_image_files',
+] as const;
+
 export type DocumentCommand = typeof DOCUMENT_COMMANDS[number];
 export type AgentCommand = typeof AGENT_COMMANDS[number];
-export type LinCommand = DocumentCommand | AgentCommand;
+export type AssetCommand = typeof ASSET_COMMANDS[number];
+export type LinCommand = DocumentCommand | AgentCommand | AssetCommand;
 
 const documentCommands = new Set<string>(DOCUMENT_COMMANDS);
 const agentCommands = new Set<string>(AGENT_COMMANDS);
+const assetCommands = new Set<string>(ASSET_COMMANDS);
 
 export function isDocumentCommand(command: string): command is DocumentCommand {
   return documentCommands.has(command);
@@ -129,4 +139,8 @@ export function isDocumentCommand(command: string): command is DocumentCommand {
 
 export function isAgentCommand(command: string): command is AgentCommand {
   return agentCommands.has(command);
+}
+
+export function isAssetCommand(command: string): command is AssetCommand {
+  return assetCommands.has(command);
 }

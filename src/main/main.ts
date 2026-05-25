@@ -1,10 +1,11 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, protocol } from 'electron';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DocumentService } from './documentService';
+import { AssetService } from './assetService';
 import { AgentRuntime } from './agentRuntime';
 import { MAC_TRAFFIC_LIGHT_POSITION } from '../core/chromeGeometry';
-import { LIN_DOCUMENT_EVENT_CHANNEL } from '../core/types';
+import { LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput } from '../core/types';
 import {
   deleteProviderApiKey,
   deleteProviderConfig,
@@ -15,15 +16,26 @@ import {
   updateAgentRuntimeSettings,
   upsertProviderConfig,
 } from './agentSettings';
-import { isAgentCommand, isDocumentCommand, type AgentCommand } from '../core/commands';
+import { isAgentCommand, isAssetCommand, isDocumentCommand, type AgentCommand, type AssetCommand } from '../core/commands';
 import type { AgentProviderConfigInput, AgentRuntimeSettingsInput } from '../core/types';
 
 if (process.env.ELECTRON_USER_DATA_DIR) {
   app.setPath('userData', process.env.ELECTRON_USER_DATA_DIR);
 }
 
+// Must run before the app `ready` event so the renderer can load assets with
+// regular <img>/<video> tags via `lin-asset://<id>`.
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'lin-asset', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } },
+]);
+
+const IMAGE_FILE_FILTERS = [
+  { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'bmp', 'heic'] },
+];
+
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const documentService = new DocumentService();
+const assetService = new AssetService(() => join(app.getPath('userData'), 'assets'));
 let mainWindow: BrowserWindow | null = null;
 let quitAfterFlush = false;
 const agentRuntime = new AgentRuntime(() => mainWindow, documentService, {
@@ -68,6 +80,7 @@ function createWindow() {
 function registerIpc() {
   ipcMain.handle('lin:invoke', async (_event, command: string, args?: Record<string, unknown>) => {
     if (isAgentCommand(command)) return handleAgentCommand(command, args ?? {});
+    if (isAssetCommand(command)) return handleAssetCommand(command, args ?? {});
     if (isDocumentCommand(command)) return documentService.handle(command, args);
     throw new Error(`Unknown command: ${command}`);
   });
@@ -82,6 +95,32 @@ function registerIpc() {
     }
     if (command === 'close') window.close();
   });
+}
+
+async function handleAssetCommand(command: AssetCommand, args: Record<string, unknown>) {
+  switch (command) {
+    case 'ingest_asset':
+      return assetService.ingest(args as unknown as AssetIngestInput);
+    case 'lookup_asset':
+      return assetService.lookup(String(args.id));
+    case 'delete_asset':
+      return assetService.delete(String(args.id));
+    case 'pick_image_files': {
+      const window = BrowserWindow.getFocusedWindow() ?? mainWindow;
+      const options = {
+        title: 'Insert image',
+        properties: ['openFile', 'multiSelections'] as Array<'openFile' | 'multiSelections'>,
+        filters: IMAGE_FILE_FILTERS,
+      };
+      const result = window
+        ? await dialog.showOpenDialog(window, options)
+        : await dialog.showOpenDialog(options);
+      if (result.canceled) return [];
+      return Promise.all(result.filePaths.map((path) => assetService.ingest({ kind: 'path', path })));
+    }
+    default:
+      throw new Error(`Unknown asset command: ${command}`);
+  }
 }
 
 async function handleAgentCommand(command: AgentCommand, args: Record<string, unknown>) {
@@ -179,6 +218,10 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
 }
 
 app.whenReady().then(() => {
+  protocol.handle('lin-asset', (request) => {
+    const id = new URL(request.url).hostname;
+    return assetService.serve(id);
+  });
   registerIpc();
   createWindow();
   app.on('activate', () => {

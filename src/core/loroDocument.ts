@@ -94,6 +94,7 @@ const NODE_SCALAR_KEYS: Array<keyof Node> = [
   'queryTagDefId',
   'queryFieldDefId',
   'codeLanguage',
+  'assetId',
   'mediaUrl',
   'mediaAlt',
   'imageWidth',

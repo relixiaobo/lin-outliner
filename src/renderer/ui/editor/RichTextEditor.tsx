@@ -76,6 +76,7 @@ interface RichTextEditorProps {
     children: CreateNodeTree[];
     siblingsAfter: CreateNodeTree[];
   }) => void;
+  onPasteImage?: (images: Array<{ data: Uint8Array; mimeType?: string; name?: string }>) => void;
   onInlineReferenceClick?: (targetNodeId: string) => void;
   resolveInlineReferenceColor?: (targetNodeId: string) => string | undefined;
   focusTarget?: FocusTarget;
@@ -410,6 +411,25 @@ export function RichTextEditor(props: RichTextEditorProps) {
           if (propsRef.current.readOnly) return false;
 
           const clipboardEvent = event as ClipboardEvent;
+
+          // Image files (e.g. a pasted screenshot) become image nodes. Take
+          // priority over text so a clipboard carrying both an image and its
+          // filename text does not fall through to the text path.
+          const onPasteImage = propsRef.current.onPasteImage;
+          const imageFiles = Array.from(clipboardEvent.clipboardData?.items ?? [])
+            .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+            .map((item) => item.getAsFile())
+            .filter((file): file is File => file !== null);
+          if (onPasteImage && imageFiles.length > 0) {
+            clipboardEvent.preventDefault();
+            void Promise.all(imageFiles.map(async (file) => ({
+              data: new Uint8Array(await file.arrayBuffer()),
+              mimeType: file.type || undefined,
+              name: file.name || undefined,
+            }))).then((images) => onPasteImage(images));
+            return true;
+          }
+
           const plainText = clipboardEvent.clipboardData?.getData('text/plain') ?? '';
           const htmlText = clipboardEvent.clipboardData?.getData('text/html') ?? '';
 
