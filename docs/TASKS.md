@@ -41,6 +41,12 @@ Ordered by priority; lower items may depend on higher ones.
 - **view-toolbar-name-filter** (P3) — quick incremental name filter as the
   view toolbar's first control (Tana-style); needs backend/data-model support.
   Optional follow-ons: `is_not` for options filters; relative-date operands.
+- **node-line-editor-unification Phase 2** (P2) — `useNodeLineEditor` core +
+  `resolveTargetId`: build the view/plugins/keymap/trigger pipeline/IME/focus
+  once so `RichTextEditor` and `TrailingInput` become thin wrappers. High-risk
+  behavior reconciliation (the two trigger systems differ by design, not drift);
+  verify with the app running against the `outliner-*` Playwright e2e specs.
+  See `docs/plans/node-line-editor-unification.md`. Phase 1 landed in PR #11.
 - **embed-strategy** (P3) — decide live iframe vs cached-metadata embeds.
 - **past-chats-output-polish** (P3) — minor cleanups deferred from PR #7:
   (1) drop the now-redundant `returned_items` / `returned_hits` / `message_count`
@@ -51,9 +57,20 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **node-line-editor-unification Phase 1** (P2) — shared `classifyMediaPaste`
+  classifier for the image / media-URL / link-URL paste front-matter; both
+  `RichTextEditor` and `TrailingInput` call it, deleting duplicated paste
+  routing. Behavior-preserving (PR #11).
+- **media-url-sources** (P1) — `image` nodes now take exactly one of a local
+  `assetId` or a remote `mediaUrl`; `mediaSource()` resolves either for the
+  view. Pasting a lone http(s) image URL makes a remote image node (with a
+  selection it links the text instead). Renamed the protocol `lin-asset://` →
+  `asset://` (centralized in `core/assets.ts`; no data migration — only the
+  bare id persists). `mediaUrl` is validated http(s) at the core boundary and
+  `open_external_url` (PR #10).
 - **asset-subsystem + image-rendering** (P0/P1) — local asset store
   (`assetService`: ingest/lookup/serve/delete, MIME sniff, dimension probe,
-  path-traversal-safe ids) behind a privileged `lin-asset://` protocol, plus
+  path-traversal-safe ids) behind a privileged `asset://` protocol, plus
   inline `image` nodes on a reusable focusable `BlockNodeRow` shell (the
   foundation future media types plug into via `renderBlockBody` +
   `isBlockNodeType`). Clipboard paste + `/image` picker ingest; hover toolbar
