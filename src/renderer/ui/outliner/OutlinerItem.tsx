@@ -26,6 +26,7 @@ import {
   richTextEquals,
 } from '../editor/richTextCodec';
 import { indentTargetParentId, previousVisibleRowId } from '../interactions/outlinerStructure';
+import { appendImageNodes, ingestPastedImages, type PastedImage } from '../interactions/imagePaste';
 import { getTreeReferenceBlockReason } from '../interactions/referenceRules';
 import { armReferenceTypeAhead } from '../interactions/referenceTypeAhead';
 import {
@@ -363,13 +364,9 @@ export function OutlinerItem(props: OutlinerItemProps) {
     }
   };
 
-  const handlePasteImage = async (images: Array<{ data: Uint8Array; mimeType?: string; name?: string }>) => {
+  const handlePasteImage = async (images: PastedImage[]) => {
     await commitDraft();
-    const assets: AssetMetadata[] = [];
-    for (const image of images) {
-      assets.push(await api.ingestAssetFromData(image.data, image.mimeType, image.name));
-    }
-    await insertImagesFromAssets(assets);
+    await insertImagesFromAssets(await ingestPastedImages(images));
   };
 
   const applyReference = async (target: NodeProjection) => {
@@ -1080,6 +1077,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
               onCreateTree={(parentId, nodes) => (
                 props.run(() => api.createNodesFromTree(parentId, nodes), { applyFocus: false })
               )}
+              onPasteImages={(parentId, images) => appendImageNodes(parentId, images, props.run)}
               onIndentNode={(nodeId) => (
                 props.run(() => api.indentNode(nodeId), { applyFocus: false })
               )}

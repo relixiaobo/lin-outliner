@@ -16,6 +16,7 @@ import {
   isPlainSingleParagraph,
   parseClipboardPaste,
 } from '../interactions/pasteParser';
+import { clipboardImageFiles, readPastedImages, type PastedImage } from '../interactions/imagePaste';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { matchesShortcutEvent } from '../interactions/shortcutRegistry';
 import { FloatingEditorToolbar, type ToolbarMark } from './FloatingEditorToolbar';
@@ -76,7 +77,7 @@ interface RichTextEditorProps {
     children: CreateNodeTree[];
     siblingsAfter: CreateNodeTree[];
   }) => void;
-  onPasteImage?: (images: Array<{ data: Uint8Array; mimeType?: string; name?: string }>) => void;
+  onPasteImage?: (images: PastedImage[]) => void;
   onInlineReferenceClick?: (targetNodeId: string) => void;
   resolveInlineReferenceColor?: (targetNodeId: string) => string | undefined;
   focusTarget?: FocusTarget;
@@ -416,17 +417,10 @@ export function RichTextEditor(props: RichTextEditorProps) {
           // priority over text so a clipboard carrying both an image and its
           // filename text does not fall through to the text path.
           const onPasteImage = propsRef.current.onPasteImage;
-          const imageFiles = Array.from(clipboardEvent.clipboardData?.items ?? [])
-            .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
-            .map((item) => item.getAsFile())
-            .filter((file): file is File => file !== null);
+          const imageFiles = clipboardImageFiles(clipboardEvent.clipboardData);
           if (onPasteImage && imageFiles.length > 0) {
             clipboardEvent.preventDefault();
-            void Promise.all(imageFiles.map(async (file) => ({
-              data: new Uint8Array(await file.arrayBuffer()),
-              mimeType: file.type || undefined,
-              name: file.name || undefined,
-            }))).then((images) => onPasteImage(images));
+            void readPastedImages(imageFiles).then((images) => onPasteImage(images));
             return true;
           }
 
