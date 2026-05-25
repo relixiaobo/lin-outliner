@@ -238,6 +238,20 @@ test.describe('outliner trigger parity', () => {
     await expect(row(page, createdRowId!).locator('.tag-badge-label')).toContainText('project');
   });
 
+  test('# trigger in trailing input closes when navigating to Recents', async ({ page }) => {
+    await trailingEditor(page).click();
+    await page.keyboard.type('#project');
+    await expect(page.getByRole('listbox', { name: 'Tag suggestions' })).toBeVisible();
+
+    await page.locator('.sidebar-primary-nav')
+      .getByRole('button', { name: 'Recents', exact: true })
+      .click();
+
+    await expect(page.locator('.outline-panel-surface.active-panel .panel-title-editor')).toContainText('Recents');
+    await expect(page.locator('.trigger-popover')).toHaveCount(0);
+    await expect(trailingEditor(page, ids.recents)).toHaveText('');
+  });
+
   test('@ in trailing input creates a focused reference conversion row', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     const beforeCalls = (await commandCalls(page)).length;

@@ -312,6 +312,18 @@ export function TrailingInput(props: TrailingInputProps) {
     depthShiftRef.current = 0;
     setEffectiveParentId(props.parentId);
     setDepthShift(0);
+    setTrailingTrigger(null);
+    setOptionsOpen(false);
+    setOptionsQuery('');
+    setOptionsIndex(0);
+    setPendingCommittedVisual(false);
+    committedVisualTextRef.current = '';
+    eagerBufferRef.current = '';
+    const view = viewRef.current;
+    if (view && !view.isDestroyed) {
+      resetEditorContent(view);
+      updateHasContent(false);
+    }
   }, [props.parentId]);
 
   useEffect(() => {

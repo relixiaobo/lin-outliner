@@ -639,6 +639,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
     viewRef.current = view;
 
     return () => {
+      propsRef.current.onTriggerChange(null);
       view.destroy();
       viewRef.current = null;
     };
