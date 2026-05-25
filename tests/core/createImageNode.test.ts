@@ -61,6 +61,14 @@ describe('Core.createImageNode', () => {
     expect(() => core.createImageNode(libraryId, null, { assetId: 'a', mediaUrl: 'https://x/y.png' })).toThrow();
     expect(() => core.createImageNode(libraryId, null, {})).toThrow();
   });
+
+  test('rejects a non-http(s) mediaUrl so a node cannot smuggle file:/javascript:/data:', () => {
+    const core = Core.new();
+    const libraryId = core.projection().libraryId;
+    for (const mediaUrl of ['file:///etc/passwd', 'javascript:alert(1)', 'data:image/svg+xml,<svg/>']) {
+      expect(() => core.createImageNode(libraryId, null, { mediaUrl })).toThrow();
+    }
+  });
 });
 
 describe('Core.setNodeImage', () => {

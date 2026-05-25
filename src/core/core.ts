@@ -2398,7 +2398,15 @@ function resolveImageSource(
     throw CoreError.invalidOperation('image node takes either an assetId or a mediaUrl, not both');
   }
   if (assetId) return { assetId };
-  if (mediaUrl) return { mediaUrl };
+  if (mediaUrl) {
+    // A remote source is always loaded into an <img>/opened externally, so it
+    // must be http(s). Enforcing it here keeps the document invariant true for
+    // every caller (paste, agent, import), not just the UI paste classifier.
+    if (!/^https?:\/\//i.test(mediaUrl)) {
+      throw CoreError.invalidOperation('image node mediaUrl must be an http(s) URL');
+    }
+    return { mediaUrl };
+  }
   throw CoreError.invalidOperation('image node requires an assetId or a mediaUrl');
 }
 
