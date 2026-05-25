@@ -1,460 +1,487 @@
 ---
 status: draft
-priority: P2
+priority: P1
 owner: relixiaobo
 created: 2026-05-21
 updated: 2026-05-25
+supersedes: agent-tool-design.md § "past_chats" (lines 1984-2021 of the historical sketch)
 ---
 
-# Agent Past Chats Implementation Plan
+# Agent `past_chats` Tool
 
-This document is a handoff plan for implementing `past_chats` in Lin Outliner.
-It should be read with:
+The agent's mechanism for recalling content from older Lin agent
+conversations. One read-only tool, designed for the agent's true access
+pattern — find by topic, read with context — not for chat-drawer browsing.
 
-- `../spec/agent-event-log-rendering.md`
-- `../spec/agent-tool-design.md`
-- `../spec/agent-pi-mono-implementation.md`
+This is **agent infrastructure**. Get it right at v1; the cost of redesigning
+later is paid in every conversation.
 
-## Decision
+## Why this shape (and not the obvious one)
 
-Implement `past_chats` on top of Lin Outliner's existing event-sourced agent
-history. Do not migrate to lin-agent's channel storage model.
+Three reference implementations exist (nodex, sider-agent, lin-agent) and
+they all use a 3-level progressive disclosure (list sessions → list messages
+in a session → read one message's exchange). That shape comes from the
+browser-extension chat drawer UI: a human clicks through sessions, then
+opens one to see messages. **An agent does not navigate that way.** It
+searches by topic, then reads the matching exchange with surrounding
+context.
 
-Lin Outliner already has a stronger durable truth than a plain conversation log:
+The middle layer ("list messages in a session") exists only to support a
+human's chronological scan. The agent never benefits from it: every L1 call
+either follows an L0 hit (already has the messageId) or precedes an L2
+(could go direct from search). Dropping L1 gives us a cleaner contract with
+no behavior loss.
 
-```txt
-agent/
-  sessions/
-    <sessionId>/
-      events.jsonl
-      payloads/
-      checkpoints/
-  indexes/
-    session-index.json
-    search-index.json
-```
+We also considered exposing chat history as files for `file_grep`/`file_read`
+to consume. Rejected:
 
-Use the event log and payload files as the durable truth, derived indexes for
-fast browsing/search, and a new service/tool layer to present history in an
-agent-friendly shape.
+- Markdown structure (`**User**`, `[m_xxx]`, timestamps) creates false
+  positives for grep matches.
+- Branch filtering (active path) is a semantic operation `grep` cannot
+  express; we would still need a service layer.
+- Current-session exclusion via filename conventions is fragile.
+- File paths leak into agent replies as ugly citations.
 
-## Goals
+But we keep what file tools do well — **internally we drive ripgrep against
+the existing search index** to inherit its quality (fuzzy, regex,
+case-insensitive, CJK) without re-implementing search.
 
-- Let the agent recall older Lin agent conversations when the user references
-  prior work, decisions, preferences, or "last time".
-- Keep history access read-only.
-- Keep token use bounded with progressive disclosure.
-- Preserve the current event-sourced model as the source of truth.
-- Avoid exposing raw runtime events directly to the model.
-- Support UI and model citations back to the source session/message.
+## Goal
 
-## Non-Goals
+- Single tool, two modes. Search returns hits with anchors; read returns
+  the exchange around an anchor.
+- Always-on active-branch filtering. Never return content the user has
+  edited away.
+- Self-correcting errors. Wrong message IDs and missing sessions return a
+  structured result the model can act on without retry.
+- Bounded output. Hard caps on every dimension, always silently clamped.
+- Tool description that overrides the model's default "I don't remember"
+  disposition.
 
-- Do not implement long-term memory facts in this phase.
-- Do not auto-inject historical summaries into every model turn.
-- Do not create a channel/member system just for history.
-- Do not read raw `events.jsonl` directly from the tool implementation.
-- Do not make archived/deleted/private future states visible by default.
+## Non-goals
 
-## Current Data Layers
+- Memory facts, long-term summaries auto-injected into every turn.
+- Channel/conversation-grouping abstractions. Lin uses sessions; that's
+  enough.
+- Cross-session reference graph, topic clustering, related-session
+  suggestions. Add only if real workflows need them.
+- Multi-workspace scoping. Lin has no workspace concept on sessions yet;
+  schema does not pre-bake one.
+- Materializing transcripts to disk.
+- UI changes in this plan. Citation rendering is a follow-up.
 
-History currently has five useful layers:
+## Tool Contract
 
-```txt
-1. Payload files
-   sessions/<sessionId>/payloads/*
-   Large tool output, image refs, debug payloads, subagent transcript payloads.
-
-2. Event log
-   sessions/<sessionId>/events.jsonl
-   Durable append-only truth.
-
-3. Replay state
-   AgentEventReplayState
-   Rebuilt from events; contains messages, branches, runs, subagents,
-   compactions, payload refs, and selected leaf.
-
-4. Derived indexes
-   indexes/session-index.json
-   indexes/search-index.json
-   Fast session list, message search, and user-message list.
-
-5. Projections
-   UI transcript, debug view, model context, and future past_chats results.
-```
-
-`past_chats` should use layer 4 for L0/L1 browsing and layer 3 for L2 detail.
-It should only load layer 1 payload files when a detail result explicitly needs
-payload text.
-
-## Agent-Facing Shape
-
-Use a three-level progressive disclosure contract. This is the same core shape
-as nodex, sider-agent, and lin-agent, adapted to Lin Outliner's event store.
+### Parameters
 
 ```ts
-past_chats({ query?, after?, before?, limit?, offset? })
-// L0: list/search sessions.
+interface PastChatsParams {
+  // Search mode — pass `query`.
+  query?: string;
+  after?: string;                     // ISO 8601, inclusive
+  before?: string;                    // ISO 8601, inclusive
+  sessionIds?: string[];              // narrow to specific sessions
+  limit?: number;                     // default 10, max 20
+  includeCurrentSession?: boolean;    // default false
 
-past_chats({ sessionId, query?, limit?, offset? })
-// L1: list user messages in one session.
-
-past_chats({ sessionId, messageId, maxChars?, textOffset? })
-// L2: read one user message plus the following assistant/tool response detail.
-```
-
-Recommended limits:
-
-- L0 default `limit = 10`, max `20`.
-- L1 default `limit = 20`, max `50`.
-- L2 default `maxChars = 2000`.
-- L2 supports `textOffset` for paging long replies.
-
-Public naming should use `past_chats` and lower snake case. Internally, prefer
-`sessionId` because Lin Outliner already uses `AgentSession`/`sessionId`.
-If product copy wants "conversation", keep that as UI wording only.
-
-## Result Semantics
-
-L0 returns session summaries:
-
-```ts
-interface PastChatsSessionSummary {
-  sessionId: string;
-  title: string | null;
-  createdAt: number;
-  updatedAt: number;
-  messageCount: number;
-  preview: string;
+  // Read mode — pass `messageId`.
+  messageId?: string;
+  beforeContext?: number;             // default 1, max 5
+  afterContext?: number;              // default 4, max 20
+  maxChars?: number;                  // default 2000, max 8000
 }
 ```
 
-L1 returns user-message summaries:
+Mode is inferred from parameter presence:
+
+| Input | Mode |
+| --- | --- |
+| `query` present, `messageId` absent | `search` |
+| `messageId` present, `query` absent | `read` |
+| Both present | `error: AMBIGUOUS_MODE` |
+| Neither present | `error: MISSING_QUERY_OR_MESSAGE_ID` |
+
+`query` is a free-text string passed verbatim to ripgrep (`-i` case-
+insensitive, fixed-string by default, `-F`). Regex is opt-in via a future
+`regex: true` flag.
+
+### Result
+
+A discriminated union with `mode` discriminator, including error mode so the
+model can self-correct without raising an exception:
 
 ```ts
-interface PastChatsUserMessageSummary {
-  sessionId: string;
-  messageId: string;
-  createdAt: number;
-  preview: string;
-  hasAttachments: boolean;
+type PastChatsResult =
+  | PastChatsSearchResult
+  | PastChatsReadResult
+  | PastChatsErrorResult;
+
+interface PastChatsSearchResult {
+  mode: 'search';
+  hits: Array<{
+    messageId: string;
+    sessionId: string;
+    sessionTitle: string | null;
+    role: 'user' | 'assistant' | 'toolResult';
+    createdAt: string;                // ISO
+    snippet: string;                  // 200 chars, query terms surrounded by <mark>…</mark>
+  }>;
+  totalHits: number;                  // before limit truncation
+  truncated: boolean;                 // totalHits > limit
 }
-```
 
-L2 returns a focused exchange:
-
-```ts
-interface PastChatsMessageDetail {
-  sessionId: string;
-  messageId: string;
-  title: string | null;
-  user: {
+interface PastChatsReadResult {
+  mode: 'read';
+  session: { id: string; title: string | null; createdAt: string; updatedAt: string };
+  anchorMessageId: string;
+  messages: Array<{
     messageId: string;
-    createdAt: number;
-    text: string;
-  };
-  replies: Array<{
-    messageId: string;
-    role: "assistant" | "toolResult";
-    createdAt: number;
-    text: string;
+    role: 'user' | 'assistant' | 'toolResult';
+    createdAt: string;                // ISO
+    text: string;                     // tool calls/results already summarized
     toolName?: string;
     isError?: boolean;
+    messageTruncated?: boolean;       // per-message truncation
   }>;
-  truncated: boolean;
-  totalChars: number;
-  nextTextOffset?: number;
+  totalChars: number;                 // for the full assembled output
+  outputTruncated: boolean;
+}
+
+interface PastChatsErrorResult {
+  mode: 'error';
+  code:
+    | 'AMBIGUOUS_MODE'
+    | 'MISSING_QUERY_OR_MESSAGE_ID'
+    | 'SESSION_NOT_FOUND'
+    | 'NOT_ON_ACTIVE_BRANCH'
+    | 'SESSION_IS_CURRENT';
+  message: string;
+  nearbyMessageIds?: string[];        // for NOT_ON_ACTIVE_BRANCH
 }
 ```
 
-Tool text output should be concise and model-readable. The user does not see the
-tool listing directly, so the agent must surface relevant recalled facts in its
-final answer.
+### Tool description (model-facing, verbatim)
 
-## Visibility Rules
+This text ships in the tool registration. It is the highest-leverage
+artifact in this design — it converts the model's default "I don't remember"
+into proactive recall. Do not soften it.
 
-For MVP:
+```text
+Recall content from past Lin agent conversations. Call this BEFORE saying
+you don't remember something.
 
-- Exclude the current active session from L0/L1 by default. The current session
-  is already in model context.
-- Allow current-session lookup only if a compaction makes older original text
-  unavailable from active context.
-- Deleted sessions must not be listed.
-- Future archived/private workspace states should be hidden unless explicitly
-  requested and allowed.
-- L1 and L2 must re-check visibility. A guessed `sessionId` must not bypass L0.
+When to call:
+- User says "last time", "before", "previously", "you said", "remember",
+  "we discussed", "I told you" — and the reference is NOT to something
+  earlier in this same conversation.
+- User references a prior decision or preference you don't have in
+  current context.
+- User asks "have we ever discussed X".
 
-For later workspace scoping:
+Two modes (chosen by parameters):
 
-- Add `workspaceId` or project scope to session metadata if Lin starts grouping
-  agent sessions by workspace.
-- Filter by scope in `PastChatsService`, not in the tool wrapper or UI.
+SEARCH — pass `query` plus optional `after`/`before`/`sessionIds`/`limit`.
+  Returns hits across past sessions with [m_xxx] anchors.
 
-## Branch Semantics
+READ — pass `messageId` from a search hit, plus optional `beforeContext`/
+  `afterContext`/`maxChars`. Returns the conversation around that message.
 
-Lin Outliner stores branch state through parent-linked messages and
-`selectedLeafMessageId`.
+Typical flow: SEARCH to find relevant messages, then READ the most
+relevant hit for full context. Do NOT summarize from search snippets
+alone — snippets are for navigation, not citation.
 
-MVP behavior:
+Important: the user does NOT see your tool output. You must restate any
+recalled facts in your reply. You may use [m_xxx] anchors when referring
+back to specific moments.
 
-- L0 searches current indexed messages, not historical edited-away text.
-- L1 lists user messages from the replayed active branch by default.
-- L2 reads detail from the active branch. It starts at the selected user message
-  and includes following assistant/tool-result messages until the next user
-  message on that branch.
-
-Optional future behavior:
-
-- Add `branchMode: "active" | "all"` if users need recall from non-active
-  branches.
-- Include branch metadata in L1 summaries only when a message has siblings.
-
-## Implementation Plan
-
-### 1. Add a PastChats service
-
-Create a main-process service, for example:
-
-```txt
-src/main/agentPastChats.ts
+After compaction of the current session, pass `includeCurrentSession: true`
+to recall earlier turns that are no longer in your working context.
 ```
 
-The service should depend on `AgentEventStore`, not renderer state.
+## Internal Design
 
-Suggested API:
+```
+┌────────────────────────────────────────────────────────────┐
+│ Tool wrapper (src/main/agentPastChatsTool.ts)              │
+│   • param validation, mode inference                       │
+│   • Markdown formatting of result                          │
+│   • injects currentSessionId from runtime context          │
+└────────────────────────────────────────────────────────────┘
+              │
+              ▼
+┌────────────────────────────────────────────────────────────┐
+│ AgentPastChatsService (src/main/agentPastChats.ts)         │
+│   • search(): index lookup → ripgrep → semantic filter     │
+│   • read(): replay → active path → window assembly         │
+│   • single source of visibility rules                      │
+└────────────────────────────────────────────────────────────┘
+              │
+              ▼
+┌────────────────────────────────────────────────────────────┐
+│ AgentEventStore (existing, unchanged)                      │
+│   • search-index.json, session-index.json                  │
+│   • replay(sessionId) with checkpoint fast path            │
+└────────────────────────────────────────────────────────────┘
+```
+
+### Search path
+
+1. Load search-index.json (already in-memory after first read).
+2. Filter by `sessionIds`/`after`/`before` over `AgentEventSearchIndexEntry`.
+3. Pipe candidate `normalizedText` strings to ripgrep via stdin:
+   `rg -i -F --json --max-count=1 <query>`. Capture matched entries.
+4. For each session with hits, compute active path
+   (cached by `(sessionId, latestEventId)`).
+5. Drop hits whose `messageId` is not on the session's active path.
+6. Drop hits from current session unless `includeCurrentSession`.
+7. Sort by `updatedAt` desc, clamp to `limit`, build snippets (200 chars
+   centered on first match, `<mark>` around query terms).
+
+Why ripgrep: file_grep already depends on it. We get fuzzy-tolerant fixed-
+string match, case-insensitive search, CJK handling, and regex (when we
+opt in) without bundling a JS search library or maintaining our own
+normalizer beyond what the index already stores.
+
+### Read path
+
+1. Resolve `messageId` → `sessionId` via search-index (O(1) lookup).
+2. If session is current and `includeCurrentSession` is not requested
+   → `SESSION_IS_CURRENT`.
+3. If session is deleted → `SESSION_NOT_FOUND` (no leak of existence
+   beyond search hits the caller already saw).
+4. `eventStore.replay(sessionId)` → state.
+5. Compute active path from `selectedLeafMessageId`. If `messageId` is not
+   on active path → `NOT_ON_ACTIVE_BRANCH` with `nearbyMessageIds` =
+   active-path messages within ±10 of the anchor's position-in-path.
+6. Take `beforeContext` user-role messages before the anchor and
+   `afterContext` messages after (any role, until next user message that
+   pushes us past `afterContext`).
+7. For each message: if it's a tool call/result, use the persisted
+   `outputSummary` from the payload (already stored). Otherwise read text
+   from `content[]`.
+8. Concatenate and clamp at `maxChars`. Set `outputTruncated` true if
+   clipped. Per-message `messageTruncated` if a single message was clipped.
+
+### Active path computation
 
 ```ts
-export class AgentPastChatsService {
-  listSessions(args: ListPastChatSessionsArgs): Promise<PastChatsSessionPage>;
-  listMessages(args: ListPastChatMessagesArgs): Promise<PastChatsMessagePage | null>;
-  readMessage(args: ReadPastChatMessageArgs): Promise<PastChatsMessageDetail | null>;
+function activePath(state: AgentEventReplayState): Set<string> {
+  const ids = new Set<string>();
+  let cursor = state.selectedLeafMessageId;
+  while (cursor) {
+    ids.add(cursor);
+    cursor = state.messages[cursor]?.parentMessageId ?? null;
+  }
+  return ids;
 }
 ```
 
-Use existing store capabilities where possible:
+Cached per process keyed by `(sessionId, state.latestEventId)`. Cache
+invalidates implicitly when a new event lands (latestEventId changes).
 
-- `AgentEventStore.listSessionIndexEntries()`
-- `AgentEventStore.listUserMessageIndexEntries(sessionId?)`
-- `AgentEventStore.searchMessages(query, options)`
-- `AgentEventStore.replay(sessionId)`
+### Current-session injection
 
-Do not parse `events.jsonl` directly in this service.
+The tool wrapper receives `currentSessionId` from the agent runtime call
+context — it is **not** a parameter the model can supply. The model has no
+way to spoof the current session and bypass the exclusion.
 
-### 2. Strengthen the indexes if needed
+## Visibility & Safety
 
-Current search index already tracks:
+| Rule | Strength | Where |
+| --- | --- | --- |
+| Exclude deleted sessions | Hard | search + read |
+| Exclude current session | Soft (override `includeCurrentSession`) | search |
+| Only active branch | Hard (v1) | search + read |
+| No exposure of session existence beyond search hits | Hard | read returns `SESSION_NOT_FOUND` for unknown IDs without distinguishing "never existed" vs "deleted" |
 
-- all searchable messages
-- user messages
-- message preview
-- normalized text
-- payload ids
-- latest seq
+All enforcement lives in `AgentPastChatsService`. The tool wrapper does
+only parameter validation and result formatting.
 
-The service may need small additions:
+## Limits
 
-- stable pagination helpers with `offset`/`limit`
-- session search over title plus matching message previews
-- helper to get the best preview for a session
-- optional `updatedAt` or date filters on session index entries
+| Limit | Default | Max | Behavior |
+| --- | ---: | ---: | --- |
+| search `limit` | 10 | 20 | silently clamp |
+| search snippet chars | 200 | 200 | not configurable |
+| read `beforeContext` | 1 | 5 | silently clamp |
+| read `afterContext` | 4 | 20 | silently clamp |
+| read `maxChars` | 2000 | 8000 | silently clamp |
+| tool output total chars | — | 16000 | hard cap; signal truncation |
 
-Indexes are derived caches. Rebuild from event logs when missing or invalid.
+Silently clamp = no error; values coerced into range. The tool result
+records the effective values when relevant.
 
-### 3. Build the L2 detail projection
+## Model-Facing Output (the `content[0].text` Markdown)
 
-For L2:
+### Search example
 
-1. Replay the target session with `AgentEventStore.replay(sessionId)`.
-2. Build the active path from `getAgentEventActivePath(state)`.
-3. Find the target user message by `messageId`.
-4. Collect subsequent messages until the next user message:
-   - include assistant messages
-   - include tool-result messages when they are useful
-   - skip raw debug/metric/runtime-only events
-5. Convert content blocks to plain text snippets.
-6. Page the combined reply text with `maxChars` and `textOffset`.
+```markdown
+Found 7 hits for "OAuth":
 
-Tool results should use already-slimmed persisted content and `outputSummary`.
-Do not inline large payloads unless the user explicitly needs them.
+[m_abc123] s_x9q2 · "OAuth setup discussion" · 2026-03-12 14:30 · User
+> Should we use <mark>OAuth</mark> 1 or 2?
 
-### 4. Add the public agent tool
+[m_def456] s_x9q2 · "OAuth setup discussion" · 2026-03-12 14:31 · Assistant
+> <mark>OAuth</mark> 2 — easier integration with modern providers…
 
-Add a TypeScript-backed read-only tool:
+[m_pqr890] s_b3k1 · "API rewrite plan" · 2026-04-02 09:15 · User
+> Decided to drop <mark>OAuth</mark> in favor of API keys.
 
-```txt
-src/main/agentPastChatsTool.ts
+…4 more hits. Pass limit=20 to see more or refine query.
+
+Next: call past_chats(messageId=<one of these>) for full context.
 ```
 
-Register it with the existing tool registry/runtime as `past_chats`.
+### Read example
 
-Tool metadata:
+```markdown
+# "OAuth setup discussion" · s_x9q2
+2026-03-12 14:28–14:45 · 7 messages
 
-- read-only
-- no approval
-- concurrency safe
-- bounded output
-- concise activity label such as `Searching past chats`
+[m_xyz000] User · 14:28
+> I'm building auth for the new dashboard.
 
-The tool wrapper should only:
+[m_abc123] User · 14:30  ← anchor
+> Should we use OAuth 1 or 2?
 
-- validate parameters
-- call `AgentPastChatsService`
-- format a model-readable text result
-- include structured details for future UI rendering
+[m_def456] Assistant · 14:31
+OAuth 2 — easier integration with modern providers, better RFC clarity…
+[tool: web_search · 12 hits · "OAuth 2 vs 1 comparison…"]
 
-Visibility and data traversal belong in the service.
+[m_ghi789] User · 14:33
+> What library do you recommend?
 
-### 5. Update model guidance
+[m_jkl012] Assistant · 14:34
+For Node: `oidc-client-ts`. For Python: `authlib`…
 
-Update the agent system/tool guidance so the model knows when to call
-`past_chats`.
+— Truncated at 2000/4200 chars. Call past_chats(messageId=m_abc123, maxChars=6000).
+```
 
-Rules:
+### Error example
 
-- When the user says "last time", "previously", "do you remember", or refers
-  to prior decisions, call `past_chats` before answering.
-- Use concrete keywords, not meta words like "mentioned" or "discussed".
-- Do not claim old context is unavailable until `past_chats` has been tried.
-- Do not use `past_chats` for the current active session unless compaction
-  requires recovering original text.
-- Summarize or cite recalled content in the final answer because the user does
-  not see tool listings.
+```markdown
+Error: NOT_ON_ACTIVE_BRANCH
 
-### 6. Add citations and UI hooks later
+The message m_xxx was edited away or is on a non-active branch. Nearby
+messages on the active branch:
 
-MVP can return plain text. A later UI pass can render:
+- m_abc123 (User, 2026-03-12 14:30)
+- m_def456 (Assistant, 2026-03-12 14:31)
+- m_ghi789 (User, 2026-03-12 14:33)
+```
 
-- `cite type="chat" id="<sessionId>"`
-- click-to-open session
-- click-to-scroll to message id
-- "Past conversation" badges in message rows
+The structured `mode: 'error'` result is always also returned so runtime
+code can render specifically.
 
-Do not block MVP on UI citation rendering.
+## Implementation Map
+
+| Day | Work |
+| --: | --- |
+| 1 | `src/main/agentPastChats.ts` service skeleton: search (no ripgrep yet, token-AND), read with active-path filter, error shapes. Tests for active-path logic. |
+| 2 | Wire ripgrep: spawn process, stdin pipe, JSON output parsing. Add unit tests for fuzzy and CJK queries. |
+| 3 | `src/main/agentPastChatsTool.ts` wrapper: param validation, mode inference, currentSessionId injection from runtime context, Markdown formatter. |
+| 4 | Index normalization upgrade: `normalizeIndexText` adds NFC + diacritic stripping + CJK char split. Schema bump search-index version to force one-time rebuild. |
+| 5 | Tool registration in `agentTools.ts`. System-prompt nudges (none needed if tool description is sufficient — verify with deterministic E2E). |
+| 6 | E2E with mock LLM exercising "user references prior" → search → read → reply. Add to existing agent test suite. |
+| 7 | Doc updates: remove old sketch from `agent-tool-design.md`; flip this plan's `status` to `in-progress`. |
+
+Total: ~5–7 dev days for a contractually complete v1.
 
 ## Tests
 
-Add focused tests before broad E2E coverage.
+Core service tests (in `tests/core/agentPastChats.test.ts`):
 
-Core service tests:
+- Search returns active-branch messages only when sibling branches exist.
+- Search excludes current session unless `includeCurrentSession: true`.
+- Search excludes deleted sessions.
+- Search clamps `limit > 20` to 20 silently.
+- Search hits are sorted by `updatedAt` desc.
+- Search with `after`/`before` filters correctly inclusive of bounds.
+- Read returns NOT_ON_ACTIVE_BRANCH with nearbyMessageIds when target is
+  on a sibling branch.
+- Read returns SESSION_IS_CURRENT for the current session unless
+  `includeCurrentSession`.
+- Read clamps `beforeContext > 5` and `afterContext > 20` silently.
+- Read includes tool-call messages with summarized output, not raw payload.
+- Read returns SESSION_NOT_FOUND for unknown message IDs without
+  distinguishing "never existed" from "deleted".
 
-- L0 lists sessions sorted by `updatedAt` descending.
-- L0 query matches session title and indexed message text.
-- L0 excludes current session by default.
-- L0 date filters are inclusive.
-- L1 lists only user messages from one visible session.
-- L1 query filters user-message previews.
-- L2 reads a user message plus following assistant/tool-result replies.
-- L2 stops at the next user message.
-- L2 paginates long replies with `maxChars`/`textOffset`.
-- L2 rejects assistant/tool-result message ids as anchors.
-- guessed or missing session ids return a controlled error.
-- missing search indexes rebuild from event logs.
+Tool wrapper tests:
 
-Useful existing test files to extend or mirror:
+- AMBIGUOUS_MODE when both `query` and `messageId` are present.
+- MISSING_QUERY_OR_MESSAGE_ID when neither is present.
+- Markdown formatter produces stable anchor format `[m_xxx]`.
+- Markdown formatter caps total output at 16000 chars.
+- Snippet `<mark>` highlighting covers all query terms.
 
-- `/Users/lixiaobo/Documents/lin-outliner/tests/core/agentEventStore.test.ts`
-- `/Users/lixiaobo/Documents/lin-outliner/tests/core/agentLargeSession.test.ts`
-- `/Users/lixiaobo/Documents/lin-outliner/tests/core/agentEventLog.test.ts`
-- `/Users/lixiaobo/Documents/lin-outliner/tests/core/agentRenderProjection.test.ts`
+E2E (`tests/e2e/agent-past-chats.spec.ts`):
 
-Add new tests if the service is separate:
+- Mock LLM that, on seeing "last time", calls `past_chats(query=...)`
+  → receives hits → calls `past_chats(messageId=...)` → cites the
+  recalled fact in its final reply. Assert exact tool call sequence.
 
-```txt
-tests/core/agentPastChats.test.ts
-```
+## Decision Log
 
-## Acceptance Criteria
+Decisions intentionally made differently from existing nodex / sider /
+lin-agent references, with rationale:
 
-- The agent can answer "what did we discuss last time about X?" by calling
-  `past_chats`.
-- The implementation does not alter event log truth or replay semantics.
-- The current session is not returned by default.
-- Large histories are browsed through indexes, not full replay.
-- Detail reads replay only the selected session.
-- The tool returns bounded output and clear next-step hints.
-- Tests cover L0/L1/L2 behavior and index rebuild behavior.
+- **No L1 layer.** Removed because the agent's access pattern is
+  topic-driven, not chronological-within-session. L0 → L2 is sufficient.
+- **One tool, conditional params.** Same pattern as all three references,
+  but with discriminated-union return so the model can read the `mode`
+  field instead of inferring from result shape.
+- **Errors as `mode: 'error'`, not exceptions.** Models self-correct
+  better from structured errors than from thrown failures.
+- **ripgrep, not fuzzysort, not embeddings.** ripgrep is already in the
+  process tree for `file_grep`, gives fuzzy-tolerant fixed-string match
+  and CJK out of the box, no JS dependency. Embeddings deferred until a
+  real recall failure surfaces in usage.
+- **`messageId` not `messageTs`.** Lin has message branching; messageId
+  is stable across branch operations, timestamps are not.
+- **`<mark>` highlighting in snippets.** Models read structured Markdown
+  efficiently; the `<mark>` tag is a strong signal of "this matched".
+- **`[m_xxx]` anchors in Markdown.** A short stable identifier the model
+  can quote in tool calls and replies without needing to remember
+  surrounding context.
+- **No transcript materialization to disk.** Branch filtering is a
+  semantic operation grep cannot express; materializing would still
+  require a service layer for filtering, so the file-system layer adds
+  cost without saving design.
+- **`includeCurrentSession` exists.** After compaction, the model may
+  legitimately need to read original content from its own session.
 
-## Reference Projects
+## Future Work (post v1)
 
-### Lin Outliner current architecture
+- **Regex search**: `regex: true` flag on search, passed through to ripgrep
+  without `-F`.
+- **Hit ranking**: today sort by `updatedAt`. Later score by query-term
+  density, role match (user vs assistant), and recency-weighted blend.
+- **Citation UI**: render `[m_xxx]` anchors in assistant messages as
+  clickable jumps to the source session and message.
+- **Embedding rerank**: only invoked when ripgrep returns fewer than N
+  hits. Cached per query. Out of scope for v1.
+- **Cross-branch read**: `branch: 'all'` parameter on read. Currently
+  every read is active-branch-only; no real workflow has surfaced for
+  cross-branch recall yet.
 
-Use these as the implementation base:
+## References
 
-- `/Users/lixiaobo/Documents/lin-outliner/src/main/agentEventStore.ts`
-  - Current durable event store, session index, search index, payload storage,
-    checkpoints, replay entry point.
-- `/Users/lixiaobo/Documents/lin-outliner/src/core/agentEventLog.ts`
-  - Event schema, replay state, active path, branch state, PI message derivation.
-- `/Users/lixiaobo/Documents/lin-outliner/src/core/agentRenderProjection.ts`
-  - UI projection pattern. Useful as an example of turning replay state into a
-    purpose-built view.
-- `/Users/lixiaobo/Documents/lin-outliner/src/main/agentRuntime.ts`
-  - Session restore/list/create flow and event append flow.
-- `/Users/lixiaobo/Documents/lin-outliner/docs/spec/agent-event-log-rendering.md`
-  - Canonical durable agent architecture.
-- `/Users/lixiaobo/Documents/lin-outliner/docs/spec/agent-tool-design.md`
-  - Public agent tool protocol. Update its P1 `past_chats` sketch when this plan
-    is implemented.
+- `src/main/agentEventStore.ts` — `searchMessages`, `listSessionIndexEntries`,
+  `listUserMessageIndexEntries`, `replay`. The service layer wraps these,
+  does not bypass them.
+- `src/core/agentEventLog.ts` — `AgentEventReplayState`, message branch
+  fields (`parentMessageId`, `selectedLeafMessageId`, `childrenByParentId`).
+- `docs/spec/agent-event-log-rendering.md` — durable agent architecture.
+- `docs/spec/agent-tool-design.md` — public agent tool protocol. The
+  historical `past_chats` sketch in that doc is superseded by this plan
+  and should be removed when implementation lands.
 
-### lin-agent
+External references (read for inspiration, not copy):
 
-Use for the clean service boundary and visibility rules. Do not copy the channel
-storage model directly.
-
-- `/Users/lixiaobo/Documents/Coding/lin-agent/src/main/tools/past-chats.ts`
-  - Tool wrapper, three mode shape, validation, formatting.
-- `/Users/lixiaobo/Documents/Coding/lin-agent/src/main/kernel/past-chats/service.ts`
-  - Best reference for `PastChatsService`, visibility rules, paging, fuzzy
-    filtering, and L2 detail logic.
-- `/Users/lixiaobo/Documents/Coding/lin-agent/src/main/kernel/channel/conversation.ts`
-  - Reference for session segmentation and "current live session" handling.
-- `/Users/lixiaobo/Documents/Coding/lin-agent/src/shared/types/channel.ts`
-  - Reference types for session segments and boundary lines.
-- `/Users/lixiaobo/Documents/Coding/lin-agent/src/main/tools/past-chats.test.ts`
-  - Tool-level tests.
-- `/Users/lixiaobo/Documents/Coding/lin-agent/src/main/kernel/past-chats/service.test.ts`
-  - Service-level visibility and L0/L1/L2 tests.
-- `/Users/lixiaobo/Documents/Coding/lin-agent/src/main/kernel/channel/conversation.test.ts`
-  - Segmentation tests.
-
-### nodex
-
-Use for the browser-extension IndexedDB version and a mature progressive
-disclosure contract.
-
-- `/Users/lixiaobo/Documents/Coding/nodex/src/lib/ai-tools/past-chats-tool.ts`
-  - Three-level `past_chats` implementation using `sessionId`/`messageId`.
-- `/Users/lixiaobo/Documents/Coding/nodex/src/lib/ai-persistence.ts`
-  - IndexedDB session metadata and user-message metadata pattern.
-- `/Users/lixiaobo/Documents/Coding/nodex/tests/vitest/past-chats-tool.test.ts`
-  - Strong test coverage for current-session exclusion, fuzzy search, date
-    bounds, paging, invalid params, and detail reads.
-- `/Users/lixiaobo/Documents/Coding/nodex/src/lib/ai-agent-node.ts`
-  - "Chat recall" guidance that tells the model when to use `past_chats`.
-- `/Users/lixiaobo/Documents/Coding/nodex/src/components/layout/ChatDrawer.tsx`
-  - UI history dropdown reference.
-
-### sider-agent
-
-Use as a second browser-extension reference and for UI/tool-result wording.
-
-- `/Users/lixiaobo/Documents/Coding/sider-agent/src/lib/ai-tools/past-chats-tool.ts`
-  - Similar three-level implementation, newer prose-style tool result wrapper.
-- `/Users/lixiaobo/Documents/Coding/sider-agent/src/lib/ai-persistence.ts`
-  - Session metadata and user-message metadata persistence.
-- `/Users/lixiaobo/Documents/Coding/sider-agent/src/components/chat/ChatPanelHeader.tsx`
-  - Session history dropdown UI with rename/delete.
-- `/Users/lixiaobo/Documents/Coding/sider-agent/src/components/chat/ToolCallBlock.tsx`
-  - `past_chats` tool-call display text and history icon mapping.
-
-## Implementation Notes
-
-- Keep the service pure TypeScript and main-process owned.
-- Keep renderer access behind existing IPC/API patterns.
-- Keep output caps strict. Historical recall should never dump a whole large
-  session by accident.
-- Keep indexes derived. If an index disagrees with event logs, event logs win.
-- Prefer exact session/message ids from L0/L1 results. The model should not
-  guess ids.
-- Add a short note to the final user answer when recalled context is low
-  confidence because search results were weak or ambiguous.
+- lin-agent — best service-boundary reference; visibility rules and
+  three-overload tool wrapper. Currently checked out under
+  `~/Documents/Coding/lin-agent`.
+- sider-agent — best progressive disclosure contract reference. Currently
+  checked out under `~/Documents/Coding/sider-agent`.
+- nodex — original three-level pattern. Currently checked out under
+  `~/Documents/Coding/nodex`.

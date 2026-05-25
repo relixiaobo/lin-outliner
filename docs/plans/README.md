@@ -37,7 +37,7 @@ items above.
 | [`code-block-editor.md`](code-block-editor.md) | draft | P2 | Dedicated `codeBlock` editor with language selection and syntax highlighting. |
 | [`floating-toolbar-polish.md`](floating-toolbar-polish.md) | draft | P3 | Add heading-mark toggle and `#` selection-extract to the floating editor toolbar. |
 | [`embed-strategy.md`](embed-strategy.md) | draft | P3 | Decide between live iframe embeds, locally-cached metadata embeds, or removing the embed schema fields. |
-| [`agent-past-chats.md`](agent-past-chats.md) | draft | P2 | Event-store-backed `past_chats` tool for agent recall of prior sessions. |
+| [`agent-past-chats.md`](agent-past-chats.md) | draft | P1 | Single `past_chats` tool (search + read modes) backed by the event store and ripgrep. Foundational agent infrastructure. |
 | [`nodex-parity-decisions.md`](nodex-parity-decisions.md) | meta | — | Catalog of nodex features we explicitly will not port and why. |
 
 ## Working Rules

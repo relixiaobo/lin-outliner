@@ -1985,40 +1985,11 @@ Example read result data:
 
 ### `past_chats`
 
-P1. Search and read previous Lin agent conversations.
-
-Parameters:
-
-```ts
-interface PastChatsParams {
-  query?: string;
-  conversationId?: string;
-  limit?: number;
-}
-```
-
-Return data:
-
-```ts
-interface PastChatsData {
-  total: number;
-  items: Array<{
-    conversationId: string;
-    title: string;
-    updatedAt: string;
-    snippet: string;
-  }>;
-  conversation?: {
-    conversationId: string;
-    title: string;
-    messages: Array<{
-      role: "user" | "assistant" | "tool" | "system";
-      text: string;
-      createdAt: string;
-    }>;
-  };
-}
-```
+Canonical contract lives in [`../plans/agent-past-chats.md`](../plans/agent-past-chats.md).
+The plan supersedes any earlier sketch of this tool. One tool, two modes
+(`search`/`read`) selected by parameters, internally backed by the
+existing event store plus ripgrep. Update this section to point at the
+spec entry instead of the plan once implementation lands.
 
 ## Mapping to Current Lin Commands
 
