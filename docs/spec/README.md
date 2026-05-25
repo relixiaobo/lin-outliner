@@ -1,8 +1,11 @@
 # Lin Specs
 
 This directory is the agent-readable product specification map for Lin
-Outliner. Use this file first, then jump to the smallest document that owns the
-question you are answering.
+Outliner. Use this file first, then jump to the smallest document that owns
+the question you are answering.
+
+`spec/` describes **current intended behavior** of code that exists. Forward-
+looking plans live in [`../plans/`](../plans/README.md).
 
 ## Reading Order
 
@@ -28,19 +31,20 @@ For agent work:
 3. `agent-skills.md`
 4. `agent-subagent-runtime-plan.md`
 5. `agent-tool-design.md`
-6. `agent-chat-rendering.md`
-7. `agent-progress.md`
+6. `agent-progress.md`
 
 ## Canonical Documents
 
 | File | Owns | Read When |
 | --- | --- | --- |
 | `architecture.md` | Runtime boundaries, command flow, renderer/main/core ownership. | Changing broad architecture or deciding where logic belongs. |
-| `commands.md` | Electron IPC document command list. | Adding, renaming, or auditing document mutations. |
+| `commands.md` | Electron IPC document and agent command surface. | Adding, renaming, or auditing commands. |
 | `workspace-layout.md` | Shell, tabs, workspace canvas, tiled panels, sidebar, and agent dock layout. | Changing app frame or panel layout behavior. |
 | `design-system.md` | Visual system, density, typography, tokens, surfaces, components, and UI contracts. | Changing UI visuals, primitives, overlay styling, outliner row rhythm, or agent dock styling. |
 | `ui-behavior.md` | Compact outliner keyboard, pointer, trailing input, field row, selection, and trigger behavior. | Making everyday outliner interaction changes. |
-| `outliner-parity-matrix.md` | Detailed nodex parity checklist and test mapping. | Checking exact nodex-style selection/editing parity. |
+| `outliner-parity-matrix.md` | Behavioral parity with nodex: pointer, keyboard, selection, trigger semantics, and the tests that pin them. | Checking exact nodex-style selection/editing parity. |
+| `search-query-grammar.md` | Search node query expression and operator semantics. | Changing query operators, search node persistence, or live refresh. |
+| `date-field-values.md` | Date field value model, parsing, and display rules. | Changing date fields. |
 | `agent-event-log-rendering.md` | Canonical event-sourced agent data, debug, persistence, and render projection architecture. | Changing agent state, event store, debug, persistence, replay, or render projection. |
 | `agent-pi-mono-implementation.md` | pi-mono runtime boundary and Electron integration. | Changing provider loop, runtime execution, approvals, keys, streaming, or pi-mono adapter behavior. |
 | `agent-skills.md` | Skill discovery, loading, slash invocation, compaction restore, and permission preapproval behavior. | Changing agent skills, `/compact`, runtime permission policy, or skill settings. |
@@ -51,13 +55,12 @@ For agent work:
 
 | File | Role |
 | --- | --- |
-| `agent-chat-rendering.md` | Rendering-focused reference for the current agent panel. Event store architecture remains canonical in `agent-event-log-rendering.md`. |
 | `agent-progress.md` | Working checklist for agent milestones and remaining work. Keep this current when agent priorities change. |
 
 ## Ownership Rules
 
-- Product code is still the executable source of truth. Specs define intended
-  contracts and should move with behavior changes.
+- Product code is the executable source of truth. Specs define intended
+  contracts and must move with behavior changes.
 - Prefer one canonical document per concern. Do not add a new spec if an
   existing file owns that area.
 - Keep `design-system.md` as a single file. It is optimized for agents reading
@@ -66,6 +69,7 @@ For agent work:
   nodex parity evidence; then update `outliner-parity-matrix.md` too.
 - Keep durable agent architecture in `agent-event-log-rendering.md`. Other
   agent files should link back to it instead of restating the model.
+- Forward-looking work goes to [`../plans/`](../plans/README.md), not here.
 - Remove or merge stale docs when a document becomes only a duplicate summary.
 
 ## Validation
