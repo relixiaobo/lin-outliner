@@ -35,6 +35,12 @@ Ordered by priority; lower items may depend on higher ones.
 - **floating-toolbar-polish** (P3) — heading-mark toggle + `#` selection
   extract in the floating editor toolbar.
 - **embed-strategy** (P3) — decide live iframe vs cached-metadata embeds.
+- **past-chats-output-polish** (P3) — minor cleanups deferred from PR #7:
+  (1) drop the now-redundant `returned_items` / `returned_hits` / `message_count`
+  counts in `visiblePastChatsResult` (derivable from the inline arrays);
+  (2) avoid `isJsonText` re-parsing on every render in `AgentToolCallBlock`
+  (compute once in the memoized `resultParts`); (3) give `visiblePastChatsResult`
+  a named return type instead of `unknown`. None affect behavior.
 
 ## Recently completed
 
@@ -45,5 +51,7 @@ Ordered by priority; lower items may depend on higher ones.
   highlighting, language picker, horizontal scroll, cross-row selection
   (PR #2).
 - **agent-past-chats** groundwork — recall tool + transcript UI (PRs #1, #4).
+  past_chats now returns one self-contained JSON; tool-call JSON is
+  Shiki-highlighted and renders identically live vs. reloaded (PR #7).
 - **dev-workflow** — three-clone hub model (main + cc + codex), merge gating,
   this board.
