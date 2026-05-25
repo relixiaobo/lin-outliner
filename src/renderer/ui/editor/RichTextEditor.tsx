@@ -16,7 +16,7 @@ import {
   isPlainSingleParagraph,
   parseClipboardPaste,
 } from '../interactions/pasteParser';
-import { clipboardImageFiles, readPastedImages, type PastedImage } from '../interactions/imagePaste';
+import { clipboardImageFiles, imageUrlFromText, readPastedImages, type PastedImage } from '../interactions/imagePaste';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { matchesShortcutEvent } from '../interactions/shortcutRegistry';
 import { FloatingEditorToolbar, type ToolbarMark } from './FloatingEditorToolbar';
@@ -78,6 +78,8 @@ interface RichTextEditorProps {
     siblingsAfter: CreateNodeTree[];
   }) => void;
   onPasteImage?: (images: PastedImage[]) => void;
+  /** A lone remote image URL pasted with no active selection. */
+  onPasteMediaUrl?: (url: string) => void;
   onInlineReferenceClick?: (targetNodeId: string) => void;
   resolveInlineReferenceColor?: (targetNodeId: string) => string | undefined;
   focusTarget?: FocusTarget;
@@ -426,6 +428,20 @@ export function RichTextEditor(props: RichTextEditorProps) {
 
           const plainText = clipboardEvent.clipboardData?.getData('text/plain') ?? '';
           const htmlText = clipboardEvent.clipboardData?.getData('text/html') ?? '';
+
+          // A lone remote image URL pasted with no active selection becomes a
+          // remote image node. With a selection, fall through so the URL links
+          // the selected text instead.
+          const onPasteMediaUrl = propsRef.current.onPasteMediaUrl;
+          const pastedImageUrl = imageUrlFromText(plainText);
+          if (onPasteMediaUrl && pastedImageUrl) {
+            const { from, to } = selectionOffsets(viewInstance);
+            if (from === to) {
+              clipboardEvent.preventDefault();
+              onPasteMediaUrl(pastedImageUrl);
+              return true;
+            }
+          }
 
           const setContent = (nextContent: RichText) => {
             const nextDoc = richTextToDoc(

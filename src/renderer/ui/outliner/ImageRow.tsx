@@ -5,7 +5,12 @@ import { DescriptionIcon, ExpandIcon, ICON_SIZE, OpenIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 
 interface ImageRowProps {
-  assetId: string;
+  /** Resolved URL to load: `asset://<id>` for local, or the remote URL. */
+  src: string;
+  /** Remote (mediaUrl) vs local (assetId) — changes "open original". */
+  isRemote: boolean;
+  assetId?: string;
+  mediaUrl?: string;
   alt?: string;
   width?: number;
   height?: number;
@@ -18,7 +23,7 @@ interface ImageRowProps {
 /**
  * Presentational body for an `image` node, rendered inside the focusable
  * `BlockNodeRow` shell (which owns focus and keyboard navigation). Bytes load
- * via the `lin-asset://` protocol. A hover toolbar offers a caption (the node's
+ * via the `asset://` protocol. A hover toolbar offers a caption (the node's
  * `description` field), fullscreen preview, and "open original" (the OS default
  * app — an Electron capability); double-clicking the image also opens the
  * lightbox. The caption renders below the image as a `NodeDescription` and is
@@ -29,8 +34,16 @@ export function ImageRow(props: ImageRowProps) {
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const lightboxRef = useRef<HTMLDivElement | null>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
-  const src = `lin-asset://${props.assetId}`;
+  const src = props.src;
   const hasIntrinsicSize = typeof props.width === 'number' && typeof props.height === 'number';
+
+  const openOriginal = () => {
+    if (props.isRemote) {
+      if (props.mediaUrl) void api.openExternalUrl(props.mediaUrl);
+    } else if (props.assetId) {
+      void api.openAsset(props.assetId);
+    }
+  };
 
   // Move focus into the lightbox while open (and restore it on close) so its
   // own Esc handler closes it without the same keydown also reaching the
@@ -86,9 +99,9 @@ export function ImageRow(props: ImageRowProps) {
             <ExpandIcon size={ICON_SIZE.toolbar} />
           </ButtonControl>
           <ButtonControl
-            aria-label="Open original"
+            aria-label={props.isRemote ? 'Open in browser' : 'Open original'}
             className="outliner-image-tool"
-            onClick={() => void api.openAsset(props.assetId)}
+            onClick={openOriginal}
           >
             <OpenIcon size={ICON_SIZE.toolbar} />
           </ButtonControl>

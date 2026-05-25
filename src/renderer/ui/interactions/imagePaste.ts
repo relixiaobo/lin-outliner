@@ -46,6 +46,17 @@ export async function ingestPastedImages(images: PastedImage[]): Promise<AssetMe
   return assets;
 }
 
+// A lone http(s) URL ending in a known image extension (optional query). Used
+// to turn a pasted image link into a remote image node rather than plain text.
+const IMAGE_URL_RE = /^https?:\/\/\S+\.(?:png|jpe?g|gif|webp|svg|avif|bmp|heic)(?:\?\S*)?$/i;
+
+/** If `text` is exactly a remote image URL, return it (trimmed); else null. */
+export function imageUrlFromText(text: string | null | undefined): string | null {
+  if (!text) return null;
+  const trimmed = text.trim();
+  return IMAGE_URL_RE.test(trimmed) ? trimmed : null;
+}
+
 /**
  * Decide whether a dropped/pasted image should convert the current row in
  * place (vs. insert as a sibling). Converting an existing `image` row is always
@@ -78,4 +89,9 @@ export async function appendImageNodes(parentId: NodeId, images: PastedImage[], 
       height: asset.imageHeight,
     }));
   }
+}
+
+/** Create a remote (mediaUrl-backed) image node appended under `parentId`. */
+export async function appendRemoteImageNode(parentId: NodeId, url: string, run: CommandRunner): Promise<void> {
+  await run(() => api.createImageNode(parentId, null, { mediaUrl: url }));
 }

@@ -74,7 +74,7 @@ if (mimeType === 'application/pdf') return <PdfAttachment ... />;
 return <GenericFileCard ... />;
 ```
 
-Each branch is small. `lin-asset://<id>` works for `<audio>`, `<video>`, and
+Each branch is small. `asset://<id>` works for `<audio>`, `<video>`, and
 PDF embeds.
 
 ### PDF thumbnail
@@ -83,7 +83,7 @@ AssetService renders page 1 to PNG at ingest via the existing `pdftoppm`
 binary the agent file tools already depend on (see `agent-progress.md`
 "local tool capability parity pass"). Cache the thumbnail as a second
 asset id stored in the sidecar of the source asset. The renderer loads the
-thumbnail via `lin-asset://<thumbnail-id>`.
+thumbnail via `asset://<thumbnail-id>`.
 
 ### System integration
 
@@ -129,7 +129,7 @@ Same three as images: paste, drag, file picker. The dispatcher routes:
 - Core: `create_attachment_node` produces a valid projection.
 - E2E: drop a PDF fixture, verify thumbnail + page count render; click
   Open, verify `shell.openPath` is invoked (mock the shell in test).
-- E2E: drop an audio fixture, verify `<audio>` renders with `lin-asset://`
+- E2E: drop an audio fixture, verify `<audio>` renders with `asset://`
   src.
 - Smoke: a 100 MB attachment ingests in reasonable time and renders
   without locking the UI.

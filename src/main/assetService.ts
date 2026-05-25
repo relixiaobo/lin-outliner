@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { AssetIngestInput, AssetMetadata } from '../core/types';
 
 const META_SUFFIX = '.meta.json';
-// Lowercase + digits only: ids land in `lin-asset://<id>` URLs whose hostname
+// Lowercase + digits only: ids land in `asset://<id>` URLs whose hostname
 // the URL parser lowercases, so a mixed-case id would never match its file.
 const NANOID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
 
@@ -12,7 +12,7 @@ const NANOID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
  * Owns binary asset files under a single directory. The document references
  * assets purely by id; bytes and metadata live on disk so the CRDT stays small
  * and assets can later sync out-of-band. The renderer reads them through the
- * `lin-asset://` protocol handled by `serve`.
+ * `asset://` protocol handled by `serve`.
  *
  * Layout:
  *   <root>/<id>.<ext>        raw bytes (extension is informational only)
@@ -81,7 +81,7 @@ export class AssetService {
     ]);
   }
 
-  /** Serve an asset for the `lin-asset://<id>` protocol handler. */
+  /** Serve an asset for the `asset://<id>` protocol handler. */
   async serve(id: string): Promise<Response> {
     let safe: string;
     try {

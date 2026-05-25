@@ -5,6 +5,7 @@ import { DocumentService } from './documentService';
 import { AssetService } from './assetService';
 import { AgentRuntime } from './agentRuntime';
 import { MAC_TRAFFIC_LIGHT_POSITION } from '../core/chromeGeometry';
+import { ASSET_URL_SCHEME } from '../core/assets';
 import { LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput } from '../core/types';
 import {
   deleteProviderApiKey,
@@ -24,9 +25,9 @@ if (process.env.ELECTRON_USER_DATA_DIR) {
 }
 
 // Must run before the app `ready` event so the renderer can load assets with
-// regular <img>/<video> tags via `lin-asset://<id>`.
+// regular <img>/<video> tags via `asset://<id>`.
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'lin-asset', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } },
+  { scheme: ASSET_URL_SCHEME, privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } },
 ]);
 
 const IMAGE_FILE_FILTERS = [
@@ -103,7 +104,7 @@ async function handleAssetCommand(command: AssetCommand, args: Record<string, un
       // Only the buffer path is exposed to the renderer. Path ingest is an
       // arbitrary-local-file read primitive, so it stays main-process-only
       // (used internally by pick_image_files); the renderer can never name a
-      // path to read back through lin-asset://.
+      // path to read back through asset://.
       if ((args as { kind?: unknown }).kind !== 'buffer') {
         throw new Error('ingest_asset accepts only kind:"buffer" over IPC');
       }
@@ -135,6 +136,15 @@ async function handleAssetCommand(command: AssetCommand, args: Record<string, un
       const path = await assetService.pathFor(String(args.id));
       if (path) shell.showItemInFolder(path);
       return { revealed: Boolean(path) };
+    }
+    case 'open_external_url': {
+      // Opens a remote media node's source in the OS default browser. Only
+      // http(s) is allowed so a node can never smuggle a file:// or other
+      // scheme into shell.openExternal.
+      const url = String(args.url);
+      if (!/^https?:\/\//i.test(url)) return { opened: false };
+      await shell.openExternal(url);
+      return { opened: true };
     }
     default:
       throw new Error(`Unknown asset command: ${command}`);
@@ -236,7 +246,7 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
 }
 
 app.whenReady().then(() => {
-  protocol.handle('lin-asset', (request) => {
+  protocol.handle(ASSET_URL_SCHEME, (request) => {
     const id = new URL(request.url).hostname;
     return assetService.serve(id);
   });

@@ -243,17 +243,17 @@ export class Core {
   createImageNode(
     parentId: string,
     index: number | null | undefined,
-    options: { assetId: string; width?: number | null; height?: number | null; alt?: string | null },
+    options: { assetId?: string; mediaUrl?: string; width?: number | null; height?: number | null; alt?: string | null },
   ): CommandOutcome {
-    const assetId = options.assetId.trim();
-    if (!assetId) throw CoreError.invalidOperation('image node requires an assetId');
+    const source = resolveImageSource(options);
     return this.mutate(() => {
       const state = this.snapshot();
       ensureParentMutable(state, parentId);
       const id = freshId('image');
       this.loro.createNodeWithId(id, parentId, index, 'image', (node) => {
         node.content = plainText('');
-        node.assetId = assetId;
+        if (source.assetId) node.assetId = source.assetId;
+        else node.mediaUrl = source.mediaUrl;
         if (options.width != null) node.imageWidth = options.width;
         if (options.height != null) node.imageHeight = options.height;
         const alt = options.alt?.trim();
@@ -266,22 +266,29 @@ export class Core {
 
   /**
    * Convert a plain content node into an image node in place. Used when
-   * pasting/dropping an image onto an existing row so the image lands on that
-   * row rather than spawning a sibling. Any existing row text is preserved in
-   * `content` (it is not shown for image nodes — the caption is `description`).
+   * pasting/dropping an image (or a remote image URL) onto an existing row so
+   * the image lands on that row rather than spawning a sibling. The source is
+   * exactly one of `assetId` (local) or `mediaUrl` (remote); the other is
+   * cleared. Any existing row text is preserved in `content` (it is not shown
+   * for image nodes — the caption is `description`).
    */
   setNodeImage(
     nodeId: string,
-    options: { assetId: string; width?: number | null; height?: number | null },
+    options: { assetId?: string; mediaUrl?: string; width?: number | null; height?: number | null },
   ): CommandOutcome {
-    const assetId = options.assetId.trim();
-    if (!assetId) throw CoreError.invalidOperation('image node requires an assetId');
+    const source = resolveImageSource(options);
     return this.patchNode(nodeId, (node) => {
       if (node.type !== undefined && node.type !== 'image') {
         throw CoreError.invalidOperation('only plain content nodes can become images');
       }
       node.type = 'image';
-      node.assetId = assetId;
+      if (source.assetId) {
+        node.assetId = source.assetId;
+        delete node.mediaUrl;
+      } else {
+        node.mediaUrl = source.mediaUrl;
+        delete node.assetId;
+      }
       if (options.width != null) node.imageWidth = options.width;
       else delete node.imageWidth;
       if (options.height != null) node.imageHeight = options.height;
@@ -2376,6 +2383,31 @@ function cycleNodeDoneState(node: Node) {
 
 function freshId(prefix: string): string {
   return `${prefix}:${crypto.randomUUID()}`;
+}
+
+/**
+ * An image node's source is exactly one of a local `assetId` or a remote
+ * `mediaUrl`. Normalize and validate the create/convert options into one.
+ */
+function resolveImageSource(
+  options: { assetId?: string; mediaUrl?: string },
+): { assetId: string; mediaUrl?: undefined } | { assetId?: undefined; mediaUrl: string } {
+  const assetId = options.assetId?.trim();
+  const mediaUrl = options.mediaUrl?.trim();
+  if (assetId && mediaUrl) {
+    throw CoreError.invalidOperation('image node takes either an assetId or a mediaUrl, not both');
+  }
+  if (assetId) return { assetId };
+  if (mediaUrl) {
+    // A remote source is always loaded into an <img>/opened externally, so it
+    // must be http(s). Enforcing it here keeps the document invariant true for
+    // every caller (paste, agent, import), not just the UI paste classifier.
+    if (!/^https?:\/\//i.test(mediaUrl)) {
+      throw CoreError.invalidOperation('image node mediaUrl must be an http(s) URL');
+    }
+    return { mediaUrl };
+  }
+  throw CoreError.invalidOperation('image node requires an assetId or a mediaUrl');
 }
 
 function requiredNode(state: DocumentState, nodeId: string): Node {

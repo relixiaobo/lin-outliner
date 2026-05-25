@@ -27,7 +27,7 @@ import { getTreeReferenceBlockReason } from '../interactions/referenceRules';
 import { isOptionsFieldType } from '../fields/fieldTypeRegistry';
 import { filterFieldOptions, resolveFieldOptions } from '../interactions/fieldOptions';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
-import { clipboardImageFiles, readPastedImages, type PastedImage } from '../interactions/imagePaste';
+import { clipboardImageFiles, imageUrlFromText, readPastedImages, type PastedImage } from '../interactions/imagePaste';
 import { matchesShortcutEvent } from '../interactions/shortcutRegistry';
 import { parseClipboardPaste } from '../interactions/pasteParser';
 import type { SlashCommandId } from '../interactions/slashCommands';
@@ -56,6 +56,7 @@ interface TrailingInputProps {
   onCreate: (parentId: NodeId, text: string) => Promise<NodeId | null> | NodeId | null | void;
   onCreateTree?: (parentId: NodeId, nodes: CreateNodeTree[]) => Promise<unknown> | unknown;
   onPasteImages?: (parentId: NodeId, images: PastedImage[]) => Promise<unknown> | unknown;
+  onPasteMediaUrl?: (parentId: NodeId, url: string) => Promise<unknown> | unknown;
   onIndentNode?: (nodeId: NodeId) => Promise<unknown> | unknown;
   onUpdateCreated?: (nodeId: NodeId, text: string) => Promise<void> | void;
   onToggleCreated?: (nodeId: NodeId) => Promise<void> | void;
@@ -973,6 +974,19 @@ export function TrailingInput(props: TrailingInputProps) {
 
           const pastedText = clipboardEvent.clipboardData?.getData('text/plain') ?? '';
           const pastedHtml = clipboardEvent.clipboardData?.getData('text/html') ?? '';
+
+          // A lone remote image URL becomes a remote image node under the
+          // parent, mirroring the image-file path above.
+          const onPasteMediaUrl = propsRef.current.onPasteMediaUrl;
+          const mediaUrl = imageUrlFromText(pastedText);
+          if (onPasteMediaUrl && mediaUrl) {
+            clipboardEvent.preventDefault();
+            const parentId = effectiveParentRef.current;
+            resetEditorContent(viewInstance);
+            updateHasContent(false);
+            void Promise.resolve(onPasteMediaUrl(parentId, mediaUrl));
+            return true;
+          }
 
           const parsed = parseClipboardPaste(pastedText, pastedHtml);
           if (parsed.length === 0) return false;

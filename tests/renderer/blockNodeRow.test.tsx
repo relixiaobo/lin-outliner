@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
-import { BlockNodeRow, isBlockNodeType, type BlockNodeRowProps } from '../../src/renderer/ui/outliner/BlockNodeRow';
+import { BlockNodeRow, isBlockNodeType, mediaSource, type BlockNodeRowProps } from '../../src/renderer/ui/outliner/BlockNodeRow';
 import { cursorEnd, rowFocusTarget } from '../../src/renderer/ui/focus/focusModel';
 import type { NodeProjection } from '../../src/renderer/api/types';
 import type { FocusRequest } from '../../src/renderer/state/document';
@@ -109,11 +109,20 @@ function shell(rendered: Rendered): HTMLElement {
 }
 
 describe('isBlockNodeType', () => {
-  test('an image with an assetId is a block node; without one it is not', () => {
-    expect(isBlockNodeType({ type: 'image', assetId: 'a' })).toBe(true);
-    expect(isBlockNodeType({ type: 'image', assetId: undefined })).toBe(false);
-    expect(isBlockNodeType({ type: undefined, assetId: undefined })).toBe(false);
-    expect(isBlockNodeType({ type: 'codeBlock', assetId: undefined })).toBe(false);
+  test('an image with a local OR remote source is a block node; otherwise not', () => {
+    expect(isBlockNodeType({ type: 'image', assetId: 'a', mediaUrl: undefined })).toBe(true);
+    expect(isBlockNodeType({ type: 'image', assetId: undefined, mediaUrl: 'https://x/y.png' })).toBe(true);
+    expect(isBlockNodeType({ type: 'image', assetId: undefined, mediaUrl: undefined })).toBe(false);
+    expect(isBlockNodeType({ type: undefined, assetId: undefined, mediaUrl: undefined })).toBe(false);
+    expect(isBlockNodeType({ type: 'codeBlock', assetId: undefined, mediaUrl: undefined })).toBe(false);
+  });
+});
+
+describe('mediaSource', () => {
+  test('resolves local assetId to an asset:// URL, remote mediaUrl as-is', () => {
+    expect(mediaSource({ assetId: 'abc', mediaUrl: undefined })).toEqual({ src: 'asset://abc', isRemote: false });
+    expect(mediaSource({ assetId: undefined, mediaUrl: 'https://x/y.png' })).toEqual({ src: 'https://x/y.png', isRemote: true });
+    expect(mediaSource({ assetId: undefined, mediaUrl: undefined })).toBeNull();
   });
 });
 
@@ -121,8 +130,15 @@ describe('BlockNodeRow', () => {
   test('renders the image body and a caption affordance', () => {
     const { rendered } = render();
     const img = rendered.document.querySelector('img');
-    expect(img?.getAttribute('src')).toBe('lin-asset://abc123');
+    expect(img?.getAttribute('src')).toBe('asset://abc123');
     expect(rendered.document.querySelector('button[aria-label="Add caption"]')).not.toBeNull();
+  });
+
+  test('renders a remote image node from its URL with a browser-open action', () => {
+    const { rendered } = render({ node: imageNode({ assetId: undefined, mediaUrl: 'https://example.com/cat.png' }) });
+    const img = rendered.document.querySelector('img');
+    expect(img?.getAttribute('src')).toBe('https://example.com/cat.png');
+    expect(rendered.document.querySelector('button[aria-label="Open in browser"]')).not.toBeNull();
   });
 
   test('labels the caption button "Edit caption" when a description exists', () => {

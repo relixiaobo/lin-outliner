@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { clipboardImageFiles, readPastedImages, shouldConvertRowToImage } from '../../src/renderer/ui/interactions/imagePaste';
+import { clipboardImageFiles, imageUrlFromText, readPastedImages, shouldConvertRowToImage } from '../../src/renderer/ui/interactions/imagePaste';
 
 function fileItem(file: File): DataTransferItem {
   return { kind: 'file', type: file.type, getAsFile: () => file } as unknown as DataTransferItem;
@@ -50,6 +50,23 @@ describe('clipboardImageFiles', () => {
 
   test('returns empty for a null DataTransfer', () => {
     expect(clipboardImageFiles(null)).toEqual([]);
+  });
+});
+
+describe('imageUrlFromText', () => {
+  test('accepts a lone http(s) image URL (trimmed, case/query tolerant)', () => {
+    expect(imageUrlFromText('https://example.com/a.png')).toBe('https://example.com/a.png');
+    expect(imageUrlFromText('  http://x.io/p.JPG?v=2  ')).toBe('http://x.io/p.JPG?v=2');
+    expect(imageUrlFromText('https://cdn.test/img.webp')).toBe('https://cdn.test/img.webp');
+  });
+
+  test('rejects non-image URLs, multi-token text, and non-URLs', () => {
+    expect(imageUrlFromText('https://example.com/page')).toBeNull();
+    expect(imageUrlFromText('see https://x.io/a.png now')).toBeNull();
+    expect(imageUrlFromText('/local/a.png')).toBeNull();
+    expect(imageUrlFromText('hello world')).toBeNull();
+    expect(imageUrlFromText('')).toBeNull();
+    expect(imageUrlFromText(null)).toBeNull();
   });
 });
 
