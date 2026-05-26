@@ -84,6 +84,12 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Bounded local-file caches** — the local file search / icon / thumbnail
+  caches now evict oldest-first via a shared bounded helper instead of clearing
+  wholesale at 1000 entries. The wholesale clear could drop the `id -> path`
+  mappings that prepare/preview rely on, making recently surfaced `@`-mention
+  files unselectable mid-session. Follow-up to #21.
+  ([#22](https://github.com/relixiaobo/lin-outliner/pull/22))
 - **Subagent next-step guidance on the envelope** — the `Agent` / `AgentStatus`
   / `AgentSend` / `AgentStop` subagent tools now carry their next-step
   `instructions` via the envelope's top-level `instructions` field
