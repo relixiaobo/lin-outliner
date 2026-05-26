@@ -297,12 +297,14 @@ export interface NodeVisibleEnvelope {
 export interface NodeVisibleReadResult {
   kind: 'read';
   outline?: string;
+  references?: NodeVisibleReference[];
   page?: NodeVisiblePage;
 }
 
 export interface NodeVisibleSearchResult {
   kind: 'search';
   outline?: string;
+  references?: NodeVisibleReference[];
   page: NodeVisiblePage;
 }
 
@@ -318,6 +320,14 @@ export interface NodeVisibleCountResult {
   kind: 'count';
   total: number;
   page: NodeVisiblePage;
+}
+
+export interface NodeVisibleReference {
+  node_id: string;
+  title: string;
+  display_ref: string;
+  edit_handle: string;
+  type: string;
 }
 
 export interface NodeVisibleChanges {

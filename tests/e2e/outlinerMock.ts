@@ -1039,6 +1039,24 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             transcript_message_count: 4,
           }) as T;
         }
+        if (cmd === 'agent_list_slash_commands') {
+          return clone([
+            {
+              id: 'compact',
+              kind: 'runtime',
+              label: '/compact',
+              description: 'Compact the current conversation',
+              insertText: '/compact ',
+            },
+            {
+              id: 'skill:auto-skill',
+              kind: 'skill',
+              label: '/auto-skill',
+              description: 'Run automatic skill',
+              insertText: '/auto-skill ',
+            },
+          ]) as T;
+        }
         if (cmd === 'agent_queue_follow_up') return clone({ queued: true }) as T;
         if (cmd === 'agent_steer_session') return clone({ queued: true }) as T;
         if (cmd.startsWith('agent_')) return clone(undefined) as T;

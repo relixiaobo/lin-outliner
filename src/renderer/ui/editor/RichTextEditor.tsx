@@ -5,7 +5,8 @@ import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { replaceAllRichTextPatch, type CreateNodeTree, type RichText, type RichTextPatch } from '../../api/types';
 import type { FocusRequest, FocusTarget, PendingInputChar } from '../../state/document';
-import type { EditorTrigger } from '../shared';
+import type { EditorTrigger, NavigateRootOptions } from '../shared';
+import { wantsNewTabFromClick } from '../shared';
 import {
   resolveContentRowUpdateAction,
   resolveEditorTriggerText,
@@ -83,7 +84,7 @@ interface RichTextEditorProps {
   onPasteImage?: (images: PastedImage[]) => void;
   /** A lone remote image URL pasted with no active selection. */
   onPasteMediaUrl?: (url: string) => void;
-  onInlineReferenceClick?: (targetNodeId: string) => void;
+  onInlineReferenceClick?: (targetNodeId: string, options?: NavigateRootOptions) => void;
   resolveInlineReferenceColor?: (targetNodeId: string) => string | undefined;
   focusTarget?: FocusTarget;
   focusRequest?: FocusRequest | null;
@@ -359,7 +360,9 @@ export function RichTextEditor(props: RichTextEditorProps) {
           if (!targetNodeId || !propsRef.current.onInlineReferenceClick) return false;
           event.preventDefault();
           event.stopPropagation();
-          propsRef.current.onInlineReferenceClick(targetNodeId);
+          propsRef.current.onInlineReferenceClick(targetNodeId, {
+            newTab: wantsNewTabFromClick(event),
+          });
           return true;
         },
         paste(viewInstance, event) {

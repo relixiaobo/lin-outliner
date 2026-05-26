@@ -2,7 +2,10 @@ export const DATE_FIELD_VALUE_GUIDANCE =
   'Date field values use YYYY-MM-DD, YYYY-MM-DDTHH:mm, or start/end with "/" such as 2026-05-20/2026-05-24. Do not use ".." for date ranges.';
 
 export const NODE_REFERENCE_GUIDANCE =
-  'Node references use [[Display^node:...]] markers from node_read/node_search results, or exact node ids when you already have them.';
+  'Node references use [[Display^node:...]] markers, or [[^node:...]] when only the id is known. Exact node ids are also accepted in tool parameters.';
+
+export const FINAL_ANSWER_NODE_REFERENCE_GUIDANCE =
+  'For final answers, never show %%node:id%% edit handles. Mention concrete nodes with [[Display^node:...]], or [[^node:...]] when only the id is known.';
 
 export const LIN_OUTLINE_CREATE_GUIDANCE = [
   'Lin Outline Format uses "- Title" lines with exactly 2 spaces per child level.',
@@ -15,6 +18,7 @@ export const ANNOTATED_OUTLINE_EDIT_GUIDANCE = [
   'Annotated outlines come from node_read and include %%node:id%% markers for exact follow-up edits.',
   'Keep markers for existing nodes that should be updated or moved. Lines without markers create new nodes under the edited outline.',
   'Treat %%node:id%% as protocol metadata, not user-visible node text.',
+  FINAL_ANSWER_NODE_REFERENCE_GUIDANCE,
 ].join(' ');
 
 export const SEARCH_QUERY_SHAPE_GUIDANCE = [

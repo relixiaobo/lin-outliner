@@ -5,6 +5,7 @@ import { pmSchema } from '../../src/renderer/ui/editor/pmSchema';
 import {
   docToRichText,
   INLINE_REF_TEXT_SENTINEL,
+  replaceRichTextRangeWithInlineRef,
   richTextToDoc,
   textOffsetToDocPos,
 } from '../../src/renderer/ui/editor/richTextCodec';
@@ -63,6 +64,36 @@ describe('editor text patch', () => {
 
     expect(textOffsetToDocPos(leadingRefDoc, 0, { inlineRefBias: 'before' })).toBe(2);
     expect(textOffsetToDocPos(leadingRefDoc, 0, { inlineRefBias: 'after' })).toBe(3);
+  });
+
+  test('adds a text gap after inserted inline references', () => {
+    const content = replaceRichTextRangeWithInlineRef(
+      plainText('See @Alnext'),
+      4,
+      7,
+      { targetNodeId: 'target', displayName: 'Alpha' },
+    );
+
+    expect(content).toEqual({
+      text: 'See  next',
+      marks: [],
+      inlineRefs: [{ offset: 4, targetNodeId: 'target', displayName: 'Alpha' }],
+    });
+  });
+
+  test('does not duplicate existing whitespace after inserted inline references', () => {
+    const content = replaceRichTextRangeWithInlineRef(
+      plainText('See @Al next'),
+      4,
+      7,
+      { targetNodeId: 'target', displayName: 'Alpha' },
+    );
+
+    expect(content).toEqual({
+      text: 'See  next',
+      marks: [],
+      inlineRefs: [{ offset: 4, targetNodeId: 'target', displayName: 'Alpha' }],
+    });
   });
 
   test('uses full replacement for text insertion at an inline reference boundary', () => {

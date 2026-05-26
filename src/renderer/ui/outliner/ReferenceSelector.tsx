@@ -1,9 +1,10 @@
 import { api } from '../../api/client';
 import type { CommandOutcome, DocumentProjection, NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
-import { AddIcon, CalendarIcon, ICON_SIZE, ReferenceIcon } from '../icons';
+import { AddIcon, CalendarIcon, ICON_SIZE } from '../icons';
 import { buildReferenceCandidates, type ReferenceCandidate } from '../interactions/referenceCandidates';
 import type { CommandRunner } from '../shared';
+import { NodeReferenceMenuIcon } from './NodeReferenceMenuIcon';
 import { PopoverEmpty, PopoverListItem } from './PopoverList';
 
 interface ReferenceSelectorProps {
@@ -45,10 +46,10 @@ function dateParts(date: Date): { year: number; month: number; day: number } {
   };
 }
 
-function iconForItem(item: ReferenceCandidate) {
+function iconForItem(item: ReferenceCandidate, index: DocumentIndex) {
   if (item.type === 'date') return <CalendarIcon size={ICON_SIZE.menu} />;
   if (item.type === 'create') return <AddIcon size={ICON_SIZE.menu} />;
-  return <ReferenceIcon size={ICON_SIZE.menu} />;
+  return <NodeReferenceMenuIcon index={index} node={index.byId.get(item.id)} />;
 }
 
 export function ReferenceSelector(props: ReferenceSelectorProps) {
@@ -119,7 +120,7 @@ export function ReferenceSelector(props: ReferenceSelectorProps) {
             disabled={disabled}
             data-create-reference={item.type === 'create' ? 'true' : undefined}
             title={item.type === 'node' ? item.disabledReason ?? undefined : undefined}
-            icon={iconForItem(item)}
+            icon={iconForItem(item, props.index)}
             iconClassName="popover-item-icon"
             label={(
               <>

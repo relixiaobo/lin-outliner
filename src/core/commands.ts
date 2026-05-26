@@ -108,6 +108,7 @@ export const AGENT_COMMANDS = [
   'agent_stop_session',
   'agent_reset_session',
   'agent_close_session',
+  'agent_list_slash_commands',
   'agent_get_provider_settings',
   'agent_update_runtime_settings',
   'agent_upsert_provider_config',

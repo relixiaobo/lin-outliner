@@ -8,6 +8,7 @@ import {
   type SearchQueryOperand,
   type SearchQueryRule,
 } from '../core/types';
+import { formatNodeReferenceMarker } from '../core/nodeReferenceMarkup';
 import {
   SEARCH_EXECUTABLE_QUERY_OPS,
   runSearchExpr,
@@ -614,7 +615,7 @@ function operandText(index: ProjectionIndex, operand: SearchQueryOperand): strin
 
 function nodeReference(index: ProjectionIndex, nodeId: string, label?: string): string {
   const node = index.nodes.get(nodeId);
-  return `[[${label ?? (node ? nodeTitle(index, node) : nodeId)}^${nodeId}]]`;
+  return formatNodeReferenceMarker(label ?? (node ? nodeTitle(index, node) : nodeId), nodeId);
 }
 
 function requiredSearchNode(index: ProjectionIndex, nodeId: string): NodeProjection {

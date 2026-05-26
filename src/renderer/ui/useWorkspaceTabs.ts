@@ -326,8 +326,8 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
     }
   }, [focusNode, tabs]);
 
-  const createTab = useCallback(() => {
-    if (!rootId) return;
+  const createTab = useCallback((nodeId: NodeId | null = rootId) => {
+    if (!nodeId) return;
     const panelId = nextId('panel');
     const tabId = nextId('tab');
     setTabs((prev) => [
@@ -336,11 +336,11 @@ export function useWorkspaceTabs({ focusNode }: UseWorkspaceTabsOptions) {
         id: tabId,
         activePanelId: panelId,
         panelSizes: { [panelId]: 1 },
-        panels: [outlinerPanel(panelId, rootId)],
+        panels: [outlinerPanel(panelId, nodeId)],
       },
     ]);
     setActiveTabId(tabId);
-    focusNode(rootId);
+    focusNode(nodeId);
   }, [focusNode, rootId]);
 
   const openPanel = useCallback((nodeId: NodeId | null = rootId) => {

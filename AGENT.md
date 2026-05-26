@@ -25,12 +25,13 @@ persistence are all implemented in TypeScript.
 Three independent clones run side-by-side under `~/Coding/`, sharing one
 GitHub origin (`relixiaobo/lin-outliner`). Synchronization happens through
 PRs to `main`, never via local cross-clone operations — treat the clones as
-three separate machines that share a remote.
+separate machines that share a remote.
 
 ```
 ~/Coding/
   lin-outliner/         ← main agent: review, merge, integration
   lin-outliner-cc/      ← Claude Code dev agent
+  lin-outliner-cc-2/    ← Claude Code dev agent (second)
   lin-outliner-codex/   ← Codex dev agent
 ```
 
@@ -43,13 +44,15 @@ directory at the start of a session and act accordingly.
 |-------|-------|------|
 | `lin-outliner/` | main agent (Claude Code) | Plan, draft task PRs, review, merge, push `main`, visual verification. Owns `docs/TASKS.md`. |
 | `lin-outliner-cc/` | Claude Code dev agent | Build features on `cc/<topic>` branches; open Draft PRs. |
+| `lin-outliner-cc-2/` | Claude Code dev agent | Build features on `cc-2/<topic>` branches; open Draft PRs. |
 | `lin-outliner-codex/` | Codex dev agent | Build features on `codex/<topic>` branches; open Draft PRs. |
 
-**Dev agents (cc / codex) must NOT:**
+**Dev agents (cc / cc-2 / codex) must NOT:**
 
 - `gh pr merge` or otherwise merge any PR.
 - Push to `main` (work only on feature branches).
-- Edit `docs/TASKS.md` (main-agent-owned).
+- Edit `docs/TASKS.md` or `CHANGELOG.md` (both main-agent-owned; the main
+  agent records the changelog entry on merge).
 
 Only the main agent in `lin-outliner/` merges to `main`. When a dev agent's
 change is ready, mark the PR ready and stop — the main agent takes it from
@@ -61,18 +64,20 @@ there.
    `docs/plans/`. Either create a feature branch + Draft PR whose body is a
    self-contained task spec for a dev agent, or hand the topic to a dev agent
    to self-initiate.
-2. **Build (dev agent).** On `cc/<topic>` or `codex/<topic>`, implement the
-   change, run `bun run typecheck` + relevant tests, commit, push, and open a
-   Draft PR (or mark an assigned one ready). The PR body is the contract.
+2. **Build (dev agent).** On `cc/<topic>`, `cc-2/<topic>`, or `codex/<topic>`,
+   implement the change, run `bun run typecheck` + relevant tests, commit,
+   push, and open a Draft PR (or mark an assigned one ready). The PR body is
+   the contract.
 3. **Review + merge (main agent).** Review the PR (typecheck, tests, build,
-   code + design-system review, visual check for UI), merge to `main`, and
-   update `docs/TASKS.md`.
+   code + design-system review, visual check for UI), merge to `main`, update
+   `docs/TASKS.md`, and add a `CHANGELOG.md` entry under `[Unreleased]`
+   (Added / Changed / Fixed / Internal as appropriate, referencing the PR).
 4. **Resync.** After a merge, dev agents `git fetch && git rebase origin/main`
    on their active branches.
 
-Branch naming: `cc/<topic>` (Claude Code), `codex/<topic>` (Codex). Topic
-should map to a plan in `docs/plans/` whenever possible. One branch per plan;
-close it when merged. Avoid long-lived catch-all branches.
+Branch naming: `cc/<topic>` and `cc-2/<topic>` (Claude Code), `codex/<topic>`
+(Codex). Topic should map to a plan in `docs/plans/` whenever possible. One
+branch per plan; close it when merged. Avoid long-lived catch-all branches.
 
 ### userData isolation (required)
 
@@ -85,9 +90,10 @@ documents, agent sessions, and tests.
 `app.setPath('userData', ...)`. Use the clone-specific dev script, not the
 bare `bun run dev`:
 
-- Main agent:  `bun run dev:main`  → `$HOME/.lin-outliner-main`
-- Claude Code: `bun run dev:cc`    → `$HOME/.lin-outliner-cc`
-- Codex:       `bun run dev:codex` → `$HOME/.lin-outliner-codex`
+- Main agent:    `bun run dev:main`  → `$HOME/.lin-outliner-main`
+- Claude Code:   `bun run dev:cc`    → `$HOME/.lin-outliner-cc`
+- Claude Code 2: `bun run dev:cc-2`  → `$HOME/.lin-outliner-cc-2`
+- Codex:         `bun run dev:codex` → `$HOME/.lin-outliner-codex`
 - Production: leave `ELECTRON_USER_DATA_DIR` unset to use the default
   user-data path.
 
@@ -107,6 +113,8 @@ agent rebase before continuing:
 - `docs/spec/README.md`, `docs/plans/README.md` — doc indexes
 - `src/core/commands.ts`, `src/core/types.ts` — protocol surface
 - `docs/TASKS.md` — main-agent-owned; dev agents never edit it
+- `CHANGELOG.md` — main-agent-owned; the main agent adds an `[Unreleased]`
+  entry on merge (step 3), dev agents never edit it
 
 The default owner is whichever agent is actively shipping the related
 plan. When in doubt, post the intended change on the corresponding PR

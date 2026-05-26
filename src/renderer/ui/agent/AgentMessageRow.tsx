@@ -14,6 +14,7 @@ import {
   parseAgentTextAttachmentBlock,
   type ParsedAgentTextAttachment,
 } from '../../../core/agentAttachments';
+import type { DocumentIndex } from '../../state/document';
 import {
   CheckIcon,
   CloseIcon,
@@ -40,16 +41,22 @@ import {
   AgentMessageFrame,
   AgentStreamingIndicator,
 } from './AgentMessageFrame';
+import {
+  AgentInlineReferenceText,
+  type AgentNodeReferenceOpenHandler,
+} from './AgentInlineReferenceText';
 
 interface AgentMessageRowProps {
   busy?: boolean;
   contentKey?: string;
   entry: AgentMessageEntry;
+  index: DocumentIndex;
   isLastInTurn?: boolean;
   onEdit?: (nodeId: string, message: string) => void | Promise<void>;
   onCopy?: () => void | Promise<void>;
   onRegenerate?: (nodeId: string) => void | Promise<void>;
   onRetry?: (nodeId: string) => void | Promise<void>;
+  onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   onOpenSubagentTranscript?: (subagentId: string) => void;
   onSwitchBranch?: (nodeId: string) => void | Promise<void>;
   pendingToolCallIds: ReadonlySet<string>;
@@ -147,7 +154,9 @@ function textFromAssistant(message: AssistantMessage): string {
 function renderAssistantBlocks(
   message: AssistantMessage,
   contentKey: string,
+  documentIndex: DocumentIndex,
   expandState: AgentExpandState,
+  onNodeReferenceOpen: AgentNodeReferenceOpenHandler | undefined,
   onOpenSubagentTranscript: ((subagentId: string) => void) | undefined,
   pendingToolCallIds: ReadonlySet<string>,
   sessionId: string | null | undefined,
@@ -172,30 +181,30 @@ function renderAssistantBlocks(
   const turnHasProse = visibleBlocks.some((block) => block.type === 'text' && block.text.trim().length > 0);
   const turnFailedWithoutProse = turnEnded && !turnHasProse;
 
-  let index = 0;
-  while (index < visibleBlocks.length) {
-    const block = visibleBlocks[index]!;
+  let blockIndex = 0;
+  while (blockIndex < visibleBlocks.length) {
+    const block = visibleBlocks[blockIndex]!;
     if (block.type === 'thinking' || block.type === 'toolCall') {
-      const runStart = index;
+      const runStart = blockIndex;
       const segmentBlocks: AgentProcessSegmentBlock[] = [];
-      while (index < visibleBlocks.length) {
-        const candidate = visibleBlocks[index]!;
+      while (blockIndex < visibleBlocks.length) {
+        const candidate = visibleBlocks[blockIndex]!;
         if (candidate.type === 'thinking') {
           const hasLaterVisibleBlock = visibleBlocks
-            .slice(index + 1)
+            .slice(blockIndex + 1)
             .some((later) => later.type === 'thinking' || later.type === 'toolCall' || later.type === 'text');
           segmentBlocks.push({
             kind: 'thinking',
-            sourceIndex: index,
+            sourceIndex: blockIndex,
             streaming: streaming && !hasLaterVisibleBlock,
             text: candidate.thinking,
           });
-          index += 1;
+          blockIndex += 1;
           continue;
         }
         if (candidate.type === 'toolCall') {
           segmentBlocks.push({ kind: 'toolCall', toolCall: candidate });
-          index += 1;
+          blockIndex += 1;
           continue;
         }
         break;
@@ -204,7 +213,7 @@ function renderAssistantBlocks(
       const thinkingCount = segmentBlocks.filter((candidate) => candidate.kind === 'thinking').length;
       const toolCount = segmentBlocks.length - thinkingCount;
       const segmentSealed = visibleBlocks
-        .slice(index)
+        .slice(blockIndex)
         .some((candidate) => candidate.type === 'text' && candidate.text.trim().length > 0);
 
       if (thinkingCount === 0 && toolCount === 1) {
@@ -213,8 +222,10 @@ function renderAssistantBlocks(
         rendered.push(
           <AgentToolCallBlock
             expanded={expandState.isExpanded(toolId, false)}
+            index={documentIndex}
             key={toolId}
             onToggle={() => expandState.toggle(toolId, expandState.isExpanded(toolId, false))}
+            onNodeReferenceOpen={onNodeReferenceOpen}
             onOpenSubagentTranscript={onOpenSubagentTranscript}
             pendingToolCallIds={pendingToolCallIds}
             result={toolResults.get(toolCall.id)}
@@ -231,7 +242,9 @@ function renderAssistantBlocks(
             blocks={segmentBlocks}
             expandState={expandState}
             id={segmentId}
+            index={documentIndex}
             key={segmentId}
+            onNodeReferenceOpen={onNodeReferenceOpen}
             onOpenSubagentTranscript={onOpenSubagentTranscript}
             pendingToolCallIds={pendingToolCallIds}
             results={toolResults}
@@ -247,17 +260,19 @@ function renderAssistantBlocks(
     }
 
     const hasLaterText = visibleBlocks
-      .slice(index + 1)
+      .slice(blockIndex + 1)
       .some((candidate) => candidate.type === 'text' && candidate.text.trim().length > 0);
     rendered.push(
       <AgentMarkdown
-        key={`text-${index}`}
-        keyPrefix={`${contentKey}-text-${index}`}
+        index={documentIndex}
+        key={`text-${blockIndex}`}
+        keyPrefix={`${contentKey}-text-${blockIndex}`}
+        onNodeReferenceOpen={onNodeReferenceOpen}
         streaming={streaming && !hasLaterText}
         text={block.text}
       />,
     );
-    index += 1;
+    blockIndex += 1;
   }
 
   return rendered;
@@ -267,11 +282,13 @@ export function AgentMessageRow({
   busy = false,
   contentKey,
   entry,
+  index,
   isLastInTurn = true,
   onCopy,
   onEdit,
   onRegenerate,
   onRetry,
+  onNodeReferenceOpen,
   onOpenSubagentTranscript,
   onSwitchBranch,
   pendingToolCallIds,
@@ -393,7 +410,15 @@ export function AgentMessageRow({
               ))}
             </div>
           ) : null}
-          {text.trim().length > 0 ? <div className="agent-user-bubble">{text}</div> : null}
+          {text.trim().length > 0 ? (
+            <div className="agent-user-bubble">
+              <AgentInlineReferenceText
+                index={index}
+                onNodeReferenceOpen={onNodeReferenceOpen}
+                text={text}
+              />
+            </div>
+          ) : null}
           {!turnActive ? (
             <AgentMessageActions>
               {nodeId && onEdit && !hasAttachments && text.trim().length > 0 ? (
@@ -440,7 +465,9 @@ export function AgentMessageRow({
   const assistantBlocks = renderAssistantBlocks(
     message,
     assistantContentKey,
+    index,
     expandState,
+    onNodeReferenceOpen,
     onOpenSubagentTranscript,
     pendingToolCallIds,
     sessionId,

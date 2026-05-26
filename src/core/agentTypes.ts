@@ -94,6 +94,7 @@ export interface AgentUserViewContext {
   focusSurface: string | null;
   focusedNode: AgentUserViewNodeContext | null;
   nodePanels: AgentUserViewPanelContext[];
+  referencedNodes?: AgentUserViewNodeContext[];
 }
 
 export interface AgentToolResultPayloadPart {
