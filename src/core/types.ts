@@ -110,6 +110,20 @@ export type DefConfigKey = TagConfigKey | FieldConfigKey;
 //   color    → typed leaf field on the defConfig node
 export type ConfigValueDomain = 'ref' | 'enum' | 'enumList' | 'number' | 'bool' | 'color';
 
+// The single polymorphic value slot of a value-bearing node (config values,
+// and eventually view-rule params). Stored as one JSON object on the node, set
+// atomically. `text` means the value is carried by the node's `content`; `ref`
+// points at a node (a tagDef, or a system option node for enums) WITHOUT
+// creating a user-facing `reference` node, so it never enters the backlink
+// graph. See docs/plans/config-as-nodes.md.
+export type NodeValue =
+  | { kind: 'text' }
+  | { kind: 'number'; number: number }
+  | { kind: 'bool'; bool: boolean }
+  | { kind: 'color'; color: string }
+  | { kind: 'ref'; ref: NodeId }
+  | { kind: 'date'; date: string };
+
 export interface TagConfigPatch {
   color?: string | null;
   extends?: NodeId | null;
@@ -328,6 +342,8 @@ export interface Node {
   fieldDefId?: NodeId;
   /** For `defConfig` nodes: which config knob this row represents. */
   configKey?: DefConfigKey;
+  /** Single polymorphic value slot for value-bearing nodes (config values). */
+  value?: NodeValue;
   fieldType?: FieldType;
   cardinality?: FieldCardinality;
   nullable?: boolean;

@@ -64,6 +64,7 @@ const NODE_SCALAR_KEYS: Array<keyof Node> = [
   'doneStateEnabled',
   'fieldDefId',
   'configKey',
+  'value',
   'fieldType',
   'cardinality',
   'nullable',
