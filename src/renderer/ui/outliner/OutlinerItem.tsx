@@ -755,33 +755,37 @@ export function OutlinerItem(props: OutlinerItemProps) {
 
   const handleTab = async (shiftKey: boolean, cursorOffset: number) => {
     if (props.draft && !realNode) {
-      // Tab on the trailing draft materializes it (empty) and indents it under
-      // the previous sibling — the explicit structural intent creates the node,
-      // matching Enter. Shift+Tab has nothing to outdent past at the draft's
-      // own level, so it is a no-op.
-      if (shiftKey) return;
-      // The draft sits after the parent's last child; once materialized it is
-      // appended there, so that last child is the indent target. Expand it so
-      // the freshly-indented row stays visible (and focused) instead of being
-      // hidden under a collapsed parent.
+      // Structural keys on the trailing draft materialize it (empty) first — the
+      // explicit intent creates the node, matching Enter — then Tab indents it
+      // under the previous sibling and Shift+Tab outdents it to the parent level.
+      // The draft sits after the parent's last child, so once materialized that
+      // child is the indent target; expand it so the row stays visible.
       const siblings = props.index.byId.get(props.parentId)?.children ?? [];
       const indentTarget = siblings[siblings.length - 1];
       materializeDraft();
       await pendingTextPatchRef.current;
-      if (indentTarget) {
-        props.setUi((prev) => {
-          const expanded = new Set(prev.expanded);
-          expanded.add(indentTarget);
-          return { ...prev, expanded };
-        });
+      // Move with the default applyFocus so the moved node (the move outcome
+      // focuses it) keeps focus; the command is a no-op at the tree's edge.
+      let result: unknown;
+      if (!shiftKey) {
+        if (indentTarget) {
+          props.setUi((prev) => {
+            const expanded = new Set(prev.expanded);
+            expanded.add(indentTarget);
+            return { ...prev, expanded };
+          });
+        }
+        result = await props.run(() => api.indentNode(props.nodeId));
+      } else {
+        result = await props.run(() => api.outdentNode(props.nodeId));
       }
-      // Core's indentNode is a no-op when there is no previous sibling.
-      await props.run(() => api.indentNode(props.nodeId), { applyFocus: false });
-      props.setUi((prev) => requestFocusState(
-        prev,
-        rowFocusTarget(props.nodeId, null, props.panelId),
-        cursorAtOffset(cursorOffset),
-      ));
+      if (result) {
+        props.setUi((prev) => requestFocusState(
+          prev,
+          rowFocusTarget(props.nodeId, null, props.panelId),
+          cursorAtOffset(cursorOffset),
+        ));
+      }
       return;
     }
     await commitDraft();
