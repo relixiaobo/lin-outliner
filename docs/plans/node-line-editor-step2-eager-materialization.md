@@ -1,11 +1,57 @@
 ---
-status: proposed
+status: in-progress
 priority: P1
 owner: relixiaobo
 created: 2026-05-26
 updated: 2026-05-26
 builds-on: node-line-editor-step1-extraction.md
 ---
+
+> **Codex review incorporated (2026-05-26).** Option A (client-*proposed* id,
+> core validates and owns; single id factory; `key === nodeId`) is confirmed as
+> the right direction. Seven P1s are accepted and fold into the plan below — the
+> central reframe is that **the hard problem is lifecycle, not id**: first input,
+> IME, async projection arrival, view transforms, and undo cleanup must be
+> designed as **one state machine**. Specifically:
+>
+> 1. **Materialize on first *committed* content, not `compositionstart`.** During
+>    IME composition no text is committed (`RichTextEditor` only flushes at
+>    `compositionend`), so materializing on `compositionstart` would leave an
+>    empty node if the composition is cancelled. The editor instance is stable
+>    regardless of *when* we materialize (the key never changes), so we wait for
+>    real content — no empty-node window. A node that is later emptied + blurred
+>    is deleted (delete-on-empty cleanup).
+> 2. **Materialize creates the node carrying the current buffer text; the patch
+>    that *triggered* it must be a no-op** (the node did not exist when that
+>    patch fired) to avoid a double first character. Text typed during the async
+>    create window is reconciled once the node arrives (a small in-flight
+>    reconciliation — much less than step 1's full commit dance, but not zero).
+> 3. **Stable key is necessary but not sufficient — the keyed element must be the
+>    *same component type* for draft and materialized.** A `<DraftRow>` →
+>    `<OutlinerItem>` swap remounts even with the same key. Step C must make the
+>    keyed element a single `EditableOutlinerRow` that branches on props.
+> 4. **`buildOutlinerRows` stays pure projection.** It also feeds
+>    `flattenVisibleRows` (keyboard nav/selection) and agent view context, so a
+>    renderer-only draft must NOT be injected there. The draft row is appended in
+>    the render layer (`RowHost`/`OutlinerView`) at the position the materialized
+>    node will occupy, so identity is preserved without polluting nav/selection.
+> 5. **Renderer-only draft fixes *pre*-materialize pollution but not view
+>    transforms.** Once real, the node enters `filterRows`/`groupRows` and may
+>    vanish/jump in filtered/grouped/sorted views. Rule: pin the focused
+>    just-materialized row while editing, or keep lazy commit in transformed
+>    views.
+> 6. **Strict core validation (done in A.1):** the proposed id must match
+>    `node:<uuid>`; an existing id is idempotent only for a same-parent retry,
+>    never a focus-existing-node backdoor; anything else throws.
+> 7. **Dedicated materialize undo path**, not an extension of the text-edit
+>    group: a `materialize_draft_node` metadata/path so the create + following
+>    text patches share one `operationId`/undo group.
+>
+> Adopted sequencing (replaces the one at the bottom): (1) shared
+> `freshNodeId()` + validator + optional id, renderer-internal only; (2)
+> materialize undo-group API/metadata + core & DocumentService tests; (3) append
+> draft rows in the render layer without changing `buildOutlinerRows`; (4) single
+> keyed `EditableOutlinerRow`, then remove the lazy commit dance last.
 
 # Eager Materialization — the Tana-model trailing row (step 2)
 
