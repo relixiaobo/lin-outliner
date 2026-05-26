@@ -16,7 +16,7 @@ workflow.
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle |
-| Codex | `lin-outliner-codex/` | — | `agent-past-chats` |
+| Codex | `lin-outliner-codex/` | — | idle |
 
 ## In progress
 
@@ -58,6 +58,13 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **agent-composer-inline-references** (P1, Codex) — replace the agent composer
+  textarea with a ProseMirror editor: slash commands, inline node references
+  (rendered consistently in user/assistant/tool output with Cmd/Ctrl-click
+  open-in-new-tab), inline file references, paste/drop + native-picker file
+  attachments (sent inline as base64 to the model via `lin:pick-local-files`;
+  distinct from the persisted asset store). Adds `core/nodeReferenceMarkup`
+  and tightens agent node-tool visibility/guidance (PR #15).
 - **node-line-editor-unification Phase 1** (P2) — shared `classifyMediaPaste`
   classifier for the image / media-URL / link-URL paste front-matter; both
   `RichTextEditor` and `TrailingInput` call it, deleting duplicated paste
