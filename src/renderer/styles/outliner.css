@@ -1575,9 +1575,11 @@
 }
 
 /* A not-yet-materialized trailing draft row: a fainter bullet marks it as the
-   "next" slot, distinct from a real (even if empty) node. */
+   "next" slot, distinct from a real (even if empty) node. Uses the design
+   system's faint-element idiom (a low-percentage mix of --text), lighter than
+   the standard bullet's 0.40 ink. */
 .row.node-draft .row-bullet-shape.content {
-  color: rgba(26, 26, 26, 0.18);
+  color: color-mix(in srgb, var(--text) 12%, transparent);
 }
 
 .row-bullet-shape.reference {
