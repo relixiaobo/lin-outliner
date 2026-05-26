@@ -39,6 +39,7 @@ export type NodeType =
   | 'tagDef'
   | 'fieldDef'
   | 'defConfig'
+  | 'systemOption'
   | 'viewDef'
   | 'sortRule'
   | 'filterRule'
@@ -114,6 +115,19 @@ export type DefConfigKey = TagConfigKey | FieldConfigKey;
 // a child value node (same mechanism field values already use). See
 // docs/plans/config-as-nodes.md.
 export type ConfigValueDomain = 'ref' | 'enum' | 'enumList' | 'number' | 'bool' | 'color';
+
+// The role a `reference` node plays. Reads/backlinks/search use this to decide
+// whether a reference is a real edge (link/fieldValue) or an internal pointer
+// (config/enum/system/searchResult) that must stay out of the backlink graph.
+// See docs/plans/config-as-nodes.md (transitional rule 4) — explicit role, not
+// parent inference. Absent role is treated as 'link' (legacy user reference).
+export type RefRole =
+  | 'link'
+  | 'fieldValue'
+  | 'config'
+  | 'enum'
+  | 'searchResult'
+  | 'autoInit';
 
 export interface TagConfigPatch {
   color?: string | null;
@@ -333,6 +347,8 @@ export interface Node {
   fieldDefId?: NodeId;
   /** For `defConfig` nodes: which config knob this row represents. */
   configKey?: DefConfigKey;
+  /** For `reference` nodes: the role this reference plays (backlink allowlist). */
+  refRole?: RefRole;
   fieldType?: FieldType;
   cardinality?: FieldCardinality;
   nullable?: boolean;
