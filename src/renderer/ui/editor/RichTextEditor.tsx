@@ -605,16 +605,19 @@ export function RichTextEditor(props: RichTextEditorProps) {
         if (!structural) return false;
         if (structural.type === 'backspaceAtStart') {
           // A "backspace at start" is decided by *text* offset, but inline-ref
-          // atoms (and their zero-width IME sentinels) carry no text offset — so
-          // a caret sitting just after a leading reference also reads as offset 0.
-          // Only merge the row up when the caret is truly at the paragraph start;
-          // otherwise delete the leading reference(s) instead.
+          // atoms carry no text offset — so a caret sitting just after a leading
+          // reference also reads as offset 0. Delete the reference only when it
+          // is the node immediately before the caret; a caret truly at the start
+          // (nothing, or just the zero-width IME sentinel, before it) still merges
+          // the row up.
           const { $from, empty } = viewInstance.state.selection;
           if (!empty) return false;
-          if ($from.parentOffset > 0) {
+          if ($from.nodeBefore?.type.name === 'inlineReference') {
             event.preventDefault();
             viewInstance.dispatch(
-              viewInstance.state.tr.delete($from.start(), $from.pos).scrollIntoView(),
+              viewInstance.state.tr
+                .delete($from.pos - $from.nodeBefore.nodeSize, $from.pos)
+                .scrollIntoView(),
             );
             return true;
           }
