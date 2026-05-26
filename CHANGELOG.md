@@ -51,6 +51,12 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Tool output shows the model-visible payload** — the agent tool-call Output
+  region now renders exactly the slimmed `content` the model received (a
+  syntax-highlighted JSON envelope) instead of reconstructing the fuller
+  `details` envelope. This makes "what you see" match "what the model got" and
+  removes the prior live-vs-reload inconsistency (`details` is not persisted).
+  ([#19](https://github.com/relixiaobo/lin-outliner/pull/19))
 - **View toolbar redesign** — per-node Display / Group by / Sort by / Filter by
   moved from inline panels to anchored popovers that no longer shift the row
   list; progressive, field-type-aware filter editors (boolean / options / date /
