@@ -39,6 +39,8 @@ items above.
 | [`floating-toolbar-polish.md`](floating-toolbar-polish.md) | draft | P3 | Add heading-mark toggle and `#` selection-extract to the floating editor toolbar. |
 | [`embed-strategy.md`](embed-strategy.md) | draft | P3 | Decide between live iframe embeds, locally-cached metadata embeds, or removing the embed schema fields. |
 | [`agent-past-chats.md`](agent-past-chats.md) | in-progress | P1 | Single `past_chats` tool (recent + search + read modes) backed by the event store, user-message/search indexes, and visible transcript filtering. Foundational agent infrastructure. |
+| [`node-line-editor-unification.md`](node-line-editor-unification.md) | in-progress | P1 | Unify the two node-line editors (inline `RichTextEditor` + `TrailingInput`). Phase 1 (shared paste classifier, #11) and Phase 2a (shared view helpers, #12) shipped; Phase 2b is the `resolveTargetId` trigger-application rewrite. |
+| [`node-line-editor-core-design.md`](node-line-editor-core-design.md) | design | P1 | Build contract for Phase 2b of the unification: shared pure modules over a monolithic hook; trigger application routed through `resolveTargetId`. |
 | [`nodex-parity-decisions.md`](nodex-parity-decisions.md) | meta | — | Catalog of nodex features we explicitly will not port and why. |
 
 ## Working Rules

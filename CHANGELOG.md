@@ -57,6 +57,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Shared node-line view helpers** — extracted `nodeLineView.ts`
+  (`caretAnchor`, `selectionTextOffsets`, and a unified inline-ref-aware
+  `selectionForPlacement` / `applyCursorPlacement`) from `RichTextEditor` and
+  `TrailingInput`, which both now delegate to it. Behavior-preserving (the
+  trailing input's old `1 + offset` math reduces to the shared version for
+  plain text, pinned by unit tests); Phase 2a of the node-line editor
+  unification. ([#12](https://github.com/relixiaobo/lin-outliner/pull/12))
+- **Node-line editor core build contract** — design doc
+  (`docs/plans/node-line-editor-core-design.md`) pinning the Phase 2b
+  approach: drop the monolithic `useNodeLineEditor` hook in favor of shared
+  pure modules, and route trigger application through `resolveTargetId`.
+  ([#13](https://github.com/relixiaobo/lin-outliner/pull/13))
 - **Three-clone parallel-agent hub model** — `lin-outliner` (main: review /
   merge / integration) plus `lin-outliner-cc`, `lin-outliner-cc-2`, and
   `lin-outliner-codex` dev clones sharing one GitHub origin, integrating via PRs

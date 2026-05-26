@@ -42,12 +42,15 @@ Ordered by priority; lower items may depend on higher ones.
 - **view-toolbar-name-filter** (P3) — quick incremental name filter as the
   view toolbar's first control (Tana-style); needs backend/data-model support.
   Optional follow-ons: `is_not` for options filters; relative-date operands.
-- **node-line-editor-unification Phase 2** (P2) — `useNodeLineEditor` core +
-  `resolveTargetId`: build the view/plugins/keymap/trigger pipeline/IME/focus
-  once so `RichTextEditor` and `TrailingInput` become thin wrappers. High-risk
-  behavior reconciliation (the two trigger systems differ by design, not drift);
-  verify with the app running against the `outliner-*` Playwright e2e specs.
-  See `docs/plans/node-line-editor-unification.md`. Phase 1 landed in PR #11.
+- **node-line-editor-unification Phase 2b** (P1) — route trigger application
+  through `resolveTargetId` so `#`/`@`/`/` behave identically across the inline
+  editor and the trailing line, unify the trigger popover on `NodePanel`, and
+  delete the trailing input's bespoke `onApply*Trigger` props. High-risk
+  reconciliation of the hot node-creation path; verify with the app running
+  against the `outliner-*` Playwright e2e specs. Build contract:
+  `docs/plans/node-line-editor-core-design.md` (PR #13). Phase 1 (#11) and
+  Phase 2a view helpers (#12) shipped; eager-materialized trailing draft is
+  in flight on `cc/node-line-editor-core-impl` (PR #14, pending rebase).
 - **embed-strategy** (P3) — decide live iframe vs cached-metadata embeds.
 - **past-chats-output-polish** (P3) — minor cleanups deferred from PR #7:
   (1) drop the now-redundant `returned_items` / `returned_hits` / `message_count`
@@ -58,6 +61,13 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **node-line-editor-unification Phase 2a** (P1, cc) — shared `nodeLineView.ts`
+  view helpers (`caretAnchor`, `selectionTextOffsets`, unified inline-ref-aware
+  `selectionForPlacement` / `applyCursorPlacement`); `RichTextEditor` and
+  `TrailingInput` both delegate. Behavior-preserving, unit-test-pinned (PR #12).
+- **node-line-editor-core-design** (P1, cc) — Phase 2b build contract doc:
+  drop the monolithic `useNodeLineEditor` hook in favor of shared pure modules,
+  route trigger application through `resolveTargetId` (PR #13).
 - **agent-composer-inline-references** (P1, Codex) — replace the agent composer
   textarea with a ProseMirror editor: slash commands, inline node references
   (rendered consistently in user/assistant/tool output with Cmd/Ctrl-click
