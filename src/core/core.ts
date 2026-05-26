@@ -232,9 +232,20 @@ export class Core {
       // A caller-supplied id lets the renderer materialize a draft row under an
       // id it already chose, so the row's React identity survives the
       // draft->real transition (see node-line-editor-step2-eager-materialization).
-      // Re-materializing an id that already exists is idempotent.
-      if (id && this.loro.hasNode(id)) {
-        return focus(id, { parentId, placement: { kind: 'end' } });
+      // The renderer only *proposes* the id; core validates and owns it.
+      if (id !== undefined) {
+        if (!isClientNodeId(id)) {
+          throw new Error(`createNode: invalid client-supplied id "${id}" (expected node:<uuid>)`);
+        }
+        const existing = state.nodes[id];
+        if (existing) {
+          // Idempotent only for a retry of the *same* materialization (same
+          // parent). Otherwise a stale/forged id must not hijack another node.
+          if (existing.parentId !== parentId) {
+            throw new Error(`createNode: id "${id}" already exists under a different parent`);
+          }
+          return focus(id, { parentId, placement: { kind: 'end' } });
+        }
       }
       const newId = this.createPlainNode(parentId, index, text, undefined, id);
       this.applyChildTagsDirect(parentId, newId);
@@ -2401,6 +2412,17 @@ function cycleNodeDoneState(node: Node) {
 
 function freshId(prefix: string): string {
   return `${prefix}:${crypto.randomUUID()}`;
+}
+
+/**
+ * A client-minted plain-node id: `node:` + a v4 UUID, exactly what
+ * `freshId('node')` produces. The renderer may propose such an id (so a draft
+ * row keeps its React identity through materialization); core validates it
+ * before accepting. Reserved/structural ids (workspace, trash, …) and forged
+ * strings are rejected by the strict shape.
+ */
+export function isClientNodeId(id: string): boolean {
+  return /^node:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 }
 
 /**
