@@ -6,158 +6,115 @@ created: 2026-05-26
 updated: 2026-05-26
 ---
 
-# Config as Nodes — full node unification
+# Config as Nodes — node unification (U1)
 
-Move lin's data model from a flat typed god-record (`Node` with ~60 typed
-fields) to a **node-uniform model**: a generic node carries a single typed
-`value`; definition and view configuration live as child value-nodes; readers
-go through typed accessors. The "config panel vs outliner" seam disappears
-*and* the data model becomes internally uniform (no flat-field/node hybrid).
+Move definition (and view) configuration off `Node`'s flat typed fields and
+into the node tree, reusing the **existing field-value mechanism** — a config
+value is a child node / reference, exactly like a field value, with its type
+known from the registry. Reads go through typed accessors as the single entry
+point. The "config panel vs outliner" seam disappears and the data model has
+**one** value mechanism, not a parallel one.
 
-This supersedes the earlier hybrid sketch, which kept config values split
-across leaf fields and reference children, reused the god-record's own fields,
-kept a derived flat-field cache, and overloaded user references for enums —
-four smells. The clean model below removes all four.
+History: an earlier sketch introduced a typed `NodeValue` slot; per Codex
+review that is a *second* value mechanism (field values are already child
+content/reference nodes), so it was dropped. This doc is the U1 model.
 
-## Goal
+## The model (U1)
 
-```
-#Task (tagDef)
-├─ ⚙ color            value:{color:#7C9}
-├─ ⚙ extends          value:{ref:#Project}
-├─ ⚙ show as checkbox value:{bool:true}
-├─ ⚙ default child    value:{ref:#Subtask}
-└─ … default content (ordinary content rows, same surface)
+- A config item = a **`defConfig` node** (dedicated type), child of the
+  `tagDef`/`fieldDef`, carrying `configKey`. fieldEntry-shaped for value
+  storage so it reuses `OutlinerFieldRow`/`FieldValueOutliner` rendering and
+  editing — but a **distinct type** so field/template logic never touches it.
+- The value is stored the way field values already are:
+  - number / color / bool → a child value node (content text, parsed per
+    `configKey`), same as today's field values.
+  - ref (`extends`, `childSupertag`, `sourceSupertag`) → a child reference.
+  - enum (`fieldType`, `hideField`, `cardinality`) → a child reference to a
+    **system option node**; `autoInitialize` → several. An invalid enum value
+    is unrepresentable.
+- **Reference roles.** `reference` today serves user links, field-option
+  values, auto-init values, and search results. We add a role distinction
+  (`refRole`, or inference from parent context) so config/enum refs stay **out
+  of the backlink graph**, while field-value refs keep whatever backlink
+  behavior they have today.
+- **System option nodes** (`systemOption` type) hold enum domains; hidden at
+  the **projection layer**, not merely absent from the Schema view.
+- **Reads via accessors + a config index.** `projectTagConfig` /
+  `projectFieldConfig` over a `buildConfigIndex(state)` (not a child scan per
+  call — config is read in hot paths: outliner rows, search, field options,
+  agent projection).
+- Schema registry (canonicalized in `src/core`) is the authoritative closed
+  schema: `configKey` → domain, cardinality, `appliesTo`, `visibleWhen`,
+  label/icon, optional `validate`.
 
-priority (fieldDef)
-├─ ⚙ field type       value:{ref: schema-option:number}
-├─ ⚙ minimum value    value:{number:0}
-└─ ⚙ required         value:{bool:false}
-```
+## Review-driven constraints (must hold)
 
-A definition is just a node whose children include its configuration; a config
-row is a node; the UI is a pure projection of nodes. One rendering path, one
-keyboard model, one selection/undo model.
-
-## Non-goals
-
-- No new config *features* (done-state mapping editor, auto-collect list) — the
-  surface is unified first; features follow.
-
-## The clean model
-
-### 1. `Node` slims; one polymorphic value slot
-
-The config/view typed fields leave `Node`. Value-bearing nodes carry a single
-tagged union:
-
-```ts
-type NodeValue =
-  | { kind: 'text' }                  // value is the node's content (RichText)
-  | { kind: 'number'; number: number }
-  | { kind: 'bool'; bool: boolean }
-  | { kind: 'color'; color: string }
-  | { kind: 'ref'; ref: NodeId }      // points to a node (tag, or system option)
-  | { kind: 'date'; date: string };
-```
-
-All scalar/bool/color/ref/enum values go through `value`. No split storage, no
-reuse of namesake god-record fields.
-
-### 2. Configuration is a child subtree
-
-`tagDef` / `fieldDef` own `defConfig` children, one per applicable knob,
-carrying `configKey` + a `value` (single) or child value-refs (list, e.g.
-`autoInitialize`). Ordered by the registry; structurally locked (no user
-delete / reparent / reorder / rename).
-
-### 3. Config refs are value-refs, not `reference` nodes
-
-A config/enum ref is `value:{kind:'ref'}`, distinct from the user-facing
-`reference` node type. It therefore does **not** enter the backlink / inline-ref
-graph. Enums = `value.ref` → a **system option node** (see below); an invalid
-enum value is unrepresentable.
-
-### 4. System option nodes (enum domains)
-
-Hidden system subtrees hold the enum domains (field-types, hide-modes,
-cardinalities, auto-init strategies). Seeded at bootstrap, idempotent for
-existing docs, kept out of the user-visible Schema view.
-
-### 5. Reads go through typed accessors — no derived flat cache
-
-```ts
-projectTagConfig(tagDefId): TagConfig
-projectFieldConfig(fieldDefId): FieldConfig
-projectViewRule(ruleId): ViewRule
-```
-
-Every current reader of `node.color` / `node.fieldType` / `node.filterField` /
-… is rewritten to read through an accessor. The flat fields are **removed** from
-`Node`/projection (not kept as a cache). Single source of truth.
-
-### 6. viewDef unification
-
-`sortRule` / `filterRule` / `displayField` are already child nodes; their
-parameters (`filterField`, `filterOperator`, `filterValues`, `sortField`,
-`displayField`, …) move to `value` slots / value-refs too, on the same
-`NodeValue` mechanism. Definition + view config become one uniform node model.
-
-### 7. Schema registry = closed schema
-
-`definitionConfig.ts` (moved/canonicalized into core) declares each knob: key,
-`valueKind`, `cardinality`, `appliesTo`, `visibleWhen`, label/icon/description,
-optional `validate`. It is the authoritative closed schema that keeps the open
-node tree from drifting.
-
-### Invariants
-
-| Invariant | Enforced by |
-| --- | --- |
-| Enum value legal | structural (`value.ref` must resolve to an option node in the right subtree) |
-| Membership closed, registry order | `reconcileConfigSubtree` |
-| No delete / reparent / reorder / rename of config nodes | command layer rejects on `defConfig` |
-| Value kind matches knob | write-time `valueKind` check |
-| `extends` acyclic | guard (value-ref graph cycle check) |
-| `min ≤ max`, finite | knob `validate` |
-| Applicability follows `fieldType` | `reconcileConfigSubtree` (appliesTo) |
+1. **`showCheckbox` is dual-purpose** — a per-node checkbox affordance
+   (`core.ts:2418` done toggle/cycle) *and* tag config (`core.ts:970`). Split
+   the node affordance from the tag default **before** removing it from `Node`.
+2. **Structural protection from day one** — `defConfig`/`systemOption` must be
+   excluded from outliner rendering (`shared.ts` filter), template content
+   cloning (`getTemplateContentNodes`, `core.ts:2048`), drag/copy/duplicate,
+   agent projection (`agentNodeToolProjection.ts`), sidebar, and search — not
+   deferred. Otherwise config rows get displayed/dragged/copied/instantiated.
+3. **Migration precedence** — until the write path switches, flat fields are
+   the source of truth. `setTagConfig`/`setFieldConfig` **dual-write** (flat +
+   subtree), or accessors **read flat-first**. Pick dual-write; flip to
+   subtree-as-truth only once all writes are migrated.
+4. **`value.ref` is too coarse** → reference roles (above).
+5. **Scope boundary** — field *values* stay as today's child content/reference
+   nodes (already node-shaped); we are **not** introducing a typed value slot
+   for them. Unification = config uses the same node-value mechanism, not a new
+   one.
+6. **viewDef in the same batch** — view-rule params (`sortField`,
+   `filterField`, `filterOperator`, `filterValues`, `displayField`,
+   `groupField`; `outlinerRows.ts:66`, `searchEngine.ts`) migrate on the same
+   read/write rules as definition config, or we drop `projectViewRule` until
+   they do. No half-promise.
+7. **Hidden system options need product-level hiding** — projection-layer
+   exclusion so normal-child / search / agent / sidebar paths don't each
+   re-implement it.
+8. **Accessors need caching** — `buildConfigIndex`, not per-call scans.
+9. **Tests per stage** — "green" must mean behavioral tests, not just
+   typecheck: migration idempotency, dual-write precedence, structural lock,
+   template-not-cloning-config, backlinks-exclude-config-refs, view-rule
+   parity.
 
 ## Scope (honest)
 
-This is a foundational data-model rewrite, not a config feature. Touches:
-`types.ts` (slim `Node`, `NodeValue`), `loroDocument.ts` (persist value union,
-drop flat keys), `core.ts` (commands, migration, reconcile, accessors),
-projection, **every reader of the moved fields** (rendering, queries,
-done-state, auto-init, search, agent projection, fieldOptions, tag colors, …),
-viewDef rule readers, the config UI, and tests. The reader rewrite is the long
-tail and the bulk of the effort.
+Foundational: `types.ts`, `loroDocument.ts`, `core.ts` (commands, migration,
+reconcile, accessors, guards, refRole), projection, the ~234+ flat config/view
+field reads across `src`/`tests` (`.fieldType` alone is 66), viewDef readers,
+config UI, agent tools, E2E mocks. The reader rewrite is the long tail.
 
-## Staged commits (one PR, each keeps typecheck + tests green)
+## Stages (one PR; each stage ships behavioral tests + stays green)
 
-1. **Value model + persistence** — `NodeValue` union; persist it; `configKey`
-   already added. (Flat fields stay during migration; removed in stage 9.)
-2. **Typed accessors** — `projectTagConfig`/`projectFieldConfig`/`projectViewRule`
-   reading the value subtree (flat-field fallback while both coexist).
-3. **System option nodes + subtree creation + `reconcileConfigSubtree`**.
-4. **Migration** — idempotently materialize value subtrees from existing flat
-   fields for every tagDef/fieldDef (+ viewDef rules in stage 8).
-5. **Reader rewrite** — route all readers through accessors; remove flat-field
-   reads. The long tail; split into reviewable sub-commits by subsystem.
-6. **Write path + guard + structural locks** — commands write the value
-   subtree; `guardConfigMutation`; lock `defConfig` structural ops.
-7. **Config UI as rows** — config rows from the subtree; domain controls bound
-   to `value` slots; delete `DefinitionConfigPanel`/`Controls`/`RowShell`.
-8. **viewDef rule params → value-nodes** — same mechanism for
-   filter/sort/display.
-9. **Remove flat fields** from `Node`, persistence, and projection.
-10. **Tests + visual verify** — migration idempotency, accessor parity, guard,
-    reconcile, structural locks; visual check; mark PR ready.
+0. **Definitions, no behavior change** — closed schema registry,
+   `defConfig`/`systemOption` types, refRole taxonomy, accessor API surface,
+   migration-precedence rule.
+1. **Protection + persistence + guard (day one)** — full structural exclusion
+   (render/template/drag/copy/agent/sidebar/search) + projection-layer hiding +
+   structural guard for `defConfig`/`systemOption`. Tests for each.
+2. **Split `showCheckbox`** — node checkbox affordance vs tag config; done
+   toggle/cycle unaffected (tests).
+3. **Accessors + `buildConfigIndex`** — flat-first precedence during
+   transition.
+4. **Seed system option nodes + `reconcileConfigSubtree`** — idempotent;
+   appliesTo+visibleWhen; registry order.
+5. **Migration + dual-write** — materialize subtrees from flat fields;
+   commands dual-write. Tests: idempotency, parity.
+6. **Reader rewrite (long tail)** — by subsystem, each green + tested.
+7. **Flip source of truth** — subtree-only writes; accessor value-first;
+   dual-write removed; guard chokepoint final.
+8. **Config UI as rows + viewDef params** — reuse field-value rendering for
+   config rows; delete `DefinitionConfigPanel`/`Controls`/`RowShell`; migrate
+   view-rule params on the same rules.
+9. **Remove flat fields + final verify** — only after agent tools, E2E mocks,
+   renderer projection are all off flat config fields; remove from
+   `Node`/persistence/projection; visual verify; mark PR ready.
 
-## Open questions
+## Consistency note
 
-- Order of the reader rewrite (stage 5) — by subsystem; keep each sub-commit
-  green.
-- Whether `value:{kind:'text'}` nodes need a distinct marker vs ordinary
-  content nodes (likely: presence of a parent `defConfig`/value context).
-- Undo granularity: a `fieldType` change + its `reconcileConfigSubtree`
-  prune/create is one undo step.
+Node-encodes definition + view config, reversing `nodex-parity-decisions.md:38`
+("we chose typed" for viewDef filters). Chosen deliberately for a uniform
+end-state. Update that entry on merge — main-agent call.
