@@ -18,7 +18,11 @@ const INTERNAL_NODE_TYPES = new Set<NodeProjection['type']>([
 
 export type OutlinerRowItem =
   | { id: NodeId; type: 'field' }
-  | { id: NodeId; type: 'content' }
+  // `draft` marks a renderer-only trailing row whose node is not in the
+  // projection yet (eager materialization). `buildOutlinerRows` never emits it;
+  // it is appended in the render layer so it stays out of nav/selection/agent
+  // context until the user types and it materializes.
+  | { id: NodeId; type: 'content'; draft?: boolean }
   | { id: string; type: 'group'; label: string }
   | { id: string; type: 'hiddenField'; fieldId: NodeId; label: string };
 

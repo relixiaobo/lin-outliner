@@ -26,7 +26,7 @@ import {
   richTextEquals,
 } from '../editor/richTextCodec';
 import { indentTargetParentId, previousVisibleRowId } from '../interactions/outlinerStructure';
-import { appendImageNodes, appendRemoteImageNode, ingestPastedImages, shouldConvertRowToImage, type PastedImage } from '../interactions/imagePaste';
+import { ingestPastedImages, shouldConvertRowToImage, type PastedImage } from '../interactions/imagePaste';
 import { getTreeReferenceBlockReason } from '../interactions/referenceRules';
 import { armReferenceTypeAhead } from '../interactions/referenceTypeAhead';
 import {
@@ -52,7 +52,6 @@ import { TagBar } from '../tags/TagBar';
 import { inlineReferenceTextColor, resolveTagColor, tagBulletColors } from '../tags/tagColors';
 import { BlockNodeRow, isBlockNodeType } from './BlockNodeRow';
 import { CodeBlockRow } from './CodeBlockRow';
-import { TrailingInput } from './TrailingInput';
 import { TriggerPopover } from './TriggerPopover';
 import { DoneCheckbox } from './DoneCheckbox';
 import { NodeContextMenu } from './NodeContextMenu';
@@ -61,14 +60,9 @@ import { OutlinerRowShell } from './OutlinerRowShell';
 import { OutlinerView } from './OutlinerView';
 import { IndentGuide } from './IndentGuide';
 import { RowLeading } from './RowLeading';
-import { buildOutlinerRows } from './row-model';
+import { makeDraftNode } from './draftRow';
 import {
-  applyTrailingReferenceTrigger,
-  applyTrailingTagTrigger,
-  createAndApplyTrailingTagTrigger,
   createPlaceholderInlineFieldAfterNode,
-  createTrailingField,
-  executeTrailingSlashTrigger,
   triggerOwnsWholeText,
 } from './trailingTriggers';
 import { useOutlinerRowInteraction } from './useOutlinerRowInteraction';
@@ -89,16 +83,26 @@ interface OutlinerItemProps {
   dragId: NodeId | null;
   setDragId: (nodeId: NodeId | null) => void;
   referencePath: readonly NodeId[];
+  // Eager materialization: when true, this row's node is not in the projection
+  // yet — it is the trailing draft. The first committed text materializes it
+  // under `nodeId` (kept stable so the editor is never remounted), after which
+  // the row is rendered like any other content row.
+  draft?: boolean;
 }
 
 export function OutlinerItem(props: OutlinerItemProps) {
-  const node = props.index.byId.get(props.nodeId);
+  const realNode = props.index.byId.get(props.nodeId);
+  // A draft row synthesizes an empty plain node so the normal render path runs;
+  // `realNode` distinguishes "not materialized yet" from a real node.
+  const node = realNode ?? (props.draft ? makeDraftNode(props.nodeId, props.parentId) : undefined);
   const [draftContent, setDraftContent] = useState<RichText>(node?.content ?? EMPTY_RICH_TEXT);
   const [draftContentRevision, setDraftContentRevision] = useState(0);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const draftContentRef = useRef<RichText>(node?.content ?? EMPTY_RICH_TEXT);
   const localDraftSyncRef = useRef<{ nodeId: NodeId; content: RichText } | null>(null);
   const pendingTextPatchRef = useRef<Promise<unknown>>(Promise.resolve());
+  // Guards eager materialization so the create fires exactly once per draft.
+  const materializeStartedRef = useRef(false);
   const restoredReferenceConversionNodeRef = useRef<NodeId | null>(null);
   const descriptionReturnPlacementRef = useRef<CursorPlacement>(cursorEnd());
   const referenceTargetId = node?.type === 'reference' && node.targetId
@@ -127,9 +131,18 @@ export function OutlinerItem(props: OutlinerItemProps) {
     dragId: props.dragId,
     setDragId: props.setDragId,
   });
-  const rowEditorFocused = props.ui.focusedId === props.nodeId
-    && props.ui.focusSurface === 'row'
+  // A not-yet-materialized draft is also "focused" when keyboard navigation
+  // targets the parent's trailing surface (the existing trailing-focus signal);
+  // once the editor takes focus, onFocus settles it to this row's own id.
+  const trailingDraftFocused = props.draft === true
+    && !realNode
+    && props.ui.focusedId === props.parentId
+    && props.ui.focusSurface === 'trailing'
     && props.ui.focusedPanelId === props.panelId;
+  const rowEditorFocused = (props.ui.focusedId === props.nodeId
+    && props.ui.focusSurface === 'row'
+    && props.ui.focusedPanelId === props.panelId)
+    || trailingDraftFocused;
 
   useEffect(() => {
     const nextContent = displayed?.content ?? EMPTY_RICH_TEXT;
@@ -160,6 +173,12 @@ export function OutlinerItem(props: OutlinerItemProps) {
   const targetEditId = referenceTargetId ?? node.id;
   const drillDownId = referenceTargetId ?? node.id;
   const editorFocusTarget = rowFocusTarget(props.nodeId, props.parentId, props.panelId);
+  // A not-yet-materialized draft consumes the parent's trailing focus request
+  // (keyboard nav into the trailing line targets `(parentId, 'trailing')`); once
+  // the editor focuses, onFocus settles the signal to this row's own id.
+  const editorRequestTarget = props.draft && !realNode
+    ? focusTarget(props.parentId, props.parentId, props.panelId, 'trailing')
+    : editorFocusTarget;
   const descriptionFocusTarget = focusTarget(props.nodeId, props.parentId, props.panelId, 'description');
   const requestRowFocus = (
     nodeId: NodeId,
@@ -187,13 +206,6 @@ export function OutlinerItem(props: OutlinerItemProps) {
       }));
     });
   };
-  const childRows = referenceCycle ? [] : buildOutlinerRows(childParentNode, props.index.byId, {
-    expandedHiddenFields: props.ui.expandedHiddenFields,
-  });
-  const childTrailingFocused = props.ui.focusedId === childParentId
-    && props.ui.focusSurface === 'trailing'
-    && props.ui.focusedPanelId === props.panelId;
-  const showEmptyChildTrailingInput = !referenceCycle && (childRows.length === 0 || childTrailingFocused);
   const childReferencePath = [...props.referencePath, childParentId];
   const pendingReferenceConversion = props.ui.pendingReferenceConversion?.nodeId === props.nodeId;
   const pendingReferenceTypeAhead = props.ui.pendingReferenceTypeAhead?.nodeId === props.nodeId;
@@ -298,11 +310,65 @@ export function OutlinerItem(props: OutlinerItemProps) {
   };
 
   const commitDraft = async (content = draftContent) => {
+    if (props.draft && !realNode) {
+      // Blur/commit on the trailing draft: materialize only if something was
+      // typed (so a click-away on an empty line never persists an empty node).
+      const buffered = draftContentRef.current;
+      if (buffered.text.trim().length > 0 || buffered.inlineRefs.length > 0) {
+        materializeDraft();
+        await pendingTextPatchRef.current;
+      }
+      return props.nodeId;
+    }
     const result = await restorePendingReferenceConversion(content);
     return result.nodeId;
   };
 
+  // Eager materialization: turn the draft into a real node under its stable id
+  // on the first committed content. Runs once; the create and the text patches
+  // that follow share one undo group (see DocumentService). Keystrokes that land
+  // during the IPC round-trip stay in the buffer and are reconciled when the
+  // node arrives, then focus moves from the parent's trailing surface to this
+  // row's own id (without re-focusing, so the caret is undisturbed) — that frees
+  // the trailing signal for the freshly minted next draft.
+  const materializeDraft = () => {
+    if (realNode || materializeStartedRef.current) return;
+    materializeStartedRef.current = true;
+    const seed = draftContentRef.current;
+    pendingTextPatchRef.current = pendingTextPatchRef.current
+      .then(() => props.run(async () => {
+        const outcome = await api.materializeDraftNode(props.parentId, null, seed.text, props.nodeId);
+        return outcome.projection;
+      }, { applyFocus: false }))
+      .then(() => {
+        const latest = draftContentRef.current;
+        const needsReconcile = latest.text !== seed.text
+          || latest.marks.length > 0
+          || latest.inlineRefs.length > 0;
+        if (needsReconcile) {
+          return props.run(
+            () => api.applyNodeTextPatch(props.nodeId, replaceAllRichTextPatch(latest)),
+            { applyFocus: false },
+          );
+        }
+      })
+      .then(() => {
+        props.setUi((prev) => selectFocusState(
+          prev,
+          rowFocusTarget(props.nodeId, props.parentId, props.panelId),
+        ));
+      });
+    void pendingTextPatchRef.current;
+  };
+
   const applyTextPatch = (patch: RichTextPatch) => {
+    if (props.draft && !realNode) {
+      // First committed content on a draft: materialize rather than patch a node
+      // that does not exist yet. Further in-flight patches are dropped; the
+      // buffer is the source of truth until the node arrives and reconciles.
+      materializeDraft();
+      return;
+    }
     pendingTextPatchRef.current = pendingTextPatchRef.current.then(() =>
       props.run(() => api.applyNodeTextPatch(targetEditId, patch), {
         applyFocus: false,
@@ -548,8 +614,39 @@ export function OutlinerItem(props: OutlinerItemProps) {
     return null;
   };
 
+  // From the empty trailing draft, step focus up to the visually-previous row
+  // without creating or deleting anything (the draft has no real node).
+  const focusPreviousFromDraft = (placement: CursorPlacement = cursorEnd()) => {
+    if (props.parentId === props.rootId) {
+      const visible = flattenVisibleRows(
+        props.rootId,
+        props.index.byId,
+        props.ui.expanded,
+        props.ui.expandedHiddenFields,
+      );
+      const previousId = visible[visible.length - 1];
+      if (previousId) {
+        requestRowFocus(previousId, placement, props.index.byId.get(previousId)?.parentId ?? null);
+      }
+      return;
+    }
+    requestRowFocus(props.parentId, placement, props.index.byId.get(props.parentId)?.parentId ?? null);
+  };
+
   const handleEnter = async (payload: EditorSplitPayload) => {
     if (props.trigger?.nodeId === props.nodeId) return;
+    if (props.draft && !realNode) {
+      // Enter on the trailing draft: materialize it (carrying any typed content),
+      // then drop to a fresh trailing line below.
+      materializeDraft();
+      await pendingTextPatchRef.current;
+      props.setUi((prev) => requestFocusState(
+        prev,
+        focusTarget(props.parentId, props.parentId, props.panelId, 'trailing'),
+        cursorEnd(),
+      ));
+      return;
+    }
     const siblings = props.index.byId.get(props.parentId)?.children ?? [];
     const rowIndex = siblings.indexOf(props.nodeId);
     if (!payload.atEnd) {
@@ -613,6 +710,11 @@ export function OutlinerItem(props: OutlinerItemProps) {
   };
 
   const handleBackspaceAtStart = async (isEmpty: boolean) => {
+    if (props.draft && !realNode) {
+      // The trailing draft has no real node: never trash/merge; step up instead.
+      focusPreviousFromDraft();
+      return;
+    }
     const intent = resolveContentRowBackspaceAtStartIntent({
       isEmpty,
       hasChildren: row.hasChildren,
@@ -652,6 +754,9 @@ export function OutlinerItem(props: OutlinerItemProps) {
   };
 
   const handleTab = async (shiftKey: boolean, cursorOffset: number) => {
+    // Depth-shifting an empty trailing draft (before it has a node) is a v1
+    // no-op; once the user types and the row materializes, Tab indents normally.
+    if (props.draft && !realNode) return;
     await commitDraft();
     if (!shiftKey) {
       const targetParentId = indentTargetParentId(props.nodeId, props.index.byId);
@@ -716,18 +821,6 @@ export function OutlinerItem(props: OutlinerItemProps) {
       selectionRootId: props.rootId,
       selectionSource: 'global',
     }));
-  };
-
-  const focusNode = (nodeId: NodeId) => {
-    requestRowFocus(nodeId);
-  };
-
-  const collapseNode = (nodeId: NodeId) => {
-    props.setUi((prev) => {
-      const expanded = new Set(prev.expanded);
-      expanded.delete(nodeId);
-      return { ...prev, expanded };
-    });
   };
 
   const openContextMenu = (event: MouseEvent) => {
@@ -979,7 +1072,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
             onEnter={(payload) => void handleEnter(payload)}
             onBackspaceAtStart={(isEmpty) => void handleBackspaceAtStart(isEmpty)}
             onTab={(shiftKey, cursorOffset) => void handleTab(shiftKey, cursorOffset)}
-            onArrowUpAtStart={() => row.moveFocus(-1)}
+            onArrowUpAtStart={() => (props.draft && !realNode ? focusPreviousFromDraft() : row.moveFocus(-1))}
             onArrowDownAtEnd={() => row.moveFocus(1)}
             onShiftArrow={() => void exitToSelection()}
             onMove={(direction) => void moveCurrentNode(direction)}
@@ -1018,7 +1111,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
                 focus: false,
                 newTab: options?.newTab,
               })}
-            focusTarget={editorFocusTarget}
+            focusTarget={editorRequestTarget}
             focusRequest={props.ui.focusRequest}
             pendingInput={props.ui.pendingInputChar}
             onFocusRequestConsumed={(request) => {
@@ -1140,81 +1233,11 @@ export function OutlinerItem(props: OutlinerItemProps) {
             dragId={props.dragId}
             setDragId={props.setDragId}
             referencePath={childReferencePath}
+            // The trailing draft (eager materialization) replaces the old child
+            // TrailingInput: shown for an empty child list or when nav focuses
+            // the trailing surface, unless this is a reference cycle.
+            trailingDraft={referenceCycle ? 'none' : 'auto'}
           />
-          {showEmptyChildTrailingInput && (
-            <TrailingInput
-              panelId={props.panelId}
-              parentId={childParentId}
-              index={props.index}
-              expanded={props.ui.expanded}
-              run={props.run}
-              focusRequest={props.ui.focusRequest}
-              focusedId={props.ui.focusedId}
-              focusSurface={props.ui.focusSurface}
-              onFocusRequestConsumed={(request) => {
-                props.setUi((prev) => clearFocusRequestState(prev, request));
-              }}
-              onCreate={async (parentId, text) => {
-                let createdId: string | null = null;
-                await props.run(async () => {
-                  const outcome = await api.createNode(parentId, null, text);
-                  createdId = outcome.focus?.nodeId ?? null;
-                  return outcome.projection;
-                }, { applyFocus: false });
-                return createdId;
-              }}
-              onCreateTree={(parentId, nodes) => (
-                props.run(() => api.createNodesFromTree(parentId, nodes), { applyFocus: false })
-              )}
-              onPasteImages={(parentId, images) => appendImageNodes(parentId, images, props.run)}
-              onPasteMediaUrl={(parentId, url) => appendRemoteImageNode(parentId, url, props.run)}
-              onIndentNode={(nodeId) => (
-                props.run(() => api.indentNode(nodeId), { applyFocus: false })
-              )}
-              onUpdateCreated={async (nodeId, text) => {
-                await props.run(() => api.replaceNodeText(nodeId, plainText(text)), { applyFocus: false });
-              }}
-              continueOnEnter
-              onToggleCreated={async (nodeId) => {
-                await props.run(() => api.toggleDone(nodeId));
-              }}
-              onApplyTagTrigger={applyTrailingTagTrigger}
-              onCreateTagTrigger={createAndApplyTrailingTagTrigger}
-              onApplyReferenceTrigger={applyTrailingReferenceTrigger}
-              onReferenceConversionCreated={({ nodeId, parentId, targetId }) => {
-                props.setUi((prev) => ({
-                  ...prev,
-                  pendingReferenceConversion: { nodeId, parentId, targetId },
-                }));
-              }}
-              onExecuteSlashTrigger={executeTrailingSlashTrigger}
-              onOpenCommandPalette={() => props.setUi((prev) => ({ ...prev, commandOpen: true }))}
-              onCreateField={(parentId) => (
-                createTrailingField({
-                  parentId,
-                  run: props.run,
-                })
-              )}
-              onExpand={(nodeId) => {
-                props.setUi((prev) => {
-                  const expanded = new Set(prev.expanded);
-                  expanded.add(nodeId);
-                  return { ...prev, expanded };
-                });
-              }}
-              onFocusNode={focusNode}
-              onFocusDescription={(nodeId, parentId) => {
-                props.setUi((prev) => requestFocusState(
-                  { ...prev, editingDescriptionId: nodeId },
-                  focusTarget(nodeId, parentId, props.panelId, 'description'),
-                  cursorEnd(),
-                ));
-              }}
-              onCollapseNode={collapseNode}
-              onUndo={() => void props.run(() => api.undo())}
-              onRedo={() => void props.run(() => api.redo())}
-            />
-          )}
         </div>
       )}
     </OutlinerRowShell>
