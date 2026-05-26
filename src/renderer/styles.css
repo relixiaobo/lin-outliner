@@ -2,6 +2,8 @@
   --font-family-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-family-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --font-scale: 100%;
+  --font-ui-3xs: 0.375rem;
+  --line-ui-3xs: 0.5rem;
   --font-ui-2xs: 0.625rem;
   --line-ui-2xs-tight: 0.8125rem;
   --line-ui-2xs: 0.875rem;
@@ -81,6 +83,13 @@
   --outline-primary-strong: inset 0 0 0 1px color-mix(in srgb, var(--accent-brand) 58%, var(--border-subtle));
   --underline-focus-shadow: inset 0 -1px 0 rgba(26, 26, 26, 0.18);
   --tag-focus-shadow: 0 0 0 2px color-mix(in srgb, var(--tag-text, currentColor) 22%, transparent);
+  --inline-ref-selection-shadow: inset 0 0 0 1px var(--row-selection-border);
+  --inline-ref-focus-shadow: 0 0 0 2px color-mix(in srgb, var(--inline-ref-accent, var(--inline-ref-default)) 22%, transparent);
+  --agent-side-panel-shadow: -18px 0 48px rgba(15, 23, 42, 0.12);
+  --view-radio-shadow: inset 0 0 0 1.5px var(--border-strong);
+  --view-radio-checked-shadow: inset 0 0 0 1.5px var(--text-main);
+  --search-builder-focus-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 16%, transparent);
+  --typed-field-section-shadow: inset 0 1px 0 var(--border-subtle);
   --shadow-thumb: 0 1px 2px rgba(0, 0, 0, 0.14);
   --shadow-thumb-strong: 0 1px 2px rgba(0, 0, 0, 0.18);
   --space-hairline: 1px;
@@ -187,6 +196,8 @@
   --muted: var(--text-sub);
   --muted-2: var(--text-muted);
   --text: var(--text-main);
+  --inline-ref-default: var(--semantic-info);
+  --inline-ref-hover: color-mix(in srgb, var(--semantic-info) 78%, var(--text));
   --primary: var(--accent-brand);
   --primary-hover: var(--accent-danger);
   --primary-soft: color-mix(in srgb, var(--accent-brand) 9%, transparent);
@@ -257,6 +268,7 @@
 .agent-tool-persisted-output pre,
 .agent-steer-preview,
 .agent-composer-input,
+.agent-composer-editor,
 .agent-composer-model-menu,
 .agent-composer-more-model-list,
 .agent-settings-dialog,
@@ -314,6 +326,32 @@ button:focus-visible {
   outline: none;
   box-shadow: none;
   -webkit-focus-ring-color: transparent;
+}
+
+.inline-ref {
+  display: inline;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  color: var(--inline-ref-accent, var(--inline-ref-default));
+  font-weight: inherit;
+  padding: 0 var(--space-hairline);
+  text-decoration: none;
+}
+
+.inline-ref:hover {
+  color: var(--inline-ref-hover-accent, var(--inline-ref-accent, var(--inline-ref-hover)));
+  cursor: pointer;
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.12em;
+}
+
+.inline-ref.ProseMirror-selectednode {
+  border-radius: var(--radius-control-xs);
+  background: var(--row-selection-frame-bg);
+  box-shadow: var(--inline-ref-selection-shadow);
 }
 
 .icon-button {
@@ -735,7 +773,7 @@ button:focus-visible {
   --sidebar-tree-indent: var(--space-5);
   --sidebar-content-start: var(--space-8);
   gap: var(--sidebar-section-gap);
-  padding: calc(var(--space-8) + var(--space-2)) 0 0 var(--space-2);
+  padding: calc(var(--space-8) + var(--space-2)) var(--agent-dock-inset-x) 0 var(--space-2);
 }
 
 .sidebar-primary-nav,
@@ -744,6 +782,11 @@ button:focus-visible {
 .workspace-tree-children {
   display: flex;
   flex-direction: column;
+}
+
+.sidebar-primary-nav,
+.sidebar-section {
+  margin-right: calc(-1 * var(--agent-dock-inset-x));
 }
 
 .sidebar-primary-nav,
@@ -2305,6 +2348,31 @@ button.panel-resize-handle::after {
   white-space: pre-wrap;
 }
 
+.agent-message-inline-ref {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  line-height: inherit;
+  margin: 0;
+  text-align: inherit;
+  vertical-align: baseline;
+}
+
+.agent-message-inline-ref:focus-visible {
+  background: color-mix(in srgb, var(--inline-ref-accent, var(--inline-ref-default)) 10%, transparent);
+  box-shadow: var(--inline-ref-focus-shadow);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.12em;
+}
+
+.agent-message-inline-ref:not(button),
+.agent-message-inline-ref:not(button):hover {
+  cursor: default;
+  text-decoration-line: none;
+}
+
 .agent-user-file-list,
 .agent-user-image-list {
   display: flex;
@@ -3254,7 +3322,7 @@ button.panel-resize-handle::after {
   flex-direction: column;
   border-left: 1px solid var(--border-subtle);
   background: color-mix(in srgb, var(--surface) 96%, white);
-  box-shadow: -18px 0 48px rgba(15, 23, 42, 0.12);
+  box-shadow: var(--agent-side-panel-shadow);
 }
 
 .agent-subagent-details-header {
@@ -3894,6 +3962,111 @@ button.panel-resize-handle::after {
 
 .agent-composer-input::placeholder {
   color: var(--text-faint);
+}
+
+.agent-composer-editor {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 32px;
+  max-height: 160px;
+  overflow-y: auto;
+  color: var(--text-strong);
+  cursor: text;
+  font-size: var(--font-content);
+  line-height: var(--line-content);
+  padding: var(--space-hairline) var(--space-2) calc(var(--space-2) + var(--space-hairline));
+}
+
+.agent-composer-editor .ProseMirror {
+  min-height: 32px;
+  outline: none;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.agent-composer-editor .ProseMirror p {
+  margin: 0;
+}
+
+.agent-composer-editor.is-empty::before {
+  position: absolute;
+  top: var(--space-hairline);
+  left: var(--space-2);
+  color: var(--text-faint);
+  content: attr(data-placeholder);
+  pointer-events: none;
+}
+
+.agent-composer-inline-file {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: var(--space-1);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--semantic-info);
+  line-height: inherit;
+  padding: 0 var(--space-hairline);
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
+.agent-composer-inline-file:hover {
+  cursor: pointer;
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.12em;
+}
+
+.agent-composer-inline-file-icon {
+  position: relative;
+  display: inline-flex;
+  width: 17px;
+  height: 18px;
+  flex: 0 0 17px;
+  align-items: flex-end;
+  justify-content: center;
+  box-sizing: border-box;
+  border: 1.4px solid currentColor;
+  border-radius: var(--radius-2xs);
+  margin-right: var(--space-hairline);
+  padding-bottom: 1px;
+  font-size: var(--font-ui-3xs);
+  font-weight: 700;
+  line-height: var(--line-ui-3xs);
+  transform: translateY(2px);
+}
+
+.agent-composer-inline-file-icon::before {
+  position: absolute;
+  top: -1.4px;
+  right: -1.4px;
+  width: 6px;
+  height: 6px;
+  border-bottom: 1.4px solid currentColor;
+  border-left: 1.4px solid currentColor;
+  background: var(--panel-bg);
+  content: "";
+}
+
+.agent-composer-inline-file-icon::after {
+  content: attr(data-extension);
+}
+
+.agent-composer-inline-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-composer-inline-file.ProseMirror-selectednode {
+  background: var(--row-selection-frame-bg);
+  box-shadow: var(--inline-ref-selection-shadow);
+}
+
+.agent-composer-trigger-popover {
+  z-index: var(--z-popover);
 }
 
 .agent-composer-toolbar {
@@ -5054,6 +5227,20 @@ button.panel-resize-handle::after {
   align-items: center;
   justify-content: center;
   color: var(--muted);
+}
+
+.popover-node-emoji {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--icon-size-sm);
+  line-height: 1;
+}
+
+.popover-node-bullet {
+  flex: 0 0 auto;
 }
 
 .command-item-bullet::before {

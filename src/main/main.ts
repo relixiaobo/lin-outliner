@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, protocol, shell } from 'electron';
-import { join } from 'node:path';
+import { readFile, stat } from 'node:fs/promises';
+import { basename, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DocumentService } from './documentService';
 import { AssetService } from './assetService';
@@ -39,6 +40,8 @@ const documentService = new DocumentService();
 const assetService = new AssetService(() => join(app.getPath('userData'), 'assets'));
 let mainWindow: BrowserWindow | null = null;
 let quitAfterFlush = false;
+let lastAttachmentPickerDirectory: string | null = null;
+const DEFAULT_ATTACHMENT_PICKER_LIMIT = 6;
 const agentRuntime = new AgentRuntime(() => mainWindow, documentService, {
   localFileRoot: process.env.LIN_AGENT_LOCAL_ROOT ?? process.cwd(),
 });
@@ -96,6 +99,39 @@ function registerIpc() {
     }
     if (command === 'close') window.close();
   });
+
+  ipcMain.handle('lin:pick-local-files', async (event, rawOptions?: {
+    maxFiles?: unknown;
+  }) => {
+    const maxFiles = clampPickerLimit(rawOptions?.maxFiles);
+    const window = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? mainWindow;
+    const defaultPath = attachmentPickerDefaultPath();
+    const multiSelections = maxFiles > 1;
+    const options: Electron.OpenDialogOptions = {
+      ...(defaultPath.path ? { defaultPath: defaultPath.path } : {}),
+      properties: multiSelections ? ['openFile', 'multiSelections'] : ['openFile'],
+    };
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled || result.filePaths.length === 0) {
+      return {
+        canceled: true,
+        files: [],
+      };
+    }
+    lastAttachmentPickerDirectory = dirname(result.filePaths[0]!);
+    const selectedPaths = result.filePaths.slice(0, maxFiles);
+    const skippedCount = Math.max(0, result.filePaths.length - selectedPaths.length);
+    const files = (await Promise.all(selectedPaths.map(localPickedFile))).filter(
+      (file): file is NonNullable<Awaited<ReturnType<typeof localPickedFile>>> => Boolean(file),
+    );
+    return {
+      canceled: false,
+      files,
+      ...(skippedCount > 0 ? { skippedCount } : {}),
+    };
+  });
 }
 
 async function handleAssetCommand(command: AssetCommand, args: Record<string, unknown>) {
@@ -150,6 +186,114 @@ async function handleAssetCommand(command: AssetCommand, args: Record<string, un
       throw new Error(`Unknown asset command: ${command}`);
   }
 }
+
+function attachmentPickerDefaultPath(): { path?: string; source: string } {
+  const mode = process.env.LIN_ATTACHMENT_PICKER_DEFAULT_PATH ?? 'last';
+  if (mode === 'none' || mode === 'system') return { source: 'system' };
+  if (mode === 'last') {
+    if (lastAttachmentPickerDirectory) return { path: lastAttachmentPickerDirectory, source: 'last' };
+    const downloads = safeAppPath('downloads');
+    if (downloads) return { path: downloads, source: 'downloads-fallback' };
+    return { source: 'system' };
+  }
+  if (mode === 'downloads') {
+    const downloads = safeAppPath('downloads');
+    return downloads ? { path: downloads, source: 'downloads' } : { source: 'system' };
+  }
+  if (mode === 'documents') {
+    const documents = safeAppPath('documents');
+    return documents ? { path: documents, source: 'documents' } : { source: 'system' };
+  }
+  if (mode === 'home') {
+    const home = safeAppPath('home');
+    return home ? { path: home, source: 'home' } : { source: 'system' };
+  }
+  return { source: 'system' };
+}
+
+function clampPickerLimit(value: unknown): number {
+  const numeric = typeof value === 'number' && Number.isFinite(value)
+    ? Math.trunc(value)
+    : DEFAULT_ATTACHMENT_PICKER_LIMIT;
+  return Math.min(50, Math.max(1, numeric));
+}
+
+async function localPickedFile(filePath: string) {
+  try {
+    const fileStat = await stat(filePath);
+    if (!fileStat.isFile() || fileStat.size <= 0) return null;
+    const mimeType = inferMimeType(filePath);
+    const imageDataBase64 = isInlineImageMimeType(mimeType) && fileStat.size <= 10 * 1024 * 1024
+      ? (await readFile(filePath)).toString('base64')
+      : undefined;
+    return {
+      path: filePath,
+      name: basename(filePath),
+      mimeType,
+      sizeBytes: fileStat.size,
+      lastModified: fileStat.mtimeMs,
+      ...(imageDataBase64 ? { imageDataBase64 } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function safeAppPath(name: Parameters<typeof app.getPath>[0]): string | null {
+  try {
+    return app.getPath(name);
+  } catch {
+    return null;
+  }
+}
+
+function inferMimeType(filePath: string): string {
+  const extension = extname(filePath).toLowerCase();
+  if (extension === '.jpg' || extension === '.jpeg') return 'image/jpeg';
+  if (extension === '.png') return 'image/png';
+  if (extension === '.gif') return 'image/gif';
+  if (extension === '.webp') return 'image/webp';
+  if (extension === '.pdf') return 'application/pdf';
+  if (extension === '.json') return 'application/json';
+  if (extension === '.xml') return 'application/xml';
+  if (extension === '.yaml' || extension === '.yml') return 'application/yaml';
+  if (TEXT_ATTACHMENT_EXTENSIONS.has(extension)) return 'text/plain';
+  return 'application/octet-stream';
+}
+
+function isInlineImageMimeType(mimeType: string): boolean {
+  return mimeType === 'image/jpeg'
+    || mimeType === 'image/png'
+    || mimeType === 'image/gif'
+    || mimeType === 'image/webp';
+}
+
+const TEXT_ATTACHMENT_EXTENSIONS = new Set([
+  '.c',
+  '.cpp',
+  '.css',
+  '.csv',
+  '.env',
+  '.go',
+  '.h',
+  '.hpp',
+  '.html',
+  '.java',
+  '.js',
+  '.jsx',
+  '.kt',
+  '.log',
+  '.md',
+  '.py',
+  '.rs',
+  '.sh',
+  '.sql',
+  '.swift',
+  '.toml',
+  '.ts',
+  '.tsx',
+  '.txt',
+]);
 
 async function handleAgentCommand(command: AgentCommand, args: Record<string, unknown>) {
   switch (command) {
@@ -224,6 +368,8 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
       return agentRuntime.resetSession(String(args.sessionId));
     case 'agent_close_session':
       return agentRuntime.closeSession(String(args.sessionId));
+    case 'agent_list_slash_commands':
+      return agentRuntime.listSlashCommands(String(args.sessionId));
     case 'agent_get_provider_settings':
       return getProviderSettings();
     case 'agent_update_runtime_settings':

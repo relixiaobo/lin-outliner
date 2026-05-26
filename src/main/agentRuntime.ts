@@ -59,6 +59,7 @@ import {
   type AgentPersistedContent,
 } from '../core/agentEventLog';
 import { serializeAgentAttachmentMarker, serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
+import { nodeReferenceMarkersToText } from '../core/nodeReferenceMarkup';
 import { toolEnvelopeAfterToolCall } from './agentToolEnvelope';
 import { createAgentTools, type AgentToolsOptions } from './agentTools';
 import { LIN_AGENT_SYSTEM_PROMPT } from './agentSystemPrompt';
@@ -120,7 +121,13 @@ import {
   type ToolResultBudgetState,
 } from './agentToolOutputSlimming';
 import { AgentRuntimeContextManager, type AgentRuntimeContextEventInput } from './agentRuntimeContext';
-import type { AgentPermissionMode, AgentReasoningLevel, AgentRuntimeSettings, AgentSessionMeta } from '../core/types';
+import type {
+  AgentPermissionMode,
+  AgentReasoningLevel,
+  AgentRuntimeSettings,
+  AgentSessionMeta,
+  AgentSlashCommandView,
+} from '../core/types';
 import { buildAgentRenderProjection, type AgentRenderActiveCompaction } from '../core/agentRenderProjection';
 import { createAbortSettledStreamFn } from './agentStreamAbort';
 import { awaitWithAbort, throwIfAborted } from './agentAwaitWithAbort';
@@ -321,6 +328,38 @@ export class AgentRuntime {
     return this.listEventSessions();
   }
 
+  async listSlashCommands(sessionId: string): Promise<AgentSlashCommandView[]> {
+    const session = await this.ensureSessionWithId(sessionId);
+    const runtimeSettings = await this.refreshRuntimeSettings(session);
+    const commands: AgentSlashCommandView[] = [];
+
+    if (runtimeSettings.compactEnabled) {
+      commands.push({
+        id: 'compact',
+        kind: 'runtime',
+        label: '/compact',
+        description: 'Compact the current conversation',
+        insertText: '/compact ',
+      });
+    }
+
+    if (runtimeSettings.slashSkillsEnabled) {
+      const skills = await session.skillRuntime.listUserInvocableSkills();
+      commands.push(...skills.map((skill): AgentSlashCommandView => ({
+        id: `skill:${skill.name}`,
+        kind: 'skill',
+        label: `/${skill.name}`,
+        description: slashCommandDescription(skill.displayName, skill.description),
+        insertText: `/${skill.name} `,
+      })));
+    }
+
+    return commands.sort((left, right) => (
+      slashCommandKindRank(left.kind) - slashCommandKindRank(right.kind)
+      || left.label.localeCompare(right.label)
+    ));
+  }
+
   async debugSnapshot(sessionId: string) {
     const session = await this.ensureSessionWithId(sessionId);
     const projection = await this.deriveDebugProjection(sessionId);
@@ -385,7 +424,7 @@ export class AgentRuntime {
   }
 
   async renameSession(sessionId: string, title: string) {
-    const normalized = title.trim() || 'Untitled';
+    const normalized = normalizeSessionTitle(title);
     const session = this.sessions.get(sessionId);
     if (session) {
       await this.appendSessionEvents(sessionId, session, [{
@@ -1279,7 +1318,7 @@ export class AgentRuntime {
       model: state.model as Model<any>,
       queryIndex: 0,
       sessionId,
-      sessionTitle: session.eventState.session?.title ?? null,
+      sessionTitle: sanitizeSessionTitle(session.eventState.session?.title),
       systemPrompt: state.systemPrompt,
       thinkingLevel: state.thinkingLevel,
       tools: state.tools,
@@ -1300,7 +1339,7 @@ export class AgentRuntime {
       events,
       readPayload: (payload) => this.getEventStore().readPayload(sessionId, payload),
       sessionId,
-      sessionTitle: this.sessions.get(sessionId)?.eventState.session?.title,
+      sessionTitle: sanitizeSessionTitle(this.sessions.get(sessionId)?.eventState.session?.title),
     });
     this.debugProjectionCache.set(sessionId, projection);
     return projection;
@@ -1358,7 +1397,7 @@ export class AgentRuntime {
   }
 
   private renderProjection(session: AgentSessionState) {
-    return buildAgentRenderProjection(session.eventState, {
+    const projection = buildAgentRenderProjection(session.eventState, {
       revision: session.revision,
       activeRunId: session.activeRunId,
       activeCompaction: session.activeCompaction,
@@ -1368,6 +1407,10 @@ export class AgentRuntime {
       pendingToolCallIds: Array.from(session.agent.state.pendingToolCalls),
       errorMessage: latestAssistantWasAborted(session) ? null : session.agent.state.errorMessage ?? null,
     });
+    return {
+      ...projection,
+      sessionTitle: sanitizeSessionTitle(projection.sessionTitle),
+    };
   }
 
   private beginCompaction(
@@ -1484,7 +1527,7 @@ export class AgentRuntime {
   private async listEventSessions(): Promise<AgentSessionMeta[]> {
     return (await this.getEventStore().listSessionIndexEntries()).map((entry) => ({
       id: entry.id,
-      title: entry.title,
+      title: sanitizeSessionTitle(entry.title),
       createdAt: entry.createdAt,
       updatedAt: entry.updatedAt,
       messageCount: entry.messageCount,
@@ -2425,6 +2468,9 @@ function normalizeAgentUserViewContext(input: unknown): AgentUserViewContext | n
   const nodePanels = Array.isArray(input.nodePanels)
     ? input.nodePanels.slice(0, 6).map(normalizeUserViewPanel).filter((panel): panel is AgentUserViewPanel => Boolean(panel))
     : [];
+  const referencedNodes = Array.isArray(input.referencedNodes)
+    ? input.referencedNodes.slice(0, 20).map(normalizeUserViewNode).filter((node): node is AgentUserViewNode => Boolean(node))
+    : [];
 
   return {
     activePanelId: nullableCompactString(input.activePanelId, 160),
@@ -2432,6 +2478,7 @@ function normalizeAgentUserViewContext(input: unknown): AgentUserViewContext | n
     focusSurface: nullableCompactString(input.focusSurface, 80),
     focusedNode: normalizeUserViewNode(input.focusedNode),
     nodePanels,
+    ...(referencedNodes.length > 0 ? { referencedNodes } : {}),
   };
 }
 
@@ -2646,7 +2693,7 @@ function eventStateToMeta(eventState: AgentEventReplayState): AgentSessionMeta |
   if (!eventState.session) return null;
   return {
     id: eventState.session.id,
-    title: eventState.session.title,
+    title: sanitizeSessionTitle(eventState.session.title),
     createdAt: eventState.session.createdAt,
     updatedAt: eventState.session.updatedAt,
     messageCount: Object.keys(eventState.messages).length,
@@ -2712,8 +2759,17 @@ function deriveTitleFromPersistedContent(content: AgentPersistedContent[]): stri
     .reverse()
     .find((part): part is Extract<AgentPersistedContent, { type: 'text' }> => part.type === 'text' && !part.text.includes('<system-reminder>'))
     ?.text ?? persistedText(content);
-  const normalized = text.replace(/\s+/g, ' ').trim();
+  const normalized = sanitizeSessionTitle(text);
   return normalized ? normalized.slice(0, 30) : null;
+}
+
+function sanitizeSessionTitle(title: string | null | undefined): string | null {
+  const normalized = nodeReferenceMarkersToText(title ?? '').replace(/\s+/g, ' ').trim();
+  return normalized || null;
+}
+
+function normalizeSessionTitle(title: string): string {
+  return sanitizeSessionTitle(title) ?? 'Untitled';
 }
 
 function summarizeToolResult(message: ToolResultMessage): string {
@@ -3127,6 +3183,16 @@ function createAssistantBase(model: Model<Api>): AssistantMessage {
     stopReason: 'stop',
     timestamp: Date.now(),
   };
+}
+
+function slashCommandKindRank(kind: AgentSlashCommandView['kind']): number {
+  return kind === 'runtime' ? 0 : 1;
+}
+
+function slashCommandDescription(displayName: string | undefined, description: string): string {
+  const detail = description.split('\n').map((line) => line.trim()).find(Boolean) ?? '';
+  if (!displayName || displayName === detail) return detail;
+  return detail ? `${displayName} - ${detail}` : displayName;
 }
 
 function clone<T>(value: T): T {

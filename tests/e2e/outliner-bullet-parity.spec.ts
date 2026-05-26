@@ -368,10 +368,16 @@ test.describe('outliner inline atom and drag visuals', () => {
 
     const styles = await inlineRef.evaluate((element) => {
       const computed = getComputedStyle(element);
+      const expected = document.createElement('span');
+      expected.style.color = 'var(--inline-ref-default)';
+      element.appendChild(expected);
+      const expectedColor = getComputedStyle(expected).color;
+      expected.remove();
       return {
         display: computed.display,
         background: computed.backgroundColor,
         color: computed.color,
+        expectedColor,
         cursor: computed.cursor,
         textDecorationLine: computed.textDecorationLine,
         fontWeight: Number(computed.fontWeight),
@@ -379,7 +385,7 @@ test.describe('outliner inline atom and drag visuals', () => {
     });
     expect(styles.display).toBe('inline');
     expect(styles.background).toBe('rgba(0, 0, 0, 0)');
-    expect(styles.color).toBe('rgb(50, 136, 208)');
+    expect(styles.color).toBe(styles.expectedColor);
     expect(styles.cursor).toBe('auto');
     expect(styles.textDecorationLine).toBe('none');
     expect(styles.fontWeight).toBeLessThan(500);
@@ -399,6 +405,83 @@ test.describe('outliner inline atom and drag visuals', () => {
     const titleEditor = page.locator('.panel-title-editor .ProseMirror').first();
     await expect(titleEditor).toHaveText('Alpha');
     await expect(titleEditor).not.toBeFocused();
+  });
+
+  test('inline references use target tag color before the default color', async ({ page }) => {
+    await page.evaluate(async ({ nodeId, tagId, targetId }) => {
+      const win = window as Window & {
+        lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      };
+      await win.lin?.invoke('apply_tag', { nodeId: targetId, tagId });
+      await win.lin?.invoke('apply_node_text_patch', {
+        nodeId,
+        patch: {
+          ops: [{
+            type: 'replace_all',
+            content: {
+              text: 'See ',
+              marks: [],
+              inlineRefs: [{ offset: 4, targetNodeId: targetId, displayName: 'Alpha' }],
+            },
+          }],
+        },
+      });
+    }, { nodeId: ids.beta, tagId: ids.projectTag, targetId: ids.alpha });
+    await emitDocumentEvent(page, {
+      type: 'projection_changed',
+      origin: 'test',
+      projection: await e2eProjection(page),
+      timestamp: Date.now(),
+    });
+
+    const colors = await row(page, ids.beta).locator('.inline-ref').first().evaluate((element) => {
+      const defaultProbe = document.createElement('span');
+      defaultProbe.style.color = 'var(--inline-ref-default)';
+      const tagProbe = document.createElement('span');
+      tagProbe.style.color = '#5e8e65';
+      element.append(defaultProbe, tagProbe);
+      const result = {
+        actual: getComputedStyle(element).color,
+        defaultColor: getComputedStyle(defaultProbe).color,
+        tagColor: getComputedStyle(tagProbe).color,
+      };
+      defaultProbe.remove();
+      tagProbe.remove();
+      return result;
+    });
+    expect(colors.actual).toBe(colors.tagColor);
+    expect(colors.actual).not.toBe(colors.defaultColor);
+  });
+
+  test('inline references without display names do not expose node ids', async ({ page }) => {
+    await page.evaluate(async ({ nodeId, targetId }) => {
+      const win = window as Window & {
+        lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      };
+      await win.lin?.invoke('apply_node_text_patch', {
+        nodeId,
+        patch: {
+          ops: [{
+            type: 'replace_all',
+            content: {
+              text: 'See ',
+              marks: [],
+              inlineRefs: [{ offset: 4, targetNodeId: targetId }],
+            },
+          }],
+        },
+      });
+    }, { nodeId: ids.beta, targetId: 'node-missing-inline-ref' });
+    await emitDocumentEvent(page, {
+      type: 'projection_changed',
+      origin: 'test',
+      projection: await e2eProjection(page),
+      timestamp: Date.now(),
+    });
+
+    const inlineRef = row(page, ids.beta).locator('.inline-ref').first();
+    await expect(inlineRef).toHaveText('Referenced node');
+    await expect(inlineRef).not.toContainText('node-missing-inline-ref');
   });
 
   test('drag drop indicators use the row selection axis without layout shift', async ({ page }) => {

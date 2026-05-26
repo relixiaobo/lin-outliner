@@ -8,6 +8,7 @@ export type {
   AgentReasoningLevel,
   AgentRuntimeSettings,
   AgentRuntimeSettingsInput,
+  AgentSlashCommandView,
   AgentProviderSecretStatus,
   AgentProviderSettingsView,
   AgentSession,

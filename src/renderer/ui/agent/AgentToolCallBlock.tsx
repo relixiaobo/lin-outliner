@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AgentToolResultPayloadPart, AgentToolResultWithPayloads, ToolCall } from '../../../core/agentTypes';
 import type { AgentRenderSubagentEntity } from '../../../core/agentRenderProjection';
+import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
 import {
   AgentIcon,
@@ -21,11 +22,17 @@ import {
 } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { highlightCode, plainCodeHtml } from '../editor/shikiHighlighter';
+import {
+  AgentInlineReferenceText,
+  type AgentNodeReferenceOpenHandler,
+} from './AgentInlineReferenceText';
 import { AgentToolCallDisclosure } from './AgentToolCallDisclosure';
 
 interface AgentToolCallBlockProps {
   defaultExpanded?: boolean;
   expanded?: boolean;
+  index?: DocumentIndex;
+  onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   onToggle?: () => void;
   onOpenSubagentTranscript?: (subagentId: string) => void;
   pendingToolCallIds?: ReadonlySet<string>;
@@ -45,6 +52,25 @@ type ResultPart =
 
 const TOOL_OUTPUT_WINDOW_HEAD_CHARS = 12_000;
 const TOOL_OUTPUT_WINDOW_TAIL_CHARS = 4_000;
+
+interface ToolEnvelopeLike {
+  ok: boolean;
+  tool: string;
+  version: number;
+  status: string;
+  data?: unknown;
+  error?: {
+    code?: string;
+    message?: string;
+    recoverable?: boolean;
+    details?: unknown;
+  };
+  nextStep?: string;
+  fallback?: string;
+  hint?: unknown;
+  warnings?: string[];
+  metrics?: unknown;
+}
 
 export function getToolCallStatus(
   toolCallId: string,
@@ -214,9 +240,13 @@ function previewText(text: string | undefined, maxLength = 520): string {
 }
 
 function SubagentInlineDetails({
+  index,
+  onNodeReferenceOpen,
   onOpenTranscript,
   subagent,
 }: {
+  index?: DocumentIndex;
+  onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   onOpenTranscript?: (subagentId: string) => void;
   subagent: AgentRenderSubagentEntity;
 }) {
@@ -250,7 +280,9 @@ function SubagentInlineDetails({
           <div className="agent-tool-call-section-header">
             <div className="agent-tool-call-section-title">Name</div>
           </div>
-          <pre>{subagent.name}</pre>
+          <pre>
+            <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={subagent.name} />
+          </pre>
         </section>
       ) : null}
       {prompt ? (
@@ -259,7 +291,9 @@ function SubagentInlineDetails({
             <div className="agent-tool-call-section-title">Prompt</div>
             <ToolCopyButton ariaLabel="Copy subagent prompt" text={subagent.prompt} />
           </div>
-          <pre>{prompt}</pre>
+          <pre>
+            <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={prompt} />
+          </pre>
         </section>
       ) : null}
       {result ? (
@@ -268,7 +302,9 @@ function SubagentInlineDetails({
             <div className="agent-tool-call-section-title">Result</div>
             <ToolCopyButton ariaLabel="Copy subagent result" text={subagent.result ?? ''} />
           </div>
-          <pre>{result}</pre>
+          <pre>
+            <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={result} />
+          </pre>
         </section>
       ) : null}
       {error ? (
@@ -280,7 +316,9 @@ function SubagentInlineDetails({
             </div>
             <ToolCopyButton ariaLabel="Copy subagent error" text={subagent.error ?? ''} />
           </div>
-          <pre>{error}</pre>
+          <pre>
+            <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={error} />
+          </pre>
         </section>
       ) : null}
       <div className="agent-subagent-inline-actions">
@@ -338,6 +376,15 @@ function resultImages(result: AgentToolResultWithPayloads | undefined): Array<{ 
     .filter((block): block is Extract<AgentToolResultWithPayloads['content'][number], { type: 'image' }> =>
       block.type === 'image')
     .map((block) => ({ data: block.data, mimeType: block.mimeType }));
+}
+
+function isToolEnvelope(value: unknown): value is ToolEnvelopeLike {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<ToolEnvelopeLike>;
+  return candidate.version === 1
+    && typeof candidate.ok === 'boolean'
+    && typeof candidate.tool === 'string'
+    && typeof candidate.status === 'string';
 }
 
 function isJsonText(text: string): boolean {
@@ -436,6 +483,37 @@ function ToolCopyButton({ ariaLabel, text }: { ariaLabel: string; text: string }
   );
 }
 
+function ToolEnvelopeOutput({ envelope }: { envelope: ToolEnvelopeLike }) {
+  const notes = [
+    envelope.error?.message,
+    ...(envelope.warnings ?? []),
+    envelope.nextStep ? `Next: ${envelope.nextStep}` : null,
+    envelope.fallback ? `Fallback: ${envelope.fallback}` : null,
+  ].filter((note): note is string => typeof note === 'string' && note.trim().length > 0);
+
+  return (
+    <div className="agent-tool-envelope">
+      <div className={`agent-tool-status-line ${envelope.ok ? 'is-ok' : 'is-error'}`}>
+        <span>{envelope.status}</span>
+        <span>{envelope.tool}</span>
+      </div>
+      {notes.length > 0 ? (
+        <div className="agent-tool-notes">
+          {notes.map((note, index) => (
+            <div key={`note-${index}`}>{note}</div>
+          ))}
+        </div>
+      ) : null}
+      {envelope.data !== undefined ? (
+        <pre>{jsonText(envelope.data)}</pre>
+      ) : null}
+      {envelope.hint !== undefined ? (
+        <pre>{jsonText(envelope.hint)}</pre>
+      ) : null}
+    </div>
+  );
+}
+
 function ToolResultImages({ images }: { images: Array<{ data: string; mimeType: string }> }) {
   if (images.length === 0) return null;
   return (
@@ -454,10 +532,14 @@ function ToolResultImages({ images }: { images: Array<{ data: string; mimeType: 
 
 function PersistedToolOutput({
   initialText,
+  index,
+  onNodeReferenceOpen,
   payloadRef,
   sessionId,
 }: {
   initialText: string;
+  index?: DocumentIndex;
+  onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   payloadRef: AgentToolResultPayloadPart;
   sessionId?: string | null;
 }) {
@@ -503,7 +585,9 @@ function PersistedToolOutput({
         <span>{payload.summary || 'Stored tool output'}</span>
         <small>{formatBytes(payload.byteLength)}</small>
       </div>
-      <pre>{visible.text}</pre>
+      <pre>
+        <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={visible.text} />
+      </pre>
       <div className="agent-tool-persisted-actions">
         <ButtonControl
           className="agent-tool-persisted-load"
@@ -530,6 +614,8 @@ function PersistedToolOutput({
 export function AgentToolCallBlock({
   defaultExpanded = false,
   expanded,
+  index,
+  onNodeReferenceOpen,
   onToggle,
   onOpenSubagentTranscript,
   pendingToolCallIds,
@@ -548,9 +634,11 @@ export function AgentToolCallBlock({
   const outputText = useMemo(() => resultText(result), [result]);
   const images = useMemo(() => resultImages(result), [result]);
   const parts = useMemo(() => resultParts(result, isExpanded), [result, isExpanded]);
+  const details = result?.details;
+  const envelope = isToolEnvelope(details) ? details : null;
   const hasSubagentDetails = Boolean(subagent);
-  const hasDetails = hasSubagentDetails || inputText !== '{}' || outputText.length > 0;
-  const hasOutputDetails = parts.length > 0;
+  const hasDetails = hasSubagentDetails || inputText !== '{}' || outputText.length > 0 || envelope !== null;
+  const hasOutputDetails = envelope !== null || parts.length > 0;
 
   function toggle() {
     if (onToggle) {
@@ -573,6 +661,8 @@ export function AgentToolCallBlock({
     >
       {subagent ? (
         <SubagentInlineDetails
+          index={index}
+          onNodeReferenceOpen={onNodeReferenceOpen}
           onOpenTranscript={onOpenSubagentTranscript}
           subagent={subagent}
         />
@@ -595,25 +685,30 @@ export function AgentToolCallBlock({
             </div>
             <ToolCopyButton ariaLabel="Copy tool output" text={outputText} />
           </div>
-          {parts.map((part, index) =>
+          {envelope ? <ToolEnvelopeOutput envelope={envelope} /> : null}
+          {!envelope ? parts.map((part, partIndex) =>
             part.type === 'imagePlaceholder' ? (
-              <div className="agent-tool-image-placeholder" key={`placeholder-${index}`}>
+              <div className="agent-tool-image-placeholder" key={`placeholder-${partIndex}`}>
                 <FileTextIcon size={ICON_SIZE.menu} />
                 <span>Screenshot captured</span>
               </div>
             ) : part.type === 'persistedOutput' ? (
               <PersistedToolOutput
                 initialText={part.text}
+                index={index}
                 key={`payload-${part.payloadRef.payload.id}`}
+                onNodeReferenceOpen={onNodeReferenceOpen}
                 payloadRef={part.payloadRef}
                 sessionId={sessionId}
               />
             ) : isJsonText(part.text) ? (
-              <HighlightedJson code={part.text} key={`text-${index}`} />
+              <HighlightedJson code={part.text} key={`text-${partIndex}`} />
             ) : (
-              <pre key={`text-${index}`}>{part.text}</pre>
+              <pre key={`text-${partIndex}`}>
+                <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={part.text} />
+              </pre>
             ),
-          )}
+          ) : null}
         </section>
       ) : null}
     </AgentToolCallDisclosure>

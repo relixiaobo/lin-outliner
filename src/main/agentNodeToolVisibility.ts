@@ -1,6 +1,8 @@
 import type { AgentToolResult } from '@earendil-works/pi-agent-core';
+import { formatNodeReferenceMarker } from '../core/nodeReferenceMarkup';
 import type { ToolEnvelope } from './agentToolEnvelope';
-import { normalChildIds } from './agentNodeToolProjection';
+import { FINAL_ANSWER_NODE_REFERENCE_GUIDANCE } from './agentNodeToolGuidance';
+import { nodeKind, nodeTitle, normalChildIds, requiredNode } from './agentNodeToolProjection';
 import { serializeAnnotatedOutlines } from './agentNodeToolRead';
 import type {
   ChildrenPage,
@@ -14,6 +16,7 @@ import type {
   NodeVisibleMutationResult,
   NodeVisiblePage,
   NodeVisibleReadResult,
+  NodeVisibleReference,
   NodeVisibleResult,
   NodeVisibleSearchResult,
   NormalizedReadParams,
@@ -83,6 +86,7 @@ export function visibleReadResult(
   return compactVisibleResult({
     kind: 'read',
     outline,
+    references: visibleReferences(index, visibleReadReferenceIds(index, nodeIds, params)),
     page,
   });
 }
@@ -105,7 +109,10 @@ export function visibleSearchResult(index: ProjectionIndex, data: NodeSearchData
   const page = visiblePage({ total: data.total, offset: data.offset, limit: data.limit, items });
   return compactVisibleResult({
     kind: data.items ? 'search' : 'count',
-    ...(data.items ? { outline: serializeAnnotatedOutlines(index, items.map((item) => item.nodeId), 0, 0, 0, false) } : { total: data.total }),
+    ...(data.items ? {
+      outline: serializeAnnotatedOutlines(index, items.map((item) => item.nodeId), 0, 0, 0, false),
+      references: visibleReferences(index, items.map((item) => item.nodeId)),
+    } : { total: data.total }),
     page,
   } as NodeVisibleSearchResult | NodeVisibleCountResult);
 }
@@ -185,11 +192,15 @@ function nodeInstructions<TData>(envelope: ToolEnvelope<TData>, data: NodeVisibl
   const parts: string[] = [];
   if (data.kind === 'read') {
     parts.push('Use data.outline as the single source of truth for follow-up edits. Preserve existing %%node:id%% markers for existing nodes; omit markers only for newly created lines.');
+    if (data.references?.length) parts.push('For final answers, prefer copying data.references[].display_ref for node mentions.');
+    parts.push(FINAL_ANSWER_NODE_REFERENCE_GUIDANCE);
     if (data.page?.next_offset !== undefined) {
       parts.push(`More root children are available. Call node_read again with child_offset ${data.page.next_offset} and the same node_id/depth/child_limit.`);
     }
   } else if (data.kind === 'search') {
     parts.push('Use the %%node:id%% markers in data.outline when reading or editing a search result.');
+    if (data.references?.length) parts.push('For final answers, prefer copying data.references[].display_ref for result mentions.');
+    parts.push(FINAL_ANSWER_NODE_REFERENCE_GUIDANCE);
     if (data.page.next_offset !== undefined) {
       parts.push(`More search results are available. Call node_search again with offset ${data.page.next_offset} and the same outline/search_node_id/limit.`);
     }
@@ -216,6 +227,48 @@ function nodeInstructions<TData>(envelope: ToolEnvelope<TData>, data: NodeVisibl
 
 function errorInstructions<TData>(envelope: ToolEnvelope<TData>): string | undefined {
   return envelope.instructions;
+}
+
+function visibleReadReferenceIds(
+  index: ProjectionIndex,
+  nodeIds: string[],
+  params: NormalizedReadParams,
+): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const push = (nodeId: string) => {
+    if (seen.has(nodeId)) return;
+    seen.add(nodeId);
+    out.push(nodeId);
+  };
+  const visit = (nodeId: string, depth: number, childOffset: number) => {
+    push(nodeId);
+    if (depth <= 0) return;
+    const childIds = normalChildIds(index, nodeId, params.includeDeleted)
+      .slice(childOffset, childOffset + params.childLimit);
+    for (const childId of childIds) visit(childId, depth - 1, 0);
+  };
+  for (const nodeId of nodeIds) visit(nodeId, params.depth, params.childOffset);
+  return out;
+}
+
+function visibleReferences(index: ProjectionIndex, nodeIds: string[]): NodeVisibleReference[] | undefined {
+  const seen = new Set<string>();
+  const references: NodeVisibleReference[] = [];
+  for (const nodeId of nodeIds) {
+    if (seen.has(nodeId)) continue;
+    seen.add(nodeId);
+    const node = requiredNode(index, nodeId);
+    const title = nodeTitle(index, node);
+    references.push({
+      node_id: nodeId,
+      title,
+      display_ref: formatNodeReferenceMarker(title, nodeId),
+      edit_handle: `%%node:${nodeId}%%`,
+      type: nodeKind(node),
+    });
+  }
+  return references.length > 0 ? references : undefined;
 }
 
 function compactChanges(changes: NodeVisibleChanges): NodeVisibleChanges | undefined {

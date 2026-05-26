@@ -1,5 +1,11 @@
 import { expect, test } from '@playwright/test';
-import { commandCalls, emitAgentProjection, openMockedApp } from './outlinerMock';
+import {
+  commandCalls,
+  e2eProjection,
+  emitAgentProjection,
+  emitDocumentEvent,
+  openMockedApp,
+} from './outlinerMock';
 
 async function waitForAgentSession(page: import('@playwright/test').Page) {
   await expect.poll(async () => {
@@ -14,7 +20,7 @@ test.describe('agent composer controls', () => {
     await waitForAgentSession(page);
   });
 
-  test('sends from the primary action and keeps attachment chips removable', async ({ page }) => {
+  test('sends from the primary action', async ({ page }) => {
     const input = page.getByLabel('Agent message');
     await input.fill('Summarize current outline.');
     await page.getByRole('button', { name: 'Send message' }).click();
@@ -26,16 +32,77 @@ test.describe('agent composer controls', () => {
       message: 'Summarize current outline.',
       sessionId: 'mock-agent-session',
     });
+  });
 
+  test('inserts attachments inline and sends them as context', async ({ page }) => {
     await page.locator('.agent-composer-file-input').setInputFiles({
       name: 'notes.txt',
       mimeType: 'text/plain',
       buffer: Buffer.from('hello from test'),
     });
-    await expect(page.getByText('notes.txt')).toBeVisible();
+    await expect(page.locator('[data-agent-file-ref]')).toContainText('notes.txt');
+    await expect(page.locator('[data-agent-file-ref] .agent-composer-inline-file-icon')).toHaveAttribute('data-extension', 'TXT');
+    await expect(page.locator('.agent-attachment-chip')).toHaveCount(0);
 
-    await page.getByRole('button', { name: 'Remove notes.txt' }).click();
-    await expect(page.getByText('notes.txt')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Send message' }).click();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.find((call) => (
+        call.cmd === 'agent_send_message'
+        && Array.isArray(call.args.attachments)
+        && call.args.attachments.some((attachment: { name?: string }) => attachment.name === 'notes.txt')
+      ))?.args;
+    }).toMatchObject({
+      attachments: [{ name: 'notes.txt' }],
+      message: '@notes.txt',
+    });
+  });
+
+  test('uses the native attachment picker when available', async ({ page }) => {
+    await page.evaluate(() => {
+      const win = window as typeof window & {
+        lin?: {
+          invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+          pickLocalFiles?: () => Promise<{
+            canceled: boolean;
+            files: Array<{
+              path: string;
+              name: string;
+              mimeType: string;
+              sizeBytes: number;
+              lastModified: number;
+            }>;
+          }>;
+        };
+      };
+      if (!win.lin) return;
+      win.lin.pickLocalFiles = async () => ({
+        canceled: false,
+        files: [{
+          path: '/Users/test/Documents/local-notes.md',
+          name: 'local-notes.md',
+          mimeType: 'text/plain',
+          sizeBytes: 42,
+          lastModified: 1_800_000_000_000,
+        }],
+      });
+    });
+
+    await page.getByRole('button', { name: 'Add attachment' }).click();
+    await expect(page.locator('[data-agent-file-ref]')).toContainText('local-notes.md');
+
+    await page.getByRole('button', { name: 'Send message' }).click();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.find((call) => (
+        call.cmd === 'agent_send_message'
+        && Array.isArray(call.args.attachments)
+        && call.args.attachments.some((attachment: { path?: string }) => attachment.path === '/Users/test/Documents/local-notes.md')
+      ))?.args;
+    }).toMatchObject({
+      attachments: [{ kind: 'file', path: '/Users/test/Documents/local-notes.md' }],
+      message: '@local-notes.md',
+    });
   });
 
   test('passes slash commands through for runtime compact and skill handling', async ({ page }) => {
@@ -55,6 +122,186 @@ test.describe('agent composer controls', () => {
       '/compact keep only current project decisions',
       '/auto-skill runtime-check',
     ]);
+  });
+
+  test('suggests slash commands from the composer editor', async ({ page }) => {
+    const input = page.getByLabel('Agent message');
+    await input.click();
+    await page.keyboard.type('/');
+
+    const menu = page.getByRole('listbox', { name: 'Agent slash commands' });
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole('option', { name: /\/compact/ })).toBeVisible();
+
+    await page.keyboard.press('Enter');
+    await expect(input).toContainText('/compact');
+  });
+
+  test('clears the composer immediately after handing off a compact command', async ({ page }) => {
+    await page.evaluate(() => {
+      const win = window as typeof window & {
+        __resolveAgentSend?: () => void;
+        lin?: {
+          invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+        };
+      };
+      const originalInvoke = win.lin?.invoke;
+      if (!originalInvoke || !win.lin) return;
+      win.lin.invoke = ((cmd: string, args?: Record<string, unknown>) => {
+        if (cmd === 'agent_send_message') {
+          return new Promise((resolve) => {
+            win.__resolveAgentSend = () => resolve(undefined);
+          });
+        }
+        return originalInvoke(cmd, args);
+      }) as typeof originalInvoke;
+    });
+
+    const input = page.getByLabel('Agent message');
+    await input.fill('/compact');
+    await page.getByRole('button', { name: 'Send message' }).click();
+
+    await expect(input).toHaveText('');
+    await page.evaluate(() => {
+      const win = window as typeof window & { __resolveAgentSend?: () => void };
+      win.__resolveAgentSend?.();
+    });
+  });
+
+  test('inserts node references and sends explicit referenced node context', async ({ page }) => {
+    const input = page.getByLabel('Agent message');
+    await input.click();
+    await page.keyboard.type('@Alpha');
+
+    const menu = page.getByRole('listbox', { name: 'Agent reference suggestions' });
+    await expect(menu).toBeVisible();
+    const alphaOption = menu.getByRole('option', { name: /Alpha/ });
+    await expect(alphaOption.locator('.row-bullet-shape.content')).toBeVisible();
+    await alphaOption.click();
+
+    await expect(page.locator('[data-agent-node-ref="node-alpha"]')).toBeVisible();
+    await page.keyboard.type('details');
+    await expect(input).toContainText('Alpha details');
+    await page.getByRole('button', { name: 'Send message' }).click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.find((call) => (
+        call.cmd === 'agent_send_message'
+        && call.args.userViewContext
+        && typeof call.args.userViewContext === 'object'
+        && 'referencedNodes' in call.args.userViewContext
+      ))?.args;
+    }).toMatchObject({
+      message: '[[Alpha^node-alpha]] details',
+      userViewContext: {
+        referencedNodes: [{ nodeId: 'node-alpha', title: 'Alpha' }],
+      },
+    });
+
+    await emitAgentProjection(page, 'mock-agent-session', {
+      sessionTitle: 'Agent System',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      conversation: [{
+        nodeId: 'agent-user-with-ref',
+        message: {
+          role: 'user',
+          timestamp: 1_800_000_000_500,
+          content: [{ type: 'text', text: '[[Alpha^node-alpha]] details' }],
+        },
+        branches: null,
+      }],
+    });
+
+    const userBubble = page.locator('.agent-user-bubble', { hasText: 'details' });
+    await expect(userBubble.locator('[data-inline-ref="node-alpha"]')).toHaveText('Alpha');
+    await expect(userBubble).not.toContainText('[[Alpha^node-alpha]]');
+  });
+
+  test('renders node reference markers in assistant and tool output', async ({ page }) => {
+    await emitAgentProjection(page, 'mock-agent-session', {
+      sessionTitle: 'Agent System',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      conversation: [{
+        nodeId: 'agent-assistant-inline-ref',
+        message: {
+          role: 'assistant',
+          timestamp: 1_800_000_000_700,
+          api: 'openai-completions',
+          provider: 'openai',
+          model: 'gpt-5.4',
+          stopReason: 'toolUse',
+          content: [
+            { type: 'text', text: 'Review [[Alpha^node-alpha]] and [[^node-alpha]] before [[^node-missing]].' },
+            { type: 'toolCall', id: 'tool-ref-output', name: 'node_read', arguments: { nodeId: 'node-alpha' } },
+          ],
+        },
+        branches: null,
+      }],
+      messages: [{
+        role: 'toolResult',
+        toolCallId: 'tool-ref-output',
+        toolName: 'node_read',
+        timestamp: 1_800_000_000_800,
+        content: [{ type: 'text', text: 'Tool output references [[^node-alpha]].' }],
+        isError: false,
+      }],
+    });
+
+    await expect(page.locator('.agent-markdown [data-inline-ref="node-alpha"]')).toHaveText(['Alpha', 'Alpha']);
+    await expect(page.locator('.agent-markdown [data-inline-ref="node-missing"]')).toHaveText('Referenced node');
+    await expect(page.locator('.agent-markdown [data-inline-ref="node-missing"]')).not.toContainText('node-missing');
+    const tabCount = await page.locator('.workspace-tab').count();
+    const panelCount = await page.locator('.outline-panel-surface').count();
+
+    await page.locator('.agent-markdown [data-inline-ref="node-alpha"]').first().click();
+    await expect(page.locator('.workspace-tab')).toHaveCount(tabCount);
+    await expect(page.locator('.outline-panel-surface')).toHaveCount(panelCount);
+    await expect(page.locator('.workspace-tab.active')).toContainText('Alpha');
+
+    await page.locator('.agent-markdown [data-inline-ref="node-alpha"]').nth(1).click({ modifiers: ['Meta'] });
+    await expect(page.locator('.workspace-tab')).toHaveCount(tabCount + 1);
+    await expect(page.locator('.workspace-tab.active')).toContainText('Alpha');
+
+    await page.getByRole('button', { name: /Read node/ }).click();
+    await expect(page.locator('.agent-tool-call-section [data-inline-ref="node-alpha"]')).toHaveText('Alpha');
+  });
+
+  test('uses node icons in reference suggestions when available', async ({ page }) => {
+    await page.evaluate(() => {
+      const win = window as typeof window & {
+        lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      };
+      return win.lin?.invoke('set_node_icon', {
+        nodeId: 'node-alpha',
+        icon: '🏀',
+        iconKind: 'emoji',
+      });
+    });
+    await emitDocumentEvent(page, {
+      type: 'projection_changed',
+      origin: 'test',
+      projection: await e2eProjection(page),
+      timestamp: Date.now(),
+    });
+
+    const input = page.getByLabel('Agent message');
+    await input.click();
+    await page.keyboard.type('@Alpha');
+
+    const alphaOption = page.getByRole('listbox', { name: 'Agent reference suggestions' })
+      .getByRole('option', { name: /Alpha/ });
+    await expect(alphaOption.locator('.popover-node-emoji')).toHaveText('🏀');
+  });
+
+  test('keeps local files out of the reference menu for now', async ({ page }) => {
+    const input = page.getByLabel('Agent message');
+    await input.click();
+    await page.keyboard.type('@');
+
+    const menu = page.getByRole('listbox', { name: 'Agent reference suggestions' });
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole('option', { name: /Attach local file/ })).toHaveCount(0);
   });
 
   test('shows compact progress before expandable summaries', async ({ page }) => {
@@ -219,7 +466,7 @@ test.describe('agent composer controls', () => {
   test('keeps the composer surface unified with neutral focus', async ({ page }) => {
     await expect(page.locator('.agent-composer-toolbar')).toHaveCSS('border-top-width', '0px');
 
-    const input = page.locator('.agent-composer-input');
+    const input = page.locator('.agent-composer-editor .ProseMirror');
     await input.click();
     await expect(input).toBeFocused();
     const focusState = await input.evaluate((element) => {
@@ -438,6 +685,17 @@ test.describe('agent composer controls', () => {
       chevronOpacity: '0.72',
       titleColor: metrics!.textStrong,
     });
+  });
+
+  test('renders node reference session titles without node ids', async ({ page }) => {
+    await emitAgentProjection(page, 'mock-agent-session', {
+      sessionTitle: '[[你好^node:abcd7362-b2e4-498d-a1b2]] 你好',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      conversation: [],
+    });
+
+    await expect(page.locator('.agent-dock-title')).toHaveText('你好 你好');
+    await expect(page.locator('.agent-dock-title')).not.toContainText('node:');
   });
 
   test('keeps conversation rename geometry stable', async ({ page }) => {

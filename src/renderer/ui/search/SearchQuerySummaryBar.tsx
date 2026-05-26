@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import { formatNodeReferenceMarker } from '../../../core/nodeReferenceMarkup';
 import { api } from '../../api/client';
 import type { NodeId, NodeProjection, QueryLogic, QueryOp } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
@@ -495,7 +496,7 @@ function nodeTitle(index: DocumentIndex, nodeId: NodeId): string {
 }
 
 function nodeReference(index: DocumentIndex, nodeId: NodeId, label?: string): string {
-  return `[[${label ?? nodeTitle(index, nodeId)}^${nodeId}]]`;
+  return formatNodeReferenceMarker(label ?? nodeTitle(index, nodeId), nodeId);
 }
 
 function tagName(index: DocumentIndex, tagId: NodeId): string {

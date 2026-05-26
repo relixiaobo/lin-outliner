@@ -959,6 +959,7 @@ describe('agent node tools', () => {
       data?: {
         kind: 'read';
         outline?: string;
+        references?: Array<{ node_id: string; title: string; display_ref: string; edit_handle: string; type: string }>;
       };
     }>(result.contentText);
 
@@ -968,6 +969,22 @@ describe('agent node tools', () => {
     expect((visible as any).metrics).toBeUndefined();
     expect(visible.data!.outline).toBe(`- %%node:${root}%% Root\n  - %%node:${child}%% Child`);
     expect((visible.data! as any).refs).toBeUndefined();
+    expect(visible.data!.references).toEqual([
+      {
+        display_ref: `[[Root^${root}]]`,
+        edit_handle: `%%node:${root}%%`,
+        node_id: root,
+        title: 'Root',
+        type: 'node',
+      },
+      {
+        display_ref: `[[Child^${child}]]`,
+        edit_handle: `%%node:${child}%%`,
+        node_id: child,
+        title: 'Child',
+        type: 'node',
+      },
+    ]);
     expect(result.details.data!.items[0]!.children.items).toEqual([expect.objectContaining({ nodeId: child })]);
   });
 
@@ -1081,18 +1098,31 @@ describe('agent node tools', () => {
     const visible = parseVisibleToolResult<{
       ok: boolean;
       tool: string;
+      instructions?: string;
       data?: {
         kind: 'search';
         outline?: string;
+        references?: Array<{ node_id: string; title: string; display_ref: string; edit_handle: string; type: string }>;
         page?: { total: number; offset: number; limit: number; next_offset?: number };
       };
     }>(result.contentText);
 
     expect(visible).toMatchObject({ ok: true, tool: 'node_search' });
+    expect(visible.instructions).toContain('[[Display^node:...]]');
+    expect(visible.instructions).toContain('[[^node:...]]');
+    expect(visible.instructions).toContain('never show %%node:id%%');
+    expect(visible.instructions).toContain('data.references[].display_ref');
     expect(visible.data!.kind).toBe('search');
     expect(visible.data!.outline).toBe(`- %%node:${chengdu}%% Chengdu weather`);
     expect((visible.data! as any).matches).toBeUndefined();
     expect((visible.data! as any).refs).toBeUndefined();
+    expect(visible.data!.references).toEqual([{
+      display_ref: `[[Chengdu weather^${chengdu}]]`,
+      edit_handle: `%%node:${chengdu}%%`,
+      node_id: chengdu,
+      title: 'Chengdu weather',
+      type: 'node',
+    }]);
     expect(visible.data!.page).toMatchObject({ total: 1, offset: 0, limit: 10 });
     expect(result.details.data!.items![0]!.nodeId).toBe(chengdu);
   });

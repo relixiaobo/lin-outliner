@@ -179,14 +179,24 @@ export function App() {
   }, [setUi]);
 
   const navigateRoot = useCallback((nodeId: NodeId, options?: NavigateRootOptions) => {
+    if (options?.newTab) {
+      createTab(nodeId);
+      expandNodeInOutliner(nodeId);
+      return;
+    }
     setActivePanelRoot(nodeId, options);
     expandNodeInOutliner(nodeId);
-  }, [expandNodeInOutliner, setActivePanelRoot]);
+  }, [createTab, expandNodeInOutliner, setActivePanelRoot]);
 
   const navigatePanelRoot = useCallback((panelId: string, nodeId: NodeId, options?: NavigateRootOptions) => {
+    if (options?.newTab) {
+      createTab(nodeId);
+      expandNodeInOutliner(nodeId);
+      return;
+    }
     setPanelRoot(panelId, nodeId, options);
     expandNodeInOutliner(nodeId);
-  }, [expandNodeInOutliner, setPanelRoot]);
+  }, [createTab, expandNodeInOutliner, setPanelRoot]);
 
   const navigatePanelBack = useCallback((panelId: string) => {
     const nodeId = goPanelBack(panelId);
@@ -212,6 +222,10 @@ export function App() {
     openPanel(nodeId);
     expandNodeInOutliner(nodeId);
   }, [expandNodeInOutliner, openPanel]);
+
+  const openNodeReferenceFromAgent = useCallback((nodeId: NodeId, options?: NavigateRootOptions) => {
+    navigateRoot(nodeId, { focus: false, newTab: options?.newTab });
+  }, [navigateRoot]);
 
   const openActiveRootInPanel = useCallback(() => {
     if (!rootId) return;
@@ -334,7 +348,7 @@ export function App() {
         activeTabId={activeTabId}
         canNavigateBack={Boolean(pageHistoryPanel?.pageBackStack?.length)}
         canNavigateForward={Boolean(pageHistoryPanel?.pageForwardStack?.length)}
-        onCreateTab={createTab}
+        onCreateTab={() => createTab()}
         onCloseTab={closeTab}
         onNavigateBack={navigateActivePanelBack}
         onNavigateForward={navigateActivePanelForward}
@@ -383,7 +397,9 @@ export function App() {
         />
 
         <AgentDock
+          index={index}
           userViewContext={agentUserViewContext}
+          onOpenNodeReference={openNodeReferenceFromAgent}
           onOpenDebugPanel={openAgentDebugPanel}
           onProviderSettingsOpenChange={setProviderSettingsOpen}
           providerSettingsRestoreFocus={() => providerSettingsRestoreTargetRef.current}

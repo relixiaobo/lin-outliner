@@ -367,9 +367,22 @@ test.describe('outliner selection keyboard parity', () => {
 
     const inlineRef = row(page, referenceId).locator('.inline-ref').first();
     await expect(inlineRef).toHaveText('Beta');
-    const titleEditor = page.locator('.panel-title-editor .ProseMirror').first();
-    await inlineRef.click();
+    const tabCount = await page.locator('.workspace-tab').count();
+    const panelCount = await page.locator('.outline-panel-surface').count();
 
+    await inlineRef.click({ modifiers: ['Meta'] });
+    await expect(page.locator('.workspace-tab')).toHaveCount(tabCount + 1);
+    await expect(page.locator('.workspace-tab.active')).toContainText('Beta');
+
+    await page.locator('.workspace-tab').first().click();
+    await expect(page.locator('.outline-panel-surface')).toHaveCount(panelCount);
+
+    const originalTabInlineRef = row(page, referenceId).locator('.inline-ref').first();
+    await expect(originalTabInlineRef).toHaveText('Beta');
+    const titleEditor = page.locator('.panel-title-editor .ProseMirror').first();
+    await originalTabInlineRef.click();
+
+    await expect(page.locator('.workspace-tab')).toHaveCount(tabCount + 1);
     await expect(titleEditor).toHaveText('Beta');
     await expect(titleEditor).not.toBeFocused();
   });

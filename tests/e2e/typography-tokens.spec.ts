@@ -108,6 +108,7 @@ test.describe('typography tokens', () => {
   test('keeps product font declarations tokenized outside proportional glyph exceptions', () => {
     const allowedValues = new Set([
       '0.92em',
+      '0',
       '1',
       '1.16em',
       '1.25',
@@ -287,7 +288,7 @@ test.describe('typography tokens', () => {
       fontSize: '16px',
       lineHeight: '26px',
     });
-    await expect(cssTextMetrics(page, '.agent-composer-input')).resolves.toEqual({
+    await expect(cssTextMetrics(page, '.agent-composer-editor')).resolves.toEqual({
       fontSize: '16px',
       lineHeight: '26px',
     });

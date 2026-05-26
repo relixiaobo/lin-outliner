@@ -1,11 +1,8 @@
 import type { ChangeEvent, ReactNode, RefObject } from 'react';
-import type { AgentMessageAttachmentInput } from '../../../core/agentTypes';
 import type { AgentReasoningLevel } from '../../api/types';
 import {
   AttachmentIcon,
   ChevronDownIcon,
-  CloseIcon,
-  FileTextIcon,
   ICON_SIZE,
   PencilIcon,
   SendIcon,
@@ -46,45 +43,6 @@ export function AgentQueuedSteer({
         />
       </div>
       <div className="agent-steer-preview">{note}</div>
-    </div>
-  );
-}
-
-type AttachmentChipAttachment = Pick<AgentMessageAttachmentInput, 'kind' | 'name' | 'sizeBytes'> & {
-  previewUrl?: string;
-};
-
-export function AgentComposerAttachmentChip({
-  attachment,
-  onRemove,
-  sizeLabel,
-}: {
-  attachment: AttachmentChipAttachment;
-  onRemove: () => void;
-  sizeLabel: string;
-}) {
-  return (
-    <div className="agent-attachment-chip">
-      <div className="agent-attachment-preview">
-        {attachment.kind === 'image' && attachment.previewUrl ? (
-          <img alt="" src={attachment.previewUrl} />
-        ) : (
-          <FileTextIcon size={ICON_SIZE.menu} />
-        )}
-      </div>
-      <div className="agent-attachment-meta">
-        <span title={attachment.name}>{attachment.name}</span>
-        <small>{sizeLabel}</small>
-      </div>
-      <IconButton
-        className="agent-attachment-remove"
-        icon={CloseIcon}
-        iconSize={ICON_SIZE.tiny}
-        label={`Remove ${attachment.name}`}
-        onClick={onRemove}
-        title="Remove attachment"
-        variant="tabClose"
-      />
     </div>
   );
 }

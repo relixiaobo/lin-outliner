@@ -28,6 +28,16 @@ const EMPTY_COMMAND_RUNNER_LIFECYCLE: CommandRunnerLifecycle = {};
 
 export interface NavigateRootOptions {
   focus?: boolean;
+  newTab?: boolean;
+}
+
+interface ModifierClickEventLike {
+  ctrlKey: boolean;
+  metaKey: boolean;
+}
+
+export function wantsNewTabFromClick(event: ModifierClickEventLike): boolean {
+  return event.metaKey || event.ctrlKey;
 }
 
 export interface TriggerAnchor {

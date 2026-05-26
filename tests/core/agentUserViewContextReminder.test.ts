@@ -40,6 +40,20 @@ describe('agent user view context reminder', () => {
     })).toBeNull();
   });
 
+  test('renders explicit references even without visible panels', () => {
+    const reminder = buildUserViewContextReminder({
+      activePanelId: null,
+      focusedPanelId: null,
+      focusSurface: null,
+      focusedNode: null,
+      nodePanels: [],
+      referencedNodes: [{ nodeId: 'node-ref-1', title: 'Referenced node' }],
+    });
+
+    expect(reminder).toContain('<explicit-references>');
+    expect(reminder).toContain('<node-ref id="node-ref-1" title="Referenced node" />');
+  });
+
   test('tracks per-session snapshots and sends diffs after the first view', () => {
     const tracker = new AgentUserViewContextReminderTracker();
     const first = tracker.prepare('session-1', sampleContext());
@@ -56,6 +70,14 @@ describe('agent user view context reminder', () => {
     expect(changed.reminder).toContain('<focus-changed from_node_id="node-1" to_node_id="node-2" />');
     expect(changed.reminder).toContain('<panel-visible-outline-changed id="panel-1" root_id="root-1">');
     expect(changed.reminder).toContain('  - %%node:node-2 focused collapsed children=3%% Collapsed branch');
+
+    const referenced = tracker.prepare('session-1', {
+      ...focusedOnCollapsedBranchContext(),
+      referencedNodes: [{ nodeId: 'node-ref-2', title: 'Second reference' }],
+    });
+    expect(referenced.reminder).toContain('<user-view-context mode="diff" basis="previous-user-view-context">');
+    expect(referenced.reminder).toContain('<explicit-references>');
+    expect(referenced.reminder).toContain('<node-ref id="node-ref-2" title="Second reference" />');
 
     tracker.reset('session-1');
     const afterReset = tracker.prepare('session-1', sampleContext());

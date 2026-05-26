@@ -1,5 +1,7 @@
 import type { AgentToolResultWithPayloads } from '../../../core/agentTypes';
 import type { AgentRenderSubagentEntity } from '../../../core/agentRenderProjection';
+import type { DocumentIndex } from '../../state/document';
+import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentThinkingBody, AgentThinkingRow } from './AgentThinkingBlock';
 import { AgentToolCallBlock } from './AgentToolCallBlock';
 import type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
@@ -8,6 +10,8 @@ interface AgentProcessTimelineProps {
   blocks: AgentProcessSegmentBlock[];
   expandState: AgentExpandState;
   id: string;
+  index: DocumentIndex;
+  onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   onOpenSubagentTranscript?: (subagentId: string) => void;
   pendingToolCallIds: ReadonlySet<string>;
   results: Map<string, AgentToolResultWithPayloads>;
@@ -20,6 +24,8 @@ export function AgentProcessTimeline({
   blocks,
   expandState,
   id,
+  index,
+  onNodeReferenceOpen,
   onOpenSubagentTranscript,
   pendingToolCallIds,
   results,
@@ -55,11 +61,13 @@ export function AgentProcessTimeline({
           return (
             <AgentToolCallBlock
               expanded={expandState.isExpanded(`tool:${block.toolCall.id}`, false)}
+              index={index}
               key={`tool-${block.toolCall.id}`}
               onToggle={() => {
                 const toolId = `tool:${block.toolCall.id}`;
                 expandState.toggle(toolId, expandState.isExpanded(toolId, false));
               }}
+              onNodeReferenceOpen={onNodeReferenceOpen}
               onOpenSubagentTranscript={onOpenSubagentTranscript}
               pendingToolCallIds={pendingToolCallIds}
               result={results.get(block.toolCall.id)}
