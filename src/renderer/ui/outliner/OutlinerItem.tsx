@@ -740,7 +740,10 @@ export function OutlinerItem(props: OutlinerItemProps) {
     const previousNode = props.index.byId.get(previousId);
     if (!previousNode) return;
 
-    if (node.type === 'reference' || previousNode.type === 'reference') {
+    // Backspacing a reference row itself has nothing to merge away — just step
+    // up. But merging *into* a reference is allowed: core converts that
+    // reference into a leading inline reference on the joined row.
+    if (node.type === 'reference') {
       requestRowFocus(previousId);
       return;
     }

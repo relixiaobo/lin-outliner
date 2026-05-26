@@ -2275,7 +2275,26 @@ export class Core {
     const sourceParentId = current.parentId;
     const sourceIndex = sourceParentId ? childIndex(state, sourceParentId, nodeId) : undefined;
     const target = clone(requiredNode(state, targetId));
-    target.content = appendRichText(target.content, current.content);
+    if (target.type === 'reference' && target.targetId) {
+      // A reference node renders its target, not its own content, so merging text
+      // into it converts the reference into a *leading inline reference* on a
+      // now-plain node — the merged text then has somewhere to live.
+      const resolvedTargetId = resolveReferenceTargetId(state, target.targetId);
+      const inlineRefContent: RichText = {
+        text: '',
+        marks: [],
+        inlineRefs: [{
+          offset: 0,
+          targetNodeId: resolvedTargetId,
+          displayName: state.nodes[resolvedTargetId]?.content.text || undefined,
+        }],
+      };
+      target.type = undefined;
+      target.targetId = undefined;
+      target.content = appendRichText(inlineRefContent, current.content);
+    } else {
+      target.content = appendRichText(target.content, current.content);
+    }
     target.updatedAt = nowMs();
     this.loro.writeNode(target);
     current.children.forEach((childId, offset) => {
