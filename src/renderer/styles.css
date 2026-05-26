@@ -2373,6 +2373,30 @@ button.panel-resize-handle::after {
   text-decoration-line: none;
 }
 
+.agent-message-inline-file {
+  display: inline-flex;
+  max-width: min(100%, 220px);
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--semantic-info);
+  line-height: inherit;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
+.agent-message-inline-file svg {
+  width: 0.92em;
+  height: 0.92em;
+  flex: 0 0 auto;
+  transform: translateY(0.08em);
+}
+
+.agent-message-inline-file span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .agent-user-file-list,
 .agent-user-image-list {
   display: flex;
@@ -4025,6 +4049,11 @@ button.panel-resize-handle::after {
   width: 17px;
   height: 18px;
   flex: 0 0 17px;
+  overflow: hidden;
+  transform: translateY(2px);
+}
+
+.agent-composer-inline-file-icon.is-fallback-icon {
   align-items: flex-end;
   justify-content: center;
   box-sizing: border-box;
@@ -4035,10 +4064,9 @@ button.panel-resize-handle::after {
   font-size: var(--font-ui-3xs);
   font-weight: 700;
   line-height: var(--line-ui-3xs);
-  transform: translateY(2px);
 }
 
-.agent-composer-inline-file-icon::before {
+.agent-composer-inline-file-icon.is-fallback-icon::before {
   position: absolute;
   top: -1.4px;
   right: -1.4px;
@@ -4050,8 +4078,51 @@ button.panel-resize-handle::after {
   content: "";
 }
 
-.agent-composer-inline-file-icon::after {
+.agent-composer-inline-file-icon.is-fallback-icon::after {
   content: attr(data-extension);
+}
+
+.agent-composer-inline-file-icon.is-native-icon,
+.agent-composer-inline-file-icon.is-thumbnail-icon {
+  width: 18px;
+  height: 18px;
+  flex-basis: 18px;
+  align-items: center;
+  justify-content: center;
+  margin-right: var(--space-hairline);
+  border-radius: var(--radius-2xs);
+  background: var(--panel-bg);
+}
+
+.agent-composer-inline-file-icon.is-native-icon img,
+.agent-composer-inline-file-icon.is-thumbnail-icon img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.agent-composer-inline-file-icon.is-native-icon img {
+  object-fit: contain;
+}
+
+.agent-composer-inline-file-icon.is-thumbnail-icon img {
+  object-fit: cover;
+}
+
+.agent-composer-inline-file.is-directory .agent-composer-inline-file-icon.is-fallback-icon {
+  height: 15px;
+  border-radius: var(--radius-2xs);
+  transform: translateY(1px);
+}
+
+.agent-composer-inline-file.is-directory .agent-composer-inline-file-icon.is-fallback-icon::before {
+  top: -5px;
+  left: -1.4px;
+  width: 9px;
+  height: 5px;
+  border: 1.4px solid currentColor;
+  border-bottom: 0;
+  border-radius: var(--radius-2xs) var(--radius-2xs) 0 0;
 }
 
 .agent-composer-inline-file-name {
@@ -4067,6 +4138,52 @@ button.panel-resize-handle::after {
 
 .agent-composer-trigger-popover {
   z-index: var(--z-popover);
+}
+
+.agent-composer-mention-section {
+  color: var(--muted-2);
+  font-size: var(--font-ui-xs);
+  font-weight: 650;
+  padding: var(--space-2) var(--space-3) var(--space-1);
+}
+
+.agent-composer-mention-status {
+  color: var(--muted-2);
+  font-size: var(--font-ui-xs);
+  padding: var(--space-2) var(--space-3);
+}
+
+.agent-composer-mention-file-native-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
+.agent-composer-mention-file-native-icon.is-thumbnail {
+  border-radius: var(--radius-2xs);
+  object-fit: cover;
+}
+
+.agent-composer-file-preview-popover {
+  box-sizing: border-box;
+  z-index: var(--z-popover);
+  height: 112px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  padding: var(--space-1);
+  pointer-events: none;
+}
+
+.agent-composer-file-preview-popover img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: calc(var(--radius-sm) - 2px);
+  object-fit: contain;
+  image-rendering: auto;
 }
 
 .agent-composer-toolbar {
@@ -5266,6 +5383,24 @@ button.panel-resize-handle::after {
   display: flex;
   flex-direction: column;
   line-height: var(--line-ui-xs-relaxed);
+}
+
+.agent-composer-file-name-middle {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+}
+
+.agent-composer-file-name-start {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-composer-file-name-end {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .popover-item-meta {

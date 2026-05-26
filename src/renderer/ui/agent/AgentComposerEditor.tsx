@@ -2,14 +2,17 @@ import {
   forwardRef,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
 } from 'react';
 import { createPortal } from 'react-dom';
 import { Schema, type Node as PMNode } from 'prosemirror-model';
 import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
+import { formatFileReferenceMarker, sanitizeFileReferenceRef } from '../../../core/agentFileReferenceMarkup';
 import { formatNodeReferenceMarker } from '../../../core/nodeReferenceMarkup';
 import type { AgentSlashCommandView, NodeId } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
@@ -19,7 +22,21 @@ import { referenceItems } from '../outliner/ReferenceSelector';
 import { NodeReferenceMenuIcon } from '../outliner/NodeReferenceMenuIcon';
 import { PopoverEmpty, PopoverListbox, PopoverListItem } from '../outliner/PopoverList';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
-import { CommandIcon, ICON_SIZE } from '../icons';
+import {
+  CommandIcon,
+  DatabaseIcon,
+  FileArchiveIcon,
+  FileAudioIcon,
+  FileCodeIcon,
+  FileImageIcon,
+  FileSpreadsheetIcon,
+  FileTextIcon,
+  FileVideoIcon,
+  FolderIcon,
+  ICON_SIZE,
+  PresentationIcon,
+  type AppIcon,
+} from '../icons';
 import { textOf } from '../shared';
 import { inlineReferenceTextColor } from '../tags/tagColors';
 import {
@@ -34,9 +51,26 @@ export interface AgentComposerNodeReference {
 
 export interface AgentComposerFileReference {
   attachmentId: string;
+  entryKind?: 'file' | 'directory';
+  iconDataUrl?: string;
   name: string;
+  ref: string;
   mimeType: string;
   sizeBytes: number;
+  thumbnailDataUrl?: string;
+}
+
+export interface AgentComposerLocalFileCandidate {
+  entryKind: 'file' | 'directory';
+  id: string;
+  path: string;
+  name: string;
+  parentPath: string;
+  mimeType: string;
+  sizeBytes: number;
+  lastModified: number;
+  iconDataUrl?: string;
+  thumbnailDataUrl?: string;
 }
 
 export interface AgentComposerDraft {
@@ -66,7 +100,11 @@ interface AgentComposerEditorProps {
   isStreaming: boolean;
   onChange: (draft: AgentComposerDraft) => void;
   onFilesPasted: (files: File[]) => void;
+  onLocalFilePreview: (file: AgentComposerLocalFileCandidate) => Promise<AgentComposerLocalFileCandidate | null>;
+  onLocalFileSearch: (query: string) => Promise<AgentComposerLocalFileCandidate[]>;
+  onLocalFileSelect: (file: AgentComposerLocalFileCandidate) => Promise<AgentComposerFileReference | null>;
   onNodeReferenceClick: AgentNodeReferenceOpenHandler;
+  recentLocalFiles: readonly AgentComposerLocalFileCandidate[];
   onStop: () => void;
   onSubmit: () => void;
   placeholder: string;
@@ -75,6 +113,7 @@ interface AgentComposerEditorProps {
 
 interface ComposerTrigger {
   kind: '@' | '/';
+  mode: 'mention' | 'slash';
   query: string;
   from: number;
   to: number;
@@ -87,6 +126,40 @@ const EMPTY_DRAFT: AgentComposerDraft = {
   nodeRefs: [],
   text: '',
 };
+
+const LOCAL_FILE_TRIGGER_PATTERN = /(?:^|\s)(@(本机文件|file|local|localfile)(?::|\s)?([^\n@]*))$/iu;
+const LOCAL_FILE_SEARCH_DEBOUNCE_MS = 160;
+const LOCAL_FILE_MIN_QUERY_LENGTH = 2;
+const MAX_MENTION_NODES = 6;
+const MAX_MENTION_FILES = 6;
+const FILE_PREVIEW_POPOVER_GAP = 8;
+const FILE_PREVIEW_POPOVER_HEIGHT = 112;
+const FILE_PREVIEW_POPOVER_WIDTH = 156;
+
+interface FilePreviewAnchorRect {
+  bottom: number;
+  height: number;
+  left: number;
+  right: number;
+  top: number;
+}
+
+type MentionMenuItem =
+  | {
+    kind: 'node';
+    section: 'Recent' | 'Nodes';
+    key: string;
+    id: NodeId;
+    label: string;
+    breadcrumb?: string;
+    node: ReturnType<DocumentIndex['byId']['get']>;
+  }
+  | {
+    kind: 'file';
+    section: 'Recent' | 'Files';
+    key: string;
+    file: AgentComposerLocalFileCandidate;
+  };
 
 const agentComposerSchema = new Schema({
   nodes: {
@@ -145,27 +218,37 @@ const agentComposerSchema = new Schema({
       selectable: true,
       attrs: {
         attachmentId: { default: '' },
+        entryKind: { default: 'file' },
+        iconDataUrl: { default: '' },
         name: { default: '' },
+        ref: { default: '' },
         mimeType: { default: '' },
         sizeBytes: { default: 0 },
+        thumbnailDataUrl: { default: '' },
       },
       toDOM(node) {
         const name = String(node.attrs.name ?? '') || 'file';
+        const mimeType = String(node.attrs.mimeType ?? '');
+        const entryKind = String(node.attrs.entryKind ?? '') === 'directory' || mimeType === 'inode/directory'
+          ? 'directory'
+          : 'file';
+        const iconDataUrl = String(node.attrs.iconDataUrl ?? '');
         const sizeBytes = Number(node.attrs.sizeBytes ?? 0);
+        const thumbnailDataUrl = String(node.attrs.thumbnailDataUrl ?? '');
         const detail = [
           name,
-          node.attrs.mimeType ? String(node.attrs.mimeType) : null,
+          entryKind === 'directory' ? 'Folder' : mimeType || null,
           Number.isFinite(sizeBytes) && sizeBytes > 0 ? formatBytes(sizeBytes) : null,
         ].filter(Boolean).join(' - ');
         return [
           'span',
           {
-            class: 'agent-composer-inline-file',
+            'aria-label': detail,
+            class: `agent-composer-inline-file ${entryKind === 'directory' ? 'is-directory' : ''}`,
             contenteditable: 'false',
             'data-agent-file-ref': String(node.attrs.attachmentId ?? ''),
-            title: detail,
           },
-          ['span', { class: 'agent-composer-inline-file-icon', 'data-extension': fileExtensionLabel(name, node.attrs.mimeType) }],
+          fileReferenceIconDom({ entryKind, iconDataUrl, mimeType, name, thumbnailDataUrl }),
           ['span', { class: 'agent-composer-inline-file-name' }, name],
         ];
       },
@@ -182,25 +265,64 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
     const itemCountRef = useRef(0);
     const selectedIndexRef = useRef(0);
     const triggerRef = useRef<ComposerTrigger | null>(null);
+    const previewRequestIdsRef = useRef(new Set<string>());
     const [trigger, setTrigger] = useState<ComposerTrigger | null>(null);
     const [selectedIndex, setSelectedIndex] = useState(0);
     const [isEmpty, setIsEmpty] = useState(true);
+    const [filePreviewThumbnails, setFilePreviewThumbnails] = useState<Record<string, string>>({});
+    const [localFileSearch, setLocalFileSearch] = useState<{
+      error: string | null;
+      query: string;
+      results: AgentComposerLocalFileCandidate[];
+      status: 'idle' | 'loading' | 'ready' | 'error';
+    }>({ error: null, query: '', results: [], status: 'idle' });
+    const [filePreviewAnchor, setFilePreviewAnchor] = useState<FilePreviewAnchorRect | null>(null);
 
     propsRef.current = props;
 
+    const rawMentionItems = useMemo(() => trigger?.mode === 'mention'
+      ? mentionMenuItems({
+          currentNodeId: props.currentNodeId,
+          index: props.index,
+          localFileSearch,
+          query: trigger.query,
+          recentLocalFiles: props.recentLocalFiles,
+        })
+      : [], [
+        localFileSearch,
+        props.currentNodeId,
+        props.index,
+        props.recentLocalFiles,
+        trigger?.mode,
+        trigger?.query,
+      ]);
+    const mentionItems = useMemo(
+      () => applyMentionFilePreviewThumbnails(rawMentionItems, filePreviewThumbnails),
+      [filePreviewThumbnails, rawMentionItems],
+    );
+
     const itemCount = useMemo(() => {
       if (!trigger) return 0;
-      if (trigger.kind === '/') return filterSlashCommands(props.slashCommands, trigger.query).length;
-      return referenceMenuItems(props.index, props.currentNodeId, trigger.query).length;
-    }, [props.currentNodeId, props.index, props.slashCommands, trigger]);
+      if (trigger.mode === 'slash') return filterSlashCommands(props.slashCommands, trigger.query).length;
+      return mentionItems.length;
+    }, [mentionItems.length, props.slashCommands, trigger]);
 
     const anchoredStyle = useAnchoredOverlay(menuRef, {
       anchorRect: trigger?.anchor ?? null,
-      layoutKey: trigger ? `${trigger.kind}:${trigger.query}:${itemCount}` : 'closed',
-      maxHeight: 260,
+      layoutKey: trigger ? `${trigger.kind}:${trigger.mode}:${trigger.query}:${itemCount}` : 'closed',
+      maxHeight: trigger?.mode === 'mention' ? 320 : 260,
       placement: 'bottom-start',
       width: 260,
     });
+    const selectedMentionFile = trigger?.mode === 'mention'
+      ? selectedMentionFileItem(mentionItems, selectedIndex)
+      : null;
+    const selectedPreviewFile = selectedMentionFile?.thumbnailDataUrl && isImagePreviewFile(selectedMentionFile)
+      ? selectedMentionFile
+      : null;
+    const filePreviewStyle = selectedPreviewFile && filePreviewAnchor
+      ? mentionFilePreviewStyle(filePreviewAnchor)
+      : undefined;
 
     useImperativeHandle(ref, () => ({
       clear() {
@@ -258,15 +380,97 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
 
     useEffect(() => {
       setSelectedIndex(0);
-    }, [trigger?.kind, trigger?.query, itemCount]);
+    }, [trigger?.kind, trigger?.mode, trigger?.query, itemCount]);
 
     useEffect(() => {
       itemCountRef.current = itemCount;
     }, [itemCount]);
 
+    useLayoutEffect(() => {
+      if (!selectedMentionFile) {
+        setFilePreviewAnchor(null);
+        return;
+      }
+      const option = menuRef.current?.querySelectorAll<HTMLElement>('[role="option"]')[selectedIndex];
+      const rect = option?.getBoundingClientRect();
+      if (!rect) {
+        setFilePreviewAnchor(null);
+        return;
+      }
+      setFilePreviewAnchor({
+        bottom: rect.bottom,
+        height: rect.height,
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+      });
+    }, [
+      selectedIndex,
+      selectedMentionFile?.id,
+      itemCount,
+      anchoredStyle?.left,
+      anchoredStyle?.top,
+    ]);
+
     useEffect(() => {
       selectedIndexRef.current = selectedIndex;
     }, [selectedIndex]);
+
+    useEffect(() => {
+      if (!selectedMentionFile || selectedMentionFile.thumbnailDataUrl || !isImagePreviewFile(selectedMentionFile)) return;
+      if (previewRequestIdsRef.current.has(selectedMentionFile.id)) return;
+      previewRequestIdsRef.current.add(selectedMentionFile.id);
+      let canceled = false;
+      propsRef.current.onLocalFilePreview(selectedMentionFile)
+        .then((file) => {
+          if (canceled || !file?.thumbnailDataUrl) return;
+          setFilePreviewThumbnails((current) => current[file.id]
+            ? current
+            : { ...current, [file.id]: file.thumbnailDataUrl! });
+        })
+        .catch(() => {
+          // Preview is optional; the list can still use the normal file icon.
+        });
+      return () => {
+        canceled = true;
+      };
+    }, [selectedMentionFile?.id, selectedMentionFile?.thumbnailDataUrl]);
+
+    useEffect(() => {
+      if (!trigger || trigger.mode !== 'mention') {
+        setLocalFileSearch((current) => current.status === 'idle'
+          ? current
+          : { error: null, query: '', results: [], status: 'idle' });
+        return;
+      }
+      const query = trigger.query.trim();
+      if (query.length < LOCAL_FILE_MIN_QUERY_LENGTH) {
+        setLocalFileSearch({ error: null, query: trigger.query, results: [], status: 'idle' });
+        return;
+      }
+      let canceled = false;
+      setLocalFileSearch({ error: null, query: trigger.query, results: [], status: 'loading' });
+      const timer = window.setTimeout(() => {
+        propsRef.current.onLocalFileSearch(query)
+          .then((results) => {
+            if (canceled) return;
+            setLocalFileSearch({ error: null, query: trigger.query, results, status: 'ready' });
+          })
+          .catch((error) => {
+            if (canceled) return;
+            setLocalFileSearch({
+              error: error instanceof Error ? error.message : String(error),
+              query: trigger.query,
+              results: [],
+              status: 'error',
+            });
+          });
+      }, LOCAL_FILE_SEARCH_DEBOUNCE_MS);
+      return () => {
+        canceled = true;
+        window.clearTimeout(timer);
+      };
+    }, [trigger?.mode, trigger?.query]);
 
     useEffect(() => {
       triggerRef.current = trigger;
@@ -390,55 +594,69 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
     }, []);
 
     const menu = trigger ? (
-      <PopoverListbox
-        ref={menuRef}
-        className="trigger-popover agent-composer-trigger-popover"
-        label={trigger.kind === '/' ? 'Agent slash commands' : 'Agent reference suggestions'}
-        preventMouseDown={false}
-        style={anchoredStyle}
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        {trigger.kind === '/'
-          ? (
-              <SlashMenu
-                commands={props.slashCommands}
-                query={trigger.query}
-                selectedIndex={selectedIndex}
-                setSelectedIndex={setSelectedIndex}
-                onSelect={(command) => {
-                  const view = viewRef.current;
-                  if (!view) return;
-                  replaceWithText(view, trigger, command.insertText);
-                  syncDraft(view);
-                  triggerRef.current = null;
-                  setTrigger(null);
-                  view.focus();
-                }}
-              />
-            )
-          : (
-              <ReferenceMenu
-                currentNodeId={props.currentNodeId}
-                index={props.index}
-                query={trigger.query}
-                selectedIndex={selectedIndex}
-                setSelectedIndex={setSelectedIndex}
-                onSelectNode={(nodeId, title) => {
-                  const view = viewRef.current;
-                  if (!view) return;
-                  replaceWithNodeReference(view, trigger, {
-                    nodeId,
-                    title,
-                    color: inlineReferenceTextColor(nodeId, props.index) ?? '',
-                  });
-                  syncDraft(view);
-                  triggerRef.current = null;
-                  setTrigger(null);
-                  view.focus();
-                }}
-              />
-            )}
-      </PopoverListbox>
+      <>
+        <PopoverListbox
+          ref={menuRef}
+          className="trigger-popover agent-composer-trigger-popover"
+          label={trigger.mode === 'slash'
+            ? 'Agent slash commands'
+            : 'Agent mention suggestions'}
+          preventMouseDown={false}
+          style={anchoredStyle}
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          {trigger.mode === 'slash'
+            ? (
+                <SlashMenu
+                  commands={props.slashCommands}
+                  query={trigger.query}
+                  selectedIndex={selectedIndex}
+                  setSelectedIndex={setSelectedIndex}
+                  onSelect={(command) => {
+                    const view = viewRef.current;
+                    if (!view) return;
+                    replaceWithText(view, trigger, command.insertText);
+                    syncDraft(view);
+                    triggerRef.current = null;
+                    setTrigger(null);
+                    view.focus();
+                  }}
+                />
+              )
+            : (
+                <MentionMenu
+                  index={props.index}
+                  items={mentionItems}
+                  query={trigger.query}
+                  search={localFileSearch}
+                  selectedIndex={selectedIndex}
+                  setSelectedIndex={setSelectedIndex}
+                  onSelect={async (item) => {
+                    const view = viewRef.current;
+                    if (!view) return;
+                    if (item.kind === 'node') {
+                      replaceWithNodeReference(view, trigger, {
+                        nodeId: item.id,
+                        title: item.label,
+                        color: inlineReferenceTextColor(item.id, props.index) ?? '',
+                      });
+                    } else {
+                      const ref = await propsRef.current.onLocalFileSelect(item.file);
+                      if (!ref) return;
+                      insertFileReferenceNodes(view, trigger, [ref]);
+                    }
+                    syncDraft(view);
+                    triggerRef.current = null;
+                    setTrigger(null);
+                    view.focus();
+                  }}
+                />
+              )}
+        </PopoverListbox>
+        {selectedPreviewFile && filePreviewStyle ? (
+          <MentionFilePreview file={selectedPreviewFile} style={filePreviewStyle} />
+        ) : null}
+      </>
     ) : null;
 
     return (
@@ -506,6 +724,8 @@ function resolveComposerTrigger(view: EditorView): ComposerTrigger | null {
   const parent = selection.$from.parent;
   const beforeCursor = parent.textBetween(0, selection.$from.parentOffset, '', '\n');
   const afterCursor = parent.textBetween(selection.$from.parentOffset, parent.content.size, '', '\n');
+  const localFileTrigger = resolveLocalFileTrigger(beforeCursor, selection.from);
+  if (localFileTrigger) return { ...localFileTrigger, anchor: caretAnchor(view) };
   const resolved = resolveEditorTriggerText({
     text: `${beforeCursor}${afterCursor}`,
     cursorOffset: beforeCursor.length,
@@ -515,10 +735,32 @@ function resolveComposerTrigger(view: EditorView): ComposerTrigger | null {
   const from = Math.max(1, selection.from - length);
   return {
     kind: resolved.kind,
+    mode: resolved.kind === '/' ? 'slash' : 'mention',
     query: resolved.query,
     from,
     to: selection.from,
     anchor: caretAnchor(view),
+  };
+}
+
+function resolveLocalFileTrigger(
+  beforeCursor: string,
+  selectionFrom: number,
+): Omit<ComposerTrigger, 'anchor'> | null {
+  const match = beforeCursor.match(LOCAL_FILE_TRIGGER_PATTERN);
+  if (!match || match.index === undefined) return null;
+  const triggerText = match[1] ?? '';
+  const alias = match[2] ?? '';
+  if (!triggerText || !alias) return null;
+  const query = (match[3] ?? '').trim();
+  const triggerStartTextOffset = match.index + match[0].length - triggerText.length;
+  const triggerLength = beforeCursor.length - triggerStartTextOffset;
+  return {
+    kind: '@',
+    mode: 'mention',
+    query,
+    from: Math.max(1, selectionFrom - triggerLength),
+    to: selectionFrom,
   };
 }
 
@@ -557,10 +799,27 @@ function docToDraft(doc: PMNode): AgentComposerDraft {
     if (child.type.name === 'fileReference') {
       const attachmentId = String(child.attrs.attachmentId ?? '');
       const name = String(child.attrs.name ?? '') || 'file';
+      const ref = sanitizeFileReferenceRef(String(child.attrs.ref ?? '') || name);
       const mimeType = String(child.attrs.mimeType ?? '');
+      const iconDataUrl = String(child.attrs.iconDataUrl ?? '');
       const sizeBytes = Number(child.attrs.sizeBytes ?? 0);
-      text += `@${name}`;
-      if (attachmentId) fileRefs.push({ attachmentId, name, mimeType, sizeBytes });
+      const thumbnailDataUrl = String(child.attrs.thumbnailDataUrl ?? '');
+      const entryKind = String(child.attrs.entryKind ?? '') === 'directory' || mimeType === 'inode/directory'
+        ? 'directory'
+        : 'file';
+      text += formatFileReferenceMarker(ref);
+      if (attachmentId) {
+        fileRefs.push({
+          attachmentId,
+          entryKind,
+          ...(iconDataUrl ? { iconDataUrl } : {}),
+          name,
+          ref,
+          mimeType,
+          sizeBytes,
+          ...(thumbnailDataUrl ? { thumbnailDataUrl } : {}),
+        });
+      }
     }
   });
 
@@ -623,9 +882,13 @@ function insertFileReferenceNodes(
   const nodes = refs.flatMap((ref, index) => {
     const node = agentComposerSchema.nodes.fileReference.create({
       attachmentId: ref.attachmentId,
+      entryKind: ref.entryKind ?? (ref.mimeType === 'inode/directory' ? 'directory' : 'file'),
+      iconDataUrl: ref.iconDataUrl ?? '',
       name: ref.name,
+      ref: ref.ref,
       mimeType: ref.mimeType,
       sizeBytes: ref.sizeBytes,
+      thumbnailDataUrl: ref.thumbnailDataUrl ?? '',
     });
     return index === refs.length - 1 && !addTrailingSpace ? [node] : [node, agentComposerSchema.text(' ')];
   });
@@ -732,43 +995,355 @@ function SlashMenu({
   );
 }
 
-function ReferenceMenu({
-  currentNodeId,
+function MentionMenu({
   index,
-  onSelectNode,
+  items,
+  onSelect,
   query,
+  search,
   selectedIndex,
   setSelectedIndex,
 }: {
-  currentNodeId: NodeId | null;
   index: DocumentIndex;
-  onSelectNode: (nodeId: NodeId, title: string) => void;
+  items: MentionMenuItem[];
+  onSelect: (item: MentionMenuItem) => void;
   query: string;
+  search: {
+    error: string | null;
+    query: string;
+    results: AgentComposerLocalFileCandidate[];
+    status: 'idle' | 'loading' | 'ready' | 'error';
+  };
   selectedIndex: number;
   setSelectedIndex: (index: number | ((current: number) => number)) => void;
 }) {
-  const items = referenceMenuItems(index, currentNodeId, query);
-  if (items.length === 0) return <PopoverEmpty>No references</PopoverEmpty>;
+  const trimmedQuery = query.trim();
+  if (items.length === 0) {
+    if (trimmedQuery.length >= LOCAL_FILE_MIN_QUERY_LENGTH && search.status === 'loading') {
+      return <PopoverEmpty>Searching files...</PopoverEmpty>;
+    }
+    if (trimmedQuery.length >= LOCAL_FILE_MIN_QUERY_LENGTH && search.status === 'error') {
+      return <PopoverEmpty>{search.error ?? 'Could not search files'}</PopoverEmpty>;
+    }
+    return <PopoverEmpty>{trimmedQuery ? 'No mentions' : 'No recent mentions'}</PopoverEmpty>;
+  }
+  let previousSection: MentionMenuItem['section'] | null = null;
   return (
     <>
-      {items.map((item, itemIndex) => (
-        <PopoverListItem
-          key={item.key}
-          active={itemIndex === selectedIndex}
-          icon={<NodeReferenceMenuIcon index={index} node={item.node} />}
-          iconClassName="popover-item-icon"
-          label={(
-            <>
-              <span>{item.label}</span>
-              {item.breadcrumb ? <span className="popover-item-meta">{item.breadcrumb}</span> : null}
-            </>
-          )}
-          onClick={() => onSelectNode(item.id, item.label)}
-          onMouseEnter={() => setSelectedIndex(itemIndex)}
-        />
-      ))}
+      {items.flatMap((item, itemIndex) => {
+        const sectionHeader = item.section !== previousSection
+          ? <div className="agent-composer-mention-section" key={`section-${item.section}`}>{item.section}</div>
+          : null;
+        previousSection = item.section;
+        const option = (
+          <PopoverListItem
+            key={item.key}
+            active={itemIndex === selectedIndex}
+            icon={item.kind === 'node'
+              ? <NodeReferenceMenuIcon index={index} node={item.node} />
+              : <MentionFileIcon file={item.file} />}
+            iconClassName="popover-item-icon"
+            label={item.kind === 'node'
+              ? (
+                  <>
+                    <span>{item.label}</span>
+                    {item.breadcrumb ? <span className="popover-item-meta">{item.breadcrumb}</span> : null}
+                  </>
+                )
+              : (
+                  <>
+                    <MiddleTruncatedFilename name={item.file.name} />
+                    <span className="popover-item-meta">{item.file.parentPath}</span>
+                  </>
+                )}
+            {...(item.kind === 'file' ? { 'data-entry-kind': item.file.entryKind } : {})}
+            onClick={() => onSelect(item)}
+            onMouseEnter={() => setSelectedIndex(itemIndex)}
+          />
+        );
+        return sectionHeader ? [sectionHeader, option] : [option];
+      })}
+      {trimmedQuery.length >= LOCAL_FILE_MIN_QUERY_LENGTH && search.status === 'loading' ? (
+        <div className="agent-composer-mention-status">Searching files...</div>
+      ) : null}
+      {trimmedQuery.length >= LOCAL_FILE_MIN_QUERY_LENGTH && search.status === 'error' ? (
+        <div className="agent-composer-mention-status">{search.error ?? 'Could not search files'}</div>
+      ) : null}
     </>
   );
+}
+
+function MentionFileIcon({ file }: { file: AgentComposerLocalFileCandidate }) {
+  if (file.thumbnailDataUrl && isImagePreviewFile(file)) {
+    return (
+      <img
+        alt=""
+        className="agent-composer-mention-file-native-icon is-thumbnail"
+        data-file-icon="thumbnail"
+        src={file.thumbnailDataUrl}
+      />
+    );
+  }
+  if (file.iconDataUrl) {
+    return (
+      <img
+        alt=""
+        className="agent-composer-mention-file-native-icon"
+        data-file-icon="native"
+        src={file.iconDataUrl}
+      />
+    );
+  }
+  const iconKind = localFileIconKind(file);
+  const Icon = iconForLocalFileKind(iconKind);
+  return <Icon data-file-icon={iconKind} size={ICON_SIZE.menu} />;
+}
+
+function MentionFilePreview({ file, style }: { file: AgentComposerLocalFileCandidate; style: CSSProperties }) {
+  if (!file.thumbnailDataUrl || !isImagePreviewFile(file)) return null;
+  return (
+    <div className="agent-composer-file-preview-popover" data-file-preview style={style}>
+      <img alt="" src={file.thumbnailDataUrl} />
+    </div>
+  );
+}
+
+function selectedMentionFileItem(
+  items: readonly MentionMenuItem[],
+  selectedIndex: number,
+): AgentComposerLocalFileCandidate | null {
+  const item = items[selectedIndex];
+  if (!item || item.kind !== 'file') return null;
+  return item.file;
+}
+
+function applyMentionFilePreviewThumbnails(
+  items: readonly MentionMenuItem[],
+  thumbnails: Record<string, string>,
+): MentionMenuItem[] {
+  if (items.length === 0 || Object.keys(thumbnails).length === 0) return [...items];
+  return items.map((item) => {
+    if (item.kind !== 'file' || item.file.thumbnailDataUrl) return item;
+    const thumbnailDataUrl = thumbnails[item.file.id];
+    return thumbnailDataUrl
+      ? {
+          ...item,
+          file: {
+            ...item.file,
+            thumbnailDataUrl,
+          },
+        }
+      : item;
+  });
+}
+
+function mentionFilePreviewStyle(anchor: FilePreviewAnchorRect): CSSProperties {
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1024;
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 768;
+  const margin = 8;
+  const rightSideLeft = anchor.right + FILE_PREVIEW_POPOVER_GAP;
+  const previewLeft = rightSideLeft + FILE_PREVIEW_POPOVER_WIDTH + margin <= viewportWidth
+    ? rightSideLeft
+    : Math.max(margin, anchor.left - FILE_PREVIEW_POPOVER_WIDTH - FILE_PREVIEW_POPOVER_GAP);
+  const previewTop = Math.min(
+    Math.max(
+      margin,
+      anchor.top + (anchor.height / 2) - (FILE_PREVIEW_POPOVER_HEIGHT / 2),
+    ),
+    Math.max(margin, viewportHeight - FILE_PREVIEW_POPOVER_HEIGHT - margin),
+  );
+  return {
+    left: previewLeft,
+    position: 'fixed',
+    top: previewTop,
+    width: FILE_PREVIEW_POPOVER_WIDTH,
+  };
+}
+
+function isImagePreviewFile(file: Pick<AgentComposerLocalFileCandidate, 'entryKind' | 'mimeType' | 'name'>): boolean {
+  if (file.entryKind === 'directory' || file.mimeType === 'inode/directory') return false;
+  const mimeType = file.mimeType.toLowerCase();
+  if (mimeType.startsWith('image/')) return true;
+  const extension = file.name.match(/\.([a-z0-9]{1,8})$/iu)?.[1]?.toLowerCase() ?? '';
+  return ['avif', 'bmp', 'gif', 'heic', 'jpeg', 'jpg', 'png', 'svg', 'tif', 'tiff', 'webp'].includes(extension);
+}
+
+function fileReferenceIconDom(file: {
+  entryKind: 'file' | 'directory';
+  iconDataUrl?: string;
+  mimeType: string;
+  name: string;
+  thumbnailDataUrl?: string;
+}) {
+  const thumbnailDataUrl = isImagePreviewFile(file) ? file.thumbnailDataUrl : undefined;
+  if (thumbnailDataUrl || file.iconDataUrl) {
+    const isThumbnail = Boolean(thumbnailDataUrl);
+    return [
+      'span',
+      {
+        class: `agent-composer-inline-file-icon ${isThumbnail ? 'is-thumbnail-icon' : 'is-native-icon'}`,
+        'data-file-icon': isThumbnail ? 'thumbnail' : 'native',
+      },
+      ['img', { alt: '', src: thumbnailDataUrl || file.iconDataUrl || '' }],
+    ];
+  }
+  const iconKind = localFileIconKind(file);
+  return [
+    'span',
+    {
+      class: 'agent-composer-inline-file-icon is-fallback-icon',
+      'data-extension': fileExtensionLabel(file.name, file.mimeType),
+      'data-file-icon': iconKind,
+    },
+  ];
+}
+
+function MiddleTruncatedFilename({ name }: { name: string }) {
+  const parts = middleTruncateFilenameParts(name);
+  return (
+    <span className="agent-composer-file-name-middle" title={name}>
+      <span className="agent-composer-file-name-start">{parts.start}</span>
+      <span className="agent-composer-file-name-end">{parts.end}</span>
+    </span>
+  );
+}
+
+function middleTruncateFilenameParts(name: string): { start: string; end: string } {
+  const normalizedName = name.trim();
+  if (normalizedName.length <= 28) return { start: normalizedName, end: '' };
+  const extensionMatch = normalizedName.match(/(\.[^.\s]{1,12})$/u);
+  const extension = extensionMatch?.[1] ?? '';
+  const stem = extension ? normalizedName.slice(0, -extension.length) : normalizedName;
+  if (stem.length <= 24) return { start: normalizedName, end: '' };
+  const tailStemLength = extension ? 5 : 8;
+  return {
+    start: stem.slice(0, -tailStemLength),
+    end: `${stem.slice(-tailStemLength)}${extension}`,
+  };
+}
+
+type LocalFileIconKind =
+  | 'archive'
+  | 'audio'
+  | 'code'
+  | 'database'
+  | 'folder'
+  | 'image'
+  | 'presentation'
+  | 'spreadsheet'
+  | 'text'
+  | 'video';
+
+function localFileIconKind(file: Pick<AgentComposerLocalFileCandidate, 'entryKind' | 'mimeType' | 'name'>): LocalFileIconKind {
+  if (file.entryKind === 'directory' || file.mimeType === 'inode/directory') return 'folder';
+  const mimeType = file.mimeType.toLowerCase();
+  const extension = file.name.match(/\.([a-z0-9]{1,8})$/iu)?.[1]?.toLowerCase() ?? '';
+  if (mimeType.startsWith('image/')) return 'image';
+  if (mimeType.startsWith('audio/')) return 'audio';
+  if (mimeType.startsWith('video/')) return 'video';
+  if (mimeType.includes('presentation') || mimeType.includes('powerpoint') || ['ppt', 'pptx', 'key', 'keynote', 'odp'].includes(extension)) {
+    return 'presentation';
+  }
+  if (mimeType.includes('spreadsheet') || ['xls', 'xlsx', 'csv', 'numbers', 'ods'].includes(extension)) return 'spreadsheet';
+  if (mimeType.includes('zip') || mimeType.includes('archive') || ['zip', 'tar', 'gz', 'tgz', 'rar', '7z'].includes(extension)) return 'archive';
+  if (mimeType.includes('sqlite') || ['db', 'sqlite', 'sqlite3'].includes(extension)) return 'database';
+  if ([
+    'c',
+    'cpp',
+    'css',
+    'go',
+    'h',
+    'html',
+    'java',
+    'js',
+    'jsx',
+    'json',
+    'kt',
+    'py',
+    'rs',
+    'sh',
+    'sql',
+    'swift',
+    'ts',
+    'tsx',
+    'xml',
+    'yaml',
+    'yml',
+  ].includes(extension)) return 'code';
+  return 'text';
+}
+
+function iconForLocalFileKind(kind: LocalFileIconKind): AppIcon {
+  if (kind === 'archive') return FileArchiveIcon;
+  if (kind === 'audio') return FileAudioIcon;
+  if (kind === 'code') return FileCodeIcon;
+  if (kind === 'database') return DatabaseIcon;
+  if (kind === 'folder') return FolderIcon;
+  if (kind === 'image') return FileImageIcon;
+  if (kind === 'presentation') return PresentationIcon;
+  if (kind === 'spreadsheet') return FileSpreadsheetIcon;
+  if (kind === 'video') return FileVideoIcon;
+  return FileTextIcon;
+}
+
+function mentionMenuItems({
+  currentNodeId,
+  index,
+  localFileSearch,
+  query,
+  recentLocalFiles,
+}: {
+  currentNodeId: NodeId | null;
+  index: DocumentIndex;
+  localFileSearch: {
+    query: string;
+    results: AgentComposerLocalFileCandidate[];
+    status: 'idle' | 'loading' | 'ready' | 'error';
+  };
+  query: string;
+  recentLocalFiles: readonly AgentComposerLocalFileCandidate[];
+}): MentionMenuItem[] {
+  const trimmedQuery = query.trim();
+  if (!trimmedQuery) {
+    return [
+      ...recentNodeMenuItems(index, currentNodeId, MAX_MENTION_NODES).map((item): MentionMenuItem => ({
+        ...item,
+        section: 'Recent',
+      })),
+      ...recentLocalFiles.slice(0, MAX_MENTION_FILES).map((file): MentionMenuItem => ({
+        kind: 'file',
+        section: 'Recent',
+        key: `file:${file.id}`,
+        file,
+      })),
+    ].slice(0, MAX_MENTION_NODES + MAX_MENTION_FILES);
+  }
+  const nodeItems = referenceMenuItems(index, currentNodeId, trimmedQuery)
+    .slice(0, MAX_MENTION_NODES)
+    .map((item): MentionMenuItem => ({
+      ...item,
+      section: 'Nodes',
+    }));
+  const fileItems = localFileSearch.query === query && localFileSearch.status === 'ready'
+    ? localFileSearch.results.slice(0, MAX_MENTION_FILES).map((file): MentionMenuItem => ({
+        kind: 'file',
+        section: 'Files',
+        key: `file:${file.id}`,
+        file,
+      }))
+    : [];
+  return [...nodeItems, ...fileItems];
+}
+
+function recentNodeMenuItems(index: DocumentIndex, currentNodeId: NodeId | null, limit: number) {
+  if (!currentNodeId) return [];
+  return referenceMenuItems(index, currentNodeId, '')
+    .sort((left, right) => {
+      const leftUpdatedAt = left.node?.updatedAt ?? 0;
+      const rightUpdatedAt = right.node?.updatedAt ?? 0;
+      return rightUpdatedAt - leftUpdatedAt;
+    })
+    .slice(0, limit);
 }
 
 function referenceMenuItems(index: DocumentIndex, currentNodeId: NodeId | null, query: string) {
@@ -781,8 +1356,8 @@ function referenceMenuItems(index: DocumentIndex, currentNodeId: NodeId | null, 
     if (item.type !== 'node' || item.disabledReason) return [];
     const node = index.byId.get(item.id);
     return [{
-      type: 'node' as const,
-      key: item.id,
+      kind: 'node' as const,
+      key: `node:${item.id}`,
       id: item.id,
       label: item.label || textOf(node),
       breadcrumb: item.breadcrumb,
@@ -790,7 +1365,6 @@ function referenceMenuItems(index: DocumentIndex, currentNodeId: NodeId | null, 
     }];
   });
 }
-
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -798,6 +1372,7 @@ function formatBytes(bytes: number): string {
 }
 
 function fileExtensionLabel(name: string, mimeType: unknown): string {
+  if (mimeType === 'inode/directory') return 'DIR';
   const extension = name.match(/\.([a-z0-9]{1,6})$/iu)?.[1];
   if (extension) return extension.toUpperCase();
   const type = typeof mimeType === 'string' ? mimeType.toLowerCase() : '';

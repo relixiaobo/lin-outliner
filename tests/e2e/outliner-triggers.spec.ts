@@ -323,6 +323,32 @@ test.describe('outliner trigger parity', () => {
     expect(calls.filter((cmd) => cmd === 'add_reference_conversion')).toHaveLength(1);
   });
 
+  test('@ suggestions exclude nodes moved to Trash', async ({ page }) => {
+    await invokeMockCommand(page, 'create_node', {
+      parentId: ids.library,
+      index: null,
+      text: 'Visible TrashCandidate',
+    });
+    await invokeMockCommand(page, 'create_node', {
+      parentId: ids.library,
+      index: null,
+      text: 'Deleted TrashCandidate',
+    });
+    const deletedId = (await e2eProjection(page)).nodes.find((node) => (
+      node.content.text === 'Deleted TrashCandidate'
+    ))?.id;
+    expect(deletedId).toBeTruthy();
+    await invokeMockCommand(page, 'trash_node', { nodeId: deletedId });
+
+    await placeCursor(page, ids.gamma, 'start');
+    await page.keyboard.type('@TrashCandidate');
+
+    const listbox = page.getByRole('listbox', { name: 'Reference suggestions' });
+    await expect(listbox).toBeVisible();
+    await expect(listbox.getByRole('option', { name: /Visible TrashCandidate/ })).toBeVisible();
+    await expect(listbox.getByRole('option', { name: /Deleted TrashCandidate/ })).toHaveCount(0);
+  });
+
   test('@ reference conversion clicks restore and select like a reference row', async ({ page }) => {
     const beforeCalls = (await commandCalls(page)).length;
     await trailingEditor(page).click();

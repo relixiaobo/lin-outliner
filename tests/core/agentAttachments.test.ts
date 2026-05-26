@@ -20,6 +20,7 @@ describe('agent attachments', () => {
     });
 
     expect(parseAgentTextAttachmentBlock(serialized)).toEqual({
+      ref: 'notes.md',
       name: 'notes.md',
       mimeType: 'text/markdown',
       sizeBytes: 42,
@@ -45,6 +46,7 @@ describe('agent attachments', () => {
     expect(marker).toContain('<user-attachments>');
     expect(parseAgentAttachmentMarkerBlock(systemReminder(marker!))?.attachments).toEqual([{
       kind: 'file',
+      ref: 'report.pdf',
       name: 'report.pdf',
       mimeType: 'application/pdf',
       sizeBytes: 2048,

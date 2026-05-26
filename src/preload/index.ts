@@ -3,12 +3,15 @@ import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../core/agentTy
 import { LIN_DOCUMENT_EVENT_CHANNEL, type DocumentProjectionChangedEvent } from '../core/types';
 
 export interface LinPickedLocalFile {
+  entryKind?: 'file' | 'directory';
   path: string;
   name: string;
   mimeType: string;
   sizeBytes: number;
   lastModified: number;
+  iconDataUrl?: string;
   imageDataBase64?: string;
+  thumbnailDataUrl?: string;
 }
 
 export interface LinPickLocalFilesResult {
@@ -19,6 +22,53 @@ export interface LinPickLocalFilesResult {
 
 export interface LinPickLocalFilesOptions {
   maxFiles?: number;
+}
+
+export interface LinLocalFileSearchResult {
+  entryKind: 'file' | 'directory';
+  id: string;
+  path: string;
+  name: string;
+  parentPath: string;
+  mimeType: string;
+  sizeBytes: number;
+  lastModified: number;
+  iconDataUrl?: string;
+  thumbnailDataUrl?: string;
+}
+
+export interface LinSearchLocalFilesOptions {
+  query: string;
+  limit?: number;
+}
+
+export interface LinSearchLocalFilesResult {
+  files: LinLocalFileSearchResult[];
+  query: string;
+}
+
+export interface LinRecentLocalFilesOptions {
+  limit?: number;
+}
+
+export interface LinRecentLocalFilesResult {
+  files: LinLocalFileSearchResult[];
+}
+
+export interface LinPrepareLocalFileOptions {
+  id: string;
+}
+
+export interface LinPrepareLocalFileResult {
+  file: LinPickedLocalFile | null;
+}
+
+export interface LinPreviewLocalFileOptions {
+  id: string;
+}
+
+export interface LinPreviewLocalFileResult {
+  thumbnailDataUrl: string | null;
 }
 
 const nativeAttachmentPickerDisabled = process.env.LIN_ATTACHMENT_PICKER_METHOD === 'web'
@@ -51,6 +101,14 @@ const api = {
     pickLocalFiles: (options: LinPickLocalFilesOptions = {}) =>
       ipcRenderer.invoke('lin:pick-local-files', options) as Promise<LinPickLocalFilesResult>,
   }),
+  prepareLocalFile: (options: LinPrepareLocalFileOptions) =>
+    ipcRenderer.invoke('lin:prepare-local-file', options) as Promise<LinPrepareLocalFileResult>,
+  previewLocalFile: (options: LinPreviewLocalFileOptions) =>
+    ipcRenderer.invoke('lin:preview-local-file', options) as Promise<LinPreviewLocalFileResult>,
+  recentLocalFiles: (options: LinRecentLocalFilesOptions = {}) =>
+    ipcRenderer.invoke('lin:recent-local-files', options) as Promise<LinRecentLocalFilesResult>,
+  searchLocalFiles: (options: LinSearchLocalFilesOptions) =>
+    ipcRenderer.invoke('lin:search-local-files', options) as Promise<LinSearchLocalFilesResult>,
 };
 
 contextBridge.exposeInMainWorld('lin', api);

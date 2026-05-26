@@ -28,6 +28,7 @@ export type {
 
 export interface AgentAttachmentInputBase {
   id: string;
+  ref?: string;
   name: string;
   mimeType: string;
   sizeBytes: number;

@@ -1302,6 +1302,50 @@ describe('row interaction resolvers', () => {
     expect(candidates.at(-1)).toEqual({ type: 'create', label: 'tod' });
   });
 
+  test('reference candidates exclude nodes in Trash', () => {
+    const nodes = [
+      makeNode('root', 'Root', { children: ['today', 'trash'] }),
+      makeNode('today', 'Today', { parentId: 'root', children: ['current', 'visible'] }),
+      makeNode('current', 'Current', { parentId: 'today' }),
+      makeNode('visible', 'Visible target', { parentId: 'today' }),
+      makeNode('trash', 'Trash', { parentId: 'root', children: ['deleted-parent'] }),
+      makeNode('deleted-parent', 'Deleted parent', { parentId: 'trash', children: ['deleted-child'] }),
+      makeNode('deleted-child', 'Deleted child', { parentId: 'deleted-parent' }),
+    ];
+    const projection = {
+      workspaceId: 'root',
+      rootId: 'root',
+      libraryId: 'root',
+      dailyNotesId: 'today',
+      schemaId: 'schema',
+      searchesId: 'searches',
+      recentsId: 'recents',
+      trashId: 'trash',
+      settingsId: 'settings',
+      todayId: 'today',
+      nodes,
+    };
+
+    const candidates = buildReferenceCandidates({
+      index: { projection, byId: new Map(nodes.map((node) => [node.id, node])) } as any,
+      currentNodeId: 'current',
+      query: 'deleted',
+    });
+    expect(candidates.some((candidate) => candidate.type === 'node')).toBe(false);
+    expect(candidates).toContainEqual({ type: 'create', label: 'deleted' });
+
+    const visibleCandidates = buildReferenceCandidates({
+      index: { projection, byId: new Map(nodes.map((node) => [node.id, node])) } as any,
+      currentNodeId: 'current',
+      query: 'visible',
+    });
+    expect(visibleCandidates).toContainEqual(expect.objectContaining({
+      id: 'visible',
+      label: 'Visible target',
+      type: 'node',
+    }));
+  });
+
   test('orders reference candidates by current context before untitled recent nodes', () => {
     const nodes = [
       makeNode('root', 'Root', { children: ['today', 'other'] }),

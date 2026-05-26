@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import {
   commandCalls,
   e2eProjection,
@@ -12,6 +12,21 @@ async function waitForAgentSession(page: import('@playwright/test').Page) {
     const calls = await commandCalls(page);
     return calls.some((call) => call.cmd === 'agent_restore_latest_session');
   }).toBe(true);
+}
+
+async function invokeDocumentCommand(page: Page, cmd: string, args: Record<string, unknown>) {
+  await page.evaluate(async ({ cmd, args }) => {
+    const win = window as unknown as {
+      lin?: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
+    };
+    await win.lin?.invoke(cmd, args);
+  }, { cmd, args });
+  await emitDocumentEvent(page, {
+    type: 'projection_changed',
+    origin: 'test',
+    projection: await e2eProjection(page),
+    timestamp: Date.now(),
+  });
 }
 
 test.describe('agent composer controls', () => {
@@ -54,7 +69,7 @@ test.describe('agent composer controls', () => {
       ))?.args;
     }).toMatchObject({
       attachments: [{ name: 'notes.txt' }],
-      message: '@notes.txt',
+      message: '[[file:notes.txt]]',
     });
   });
 
@@ -101,8 +116,556 @@ test.describe('agent composer controls', () => {
       ))?.args;
     }).toMatchObject({
       attachments: [{ kind: 'file', path: '/Users/test/Documents/local-notes.md' }],
-      message: '@local-notes.md',
+      message: '[[file:local-notes.md]]',
     });
+  });
+
+  test('renders sent attachment mentions inline without raw image placeholders', async ({ page }) => {
+    const marker = {
+      version: 1,
+      instructions: 'Images are visible as image content blocks. Files and folders are available at local paths; use file_read for files and file_glob for folders instead of assuming they are already visible. Inline text attachments are included in this user message.',
+      attachments: [
+        {
+          kind: 'file',
+          ref: '.DS_Store',
+          name: '.DS_Store',
+          mimeType: 'application/octet-stream',
+          sizeBytes: 26_624,
+          path: '/Users/test/Desktop/.DS_Store',
+        },
+        {
+          kind: 'file',
+          ref: 'Coding',
+          name: 'Coding',
+          mimeType: 'inode/directory',
+          sizeBytes: 0,
+          path: '/Users/test/Documents/Coding',
+        },
+        {
+          kind: 'image',
+          ref: 'Screenshot 2026-05-26 at 14.50.16.png',
+          name: 'Screenshot 2026-05-26 at 14.50.16.png',
+          mimeType: 'image/png',
+          sizeBytes: 481_000,
+          inline: true,
+        },
+      ],
+    };
+
+    await emitAgentProjection(page, 'mock-agent-session', {
+      sessionTitle: 'Agent System',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      conversation: [{
+        nodeId: 'agent-user-with-attachments',
+        message: {
+          role: 'user',
+          timestamp: 1_800_000_000_500,
+          content: [
+            {
+              type: 'text',
+              text: `<system-reminder>\n<user-attachments>\n${JSON.stringify(marker, null, 2)}\n</user-attachments>\n</system-reminder>`,
+            },
+            {
+              type: 'text',
+              text: '[[file:.DS_Store]] 总结一下，然后跟 [[file:Coding]] 对比一下，然后添加到 [[Alpha^node-alpha]]，参考 [[file:Screenshot 2026-05-26 at 14.50.16.png]]',
+            },
+            { type: 'text', text: 'Image attachment' },
+          ],
+        },
+        branches: null,
+      }],
+    });
+
+    const row = page.locator('.agent-message-row.user').filter({ hasText: '总结一下' });
+    const bubble = row.locator('.agent-user-bubble');
+    await expect(row.locator('.agent-user-file-chip')).toHaveCount(0);
+    await expect(bubble.locator('.agent-message-inline-file')).toHaveCount(3);
+    await expect(bubble.locator('.agent-message-inline-file').nth(0)).toContainText('.DS_Store');
+    await expect(bubble.locator('.agent-message-inline-file').nth(1)).toContainText('Coding');
+    await expect(bubble.locator('.agent-message-inline-file').nth(2)).toContainText('Screenshot 2026-05-26 at 14.50.16.png');
+    await expect(bubble.locator('.agent-message-inline-ref')).toHaveText('Alpha');
+    await expect.poll(async () => bubble.evaluate((element) => (
+      element.textContent?.replace(/\s+/gu, ' ').trim()
+    ))).toBe('.DS_Store 总结一下，然后跟 Coding 对比一下，然后添加到 Alpha，参考 Screenshot 2026-05-26 at 14.50.16.png');
+    await expect(row.locator('.agent-user-bubble')).not.toContainText('@.DS_Store');
+    await expect(row.locator('.agent-user-bubble')).not.toContainText('@Coding');
+    await expect(row.locator('.agent-user-bubble')).not.toContainText('[[file:');
+    await expect(row.locator('.agent-user-bubble')).not.toContainText('Image attachment');
+  });
+
+  test('searches local files from @ mentions and sends the selected file as context', async ({ page }) => {
+    await page.evaluate(() => {
+      const win = window as typeof window & {
+        lin?: {
+          invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+          prepareLocalFile?: (options: { id: string }) => Promise<{
+            file: {
+              entryKind?: 'file' | 'directory';
+              path: string;
+              name: string;
+              mimeType: string;
+              sizeBytes: number;
+              lastModified: number;
+            } | null;
+          }>;
+          searchLocalFiles?: (options: { query: string; limit?: number }) => Promise<{
+            files: Array<{
+              entryKind: 'file' | 'directory';
+              id: string;
+              path: string;
+              name: string;
+              parentPath: string;
+              mimeType: string;
+              sizeBytes: number;
+              lastModified: number;
+              iconDataUrl?: string;
+              thumbnailDataUrl?: string;
+            }>;
+            query: string;
+          }>;
+        };
+      };
+      if (!win.lin) return;
+      win.lin.searchLocalFiles = async (options) => ({
+        files: options.query.toLowerCase().includes('report')
+          ? [{
+              id: 'local-file-report',
+              entryKind: 'file',
+              path: '/Users/test/Documents/Project Report.md',
+              name: 'Project Report.md',
+              parentPath: '/Users/test/Documents',
+              mimeType: 'text/plain',
+              sizeBytes: 2048,
+              lastModified: 1_800_000_000_000,
+            }]
+          : [],
+        query: options.query,
+      });
+      win.lin.prepareLocalFile = async (options) => ({
+        file: options.id === 'local-file-report'
+          ? {
+              entryKind: 'file',
+              path: '/Users/test/Documents/Project Report.md',
+              name: 'Project Report.md',
+              mimeType: 'text/plain',
+              sizeBytes: 2048,
+              lastModified: 1_800_000_000_000,
+            }
+          : null,
+      });
+    });
+
+    const input = page.getByLabel('Agent message');
+    await input.click();
+    await page.keyboard.type('@report');
+
+    const menu = page.getByRole('listbox', { name: 'Agent mention suggestions' });
+    await expect(menu).toBeVisible();
+    await expect(menu.locator('.agent-composer-mention-section', { hasText: 'Files' })).toBeVisible();
+    await expect(menu.getByRole('option', { name: /Project Report\.md/ })).toBeVisible();
+    await menu.getByRole('option', { name: /Project Report\.md/ }).click();
+
+    await expect(page.locator('[data-agent-file-ref]')).toContainText('Project Report.md');
+    await page.getByRole('button', { name: 'Send message' }).click();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.find((call) => (
+        call.cmd === 'agent_send_message'
+        && Array.isArray(call.args.attachments)
+        && call.args.attachments.some((attachment: { path?: string }) => (
+          attachment.path === '/Users/test/Documents/Project Report.md'
+        ))
+      ))?.args;
+    }).toMatchObject({
+      attachments: [{ kind: 'file', path: '/Users/test/Documents/Project Report.md' }],
+      message: '[[file:Project Report.md]]',
+    });
+  });
+
+  test('searches local folders from @ mentions and sends the selected folder path as context', async ({ page }) => {
+    await page.evaluate(() => {
+      const win = window as typeof window & {
+        lin?: {
+          invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+          prepareLocalFile?: (options: { id: string }) => Promise<{
+            file: {
+              entryKind?: 'file' | 'directory';
+              path: string;
+              name: string;
+              mimeType: string;
+              sizeBytes: number;
+              lastModified: number;
+            } | null;
+          }>;
+          searchLocalFiles?: (options: { query: string; limit?: number }) => Promise<{
+            files: Array<{
+              entryKind: 'file' | 'directory';
+              id: string;
+              path: string;
+              name: string;
+              parentPath: string;
+              mimeType: string;
+              sizeBytes: number;
+              lastModified: number;
+              iconDataUrl?: string;
+              thumbnailDataUrl?: string;
+            }>;
+            query: string;
+          }>;
+        };
+      };
+      if (!win.lin) return;
+      win.lin.searchLocalFiles = async (options) => ({
+        files: options.query.toLowerCase().includes('design')
+          ? [{
+              entryKind: 'directory',
+              id: 'local-folder-design',
+              path: '/Users/test/Documents/design-system',
+              name: 'design-system',
+              parentPath: '/Users/test/Documents',
+              mimeType: 'inode/directory',
+              sizeBytes: 0,
+              lastModified: 1_800_000_000_000,
+            }]
+          : [],
+        query: options.query,
+      });
+      win.lin.prepareLocalFile = async (options) => ({
+        file: options.id === 'local-folder-design'
+          ? {
+              entryKind: 'directory',
+              path: '/Users/test/Documents/design-system',
+              name: 'design-system',
+              mimeType: 'inode/directory',
+              sizeBytes: 0,
+              lastModified: 1_800_000_000_000,
+            }
+          : null,
+      });
+    });
+
+    const input = page.getByLabel('Agent message');
+    await input.click();
+    await page.keyboard.type('@design');
+
+    const menu = page.getByRole('listbox', { name: 'Agent mention suggestions' });
+    await expect(menu.getByRole('option', { name: /design-system/ })).toHaveAttribute('data-entry-kind', 'directory');
+    await menu.getByRole('option', { name: /design-system/ }).click();
+
+    await expect(page.locator('[data-agent-file-ref]')).toContainText('design-system');
+    await expect(page.locator('[data-agent-file-ref] .agent-composer-inline-file-icon')).toHaveAttribute('data-extension', 'DIR');
+    await page.getByRole('button', { name: 'Send message' }).click();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.find((call) => (
+        call.cmd === 'agent_send_message'
+        && Array.isArray(call.args.attachments)
+        && call.args.attachments.some((attachment: { path?: string }) => (
+          attachment.path === '/Users/test/Documents/design-system'
+        ))
+      ))?.args;
+    }).toMatchObject({
+      attachments: [{ kind: 'file', path: '/Users/test/Documents/design-system' }],
+      message: '[[file:design-system]]',
+    });
+  });
+
+  test('uses a presentation icon for local slide decks in @ mentions', async ({ page }) => {
+    await page.evaluate(() => {
+      const win = window as typeof window & {
+        lin?: {
+          invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+          searchLocalFiles?: (options: { query: string; limit?: number }) => Promise<{
+            files: Array<{
+              entryKind: 'file' | 'directory';
+              id: string;
+              path: string;
+              name: string;
+              parentPath: string;
+              mimeType: string;
+              sizeBytes: number;
+              lastModified: number;
+              iconDataUrl?: string;
+              thumbnailDataUrl?: string;
+            }>;
+            query: string;
+          }>;
+        };
+      };
+      if (!win.lin) return;
+      win.lin.searchLocalFiles = async (options) => ({
+        files: options.query.toLowerCase().includes('slides')
+          ? [{
+              entryKind: 'file',
+              id: 'local-file-slides',
+              path: '/Users/test/Documents/demo-slides.pptx',
+              name: 'demo-slides.pptx',
+              parentPath: '/Users/test/Documents',
+              mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+              sizeBytes: 4096,
+              lastModified: 1_800_000_000_000,
+            }]
+          : [],
+        query: options.query,
+      });
+    });
+
+    const input = page.getByLabel('Agent message');
+    await input.click();
+    await page.keyboard.type('@slides');
+
+    const slidesOption = page.getByRole('listbox', { name: 'Agent mention suggestions' })
+      .getByRole('option', { name: /demo-slides\.pptx/ });
+    await expect(slidesOption.locator('[data-file-icon="presentation"]')).toBeVisible();
+  });
+
+  test('uses native local file icons when search returns one', async ({ page }) => {
+    await page.evaluate(() => {
+      const win = window as typeof window & {
+        lin?: {
+          invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+          searchLocalFiles?: (options: { query: string; limit?: number }) => Promise<{
+            files: Array<{
+              entryKind: 'file' | 'directory';
+              id: string;
+              path: string;
+              name: string;
+              parentPath: string;
+              mimeType: string;
+              sizeBytes: number;
+              lastModified: number;
+              iconDataUrl?: string;
+              thumbnailDataUrl?: string;
+            }>;
+            query: string;
+          }>;
+        };
+      };
+      if (!win.lin) return;
+      win.lin.searchLocalFiles = async (options) => ({
+        files: options.query.toLowerCase().includes('native')
+          ? [{
+              entryKind: 'file',
+              id: 'local-file-native-icon',
+              path: '/Users/test/Documents/native-icon.pdf',
+              name: 'native-icon.pdf',
+              parentPath: '/Users/test/Documents',
+              mimeType: 'application/pdf',
+              sizeBytes: 4096,
+              lastModified: 1_800_000_000_000,
+              iconDataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lPvsZAAAAABJRU5ErkJggg==',
+            }]
+          : [],
+        query: options.query,
+      });
+    });
+
+    const input = page.getByLabel('Agent message');
+    await input.click();
+    await page.keyboard.type('@native');
+
+    const nativeOption = page.getByRole('listbox', { name: 'Agent mention suggestions' })
+      .getByRole('option', { name: /native-icon\.pdf/ });
+    await expect(nativeOption.locator('[data-file-icon="native"]')).toBeVisible();
+  });
+
+  test('uses local file thumbnails for mention rows, hover previews, and inline references', async ({ page }) => {
+    await page.evaluate(() => {
+      const thumbnail = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lPvsZAAAAABJRU5ErkJggg==';
+      const win = window as typeof window & {
+        lin?: {
+          invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+          prepareLocalFile?: (options: { id: string }) => Promise<{
+            file: {
+              entryKind?: 'file' | 'directory';
+              path: string;
+              name: string;
+              mimeType: string;
+              sizeBytes: number;
+              lastModified: number;
+              thumbnailDataUrl?: string;
+            } | null;
+          }>;
+          searchLocalFiles?: (options: { query: string; limit?: number }) => Promise<{
+            files: Array<{
+              entryKind: 'file' | 'directory';
+              id: string;
+              path: string;
+              name: string;
+              parentPath: string;
+              mimeType: string;
+              sizeBytes: number;
+              lastModified: number;
+              thumbnailDataUrl?: string;
+            }>;
+            query: string;
+          }>;
+        };
+      };
+      if (!win.lin) return;
+      win.lin.searchLocalFiles = async (options) => ({
+        files: options.query.toLowerCase().includes('image')
+          ? [{
+              entryKind: 'file',
+              id: 'local-file-image',
+              path: '/Users/test/Pictures/gpt4.png',
+              name: 'gpt4.png',
+              parentPath: '/Users/test/Pictures',
+              mimeType: 'image/png',
+              sizeBytes: 4096,
+              lastModified: 1_800_000_000_000,
+              thumbnailDataUrl: thumbnail,
+            }]
+          : [],
+        query: options.query,
+      });
+      win.lin.prepareLocalFile = async (options) => ({
+        file: options.id === 'local-file-image'
+          ? {
+              entryKind: 'file',
+              path: '/Users/test/Pictures/gpt4.png',
+              name: 'gpt4.png',
+              mimeType: 'image/png',
+              sizeBytes: 4096,
+              lastModified: 1_800_000_000_000,
+              thumbnailDataUrl: thumbnail,
+            }
+          : null,
+      });
+    });
+
+    const input = page.getByLabel('Agent message');
+    await input.click();
+    await page.keyboard.type('@image');
+
+    const imageOption = page.getByRole('listbox', { name: 'Agent mention suggestions' })
+      .getByRole('option', { name: /gpt4\.png/ });
+    await expect(imageOption.locator('[data-file-icon="thumbnail"]')).toBeVisible();
+    await imageOption.hover();
+    const preview = page.locator('[data-file-preview]');
+    await expect(preview).toBeVisible();
+    await expect(preview).not.toContainText('gpt4.png');
+    const optionBox = await imageOption.boundingBox();
+    const previewBox = await preview.boundingBox();
+    expect(previewBox?.width).toBeLessThanOrEqual(170);
+    expect(previewBox?.height).toBeLessThanOrEqual(125);
+    expect(Math.abs(((previewBox?.y ?? 0) + ((previewBox?.height ?? 0) / 2)) - ((optionBox?.y ?? 0) + ((optionBox?.height ?? 0) / 2)))).toBeLessThan(90);
+    await imageOption.click();
+    await expect(page.locator('[data-agent-file-ref]')).toContainText('gpt4.png');
+    await expect(page.locator('[data-agent-file-ref] [data-file-icon="thumbnail"]')).toBeVisible();
+    await expect(page.locator('[data-agent-file-ref]')).not.toHaveAttribute('title', /gpt4\.png/);
+    await expect(page.locator('[data-agent-file-ref]')).toHaveAttribute('aria-label', /gpt4\.png/);
+  });
+
+  test('loads an image preview after selecting a result that only returned an icon', async ({ page }) => {
+    await page.evaluate(() => {
+      const thumbnail = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lPvsZAAAAABJRU5ErkJggg==';
+      const icon = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lPvsZAAAAABJRU5ErkJggg==';
+      const win = window as typeof window & {
+        lin?: {
+          invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+          previewLocalFile?: (options: { id: string }) => Promise<{ thumbnailDataUrl: string | null }>;
+          searchLocalFiles?: (options: { query: string; limit?: number }) => Promise<{
+            files: Array<{
+              entryKind: 'file' | 'directory';
+              id: string;
+              path: string;
+              name: string;
+              parentPath: string;
+              mimeType: string;
+              sizeBytes: number;
+              lastModified: number;
+              iconDataUrl?: string;
+            }>;
+            query: string;
+          }>;
+        };
+      };
+      if (!win.lin) return;
+      win.lin.searchLocalFiles = async (options) => ({
+        files: options.query.toLowerCase().includes('lazyimage')
+          ? [{
+              entryKind: 'file',
+              id: 'local-file-lazy-image',
+              path: '/Users/test/Pictures/lazy-image.png',
+              name: 'lazy-image.png',
+              parentPath: '/Users/test/Pictures',
+              mimeType: 'image/png',
+              sizeBytes: 4096,
+              lastModified: 1_800_000_000_000,
+              iconDataUrl: icon,
+            }]
+          : [],
+        query: options.query,
+      });
+      win.lin.previewLocalFile = async (options) => {
+        await new Promise((resolve) => window.setTimeout(resolve, 120));
+        return {
+          thumbnailDataUrl: options.id === 'local-file-lazy-image' ? thumbnail : null,
+        };
+      };
+    });
+
+    const input = page.getByLabel('Agent message');
+    await input.click();
+    await page.keyboard.type('@lazyimage');
+
+    const imageOption = page.getByRole('listbox', { name: 'Agent mention suggestions' })
+      .getByRole('option', { name: /lazy-image\.png/ });
+    await expect(imageOption.locator('[data-file-icon="native"]')).toBeVisible();
+    await expect(imageOption.locator('[data-file-icon="thumbnail"]')).toBeVisible();
+    await expect(page.locator('[data-file-preview]')).toBeVisible();
+  });
+
+  test('middle-truncates long local filenames while preserving the extension', async ({ page }) => {
+    await page.evaluate(() => {
+      const win = window as typeof window & {
+        lin?: {
+          invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+          searchLocalFiles?: (options: { query: string; limit?: number }) => Promise<{
+            files: Array<{
+              entryKind: 'file' | 'directory';
+              id: string;
+              path: string;
+              name: string;
+              parentPath: string;
+              mimeType: string;
+              sizeBytes: number;
+              lastModified: number;
+            }>;
+            query: string;
+          }>;
+        };
+      };
+      if (!win.lin) return;
+      win.lin.searchLocalFiles = async (options) => ({
+        files: options.query.toLowerCase().includes('screenshot')
+          ? [{
+              entryKind: 'file',
+              id: 'local-file-long-screenshot',
+              path: '/Users/test/Desktop/Screenshot 2026-05-26 at 14.50.30 with a very long name.png',
+              name: 'Screenshot 2026-05-26 at 14.50.30 with a very long name.png',
+              parentPath: '/Users/test/Desktop',
+              mimeType: 'image/png',
+              sizeBytes: 4096,
+              lastModified: 1_800_000_000_000,
+            }]
+          : [],
+        query: options.query,
+      });
+    });
+
+    const input = page.getByLabel('Agent message');
+    await input.click();
+    await page.keyboard.type('@screenshot');
+
+    const menu = page.getByRole('listbox', { name: 'Agent mention suggestions' });
+    const name = menu.locator('.agent-composer-file-name-middle', {
+      has: page.locator('.agent-composer-file-name-end', { hasText: ' name.png' }),
+    });
+    await expect(name).toHaveAttribute('title', 'Screenshot 2026-05-26 at 14.50.30 with a very long name.png');
+    await expect(name.locator('.agent-composer-file-name-start')).toContainText('Screenshot 2026-05-26 at 14.50.30 with a very long');
+    await expect(name.locator('.agent-composer-file-name-end')).toHaveText(' name.png');
   });
 
   test('passes slash commands through for runtime compact and skill handling', async ({ page }) => {
@@ -173,8 +736,9 @@ test.describe('agent composer controls', () => {
     await input.click();
     await page.keyboard.type('@Alpha');
 
-    const menu = page.getByRole('listbox', { name: 'Agent reference suggestions' });
+    const menu = page.getByRole('listbox', { name: 'Agent mention suggestions' });
     await expect(menu).toBeVisible();
+    await expect(menu.locator('.agent-composer-mention-section', { hasText: 'Nodes' })).toBeVisible();
     const alphaOption = menu.getByRole('option', { name: /Alpha/ });
     await expect(alphaOption.locator('.row-bullet-shape.content')).toBeVisible();
     await alphaOption.click();
@@ -216,6 +780,34 @@ test.describe('agent composer controls', () => {
     const userBubble = page.locator('.agent-user-bubble', { hasText: 'details' });
     await expect(userBubble.locator('[data-inline-ref="node-alpha"]')).toHaveText('Alpha');
     await expect(userBubble).not.toContainText('[[Alpha^node-alpha]]');
+  });
+
+  test('excludes trashed nodes from node mention suggestions', async ({ page }) => {
+    await invokeDocumentCommand(page, 'create_node', {
+      parentId: 'library',
+      index: null,
+      text: 'Visible AgentTrashCandidate',
+    });
+    await invokeDocumentCommand(page, 'create_node', {
+      parentId: 'library',
+      index: null,
+      text: 'Deleted AgentTrashCandidate',
+    });
+    const deletedId = (await e2eProjection(page)).nodes.find((node) => (
+      node.content.text === 'Deleted AgentTrashCandidate'
+    ))?.id;
+    expect(deletedId).toBeTruthy();
+    await invokeDocumentCommand(page, 'trash_node', { nodeId: deletedId });
+
+    const input = page.getByLabel('Agent message');
+    await input.click();
+    await page.keyboard.type('@AgentTrashCandidate');
+
+    const menu = page.getByRole('listbox', { name: 'Agent mention suggestions' });
+    await expect(menu).toBeVisible();
+    await expect(menu.locator('.agent-composer-mention-section', { hasText: 'Nodes' })).toBeVisible();
+    await expect(menu.getByRole('option', { name: /Visible AgentTrashCandidate/ })).toBeVisible();
+    await expect(menu.getByRole('option', { name: /Deleted AgentTrashCandidate/ })).toHaveCount(0);
   });
 
   test('renders node reference markers in assistant and tool output', async ({ page }) => {
@@ -289,19 +881,56 @@ test.describe('agent composer controls', () => {
     await input.click();
     await page.keyboard.type('@Alpha');
 
-    const alphaOption = page.getByRole('listbox', { name: 'Agent reference suggestions' })
+    const alphaOption = page.getByRole('listbox', { name: 'Agent mention suggestions' })
       .getByRole('option', { name: /Alpha/ });
     await expect(alphaOption.locator('.popover-node-emoji')).toHaveText('🏀');
   });
 
-  test('keeps local files out of the reference menu for now', async ({ page }) => {
+  test('opens a sectioned mention menu from bare @', async ({ page }) => {
+    await page.evaluate(() => {
+      const win = window as typeof window & {
+        lin?: {
+          invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+          recentLocalFiles?: (options?: { limit?: number }) => Promise<{
+            files: Array<{
+              entryKind: 'file' | 'directory';
+              id: string;
+              path: string;
+              name: string;
+              parentPath: string;
+              mimeType: string;
+              sizeBytes: number;
+              lastModified: number;
+              iconDataUrl?: string;
+              thumbnailDataUrl?: string;
+            }>;
+          }>;
+        };
+      };
+      if (!win.lin) return;
+      win.lin.recentLocalFiles = async () => ({
+        files: [{
+          entryKind: 'file',
+          id: 'recent-local-notes',
+          path: '/Users/test/Documents/recent-notes.md',
+          name: 'recent-notes.md',
+          parentPath: '/Users/test/Documents',
+          mimeType: 'text/plain',
+          sizeBytes: 123,
+          lastModified: 1_800_000_000_000,
+        }],
+      });
+    });
+
     const input = page.getByLabel('Agent message');
     await input.click();
     await page.keyboard.type('@');
 
-    const menu = page.getByRole('listbox', { name: 'Agent reference suggestions' });
+    const menu = page.getByRole('listbox', { name: 'Agent mention suggestions' });
     await expect(menu).toBeVisible();
-    await expect(menu.getByRole('option', { name: /Attach local file/ })).toHaveCount(0);
+    await expect(menu.locator('.agent-composer-mention-section', { hasText: 'Recent' })).toBeVisible();
+    await expect(menu.getByRole('option', { name: /recent-notes\.md/ })).toBeVisible();
+    await expect(menu.getByRole('option')).not.toHaveCount(0);
   });
 
   test('shows compact progress before expandable summaries', async ({ page }) => {

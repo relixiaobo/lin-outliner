@@ -45,6 +45,21 @@ type E2EWindow = Window & {
     invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
     onAgentEvent: (listener: (event: unknown) => void) => () => void;
     onDocumentEvent: (listener: (event: unknown) => void) => () => void;
+    previewLocalFile?: (options: { id: string }) => Promise<{ thumbnailDataUrl: string | null }>;
+    recentLocalFiles?: (options?: { limit?: number }) => Promise<{
+      files: Array<{
+        entryKind: 'file' | 'directory';
+        id: string;
+        path: string;
+        name: string;
+        parentPath: string;
+        mimeType: string;
+        sizeBytes: number;
+        lastModified: number;
+        iconDataUrl?: string;
+        thumbnailDataUrl?: string;
+      }>;
+    }>;
   };
 };
 
@@ -869,6 +884,18 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 
     win.__LIN_E2E__ = { calls, projection, clipboardText: () => clipboardText, emitAgentEvent, emitDocumentEvent };
     win.lin = {
+      recentLocalFiles: async () => ({
+        files: [{
+          entryKind: 'file',
+          id: 'recent-local-notes',
+          path: '/Users/test/Documents/recent-notes.md',
+          name: 'recent-notes.md',
+          parentPath: '/Users/test/Documents',
+          mimeType: 'text/plain',
+          sizeBytes: 123,
+          lastModified: now - 1_000,
+        }],
+      }),
       invoke: async <T,>(cmd: string, args: Record<string, unknown> = {}): Promise<T> => {
         calls.push({ cmd, args: clone(args) });
         if (cmd === 'agent_create_session' || cmd === 'agent_restore_latest_session' || cmd === 'agent_restore_session') {
