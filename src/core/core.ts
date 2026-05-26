@@ -17,7 +17,7 @@ import {
 } from './operationJournal';
 import { buildDocumentProjection } from './projection';
 import { runSearchExpr, runSearchNode, searchNodeHasRules } from './searchEngine';
-import { isInternalConfigNode } from './configSchema';
+import { isInternalConfigNode, refRoleCountsAsBacklink } from './configSchema';
 import {
   AREAS_ID,
   DAILY_NOTES_ID,
@@ -1395,7 +1395,7 @@ export class Core {
     const result: Backlink[] = [];
     for (const node of Object.values(this.stateValue.nodes)) {
       if (isInTrash(this.stateValue, node.id)) continue;
-      if (node.type === 'reference' && node.targetId === targetId && node.parentId) {
+      if (refRoleCountsAsBacklink(node) && node.targetId === targetId && node.parentId) {
         result.push({ sourceId: node.parentId, referenceId: node.id, kind: 'tree' });
       }
       for (const inlineRef of node.content.inlineRefs) {

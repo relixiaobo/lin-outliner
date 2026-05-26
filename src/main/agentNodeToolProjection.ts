@@ -12,6 +12,7 @@ import {
   type NodeProjection,
 } from '../core/types';
 import { formatNodeReferenceMarker } from '../core/nodeReferenceMarkup';
+import { refRoleCountsAsBacklink } from '../core/configSchema';
 import type {
   NodeBacklink,
   NodeFieldRead,
@@ -67,7 +68,7 @@ export function backlinks(index: ProjectionIndex, targetId: string, includeDelet
   const result: NodeBacklink[] = [];
   for (const node of index.projection.nodes) {
     if (!includeDeleted && isInTrash(index, node.id)) continue;
-    if (node.type === 'reference' && node.targetId === targetId) {
+    if (refRoleCountsAsBacklink(node) && node.targetId === targetId) {
       const parent = node.parentId ? index.nodes.get(node.parentId) : undefined;
       const source = parent && parent.type === 'fieldEntry' && parent.parentId ? index.nodes.get(parent.parentId) : parent;
       result.push({
