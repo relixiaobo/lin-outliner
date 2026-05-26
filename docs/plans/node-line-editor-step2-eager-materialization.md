@@ -76,11 +76,12 @@ builds-on: node-line-editor-step1-extraction.md
 >
 > **Scope of this pass / deferred:** the unification covers the **main outliner**
 > (panel body + children). `FieldValueOutliner` keeps its `TrailingInput` (its
-> options-picker / typed-control surface is out of scope). **Depth-shift on an
-> empty trailing line (Tab/Shift-Tab before typing) is a no-op for now** — after
-> the row materializes on first input, Tab indents normally. `TrailingInput.tsx`
-> is no longer used by the main outliner but is retained for the field-value
-> surface. IME continuity + the materialize lifecycle require running the app.
+> options-picker / typed-control surface is out of scope). Structural keys on an
+> empty draft mirror Enter: **Tab materializes the draft (empty) and indents it**
+> under the previous sibling; **Shift+Tab is a no-op** at the draft's own level.
+> `TrailingInput.tsx` is no longer used by the main outliner but is retained for
+> the field-value surface. IME continuity + the materialize lifecycle require
+> running the app.
 
 # Eager Materialization — the Tana-model trailing row (step 2)
 

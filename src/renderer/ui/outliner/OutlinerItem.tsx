@@ -754,9 +754,23 @@ export function OutlinerItem(props: OutlinerItemProps) {
   };
 
   const handleTab = async (shiftKey: boolean, cursorOffset: number) => {
-    // Depth-shifting an empty trailing draft (before it has a node) is a v1
-    // no-op; once the user types and the row materializes, Tab indents normally.
-    if (props.draft && !realNode) return;
+    if (props.draft && !realNode) {
+      // Tab on the trailing draft materializes it (empty) and indents it under
+      // the previous sibling — the explicit structural intent creates the node,
+      // matching Enter. Shift+Tab has nothing to outdent past at the draft's
+      // own level, so it is a no-op.
+      if (shiftKey) return;
+      materializeDraft();
+      await pendingTextPatchRef.current;
+      // Core's indentNode is a no-op when there is no previous sibling.
+      await props.run(() => api.indentNode(props.nodeId), { applyFocus: false });
+      props.setUi((prev) => requestFocusState(
+        prev,
+        rowFocusTarget(props.nodeId, null, props.panelId),
+        cursorAtOffset(cursorOffset),
+      ));
+      return;
+    }
     await commitDraft();
     if (!shiftKey) {
       const targetParentId = indentTargetParentId(props.nodeId, props.index.byId);
