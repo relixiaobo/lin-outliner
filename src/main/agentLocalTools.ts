@@ -100,7 +100,7 @@ interface FileGlobParams {
   path?: string;
 }
 
-interface FileGlobData {
+export interface FileGlobData {
   durationMs: number;
   numFiles: number;
   filenames: string[];
@@ -124,7 +124,7 @@ interface FileGrepParams {
   multiline?: boolean;
 }
 
-interface FileGrepData {
+export interface FileGrepData {
   mode?: 'content' | 'files_with_matches' | 'count';
   numFiles: number;
   filenames: string[];
@@ -181,7 +181,7 @@ interface BashParams {
   dangerouslyDisableSandbox?: boolean;
 }
 
-interface BashData {
+export interface BashData {
   stdout: string;
   stderr: string;
   rawOutputPath?: string;
@@ -231,7 +231,7 @@ interface TaskStopParams {
   task_id: string;
 }
 
-interface TaskStopData {
+export interface TaskStopData {
   message: string;
   task_id: string;
   task_type: string;
@@ -765,7 +765,7 @@ function createFileGlobTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
         return agentToolResult(successEnvelope('file_glob', data, {
           instructions: data.truncated ? 'Results were truncated. Use a more specific pattern or path.' : undefined,
           metrics: { durationMs: elapsed(started), truncated: data.truncated, outputBytes: jsonByteLength(data) },
-        }));
+        }), visibleFileGlob(data));
       } catch (error) {
         return localErrorResult('file_glob', error, started);
       }
@@ -793,7 +793,7 @@ function createFileGrepTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
         return agentToolResult(successEnvelope('file_grep', data, {
           instructions: data.appliedLimit !== undefined ? `More results may be available. Call file_grep again with offset ${(data.appliedOffset ?? 0) + data.appliedLimit}.` : undefined,
           metrics: metrics(started, data),
-        }));
+        }), visibleFileGrep(data));
       } catch (error) {
         return localErrorResult('file_grep', error, started);
       }
@@ -975,7 +975,7 @@ function createBashTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelop
           return agentToolResult(successEnvelope('bash', data, {
             instructions: `Command is running in the background as ${data.backgroundTaskId}. Use task_stop with task_id if it needs to be stopped.`,
             metrics: metrics(started, data),
-          }));
+          }), visibleBash(data));
         }
         const result = await runForegroundCommand(workspace, params, signal);
         const interpretation = interpretCommandResult(result.command ?? params.command, result.exitCode);
@@ -992,7 +992,7 @@ function createBashTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelop
             instructions: 'Inspect stdout and stderr. Fix the command or inputs, then retry if appropriate.',
             metrics: metrics(started, result),
           });
-        return agentToolResult(envelope);
+        return agentToolResult(envelope, visibleBash(result));
       } catch (error) {
         return localErrorResult('bash', error, started);
       }
@@ -1036,7 +1036,7 @@ function createTaskStopTool(): AgentTool<any, ToolEnvelope<TaskStopData>> {
           status: task.status,
           outputPath: task.outputPath,
         };
-        return agentToolResult(successEnvelope('task_stop', data, { metrics: metrics(started, data) }));
+        return agentToolResult(successEnvelope('task_stop', data, { metrics: metrics(started, data) }), visibleTaskStop(data));
       } catch (error) {
         return localErrorResult('task_stop', error, started);
       }
@@ -2088,6 +2088,49 @@ function visibleFileWrite(data: FileWriteData) {
     type: data.type,
     filePath: data.filePath,
     structuredPatch: data.structuredPatch,
+  };
+}
+
+// Model-visible projections for tools whose full data carries echoed arguments
+// or telemetry. The complete data object stays on the envelope (details); the
+// model only sees what it needs to read output and decide the next step.
+export function visibleFileGlob(data: FileGlobData) {
+  return {
+    filenames: data.filenames,
+    ...(data.truncated ? { truncated: true } : {}),
+  };
+}
+
+export function visibleFileGrep(data: FileGrepData): unknown {
+  const mode = data.mode ?? 'files_with_matches';
+  if (mode === 'content') {
+    return { mode, content: data.content ?? '' };
+  }
+  if (mode === 'count') {
+    return { mode, content: data.content ?? '', numMatches: data.numMatches ?? 0 };
+  }
+  return { mode, filenames: data.filenames };
+}
+
+export function visibleBash(data: BashData): unknown {
+  const visible: Record<string, unknown> = {
+    stdout: data.stdout,
+    stderr: data.stderr,
+  };
+  if (data.interrupted) visible.interrupted = true;
+  if (typeof data.exitCode === 'number' && data.exitCode !== 0) visible.exitCode = data.exitCode;
+  if (data.isImage) visible.isImage = true;
+  if (data.backgroundTaskId) visible.backgroundTaskId = data.backgroundTaskId;
+  if (data.taskStatus) visible.taskStatus = data.taskStatus;
+  if (data.persistedOutputPath) visible.persistedOutputPath = data.persistedOutputPath;
+  return visible;
+}
+
+export function visibleTaskStop(data: TaskStopData) {
+  return {
+    task_id: data.task_id,
+    status: data.status,
+    outputPath: data.outputPath,
   };
 }
 

@@ -94,6 +94,7 @@ import type {
   NodeSearchData,
   NormalizedEditParams,
   OperationHistoryData,
+  OperationHistoryItem,
   OperationHistoryParams,
   OutlinerToolHost,
   ProjectionIndex,
@@ -162,8 +163,38 @@ function createOperationHistoryTool(host: OutlinerToolHost): AgentTool<any, Tool
       return agentToolResult(successEnvelope('operation_history', data, {
         status: params.action === 'list' || data.count > 0 ? 'success' : 'unchanged',
         metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-      }));
+      }), visibleOperationHistory(data));
     },
+  };
+}
+
+// Model-visible projection: the full OperationHistoryData stays on the envelope
+// (details). The model needs the entries plus undo/redo affordances, not the
+// derivable count, the internal historyMode, the Loro cursor, or each item's
+// raw command name (tool/action/summary already describe the operation).
+export function visibleOperationHistory(data: OperationHistoryData): unknown {
+  const visible: Record<string, unknown> = { action: data.action };
+  if (data.total !== undefined) visible.total = data.total;
+  if (data.hasMore) visible.hasMore = true;
+  if (data.items) visible.items = data.items.map(visibleHistoryItem);
+  if (data.undone) visible.undone = data.undone.map(visibleHistoryItem);
+  if (data.redone) visible.redone = data.redone.map(visibleHistoryItem);
+  visible.canUndo = data.canUndo;
+  visible.canRedo = data.canRedo;
+  return visible;
+}
+
+function visibleHistoryItem(item: OperationHistoryItem) {
+  return {
+    operationId: item.operationId,
+    origin: item.origin,
+    ...(item.tool ? { tool: item.tool } : {}),
+    action: item.action,
+    summary: item.summary,
+    affectedNodeIds: item.affectedNodeIds,
+    createdAt: item.createdAt,
+    canUndo: item.canUndo,
+    canRedo: item.canRedo,
   };
 }
 

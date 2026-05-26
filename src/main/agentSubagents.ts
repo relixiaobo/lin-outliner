@@ -1061,7 +1061,7 @@ export function createAgentSubagentTools(runtime: AgentSubagentRuntime): AgentTo
       executionMode: 'parallel',
       execute: async (toolCallId, rawParams, signal) => {
         try {
-          return agentToolResult(successEnvelope(AGENT_SUBAGENT_TOOL_NAME, await runtime.invokeAgent(rawParams, signal, toolCallId)));
+          return subagentToolResult(AGENT_SUBAGENT_TOOL_NAME, await runtime.invokeAgent(rawParams, signal, toolCallId));
         } catch (error) {
           return agentToolResult(errorEnvelope(AGENT_SUBAGENT_TOOL_NAME, 'agent_failed', errorMessage(error)));
         }
@@ -1075,7 +1075,7 @@ export function createAgentSubagentTools(runtime: AgentSubagentRuntime): AgentTo
       executionMode: 'parallel',
       execute: async (_toolCallId, rawParams) => {
         try {
-          return agentToolResult(successEnvelope(AGENT_STATUS_TOOL_NAME, await runtime.status(rawParams)));
+          return subagentToolResult(AGENT_STATUS_TOOL_NAME, await runtime.status(rawParams));
         } catch (error) {
           return agentToolResult(errorEnvelope(AGENT_STATUS_TOOL_NAME, 'agent_status_failed', errorMessage(error)));
         }
@@ -1089,7 +1089,7 @@ export function createAgentSubagentTools(runtime: AgentSubagentRuntime): AgentTo
       executionMode: 'parallel',
       execute: async (_toolCallId, rawParams) => {
         try {
-          return agentToolResult(successEnvelope(AGENT_SEND_TOOL_NAME, await runtime.send(rawParams)));
+          return subagentToolResult(AGENT_SEND_TOOL_NAME, await runtime.send(rawParams));
         } catch (error) {
           return agentToolResult(errorEnvelope(AGENT_SEND_TOOL_NAME, 'agent_send_failed', errorMessage(error)));
         }
@@ -1103,7 +1103,7 @@ export function createAgentSubagentTools(runtime: AgentSubagentRuntime): AgentTo
       executionMode: 'parallel',
       execute: async (_toolCallId, rawParams) => {
         try {
-          return agentToolResult(successEnvelope(AGENT_STOP_TOOL_NAME, await runtime.stop(rawParams)));
+          return subagentToolResult(AGENT_STOP_TOOL_NAME, await runtime.stop(rawParams));
         } catch (error) {
           return agentToolResult(errorEnvelope(AGENT_STOP_TOOL_NAME, 'agent_stop_failed', errorMessage(error)));
         }
@@ -1404,6 +1404,27 @@ function lastAssistantMessage(messages: readonly AgentMessage[]): AssistantMessa
     if (message?.role === 'assistant') return message;
   }
   return null;
+}
+
+function subagentToolResult(toolName: string, data: AgentSubagentToolData) {
+  return agentToolResult(successEnvelope(toolName, data), visibleSubagentResult(data));
+}
+
+// Model-visible projection. The full AgentSubagentToolData stays on the envelope
+// (details); the parent agent only needs the lifecycle status, the id to address
+// follow-ups, the produced result/error, and any next-step instructions. Echoed
+// launch arguments (prompt, description, subagent_type, context_mode) and
+// timestamps/transcript counts are dropped.
+export function visibleSubagentResult(data: AgentSubagentToolData): unknown {
+  const visible: Record<string, unknown> = {
+    status: data.status,
+    agent_id: data.agent_id,
+  };
+  if (data.name) visible.name = data.name;
+  if (data.result !== undefined) visible.result = data.result;
+  if (data.error !== undefined) visible.error = data.error;
+  if (data.instructions) visible.instructions = data.instructions;
+  return visible;
 }
 
 function runToToolData(run: AgentRunRecord): AgentSubagentToolData {
