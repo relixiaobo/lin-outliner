@@ -1,5 +1,6 @@
 import { CoreError } from './errors';
 import { LoroOutlinerDocument, type SerializedLoroDocumentState } from './loroDocument';
+import { freshNodeId, isClientNodeId } from './nodeId';
 import {
   OperationJournal,
   decorateHistoryItem,
@@ -2414,16 +2415,9 @@ function freshId(prefix: string): string {
   return `${prefix}:${crypto.randomUUID()}`;
 }
 
-/**
- * A client-minted plain-node id: `node:` + a v4 UUID, exactly what
- * `freshId('node')` produces. The renderer may propose such an id (so a draft
- * row keeps its React identity through materialization); core validates it
- * before accepting. Reserved/structural ids (workspace, trash, …) and forged
- * strings are rejected by the strict shape.
- */
-export function isClientNodeId(id: string): boolean {
-  return /^node:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
-}
+// Re-exported so existing importers of `core` keep resolving these; the shape
+// itself lives in `./nodeId` as the single source of truth for renderer + core.
+export { freshNodeId, isClientNodeId };
 
 /**
  * An image node's source is exactly one of a local `assetId` or a remote

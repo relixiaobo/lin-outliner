@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { Core } from '../../src/core/core';
-import { isClientNodeId } from '../../src/core/core';
+import { freshNodeId, isClientNodeId } from '../../src/core/core';
+import { replaceAllRichTextPatch } from '../../src/core/types';
 
 function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T) {
   if (!outcome.focus) throw new Error('expected focus');
@@ -65,5 +66,29 @@ describe('createNode with a client-proposed id (eager materialization support)',
     expect(isClientNodeId('node:abc')).toBe(false);
     expect(isClientNodeId('ref:' + crypto.randomUUID())).toBe(false);
     expect(isClientNodeId('trash')).toBe(false);
+  });
+
+  test('freshNodeId produces a client-shaped id', () => {
+    const id = freshNodeId();
+    expect(isClientNodeId(id)).toBe(true);
+  });
+
+  // The DocumentService materialize path wraps the create + the text patches
+  // that immediately follow in one undo group (beginUndoGroup/endUndoGroup).
+  // This exercises the core mechanism that orchestration relies on.
+  test('materialize undo group: create + following patches undo as a single step', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const id = freshNodeId();
+    core.beginUndoGroup();
+    core.createNode(today, null, '你', id);
+    core.applyNodeTextPatch(id, replaceAllRichTextPatch({ text: '你好', marks: [], inlineRefs: [] }));
+    core.endUndoGroup();
+    expect(core.projection().nodes.find((n) => n.id === id)?.content.text).toBe('你好');
+
+    core.undo();
+    // Undo removes the whole node, never leaving a one-character orphan.
+    expect(core.projection().nodes.find((n) => n.id === id)).toBeUndefined();
+    expect(core.projection().nodes.find((n) => n.id === today)?.children).not.toContain(id);
   });
 });
