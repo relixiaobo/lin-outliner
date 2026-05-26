@@ -17,6 +17,19 @@ export const TAG_DAY_ID = 'tag:day';
 export const TAG_WEEK_ID = 'tag:week';
 export const TAG_YEAR_ID = 'tag:year';
 
+// System option subtrees under SCHEMA_ID. Each holds the enum domain for a
+// config knob; selecting an enum value = referencing one of these nodes, so
+// an invalid enum value is unrepresentable. See docs/plans/config-as-nodes.md.
+export const SCHEMA_FIELD_TYPES_ID = 'schema:field-types';
+export const SCHEMA_HIDE_MODES_ID = 'schema:hide-modes';
+export const SCHEMA_CARDINALITIES_ID = 'schema:cardinalities';
+export const SCHEMA_AUTO_INIT_ID = 'schema:auto-init';
+
+/** Deterministic id for a system option node, e.g. `schema:field-types/number`. */
+export function systemOptionNodeId(subtreeId: string, value: string): NodeId {
+  return `${subtreeId}/${value}`;
+}
+
 export type NodeType =
   | 'fieldEntry'
   | 'reference'
@@ -25,6 +38,7 @@ export type NodeType =
   | 'embed'
   | 'tagDef'
   | 'fieldDef'
+  | 'defConfig'
   | 'viewDef'
   | 'sortRule'
   | 'filterRule'
@@ -61,6 +75,40 @@ export type HideFieldMode =
   | 'not_empty'
   | 'value_is_default'
   | 'always';
+
+// ─── Config-as-nodes (see docs/plans/config-as-nodes.md) ───
+// A definition's configuration is stored as `defConfig` child nodes whose
+// `configKey` identifies the knob. The projection derives the legacy flat
+// fields (color/extends/fieldType/…) back onto the parent NodeProjection so
+// existing readers are unchanged; these keys are the bridge.
+export type TagConfigKey =
+  | 'color'
+  | 'extends'
+  | 'childSupertag'
+  | 'showCheckbox'
+  | 'doneStateEnabled';
+
+export type FieldConfigKey =
+  | 'fieldType'
+  | 'cardinality'
+  | 'sourceSupertag'
+  | 'nullable'
+  | 'hideField'
+  | 'autoInitialize'
+  | 'autocollectOptions'
+  | 'minValue'
+  | 'maxValue';
+
+export type DefConfigKey = TagConfigKey | FieldConfigKey;
+
+// How a config value is stored on / under its `defConfig` node:
+//   ref      → one child `reference` node targeting a tagDef
+//   enum     → one child `reference` node targeting a system option node
+//   enumList → zero or more child `reference`s to system option nodes
+//   number   → typed leaf field on the defConfig node
+//   bool     → typed leaf field on the defConfig node
+//   color    → typed leaf field on the defConfig node
+export type ConfigValueDomain = 'ref' | 'enum' | 'enumList' | 'number' | 'bool' | 'color';
 
 export interface TagConfigPatch {
   color?: string | null;
@@ -278,6 +326,8 @@ export interface Node {
   extends?: NodeId;
   doneStateEnabled: boolean;
   fieldDefId?: NodeId;
+  /** For `defConfig` nodes: which config knob this row represents. */
+  configKey?: DefConfigKey;
   fieldType?: FieldType;
   cardinality?: FieldCardinality;
   nullable?: boolean;
