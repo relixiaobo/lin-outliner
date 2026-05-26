@@ -760,8 +760,21 @@ export function OutlinerItem(props: OutlinerItemProps) {
       // matching Enter. Shift+Tab has nothing to outdent past at the draft's
       // own level, so it is a no-op.
       if (shiftKey) return;
+      // The draft sits after the parent's last child; once materialized it is
+      // appended there, so that last child is the indent target. Expand it so
+      // the freshly-indented row stays visible (and focused) instead of being
+      // hidden under a collapsed parent.
+      const siblings = props.index.byId.get(props.parentId)?.children ?? [];
+      const indentTarget = siblings[siblings.length - 1];
       materializeDraft();
       await pendingTextPatchRef.current;
+      if (indentTarget) {
+        props.setUi((prev) => {
+          const expanded = new Set(prev.expanded);
+          expanded.add(indentTarget);
+          return { ...prev, expanded };
+        });
+      }
       // Core's indentNode is a no-op when there is no previous sibling.
       await props.run(() => api.indentNode(props.nodeId), { applyFocus: false });
       props.setUi((prev) => requestFocusState(
