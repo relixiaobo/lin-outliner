@@ -53,6 +53,7 @@ const LOCAL_FILE_PREVIEW_TIMEOUT_MS = 1600;
 const LOCAL_FILE_THUMBNAIL_TIMEOUT_MS = 350;
 const LOCAL_FILE_THUMBNAIL_SIZE = 512;
 const RECENT_LOCAL_FILE_TIMEOUT_MS = 900;
+const LOCAL_FILE_CACHE_LIMIT = 1000;
 const localFileSearchCache = new Map<string, string>();
 const localFileIconCache = new Map<string, string | null>();
 const localFileThumbnailCache = new Map<string, string | null>();
@@ -525,10 +526,23 @@ function localFilePathRank(filePath: string, query: string): number {
   return 10;
 }
 
+// Bounded LRU-ish insert: re-touch the key so it stays fresh and evict the
+// oldest entries when over the cap, instead of clearing the whole map. Wholesale
+// clearing would drop ids that prepare/preview still need for the visible
+// results, leaving recently surfaced files unselectable mid-session.
+function setBoundedLocalFileCache<V>(cache: Map<string, V>, key: string, value: V): void {
+  if (cache.has(key)) cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > LOCAL_FILE_CACHE_LIMIT) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
+
 function cacheLocalFileSearchPath(filePath: string): string {
-  if (localFileSearchCache.size > 1000) localFileSearchCache.clear();
   const id = createHash('sha256').update(filePath).digest('hex').slice(0, 24);
-  localFileSearchCache.set(id, filePath);
+  setBoundedLocalFileCache(localFileSearchCache, id, filePath);
   return id;
 }
 
@@ -548,11 +562,10 @@ async function loadLocalFileIconDataUrl(filePath: string): Promise<string | null
   try {
     const image = await app.getFileIcon(filePath, { size: LOCAL_FILE_ICON_SIZE });
     const iconDataUrl = image.isEmpty() ? null : image.toDataURL();
-    if (localFileIconCache.size > 1000) localFileIconCache.clear();
-    localFileIconCache.set(filePath, iconDataUrl);
+    setBoundedLocalFileCache(localFileIconCache, filePath, iconDataUrl);
     return iconDataUrl;
   } catch {
-    localFileIconCache.set(filePath, null);
+    setBoundedLocalFileCache(localFileIconCache, filePath, null);
     return null;
   }
 }
@@ -576,11 +589,10 @@ async function loadLocalFileThumbnailDataUrl(filePath: string): Promise<string |
       height: LOCAL_FILE_THUMBNAIL_SIZE,
     });
     const thumbnailDataUrl = image.isEmpty() ? null : image.toDataURL();
-    if (localFileThumbnailCache.size > 1000) localFileThumbnailCache.clear();
-    localFileThumbnailCache.set(filePath, thumbnailDataUrl);
+    setBoundedLocalFileCache(localFileThumbnailCache, filePath, thumbnailDataUrl);
     return thumbnailDataUrl;
   } catch {
-    localFileThumbnailCache.set(filePath, null);
+    setBoundedLocalFileCache(localFileThumbnailCache, filePath, null);
     return null;
   }
 }
