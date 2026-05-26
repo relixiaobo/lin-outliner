@@ -6,222 +6,158 @@ created: 2026-05-26
 updated: 2026-05-26
 ---
 
-# Config as Nodes
+# Config as Nodes — full node unification
 
-Make tag/field configuration a first-class part of the node graph instead of a
-separate form panel. Each config item becomes a real node that renders, is
-navigated, selected, and undone through the same machinery as ordinary
-outliner rows. The "config panel vs outliner" seam disappears.
+Move lin's data model from a flat typed god-record (`Node` with ~60 typed
+fields) to a **node-uniform model**: a generic node carries a single typed
+`value`; definition and view configuration live as child value-nodes; readers
+go through typed accessors. The "config panel vs outliner" seam disappears
+*and* the data model becomes internally uniform (no flat-field/node hybrid).
+
+This supersedes the earlier hybrid sketch, which kept config values split
+across leaf fields and reference children, reused the god-record's own fields,
+kept a derived flat-field cache, and overloaded user references for enums —
+four smells. The clean model below removes all four.
 
 ## Goal
 
-A `tagDef` / `fieldDef` is just a node whose children include its
-configuration. Opening it shows one continuous outline:
-
 ```
 #Task (tagDef)
-├─ ⚙ color            → #7C9            (color control on the config row)
-├─ ⚙ extends          → [ref → #Project]
-├─ ⚙ show as checkbox → on
-├─ ⚙ done state       → on             (present only when checkbox = on)
-├─ ⚙ default child    → [ref → #Subtask]
+├─ ⚙ color            value:{color:#7C9}
+├─ ⚙ extends          value:{ref:#Project}
+├─ ⚙ show as checkbox value:{bool:true}
+├─ ⚙ default child    value:{ref:#Subtask}
 └─ … default content (ordinary content rows, same surface)
+
+priority (fieldDef)
+├─ ⚙ field type       value:{ref: schema-option:number}
+├─ ⚙ minimum value    value:{number:0}
+└─ ⚙ required         value:{bool:false}
 ```
 
-The felt result: configuring a definition uses the same keyboard, selection,
-and editing model as writing notes — no modal, no parallel control layer.
+A definition is just a node whose children include its configuration; a config
+row is a node; the UI is a pure projection of nodes. One rendering path, one
+keyboard model, one selection/undo model.
 
 ## Non-goals
 
-- Not changing what is configurable (the knob set stays as today).
-- Not migrating `viewDef` filter/sort/display config in this PR (see
-  **Consistency conflict** below).
-- Not building new config features (done-state mapping editor, auto-collect
-  list) here — those are follow-ups once the surface is unified.
+- No new config *features* (done-state mapping editor, auto-collect list) — the
+  surface is unified first; features follow.
 
-## Consistency conflict (read before reviewing)
+## The clean model
 
-This reverses, for definition config, a decision recorded in
-[`nodex-parity-decisions.md`](nodex-parity-decisions.md): *"`Filter` rules as
-child nodes of `viewDef` … nodex's child-node encoding is more composable but
-less type-safe; we chose typed."* lin currently stores definition config as
-**typed flat fields** on the node (`src/core/types.ts:256` `Node` — `color`,
-`extends`, `fieldType`, `cardinality`, …).
+### 1. `Node` slims; one polymorphic value slot
 
-Going node-encoded for tag/field config makes the codebase internally
-inconsistent (config = nodes, but `viewDef` filter/sort = typed flat). The
-owner chose node-encoding deliberately for the unification payoff. Open
-question for the main agent: either accept the temporary inconsistency, or
-plan a follow-up to migrate `viewDef` config the same way. The
-parity-decisions entry should be updated on merge.
-
-## Design
-
-### Source of truth + backward-compatible reads
-
-The **document** stores config as `defConfig` child nodes (new node type). The
-**projection** derives the legacy flat fields back onto the parent
-`NodeProjection`, so every existing reader (rendering, queries, done-state,
-auto-init, agent projection) is untouched. Blast radius is contained to:
-
-1. the core write + projection-derivation layer, and
-2. the config UI (which is deleted and re-expressed as rows).
-
-```
-write:  set_tag_config / set_field_config / direct row edit
-          → mutate defConfig subtree (guarded)
-read:   build projection → derive node.color/extends/fieldType/… from subtree
-          → all existing readers see the same flat fields as before
-```
-
-### Node schema
+The config/view typed fields leave `Node`. Value-bearing nodes carry a single
+tagged union:
 
 ```ts
-// new NodeType: 'defConfig'
-// a config item is a system field-node on a tagDef/fieldDef
-interface DefConfigNode {
-  type: 'defConfig';
-  configKey: DefConfigKey;   // 'color' | 'extends' | 'fieldType' | … → schema lookup
-  parentId: NodeId;          // the tagDef / fieldDef
-  system: true;              // structural lock: no delete / reparent / reorder / rename
-  children: NodeId[];        // ref/enum values live here
-  // scalar/bool values live in the typed leaf fields below
-}
+type NodeValue =
+  | { kind: 'text' }                  // value is the node's content (RichText)
+  | { kind: 'number'; number: number }
+  | { kind: 'bool'; bool: boolean }
+  | { kind: 'color'; color: string }
+  | { kind: 'ref'; ref: NodeId }      // points to a node (tag, or system option)
+  | { kind: 'date'; date: string };
 ```
 
-Value representation by domain:
+All scalar/bool/color/ref/enum values go through `value`. No split storage, no
+reuse of namesake god-record fields.
 
-| Config keys | Domain | Stored as |
-| --- | --- | --- |
-| `extends`, `childSupertag`, `sourceSupertag` | ref | one child `reference` node → target tagDef |
-| `fieldType`, `cardinality`, `hideField` | enum | one child `reference` → a **system option node** |
-| `autoInitialize` | enum list | child `reference`s → strategy option nodes |
-| `minValue`, `maxValue` | number | typed leaf field on the `defConfig` node |
-| `color` | color | typed leaf field on the `defConfig` node |
-| `showCheckbox`, `doneStateEnabled`, `required`, `autocollectOptions` | bool | typed leaf field on the `defConfig` node |
+### 2. Configuration is a child subtree
 
-Enums become "options fields whose options are system nodes", reusing the
-existing `options_from_supertag` value machinery. Selecting a value = a
-reference; an invalid enum value is therefore **unrepresentable**.
+`tagDef` / `fieldDef` own `defConfig` children, one per applicable knob,
+carrying `configKey` + a `value` (single) or child value-refs (list, e.g.
+`autoInitialize`). Ordered by the registry; structurally locked (no user
+delete / reparent / reorder / rename).
 
-### System option nodes
+### 3. Config refs are value-refs, not `reference` nodes
 
-A new system subtree under `SCHEMA_ID` holds the enum domains:
+A config/enum ref is `value:{kind:'ref'}`, distinct from the user-facing
+`reference` node type. It therefore does **not** enter the backlink / inline-ref
+graph. Enums = `value.ref` → a **system option node** (see below); an invalid
+enum value is unrepresentable.
 
-```
-SCHEMA/
-  field-types/    plain, options, options_from_supertag, date, number, …
-  hide-modes/     never, empty, not_empty, value_is_default, always
-  cardinalities/  single, list
-  auto-init/      current_date, ancestor_day_node, ancestor_field_value, ancestor_supertag_ref
-```
+### 4. System option nodes (enum domains)
 
-Seeded at document bootstrap; idempotent migration adds them to existing docs.
+Hidden system subtrees hold the enum domains (field-types, hide-modes,
+cardinalities, auto-init strategies). Seeded at bootstrap, idempotent for
+existing docs, kept out of the user-visible Schema view.
 
-### Schema registry
-
-`definitionConfig.ts` evolves from a render-only list into the authoritative
-**closed schema**:
+### 5. Reads go through typed accessors — no derived flat cache
 
 ```ts
-interface ConfigSchemaDef {
-  key: DefConfigKey;
-  kind: 'tag' | 'field';
-  domain: ConfigDomain;                  // ref | enum | enumList | number | bool | color
-  cardinality: 'single' | 'list';
-  appliesTo: '*' | FieldType[];
-  visibleWhen?: (cfg: ProjectedConfig) => boolean;
-  label: string; icon: IconKind; description?: string;
-  validate?: (value, ctx) => void;       // only cycle / min-max remain
-}
+projectTagConfig(tagDefId): TagConfig
+projectFieldConfig(fieldDefId): FieldConfig
+projectViewRule(ruleId): ViewRule
 ```
+
+Every current reader of `node.color` / `node.fieldType` / `node.filterField` /
+… is rewritten to read through an accessor. The flat fields are **removed** from
+`Node`/projection (not kept as a cache). Single source of truth.
+
+### 6. viewDef unification
+
+`sortRule` / `filterRule` / `displayField` are already child nodes; their
+parameters (`filterField`, `filterOperator`, `filterValues`, `sortField`,
+`displayField`, …) move to `value` slots / value-refs too, on the same
+`NodeValue` mechanism. Definition + view config become one uniform node model.
+
+### 7. Schema registry = closed schema
+
+`definitionConfig.ts` (moved/canonicalized into core) declares each knob: key,
+`valueKind`, `cardinality`, `appliesTo`, `visibleWhen`, label/icon/description,
+optional `validate`. It is the authoritative closed schema that keeps the open
+node tree from drifting.
 
 ### Invariants
 
 | Invariant | Enforced by |
 | --- | --- |
-| Enum value legal | structurally (can only reference an existing option node) |
-| Membership closed (only registry keys) | `reconcileConfigSubtree` |
-| Order fixed (registry order) | `reconcileConfigSubtree` + render |
-| No delete / reparent / reorder / rename | command layer rejects on `system` nodes |
-| Value-domain typed | write-time domain check |
-| `extends` acyclic | guard (reference-graph cycle check) |
-| `min ≤ max`, finite | domain `validate` |
+| Enum value legal | structural (`value.ref` must resolve to an option node in the right subtree) |
+| Membership closed, registry order | `reconcileConfigSubtree` |
+| No delete / reparent / reorder / rename of config nodes | command layer rejects on `defConfig` |
+| Value kind matches knob | write-time `valueKind` check |
+| `extends` acyclic | guard (value-ref graph cycle check) |
+| `min ≤ max`, finite | knob `validate` |
 | Applicability follows `fieldType` | `reconcileConfigSubtree` (appliesTo) |
 
-### Validation convergence — single chokepoint
+## Scope (honest)
 
-```ts
-function guardConfigMutation(defNode, configKey, nextValue, ctx): void {
-  CONFIG_SCHEMA[configKey].validate?.(nextValue, ctx);   // cycle / min-max
-  // structural invariants come from the command layer refusing structural
-  // ops on system nodes; enum legality is structural (reference must exist)
-}
-function reconcileConfigSubtree(defNode): void {
-  // recompute applicable defConfig children by appliesTo:
-  // prune non-applicable, create newly-applicable, order by registry
-  // (replaces the imperative "clear sourceSupertag/min/max on type change")
-}
-```
+This is a foundational data-model rewrite, not a config feature. Touches:
+`types.ts` (slim `Node`, `NodeValue`), `loroDocument.ts` (persist value union,
+drop flat keys), `core.ts` (commands, migration, reconcile, accessors),
+projection, **every reader of the moved fields** (rendering, queries,
+done-state, auto-init, search, agent projection, fieldOptions, tag colors, …),
+viewDef rule readers, the config UI, and tests. The reader rewrite is the long
+tail and the bulk of the effort.
 
-`set_tag_config` / `set_field_config` survive as **thin typed facades**: each
-patch key writes its value (leaf field or reference child) and hits the guard.
-The row UI edits the same nodes directly and hits the same guard. One source
-of validation truth, no bypass.
+## Staged commits (one PR, each keeps typecheck + tests green)
 
-Existing `core.ts` checks map cleanly:
-
-| Old (imperative, scattered) | New (declarative, single) |
-| --- | --- |
-| validate fieldType/hideField/cardinality enum | structural (reference an option node) |
-| clear sourceSupertag/autocollect/min/max on type change | `reconcileConfigSubtree` |
-| `extends` not cyclic | `guardConfigMutation` |
-| `min ≤ max`, finite number | domain `validate` |
-| `required` ↔ `nullable` inversion | derivation/accessor mapping (unchanged behavior) |
-
-### Rendering + keyboard (inherited, not rebuilt)
-
-- `buildOutlinerRows` / `buildChildRows` emit a `defConfig` row from the
-  subtree; a new `RowLeading` variant draws the config bullet.
-- The control (color swatch / number / switch / ref picker / enum picker) is
-  chosen by `domain` and rendered inside `FieldEntryGrid`, exactly as
-  `OutlinerFieldRow` renders a field value.
-- Navigation, multi-row selection, focus, and undo are **inherited** because
-  config rows are nodes in `flattenVisibleRows`. Drag-reorder and delete are
-  suppressed for `system` nodes.
-- `visibleWhen` / `appliesTo` are resolved at `reconcile` time (the node is
-  present or not), so the renderer needs no special filtering.
-- Deleted: `DefinitionConfigPanel.tsx`, `DefinitionConfigControls.tsx`,
-  `DefinitionConfigRowShell.tsx`, and the separate `<section>` in
-  `NodePanel.tsx:705`.
-
-## Staged commits (one PR)
-
-Each stage keeps `bun run typecheck` + tests green and the app runnable.
-
-1. **Schema + types** — `NodeType` `'defConfig'`, `DefConfigKey`,
-   `ConfigDomain`, `ConfigSchemaDef`; system option node ids/seed.
-2. **Document layer** — bootstrap seeds option nodes + config subtrees;
-   idempotent migration for existing docs; `reconcileConfigSubtree`.
-3. **Projection derivation** — derive legacy flat fields from the subtree so
-   all readers stay green (no reader edits).
-4. **Write path + guard** — `set_tag_config`/`set_field_config` rewritten as
-   facades over subtree writes; `guardConfigMutation`; structural-op locks for
-   `system` nodes.
-5. **Render config as rows** — row type + leading variant + domain controls;
-   wire into `buildChildRows`.
-6. **Keyboard/selection** — confirm inherited nav across config + content;
-   suppress drag/delete on system nodes.
-7. **Delete old UI** — remove the three definition-config components and the
-   panel section; clean styles.
-8. **Tests** — migration idempotency, projection-derivation parity vs current
-   flat-field behavior, guard validation, reconcile on type change.
+1. **Value model + persistence** — `NodeValue` union; persist it; `configKey`
+   already added. (Flat fields stay during migration; removed in stage 9.)
+2. **Typed accessors** — `projectTagConfig`/`projectFieldConfig`/`projectViewRule`
+   reading the value subtree (flat-field fallback while both coexist).
+3. **System option nodes + subtree creation + `reconcileConfigSubtree`**.
+4. **Migration** — idempotently materialize value subtrees from existing flat
+   fields for every tagDef/fieldDef (+ viewDef rules in stage 8).
+5. **Reader rewrite** — route all readers through accessors; remove flat-field
+   reads. The long tail; split into reviewable sub-commits by subsystem.
+6. **Write path + guard + structural locks** — commands write the value
+   subtree; `guardConfigMutation`; lock `defConfig` structural ops.
+7. **Config UI as rows** — config rows from the subtree; domain controls bound
+   to `value` slots; delete `DefinitionConfigPanel`/`Controls`/`RowShell`.
+8. **viewDef rule params → value-nodes** — same mechanism for
+   filter/sort/display.
+9. **Remove flat fields** from `Node`, persistence, and projection.
+10. **Tests + visual verify** — migration idempotency, accessor parity, guard,
+    reconcile, structural locks; visual check; mark PR ready.
 
 ## Open questions
 
-- `viewDef` consistency (see **Consistency conflict**) — main-agent call.
-- Scalar/bool values as leaf fields on `defConfig` vs literal child nodes:
-  chosen leaf fields (a literal node per number/bool is noise); revisit only if
-  a future feature needs them addressable.
-- Undo granularity for `reconcileConfigSubtree` (should a type change + its
-  prune/create be one undo step — yes).
+- Order of the reader rewrite (stage 5) — by subsystem; keep each sub-commit
+  green.
+- Whether `value:{kind:'text'}` nodes need a distinct marker vs ordinary
+  content nodes (likely: presence of a parent `defConfig`/value context).
+- Undo granularity: a `fieldType` change + its `reconcileConfigSubtree`
+  prune/create is one undo step.
