@@ -4,8 +4,8 @@ import type { Node as PMNode } from 'prosemirror-model';
 import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { replaceAllRichTextPatch, type CreateNodeTree, type RichText, type RichTextPatch } from '../../api/types';
-import type { FocusRequest, FocusTarget, PendingInputChar, CursorPlacement } from '../../state/document';
-import type { EditorTrigger, NavigateRootOptions, TriggerAnchor } from '../shared';
+import type { FocusRequest, FocusTarget, PendingInputChar } from '../../state/document';
+import type { EditorTrigger, NavigateRootOptions } from '../shared';
 import { wantsNewTabFromClick } from '../shared';
 import {
   resolveContentRowUpdateAction,
@@ -30,10 +30,15 @@ import {
   richTextToDoc,
   richTextEquals,
   sliceRichText,
-  textOffsetToDocPos,
 } from './richTextCodec';
 import { richTextPatchFromTransaction } from './editorTextPatch';
 import { pmSchema } from './pmSchema';
+import {
+  applyCursorPlacement,
+  caretAnchor,
+  selectionForPlacement,
+  selectionTextOffsets as selectionOffsets,
+} from './nodeLineView';
 import { focusTargetMatches } from '../focus/focusModel';
 
 export interface EditorSplitPayload {
@@ -45,8 +50,6 @@ export interface EditorSplitPayload {
 export interface EditorDescriptionTogglePayload {
   cursorOffset: number;
 }
-
-type EditorFocusPlacement = 'start' | 'end' | 'all' | { offset: number; inlineRefBias?: 'before' | 'after' };
 
 interface RichTextEditorProps {
   nodeId: string;
@@ -90,50 +93,8 @@ interface RichTextEditorProps {
   onPendingInputConsumed?: (input: PendingInputChar) => void;
 }
 
-function editorSelectionForPlacement(doc: PMNode, placement: EditorFocusPlacement) {
-  const content = docToRichText(doc);
-  const start = 1;
-  const end = Math.max(1, doc.content.size - 1);
-  const pos = typeof placement === 'object'
-    ? textOffsetToDocPos(doc, placement.offset, { inlineRefBias: placement.inlineRefBias })
-    : placement === 'start'
-      ? start
-      : textOffsetToDocPos(doc, content.text.length, { inlineRefBias: 'after' });
-  return placement === 'all'
-    ? TextSelection.create(doc, start, end)
-    : TextSelection.create(doc, pos);
-}
-
-function editorPlacementFromCursorPlacement(placement: CursorPlacement): EditorFocusPlacement | null {
-  if (placement.kind === 'preserve') return null;
-  if (placement.kind === 'text-offset') {
-    return { offset: placement.offset, inlineRefBias: placement.inlineRefBias };
-  }
-  return placement.kind;
-}
-
-function setEditorSelection(view: EditorView, placement: EditorFocusPlacement) {
-  const selection = editorSelectionForPlacement(view.state.doc, placement);
-  view.dispatch(view.state.tr.setSelection(selection));
-}
-
-function setEditorCursorPlacement(view: EditorView, placement: CursorPlacement) {
-  if (placement.kind === 'preserve') return;
-  if (placement.kind === 'text-offset') {
-    setEditorSelection(view, { offset: placement.offset, inlineRefBias: placement.inlineRefBias });
-    return;
-  }
-  setEditorSelection(view, placement.kind);
-}
-
 function focusEditorDom(view: EditorView) {
   view.dom.focus({ preventScroll: true });
-}
-
-function selectionOffsets(view: EditorView) {
-  const from = docPosToTextOffset(view.state.doc, view.state.selection.from);
-  const to = docPosToTextOffset(view.state.doc, view.state.selection.to);
-  return from < to ? { from, to } : { from: to, to: from };
 }
 
 function selectedInlineReferencePosition(view: EditorView): number | null {
@@ -216,15 +177,6 @@ function toolbarAnchor(view: EditorView): OverlayAnchorRect | null {
   }
 }
 
-function caretAnchor(view: EditorView): TriggerAnchor | undefined {
-  try {
-    const rect = view.coordsAtPos(view.state.selection.from);
-    return { left: rect.left, top: rect.top, bottom: rect.bottom };
-  } catch {
-    return undefined;
-  }
-}
-
 function resolveEditorTrigger(view: EditorView): EditorTrigger | null {
   if (!view.state.selection.empty) return null;
   const content = docToRichText(view.state.doc);
@@ -281,15 +233,15 @@ export function RichTextEditor(props: RichTextEditorProps) {
 
   const initialState = useMemo(() => {
     const doc = richTextToDoc(props.content, pmSchema, props.resolveInlineReferenceColor);
-    const initialPlacement = props.focusTarget
+    const initialSelection = props.focusTarget
       && props.focusRequest
       && focusTargetMatches(props.focusRequest.target, props.focusTarget)
-      ? editorPlacementFromCursorPlacement(props.focusRequest.placement)
+      ? selectionForPlacement(doc, props.focusRequest.placement)
       : null;
     return EditorState.create({
       doc,
       schema: pmSchema,
-      ...(initialPlacement ? { selection: editorSelectionForPlacement(doc, initialPlacement) } : {}),
+      ...(initialSelection ? { selection: initialSelection } : {}),
     });
   }, []);
 
@@ -757,7 +709,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
     if (!focusTargetMatches(request.target, target)) return;
 
     focusEditorDom(view);
-    setEditorCursorPlacement(view, request.placement);
+    applyCursorPlacement(view, request.placement);
     updateToolbar(view);
     if (!composingRef.current && !view.composing) updateTrigger(view);
     props.onFocusRequestConsumed?.(request);

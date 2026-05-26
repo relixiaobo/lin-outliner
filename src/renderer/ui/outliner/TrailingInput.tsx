@@ -11,9 +11,10 @@ import { EditorView } from 'prosemirror-view';
 import { api } from '../../api/client';
 import type { CommandOutcome, CreateNodeTree, DocumentProjection, NodeId, NodeProjection } from '../../api/types';
 import { EMPTY_RICH_TEXT } from '../../api/types';
-import type { CursorPlacement, DocumentIndex, FocusRequest, FocusSurface } from '../../state/document';
+import type { DocumentIndex, FocusRequest, FocusSurface } from '../../state/document';
 import { pmSchema } from '../editor/pmSchema';
 import { richTextToDoc } from '../editor/richTextCodec';
+import { applyCursorPlacement, caretAnchor } from '../editor/nodeLineView';
 import { focusTarget, focusTargetMatches } from '../focus/focusModel';
 import {
   resolveTrailingRowArrowDownIntent,
@@ -188,32 +189,6 @@ function commandProjection(result: unknown): DocumentProjection | null {
   if ('projection' in result) return (result as CommandOutcome).projection;
   if ('nodes' in result) return result as DocumentProjection;
   return null;
-}
-
-function caretAnchor(view: EditorView) {
-  try {
-    const rect = view.coordsAtPos(view.state.selection.from);
-    return {
-      left: rect.left,
-      top: rect.top,
-      bottom: rect.bottom,
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-function setTrailingSelection(view: EditorView, placement: CursorPlacement) {
-  if (placement.kind === 'preserve') return;
-  const textLength = getEditorText(view).length;
-  const boundedOffset = placement.kind === 'start'
-    ? 0
-    : placement.kind === 'text-offset'
-      ? Math.max(0, Math.min(textLength, placement.offset))
-      : textLength;
-  const from = placement.kind === 'all' ? 1 : Math.max(1, Math.min(1 + boundedOffset, view.state.doc.content.size - 1));
-  const to = placement.kind === 'all' ? Math.max(1, view.state.doc.content.size - 1) : from;
-  view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, from, to)));
 }
 
 function isPlainPrintableKey(event: KeyboardEvent): boolean {
@@ -1302,7 +1277,7 @@ export function TrailingInput(props: TrailingInputProps) {
     );
     if (!focusTargetMatches(request.target, target)) return;
     view.focus();
-    setTrailingSelection(view, request.placement);
+    applyCursorPlacement(view, request.placement);
     props.onFocusRequestConsumed?.(request);
   }, [effectiveParentId, props.focusRequest, props.onFocusRequestConsumed, props.panelId]);
 
