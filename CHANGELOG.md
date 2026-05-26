@@ -12,6 +12,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Local file mentions in the agent composer** — the `@` mention menu now
+  combines recent nodes, local files, folders, and live file-search results
+  (Spotlight `mdfind` on macOS, `rg` fallback elsewhere); selected entries
+  render as inline tokens with native icons, image thumbnails, and hover
+  previews. The model-facing prompt preserves positional intent with
+  `[[file:<ref>]]` markers while a hidden `<user-attachments>` table maps each
+  `ref` to its local path, kind, MIME type, and size, so files, folders, inline
+  text, and images share one resolution path. Folders are exposed to the agent
+  via a symlink into the local root for `file_glob`. Trashed nodes are excluded
+  from both outliner and agent `@` suggestions.
+  ([#21](https://github.com/relixiaobo/lin-outliner/pull/21))
 - **Eager-materialized trailing draft row** — the Tana-style blank line at the
   bottom of the outline is now a real draft row: typing the first committed
   character materializes an actual node in place (IME-seamless, no editor

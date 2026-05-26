@@ -62,6 +62,13 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **local-file-mentions** (P1, Codex) — the agent composer `@` menu now mixes
+  recent nodes, local files, folders, and live file search (Spotlight `mdfind`
+  on macOS, `rg` fallback); selections render as inline tokens with native
+  icons/thumbnails/hover previews. Model-facing text keeps position via
+  `[[file:<ref>]]` markers, and the hidden `<user-attachments>` table maps each
+  `ref` to path/kind/MIME/size; folders are symlinked into the local root for
+  `file_glob`. Trashed nodes are excluded from `@` suggestions (PR #21).
 - **node-line-editor eager-materialized trailing draft** (P1, cc) — typing in
   the trailing blank line materializes a real node in place (IME-seamless, no
   remount) under a client-proposed id; create + first edits collapse into one
