@@ -14,9 +14,16 @@ is a child node / reference, type known from the registry; reads go through
 typed accessors backed by an index. One value mechanism, not a parallel one.
 The "config panel vs outliner" seam disappears.
 
-History: a typed `NodeValue` slot (a *second* value mechanism — field values
-are already child nodes) was dropped per review. This is the U1 model, refined
-by two Codex review passes (model direction endorsed; risks are transitional).
+History: a typed `NodeValue` slot was dropped (it would be a *second* value
+mechanism). Two Codex review passes endorsed the U1 direction and surfaced the
+transitional-correctness rules below.
+
+**Pre-launch: no backward-compat.** The product has not launched, so there is
+no persisted user data to preserve. This removes the migration machinery —
+there is no idempotent legacy-doc backfill, no dual-write, no read-precedence,
+no lint gate. The cutover is **compiler-driven**: delete a flat field and the
+type checker enumerates every reader/writer to fix. The runtime-correctness
+work below is unaffected.
 
 ## The model (U1)
 
@@ -27,102 +34,68 @@ by two Codex review passes (model direction endorsed; risks are transitional).
 - Value stored as field values already are: number/color/bool → child value
   node (content text, per the registry **codec**); ref/enum → child
   `reference` (enum → a **system option node**).
-- **`systemOption` nodes** hold enum domains. **Stable IDs derived from the
+- **`systemOption` nodes** hold enum domains; **stable IDs derived from the
   registry key/domain** (`systemOptionNodeId`), never `freshId`.
+- Reads via `projectTagConfig`/`projectFieldConfig`/`projectViewRule` over a
+  `buildConfigIndex(state)` (config is read in hot paths — no per-call scans).
 
-## Transitional-state rules (the actual risk — from review)
-
-These are non-negotiable; getting them wrong corrupts documents mid-migration.
+## Runtime-correctness rules (still required — not migration)
 
 1. **Two-layer visibility, NOT projection removal.** `defConfig`/`systemOption`
-   stay **in** `DocumentProjection` (`projection.ts:15` projects every node;
-   the renderer resolves reference labels via the projection, so enum/ref value
-   labels need their target present). A single `isInternalNode(node)` predicate
-   excludes them at every *consumer*: outliner normal-child render
-   (`shared.ts:73`), **search candidates** (`searchEngine.ts` runs over
-   `DocumentState`, not the projection — must filter at the index layer), agent
-   projection (`agentNodeToolProjection.ts`), sidebar. The config *surface*
-   opts **in** to rendering `defConfig` children.
+   stay **in** `DocumentProjection` (the renderer resolves reference labels via
+   the projection). A single `isInternalConfigNode` predicate excludes them at
+   each *consumer*: outliner render (`shared.ts`/`outlinerRows.ts`), search
+   candidacy (allowlist already does), agent `normalChildIds`, sidebar. The
+   config surface opts **in**.
 2. **Visible↔raw child-index translation.** `defConfig` nodes are a pinned
-   internal segment of a definition's `children`. Every definition-child
-   `moveNode`/`createNode`/`createFieldDef`/insert must translate the visible
-   index to a raw index (skipping the internal segment), or a drag to "index 0"
-   lands among/before config. Route all definition-child structural ops through
-   one helper.
-3. **Guard granularity — structure locked, value mutable.** A dedicated
-   chokepoint: the `defConfig` node itself cannot be renamed/reparented/
-   deleted/reordered, but its value is set via a registry-governed
-   `setConfigValue` (replace/set), **not** raw child create/delete.
-   `systemOption` nodes are fully immutable.
-4. **Explicit `refRole` + backlink allowlist.** Add `refRole`
-   (`link`/`fieldValue`/`config`/`enum`/`searchResult`/`autoInit`). Backlink &
-   reference-cleanup logic (keyed today on `type==='reference' && targetId` in
-   ~15 spots, e.g. `core.ts:1397`, `2278`, `2353`) switches to an **allowlist**
-   (link/tree/fieldValue in; config/enum/system/searchResult out). Migration
-   backfills `refRole` by context; do not rely on parent inference long-term.
-5. **Scalar codec in the registry.** Each scalar knob declares canonical
-   storage text, empty/unset/default semantics, write-time validation, and
-   reconcile for invalid persisted values — enum unrepresentability does not
-   cover number/bool/color stored as text.
-6. **viewDef rides with config.** view-rule params (`sortField`,
-   `filterField`, `filterOperator`, `filterValues`, `displayField`,
-   `groupField`; written `core.ts:448`, read `outlinerRows.ts:66`,
-   `searchEngine.ts:231`) migrate/dual-write/reader-rewrite in the **same**
-   stages as definition config, flip together in Stage 7. No half-promised
-   `projectViewRule`.
-7. **Lint gate.** An `rg`/test fails on new direct reads of moved flat fields
-   (~153 in `src`) outside an allowlist (migration/dual-write/accessor/legacy
-   tests) — the compiler won't stop them while the fields still exist.
-8. **`showCheckbox` is dual-purpose** (node affordance `core.ts:2418` + tag
+   internal segment of a definition's `children`; definition-child
+   move/insert/create must translate visible→raw index (skip the segment).
+3. **Guard granularity — structure locked, value mutable.** The `defConfig`
+   node itself can't be renamed/reparented/deleted/reordered (done via the
+   `ensure*` guards); its value is set only via a registry-governed
+   `setConfigValue` chokepoint (`*Direct` APIs). `systemOption` immutable.
+4. **Explicit `refRole` + backlink allowlist.** `refRole`
+   (`link`/`fieldValue`/`config`/`enum`/`searchResult`/`autoInit`); backlink &
+   reference logic uses an allowlist (link/fieldValue in; config/enum/system/
+   searchResult out), not parent inference.
+5. **Scalar codec in the registry** — canonical text, unset/default, write-time
+   validation for number/bool/color.
+6. **viewDef rides with config** — view-rule params migrate to the value
+   mechanism in the same stages and cut over together.
+7. **`showCheckbox` is dual-purpose** (node affordance `core.ts:2418` + tag
    config `core.ts:970`) — split before removal from `Node`.
 
-## Reads via accessors + index
+## Cutover (no compat → compiler-driven)
 
-`projectTagConfig`/`projectFieldConfig`/`projectViewRule` over a
-`buildConfigIndex(state)` (config is read in hot paths: outliner rows, search,
-field options, agent projection — no per-call child scans). Flat-first
-precedence during transition; value-first after Stage 7.
+Writes produce the subtree as the source of truth; accessors read it. Then
+**delete each flat field from `Node`** — the type checker lights up every reader
+(~153 in `src`) and writer; fix them to the accessor / `setConfigValue`. No
+dual-write, no backfill: field-by-field, each step compiles green.
 
-## Scope (honest)
+## Stages (one PR; each stage ships behavioral tests + stays green)
 
-Foundational: `types.ts`, `loroDocument.ts`, `core.ts` (commands, migration,
-reconcile, accessors, guards, refRole, index translation), `projection.ts`,
-`searchEngine.ts`, the ~153 flat config/view reads across `src`, viewDef
-readers, config UI, agent tools, E2E mocks. The reader rewrite is the long tail.
-
-## Stages (one PR; each ships behavioral tests + stays green)
-
-0. **Definitions, no behavior change** — closed schema registry (domains,
-   cardinality, appliesTo, visibleWhen, **scalar codecs**, validate),
-   `defConfig`/`systemOption` types, `refRole` taxonomy + backlink allowlist
-   design, `isInternalNode` predicate, visible↔raw index helper API,
-   `setConfigValue` chokepoint API, migration-precedence rule.
-1. **Internal-node infra + protection (day one)** — `isInternalNode` wired into
-   outliner render, **search candidates**, agent projection, sidebar (kept in
-   projection); visible↔raw child-index translation for all definition-child
-   ops; structural guard (lock `defConfig`/`systemOption` structure) +
-   `setConfigValue` chokepoint; persistence. Test per protection (incl. index
-   translation, template-not-cloning-config, search-excludes-config).
+0. ✅ **Definitions** — `defConfig`/`systemOption` types, `RefRole`, closed
+   schema registry + scalar codecs + enum domains, `isInternalConfigNode`,
+   backlink allowlist, accessor/index/`setConfigValue` API surface.
+1. **Protection + guard + index translation** (in progress) — `isInternalConfigNode`
+   wired into outliner/agent/sidebar (search already allowlist); structural
+   guards; visible↔raw index translation. Tests per protection.
 2. **Split `showCheckbox`** — node affordance vs tag config; done toggle/cycle
    unaffected (tests).
 3. **`refRole` + backlink allowlist** — add `refRole`; switch backlink/reference
-   logic to allowlist; migration backfills by context. Tests: backlinks exclude
-   config/enum refs; field-value refs unchanged.
-4. **System options (stable IDs) + reconcile + accessors + index** — covers
-   definition **and** view config domains.
-5. **Migration + dual-write (config + view)** — materialize subtrees from flat
-   fields (codec-validated); commands dual-write. Tests: idempotency, parity,
-   invalid-value reconcile.
-6. **Reader rewrite (config + view), by subsystem** + **lint gate**. Each green
-   + tested.
-7. **Flip source of truth (config + view together)** — subtree-only writes;
-   accessor value-first; dual-write removed; guard chokepoint final.
-8. **Config UI as rows (UI-only)** — reuse field-value rendering via
-   `setConfigValue`; delete `DefinitionConfigPanel`/`Controls`/`RowShell`. No
-   data migration here.
-9. **Remove flat fields + final verify** — only after agent tools, E2E mocks,
-   renderer projection are off flat config fields; remove from
-   `Node`/persistence/projection; full suite + build; visual verify; mark ready.
+   logic to the allowlist. Tests: backlinks exclude config/enum refs.
+4. **System options + reconcile + accessors + index (config + view)** — seed
+   enum subtrees (stable IDs); `reconcileConfigSubtree`; `buildConfigIndex` +
+   accessors.
+5. **Cutover** — config (and view) writes produce the subtree as source of
+   truth; accessors read it.
+6. **Remove flat fields (compiler-driven) + reader/writer rewrite** — delete
+   moved fields from `Node`/persistence; fix every compile error to
+   accessor/`setConfigValue`, by subsystem, each green + tested.
+7. **Config UI as rows + final verify** — render config rows reusing
+   `OutlinerFieldRow`/`FieldValueOutliner` via `setConfigValue`; delete
+   `DefinitionConfigPanel`/`Controls`/`RowShell`; full suite + build; visual
+   verify; mark ready.
 
 ## Consistency note
 
