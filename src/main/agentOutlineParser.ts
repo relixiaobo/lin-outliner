@@ -1,4 +1,5 @@
 import { isCssHexColorToken } from '../core/textSyntax';
+import { parseNodeReferenceMarkers } from '../core/nodeReferenceMarkup';
 
 export interface OutlineDocument {
   roots: OutlineNode[];
@@ -219,9 +220,9 @@ function stripNodeMarker(text: string): { nodeId?: string; text: string } {
 }
 
 function parseReference(text: string): { display: string; targetId: string; full: boolean } | null {
-  const match = /^\[\[(.+?)\^(.+?)\]\]$/.exec(text);
-  if (!match) return null;
-  return { display: match[1]!.trim(), targetId: match[2]!.trim(), full: true };
+  const marker = parseNodeReferenceMarkers(text)[0];
+  if (!marker || marker.start !== 0 || marker.end !== text.length) return null;
+  return { display: marker.label || marker.nodeId, targetId: marker.nodeId, full: true };
 }
 
 function splitDescription(text: string): [string, string?] {

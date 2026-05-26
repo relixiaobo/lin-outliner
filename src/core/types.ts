@@ -459,6 +459,16 @@ export interface AgentRuntimeSettingsInput {
   providerCacheRetention?: AgentCacheRetention;
 }
 
+export type AgentSlashCommandKind = 'runtime' | 'skill';
+
+export interface AgentSlashCommandView {
+  id: string;
+  kind: AgentSlashCommandKind;
+  label: string;
+  description?: string;
+  insertText: string;
+}
+
 export interface AgentProviderConfigInput {
   providerId: string;
   modelId: string;

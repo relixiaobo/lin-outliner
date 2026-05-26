@@ -7,8 +7,9 @@ import {
 } from './outlinerMock';
 
 async function openSchema(page: import('@playwright/test').Page) {
-  await page.getByRole('button', { name: 'Library' }).click();
-  await row(page, ids.schema).getByRole('button', { name: 'Open' }).click();
+  await page.locator('.sidebar-primary-nav')
+    .getByRole('button', { name: 'Schema', exact: true })
+    .click();
 }
 
 async function chooseConfigOption(

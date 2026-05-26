@@ -7,6 +7,7 @@ import type {
   AgentRuntimeSettingsInput,
   AgentSession,
   AgentSessionMeta,
+  AgentSlashCommandView,
   CommandOutcome,
   CreateNodeTree,
   DocumentProjection,
@@ -263,6 +264,8 @@ export const api = {
     command<void>('agent_reset_session', { sessionId }),
   agentCloseSession: (sessionId: string) =>
     command<void>('agent_close_session', { sessionId }),
+  agentListSlashCommands: (sessionId: string) =>
+    command<AgentSlashCommandView[]>('agent_list_slash_commands', { sessionId }),
   agentGetProviderSettings: () =>
     command<AgentProviderSettingsView>('agent_get_provider_settings'),
   agentUpdateRuntimeSettings: (settings: AgentRuntimeSettingsInput) =>

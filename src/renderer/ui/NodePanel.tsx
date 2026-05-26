@@ -435,7 +435,7 @@ export function NodePanel(props: NodePanelProps) {
     props.setUi((prev) => requestFocusState(
       prev,
       titleFocusTarget,
-      cursorAtOffset(titleTrigger.from, 'after'),
+      cursorAtOffset(cursorOffsetAfterInlineReference(nextContent, titleTrigger.from), 'after'),
     ));
     return api.replaceNodeText(props.rootId, nextContent);
   };
@@ -591,7 +591,10 @@ export function NodePanel(props: NodePanelProps) {
                 }}
                 onModEnter={(content) => void handleTitleModEnter(content)}
                 resolveInlineReferenceColor={(targetId) => inlineReferenceTextColor(targetId, props.index)}
-                onInlineReferenceClick={(targetId) => props.onRoot(targetId, { focus: false })}
+                onInlineReferenceClick={(targetId, options) => props.onRoot(targetId, {
+                  focus: false,
+                  newTab: options?.newTab,
+                })}
                 onEscape={() => {
                   replaceLocalTitleContent(rootNode?.content ?? EMPTY_RICH_TEXT);
                   setTitleTrigger(null);
@@ -832,4 +835,8 @@ export function NodePanel(props: NodePanelProps) {
       </div>
     </main>
   );
+}
+
+function cursorOffsetAfterInlineReference(content: RichText, offset: number): number {
+  return /\s/u.test(content.text[offset] ?? '') ? offset + 1 : offset;
 }

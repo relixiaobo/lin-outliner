@@ -257,16 +257,40 @@ export function replaceRichTextRangeWithInlineRef(
   start: number,
   end: number,
   ref: Omit<InlineRef, 'offset'>,
+  options: { trailingSpace?: boolean } = {},
 ): RichText {
   const next = deleteRichTextRange(content, start, end);
   const offset = Math.max(0, Math.min(next.text.length, start));
+  const addTrailingSpace = options.trailingSpace !== false && shouldAddInlineRefTrailingSpace(next.text, offset);
+  const text = addTrailingSpace
+    ? `${next.text.slice(0, offset)} ${next.text.slice(offset)}`
+    : next.text;
+  const shiftAfterRef = addTrailingSpace ? 1 : 0;
   return {
     ...next,
+    text,
+    marks: next.marks
+      .map((mark) => ({
+        ...mark,
+        start: mark.start >= offset ? mark.start + shiftAfterRef : mark.start,
+        end: mark.end > offset ? mark.end + shiftAfterRef : mark.end,
+      }))
+      .filter((mark) => mark.end > mark.start),
     inlineRefs: [
-      ...next.inlineRefs.filter((inlineRef) => inlineRef.offset !== offset || inlineRef.targetNodeId !== ref.targetNodeId),
+      ...next.inlineRefs
+        .filter((inlineRef) => inlineRef.offset !== offset || inlineRef.targetNodeId !== ref.targetNodeId)
+        .map((inlineRef) => ({
+          ...inlineRef,
+          offset: inlineRef.offset >= offset ? inlineRef.offset + shiftAfterRef : inlineRef.offset,
+        })),
       { ...ref, offset },
     ].sort((a, b) => a.offset - b.offset),
   };
+}
+
+function shouldAddInlineRefTrailingSpace(text: string, offset: number): boolean {
+  const next = text[offset];
+  return next === undefined || !/\s/u.test(next);
 }
 
 export function replaceRichTextRangeWithText(

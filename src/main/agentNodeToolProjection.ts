@@ -11,6 +11,7 @@ import {
   type DocumentProjection,
   type NodeProjection,
 } from '../core/types';
+import { formatNodeReferenceMarker } from '../core/nodeReferenceMarkup';
 import type {
   NodeBacklink,
   NodeFieldRead,
@@ -154,7 +155,7 @@ export function referenceText(index: ProjectionIndex, node: NodeProjection): str
   if (node.type !== 'reference' || !node.targetId) return null;
   const target = index.nodes.get(node.targetId);
   const display = target ? nodeTitle(index, target) : node.targetId;
-  return `[[${display}^${node.targetId}]]`;
+  return formatNodeReferenceMarker(display, node.targetId);
 }
 
 export function fieldName(index: ProjectionIndex, fieldEntry: NodeProjection): string {

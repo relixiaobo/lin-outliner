@@ -198,7 +198,7 @@
   padding: var(--space-hairline) var(--space-1) 0;
   color: var(--muted-2);
   font-size: var(--font-meta);
-  line-height: 1.4;
+  line-height: var(--line-meta-tight);
 }
 
 .view-toolbar-pill {
@@ -237,7 +237,7 @@
   justify-content: center;
   border-radius: var(--radius-pill);
   background: var(--text-main);
-  padding: 0 3px;
+  padding: 0 calc(var(--space-1) + var(--space-hairline));
   color: var(--panel-bg);
   font-size: var(--font-ui-2xs);
   font-weight: 600;
@@ -321,11 +321,11 @@
   height: var(--icon-size-md);
   flex: 0 0 var(--icon-size-md);
   border-radius: var(--radius-pill);
-  box-shadow: inset 0 0 0 1.5px var(--border-strong);
+  box-shadow: var(--view-radio-shadow);
 }
 
 .view-toolbar-radio.checked {
-  box-shadow: inset 0 0 0 1.5px var(--text-main);
+  box-shadow: var(--view-radio-checked-shadow);
   background: radial-gradient(circle at center, var(--text-main) 0 3.5px, transparent 4px);
 }
 
@@ -505,10 +505,10 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  margin: 0 0 8px var(--row-selection-start);
+  margin: 0 0 var(--space-4) var(--row-selection-start);
   color: var(--muted);
   font-size: var(--font-ui-sm);
-  line-height: 1.45;
+  line-height: var(--line-ui-sm-tight);
 }
 
 .search-query-builder-panel {
@@ -574,7 +574,7 @@
 .search-query-builder-textarea:focus {
   border-color: color-mix(in srgb, var(--primary) 55%, transparent);
   outline: none;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 16%, transparent);
+  box-shadow: var(--search-builder-focus-shadow);
 }
 
 .search-query-builder-textarea:read-only {
@@ -1322,7 +1322,7 @@
 .typed-field-date-settings {
   display: grid;
   gap: var(--space-1);
-  box-shadow: inset 0 1px 0 var(--border-subtle);
+  box-shadow: var(--typed-field-section-shadow);
   margin-top: var(--space-5);
   padding-top: var(--space-3);
   color: var(--text-soft);
@@ -1342,7 +1342,7 @@
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: transparent;
   cursor: pointer;
   padding: 0;
@@ -1788,13 +1788,14 @@
   background: transparent;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
-  color: var(--inline-ref-accent, var(--semantic-info));
+  color: var(--inline-ref-accent, var(--inline-ref-default));
   font-weight: inherit;
   padding: 0 var(--space-hairline);
   text-decoration: none;
 }
 
 .row-editor .inline-ref:hover {
+  color: var(--inline-ref-hover-accent, var(--inline-ref-accent, var(--inline-ref-hover)));
   cursor: pointer;
   text-decoration-line: underline;
   text-decoration-thickness: 1px;
@@ -1809,7 +1810,7 @@
 .row-editor .inline-ref.ProseMirror-selectednode {
   border-radius: var(--radius-control-xs);
   background: var(--row-selection-frame-bg);
-  box-shadow: inset 0 0 0 1px var(--row-selection-border);
+  box-shadow: var(--inline-ref-selection-shadow);
 }
 
 @keyframes reference-conversion-pulse {
@@ -1819,7 +1820,7 @@
   }
 
   36% {
-    color: var(--inline-ref-accent, var(--semantic-info));
+    color: var(--inline-ref-accent, var(--inline-ref-default));
   }
 }
 
@@ -2039,6 +2040,7 @@
   z-index: var(--z-popover);
   min-width: 210px;
   max-width: 320px;
+  overflow-y: auto;
   border-radius: var(--radius-md);
   background: var(--bg);
   box-shadow: var(--shadow);

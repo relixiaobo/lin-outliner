@@ -334,6 +334,10 @@ export class AgentSkillRuntime {
     return this.registry.resolveSkill(name);
   }
 
+  async listUserInvocableSkills(): Promise<SkillDefinition[]> {
+    return this.registry.getUserInvocableSkills();
+  }
+
   async invokeSkill(input: InvokeSkillInput): Promise<SkillInvocationResult> {
     const requestedName = normalizeSkillName(input.skill);
     if (!requestedName) {
@@ -627,6 +631,11 @@ class SkillRegistry {
   async getModelInvocableSkills(): Promise<SkillDefinition[]> {
     await this.ensureLoaded();
     return [...this.skills.values()].filter((skill) => skill.modelInvocable);
+  }
+
+  async getUserInvocableSkills(): Promise<SkillDefinition[]> {
+    await this.ensureLoaded();
+    return [...this.skills.values()].filter((skill) => skill.userInvocable);
   }
 
   async resolveSkill(name: string): Promise<SkillDefinition | null> {

@@ -475,7 +475,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
     replaceLocalDraftContent(nextContent);
     requestRowFocus(
       props.nodeId,
-      cursorAtOffset(trigger.from, 'after'),
+      cursorAtOffset(cursorOffsetAfterInlineReference(nextContent, trigger.from), 'after'),
       props.parentId,
     );
     return api.replaceNodeText(targetEditId, nextContent);
@@ -1014,7 +1014,10 @@ export function OutlinerItem(props: OutlinerItemProps) {
             onPasteMediaUrl={node.type === 'reference' ? undefined : (url) => void handlePasteMediaUrl(url)}
             onInlineReferenceClick={pendingReferenceConversion
               ? undefined
-              : (targetId) => props.onRoot(targetId, { focus: false })}
+              : (targetId, options) => props.onRoot(targetId, {
+                focus: false,
+                newTab: options?.newTab,
+              })}
             focusTarget={editorFocusTarget}
             focusRequest={props.ui.focusRequest}
             pendingInput={props.ui.pendingInputChar}
@@ -1226,4 +1229,8 @@ function isOnlyInlineReference(content: RichText, targetId: NodeId) {
     && content.inlineRefs.length === 1
     && content.inlineRefs[0].offset === 0
     && content.inlineRefs[0].targetNodeId === targetId;
+}
+
+function cursorOffsetAfterInlineReference(content: RichText, offset: number): number {
+  return /\s/u.test(content.text[offset] ?? '') ? offset + 1 : offset;
 }

@@ -219,7 +219,7 @@ test.describe('outliner trigger parity', () => {
   });
 
   test('# in trailing input keeps the draft visible until the tagged node materializes', async ({ page }) => {
-    await delayMockCommands(page, ['create_tagged_node']);
+    await delayMockCommands(page, ['create_tagged_node'], 800);
     const beforeChildren = await todayChildren(page);
 
     await trailingEditor(page).click();
@@ -249,7 +249,7 @@ test.describe('outliner trigger parity', () => {
 
     await expect(page.locator('.outline-panel-surface.active-panel .panel-title-editor')).toContainText('Recents');
     await expect(page.locator('.trigger-popover')).toHaveCount(0);
-    await expect(trailingEditor(page, ids.recents)).toHaveText('');
+    await expect(page.locator('.outline-panel-surface.active-panel [data-trailing-parent-id]')).toHaveCount(0);
   });
 
   test('@ in trailing input creates a focused reference conversion row', async ({ page }) => {
@@ -377,7 +377,7 @@ test.describe('outliner trigger parity', () => {
       index: null,
       text: 'RemoteTarget',
     });
-    await delayMockCommands(page, ['add_reference_conversion']);
+    await delayMockCommands(page, ['add_reference_conversion'], 800);
     const beforeChildren = await todayChildren(page);
     const beforeCalls = (await commandCalls(page)).length;
 
@@ -466,7 +466,7 @@ test.describe('outliner trigger parity', () => {
     await expect(row(page, createdRowId!)).toContainText('Alpha');
     await expect.poll(async () => nodeById(page, createdRowId!)).toMatchObject({
       content: {
-        text: 'See ',
+        text: 'See  ',
         inlineRefs: [{ offset: 4, targetNodeId: ids.alpha, displayName: 'Alpha' }],
       },
     });
@@ -715,7 +715,7 @@ test.describe('outliner trigger parity', () => {
     });
     await expect.poll(async () => nodeById(page, emptyRowId!)).toMatchObject({
       content: {
-        text: 'test',
+        text: ' test',
         inlineRefs: [{ offset: 0, targetNodeId: ids.alpha, displayName: 'Alpha' }],
       },
     });
@@ -756,7 +756,7 @@ test.describe('outliner trigger parity', () => {
     });
     await expect.poll(async () => nodeById(page, emptyRowId!)).toMatchObject({
       content: {
-        text: '你好',
+        text: ' 你好',
         inlineRefs: [{ offset: 0, targetNodeId: ids.alpha, displayName: 'Alpha' }],
       },
     });
@@ -783,7 +783,7 @@ test.describe('outliner trigger parity', () => {
       const node = await nodeById(page, nodeId!);
       return node?.content;
     }).toMatchObject({
-      text: 'See !',
+      text: 'See  !',
       inlineRefs: [{ offset: 4, targetNodeId: ids.alpha, displayName: 'Alpha' }],
     });
   });

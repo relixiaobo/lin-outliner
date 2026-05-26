@@ -1,5 +1,6 @@
 import type { AgentToolResultWithPayloads, ToolCall } from '../../../core/agentTypes';
 import type { AgentRenderSubagentEntity } from '../../../core/agentRenderProjection';
+import type { DocumentIndex } from '../../state/document';
 import {
   BrainIcon,
   ICON_SIZE,
@@ -9,6 +10,7 @@ import {
 } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { AgentDisclosureIndicator } from './AgentDisclosureIndicator';
+import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentProcessTimeline } from './AgentProcessTimeline';
 import { getToolCallStatus, summarizeToolCall } from './AgentToolCallBlock';
 import type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
@@ -22,6 +24,8 @@ interface AgentProcessBlockProps {
   blocks: AgentProcessSegmentBlock[];
   expandState: AgentExpandState;
   id: string;
+  index: DocumentIndex;
+  onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   onOpenSubagentTranscript?: (subagentId: string) => void;
   pendingToolCallIds: ReadonlySet<string>;
   results: Map<string, AgentToolResultWithPayloads>;
@@ -90,6 +94,8 @@ export function AgentProcessBlock({
   blocks,
   expandState,
   id,
+  index,
+  onNodeReferenceOpen,
   onOpenSubagentTranscript,
   pendingToolCallIds,
   results,
@@ -148,6 +154,8 @@ export function AgentProcessBlock({
           blocks={blocks}
           expandState={expandState}
           id={id}
+          index={index}
+          onNodeReferenceOpen={onNodeReferenceOpen}
           onOpenSubagentTranscript={onOpenSubagentTranscript}
           pendingToolCallIds={pendingToolCallIds}
           results={results}

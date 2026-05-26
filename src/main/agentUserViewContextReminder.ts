@@ -43,6 +43,7 @@ interface UserViewSnapshot {
   focusedNodeId: string | null;
   focusSurface: string | null;
   panels: PanelSnapshot[];
+  referencedNodes: AgentUserViewNodeContext[];
 }
 
 interface PanelSnapshot {
@@ -56,6 +57,7 @@ function createSnapshot(context: AgentUserViewContext | null | undefined): UserV
     !context.activePanelId
     && !context.focusedNode
     && context.nodePanels.length === 0
+    && (context.referencedNodes?.length ?? 0) === 0
   ) {
     return null;
   }
@@ -64,6 +66,7 @@ function createSnapshot(context: AgentUserViewContext | null | undefined): UserV
     focusedPanelId: context.focusedPanelId,
     focusedNodeId: context.focusedNode?.nodeId ?? null,
     focusSurface: context.focusSurface,
+    referencedNodes: context.referencedNodes ?? [],
     panels: context.nodePanels.map((panel) => ({
       panel,
       outlineSignature: panel.visibleOutline
@@ -84,6 +87,7 @@ function createSnapshot(context: AgentUserViewContext | null | undefined): UserV
 function renderSnapshot(snapshot: UserViewSnapshot): string {
   const lines = ['<user-view-context mode="snapshot">'];
   lines.push(renderCurrent(snapshot));
+  lines.push(...renderExplicitReferences(snapshot, 2));
   for (const panel of snapshot.panels) lines.push(...renderPanel(panel.panel, 2));
   lines.push('</user-view-context>');
   return lines.join('\n');
@@ -92,6 +96,7 @@ function renderSnapshot(snapshot: UserViewSnapshot): string {
 function renderDiff(previous: UserViewSnapshot, next: UserViewSnapshot): string {
   const lines = ['<user-view-context mode="diff" basis="previous-user-view-context">'];
   lines.push(renderCurrent(next));
+  lines.push(...renderExplicitReferences(next, 2));
   const changes = renderChanges(previous, next);
   if (changes.length > 0) {
     lines.push('  <changes>');
@@ -109,6 +114,17 @@ function renderCurrent(snapshot: UserViewSnapshot): string {
     focused_node_id: snapshot.focusedNodeId,
     focus_surface: snapshot.focusSurface,
   })} />`;
+}
+
+function renderExplicitReferences(snapshot: UserViewSnapshot, spaces: number): string[] {
+  if (snapshot.referencedNodes.length === 0) return [];
+  const prefix = ' '.repeat(spaces);
+  const lines = [`${prefix}<explicit-references>`];
+  for (const node of snapshot.referencedNodes) {
+    lines.push(`${prefix}  <node-ref${xmlAttrs(nodeRefAttrs(node))} />`);
+  }
+  lines.push(`${prefix}</explicit-references>`);
+  return lines;
 }
 
 function renderChanges(previous: UserViewSnapshot, next: UserViewSnapshot): string[] {

@@ -4,6 +4,7 @@ import type {
   AgentUserViewOutlineNodeContext,
   AgentUserViewPanelContext,
 } from '../../../core/agentTypes';
+import { formatNodeReferenceMarker } from '../../../core/nodeReferenceMarkup';
 import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
 import { buildOutlinerRows, readViewConfig } from '../../state/outlinerRows';
@@ -149,7 +150,7 @@ function referenceText(node: NodeProjection, index: DocumentIndex): string | nul
   if (node.type !== 'reference' || !node.targetId) return null;
   const target = index.byId.get(node.targetId);
   const display = target ? titleForNode(target) : node.targetId;
-  return `[[${display}^${node.targetId}]]`;
+  return formatNodeReferenceMarker(display, node.targetId);
 }
 
 function tagLabels(node: NodeProjection, index: DocumentIndex): string[] {

@@ -15,12 +15,16 @@ import type {
   AgentUserViewContext,
   AssistantMessage,
 } from '../../../core/agentTypes';
+import { nodeReferenceMarkersToText } from '../../../core/nodeReferenceMarkup';
 import type {
   AgentProviderConfigView,
   AgentProviderSettingsView,
   AgentReasoningLevel,
   AgentSessionMeta,
+  AgentSlashCommandView,
+  NodeId,
 } from '../../api/types';
+import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
 import { useLinAgentRuntime } from '../../agent/runtime';
 import type {
@@ -42,6 +46,8 @@ import {
 } from '../icons';
 import { AgentCompactionBoundary } from './AgentCompactionBoundary';
 import { AgentComposer } from './AgentComposer';
+import type { AgentComposerNodeReference } from './AgentComposerEditor';
+import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentSettingsDialog } from './AgentSettingsDialog';
 import { AgentMessageRow } from './AgentMessageRow';
 import { AgentSubagentDetailsPanel } from './AgentSubagentDetailsPanel';
@@ -61,7 +67,9 @@ const TRANSCRIPT_VIRTUAL_MIN_ROWS = 40;
 const TRANSCRIPT_VIRTUAL_OVERSCAN_PX = 720;
 
 interface AgentChatPanelProps {
+  index: DocumentIndex;
   userViewContext: AgentUserViewContext;
+  onOpenNodeReference: AgentNodeReferenceOpenHandler;
   onOpenDebugPanel?: (sessionId: string | null) => void;
   onProviderSettingsOpenChange?: (open: boolean) => void;
   providerSettingsRestoreFocus?: () => HTMLElement | null;
@@ -102,6 +110,36 @@ function coerceReasoningLevel(
   if (supportedLevels.includes(reasoningLevel)) return reasoningLevel;
   if (supportedLevels.includes('off')) return 'off';
   return supportedLevels[0] ?? 'off';
+}
+
+function composerCurrentNodeId(context: AgentUserViewContext, index: DocumentIndex): NodeId | null {
+  return context.focusedNode?.nodeId
+    ?? context.nodePanels.find((panel) => panel.active)?.rootNodeId
+    ?? context.nodePanels[0]?.rootNodeId
+    ?? index.projection.todayId
+    ?? null;
+}
+
+function withReferencedNodes(
+  context: AgentUserViewContext,
+  refs: readonly AgentComposerNodeReference[],
+  index: DocumentIndex,
+): AgentUserViewContext {
+  if (refs.length === 0) return context;
+  const seen = new Set<NodeId>();
+  const referencedNodes = refs.flatMap((ref) => {
+    if (seen.has(ref.nodeId) || !index.byId.has(ref.nodeId)) return [];
+    seen.add(ref.nodeId);
+    return [{
+      nodeId: ref.nodeId,
+      title: ref.title.trim() || 'Untitled',
+    }];
+  });
+  return referencedNodes.length > 0 ? { ...context, referencedNodes } : context;
+}
+
+function readableSessionTitle(title: string | null | undefined, fallback: string): string {
+  return nodeReferenceMarkersToText(title ?? '').replace(/\s+/g, ' ').trim() || fallback;
 }
 
 function formatSessionTime(timestamp: number): string {
@@ -447,6 +485,8 @@ function AgentTranscriptRowShell({
 }
 
 export function AgentChatPanel({
+  index,
+  onOpenNodeReference,
   onOpenDebugPanel,
   onProviderSettingsOpenChange,
   providerSettingsRestoreFocus,
@@ -484,6 +524,7 @@ export function AgentChatPanel({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [sessions, setSessions] = useState<AgentSessionMeta[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [slashCommands, setSlashCommands] = useState<AgentSlashCommandView[]>([]);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [selectedSubagentId, setSelectedSubagentId] = useState<string | null>(null);
@@ -495,6 +536,7 @@ export function AgentChatPanel({
   const mountedRef = useRef(false);
   const providerSettingsRequestRef = useRef(0);
   const sessionsRequestRef = useRef(0);
+  const slashCommandsRequestRef = useRef(0);
   const scrollFrameRef = useRef<number | null>(null);
   const rowHeightsRef = useRef(new Map<string, number>());
   const copyPayloadTextCacheRef = useRef<PayloadTextPromiseCache>(new Map());
@@ -518,9 +560,13 @@ export function AgentChatPanel({
     ? visibleTranscriptRange(virtualLayout, scrollMetrics.top, scrollMetrics.height)
     : { start: 0, end: conversationRows.length };
   const visibleConversationRows = conversationRows.slice(virtualRange.start, virtualRange.end);
-  const sendMessage = useCallback((prompt: string, attachments?: AgentMessageAttachmentInput[]) => (
-    sendRuntimeMessage(prompt, attachments, userViewContext)
-  ), [sendRuntimeMessage, userViewContext]);
+  const sendMessage = useCallback((
+    prompt: string,
+    attachments?: AgentMessageAttachmentInput[],
+    nodeRefs: AgentComposerNodeReference[] = [],
+  ) => (
+    sendRuntimeMessage(prompt, attachments, withReferencedNodes(userViewContext, nodeRefs, index))
+  ), [index, sendRuntimeMessage, userViewContext]);
 
   const updateScrollMetrics = useCallback((element: HTMLDivElement) => {
     const next = {
@@ -588,6 +634,27 @@ export function AgentChatPanel({
     }
   }, []);
 
+  const loadSlashCommands = useCallback(async () => {
+    const requestId = slashCommandsRequestRef.current + 1;
+    slashCommandsRequestRef.current = requestId;
+    if (!sessionId) {
+      setSlashCommands([]);
+      return null;
+    }
+    try {
+      const next = await api.agentListSlashCommands(sessionId);
+      if (!mountedRef.current || requestId !== slashCommandsRequestRef.current) return null;
+      setSlashCommands(next);
+      return next;
+    } catch (caught) {
+      if (mountedRef.current && requestId === slashCommandsRequestRef.current) {
+        setSettingsError(caught instanceof Error ? caught.message : String(caught));
+        setSlashCommands([]);
+      }
+      return null;
+    }
+  }, [sessionId]);
+
   useLayoutEffect(() => {
     const element = scrollRef.current;
     if (!element) return undefined;
@@ -625,8 +692,13 @@ export function AgentChatPanel({
       mountedRef.current = false;
       providerSettingsRequestRef.current += 1;
       sessionsRequestRef.current += 1;
+      slashCommandsRequestRef.current += 1;
     };
   }, [loadProviderSettings]);
+
+  useEffect(() => {
+    void loadSlashCommands();
+  }, [loadSlashCommands]);
 
   useEffect(() => {
     if (!isStreaming) {
@@ -701,6 +773,7 @@ export function AgentChatPanel({
 
   async function applySettingsDialogChanges() {
     await loadProviderSettings();
+    await loadSlashCommands();
     await reloadSession();
   }
 
@@ -743,7 +816,7 @@ export function AgentChatPanel({
   }
 
   async function handleDeleteSession(targetSessionId: string, title: string | null) {
-    const label = title?.trim() || 'Untitled';
+    const label = readableSessionTitle(title, 'Untitled');
     if (!window.confirm(`Delete "${label}"? This cannot be undone.`)) return;
     await api.agentDeleteSession(targetSessionId);
     if (targetSessionId === sessionId) {
@@ -776,9 +849,11 @@ export function AgentChatPanel({
         busy={isStreaming}
         contentKey={row.contentKey}
         entry={row.entry}
+        index={index}
         isLastInTurn={row.isLastInTurn}
         onCopy={copyAssistantTurn}
         onEdit={editMessage}
+        onNodeReferenceOpen={onOpenNodeReference}
         onOpenSubagentTranscript={setSelectedSubagentId}
         onRegenerate={regenerateMessage}
         onRetry={retryMessage}
@@ -795,7 +870,7 @@ export function AgentChatPanel({
   }
 
   const visibleError = error ?? settingsError;
-  const displayTitle = sessionTitle || 'conversation';
+  const displayTitle = readableSessionTitle(sessionTitle, 'conversation');
   const settingsDialogOpen = providerSettingsOpen;
   const historyMenuStyle = useAnchoredOverlay(historyMenuRef, {
     anchorRef: historyButtonRef,
@@ -879,7 +954,7 @@ export function AgentChatPanel({
                 <div className="agent-session-empty">No conversations</div>
               ) : sessions.map((session) => {
                 const isCurrent = session.id === sessionId;
-                const title = session.title?.trim() || 'Untitled';
+                const title = readableSessionTitle(session.title, 'Untitled');
                 if (editingSessionId === session.id) {
                   return (
                     <div className="agent-session-row is-editing" key={session.id}>
@@ -1015,7 +1090,10 @@ export function AgentChatPanel({
       </div>
 
       <AgentComposer
+        currentNodeId={composerCurrentNodeId(userViewContext, index)}
+        index={index}
         isStreaming={isStreaming}
+        onNodeReferenceOpen={onOpenNodeReference}
         onModelChange={(providerId, modelId) => updateProviderConfig(providerId, { modelId })}
         onReasoningChange={(reasoningLevel) => updateActiveProviderConfig({ reasoningLevel })}
         onCancelSteer={handleCancelSteer}
@@ -1023,6 +1101,7 @@ export function AgentChatPanel({
         onStop={stop}
         onSteer={handleSteerMessage}
         settings={providerSettings}
+        slashCommands={slashCommands}
         steeringNote={steeringNote}
       />
       <AgentSettingsDialog

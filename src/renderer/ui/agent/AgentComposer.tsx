@@ -3,7 +3,6 @@ import {
   useRef,
   useState,
   type ChangeEvent,
-  type ClipboardEvent,
   type DragEvent,
 } from 'react';
 import type { AgentMessageAttachmentInput } from '../../../core/agentTypes';
@@ -12,9 +11,11 @@ import type {
   AgentProviderConfigView,
   AgentProviderSettingsView,
   AgentReasoningLevel,
+  AgentSlashCommandView,
+  NodeId,
 } from '../../api/types';
+import type { DocumentIndex } from '../../state/document';
 import {
-  AgentComposerAttachmentChip,
   AgentComposerModelButton,
   AgentComposerPrimaryAction,
   AgentComposerToolbar,
@@ -24,16 +25,33 @@ import {
   AgentComposerModelMenu,
   type ComposerModelChoice,
 } from './AgentComposerModelMenu';
+import {
+  AgentComposerEditor,
+  type AgentComposerDraft,
+  type AgentComposerEditorHandle,
+  type AgentComposerEditorSnapshot,
+  type AgentComposerFileReference,
+  type AgentComposerNodeReference,
+} from './AgentComposerEditor';
+import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 
 interface AgentComposerProps {
+  currentNodeId: NodeId | null;
+  index: DocumentIndex;
   isStreaming: boolean;
-  onSend: (message: string, attachments?: AgentMessageAttachmentInput[]) => Promise<void>;
+  onNodeReferenceOpen: AgentNodeReferenceOpenHandler;
+  onSend: (
+    message: string,
+    attachments?: AgentMessageAttachmentInput[],
+    nodeRefs?: AgentComposerNodeReference[],
+  ) => Promise<void>;
   onSteer: (message: string) => Promise<void>;
   onCancelSteer: () => Promise<void>;
   onStop: () => void;
   onModelChange: (providerId: string, modelId: string) => Promise<void>;
   onReasoningChange: (reasoningLevel: AgentReasoningLevel) => Promise<void>;
   settings: AgentProviderSettingsView | null;
+  slashCommands: AgentSlashCommandView[];
   steeringNote: string | null;
 }
 
@@ -101,34 +119,54 @@ type ComposerAttachment = AgentMessageAttachmentInput & {
   sha256?: string;
 };
 
+interface PickedLocalFileAttachment {
+  path: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  lastModified: number;
+  imageDataBase64?: string;
+}
+
+const EMPTY_DRAFT: AgentComposerDraft = {
+  empty: true,
+  fileRefs: [],
+  nodeRefs: [],
+  text: '',
+};
+
 export function AgentComposer({
+  currentNodeId,
+  index,
   isStreaming,
   onModelChange,
+  onNodeReferenceOpen,
   onReasoningChange,
   onCancelSteer,
   onSend,
   onSteer,
   onStop,
   settings,
+  slashCommands,
   steeringNote,
 }: AgentComposerProps) {
-  const [value, setValue] = useState('');
+  const [draft, setDraft] = useState<AgentComposerDraft>(EMPTY_DRAFT);
   const [sending, setSending] = useState(false);
   const [configSubmitting, setConfigSubmitting] = useState(false);
-  const [isComposing, setIsComposing] = useState(false);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [moreModelsOpen, setMoreModelsOpen] = useState(false);
   const [reasoningMenuOpen, setReasoningMenuOpen] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<AgentComposerEditorHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachmentsRef = useRef<ComposerAttachment[]>([]);
+  const draftRef = useRef<AgentComposerDraft>(EMPTY_DRAFT);
   const dragDepthRef = useRef(0);
   const sendingRef = useRef(false);
   const modelMenuRef = useRef<HTMLDivElement>(null);
-  const hasDraft = value.trim().length > 0;
+  const hasDraft = !draft.empty;
   const hasAttachments = attachments.length > 0;
   const canSubmit = isStreaming
     ? hasDraft && !hasAttachments
@@ -149,13 +187,6 @@ export function AgentComposer({
   const configDisabled = isStreaming || configSubmitting || modelOptions.length === 0;
 
   useEffect(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-    textarea.style.height = '0px';
-    textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, 34), 160)}px`;
-  }, [value]);
-
-  useEffect(() => {
     if (!modelMenuOpen) {
       setReasoningMenuOpen(false);
     }
@@ -173,30 +204,39 @@ export function AgentComposer({
 
   async function submit() {
     if (!canSubmit) return;
-    const message = value.trim();
-    const sentAttachments = attachments;
+    const currentDraft = draftRef.current;
+    const message = currentDraft.text.trim();
+    const sentAttachments = attachmentsRef.current;
     const outgoingAttachments = sentAttachments.map(toAttachmentPayload);
+    const editorSnapshot = editorRef.current?.snapshot() ?? null;
 
     if (isStreaming) {
       if (sentAttachments.length > 0) {
         setAttachmentError('Attachments cannot be queued while the agent is running.');
         return;
       }
-      setValue('');
-      await onSteer(message);
+      editorRef.current?.clear();
+      try {
+        await onSteer(message);
+      } catch (error) {
+        restoreDraftIfUnchanged(editorSnapshot);
+        setAttachmentError(error instanceof Error ? error.message : String(error));
+      }
       return;
     }
 
     if (sendingRef.current) return;
     sendingRef.current = true;
     setSending(true);
-    setValue('');
+    editorRef.current?.clear();
     detachAttachments();
     let restoredAttachments = false;
+    let succeeded = false;
     try {
-      await onSend(message, outgoingAttachments);
+      await onSend(message, outgoingAttachments, currentDraft.nodeRefs);
+      succeeded = true;
     } catch (error) {
-      setValue((current) => (current.length === 0 ? message : current));
+      restoreDraftIfUnchanged(editorSnapshot);
       if (attachmentsRef.current.length === 0) {
         attachmentsRef.current = sentAttachments;
         restoredAttachments = true;
@@ -204,7 +244,7 @@ export function AgentComposer({
       }
       setAttachmentError(error instanceof Error ? error.message : String(error));
     } finally {
-      if (!restoredAttachments) {
+      if (succeeded || !restoredAttachments) {
         for (const attachment of sentAttachments) {
           revokeAttachmentPreview(attachment);
         }
@@ -214,14 +254,14 @@ export function AgentComposer({
     }
   }
 
-  async function addFiles(files: FileList | File[]) {
+  async function addFiles(files: FileList | File[]): Promise<ComposerAttachment[]> {
     const incoming = Array.from(files).filter((file) => file.size > 0);
-    if (incoming.length === 0) return;
+    if (incoming.length === 0) return [];
 
     const remainingSlots = MAX_ATTACHMENTS - attachmentsRef.current.length;
     if (remainingSlots <= 0) {
       setAttachmentError(`You can attach up to ${MAX_ATTACHMENTS} files.`);
-      return;
+      return [];
     }
 
     const existingFingerprints = new Set(attachmentsRef.current.map((attachment) => attachment.fingerprint));
@@ -261,7 +301,68 @@ export function AgentComposer({
     }
 
     if (nextAttachments.length > 0) {
-      setAttachments((current) => [...current, ...nextAttachments]);
+      const merged = [...attachmentsRef.current, ...nextAttachments];
+      attachmentsRef.current = merged;
+      setAttachments(merged);
+    }
+    setAttachmentError(
+      failures[0]
+        ?? duplicateMessage(skippedDuplicates)
+        ?? overflowMessage(skippedOverflow)
+        ?? null,
+    );
+    return nextAttachments;
+  }
+
+  async function addFilesInline(files: FileList | File[]) {
+    const added = await addFiles(files);
+    if (added.length > 0) {
+      editorRef.current?.insertFileReferences(added.map(attachmentToFileReference));
+    }
+  }
+
+  async function addPickedLocalFilesInline(files: PickedLocalFileAttachment[]) {
+    if (files.length === 0) return;
+    const remainingSlots = MAX_ATTACHMENTS - attachmentsRef.current.length;
+    if (remainingSlots <= 0) {
+      setAttachmentError(`You can attach up to ${MAX_ATTACHMENTS} files.`);
+      return;
+    }
+
+    const existingFingerprints = new Set(attachmentsRef.current.map((attachment) => attachment.fingerprint));
+    const failures: string[] = [];
+    const nextAttachments: ComposerAttachment[] = [];
+    let skippedDuplicates = 0;
+    let skippedOverflow = 0;
+
+    for (const file of files) {
+      if (nextAttachments.length >= remainingSlots) {
+        skippedOverflow += 1;
+        continue;
+      }
+      try {
+        if (file.sizeBytes > MAX_ATTACHMENT_BYTES) {
+          failures.push(`${file.name || 'Attachment'} is larger than ${formatBytes(MAX_ATTACHMENT_BYTES)}.`);
+          continue;
+        }
+        const fingerprint = pickedLocalFileFingerprint(file);
+        if (existingFingerprints.has(fingerprint)) {
+          skippedDuplicates += 1;
+          continue;
+        }
+        const attachment = await pickedLocalFileToAttachment(file);
+        nextAttachments.push({ ...attachment, fingerprint });
+        existingFingerprints.add(fingerprint);
+      } catch (error) {
+        failures.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    if (nextAttachments.length > 0) {
+      const merged = [...attachmentsRef.current, ...nextAttachments];
+      attachmentsRef.current = merged;
+      setAttachments(merged);
+      editorRef.current?.insertFileReferences(nextAttachments.map(attachmentToFileReference));
     }
     setAttachmentError(
       failures[0]
@@ -271,32 +372,39 @@ export function AgentComposer({
     );
   }
 
-  function removeAttachment(id: string) {
-    setAttachments((current) => {
-      const removed = current.find((attachment) => attachment.id === id);
-      if (removed) revokeAttachmentPreview(removed);
-      return current.filter((attachment) => attachment.id !== id);
-    });
-    setAttachmentError(null);
-  }
-
   function detachAttachments() {
     attachmentsRef.current = [];
     setAttachments([]);
     setAttachmentError(null);
   }
 
-  function handleFileInputChange(event: ChangeEvent<HTMLInputElement>) {
-    const files = event.currentTarget.files;
-    if (files) void addFiles(files);
-    event.currentTarget.value = '';
+  async function handleFileInputChange(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const files = input.files ? Array.from(input.files) : [];
+    input.value = '';
+    if (files.length === 0) return;
+    await addFilesInline(files);
   }
 
-  function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
-    const files = event.clipboardData.files;
-    if (!files || files.length === 0) return;
-    event.preventDefault();
-    void addFiles(files);
+  async function handleAttachmentClick() {
+    if (window.lin?.pickLocalFiles) {
+      try {
+        const result = await window.lin.pickLocalFiles({
+          maxFiles: Math.max(1, MAX_ATTACHMENTS - attachmentsRef.current.length),
+        });
+        if (!result.canceled) {
+          await addPickedLocalFilesInline(result.files);
+          if (result.skippedCount) {
+            setAttachmentError((current) => current ?? overflowMessage(result.skippedCount ?? 0));
+          }
+        }
+        return;
+      } catch {
+        // Fall through to the web file input when the native picker is unavailable.
+      }
+    }
+
+    fileInputRef.current?.click();
   }
 
   function handleDragEnter(event: DragEvent<HTMLDivElement>) {
@@ -324,19 +432,13 @@ export function AgentComposer({
     event.preventDefault();
     dragDepthRef.current = 0;
     setDragActive(false);
-    void addFiles(event.dataTransfer.files);
+    void addFilesInline(event.dataTransfer.files);
   }
 
   async function editSteer() {
     if (!steeringNote) return;
     await onCancelSteer();
-    setValue(steeringNote);
-    requestAnimationFrame(() => {
-      const textarea = textareaRef.current;
-      if (!textarea) return;
-      textarea.focus();
-      textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
-    });
+    editorRef.current?.setPlainText(steeringNote);
   }
 
   async function changeModel(model: ComposerModelChoice) {
@@ -377,6 +479,29 @@ export function AgentComposer({
       ? shortenModelName(activeProvider.modelId)
       : 'Select model';
 
+  function handleDraftChange(nextDraft: AgentComposerDraft) {
+    if (!sendingRef.current) pruneUnreferencedAttachments(nextDraft);
+    draftRef.current = nextDraft;
+    setDraft(nextDraft);
+  }
+
+  function restoreDraftIfUnchanged(snapshot: AgentComposerEditorSnapshot | null) {
+    if (!snapshot || !draftRef.current.empty) return;
+    editorRef.current?.restore(snapshot);
+  }
+
+  function pruneUnreferencedAttachments(nextDraft: AgentComposerDraft) {
+    if (attachmentsRef.current.length === 0) return;
+    const referencedAttachmentIds = new Set(nextDraft.fileRefs.map((fileRef) => fileRef.attachmentId));
+    const nextAttachments = attachmentsRef.current.filter((attachment) => referencedAttachmentIds.has(attachment.id));
+    if (nextAttachments.length === attachmentsRef.current.length) return;
+    for (const attachment of attachmentsRef.current) {
+      if (!referencedAttachmentIds.has(attachment.id)) revokeAttachmentPreview(attachment);
+    }
+    attachmentsRef.current = nextAttachments;
+    setAttachments(nextAttachments);
+  }
+
   return (
     <form
       className="agent-composer"
@@ -401,50 +526,27 @@ export function AgentComposer({
       >
         {dragActive ? <div className="agent-composer-drop-overlay">Drop files to attach</div> : null}
         {attachmentError ? <div className="agent-composer-error">{attachmentError}</div> : null}
-        {attachments.length > 0 ? (
-          <div className="agent-attachment-list">
-            {attachments.map((attachment) => (
-              <AgentComposerAttachmentChip
-                attachment={attachment}
-                key={attachment.id}
-                onRemove={() => removeAttachment(attachment.id)}
-                sizeLabel={formatBytes(attachment.sizeBytes)}
-              />
-            ))}
-          </div>
-        ) : null}
-        <textarea
-          ref={textareaRef}
-          aria-label="Agent message"
-          className="agent-composer-input"
-          onChange={(event) => setValue(event.target.value)}
-          onCompositionEnd={() => setIsComposing(false)}
-          onCompositionStart={() => setIsComposing(true)}
-          onKeyDown={(event) => {
-            if (isStreaming && (event.metaKey || event.ctrlKey) && event.key === '.') {
-              event.preventDefault();
-              onStop();
-              return;
-            }
-            if (event.key === 'Enter' && !event.shiftKey) {
-              if (isComposing || event.nativeEvent.isComposing || event.keyCode === 229) return;
-              event.preventDefault();
-              void submit();
-            }
-          }}
-          onPaste={handlePaste}
+        <AgentComposerEditor
+          ref={editorRef}
+          currentNodeId={currentNodeId}
+          index={index}
+          isStreaming={isStreaming}
+          onChange={handleDraftChange}
+          onFilesPasted={(files) => void addFilesInline(files)}
+          onNodeReferenceClick={onNodeReferenceOpen}
+          onStop={onStop}
+          onSubmit={() => void submit()}
           placeholder={
             isStreaming
               ? steeringNote ? 'Append another steer...' : 'Steer the conversation...'
               : 'Ask anything...'
           }
-          rows={1}
-          value={value}
+          slashCommands={slashCommands}
         />
         <AgentComposerToolbar
           attachmentDisabled={isStreaming || attachments.length >= MAX_ATTACHMENTS}
           fileInputRef={fileInputRef}
-          onAttachmentClick={() => fileInputRef.current?.click()}
+          onAttachmentClick={() => void handleAttachmentClick()}
           onFileInputChange={handleFileInputChange}
           modelControl={(
             <div className="agent-composer-model" ref={modelMenuRef}>
@@ -551,6 +653,36 @@ async function fileToAttachment(file: File): Promise<ComposerAttachment> {
   throw new Error(`${file.name || 'Attachment'} is not a supported image or text file.`);
 }
 
+async function pickedLocalFileToAttachment(file: PickedLocalFileAttachment): Promise<ComposerAttachment> {
+  const mimeType = file.mimeType || inferMimeType(file.name);
+  const inlineImageMimeType = normalizeInlineImageMimeType(mimeType);
+  const id = createAttachmentId();
+  const name = file.name || 'attachment';
+
+  if (inlineImageMimeType && file.imageDataBase64) {
+    const imageFile = fileFromBase64(file.imageDataBase64, name, inlineImageMimeType, file.lastModified);
+    const inlineImage = await readInlineImageForModel(imageFile, inlineImageMimeType);
+    return {
+      id,
+      kind: 'image',
+      name,
+      mimeType: inlineImage.mimeType,
+      sizeBytes: file.sizeBytes,
+      dataBase64: inlineImage.dataBase64,
+      previewUrl: URL.createObjectURL(imageFile),
+    };
+  }
+
+  return {
+    id,
+    kind: 'file',
+    name,
+    mimeType,
+    sizeBytes: file.sizeBytes,
+    path: file.path,
+  };
+}
+
 function toAttachmentPayload(attachment: ComposerAttachment): AgentMessageAttachmentInput {
   if (attachment.kind === 'image') {
     const { fingerprint: _fingerprint, previewUrl: _previewUrl, sha256: _sha256, ...payload } = attachment;
@@ -558,6 +690,15 @@ function toAttachmentPayload(attachment: ComposerAttachment): AgentMessageAttach
   }
   const { fingerprint: _fingerprint, previewUrl: _previewUrl, sha256: _sha256, ...payload } = attachment;
   return payload;
+}
+
+function attachmentToFileReference(attachment: ComposerAttachment): AgentComposerFileReference {
+  return {
+    attachmentId: attachment.id,
+    name: attachment.name,
+    mimeType: attachment.mimeType,
+    sizeBytes: attachment.sizeBytes,
+  };
 }
 
 function isTextAttachment(file: File, mimeType: string): boolean {
@@ -687,6 +828,19 @@ async function sha256File(file: File): Promise<string> {
 
 function fileFingerprint(file: File): string {
   return `${file.name}:${file.size}:${file.lastModified}`;
+}
+
+function pickedLocalFileFingerprint(file: PickedLocalFileAttachment): string {
+  return `${file.path}:${file.sizeBytes}:${file.lastModified}`;
+}
+
+function fileFromBase64(dataBase64: string, name: string, mimeType: string, lastModified: number): File {
+  const binary = atob(dataBase64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new File([bytes], name, { type: mimeType, lastModified });
 }
 
 function hasFileDrag(event: DragEvent<HTMLElement>): boolean {

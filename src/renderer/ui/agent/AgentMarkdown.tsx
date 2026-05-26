@@ -6,22 +6,43 @@ import {
   useRef,
   useState,
   type ComponentPropsWithoutRef,
+  type ReactNode,
 } from 'react';
 import { Lexer } from 'marked';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remend from 'remend';
+import { splitNodeReferenceMarkers } from '../../../core/nodeReferenceMarkup';
+import type { NodeId } from '../../api/types';
+import type { DocumentIndex } from '../../state/document';
 import { CheckIcon, CopyIcon, ICON_SIZE } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { highlightCode, plainCodeHtml } from '../editor/shikiHighlighter';
+import {
+  nodeReferenceDisplayLabel,
+  nodeReferenceOpenOptionsFromClick,
+  nodeReferenceStyle,
+  type AgentNodeReferenceOpenHandler,
+} from './AgentInlineReferenceText';
 
 interface AgentMarkdownProps {
+  index?: DocumentIndex;
   keyPrefix: string;
+  onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   streaming?: boolean;
   text: string;
 }
 
-const REMARK_PLUGINS = [remarkGfm];
+interface MarkdownAstNode {
+  children?: MarkdownAstNode[];
+  title?: string | null;
+  type?: string;
+  url?: string;
+  value?: string;
+}
+
+const NODE_REFERENCE_LINK_PREFIX = 'lin-node:';
+const REMARK_PLUGINS = [remarkGfm, remarkNodeReferences];
 
 function splitMarkdownBlocks(text: string): string[] {
   if (!text) return [''];
@@ -88,69 +109,181 @@ function AgentCodeBlock({
   );
 }
 
-const MARKDOWN_COMPONENTS = {
-  a({ children, href, ...rest }: ComponentPropsWithoutRef<'a'>) {
-    return (
-      <a href={href} rel="noreferrer" target="_blank" {...rest}>
-        {children}
-      </a>
-    );
-  },
-  code({ children, className }: ComponentPropsWithoutRef<'code'>) {
-    const rawCode = String(children);
-    const lang = className?.match(/language-(\S+)/)?.[1] ?? '';
-    if (lang || rawCode.includes('\n')) {
-      return (
-        <AgentCodeBlock
-          code={rawCode.replace(/\n$/, '')}
-          lang={lang}
-        />
-      );
+function remarkNodeReferences() {
+  return (tree: MarkdownAstNode) => {
+    transformNodeReferenceText(tree);
+  };
+}
+
+function transformNodeReferenceText(node: MarkdownAstNode): void {
+  if (!node.children || node.type === 'code' || node.type === 'inlineCode') return;
+  const nextChildren: MarkdownAstNode[] = [];
+  for (const child of node.children) {
+    if (child.type === 'text' && typeof child.value === 'string' && node.type !== 'link') {
+      nextChildren.push(...nodeReferenceMarkdownNodes(child.value));
+      continue;
     }
-    return <code className="agent-inline-code">{children}</code>;
-  },
-  input({ ...rest }: ComponentPropsWithoutRef<'input'>) {
-    return <input {...rest} disabled />;
-  },
-  pre({ children }: ComponentPropsWithoutRef<'pre'>) {
-    return <>{children}</>;
-  },
-  table({ children, ...rest }: ComponentPropsWithoutRef<'table'>) {
-    return (
-      <div className="agent-markdown-table-wrap">
-        <table {...rest}>{children}</table>
-      </div>
-    );
-  },
-};
+    transformNodeReferenceText(child);
+    nextChildren.push(child);
+  }
+  node.children = nextChildren;
+}
+
+function nodeReferenceMarkdownNodes(text: string): MarkdownAstNode[] {
+  return splitNodeReferenceMarkers(text).map((segment) => {
+    if (segment.type === 'text') return { type: 'text', value: segment.text };
+    return {
+      children: [{ type: 'text', value: segment.label }],
+      title: null,
+      type: 'link',
+      url: `#${NODE_REFERENCE_LINK_PREFIX}${encodeURIComponent(segment.nodeId)}`,
+    };
+  });
+}
+
+function nodeIdFromReferenceHref(href: string | undefined): NodeId | null {
+  const normalizedHref = href?.startsWith('#') ? href.slice(1) : href;
+  if (!normalizedHref?.startsWith(NODE_REFERENCE_LINK_PREFIX)) return null;
+  const encodedNodeId = normalizedHref.slice(NODE_REFERENCE_LINK_PREFIX.length);
+  try {
+    return decodeURIComponent(encodedNodeId);
+  } catch {
+    return encodedNodeId;
+  }
+}
+
+function reactNodeText(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(reactNodeText).join('');
+  return '';
+}
+
+function useMarkdownComponents(
+  index: DocumentIndex | undefined,
+  onNodeReferenceOpen: AgentNodeReferenceOpenHandler | undefined,
+) {
+  return useMemo(() => ({
+    a({ children, href, ...rest }: ComponentPropsWithoutRef<'a'>) {
+      const nodeId = nodeIdFromReferenceHref(href);
+      if (nodeId) {
+        const style = nodeReferenceStyle(nodeId, index);
+        const label = nodeReferenceDisplayLabel(reactNodeText(children), nodeId, index);
+        if (!onNodeReferenceOpen) {
+          return (
+            <span
+              className="inline-ref agent-message-inline-ref"
+              data-inline-ref={nodeId}
+              style={style}
+            >
+              {label}
+            </span>
+          );
+        }
+        return (
+          <button
+            className="inline-ref agent-message-inline-ref"
+            data-inline-ref={nodeId}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onNodeReferenceOpen(nodeId, nodeReferenceOpenOptionsFromClick(event));
+            }}
+            style={style}
+            type="button"
+          >
+            {label}
+          </button>
+        );
+      }
+      return (
+        <a href={href} rel="noreferrer" target="_blank" {...rest}>
+          {children}
+        </a>
+      );
+    },
+    code({ children, className }: ComponentPropsWithoutRef<'code'>) {
+      const rawCode = String(children);
+      const lang = className?.match(/language-(\S+)/)?.[1] ?? '';
+      if (lang || rawCode.includes('\n')) {
+        return (
+          <AgentCodeBlock
+            code={rawCode.replace(/\n$/, '')}
+            lang={lang}
+          />
+        );
+      }
+      return <code className="agent-inline-code">{children}</code>;
+    },
+    input({ ...rest }: ComponentPropsWithoutRef<'input'>) {
+      return <input {...rest} disabled />;
+    },
+    pre({ children }: ComponentPropsWithoutRef<'pre'>) {
+      return <>{children}</>;
+    },
+    table({ children, ...rest }: ComponentPropsWithoutRef<'table'>) {
+      return (
+        <div className="agent-markdown-table-wrap">
+          <table {...rest}>{children}</table>
+        </div>
+      );
+    },
+  }), [index, onNodeReferenceOpen]);
+}
 
 const MemoizedMarkdownBlock = memo(
-  function MemoizedMarkdownBlock({ markdown }: { markdown: string }) {
+  function MemoizedMarkdownBlock({
+    index,
+    markdown,
+    onNodeReferenceOpen,
+  }: {
+    index?: DocumentIndex;
+    markdown: string;
+    onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
+  }) {
+    const components = useMarkdownComponents(index, onNodeReferenceOpen);
     return (
-      <Markdown components={MARKDOWN_COMPONENTS} remarkPlugins={REMARK_PLUGINS}>
+      <Markdown components={components} remarkPlugins={REMARK_PLUGINS}>
         {markdown}
       </Markdown>
     );
   },
-  (prev, next) => prev.markdown === next.markdown,
+  (prev, next) => (
+    prev.markdown === next.markdown
+    && prev.index === next.index
+    && prev.onNodeReferenceOpen === next.onNodeReferenceOpen
+  ),
 );
 
-export function AgentMarkdown({ keyPrefix, streaming = false, text }: AgentMarkdownProps) {
+export function AgentMarkdown({
+  index: documentIndex,
+  keyPrefix,
+  onNodeReferenceOpen,
+  streaming = false,
+  text,
+}: AgentMarkdownProps) {
   const mended = useMemo(() => (streaming ? remend(text) : text), [streaming, text]);
   const blocks = useMemo(() => splitMarkdownBlocks(mended), [mended]);
+  const components = useMarkdownComponents(documentIndex, onNodeReferenceOpen);
 
   return (
     <div className="agent-markdown">
-      {blocks.map((block, index) => {
-        const blockKey = `${keyPrefix}-block-${index}`;
-        if (streaming && index === blocks.length - 1) {
+      {blocks.map((block, blockIndex) => {
+        const blockKey = `${keyPrefix}-block-${blockIndex}`;
+        if (streaming && blockIndex === blocks.length - 1) {
           return (
-            <Markdown components={MARKDOWN_COMPONENTS} key={blockKey} remarkPlugins={REMARK_PLUGINS}>
+            <Markdown components={components} key={blockKey} remarkPlugins={REMARK_PLUGINS}>
               {block}
             </Markdown>
           );
         }
-        return <MemoizedMarkdownBlock key={blockKey} markdown={block} />;
+        return (
+          <MemoizedMarkdownBlock
+            index={documentIndex}
+            key={blockKey}
+            markdown={block}
+            onNodeReferenceOpen={onNodeReferenceOpen}
+          />
+        );
       })}
     </div>
   );
