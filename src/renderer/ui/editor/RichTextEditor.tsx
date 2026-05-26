@@ -52,6 +52,8 @@ interface RichTextEditorProps {
   content: RichText;
   contentRevision?: number;
   placeholder?: string;
+  /** Extra class appended to the editor element (e.g. `trailing-editor`). */
+  className?: string;
   readOnly?: boolean;
   completed?: boolean;
   onFocus: () => void;
@@ -80,6 +82,18 @@ interface RichTextEditorProps {
   onPasteImage?: (images: PastedImage[]) => void;
   /** A lone remote image URL pasted with no active selection. */
   onPasteMediaUrl?: (url: string) => void;
+  /**
+   * First-chance paste handler. When it returns `true` the editor's own paste
+   * logic is skipped entirely. Lets a consumer (the trailing slot) keep its own
+   * create-on-paste semantics while sharing this one editor.
+   */
+  onPasteCapture?: (event: ClipboardEvent, ctx: { selectionEmpty: boolean }) => boolean;
+  /**
+   * Whether a lone single-line URL is linkified in place. Defaults to `true`
+   * (inline rows). The trailing slot sets this `false` so a pasted URL flows in
+   * as plain text instead.
+   */
+  linkifyPastedUrl?: boolean;
   onInlineReferenceClick?: (targetNodeId: string) => void;
   resolveInlineReferenceColor?: (targetNodeId: string) => string | undefined;
   focusTarget?: FocusTarget;
@@ -199,6 +213,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
   ));
   const editorClassName = [
     'row-editor',
+    props.className ?? '',
     props.completed ? 'done' : '',
     isEmpty ? 'is-empty' : '',
     focusPending ? 'is-focus-pending' : '',
@@ -343,11 +358,17 @@ export function RichTextEditor(props: RichTextEditorProps) {
 
           const clipboardEvent = event as ClipboardEvent;
 
+          // First-chance hook: the trailing slot owns create-on-paste semantics
+          // and short-circuits the in-place editing logic below.
+          const { from, to } = selectionOffsets(viewInstance);
+          if (propsRef.current.onPasteCapture?.(clipboardEvent, { selectionEmpty: from === to })) {
+            return true;
+          }
+
           // Image / media-URL / single-line-URL front-matter is classified by
           // the same helper the trailing input uses, so the two stay in
           // lock-step. Only the application below differs (edit in place here;
           // create a node in the trailing input).
-          const { from, to } = selectionOffsets(viewInstance);
           const mediaPaste = classifyMediaPaste(clipboardEvent.clipboardData, { hasSelection: from !== to });
 
           const onPasteImage = propsRef.current.onPasteImage;
@@ -380,8 +401,10 @@ export function RichTextEditor(props: RichTextEditorProps) {
           };
 
           // A single-line URL becomes a link: wrap the selection if there is
-          // one, otherwise insert the URL as link-marked text.
-          if (mediaPaste?.kind === 'linkUrl') {
+          // one, otherwise insert the URL as link-marked text. Consumers that
+          // prefer a pasted URL to flow in as plain text opt out via
+          // `linkifyPastedUrl={false}`.
+          if (mediaPaste?.kind === 'linkUrl' && propsRef.current.linkifyPastedUrl !== false) {
             const url = mediaPaste.url;
             clipboardEvent.preventDefault();
             const current = docToRichText(viewInstance.state.doc);
