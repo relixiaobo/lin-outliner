@@ -43,6 +43,51 @@ IME state, focus handshake). The *commands* genuinely differ and must be
 **injected**, not flattened into one shape. "Both become thin wrappers" means
 *thinner* wrappers that inject a target + a command set — not zero-logic.
 
+### Revision after reading both editors end-to-end (2026-05-26)
+
+A full read of both components changes the recommendation on the *form* of the
+core. RichTextEditor is ~90% inline-specific imperative wiring (the floating
+mark toolbar, inline-reference click/anchor/IME, content-revision sync,
+pending-input insertion, field-trigger); TrailingInput is a create/buffer/
+async-commit state machine with option-field UI. The genuinely shared surface
+is the **pure decision logic** — and that is now *entirely* extracted into
+shared modules:
+
+- `interactions/clipboardPaste.ts` (`classifyMediaPaste`, PR #11)
+- `editor/nodeLineView.ts` (caret + selection placement, PR #12)
+- `editor/nodeLineTrigger.ts` (`resolveNodeLineTrigger`, this branch)
+- `interactions/nodeLineKeymap.ts` (`resolveNodeLineKeyAction`, this branch)
+
+Given that, a monolithic `useNodeLineEditor` hook that both editors consume as
+"thin wrappers" is **not worth building**: it would be a thin `new EditorView`
++ cleanup shell wrapped by dozens of injection points around two essentially
+different machines (create vs. edit), and prevents only *skeleton* drift — while
+the *behavioral* drift (what each key/trigger does) is already prevented by the
+shared pure modules above. The cost (a large, blind, hot-path relocation) far
+exceeds the marginal benefit. **Recommendation: drop the hook.** The "core" is
+the set of shared pure modules, not a class/hook.
+
+### The remaining unification, and why it needs the app
+
+The one substantive piece left is the design's thesis — **trigger application
+through `resolveTargetId`** so `#`/`@`/`/` behave identically. It is *not* a
+mechanical extraction: it is a multi-file rewrite of the trailing input's async
+create machinery —
+
+- `beginInlineTriggerCommit` / `finishInlineTriggerCommit` (the `committingRef`
+  + projection-clear + focus-restore dance),
+- `applyTrailingTag` / `createTrailingTag` / `applyTrailingReference`
+  (including the reference inline-conversion + pending-text handoff,
+  `TrailingInput.tsx` ~695–745) / `executeTrailingSlashCommand`,
+- the bespoke `onApply*Trigger` props implemented in `NodePanel`,
+  `OutlinerItem`, `FieldValueOutliner`,
+- and consolidating the trailing-owned `TriggerPopover` onto `NodePanel`.
+
+This is the hottest node-creation path; the async/focus/undo-grouping behavior
+is not headlessly testable and must be verified in-app step by step. It should
+be done with the app in the loop (run → adjust), not as a blind rewrite — a
+broken async rewrite here cannot be diagnosed without reproducing it.
+
 ## 2. The central abstraction
 
 ```ts
