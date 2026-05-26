@@ -1406,15 +1406,20 @@ function lastAssistantMessage(messages: readonly AgentMessage[]): AssistantMessa
   return null;
 }
 
-function subagentToolResult(toolName: string, data: AgentSubagentToolData) {
-  return agentToolResult(successEnvelope(toolName, data), visibleSubagentResult(data));
+export function subagentToolResult(toolName: string, data: AgentSubagentToolData) {
+  // Next-step guidance is an envelope concern, not data: lift data.instructions
+  // to the envelope's instructions field so it sits beside status/error like
+  // every other tool, rather than nested inside the result payload.
+  const envelope = successEnvelope(toolName, data, data.instructions ? { instructions: data.instructions } : {});
+  return agentToolResult(envelope, visibleSubagentResult(data));
 }
 
 // Model-visible projection. The full AgentSubagentToolData stays on the envelope
 // (details); the parent agent only needs the lifecycle status, the id to address
-// follow-ups, the produced result/error, and any next-step instructions. Echoed
-// launch arguments (prompt, description, subagent_type, context_mode) and
-// timestamps/transcript counts are dropped.
+// follow-ups, and the produced result/error. Next-step instructions are carried
+// by the envelope's instructions field. Echoed launch arguments (prompt,
+// description, subagent_type, context_mode) and timestamps/transcript counts are
+// dropped.
 export function visibleSubagentResult(data: AgentSubagentToolData): unknown {
   const visible: Record<string, unknown> = {
     status: data.status,
@@ -1423,7 +1428,6 @@ export function visibleSubagentResult(data: AgentSubagentToolData): unknown {
   if (data.name) visible.name = data.name;
   if (data.result !== undefined) visible.result = data.result;
   if (data.error !== undefined) visible.error = data.error;
-  if (data.instructions) visible.instructions = data.instructions;
   return visible;
 }
 
