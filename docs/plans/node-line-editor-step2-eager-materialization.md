@@ -53,6 +53,35 @@ builds-on: node-line-editor-step1-extraction.md
 > draft rows in the render layer without changing `buildOutlinerRows`; (4) single
 > keyed `EditableOutlinerRow`, then remove the lazy commit dance last.
 
+> **Implemented (2026-05-26), pending app verification.** Built on branch
+> `cc/node-line-editor-core-impl`:
+>
+> - **A (core/main).** `freshNodeId()`/`isClientNodeId()` extracted to
+>   `src/core/nodeId.ts` (single source for renderer + core). A `create_node`
+>   carrying `materialize: true` opens a text-edit undo group keyed to the new
+>   node (`DocumentService.beginMaterializeGroup`), so the create + the patches
+>   that follow undo as one step. `api.materializeDraftNode(...)`. Headless tests
+>   for the id shape and the create+patch single-undo.
+> - **B/C (renderer).** The key realization: `OutlinerItem` already edits over a
+>   local buffer and emits granular patches, so the draft is just an
+>   `OutlinerItem` with a **synthetic empty node** (`makeDraftNode`) — the editor
+>   sits at the same JSX position before/after materialization, so it is never
+>   remounted (satisfies P1.3 at the JSX level without a separate component). The
+>   first `onPatch` calls `materializeDraftNode`; in-flight keystrokes reconcile
+>   from the buffer on arrival; focus transitions trailing→row via
+>   `selectFocusState` (no re-focus, caret undisturbed). The draft row is appended
+>   in the render layer (`OutlinerView` `trailingDraft` mode: `always` body /
+>   `auto` child); `buildOutlinerRows` stays pure. `useTrailingDraftId` mints the
+>   id and regenerates it on materialize.
+>
+> **Scope of this pass / deferred:** the unification covers the **main outliner**
+> (panel body + children). `FieldValueOutliner` keeps its `TrailingInput` (its
+> options-picker / typed-control surface is out of scope). **Depth-shift on an
+> empty trailing line (Tab/Shift-Tab before typing) is a no-op for now** — after
+> the row materializes on first input, Tab indents normally. `TrailingInput.tsx`
+> is no longer used by the main outliner but is retained for the field-value
+> surface. IME continuity + the materialize lifecycle require running the app.
+
 # Eager Materialization — the Tana-model trailing row (step 2)
 
 > **Goal.** Typing any character into the empty trailing line — including the
