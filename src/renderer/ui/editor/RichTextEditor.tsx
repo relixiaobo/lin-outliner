@@ -8,6 +8,7 @@ import type { FocusRequest, FocusTarget, PendingInputChar } from '../../state/do
 import type { EditorTrigger, NavigateRootOptions } from '../shared';
 import { wantsNewTabFromClick } from '../shared';
 import { resolveContentRowUpdateAction } from '../interactions/rowInteractions';
+import { resolveNodeLineKeyAction } from '../interactions/nodeLineKeymap';
 import { resolveSelectedReferenceShortcut } from '../interactions/selectedReferenceShortcuts';
 import {
   isPlainSingleParagraph,
@@ -571,71 +572,58 @@ export function RichTextEditor(props: RichTextEditorProps) {
           propsRef.current.onMove(matchesShortcutEvent(event, 'editor.move_up') ? 'up' : 'down');
           return true;
         }
-        if (event.key === 'Enter' && !event.shiftKey) {
-          event.preventDefault();
-          const current = docToRichText(viewInstance.state.doc);
-          if (propsRef.current.readOnly) {
+        const selection = selectionOffsets(viewInstance);
+        const structural = resolveNodeLineKeyAction(event, {
+          from: selection.from,
+          to: selection.to,
+          textLength: docToRichText(viewInstance.state.doc).text.length,
+          hasShiftArrow: Boolean(propsRef.current.onShiftArrow),
+        });
+        if (!structural) return false;
+        event.preventDefault();
+        switch (structural.type) {
+          case 'split': {
+            const current = docToRichText(viewInstance.state.doc);
+            if (propsRef.current.readOnly) {
+              propsRef.current.onEnter({
+                before: current,
+                after: { text: '', marks: [], inlineRefs: [] },
+                atEnd: true,
+              });
+              break;
+            }
+            const { from, to } = selectionOffsets(viewInstance);
             propsRef.current.onEnter({
-              before: current,
-              after: { text: '', marks: [], inlineRefs: [] },
-              atEnd: true,
+              before: sliceRichText(current, 0, from),
+              after: sliceRichText(current, from, current.text.length),
+              atEnd: from === to && to >= current.text.length,
             });
-            return true;
+            break;
           }
-          const { from, to } = selectionOffsets(viewInstance);
-          propsRef.current.onEnter({
-            before: sliceRichText(current, 0, from),
-            after: sliceRichText(current, from, current.text.length),
-            atEnd: from === to && to >= current.text.length,
-          });
-          return true;
-        }
-        if (event.key === 'Backspace') {
-          const current = docToRichText(viewInstance.state.doc);
-          const { from, to } = selectionOffsets(viewInstance);
-          if (from === 0 && to === 0) {
-            event.preventDefault();
+          case 'backspaceAtStart': {
+            const current = docToRichText(viewInstance.state.doc);
             propsRef.current.onBackspaceAtStart(
               current.text.replace(/\u200B/g, '').trim().length === 0 && current.inlineRefs.length === 0,
             );
-            return true;
+            break;
           }
-        }
-        if (event.key === 'Tab') {
-          event.preventDefault();
-          const { from } = selectionOffsets(viewInstance);
-          propsRef.current.onTab(event.shiftKey, from);
-          return true;
-        }
-        if (event.shiftKey && !mod && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
-          if (!propsRef.current.onShiftArrow) return false;
-          event.preventDefault();
-          propsRef.current.onShiftArrow(event.key === 'ArrowUp' ? 'up' : 'down');
-          return true;
-        }
-        if (event.key === 'ArrowUp') {
-          const { from } = selectionOffsets(viewInstance);
-          if (from === 0) {
-            event.preventDefault();
+          case 'indent':
+            propsRef.current.onTab(structural.shiftKey, selection.from);
+            break;
+          case 'shiftArrow':
+            propsRef.current.onShiftArrow?.(structural.direction);
+            break;
+          case 'navigateUpAtStart':
             propsRef.current.onArrowUpAtStart();
-            return true;
-          }
-        }
-        if (event.key === 'ArrowDown') {
-          const current = docToRichText(viewInstance.state.doc);
-          const { to } = selectionOffsets(viewInstance);
-          if (to >= current.text.length) {
-            event.preventDefault();
+            break;
+          case 'navigateDownAtEnd':
             propsRef.current.onArrowDownAtEnd();
-            return true;
-          }
+            break;
+          case 'escape':
+            propsRef.current.onEscape();
+            break;
         }
-        if (event.key === 'Escape') {
-          event.preventDefault();
-          propsRef.current.onEscape();
-          return true;
-        }
-        return false;
+        return true;
       },
     });
 
