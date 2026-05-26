@@ -1026,7 +1026,7 @@ export function TrailingInput(props: TrailingInputProps) {
     }
   };
 
-  const handleCommit = (content: RichText) => {
+  const handleCommit = () => {
     // Fires on blur. Mid-commit blurs buffer their remaining text for replay
     // after the projection settles; otherwise commit any pending text.
     if (committingRef.current) {
@@ -1039,7 +1039,10 @@ export function TrailingInput(props: TrailingInputProps) {
       return;
     }
     if (clearAfterProjectionRef.current) return;
-    const text = content.text;
+    // Read the synchronously-updated buffer, not the editor-provided doc: after
+    // a commit resets the buffer, the view can still hold the just-committed
+    // text for a frame, and reading it here would commit a duplicate.
+    const text = getEditorText();
     if (text.trim().length > 0) {
       void commitContent(text, false, 'none').then(resetEffectiveParent);
       return;
@@ -1244,7 +1247,7 @@ export function TrailingInput(props: TrailingInputProps) {
         onTab={handleTab}
         onArrowUpAtStart={handleArrowUpAtStart}
         onArrowDownAtEnd={handleArrowDownAtEnd}
-        onModEnter={(content) => void createDoneNode(content.text)}
+        onModEnter={() => void createDoneNode(getEditorText())}
         onDescriptionToggle={() => void createNodeAndFocusDescription(getEditorText())}
         onEscape={handleEscape}
         onUndo={props.onUndo}
