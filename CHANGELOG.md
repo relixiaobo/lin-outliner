@@ -12,6 +12,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Eager-materialized trailing draft row** — the Tana-style blank line at the
+  bottom of the outline is now a real draft row: typing the first committed
+  character materializes an actual node in place (IME-seamless, no editor
+  remount) via a client-proposed node id, and drops a fresh empty draft below.
+  Create + the first text edits collapse into one undo step. Structural keys
+  work on the draft (Enter / Tab indent-under-previous-sibling / Shift+Tab /
+  Backspace), plus fixes for leading-inline-ref backspace and merging a row
+  into a reference node (converts it to a leading inline reference). Main
+  outliner only; `FieldValueOutliner` keeps its typed-control trailing input.
+  ([#16](https://github.com/relixiaobo/lin-outliner/pull/16))
 - **Agent composer with inline references** — replaced the agent composer
   textarea with a ProseMirror editor supporting slash commands, inline node
   references (rendered consistently across user / assistant / tool output and

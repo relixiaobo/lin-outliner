@@ -41,6 +41,8 @@ items above.
 | [`agent-past-chats.md`](agent-past-chats.md) | in-progress | P1 | Single `past_chats` tool (recent + search + read modes) backed by the event store, user-message/search indexes, and visible transcript filtering. Foundational agent infrastructure. |
 | [`node-line-editor-unification.md`](node-line-editor-unification.md) | in-progress | P1 | Unify the two node-line editors (inline `RichTextEditor` + `TrailingInput`). Phase 1 (shared paste classifier, #11) and Phase 2a (shared view helpers, #12) shipped; Phase 2b is the `resolveTargetId` trigger-application rewrite. |
 | [`node-line-editor-core-design.md`](node-line-editor-core-design.md) | design | P1 | Build contract for Phase 2b of the unification: shared pure modules over a monolithic hook; trigger application routed through `resolveTargetId`. |
+| [`node-line-editor-step1-extraction.md`](node-line-editor-step1-extraction.md) | done | P1 | Step 1: extract shared node-line trigger detection + structural keymap resolvers as pure modules (#16). |
+| [`node-line-editor-step2-eager-materialization.md`](node-line-editor-step2-eager-materialization.md) | done | P1 | Step 2: eager-materialize the trailing draft row — client-proposed node id + materialize undo grouping; type-to-create with no editor remount (#16). |
 | [`nodex-parity-decisions.md`](nodex-parity-decisions.md) | meta | — | Catalog of nodex features we explicitly will not port and why. |
 
 ## Working Rules

@@ -48,9 +48,10 @@ Ordered by priority; lower items may depend on higher ones.
   delete the trailing input's bespoke `onApply*Trigger` props. High-risk
   reconciliation of the hot node-creation path; verify with the app running
   against the `outliner-*` Playwright e2e specs. Build contract:
-  `docs/plans/node-line-editor-core-design.md` (PR #13). Phase 1 (#11) and
-  Phase 2a view helpers (#12) shipped; eager-materialized trailing draft is
-  in flight on `cc/node-line-editor-core-impl` (PR #14, pending rebase).
+  `docs/plans/node-line-editor-core-design.md` (PR #13). Phase 1 (#11),
+  Phase 2a view helpers (#12), and the eager-materialized trailing draft +
+  step-1 trigger/keymap extraction (#16) shipped; the `resolveTargetId`
+  trigger-application unification remains.
 - **embed-strategy** (P3) — decide live iframe vs cached-metadata embeds.
 - **past-chats-output-polish** (P3) — minor cleanups deferred from PR #7:
   (1) drop the now-redundant `returned_items` / `returned_hits` / `message_count`
@@ -61,6 +62,12 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **node-line-editor eager-materialized trailing draft** (P1, cc) — typing in
+  the trailing blank line materializes a real node in place (IME-seamless, no
+  remount) under a client-proposed id; create + first edits collapse into one
+  undo step. Includes step-1 shared trigger detection + structural keymap
+  resolvers, draft-mode `OutlinerItem`, and fixes for leading-inline-ref
+  backspace and merge-into-reference conversion. Main outliner only (PR #16).
 - **node-line-editor-unification Phase 2a** (P1, cc) — shared `nodeLineView.ts`
   view helpers (`caretAnchor`, `selectionTextOffsets`, unified inline-ref-aware
   `selectionForPlacement` / `applyCursorPlacement`); `RichTextEditor` and

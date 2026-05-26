@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 priority: P1
 owner: relixiaobo
 created: 2026-05-26
