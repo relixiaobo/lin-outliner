@@ -40,8 +40,8 @@ function command<T>(name: string, args?: Record<string, unknown>): Promise<T> {
 export const api = {
   initWorkspace: () => command<DocumentProjection>('init_workspace'),
   getProjection: () => command<DocumentProjection>('get_projection'),
-  createNode: (parentId: string, index: number | null, text: string) =>
-    command<CommandOutcome>('create_node', { parentId, index, text }),
+  createNode: (parentId: string, index: number | null, text: string, id?: string) =>
+    command<CommandOutcome>('create_node', { parentId, index, text, id }),
   createRichTextNode: (parentId: string, index: number | null, content: RichText) =>
     command<CommandOutcome>('create_rich_text_node', { parentId, index, content }),
   createTaggedNode: (parentId: string, content: RichText, tagId: string) =>

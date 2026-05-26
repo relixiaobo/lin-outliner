@@ -220,13 +220,25 @@ export class Core {
     }
   }
 
-  createNode(parentId: string, index: number | null | undefined, text: string): CommandOutcome {
+  createNode(
+    parentId: string,
+    index: number | null | undefined,
+    text: string,
+    id?: string,
+  ): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureParentMutable(state, parentId);
-      const id = this.createPlainNode(parentId, index, text);
-      this.applyChildTagsDirect(parentId, id);
-      return focus(id, { parentId, placement: { kind: 'end' } });
+      // A caller-supplied id lets the renderer materialize a draft row under an
+      // id it already chose, so the row's React identity survives the
+      // draft->real transition (see node-line-editor-step2-eager-materialization).
+      // Re-materializing an id that already exists is idempotent.
+      if (id && this.loro.hasNode(id)) {
+        return focus(id, { parentId, placement: { kind: 'end' } });
+      }
+      const newId = this.createPlainNode(parentId, index, text, undefined, id);
+      this.applyChildTagsDirect(parentId, newId);
+      return focus(newId, { parentId, placement: { kind: 'end' } });
     });
   }
 
@@ -1843,12 +1855,18 @@ export class Core {
     if (parentId && node.parentId !== parentId) this.loro.moveNode(id, parentId, undefined);
   }
 
-  private createPlainNode(parentId: string, index: number | null | undefined, text: string, type?: NodeType) {
-    const id = freshId(type === 'reference' ? 'ref' : type === 'fieldEntry' ? 'field_entry' : 'node');
-    this.loro.createNodeWithId(id, parentId, index, type, (node) => {
+  private createPlainNode(
+    parentId: string,
+    index: number | null | undefined,
+    text: string,
+    type?: NodeType,
+    id?: string,
+  ) {
+    const nodeId = id ?? freshId(type === 'reference' ? 'ref' : type === 'fieldEntry' ? 'field_entry' : 'node');
+    this.loro.createNodeWithId(nodeId, parentId, index, type, (node) => {
       node.content = plainText(text);
     });
-    return id;
+    return nodeId;
   }
 
   private createRichTextNodeDirect(parentId: string, index: number | null | undefined, content: RichText, type?: NodeType) {

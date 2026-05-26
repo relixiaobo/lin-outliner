@@ -205,7 +205,12 @@ export class DocumentService {
   private runMutation(command: DocumentCommand, args: Record<string, unknown>, meta: DocumentMutationMeta) {
     switch (command) {
       case 'create_node':
-        return this.core.createNode(String(args.parentId), nullableNumber(args.index), String(args.text ?? ''));
+        return this.core.createNode(
+          String(args.parentId),
+          nullableNumber(args.index),
+          String(args.text ?? ''),
+          typeof args.id === 'string' ? args.id : undefined,
+        );
       case 'create_rich_text_node':
         return this.core.createRichTextContentNode(String(args.parentId), nullableNumber(args.index), args.content as RichText);
       case 'create_tagged_node':
