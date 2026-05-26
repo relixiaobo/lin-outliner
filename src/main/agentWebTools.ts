@@ -470,6 +470,59 @@ export function sliceContent(content: string, offset: number, maxChars: number):
   };
 }
 
+// Model-visible projections. The full WebSearchData/WebFetchData stays on the
+// envelope (details) for logs and the UI; the model only needs the result
+// payload and pagination/recovery signals. Fields that echo the call arguments
+// (query, url, format, mode), constant provider metadata, and telemetry
+// (durationMs, byteLength, finalUrl) are dropped. See agentToolEnvelope's
+// modelData parameter for how this projection is attached.
+export function webSearchModelData(data: WebSearchData): unknown {
+  const visible: Record<string, unknown> = {
+    results: data.results.map((result) => ({
+      title: result.title,
+      url: result.url,
+      snippet: result.snippet,
+      ...(result.publishedAt ? { publishedAt: result.publishedAt } : {}),
+    })),
+  };
+  if (data.truncated) {
+    visible.truncated = true;
+    if (data.totalResults !== undefined) visible.totalResults = data.totalResults;
+  }
+  if (data.hint) visible.hint = data.hint;
+  return visible;
+}
+
+export function webFetchModelData(data: WebFetchData): unknown {
+  const visible: Record<string, unknown> = {};
+  if (data.title) visible.title = data.title;
+  if (data.finalUrl && data.finalUrl !== data.url) visible.finalUrl = data.finalUrl;
+  if (data.statusCode && data.statusCode !== 200) visible.statusCode = data.statusCode;
+
+  if (data.binaryFile) {
+    visible.binaryFile = { filePath: data.binaryFile.filePath, mimeType: data.binaryFile.mimeType };
+    if (data.hint) visible.hint = data.hint;
+    return visible;
+  }
+
+  if (data.mode === 'metadata') {
+    if (data.metadata) visible.metadata = data.metadata;
+  } else if (data.mode === 'find') {
+    visible.matches = (data.matches ?? []).map((match) => ({ snippet: match.snippet }));
+    visible.totalMatches = data.totalMatches ?? 0;
+    if (data.nextMatchOffset !== undefined) visible.nextMatchOffset = data.nextMatchOffset;
+  } else {
+    if (data.content !== undefined) visible.content = data.content;
+    if (data.truncated) {
+      visible.truncated = true;
+      if (data.totalChars !== undefined) visible.totalChars = data.totalChars;
+      if (data.nextOffset !== undefined) visible.nextOffset = data.nextOffset;
+    }
+  }
+  if (data.hint) visible.hint = data.hint;
+  return visible;
+}
+
 export function buildEffectiveSearchQuery(query: string, site?: string): string {
   if (!site) return query;
   return `${query} site:${site}`;

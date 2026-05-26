@@ -36,6 +36,8 @@ import {
   extractFetchedPageContent,
   normalizeWebFetchParams,
   normalizeWebSearchParams,
+  webFetchModelData,
+  webSearchModelData,
   type FetchTextResult,
   type NormalizedWebFetchParams,
   type WebFetchBinaryFile,
@@ -230,10 +232,10 @@ function createWebFetchTool(localRoot?: string): AgentTool<any, ToolEnvelope<Web
 
       const params = normalized.params;
       try {
-        return agentToolResult(await fetchWebFetchEnvelope(params, started, signal, localRoot));
+        return webFetchToolResult(await fetchWebFetchEnvelope(params, started, signal, localRoot));
       } catch (error) {
         if (error instanceof WebToolFailure && error.hint) {
-          return agentToolResult(webFetchHintEnvelope(params, error, started));
+          return webFetchToolResult(webFetchHintEnvelope(params, error, started));
         }
         return agentToolResult(errorEnvelope('web_fetch', classifyWebError(error), errorMessage(error), {
           instructions: 'Retry once if this looks transient. If it still fails, use web_search for another source.',
@@ -242,6 +244,10 @@ function createWebFetchTool(localRoot?: string): AgentTool<any, ToolEnvelope<Web
       }
     },
   };
+}
+
+function webFetchToolResult(envelope: ToolEnvelope<WebFetchData>) {
+  return agentToolResult(envelope, envelope.data ? webFetchModelData(envelope.data) : undefined);
 }
 
 async function fetchWebFetchEnvelope(
@@ -377,7 +383,7 @@ function createWebSearchTool(): AgentTool<any, ToolEnvelope<WebSearchData>> {
       try {
         const search = await searchGoogle(searchUrl, signal);
         if (search.kind === 'hint') {
-          return agentToolResult(successEnvelope('web_search', {
+          return webSearchToolResult(successEnvelope('web_search', {
             query,
             effectiveQuery,
             provider: 'provider',
@@ -396,7 +402,7 @@ function createWebSearchTool(): AgentTool<any, ToolEnvelope<WebSearchData>> {
           }));
         }
         if (search.kind === 'error') {
-          return agentToolResult(errorEnvelope('web_search', search.code, search.message, {
+          return webSearchToolResult(errorEnvelope('web_search', search.code, search.message, {
             data: {
               query,
               effectiveQuery,
@@ -420,7 +426,7 @@ function createWebSearchTool(): AgentTool<any, ToolEnvelope<WebSearchData>> {
           ? ['recency_days is best-effort with the current search provider. Verify dates with web_fetch when freshness matters.']
           : undefined;
 
-        return agentToolResult(successEnvelope('web_search', {
+        return webSearchToolResult(successEnvelope('web_search', {
           query,
           effectiveQuery,
           provider: 'provider',
@@ -444,6 +450,10 @@ function createWebSearchTool(): AgentTool<any, ToolEnvelope<WebSearchData>> {
       }
     },
   };
+}
+
+function webSearchToolResult(envelope: ToolEnvelope<WebSearchData>) {
+  return agentToolResult(envelope, envelope.data ? webSearchModelData(envelope.data) : undefined);
 }
 
 async function fetchText(url: string, signal?: AbortSignal, localRoot?: string): Promise<FetchTextResult> {

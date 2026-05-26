@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { Core } from '../../src/core/core';
 import { TRASH_ID } from '../../src/core/types';
-import { createNodeTools, type OutlinerToolHost } from '../../src/main/agentNodeTools';
+import { createNodeTools, visibleOperationHistory, type OutlinerToolHost } from '../../src/main/agentNodeTools';
+import type { OperationHistoryData } from '../../src/main/agentNodeToolTypes';
 import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
 
 function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T) {
@@ -859,6 +860,54 @@ describe('agent node tools', () => {
       canUndo: true,
     });
     expect(history.data!.items![0]!.affectedNodeIds).toContain(created.data!.createdRootIds[0]!);
+  });
+
+  test('operation_history model view drops derivable count, historyMode, cursor, and item command', () => {
+    const data: OperationHistoryData = {
+      action: 'list',
+      historyMode: 'journal',
+      count: 1,
+      total: 5,
+      hasMore: true,
+      canUndo: true,
+      canRedo: false,
+      cursor: { topUndoOperationId: 'op_1' },
+      items: [
+        {
+          operationId: 'op_1',
+          origin: 'agent',
+          command: 'create_node',
+          tool: 'node_create',
+          action: 'node_create',
+          summary: 'Created a node.',
+          affectedNodeIds: ['node_1'],
+          createdAt: '2026-05-26T00:00:00.000Z',
+          canUndo: true,
+          canRedo: false,
+        },
+      ],
+    };
+
+    expect(visibleOperationHistory(data)).toEqual({
+      action: 'list',
+      total: 5,
+      hasMore: true,
+      items: [
+        {
+          operationId: 'op_1',
+          origin: 'agent',
+          tool: 'node_create',
+          action: 'node_create',
+          summary: 'Created a node.',
+          affectedNodeIds: ['node_1'],
+          createdAt: '2026-05-26T00:00:00.000Z',
+          canUndo: true,
+          canRedo: false,
+        },
+      ],
+      canUndo: true,
+      canRedo: false,
+    });
   });
 
   test('operation_history defaults to listing all origins', async () => {

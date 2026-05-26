@@ -7,6 +7,14 @@ import {
   createAgentLocalWorkspaceContext,
   createLocalTools,
   restorePostCompactReadFiles,
+  visibleBash,
+  visibleFileGlob,
+  visibleFileGrep,
+  visibleTaskStop,
+  type BashData,
+  type FileGlobData,
+  type FileGrepData,
+  type TaskStopData,
 } from '../../src/main/agentLocalTools';
 import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
 
@@ -717,5 +725,79 @@ describe('agent local tools', () => {
       expect(recentCompleted.ok).toBe(false);
       expect(recentCompleted.error?.code).toBe('task_not_running');
     });
+  });
+});
+
+describe('local tool model-visible projections', () => {
+  test('bash keeps output and signals, drops echoed command and telemetry', () => {
+    const data: BashData = {
+      stdout: 'hi',
+      stderr: '',
+      interrupted: false,
+      exitCode: 0,
+      command: 'echo hi',
+      returnCodeInterpretation: undefined,
+      noOutputExpected: false,
+      dangerouslyDisableSandbox: false,
+    };
+    expect(visibleBash(data)).toEqual({ stdout: 'hi', stderr: '' });
+  });
+
+  test('bash surfaces non-zero exit, interruption, and background/persisted paths', () => {
+    const failed: BashData = {
+      stdout: '',
+      stderr: 'boom',
+      interrupted: true,
+      exitCode: 1,
+      command: 'false',
+    };
+    expect(visibleBash(failed)).toEqual({ stdout: '', stderr: 'boom', interrupted: true, exitCode: 1 });
+
+    const background: BashData = {
+      stdout: '',
+      stderr: '',
+      interrupted: false,
+      backgroundTaskId: 'task_1',
+      taskStatus: 'running',
+      command: 'sleep 100',
+      persistedOutputPath: '/tmp/task_1.log',
+      startedAt: '2026-05-26T00:00:00.000Z',
+    };
+    expect(visibleBash(background)).toEqual({
+      stdout: '',
+      stderr: '',
+      backgroundTaskId: 'task_1',
+      taskStatus: 'running',
+      persistedOutputPath: '/tmp/task_1.log',
+    });
+  });
+
+  test('file_glob keeps filenames and only includes truncated when true', () => {
+    const data: FileGlobData = { durationMs: 12, numFiles: 2, filenames: ['a.ts', 'b.ts'], truncated: false };
+    expect(visibleFileGlob(data)).toEqual({ filenames: ['a.ts', 'b.ts'] });
+    expect(visibleFileGlob({ ...data, truncated: true })).toEqual({ filenames: ['a.ts', 'b.ts'], truncated: true });
+  });
+
+  test('file_grep returns mode-specific shapes without derivable counts', () => {
+    const filesMode: FileGrepData = { mode: 'files_with_matches', numFiles: 2, filenames: ['a.ts', 'b.ts'] };
+    expect(visibleFileGrep(filesMode)).toEqual({ mode: 'files_with_matches', filenames: ['a.ts', 'b.ts'] });
+
+    const contentMode: FileGrepData = { mode: 'content', numFiles: 0, filenames: [], content: 'a.ts:1:hit', numLines: 1, appliedLimit: 1, appliedOffset: 0 };
+    expect(visibleFileGrep(contentMode)).toEqual({ mode: 'content', content: 'a.ts:1:hit' });
+
+    const countMode: FileGrepData = { mode: 'count', numFiles: 2, filenames: [], content: 'a.ts:2', numMatches: 3 };
+    expect(visibleFileGrep(countMode)).toEqual({ mode: 'count', content: 'a.ts:2', numMatches: 3 });
+  });
+
+  test('task_stop keeps id/status/outputPath and drops the echoed message', () => {
+    const data: TaskStopData = {
+      message: 'Successfully stopped task: task_1 (sleep 100)',
+      task_id: 'task_1',
+      task_type: 'bash',
+      command: 'sleep 100',
+      status: 'stopped',
+      outputPath: '/tmp/task_1.log',
+    };
+    expect(visibleTaskStop(data)).toEqual({ task_id: 'task_1', status: 'stopped', outputPath: '/tmp/task_1.log' });
   });
 });

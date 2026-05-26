@@ -4,7 +4,11 @@ import {
   buildWebFetchSuccessEnvelope,
   normalizeWebFetchParams,
   normalizeWebSearchParams,
+  webFetchModelData,
+  webSearchModelData,
   type FetchTextResult,
+  type WebFetchData,
+  type WebSearchData,
   type WebParamResult,
 } from '../../src/main/agentWebTools';
 import {
@@ -168,17 +172,16 @@ describe('agent web tools', () => {
     }));
 
     const envelope = await buildWebFetchSuccessEnvelope(fetchedText(html), params, 12);
-    const result = agentToolResult(envelope);
+    const result = agentToolResult(envelope, webFetchModelData(envelope.data!));
     const visible = JSON.parse(result.content[0]!.type === 'text' ? result.content[0]!.text : '{}');
 
     expect(result.details).toBe(envelope);
+    // The full WebFetchData stays on details; the model only sees title + metadata.
     expect(visible).toMatchObject({
       ok: true,
       tool: 'web_fetch',
       status: 'success',
       data: {
-        mode: 'metadata',
-        format: 'metadata',
         title: 'Lin Docs',
         metadata: {
           title: 'Lin Docs',
@@ -189,9 +192,13 @@ describe('agent web tools', () => {
           headings: ['Overview', 'Install'],
           links: [{ text: 'Next', url: 'https://example.com/docs/next' }],
         },
-        truncated: false,
       },
     });
+    // Echoed arguments and telemetry are dropped from the model view.
+    expect(visible.data.mode).toBeUndefined();
+    expect(visible.data.format).toBeUndefined();
+    expect(visible.data.url).toBeUndefined();
+    expect(visible.data.durationMs).toBeUndefined();
     expect(visible.version).toBeUndefined();
     expect(envelope.data!.content).toBeUndefined();
   });
@@ -256,5 +263,137 @@ describe('agent web tools', () => {
       truncated: false,
     });
     expect(envelope.instructions).toContain('file_read');
+  });
+});
+
+describe('web tool model-visible projections', () => {
+  test('web_search keeps results and pagination, drops echoed args and telemetry', () => {
+    const data: WebSearchData = {
+      query: 'chengdu weather',
+      effectiveQuery: 'chengdu weather',
+      provider: 'provider',
+      providerName: 'google_serp',
+      finalUrl: 'https://www.google.com/search?q=chengdu+weather',
+      resultCount: 1,
+      totalResults: 14,
+      truncated: true,
+      durationMs: 49023,
+      results: [
+        { title: 'Weather', url: 'https://example.com/w', snippet: 'sunny', source: 'example.com' },
+      ],
+    };
+
+    expect(webSearchModelData(data)).toEqual({
+      results: [{ title: 'Weather', url: 'https://example.com/w', snippet: 'sunny' }],
+      truncated: true,
+      totalResults: 14,
+    });
+  });
+
+  test('web_search omits truncated/totalResults when not truncated and keeps hints', () => {
+    const data: WebSearchData = {
+      query: 'q',
+      effectiveQuery: 'q',
+      provider: 'provider',
+      providerName: 'google_serp',
+      resultCount: 0,
+      truncated: false,
+      results: [],
+      hint: { type: 'search_blocked', reason: 'captcha', origin: 'https://www.google.com' },
+    };
+
+    expect(webSearchModelData(data)).toEqual({
+      results: [],
+      hint: { type: 'search_blocked', reason: 'captcha', origin: 'https://www.google.com' },
+    });
+  });
+
+  test('web_fetch read mode keeps content and pagination only when truncated', () => {
+    const base: WebFetchData = {
+      url: 'https://example.com/page',
+      finalUrl: 'https://example.com/page',
+      statusCode: 200,
+      contentType: 'text/html',
+      byteLength: 999,
+      durationMs: 42,
+      mode: 'read',
+      format: 'markdown',
+      title: 'Page',
+      content: 'hello',
+      totalChars: 12,
+      returnedChars: 5,
+      nextOffset: 5,
+      truncated: true,
+    };
+
+    expect(webFetchModelData(base)).toEqual({
+      title: 'Page',
+      content: 'hello',
+      truncated: true,
+      totalChars: 12,
+      nextOffset: 5,
+    });
+    expect(webFetchModelData({ ...base, truncated: false, nextOffset: undefined })).toEqual({
+      title: 'Page',
+      content: 'hello',
+    });
+  });
+
+  test('web_fetch surfaces finalUrl on redirect and statusCode on non-200', () => {
+    const data: WebFetchData = {
+      url: 'https://example.com/a',
+      finalUrl: 'https://other.com/b',
+      statusCode: 404,
+      mode: 'read',
+      format: 'markdown',
+      content: 'x',
+      truncated: false,
+    };
+
+    expect(webFetchModelData(data)).toEqual({
+      finalUrl: 'https://other.com/b',
+      statusCode: 404,
+      content: 'x',
+    });
+  });
+
+  test('web_fetch find mode drops byte offsets and keeps snippets', () => {
+    const data: WebFetchData = {
+      url: 'https://example.com',
+      finalUrl: 'https://example.com',
+      statusCode: 200,
+      mode: 'find',
+      format: 'markdown',
+      matches: [
+        { index: 0, start: 10, end: 14, snippetStart: 0, snippetEnd: 30, snippet: '...beta...' },
+      ],
+      totalMatches: 3,
+      returnedMatches: 1,
+      nextMatchOffset: 1,
+      truncated: true,
+    };
+
+    expect(webFetchModelData(data)).toEqual({
+      matches: [{ snippet: '...beta...' }],
+      totalMatches: 3,
+      nextMatchOffset: 1,
+    });
+  });
+
+  test('web_fetch binary keeps filePath and mimeType only', () => {
+    const data: WebFetchData = {
+      url: 'https://example.com/file.pdf',
+      finalUrl: 'https://example.com/file.pdf',
+      statusCode: 200,
+      mode: 'read',
+      format: 'markdown',
+      content: 'Binary content saved to /tmp/x.pdf. Use file_read on this path.',
+      binaryFile: { filePath: '/tmp/x.pdf', mimeType: 'application/pdf', byteLength: 1234, sha256: 'abc' },
+      truncated: false,
+    };
+
+    expect(webFetchModelData(data)).toEqual({
+      binaryFile: { filePath: '/tmp/x.pdf', mimeType: 'application/pdf' },
+    });
   });
 });
