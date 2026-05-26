@@ -62,8 +62,17 @@ work below is unaffected.
    validation for number/bool/color.
 6. **viewDef rides with config** — view-rule params migrate to the value
    mechanism in the same stages and cut over together.
-7. **`showCheckbox` is dual-purpose** (node affordance `core.ts:2418` + tag
-   config `core.ts:970`) — split before removal from `Node`.
+7. **`showCheckbox` / `doneStateEnabled` are dual-purpose** — audited:
+   - **Content-node affordance (STAYS on `Node`; NOT removed in Stage 6):**
+     `set_node_checkbox_visible` (core:450), done toggle/batch (core:778/849),
+     `createInlineField` reset (core:1058), `cycleNodeDoneState` (core:2419),
+     search `TODO`/`NOT_DONE` (searchEngine:508), NodePanel/OutlinerItem/
+     userViewContext display.
+   - **TagDef config (redirect to subtree/accessor only):** `setTagConfig`
+     (core:971) + `DefinitionConfigPanel` UI + renderer registry.
+   So these two fields are kept on `Node`; only their tagDef-config role moves
+   to the subtree. The "split" is realized during cutover via this
+   classification, not as standalone pre-work.
 
 ## Cutover (no compat → compiler-driven)
 
