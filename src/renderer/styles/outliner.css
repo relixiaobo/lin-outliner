@@ -1574,6 +1574,12 @@
   color: rgba(26, 26, 26, 0.15);
 }
 
+/* A not-yet-materialized trailing draft row: a fainter bullet marks it as the
+   "next" slot, distinct from a real (even if empty) node. */
+.row.node-draft .row-bullet-shape.content {
+  color: rgba(26, 26, 26, 0.18);
+}
+
 .row-bullet-shape.reference {
   width: 13px;
   height: 13px;

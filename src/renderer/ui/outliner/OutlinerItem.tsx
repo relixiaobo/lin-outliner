@@ -884,6 +884,17 @@ export function OutlinerItem(props: OutlinerItemProps) {
     });
     const editorRect = editor.getBoundingClientRect();
     const inlineRefBias = event.clientX <= editorRect.left + 2 ? 'before' : 'after';
+    if (props.draft && !realNode) {
+      // A draft editor consumes the parent's trailing focus request (its
+      // focusTarget is the trailing surface), so route the click there too; once
+      // focused, onFocus settles the signal to this row's own id.
+      props.setUi((prev) => requestFocusState(
+        prev,
+        focusTarget(props.parentId, props.parentId, props.panelId, 'trailing'),
+        cursorAtOffset(offset, inlineRefBias),
+      ));
+      return;
+    }
     requestRowFocus(props.nodeId, cursorAtOffset(offset, inlineRefBias), props.parentId);
   };
 
@@ -975,6 +986,9 @@ export function OutlinerItem(props: OutlinerItemProps) {
         referenceLikeRow ? 'reference-row' : '',
         pendingReferenceConversion ? 'ref-converting' : '',
         pendingReferenceTypeAhead ? 'ref-typeahead' : '',
+        // A not-yet-materialized trailing draft reads as a fainter bullet, so it
+        // is visually distinct from a real (empty) node.
+        props.draft && !realNode ? 'node-draft' : '',
       ].filter(Boolean).join(' '))}
       onSelectFromPointer={row.selectFromPointer}
       onContextMenu={openContextMenu}
