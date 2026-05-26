@@ -6,16 +6,24 @@ import {
   type CSSProperties,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { EditorState, TextSelection } from 'prosemirror-state';
-import { EditorView } from 'prosemirror-view';
 import { api } from '../../api/client';
-import type { CommandOutcome, CreateNodeTree, DocumentProjection, NodeId, NodeProjection } from '../../api/types';
+import type {
+  CommandOutcome,
+  CreateNodeTree,
+  DocumentProjection,
+  NodeId,
+  NodeProjection,
+  RichText,
+} from '../../api/types';
 import { EMPTY_RICH_TEXT } from '../../api/types';
-import type { DocumentIndex, FocusRequest, FocusSurface } from '../../state/document';
-import { pmSchema } from '../editor/pmSchema';
-import { richTextToDoc } from '../editor/richTextCodec';
-import { applyCursorPlacement, caretAnchor } from '../editor/nodeLineView';
-import { focusTarget, focusTargetMatches } from '../focus/focusModel';
+import type {
+  CursorPlacement,
+  DocumentIndex,
+  FocusRequest,
+  FocusSurface,
+} from '../../state/document';
+import { focusTarget } from '../focus/focusModel';
+import { RichTextEditor, type EditorSplitPayload } from '../editor/RichTextEditor';
 import {
   resolveTrailingRowArrowDownIntent,
   resolveTrailingRowArrowUpIntent,
@@ -30,7 +38,6 @@ import { filterFieldOptions, resolveFieldOptions } from '../interactions/fieldOp
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { readPastedImages, type PastedImage } from '../interactions/imagePaste';
 import { classifyMediaPaste } from '../interactions/clipboardPaste';
-import { matchesShortcutEvent } from '../interactions/shortcutRegistry';
 import { parseClipboardPaste } from '../interactions/pasteParser';
 import type { SlashCommandId } from '../interactions/slashCommands';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
@@ -110,6 +117,8 @@ interface TrailingInputProps {
 
 type CommitFocusTarget = 'none' | 'trailing' | 'created';
 
+const PRESERVE_PLACEMENT: CursorPlacement = { kind: 'preserve' };
+
 function isInlineTrigger(trigger: EditorTrigger): trigger is TrailingInlineTrigger {
   return trigger.kind === '#' || trigger.kind === '@';
 }
@@ -118,8 +127,8 @@ function isSlashTrigger(trigger: EditorTrigger): trigger is TrailingSlashTrigger
   return trigger.kind === '/';
 }
 
-function emptyDoc() {
-  return richTextToDoc(EMPTY_RICH_TEXT, pmSchema);
+function plainBuffer(text: string): RichText {
+  return { ...EMPTY_RICH_TEXT, text };
 }
 
 function plainTreeNode(text: string): CreateNodeTree {
@@ -130,48 +139,6 @@ function plainTreeNode(text: string): CreateNodeTree {
     },
     children: [],
   };
-}
-
-function resetEditorContent(view: EditorView) {
-  const doc = emptyDoc();
-  let tr = view.state.tr.replaceWith(0, view.state.doc.content.size, doc.content);
-  tr = tr.setMeta('addToHistory', false);
-  tr = tr.setSelection(TextSelection.create(tr.doc, 1));
-  view.dispatch(tr);
-}
-
-function replaceEditorTextRange(
-  view: EditorView,
-  fromOffset: number,
-  toOffset: number,
-  replacement: string,
-) {
-  const from = Math.max(1, Math.min(1 + fromOffset, view.state.doc.content.size - 1));
-  const to = Math.max(from, Math.min(1 + toOffset, view.state.doc.content.size - 1));
-  let tr = view.state.tr.insertText(replacement, from, to);
-  const cursor = Math.max(1, Math.min(from + replacement.length, tr.doc.content.size - 1));
-  tr = tr.setSelection(TextSelection.create(tr.doc, cursor));
-  view.dispatch(tr);
-}
-
-function clearCommittedEditor(view: EditorView, updateHasContent: (nextHasContent: boolean) => void) {
-  if (!view.isDestroyed) {
-    resetEditorContent(view);
-  }
-  updateHasContent(false);
-}
-
-function replaceEditorText(view: EditorView, text: string) {
-  const docTo = Math.max(1, view.state.doc.content.size - 1);
-  let tr = view.state.tr.insertText(text, 1, docTo);
-  const maxPos = tr.doc.content.size - 1;
-  tr = tr.setMeta('addToHistory', false);
-  tr = tr.setSelection(TextSelection.create(tr.doc, Math.max(1, Math.min(1 + text.length, maxPos))));
-  view.dispatch(tr);
-}
-
-function getEditorText(view: EditorView): string {
-  return view.state.doc.textContent;
 }
 
 function commandFocusNodeId(result: CommandOutcome | DocumentProjection | null | void): NodeId | null {
@@ -221,16 +188,20 @@ export function TrailingInput(props: TrailingInputProps) {
   const [optionsQuery, setOptionsQuery] = useState('');
   const [optionsIndex, setOptionsIndex] = useState(0);
   const [trailingTrigger, setTrailingTrigger] = useState<EditorTrigger | null>(null);
-  const mountRef = useRef<HTMLDivElement | null>(null);
+  // The trailing line is a virtual buffer: a local RichText, not a real node,
+  // rendered by the single shared editor. `contentRevision` is bumped whenever
+  // the buffer is reset/replaced imperatively so the controlled editor re-syncs.
+  const [buffer, setBuffer] = useState<RichText>(EMPTY_RICH_TEXT);
+  const [contentRevision, setContentRevision] = useState(0);
+  const [localFocus, setLocalFocus] = useState<FocusRequest | null>(null);
+  const rowRef = useRef<HTMLDivElement | null>(null);
   const optionsMenuRef = useRef<HTMLDivElement | null>(null);
-  const viewRef = useRef<EditorView | null>(null);
   const propsRef = useRef(props);
   const effectiveParentRef = useRef(props.parentId);
   const depthShiftRef = useRef(0);
   const committingRef = useRef(false);
   const clearAfterProjectionRef = useRef(false);
   const refocusAfterProjectionRef = useRef(false);
-  const composingRef = useRef(false);
   const committedVisualTextRef = useRef('');
   const eagerBufferRef = useRef('');
   const postCommitIndentRef = useRef(false);
@@ -238,6 +209,8 @@ export function TrailingInput(props: TrailingInputProps) {
   const focusEagerBufferAfterSettleRef = useRef(false);
   const skipCreatedFocusAfterCommitRef = useRef(false);
   const trailingTriggerRef = useRef<EditorTrigger | null>(null);
+  const bufferRef = useRef<RichText>(EMPTY_RICH_TEXT);
+  const localFocusRef = useRef<FocusRequest | null>(null);
   const optionsStateRef = useRef({
     isOptionsField: false,
     optionsOpen: false,
@@ -256,7 +229,7 @@ export function TrailingInput(props: TrailingInputProps) {
     && props.optionField?.autocollectOptions !== false
     && !allOptions.some((option) => option.label.toLowerCase() === optionsQuery.trim().toLowerCase());
   const optionCount = filteredOptions.length + (canCreateOption ? 1 : 0);
-  const trailingText = viewRef.current ? getEditorText(viewRef.current) : '';
+  const trailingText = buffer.text;
   const treeReferenceParentId = trailingTrigger
     && isInlineTrigger(trailingTrigger)
     && trailingTrigger.kind === '@'
@@ -264,7 +237,7 @@ export function TrailingInput(props: TrailingInputProps) {
     ? effectiveParentId
     : null;
   const optionsMenuStyle = useAnchoredOverlay(optionsMenuRef, {
-    anchorRef: mountRef,
+    anchorRef: rowRef,
     disabled: !optionsOpen || !isOptionsField,
     layoutKey: `${optionsQuery}:${optionCount}`,
     maxHeight: 240,
@@ -285,6 +258,58 @@ export function TrailingInput(props: TrailingInputProps) {
   effectiveParentRef.current = effectiveParentId;
   depthShiftRef.current = depthShift;
   trailingTriggerRef.current = trailingTrigger;
+  bufferRef.current = buffer;
+  localFocusRef.current = localFocus;
+
+  const trailingFocusTarget = focusTarget(
+    effectiveParentId,
+    effectiveParentId,
+    props.panelId ?? null,
+    'trailing',
+  );
+
+  // --- buffer primitives (replace the old imperative EditorView ops) ---
+
+  const bumpRevision = () => setContentRevision((revision) => revision + 1);
+
+  const getEditorText = () => bufferRef.current.text;
+
+  const setEditorText = (text: string) => {
+    const next = plainBuffer(text);
+    bufferRef.current = next;
+    setBuffer(next);
+    bumpRevision();
+  };
+
+  const resetEditorContent = () => {
+    setEditorText('');
+  };
+
+  const replaceEditorTextRange = (fromOffset: number, toOffset: number, replacement: string) => {
+    const text = bufferRef.current.text;
+    const from = Math.max(0, Math.min(fromOffset, text.length));
+    const to = Math.max(from, Math.min(toOffset, text.length));
+    setEditorText(text.slice(0, from) + replacement + text.slice(to));
+    // Place the caret after the replacement (the editor's content-sync effect
+    // runs before its focus effect, so this placement wins).
+    focusEditorSoon({ kind: 'text-offset', offset: from + replacement.length, inlineRefBias: 'after' });
+  };
+
+  const focusEditorSoon = (placement: CursorPlacement = PRESERVE_PLACEMENT) => {
+    // Build the target from the synchronously-updated effective parent so an
+    // imperative refocus right after an indent/outdent targets the new parent.
+    setLocalFocus({
+      target: focusTarget(
+        effectiveParentRef.current,
+        effectiveParentRef.current,
+        propsRef.current.panelId ?? null,
+        'trailing',
+      ),
+      placement,
+    });
+  };
+
+  // --- effects ---
 
   useEffect(() => {
     effectiveParentRef.current = props.parentId;
@@ -298,11 +323,8 @@ export function TrailingInput(props: TrailingInputProps) {
     setPendingCommittedVisual(false);
     committedVisualTextRef.current = '';
     eagerBufferRef.current = '';
-    const view = viewRef.current;
-    if (view && !view.isDestroyed) {
-      resetEditorContent(view);
-      updateHasContent(false);
-    }
+    resetEditorContent();
+    updateHasContent(false);
   }, [props.parentId]);
 
   useEffect(() => {
@@ -312,10 +334,120 @@ export function TrailingInput(props: TrailingInputProps) {
   useLayoutEffect(() => {
     if (!clearAfterProjectionRef.current) return;
     if (committingRef.current) return;
-    const view = viewRef.current;
-    if (!view || view.isDestroyed) return;
-    finishProjectionClearIfPending(view);
+    finishProjectionClearIfPending();
   }, [props.index.projection]);
+
+  // Options-field popover owns Arrow/Enter/Escape while open — mirrors the
+  // window capture-phase pattern the trigger popover uses, so navigation does
+  // not depend on the shared editor's keymap.
+  useEffect(() => {
+    if (!optionsOpen || !isOptionsField) return;
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (isImeComposingEvent(event)) return;
+      if (!['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(event.key)) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        closeOptions();
+        return;
+      }
+      const state = optionsStateRef.current;
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        event.stopPropagation();
+        setOptionsIndex((current) => Math.min(state.optionCount - 1, current + 1));
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        event.stopPropagation();
+        setOptionsIndex((current) => Math.max(0, current - 1));
+        return;
+      }
+      // Enter
+      if (event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (state.optionCount === 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const option = state.filteredOptions[state.optionsIndex];
+      if (option) selectOption(option.id);
+      else if (state.canCreateOption) createOption();
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [optionsOpen, isOptionsField]);
+
+  // During an in-flight commit, keystrokes are buffered (eagerBuffer) and shown
+  // in place of the just-committed text, then restored once the projection
+  // settles. The editor itself is bypassed via a window capture-phase listener
+  // (it owns the keymap, so this is how the slot reclaims keys mid-commit).
+  useEffect(() => {
+    const onKeyDownCapture = (event: globalThis.KeyboardEvent) => {
+      if (!committingRef.current) return;
+      if (isImeComposingEvent(event)) return;
+      if (event.key === 'Tab' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.shiftKey) {
+          postCommitIndentRef.current = true;
+          const bufferedText = pendingBufferedText();
+          if (bufferedText.trim().length > 0) {
+            eagerBufferRef.current = bufferedText;
+            commitEagerBufferAfterSettleRef.current = true;
+            focusEagerBufferAfterSettleRef.current = true;
+            refocusAfterProjectionRef.current = false;
+          }
+          resetEditorContent();
+          updateHasContent(false);
+          setPendingCommittedVisual(false);
+        }
+        return;
+      }
+      if (isPlainPrintableKey(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        appendCommittingBufferKey(event.key);
+        if (postCommitIndentRef.current) {
+          commitEagerBufferAfterSettleRef.current = true;
+          focusEagerBufferAfterSettleRef.current = true;
+          refocusAfterProjectionRef.current = false;
+        }
+      } else if (event.key === 'Backspace') {
+        event.preventDefault();
+        event.stopPropagation();
+        removeCommittingBufferKey();
+        if (postCommitIndentRef.current) {
+          commitEagerBufferAfterSettleRef.current = eagerBufferRef.current.trim().length > 0;
+          focusEagerBufferAfterSettleRef.current = eagerBufferRef.current.trim().length > 0;
+          refocusAfterProjectionRef.current = false;
+        }
+      }
+    };
+    window.addEventListener('keydown', onKeyDownCapture, true);
+    return () => window.removeEventListener('keydown', onKeyDownCapture, true);
+  }, []);
+
+  // When a commit is in flight and the user clicks away (to another editor or a
+  // focusable control), suppress the post-commit refocus of the created node.
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (!committingRef.current) return;
+      const row = rowRef.current;
+      if (event.target instanceof Node && row && !row.contains(event.target)) {
+        skipCreatedFocusAfterCommitRef.current = true;
+      }
+      const target = event.target instanceof HTMLElement
+        ? event.target.closest<HTMLElement>('.ProseMirror')
+        : null;
+      if (target && row && !row.contains(target)) {
+        skipCreatedFocusAfterCommitRef.current = true;
+      }
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => document.removeEventListener('pointerdown', onPointerDown, true);
+  }, []);
+
+  // --- depth shift / effective parent ---
 
   const resetEffectiveParent = () => {
     effectiveParentRef.current = propsRef.current.parentId;
@@ -331,20 +463,11 @@ export function TrailingInput(props: TrailingInputProps) {
     setDepthShift(depthShiftValue);
   };
 
-  const refocusTrailingEditorSoon = () => {
-    const focus = () => {
-      const view = viewRef.current;
-      if (!view || view.isDestroyed) return;
-      view.focus();
-    };
-    queueMicrotask(focus);
-    requestAnimationFrame(focus);
-    window.setTimeout(focus, 0);
-  };
-
   const updateHasContent = (nextHasContent: boolean) => {
     setHasContent((current) => current === nextHasContent ? current : nextHasContent);
   };
+
+  // --- projection-settle commit dance ---
 
   const beginProjectionClear = (
     focusAfterCommit: CommitFocusTarget = 'none',
@@ -363,59 +486,64 @@ export function TrailingInput(props: TrailingInputProps) {
     setPendingCommittedVisual(false);
   };
 
-  const pendingBufferedText = (view: EditorView) => {
+  const pendingBufferedText = () => {
     if (eagerBufferRef.current.length > 0) return eagerBufferRef.current;
-    const text = getEditorText(view);
+    const text = getEditorText();
     const committedText = committedVisualTextRef.current;
     return committedText && text.startsWith(committedText)
       ? text.slice(committedText.length)
       : text;
   };
 
-  const finishProjectionClear = (view: EditorView, shouldRefocus: boolean) => {
-    const bufferedText = pendingBufferedText(view);
-    clearCommittedEditor(view, updateHasContent);
+  const finishProjectionClear = (shouldRefocus: boolean) => {
+    const bufferedText = pendingBufferedText();
+    resetEditorContent();
+    updateHasContent(false);
     eagerBufferRef.current = '';
     committedVisualTextRef.current = '';
-    if (bufferedText.length > 0) {
-      replaceEditorText(view, bufferedText);
-      updateHasContent(true);
-      shouldRefocus = true;
-    }
     setPendingCommittedVisual(false);
-    if (shouldRefocus) view.focus();
+    if (bufferedText.length > 0) {
+      setEditorText(bufferedText);
+      updateHasContent(true);
+      // Restore the buffered text with the caret at its end.
+      focusEditorSoon({ kind: 'end' });
+      return;
+    }
+    if (shouldRefocus) focusEditorSoon();
   };
 
-  const finishProjectionClearIfPending = (view: EditorView | null = viewRef.current) => {
-    if (!clearAfterProjectionRef.current || !view || view.isDestroyed) return;
+  const finishProjectionClearIfPending = () => {
+    if (!clearAfterProjectionRef.current) return;
     const shouldRefocus = refocusAfterProjectionRef.current;
     clearAfterProjectionRef.current = false;
     refocusAfterProjectionRef.current = false;
-    finishProjectionClear(view, shouldRefocus);
+    finishProjectionClear(shouldRefocus);
   };
 
-  const consumePendingTextForExternalHandoff = (view: EditorView) => {
-    const bufferedText = pendingBufferedText(view);
+  const consumePendingTextForExternalHandoff = () => {
+    const bufferedText = pendingBufferedText();
     eagerBufferRef.current = '';
     committedVisualTextRef.current = '';
-    resetEditorContent(view);
+    resetEditorContent();
     updateHasContent(false);
     return bufferedText;
   };
 
-  const appendCommittingBufferKey = (view: EditorView, key: string) => {
+  const appendCommittingBufferKey = (key: string) => {
     eagerBufferRef.current += key;
-    replaceEditorText(view, eagerBufferRef.current);
+    setEditorText(eagerBufferRef.current);
     updateHasContent(eagerBufferRef.current.length > 0);
   };
 
-  const removeCommittingBufferKey = (view: EditorView) => {
+  const removeCommittingBufferKey = () => {
     if (eagerBufferRef.current.length > 0) {
       eagerBufferRef.current = eagerBufferRef.current.slice(0, -1);
     }
-    replaceEditorText(view, eagerBufferRef.current);
+    setEditorText(eagerBufferRef.current);
     updateHasContent(eagerBufferRef.current.length > 0);
   };
+
+  // --- node creation ---
 
   const createNode = async (parentId: NodeId, text: string) => (
     Promise.resolve(propsRef.current.onCreate(parentId, text))
@@ -447,7 +575,6 @@ export function TrailingInput(props: TrailingInputProps) {
   };
 
   const commitContent = async (
-    view: EditorView,
     rawText: string,
     continueWithEmpty: boolean,
     focusAfterCommit: CommitFocusTarget = 'none',
@@ -493,7 +620,7 @@ export function TrailingInput(props: TrailingInputProps) {
             const bufferedText = eagerBufferRef.current;
             eagerBufferRef.current = '';
             await propsRef.current.onUpdateCreated?.(continuationId, bufferedText);
-            committedVisualTextRef.current = getEditorText(view);
+            committedVisualTextRef.current = getEditorText();
             if (focusEagerBufferAfterSettleRef.current) {
               createdFocusId = continuationId;
             }
@@ -516,7 +643,7 @@ export function TrailingInput(props: TrailingInputProps) {
           : effectiveParentRef.current;
         eagerBufferRef.current = '';
         const bufferedNodeId = await createNode(bufferedParentId, bufferedText);
-        committedVisualTextRef.current = getEditorText(view);
+        committedVisualTextRef.current = getEditorText();
         if (focusEagerBufferAfterSettleRef.current && bufferedNodeId) {
           createdFocusId = bufferedNodeId;
         }
@@ -532,12 +659,12 @@ export function TrailingInput(props: TrailingInputProps) {
       skipCreatedFocusAfterCommitRef.current = false;
       committingRef.current = false;
       if (committed) {
-        finishProjectionClearIfPending(view);
+        finishProjectionClearIfPending();
       }
     }
   };
 
-  const createDoneNode = async (view: EditorView, rawText: string) => {
+  const createDoneNode = async (rawText: string) => {
     if (committingRef.current) return;
     const targetParentId = effectiveParentRef.current;
     committingRef.current = true;
@@ -553,11 +680,11 @@ export function TrailingInput(props: TrailingInputProps) {
     } finally {
       if (!committed) cancelProjectionClear();
       committingRef.current = false;
-      if (committed) finishProjectionClearIfPending(view);
+      if (committed) finishProjectionClearIfPending();
     }
   };
 
-  const createNodeAndFocusDescription = async (view: EditorView, rawText: string) => {
+  const createNodeAndFocusDescription = async (rawText: string) => {
     if (committingRef.current || rawText.trim().length === 0 || !propsRef.current.onFocusDescription) return;
     const targetParentId = effectiveParentRef.current;
     committingRef.current = true;
@@ -572,15 +699,15 @@ export function TrailingInput(props: TrailingInputProps) {
     } finally {
       if (!committed) cancelProjectionClear();
       committingRef.current = false;
-      if (committed) finishProjectionClearIfPending(view);
+      if (committed) finishProjectionClearIfPending();
       resetEffectiveParent();
     }
   };
 
-  const createField = (view: EditorView) => {
+  const createField = () => {
     if (committingRef.current || !propsRef.current.onCreateField) return;
     committingRef.current = true;
-    resetEditorContent(view);
+    resetEditorContent();
     updateHasContent(false);
     void Promise.resolve(propsRef.current.onCreateField(effectiveParentRef.current))
       .finally(() => {
@@ -588,22 +715,7 @@ export function TrailingInput(props: TrailingInputProps) {
       });
   };
 
-  const openTrailingTrigger = (
-    view: EditorView,
-    triggerKind: EditorTrigger['kind'],
-    textOffset: number,
-  ) => {
-    const text = getEditorText(view);
-    const from = Math.max(0, text.lastIndexOf(triggerKind));
-    const to = Math.max(from + 1, Math.min(textOffset, text.length));
-    setTrailingTrigger({
-      anchor: caretAnchor(view),
-      from,
-      kind: triggerKind,
-      query: text.slice(from + 1, to),
-      to,
-    });
-  };
+  // --- trigger application (atomic create-and-apply; unchanged commands) ---
 
   const closeTrailingTrigger = () => {
     if (trailingTriggerRef.current) setTrailingTrigger(null);
@@ -614,26 +726,25 @@ export function TrailingInput(props: TrailingInputProps) {
     beginProjectionClear('none', committedVisualText);
   };
 
-  const finishInlineTriggerCommit = (committed: boolean, view: EditorView) => {
+  const finishInlineTriggerCommit = (committed: boolean) => {
     if (!committed) {
       cancelProjectionClear();
-      if (!view.isDestroyed) view.focus();
+      focusEditorSoon();
     }
     committingRef.current = false;
     setTrailingTrigger(null);
     resetEffectiveParent();
-    if (committed) finishProjectionClearIfPending(view);
+    if (committed) finishProjectionClearIfPending();
   };
 
   const applyTrailingTag = async (
     tag: NodeProjection,
     triggerOverride?: TrailingInlineTrigger | null,
   ) => {
-    const view = viewRef.current;
     const currentTrigger = trailingTriggerRef.current;
     const trigger = triggerOverride ?? (currentTrigger && isInlineTrigger(currentTrigger) ? currentTrigger : null);
-    if (!view || !trigger || !propsRef.current.onApplyTagTrigger) return null;
-    const text = getEditorText(view);
+    if (!trigger || !propsRef.current.onApplyTagTrigger) return null;
+    const text = getEditorText();
     beginInlineTriggerCommit(text);
     let committed = false;
     try {
@@ -646,7 +757,7 @@ export function TrailingInput(props: TrailingInputProps) {
       committed = Boolean(result);
       return result;
     } finally {
-      finishInlineTriggerCommit(committed, view);
+      finishInlineTriggerCommit(committed);
     }
   };
 
@@ -654,11 +765,10 @@ export function TrailingInput(props: TrailingInputProps) {
     name: string,
     triggerOverride?: TrailingInlineTrigger | null,
   ) => {
-    const view = viewRef.current;
     const currentTrigger = trailingTriggerRef.current;
     const trigger = triggerOverride ?? (currentTrigger && isInlineTrigger(currentTrigger) ? currentTrigger : null);
-    if (!view || !trigger || !propsRef.current.onCreateTagTrigger) return null;
-    const text = getEditorText(view);
+    if (!trigger || !propsRef.current.onCreateTagTrigger) return null;
+    const text = getEditorText();
     beginInlineTriggerCommit(text);
     let committed = false;
     try {
@@ -671,7 +781,7 @@ export function TrailingInput(props: TrailingInputProps) {
       committed = Boolean(result);
       return result;
     } finally {
-      finishInlineTriggerCommit(committed, view);
+      finishInlineTriggerCommit(committed);
     }
   };
 
@@ -679,13 +789,12 @@ export function TrailingInput(props: TrailingInputProps) {
     target: NodeProjection,
     triggerOverride?: TrailingInlineTrigger | null,
   ) => {
-    const view = viewRef.current;
     const currentTrigger = trailingTriggerRef.current;
     const trigger = triggerOverride ?? (currentTrigger && isInlineTrigger(currentTrigger) ? currentTrigger : null);
-    if (!view || !trigger || !propsRef.current.onApplyReferenceTrigger) {
+    if (!trigger || !propsRef.current.onApplyReferenceTrigger) {
       return null;
     }
-    const text = getEditorText(view);
+    const text = getEditorText();
     const blockReason = getTreeReferenceBlockReason({
       parentId: effectiveParentRef.current,
       targetId: target.id,
@@ -707,7 +816,7 @@ export function TrailingInput(props: TrailingInputProps) {
       const nodeId = commandFocusNodeId(result);
       if (createsInlineConversion && nodeId) {
         const parentId = commandFocusParentId(result) ?? effectiveParentRef.current;
-        const pendingText = consumePendingTextForExternalHandoff(view);
+        const pendingText = consumePendingTextForExternalHandoff();
         if (pendingText.length > 0) {
           const projection = commandProjection(result);
           const createdNode = projection?.nodes.find((node) => node.id === nodeId);
@@ -745,7 +854,7 @@ export function TrailingInput(props: TrailingInputProps) {
       }
       return result;
     } finally {
-      finishInlineTriggerCommit(committed, view);
+      finishInlineTriggerCommit(committed);
     }
   };
 
@@ -753,17 +862,16 @@ export function TrailingInput(props: TrailingInputProps) {
     commandId: SlashCommandId,
     triggerOverride?: TrailingSlashTrigger | null,
   ) => {
-    const view = viewRef.current;
     const currentTrigger = trailingTriggerRef.current;
     const trigger = triggerOverride ?? (currentTrigger && isSlashTrigger(currentTrigger)
       ? currentTrigger
       : null);
-    if (!view || !trigger) return null;
+    if (!trigger) return null;
 
     if (commandId === 'reference') {
-      replaceEditorTextRange(view, trigger.from, trigger.to, '@');
+      replaceEditorTextRange(trigger.from, trigger.to, '@');
       setTrailingTrigger({
-        anchor: caretAnchor(view) ?? trigger.anchor,
+        anchor: trigger.anchor,
         from: trigger.from,
         kind: '@',
         query: '',
@@ -773,7 +881,7 @@ export function TrailingInput(props: TrailingInputProps) {
     }
 
     if (commandId === 'command_palette') {
-      replaceEditorTextRange(view, trigger.from, trigger.to, '');
+      replaceEditorTextRange(trigger.from, trigger.to, '');
       setTrailingTrigger(null);
       propsRef.current.onOpenCommandPalette?.();
       return propsRef.current.index.projection;
@@ -784,7 +892,7 @@ export function TrailingInput(props: TrailingInputProps) {
     if (commandId === 'image') return null;
 
     if (!propsRef.current.onExecuteSlashTrigger) return null;
-    const text = getEditorText(view);
+    const text = getEditorText();
     beginInlineTriggerCommit(text);
     let committed = false;
     try {
@@ -797,9 +905,11 @@ export function TrailingInput(props: TrailingInputProps) {
       committed = Boolean(result);
       return result;
     } finally {
-      finishInlineTriggerCommit(committed, view);
+      finishInlineTriggerCommit(committed);
     }
   };
+
+  // --- options field ---
 
   const closeOptions = () => {
     setOptionsOpen(false);
@@ -807,10 +917,10 @@ export function TrailingInput(props: TrailingInputProps) {
     setOptionsIndex(0);
   };
 
-  const selectOption = (view: EditorView, optionId: NodeId) => {
+  const selectOption = (optionId: NodeId) => {
     if (committingRef.current || !propsRef.current.onSelectOption) return;
     committingRef.current = true;
-    resetEditorContent(view);
+    resetEditorContent();
     updateHasContent(false);
     closeOptions();
     void Promise.resolve(propsRef.current.onSelectOption(optionId))
@@ -819,11 +929,11 @@ export function TrailingInput(props: TrailingInputProps) {
       });
   };
 
-  const createOption = (view: EditorView) => {
+  const createOption = () => {
     const name = optionsStateRef.current.optionsQuery.trim();
     if (committingRef.current || !name || !propsRef.current.onCreateOption) return;
     committingRef.current = true;
-    resetEditorContent(view);
+    resetEditorContent();
     updateHasContent(false);
     closeOptions();
     void Promise.resolve(propsRef.current.onCreateOption(name))
@@ -832,13 +942,15 @@ export function TrailingInput(props: TrailingInputProps) {
       });
   };
 
+  // --- structural navigation (depth, last-visible, navigate-out) ---
+
   const indentEffectiveParent = () => {
     const currentParentId = effectiveParentRef.current;
     const children = propsRef.current.index.byId.get(currentParentId)?.children ?? [];
     const lastChildId = children.filter((childId) => propsRef.current.index.byId.has(childId)).at(-1);
     if (!lastChildId) return;
     setTrailingParent(lastChildId, depthShiftRef.current + 1);
-    refocusTrailingEditorSoon();
+    focusEditorSoon();
   };
 
   const indentedParentForCurrentScope = () => {
@@ -847,13 +959,13 @@ export function TrailingInput(props: TrailingInputProps) {
     return children.filter((childId) => propsRef.current.index.byId.has(childId)).at(-1) ?? null;
   };
 
-  const commitTextAsIndentedChild = async (view: EditorView) => {
-    const text = getEditorText(view);
+  const commitTextAsIndentedChild = async () => {
+    const text = getEditorText();
     if (text.trim().length === 0) return false;
     const targetParentId = indentedParentForCurrentScope();
     if (!targetParentId) return false;
     propsRef.current.onExpand?.(targetParentId);
-    await commitContent(view, text, false, 'created', targetParentId);
+    await commitContent(text, false, 'created', targetParentId);
     return true;
   };
 
@@ -862,7 +974,7 @@ export function TrailingInput(props: TrailingInputProps) {
     const parentId = propsRef.current.index.byId.get(effectiveParentRef.current)?.parentId;
     if (!parentId) return;
     setTrailingParent(parentId, Math.max(0, depthShiftRef.current - 1));
-    refocusTrailingEditorSoon();
+    focusEditorSoon();
   };
 
   const focusLastVisible = () => {
@@ -874,412 +986,231 @@ export function TrailingInput(props: TrailingInputProps) {
     return false;
   };
 
-  useEffect(() => {
-    const mount = mountRef.current;
-    if (!mount) return;
+  // --- shared-editor callbacks (edit semantics -> create semantics) ---
 
-    const rememberPendingFocusTarget = (event: PointerEvent) => {
-      if (!committingRef.current) return;
-      if (event.target instanceof Node && !mount.contains(event.target)) {
-        skipCreatedFocusAfterCommitRef.current = true;
+  const handleChange = (content: RichText) => {
+    bufferRef.current = content;
+    setBuffer(content);
+    if (committingRef.current) return;
+    const text = content.text;
+    updateHasContent(text.length > 0);
+    if (!optionsStateRef.current.isOptionsField) return;
+    const action = resolveTrailingRowUpdateAction({ text, isOptionsField: true });
+    if (action.type === 'open_options') {
+      closeTrailingTrigger();
+      setOptionsOpen(true);
+      setOptionsQuery(action.query);
+    } else if (action.type === 'close_options') {
+      closeOptions();
+    }
+  };
+
+  const handleTriggerChange = (trigger: EditorTrigger | null) => {
+    if (committingRef.current) return;
+    // Options fields type free-text queries; `#`/`/` are not triggers there.
+    if (optionsStateRef.current.isOptionsField) return;
+    if (trigger) closeOptions();
+    setTrailingTrigger(trigger);
+  };
+
+  const handleFieldTriggerFire = () => {
+    if (optionsStateRef.current.isOptionsField) return;
+    createField();
+  };
+
+  const handleFocus = () => {
+    if (optionsStateRef.current.isOptionsField) {
+      setOptionsOpen(true);
+      setOptionsQuery('');
+      setOptionsIndex(0);
+    }
+  };
+
+  const handleCommit = () => {
+    // Fires on blur. Mid-commit blurs buffer their remaining text for replay
+    // after the projection settles; otherwise commit any pending text.
+    if (committingRef.current) {
+      const bufferedText = pendingBufferedText();
+      if (bufferedText.trim().length > 0) {
+        eagerBufferRef.current = bufferedText;
+        commitEagerBufferAfterSettleRef.current = true;
+        refocusAfterProjectionRef.current = false;
       }
-      const target = event.target instanceof HTMLElement
-        ? event.target.closest<HTMLElement>('.ProseMirror')
-        : null;
-      if (target) {
-        skipCreatedFocusAfterCommitRef.current = true;
-      }
-    };
-    document.addEventListener('pointerdown', rememberPendingFocusTarget, true);
+      return;
+    }
+    if (clearAfterProjectionRef.current) return;
+    // Read the synchronously-updated buffer, not the editor-provided doc: after
+    // a commit resets the buffer, the view can still hold the just-committed
+    // text for a frame, and reading it here would commit a duplicate.
+    const text = getEditorText();
+    if (text.trim().length > 0) {
+      void commitContent(text, false, 'none').then(resetEffectiveParent);
+      return;
+    }
+    updateHasContent(false);
+    closeTrailingTrigger();
+    closeOptions();
+    resetEffectiveParent();
+  };
 
-    const view = new EditorView(mount, {
-      state: EditorState.create({
-        schema: pmSchema,
-        doc: emptyDoc(),
-      }),
-      dispatchTransaction(transaction) {
-        const nextState = view.state.apply(transaction);
-        view.updateState(nextState);
-        if (!transaction.docChanged) return;
-
-        const text = getEditorText(view);
-        updateHasContent(text.length > 0);
-        if (committingRef.current) return;
-
-        const optionState = optionsStateRef.current;
-        const action = resolveTrailingRowUpdateAction({
-          text,
-          isOptionsField: optionState.isOptionsField,
-        });
-        if (action.type === 'create_field') {
-          createField(view);
-          return;
-        }
-        if (action.type === 'open_trigger') {
-          closeOptions();
-          openTrailingTrigger(view, action.trigger, action.textOffset);
-          return;
-        }
-        if (action.type === 'open_options') {
-          closeTrailingTrigger();
-          setOptionsOpen(true);
-          setOptionsQuery(action.query);
-          return;
-        }
-        if (action.type === 'close_options') {
-          closeOptions();
-        }
-        closeTrailingTrigger();
-      },
-      handleDOMEvents: {
-        paste(viewInstance, event) {
-          const clipboardEvent = event as ClipboardEvent;
-
-          // Image / media-URL front-matter is classified by the same helper the
-          // inline editor uses, so the two stay in lock-step. The trailing input
-          // has no selection, and (unlike the inline editor) lets a lone link
-          // URL flow into the editor as text, so it ignores the `linkUrl` intent
-          // and falls through to the structured path below.
-          const mediaPaste = classifyMediaPaste(clipboardEvent.clipboardData, { hasSelection: false });
-
-          const onPasteImages = propsRef.current.onPasteImages;
-          if (mediaPaste?.kind === 'images' && onPasteImages) {
-            clipboardEvent.preventDefault();
-            const parentId = effectiveParentRef.current;
-            resetEditorContent(viewInstance);
-            updateHasContent(false);
-            void readPastedImages(mediaPaste.files).then((images) => onPasteImages(parentId, images));
-            return true;
-          }
-
-          const onPasteMediaUrl = propsRef.current.onPasteMediaUrl;
-          if (mediaPaste?.kind === 'mediaUrl' && onPasteMediaUrl) {
-            clipboardEvent.preventDefault();
-            const parentId = effectiveParentRef.current;
-            resetEditorContent(viewInstance);
-            updateHasContent(false);
-            void Promise.resolve(onPasteMediaUrl(parentId, mediaPaste.url));
-            return true;
-          }
-
-          const pastedText = clipboardEvent.clipboardData?.getData('text/plain') ?? '';
-          const pastedHtml = clipboardEvent.clipboardData?.getData('text/html') ?? '';
-
-          const parsed = parseClipboardPaste(pastedText, pastedHtml);
-          if (parsed.length === 0) return false;
-          // Only take over for genuinely structured paste; a single plain line
-          // should keep flowing into the trailing editor for further editing.
-          const structured =
-            pastedText.includes('\n') ||
-            parsed.length > 1 ||
-            parsed[0].children.length > 0 ||
-            parsed[0].type !== undefined;
-          if (!structured) return false;
-
-          clipboardEvent.preventDefault();
-          if (committingRef.current) return true;
-          committingRef.current = true;
-          resetEditorContent(viewInstance);
-          updateHasContent(false);
-          void Promise.resolve(
-            propsRef.current.onCreateTree
-              ? propsRef.current.onCreateTree(effectiveParentRef.current, parsed)
-              : Promise.all(parsed.map((node) => createNode(effectiveParentRef.current, node.content.text))),
-          )
-            .finally(() => {
-              committingRef.current = false;
-            });
-          return true;
-        },
-        focus() {
-          if (optionsStateRef.current.isOptionsField) {
-            setOptionsOpen(true);
-            setOptionsQuery('');
-            setOptionsIndex(0);
-          }
-          return false;
-        },
-        blur(viewInstance, event) {
-          composingRef.current = false;
-          if (committingRef.current) {
-            const relatedTarget = (event as FocusEvent).relatedTarget;
-            const explicitFocusTarget = relatedTarget instanceof HTMLElement
-              ? relatedTarget.closest<HTMLElement>('.ProseMirror')
-                ?? relatedTarget.closest<HTMLElement>('button, [href], input, textarea, select, [tabindex]:not([tabindex="-1"])')
-              : null;
-            if (explicitFocusTarget) {
-              skipCreatedFocusAfterCommitRef.current = true;
-            }
-            const bufferedText = pendingBufferedText(viewInstance);
-            if (bufferedText.trim().length > 0) {
-              eagerBufferRef.current = bufferedText;
-              commitEagerBufferAfterSettleRef.current = true;
-              refocusAfterProjectionRef.current = false;
-            }
-            return false;
-          }
-          if (clearAfterProjectionRef.current) return false;
-          const text = getEditorText(viewInstance);
-          if (text.trim().length > 0) {
-            void commitContent(viewInstance, text, false, 'none').then(resetEffectiveParent);
-            return false;
-          }
-          updateHasContent(false);
-          closeTrailingTrigger();
-          closeOptions();
-          resetEffectiveParent();
-          return false;
-        },
-        compositionstart() {
-          composingRef.current = true;
-          return false;
-        },
-        compositionend(viewInstance) {
-          composingRef.current = false;
-          queueMicrotask(() => {
-            if (committingRef.current || viewInstance.isDestroyed) return;
-            const text = getEditorText(viewInstance);
-            updateHasContent(text.length > 0);
-            const optionState = optionsStateRef.current;
-            const action = resolveTrailingRowUpdateAction({
-              text,
-              isOptionsField: optionState.isOptionsField,
-            });
-            if (action.type === 'open_options') {
-              closeTrailingTrigger();
-              setOptionsOpen(true);
-              setOptionsQuery(action.query);
-            } else if (action.type === 'close_options') {
-              closeOptions();
-              closeTrailingTrigger();
-            } else if (action.type === 'open_trigger') {
-              closeOptions();
-              openTrailingTrigger(viewInstance, action.trigger, action.textOffset);
-            } else {
-              closeTrailingTrigger();
-            }
-          });
-          return false;
-        },
-      },
-      handleKeyDown(viewInstance, event) {
-        if (isImeComposingEvent(event) || composingRef.current) return false;
-        if (committingRef.current) {
-          if (event.key === 'Tab' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-            event.preventDefault();
-            if (!event.shiftKey) {
-              postCommitIndentRef.current = true;
-              const bufferedText = pendingBufferedText(viewInstance);
-              if (bufferedText.trim().length > 0) {
-                eagerBufferRef.current = bufferedText;
-                commitEagerBufferAfterSettleRef.current = true;
-                focusEagerBufferAfterSettleRef.current = true;
-                refocusAfterProjectionRef.current = false;
-              }
-              resetEditorContent(viewInstance);
-              updateHasContent(false);
-              setPendingCommittedVisual(false);
-            }
-            return true;
-          }
-          if (isPlainPrintableKey(event)) {
-            event.preventDefault();
-            appendCommittingBufferKey(viewInstance, event.key);
-            if (postCommitIndentRef.current) {
-              commitEagerBufferAfterSettleRef.current = true;
-              focusEagerBufferAfterSettleRef.current = true;
-              refocusAfterProjectionRef.current = false;
-            }
-          } else if (event.key === 'Backspace') {
-            event.preventDefault();
-            removeCommittingBufferKey(viewInstance);
-            if (postCommitIndentRef.current) {
-              commitEagerBufferAfterSettleRef.current = eagerBufferRef.current.trim().length > 0;
-              focusEagerBufferAfterSettleRef.current = eagerBufferRef.current.trim().length > 0;
-              refocusAfterProjectionRef.current = false;
-            }
-          }
-          return true;
-        }
-
-        if (matchesShortcutEvent(event, 'trailing.redo')) {
-          event.preventDefault();
-          propsRef.current.onRedo?.();
-          return true;
-        }
-
-        if (matchesShortcutEvent(event, 'trailing.undo')) {
-          event.preventDefault();
-          propsRef.current.onUndo?.();
-          return true;
-        }
-
-        if (matchesShortcutEvent(event, 'trailing.checkbox')) {
-          event.preventDefault();
-          void createDoneNode(viewInstance, getEditorText(viewInstance));
-          return true;
-        }
-
-        if (
-          matchesShortcutEvent(event, 'trailing.description')
-          && getEditorText(viewInstance).trim().length > 0
-        ) {
-          event.preventDefault();
-          void createNodeAndFocusDescription(viewInstance, getEditorText(viewInstance));
-          return true;
-        }
-
-        if (event.key === 'Enter' && !event.shiftKey) {
-          event.preventDefault();
-          const text = getEditorText(viewInstance);
-          const intent = resolveTrailingRowEnterIntent({
-            continueOnText: propsRef.current.continueOnEnter === true,
-            hasText: text.trim().length > 0,
-            optionsOpen: optionsStateRef.current.optionsOpen,
-            optionCount: optionsStateRef.current.optionCount,
-          });
-          if (intent === 'options_confirm') {
-            const optionState = optionsStateRef.current;
-            const option = optionState.filteredOptions[optionState.optionsIndex];
-            if (option) selectOption(viewInstance, option.id);
-            else if (optionState.canCreateOption) createOption(viewInstance);
-            return true;
-          }
-          void commitContent(
-            viewInstance,
-            text,
-            intent === 'create_content_and_continue' || intent === 'create_empty',
-            intent === 'create_content_and_continue' || intent === 'create_empty' ? 'created' : 'trailing',
-          );
-          return true;
-        }
-
-        if (event.key === 'Tab') {
-          event.preventDefault();
-          if (event.shiftKey) outdentEffectiveParent();
-          else {
-            const text = getEditorText(viewInstance);
-            if (text.trim().length > 0) {
-              void commitTextAsIndentedChild(viewInstance);
-            } else {
-              indentEffectiveParent();
-            }
-          }
-          return true;
-        }
-
-        if (event.key === 'Backspace') {
-          const text = getEditorText(viewInstance);
-          const currentParentId = effectiveParentRef.current;
-          const parentChildCount = propsRef.current.index.byId.get(currentParentId)?.children.length ?? 0;
-          const target = lastVisibleDescendant(currentParentId, propsRef.current.index, propsRef.current.expanded);
-          const intent = resolveTrailingRowBackspaceIntent({
-            isEditorEmpty: text.length === 0,
-            depthShifted: currentParentId !== propsRef.current.parentId,
-            parentChildCount,
-            hasLastVisibleTarget: Boolean(target),
-          });
-
-          if (intent === 'allow_default') return false;
-          event.preventDefault();
-          if (intent === 'reset_depth_shift') {
-            resetEffectiveParent();
-            return true;
-          }
-          if (intent === 'collapse_parent') {
-            propsRef.current.onCollapseNode?.(currentParentId);
-            propsRef.current.onFocusNode?.(currentParentId);
-            return true;
-          }
-          if (intent === 'focus_last_visible' && target) {
-            propsRef.current.onFocusNode?.(target);
-          }
-          return true;
-        }
-
-        if (event.key === 'ArrowUp') {
-          const intent = resolveTrailingRowArrowUpIntent({
-            hasLastVisibleTarget: Boolean(lastVisibleDescendant(effectiveParentRef.current, propsRef.current.index, propsRef.current.expanded)),
-            hasNavigateOut: Boolean(propsRef.current.onNavigateOut),
-            optionsOpen: optionsStateRef.current.optionsOpen,
-            optionCount: optionsStateRef.current.optionCount,
-          });
-          if (intent === 'options_up') {
-            event.preventDefault();
-            setOptionsIndex((current) => Math.max(0, current - 1));
-            return true;
-          }
-          if (intent === 'focus_last_visible') {
-            event.preventDefault();
-            focusLastVisible();
-            return true;
-          }
-          if (intent === 'navigate_out_up') {
-            event.preventDefault();
-            propsRef.current.onNavigateOut?.('up');
-            return true;
-          }
-        }
-
-        if (event.key === 'ArrowDown') {
-          const intent = resolveTrailingRowArrowDownIntent({
-            hasNavigateOut: Boolean(propsRef.current.onNavigateOut),
-            optionsOpen: optionsStateRef.current.optionsOpen,
-            optionCount: optionsStateRef.current.optionCount,
-          });
-          if (intent === 'options_down') {
-            event.preventDefault();
-            setOptionsIndex((current) => Math.min(optionsStateRef.current.optionCount - 1, current + 1));
-            return true;
-          }
-          if (intent === 'navigate_out_down') {
-            event.preventDefault();
-            propsRef.current.onNavigateOut?.('down');
-            return true;
-          }
-        }
-
-        if (event.key === 'Escape') {
-          const intent = resolveTrailingRowEscapeIntent(optionsStateRef.current.optionsOpen);
-          if (intent === 'close_options') {
-            event.preventDefault();
-            closeOptions();
-            return true;
-          }
-          if (intent === 'blur_editor') {
-            event.preventDefault();
-            viewInstance.dom.blur();
-            return true;
-          }
-        }
-
-        return false;
-      },
+  const handleEnter = (_payload: EditorSplitPayload) => {
+    // The shared editor reports a split; the trailing slot commits the whole
+    // line (options confirmation is handled by the options popover capture).
+    const text = getEditorText();
+    const intent = resolveTrailingRowEnterIntent({
+      continueOnText: propsRef.current.continueOnEnter === true,
+      hasText: text.trim().length > 0,
+      optionsOpen: optionsStateRef.current.optionsOpen,
+      optionCount: optionsStateRef.current.optionCount,
     });
+    if (intent === 'options_confirm') {
+      const state = optionsStateRef.current;
+      const option = state.filteredOptions[state.optionsIndex];
+      if (option) selectOption(option.id);
+      else if (state.canCreateOption) createOption();
+      return;
+    }
+    const continueWithEmpty = intent === 'create_content_and_continue' || intent === 'create_empty';
+    void commitContent(text, continueWithEmpty, continueWithEmpty ? 'created' : 'trailing');
+  };
 
-    viewRef.current = view;
-    return () => {
-      document.removeEventListener('pointerdown', rememberPendingFocusTarget, true);
-      view.destroy();
-      viewRef.current = null;
-    };
-  }, []);
+  const handleTab = (shiftKey: boolean) => {
+    if (committingRef.current) return;
+    if (shiftKey) {
+      outdentEffectiveParent();
+      return;
+    }
+    const text = getEditorText();
+    if (text.trim().length > 0) {
+      void commitTextAsIndentedChild();
+    } else {
+      indentEffectiveParent();
+    }
+  };
 
-  useEffect(() => {
-    const view = viewRef.current;
-    const request = props.focusRequest;
-    if (!view || view.isDestroyed || !request) return;
-    const target = focusTarget(
-      effectiveParentId,
-      effectiveParentId,
-      props.panelId ?? null,
-      'trailing',
-    );
-    if (!focusTargetMatches(request.target, target)) return;
-    view.focus();
-    applyCursorPlacement(view, request.placement);
-    props.onFocusRequestConsumed?.(request);
-  }, [effectiveParentId, props.focusRequest, props.onFocusRequestConsumed, props.panelId]);
+  const handleBackspaceAtStart = () => {
+    const currentParentId = effectiveParentRef.current;
+    const parentChildCount = propsRef.current.index.byId.get(currentParentId)?.children.length ?? 0;
+    const target = lastVisibleDescendant(currentParentId, propsRef.current.index, propsRef.current.expanded);
+    const intent = resolveTrailingRowBackspaceIntent({
+      isEditorEmpty: getEditorText().length === 0,
+      depthShifted: currentParentId !== propsRef.current.parentId,
+      parentChildCount,
+      hasLastVisibleTarget: Boolean(target),
+    });
+    if (intent === 'reset_depth_shift') {
+      resetEffectiveParent();
+      return;
+    }
+    if (intent === 'collapse_parent') {
+      propsRef.current.onCollapseNode?.(currentParentId);
+      propsRef.current.onFocusNode?.(currentParentId);
+      return;
+    }
+    if (intent === 'focus_last_visible' && target) {
+      propsRef.current.onFocusNode?.(target);
+    }
+  };
+
+  const handleArrowUpAtStart = () => {
+    const intent = resolveTrailingRowArrowUpIntent({
+      hasLastVisibleTarget: Boolean(lastVisibleDescendant(effectiveParentRef.current, propsRef.current.index, propsRef.current.expanded)),
+      hasNavigateOut: Boolean(propsRef.current.onNavigateOut),
+      optionsOpen: optionsStateRef.current.optionsOpen,
+      optionCount: optionsStateRef.current.optionCount,
+    });
+    if (intent === 'focus_last_visible') {
+      focusLastVisible();
+      return;
+    }
+    if (intent === 'navigate_out_up') {
+      propsRef.current.onNavigateOut?.('up');
+    }
+  };
+
+  const handleArrowDownAtEnd = () => {
+    const intent = resolveTrailingRowArrowDownIntent({
+      hasNavigateOut: Boolean(propsRef.current.onNavigateOut),
+      optionsOpen: optionsStateRef.current.optionsOpen,
+      optionCount: optionsStateRef.current.optionCount,
+    });
+    if (intent === 'navigate_out_down') {
+      propsRef.current.onNavigateOut?.('down');
+    }
+  };
+
+  const handleEscape = () => {
+    const intent = resolveTrailingRowEscapeIntent(optionsStateRef.current.optionsOpen);
+    if (intent === 'close_options') {
+      closeOptions();
+      return;
+    }
+    // blur_editor
+    const dom = rowRef.current?.querySelector<HTMLElement>('.ProseMirror');
+    dom?.blur();
+  };
+
+  const handlePasteCapture = (event: ClipboardEvent): boolean => {
+    // Image / media-URL front-matter classified by the same helper the inline
+    // editor uses. The trailing input has no selection, and lets a lone link
+    // URL flow into the buffer as text (linkifyPastedUrl={false}), so it ignores
+    // the `linkUrl` intent and only takes over for genuinely structured paste.
+    const mediaPaste = classifyMediaPaste(event.clipboardData, { hasSelection: false });
+
+    const onPasteImages = propsRef.current.onPasteImages;
+    if (mediaPaste?.kind === 'images' && onPasteImages) {
+      event.preventDefault();
+      const parentId = effectiveParentRef.current;
+      resetEditorContent();
+      updateHasContent(false);
+      void readPastedImages(mediaPaste.files).then((images) => onPasteImages(parentId, images));
+      return true;
+    }
+
+    const onPasteMediaUrl = propsRef.current.onPasteMediaUrl;
+    if (mediaPaste?.kind === 'mediaUrl' && onPasteMediaUrl) {
+      event.preventDefault();
+      const parentId = effectiveParentRef.current;
+      resetEditorContent();
+      updateHasContent(false);
+      void Promise.resolve(onPasteMediaUrl(parentId, mediaPaste.url));
+      return true;
+    }
+
+    const pastedText = event.clipboardData?.getData('text/plain') ?? '';
+    const pastedHtml = event.clipboardData?.getData('text/html') ?? '';
+    const parsed = parseClipboardPaste(pastedText, pastedHtml);
+    if (parsed.length === 0) return false;
+    const structured =
+      pastedText.includes('\n') ||
+      parsed.length > 1 ||
+      parsed[0].children.length > 0 ||
+      parsed[0].type !== undefined;
+    if (!structured) return false;
+
+    event.preventDefault();
+    if (committingRef.current) return true;
+    committingRef.current = true;
+    resetEditorContent();
+    updateHasContent(false);
+    void Promise.resolve(
+      propsRef.current.onCreateTree
+        ? propsRef.current.onCreateTree(effectiveParentRef.current, parsed)
+        : Promise.all(parsed.map((node) => createNode(effectiveParentRef.current, node.content.text))),
+    )
+      .finally(() => {
+        committingRef.current = false;
+      });
+    return true;
+  };
+
+  const handleFocusRequestConsumed = (request: FocusRequest) => {
+    if (request === localFocusRef.current) {
+      setLocalFocus(null);
+      return;
+    }
+    propsRef.current.onFocusRequestConsumed?.(request);
+  };
 
   const rowInlineIndent = `calc(var(--row-depth) * ${depthShift})`;
   const rowStyle: CSSProperties | undefined = depthShift > 0
@@ -1291,15 +1222,39 @@ export function TrailingInput(props: TrailingInputProps) {
 
   return (
     <div
+      ref={rowRef}
       className="row control trailing-row"
       data-trailing-parent-id={effectiveParentId}
       style={rowStyle}
     >
       <TrailingInputLeading hasContent={hasContent && !pendingCommittedVisual} />
-      <div
-        ref={mountRef}
-        className={`row-editor trailing-editor ${hasContent ? '' : 'is-empty'}`}
-        data-placeholder={props.placeholder ?? ''}
+      <RichTextEditor
+        nodeId={`trailing:${effectiveParentId}`}
+        className="trailing-editor"
+        content={buffer}
+        contentRevision={contentRevision}
+        placeholder={props.placeholder}
+        linkifyPastedUrl={false}
+        focusTarget={trailingFocusTarget}
+        focusRequest={localFocus ?? props.focusRequest ?? null}
+        onFocusRequestConsumed={handleFocusRequestConsumed}
+        onFocus={handleFocus}
+        onChange={handleChange}
+        onPatch={() => {}}
+        onCommit={handleCommit}
+        onEnter={handleEnter}
+        onBackspaceAtStart={handleBackspaceAtStart}
+        onTab={handleTab}
+        onArrowUpAtStart={handleArrowUpAtStart}
+        onArrowDownAtEnd={handleArrowDownAtEnd}
+        onModEnter={() => void createDoneNode(getEditorText())}
+        onDescriptionToggle={() => void createNodeAndFocusDescription(getEditorText())}
+        onEscape={handleEscape}
+        onUndo={props.onUndo}
+        onRedo={props.onRedo}
+        onTriggerChange={handleTriggerChange}
+        onFieldTriggerFire={handleFieldTriggerFire}
+        onPasteCapture={handlePasteCapture}
       />
       {optionsOpen && isOptionsField && createPortal(
         <PopoverListbox
@@ -1316,10 +1271,7 @@ export function TrailingInput(props: TrailingInputProps) {
               icon={<PopoverBulletIcon />}
               label={option.label}
               onMouseEnter={() => setOptionsIndex(index)}
-              onClick={() => {
-                const view = viewRef.current;
-                if (view) selectOption(view, option.id);
-              }}
+              onClick={() => selectOption(option.id)}
             />
           ))}
           {canCreateOption && (
@@ -1328,10 +1280,7 @@ export function TrailingInput(props: TrailingInputProps) {
               icon={<PopoverBulletIcon />}
               label={`Create "${optionsQuery.trim()}"`}
               onMouseEnter={() => setOptionsIndex(filteredOptions.length)}
-              onClick={() => {
-                const view = viewRef.current;
-                if (view) createOption(view);
-              }}
+              onClick={() => createOption()}
             />
           )}
         </PopoverListbox>,

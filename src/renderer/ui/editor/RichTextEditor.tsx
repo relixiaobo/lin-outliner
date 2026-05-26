@@ -7,10 +7,8 @@ import { replaceAllRichTextPatch, type CreateNodeTree, type RichText, type RichT
 import type { FocusRequest, FocusTarget, PendingInputChar } from '../../state/document';
 import type { EditorTrigger, NavigateRootOptions } from '../shared';
 import { wantsNewTabFromClick } from '../shared';
-import {
-  resolveContentRowUpdateAction,
-  resolveEditorTriggerText,
-} from '../interactions/rowInteractions';
+import { resolveContentRowUpdateAction } from '../interactions/rowInteractions';
+import { resolveNodeLineKeyAction } from '../interactions/nodeLineKeymap';
 import { resolveSelectedReferenceShortcut } from '../interactions/selectedReferenceShortcuts';
 import {
   isPlainSingleParagraph,
@@ -24,7 +22,6 @@ import { FloatingEditorToolbar, type ToolbarMark } from './FloatingEditorToolbar
 import type { OverlayAnchorRect } from '../primitives/useAnchoredOverlay';
 import {
   concatRichText,
-  docPosToTextOffset,
   docToRichText,
   INLINE_REF_TEXT_SENTINEL,
   richTextToDoc,
@@ -35,10 +32,10 @@ import { richTextPatchFromTransaction } from './editorTextPatch';
 import { pmSchema } from './pmSchema';
 import {
   applyCursorPlacement,
-  caretAnchor,
   selectionForPlacement,
   selectionTextOffsets as selectionOffsets,
 } from './nodeLineView';
+import { resolveNodeLineTrigger } from './nodeLineTrigger';
 import { focusTargetMatches } from '../focus/focusModel';
 
 export interface EditorSplitPayload {
@@ -56,6 +53,8 @@ interface RichTextEditorProps {
   content: RichText;
   contentRevision?: number;
   placeholder?: string;
+  /** Extra class appended to the editor element (e.g. `trailing-editor`). */
+  className?: string;
   readOnly?: boolean;
   completed?: boolean;
   onFocus: () => void;
@@ -84,6 +83,18 @@ interface RichTextEditorProps {
   onPasteImage?: (images: PastedImage[]) => void;
   /** A lone remote image URL pasted with no active selection. */
   onPasteMediaUrl?: (url: string) => void;
+  /**
+   * First-chance paste handler. When it returns `true` the editor's own paste
+   * logic is skipped entirely. Lets a consumer (the trailing slot) keep its own
+   * create-on-paste semantics while sharing this one editor.
+   */
+  onPasteCapture?: (event: ClipboardEvent, ctx: { selectionEmpty: boolean }) => boolean;
+  /**
+   * Whether a lone single-line URL is linkified in place. Defaults to `true`
+   * (inline rows). The trailing slot sets this `false` so a pasted URL flows in
+   * as plain text instead.
+   */
+  linkifyPastedUrl?: boolean;
   onInlineReferenceClick?: (targetNodeId: string, options?: NavigateRootOptions) => void;
   resolveInlineReferenceColor?: (targetNodeId: string) => string | undefined;
   focusTarget?: FocusTarget;
@@ -177,27 +188,6 @@ function toolbarAnchor(view: EditorView): OverlayAnchorRect | null {
   }
 }
 
-function resolveEditorTrigger(view: EditorView): EditorTrigger | null {
-  if (!view.state.selection.empty) return null;
-  const content = docToRichText(view.state.doc);
-  const cursorOffset = docPosToTextOffset(view.state.doc, view.state.selection.from);
-  const trigger = resolveEditorTriggerText({
-    text: content.text,
-    cursorOffset,
-  });
-  if (trigger) return { ...trigger, anchor: caretAnchor(view) };
-  if (content.inlineRefs.length === 0 && ['#', '@', '/'].includes(content.text)) {
-    return {
-      kind: content.text as EditorTrigger['kind'],
-      query: '',
-      from: 0,
-      to: 1,
-      anchor: caretAnchor(view),
-    };
-  }
-  return null;
-}
-
 function isEmptyDoc(doc: EditorState['doc']) {
   const content = docToRichText(doc);
   return content.text.replace(/\u200B/g, '').trim().length === 0 && content.inlineRefs.length === 0;
@@ -224,6 +214,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
   ));
   const editorClassName = [
     'row-editor',
+    props.className ?? '',
     props.completed ? 'done' : '',
     isEmpty ? 'is-empty' : '',
     focusPending ? 'is-focus-pending' : '',
@@ -259,7 +250,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
   };
 
   const updateTrigger = (view: EditorView) => {
-    propsRef.current.onTriggerChange(resolveEditorTrigger(view));
+    propsRef.current.onTriggerChange(resolveNodeLineTrigger(view));
   };
 
   const handleContentUpdateAction = (nextContent: RichText) => {
@@ -370,11 +361,17 @@ export function RichTextEditor(props: RichTextEditorProps) {
 
           const clipboardEvent = event as ClipboardEvent;
 
+          // First-chance hook: the trailing slot owns create-on-paste semantics
+          // and short-circuits the in-place editing logic below.
+          const { from, to } = selectionOffsets(viewInstance);
+          if (propsRef.current.onPasteCapture?.(clipboardEvent, { selectionEmpty: from === to })) {
+            return true;
+          }
+
           // Image / media-URL / single-line-URL front-matter is classified by
           // the same helper the trailing input uses, so the two stay in
           // lock-step. Only the application below differs (edit in place here;
           // create a node in the trailing input).
-          const { from, to } = selectionOffsets(viewInstance);
           const mediaPaste = classifyMediaPaste(clipboardEvent.clipboardData, { hasSelection: from !== to });
 
           const onPasteImage = propsRef.current.onPasteImage;
@@ -407,8 +404,10 @@ export function RichTextEditor(props: RichTextEditorProps) {
           };
 
           // A single-line URL becomes a link: wrap the selection if there is
-          // one, otherwise insert the URL as link-marked text.
-          if (mediaPaste?.kind === 'linkUrl') {
+          // one, otherwise insert the URL as link-marked text. Consumers that
+          // prefer a pasted URL to flow in as plain text opt out via
+          // `linkifyPastedUrl={false}`.
+          if (mediaPaste?.kind === 'linkUrl' && propsRef.current.linkifyPastedUrl !== false) {
             const url = mediaPaste.url;
             clipboardEvent.preventDefault();
             const current = docToRichText(viewInstance.state.doc);
@@ -596,71 +595,77 @@ export function RichTextEditor(props: RichTextEditorProps) {
           propsRef.current.onMove(matchesShortcutEvent(event, 'editor.move_up') ? 'up' : 'down');
           return true;
         }
-        if (event.key === 'Enter' && !event.shiftKey) {
-          event.preventDefault();
-          const current = docToRichText(viewInstance.state.doc);
-          if (propsRef.current.readOnly) {
-            propsRef.current.onEnter({
-              before: current,
-              after: { text: '', marks: [], inlineRefs: [] },
-              atEnd: true,
-            });
-            return true;
-          }
-          const { from, to } = selectionOffsets(viewInstance);
-          propsRef.current.onEnter({
-            before: sliceRichText(current, 0, from),
-            after: sliceRichText(current, from, current.text.length),
-            atEnd: from === to && to >= current.text.length,
-          });
-          return true;
-        }
-        if (event.key === 'Backspace') {
-          const current = docToRichText(viewInstance.state.doc);
-          const { from, to } = selectionOffsets(viewInstance);
-          if (from === 0 && to === 0) {
+        const selection = selectionOffsets(viewInstance);
+        const structural = resolveNodeLineKeyAction(event, {
+          from: selection.from,
+          to: selection.to,
+          textLength: docToRichText(viewInstance.state.doc).text.length,
+          hasShiftArrow: Boolean(propsRef.current.onShiftArrow),
+        });
+        if (!structural) return false;
+        if (structural.type === 'backspaceAtStart') {
+          // A "backspace at start" is decided by *text* offset, but inline-ref
+          // atoms carry no text offset — so a caret sitting just after a leading
+          // reference also reads as offset 0. Delete the reference only when it
+          // is the node immediately before the caret; a caret truly at the start
+          // (nothing, or just the zero-width IME sentinel, before it) still merges
+          // the row up.
+          const { $from, empty } = viewInstance.state.selection;
+          if (!empty) return false;
+          if ($from.nodeBefore?.type.name === 'inlineReference') {
             event.preventDefault();
-            propsRef.current.onBackspaceAtStart(
-              current.text.replace(/\u200B/g, '').trim().length === 0 && current.inlineRefs.length === 0,
+            viewInstance.dispatch(
+              viewInstance.state.tr
+                .delete($from.pos - $from.nodeBefore.nodeSize, $from.pos)
+                .scrollIntoView(),
             );
             return true;
           }
         }
-        if (event.key === 'Tab') {
-          event.preventDefault();
-          const { from } = selectionOffsets(viewInstance);
-          propsRef.current.onTab(event.shiftKey, from);
-          return true;
-        }
-        if (event.shiftKey && !mod && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
-          if (!propsRef.current.onShiftArrow) return false;
-          event.preventDefault();
-          propsRef.current.onShiftArrow(event.key === 'ArrowUp' ? 'up' : 'down');
-          return true;
-        }
-        if (event.key === 'ArrowUp') {
-          const { from } = selectionOffsets(viewInstance);
-          if (from === 0) {
-            event.preventDefault();
+        event.preventDefault();
+        switch (structural.type) {
+          case 'split': {
+            const current = docToRichText(viewInstance.state.doc);
+            if (propsRef.current.readOnly) {
+              propsRef.current.onEnter({
+                before: current,
+                after: { text: '', marks: [], inlineRefs: [] },
+                atEnd: true,
+              });
+              break;
+            }
+            const { from, to } = selectionOffsets(viewInstance);
+            propsRef.current.onEnter({
+              before: sliceRichText(current, 0, from),
+              after: sliceRichText(current, from, current.text.length),
+              atEnd: from === to && to >= current.text.length,
+            });
+            break;
+          }
+          case 'backspaceAtStart': {
+            const current = docToRichText(viewInstance.state.doc);
+            propsRef.current.onBackspaceAtStart(
+              current.text.replace(/\u200B/g, '').trim().length === 0 && current.inlineRefs.length === 0,
+            );
+            break;
+          }
+          case 'indent':
+            propsRef.current.onTab(structural.shiftKey, selection.from);
+            break;
+          case 'shiftArrow':
+            propsRef.current.onShiftArrow?.(structural.direction);
+            break;
+          case 'navigateUpAtStart':
             propsRef.current.onArrowUpAtStart();
-            return true;
-          }
-        }
-        if (event.key === 'ArrowDown') {
-          const current = docToRichText(viewInstance.state.doc);
-          const { to } = selectionOffsets(viewInstance);
-          if (to >= current.text.length) {
-            event.preventDefault();
+            break;
+          case 'navigateDownAtEnd':
             propsRef.current.onArrowDownAtEnd();
-            return true;
-          }
+            break;
+          case 'escape':
+            propsRef.current.onEscape();
+            break;
         }
-        if (event.key === 'Escape') {
-          event.preventDefault();
-          propsRef.current.onEscape();
-          return true;
-        }
-        return false;
+        return true;
       },
     });
 

@@ -1,5 +1,6 @@
 import { CoreError } from './errors';
 import { LoroOutlinerDocument, type SerializedLoroDocumentState } from './loroDocument';
+import { freshNodeId, isClientNodeId } from './nodeId';
 import {
   OperationJournal,
   decorateHistoryItem,
@@ -220,13 +221,36 @@ export class Core {
     }
   }
 
-  createNode(parentId: string, index: number | null | undefined, text: string): CommandOutcome {
+  createNode(
+    parentId: string,
+    index: number | null | undefined,
+    text: string,
+    id?: string,
+  ): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureParentMutable(state, parentId);
-      const id = this.createPlainNode(parentId, index, text);
-      this.applyChildTagsDirect(parentId, id);
-      return focus(id, { parentId, placement: { kind: 'end' } });
+      // A caller-supplied id lets the renderer materialize a draft row under an
+      // id it already chose, so the row's React identity survives the
+      // draft->real transition (see node-line-editor-step2-eager-materialization).
+      // The renderer only *proposes* the id; core validates and owns it.
+      if (id !== undefined) {
+        if (!isClientNodeId(id)) {
+          throw new Error(`createNode: invalid client-supplied id "${id}" (expected node:<uuid>)`);
+        }
+        const existing = state.nodes[id];
+        if (existing) {
+          // Idempotent only for a retry of the *same* materialization (same
+          // parent). Otherwise a stale/forged id must not hijack another node.
+          if (existing.parentId !== parentId) {
+            throw new Error(`createNode: id "${id}" already exists under a different parent`);
+          }
+          return focus(id, { parentId, placement: { kind: 'end' } });
+        }
+      }
+      const newId = this.createPlainNode(parentId, index, text, undefined, id);
+      this.applyChildTagsDirect(parentId, newId);
+      return focus(newId, { parentId, placement: { kind: 'end' } });
     });
   }
 
@@ -1843,12 +1867,18 @@ export class Core {
     if (parentId && node.parentId !== parentId) this.loro.moveNode(id, parentId, undefined);
   }
 
-  private createPlainNode(parentId: string, index: number | null | undefined, text: string, type?: NodeType) {
-    const id = freshId(type === 'reference' ? 'ref' : type === 'fieldEntry' ? 'field_entry' : 'node');
-    this.loro.createNodeWithId(id, parentId, index, type, (node) => {
+  private createPlainNode(
+    parentId: string,
+    index: number | null | undefined,
+    text: string,
+    type?: NodeType,
+    id?: string,
+  ) {
+    const nodeId = id ?? freshId(type === 'reference' ? 'ref' : type === 'fieldEntry' ? 'field_entry' : 'node');
+    this.loro.createNodeWithId(nodeId, parentId, index, type, (node) => {
       node.content = plainText(text);
     });
-    return id;
+    return nodeId;
   }
 
   private createRichTextNodeDirect(parentId: string, index: number | null | undefined, content: RichText, type?: NodeType) {
@@ -2245,7 +2275,26 @@ export class Core {
     const sourceParentId = current.parentId;
     const sourceIndex = sourceParentId ? childIndex(state, sourceParentId, nodeId) : undefined;
     const target = clone(requiredNode(state, targetId));
-    target.content = appendRichText(target.content, current.content);
+    if (target.type === 'reference' && target.targetId) {
+      // A reference node renders its target, not its own content, so merging text
+      // into it converts the reference into a *leading inline reference* on a
+      // now-plain node — the merged text then has somewhere to live.
+      const resolvedTargetId = resolveReferenceTargetId(state, target.targetId);
+      const inlineRefContent: RichText = {
+        text: '',
+        marks: [],
+        inlineRefs: [{
+          offset: 0,
+          targetNodeId: resolvedTargetId,
+          displayName: state.nodes[resolvedTargetId]?.content.text || undefined,
+        }],
+      };
+      target.type = undefined;
+      target.targetId = undefined;
+      target.content = appendRichText(inlineRefContent, current.content);
+    } else {
+      target.content = appendRichText(target.content, current.content);
+    }
     target.updatedAt = nowMs();
     this.loro.writeNode(target);
     current.children.forEach((childId, offset) => {
@@ -2384,6 +2433,10 @@ function cycleNodeDoneState(node: Node) {
 function freshId(prefix: string): string {
   return `${prefix}:${crypto.randomUUID()}`;
 }
+
+// Re-exported so existing importers of `core` keep resolving these; the shape
+// itself lives in `./nodeId` as the single source of truth for renderer + core.
+export { freshNodeId, isClientNodeId };
 
 /**
  * An image node's source is exactly one of a local `assetId` or a remote

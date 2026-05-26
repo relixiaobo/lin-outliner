@@ -11,7 +11,7 @@ import {
 } from 'react';
 import { api } from '../api/client';
 import type { NodeId, RichText, RichTextPatch } from '../api/types';
-import { EMPTY_RICH_TEXT, plainText } from '../api/types';
+import { EMPTY_RICH_TEXT } from '../api/types';
 import { TAG_DAY_ID } from '../../core/types';
 import { flattenVisibleRows, type DocumentIndex, type UiState } from '../state/document';
 import { RichTextEditor, type EditorSplitPayload } from './editor/RichTextEditor';
@@ -56,16 +56,7 @@ import { NodeContextMenu } from './outliner/NodeContextMenu';
 import { NodeDescription } from './outliner/NodeDescription';
 import { OutlinerView } from './outliner/OutlinerView';
 import { buildOutlinerRows } from './outliner/row-model';
-import { TrailingInput } from './outliner/TrailingInput';
-import { appendImageNodes, appendRemoteImageNode } from './interactions/imagePaste';
 import { TriggerPopover } from './outliner/TriggerPopover';
-import {
-  applyTrailingReferenceTrigger,
-  applyTrailingTagTrigger,
-  createAndApplyTrailingTagTrigger,
-  createTrailingField,
-  executeTrailingSlashTrigger,
-} from './outliner/trailingTriggers';
 import { ButtonControl } from './primitives/ButtonControl';
 import { IconButton } from './primitives/IconButton';
 import { SearchQueryBuilderPanel } from './search/SearchQuerySummaryBar';
@@ -210,23 +201,6 @@ export function NodePanel(props: NodePanelProps) {
     localTitleSyncRef.current = { nodeId: props.rootId, content };
     setTitleContent(content);
     setTitleContentRevision((revision) => revision + 1);
-  };
-
-  const focusNode = (nodeId: NodeId) => {
-    const targetNode = props.index.byId.get(nodeId);
-    props.setUi((prev) => requestFocusState(
-      prev,
-      rowFocusTarget(nodeId, targetNode?.parentId ?? null, props.panelId),
-      cursorEnd(),
-    ));
-  };
-
-  const collapseNode = (nodeId: NodeId) => {
-    props.setUi((prev) => {
-      const expanded = new Set(prev.expanded);
-      expanded.delete(nodeId);
-      return { ...prev, expanded };
-    });
   };
 
   const renderHeaderIcon = () => {
@@ -755,81 +729,10 @@ export function NodePanel(props: NodePanelProps) {
               dragId={props.dragId}
               setDragId={props.setDragId}
               rows={panelRows}
+              // The body always offers a place to add a node; the trailing draft
+              // (eager materialization) subsumes the old body TrailingInput.
+              trailingDraft={showTrailingInput ? 'always' : 'none'}
             />
-            {showTrailingInput && (
-              <TrailingInput
-                panelId={props.panelId}
-                parentId={props.rootId}
-                index={props.index}
-                expanded={props.ui.expanded}
-                run={props.run}
-                focusRequest={props.ui.focusRequest}
-                focusedId={props.ui.focusedId}
-                focusSurface={props.ui.focusSurface}
-                onFocusRequestConsumed={(request) => {
-                  props.setUi((prev) => clearFocusRequestState(prev, request));
-                }}
-                onCreate={async (parentId, text) => {
-                  let createdId: string | null = null;
-                  await props.run(async () => {
-                    const outcome = await api.createNode(parentId, null, text);
-                    createdId = outcome.focus?.nodeId ?? null;
-                    return outcome.projection;
-                  }, { applyFocus: false });
-                  return createdId;
-                }}
-                onCreateTree={(parentId, nodes) => (
-                  props.run(() => api.createNodesFromTree(parentId, nodes), { applyFocus: false })
-                )}
-                onPasteImages={(parentId, images) => appendImageNodes(parentId, images, props.run)}
-                onPasteMediaUrl={(parentId, url) => appendRemoteImageNode(parentId, url, props.run)}
-                onIndentNode={(nodeId) => (
-                  props.run(() => api.indentNode(nodeId), { applyFocus: false })
-                )}
-                onUpdateCreated={async (nodeId, text) => {
-                  await props.run(() => api.replaceNodeText(nodeId, plainText(text)), { applyFocus: false });
-                }}
-                continueOnEnter
-                onToggleCreated={async (nodeId) => {
-                  await props.run(() => api.toggleDone(nodeId));
-                }}
-                onApplyTagTrigger={applyTrailingTagTrigger}
-                onCreateTagTrigger={createAndApplyTrailingTagTrigger}
-                onApplyReferenceTrigger={applyTrailingReferenceTrigger}
-                onReferenceConversionCreated={({ nodeId, parentId, targetId }) => {
-                  props.setUi((prev) => ({
-                    ...prev,
-                    pendingReferenceConversion: { nodeId, parentId, targetId },
-                  }));
-                }}
-                onExecuteSlashTrigger={executeTrailingSlashTrigger}
-                onOpenCommandPalette={() => props.setUi((prev) => ({ ...prev, commandOpen: true }))}
-                onCreateField={(parentId) => {
-                  void createTrailingField({
-                    parentId,
-                    run: props.run,
-                  });
-                }}
-                onExpand={(nodeId) => {
-                  props.setUi((prev) => {
-                    const expanded = new Set(prev.expanded);
-                    expanded.add(nodeId);
-                    return { ...prev, expanded };
-                  });
-                }}
-                onFocusNode={focusNode}
-                onFocusDescription={(nodeId, parentId) => {
-                  props.setUi((prev) => requestFocusState(
-                    { ...prev, editingDescriptionId: nodeId },
-                    focusTarget(nodeId, parentId, props.panelId, 'description'),
-                    cursorEnd(),
-                  ));
-                }}
-                onCollapseNode={collapseNode}
-                onUndo={() => void props.run(() => api.undo())}
-                onRedo={() => void props.run(() => api.redo())}
-              />
-            )}
           </div>
         )}
       </div>

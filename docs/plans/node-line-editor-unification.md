@@ -20,6 +20,15 @@ updated: 2026-05-25
 > `setTrailingSelection` and its inline-ref-blind `1 + offset` math are gone;
 > the shared inline-ref-aware version reduces to the same thing for plain text,
 > pinned by `tests/renderer/nodeLineView.test.ts`).
+>
+> **Revision (2026-05-26).** Phase 2 is restaged. The original thesis assumed
+> trigger application would collapse into a single `resolveTargetId`
+> ("materialize then apply"), and a later exploration assumed a real Loro draft
+> node. Both are dropped for step 1: the trailing slot stays a **virtual local
+> buffer** and keeps its **atomic** create-and-apply trigger commands unchanged.
+> The win is one *editor*, not one *command path*. See
+> `node-line-editor-step1-extraction.md` for the full step-1 contract and risk
+> assessment.
 
 A node line — one editable line of node text — is rendered by **two
 independent ProseMirror `EditorView` instances**:
@@ -82,7 +91,7 @@ rather than manual synchronization.
 |-------|---------|------|
 | **1. Shared paste classifier** ✅ | `classifyMediaPaste` for the image / media-URL / link-URL front-matter; both editors call it. Behavior-preserving. | low |
 | **2a. Shared view helpers** ✅ | `nodeLineView.ts`: `caretAnchor`, `selectionTextOffsets`, unified `selectionForPlacement` / `applyCursorPlacement`. Both editors delegate. Behavior-preserving (equivalence pinned by headless unit tests). | low |
-| **2b. `useNodeLineEditor` core + `resolveTargetId`** | Build the view + plugins + keymap + trigger pipeline + IME + focus once; both editors become thin wrappers. Includes unifying trigger detection (see finding below) and routing trigger application through `resolveTargetId`, deleting the trailing input's bespoke `onApply*Trigger` props. The large, high-risk PR. | high |
+| **2b. Single `NodeLineEditor` + virtual draft slot** | One editing core (= `RichTextEditor`) rendered by both real rows and the trailing slot; the slot keeps a **local buffer** (no real node until commit) and adapts the editor's semantic callbacks to create-semantics. Eliminates the second `EditorView` — the actual drift source — without touching the document model, undo, persistence, projection, or the e2e contracts. Full contract: **`node-line-editor-step1-extraction.md`**. | high |
 
 ### Finding: trigger detection is not a safe standalone extraction
 

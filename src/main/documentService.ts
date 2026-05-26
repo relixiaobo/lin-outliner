@@ -131,26 +131,41 @@ export class DocumentService {
     const mutationMeta = command === 'refresh_search_node_results' && !meta.origin
       ? { ...meta, origin: 'system' as const, summary: meta.summary ?? 'Refreshed search node results.' }
       : meta;
+    // An eager-materialize create (`create_node` with `materialize: true`) opens
+    // a text-edit undo group keyed to the new node, so the create and the text
+    // patches that immediately follow on that node collapse into a single undo
+    // step — undoing a half-typed new row removes the whole node, never leaving
+    // a one-character orphan.
+    const isMaterialize = command === 'create_node'
+      && args.materialize === true
+      && typeof args.id === 'string';
     const task = this.mutationQueue.then(async () => {
       if (command !== 'apply_node_text_patch') {
         await this.flushTextEditGroupNow();
       }
       const before = this.core.intoState();
-      const textEditMeta = command === 'apply_node_text_patch'
+      const effectiveMeta = command === 'apply_node_text_patch'
         ? await this.textEditMetadata(String(args.nodeId), mutationMeta)
-        : mutationMeta;
+        : isMaterialize
+          ? this.beginMaterializeGroup(String(args.id), mutationMeta)
+          : mutationMeta;
       const outcome = this.core.withOrigin(
-        textEditMeta.origin ?? 'user',
-        () => this.runMutation(command, args, textEditMeta),
-        transactionMetadata({ ...textEditMeta, command }),
+        effectiveMeta.origin ?? 'user',
+        () => this.runMutation(command, args, effectiveMeta),
+        transactionMetadata({ ...effectiveMeta, command }),
       );
       const changed = !sameJson(before, this.core.intoState());
       if (command === 'apply_node_text_patch') {
         if (changed) this.scheduleTextEditFlush();
+      } else if (isMaterialize) {
+        // Keep the group open for the following text patches when the node was
+        // created; close it immediately if the create was an idempotent retry.
+        if (changed) this.scheduleTextEditFlush();
+        else await this.flushTextEditGroupNow();
       } else if (changed) {
         await this.saveCore();
       }
-      if (changed) this.emitProjectionChanged(textEditMeta.origin ?? 'user');
+      if (changed) this.emitProjectionChanged(effectiveMeta.origin ?? 'user');
       return outcome;
     });
     this.mutationQueue = task.then(() => undefined, () => undefined);
@@ -175,6 +190,25 @@ export class DocumentService {
       origin,
       operationId: this.textEditGroup.operationId,
       summary: meta.summary ?? 'Edited node text.',
+    };
+  }
+
+  private beginMaterializeGroup(nodeId: string, meta: DocumentMutationMeta): DocumentMutationMeta {
+    const origin = meta.origin ?? 'user';
+    // Any prior group was flushed before this runs, so a materialize always
+    // starts a fresh group. Subsequent `apply_node_text_patch` calls on the
+    // same node id reuse this group (see `textEditMetadata`).
+    this.core.beginUndoGroup();
+    this.textEditGroup = {
+      nodeId,
+      origin,
+      operationId: `op:${randomUUID()}`,
+    };
+    return {
+      ...meta,
+      origin,
+      operationId: this.textEditGroup.operationId,
+      summary: meta.summary ?? 'Created node.',
     };
   }
 
@@ -205,7 +239,12 @@ export class DocumentService {
   private runMutation(command: DocumentCommand, args: Record<string, unknown>, meta: DocumentMutationMeta) {
     switch (command) {
       case 'create_node':
-        return this.core.createNode(String(args.parentId), nullableNumber(args.index), String(args.text ?? ''));
+        return this.core.createNode(
+          String(args.parentId),
+          nullableNumber(args.index),
+          String(args.text ?? ''),
+          typeof args.id === 'string' ? args.id : undefined,
+        );
       case 'create_rich_text_node':
         return this.core.createRichTextContentNode(String(args.parentId), nullableNumber(args.index), args.content as RichText);
       case 'create_tagged_node':
