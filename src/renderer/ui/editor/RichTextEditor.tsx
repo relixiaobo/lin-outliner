@@ -600,6 +600,22 @@ export function RichTextEditor(props: RichTextEditorProps) {
           hasShiftArrow: Boolean(propsRef.current.onShiftArrow),
         });
         if (!structural) return false;
+        if (structural.type === 'backspaceAtStart') {
+          // A "backspace at start" is decided by *text* offset, but inline-ref
+          // atoms (and their zero-width IME sentinels) carry no text offset — so
+          // a caret sitting just after a leading reference also reads as offset 0.
+          // Only merge the row up when the caret is truly at the paragraph start;
+          // otherwise delete the leading reference(s) instead.
+          const { $from, empty } = viewInstance.state.selection;
+          if (!empty) return false;
+          if ($from.parentOffset > 0) {
+            event.preventDefault();
+            viewInstance.dispatch(
+              viewInstance.state.tr.delete($from.start(), $from.pos).scrollIntoView(),
+            );
+            return true;
+          }
+        }
         event.preventDefault();
         switch (structural.type) {
           case 'split': {
