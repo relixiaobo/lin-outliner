@@ -7,10 +7,7 @@ import { replaceAllRichTextPatch, type CreateNodeTree, type RichText, type RichT
 import type { FocusRequest, FocusTarget, PendingInputChar } from '../../state/document';
 import type { EditorTrigger, NavigateRootOptions } from '../shared';
 import { wantsNewTabFromClick } from '../shared';
-import {
-  resolveContentRowUpdateAction,
-  resolveEditorTriggerText,
-} from '../interactions/rowInteractions';
+import { resolveContentRowUpdateAction } from '../interactions/rowInteractions';
 import { resolveSelectedReferenceShortcut } from '../interactions/selectedReferenceShortcuts';
 import {
   isPlainSingleParagraph,
@@ -24,7 +21,6 @@ import { FloatingEditorToolbar, type ToolbarMark } from './FloatingEditorToolbar
 import type { OverlayAnchorRect } from '../primitives/useAnchoredOverlay';
 import {
   concatRichText,
-  docPosToTextOffset,
   docToRichText,
   INLINE_REF_TEXT_SENTINEL,
   richTextToDoc,
@@ -35,10 +31,10 @@ import { richTextPatchFromTransaction } from './editorTextPatch';
 import { pmSchema } from './pmSchema';
 import {
   applyCursorPlacement,
-  caretAnchor,
   selectionForPlacement,
   selectionTextOffsets as selectionOffsets,
 } from './nodeLineView';
+import { resolveNodeLineTrigger } from './nodeLineTrigger';
 import { focusTargetMatches } from '../focus/focusModel';
 
 export interface EditorSplitPayload {
@@ -177,27 +173,6 @@ function toolbarAnchor(view: EditorView): OverlayAnchorRect | null {
   }
 }
 
-function resolveEditorTrigger(view: EditorView): EditorTrigger | null {
-  if (!view.state.selection.empty) return null;
-  const content = docToRichText(view.state.doc);
-  const cursorOffset = docPosToTextOffset(view.state.doc, view.state.selection.from);
-  const trigger = resolveEditorTriggerText({
-    text: content.text,
-    cursorOffset,
-  });
-  if (trigger) return { ...trigger, anchor: caretAnchor(view) };
-  if (content.inlineRefs.length === 0 && ['#', '@', '/'].includes(content.text)) {
-    return {
-      kind: content.text as EditorTrigger['kind'],
-      query: '',
-      from: 0,
-      to: 1,
-      anchor: caretAnchor(view),
-    };
-  }
-  return null;
-}
-
 function isEmptyDoc(doc: EditorState['doc']) {
   const content = docToRichText(doc);
   return content.text.replace(/\u200B/g, '').trim().length === 0 && content.inlineRefs.length === 0;
@@ -259,7 +234,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
   };
 
   const updateTrigger = (view: EditorView) => {
-    propsRef.current.onTriggerChange(resolveEditorTrigger(view));
+    propsRef.current.onTriggerChange(resolveNodeLineTrigger(view));
   };
 
   const handleContentUpdateAction = (nextContent: RichText) => {
