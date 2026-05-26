@@ -73,6 +73,12 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Subagent next-step guidance on the envelope** — the `Agent` / `AgentStatus`
+  / `AgentSend` / `AgentStop` subagent tools now carry their next-step
+  `instructions` via the envelope's top-level `instructions` field
+  (`successEnvelope(tool, data, { instructions })`) instead of duplicating it on
+  `data.instructions` in the model-visible projection. Follow-up to #17.
+  ([#20](https://github.com/relixiaobo/lin-outliner/pull/20))
 - **Slimmer model-visible tool output** — `web_search`, `web_fetch`,
   `file_glob`, `file_grep`, `bash`, `task_stop`, `operation_history`, and the
   `Agent`/`AgentStatus`/`AgentSend`/`AgentStop` subagent tools now project a
