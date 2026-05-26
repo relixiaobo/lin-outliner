@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: in-progress
 priority: P1
 owner: relixiaobo
 created: 2026-05-26
@@ -8,6 +8,15 @@ supersedes-framing: node-line-editor-unification.md#2b
 ---
 
 # NodeLineEditor Extraction — Step 1 Design & Risk Assessment
+
+> **Implemented (2026-05-26).** `TrailingInput` now renders the shared
+> `RichTextEditor` over a local `RichText` buffer instead of running its own
+> `EditorView`. `RichTextEditor` gained `onPasteCapture`, `linkifyPastedUrl`,
+> and `className` (all inline-safe). The commit/projection-settle dance,
+> depth-shift, options popover, and atomic trigger commands stayed in the
+> wrapper; the three call sites are untouched (props interface preserved).
+> typecheck clean; 503 unit tests pass. Behavior verification (commit/focus/
+> IME/trigger) is pending the app + e2e — see the manual list below.
 
 > **What changed.** The earlier "Phase 2b" framing assumed the elegant terminal
 > state required a **real Loro draft node** materialized while typing in the
