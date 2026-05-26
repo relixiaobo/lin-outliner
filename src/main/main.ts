@@ -1,5 +1,7 @@
-import { app, BrowserWindow, dialog, ipcMain, protocol, shell } from 'electron';
-import { readFile, stat } from 'node:fs/promises';
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, protocol, shell } from 'electron';
+import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DocumentService } from './documentService';
@@ -42,6 +44,20 @@ let mainWindow: BrowserWindow | null = null;
 let quitAfterFlush = false;
 let lastAttachmentPickerDirectory: string | null = null;
 const DEFAULT_ATTACHMENT_PICKER_LIMIT = 6;
+const DEFAULT_LOCAL_FILE_SEARCH_LIMIT = 8;
+const DEFAULT_RECENT_LOCAL_FILE_LIMIT = 6;
+const LOCAL_FILE_SEARCH_TIMEOUT_MS = 1200;
+const LOCAL_FILE_ICON_TIMEOUT_MS = 250;
+const LOCAL_FILE_ICON_SIZE: Electron.FileIconOptions['size'] = 'normal';
+const LOCAL_FILE_PREVIEW_TIMEOUT_MS = 1600;
+const LOCAL_FILE_THUMBNAIL_TIMEOUT_MS = 350;
+const LOCAL_FILE_THUMBNAIL_SIZE = 512;
+const RECENT_LOCAL_FILE_TIMEOUT_MS = 900;
+const localFileSearchCache = new Map<string, string>();
+const localFileIconCache = new Map<string, string | null>();
+const localFileThumbnailCache = new Map<string, string | null>();
+const pendingLocalFileIconLoads = new Map<string, Promise<string | null>>();
+const pendingLocalFileThumbnailLoads = new Map<string, Promise<string | null>>();
 const agentRuntime = new AgentRuntime(() => mainWindow, documentService, {
   localFileRoot: process.env.LIN_AGENT_LOCAL_ROOT ?? process.cwd(),
 });
@@ -132,6 +148,55 @@ function registerIpc() {
       ...(skippedCount > 0 ? { skippedCount } : {}),
     };
   });
+
+  ipcMain.handle('lin:search-local-files', async (_event, rawOptions?: {
+    limit?: unknown;
+    query?: unknown;
+  }) => {
+    const query = normalizeLocalFileQuery(rawOptions?.query);
+    const limit = clampLocalFileSearchLimit(rawOptions?.limit);
+    if (!query) return { files: [], query };
+    const paths = await searchLocalFilePaths(query, limit * 6);
+    const files = await localFileSearchResults(paths, query, limit);
+    return { files, query };
+  });
+
+  ipcMain.handle('lin:recent-local-files', async (_event, rawOptions?: { limit?: unknown }) => {
+    const limit = clampRecentLocalFileLimit(rawOptions?.limit);
+    const paths = await recentLocalFilePaths(limit * 12);
+    const files = await withLocalFileIcons((await localFileMetadataResults(paths, limit * 12))
+      .sort((left, right) => right.lastModified - left.lastModified)
+      .slice(0, limit));
+    return { files };
+  });
+
+  ipcMain.handle('lin:prepare-local-file', async (_event, rawOptions?: { id?: unknown }) => {
+    const id = typeof rawOptions?.id === 'string' ? rawOptions.id : '';
+    const filePath = localFileSearchCache.get(id);
+    if (!filePath) return { file: null };
+    return { file: await localPickedFile(filePath) };
+  });
+
+  ipcMain.handle('lin:preview-local-file', async (_event, rawOptions?: { id?: unknown }) => {
+    const id = typeof rawOptions?.id === 'string' ? rawOptions.id : '';
+    const filePath = localFileSearchCache.get(id);
+    if (!filePath) return { thumbnailDataUrl: null };
+    try {
+      const fileStat = await stat(filePath);
+      if (!fileStat.isFile()) return { thumbnailDataUrl: null };
+      const file = {
+        entryKind: 'file',
+        mimeType: inferMimeType(filePath),
+        name: basename(filePath),
+      };
+      if (!shouldLoadLocalFileThumbnail(file)) return { thumbnailDataUrl: null };
+      return {
+        thumbnailDataUrl: await localFileThumbnailDataUrl(filePath, LOCAL_FILE_PREVIEW_TIMEOUT_MS),
+      };
+    } catch {
+      return { thumbnailDataUrl: null };
+    }
+  });
 }
 
 async function handleAssetCommand(command: AssetCommand, args: Record<string, unknown>) {
@@ -218,20 +283,361 @@ function clampPickerLimit(value: unknown): number {
   return Math.min(50, Math.max(1, numeric));
 }
 
+function clampLocalFileSearchLimit(value: unknown): number {
+  const numeric = typeof value === 'number' && Number.isFinite(value)
+    ? Math.trunc(value)
+    : DEFAULT_LOCAL_FILE_SEARCH_LIMIT;
+  return Math.min(24, Math.max(1, numeric));
+}
+
+function clampRecentLocalFileLimit(value: unknown): number {
+  const numeric = typeof value === 'number' && Number.isFinite(value)
+    ? Math.trunc(value)
+    : DEFAULT_RECENT_LOCAL_FILE_LIMIT;
+  return Math.min(18, Math.max(1, numeric));
+}
+
+function normalizeLocalFileQuery(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return value.replace(/\s+/g, ' ').trim().slice(0, 80);
+}
+
+async function searchLocalFilePaths(query: string, limit: number): Promise<string[]> {
+  if (process.platform === 'darwin') {
+    const spotlight = await mdfindFileNameMatches(query, limit);
+    if (spotlight.length > 0) return spotlight;
+  }
+  return rgFileNameMatches(query, limit);
+}
+
+function mdfindFileNameMatches(query: string, limit: number): Promise<string[]> {
+  return collectNullDelimitedProcess('/usr/bin/mdfind', ['-0', '-name', query], limit, LOCAL_FILE_SEARCH_TIMEOUT_MS);
+}
+
+async function recentLocalFilePaths(limit: number): Promise<string[]> {
+  if (process.platform === 'darwin') {
+    const spotlight = await collectNullDelimitedProcess(
+      '/usr/bin/mdfind',
+      ['-0', 'kMDItemFSContentChangeDate >= $time.today(-30)'],
+      limit,
+      RECENT_LOCAL_FILE_TIMEOUT_MS,
+    );
+    if (spotlight.length > 0) return spotlight;
+  }
+  return commonDirectoryRecentFilePaths(limit);
+}
+
+async function commonDirectoryRecentFilePaths(limit: number): Promise<string[]> {
+  const roots = ['desktop', 'documents', 'downloads']
+    .map((name) => safeAppPath(name as Parameters<typeof app.getPath>[0]))
+    .filter((path): path is string => Boolean(path));
+  const paths: string[] = [];
+  for (const root of roots) {
+    try {
+      const entries = await readdir(root, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile() && !entry.isDirectory()) continue;
+        paths.push(join(root, entry.name));
+        if (paths.length >= limit) return paths;
+      }
+    } catch {
+      // Ignore folders the user has not granted or that do not exist.
+    }
+  }
+  return paths;
+}
+
+function rgFileNameMatches(query: string, limit: number): Promise<string[]> {
+  const home = safeAppPath('home');
+  if (!home) return Promise.resolve([]);
+  return new Promise((resolve) => {
+    const results: string[] = [];
+    const seen = new Set<string>();
+    const lowerQuery = query.toLowerCase();
+    const child = spawn('rg', [
+      '--files',
+      '--hidden',
+      '--glob', '!**/.git/**',
+      '--glob', '!**/node_modules/**',
+      '--glob', '!**/Library/**',
+      home,
+    ], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let buffer = '';
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(results);
+    };
+    const timer = setTimeout(() => {
+      child.kill();
+      finish();
+    }, LOCAL_FILE_SEARCH_TIMEOUT_MS);
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      buffer += chunk;
+      let newline = buffer.indexOf('\n');
+      while (newline >= 0) {
+        const filePath = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        if (basename(filePath).toLowerCase().includes(lowerQuery) && !seen.has(filePath)) {
+          seen.add(filePath);
+          results.push(filePath);
+          if (results.length >= limit) {
+            child.kill();
+            finish();
+            return;
+          }
+        }
+        newline = buffer.indexOf('\n');
+      }
+    });
+    child.on('error', finish);
+    child.on('close', finish);
+  });
+}
+
+function collectNullDelimitedProcess(
+  command: string,
+  args: string[],
+  limit: number,
+  timeoutMs: number,
+): Promise<string[]> {
+  return new Promise((resolve) => {
+    const results: string[] = [];
+    const seen = new Set<string>();
+    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'ignore'] });
+    let buffer = Buffer.alloc(0);
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(results);
+    };
+    const timer = setTimeout(() => {
+      child.kill();
+      finish();
+    }, timeoutMs);
+    child.stdout.on('data', (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      let delimiter = buffer.indexOf(0);
+      while (delimiter >= 0) {
+        const filePath = buffer.subarray(0, delimiter).toString('utf8');
+        buffer = buffer.subarray(delimiter + 1);
+        if (filePath && !seen.has(filePath)) {
+          seen.add(filePath);
+          results.push(filePath);
+          if (results.length >= limit) {
+            child.kill();
+            finish();
+            return;
+          }
+        }
+        delimiter = buffer.indexOf(0);
+      }
+    });
+    child.on('error', finish);
+    child.on('close', finish);
+  });
+}
+
+async function localFileSearchResults(paths: string[], query: string, limit: number) {
+  const rankedPaths = [...paths].sort((left, right) =>
+    localFilePathRank(left, query) - localFilePathRank(right, query));
+  return withLocalFileIcons(await localFileMetadataResults(rankedPaths, limit));
+}
+
+async function localFileMetadataResults(paths: string[], limit: number) {
+  const files = [];
+  for (const filePath of paths) {
+    if (files.length >= limit) break;
+    try {
+      const fileStat = await stat(filePath);
+      const entryKind = fileStat.isDirectory() ? 'directory' : fileStat.isFile() ? 'file' : null;
+      if (!entryKind) continue;
+      files.push({
+        entryKind,
+        id: cacheLocalFileSearchPath(filePath),
+        path: filePath,
+        name: basename(filePath),
+        parentPath: dirname(filePath),
+        mimeType: entryKind === 'directory' ? 'inode/directory' : inferMimeType(filePath),
+        sizeBytes: entryKind === 'directory' ? 0 : fileStat.size,
+        lastModified: fileStat.mtimeMs,
+      });
+    } catch {
+      // Spotlight can return stale paths; ignore entries that no longer stat.
+    }
+  }
+  return files;
+}
+
+function withLocalFileIcons<T extends {
+  entryKind?: string;
+  mimeType?: string;
+  name?: string;
+  path: string;
+}>(files: T[]): Promise<Array<T & { iconDataUrl?: string; thumbnailDataUrl?: string }>> {
+  return Promise.all(files.map(async (file) => {
+    const [iconDataUrl, thumbnailDataUrl] = await Promise.all([
+      localFileIconDataUrl(file.path),
+      shouldLoadLocalFileThumbnail(file) ? localFileThumbnailDataUrl(file.path, LOCAL_FILE_THUMBNAIL_TIMEOUT_MS) : Promise.resolve(null),
+    ]);
+    return {
+      ...file,
+      ...(iconDataUrl ? { iconDataUrl } : {}),
+      ...(thumbnailDataUrl ? { thumbnailDataUrl } : {}),
+    };
+  }));
+}
+
+function shouldLoadLocalFileThumbnail(file: { entryKind?: string; mimeType?: string; name?: string }): boolean {
+  if (file.entryKind === 'directory' || file.mimeType === 'inode/directory') return false;
+  const mimeType = (file.mimeType ?? '').toLowerCase();
+  if (mimeType.startsWith('image/')) return true;
+  const extension = extname(file.name ?? '').toLowerCase();
+  return [
+    '.avif',
+    '.bmp',
+    '.gif',
+    '.heic',
+    '.jpeg',
+    '.jpg',
+    '.png',
+    '.svg',
+    '.tif',
+    '.tiff',
+    '.webp',
+  ].includes(extension);
+}
+
+function localFilePathRank(filePath: string, query: string): number {
+  const name = basename(filePath).toLowerCase();
+  const lowerQuery = query.toLowerCase();
+  if (name === lowerQuery) return 0;
+  if (name.startsWith(lowerQuery)) return 1;
+  const wordIndex = name.search(new RegExp(`(^|[\\s._-])${escapeRegExp(lowerQuery)}`, 'u'));
+  if (wordIndex >= 0) return 2 + wordIndex / 1000;
+  const containsIndex = name.indexOf(lowerQuery);
+  if (containsIndex >= 0) return 4 + containsIndex / 1000;
+  return 10;
+}
+
+function cacheLocalFileSearchPath(filePath: string): string {
+  if (localFileSearchCache.size > 1000) localFileSearchCache.clear();
+  const id = createHash('sha256').update(filePath).digest('hex').slice(0, 24);
+  localFileSearchCache.set(id, filePath);
+  return id;
+}
+
+async function localFileIconDataUrl(filePath: string): Promise<string | null> {
+  const cached = localFileIconCache.get(filePath);
+  if (cached !== undefined) return cached;
+  let pending = pendingLocalFileIconLoads.get(filePath);
+  if (!pending) {
+    pending = loadLocalFileIconDataUrl(filePath)
+      .finally(() => pendingLocalFileIconLoads.delete(filePath));
+    pendingLocalFileIconLoads.set(filePath, pending);
+  }
+  return promiseWithTimeout(pending, LOCAL_FILE_ICON_TIMEOUT_MS, null);
+}
+
+async function loadLocalFileIconDataUrl(filePath: string): Promise<string | null> {
+  try {
+    const image = await app.getFileIcon(filePath, { size: LOCAL_FILE_ICON_SIZE });
+    const iconDataUrl = image.isEmpty() ? null : image.toDataURL();
+    if (localFileIconCache.size > 1000) localFileIconCache.clear();
+    localFileIconCache.set(filePath, iconDataUrl);
+    return iconDataUrl;
+  } catch {
+    localFileIconCache.set(filePath, null);
+    return null;
+  }
+}
+
+async function localFileThumbnailDataUrl(filePath: string, timeoutMs: number): Promise<string | null> {
+  const cached = localFileThumbnailCache.get(filePath);
+  if (cached !== undefined) return cached;
+  let pending = pendingLocalFileThumbnailLoads.get(filePath);
+  if (!pending) {
+    pending = loadLocalFileThumbnailDataUrl(filePath)
+      .finally(() => pendingLocalFileThumbnailLoads.delete(filePath));
+    pendingLocalFileThumbnailLoads.set(filePath, pending);
+  }
+  return promiseWithTimeout(pending, timeoutMs, null);
+}
+
+async function loadLocalFileThumbnailDataUrl(filePath: string): Promise<string | null> {
+  try {
+    const image = await nativeImage.createThumbnailFromPath(filePath, {
+      width: LOCAL_FILE_THUMBNAIL_SIZE,
+      height: LOCAL_FILE_THUMBNAIL_SIZE,
+    });
+    const thumbnailDataUrl = image.isEmpty() ? null : image.toDataURL();
+    if (localFileThumbnailCache.size > 1000) localFileThumbnailCache.clear();
+    localFileThumbnailCache.set(filePath, thumbnailDataUrl);
+    return thumbnailDataUrl;
+  } catch {
+    localFileThumbnailCache.set(filePath, null);
+    return null;
+  }
+}
+
+function promiseWithTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve(fallback);
+    }, timeoutMs);
+    promise
+      .then((value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch(() => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(fallback);
+      });
+  });
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 async function localPickedFile(filePath: string) {
   try {
     const fileStat = await stat(filePath);
-    if (!fileStat.isFile() || fileStat.size <= 0) return null;
-    const mimeType = inferMimeType(filePath);
-    const imageDataBase64 = isInlineImageMimeType(mimeType) && fileStat.size <= 10 * 1024 * 1024
+    const entryKind = fileStat.isDirectory() ? 'directory' : fileStat.isFile() ? 'file' : null;
+    if (!entryKind) return null;
+    if (entryKind === 'file' && fileStat.size <= 0) return null;
+    const mimeType = entryKind === 'directory' ? 'inode/directory' : inferMimeType(filePath);
+    const imageDataBase64 = entryKind === 'file' && isInlineImageMimeType(mimeType) && fileStat.size <= 10 * 1024 * 1024
       ? (await readFile(filePath)).toString('base64')
       : undefined;
+    const [visual] = await withLocalFileIcons([{
+      entryKind,
+      mimeType,
+      name: basename(filePath),
+      path: filePath,
+    }]);
     return {
+      entryKind,
       path: filePath,
       name: basename(filePath),
       mimeType,
-      sizeBytes: fileStat.size,
+      sizeBytes: entryKind === 'directory' ? 0 : fileStat.size,
       lastModified: fileStat.mtimeMs,
+      ...(visual?.iconDataUrl ? { iconDataUrl: visual.iconDataUrl } : {}),
+      ...(visual?.thumbnailDataUrl ? { thumbnailDataUrl: visual.thumbnailDataUrl } : {}),
       ...(imageDataBase64 ? { imageDataBase64 } : {}),
     };
   } catch {
@@ -253,7 +659,22 @@ function inferMimeType(filePath: string): string {
   if (extension === '.png') return 'image/png';
   if (extension === '.gif') return 'image/gif';
   if (extension === '.webp') return 'image/webp';
+  if (extension === '.svg') return 'image/svg+xml';
+  if (extension === '.avif') return 'image/avif';
+  if (extension === '.bmp') return 'image/bmp';
+  if (extension === '.heic') return 'image/heic';
+  if (extension === '.tif' || extension === '.tiff') return 'image/tiff';
   if (extension === '.pdf') return 'application/pdf';
+  if (extension === '.doc') return 'application/msword';
+  if (extension === '.docx') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if (extension === '.ppt') return 'application/vnd.ms-powerpoint';
+  if (extension === '.pptx') return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+  if (extension === '.key' || extension === '.keynote') return 'application/vnd.apple.keynote';
+  if (extension === '.pages') return 'application/vnd.apple.pages';
+  if (extension === '.odp') return 'application/vnd.oasis.opendocument.presentation';
+  if (extension === '.xls') return 'application/vnd.ms-excel';
+  if (extension === '.xlsx') return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  if (extension === '.numbers') return 'application/vnd.apple.numbers';
   if (extension === '.json') return 'application/json';
   if (extension === '.xml') return 'application/xml';
   if (extension === '.yaml' || extension === '.yml') return 'application/yaml';

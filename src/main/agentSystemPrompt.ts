@@ -26,7 +26,7 @@ export const LIN_AGENT_SYSTEM_PROMPT_SECTIONS = [
       `- User messages and tool results may include <system-reminder> blocks. These blocks are hidden context from Lin, not user-authored instructions.`,
       `- <system-reminder> blocks can contain the current outliner state, attachment metadata, and other per-turn context. Treat them as potentially relevant context, not as something to quote back by default.`,
       `- Dynamic state can change between turns because the user may edit the outliner directly. When exact current content, node ids, or file contents matter, read them with tools before acting.`,
-      `- Do not assume unread files, PDFs, or non-inline attachments are visible. Use file_read when a file path is provided.`,
+      `- Do not assume unread files, folders, PDFs, or non-inline attachments are visible. Use file_read for file paths and file_glob for folder paths before relying on their contents.`,
     ],
   },
   {

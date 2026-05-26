@@ -8,6 +8,7 @@ const SYSTEM_REMINDER_START = '<system-reminder>';
 const SYSTEM_REMINDER_END = '</system-reminder>';
 
 export interface ParsedAgentTextAttachment {
+  ref: string;
   name: string;
   mimeType: string;
   sizeBytes: number;
@@ -19,6 +20,7 @@ export interface ParsedAgentTextAttachment {
 export type AgentAttachmentMarkerItem =
   | {
       kind: 'image';
+      ref: string;
       name: string;
       mimeType: string;
       sizeBytes: number;
@@ -26,6 +28,7 @@ export type AgentAttachmentMarkerItem =
     }
   | {
       kind: 'file';
+      ref: string;
       name: string;
       mimeType: string;
       sizeBytes: number;
@@ -33,6 +36,7 @@ export type AgentAttachmentMarkerItem =
     }
   | {
       kind: 'inline_text';
+      ref: string;
       name: string;
       mimeType: string;
       sizeBytes: number;
@@ -47,6 +51,7 @@ export interface AgentAttachmentMarker {
 
 export function serializeAgentTextAttachment(attachment: AgentTextAttachmentInput): string {
   const metadata = {
+    ref: attachment.ref ?? attachment.name,
     name: attachment.name,
     mimeType: attachment.mimeType,
     sizeBytes: attachment.sizeBytes,
@@ -70,6 +75,7 @@ export function parseAgentTextAttachmentBlock(text: string): ParsedAgentTextAtta
     const metadata = JSON.parse(metadataText) as Partial<ParsedAgentTextAttachment>;
     if (typeof metadata.name !== 'string' || typeof metadata.mimeType !== 'string') return null;
     return {
+      ref: typeof metadata.ref === 'string' && metadata.ref.trim() ? metadata.ref : metadata.name,
       name: metadata.name,
       mimeType: metadata.mimeType,
       sizeBytes: typeof metadata.sizeBytes === 'number' ? metadata.sizeBytes : 0,
@@ -86,6 +92,7 @@ export function serializeAgentAttachmentMarker(attachments: Array<AgentImageAtta
     if (attachment.kind === 'image') {
       return {
         kind: 'image',
+        ref: attachment.ref ?? attachment.name,
         name: attachment.name,
         mimeType: attachment.mimeType,
         sizeBytes: attachment.sizeBytes,
@@ -95,6 +102,7 @@ export function serializeAgentAttachmentMarker(attachments: Array<AgentImageAtta
     if (attachment.kind === 'file') {
       return {
         kind: 'file',
+        ref: attachment.ref ?? attachment.name,
         name: attachment.name,
         mimeType: attachment.mimeType,
         sizeBytes: attachment.sizeBytes,
@@ -103,6 +111,7 @@ export function serializeAgentAttachmentMarker(attachments: Array<AgentImageAtta
     }
     return {
       kind: 'inline_text',
+      ref: attachment.ref ?? attachment.name,
       name: attachment.name,
       mimeType: attachment.mimeType,
       sizeBytes: attachment.sizeBytes,
@@ -112,7 +121,7 @@ export function serializeAgentAttachmentMarker(attachments: Array<AgentImageAtta
   if (items.length === 0) return null;
   const marker: AgentAttachmentMarker = {
     version: 1,
-    instructions: 'Images are visible as image content blocks. Files are available at local paths; use file_read to inspect file contents instead of assuming they are already visible. Inline text attachments are included in this user message.',
+    instructions: 'When user text includes [[file:<ref>]], match <ref> against these attachments. Images are visible as image content blocks. Files and folders are available at local paths; use file_read for files and file_glob for folders instead of assuming they are already visible. Inline text attachments are included in this user message.',
     attachments: items,
   };
   return `${USER_ATTACHMENTS_START}\n${JSON.stringify(marker, null, 2)}\n${USER_ATTACHMENTS_END}`;
@@ -131,6 +140,7 @@ export function parseAgentAttachmentMarkerBlock(text: string): AgentAttachmentMa
       if (item.kind === 'image' && typeof item.name === 'string' && typeof item.mimeType === 'string') {
         attachments.push({
           kind: 'image',
+          ref: typeof item.ref === 'string' && item.ref.trim() ? item.ref : item.name,
           name: item.name,
           mimeType: item.mimeType,
           sizeBytes: typeof item.sizeBytes === 'number' ? item.sizeBytes : 0,
@@ -139,6 +149,7 @@ export function parseAgentAttachmentMarkerBlock(text: string): AgentAttachmentMa
       } else if (item.kind === 'file' && typeof item.name === 'string' && typeof item.mimeType === 'string' && typeof item.path === 'string') {
         attachments.push({
           kind: 'file',
+          ref: typeof item.ref === 'string' && item.ref.trim() ? item.ref : item.name,
           name: item.name,
           mimeType: item.mimeType,
           sizeBytes: typeof item.sizeBytes === 'number' ? item.sizeBytes : 0,
@@ -147,6 +158,7 @@ export function parseAgentAttachmentMarkerBlock(text: string): AgentAttachmentMa
       } else if (item.kind === 'inline_text' && typeof item.name === 'string' && typeof item.mimeType === 'string') {
         attachments.push({
           kind: 'inline_text',
+          ref: typeof item.ref === 'string' && item.ref.trim() ? item.ref : item.name,
           name: item.name,
           mimeType: item.mimeType,
           sizeBytes: typeof item.sizeBytes === 'number' ? item.sizeBytes : 0,

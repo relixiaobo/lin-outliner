@@ -8,18 +8,20 @@ import type {
   UserMessage,
 } from '../../../core/agentTypes';
 import type { AgentRenderSubagentEntity } from '../../../core/agentRenderProjection';
+import { splitFileReferenceMarkers } from '../../../core/agentFileReferenceMarkup';
 import {
   isHiddenAgentContextBlock,
   parseAgentAttachmentMarkerBlock,
   parseAgentTextAttachmentBlock,
-  type ParsedAgentTextAttachment,
 } from '../../../core/agentAttachments';
 import type { DocumentIndex } from '../../state/document';
 import {
   CheckIcon,
   CloseIcon,
   CopyIcon,
+  FileImageIcon,
   FileTextIcon,
+  FolderIcon,
   ICON_SIZE,
   PencilIcon,
   RedoIcon,
@@ -43,6 +45,7 @@ import {
 } from './AgentMessageFrame';
 import {
   AgentInlineReferenceText,
+  type AgentInlineFileReference,
   type AgentNodeReferenceOpenHandler,
 } from './AgentInlineReferenceText';
 
@@ -70,22 +73,32 @@ interface AgentMessageRowProps {
 
 interface UserDisplayContent {
   text: string;
-  textAttachments: ParsedAgentTextAttachment[];
+  attachments: UserAttachmentDisplayItem[];
   images: ImageContent[];
+}
+
+interface UserAttachmentDisplayItem extends AgentInlineFileReference {
+  kind: 'file' | 'image' | 'inline_text';
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  path?: string;
+  truncated?: boolean;
 }
 
 function displayContentFromUser(content: UserMessage['content']): UserDisplayContent {
   if (typeof content === 'string') {
     return {
       text: content,
-      textAttachments: [],
+      attachments: [],
       images: [],
     };
   }
 
   const textBlocks: string[] = [];
-  const textAttachments: ParsedAgentTextAttachment[] = [];
+  const attachments: UserAttachmentDisplayItem[] = [];
   const images: ImageContent[] = [];
+  let pendingImageSummaryBlocks = 0;
 
   for (const block of content) {
     if (block.type === 'image') {
@@ -95,31 +108,49 @@ function displayContentFromUser(content: UserMessage['content']): UserDisplayCon
 
     const parsedAttachment = parseAgentTextAttachmentBlock(block.text);
     if (parsedAttachment) {
-      textAttachments.push(parsedAttachment);
+      attachments.push({
+        kind: 'inline_text',
+        name: parsedAttachment.name,
+        ref: parsedAttachment.ref,
+        mimeType: parsedAttachment.mimeType,
+        sizeBytes: parsedAttachment.sizeBytes,
+        truncated: parsedAttachment.truncated,
+      });
     } else if (isHiddenAgentContextBlock(block.text)) {
       const marker = parseAgentAttachmentMarkerBlock(block.text);
       if (marker) {
         for (const item of marker.attachments) {
           if (item.kind === 'file') {
-            textAttachments.push({
+            attachments.push({
+              kind: 'file',
               name: item.name,
+              ref: item.ref,
               mimeType: item.mimeType,
               sizeBytes: item.sizeBytes,
-              truncated: false,
-              text: '',
               path: item.path,
             });
+          } else if (item.kind === 'image') {
+            attachments.push({
+              kind: 'image',
+              name: item.name,
+              ref: item.ref,
+              mimeType: item.mimeType,
+              sizeBytes: item.sizeBytes,
+            });
+            pendingImageSummaryBlocks += 1;
           }
         }
       }
+    } else if (pendingImageSummaryBlocks > 0 && block.text.trim() === 'Image attachment') {
+      pendingImageSummaryBlocks -= 1;
     } else {
       textBlocks.push(block.text);
     }
   }
 
   return {
-    text: textBlocks.join('\n\n'),
-    textAttachments,
+    text: removeImageAttachmentSummaries(textBlocks.join('\n\n')),
+    attachments,
     images,
   };
 }
@@ -139,6 +170,45 @@ function formatBytes(bytes: number): string {
     unitIndex += 1;
   }
   return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function removeImageAttachmentSummaries(text: string): string {
+  return text
+    .replace(/[ \t]+\n/gu, '\n')
+    .replace(/\n[ \t]+/gu, '\n')
+    .replace(/\n{3,}/gu, '\n\n')
+    .trim();
+}
+
+function iconForUserAttachment(attachment: UserAttachmentDisplayItem) {
+  if (attachment.mimeType === 'inode/directory') return <FolderIcon size={ICON_SIZE.menu} />;
+  if (attachment.kind === 'image' || attachment.mimeType.startsWith('image/')) return <FileImageIcon size={ICON_SIZE.menu} />;
+  return <FileTextIcon size={ICON_SIZE.menu} />;
+}
+
+function referencedAttachmentRefs(
+  text: string,
+  attachments: readonly UserAttachmentDisplayItem[],
+): Set<string> {
+  const refs = new Set<string>();
+  for (const segment of splitFileReferenceMarkers(text)) {
+    if (segment.type === 'file') refs.add(segment.ref);
+  }
+  for (const attachment of attachments) {
+    if (textContainsAttachmentMention(text, attachment.name)) refs.add(attachment.ref);
+  }
+  return refs;
+}
+
+function textContainsAttachmentMention(text: string, name: string): boolean {
+  const mention = `@${name}`;
+  let offset = text.indexOf(mention);
+  while (offset >= 0) {
+    const next = text[offset + mention.length];
+    if (!next || !/[A-Za-z0-9._-]/u.test(next)) return true;
+    offset = text.indexOf(mention, offset + 1);
+  }
+  return false;
 }
 
 function textFromAssistant(message: AssistantMessage): string {
@@ -344,7 +414,9 @@ export function AgentMessageRow({
   if (message.role === 'user') {
     const userContent = displayContentFromUser(message.content);
     const text = userContent.text;
-    const hasAttachments = userContent.textAttachments.length > 0 || userContent.images.length > 0;
+    const inlineAttachmentRefs = referencedAttachmentRefs(text, userContent.attachments);
+    const listedAttachments = userContent.attachments.filter((attachment) => !inlineAttachmentRefs.has(attachment.ref));
+    const hasAttachments = userContent.attachments.length > 0 || userContent.images.length > 0;
     const CopyStateIcon = copied ? CheckIcon : CopyIcon;
     const nodeId = entry.nodeId;
     if (editing && nodeId) {
@@ -388,11 +460,11 @@ export function AgentMessageRow({
     return (
       <AgentMessageFrame role="user">
         <div className="agent-user-content">
-          {userContent.textAttachments.length > 0 ? (
+          {listedAttachments.length > 0 ? (
             <div className="agent-user-file-list">
-              {userContent.textAttachments.map((attachment, index) => (
-                <div className="agent-user-file-chip" key={`${attachment.name}-${index}`}>
-                  <FileTextIcon size={ICON_SIZE.menu} />
+              {listedAttachments.map((attachment, index) => (
+                <div className="agent-user-file-chip" key={`${attachment.ref}-${index}`}>
+                  {iconForUserAttachment(attachment)}
                   <span title={attachment.name}>{attachment.name}</span>
                   <small>{formatBytes(attachment.sizeBytes)}</small>
                 </div>
@@ -413,6 +485,7 @@ export function AgentMessageRow({
           {text.trim().length > 0 ? (
             <div className="agent-user-bubble">
               <AgentInlineReferenceText
+                fileAttachments={userContent.attachments}
                 index={index}
                 onNodeReferenceOpen={onNodeReferenceOpen}
                 text={text}

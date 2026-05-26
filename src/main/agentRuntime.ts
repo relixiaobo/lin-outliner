@@ -29,7 +29,7 @@ import type {
   ToolResultMessage,
 } from '@earendil-works/pi-ai';
 import { createHash, randomUUID } from 'node:crypto';
-import { copyFile, mkdir, stat } from 'node:fs/promises';
+import { copyFile, mkdir, stat, symlink } from 'node:fs/promises';
 import path from 'node:path';
 import {
   type AgentFileAttachmentInput,
@@ -58,6 +58,7 @@ import {
   type AgentPayloadRef,
   type AgentPersistedContent,
 } from '../core/agentEventLog';
+import { sanitizeFileReferenceRef } from '../core/agentFileReferenceMarkup';
 import { serializeAgentAttachmentMarker, serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
 import { nodeReferenceMarkersToText } from '../core/nodeReferenceMarkup';
 import { toolEnvelopeAfterToolCall } from './agentToolEnvelope';
@@ -2348,6 +2349,7 @@ function normalizeAttachmentInput(input: unknown): AgentMessageAttachmentInput |
   const kind = record.kind;
   const id = stringOrFallback(record.id, randomUUID());
   const name = stringOrFallback(record.name, 'attachment').slice(0, MAX_ATTACHMENT_NAME_LENGTH);
+  const ref = sanitizeFileReferenceRef(stringOrFallback(record.ref, name)).slice(0, MAX_ATTACHMENT_NAME_LENGTH);
   const mimeType = stringOrFallback(record.mimeType, 'application/octet-stream');
   const sizeBytes = Number.isFinite(record.sizeBytes) ? Math.max(0, Number(record.sizeBytes)) : 0;
 
@@ -2359,7 +2361,7 @@ function normalizeAttachmentInput(input: unknown): AgentMessageAttachmentInput |
       : '';
     if (!dataBase64) return null;
     if (dataBase64.length > MAX_IMAGE_ATTACHMENT_BASE64_CHARS) return null;
-    return { id, kind: 'image', name, mimeType: normalizedMimeType, sizeBytes, dataBase64 };
+    return { id, ref, kind: 'image', name, mimeType: normalizedMimeType, sizeBytes, dataBase64 };
   }
 
   if (kind === 'text') {
@@ -2367,6 +2369,7 @@ function normalizeAttachmentInput(input: unknown): AgentMessageAttachmentInput |
     const text = rawText.slice(0, MAX_TEXT_ATTACHMENT_CHARS);
     return {
       id,
+      ref,
       kind: 'text',
       name,
       mimeType,
@@ -2379,7 +2382,7 @@ function normalizeAttachmentInput(input: unknown): AgentMessageAttachmentInput |
   if (kind === 'file') {
     const filePath = stringOrFallback(record.path, '');
     if (!filePath) return null;
-    return { id, kind: 'file', name, mimeType, sizeBytes, path: filePath };
+    return { id, ref, kind: 'file', name, mimeType, sizeBytes, path: filePath };
   }
 
   return null;
@@ -2576,10 +2579,14 @@ async function materializeFileAttachment(localRoot: string, attachment: AgentFil
   const sourcePath = path.resolve(attachment.path);
   if (isPathInside(localRoot, sourcePath)) return { ...attachment, path: sourcePath };
 
-  await stat(sourcePath);
+  const sourceStat = await stat(sourcePath);
   const attachmentDir = path.join(localRoot, 'tmp', AGENT_ATTACHMENT_DIR);
   await mkdir(attachmentDir, { recursive: true });
   const targetPath = path.join(attachmentDir, `${randomUUID()}-${safeAttachmentFileName(attachment.name)}`);
+  if (sourceStat.isDirectory()) {
+    await symlink(sourcePath, targetPath, 'dir');
+    return { ...attachment, path: targetPath };
+  }
   await copyFile(sourcePath, targetPath);
   return { ...attachment, path: targetPath };
 }

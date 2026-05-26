@@ -3,7 +3,7 @@
 This document is the working checklist for Lin's local agent integration. Keep
 it current whenever a meaningful agent milestone lands or a priority changes.
 
-Last updated: 2026-05-22
+Last updated: 2026-05-26
 
 ## Current Direction
 
@@ -61,6 +61,11 @@ truth.
   - `web_fetch`
 - [x] Per-turn hidden context reminders for current outliner context and
   uploaded file metadata.
+- [x] Local file mentions in the agent composer:
+  - `@` suggestions include recent nodes, local files, and folders
+  - selected files/folders/images render as inline tokens
+  - model-facing text preserves position with `[[file:<ref>]]`
+  - hidden attachment context maps each `ref` to path, kind, MIME type, and size
 - [x] Lin-specific stable system prompt module for agent identity, tool
   boundaries, dynamic reminder handling, and safety posture.
 - [x] Event-sourced agent runtime foundation:

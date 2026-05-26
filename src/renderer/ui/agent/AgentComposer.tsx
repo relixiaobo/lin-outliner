@@ -6,6 +6,7 @@ import {
   type DragEvent,
 } from 'react';
 import type { AgentMessageAttachmentInput } from '../../../core/agentTypes';
+import { sanitizeFileReferenceRef } from '../../../core/agentFileReferenceMarkup';
 import type {
   AgentModelOption,
   AgentProviderConfigView,
@@ -31,6 +32,7 @@ import {
   type AgentComposerEditorHandle,
   type AgentComposerEditorSnapshot,
   type AgentComposerFileReference,
+  type AgentComposerLocalFileCandidate,
   type AgentComposerNodeReference,
 } from './AgentComposerEditor';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
@@ -115,17 +117,22 @@ const TEXT_ATTACHMENT_EXTENSIONS = new Set([
 
 type ComposerAttachment = AgentMessageAttachmentInput & {
   fingerprint?: string;
+  iconDataUrl?: string;
   previewUrl?: string;
   sha256?: string;
+  thumbnailDataUrl?: string;
 };
 
 interface PickedLocalFileAttachment {
+  entryKind?: 'file' | 'directory';
   path: string;
   name: string;
   mimeType: string;
   sizeBytes: number;
   lastModified: number;
+  iconDataUrl?: string;
   imageDataBase64?: string;
+  thumbnailDataUrl?: string;
 }
 
 const EMPTY_DRAFT: AgentComposerDraft = {
@@ -159,6 +166,7 @@ export function AgentComposer({
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [moreModelsOpen, setMoreModelsOpen] = useState(false);
   const [reasoningMenuOpen, setReasoningMenuOpen] = useState(false);
+  const [recentLocalFiles, setRecentLocalFiles] = useState<AgentComposerLocalFileCandidate[]>([]);
   const editorRef = useRef<AgentComposerEditorHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachmentsRef = useRef<ComposerAttachment[]>([]);
@@ -200,6 +208,20 @@ export function AgentComposer({
     for (const attachment of attachmentsRef.current) {
       revokeAttachmentPreview(attachment);
     }
+  }, []);
+
+  useEffect(() => {
+    let canceled = false;
+    window.lin?.recentLocalFiles?.({ limit: 6 })
+      .then((result) => {
+        if (!canceled) setRecentLocalFiles(result.files);
+      })
+      .catch(() => {
+        // Recent local files are an optional convenience; search still works.
+      });
+    return () => {
+      canceled = true;
+    };
   }, []);
 
   async function submit() {
@@ -300,8 +322,9 @@ export function AgentComposer({
       }
     }
 
-    if (nextAttachments.length > 0) {
-      const merged = [...attachmentsRef.current, ...nextAttachments];
+    const referencedAttachments = withAttachmentRefs(nextAttachments, attachmentsRef.current);
+    if (referencedAttachments.length > 0) {
+      const merged = [...attachmentsRef.current, ...referencedAttachments];
       attachmentsRef.current = merged;
       setAttachments(merged);
     }
@@ -311,7 +334,7 @@ export function AgentComposer({
         ?? overflowMessage(skippedOverflow)
         ?? null,
     );
-    return nextAttachments;
+    return referencedAttachments;
   }
 
   async function addFilesInline(files: FileList | File[]) {
@@ -321,12 +344,16 @@ export function AgentComposer({
     }
   }
 
-  async function addPickedLocalFilesInline(files: PickedLocalFileAttachment[]) {
-    if (files.length === 0) return;
+  async function addPickedLocalFilesInline(
+    files: PickedLocalFileAttachment[],
+    options: { insertReferences?: boolean } = {},
+  ): Promise<AgentComposerFileReference[]> {
+    const insertReferences = options.insertReferences ?? true;
+    if (files.length === 0) return [];
     const remainingSlots = MAX_ATTACHMENTS - attachmentsRef.current.length;
     if (remainingSlots <= 0) {
       setAttachmentError(`You can attach up to ${MAX_ATTACHMENTS} files.`);
-      return;
+      return [];
     }
 
     const existingFingerprints = new Set(attachmentsRef.current.map((attachment) => attachment.fingerprint));
@@ -359,10 +386,19 @@ export function AgentComposer({
     }
 
     if (nextAttachments.length > 0) {
-      const merged = [...attachmentsRef.current, ...nextAttachments];
+      const referencedAttachments = withAttachmentRefs(nextAttachments, attachmentsRef.current);
+      const merged = [...attachmentsRef.current, ...referencedAttachments];
       attachmentsRef.current = merged;
       setAttachments(merged);
-      editorRef.current?.insertFileReferences(nextAttachments.map(attachmentToFileReference));
+      const refs = referencedAttachments.map(attachmentToFileReference);
+      if (insertReferences) editorRef.current?.insertFileReferences(refs);
+      setAttachmentError(
+        failures[0]
+          ?? duplicateMessage(skippedDuplicates)
+          ?? overflowMessage(skippedOverflow)
+          ?? null,
+      );
+      return refs;
     }
     setAttachmentError(
       failures[0]
@@ -370,6 +406,7 @@ export function AgentComposer({
         ?? overflowMessage(skippedOverflow)
         ?? null,
     );
+    return [];
   }
 
   function detachAttachments() {
@@ -405,6 +442,45 @@ export function AgentComposer({
     }
 
     fileInputRef.current?.click();
+  }
+
+  async function searchLocalFiles(query: string): Promise<AgentComposerLocalFileCandidate[]> {
+    if (!window.lin?.searchLocalFiles) return [];
+    const result = await window.lin.searchLocalFiles({ query, limit: 8 });
+    return result.files;
+  }
+
+  async function previewLocalFile(
+    file: AgentComposerLocalFileCandidate,
+  ): Promise<AgentComposerLocalFileCandidate | null> {
+    if (file.thumbnailDataUrl || !window.lin?.previewLocalFile) return file.thumbnailDataUrl ? file : null;
+    const result = await window.lin.previewLocalFile({ id: file.id });
+    return result.thumbnailDataUrl
+      ? { ...file, thumbnailDataUrl: result.thumbnailDataUrl }
+      : null;
+  }
+
+  async function attachLocalFileCandidate(
+    file: AgentComposerLocalFileCandidate,
+  ): Promise<AgentComposerFileReference | null> {
+    if (!window.lin?.prepareLocalFile) {
+      setAttachmentError('Local file search is not available in this window.');
+      return null;
+    }
+    const result = await window.lin.prepareLocalFile({ id: file.id });
+    if (!result.file) {
+      setAttachmentError('That local file is no longer available.');
+      return null;
+    }
+    const refs = await addPickedLocalFilesInline([{
+      ...result.file,
+      iconDataUrl: result.file.iconDataUrl ?? file.iconDataUrl,
+      thumbnailDataUrl: result.file.thumbnailDataUrl ?? file.thumbnailDataUrl,
+    }], { insertReferences: false });
+    if (refs.length > 0) {
+      setRecentLocalFiles((current) => [file, ...current.filter((item) => item.id !== file.id)].slice(0, 8));
+    }
+    return refs[0] ?? null;
   }
 
   function handleDragEnter(event: DragEvent<HTMLDivElement>) {
@@ -533,7 +609,11 @@ export function AgentComposer({
           isStreaming={isStreaming}
           onChange={handleDraftChange}
           onFilesPasted={(files) => void addFilesInline(files)}
+          onLocalFilePreview={previewLocalFile}
+          onLocalFileSearch={searchLocalFiles}
+          onLocalFileSelect={attachLocalFileCandidate}
           onNodeReferenceClick={onNodeReferenceOpen}
+          recentLocalFiles={recentLocalFiles}
           onStop={onStop}
           onSubmit={() => void submit()}
           placeholder={
@@ -622,6 +702,7 @@ async function fileToAttachment(file: File): Promise<ComposerAttachment> {
       sizeBytes: file.size,
       dataBase64: inlineImage.dataBase64,
       previewUrl,
+      thumbnailDataUrl: previewUrl,
     };
   }
 
@@ -662,6 +743,7 @@ async function pickedLocalFileToAttachment(file: PickedLocalFileAttachment): Pro
   if (inlineImageMimeType && file.imageDataBase64) {
     const imageFile = fileFromBase64(file.imageDataBase64, name, inlineImageMimeType, file.lastModified);
     const inlineImage = await readInlineImageForModel(imageFile, inlineImageMimeType);
+    const previewUrl = URL.createObjectURL(imageFile);
     return {
       id,
       kind: 'image',
@@ -669,7 +751,8 @@ async function pickedLocalFileToAttachment(file: PickedLocalFileAttachment): Pro
       mimeType: inlineImage.mimeType,
       sizeBytes: file.sizeBytes,
       dataBase64: inlineImage.dataBase64,
-      previewUrl: URL.createObjectURL(imageFile),
+      previewUrl,
+      thumbnailDataUrl: file.thumbnailDataUrl ?? previewUrl,
     };
   }
 
@@ -679,26 +762,73 @@ async function pickedLocalFileToAttachment(file: PickedLocalFileAttachment): Pro
     name,
     mimeType,
     sizeBytes: file.sizeBytes,
+    iconDataUrl: file.iconDataUrl,
     path: file.path,
+    thumbnailDataUrl: file.thumbnailDataUrl,
   };
 }
 
 function toAttachmentPayload(attachment: ComposerAttachment): AgentMessageAttachmentInput {
   if (attachment.kind === 'image') {
-    const { fingerprint: _fingerprint, previewUrl: _previewUrl, sha256: _sha256, ...payload } = attachment;
+    const {
+      fingerprint: _fingerprint,
+      iconDataUrl: _iconDataUrl,
+      previewUrl: _previewUrl,
+      sha256: _sha256,
+      thumbnailDataUrl: _thumbnailDataUrl,
+      ...payload
+    } = attachment;
     return payload;
   }
-  const { fingerprint: _fingerprint, previewUrl: _previewUrl, sha256: _sha256, ...payload } = attachment;
+  const {
+    fingerprint: _fingerprint,
+    iconDataUrl: _iconDataUrl,
+    previewUrl: _previewUrl,
+    sha256: _sha256,
+    thumbnailDataUrl: _thumbnailDataUrl,
+    ...payload
+  } = attachment;
   return payload;
 }
 
 function attachmentToFileReference(attachment: ComposerAttachment): AgentComposerFileReference {
   return {
     attachmentId: attachment.id,
+    entryKind: attachment.mimeType === 'inode/directory' ? 'directory' : 'file',
+    iconDataUrl: attachment.iconDataUrl,
     name: attachment.name,
+    ref: attachment.ref ?? sanitizeFileReferenceRef(attachment.name),
     mimeType: attachment.mimeType,
     sizeBytes: attachment.sizeBytes,
+    thumbnailDataUrl: attachment.thumbnailDataUrl,
   };
+}
+
+function withAttachmentRefs(
+  attachments: readonly ComposerAttachment[],
+  existingAttachments: readonly ComposerAttachment[],
+): ComposerAttachment[] {
+  const usedRefs = new Set<string>();
+  for (const attachment of existingAttachments) {
+    if (attachment.ref) usedRefs.add(attachment.ref);
+  }
+  return attachments.map((attachment) => {
+    const base = sanitizeFileReferenceRef(attachment.ref ?? attachment.name);
+    const ref = uniqueAttachmentRef(base, usedRefs);
+    usedRefs.add(ref);
+    return { ...attachment, ref };
+  });
+}
+
+function uniqueAttachmentRef(base: string, usedRefs: Set<string>): string {
+  if (!usedRefs.has(base)) return base;
+  const extensionMatch = base.match(/^(.*?)(\.[^./\\]+)?$/u);
+  const stem = extensionMatch?.[1] || base;
+  const extension = extensionMatch?.[2] || '';
+  for (let index = 2; ; index += 1) {
+    const candidate = `${stem}-${index}${extension}`;
+    if (!usedRefs.has(candidate)) return candidate;
+  }
 }
 
 function isTextAttachment(file: File, mimeType: string): boolean {
@@ -719,9 +849,29 @@ function isTextAttachment(file: File, mimeType: string): boolean {
 
 function inferMimeType(name: string): string {
   const lowerName = name.toLowerCase();
+  if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) return 'image/jpeg';
+  if (lowerName.endsWith('.png')) return 'image/png';
+  if (lowerName.endsWith('.gif')) return 'image/gif';
+  if (lowerName.endsWith('.webp')) return 'image/webp';
+  if (lowerName.endsWith('.svg')) return 'image/svg+xml';
+  if (lowerName.endsWith('.avif')) return 'image/avif';
+  if (lowerName.endsWith('.bmp')) return 'image/bmp';
+  if (lowerName.endsWith('.heic')) return 'image/heic';
+  if (lowerName.endsWith('.tif') || lowerName.endsWith('.tiff')) return 'image/tiff';
+  if (lowerName.endsWith('.pdf')) return 'application/pdf';
+  if (lowerName.endsWith('.doc')) return 'application/msword';
+  if (lowerName.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
   if (lowerName.endsWith('.json')) return 'application/json';
   if (lowerName.endsWith('.xml')) return 'application/xml';
   if (lowerName.endsWith('.yaml') || lowerName.endsWith('.yml')) return 'application/yaml';
+  if (lowerName.endsWith('.ppt')) return 'application/vnd.ms-powerpoint';
+  if (lowerName.endsWith('.pptx')) return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+  if (lowerName.endsWith('.key') || lowerName.endsWith('.keynote')) return 'application/vnd.apple.keynote';
+  if (lowerName.endsWith('.pages')) return 'application/vnd.apple.pages';
+  if (lowerName.endsWith('.odp')) return 'application/vnd.oasis.opendocument.presentation';
+  if (lowerName.endsWith('.xls')) return 'application/vnd.ms-excel';
+  if (lowerName.endsWith('.xlsx')) return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  if (lowerName.endsWith('.numbers')) return 'application/vnd.apple.numbers';
   if ([...TEXT_ATTACHMENT_EXTENSIONS].some((extension) => lowerName.endsWith(extension))) return 'text/plain';
   return 'application/octet-stream';
 }

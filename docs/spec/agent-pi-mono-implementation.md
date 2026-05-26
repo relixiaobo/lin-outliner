@@ -196,6 +196,37 @@ Session listing, rename/delete, debug history, debug payload reads, payload text
 reads, reset, and provider settings are separate Electron IPC commands that use
 the same Lin-owned DTO boundary.
 
+## Local File Mentions
+
+The composer may insert local files, folders, and images as inline mention
+atoms. The user-facing editor and transcript render these as natural `@name`
+tokens, but the model-facing user text uses structured positional markers:
+`[[file:<ref>]]`.
+
+`ref` is a stable, human-readable reference for one user turn. It is derived
+from the selected file name, sanitized to one line, and de-duplicated within the
+turn when multiple attachments would otherwise collide. It is not a model-facing
+attachment id. Renderer-only attachment ids may exist for editing and deletion,
+but they must not be required for model interpretation.
+
+Every turn with attachments also includes a hidden `<user-attachments>` reminder.
+Each item carries the fields needed to resolve a marker:
+
+- `ref`, `kind`, `name`, `mimeType`, and `sizeBytes`
+- `path` for local files and folders
+- `inline: true` for image content that is sent as a pi-ai image block
+- `truncated` for inline text attachments
+
+When the user writes `[[file:<ref>]]`, the agent should match `<ref>` against
+that hidden attachment table. Image attachments are visible as image content
+blocks. Local files and folders are available by path and should be inspected
+with `file_read` or `file_glob`; the model should not assume their contents are
+already present unless the item is an inline text attachment.
+
+Clipboard images and temporary files follow the same contract: Lin materializes
+or inlines the data as needed, gives it a friendly `ref`, and records enough
+hidden context for the model to resolve that `ref`.
+
 ## Model Configuration
 
 Lin should use `pi-ai` for known provider and model metadata, but Lin should own

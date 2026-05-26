@@ -2,6 +2,7 @@ import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { isContentNode, textOf } from '../shared';
 import { textMatchRank } from './candidateRanking';
+import { isNodeInTrash } from './nodeLocation';
 import { getTreeReferenceBlockMessage, getTreeReferenceBlockReason } from './referenceRules';
 
 export type ReferenceCandidate =
@@ -111,7 +112,7 @@ function nodeCandidates(
   const currentNode = index.byId.get(currentNodeId);
   const currentAncestors = ancestorIds(currentNode, index.byId);
   const candidates = index.projection.nodes
-    .filter((node) => isContentNode(node) && node.id !== currentNodeId)
+    .filter((node) => isContentNode(node) && node.id !== currentNodeId && !isNodeInTrash(index, node.id))
     .map((node) => {
       const label = textOf(node);
       const rawText = node.content.text.trim();
