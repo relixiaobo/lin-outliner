@@ -51,7 +51,8 @@ directory at the start of a session and act accordingly.
 
 - `gh pr merge` or otherwise merge any PR.
 - Push to `main` (work only on feature branches).
-- Edit `docs/TASKS.md` (main-agent-owned).
+- Edit `docs/TASKS.md` or `CHANGELOG.md` (both main-agent-owned; the main
+  agent records the changelog entry on merge).
 
 Only the main agent in `lin-outliner/` merges to `main`. When a dev agent's
 change is ready, mark the PR ready and stop — the main agent takes it from
@@ -68,8 +69,9 @@ there.
    push, and open a Draft PR (or mark an assigned one ready). The PR body is
    the contract.
 3. **Review + merge (main agent).** Review the PR (typecheck, tests, build,
-   code + design-system review, visual check for UI), merge to `main`, and
-   update `docs/TASKS.md`.
+   code + design-system review, visual check for UI), merge to `main`, update
+   `docs/TASKS.md`, and add a `CHANGELOG.md` entry under `[Unreleased]`
+   (Added / Changed / Fixed / Internal as appropriate, referencing the PR).
 4. **Resync.** After a merge, dev agents `git fetch && git rebase origin/main`
    on their active branches.
 
@@ -111,6 +113,8 @@ agent rebase before continuing:
 - `docs/spec/README.md`, `docs/plans/README.md` — doc indexes
 - `src/core/commands.ts`, `src/core/types.ts` — protocol surface
 - `docs/TASKS.md` — main-agent-owned; dev agents never edit it
+- `CHANGELOG.md` — main-agent-owned; the main agent adds an `[Unreleased]`
+  entry on merge (step 3), dev agents never edit it
 
 The default owner is whichever agent is actively shipping the related
 plan. When in doubt, post the intended change on the corresponding PR
