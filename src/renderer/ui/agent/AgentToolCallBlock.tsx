@@ -53,25 +53,6 @@ type ResultPart =
 const TOOL_OUTPUT_WINDOW_HEAD_CHARS = 12_000;
 const TOOL_OUTPUT_WINDOW_TAIL_CHARS = 4_000;
 
-interface ToolEnvelopeLike {
-  ok: boolean;
-  tool: string;
-  version: number;
-  status: string;
-  data?: unknown;
-  error?: {
-    code?: string;
-    message?: string;
-    recoverable?: boolean;
-    details?: unknown;
-  };
-  nextStep?: string;
-  fallback?: string;
-  hint?: unknown;
-  warnings?: string[];
-  metrics?: unknown;
-}
-
 export function getToolCallStatus(
   toolCallId: string,
   result: AgentToolResultWithPayloads | undefined,
@@ -378,15 +359,6 @@ function resultImages(result: AgentToolResultWithPayloads | undefined): Array<{ 
     .map((block) => ({ data: block.data, mimeType: block.mimeType }));
 }
 
-function isToolEnvelope(value: unknown): value is ToolEnvelopeLike {
-  if (!value || typeof value !== 'object') return false;
-  const candidate = value as Partial<ToolEnvelopeLike>;
-  return candidate.version === 1
-    && typeof candidate.ok === 'boolean'
-    && typeof candidate.tool === 'string'
-    && typeof candidate.status === 'string';
-}
-
 function isJsonText(text: string): boolean {
   const trimmed = text.trim();
   if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) return false;
@@ -480,37 +452,6 @@ function ToolCopyButton({ ariaLabel, text }: { ariaLabel: string; text: string }
     >
       <CopyStateIcon size={ICON_SIZE.menu} />
     </ButtonControl>
-  );
-}
-
-function ToolEnvelopeOutput({ envelope }: { envelope: ToolEnvelopeLike }) {
-  const notes = [
-    envelope.error?.message,
-    ...(envelope.warnings ?? []),
-    envelope.nextStep ? `Next: ${envelope.nextStep}` : null,
-    envelope.fallback ? `Fallback: ${envelope.fallback}` : null,
-  ].filter((note): note is string => typeof note === 'string' && note.trim().length > 0);
-
-  return (
-    <div className="agent-tool-envelope">
-      <div className={`agent-tool-status-line ${envelope.ok ? 'is-ok' : 'is-error'}`}>
-        <span>{envelope.status}</span>
-        <span>{envelope.tool}</span>
-      </div>
-      {notes.length > 0 ? (
-        <div className="agent-tool-notes">
-          {notes.map((note, index) => (
-            <div key={`note-${index}`}>{note}</div>
-          ))}
-        </div>
-      ) : null}
-      {envelope.data !== undefined ? (
-        <pre>{jsonText(envelope.data)}</pre>
-      ) : null}
-      {envelope.hint !== undefined ? (
-        <pre>{jsonText(envelope.hint)}</pre>
-      ) : null}
-    </div>
   );
 }
 
@@ -634,11 +575,9 @@ export function AgentToolCallBlock({
   const outputText = useMemo(() => resultText(result), [result]);
   const images = useMemo(() => resultImages(result), [result]);
   const parts = useMemo(() => resultParts(result, isExpanded), [result, isExpanded]);
-  const details = result?.details;
-  const envelope = isToolEnvelope(details) ? details : null;
   const hasSubagentDetails = Boolean(subagent);
-  const hasDetails = hasSubagentDetails || inputText !== '{}' || outputText.length > 0 || envelope !== null;
-  const hasOutputDetails = envelope !== null || parts.length > 0;
+  const hasDetails = hasSubagentDetails || inputText !== '{}' || outputText.length > 0;
+  const hasOutputDetails = outputText.length > 0;
 
   function toggle() {
     if (onToggle) {
@@ -685,8 +624,7 @@ export function AgentToolCallBlock({
             </div>
             <ToolCopyButton ariaLabel="Copy tool output" text={outputText} />
           </div>
-          {envelope ? <ToolEnvelopeOutput envelope={envelope} /> : null}
-          {!envelope ? parts.map((part, partIndex) =>
+          {parts.map((part, partIndex) =>
             part.type === 'imagePlaceholder' ? (
               <div className="agent-tool-image-placeholder" key={`placeholder-${partIndex}`}>
                 <FileTextIcon size={ICON_SIZE.menu} />
@@ -708,7 +646,7 @@ export function AgentToolCallBlock({
                 <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={part.text} />
               </pre>
             ),
-          ) : null}
+          )}
         </section>
       ) : null}
     </AgentToolCallDisclosure>
