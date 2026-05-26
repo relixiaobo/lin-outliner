@@ -15,6 +15,7 @@ workflow.
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle |
 | Codex | `lin-outliner-codex/` | — | `agent-past-chats` |
 
 ## In progress
