@@ -67,6 +67,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Slimmer model-visible tool output** — `web_search`, `web_fetch`,
+  `file_glob`, `file_grep`, `bash`, `task_stop`, `operation_history`, and the
+  `Agent`/`AgentStatus`/`AgentSend`/`AgentStop` subagent tools now project a
+  trimmed view to the model via `agentToolResult(envelope, modelData)`, dropping
+  echoed call arguments, constant provider metadata, and telemetry
+  (`durationMs`, `byteLength`, `finalUrl`, the Loro cursor, etc.). The full data
+  stays on the envelope (`details`); conditional fields (redirect `finalUrl`,
+  non-200 `statusCode`, pagination) are emitted only when meaningful. Adds
+  projection unit tests per tool.
+  ([#17](https://github.com/relixiaobo/lin-outliner/pull/17))
 - **Shared node-line view helpers** — extracted `nodeLineView.ts`
   (`caretAnchor`, `selectionTextOffsets`, and a unified inline-ref-aware
   `selectionForPlacement` / `applyCursorPlacement`) from `RichTextEditor` and
