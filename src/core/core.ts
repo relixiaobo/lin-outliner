@@ -17,6 +17,7 @@ import {
 } from './operationJournal';
 import { buildDocumentProjection } from './projection';
 import { runSearchExpr, runSearchNode, searchNodeHasRules } from './searchEngine';
+import { isInternalConfigNode } from './configSchema';
 import {
   AREAS_ID,
   DAILY_NOTES_ID,
@@ -2476,16 +2477,25 @@ function setOptional<T extends object, K extends keyof T>(object: T, key: K, val
 
 function ensureParentMutable(state: DocumentState, parentId: string) {
   if (!state.nodes[parentId]) throw CoreError.parentNotFound(parentId);
+  // config-as-nodes: defConfig/systemOption subtrees are registry-governed;
+  // user commands cannot insert children under them. Internal config machinery
+  // uses *Direct loro APIs that bypass this guard.
+  if (isInternalConfigNode(state.nodes[parentId])) {
+    throw CoreError.invalidOperation('config nodes are structurally locked');
+  }
 }
 
 function ensureNodeEditable(state: DocumentState, nodeId: string) {
   const node = requiredNode(state, nodeId);
   if (node.locked) throw CoreError.lockedNode(nodeId);
+  // The defConfig/systemOption node itself cannot be renamed/edited via user
+  // commands; its value is mutated only through the setConfigValue chokepoint.
+  if (isInternalConfigNode(node)) throw CoreError.invalidOperation('config nodes are structurally locked');
 }
 
 function ensureNodeMovable(state: DocumentState, nodeId: string) {
   const node = requiredNode(state, nodeId);
-  if (node.locked || isSystemId(nodeId)) throw CoreError.lockedNode(nodeId);
+  if (node.locked || isSystemId(nodeId) || isInternalConfigNode(node)) throw CoreError.lockedNode(nodeId);
 }
 
 function ensureTagDefinition(state: DocumentState, tagId: string) {

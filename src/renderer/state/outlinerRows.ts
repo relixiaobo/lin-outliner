@@ -14,6 +14,11 @@ const INTERNAL_NODE_TYPES = new Set<NodeProjection['type']>([
   'sortRule',
   'filterRule',
   'displayField',
+  // config-as-nodes: definition config rows + system enum options are never
+  // ordinary outliner children. The config surface renders defConfig rows
+  // explicitly (opt-in); everything else excludes them here.
+  'defConfig',
+  'systemOption',
 ]);
 
 export type OutlinerRowItem =

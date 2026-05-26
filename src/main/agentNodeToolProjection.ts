@@ -97,7 +97,7 @@ export function normalChildIds(index: ProjectionIndex, nodeId: string, includeDe
     const child = index.nodes.get(childId);
     return Boolean(child)
       && child!.type !== 'fieldEntry'
-      && !['queryCondition', 'viewDef', 'sortRule', 'filterRule', 'displayField'].includes(child!.type ?? '')
+      && !['queryCondition', 'viewDef', 'sortRule', 'filterRule', 'displayField', 'defConfig', 'systemOption'].includes(child!.type ?? '')
       && (includeDeleted || !isInTrash(index, childId));
   });
 }
