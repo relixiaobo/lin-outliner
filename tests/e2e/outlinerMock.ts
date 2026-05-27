@@ -203,6 +203,21 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             maxTokens: 8192,
           },
         ],
+      }, {
+        providerId: 'amazon-bedrock',
+        hasEnvApiKey: false,
+        envKeyNames: [],
+        defaultBaseUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com',
+        models: [
+          {
+            id: 'amazon.nova-lite-v1:0',
+            name: 'Nova Lite',
+            reasoning: false,
+            supportedThinkingLevels: ['off'],
+            contextWindow: 300_000,
+            maxTokens: 4096,
+          },
+        ],
       }],
     };
     const debugUsage = {
