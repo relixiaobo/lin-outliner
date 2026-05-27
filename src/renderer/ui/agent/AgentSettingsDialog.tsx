@@ -8,7 +8,7 @@ import type {
   AgentReasoningLevel,
 } from '../../api/types';
 import { api } from '../../api/client';
-import { ICON_SIZE, PasswordIcon, TrashIcon, WarningIcon } from '../icons';
+import { HideIcon, ICON_SIZE, OpenIcon, PasswordIcon, ShowIcon, TrashIcon, WarningIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { CheckboxControl } from '../primitives/CheckboxControl';
 import { Dialog } from '../primitives/Dialog';
@@ -78,6 +78,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
   const [settings, setSettings] = useState<AgentProviderSettingsView | null>(null);
   const [draft, setDraft] = useState<DraftConfig>(EMPTY_DRAFT);
   const [apiKey, setApiKey] = useState('');
+  const [revealKey, setRevealKey] = useState(false);
   const [category, setCategory] = useState<SettingsCategory>('providers');
   const [creatingCustom, setCreatingCustom] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -164,6 +165,18 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
     [draft.providerId, providerCatalog, settings],
   );
   const activeRowProviderId = creatingCustom ? '' : draft.providerId;
+  const selectedChoice = providerChoices.find((choice) => choice.providerId === activeRowProviderId);
+  const showDetail = creatingCustom || Boolean(draft.providerId);
+  const detailName = creatingCustom
+    ? 'Custom provider'
+    : draft.providerId ? formatProviderName(draft.providerId) : '';
+  const detailBadge = creatingCustom ? 'New' : selectedChoice ? providerStatusLabel(selectedChoice) : '';
+  const detailBadgeActive = Boolean(selectedChoice?.active && selectedChoice.enabled && selectedChoice.hasCredential);
+  const detailDescription = showConnectionFields
+    ? 'Connect any OpenAI-compatible endpoint.'
+    : providerDescription(selectedCatalog);
+  const docsUrl = showConnectionFields ? undefined : PROVIDER_DOCS_URL[draft.providerId];
+  const baseUrlPlaceholder = selectedCatalog?.defaultBaseUrl ?? 'https://api.example.com/v1';
 
   if (!open) return null;
 
@@ -180,6 +193,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
       enabled: existing?.enabled ?? true,
     }));
     setApiKey('');
+    setRevealKey(false);
     setNotice(null);
     setError(null);
   }
@@ -195,6 +209,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
       enabled: true,
     }));
     setApiKey('');
+    setRevealKey(false);
     setNotice(null);
     setError(null);
   }
@@ -345,91 +360,154 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
 
           <div className="settings-content">
             {category === 'providers' ? (
-              <section className="agent-settings-section" aria-labelledby="agent-settings-provider-heading">
+              <section className="agent-settings-section settings-providers-section" aria-labelledby="agent-settings-provider-heading">
                 <div className="agent-settings-section-header">
                   <h3 id="agent-settings-provider-heading">Providers</h3>
                   <span>Where requests go and the key they use.</span>
                 </div>
 
-                <div className="settings-provider-list">
-                  {providerChoices.map((provider) => (
+                <div className="settings-providers">
+                  <div className="settings-provider-list" role="list" aria-label="Available providers">
+                    {providerChoices.map((provider) => {
+                      const selected = provider.providerId === activeRowProviderId;
+                      const ready = provider.enabled && provider.hasCredential;
+                      const dotState = provider.active && ready
+                        ? 'is-active'
+                        : ready ? 'is-ready' : provider.configured ? 'is-warn' : '';
+                      return (
+                        <button
+                          aria-current={selected ? 'true' : undefined}
+                          aria-label={`${formatProviderName(provider.providerId)}, ${providerStatusLabel(provider)}`}
+                          className={`settings-provider-row ${selected ? 'is-selected' : ''}`}
+                          key={provider.providerId}
+                          onClick={() => selectProvider(provider.providerId)}
+                          type="button"
+                        >
+                          <span className="settings-provider-avatar" aria-hidden="true">
+                            {providerInitial(provider.providerId)}
+                          </span>
+                          <span className="settings-provider-name">{formatProviderName(provider.providerId)}</span>
+                          <span className={`settings-provider-dot ${dotState}`} aria-hidden="true" />
+                        </button>
+                      );
+                    })}
                     <button
-                      aria-pressed={provider.providerId === activeRowProviderId}
-                      className={`settings-provider-row ${provider.providerId === activeRowProviderId ? 'is-selected' : ''}`}
-                      key={provider.providerId}
-                      onClick={() => selectProvider(provider.providerId)}
+                      aria-current={creatingCustom ? 'true' : undefined}
+                      aria-label="Custom provider, OpenAI-compatible"
+                      className={`settings-provider-row ${creatingCustom ? 'is-selected' : ''}`}
+                      onClick={startCustomProvider}
                       type="button"
                     >
-                      <span className="settings-provider-name">{formatProviderName(provider.providerId)}</span>
-                      <span className={`settings-provider-status ${provider.active && provider.enabled && provider.hasCredential ? 'is-active' : ''}`}>
-                        {providerStatusLabel(provider)}
-                      </span>
+                      <span className="settings-provider-avatar" aria-hidden="true">+</span>
+                      <span className="settings-provider-name">Custom</span>
+                      <span className="settings-provider-dot" aria-hidden="true" />
                     </button>
-                  ))}
-                  <button
-                    aria-pressed={creatingCustom}
-                    className={`settings-provider-row ${creatingCustom ? 'is-selected' : ''}`}
-                    onClick={startCustomProvider}
-                    type="button"
-                  >
-                    <span className="settings-provider-name">Custom</span>
-                    <span className="settings-provider-status">New</span>
-                  </button>
-                </div>
+                  </div>
 
-                <div className="agent-settings-grid">
-                  {showConnectionFields ? (
-                    <>
-                      <FormField className="agent-settings-field" label="Provider ID">
-                        <TextInputControl
-                          label="Provider ID"
-                          onChange={(event) => setDraft((current) => ({ ...current, providerId: event.target.value.trim() }))}
-                          placeholder="my-provider"
-                          value={draft.providerId}
-                        />
-                      </FormField>
-                      <FormField className="agent-settings-field" label="Base URL">
-                        <TextInputControl
-                          label="Base URL"
-                          onChange={(event) => setDraft((current) => ({ ...current, baseUrl: event.target.value }))}
-                          placeholder="https://api.example.com/v1"
-                          value={draft.baseUrl}
-                        />
-                      </FormField>
-                    </>
-                  ) : null}
+                  <div className="settings-provider-detail">
+                    {showDetail ? (
+                      <>
+                        <div className="settings-provider-detail-header">
+                          <div className="settings-provider-detail-id">
+                            <span className="settings-provider-avatar is-large" aria-hidden="true">
+                              {creatingCustom ? '+' : providerInitial(draft.providerId)}
+                            </span>
+                            <div className="settings-provider-detail-text">
+                              <div className="settings-provider-detail-name">
+                                {detailName}
+                                {detailBadge ? (
+                                  <span className={`settings-provider-badge ${detailBadgeActive ? 'is-active' : ''}`}>
+                                    {detailBadge}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <span className="settings-provider-detail-desc">{detailDescription}</span>
+                            </div>
+                          </div>
+                          <CheckboxControl
+                            checked={draft.enabled}
+                            className="agent-settings-checkbox"
+                            onCheckedChange={(enabled) => setDraft((current) => ({ ...current, enabled }))}
+                          >
+                            <span>Enabled</span>
+                          </CheckboxControl>
+                        </div>
 
-                  <FormField as="div" className="agent-settings-field agent-settings-field-wide" label="API key">
-                    <div className="agent-settings-key-line">
-                      <div className="agent-settings-key-row">
-                        <PasswordIcon size={ICON_SIZE.menu} />
-                        <TextInputControl
-                          label="API key"
-                          onChange={(event) => setApiKey(event.target.value)}
-                          placeholder={hasAnyKey ? 'Configured' : 'Paste key'}
-                          type="password"
-                          value={apiKey}
-                        />
-                      </div>
-                      <ButtonControl
-                        className="agent-settings-secondary"
-                        disabled={saving || !configuredProvider?.hasApiKey}
-                        onClick={removeApiKey}
-                      >
-                        Remove key
-                      </ButtonControl>
-                    </div>
-                    <span className="agent-settings-field-meta">{keyStatus}</span>
-                  </FormField>
+                        <div className="agent-settings-grid">
+                          {showConnectionFields ? (
+                            <FormField className="agent-settings-field" label="Provider ID">
+                              <TextInputControl
+                                label="Provider ID"
+                                onChange={(event) => setDraft((current) => ({ ...current, providerId: event.target.value.trim() }))}
+                                placeholder="my-provider"
+                                value={draft.providerId}
+                              />
+                            </FormField>
+                          ) : null}
 
-                  <div className="agent-settings-row agent-settings-field-wide">
-                    <CheckboxControl
-                      checked={draft.enabled}
-                      className="agent-settings-checkbox"
-                      onCheckedChange={(enabled) => setDraft((current) => ({ ...current, enabled }))}
-                    >
-                      <span>Enabled</span>
-                    </CheckboxControl>
+                          <FormField
+                            className={`agent-settings-field ${showConnectionFields ? '' : 'agent-settings-field-wide'}`}
+                            label="Base URL"
+                          >
+                            <TextInputControl
+                              label="Base URL"
+                              onChange={(event) => setDraft((current) => ({ ...current, baseUrl: event.target.value }))}
+                              placeholder={baseUrlPlaceholder}
+                              value={draft.baseUrl}
+                            />
+                            <span className="agent-settings-field-meta">Leave empty to use the default endpoint.</span>
+                          </FormField>
+
+                          <FormField as="div" className="agent-settings-field agent-settings-field-wide" label="API key">
+                            <div className="agent-settings-key-line">
+                              <div className="agent-settings-key-row">
+                                <PasswordIcon size={ICON_SIZE.menu} />
+                                <TextInputControl
+                                  label="API key"
+                                  onChange={(event) => setApiKey(event.target.value)}
+                                  placeholder={hasAnyKey ? 'Configured' : 'Paste key'}
+                                  type={revealKey ? 'text' : 'password'}
+                                  value={apiKey}
+                                />
+                                <button
+                                  aria-label={revealKey ? 'Hide key' : 'Show key'}
+                                  aria-pressed={revealKey}
+                                  className="agent-settings-key-reveal"
+                                  onClick={() => setRevealKey((current) => !current)}
+                                  type="button"
+                                >
+                                  {revealKey
+                                    ? <HideIcon size={ICON_SIZE.menu} />
+                                    : <ShowIcon size={ICON_SIZE.menu} />}
+                                </button>
+                              </div>
+                              <ButtonControl
+                                className="agent-settings-secondary"
+                                disabled={saving || !configuredProvider?.hasApiKey}
+                                onClick={removeApiKey}
+                              >
+                                Remove key
+                              </ButtonControl>
+                            </div>
+                            <div className="agent-settings-key-meta">
+                              <span className="agent-settings-field-meta">{keyStatus}</span>
+                              {docsUrl ? (
+                                <button
+                                  className="agent-settings-doc-link"
+                                  onClick={() => void api.openExternalUrl(docsUrl)}
+                                  type="button"
+                                >
+                                  <span>Get your {detailName} API key</span>
+                                  <OpenIcon size={ICON_SIZE.tiny} />
+                                </button>
+                              ) : null}
+                            </div>
+                          </FormField>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="settings-provider-empty">Select a provider to connect.</div>
+                    )}
                   </div>
                 </div>
               </section>
@@ -772,8 +850,32 @@ function formatTokens(value: number): string {
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   anthropic: 'Anthropic',
   openai: 'OpenAI',
-  google: 'Google',
+  google: 'Google Gemini',
   openrouter: 'OpenRouter',
+  deepseek: 'DeepSeek',
+  xai: 'xAI',
+  groq: 'Groq',
+  mistral: 'Mistral',
+  moonshotai: 'Moonshot AI',
+  'moonshotai-cn': 'Moonshot AI (CN)',
+  zai: 'Z.AI',
+  together: 'Together AI',
+  fireworks: 'Fireworks AI',
+  cerebras: 'Cerebras',
+  minimax: 'MiniMax',
+};
+
+// Where to mint an API key, for the providers we can link directly. Omitted
+// providers simply drop the helper link.
+const PROVIDER_DOCS_URL: Record<string, string> = {
+  anthropic: 'https://console.anthropic.com/settings/keys',
+  openai: 'https://platform.openai.com/api-keys',
+  google: 'https://aistudio.google.com/app/apikey',
+  openrouter: 'https://openrouter.ai/keys',
+  deepseek: 'https://platform.deepseek.com/api_keys',
+  xai: 'https://console.x.ai',
+  groq: 'https://console.groq.com/keys',
+  mistral: 'https://console.mistral.ai/api-keys',
 };
 
 function formatProviderName(providerId: string): string {
@@ -784,4 +886,15 @@ function formatProviderName(providerId: string): string {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ') || providerId;
+}
+
+function providerInitial(providerId: string): string {
+  return (formatProviderName(providerId).trim()[0] ?? '?').toUpperCase();
+}
+
+function providerDescription(catalog: AgentProviderOption | undefined): string {
+  if (!catalog || catalog.models.length === 0) return 'Connect any OpenAI-compatible endpoint.';
+  const names = catalog.models.slice(0, 3).map((model) => model.name);
+  const suffix = catalog.models.length > names.length ? ', and more' : '';
+  return `Includes ${names.join(', ')}${suffix}.`;
 }

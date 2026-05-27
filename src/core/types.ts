@@ -500,6 +500,7 @@ export interface AgentProviderOption {
   providerId: string;
   hasEnvApiKey: boolean;
   envKeyNames: string[];
+  defaultBaseUrl?: string;
   models: AgentModelOption[];
 }
 
