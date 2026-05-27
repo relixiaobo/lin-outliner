@@ -1,5 +1,6 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { normalizeDateFieldValue } from '../core/dateFieldValue';
+import { projectFieldConfig } from '../core/configProjection';
 import {
   plainText,
   replaceAllRichTextPatch,
@@ -1375,7 +1376,7 @@ function normalizeDateOutlineValue(fieldName: string, value: OutlineValue): Outl
 function fieldTypeForEntry(index: ProjectionIndex, fieldEntryId: string): string {
   const fieldEntry = requiredNode(index, fieldEntryId);
   const fieldDef = fieldEntry.fieldDefId ? index.nodes.get(fieldEntry.fieldDefId) : undefined;
-  return fieldDef?.fieldType ?? fieldEntry.fieldType ?? 'plain';
+  return fieldDef?.type === 'fieldDef' ? projectFieldConfig(index.nodes, fieldDef).fieldType : 'plain';
 }
 
 async function syncNormalChildren(

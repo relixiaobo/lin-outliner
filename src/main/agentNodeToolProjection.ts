@@ -12,7 +12,8 @@ import {
   type NodeProjection,
 } from '../core/types';
 import { formatNodeReferenceMarker } from '../core/nodeReferenceMarkup';
-import { refRoleCountsAsBacklink } from '../core/configSchema';
+import { projectFieldConfig } from '../core/configProjection';
+import { isInternalConfigNode, refRoleCountsAsBacklink } from '../core/configSchema';
 import type {
   NodeBacklink,
   NodeFieldRead,
@@ -52,11 +53,13 @@ export function fieldReads(index: ProjectionIndex, node: NodeProjection, include
           targetId: value.targetId,
         }));
       const options = fieldDef?.children
-        .map((optionId) => index.nodes.get(optionId)?.content.text.trim())
+        .map((optionId) => index.nodes.get(optionId))
+        .filter((option): option is NodeProjection => Boolean(option) && !isInternalConfigNode(option!))
+        .map((option) => option.content.text.trim())
         .filter((value): value is string => Boolean(value));
       return {
         name: fieldDef?.content.text || fieldEntry.content.text || 'Field',
-        type: fieldDef?.fieldType ?? fieldEntry.fieldType ?? 'plain',
+        type: fieldDef?.type === 'fieldDef' ? projectFieldConfig(index.nodes, fieldDef).fieldType : 'plain',
         values,
         fieldEntryId: fieldEntry.id,
         options: options && options.length ? options : undefined,
