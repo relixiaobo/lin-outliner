@@ -76,6 +76,49 @@ describe('parseMarkdownBlocks', () => {
     ]);
   });
 
+  test('treats a multi-word info string as a fence and uses the first token as the language', () => {
+    expect(parseMarkdownBlocks('```tool node_create\n{\n  "ok": true\n}\n```')).toEqual([
+      {
+        content: { text: '{\n  "ok": true\n}', marks: [], inlineRefs: [] },
+        children: [],
+        type: 'codeBlock',
+        codeLanguage: 'tool',
+      },
+    ]);
+  });
+
+  test('keeps consecutive multi-word fences paired so prose between them stays prose', () => {
+    const pasted = [
+      '```tool node_create',
+      '{ "outline": "- A" }',
+      '```',
+      '',
+      'Between the blocks.',
+      '',
+      '```python',
+      'print("hi")',
+      '```',
+    ].join('\n');
+    expect(parseMarkdownBlocks(pasted)).toEqual([
+      {
+        content: { text: '{ "outline": "- A" }', marks: [], inlineRefs: [] },
+        children: [],
+        type: 'codeBlock',
+        codeLanguage: 'tool',
+      },
+      {
+        content: { text: 'Between the blocks.', marks: [], inlineRefs: [] },
+        children: [],
+      },
+      {
+        content: { text: 'print("hi")', marks: [], inlineRefs: [] },
+        children: [],
+        type: 'codeBlock',
+        codeLanguage: 'python',
+      },
+    ]);
+  });
+
   test('nests an indented fenced block under its parent row', () => {
     expect(parseMarkdownBlocks('Parent\n  ```\n  code\n  ```')).toEqual([
       {
