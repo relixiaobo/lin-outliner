@@ -62,6 +62,11 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **settings-provider-declutter** (P2, cc) — design pass: API key is the hero;
+  Base URL → collapsed "Advanced" disclosure, read-only models → collapsed
+  "Models (N)" disclosure; dropped the dialog subtitle, duplicate "Providers"
+  heading + floating caption, and the "ADD KEY" badge. Custom keeps Provider ID +
+  Base URL visible (PR #36).
 - **settings-provider-detail-polish** (P2, cc) — provider detail feedback: Enabled
   becomes the shared switch toggle, API key moves above Base URL (Optional),
   "Remove key" shows only when a key is saved (danger link), and a read-only

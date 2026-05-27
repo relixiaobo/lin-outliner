@@ -71,6 +71,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Declutter provider detail (progressive disclosure)** — the provider detail
+  had buried its primary task (paste an API key) under repeated status and two
+  long lists. The API key is now the hero; Base URL moves into a collapsed
+  **Advanced** disclosure (known providers) and the read-only model list into a
+  collapsed **Models (N)** disclosure. Dropped the dialog subtitle, the duplicate
+  middle "Providers" heading + its disconnected right-floating caption, and the
+  "ADD KEY" badge (the empty key field conveys it); the badge now shows only
+  Active / Disabled / New. Custom providers keep Provider ID + Base URL visible.
+  ([#36](https://github.com/relixiaobo/lin-outliner/pull/36))
 - **Provider detail: toggle, key-first order, read-only model list** — the
   Enabled control is now the shared switch toggle (was a checkbox); the API key
   is the first field with Base URL ("Optional") below it (was reversed);
