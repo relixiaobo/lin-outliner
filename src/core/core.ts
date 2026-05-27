@@ -2521,11 +2521,12 @@ export class Core {
     const current = clone(requiredNode(state, nodeId));
     const sourceParentId = current.parentId;
     const sourceIndex = sourceParentId ? childIndex(state, sourceParentId, nodeId) : undefined;
-    const target = clone(requiredNode(state, targetId));
+    let target = clone(requiredNode(state, targetId));
     if (target.type === 'reference' && target.targetId) {
       // A reference node renders its target, not its own content, so merging text
       // into it converts the reference into a *leading inline reference* on a
-      // now-plain node — the merged text then has somewhere to live.
+      // now-plain node — the merged text then has somewhere to live. Rebuild it
+      // as a content node rather than mutating the discriminant in place.
       const resolvedTargetId = resolveReferenceTargetId(state, target.targetId);
       const inlineRefContent: RichText = {
         text: '',
@@ -2536,9 +2537,12 @@ export class Core {
           displayName: state.nodes[resolvedTargetId]?.content.text || undefined,
         }],
       };
-      target.type = undefined;
-      target.targetId = undefined;
-      target.content = appendRichText(inlineRefContent, current.content);
+      target = {
+        ...target,
+        type: undefined,
+        targetId: undefined,
+        content: appendRichText(inlineRefContent, current.content),
+      };
     } else {
       target.content = appendRichText(target.content, current.content);
     }

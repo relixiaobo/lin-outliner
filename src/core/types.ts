@@ -338,9 +338,18 @@ export const QUERY_OPS = [
 
 export type QueryOp = typeof QUERY_OPS[number];
 
-export interface Node {
+// ─── Node: discriminated union over `type` (A-full, see config-as-nodes.md) ───
+//
+// Stage 8 (additive, structural no-op): every node type gets a variant that
+// extends `NodeBase` and is distinguished by its `type` discriminant. The
+// field set is still shared on `NodeBase` for now, so existing field access
+// and construction keep compiling unchanged — the only new thing is that
+// `node.type` narrows to a variant. Stage 9 narrows access sites by
+// `node.type`; Stage 10 moves each field onto the variant that owns it and the
+// god-record is gone. Until then the variants are intentionally identical
+// apart from their discriminant.
+export interface NodeBase {
   id: NodeId;
-  type?: NodeType;
   parentId?: NodeId;
   children: NodeId[];
   content: RichText;
@@ -397,6 +406,42 @@ export interface Node {
   trashedFromIndex?: number;
 }
 
+/** A plain content node — the only variant whose `type` is absent. */
+export interface ContentNode extends NodeBase { type?: undefined; }
+export interface FieldEntryNode extends NodeBase { type: 'fieldEntry'; }
+export interface ReferenceNode extends NodeBase { type: 'reference'; }
+export interface CodeBlockNode extends NodeBase { type: 'codeBlock'; }
+export interface ImageNode extends NodeBase { type: 'image'; }
+export interface EmbedNode extends NodeBase { type: 'embed'; }
+export interface TagDefNode extends NodeBase { type: 'tagDef'; }
+export interface FieldDefNode extends NodeBase { type: 'fieldDef'; }
+export interface DefConfigNode extends NodeBase { type: 'defConfig'; }
+export interface SystemOptionNode extends NodeBase { type: 'systemOption'; }
+export interface ViewDefNode extends NodeBase { type: 'viewDef'; }
+export interface SortRuleNode extends NodeBase { type: 'sortRule'; }
+export interface FilterRuleNode extends NodeBase { type: 'filterRule'; }
+export interface DisplayFieldNode extends NodeBase { type: 'displayField'; }
+export interface SearchNode extends NodeBase { type: 'search'; }
+export interface QueryConditionNode extends NodeBase { type: 'queryCondition'; }
+
+export type Node =
+  | ContentNode
+  | FieldEntryNode
+  | ReferenceNode
+  | CodeBlockNode
+  | ImageNode
+  | EmbedNode
+  | TagDefNode
+  | FieldDefNode
+  | DefConfigNode
+  | SystemOptionNode
+  | ViewDefNode
+  | SortRuleNode
+  | FilterRuleNode
+  | DisplayFieldNode
+  | SearchNode
+  | QueryConditionNode;
+
 export interface DocumentState {
   schemaVersion: number;
   workspaceId: NodeId;
@@ -404,7 +449,14 @@ export interface DocumentState {
   nodes: Record<NodeId, Node>;
 }
 
-export type NodeProjection = Omit<Node, 'trashedFromParentId' | 'trashedFromIndex'>;
+/** Omit that distributes over a union, preserving each member as its own type. */
+type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never;
+
+// The projection mirrors the `Node` union variant-by-variant (minus the trash
+// bookkeeping fields), so consumers narrow a projected node by `type` exactly
+// as they would a `Node`. While the variants still share their field set this
+// is structurally the old broad projection.
+export type NodeProjection = DistributiveOmit<Node, 'trashedFromParentId' | 'trashedFromIndex'>;
 
 export const LIN_DOCUMENT_EVENT_CHANNEL = 'lin-document-event';
 
@@ -611,6 +663,8 @@ export function createNodeRecord(
   parentId: NodeId | undefined,
   now: number,
 ): Node {
+  // `type` is the broad `NodeType | undefined` here; the variants are
+  // structurally identical at Stage 8, so this widening to the union is sound.
   return {
     id,
     type,
@@ -622,5 +676,5 @@ export function createNodeRecord(
     updatedAt: now,
     locked: false,
     autoCollected: false,
-  };
+  } as Node;
 }
