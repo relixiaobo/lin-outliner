@@ -24,7 +24,7 @@ import {
   type SearchQueryExpr,
   type SearchQueryOperand,
 } from './types';
-import { projectFieldConfig } from './configProjection';
+import { projectFieldConfig, nodeIsDone, nodeShowsCheckbox } from './configProjection';
 import {
   dateFieldValueRangesInText,
   parseDateFieldValueRange,
@@ -514,9 +514,9 @@ function evaluateLeaf(index: SearchIndex, candidate: SearchNode, conditionNode: 
     if (!conditionNode.queryTagDefId) return { ok: true, match: candidate.tags.length > 0, score: 12 };
     return { ok: true, match: candidate.tags.includes(conditionNode.queryTagDefId), score: 25 };
   }
-  if (op === 'TODO') return { ok: true, match: candidate.showCheckbox, score: 10 };
-  if (op === 'DONE') return { ok: true, match: Boolean(candidate.completedAt), score: 10 };
-  if (op === 'NOT_DONE') return { ok: true, match: candidate.showCheckbox && !candidate.completedAt, score: 10 };
+  if (op === 'TODO') return { ok: true, match: nodeShowsCheckbox(index.nodes, candidate), score: 10 };
+  if (op === 'DONE') return { ok: true, match: nodeIsDone(candidate), score: 10 };
+  if (op === 'NOT_DONE') return { ok: true, match: nodeShowsCheckbox(index.nodes, candidate) && !nodeIsDone(candidate), score: 10 };
 
   if (op === 'FIELD_IS' || op === 'FIELD_IS_NOT') {
     if (!conditionNode.queryFieldDefId) return missingEvaluationOperand(conditionNode, op, 'field id');
@@ -752,7 +752,6 @@ function virtualNode(
     createdAt: 0,
     updatedAt: 0,
     locked: false,
-    showCheckbox: false,
     doneStateEnabled: false,
     autoCollected: false,
   };

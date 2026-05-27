@@ -1,6 +1,6 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { normalizeDateFieldValue } from '../core/dateFieldValue';
-import { projectFieldConfig } from '../core/configProjection';
+import { projectFieldConfig, nodeIsDone, nodeShowsCheckbox } from '../core/configProjection';
 import {
   plainText,
   replaceAllRichTextPatch,
@@ -1547,23 +1547,26 @@ async function trashNodeIds(host: OutlinerToolHost, nodeIds: string[]) {
 }
 
 async function setCheckboxState(host: OutlinerToolHost, nodeId: string, checked: boolean | null | undefined) {
-  const current = indexProjection(host.getProjection()).nodes.get(nodeId);
+  const index = indexProjection(host.getProjection());
+  const current = index.nodes.get(nodeId);
   if (!current) throw new Error(`Node not found: ${nodeId}`);
-  const isCompleted = Boolean(current.completedAt);
+  const isCompleted = nodeIsDone(current);
   if (checked === true) {
-    if (!current.showCheckbox) await host.handle('set_node_checkbox_visible', { nodeId, visible: true });
+    if (!nodeShowsCheckbox(index.nodes, current)) await host.handle('set_node_checkbox_visible', { nodeId, visible: true });
     if (!isCompleted) await host.handle('toggle_done', { nodeId });
     return;
   }
   if (checked === false) {
     if (isCompleted) await host.handle('toggle_done', { nodeId });
-    const latest = indexProjection(host.getProjection()).nodes.get(nodeId);
-    if (!latest?.showCheckbox) await host.handle('set_node_checkbox_visible', { nodeId, visible: true });
+    const latestIndex = indexProjection(host.getProjection());
+    const latest = latestIndex.nodes.get(nodeId);
+    if (!latest || !nodeShowsCheckbox(latestIndex.nodes, latest)) await host.handle('set_node_checkbox_visible', { nodeId, visible: true });
     return;
   }
   if (isCompleted) await host.handle('toggle_done', { nodeId });
-  const latest = indexProjection(host.getProjection()).nodes.get(nodeId);
-  if (latest?.showCheckbox) await host.handle('set_node_checkbox_visible', { nodeId, visible: false });
+  const latestIndex = indexProjection(host.getProjection());
+  const latest = latestIndex.nodes.get(nodeId);
+  if (latest && nodeShowsCheckbox(latestIndex.nodes, latest)) await host.handle('set_node_checkbox_visible', { nodeId, visible: false });
 }
 
 async function syncTags(host: OutlinerToolHost, nodeId: string, tagNames: string[], tracker: MutationTracker): Promise<string[]> {

@@ -181,7 +181,7 @@ function ConfigControl(props: {
       return (
         <DefinitionSwitchControl
           label={item.label}
-          checked={node.showCheckbox}
+          checked={tagConfig?.showCheckbox ?? false}
           onChange={(showCheckbox) => updateTag({ showCheckbox })}
         />
       );

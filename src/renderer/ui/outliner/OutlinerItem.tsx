@@ -10,7 +10,7 @@ import { flushSync } from 'react-dom';
 import { api } from '../../api/client';
 import type { AssetMetadata, CreateNodeTree, NodeId, NodeProjection, RichText, RichTextPatch } from '../../api/types';
 import { EMPTY_RICH_TEXT, plainText, replaceAllRichTextPatch } from '../../api/types';
-import { projectFieldTypeById } from '../../../core/configProjection';
+import { projectFieldTypeById, nodeShowsCheckbox } from '../../../core/configProjection';
 import type { CursorPlacement } from '../../state/document';
 import {
   flattenVisibleRows,
@@ -222,9 +222,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
     .filter((tag): tag is NodeProjection => Boolean(tag));
   const appliedTagColors = tagBulletColors(appliedTags, props.index.byId);
   const tagDefColor = leadingVariant === 'tag' ? resolveTagColor(displayed, props.index.byId).text : undefined;
-  const showDoneCheckbox = displayed.showCheckbox
-    || displayed.doneStateEnabled
-    || Boolean(displayed.completedAt);
+  const showDoneCheckbox = nodeShowsCheckbox(props.index.byId, displayed);
   const descriptionEditing = props.ui.editingDescriptionId === targetEditId;
   const referenceLikeRow = node.type === 'reference' || pendingReferenceConversion;
   const isCodeBlock = displayed.type === 'codeBlock' && !referenceLikeRow;

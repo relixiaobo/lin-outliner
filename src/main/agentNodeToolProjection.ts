@@ -12,7 +12,7 @@ import {
   type NodeProjection,
 } from '../core/types';
 import { formatNodeReferenceMarker } from '../core/nodeReferenceMarkup';
-import { projectFieldConfig } from '../core/configProjection';
+import { projectFieldConfig, nodeIsDone, nodeShowsCheckbox } from '../core/configProjection';
 import { isInternalConfigNode, refRoleCountsAsBacklink } from '../core/configSchema';
 import type {
   NodeBacklink,
@@ -129,9 +129,9 @@ export function nodeKind(node: NodeProjection): string {
   return node.type ?? 'node';
 }
 
-export function checkedState(node: NodeProjection): boolean | null | undefined {
-  if (node.completedAt) return true;
-  if (node.showCheckbox) return false;
+export function checkedState(index: ProjectionIndex, node: NodeProjection): boolean | null | undefined {
+  if (nodeIsDone(node)) return true;
+  if (nodeShowsCheckbox(index.nodes, node)) return false;
   return undefined;
 }
 

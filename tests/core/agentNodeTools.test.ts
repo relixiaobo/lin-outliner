@@ -145,8 +145,7 @@ describe('agent node tools', () => {
     const node = core.state().nodes[nodeId]!;
     expect(node.content.text).toBe('Launch');
     expect(node.description).toBe('Q2 rollout');
-    expect(node.showCheckbox).toBe(true);
-    expect(node.completedAt).toBeNumber();
+    expect(node.completedAt).toBeGreaterThan(0);
     expect(node.tags).toHaveLength(1);
     expect(core.state().nodes[node.tags[0]!]!.content.text).toBe('project');
     expect(node.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual(['', 'Draft plan']);
@@ -269,8 +268,8 @@ describe('agent node tools', () => {
 
     expect(envelope.ok).toBe(true);
     const node = core.state().nodes[envelope.data!.createdRootIds[0]!]!;
-    expect(node.showCheckbox).toBe(true);
-    expect(node.completedAt).toBeUndefined();
+    // Unchecked marker → manual checkbox present but undone (sentinel completedAt = 0).
+    expect(node.completedAt).toBe(0);
   });
 
   test('node_create creates reference nodes with insertion points', async () => {
@@ -515,8 +514,7 @@ describe('agent node tools', () => {
     expect(envelope.data!.trashedNodeIds ?? []).toContain(oldChild);
     expect(core.state().nodes[root]!.content.text).toBe('Renamed');
     expect(core.state().nodes[root]!.description).toBe('Done');
-    expect(core.state().nodes[root]!.showCheckbox).toBe(true);
-    expect(core.state().nodes[root]!.completedAt).toBeNumber();
+    expect(core.state().nodes[root]!.completedAt).toBeGreaterThan(0);
     expect(core.state().nodes[root]!.tags.map((tagId) => core.state().nodes[tagId]!.content.text)).toEqual(['edited']);
     expect(core.state().nodes[oldChild]!.parentId).toBe(TRASH_ID);
     expect(core.state().nodes[oldChild]!.content.text).toBe('Old child');

@@ -124,7 +124,7 @@ export function buildSearchItem(index: ProjectionIndex, nodeId: string, queryTer
       const values = field.values.map((value) => value.text);
       return [field.name, values.length === 1 ? values[0] : values];
     })),
-    checked: checkedState(node),
+    checked: checkedState(index, node),
     hasChildren: children.length > 0,
     childCount: children.length,
     updatedAt: new Date(node.updatedAt).toISOString(),

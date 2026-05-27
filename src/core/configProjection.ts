@@ -109,6 +109,39 @@ export function projectFieldTypeById(byId: ConfigNodeMap, fieldDefId: NodeId | u
   return node?.type === 'fieldDef' ? projectFieldConfig(byId, node).fieldType : undefined;
 }
 
+// ─── Checkbox / done state (tag-driven + completedAt sentinel; nodex parity) ───
+//
+// A node's checkbox is tag-driven: it appears when any applied tag (walking the
+// extends chain) enables `showCheckbox`, or manually when `completedAt` is set.
+// `completedAt` is a three-state sentinel: undefined = no checkbox, 0 = checkbox
+// present but undone, > 0 = done (the completion timestamp).
+
+/** Whether the node carries a checkbox marked done (completion timestamp set). */
+export function nodeIsDone(node: Pick<Node, 'completedAt'>): boolean {
+  return node.completedAt !== undefined && node.completedAt > 0;
+}
+
+function tagShowsCheckbox(byId: ConfigNodeMap, tagDefId: NodeId, visited: Set<NodeId>): boolean {
+  if (visited.has(tagDefId)) return false;
+  visited.add(tagDefId);
+  const node = byId.get(tagDefId);
+  if (node?.type !== 'tagDef') return false;
+  const config = projectTagConfig(byId, node);
+  if (config.showCheckbox) return true;
+  return config.extends ? tagShowsCheckbox(byId, config.extends, visited) : false;
+}
+
+/** True when any of the node's applied tags (via extends chains) shows a checkbox. */
+export function tagDrivenShowCheckbox(byId: ConfigNodeMap, node: Pick<Node, 'tags'>): boolean {
+  const visited = new Set<NodeId>();
+  return node.tags.some((tagId) => tagShowsCheckbox(byId, tagId, visited));
+}
+
+/** Whether the node should render a checkbox at all (tag-driven or manual). */
+export function nodeShowsCheckbox(byId: ConfigNodeMap, node: Pick<Node, 'tags' | 'completedAt'>): boolean {
+  return node.completedAt !== undefined || tagDrivenShowCheckbox(byId, node);
+}
+
 // ─── The index (built once per state/projection; reads are O(1) memoized) ───
 
 export function buildConfigIndex(state: Pick<DocumentState, 'nodes'>): ConfigIndex {

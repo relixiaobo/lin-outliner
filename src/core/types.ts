@@ -349,7 +349,6 @@ export interface Node {
   bannerPositionX?: number;
   bannerPositionY?: number;
   bannerAlt?: string;
-  showCheckbox: boolean;
   templateId?: NodeId;
   doneStateEnabled: boolean;
   fieldDefId?: NodeId;
@@ -616,7 +615,6 @@ export function createNodeRecord(
     createdAt: now,
     updatedAt: now,
     locked: false,
-    showCheckbox: false,
     doneStateEnabled: false,
     autoCollected: false,
   };

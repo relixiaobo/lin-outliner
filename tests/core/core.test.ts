@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { Core } from '../../src/core/core';
 import { LoroOutlinerDocument } from '../../src/core/loroDocument';
-import { buildConfigIndex } from '../../src/core/configProjection';
+import { buildConfigIndex, nodeShowsCheckbox } from '../../src/core/configProjection';
 import { isInternalConfigNode } from '../../src/core/configSchema';
 import { runSearchNode } from '../../src/core/searchEngine';
 import {
@@ -34,6 +34,13 @@ function optionChildIds(core: Core, fieldDefId: string): string[] {
   const state = core.state();
   return state.nodes[fieldDefId].children.filter(
     (childId) => !isInternalConfigNode(state.nodes[childId]));
+}
+
+// Checkbox visibility is tag-driven + completedAt-sentinel; derive it from state
+// the same way the renderer/search do, via the config projection.
+function showsCheckbox(core: Core, nodeId: string): boolean {
+  const byId = new Map(Object.values(core.state().nodes).map((node) => [node.id, node]));
+  return nodeShowsCheckbox(byId, core.state().nodes[nodeId]);
 }
 
 describe('Core', () => {
@@ -274,20 +281,21 @@ describe('Core', () => {
     expect(viewDef.groupField).toBeUndefined();
   });
 
-  test('toggle done enables and preserves checkbox affordance', () => {
+  test('toggle done marks a manual node done, then keeps the checkbox when undone', () => {
     const core = Core.new();
     const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Task'));
 
     core.toggleDone(nodeId);
-    expect(core.state().nodes[nodeId].completedAt).toBeDefined();
-    expect(core.state().nodes[nodeId].showCheckbox).toBe(true);
+    expect(core.state().nodes[nodeId].completedAt).toBeGreaterThan(0);
+    expect(showsCheckbox(core, nodeId)).toBe(true);
 
+    // Undone manual node keeps its checkbox via the sentinel completedAt = 0.
     core.toggleDone(nodeId);
-    expect(core.state().nodes[nodeId].completedAt).toBeUndefined();
-    expect(core.state().nodes[nodeId].showCheckbox).toBe(true);
+    expect(core.state().nodes[nodeId].completedAt).toBe(0);
+    expect(showsCheckbox(core, nodeId)).toBe(true);
   });
 
-  test('batch toggle done enables checkbox affordance on each target', () => {
+  test('batch toggle done marks each target done with a visible checkbox', () => {
     const core = Core.new();
     const today = core.projection().todayId;
     const first = mustFocus(core.createNode(today, null, 'First'));
@@ -295,43 +303,52 @@ describe('Core', () => {
 
     core.batchToggleDone([first, second]);
 
-    expect(core.state().nodes[first].completedAt).toBeDefined();
-    expect(core.state().nodes[first].showCheckbox).toBe(true);
-    expect(core.state().nodes[second].completedAt).toBeDefined();
-    expect(core.state().nodes[second].showCheckbox).toBe(true);
+    expect(core.state().nodes[first].completedAt).toBeGreaterThan(0);
+    expect(showsCheckbox(core, first)).toBe(true);
+    expect(core.state().nodes[second].completedAt).toBeGreaterThan(0);
+    expect(showsCheckbox(core, second)).toBe(true);
   });
 
-  test('keyboard cycle moves through no checkbox, undone, and done', () => {
+  test('keyboard cycle moves a manual node through no checkbox, undone, and done', () => {
     const core = Core.new();
     const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Task'));
 
-    expect(core.state().nodes[nodeId].showCheckbox).toBe(false);
+    expect(showsCheckbox(core, nodeId)).toBe(false);
     expect(core.state().nodes[nodeId].completedAt).toBeUndefined();
 
+    // No checkbox → undone (sentinel 0).
     core.cycleDoneState(nodeId);
-    expect(core.state().nodes[nodeId].showCheckbox).toBe(true);
-    expect(core.state().nodes[nodeId].completedAt).toBeUndefined();
+    expect(showsCheckbox(core, nodeId)).toBe(true);
+    expect(core.state().nodes[nodeId].completedAt).toBe(0);
 
+    // Undone → done.
     core.cycleDoneState(nodeId);
-    expect(core.state().nodes[nodeId].showCheckbox).toBe(true);
-    expect(core.state().nodes[nodeId].completedAt).toBeDefined();
+    expect(showsCheckbox(core, nodeId)).toBe(true);
+    expect(core.state().nodes[nodeId].completedAt).toBeGreaterThan(0);
 
+    // Done → no checkbox.
     core.cycleDoneState(nodeId);
-    expect(core.state().nodes[nodeId].showCheckbox).toBe(false);
+    expect(showsCheckbox(core, nodeId)).toBe(false);
     expect(core.state().nodes[nodeId].completedAt).toBeUndefined();
   });
 
-  test('keyboard cycle preserves forced done affordance', () => {
+  test('keyboard cycle on a tag-driven node toggles done without removing the checkbox', () => {
     const core = Core.new();
-    const nodeId = mustFocus(core.createTag('configured task'));
-    core.setTagConfig(nodeId, { doneStateEnabled: true });
+    const tagId = mustFocus(core.createTag('task'));
+    core.setTagConfig(tagId, { showCheckbox: true });
+    const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Launch'));
+    core.applyTag(nodeId, tagId);
+
+    // Tag-driven: the checkbox is always visible regardless of done state.
+    expect(showsCheckbox(core, nodeId)).toBe(true);
 
     core.cycleDoneState(nodeId);
-    expect(core.state().nodes[nodeId].showCheckbox).toBe(true);
-    expect(core.state().nodes[nodeId].completedAt).toBeDefined();
+    expect(showsCheckbox(core, nodeId)).toBe(true);
+    expect(core.state().nodes[nodeId].completedAt).toBeGreaterThan(0);
 
+    // Undone clears the timestamp; the tag keeps the checkbox visible.
     core.cycleDoneState(nodeId);
-    expect(core.state().nodes[nodeId].showCheckbox).toBe(true);
+    expect(showsCheckbox(core, nodeId)).toBe(true);
     expect(core.state().nodes[nodeId].completedAt).toBeUndefined();
   });
 
@@ -776,7 +793,7 @@ describe('Core', () => {
 
     const childNodeId = mustFocus(core.createNode(nodeId, null, 'Checklist item'));
     expect(core.state().nodes[childNodeId].tags).toContain(defaultChildTagId);
-    expect(core.state().nodes[childTagId].showCheckbox).toBe(true);
+    expect(buildConfigIndex(core.state()).tag(childTagId)?.showCheckbox).toBe(true);
     expect(core.state().nodes[childTagId].doneStateEnabled).toBe(true);
     expect(() => core.setTagConfig(parentTagId, { extends: childTagId }))
       .toThrow('tag inheritance cannot create a cycle');

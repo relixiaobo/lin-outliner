@@ -24,7 +24,7 @@ import {
 } from './editor/richTextCodec';
 import { DefinitionConfigPanel } from './definition/DefinitionConfigPanel';
 import { definitionKind, definitionOutlinerLabel } from './definition/definitionConfig';
-import { projectFieldTypeById } from '../../core/configProjection';
+import { projectFieldTypeById, nodeShowsCheckbox } from '../../core/configProjection';
 import type { SlashCommandId } from './interactions/slashCommands';
 import type { CommandRunner, EditorTrigger, NavigateRootOptions, TriggerState } from './shared';
 import {
@@ -248,7 +248,7 @@ export function NodePanel(props: NodePanelProps) {
   };
 
   const headerIcon = renderHeaderIcon();
-  const showDoneCheckbox = Boolean(rootNode?.showCheckbox || rootNode?.doneStateEnabled || rootNode?.completedAt);
+  const showDoneCheckbox = rootNode ? nodeShowsCheckbox(props.index.byId, rootNode) : false;
   const rootTagIds = rootNode?.tags ?? [];
   const hasTitleTags = rootTagIds.length > 0;
   const panelIsoDate = rootNode && rootTagIds.some((tagId) => isDayTagId(tagId, props.index.byId))

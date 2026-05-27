@@ -20,6 +20,7 @@ import { runSearchExpr, runSearchNode, searchNodeHasRules } from './searchEngine
 import {
   CONFIG_SCHEMA,
   ENUM_DOMAINS,
+  boolCodec,
   canonicalizeScalar,
   configKeysForDefType,
   configValueKind,
@@ -460,7 +461,13 @@ export class Core {
 
   setNodeCheckboxVisible(nodeId: string, visible: boolean): CommandOutcome {
     return this.patchNode(nodeId, (node) => {
-      node.showCheckbox = visible;
+      // Manual checkbox: the `completedAt` sentinel carries presence. Adding a
+      // checkbox sets the undone sentinel (0); removing it clears the timestamp.
+      if (visible) {
+        if (node.completedAt === undefined) node.completedAt = 0;
+      } else {
+        delete node.completedAt;
+      }
     });
   }
 
@@ -788,9 +795,7 @@ export class Core {
       const state = this.snapshot();
       ensureNodeEditable(state, nodeId);
       const node = clone(requiredNode(state, nodeId));
-      node.showCheckbox = true;
-      if (node.completedAt) delete node.completedAt;
-      else node.completedAt = nowMs();
+      toggleNodeDone(node, nodeTagDrivenCheckbox(state, node));
       node.updatedAt = nowMs();
       this.loro.writeNode(node);
       return focus(nodeId);
@@ -802,7 +807,7 @@ export class Core {
       const state = this.snapshot();
       ensureNodeEditable(state, nodeId);
       const node = clone(requiredNode(state, nodeId));
-      cycleNodeDoneState(node);
+      cycleNodeDoneState(node, nodeTagDrivenCheckbox(state, node));
       node.updatedAt = nowMs();
       this.loro.writeNode(node);
       return focus(nodeId);
@@ -859,9 +864,7 @@ export class Core {
         if (!state.nodes[nodeId]) continue;
         ensureNodeEditable(state, nodeId);
         const node = clone(requiredNode(state, nodeId));
-        node.showCheckbox = true;
-        if (node.completedAt) delete node.completedAt;
-        else node.completedAt = nowMs();
+        toggleNodeDone(node, nodeTagDrivenCheckbox(state, node));
         node.updatedAt = nowMs();
         this.loro.writeNode(node);
       }
@@ -876,7 +879,7 @@ export class Core {
         if (!state.nodes[nodeId]) continue;
         ensureNodeEditable(state, nodeId);
         const node = clone(requiredNode(state, nodeId));
-        cycleNodeDoneState(node);
+        cycleNodeDoneState(node, nodeTagDrivenCheckbox(state, node));
         node.updatedAt = nowMs();
         this.loro.writeNode(node);
       }
@@ -978,11 +981,13 @@ export class Core {
       }
       if (patch.childSupertag) ensureTagDefinition(state, patch.childSupertag);
       const node = clone(requiredNode(state, tagId));
-      if (patch.showCheckbox !== undefined) node.showCheckbox = patch.showCheckbox;
       if (patch.doneStateEnabled !== undefined) node.doneStateEnabled = patch.doneStateEnabled;
       node.updatedAt = nowMs();
       this.loro.writeNode(node);
-      // config-as-nodes: color/extends/childSupertag are stored in the defConfig subtree.
+      // config-as-nodes: color/showCheckbox/extends/childSupertag are stored in the defConfig subtree.
+      if (patch.showCheckbox !== undefined) {
+        this.setConfigValueDirect(tagId, { kind: 'scalar', configKey: 'showCheckbox', text: patch.showCheckbox ? 'true' : 'false' });
+      }
       if ('color' in patch) {
         this.setConfigValueDirect(tagId, { kind: 'scalar', configKey: 'color', text: normalizeOptionalText(patch.color) ?? null });
       }
@@ -1116,7 +1121,6 @@ export class Core {
       node.fieldDefId = fieldDefId;
       node.content = plainText('');
       node.tags = [];
-      node.showCheckbox = false;
       node.doneStateEnabled = false;
       delete node.completedAt;
       this.loro.writeNode(node);
@@ -2615,20 +2619,30 @@ function nowMs() {
   return Date.now();
 }
 
-function cycleNodeDoneState(node: Node) {
-  const hasCheckboxAffordance = node.showCheckbox || node.doneStateEnabled || Boolean(node.completedAt);
-  if (!hasCheckboxAffordance) {
-    node.showCheckbox = true;
-    delete node.completedAt;
-    return;
-  }
-  if (!node.completedAt) {
-    node.showCheckbox = true;
+// Checkbox click (nodex `resolveCheckboxClick`): toggle undone ↔ done, never
+// removing the checkbox. Tag-driven nodes keep their checkbox via the tag, so
+// undone clears the timestamp entirely; manual nodes fall back to the undone
+// sentinel (0) to keep the box visible.
+function toggleNodeDone(node: Node, tagDriven: boolean) {
+  if (nodeIsDone(node)) {
+    if (tagDriven) delete node.completedAt;
+    else node.completedAt = 0;
+  } else {
     node.completedAt = nowMs();
+  }
+}
+
+// Cmd+Enter cycle (nodex `resolveCmdEnterCycle`): tag-driven nodes are a 2-state
+// toggle (undone ↔ done); manual nodes cycle no-checkbox → undone → done → none.
+function cycleNodeDoneState(node: Node, tagDriven: boolean) {
+  if (tagDriven) {
+    if (nodeIsDone(node)) delete node.completedAt;
+    else node.completedAt = nowMs();
     return;
   }
-  delete node.completedAt;
-  node.showCheckbox = Boolean(node.doneStateEnabled);
+  if (node.completedAt === undefined) node.completedAt = 0;
+  else if (node.completedAt === 0) node.completedAt = nowMs();
+  else delete node.completedAt;
 }
 
 function freshId(prefix: string): string {
@@ -2958,6 +2972,33 @@ function configScalarText(state: DocumentState, defId: string, configKey: DefCon
     }
   }
   return undefined;
+}
+
+/** A boolean config value read from the def's scalar subtree. */
+function configScalarBool(state: DocumentState, defId: string, configKey: DefConfigKey): boolean {
+  return boolCodec.decode(configScalarText(state, defId, configKey) ?? '') ?? false;
+}
+
+/** Whether a tag definition enables a checkbox, walking its `extends` chain. */
+function tagShowsCheckboxOf(state: DocumentState, tagDefId: string): boolean {
+  const visited = new Set<string>();
+  let current: string | undefined = tagDefId;
+  while (current && !visited.has(current)) {
+    visited.add(current);
+    if (configScalarBool(state, current, 'showCheckbox')) return true;
+    current = configRefTarget(state, current, 'extends');
+  }
+  return false;
+}
+
+/** True when any of the node's applied tags drives a checkbox (tag-driven visibility). */
+function nodeTagDrivenCheckbox(state: DocumentState, node: Node): boolean {
+  return node.tags.some((tagId) => tagShowsCheckboxOf(state, tagId));
+}
+
+/** Done = a completion timestamp is set (sentinel 0 means "has checkbox, undone"). */
+function nodeIsDone(node: Node): boolean {
+  return node.completedAt !== undefined && node.completedAt > 0;
 }
 
 /** A numeric config value (minValue/maxValue) read from the def's scalar subtree. */
