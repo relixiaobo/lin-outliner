@@ -62,13 +62,11 @@ test.describe('agent settings dialog', () => {
   test('gates model selection behind a key and hides the provider id for known providers', async ({ page }) => {
     const { dialog } = await openSettings(page);
 
-    // A known provider exposes no editable Provider ID. Base URL is an optional
-    // override tucked under an Advanced disclosure (defaulted to the endpoint).
+    // A known provider exposes no editable Provider ID. Base URL is an inline
+    // optional override defaulted to the endpoint.
     await dialog.locator('.settings-provider-row', { hasText: 'Anthropic' }).click();
     await expect(dialog.getByLabel('Provider ID')).toHaveCount(0);
     await expect(dialog.getByLabel('API key')).toHaveAttribute('placeholder', 'Paste key');
-    await expect(dialog.getByLabel('Base URL')).toBeHidden();
-    await dialog.getByText('Advanced', { exact: true }).click();
     await expect(dialog.getByLabel('Base URL')).toHaveAttribute('placeholder', 'https://api.anthropic.com');
 
     await gotoCategory(dialog, 'Agent');
@@ -108,17 +106,26 @@ test.describe('agent settings dialog', () => {
     await dialog.locator('.settings-provider-row', { hasText: 'Amazon Bedrock' }).click();
     // No misleading key/base-url fields for an AWS-credential provider.
     await expect(dialog.getByLabel('API key')).toHaveCount(0);
-    await expect(dialog.getByText('Advanced', { exact: true })).toHaveCount(0);
+    await expect(dialog.getByLabel('Base URL')).toHaveCount(0);
     await expect(dialog.getByText(/uses your AWS credentials/i)).toBeVisible();
     await expect(dialog.getByRole('button', { name: /AWS credential setup/ })).toBeVisible();
   });
 
-  test('lists provider models behind a Models disclosure', async ({ page }) => {
+  test('lists provider models inline with a collapsible search', async ({ page }) => {
     const { dialog } = await openSettings(page);
-    // Collapsed by default so it doesn't bury the key field.
-    await expect(dialog.getByText('GPT-5.4', { exact: true })).toBeHidden();
-    await dialog.getByText('Models', { exact: true }).click();
+    // OpenAI has multiple models, shown inline (no disclosure to expand).
     await expect(dialog.getByText('GPT-5.4', { exact: true })).toBeVisible();
+    await expect(dialog.getByText('GPT-5.4 Mini', { exact: true })).toBeVisible();
+
+    // The model search hides behind an icon beside the Models heading.
+    await expect(dialog.getByRole('textbox', { name: 'Search models' })).toHaveCount(0);
+    await dialog.getByRole('button', { name: 'Search models' }).click();
+    const search = dialog.getByRole('textbox', { name: 'Search models' });
+    await expect(search).toBeVisible();
+
+    await search.fill('mini');
+    await expect(dialog.getByText('GPT-5.4 Mini', { exact: true })).toBeVisible();
+    await expect(dialog.getByText('GPT-5.4', { exact: true })).toHaveCount(0);
   });
 
   test('toggles API key visibility', async ({ page }) => {
