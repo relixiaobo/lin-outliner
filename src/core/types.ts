@@ -388,10 +388,6 @@ export interface NodeBase {
   displayOrder?: number;
   displayLabel?: string;
   displayPlacement?: DisplayPlacement;
-  queryLogic?: QueryLogic;
-  queryOp?: QueryOp;
-  queryTagDefId?: NodeId;
-  queryFieldDefId?: NodeId;
   aiSummary?: string;
   trashedFromParentId?: NodeId;
   trashedFromIndex?: number;
@@ -428,8 +424,18 @@ export interface ViewDefNode extends NodeBase { type: 'viewDef'; }
 export interface SortRuleNode extends NodeBase { type: 'sortRule'; }
 export interface FilterRuleNode extends NodeBase { type: 'filterRule'; }
 export interface DisplayFieldNode extends NodeBase { type: 'displayField'; }
-export interface SearchNode extends NodeBase { type: 'search'; }
-export interface QueryConditionNode extends NodeBase { type: 'queryCondition'; }
+/**
+ * Query parameters carried by both a `search` node (its inline top-level rule)
+ * and each `queryCondition` node (a rule/group in the search's condition tree).
+ */
+export interface QueryParams {
+  queryLogic?: QueryLogic;
+  queryOp?: QueryOp;
+  queryTagDefId?: NodeId;
+  queryFieldDefId?: NodeId;
+}
+export interface SearchNode extends NodeBase, QueryParams { type: 'search'; }
+export interface QueryConditionNode extends NodeBase, QueryParams { type: 'queryCondition'; }
 
 export type Node =
   | ContentNode

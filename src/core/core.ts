@@ -66,6 +66,8 @@ import {
   type CodeBlockNode,
   type EmbedNode,
   type ImageNode,
+  type QueryConditionNode,
+  type SearchNode,
   type NodeId,
   type NodeType,
   type QueryLogic,
@@ -1750,15 +1752,20 @@ export class Core {
 
   private writeSearchNodeConfigDirect(nodeId: string, config: SearchNodeConfig) {
     const state = this.snapshot();
-    const node = clone(requiredNode(state, nodeId));
-    node.type = 'search';
-    node.content = plainText(normalizeSearchTitle(config.title));
-    delete node.queryOp;
-    delete node.queryLogic;
-    delete node.queryTagDefId;
-    delete node.queryFieldDefId;
-    delete node.targetId;
-    node.updatedAt = nowMs();
+    const existing = clone(requiredNode(state, nodeId));
+    // Rebuild as a search node with its inline query cleared (the query lives in
+    // child queryCondition nodes); reconstructing avoids mutating the discriminant.
+    const node: SearchNode = {
+      ...existing,
+      type: 'search',
+      content: plainText(normalizeSearchTitle(config.title)),
+      queryOp: undefined,
+      queryLogic: undefined,
+      queryTagDefId: undefined,
+      queryFieldDefId: undefined,
+      targetId: undefined,
+      updatedAt: nowMs(),
+    };
     this.loro.writeNode(node);
 
     const latest = this.snapshot();
@@ -1825,7 +1832,7 @@ export class Core {
   private createSearchQueryConditionDirect(parentId: string, query: SearchQueryExpr, index?: number | null) {
     const state = this.snapshot();
     const conditionId = freshId('condition');
-    this.loro.createNodeWithId(conditionId, parentId, index, 'queryCondition', (node) => {
+    this.loro.createNodeWithId<QueryConditionNode>(conditionId, parentId, index, 'queryCondition', (node) => {
       if (query.kind === 'group') {
         node.queryLogic = query.logic;
         node.content = plainText(query.logic);
@@ -2837,7 +2844,7 @@ function searchNodeHasSingleTagQuery(state: DocumentState, nodeId: string, tagId
   }) ?? [];
   if (conditionIds.length !== 1) return false;
   const condition = state.nodes[conditionIds[0]!];
-  return condition?.queryOp === 'HAS_TAG' && condition.queryTagDefId === tagId;
+  return condition?.type === 'queryCondition' && condition.queryOp === 'HAS_TAG' && condition.queryTagDefId === tagId;
 }
 
 function reorderDirectChildren(

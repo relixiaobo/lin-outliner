@@ -186,6 +186,9 @@ export function SearchQueryBuilderPanel({ index, nodeId, run, onClose }: SearchQ
   );
 }
 
+/** A projected node carrying query params — a `search` (inline) or `queryCondition`. */
+type QueryBearingProjection = Extract<NodeProjection, { type: 'search' } | { type: 'queryCondition' }>;
+
 export function searchQuerySummaryModel(index: DocumentIndex, nodeId: NodeId): SearchQuerySummaryModel | null {
   const searchNode = index.byId.get(nodeId);
   if (!searchNode || searchNode.type !== 'search') return null;
@@ -268,7 +271,7 @@ function SearchQueryChip({ chip }: { chip: SearchQuerySummaryChip }) {
   );
 }
 
-function conditionOutlineLines(index: DocumentIndex, condition: NodeProjection, level: number): string[] {
+function conditionOutlineLines(index: DocumentIndex, condition: QueryBearingProjection, level: number): string[] {
   const indent = '  '.repeat(level);
   if (condition.queryLogic) {
     return [
@@ -288,7 +291,7 @@ function conditionOutlineLines(index: DocumentIndex, condition: NodeProjection, 
   return lines;
 }
 
-function operandOutlineTexts(index: DocumentIndex, condition: NodeProjection): string[] {
+function operandOutlineTexts(index: DocumentIndex, condition: QueryBearingProjection): string[] {
   const operands = condition.children.flatMap((childId): string[] => {
     const child = index.byId.get(childId);
     if (!child || child.type === 'queryCondition') return [];
@@ -309,7 +312,7 @@ function operandOutlineText(index: DocumentIndex, node: NodeProjection): string 
   return node.content.text.trim();
 }
 
-function conditionChips(index: DocumentIndex, condition: NodeProjection, depth: number): SearchQuerySummaryChip[] {
+function conditionChips(index: DocumentIndex, condition: QueryBearingProjection, depth: number): SearchQuerySummaryChip[] {
   if (condition.queryLogic) {
     const childChips = directConditionChildren(index, condition)
       .flatMap((child) => conditionChips(index, child, depth + 1));
@@ -324,7 +327,7 @@ function conditionChips(index: DocumentIndex, condition: NodeProjection, depth: 
   return [ruleChip(index, condition, condition.queryOp)];
 }
 
-function ruleChip(index: DocumentIndex, condition: NodeProjection, op: QueryOp): SearchQuerySummaryChip {
+function ruleChip(index: DocumentIndex, condition: QueryBearingProjection, op: QueryOp): SearchQuerySummaryChip {
   if (op === 'HAS_TAG') {
     return {
       kind: 'tag',
@@ -359,7 +362,7 @@ function ruleChip(index: DocumentIndex, condition: NodeProjection, op: QueryOp):
   };
 }
 
-function fieldRuleLabel(index: DocumentIndex, condition: NodeProjection, op: QueryOp): string {
+function fieldRuleLabel(index: DocumentIndex, condition: QueryBearingProjection, op: QueryOp): string {
   const field = condition.queryFieldDefId ? nodeTitle(index, condition.queryFieldDefId) : 'Field';
   const values = valueLabels(index, condition);
   const value = values.join(', ');
@@ -398,7 +401,7 @@ function fieldRuleLabel(index: DocumentIndex, condition: NodeProjection, op: Que
   }
 }
 
-function targetRuleLabel(index: DocumentIndex, condition: NodeProjection, op: QueryOp): string {
+function targetRuleLabel(index: DocumentIndex, condition: QueryBearingProjection, op: QueryOp): string {
   const target = condition.targetId
     ? nodeTitle(index, condition.targetId)
     : valueLabels(index, condition)[0] ?? 'target';
@@ -418,7 +421,7 @@ function targetRuleLabel(index: DocumentIndex, condition: NodeProjection, op: Qu
   }
 }
 
-function textRuleLabel(index: DocumentIndex, condition: NodeProjection, op: QueryOp): string {
+function textRuleLabel(index: DocumentIndex, condition: QueryBearingProjection, op: QueryOp): string {
   const values = valueLabels(index, condition);
   const value = values.join(', ');
   switch (op) {
@@ -445,7 +448,7 @@ function textRuleLabel(index: DocumentIndex, condition: NodeProjection, op: Quer
   }
 }
 
-function valueLabels(index: DocumentIndex, condition: NodeProjection): string[] {
+function valueLabels(index: DocumentIndex, condition: QueryBearingProjection): string[] {
   const labels = condition.children.flatMap((childId): string[] => {
     const child = index.byId.get(childId);
     if (!child || child.type === 'queryCondition') return [];
@@ -464,10 +467,10 @@ function operandLabel(index: DocumentIndex, node: NodeProjection): string {
   return node.content.text.trim();
 }
 
-function directConditionChildren(index: DocumentIndex, node: NodeProjection): NodeProjection[] {
+function directConditionChildren(index: DocumentIndex, node: NodeProjection): QueryBearingProjection[] {
   return node.children
     .map((childId) => index.byId.get(childId))
-    .filter((child): child is NodeProjection => child?.type === 'queryCondition');
+    .filter((child): child is QueryBearingProjection => child?.type === 'queryCondition');
 }
 
 function formatLogicGroup(logic: QueryLogic, chips: SearchQuerySummaryChip[]): string {

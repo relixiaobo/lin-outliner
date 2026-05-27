@@ -39,6 +39,13 @@ import {
 
 type SearchDocument = DocumentState | DocumentProjection;
 type SearchNode = Node | NodeProjection;
+/** A node that carries query params — a `search` (inline rule) or a `queryCondition`. */
+type QueryBearingNode = Extract<SearchNode, { type: 'search' } | { type: 'queryCondition' }>;
+
+/** Narrow a looked-up node to its query-bearing variant, or undefined. */
+function asQueryBearing(node: SearchNode | undefined): QueryBearingNode | undefined {
+  return node && (node.type === 'search' || node.type === 'queryCondition') ? node : undefined;
+}
 
 /** The field's type, read from its defConfig subtree (config-as-nodes). */
 function fieldTypeOf(index: SearchIndex, fieldDefId: NodeId | undefined): FieldType | undefined {
@@ -267,11 +274,12 @@ export function searchNodeToQueryExpr(document: SearchDocument, searchNodeId: No
 
   const conditionNodes = searchNode.children
     .map((childId) => index.nodes.get(childId))
-    .filter((child): child is SearchNode => child?.type === 'queryCondition' && !isInTrash(index, child.id));
+    .filter((child): child is QueryBearingNode => child?.type === 'queryCondition' && !isInTrash(index, child.id));
 
   if (conditionNodes.length === 0) {
-    if (!searchNode.queryOp) return { ok: true, query: null };
-    return queryExprFromConditionNode(index, searchNode);
+    const inlineRule = asQueryBearing(searchNode);
+    if (!inlineRule?.queryOp) return { ok: true, query: null };
+    return queryExprFromConditionNode(index, inlineRule);
   }
 
   const children: SearchQueryExpr[] = [];
@@ -330,7 +338,7 @@ function indexSearchDocument(document: SearchDocument): SearchIndex {
   };
 }
 
-function queryExprFromConditionNode(index: SearchIndex, conditionNode: SearchNode): SearchQueryResolution {
+function queryExprFromConditionNode(index: SearchIndex, conditionNode: QueryBearingNode): SearchQueryResolution {
   if (conditionNode.queryOp) {
     const text = QUERY_TEXT_CONTENT_OPS.has(conditionNode.queryOp)
       ? conditionNode.content.text.trim()
@@ -362,7 +370,7 @@ function queryExprFromConditionNode(index: SearchIndex, conditionNode: SearchNod
 
   const childConditions = conditionNode.children
     .map((childId) => index.nodes.get(childId))
-    .filter((child): child is SearchNode => child?.type === 'queryCondition' && !isInTrash(index, child.id));
+    .filter((child): child is QueryBearingNode => child?.type === 'queryCondition' && !isInTrash(index, child.id));
   const children: SearchQueryExpr[] = [];
   for (const childCondition of childConditions) {
     const resolved = queryExprFromConditionNode(index, childCondition);
@@ -373,7 +381,7 @@ function queryExprFromConditionNode(index: SearchIndex, conditionNode: SearchNod
   return { ok: true, query: { kind: 'group', logic: conditionNode.queryLogic, children } };
 }
 
-function queryOperandsFromConditionNode(index: SearchIndex, conditionNode: SearchNode): { operands?: SearchQueryOperand[] } {
+function queryOperandsFromConditionNode(index: SearchIndex, conditionNode: QueryBearingNode): { operands?: SearchQueryOperand[] } {
   const operands = conditionNode.children.flatMap((childId): SearchQueryOperand[] => {
     const child = index.nodes.get(childId);
     if (!child || child.type === 'queryCondition' || isInTrash(index, child.id)) return [];
@@ -399,14 +407,15 @@ function evaluateSearchNode(index: SearchIndex, candidate: SearchNode, searchNod
   const context = { searchNode };
   const conditionNodes = searchNode.children
     .map((childId) => index.nodes.get(childId))
-    .filter((child): child is SearchNode => child?.type === 'queryCondition' && !isInTrash(index, child.id));
+    .filter((child): child is QueryBearingNode => child?.type === 'queryCondition' && !isInTrash(index, child.id));
 
   if (conditionNodes.length > 0) return evaluateAnd(index, candidate, conditionNodes, context);
-  if (searchNode.queryOp) return evaluateLeafNode(index, candidate, searchNode, context);
+  const inlineRule = asQueryBearing(searchNode);
+  if (inlineRule?.queryOp) return evaluateLeafNode(index, candidate, inlineRule, context);
   return { ok: true, match: false, score: 0 };
 }
 
-function evaluateCondition(index: SearchIndex, candidate: SearchNode, conditionNode: SearchNode, context: SearchContext): SearchEvaluation {
+function evaluateCondition(index: SearchIndex, candidate: SearchNode, conditionNode: QueryBearingNode, context: SearchContext): SearchEvaluation {
   if (conditionNode.queryOp) return evaluateLeafNode(index, candidate, conditionNode, context);
   if (!conditionNode.queryLogic) {
     return {
@@ -421,7 +430,7 @@ function evaluateCondition(index: SearchIndex, candidate: SearchNode, conditionN
 
   const childConditions = conditionNode.children
     .map((childId) => index.nodes.get(childId))
-    .filter((child): child is SearchNode => child?.type === 'queryCondition' && !isInTrash(index, child.id));
+    .filter((child): child is QueryBearingNode => child?.type === 'queryCondition' && !isInTrash(index, child.id));
   if (childConditions.length === 0) {
     return {
       ok: false,
@@ -449,7 +458,7 @@ function evaluateCondition(index: SearchIndex, candidate: SearchNode, conditionN
   };
 }
 
-function evaluateAnd(index: SearchIndex, candidate: SearchNode, conditions: SearchNode[], context: SearchContext): SearchEvaluation {
+function evaluateAnd(index: SearchIndex, candidate: SearchNode, conditions: QueryBearingNode[], context: SearchContext): SearchEvaluation {
   let score = 0;
   for (const condition of conditions) {
     const evaluation = evaluateCondition(index, candidate, condition, context);
@@ -460,7 +469,7 @@ function evaluateAnd(index: SearchIndex, candidate: SearchNode, conditions: Sear
   return { ok: true, match: true, score: Math.max(score, 1) };
 }
 
-function evaluateOr(index: SearchIndex, candidate: SearchNode, conditions: SearchNode[], context: SearchContext): SearchEvaluation {
+function evaluateOr(index: SearchIndex, candidate: SearchNode, conditions: QueryBearingNode[], context: SearchContext): SearchEvaluation {
   let score = 0;
   let matched = false;
   for (const condition of conditions) {
@@ -473,7 +482,7 @@ function evaluateOr(index: SearchIndex, candidate: SearchNode, conditions: Searc
   return { ok: true, match: matched, score: matched ? Math.max(score, 1) : 0 };
 }
 
-function evaluateNot(index: SearchIndex, candidate: SearchNode, conditions: SearchNode[], context: SearchContext): SearchEvaluation {
+function evaluateNot(index: SearchIndex, candidate: SearchNode, conditions: QueryBearingNode[], context: SearchContext): SearchEvaluation {
   for (const condition of conditions) {
     const evaluation = evaluateCondition(index, candidate, condition, context);
     if (!evaluation.ok) return evaluation;
@@ -482,7 +491,7 @@ function evaluateNot(index: SearchIndex, candidate: SearchNode, conditions: Sear
   return { ok: true, match: true, score: 5 };
 }
 
-function evaluateLeafNode(index: SearchIndex, candidate: SearchNode, conditionNode: SearchNode, context: SearchContext): SearchEvaluation {
+function evaluateLeafNode(index: SearchIndex, candidate: SearchNode, conditionNode: QueryBearingNode, context: SearchContext): SearchEvaluation {
   if (conditionNode.queryLogic && conditionNode.queryLogic !== 'AND') {
     return {
       ok: false,
@@ -497,7 +506,7 @@ function evaluateLeafNode(index: SearchIndex, candidate: SearchNode, conditionNo
   return evaluateLeaf(index, candidate, conditionNode, context);
 }
 
-function evaluateLeaf(index: SearchIndex, candidate: SearchNode, conditionNode: SearchNode, context: SearchContext): SearchEvaluation {
+function evaluateLeaf(index: SearchIndex, candidate: SearchNode, conditionNode: QueryBearingNode, context: SearchContext): SearchEvaluation {
   const op = conditionNode.queryOp;
   if (!op) {
     return {
@@ -689,7 +698,7 @@ function evaluateLeaf(index: SearchIndex, candidate: SearchNode, conditionNode: 
   };
 }
 
-function missingEvaluationOperand(conditionNode: SearchNode, op: QueryOp, operand: string): SearchEvaluation {
+function missingEvaluationOperand(conditionNode: QueryBearingNode, op: QueryOp, operand: string): SearchEvaluation {
   return {
     ok: false,
     issue: {
@@ -705,8 +714,8 @@ function virtualConditionTreeFromQueryExpr(
   query: SearchQueryExpr,
   parentId: NodeId | undefined,
   nextId: () => NodeId,
-): { root: SearchNode; nodes: SearchNode[] } {
-  const node = virtualNode(nextId(), parentId, 'queryCondition', query.kind === 'rule' ? query.text ?? '' : '');
+): { root: QueryBearingNode; nodes: SearchNode[] } {
+  const node = virtualNode(nextId(), parentId, 'queryCondition', query.kind === 'rule' ? query.text ?? '' : '') as QueryBearingNode;
   const nodes: SearchNode[] = [node];
 
   if (query.kind === 'group') {
@@ -849,7 +858,7 @@ function nodeMatchesDateOperands(index: SearchIndex, node: SearchNode, dateOpera
   return ranges.some((range) => nodeMatchesDateRange(index, node, range));
 }
 
-function nodeIsOverdue(index: SearchIndex, node: SearchNode, conditionNode: SearchNode): boolean {
+function nodeIsOverdue(index: SearchIndex, node: SearchNode, conditionNode: QueryBearingNode): boolean {
   if (node.completedAt) return false;
   const todayStart = startOfLocalDay(new Date()).getTime();
   return overdueDateRanges(index, node, conditionNode.queryFieldDefId)
@@ -868,11 +877,11 @@ function overdueDateRanges(index: SearchIndex, node: SearchNode, fieldDefId?: No
     })));
 }
 
-function conditionComparableValues(index: SearchIndex, conditionNode: SearchNode, context: SearchContext): string[] {
+function conditionComparableValues(index: SearchIndex, conditionNode: QueryBearingNode, context: SearchContext): string[] {
   return uniqueStrings(conditionOperands(index, conditionNode, context).map((operand) => operand.normalizedText));
 }
 
-function conditionComparableScalar(index: SearchIndex, conditionNode: SearchNode, context: SearchContext): number | null {
+function conditionComparableScalar(index: SearchIndex, conditionNode: QueryBearingNode, context: SearchContext): number | null {
   const operand = conditionOperands(index, conditionNode, context)[0];
   if (!operand) return null;
   if (operand.scalar !== undefined) return operand.scalar;
@@ -880,7 +889,7 @@ function conditionComparableScalar(index: SearchIndex, conditionNode: SearchNode
   return comparableScalar(operand.text, fieldTypeOf(index, conditionNode.queryFieldDefId));
 }
 
-function conditionTargetId(index: SearchIndex, conditionNode: SearchNode, context: SearchContext): NodeId | undefined {
+function conditionTargetId(index: SearchIndex, conditionNode: QueryBearingNode, context: SearchContext): NodeId | undefined {
   for (const operand of conditionOperands(index, conditionNode, context)) {
     if (operand.nodeId) return operand.nodeId;
     if (index.nodes.has(operand.text)) return operand.text;
@@ -888,7 +897,7 @@ function conditionTargetId(index: SearchIndex, conditionNode: SearchNode, contex
   return undefined;
 }
 
-function conditionOperands(index: SearchIndex, conditionNode: SearchNode, context: SearchContext): SearchOperand[] {
+function conditionOperands(index: SearchIndex, conditionNode: QueryBearingNode, context: SearchContext): SearchOperand[] {
   const options: OperandResolutionOptions = {
     resolveRelativeDates: shouldResolveRelativeDates(index, conditionNode),
   };
@@ -901,7 +910,7 @@ function conditionOperands(index: SearchIndex, conditionNode: SearchNode, contex
   return uniqueOperands(operandsFromNode(index, conditionNode, context, options));
 }
 
-function shouldResolveRelativeDates(index: SearchIndex, conditionNode: SearchNode): boolean {
+function shouldResolveRelativeDates(index: SearchIndex, conditionNode: QueryBearingNode): boolean {
   if (conditionNode.queryOp === 'FOR_RELATIVE_DATE') return true;
   if (!conditionNode.queryFieldDefId) return false;
   return fieldTypeOf(index, conditionNode.queryFieldDefId) === 'date';
@@ -1253,7 +1262,7 @@ function rangesOverlap(left: DateRange, right: DateRange): boolean {
   return left.start < right.end && right.start < left.end;
 }
 
-function regexpFromCondition(conditionNode: SearchNode): RegExp | null {
+function regexpFromCondition(conditionNode: QueryBearingNode): RegExp | null {
   const raw = conditionNode.content.text.trim();
   if (!raw) return null;
   try {
@@ -1265,7 +1274,7 @@ function regexpFromCondition(conditionNode: SearchNode): RegExp | null {
   }
 }
 
-function conditionDays(conditionNode: SearchNode): number | null {
+function conditionDays(conditionNode: QueryBearingNode): number | null {
   const match = conditionNode.content.text.match(/\d+/);
   if (!match) return null;
   const days = Number(match[0]);
