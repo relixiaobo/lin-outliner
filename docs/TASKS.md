@@ -67,6 +67,11 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **settings-provider-add-and-search** (P2, cc) — moved the "Custom provider" add
+  affordance from a bottom pinned row to a compact "+" button beside the provider
+  search (active when the custom draft is open), and made the model search expand
+  in place inside the "Models N" header (icon → inline field with close) instead
+  of opening a separate row below (PR #40).
 - **settings-provider-layout-and-icons** (P2, cc) — provider detail polish: dropped
   the single-field "Advanced" disclosure (Base URL inline), un-collapsed the model
   catalog (inline list with a search-icon toggle next to the "Models N" heading,

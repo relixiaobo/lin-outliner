@@ -71,6 +71,13 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Custom-provider add button at the top; in-place model search** — the pinned
+  "Custom provider" row at the bottom of the provider list is replaced by a
+  compact "+" button beside the search box (active fill while the custom draft is
+  open). The model search no longer opens as a separate row below the "Models N"
+  heading — the search icon expands in place into an inline field (icon + input +
+  close) that fills the header row; closing clears the query.
+  ([#40](https://github.com/relixiaobo/lin-outliner/pull/40))
 - **Provider detail layout polish + brand icons** — the single-field "Advanced"
   disclosure is gone; Base URL shows inline (optional override, default-endpoint
   placeholder) for every non-managed provider. The read-only model catalog is no
