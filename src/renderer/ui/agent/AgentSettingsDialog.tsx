@@ -8,7 +8,8 @@ import type {
   AgentReasoningLevel,
 } from '../../api/types';
 import { api } from '../../api/client';
-import { ChevronRightIcon, HideIcon, ICON_SIZE, OpenIcon, PasswordIcon, SearchIcon, ShowIcon, TrashIcon, WarningIcon } from '../icons';
+import { HideIcon, ICON_SIZE, OpenIcon, PasswordIcon, SearchIcon, ShowIcon, TrashIcon, WarningIcon } from '../icons';
+import { providerIconUrl } from './providerIcon';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { CheckboxControl } from '../primitives/CheckboxControl';
 import { Dialog } from '../primitives/Dialog';
@@ -83,6 +84,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
   const [revealKey, setRevealKey] = useState(false);
   const [providerQuery, setProviderQuery] = useState('');
   const [modelQuery, setModelQuery] = useState('');
+  const [modelSearchOpen, setModelSearchOpen] = useState(false);
   const [category, setCategory] = useState<SettingsCategory>('providers');
   const [creatingCustom, setCreatingCustom] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -123,6 +125,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
     setCreatingCustom(false);
     setProviderQuery('');
     setModelQuery('');
+    setModelSearchOpen(false);
     void api.agentGetProviderSettings()
       .then((next) => {
         if (!isCurrentRequest(requestId)) return;
@@ -202,7 +205,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
   const effectiveEnabled = draft.enabled && canEnable;
   const baseUrlPlaceholder = selectedCatalog?.defaultBaseUrl ?? 'https://api.example.com/v1';
   const showModelList = !creatingCustom && catalogModels.length > 0;
-  const showModelSearch = catalogModels.length > 8;
+  const showModelSearch = catalogModels.length > 1;
   const visibleModels = useMemo(() => {
     const query = modelQuery.trim().toLowerCase();
     if (!query) return catalogModels;
@@ -227,6 +230,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
     setApiKey('');
     setRevealKey(false);
     setModelQuery('');
+    setModelSearchOpen(false);
     setNotice(null);
     setError(null);
   }
@@ -244,6 +248,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
     setApiKey('');
     setRevealKey(false);
     setModelQuery('');
+    setModelSearchOpen(false);
     setNotice(null);
     setError(null);
   }
@@ -428,9 +433,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
                             onClick={() => selectProvider(provider.providerId)}
                             type="button"
                           >
-                            <span className="settings-provider-avatar" aria-hidden="true">
-                              {providerInitial(provider.providerId)}
-                            </span>
+                            <ProviderAvatar providerId={provider.providerId} />
                             <span className="settings-provider-name">{formatProviderName(provider.providerId)}</span>
                             {dotState ? (
                               <span className={`settings-provider-dot ${dotState}`} aria-hidden="true" />
@@ -456,9 +459,11 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
                       <>
                         <div className="settings-provider-detail-header">
                           <div className="settings-provider-detail-id">
-                            <span className="settings-provider-avatar is-large" aria-hidden="true">
-                              {creatingCustom ? '+' : providerInitial(draft.providerId)}
-                            </span>
+                            {creatingCustom ? (
+                              <span className="settings-provider-avatar is-large" aria-hidden="true">+</span>
+                            ) : (
+                              <ProviderAvatar providerId={draft.providerId} large />
+                            )}
                             <div className="settings-provider-detail-text">
                               <div className="settings-provider-detail-name">
                                 {detailName}
@@ -563,57 +568,63 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
                             </div>
                           </FormField>
 
-                          {showConnectionFields ? baseUrlField : null}
+                          {baseUrlField}
                         </div>
-
-                        {showConnectionFields ? null : (
-                          <details className="settings-disclosure">
-                            <summary className="settings-disclosure-summary">
-                              <ChevronRightIcon size={ICON_SIZE.menu} />
-                              <span>Advanced</span>
-                            </summary>
-                            <div className="settings-disclosure-body">{baseUrlField}</div>
-                          </details>
-                        )}
                         </>
                         )}
 
                         {showModelList ? (
-                          <details className="settings-disclosure">
-                            <summary className="settings-disclosure-summary">
-                              <ChevronRightIcon size={ICON_SIZE.menu} />
-                              <span>Models</span>
-                              <span className="settings-disclosure-count">{catalogModels.length}</span>
-                            </summary>
-                            <div className="settings-disclosure-body">
+                          <div className="settings-models">
+                            <div className="settings-models-header">
+                              <span className="settings-models-title">Models</span>
+                              <span className="settings-models-count">{catalogModels.length}</span>
                               {showModelSearch ? (
+                                <button
+                                  aria-expanded={modelSearchOpen}
+                                  aria-label="Search models"
+                                  className={`settings-models-search-toggle ${modelSearchOpen ? 'is-active' : ''}`}
+                                  onClick={() =>
+                                    setModelSearchOpen((openNow) => {
+                                      if (openNow) setModelQuery('');
+                                      return !openNow;
+                                    })
+                                  }
+                                  type="button"
+                                >
+                                  <SearchIcon size={ICON_SIZE.menu} />
+                                </button>
+                              ) : null}
+                            </div>
+                            {showModelSearch && modelSearchOpen ? (
+                              <div className="settings-model-search">
+                                <SearchIcon size={ICON_SIZE.menu} />
                                 <TextInputControl
-                                  className="settings-model-search"
+                                  autoFocus
                                   label="Search models"
                                   onChange={(event) => setModelQuery(event.target.value)}
                                   placeholder="Search models…"
                                   value={modelQuery}
                                 />
-                              ) : null}
-                              <div className="settings-model-list" role="list">
-                                {visibleModels.length === 0 ? (
-                                  <p className="settings-model-empty">No models match “{modelQuery.trim()}”.</p>
-                                ) : null}
-                                {visibleModels.map((model) => (
-                                  <div className="settings-model-row" key={model.id} role="listitem">
-                                    <div className="settings-model-row-main">
-                                      <span className="settings-model-name">{model.name}</span>
-                                      <span className="settings-model-id">{model.id}</span>
-                                    </div>
-                                    <div className="settings-model-row-meta">
-                                      {model.reasoning ? <span className="settings-model-tag">Reasoning</span> : null}
-                                      <span>{formatTokens(model.contextWindow)}</span>
-                                    </div>
-                                  </div>
-                                ))}
                               </div>
+                            ) : null}
+                            <div className="settings-model-list" role="list">
+                              {visibleModels.length === 0 ? (
+                                <p className="settings-model-empty">No models match “{modelQuery.trim()}”.</p>
+                              ) : null}
+                              {visibleModels.map((model) => (
+                                <div className="settings-model-row" key={model.id} role="listitem">
+                                  <div className="settings-model-row-main">
+                                    <span className="settings-model-name">{model.name}</span>
+                                    <span className="settings-model-id">{model.id}</span>
+                                  </div>
+                                  <div className="settings-model-row-meta">
+                                    {model.reasoning ? <span className="settings-model-tag">Reasoning</span> : null}
+                                    <span>{formatTokens(model.contextWindow)}</span>
+                                  </div>
+                                </div>
+                              ))}
                             </div>
-                          </details>
+                          </div>
                         ) : null}
                       </>
                     ) : (
@@ -1055,6 +1066,16 @@ function formatProviderName(providerId: string): string {
 
 function providerInitial(providerId: string): string {
   return (formatProviderName(providerId).trim()[0] ?? '?').toUpperCase();
+}
+
+function ProviderAvatar({ providerId, large }: { providerId: string; large?: boolean }) {
+  const url = providerIconUrl(providerId);
+  const className = `settings-provider-avatar${large ? ' is-large' : ''}${url ? ' has-logo' : ''}`;
+  return (
+    <span className={className} aria-hidden="true">
+      {url ? <img className="settings-provider-logo" src={url} alt="" /> : providerInitial(providerId)}
+    </span>
+  );
 }
 
 function providerDescription(catalog: AgentProviderOption | undefined): string {
