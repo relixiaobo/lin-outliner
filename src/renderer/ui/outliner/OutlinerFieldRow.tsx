@@ -70,7 +70,8 @@ function resolveFieldOwnerColor(
   byId: Map<NodeId, NodeProjection>,
 ): string | undefined {
   const fieldSource = field ? projectFieldConfig(byId, field).sourceSupertag : undefined;
-  const lookupIds = [entry.templateId, field?.id ?? entry.fieldDefId, fieldSource]
+  const entryFieldDefId = entry.type === 'fieldEntry' ? entry.fieldDefId : undefined;
+  const lookupIds = [entry.templateId, field?.id ?? entryFieldDefId, fieldSource]
     .filter((id): id is NodeId => Boolean(id));
 
   for (const lookupId of lookupIds) {
@@ -91,7 +92,8 @@ function resolveFieldOwnerColor(
 
 export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   const entry = props.index.byId.get(props.entryId);
-  const field = entry?.fieldDefId ? props.index.byId.get(entry.fieldDefId) : undefined;
+  const entryFieldDefId = entry?.type === 'fieldEntry' ? entry.fieldDefId : undefined;
+  const field = entryFieldDefId ? props.index.byId.get(entryFieldDefId) : undefined;
   const rowChildIds = outlinerChildren(entry, props.index.byId);
   const primaryValueId = rowChildIds[0];
   const row = useOutlinerRowInteraction({

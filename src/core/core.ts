@@ -67,6 +67,7 @@ import {
   type DefConfigNode,
   type DisplayFieldNode,
   type EmbedNode,
+  type FieldEntryNode,
   type FilterRuleNode,
   type ImageNode,
   type QueryConditionNode,
@@ -1164,12 +1165,17 @@ export class Core {
       if (!parentId) throw CoreError.noParent();
       ensureParentMutable(state, parentId);
       const fieldDefId = this.insertFieldDefNodeDirect(SCHEMA_ID, normalized, fieldType);
-      const node = clone(requiredNode(state, afterNodeId));
-      node.type = 'fieldEntry';
-      node.fieldDefId = fieldDefId;
-      node.content = plainText('');
-      node.tags = [];
-      delete node.completedAt;
+      const existing = clone(requiredNode(state, afterNodeId));
+      // Convert the row into a field entry: rebuild as the variant rather than
+      // mutating the discriminant in place.
+      const node: FieldEntryNode = {
+        ...existing,
+        type: 'fieldEntry',
+        fieldDefId,
+        content: plainText(''),
+        tags: [],
+        completedAt: undefined,
+      };
       this.loro.writeNode(node);
       return focus(afterNodeId, { parentId, surface: 'field-name', placement: { kind: 'all' } });
     });
@@ -2208,7 +2214,7 @@ export class Core {
 
   private insertFieldEntryNodeDirect(parentId: string, index: number | null | undefined, fieldDefId: string) {
     const id = freshId('field_entry');
-    this.loro.createNodeWithId(id, parentId, index, 'fieldEntry', (node) => {
+    this.loro.createNodeWithId<FieldEntryNode>(id, parentId, index, 'fieldEntry', (node) => {
       node.fieldDefId = fieldDefId;
       node.content = plainText('');
     });
@@ -2370,7 +2376,6 @@ export class Core {
       this.loro.createNodeWithId(freshId('value'), fieldEntryId, undefined, value.type, (node) => {
         node.content = clone(value.content);
         node.description = value.description;
-        node.fieldDefId = value.fieldDefId;
         node.targetId = value.targetId;
         (node as CodeBlockNode).codeLanguage = source.codeLanguage;
       });

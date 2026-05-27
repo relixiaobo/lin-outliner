@@ -1382,11 +1382,11 @@ function fieldValueNodes(index: SearchIndex, node: SearchNode): SearchNode[] {
         .filter((value): value is SearchNode => value !== undefined && !isInTrash(index, value.id)));
 }
 
-function fieldEntryNodes(index: SearchIndex, node: SearchNode): SearchNode[] {
+function fieldEntryNodes(index: SearchIndex, node: SearchNode): Extract<SearchNode, { type: 'fieldEntry' }>[] {
   if (node.type === 'tagDef' || node.type === 'fieldDef' || node.type === 'search') return [];
   return node.children
     .map((childId) => index.nodes.get(childId))
-    .filter((child): child is SearchNode => child?.type === 'fieldEntry' && !isInTrash(index, child.id));
+    .filter((child): child is Extract<SearchNode, { type: 'fieldEntry' }> => child?.type === 'fieldEntry' && !isInTrash(index, child.id));
 }
 
 function fieldValueText(index: SearchIndex, value: SearchNode): string {

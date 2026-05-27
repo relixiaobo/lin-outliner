@@ -41,7 +41,7 @@ export function isSystemNodeId(nodeId: string): boolean {
 export function fieldReads(index: ProjectionIndex, node: NodeProjection, includeDeleted: boolean): NodeFieldRead[] {
   return node.children
     .map((childId) => index.nodes.get(childId))
-    .filter((child): child is NodeProjection => child !== undefined && child.type === 'fieldEntry' && (includeDeleted || !isInTrash(index, child.id)))
+    .filter((child): child is Extract<NodeProjection, { type: 'fieldEntry' }> => child !== undefined && child.type === 'fieldEntry' && (includeDeleted || !isInTrash(index, child.id)))
     .map((fieldEntry) => {
       const fieldDef = fieldEntry.fieldDefId ? index.nodes.get(fieldEntry.fieldDefId) : undefined;
       const values = fieldEntry.children
@@ -163,7 +163,8 @@ export function referenceText(index: ProjectionIndex, node: NodeProjection): str
 }
 
 export function fieldName(index: ProjectionIndex, fieldEntry: NodeProjection): string {
-  const fieldDef = fieldEntry.fieldDefId ? index.nodes.get(fieldEntry.fieldDefId) : undefined;
+  const fieldDefId = fieldEntry.type === 'fieldEntry' ? fieldEntry.fieldDefId : undefined;
+  const fieldDef = fieldDefId ? index.nodes.get(fieldDefId) : undefined;
   return fieldDef?.content.text || fieldEntry.content.text || 'Field';
 }
 

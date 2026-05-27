@@ -151,7 +151,8 @@ function tagOptionFields(byId: Map<NodeId, NodeProjection>, tagDefId: NodeId): T
     const tag = byId.get(current);
     if (!tag) break;
     for (const childId of tag.children) {
-      const fieldDefId = byId.get(childId)?.fieldDefId;
+      const child = byId.get(childId);
+      const fieldDefId = child?.type === 'fieldEntry' ? child.fieldDefId : undefined;
       if (!fieldDefId || seenFields.has(fieldDefId)) continue;
       const fieldDef = byId.get(fieldDefId);
       if (fieldDef?.type !== 'fieldDef') continue;

@@ -1375,7 +1375,8 @@ function normalizeDateOutlineValue(fieldName: string, value: OutlineValue): Outl
 
 function fieldTypeForEntry(index: ProjectionIndex, fieldEntryId: string): string {
   const fieldEntry = requiredNode(index, fieldEntryId);
-  const fieldDef = fieldEntry.fieldDefId ? index.nodes.get(fieldEntry.fieldDefId) : undefined;
+  const fieldDefId = fieldEntry.type === 'fieldEntry' ? fieldEntry.fieldDefId : undefined;
+  const fieldDef = fieldDefId ? index.nodes.get(fieldDefId) : undefined;
   return fieldDef?.type === 'fieldDef' ? projectFieldConfig(index.nodes, fieldDef).fieldType : 'plain';
 }
 
@@ -2012,7 +2013,7 @@ async function createField(
   }));
   tracker.createdFieldEntryIds.push(fieldEntryId);
   const fieldEntry = indexProjection(host.getProjection()).nodes.get(fieldEntryId);
-  if (fieldEntry?.fieldDefId) tracker.createdFieldDefIds.push(fieldEntry.fieldDefId);
+  if (fieldEntry?.type === 'fieldEntry' && fieldEntry.fieldDefId) tracker.createdFieldDefIds.push(fieldEntry.fieldDefId);
   for (const value of field.values) {
     const valueNodeId = await createFieldValue(host, fieldEntryId, value);
     tracker.createdNodeIds.push(valueNodeId);

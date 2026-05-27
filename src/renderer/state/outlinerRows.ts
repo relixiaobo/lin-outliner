@@ -141,7 +141,8 @@ function displayNode(node: NodeProjection, byId: Map<NodeId, NodeProjection>): N
 }
 
 function fieldLabel(entry: NodeProjection, byId: Map<NodeId, NodeProjection>): string {
-  const field = entry.fieldDefId ? byId.get(entry.fieldDefId) : undefined;
+  const fieldDefId = entry.type === 'fieldEntry' ? entry.fieldDefId : undefined;
+  const field = fieldDefId ? byId.get(fieldDefId) : undefined;
   return nodeTitle(field) || nodeTitle(entry) || 'Field';
 }
 

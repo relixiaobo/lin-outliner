@@ -45,7 +45,7 @@ function isEmptyFieldNameError(error: unknown): boolean {
 async function clearFallbackFieldName(outcome: CommandOutcome): Promise<CommandOutcome> {
   const fieldEntryId = outcome.focus?.nodeId;
   const fieldEntry = outcome.projection.nodes.find((node) => node.id === fieldEntryId);
-  const fieldDefId = fieldEntry?.fieldDefId;
+  const fieldDefId = fieldEntry?.type === 'fieldEntry' ? fieldEntry.fieldDefId : undefined;
   if (!fieldDefId) return outcome;
 
   const fieldDef = outcome.projection.nodes.find((node) => node.id === fieldDefId);

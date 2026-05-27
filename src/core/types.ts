@@ -366,7 +366,6 @@ export interface NodeBase {
   bannerPositionY?: number;
   bannerAlt?: string;
   templateId?: NodeId;
-  fieldDefId?: NodeId;
   /** For `reference` nodes: the role this reference plays (backlink allowlist). */
   refRole?: RefRole;
   autoCollected: boolean;
@@ -378,7 +377,11 @@ export interface NodeBase {
 
 /** A plain content node — the only variant whose `type` is absent. */
 export interface ContentNode extends NodeBase { type?: undefined; }
-export interface FieldEntryNode extends NodeBase { type: 'fieldEntry'; }
+export interface FieldEntryNode extends NodeBase {
+  type: 'fieldEntry';
+  /** The fieldDef this entry holds a value for. */
+  fieldDefId?: NodeId;
+}
 export interface ReferenceNode extends NodeBase { type: 'reference'; }
 export interface CodeBlockNode extends NodeBase {
   type: 'codeBlock';
