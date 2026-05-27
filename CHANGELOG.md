@@ -71,6 +71,14 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Searchable provider list with pinned Custom + correct names** — follow-up to
+  the three-pane Providers settings for the real ~32-provider catalog: a
+  "Search providers…" box filters the list, the "Custom provider" entry is pinned
+  below the scroll area (no longer buried after every known provider), display
+  names get acronym-aware casing (Azure OpenAI, Cloudflare AI Gateway, GitHub
+  Copilot, …) via an explicit map + token overrides, and the status dot renders
+  only for providers with a meaningful state instead of a hollow dot on every
+  row. ([#34](https://github.com/relixiaobo/lin-outliner/pull/34))
 - **Three-pane Providers settings with metadata** — the Settings dialog's
   Providers category becomes a three-pane layout: category nav, an always-visible
   scrollable provider list (a monogram avatar + name + a status dot), and the

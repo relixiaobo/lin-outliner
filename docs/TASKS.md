@@ -62,6 +62,11 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **settings-provider-list-polish** (P2, cc) — follow-up to the three-pane
+  Providers settings for the real ~32-provider catalog: provider search box,
+  pinned "Custom provider" entry, acronym-aware display names (Azure OpenAI /
+  Cloudflare AI Gateway / GitHub Copilot), and status dots only for meaningful
+  states (PR #34).
 - **settings-providers-three-pane** (P2, cc) — Providers settings reworked toward
   the shared reference (Cherry Studio): three panes (nav | provider list | detail),
   monogram avatars + status dots, a status badge + data-driven description in the
