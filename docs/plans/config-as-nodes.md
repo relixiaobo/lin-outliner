@@ -147,6 +147,38 @@ with tight, individually-green commits and explicit PR notes.
     variants that shouldn't carry them; god-record gone. Persistence reads/writes
     per-variant key sets.
 
+## Behavioral parity (nodex/Tana-verified, 2026-05-27)
+
+Before migrating each config knob we confirmed the intended semantics against
+nodex (source) and Tana (docs). Verdicts:
+
+- **Most knobs are already correct** and only need storage migration: color
+  (visual), fieldType stale-state clearing, sourceSupertag (options from tagged
+  nodes), autocollectOptions, autoInitialize (4 strategies + priority),
+  cardinality (lin enforces at write-time — stricter than nodex, keep), hideField
+  (lin implements all 5 modes incl. `value_is_default` — more complete than nodex,
+  keep), nullable/required (UI-only, matches Tana's non-blocking red-asterisk).
+- **Template inheritance through `extends`** = fields + default content (Tana:
+  "template content" inherited wholesale, inherited content locked). Content
+  inheritance was a pre-existing gap — **fixed** (ancestor-first, dedup by
+  templateId).
+- **`childSupertag` does NOT inherit through `extends`** — Tana evidence shows
+  extends inherits the *template*, not tag-level config knobs like Child
+  supertag. lin's current behavior is correct; **no change**.
+- **Done-state mapping (`doneStateEnabled`)** — Tana feature confirmed: a
+  two-way map from checkbox state to **one or more** options/enum field values
+  (check → set each mapped field's checked value; set a mapped checked/unchecked
+  value → toggle the checkbox). Gated by Show-as-Checkbox. lin only had a bare
+  boolean — **implement full multi-field mapping this iteration**.
+  - Data model (config-as-nodes consistent): under the tagDef, the
+    `doneStateEnabled` gate + a list of mapping-entry nodes, each
+    `{ field (ref), checkedValue (option ref), uncheckedValue (option ref) }`.
+    Forward sync in the done toggle (single write); reverse sync in
+    select-field-option (single write, loop-guarded). Options/enum fields only.
+- **`minValue`/`maxValue` runtime validation** — Tana shows a **non-blocking**
+  warning when a number value is out of range (does not reject). lin only checks
+  min≤max at config time — **add the soft runtime warning this iteration**.
+
 ## Consistency note
 
 Node-encodes **definition** config (defConfig); **view** config stays typed but
