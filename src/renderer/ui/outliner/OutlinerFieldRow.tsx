@@ -36,6 +36,8 @@ import { outlinerChildren } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
 import { fieldTypeLabel } from './fieldTypePresentation';
 import { FieldEntryGrid } from './FieldEntryGrid';
+import { WarningIcon } from '../icons';
+import { validateFieldValue } from '../fields/fieldValueValidation';
 import { FieldValueOutliner } from './FieldValueOutliner';
 import { NodeContextMenu } from './NodeContextMenu';
 import { NodeDescription } from './NodeDescription';
@@ -155,8 +157,16 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
 
   if (!entry) return null;
 
-  const fieldType = field ? projectFieldConfig(props.index.byId, field).fieldType : 'plain';
+  const fieldConfig = field ? projectFieldConfig(props.index.byId, field) : undefined;
+  const fieldType = fieldConfig?.fieldType ?? 'plain';
   const drillDownId = field?.id ?? props.entryId;
+  // #16: non-blocking min/max (and not-a-number) warning on the first value.
+  const firstValueId = entry.children[0];
+  const firstValueText = firstValueId ? props.index.byId.get(firstValueId)?.content.text ?? '' : '';
+  const valueWarning = validateFieldValue(fieldType, firstValueText, {
+    min: fieldConfig?.minValue,
+    max: fieldConfig?.maxValue,
+  });
   const fieldOwnerColor = resolveFieldOwnerColor(entry, field, props.index.byId);
 
   const commitName = async (nextName = nameDraft) => {
@@ -361,21 +371,28 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     ? 'Select option'
     : 'Empty';
   const valueControl = (
-    <FieldValueOutliner
-      panelId={props.panelId}
-      entryId={props.entryId}
-      onRoot={props.onRoot}
-      index={props.index}
-      ui={props.ui}
-      setUi={props.setUi}
-      run={props.run}
-      trigger={props.trigger}
-      setTrigger={props.setTrigger}
-      dragId={props.dragId}
-      setDragId={props.setDragId}
-      optionField={field}
-      placeholder={valuePlaceholder}
-    />
+    <div className="field-value-cell">
+      <FieldValueOutliner
+        panelId={props.panelId}
+        entryId={props.entryId}
+        onRoot={props.onRoot}
+        index={props.index}
+        ui={props.ui}
+        setUi={props.setUi}
+        run={props.run}
+        trigger={props.trigger}
+        setTrigger={props.setTrigger}
+        dragId={props.dragId}
+        setDragId={props.setDragId}
+        optionField={field}
+        placeholder={valuePlaceholder}
+      />
+      {valueWarning && (
+        <span className="field-value-warning" title={valueWarning} aria-label={valueWarning}>
+          <WarningIcon size={14} />
+        </span>
+      )}
+    </div>
   );
 
   const description = (

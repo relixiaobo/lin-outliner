@@ -1080,6 +1080,27 @@
   color: color-mix(in srgb, var(--text) 28%, transparent);
 }
 
+/* #16: non-blocking min/max value warning sits beside the value, never blocks it. */
+.field-value-cell {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.field-value-cell > .field-value-outliner {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.field-value-warning {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  margin-top: 2px;
+  color: var(--semantic-warning);
+}
+
 .field-value-node-preview.done {
   color: var(--muted);
   text-decoration: line-through;
