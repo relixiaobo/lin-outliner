@@ -30,8 +30,10 @@ test.describe('agent settings dialog', () => {
     const { dialog } = await openSettings(page);
     // Providers category is the default and lists connectable providers.
     await expect(dialog.getByRole('heading', { name: 'Providers' })).toBeVisible();
-    await expect(dialog.getByRole('button', { name: 'OpenAI Active' })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'OpenAI, Active' })).toBeVisible();
     await expect(dialog.getByRole('button', { name: /Anthropic/ })).toBeVisible();
+    // The selected provider's detail pane carries the status badge and key field.
+    await expect(dialog.getByText('Active', { exact: true })).toBeVisible();
     await expect(dialog.getByLabel('API key')).toHaveAttribute('placeholder', 'Configured');
     await expect(dialog.getByRole('button', { name: 'Remove key' })).toBeEnabled();
     // Model / reasoning / permission live under the Agent category, not Providers.
@@ -62,13 +64,14 @@ test.describe('agent settings dialog', () => {
     await expect(mark).not.toHaveClass(/checked/);
   });
 
-  test('gates model selection behind a key and hides connection details for known providers', async ({ page }) => {
+  test('gates model selection behind a key and hides the provider id for known providers', async ({ page }) => {
     const { dialog } = await openSettings(page);
 
-    // A known provider exposes no Provider ID / Base URL fields — just the key.
+    // A known provider exposes no editable Provider ID — but Base URL is offered
+    // as an optional override, defaulted to the provider's endpoint.
     await dialog.locator('.settings-provider-row', { hasText: 'Anthropic' }).click();
     await expect(dialog.getByLabel('Provider ID')).toHaveCount(0);
-    await expect(dialog.getByLabel('Base URL')).toHaveCount(0);
+    await expect(dialog.getByLabel('Base URL')).toHaveAttribute('placeholder', 'https://api.anthropic.com');
     await expect(dialog.getByLabel('API key')).toHaveAttribute('placeholder', 'Paste key');
 
     await gotoCategory(dialog, 'Agent');
@@ -79,6 +82,18 @@ test.describe('agent settings dialog', () => {
     await dialog.getByLabel('API key').fill('sk-ant-test');
     await gotoCategory(dialog, 'Agent');
     await expect(dialog.getByRole('combobox', { name: 'Model' })).toBeVisible();
+  });
+
+  test('toggles API key visibility', async ({ page }) => {
+    const { dialog } = await openSettings(page);
+    const key = dialog.getByLabel('API key');
+    await expect(key).toHaveAttribute('type', 'password');
+
+    await dialog.getByRole('button', { name: 'Show key' }).click();
+    await expect(key).toHaveAttribute('type', 'text');
+
+    await dialog.getByRole('button', { name: 'Hide key' }).click();
+    await expect(key).toHaveAttribute('type', 'password');
   });
 
   test('reveals connection fields only for a custom provider', async ({ page }) => {

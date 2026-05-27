@@ -291,6 +291,7 @@ function getAvailableProviders(): AgentProviderOption[] {
     providerId,
     hasEnvApiKey: !!getEnvApiKey(providerId),
     envKeyNames: findEnvKeys(providerId) ?? [],
+    defaultBaseUrl: getModels(providerId)[0]?.baseUrl,
     models: getModels(providerId)
       .map((model): AgentModelOption => ({
         id: model.id,

@@ -169,6 +169,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         providerId: 'openai',
         hasEnvApiKey: false,
         envKeyNames: ['OPENAI_API_KEY'],
+        defaultBaseUrl: 'https://api.openai.com/v1',
         models: [
           {
             id: 'gpt-5.4',
@@ -191,6 +192,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         providerId: 'anthropic',
         hasEnvApiKey: false,
         envKeyNames: ['ANTHROPIC_API_KEY'],
+        defaultBaseUrl: 'https://api.anthropic.com',
         models: [
           {
             id: 'claude-sonnet-4-5',
