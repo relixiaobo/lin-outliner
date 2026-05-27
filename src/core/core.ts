@@ -64,6 +64,7 @@ import {
   type IconKind,
   type Node,
   type CodeBlockNode,
+  type DefConfigNode,
   type DisplayFieldNode,
   type EmbedNode,
   type FilterRuleNode,
@@ -2023,7 +2024,7 @@ export class Core {
         this.loro.moveNode(rowId, defId, index);
         return;
       }
-      this.loro.createNodeWithId(rowId, defId, index, 'defConfig', (node) => {
+      this.loro.createNodeWithId<DefConfigNode>(rowId, defId, index, 'defConfig', (node) => {
         node.configKey = key;
         node.content = plainText(CONFIG_SCHEMA[key].label);
         node.locked = true;
@@ -2089,7 +2090,7 @@ export class Core {
     const rowId = defConfigNodeId(defId, configKey);
     if (!this.loro.hasNode(rowId)) {
       const now = nowMs();
-      this.loro.createNodeWithId(rowId, defId, 0, 'defConfig', (node) => {
+      this.loro.createNodeWithId<DefConfigNode>(rowId, defId, 0, 'defConfig', (node) => {
         node.configKey = configKey;
         node.content = plainText(CONFIG_SCHEMA[configKey].label);
         node.locked = true;

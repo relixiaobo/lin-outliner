@@ -367,8 +367,6 @@ export interface NodeBase {
   bannerAlt?: string;
   templateId?: NodeId;
   fieldDefId?: NodeId;
-  /** For `defConfig` nodes: which config knob this row represents. */
-  configKey?: DefConfigKey;
   /** For `reference` nodes: the role this reference plays (backlink allowlist). */
   refRole?: RefRole;
   autoCollected: boolean;
@@ -403,7 +401,11 @@ export interface EmbedNode extends NodeBase {
 }
 export interface TagDefNode extends NodeBase { type: 'tagDef'; }
 export interface FieldDefNode extends NodeBase { type: 'fieldDef'; }
-export interface DefConfigNode extends NodeBase { type: 'defConfig'; }
+export interface DefConfigNode extends NodeBase {
+  type: 'defConfig';
+  /** Which config knob this row represents. */
+  configKey?: DefConfigKey;
+}
 export interface SystemOptionNode extends NodeBase { type: 'systemOption'; }
 export interface ViewDefNode extends NodeBase {
   type: 'viewDef';

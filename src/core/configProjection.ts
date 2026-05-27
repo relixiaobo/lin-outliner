@@ -24,10 +24,24 @@ import type {
   FieldType,
   Node,
   NodeId,
+  NodeType,
+  RichText,
 } from './types';
 
-/** A node map keyed by id; both `Node` and `NodeProjection` satisfy the reads here. */
-export type ConfigNodeLike = Pick<Node, 'id' | 'type' | 'configKey' | 'children' | 'content' | 'targetId'>;
+/**
+ * The node fields the config projection reads, structurally. Both `Node` and
+ * `NodeProjection` (and their variants) satisfy it: `configKey` lives on the
+ * defConfig variant and `targetId` on the reference variant, so both are
+ * optional here.
+ */
+export type ConfigNodeLike = {
+  id: NodeId;
+  type?: NodeType;
+  configKey?: DefConfigKey;
+  children: NodeId[];
+  content: RichText;
+  targetId?: NodeId;
+};
 export type ConfigNodeMap = ReadonlyMap<NodeId, ConfigNodeLike>;
 
 // ─── Low-level reads over a single defConfig node's value child(ren) ───
