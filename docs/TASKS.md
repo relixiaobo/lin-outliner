@@ -67,6 +67,11 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **settings-provider-enablement-list** (P2, cc) — "Enabled" gated on a credential
+  (toggle disabled without a key; pasting a key auto-enables; save persists the
+  effective state), provider-list enablement dot (green = on / hollow = off),
+  design-system search box, and background-fill selection instead of an outline
+  (PR #38).
 - **settings-provider-auth-classes** (P2, cc) — OAuth (GitHub Copilot, OpenAI
   Codex) and managed-credential (Bedrock AWS, Vertex ADC) providers show a
   credential note + docs link instead of a misleading "Paste key" field. Full

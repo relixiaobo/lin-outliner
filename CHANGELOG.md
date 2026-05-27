@@ -71,6 +71,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Provider enablement gated on a credential; list status + control polish** —
+  "Enabled" now means set up and usable: the toggle is disabled until the
+  provider has a credential (key / env key / non-key auth), pasting a key
+  auto-enables, and save persists the effective state (never enabled without a
+  credential). The provider list shows an enablement dot (green = on, hollow =
+  configured-but-off). The search box now uses the design-system field idiom
+  (icon + soft border) instead of the bare global input, and selecting a provider
+  uses a background fill rather than an outline.
+  ([#38](https://github.com/relixiaobo/lin-outliner/pull/38))
 - **Correct auth class for OAuth / managed-credential providers** — pi-ai
   authenticates providers three ways, but settings modeled every one as a
   pasteable API key. OAuth providers (GitHub Copilot, OpenAI Codex) and
