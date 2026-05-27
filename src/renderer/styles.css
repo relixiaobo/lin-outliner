@@ -4993,31 +4993,55 @@ button.panel-resize-handle::after {
   font-size: var(--font-meta);
 }
 
-.settings-models {
+.settings-disclosure {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-4);
+}
+
+.settings-disclosure-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-soft);
+  cursor: pointer;
+  font-size: var(--font-meta);
+  font-weight: 600;
+  list-style: none;
+  user-select: none;
+}
+
+.settings-disclosure-summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-disclosure-summary:hover {
+  color: var(--text-strong);
+}
+
+.settings-disclosure-summary > svg {
+  flex: 0 0 auto;
+  color: var(--muted-2);
+  transition: transform 0.15s ease;
+}
+
+.settings-disclosure[open] > .settings-disclosure-summary > svg {
+  transform: rotate(90deg);
+}
+
+.settings-disclosure-count {
+  border-radius: 999px;
+  background: var(--control-hover);
+  color: var(--text-soft);
+  font-size: var(--font-ui-2xs);
+  font-weight: 600;
+  padding: 1px 7px;
+}
+
+.settings-disclosure-body {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-}
-
-.settings-models-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-4);
-}
-
-.settings-models-header h4 {
-  margin: 0;
-  color: var(--text-strong);
-  font-size: var(--font-ui-sm);
-  font-weight: 600;
-  line-height: var(--line-ui-sm-tight);
-}
-
-.settings-models-header > span {
-  color: var(--muted-2);
-  font-size: var(--font-ui-2xs);
-  line-height: var(--line-ui-2xs);
+  padding-top: var(--space-4);
 }
 
 .settings-model-search input {

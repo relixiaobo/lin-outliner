@@ -29,7 +29,6 @@ test.describe('agent settings dialog', () => {
   test('separates providers and agent behaviour into categories', async ({ page }) => {
     const { dialog } = await openSettings(page);
     // Providers category is the default and lists connectable providers.
-    await expect(dialog.getByRole('heading', { name: 'Providers' })).toBeVisible();
     await expect(dialog.getByRole('button', { name: 'OpenAI, Active' })).toBeVisible();
     await expect(dialog.getByRole('button', { name: /Anthropic/ })).toBeVisible();
     // The selected provider's detail pane carries the status badge and key field.
@@ -63,12 +62,14 @@ test.describe('agent settings dialog', () => {
   test('gates model selection behind a key and hides the provider id for known providers', async ({ page }) => {
     const { dialog } = await openSettings(page);
 
-    // A known provider exposes no editable Provider ID — but Base URL is offered
-    // as an optional override, defaulted to the provider's endpoint.
+    // A known provider exposes no editable Provider ID. Base URL is an optional
+    // override tucked under an Advanced disclosure (defaulted to the endpoint).
     await dialog.locator('.settings-provider-row', { hasText: 'Anthropic' }).click();
     await expect(dialog.getByLabel('Provider ID')).toHaveCount(0);
-    await expect(dialog.getByLabel('Base URL')).toHaveAttribute('placeholder', 'https://api.anthropic.com');
     await expect(dialog.getByLabel('API key')).toHaveAttribute('placeholder', 'Paste key');
+    await expect(dialog.getByLabel('Base URL')).toBeHidden();
+    await dialog.getByText('Advanced', { exact: true }).click();
+    await expect(dialog.getByLabel('Base URL')).toHaveAttribute('placeholder', 'https://api.anthropic.com');
 
     await gotoCategory(dialog, 'Agent');
     await expect(dialog.getByText('Add an API key in Providers before choosing a model.')).toBeVisible();
@@ -87,6 +88,14 @@ test.describe('agent settings dialog', () => {
     await expect(dialog.getByRole('button', { name: 'OpenAI, Active' })).toHaveCount(0);
     // The custom entry is pinned outside the filtered list.
     await expect(dialog.getByRole('button', { name: /Custom provider/ })).toBeVisible();
+  });
+
+  test('lists provider models behind a Models disclosure', async ({ page }) => {
+    const { dialog } = await openSettings(page);
+    // Collapsed by default so it doesn't bury the key field.
+    await expect(dialog.getByText('GPT-5.4', { exact: true })).toBeHidden();
+    await dialog.getByText('Models', { exact: true }).click();
+    await expect(dialog.getByText('GPT-5.4', { exact: true })).toBeVisible();
   });
 
   test('toggles API key visibility', async ({ page }) => {
