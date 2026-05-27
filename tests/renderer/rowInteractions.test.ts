@@ -602,6 +602,50 @@ describe('row interaction resolvers', () => {
     })).toEqual({ type: 'none' });
   });
 
+  test('converts a bare ``` / ~~~ row into a code block', () => {
+    expect(resolveContentRowUpdateAction({
+      text: '```',
+      inlineRefCount: 0,
+      enableFieldTrigger: true,
+      enableCodeFence: true,
+    })).toEqual({ type: 'create_code_block' });
+    expect(resolveContentRowUpdateAction({
+      text: '~~~',
+      inlineRefCount: 0,
+      enableFieldTrigger: true,
+      enableCodeFence: true,
+    })).toEqual({ type: 'create_code_block' });
+  });
+
+  test('leaves partial / decorated fences and disabled rows untouched', () => {
+    // Fewer than three backticks, or any trailing text, is not a fence trigger.
+    expect(resolveContentRowUpdateAction({
+      text: '``',
+      inlineRefCount: 0,
+      enableFieldTrigger: true,
+      enableCodeFence: true,
+    })).toEqual({ type: 'none' });
+    expect(resolveContentRowUpdateAction({
+      text: '```ts',
+      inlineRefCount: 0,
+      enableFieldTrigger: true,
+      enableCodeFence: true,
+    })).toEqual({ type: 'none' });
+    // Inline refs in the row, or a row that cannot become a code block, opt out.
+    expect(resolveContentRowUpdateAction({
+      text: '```',
+      inlineRefCount: 1,
+      enableFieldTrigger: true,
+      enableCodeFence: true,
+    })).toEqual({ type: 'none' });
+    expect(resolveContentRowUpdateAction({
+      text: '```',
+      inlineRefCount: 0,
+      enableFieldTrigger: true,
+      enableCodeFence: false,
+    })).toEqual({ type: 'none' });
+  });
+
   test('protects empty parent rows from destructive backspace', () => {
     expect(resolveContentRowBackspaceAtStartIntent({
       isEmpty: false,

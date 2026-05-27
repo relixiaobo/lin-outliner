@@ -75,6 +75,8 @@ interface RichTextEditorProps {
   onEscape: () => void;
   onTriggerChange: (trigger: EditorTrigger | null) => void;
   onFieldTriggerFire?: () => void;
+  /** Fired when a bare ``` / ~~~ owns the row, to convert it into a code block. */
+  onCodeFenceFire?: () => void;
   onPasteOutliner?: (payload: {
     content: RichText;
     children: CreateNodeTree[];
@@ -200,6 +202,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
   const lastExternalContentRef = useRef(props.content);
   const lastContentRevisionRef = useRef(props.contentRevision ?? 0);
   const fieldTriggerFiredRef = useRef(false);
+  const codeFenceFiredRef = useRef(false);
   const composingRef = useRef(false);
   const compositionDocChangedRef = useRef(false);
   const [isEmpty, setIsEmpty] = useState(() => props.content.text.trim().length === 0 && props.content.inlineRefs.length === 0);
@@ -258,12 +261,19 @@ export function RichTextEditor(props: RichTextEditorProps) {
       text: nextContent.text,
       inlineRefCount: nextContent.inlineRefs.length,
       enableFieldTrigger: Boolean(propsRef.current.onFieldTriggerFire),
+      enableCodeFence: Boolean(propsRef.current.onCodeFenceFire),
     });
     if (updateAction.type === 'create_field' && !fieldTriggerFiredRef.current) {
       fieldTriggerFiredRef.current = true;
       propsRef.current.onFieldTriggerFire?.();
     } else if (updateAction.type !== 'create_field') {
       fieldTriggerFiredRef.current = false;
+    }
+    if (updateAction.type === 'create_code_block' && !codeFenceFiredRef.current) {
+      codeFenceFiredRef.current = true;
+      propsRef.current.onCodeFenceFire?.();
+    } else if (updateAction.type !== 'create_code_block') {
+      codeFenceFiredRef.current = false;
     }
   };
 
