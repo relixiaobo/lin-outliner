@@ -84,13 +84,15 @@ const RENDERER_DEV_ORIGIN = RENDERER_DEV_URL ? safeOrigin(RENDERER_DEV_URL) : nu
 // everything else (geolocation, media, notifications, …) by default.
 const ALLOWED_PERMISSIONS = new Set(['clipboard-sanitized-write']);
 
-// Production locks the renderer to its own resources. wasm-unsafe-eval covers
-// loro-crdt, 'unsafe-inline' styles cover React style props, and remote http(s)
-// is allowed only as <img>/<video> sources. The renderer makes no direct
-// network calls (everything else goes through IPC), so connect-src stays tight.
+// The packaged renderer (loaded from file://) is locked to its own resources.
+// 'unsafe-inline' styles cover Shiki's inline color spans + React style props;
+// remote http(s) is allowed only as <img>/<video> sources. The renderer makes
+// no direct network calls (everything else goes through IPC) and runs no
+// WebAssembly (loro-crdt lives in the main process), so script-src and
+// connect-src stay tight.
 const RENDERER_CSP = [
   "default-src 'self'",
-  "script-src 'self' 'wasm-unsafe-eval'",
+  "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   `img-src 'self' data: blob: https: http: ${ASSET_URL_SCHEME}:`,
   `media-src 'self' data: blob: https: http: ${ASSET_URL_SCHEME}:`,
@@ -113,7 +115,7 @@ function safeOrigin(url: string): string | null {
 // Only http(s) may reach the OS browser — never file:// or a custom scheme.
 function openExternalUrl(url: string): boolean {
   if (!/^https?:\/\//i.test(url)) return false;
-  void shell.openExternal(url);
+  void shell.openExternal(url).catch(() => {});
   return true;
 }
 
@@ -145,12 +147,12 @@ function configureSessionSecurity() {
     callback(ALLOWED_PERMISSIONS.has(permission));
   });
   ses.setPermissionCheckHandler((_contents, permission) => ALLOWED_PERMISSIONS.has(permission));
-  // Dev runs through Vite, which needs a relaxed policy for HMR; enforce CSP in
-  // production only, scoped to the renderer's own document so the agent's remote
-  // web-fetch windows are unaffected.
-  if (!app.isPackaged) return;
+  // Enforce CSP on the packaged renderer's own document (loaded from file://).
+  // Dev loads from the Vite origin, which needs a relaxed policy for HMR, so it
+  // falls through here untouched; the agent's remote web-fetch windows load
+  // http(s) and are excluded too.
   ses.webRequest.onHeadersReceived((details, callback) => {
-    if (details.resourceType !== 'mainFrame' || !isAppDocumentUrl(details.url)) {
+    if (details.resourceType !== 'mainFrame' || !details.url.startsWith('file:')) {
       callback({});
       return;
     }
