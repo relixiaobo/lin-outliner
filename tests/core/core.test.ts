@@ -545,7 +545,7 @@ describe('Core', () => {
     expect(buildConfigIndex(core.state()).field(fieldId)?.fieldType).toBe('number');
     expect(buildConfigIndex(core.state()).field(fieldId)?.cardinality).toBe('list');
     expect(buildConfigIndex(core.state()).field(fieldId)?.nullable).toBe(false);
-    expect(core.state().nodes[fieldId].hideField).toBe('empty');
+    expect(buildConfigIndex(core.state()).field(fieldId)?.hideField).toBe('empty');
     expect(core.state().nodes[fieldId].autoInitialize).toBe('ancestor_field_value');
     expect(core.state().nodes[fieldId].minValue).toBe(1);
     expect(core.state().nodes[fieldId].maxValue).toBe(5);

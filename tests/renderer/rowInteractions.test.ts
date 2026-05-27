@@ -67,28 +67,37 @@ describe('row interaction resolvers', () => {
 	    ...overrides,
 	  });
 
-  // config-as-nodes: a fieldDef resolves its fieldType from a defConfig(fieldType)
-  // subtree, not a flat field. These entries provide that subtree for a mock
-  // fieldDef; add `${defId}::cfg:fieldType` to the fieldDef's children so the
-  // projector finds it.
-  const fieldTypeConfigEntries = (defId: string, fieldType: string): Array<[string, any]> => {
-    const rowId = `${defId}::cfg:fieldType`;
+  // config-as-nodes: a fieldDef resolves enum config (fieldType, cardinality,
+  // hideField, …) from a defConfig subtree, not a flat field. These entries
+  // provide that subtree for a mock fieldDef; add `${defId}::cfg:${configKey}`
+  // to the fieldDef's children so the projector finds it.
+  const ENUM_CONFIG_SUBTREE: Record<string, string> = {
+    fieldType: 'schema:field-types',
+    cardinality: 'schema:cardinalities',
+    hideField: 'schema:hide-modes',
+    autoInitialize: 'schema:auto-init',
+  };
+  const enumConfigEntries = (defId: string, configKey: string, value: string): Array<[string, any]> => {
+    const rowId = `${defId}::cfg:${configKey}`;
     const refId = `${rowId}/value`;
-    const optionId = `schema:field-types/${fieldType}`;
+    const optionId = `${ENUM_CONFIG_SUBTREE[configKey]}/${value}`;
     return [
-      [rowId, makeNode(rowId, 'fieldType', { type: 'defConfig', parentId: defId, configKey: 'fieldType', children: [refId] })],
+      [rowId, makeNode(rowId, configKey, { type: 'defConfig', parentId: defId, configKey, children: [refId] })],
       [refId, makeNode(refId, '', { type: 'reference', parentId: rowId, refRole: 'enum', targetId: optionId })],
-      [optionId, makeNode(optionId, fieldType, { type: 'systemOption' })],
+      [optionId, makeNode(optionId, value, { type: 'systemOption' })],
     ];
   };
+  const fieldTypeConfigEntries = (defId: string, fieldType: string): Array<[string, any]> =>
+    enumConfigEntries(defId, 'fieldType', fieldType);
 
   test('builds view rows with hidden field reveal placeholders', () => {
     const parent = makeNode('parent', 'Parent', { children: ['field'] });
-    const fieldDef = makeNode('field-def', 'Status', { type: 'fieldDef', hideField: 'always' });
+    const fieldDef = makeNode('field-def', 'Status', { type: 'fieldDef', children: ['field-def::cfg:hideField'] });
     const field = makeNode('field', '', { type: 'fieldEntry', parentId: 'parent', fieldDefId: 'field-def' });
     const byId = new Map<string, any>([
       ['parent', parent],
       ['field-def', fieldDef],
+      ...enumConfigEntries('field-def', 'hideField', 'always'),
       ['field', field],
     ]);
 
@@ -105,7 +114,7 @@ describe('row interaction resolvers', () => {
 	      children: ['view', 'status', 'beta', 'alpha', 'hidden'],
 	    });
 	    const statusDef = makeNode('status-def', 'Status', { type: 'fieldDef' });
-	    const hiddenDef = makeNode('hidden-def', 'Archive', { type: 'fieldDef', hideField: 'always' });
+	    const hiddenDef = makeNode('hidden-def', 'Archive', { type: 'fieldDef', children: ['hidden-def::cfg:hideField'] });
 	    const byId = new Map<string, any>([
 	      ['parent', parent],
 	      ['view', makeNode('view', '', { type: 'viewDef', parentId: 'parent', children: ['filter', 'sort'] })],
@@ -125,6 +134,7 @@ describe('row interaction resolvers', () => {
 	      })],
 	      ['status-def', statusDef],
 	      ['hidden-def', hiddenDef],
+	      ...enumConfigEntries('hidden-def', 'hideField', 'always'),
 	      ['status', makeNode('status', '', { type: 'fieldEntry', parentId: 'parent', fieldDefId: 'status-def' })],
       ['hidden', makeNode('hidden', '', { type: 'fieldEntry', parentId: 'parent', fieldDefId: 'hidden-def' })],
       ['alpha', makeNode('alpha', 'Alpha', { parentId: 'parent' })],

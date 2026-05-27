@@ -1029,7 +1029,6 @@ export class Core {
           delete current.maxValue;
         }
       }
-      if ('hideField' in patch) setOptional(current, 'hideField', normalizeOptionalText(patch.hideField));
       if ('autoInitialize' in patch) setOptional(current, 'autoInitialize', normalizeOptionalText(patch.autoInitialize));
       if (patch.autocollectOptions !== undefined) current.autocollectOptions = patch.autocollectOptions;
       if ('minValue' in patch) setOptional(current, 'minValue', patch.minValue ?? undefined);
@@ -1045,6 +1044,9 @@ export class Core {
       }
       if ('nullable' in patch) {
         this.setConfigValueDirect(fieldId, { kind: 'scalar', configKey: 'nullable', text: patch.nullable == null ? null : (patch.nullable ? 'true' : 'false') });
+      }
+      if ('hideField' in patch) {
+        this.setConfigValueDirect(fieldId, { kind: 'enum', configKey: 'hideField', value: normalizeOptionalText(patch.hideField) ?? null });
       }
       // config-as-nodes: sourceSupertag lives in the defConfig subtree. Set it,
       // or clear it when the field type no longer supports it.

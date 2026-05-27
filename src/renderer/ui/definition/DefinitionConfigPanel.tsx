@@ -243,7 +243,7 @@ function ConfigControl(props: {
       return (
         <DefinitionHideFieldSelect
           label={item.label}
-          value={(node.hideField as HideFieldMode | undefined) ?? 'never'}
+          value={(fieldConfig?.hideField as HideFieldMode | undefined) ?? 'never'}
           onChange={(hideField) => updateField({ hideField: hideField === 'never' ? null : hideField })}
         />
       );

@@ -1,5 +1,5 @@
 import { parseDateFieldValueRange, type FilterOperator, type NodeId, type NodeProjection, type SortDirection, type ViewMode } from '../api/types';
-import { projectFieldTypeById } from '../../core/configProjection';
+import { projectFieldConfig, projectFieldTypeById } from '../../core/configProjection';
 
 export const NAME_FIELD = 'sys:name';
 export const CREATED_FIELD = 'sys:createdAt';
@@ -205,7 +205,7 @@ function hiddenFieldValue(entry: NodeProjection, byId: Map<NodeId, NodeProjectio
 function isHiddenFieldEntry(entry: NodeProjection, byId: Map<NodeId, NodeProjection>): boolean {
   if (entry.type !== 'fieldEntry') return false;
   const field = entry.fieldDefId ? byId.get(entry.fieldDefId) : undefined;
-  const mode = entry.hideField ?? field?.hideField;
+  const mode = field ? projectFieldConfig(byId, field).hideField : undefined;
   if (mode === 'always' || mode === 'hidden') return true;
   const value = hiddenFieldValue(entry, byId).trim();
   if (mode === 'empty') return value.length === 0;
