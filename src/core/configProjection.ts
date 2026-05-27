@@ -92,7 +92,8 @@ export function projectFieldConfig(byId: ConfigNodeMap, fieldDef: ConfigNodeLike
     fieldType: (enumValue(byId, rows.get('fieldType')) as FieldType | undefined) ?? 'plain',
     cardinality: (enumValue(byId, rows.get('cardinality')) as FieldCardinality | undefined) ?? 'single',
     sourceSupertag: refTarget(byId, rows.get('sourceSupertag')),
-    nullable: boolCodec.decode(scalarText(byId, rows.get('nullable')) ?? '') ?? false,
+    // Fields are optional by default; absent nullable config means nullable.
+    nullable: boolCodec.decode(scalarText(byId, rows.get('nullable')) ?? '') ?? true,
     hideField: enumValue(byId, rows.get('hideField')) ?? 'never',
     autoInitialize: enumListValues(byId, rows.get('autoInitialize')) as AutoInitStrategy[],
     autocollectOptions: boolCodec.decode(scalarText(byId, rows.get('autocollectOptions')) ?? '') ?? false,

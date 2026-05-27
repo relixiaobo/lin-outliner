@@ -1029,7 +1029,6 @@ export class Core {
           delete current.maxValue;
         }
       }
-      if ('nullable' in patch) setOptional(current, 'nullable', patch.nullable ?? undefined);
       if ('hideField' in patch) setOptional(current, 'hideField', normalizeOptionalText(patch.hideField));
       if ('autoInitialize' in patch) setOptional(current, 'autoInitialize', normalizeOptionalText(patch.autoInitialize));
       if (patch.autocollectOptions !== undefined) current.autocollectOptions = patch.autocollectOptions;
@@ -1043,6 +1042,9 @@ export class Core {
       }
       if ('cardinality' in patch) {
         this.setConfigValueDirect(fieldId, { kind: 'enum', configKey: 'cardinality', value: patch.cardinality ?? null });
+      }
+      if ('nullable' in patch) {
+        this.setConfigValueDirect(fieldId, { kind: 'scalar', configKey: 'nullable', text: patch.nullable == null ? null : (patch.nullable ? 'true' : 'false') });
       }
       // config-as-nodes: sourceSupertag lives in the defConfig subtree. Set it,
       // or clear it when the field type no longer supports it.
@@ -2120,7 +2122,6 @@ export class Core {
     const id = freshId('field');
     this.loro.createNodeWithId(id, parentId, undefined, 'fieldDef', (node) => {
       node.content = plainText(name);
-      node.nullable = true;
     });
     // config-as-nodes: fieldType lives in the defConfig subtree, not a flat field.
     this.setConfigValueDirect(id, { kind: 'enum', configKey: 'fieldType', value: fieldType });

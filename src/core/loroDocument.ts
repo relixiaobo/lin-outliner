@@ -63,7 +63,6 @@ const NODE_SCALAR_KEYS: Array<keyof Node> = [
   'fieldDefId',
   'configKey',
   'refRole',
-  'nullable',
   'hideField',
   'autoInitialize',
   'autocollectOptions',

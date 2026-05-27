@@ -66,7 +66,7 @@ describe('config-as-nodes value mechanism (Stage 4)', () => {
     expect(field?.minValue).toBe(1);
     expect(field?.maxValue).toBe(10);
     expect(field?.autoInitialize).toEqual(['current_date', 'ancestor_day_node']);
-    expect(field?.nullable).toBe(false);
+    expect(field?.nullable).toBe(true); // optional by default
     expect(field?.hideField).toBe('never');
   });
 

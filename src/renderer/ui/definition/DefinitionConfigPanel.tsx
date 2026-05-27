@@ -235,7 +235,7 @@ function ConfigControl(props: {
       return (
         <DefinitionSwitchControl
           label={item.label}
-          checked={node.nullable === false}
+          checked={fieldConfig?.nullable === false}
           onChange={(required) => updateField({ nullable: required ? false : true })}
         />
       );
