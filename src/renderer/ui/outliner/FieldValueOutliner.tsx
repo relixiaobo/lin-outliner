@@ -11,10 +11,9 @@ import {
   requestFocusState,
   rowFocusTarget,
 } from '../focus/focusModel';
-import { fieldTypeInteraction, isOptionsFieldType } from '../fields/fieldTypeRegistry';
+import { fieldTypeInteraction } from '../fields/fieldTypeRegistry';
 import { appendImageNodes, appendRemoteImageNode } from '../interactions/imagePaste';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
-import { FieldOptionPicker } from './FieldOptionPicker';
 import { OutlinerFieldRow } from './OutlinerFieldRow';
 import { OutlinerItem } from './OutlinerItem';
 import { RowHost } from './RowHost';
@@ -70,12 +69,6 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
         : api.setFieldFreeTextValue(props.entryId, name)
     ))
   );
-  const canUseOptionPicker = Boolean(
-    props.optionField
-    && singleValueField
-    && isOptionsFieldType(optionFieldType)
-    && rows.length <= 1,
-  );
   const canUseTypedControl = Boolean(
     props.optionField
     && singleValueField
@@ -90,19 +83,7 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
       data-field-value
       aria-label={empty ? props.placeholder : 'Field value'}
     >
-      {canUseOptionPicker && props.optionField ? (
-        <FieldOptionPicker
-          byId={props.index.byId}
-          field={props.optionField}
-          valueNode={singleValueNode}
-          placeholder={props.placeholder}
-          onSelectOption={(optionId) => (
-            props.run(() => api.selectFieldOption(props.entryId, optionId))
-          )}
-          onCreateOption={onCreateFieldValue}
-          onClearValue={() => props.run(() => api.clearFieldValue(props.entryId))}
-        />
-      ) : canUseTypedControl && props.optionField ? (
+      {canUseTypedControl && props.optionField ? (
         <TypedFieldValueControl
           entryId={props.entryId}
           fieldType={optionFieldType ?? 'plain'}
@@ -154,7 +135,7 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
           )}
         />
       )}
-      {!canUseOptionPicker && !canUseTypedControl && showTrailingInput && (
+      {!canUseTypedControl && showTrailingInput && (
         <TrailingInput
           panelId={props.panelId}
           parentId={props.entryId}

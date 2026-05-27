@@ -42,7 +42,7 @@ async function fieldSeparatorContent(
 }
 
 function priorityValueEditor(page: import('@playwright/test').Page) {
-  return row(page, ids.priorityEntry).locator('.field-option-picker-row').first();
+  return trailingEditor(page, ids.priorityEntry);
 }
 
 async function placeCursor(page: import('@playwright/test').Page, nodeId: string, placement: 'start' | 'end') {
@@ -1242,18 +1242,17 @@ test.describe('outliner trigger parity', () => {
 
 });
 
-test.describe('outliner option picker parity', () => {
+test.describe('outliner options field inline value', () => {
   test.beforeEach(async ({ page }) => {
     await openMockedApp(page, { optionsField: true });
   });
 
-  test('options field picker exposes listbox state and creates a selected option', async ({ page }) => {
+  test('options field value accepts a typed value inline and auto-collects it', async ({ page }) => {
     const valuePreview = row(page, ids.priorityEntry).locator('.field-value-node-preview');
     await priorityValueEditor(page).click();
 
     const listbox = page.getByRole('listbox', { name: 'Field options' });
     await expect(listbox).toBeVisible();
-    await expect(listbox.getByRole('option').first()).toHaveAttribute('aria-selected', 'true');
     await expect(listbox.getByRole('option', { name: 'High' })).toBeVisible();
 
     await page.keyboard.type('Urgent');
@@ -1285,17 +1284,10 @@ test.describe('outliner option picker parity', () => {
     });
   });
 
-  test('options field picker opens when a single value slot exists but is empty', async ({ page }) => {
-    await invokeMockCommand(page, 'create_node', {
-      parentId: ids.priorityEntry,
-      index: null,
-      text: '',
-    });
-
+  test('options field value selects an existing option from the inline listbox', async ({ page }) => {
     const valuePreview = row(page, ids.priorityEntry).locator('.field-value-node-preview');
-    await expect(valuePreview).toHaveText(/Select option/);
-
     await priorityValueEditor(page).click();
+
     const listbox = page.getByRole('listbox', { name: 'Field options' });
     await expect(listbox).toBeVisible();
     await expect(listbox.getByRole('option', { name: 'High' })).toBeVisible();
@@ -1304,33 +1296,18 @@ test.describe('outliner option picker parity', () => {
     await expect(valuePreview).toHaveText(/Low/);
   });
 
-  test('options field picker reopens on an existing value and can replace or clear it', async ({ page }) => {
-    await priorityValueEditor(page).click();
-    await page.getByRole('option', { name: 'High' }).click();
-    await expect(row(page, ids.priorityEntry).locator('.field-value-node-preview')).toHaveText(/High/);
-
-    await priorityValueEditor(page).click();
-    const listbox = page.getByRole('listbox', { name: 'Field options' });
-    await expect(listbox).toBeVisible();
-    await expect(listbox.getByRole('option', { name: 'Clear selection' })).toBeVisible();
-    await listbox.getByRole('option', { name: 'Low' }).click();
-    await expect(row(page, ids.priorityEntry).locator('.field-value-node-preview')).toHaveText(/Low/);
-
-    await priorityValueEditor(page).click();
-    await page.getByRole('option', { name: 'Clear selection' }).click();
-    await expect(row(page, ids.priorityEntry).locator('.field-value-node-preview')).toHaveText(/Select option/);
-  });
-
-  test('clearing a created auto-collected option removes the local value and collected reference', async ({ page }) => {
+  test('clearing an inline-created auto-collected value removes the local value and collected reference', async ({ page }) => {
     await priorityValueEditor(page).click();
     await page.keyboard.type('Temporary');
     await page.keyboard.press('Enter');
     await expect(row(page, ids.priorityEntry).locator('.field-value-node-preview')).toHaveText(/Temporary/);
 
-    await priorityValueEditor(page).click();
-    await page.getByRole('option', { name: 'Clear selection' }).click();
+    // No picker "Clear selection" affordance any more — clearing the field value
+    // is the same node-level command the rest of the outliner uses.
+    await invokeMockCommand(page, 'clear_field_value', { fieldEntryId: ids.priorityEntry });
 
-    await expect(row(page, ids.priorityEntry).locator('.field-value-node-preview')).toHaveText(/Select option/);
+    await expect(row(page, ids.priorityEntry).locator('.field-value-node-preview'))
+      .toHaveAttribute('aria-label', 'Select option');
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
       const entry = projection.nodes.find((node) => node.id === ids.priorityEntry);
@@ -1349,7 +1326,7 @@ test.describe('outliner option picker parity', () => {
     });
   });
 
-  test('options picker stays inside a narrow viewport', async ({ page }) => {
+  test('options field listbox stays inside a narrow viewport', async ({ page }) => {
     await page.setViewportSize({ width: 980, height: 620 });
     await page.getByRole('button', { name: 'Close panel' }).nth(1).click();
     await expect(page.locator('.outline-panel-surface')).toHaveCount(1);
