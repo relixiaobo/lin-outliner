@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { Core } from '../../src/core/core';
 import { LoroOutlinerDocument } from '../../src/core/loroDocument';
 import { buildConfigIndex } from '../../src/core/configProjection';
+import { isInternalConfigNode } from '../../src/core/configSchema';
 import { runSearchNode } from '../../src/core/searchEngine';
 import {
   AREAS_ID,
@@ -25,6 +26,14 @@ import {
 function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T) {
   expect(outcome.focus).toBeDefined();
   return outcome.focus!.nodeId;
+}
+
+// A fieldDef carries its config in a defConfig subtree alongside its option
+// children; option readers must skip those internal config nodes.
+function optionChildIds(core: Core, fieldDefId: string): string[] {
+  const state = core.state();
+  return state.nodes[fieldDefId].children.filter(
+    (childId) => !isInternalConfigNode(state.nodes[childId]));
 }
 
 describe('Core', () => {
@@ -428,7 +437,7 @@ describe('Core', () => {
     expect(value.type).toBeUndefined();
     expect(value.content.text).toBe('Urgent');
 
-    const collectedRefId = core.state().nodes[fieldDefId].children[0];
+    const collectedRefId = optionChildIds(core, fieldDefId)[0];
     const collectedRef = core.state().nodes[collectedRefId];
     expect(collectedRef.type).toBe('reference');
     expect(collectedRef.targetId).toBe(valueId);
@@ -439,7 +448,7 @@ describe('Core', () => {
 
     core.clearFieldValue(fieldEntryId);
     expect(core.state().nodes[fieldEntryId].children).toEqual([]);
-    expect(core.state().nodes[fieldDefId].children).toEqual([]);
+    expect(optionChildIds(core, fieldDefId)).toEqual([]);
   });
 
   test('clearing an auto-collected source preserves references by promoting the option', () => {
@@ -465,7 +474,7 @@ describe('Core', () => {
 
     core.createCollectedFieldOption(firstEntryId, 'Urgent');
     const sourceValueId = core.state().nodes[firstEntryId].children[0];
-    const collectedRefId = core.state().nodes[fieldDefId].children[0];
+    const collectedRefId = optionChildIds(core, fieldDefId)[0];
     core.selectFieldOption(secondEntryId, collectedRefId);
     const secondValueId = core.state().nodes[secondEntryId].children[0];
     expect(core.state().nodes[secondValueId].targetId).toBe(sourceValueId);
@@ -477,7 +486,7 @@ describe('Core', () => {
     expect(state.nodes[sourceValueId].parentId).toBe(fieldDefId);
     expect(state.nodes[sourceValueId].autoCollected).toBe(true);
     expect(state.nodes[secondValueId].targetId).toBe(sourceValueId);
-    expect(state.nodes[fieldDefId].children).toEqual([sourceValueId]);
+    expect(optionChildIds(core, fieldDefId)).toEqual([sourceValueId]);
   });
 
   test('list options append unique values instead of replacing', () => {

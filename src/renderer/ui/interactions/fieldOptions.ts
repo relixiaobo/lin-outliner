@@ -1,5 +1,6 @@
 import type { NodeId, NodeProjection } from '../../api/types';
 import { projectFieldConfig } from '../../../core/configProjection';
+import { isInternalConfigNode } from '../../../core/configSchema';
 import { isOptionsFieldType } from '../fields/fieldTypeRegistry';
 
 export interface FieldOption {
@@ -19,7 +20,7 @@ export function resolveFieldOptions(
     ? resolveOptionsFromSourceSupertag(field, byId)
     : field.children
       .map((childId) => byId.get(childId))
-      .filter((node): node is NodeProjection => Boolean(node));
+      .filter((node): node is NodeProjection => Boolean(node) && !isInternalConfigNode(node!));
 
   const options = dedupeOptions(optionNodes.flatMap((node) => {
     const target = node.type === 'reference' && node.targetId ? byId.get(node.targetId) : node;

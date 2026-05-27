@@ -1037,6 +1037,11 @@ export class Core {
       if ('maxValue' in patch) setOptional(current, 'maxValue', patch.maxValue ?? undefined);
       current.updatedAt = nowMs();
       this.loro.writeNode(current);
+      // config-as-nodes: fieldType is migrating to the subtree (transient
+      // dual-write — flat field above + subtree enum here).
+      if (patch.fieldType !== undefined) {
+        this.setConfigValueDirect(fieldId, { kind: 'enum', configKey: 'fieldType', value: patch.fieldType });
+      }
       // config-as-nodes: sourceSupertag lives in the defConfig subtree. Set it,
       // or clear it when the field type no longer supports it.
       if ('sourceSupertag' in patch) {
@@ -2117,6 +2122,9 @@ export class Core {
       node.cardinality = 'single';
       node.nullable = true;
     });
+    // config-as-nodes: fieldType is migrating to the defConfig subtree. Dual-write
+    // (transient) so readers can switch to the accessor before the flat field goes.
+    this.setConfigValueDirect(id, { kind: 'enum', configKey: 'fieldType', value: fieldType });
     return id;
   }
 
@@ -2990,7 +2998,8 @@ function ensureCollectableOptionsFieldDef(state: DocumentState, fieldDefId: stri
 function findOptionByName(state: DocumentState, fieldDefId: string, name: string) {
   const needle = name.trim().toLowerCase();
   return state.nodes[fieldDefId]?.children.find((childId) =>
-    optionLabel(state, childId).trim().toLowerCase() === needle);
+    !isInternalConfigNode(state.nodes[childId])
+    && optionLabel(state, childId).trim().toLowerCase() === needle);
 }
 
 function ensureOptionBelongsToField(state: DocumentState, fieldDefId: string, optionNodeId: string) {
