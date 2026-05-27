@@ -137,7 +137,9 @@ function outlineTextForNode(node: NodeProjection, index: DocumentIndex): string 
 
   const parts: string[] = [];
   if (node.type === 'search') parts.push('%%search%%');
-  const viewMode = node.type === 'search' ? readViewConfig(node, index.byId).viewMode : node.viewMode;
+  const viewMode = node.type === 'search'
+    ? readViewConfig(node, index.byId).viewMode
+    : node.type === 'viewDef' ? node.viewMode : undefined;
   if (viewMode) parts.push(`%%view:${viewMode}%%`);
   if (nodeIsDone(node)) parts.push('[x]');
   else if (nodeShowsCheckbox(index.byId, node)) parts.push('[ ]');

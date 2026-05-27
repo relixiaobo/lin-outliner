@@ -247,10 +247,10 @@ function sortSearchHits(hits: SearchHit[], index: SearchIndex, searchNode: Searc
 function searchNodeSortRule(index: SearchIndex, searchNode: SearchNode): { field: string; direction: SortDirection } | null {
   const viewDef = searchNode.children
     .map((childId) => index.nodes.get(childId))
-    .find((child) => child?.type === 'viewDef');
+    .find((child): child is Extract<SearchNode, { type: 'viewDef' }> => child?.type === 'viewDef');
   const sortRule = viewDef?.children
     .map((childId) => index.nodes.get(childId))
-    .find((child) => child?.type === 'sortRule' && child.sortField);
+    .find((child): child is Extract<SearchNode, { type: 'sortRule' }> => child?.type === 'sortRule' && Boolean(child.sortField));
   return sortRule?.sortField
     ? { field: sortRule.sortField, direction: sortRule.sortDirection === 'desc' ? 'desc' : 'asc' }
     : null;

@@ -332,7 +332,9 @@ export class LoroOutlinerDocument {
         autocollectOptions: readBoolean(data.get('autocollectOptions')) ?? false,
         autoCollected: readBoolean(data.get('autoCollected')) ?? false,
       } as Node);
-      if (filterValues !== undefined) node.filterValues = readStringList(filterValues);
+      // filterValues lives on the filterRule variant; persistence writes it
+      // generically (only filterRule data carries it).
+      if (filterValues !== undefined) (node as { filterValues?: string[] }).filterValues = readStringList(filterValues);
 
       for (const key of NODE_SCALAR_KEYS) {
         if ([
@@ -492,7 +494,6 @@ function isDisposableLegacyParaNode(node: Node, title: string) {
     && node.content.marks.length === 0
     && node.content.inlineRefs.length === 0
     && node.tags.length === 0
-    && (node.filterValues?.length ?? 0) === 0
     && !node.description;
 }
 

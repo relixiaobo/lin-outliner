@@ -74,7 +74,8 @@ export function hiddenFieldKey(parentId: NodeId, fieldEntryId: NodeId): string {
 }
 
 export function readViewConfig(parent: NodeProjection | undefined, byId: Map<NodeId, NodeProjection>): ViewConfig {
-  const viewDef = directChildren(parent, byId).find((child) => child.type === 'viewDef');
+  const viewDef = directChildren(parent, byId)
+    .find((child): child is Extract<NodeProjection, { type: 'viewDef' }> => child.type === 'viewDef');
   if (!viewDef) {
     return {
       viewDefId: null,
@@ -94,14 +95,14 @@ export function readViewConfig(parent: NodeProjection | undefined, byId: Map<Nod
     toolbarVisible: Boolean(viewDef.toolbarVisible),
     groupField: viewDef.groupField ?? null,
     sortRules: viewChildren
-      .filter((child) => child.type === 'sortRule' && child.sortField)
+      .filter((child): child is Extract<NodeProjection, { type: 'sortRule' }> => child.type === 'sortRule' && Boolean(child.sortField))
       .map((child) => ({
         id: child.id,
         field: child.sortField!,
         direction: child.sortDirection === 'desc' ? 'desc' : 'asc',
       })),
     filterRules: viewChildren
-      .filter((child) => child.type === 'filterRule' && child.filterField)
+      .filter((child): child is Extract<NodeProjection, { type: 'filterRule' }> => child.type === 'filterRule' && Boolean(child.filterField))
       .map((child) => ({
         id: child.id,
         field: child.filterField!,
@@ -110,7 +111,7 @@ export function readViewConfig(parent: NodeProjection | undefined, byId: Map<Nod
         values: child.filterValues ?? [],
       })),
     displayFields: viewChildren
-      .filter((child) => child.type === 'displayField' && child.displayField)
+      .filter((child): child is Extract<NodeProjection, { type: 'displayField' }> => child.type === 'displayField' && Boolean(child.displayField))
       .map((child) => ({
         id: child.id,
         field: child.displayField!,

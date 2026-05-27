@@ -64,10 +64,14 @@ import {
   type IconKind,
   type Node,
   type CodeBlockNode,
+  type DisplayFieldNode,
   type EmbedNode,
+  type FilterRuleNode,
   type ImageNode,
   type QueryConditionNode,
   type SearchNode,
+  type SortRuleNode,
+  type ViewDefNode,
   type NodeId,
   type NodeType,
   type QueryLogic,
@@ -519,7 +523,7 @@ export class Core {
   addSortRule(nodeId: string, field: ViewFieldRef, direction: SortDirection = 'asc'): CommandOutcome {
     return this.mutate(() => {
       const viewDefId = this.ensureViewDefDirect(nodeId);
-      this.loro.createNodeWithId(freshId('sort'), viewDefId, undefined, 'sortRule', (node) => {
+      this.loro.createNodeWithId<SortRuleNode>(freshId('sort'), viewDefId, undefined, 'sortRule', (node) => {
         node.sortField = normalizeRequiredText(field, 'sort field');
         node.sortDirection = direction === 'desc' ? 'desc' : 'asc';
       });
@@ -568,7 +572,7 @@ export class Core {
   ): CommandOutcome {
     return this.mutate(() => {
       const viewDefId = this.ensureViewDefDirect(nodeId);
-      this.loro.createNodeWithId(freshId('filter'), viewDefId, undefined, 'filterRule', (node) => {
+      this.loro.createNodeWithId<FilterRuleNode>(freshId('filter'), viewDefId, undefined, 'filterRule', (node) => {
         node.filterField = normalizeRequiredText(field, 'filter field');
         node.filterOperator = normalizeFilterOperator(operator);
         node.filterValueLogic = valueLogic === 'all' ? 'all' : 'any';
@@ -632,7 +636,7 @@ export class Core {
   addDisplayField(nodeId: string, field: ViewFieldRef): CommandOutcome {
     return this.mutate(() => {
       const viewDefId = this.ensureViewDefDirect(nodeId);
-      this.loro.createNodeWithId(freshId('display'), viewDefId, undefined, 'displayField', (node) => {
+      this.loro.createNodeWithId<DisplayFieldNode>(freshId('display'), viewDefId, undefined, 'displayField', (node) => {
         node.displayField = normalizeRequiredText(field, 'display field');
         node.displayVisible = true;
       });
@@ -1599,14 +1603,14 @@ export class Core {
       .find((child): child is Node => child?.type === 'viewDef');
     if (existing) return existing.id;
     const viewDefId = freshId('view');
-    this.loro.createNodeWithId(viewDefId, nodeId, 0, 'viewDef', (node) => {
+    this.loro.createNodeWithId<ViewDefNode>(viewDefId, nodeId, 0, 'viewDef', (node) => {
       node.viewMode = 'list';
       node.toolbarVisible = false;
     });
     return viewDefId;
   }
 
-  private patchViewDefDirect(nodeId: string, patch: (viewDef: Node) => void) {
+  private patchViewDefDirect(nodeId: string, patch: (viewDef: ViewDefNode) => void) {
     const viewDefId = this.ensureViewDefDirect(nodeId);
     const state = this.snapshot();
     const viewDef = clone(requiredNode(state, viewDefId));
@@ -1890,13 +1894,13 @@ export class Core {
     if (!recents) return;
     const queryCondition = recents.children
       .map((childId) => state.nodes[childId])
-      .find((node) => node?.type === 'queryCondition');
+      .find((node): node is QueryConditionNode => node?.type === 'queryCondition');
     const viewDef = recents.children
       .map((childId) => state.nodes[childId])
-      .find((node) => node?.type === 'viewDef');
+      .find((node): node is ViewDefNode => node?.type === 'viewDef');
     const sortRule = viewDef?.children
       .map((childId) => state.nodes[childId])
-      .find((node) => node?.type === 'sortRule');
+      .find((node): node is SortRuleNode => node?.type === 'sortRule');
     const alreadyConfigured = recents.type === 'search'
       && recents.content.text === 'Recents'
       && viewDef?.viewMode === 'list'
@@ -1915,7 +1919,7 @@ export class Core {
     const latest = this.snapshot();
     for (const rule of this.viewDefChildren(latest, RECENTS_ID, 'sortRule')) this.removeSubtreeDirect(rule.id);
     const viewDefId = this.ensureViewDefDirect(RECENTS_ID);
-    this.loro.createNodeWithId(freshId('sort'), viewDefId, undefined, 'sortRule', (node) => {
+    this.loro.createNodeWithId<SortRuleNode>(freshId('sort'), viewDefId, undefined, 'sortRule', (node) => {
       node.sortField = 'sys:updatedAt';
       node.sortDirection = 'desc';
     });
@@ -2969,7 +2973,6 @@ function isDisposableLegacyParaNode(node: Node, title: string) {
     && node.content.marks.length === 0
     && node.content.inlineRefs.length === 0
     && node.tags.length === 0
-    && (node.filterValues?.length ?? 0) === 0
     && !node.description;
 }
 

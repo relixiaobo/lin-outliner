@@ -373,21 +373,6 @@ export interface NodeBase {
   refRole?: RefRole;
   autoCollected: boolean;
   targetId?: NodeId;
-  viewMode?: ViewMode;
-  toolbarVisible?: boolean;
-  groupField?: ViewFieldRef;
-  sortField?: ViewFieldRef;
-  sortDirection?: SortDirection;
-  filterField?: ViewFieldRef;
-  filterOperator?: FilterOperator;
-  filterValueLogic?: FilterValueLogic;
-  filterValues?: string[];
-  displayField?: ViewFieldRef;
-  displayVisible?: boolean;
-  displayWidth?: number;
-  displayOrder?: number;
-  displayLabel?: string;
-  displayPlacement?: DisplayPlacement;
   aiSummary?: string;
   trashedFromParentId?: NodeId;
   trashedFromIndex?: number;
@@ -420,10 +405,33 @@ export interface TagDefNode extends NodeBase { type: 'tagDef'; }
 export interface FieldDefNode extends NodeBase { type: 'fieldDef'; }
 export interface DefConfigNode extends NodeBase { type: 'defConfig'; }
 export interface SystemOptionNode extends NodeBase { type: 'systemOption'; }
-export interface ViewDefNode extends NodeBase { type: 'viewDef'; }
-export interface SortRuleNode extends NodeBase { type: 'sortRule'; }
-export interface FilterRuleNode extends NodeBase { type: 'filterRule'; }
-export interface DisplayFieldNode extends NodeBase { type: 'displayField'; }
+export interface ViewDefNode extends NodeBase {
+  type: 'viewDef';
+  viewMode?: ViewMode;
+  toolbarVisible?: boolean;
+  groupField?: ViewFieldRef;
+}
+export interface SortRuleNode extends NodeBase {
+  type: 'sortRule';
+  sortField?: ViewFieldRef;
+  sortDirection?: SortDirection;
+}
+export interface FilterRuleNode extends NodeBase {
+  type: 'filterRule';
+  filterField?: ViewFieldRef;
+  filterOperator?: FilterOperator;
+  filterValueLogic?: FilterValueLogic;
+  filterValues?: string[];
+}
+export interface DisplayFieldNode extends NodeBase {
+  type: 'displayField';
+  displayField?: ViewFieldRef;
+  displayVisible?: boolean;
+  displayWidth?: number;
+  displayOrder?: number;
+  displayLabel?: string;
+  displayPlacement?: DisplayPlacement;
+}
 /**
  * Query parameters carried by both a `search` node (its inline top-level rule)
  * and each `queryCondition` node (a rule/group in the search's condition tree).

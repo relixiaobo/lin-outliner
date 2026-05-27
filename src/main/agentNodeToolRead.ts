@@ -210,7 +210,9 @@ function serializeOutlineNode(
 function outlineNodeText(index: ProjectionIndex, node: NodeProjection): string {
   const parts: string[] = [];
   if (node.type === 'search') parts.push('%%search%%');
-  const viewMode = node.type === 'search' ? searchViewModeOf(index, node) : node.viewMode;
+  const viewMode = node.type === 'search'
+    ? searchViewModeOf(index, node)
+    : node.type === 'viewDef' ? node.viewMode : undefined;
   if (viewMode) parts.push(`%%view:${viewMode}%%`);
   if (nodeIsDone(node)) parts.push('[x]');
   else if (nodeShowsCheckbox(index.nodes, node)) parts.push('[ ]');
