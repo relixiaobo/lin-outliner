@@ -5,6 +5,7 @@ import { FIELD_TYPE_CONFIG_OPTIONS } from '../fields/fieldTypeRegistry';
 export interface DefinitionConfigVisibility {
   fieldType?: FieldType;
   showCheckbox?: boolean;
+  doneStateEnabled?: boolean;
 }
 
 export type DefinitionKind = 'tag' | 'field';
@@ -14,6 +15,8 @@ export type TagConfigKey =
   | 'extends'
   | 'showCheckbox'
   | 'doneStateEnabled'
+  | 'doneMapChecked'
+  | 'doneMapUnchecked'
   | 'childSupertag';
 
 export type FieldConfigKey =
@@ -36,6 +39,7 @@ export type DefinitionConfigControl =
   | 'cardinality'
   | 'hideField'
   | 'autoInitialize'
+  | 'doneMapping'
   | 'number';
 
 export interface DefinitionConfigItem {
@@ -71,6 +75,20 @@ export const TAG_CONFIG_ITEMS: DefinitionConfigItem[] = [
     kind: 'tag',
     control: 'switch',
     visibleWhen: (config) => config.showCheckbox ?? false,
+  },
+  {
+    key: 'doneMapChecked',
+    label: 'When done, set',
+    kind: 'tag',
+    control: 'doneMapping',
+    visibleWhen: (config) => Boolean(config.showCheckbox && config.doneStateEnabled),
+  },
+  {
+    key: 'doneMapUnchecked',
+    label: 'When not done, set',
+    kind: 'tag',
+    control: 'doneMapping',
+    visibleWhen: (config) => Boolean(config.showCheckbox && config.doneStateEnabled),
   },
   { key: 'childSupertag', label: 'Default child supertag', kind: 'tag', control: 'tag' },
 ];

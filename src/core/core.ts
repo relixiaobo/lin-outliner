@@ -1026,6 +1026,12 @@ export class Core {
       if ('childSupertag' in patch) {
         this.setConfigValueDirect(tagId, { kind: 'ref', configKey: 'childSupertag', targetId: normalizeOptionalText(patch.childSupertag) ?? null });
       }
+      if (patch.doneMapChecked !== undefined) {
+        this.setConfigValueDirect(tagId, { kind: 'refList', configKey: 'doneMapChecked', targetIds: patch.doneMapChecked });
+      }
+      if (patch.doneMapUnchecked !== undefined) {
+        this.setConfigValueDirect(tagId, { kind: 'refList', configKey: 'doneMapUnchecked', targetIds: patch.doneMapUnchecked });
+      }
       return focus(tagId);
     });
   }

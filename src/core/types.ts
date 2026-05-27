@@ -151,6 +151,8 @@ export interface TagConfigPatch {
   childSupertag?: NodeId | null;
   showCheckbox?: boolean;
   doneStateEnabled?: boolean;
+  doneMapChecked?: NodeId[];
+  doneMapUnchecked?: NodeId[];
 }
 
 export interface FieldConfigPatch {

@@ -37,6 +37,17 @@ describe('definition config registry', () => {
     expect(withCheckbox).toContain('doneStateEnabled');
   });
 
+  test('reveals done-state mapping rows only when both checkbox and mapping are on', () => {
+    const tag = makeNode({ type: 'tagDef' });
+    const checkboxOnly = definitionConfigItems(tag, { showCheckbox: true, doneStateEnabled: false }).map((item) => item.key);
+    const mappingOn = definitionConfigItems(tag, { showCheckbox: true, doneStateEnabled: true }).map((item) => item.key);
+
+    expect(checkboxOnly).not.toContain('doneMapChecked');
+    expect(checkboxOnly).not.toContain('doneMapUnchecked');
+    expect(mappingOn).toContain('doneMapChecked');
+    expect(mappingOn).toContain('doneMapUnchecked');
+  });
+
   test('shows field type-specific rows without storing config as real children', () => {
     const fieldNode = makeNode({ type: 'fieldDef' });
     const plain = definitionConfigItems(fieldNode, { fieldType: 'plain' }).map((item) => item.key);

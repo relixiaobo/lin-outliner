@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
-import type { AutoInitStrategy, FieldCardinality, FieldType, HideFieldMode, NodeId } from '../../api/types';
+import type { AutoInitStrategy, FieldCardinality, FieldType, HideFieldMode, NodeId, NodeProjection } from '../../api/types';
+import { projectTagConfig } from '../../../core/configProjection';
+import { resolveFieldOptions } from '../interactions/fieldOptions';
 import { fieldTypeLabel } from '../outliner/fieldTypePresentation';
 import { NodeValuePicker, type NodeValuePickerMarker } from '../outliner/NodeValuePicker';
 import { NumberInputControl } from '../primitives/NumberInputControl';
@@ -129,6 +131,80 @@ export function DefinitionTagSelect(props: {
       placeholder="None"
       selectedId={props.value}
     />
+  );
+}
+
+interface TagOptionField {
+  fieldDefId: NodeId;
+  label: string;
+  options: Array<{ id: NodeId; label: string }>;
+}
+
+/** Every options field carried by a tag (own + inherited via extends), with its options. */
+function tagOptionFields(byId: Map<NodeId, NodeProjection>, tagDefId: NodeId): TagOptionField[] {
+  const fields: TagOptionField[] = [];
+  const seenFields = new Set<NodeId>();
+  const visitedTags = new Set<NodeId>();
+  let current: NodeId | undefined = tagDefId;
+  while (current && !visitedTags.has(current)) {
+    visitedTags.add(current);
+    const tag = byId.get(current);
+    if (!tag) break;
+    for (const childId of tag.children) {
+      const fieldDefId = byId.get(childId)?.fieldDefId;
+      if (!fieldDefId || seenFields.has(fieldDefId)) continue;
+      const fieldDef = byId.get(fieldDefId);
+      if (fieldDef?.type !== 'fieldDef') continue;
+      const options = resolveFieldOptions(fieldDef, byId);
+      if (options.length === 0) continue;
+      seenFields.add(fieldDefId);
+      fields.push({
+        fieldDefId,
+        label: fieldDef.content.text || 'Field',
+        options: options.map((option) => ({ id: option.id, label: option.label })),
+      });
+    }
+    current = projectTagConfig(byId, tag).extends;
+  }
+  return fields;
+}
+
+export function DefinitionDoneMappingControl(props: {
+  label: string;
+  byId: Map<NodeId, NodeProjection>;
+  tagDefId: NodeId;
+  value: NodeId[];
+  onChange: (optionIds: NodeId[]) => void;
+}) {
+  const fields = tagOptionFields(props.byId, props.tagDefId);
+  if (fields.length === 0) {
+    return <span className="definition-done-mapping-empty">Add an options field to map its done state.</span>;
+  }
+  return (
+    <span className="definition-done-mapping" aria-label={props.label}>
+      {fields.map((field) => {
+        const selected = props.value.find((id) => field.options.some((option) => option.id === id));
+        const setOption = (optionId: NodeId | null) => {
+          const next = props.value.filter((id) => !field.options.some((option) => option.id === id));
+          if (optionId) next.push(optionId);
+          props.onChange(next);
+        };
+        return (
+          <span key={field.fieldDefId} className="definition-done-mapping-row">
+            <span className="definition-done-mapping-field">{field.label}</span>
+            <NodeValuePicker
+              allowClear={Boolean(selected)}
+              ariaLabel={`${props.label}: ${field.label}`}
+              onClear={() => setOption(null)}
+              onSelect={(optionId) => setOption(optionId as NodeId)}
+              options={field.options.map((option) => ({ id: option.id, label: option.label || 'Untitled' }))}
+              placeholder="None"
+              selectedId={selected}
+            />
+          </span>
+        );
+      })}
+    </span>
   );
 }
 

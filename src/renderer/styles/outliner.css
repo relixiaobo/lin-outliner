@@ -166,6 +166,29 @@
   gap: var(--space-5);
 }
 
+.definition-done-mapping {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.definition-done-mapping-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.definition-done-mapping-field {
+  color: var(--text-secondary);
+}
+
+.definition-done-mapping-empty {
+  color: var(--text-secondary);
+}
+
 .definition-template-outliner {
   margin-top: 4px;
 }

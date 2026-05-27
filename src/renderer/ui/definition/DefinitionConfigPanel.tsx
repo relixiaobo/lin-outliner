@@ -1,11 +1,12 @@
 import { useMemo } from 'react';
-import { buildConfigIndexFromMap, type ConfigNodeMap } from '../../../core/configProjection';
+import { buildConfigIndexFromMap } from '../../../core/configProjection';
 import type { ProjectedFieldConfig, ProjectedTagConfig } from '../../../core/configSchema';
 import { api } from '../../api/client';
 import type {
   FieldConfigPatch,
   FieldType,
   HideFieldMode,
+  NodeId,
   NodeProjection,
   TagConfigPatch,
 } from '../../api/types';
@@ -32,6 +33,7 @@ import {
   DefinitionColorControl,
   DefinitionAutoInitializeControl,
   DefinitionCardinalitySelect,
+  DefinitionDoneMappingControl,
   DefinitionFieldTypeSelect,
   DefinitionHideFieldSelect,
   DefinitionNumberControl,
@@ -57,6 +59,7 @@ export function DefinitionConfigPanel({ node, index, run }: DefinitionConfigPane
   const items = definitionConfigItems(node, {
     fieldType: fieldConfig?.fieldType,
     showCheckbox: tagConfig?.showCheckbox,
+    doneStateEnabled: tagConfig?.doneStateEnabled,
   });
   const tagOptions = useMemo(
     () => index.projection.nodes
@@ -101,7 +104,7 @@ function DefinitionConfigRow(props: {
   isLast: boolean;
   item: DefinitionConfigItem;
   node: NodeProjection;
-  byId: ConfigNodeMap;
+  byId: Map<NodeId, NodeProjection>;
   tagConfig: ProjectedTagConfig | undefined;
   fieldConfig: ProjectedFieldConfig | undefined;
   tagOptions: TagOption[];
@@ -140,7 +143,7 @@ function ConfigIcon({ item, fieldType }: { item: DefinitionConfigItem; fieldType
 function ConfigControl(props: {
   item: DefinitionConfigItem;
   node: NodeProjection;
-  byId: ConfigNodeMap;
+  byId: Map<NodeId, NodeProjection>;
   tagConfig: ProjectedTagConfig | undefined;
   fieldConfig: ProjectedFieldConfig | undefined;
   tagOptions: TagOption[];
@@ -191,6 +194,19 @@ function ConfigControl(props: {
           label={item.label}
           checked={tagConfig?.doneStateEnabled ?? false}
           onChange={(doneStateEnabled) => updateTag({ doneStateEnabled })}
+        />
+      );
+    case 'doneMapChecked':
+    case 'doneMapUnchecked':
+      return (
+        <DefinitionDoneMappingControl
+          label={item.label}
+          byId={byId}
+          tagDefId={node.id}
+          value={item.key === 'doneMapChecked' ? (tagConfig?.doneMapChecked ?? []) : (tagConfig?.doneMapUnchecked ?? [])}
+          onChange={(optionIds) => updateTag(
+            item.key === 'doneMapChecked' ? { doneMapChecked: optionIds } : { doneMapUnchecked: optionIds },
+          )}
         />
       );
     case 'fieldType':
