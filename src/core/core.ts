@@ -17,7 +17,7 @@ import {
 } from './operationJournal';
 import { buildDocumentProjection } from './projection';
 import { runSearchExpr, runSearchNode, searchNodeHasRules } from './searchEngine';
-import { isInternalConfigNode, refRoleCountsAsBacklink } from './configSchema';
+import { ENUM_DOMAINS, isInternalConfigNode, refRoleCountsAsBacklink } from './configSchema';
 import {
   AREAS_ID,
   DAILY_NOTES_ID,
@@ -34,6 +34,7 @@ import {
   TRASH_ID,
   WORKSPACE_ID,
   plainText,
+  systemOptionNodeId,
   type Backlink,
   type CommandOutcome,
   type CreateNodeTree,
@@ -1762,6 +1763,7 @@ export class Core {
     [TAG_DAY_ID, TAG_WEEK_ID, TAG_YEAR_ID].forEach((id, index) => {
       this.loro.moveNode(id, SCHEMA_ID, index);
     });
+    this.ensureSystemOptionNodesDirect();
     this.migrateLegacyParaRootNodesDirect();
     this.ensureRecentsSearchDirect();
     this.moveLegacyWorkspaceNodesToLibraryDirect();
@@ -1866,6 +1868,24 @@ export class Core {
     node.updatedAt = node.updatedAt || now;
     this.loro.writeNode(node);
     if (parentId && node.parentId !== parentId) this.loro.moveNode(id, parentId, undefined);
+  }
+
+  // config-as-nodes Stage 4: idempotently seed the system enum option subtrees
+  // under SCHEMA_ID. Enum config values are references to these `systemOption`
+  // nodes (stable derived ids), so an invalid enum value is unrepresentable.
+  // They are `systemOption`-typed, hence excluded from outliner/search/agent/
+  // sidebar by isInternalConfigNode, but remain in the projection so config
+  // rows can resolve the selected value's label.
+  private ensureSystemOptionNodesDirect() {
+    const now = nowMs();
+    for (const [key, domain] of Object.entries(ENUM_DOMAINS)) {
+      this.ensureSystemNodeDirect(domain.subtreeId, 'systemOption', SCHEMA_ID, key, true, now);
+      domain.values.forEach((value, index) => {
+        const optionId = systemOptionNodeId(domain.subtreeId, value);
+        this.ensureSystemNodeDirect(optionId, 'systemOption', domain.subtreeId, value, true, now);
+        this.loro.moveNode(optionId, domain.subtreeId, index);
+      });
+    }
   }
 
   private createPlainNode(
