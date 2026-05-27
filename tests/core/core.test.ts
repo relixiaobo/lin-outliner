@@ -552,7 +552,7 @@ describe('Core', () => {
 
     core.setFieldConfig(fieldId, { fieldType: 'options', autocollectOptions: true });
     expect(buildConfigIndex(core.state()).field(fieldId)?.fieldType).toBe('options');
-    expect(core.state().nodes[fieldId].autocollectOptions).toBe(true);
+    expect(buildConfigIndex(core.state()).field(fieldId)?.autocollectOptions).toBe(true);
     expect(core.state().nodes[fieldId].minValue).toBeUndefined();
     expect(core.state().nodes[fieldId].maxValue).toBeUndefined();
 
@@ -563,7 +563,7 @@ describe('Core', () => {
     });
     expect(buildConfigIndex(core.state()).field(fieldId)?.fieldType).toBe('options_from_supertag');
     expect(buildConfigIndex(core.state()).field(fieldId)?.sourceSupertag).toBe(sourceTagId);
-    expect(core.state().nodes[fieldId].autocollectOptions).toBe(false);
+    expect(buildConfigIndex(core.state()).field(fieldId)?.autocollectOptions).toBe(false);
 
     expect(() => core.setFieldConfig(fieldId, { autocollectOptions: true }))
       .toThrow('auto-collect options');

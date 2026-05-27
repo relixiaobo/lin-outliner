@@ -221,16 +221,17 @@ export function TrailingInput(props: TrailingInputProps) {
     canCreateOption: false,
     optionsQuery: '',
   });
-  const optionFieldType = props.optionField
-    ? projectFieldConfig(props.index.byId, props.optionField).fieldType
+  const optionFieldConfig = props.optionField
+    ? projectFieldConfig(props.index.byId, props.optionField)
     : undefined;
+  const optionFieldType = optionFieldConfig?.fieldType;
   const isOptionsField = isOptionsFieldType(optionFieldType);
   const allOptions = resolveFieldOptions(props.optionField, props.index.byId);
   const filteredOptions = filterFieldOptions(allOptions, optionsQuery);
   const canCreateOption = isOptionsField
     && optionFieldType === 'options'
     && Boolean(optionsQuery.trim())
-    && props.optionField?.autocollectOptions !== false
+    && optionFieldConfig?.autocollectOptions !== false
     && !allOptions.some((option) => option.label.toLowerCase() === optionsQuery.trim().toLowerCase());
   const optionCount = filteredOptions.length + (canCreateOption ? 1 : 0);
   const trailingText = buffer.text;

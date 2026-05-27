@@ -359,7 +359,6 @@ export interface Node {
   /** For `reference` nodes: the role this reference plays (backlink allowlist). */
   refRole?: RefRole;
   autoInitialize?: string;
-  autocollectOptions: boolean;
   autoCollected: boolean;
   minValue?: number;
   maxValue?: number;
@@ -623,7 +622,6 @@ export function createNodeRecord(
     locked: false,
     showCheckbox: false,
     doneStateEnabled: false,
-    autocollectOptions: false,
     autoCollected: false,
   };
 }

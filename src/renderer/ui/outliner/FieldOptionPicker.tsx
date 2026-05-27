@@ -28,7 +28,8 @@ export function FieldOptionPicker({
     ? byId.get(valueNode.targetId)?.content.text
     : valueNode?.content.text;
   const selectedMarker = valueNode?.type === 'reference' ? 'reference' : 'bullet';
-  const canCreate = projectFieldConfig(byId, field).fieldType === 'options' && field.autocollectOptions !== false;
+  const fieldConfig = projectFieldConfig(byId, field);
+  const canCreate = fieldConfig.fieldType === 'options' && fieldConfig.autocollectOptions !== false;
   const pickerOptions: NodeValuePickerOption[] = options.map((option) => ({
     id: option.id,
     label: option.label,

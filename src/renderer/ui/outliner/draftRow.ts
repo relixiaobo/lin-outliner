@@ -28,7 +28,6 @@ export function makeDraftNode(id: NodeId, parentId: NodeId): NodeProjection {
     locked: false,
     showCheckbox: false,
     doneStateEnabled: false,
-    autocollectOptions: false,
     autoCollected: false,
   };
 }

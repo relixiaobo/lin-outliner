@@ -754,7 +754,6 @@ function virtualNode(
     locked: false,
     showCheckbox: false,
     doneStateEnabled: false,
-    autocollectOptions: false,
     autoCollected: false,
   };
 }

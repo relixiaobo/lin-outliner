@@ -1022,15 +1022,13 @@ export class Core {
       }
       if (patch.fieldType !== undefined) {
         // fieldType is written to the defConfig subtree below (config-as-nodes);
-        // these clear type-incompatible sibling config when the type changes.
-        if (patch.fieldType !== 'options') current.autocollectOptions = false;
+        // this clears type-incompatible sibling config when the type changes.
         if (patch.fieldType !== 'number') {
           delete current.minValue;
           delete current.maxValue;
         }
       }
       if ('autoInitialize' in patch) setOptional(current, 'autoInitialize', normalizeOptionalText(patch.autoInitialize));
-      if (patch.autocollectOptions !== undefined) current.autocollectOptions = patch.autocollectOptions;
       if ('minValue' in patch) setOptional(current, 'minValue', patch.minValue ?? undefined);
       if ('maxValue' in patch) setOptional(current, 'maxValue', patch.maxValue ?? undefined);
       current.updatedAt = nowMs();
@@ -1047,6 +1045,12 @@ export class Core {
       }
       if ('hideField' in patch) {
         this.setConfigValueDirect(fieldId, { kind: 'enum', configKey: 'hideField', value: normalizeOptionalText(patch.hideField) ?? null });
+      }
+      // autocollectOptions: explicit set, or cleared when the type no longer supports it.
+      if (patch.autocollectOptions !== undefined) {
+        this.setConfigValueDirect(fieldId, { kind: 'scalar', configKey: 'autocollectOptions', text: patch.autocollectOptions ? 'true' : 'false' });
+      } else if (patch.fieldType !== undefined && patch.fieldType !== 'options') {
+        this.setConfigValueDirect(fieldId, { kind: 'scalar', configKey: 'autocollectOptions', text: null });
       }
       // config-as-nodes: sourceSupertag lives in the defConfig subtree. Set it,
       // or clear it when the field type no longer supports it.

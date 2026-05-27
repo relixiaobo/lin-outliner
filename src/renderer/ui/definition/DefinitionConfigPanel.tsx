@@ -218,7 +218,7 @@ function ConfigControl(props: {
       return (
         <DefinitionSwitchControl
           label={item.label}
-          checked={node.autocollectOptions}
+          checked={fieldConfig?.autocollectOptions ?? false}
           onChange={(autocollectOptions) => updateField({ autocollectOptions })}
         />
       );
