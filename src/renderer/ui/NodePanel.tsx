@@ -11,7 +11,7 @@ import {
 } from 'react';
 import { api } from '../api/client';
 import type { NodeId, RichText, RichTextPatch } from '../api/types';
-import { EMPTY_RICH_TEXT } from '../api/types';
+import { EMPTY_RICH_TEXT, plainText } from '../api/types';
 import { TAG_DAY_ID } from '../../core/types';
 import { flattenVisibleRows, type DocumentIndex, type UiState } from '../state/document';
 import { RichTextEditor, type EditorSplitPayload } from './editor/RichTextEditor';
@@ -39,7 +39,6 @@ import {
   selectFocusState,
 } from './focus/focusModel';
 import {
-  CalendarIcon,
   ChevronLeftIcon,
   HashIcon,
   ICON_SIZE,
@@ -104,6 +103,31 @@ function parsePanelDateLabel(label: string) {
 
 function isDayTagId(tagId: NodeId, byId: DocumentIndex['byId']) {
   return tagId === TAG_DAY_ID || byId.get(tagId)?.content.text.toLowerCase() === 'day';
+}
+
+const WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTH_ABBR = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
+const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+// Humanize a day node's ISO date for the panel title: the weekday/month/day
+// ("Wed, May 27"), prefixed with a relative name for the adjacent days
+// ("Today, Wed, May 27"). Day nodes are locked, so this label is read-only
+// display only — the underlying `YYYY-MM-DD` content is untouched.
+export function formatDayNodeTitle(isoDate: string, now: Date): string {
+  const [year, month, day] = isoDate.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  const dayName = `${WEEKDAY_ABBR[date.getDay()]}, ${MONTH_ABBR[date.getMonth()]} ${date.getDate()}`;
+  const diffDays = Math.round(
+    (startOfDay(date).getTime() - startOfDay(now).getTime()) / 86_400_000,
+  );
+  if (diffDays === 0) return `Today, ${dayName}`;
+  if (diffDays === 1) return `Tomorrow, ${dayName}`;
+  if (diffDays === -1) return `Yesterday, ${dayName}`;
+  return dayName;
 }
 
 export function NodePanel(props: NodePanelProps) {
@@ -205,7 +229,6 @@ export function NodePanel(props: NodePanelProps) {
 
   const renderHeaderIcon = () => {
     if (!rootNode) return null;
-    if (props.rootId === projection.todayId) return <CalendarIcon size={PANEL_HEADER_ICON_SIZE} />;
     if (props.rootId === projection.libraryId) return <LibraryIcon size={PANEL_HEADER_ICON_SIZE} />;
     if (props.rootId === projection.schemaId) return <SupertagIcon size={PANEL_HEADER_ICON_SIZE} />;
     if (props.rootId === projection.trashId) return <TrashIcon size={PANEL_HEADER_ICON_SIZE} />;
@@ -228,6 +251,20 @@ export function NodePanel(props: NodePanelProps) {
   const panelIsoDate = rootNode && rootTagIds.some((tagId) => isDayTagId(tagId, props.index.byId))
     ? parsePanelDateLabel(rootNode.content.text)
     : null;
+  // A day node's title is a locked, read-only ISO string; show a humanized label
+  // ("Today, Wed, May 27" / "Wed, May 27") in its place, in both the title editor
+  // and the docked breadcrumb. Re-derived per local day so a session crossing
+  // midnight still relabels.
+  const now = new Date();
+  const todayKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
+  const dayTitleLabel = useMemo(
+    () => (panelIsoDate && rootNode?.locked ? formatDayNodeTitle(panelIsoDate, new Date()) : null),
+    [panelIsoDate, rootNode?.locked, todayKey],
+  );
+  const dayTitleContent = useMemo(
+    () => (dayTitleLabel != null ? plainText(dayTitleLabel) : null),
+    [dayTitleLabel],
+  );
   const dateNoteCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const node of props.index.byId.values()) {
@@ -515,7 +552,7 @@ export function NodePanel(props: NodePanelProps) {
               <span className="panel-breadcrumb-segment panel-breadcrumb-current">
                 <span className="panel-breadcrumb-divider">/</span>
                 <span className="panel-breadcrumb-current-label" data-current-page-title>
-                  {rootNode.content.text || 'Untitled'}
+                  {dayTitleLabel ?? (rootNode.content.text || 'Untitled')}
                 </span>
               </span>
             )}
@@ -539,7 +576,7 @@ export function NodePanel(props: NodePanelProps) {
               )}
               <RichTextEditor
                 nodeId={props.rootId}
-                content={titleContent}
+                content={dayTitleContent ?? titleContent}
                 contentRevision={titleContentRevision}
                 placeholder="Untitled"
                 readOnly={rootNode?.locked}

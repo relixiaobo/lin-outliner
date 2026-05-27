@@ -293,6 +293,32 @@ test.describe('outliner navigation and page title parity', () => {
     expectClose(metrics.moreRight, metrics.titleRowRight);
   });
 
+  test('a locked day node panel shows a humanized title and no calendar icon', async ({ page }) => {
+    // Real day nodes are locked; the mock leaves today editable, so lock it here
+    // to exercise the read-only humanized title path.
+    await page.evaluate((todayId) => {
+      const win = window as typeof window & {
+        __LIN_E2E__?: {
+          projection: () => { nodes: Array<{ id: string; locked?: boolean }> };
+          emitDocumentEvent: (event: unknown) => void;
+        };
+      };
+      const projection = win.__LIN_E2E__!.projection();
+      const today = projection.nodes.find((node) => node.id === todayId);
+      if (today) today.locked = true;
+      win.__LIN_E2E__!.emitDocumentEvent({ type: 'projection_changed', projection });
+    }, ids.today);
+
+    const panel = page.locator('.outline-panel-surface').first();
+    const title = panel.locator('.panel-title-editor').first();
+    // The raw ISO string is replaced by the "Ddd, Mmm D" day name (May 13 2026),
+    // optionally prefixed with Today/Tomorrow/Yesterday near that date.
+    await expect(title).toContainText('May 13');
+    await expect(title).not.toContainText('2026-05-13');
+    // The date node no longer carries a header calendar icon.
+    await expect(panel.locator('.panel-heading-icon-row')).toHaveCount(0);
+  });
+
   test('day panels expose date navigation and jump through ensured day nodes', async ({ page }) => {
     await expect(page.getByRole('navigation', { name: 'Date navigation' })).toBeVisible();
     await expect(page.getByRole('navigation', { name: 'Date navigation' })).not.toContainText('2026/');
