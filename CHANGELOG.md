@@ -82,6 +82,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   ([#5](https://github.com/relixiaobo/lin-outliner/pull/5),
   [#11](https://github.com/relixiaobo/lin-outliner/pull/11))
 
+### Fixed
+
+- **Pasting fenced code blocks with multi-word info strings** — the paste
+  parser only recognized a fence whose info string was a single token, so a
+  CommonMark-valid fence like ` ```tool node_create ` leaked as plain text and
+  desynced every later open/close pairing (prose swallowed into empty "Plain
+  text" code blocks, real code split into one row per line). Any info string is
+  now accepted, with its first token used as the language.
+  ([#24](https://github.com/relixiaobo/lin-outliner/pull/24))
+
 ### Internal
 
 - **Prod install isolation + signing** — `userData` now resolves in three
