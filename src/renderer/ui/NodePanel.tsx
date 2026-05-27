@@ -24,6 +24,7 @@ import {
 } from './editor/richTextCodec';
 import { DefinitionConfigPanel } from './definition/DefinitionConfigPanel';
 import { definitionKind, definitionOutlinerLabel } from './definition/definitionConfig';
+import { projectFieldTypeById } from '../../core/configProjection';
 import type { SlashCommandId } from './interactions/slashCommands';
 import type { CommandRunner, EditorTrigger, NavigateRootOptions, TriggerState } from './shared';
 import {
@@ -147,7 +148,9 @@ export function NodePanel(props: NodePanelProps) {
   const localTitleSyncRef = useRef<{ nodeId: NodeId; content: RichText } | null>(null);
   const descriptionReturnPlacementRef = useRef(cursorEnd());
   const rootDefinitionKind = definitionKind(rootNode);
-  const definitionTemplateLabel = rootNode ? definitionOutlinerLabel(rootNode) : null;
+  const definitionTemplateLabel = rootNode
+    ? definitionOutlinerLabel(rootNode, { fieldType: projectFieldTypeById(props.index.byId, rootNode.id) })
+    : null;
   const showOutliner = Boolean(rootNode && (!rootDefinitionKind || definitionTemplateLabel));
   const showTrailingInput = Boolean(rootNode && showOutliner && rootNode.type !== 'search');
   const breadcrumb = buildPanelBreadcrumb(rootNode, props.index);
@@ -240,7 +243,7 @@ export function NodePanel(props: NodePanelProps) {
         </span>
       );
     }
-    if (rootNode.type === 'fieldDef') return <FieldTypeIcon fieldType={rootNode.fieldType} size={PANEL_HEADER_ICON_SIZE} />;
+    if (rootNode.type === 'fieldDef') return <FieldTypeIcon fieldType={projectFieldTypeById(props.index.byId, rootNode.id)} size={PANEL_HEADER_ICON_SIZE} />;
     return null;
   };
 

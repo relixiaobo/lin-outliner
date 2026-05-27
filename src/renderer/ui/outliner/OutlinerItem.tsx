@@ -10,6 +10,7 @@ import { flushSync } from 'react-dom';
 import { api } from '../../api/client';
 import type { AssetMetadata, CreateNodeTree, NodeId, NodeProjection, RichText, RichTextPatch } from '../../api/types';
 import { EMPTY_RICH_TEXT, plainText, replaceAllRichTextPatch } from '../../api/types';
+import { projectFieldTypeById } from '../../../core/configProjection';
 import type { CursorPlacement } from '../../state/document';
 import {
   flattenVisibleRows,
@@ -1071,7 +1072,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
           hasChildren={row.hasChildren}
           expanded={row.expanded}
           variant={leadingVariant}
-          fieldType={displayed.fieldType}
+          fieldType={projectFieldTypeById(props.index.byId, displayed.id)}
           bulletColors={appliedTagColors}
           tagDefColor={tagDefColor}
           onToggleExpand={row.toggleExpandOrSelect}

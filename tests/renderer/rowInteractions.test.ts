@@ -67,6 +67,21 @@ describe('row interaction resolvers', () => {
 	    ...overrides,
 	  });
 
+  // config-as-nodes: a fieldDef resolves its fieldType from a defConfig(fieldType)
+  // subtree, not a flat field. These entries provide that subtree for a mock
+  // fieldDef; add `${defId}::cfg:fieldType` to the fieldDef's children so the
+  // projector finds it.
+  const fieldTypeConfigEntries = (defId: string, fieldType: string): Array<[string, any]> => {
+    const rowId = `${defId}::cfg:fieldType`;
+    const refId = `${rowId}/value`;
+    const optionId = `schema:field-types/${fieldType}`;
+    return [
+      [rowId, makeNode(rowId, 'fieldType', { type: 'defConfig', parentId: defId, configKey: 'fieldType', children: [refId] })],
+      [refId, makeNode(refId, '', { type: 'reference', parentId: rowId, refRole: 'enum', targetId: optionId })],
+      [optionId, makeNode(optionId, fieldType, { type: 'systemOption' })],
+    ];
+  };
+
   test('builds view rows with hidden field reveal placeholders', () => {
     const parent = makeNode('parent', 'Parent', { children: ['field'] });
     const fieldDef = makeNode('field-def', 'Status', { type: 'fieldDef', hideField: 'always' });
@@ -249,7 +264,8 @@ describe('row interaction resolvers', () => {
 	        filterValueLogic: 'any',
 	        filterValues: ['2026-01-01'],
 	      })],
-	      ['date-def', makeNode('date-def', 'Due', { type: 'fieldDef', fieldType: 'date' })],
+	      ['date-def', makeNode('date-def', 'Due', { type: 'fieldDef', children: ['date-def::cfg:fieldType'] })],
+	      ...fieldTypeConfigEntries('date-def', 'date'),
 	      ['early', makeNode('early', 'Early', { parentId: 'parent', children: ['early-date'] })],
 	      ['early-date', makeNode('early-date', '2025-06-01', { type: 'fieldEntry', parentId: 'early', fieldDefId: 'date-def' })],
 	      ['late', makeNode('late', 'Late', { parentId: 'parent', children: ['late-date'] })],
@@ -267,7 +283,8 @@ describe('row interaction resolvers', () => {
 	    const byId = new Map<string, any>([
 	      ['parent', parent],
 	      ['view', makeNode('view', '', { type: 'viewDef', parentId: 'parent', children: [], groupField: 'date-def' })],
-	      ['date-def', makeNode('date-def', 'Due', { type: 'fieldDef', fieldType: 'date' })],
+	      ['date-def', makeNode('date-def', 'Due', { type: 'fieldDef', children: ['date-def::cfg:fieldType'] })],
+	      ...fieldTypeConfigEntries('date-def', 'date'),
 	      ['a', makeNode('a', 'A', { parentId: 'parent', children: ['a-date'] })],
 	      ['a-date', makeNode('a-date', '2026-06-01', { type: 'fieldEntry', parentId: 'a', fieldDefId: 'date-def' })],
 	      ['b', makeNode('b', 'B', { parentId: 'parent', children: ['b-date'] })],
@@ -990,7 +1007,7 @@ describe('row interaction resolvers', () => {
     const field = {
       id: 'field_status',
       type: 'fieldDef',
-      children: ['opt_done'],
+      children: ['field_status::cfg:fieldType', 'opt_done'],
       content: { text: 'Status', marks: [], inlineRefs: [] },
       tags: [],
       createdAt: 0,
@@ -1028,6 +1045,7 @@ describe('row interaction resolvers', () => {
     } as const;
     const byId = new Map<string, any>([
       [field.id, field],
+      ...fieldTypeConfigEntries('field_status', 'options'),
       [option.id, option],
       [value.id, value],
     ]);
@@ -1040,7 +1058,7 @@ describe('row interaction resolvers', () => {
     const field = {
       id: 'field_status',
       type: 'fieldDef',
-      children: ['collected_ref'],
+      children: ['field_status::cfg:fieldType', 'collected_ref'],
       content: { text: 'Status', marks: [], inlineRefs: [] },
       tags: [],
       createdAt: 0,
@@ -1086,6 +1104,7 @@ describe('row interaction resolvers', () => {
     } as const;
     const byId = new Map<string, any>([
       [field.id, field],
+      ...fieldTypeConfigEntries('field_status', 'options'),
       [localValue.id, localValue],
       [collectedRef.id, collectedRef],
       [valueRef.id, valueRef],
@@ -1101,7 +1120,7 @@ describe('row interaction resolvers', () => {
     const field = {
       id: 'field_status',
       type: 'fieldDef',
-      children: ['opt_beta', 'opt_alpha'],
+      children: ['field_status::cfg:fieldType', 'opt_beta', 'opt_alpha'],
       content: { text: 'Status', marks: [], inlineRefs: [] },
       tags: [],
       createdAt: 0,
@@ -1138,6 +1157,7 @@ describe('row interaction resolvers', () => {
     } as const;
     const byId = new Map<string, any>([
       [field.id, field],
+      ...fieldTypeConfigEntries('field_status', 'options'),
       [beta.id, beta],
       [alpha.id, alpha],
     ]);
@@ -1149,8 +1169,8 @@ describe('row interaction resolvers', () => {
     const field = {
       id: 'field_city',
       type: 'fieldDef',
-      // config-as-nodes: sourceSupertag lives in a defConfig row, not a flat field.
-      children: ['cfg_source', 'ignored_child_option'],
+      // config-as-nodes: fieldType and sourceSupertag live in defConfig rows, not flat fields.
+      children: ['field_city::cfg:fieldType', 'cfg_source', 'ignored_child_option'],
       content: { text: 'City', marks: [], inlineRefs: [] },
       tags: [],
       createdAt: 0,
@@ -1229,6 +1249,7 @@ describe('row interaction resolvers', () => {
     } as const;
     const byId = new Map<string, any>([
       [field.id, field],
+      ...fieldTypeConfigEntries('field_city', 'options_from_supertag'),
       [sourceConfigRow.id, sourceConfigRow],
       [sourceConfigValue.id, sourceConfigValue],
       [taggedNode.id, taggedNode],

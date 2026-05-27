@@ -1,4 +1,5 @@
 import { parseDateFieldValueRange, type FilterOperator, type NodeId, type NodeProjection, type SortDirection, type ViewMode } from '../api/types';
+import { projectFieldTypeById } from '../../core/configProjection';
 
 export const NAME_FIELD = 'sys:name';
 export const CREATED_FIELD = 'sys:createdAt';
@@ -261,7 +262,7 @@ function filterRows(
 
 function isDateFilterField(fieldId: string, byId: Map<NodeId, NodeProjection>): boolean {
   if (fieldId === CREATED_FIELD || fieldId === UPDATED_FIELD || fieldId === DONE_AT_FIELD) return true;
-  return byId.get(fieldId)?.fieldType === 'date';
+  return projectFieldTypeById(byId, fieldId) === 'date';
 }
 
 // Resolves a date filter operand to an absolute [start, endExclusive) span. Handles
@@ -340,7 +341,7 @@ function sortRows(
 
 function isBooleanGroupField(fieldId: string, byId: Map<NodeId, NodeProjection>): boolean {
   if (fieldId === DONE_FIELD) return true;
-  const fieldType = byId.get(fieldId)?.fieldType;
+  const fieldType = projectFieldTypeById(byId, fieldId);
   return fieldType === 'checkbox' || fieldType === 'boolean';
 }
 

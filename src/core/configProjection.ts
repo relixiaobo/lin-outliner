@@ -101,6 +101,13 @@ export function projectFieldConfig(byId: ConfigNodeMap, fieldDef: ConfigNodeLike
   };
 }
 
+/** Convenience: a field definition's type by id, or undefined if not a fieldDef. */
+export function projectFieldTypeById(byId: ConfigNodeMap, fieldDefId: NodeId | undefined): FieldType | undefined {
+  if (!fieldDefId) return undefined;
+  const node = byId.get(fieldDefId);
+  return node?.type === 'fieldDef' ? projectFieldConfig(byId, node).fieldType : undefined;
+}
+
 // ─── The index (built once per state/projection; reads are O(1) memoized) ───
 
 export function buildConfigIndex(state: Pick<DocumentState, 'nodes'>): ConfigIndex {

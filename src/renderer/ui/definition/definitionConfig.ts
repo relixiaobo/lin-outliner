@@ -1,5 +1,11 @@
-import type { FieldCardinality, HideFieldMode, NodeProjection } from '../../api/types';
+import type { FieldCardinality, FieldType, HideFieldMode, NodeProjection } from '../../api/types';
 import { FIELD_TYPE_CONFIG_OPTIONS } from '../fields/fieldTypeRegistry';
+
+/** The projected config fields the panel's visibility predicates depend on. */
+export interface DefinitionConfigVisibility {
+  fieldType?: FieldType;
+  showCheckbox?: boolean;
+}
 
 export type DefinitionKind = 'tag' | 'field';
 
@@ -37,7 +43,7 @@ export interface DefinitionConfigItem {
   label: string;
   kind: DefinitionKind;
   control: DefinitionConfigControl;
-  visibleWhen?: (node: NodeProjection) => boolean;
+  visibleWhen?: (config: DefinitionConfigVisibility) => boolean;
 }
 
 export const HIDE_FIELD_OPTIONS: Array<{ value: HideFieldMode; label: string }> = [
@@ -64,7 +70,7 @@ export const TAG_CONFIG_ITEMS: DefinitionConfigItem[] = [
     label: 'Done state mapping',
     kind: 'tag',
     control: 'switch',
-    visibleWhen: (node) => node.showCheckbox,
+    visibleWhen: (config) => config.showCheckbox ?? false,
   },
   { key: 'childSupertag', label: 'Default child supertag', kind: 'tag', control: 'tag' },
 ];
@@ -77,14 +83,14 @@ export const FIELD_CONFIG_ITEMS: DefinitionConfigItem[] = [
     label: 'Supertag',
     kind: 'field',
     control: 'tag',
-    visibleWhen: (node) => node.fieldType === 'options_from_supertag',
+    visibleWhen: (config) => config.fieldType === 'options_from_supertag',
   },
   {
     key: 'autocollectOptions',
     label: 'Auto-collect values',
     kind: 'field',
     control: 'switch',
-    visibleWhen: (node) => node.fieldType === 'options',
+    visibleWhen: (config) => config.fieldType === 'options',
   },
   { key: 'autoInitialize', label: 'Auto-initialize', kind: 'field', control: 'autoInitialize' },
   { key: 'required', label: 'Required', kind: 'field', control: 'switch' },
@@ -94,14 +100,14 @@ export const FIELD_CONFIG_ITEMS: DefinitionConfigItem[] = [
     label: 'Minimum value',
     kind: 'field',
     control: 'number',
-    visibleWhen: (node) => node.fieldType === 'number',
+    visibleWhen: (config) => config.fieldType === 'number',
   },
   {
     key: 'maxValue',
     label: 'Maximum value',
     kind: 'field',
     control: 'number',
-    visibleWhen: (node) => node.fieldType === 'number',
+    visibleWhen: (config) => config.fieldType === 'number',
   },
 ];
 
@@ -111,13 +117,13 @@ export function definitionKind(node: NodeProjection | undefined): DefinitionKind
   return null;
 }
 
-export function definitionConfigItems(node: NodeProjection): DefinitionConfigItem[] {
+export function definitionConfigItems(node: NodeProjection, config: DefinitionConfigVisibility): DefinitionConfigItem[] {
   const items = node.type === 'tagDef' ? TAG_CONFIG_ITEMS : FIELD_CONFIG_ITEMS;
-  return items.filter((item) => item.visibleWhen?.(node) ?? true);
+  return items.filter((item) => item.visibleWhen?.(config) ?? true);
 }
 
-export function definitionOutlinerLabel(node: NodeProjection): string | null {
+export function definitionOutlinerLabel(node: NodeProjection, config: DefinitionConfigVisibility): string | null {
   if (node.type === 'tagDef') return 'Default content';
-  if (node.type === 'fieldDef' && node.fieldType === 'options') return 'Pre-determined options';
+  if (node.type === 'fieldDef' && config.fieldType === 'options') return 'Pre-determined options';
   return null;
 }

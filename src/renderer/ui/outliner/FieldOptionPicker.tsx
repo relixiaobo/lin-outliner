@@ -1,5 +1,6 @@
 import type { NodeId, NodeProjection } from '../../api/types';
 import { resolveFieldOptions, resolveSelectedOptionId } from '../interactions/fieldOptions';
+import { projectFieldConfig } from '../../../core/configProjection';
 import { NodeValuePicker, type NodeValuePickerOption } from './NodeValuePicker';
 
 interface FieldOptionPickerProps {
@@ -27,7 +28,7 @@ export function FieldOptionPicker({
     ? byId.get(valueNode.targetId)?.content.text
     : valueNode?.content.text;
   const selectedMarker = valueNode?.type === 'reference' ? 'reference' : 'bullet';
-  const canCreate = field.fieldType === 'options' && field.autocollectOptions !== false;
+  const canCreate = projectFieldConfig(byId, field).fieldType === 'options' && field.autocollectOptions !== false;
   const pickerOptions: NodeValuePickerOption[] = options.map((option) => ({
     id: option.id,
     label: option.label,

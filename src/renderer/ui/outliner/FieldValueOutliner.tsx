@@ -2,6 +2,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
 import { plainText } from '../../api/types';
+import { projectFieldConfig } from '../../../core/configProjection';
 import type { DocumentIndex, FocusRequest, UiState } from '../../state/document';
 import {
   clearFocusRequestState,
@@ -53,11 +54,14 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
   const empty = rows.length === 0;
   const singleValueNode = rows.length === 1 ? props.index.byId.get(rows[0].id) : undefined;
   const singleValueField = props.optionField?.cardinality !== 'list';
-  const valueInteraction = fieldTypeInteraction(props.optionField?.fieldType);
+  const optionFieldType = props.optionField
+    ? projectFieldConfig(props.index.byId, props.optionField).fieldType
+    : undefined;
+  const valueInteraction = fieldTypeInteraction(optionFieldType);
   const canUseOptionPicker = Boolean(
     props.optionField
     && singleValueField
-    && isOptionsFieldType(props.optionField.fieldType)
+    && isOptionsFieldType(optionFieldType)
     && rows.length <= 1,
   );
   const canUseTypedControl = Boolean(
@@ -91,7 +95,7 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
       ) : canUseTypedControl && props.optionField ? (
         <TypedFieldValueControl
           entryId={props.entryId}
-          fieldType={props.optionField.fieldType ?? 'plain'}
+          fieldType={optionFieldType ?? 'plain'}
           placeholder={props.placeholder}
           run={props.run}
           valueNode={singleValueNode}

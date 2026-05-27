@@ -35,6 +35,7 @@ import {
 import { getTreeReferenceBlockReason } from '../interactions/referenceRules';
 import { isOptionsFieldType } from '../fields/fieldTypeRegistry';
 import { filterFieldOptions, resolveFieldOptions } from '../interactions/fieldOptions';
+import { projectFieldConfig } from '../../../core/configProjection';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { readPastedImages, type PastedImage } from '../interactions/imagePaste';
 import { classifyMediaPaste } from '../interactions/clipboardPaste';
@@ -220,11 +221,14 @@ export function TrailingInput(props: TrailingInputProps) {
     canCreateOption: false,
     optionsQuery: '',
   });
-  const isOptionsField = isOptionsFieldType(props.optionField?.fieldType);
+  const optionFieldType = props.optionField
+    ? projectFieldConfig(props.index.byId, props.optionField).fieldType
+    : undefined;
+  const isOptionsField = isOptionsFieldType(optionFieldType);
   const allOptions = resolveFieldOptions(props.optionField, props.index.byId);
   const filteredOptions = filterFieldOptions(allOptions, optionsQuery);
   const canCreateOption = isOptionsField
-    && props.optionField?.fieldType === 'options'
+    && optionFieldType === 'options'
     && Boolean(optionsQuery.trim())
     && props.optionField?.autocollectOptions !== false
     && !allOptions.some((option) => option.label.toLowerCase() === optionsQuery.trim().toLowerCase());

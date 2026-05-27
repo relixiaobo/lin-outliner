@@ -155,7 +155,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
 
   if (!entry) return null;
 
-  const fieldType = field?.fieldType ?? entry.fieldType ?? 'plain';
+  const fieldType = field ? projectFieldConfig(props.index.byId, field).fieldType : 'plain';
   const drillDownId = field?.id ?? props.entryId;
   const fieldOwnerColor = resolveFieldOwnerColor(entry, field, props.index.byId);
 

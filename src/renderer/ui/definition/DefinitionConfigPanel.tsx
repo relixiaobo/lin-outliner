@@ -4,6 +4,7 @@ import type { ProjectedFieldConfig, ProjectedTagConfig } from '../../../core/con
 import { api } from '../../api/client';
 import type {
   FieldConfigPatch,
+  FieldType,
   HideFieldMode,
   NodeProjection,
   TagConfigPatch,
@@ -47,12 +48,15 @@ interface DefinitionConfigPanelProps {
 }
 
 export function DefinitionConfigPanel({ node, index, run }: DefinitionConfigPanelProps) {
-  const items = definitionConfigItems(node);
   // config-as-nodes: definition config is read from the defConfig subtree via
   // the projected accessor, not flat Node fields.
   const configIndex = useMemo(() => buildConfigIndexFromMap(index.byId), [index.byId]);
   const tagConfig = configIndex.tag(node.id);
   const fieldConfig = configIndex.field(node.id);
+  const items = definitionConfigItems(node, {
+    fieldType: fieldConfig?.fieldType,
+    showCheckbox: tagConfig?.showCheckbox,
+  });
   const tagOptions = useMemo(
     () => index.projection.nodes
       .filter((candidate) => candidate.type === 'tagDef' && candidate.id !== node.id)
@@ -105,15 +109,15 @@ function DefinitionConfigRow(props: {
     <DefinitionConfigRowShell
       configKey={props.item.key}
       control={<ConfigControl {...props} />}
-      icon={<ConfigIcon item={props.item} node={props.node} />}
+      icon={<ConfigIcon item={props.item} fieldType={props.fieldConfig?.fieldType} />}
       isLast={props.isLast}
       label={props.item.label}
     />
   );
 }
 
-function ConfigIcon({ item, node }: { item: DefinitionConfigItem; node: NodeProjection }) {
-  if (item.key === 'fieldType') return <FieldTypeIcon fieldType={node.fieldType} size={ICON_SIZE.rowGlyph} />;
+function ConfigIcon({ item, fieldType }: { item: DefinitionConfigItem; fieldType: FieldType | undefined }) {
+  if (item.key === 'fieldType') return <FieldTypeIcon fieldType={fieldType} size={ICON_SIZE.rowGlyph} />;
   if (item.key === 'color') return <ColorIcon size={ICON_SIZE.rowGlyph} />;
   if (item.key === 'extends' || item.key === 'childSupertag' || item.key === 'sourceSupertag') {
     return <SupertagIcon size={ICON_SIZE.rowGlyph} />;
@@ -189,7 +193,7 @@ function ConfigControl(props: {
       return (
         <DefinitionFieldTypeSelect
           label={item.label}
-          value={node.fieldType ?? 'plain'}
+          value={fieldConfig?.fieldType ?? 'plain'}
           onChange={(fieldType) => updateField({ fieldType })}
         />
       );
@@ -222,7 +226,7 @@ function ConfigControl(props: {
       return (
         <DefinitionAutoInitializeControl
           label={item.label}
-          fieldType={node.fieldType ?? 'plain'}
+          fieldType={fieldConfig?.fieldType ?? 'plain'}
           value={node.autoInitialize}
           onChange={(autoInitialize) => updateField({ autoInitialize })}
         />

@@ -14,9 +14,10 @@ export function resolveFieldOptions(
   field: NodeProjection | undefined,
   byId: Map<NodeId, NodeProjection>,
 ): FieldOption[] {
-  if (!field || !isOptionsFieldType(field.fieldType)) return [];
+  const fieldType = field ? projectFieldConfig(byId, field).fieldType : undefined;
+  if (!field || !isOptionsFieldType(fieldType)) return [];
 
-  const optionNodes = field.fieldType === 'options_from_supertag'
+  const optionNodes = fieldType === 'options_from_supertag'
     ? resolveOptionsFromSourceSupertag(field, byId)
     : field.children
       .map((childId) => byId.get(childId))
@@ -33,7 +34,7 @@ export function resolveFieldOptions(
     }];
   }));
 
-  return field.fieldType === 'options_from_supertag'
+  return fieldType === 'options_from_supertag'
     ? options.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
     : options;
 }

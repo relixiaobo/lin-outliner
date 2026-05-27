@@ -33,21 +33,19 @@ describe('definition config registry', () => {
   });
 
   test('shows tag done mapping only after checkbox is enabled', () => {
-    const withoutCheckbox = definitionConfigItems(makeNode({ type: 'tagDef' })).map((item) => item.key);
-    const withCheckbox = definitionConfigItems(makeNode({ type: 'tagDef', showCheckbox: true })).map((item) => item.key);
+    const withoutCheckbox = definitionConfigItems(makeNode({ type: 'tagDef' }), { showCheckbox: false }).map((item) => item.key);
+    const withCheckbox = definitionConfigItems(makeNode({ type: 'tagDef' }), { showCheckbox: true }).map((item) => item.key);
 
     expect(withoutCheckbox).not.toContain('doneStateEnabled');
     expect(withCheckbox).toContain('doneStateEnabled');
   });
 
   test('shows field type-specific rows without storing config as real children', () => {
-    const plain = definitionConfigItems(makeNode({ type: 'fieldDef', fieldType: 'plain' })).map((item) => item.key);
-    const options = definitionConfigItems(makeNode({ type: 'fieldDef', fieldType: 'options' })).map((item) => item.key);
-    const optionsFromTag = definitionConfigItems(makeNode({
-      type: 'fieldDef',
-      fieldType: 'options_from_supertag',
-    })).map((item) => item.key);
-    const number = definitionConfigItems(makeNode({ type: 'fieldDef', fieldType: 'number' })).map((item) => item.key);
+    const fieldNode = makeNode({ type: 'fieldDef' });
+    const plain = definitionConfigItems(fieldNode, { fieldType: 'plain' }).map((item) => item.key);
+    const options = definitionConfigItems(fieldNode, { fieldType: 'options' }).map((item) => item.key);
+    const optionsFromTag = definitionConfigItems(fieldNode, { fieldType: 'options_from_supertag' }).map((item) => item.key);
+    const number = definitionConfigItems(fieldNode, { fieldType: 'number' }).map((item) => item.key);
 
     expect(plain).toContain('cardinality');
     expect(plain).toContain('autoInitialize');
@@ -59,8 +57,8 @@ describe('definition config registry', () => {
   });
 
   test('only field options and tags expose template outliner sections', () => {
-    expect(definitionOutlinerLabel(makeNode({ type: 'tagDef' }))).toBe('Default content');
-    expect(definitionOutlinerLabel(makeNode({ type: 'fieldDef', fieldType: 'options' }))).toBe('Pre-determined options');
-    expect(definitionOutlinerLabel(makeNode({ type: 'fieldDef', fieldType: 'plain' }))).toBeNull();
+    expect(definitionOutlinerLabel(makeNode({ type: 'tagDef' }), {})).toBe('Default content');
+    expect(definitionOutlinerLabel(makeNode({ type: 'fieldDef' }), { fieldType: 'options' })).toBe('Pre-determined options');
+    expect(definitionOutlinerLabel(makeNode({ type: 'fieldDef' }), { fieldType: 'plain' })).toBeNull();
   });
 });
