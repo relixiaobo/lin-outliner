@@ -67,6 +67,13 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **settings-provider-layout-and-icons** (P2, cc) — provider detail polish: dropped
+  the single-field "Advanced" disclosure (Base URL inline), un-collapsed the model
+  catalog (inline list with a search-icon toggle next to the "Models N" heading,
+  shown only for >1 model), and replaced monogram avatars with vendored brand logos
+  (color variant where available, mono mark otherwise; monogram fallback for
+  unmapped/custom). Icons MIT-vendored from `@lobehub/icons-static-svg`, no dep
+  added (PR #39).
 - **settings-provider-enablement-list** (P2, cc) — "Enabled" gated on a credential
   (toggle disabled without a key; pasting a key auto-enables; save persists the
   effective state), provider-list enablement dot (green = on / hollow = off),

@@ -71,6 +71,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Provider detail layout polish + brand icons** — the single-field "Advanced"
+  disclosure is gone; Base URL shows inline (optional override, default-endpoint
+  placeholder) for every non-managed provider. The read-only model catalog is no
+  longer collapsed — it renders inline, with the search field tucked behind a
+  search icon beside the "Models N" heading that expands a small input (only when
+  a provider has more than one model). Provider list rows and the detail header
+  now render real brand logos (color variant where one exists, monochrome mark
+  for inherently single-color brands like OpenAI / Vercel / Grok), resolved at
+  build time from vendored SVGs; providers without a logo keep the monogram
+  fallback. Icons are MIT, vendored from `@lobehub/icons-static-svg` with no
+  dependency added. ([#39](https://github.com/relixiaobo/lin-outliner/pull/39))
 - **Provider enablement gated on a credential; list status + control polish** —
   "Enabled" now means set up and usable: the toggle is disabled until the
   provider has a credential (key / env key / non-key auth), pasting a key
