@@ -62,6 +62,10 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **sidebar system-icon cleanup** (P3, cc) — the workspace tree drops hardcoded
+  fallback glyphs for system nodes (calendar on Daily notes, plus library /
+  search / trash), rendering only a node's own icon. Top primary-nav shortcuts
+  keep their icons (PR #30).
 - **day-node title humanization** (P3, cc) — daily-note panel titles show a
   humanized read-only label (`Wed, May 27`, prefixed `Today` / `Tomorrow` /
   `Yesterday` for adjacent days) instead of the raw ISO date, and the date

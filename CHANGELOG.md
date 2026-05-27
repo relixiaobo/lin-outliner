@@ -71,6 +71,11 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Sidebar tree shows only a node's own icon** — the workspace tree no longer
+  paints hardcoded fallback glyphs on system nodes (the calendar on Daily notes,
+  plus the library / search / trash glyphs), since those nodes carry no icon of
+  their own. The top primary-nav shortcuts (Today / Library / Recents / Schema)
+  keep their icons. ([#30](https://github.com/relixiaobo/lin-outliner/pull/30))
 - **Humanized day-note titles, no date header icon** — a daily-note panel titled
   with its raw ISO date (`2026-05-13`) above a calendar icon now shows a humanized
   read-only label instead: the weekday/month/day (`Wed, May 27`), prefixed with
