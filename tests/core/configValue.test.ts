@@ -47,6 +47,22 @@ describe('config-as-nodes value mechanism (Stage 4)', () => {
     expect(tag?.color).toBe('#aabbcc');
     expect(tag?.extends).toBe(otherTag);
     expect(tag?.childSupertag).toBeUndefined();
+    expect(tag?.doneMapChecked).toEqual([]);
+  });
+
+  test('refList config round-trips and preserves order, then clears', () => {
+    const core = Core.new();
+    const tagId = mustFocus(core.createTag('task'));
+    const templateEntryId = mustFocus(core.createFieldDef(tagId, 'Status', 'options'));
+    const fieldDefId = fieldDefOf(core, templateEntryId);
+    const done = mustFocus(core.registerCollectedOption(fieldDefId, 'Done'));
+    const todo = mustFocus(core.registerCollectedOption(fieldDefId, 'Todo'));
+
+    core.setConfigValue(tagId, { kind: 'refList', configKey: 'doneMapChecked', targetIds: [done, todo] });
+    expect(buildConfigIndex(core.state()).tag(tagId)?.doneMapChecked).toEqual([done, todo]);
+
+    core.setConfigValue(tagId, { kind: 'refList', configKey: 'doneMapChecked', targetIds: [] });
+    expect(buildConfigIndex(core.state()).tag(tagId)?.doneMapChecked).toEqual([]);
   });
 
   test('field config round-trips: enum / scalar / enumList', () => {

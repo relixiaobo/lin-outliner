@@ -794,10 +794,7 @@ export class Core {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureNodeEditable(state, nodeId);
-      const node = clone(requiredNode(state, nodeId));
-      toggleNodeDone(node, nodeTagDrivenCheckbox(state, node));
-      node.updatedAt = nowMs();
-      this.loro.writeNode(node);
+      this.writeDoneStateDirect(state, nodeId, toggleNodeDone);
       return focus(nodeId);
     });
   }
@@ -806,10 +803,7 @@ export class Core {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureNodeEditable(state, nodeId);
-      const node = clone(requiredNode(state, nodeId));
-      cycleNodeDoneState(node, nodeTagDrivenCheckbox(state, node));
-      node.updatedAt = nowMs();
-      this.loro.writeNode(node);
+      this.writeDoneStateDirect(state, nodeId, cycleNodeDoneState);
       return focus(nodeId);
     });
   }
@@ -863,10 +857,7 @@ export class Core {
         const state = this.snapshot();
         if (!state.nodes[nodeId]) continue;
         ensureNodeEditable(state, nodeId);
-        const node = clone(requiredNode(state, nodeId));
-        toggleNodeDone(node, nodeTagDrivenCheckbox(state, node));
-        node.updatedAt = nowMs();
-        this.loro.writeNode(node);
+        this.writeDoneStateDirect(state, nodeId, toggleNodeDone);
       }
       return undefined;
     });
@@ -878,13 +869,49 @@ export class Core {
         const state = this.snapshot();
         if (!state.nodes[nodeId]) continue;
         ensureNodeEditable(state, nodeId);
-        const node = clone(requiredNode(state, nodeId));
-        cycleNodeDoneState(node, nodeTagDrivenCheckbox(state, node));
-        node.updatedAt = nowMs();
-        this.loro.writeNode(node);
+        this.writeDoneStateDirect(state, nodeId, cycleNodeDoneState);
       }
       return undefined;
     });
+  }
+
+  /**
+   * Mutate a node's done state and, when the done/undone state actually flips,
+   * push the change into mapped option fields (forward done-state mapping).
+   */
+  private writeDoneStateDirect(state: DocumentState, nodeId: string, mutate: (node: Node, tagDriven: boolean) => void) {
+    const node = clone(requiredNode(state, nodeId));
+    const wasDone = nodeIsDone(node);
+    mutate(node, nodeTagDrivenCheckbox(state, node));
+    node.updatedAt = nowMs();
+    this.loro.writeNode(node);
+    const nowDone = nodeIsDone(node);
+    if (nowDone !== wasDone) this.applyForwardDoneMappingDirect(nodeId, nowDone);
+  }
+
+  /** Forward mapping: set each mapped field to its first checked/unchecked option. */
+  private applyForwardDoneMappingDirect(nodeId: string, isDone: boolean) {
+    for (const mapping of getDoneStateMappings(this.snapshot(), requiredNode(this.snapshot(), nodeId))) {
+      const optionId = isDone ? mapping.checkedOptionIds[0] : mapping.uncheckedOptionIds[0];
+      if (!optionId) continue;
+      const entryId = this.ensureFieldEntryWithTemplateDirect(nodeId, mapping.fieldDefId, undefined, false);
+      this.selectFieldOptionDirect(entryId, mapping.fieldDefId, optionId);
+    }
+  }
+
+  /** Reverse mapping: selecting a mapped option flips the owner node's done state. */
+  private applyReverseDoneMappingDirect(ownerId: string | undefined, fieldDefId: string, optionNodeId: string) {
+    if (!ownerId) return;
+    const state = this.snapshot();
+    const owner = state.nodes[ownerId];
+    if (!owner) return;
+    const newDone = resolveReverseDoneMapping(state, owner, fieldDefId, optionNodeId);
+    if (newDone === null) return;
+    const node = clone(owner);
+    if (nodeIsDone(node) === newDone) return;
+    applyNodeDoneState(node, newDone, nodeTagDrivenCheckbox(state, node));
+    node.updatedAt = nowMs();
+    this.loro.writeNode(node);
   }
 
   batchDuplicateNodes(nodeIds: string[]): CommandOutcome {
@@ -1192,6 +1219,7 @@ export class Core {
       ensureOptionsFieldDef(state, fieldDefId);
       ensureOptionBelongsToField(state, fieldDefId, optionNodeId);
       this.selectFieldOptionDirect(fieldEntryId, fieldDefId, optionNodeId);
+      this.applyReverseDoneMappingDirect(fieldEntry.parentId, fieldDefId, optionNodeId);
       return focus(fieldEntryId);
     });
   }
@@ -2006,6 +2034,13 @@ export class Core {
         if (input.targetId == null) break;
         requiredNode(this.snapshot(), input.targetId);
         this.createConfigValueNodeDirect(rowId, '', 'config', input.targetId);
+        break;
+      }
+      case 'refList': {
+        for (const targetId of input.targetIds) {
+          requiredNode(this.snapshot(), targetId);
+          this.createConfigValueNodeDirect(rowId, '', 'config', targetId);
+        }
         break;
       }
       case 'enum': {
@@ -3000,6 +3035,97 @@ function nodeTagDrivenCheckbox(state: DocumentState, node: Node): boolean {
 /** Done = a completion timestamp is set (sentinel 0 means "has checkbox, undone"). */
 function nodeIsDone(node: Node): boolean {
   return node.completedAt !== undefined && node.completedAt > 0;
+}
+
+// ─── Done-state mapping (Tana parity): a tag's checked/unchecked done state
+// mirrors option-field values both ways. See checkbox-utils in nodex. ───
+
+/** A tag's `extends` chain including itself, ancestor-last, deduped. */
+function tagExtendsChainSelf(state: DocumentState, tagDefId: string): string[] {
+  const chain: string[] = [];
+  const visited = new Set<string>();
+  let current: string | undefined = tagDefId;
+  while (current && !visited.has(current)) {
+    visited.add(current);
+    chain.push(current);
+    current = configRefTarget(state, current, 'extends');
+  }
+  return chain;
+}
+
+/** Every target of a ref-list config value (`doneMapChecked`/`doneMapUnchecked`), in order. */
+function configRefTargets(state: DocumentState, defId: string, configKey: DefConfigKey): string[] {
+  const def = state.nodes[defId];
+  if (!def) return [];
+  for (const rowId of def.children) {
+    const row = state.nodes[rowId];
+    if (row?.type === 'defConfig' && row.configKey === configKey) {
+      return row.children
+        .map((id) => state.nodes[id])
+        .filter((n): n is Node => n?.type === 'reference' && Boolean(n.targetId))
+        .map((n) => n.targetId as string);
+    }
+  }
+  return [];
+}
+
+interface DoneStateFieldMapping {
+  fieldDefId: string;
+  checkedOptionIds: string[];
+  uncheckedOptionIds: string[];
+}
+
+/**
+ * The done-state mappings that apply to a node: for each of its tags (walking
+ * extends chains) whose `doneStateEnabled` is on, the checked/unchecked option
+ * lists grouped by the option's owning field definition.
+ */
+function getDoneStateMappings(state: DocumentState, node: Node): DoneStateFieldMapping[] {
+  const byField = new Map<string, { checked: string[]; unchecked: string[] }>();
+  const seenTags = new Set<string>();
+  const addOptions = (optionIds: string[], key: 'checked' | 'unchecked') => {
+    for (const optionId of optionIds) {
+      const fieldDefId = state.nodes[optionId]?.parentId;
+      if (!fieldDefId || state.nodes[fieldDefId]?.type !== 'fieldDef') continue;
+      let entry = byField.get(fieldDefId);
+      if (!entry) byField.set(fieldDefId, (entry = { checked: [], unchecked: [] }));
+      if (!entry[key].includes(optionId)) entry[key].push(optionId);
+    }
+  };
+  for (const tagId of node.tags) {
+    for (const tdId of tagExtendsChainSelf(state, tagId)) {
+      if (seenTags.has(tdId)) continue;
+      seenTags.add(tdId);
+      if (!configScalarBool(state, tdId, 'doneStateEnabled')) continue;
+      addOptions(configRefTargets(state, tdId, 'doneMapChecked'), 'checked');
+      addOptions(configRefTargets(state, tdId, 'doneMapUnchecked'), 'unchecked');
+    }
+  }
+  return [...byField].map(([fieldDefId, { checked, unchecked }]) => ({
+    fieldDefId,
+    checkedOptionIds: checked,
+    uncheckedOptionIds: unchecked,
+  }));
+}
+
+/**
+ * Reverse mapping: when an option is selected on a node's field, whether that
+ * implies a new done state (true/false) or has no mapping (null).
+ */
+function resolveReverseDoneMapping(state: DocumentState, node: Node, fieldDefId: string, optionNodeId: string): boolean | null {
+  for (const mapping of getDoneStateMappings(state, node)) {
+    if (mapping.fieldDefId !== fieldDefId) continue;
+    if (mapping.checkedOptionIds.includes(optionNodeId)) return true;
+    if (mapping.uncheckedOptionIds.includes(optionNodeId)) return false;
+  }
+  return null;
+}
+
+/** Apply a resolved done state to a node in place (tag-driven keeps the box on undo). */
+function applyNodeDoneState(node: Node, done: boolean, tagDriven: boolean) {
+  if (done) node.completedAt = nowMs();
+  else if (tagDriven) delete node.completedAt;
+  else node.completedAt = 0;
 }
 
 /** A numeric config value (minValue/maxValue) read from the def's scalar subtree. */

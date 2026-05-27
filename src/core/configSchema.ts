@@ -171,6 +171,8 @@ export const CONFIG_SCHEMA: Record<DefConfigKey, ConfigSchemaDef> = {
   childSupertag: { key: 'childSupertag', kind: 'tag', domain: 'ref', cardinality: 'single', appliesTo: '*', label: 'Default child supertag', description: 'Auto-apply this tag to new children' },
   showCheckbox: { key: 'showCheckbox', kind: 'tag', domain: 'bool', cardinality: 'single', appliesTo: '*', label: 'Show as checkbox' },
   doneStateEnabled: { key: 'doneStateEnabled', kind: 'tag', domain: 'bool', cardinality: 'single', appliesTo: '*', label: 'Done state mapping', visibleWhen: (c) => Boolean(c.showCheckbox) },
+  doneMapChecked: { key: 'doneMapChecked', kind: 'tag', domain: 'refList', cardinality: 'list', appliesTo: '*', label: 'When done, set', visibleWhen: (c) => Boolean(c.showCheckbox && c.doneStateEnabled) },
+  doneMapUnchecked: { key: 'doneMapUnchecked', kind: 'tag', domain: 'refList', cardinality: 'list', appliesTo: '*', label: 'When not done, set', visibleWhen: (c) => Boolean(c.showCheckbox && c.doneStateEnabled) },
 
   // ── field ──
   fieldType: { key: 'fieldType', kind: 'field', domain: 'enum', cardinality: 'single', appliesTo: '*', enumDomain: 'fieldType', label: 'Field type' },
@@ -196,6 +198,9 @@ export interface ProjectedTagConfig {
   childSupertag?: NodeId;
   showCheckbox: boolean;
   doneStateEnabled: boolean;
+  /** Option nodes whose selection maps to the checked / unchecked state. */
+  doneMapChecked: NodeId[];
+  doneMapUnchecked: NodeId[];
 }
 
 export interface ProjectedFieldConfig {
@@ -229,6 +234,7 @@ export interface ConfigIndex {
 export type SetConfigValueInput =
   | { kind: 'scalar'; configKey: DefConfigKey; text: string | null }
   | { kind: 'ref'; configKey: DefConfigKey; targetId: NodeId | null }
+  | { kind: 'refList'; configKey: DefConfigKey; targetIds: NodeId[] }
   | { kind: 'enum'; configKey: DefConfigKey; value: string | null }
   | { kind: 'enumList'; configKey: DefConfigKey; values: string[] };
 
@@ -257,6 +263,7 @@ export function canonicalizeScalar(domain: ConfigValueDomain, text: string): { t
 export function configValueKind(key: DefConfigKey): SetConfigValueInput['kind'] {
   switch (CONFIG_SCHEMA[key].domain) {
     case 'ref': return 'ref';
+    case 'refList': return 'refList';
     case 'enum': return 'enum';
     case 'enumList': return 'enumList';
     default: return 'scalar';

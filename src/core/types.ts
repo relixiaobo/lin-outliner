@@ -98,7 +98,11 @@ export type TagConfigKey =
   | 'extends'
   | 'childSupertag'
   | 'showCheckbox'
-  | 'doneStateEnabled';
+  | 'doneStateEnabled'
+  // Done-state mapping: option nodes whose selection mirrors the checked /
+  // unchecked state. Field grouping is derived from each option's owning field.
+  | 'doneMapChecked'
+  | 'doneMapUnchecked';
 
 export type FieldConfigKey =
   | 'fieldType'
@@ -115,6 +119,7 @@ export type DefConfigKey = TagConfigKey | FieldConfigKey;
 
 // How a config value is stored as child node(s) of its `defConfig` node:
 //   ref      → one child `reference` (refRole 'config') targeting a tagDef
+//   refList  → zero or more child `reference`s (refRole 'config') to nodes
 //   enum     → one child `reference` (refRole 'enum') targeting a system option
 //   enumList → zero or more child `reference`s (refRole 'enum') to options
 //   number   → one child value node; content text = codec-encoded number
@@ -125,7 +130,7 @@ export type DefConfigKey = TagConfigKey | FieldConfigKey;
 // config refRole so it stays out of the backlink graph); number/color/bool →
 // a child value node (same mechanism field values already use). See
 // docs/plans/config-as-nodes.md.
-export type ConfigValueDomain = 'ref' | 'enum' | 'enumList' | 'number' | 'bool' | 'color';
+export type ConfigValueDomain = 'ref' | 'refList' | 'enum' | 'enumList' | 'number' | 'bool' | 'color';
 
 // The role a `reference` node plays. Reads/backlinks/search use this to decide
 // whether a reference is a real edge (link/fieldValue) or an internal pointer

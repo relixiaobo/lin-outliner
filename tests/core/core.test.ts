@@ -352,6 +352,50 @@ describe('Core', () => {
     expect(core.state().nodes[nodeId].completedAt).toBeUndefined();
   });
 
+  test('done-state mapping syncs checkbox and an option field both ways', () => {
+    const core = Core.new();
+    const tagId = mustFocus(core.createTag('task'));
+    core.setTagConfig(tagId, { showCheckbox: true, doneStateEnabled: true });
+
+    const templateEntryId = mustFocus(core.createFieldDef(tagId, 'Status', 'options'));
+    const fieldDefId = core.state().nodes[templateEntryId].fieldDefId!;
+    const doneOption = mustFocus(core.registerCollectedOption(fieldDefId, 'Done'));
+    const todoOption = mustFocus(core.registerCollectedOption(fieldDefId, 'Todo'));
+    core.setConfigValue(tagId, { kind: 'refList', configKey: 'doneMapChecked', targetIds: [doneOption] });
+    core.setConfigValue(tagId, { kind: 'refList', configKey: 'doneMapUnchecked', targetIds: [todoOption] });
+
+    const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Ship it'));
+    core.applyTag(nodeId, tagId);
+
+    const entryOf = () => core.state().nodes[nodeId].children.find((childId) => {
+      const child = core.state().nodes[childId];
+      return child?.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
+    });
+    const selectedOption = () => {
+      const entryId = entryOf();
+      const valueId = entryId ? core.state().nodes[entryId].children[0] : undefined;
+      return valueId ? core.state().nodes[valueId].targetId : undefined;
+    };
+
+    // Forward: completing the node selects the mapped "done" option.
+    core.toggleDone(nodeId);
+    expect(core.state().nodes[nodeId].completedAt).toBeGreaterThan(0);
+    expect(selectedOption()).toBe(doneOption);
+
+    // Forward: un-completing selects the mapped "not done" option.
+    core.toggleDone(nodeId);
+    expect(selectedOption()).toBe(todoOption);
+
+    // Reverse: selecting the "done" option marks the node done.
+    core.selectFieldOption(entryOf()!, doneOption);
+    expect(core.state().nodes[nodeId].completedAt).toBeGreaterThan(0);
+
+    // Reverse: selecting the "not done" option clears completion (tag keeps the box).
+    core.selectFieldOption(entryOf()!, todoOption);
+    expect(core.state().nodes[nodeId].completedAt).toBeUndefined();
+    expect(showsCheckbox(core, nodeId)).toBe(true);
+  });
+
   test('merge preserves UTF-16 rich text offsets', () => {
     const core = Core.new();
     const today = core.projection().todayId;

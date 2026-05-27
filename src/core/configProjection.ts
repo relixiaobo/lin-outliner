@@ -56,6 +56,13 @@ function refTarget(byId: ConfigNodeMap, row: ConfigNodeLike | undefined): NodeId
   return valueChildren(byId, row).find((n) => n.type === 'reference')?.targetId;
 }
 
+/** Ref-list value (`doneMapChecked`/`doneMapUnchecked`): every reference's target, in order. */
+function refTargets(byId: ConfigNodeMap, row: ConfigNodeLike | undefined): NodeId[] {
+  return valueChildren(byId, row)
+    .filter((n) => n.type === 'reference' && n.targetId)
+    .map((n) => n.targetId as NodeId);
+}
+
 /** Enum value: resolve the value reference to its system option; its text is the canonical value. */
 function enumValue(byId: ConfigNodeMap, row: ConfigNodeLike | undefined): string | undefined {
   const target = refTarget(byId, row);
@@ -81,6 +88,8 @@ export function projectTagConfig(byId: ConfigNodeMap, tagDef: ConfigNodeLike): P
     childSupertag: refTarget(byId, rows.get('childSupertag')),
     showCheckbox: boolCodec.decode(scalarText(byId, rows.get('showCheckbox')) ?? '') ?? false,
     doneStateEnabled: boolCodec.decode(scalarText(byId, rows.get('doneStateEnabled')) ?? '') ?? false,
+    doneMapChecked: refTargets(byId, rows.get('doneMapChecked')),
+    doneMapUnchecked: refTargets(byId, rows.get('doneMapUnchecked')),
   };
 }
 
