@@ -14,6 +14,8 @@ import { CheckboxControl } from '../primitives/CheckboxControl';
 import { Dialog } from '../primitives/Dialog';
 import { FormField } from '../primitives/FormField';
 import { SelectControl } from '../primitives/SelectControl';
+import { SwitchControl } from '../primitives/SwitchControl';
+import { SwitchMark } from '../primitives/SwitchMark';
 import { TextInputControl } from '../primitives/TextInputControl';
 
 interface AgentSettingsDialogProps {
@@ -80,6 +82,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
   const [apiKey, setApiKey] = useState('');
   const [revealKey, setRevealKey] = useState(false);
   const [providerQuery, setProviderQuery] = useState('');
+  const [modelQuery, setModelQuery] = useState('');
   const [category, setCategory] = useState<SettingsCategory>('providers');
   const [creatingCustom, setCreatingCustom] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -119,6 +122,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
     setCategory('providers');
     setCreatingCustom(false);
     setProviderQuery('');
+    setModelQuery('');
     void api.agentGetProviderSettings()
       .then((next) => {
         if (!isCurrentRequest(requestId)) return;
@@ -186,6 +190,17 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
     : providerDescription(selectedCatalog);
   const docsUrl = showConnectionFields ? undefined : PROVIDER_DOCS_URL[draft.providerId];
   const baseUrlPlaceholder = selectedCatalog?.defaultBaseUrl ?? 'https://api.example.com/v1';
+  const showModelList = !creatingCustom && catalogModels.length > 0;
+  const showModelSearch = catalogModels.length > 8;
+  const visibleModels = useMemo(() => {
+    const query = modelQuery.trim().toLowerCase();
+    if (!query) return catalogModels;
+    return catalogModels.filter((model) =>
+      model.name.toLowerCase().includes(query) || model.id.toLowerCase().includes(query));
+  }, [catalogModels, modelQuery]);
+  const modelCountLabel = modelQuery.trim()
+    ? `Showing ${visibleModels.length} of ${catalogModels.length}`
+    : `${catalogModels.length} ${catalogModels.length === 1 ? 'model' : 'models'}`;
 
   if (!open) return null;
 
@@ -203,6 +218,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
     }));
     setApiKey('');
     setRevealKey(false);
+    setModelQuery('');
     setNotice(null);
     setError(null);
   }
@@ -219,6 +235,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
     }));
     setApiKey('');
     setRevealKey(false);
+    setModelQuery('');
     setNotice(null);
     setError(null);
   }
@@ -446,18 +463,20 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
                               <span className="settings-provider-detail-desc">{detailDescription}</span>
                             </div>
                           </div>
-                          <CheckboxControl
+                          <SwitchControl
                             checked={draft.enabled}
-                            className="agent-settings-checkbox"
+                            className="settings-provider-toggle"
+                            label="Enabled"
                             onCheckedChange={(enabled) => setDraft((current) => ({ ...current, enabled }))}
                           >
                             <span>Enabled</span>
-                          </CheckboxControl>
+                            <SwitchMark checked={draft.enabled} />
+                          </SwitchControl>
                         </div>
 
                         <div className="agent-settings-grid">
                           {showConnectionFields ? (
-                            <FormField className="agent-settings-field" label="Provider ID">
+                            <FormField className="agent-settings-field agent-settings-field-wide" label="Provider ID">
                               <TextInputControl
                                 label="Provider ID"
                                 onChange={(event) => setDraft((current) => ({ ...current, providerId: event.target.value.trim() }))}
@@ -467,53 +486,40 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
                             </FormField>
                           ) : null}
 
-                          <FormField
-                            className={`agent-settings-field ${showConnectionFields ? '' : 'agent-settings-field-wide'}`}
-                            label="Base URL"
-                          >
-                            <TextInputControl
-                              label="Base URL"
-                              onChange={(event) => setDraft((current) => ({ ...current, baseUrl: event.target.value }))}
-                              placeholder={baseUrlPlaceholder}
-                              value={draft.baseUrl}
-                            />
-                            <span className="agent-settings-field-meta">Leave empty to use the default endpoint.</span>
-                          </FormField>
-
                           <FormField as="div" className="agent-settings-field agent-settings-field-wide" label="API key">
-                            <div className="agent-settings-key-line">
-                              <div className="agent-settings-key-row">
-                                <PasswordIcon size={ICON_SIZE.menu} />
-                                <TextInputControl
-                                  label="API key"
-                                  onChange={(event) => setApiKey(event.target.value)}
-                                  placeholder={hasAnyKey ? 'Configured' : 'Paste key'}
-                                  type={revealKey ? 'text' : 'password'}
-                                  value={apiKey}
-                                />
-                                <button
-                                  aria-label={revealKey ? 'Hide key' : 'Show key'}
-                                  aria-pressed={revealKey}
-                                  className="agent-settings-key-reveal"
-                                  onClick={() => setRevealKey((current) => !current)}
-                                  type="button"
-                                >
-                                  {revealKey
-                                    ? <HideIcon size={ICON_SIZE.menu} />
-                                    : <ShowIcon size={ICON_SIZE.menu} />}
-                                </button>
-                              </div>
-                              <ButtonControl
-                                className="agent-settings-secondary"
-                                disabled={saving || !configuredProvider?.hasApiKey}
-                                onClick={removeApiKey}
+                            <div className="agent-settings-key-row">
+                              <PasswordIcon size={ICON_SIZE.menu} />
+                              <TextInputControl
+                                label="API key"
+                                onChange={(event) => setApiKey(event.target.value)}
+                                placeholder={hasAnyKey ? 'Configured' : 'Paste key'}
+                                type={revealKey ? 'text' : 'password'}
+                                value={apiKey}
+                              />
+                              <button
+                                aria-label={revealKey ? 'Hide key' : 'Show key'}
+                                aria-pressed={revealKey}
+                                className="agent-settings-key-reveal"
+                                onClick={() => setRevealKey((current) => !current)}
+                                type="button"
                               >
-                                Remove key
-                              </ButtonControl>
+                                {revealKey
+                                  ? <HideIcon size={ICON_SIZE.menu} />
+                                  : <ShowIcon size={ICON_SIZE.menu} />}
+                              </button>
                             </div>
                             <div className="agent-settings-key-meta">
                               <span className="agent-settings-field-meta">{keyStatus}</span>
-                              {docsUrl ? (
+                              {configuredProvider?.hasApiKey ? (
+                                <button
+                                  className="agent-settings-doc-link is-danger"
+                                  disabled={saving}
+                                  onClick={removeApiKey}
+                                  type="button"
+                                >
+                                  Remove key
+                                </button>
+                              ) : docsUrl ? (
                                 <button
                                   className="agent-settings-doc-link"
                                   onClick={() => void api.openExternalUrl(docsUrl)}
@@ -525,7 +531,52 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
                               ) : null}
                             </div>
                           </FormField>
+
+                          <FormField className="agent-settings-field agent-settings-field-wide" label="Base URL">
+                            <TextInputControl
+                              label="Base URL"
+                              onChange={(event) => setDraft((current) => ({ ...current, baseUrl: event.target.value }))}
+                              placeholder={baseUrlPlaceholder}
+                              value={draft.baseUrl}
+                            />
+                            <span className="agent-settings-field-meta">Optional. Leave empty to use the default endpoint.</span>
+                          </FormField>
                         </div>
+
+                        {showModelList ? (
+                          <div className="settings-models">
+                            <div className="settings-models-header">
+                              <h4>Models</h4>
+                              <span>{modelCountLabel}</span>
+                            </div>
+                            {showModelSearch ? (
+                              <TextInputControl
+                                className="settings-model-search"
+                                label="Search models"
+                                onChange={(event) => setModelQuery(event.target.value)}
+                                placeholder="Search models…"
+                                value={modelQuery}
+                              />
+                            ) : null}
+                            <div className="settings-model-list" role="list">
+                              {visibleModels.length === 0 ? (
+                                <p className="settings-model-empty">No models match “{modelQuery.trim()}”.</p>
+                              ) : null}
+                              {visibleModels.map((model) => (
+                                <div className="settings-model-row" key={model.id} role="listitem">
+                                  <div className="settings-model-row-main">
+                                    <span className="settings-model-name">{model.name}</span>
+                                    <span className="settings-model-id">{model.id}</span>
+                                  </div>
+                                  <div className="settings-model-row-meta">
+                                    {model.reasoning ? <span className="settings-model-tag">Reasoning</span> : null}
+                                    <span>{formatTokens(model.contextWindow)}</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
                       </>
                     ) : (
                       <div className="settings-provider-empty">Select a provider to connect.</div>
@@ -935,7 +986,7 @@ function providerInitial(providerId: string): string {
 
 function providerDescription(catalog: AgentProviderOption | undefined): string {
   if (!catalog || catalog.models.length === 0) return 'Connect any OpenAI-compatible endpoint.';
-  const names = catalog.models.slice(0, 3).map((model) => model.name);
+  const names = catalog.models.slice(0, 3).map((model) => model.name.replace(/\s*\(latest\)/i, ''));
   const suffix = catalog.models.length > names.length ? ', and more' : '';
   return `Includes ${names.join(', ')}${suffix}.`;
 }
