@@ -8,7 +8,7 @@ import type {
   AgentReasoningLevel,
 } from '../../api/types';
 import { api } from '../../api/client';
-import { HideIcon, ICON_SIZE, OpenIcon, PasswordIcon, ShowIcon, TrashIcon, WarningIcon } from '../icons';
+import { ChevronRightIcon, HideIcon, ICON_SIZE, OpenIcon, PasswordIcon, ShowIcon, TrashIcon, WarningIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { CheckboxControl } from '../primitives/CheckboxControl';
 import { Dialog } from '../primitives/Dialog';
@@ -183,8 +183,14 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
   const detailName = creatingCustom
     ? 'Custom provider'
     : draft.providerId ? formatProviderName(draft.providerId) : '';
-  const detailBadge = creatingCustom ? 'New' : selectedChoice ? providerStatusLabel(selectedChoice) : '';
   const detailBadgeActive = Boolean(selectedChoice?.active && selectedChoice.enabled && selectedChoice.hasCredential);
+  // Only surface a badge for states the key field itself can't convey; "needs a
+  // key" is already obvious from the empty key field below.
+  const detailBadge = creatingCustom
+    ? 'New'
+    : detailBadgeActive
+      ? 'Active'
+      : selectedChoice?.configured && !selectedChoice.enabled ? 'Disabled' : '';
   const detailDescription = showConnectionFields
     ? 'Connect any OpenAI-compatible endpoint.'
     : providerDescription(selectedCatalog);
@@ -198,9 +204,6 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
     return catalogModels.filter((model) =>
       model.name.toLowerCase().includes(query) || model.id.toLowerCase().includes(query));
   }, [catalogModels, modelQuery]);
-  const modelCountLabel = modelQuery.trim()
-    ? `Showing ${visibleModels.length} of ${catalogModels.length}`
-    : `${catalogModels.length} ${catalogModels.length === 1 ? 'model' : 'models'}`;
 
   if (!open) return null;
 
@@ -340,11 +343,17 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
     }
   }
 
-  const headerSummary = canChooseModels && draft.providerId && draft.modelId
-    ? `${draft.modelId} · ${formatProviderName(draft.providerId)}`
-    : draft.providerId
-      ? `${formatProviderName(draft.providerId)} · add an API key`
-      : 'No provider connected';
+  const baseUrlField = (
+    <FormField className="agent-settings-field agent-settings-field-wide" label="Base URL">
+      <TextInputControl
+        label="Base URL"
+        onChange={(event) => setDraft((current) => ({ ...current, baseUrl: event.target.value }))}
+        placeholder={baseUrlPlaceholder}
+        value={draft.baseUrl}
+      />
+      <span className="agent-settings-field-meta">Optional. Leave empty to use the default endpoint.</span>
+    </FormField>
+  );
 
   return (
     <Dialog
@@ -356,10 +365,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
       surfaceClassName="agent-settings-dialog settings-dialog"
     >
       <header className="agent-settings-header">
-        <div>
-          <h2 id="agent-settings-title">Settings</h2>
-          <p>{headerSummary}</p>
-        </div>
+        <h2 id="agent-settings-title">Settings</h2>
         <ButtonControl className="agent-settings-close" onClick={onClose}>
           Close
         </ButtonControl>
@@ -386,12 +392,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
 
           <div className="settings-content">
             {category === 'providers' ? (
-              <section className="agent-settings-section settings-providers-section" aria-labelledby="agent-settings-provider-heading">
-                <div className="agent-settings-section-header">
-                  <h3 id="agent-settings-provider-heading">Providers</h3>
-                  <span>Where requests go and the key they use.</span>
-                </div>
-
+              <section className="agent-settings-section settings-providers-section" aria-label="Providers">
                 <div className="settings-providers">
                   <div className="settings-provider-aside">
                     <TextInputControl
@@ -532,50 +533,55 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
                             </div>
                           </FormField>
 
-                          <FormField className="agent-settings-field agent-settings-field-wide" label="Base URL">
-                            <TextInputControl
-                              label="Base URL"
-                              onChange={(event) => setDraft((current) => ({ ...current, baseUrl: event.target.value }))}
-                              placeholder={baseUrlPlaceholder}
-                              value={draft.baseUrl}
-                            />
-                            <span className="agent-settings-field-meta">Optional. Leave empty to use the default endpoint.</span>
-                          </FormField>
+                          {showConnectionFields ? baseUrlField : null}
                         </div>
 
+                        {showConnectionFields ? null : (
+                          <details className="settings-disclosure">
+                            <summary className="settings-disclosure-summary">
+                              <ChevronRightIcon size={ICON_SIZE.menu} />
+                              <span>Advanced</span>
+                            </summary>
+                            <div className="settings-disclosure-body">{baseUrlField}</div>
+                          </details>
+                        )}
+
                         {showModelList ? (
-                          <div className="settings-models">
-                            <div className="settings-models-header">
-                              <h4>Models</h4>
-                              <span>{modelCountLabel}</span>
-                            </div>
-                            {showModelSearch ? (
-                              <TextInputControl
-                                className="settings-model-search"
-                                label="Search models"
-                                onChange={(event) => setModelQuery(event.target.value)}
-                                placeholder="Search models…"
-                                value={modelQuery}
-                              />
-                            ) : null}
-                            <div className="settings-model-list" role="list">
-                              {visibleModels.length === 0 ? (
-                                <p className="settings-model-empty">No models match “{modelQuery.trim()}”.</p>
+                          <details className="settings-disclosure">
+                            <summary className="settings-disclosure-summary">
+                              <ChevronRightIcon size={ICON_SIZE.menu} />
+                              <span>Models</span>
+                              <span className="settings-disclosure-count">{catalogModels.length}</span>
+                            </summary>
+                            <div className="settings-disclosure-body">
+                              {showModelSearch ? (
+                                <TextInputControl
+                                  className="settings-model-search"
+                                  label="Search models"
+                                  onChange={(event) => setModelQuery(event.target.value)}
+                                  placeholder="Search models…"
+                                  value={modelQuery}
+                                />
                               ) : null}
-                              {visibleModels.map((model) => (
-                                <div className="settings-model-row" key={model.id} role="listitem">
-                                  <div className="settings-model-row-main">
-                                    <span className="settings-model-name">{model.name}</span>
-                                    <span className="settings-model-id">{model.id}</span>
+                              <div className="settings-model-list" role="list">
+                                {visibleModels.length === 0 ? (
+                                  <p className="settings-model-empty">No models match “{modelQuery.trim()}”.</p>
+                                ) : null}
+                                {visibleModels.map((model) => (
+                                  <div className="settings-model-row" key={model.id} role="listitem">
+                                    <div className="settings-model-row-main">
+                                      <span className="settings-model-name">{model.name}</span>
+                                      <span className="settings-model-id">{model.id}</span>
+                                    </div>
+                                    <div className="settings-model-row-meta">
+                                      {model.reasoning ? <span className="settings-model-tag">Reasoning</span> : null}
+                                      <span>{formatTokens(model.contextWindow)}</span>
+                                    </div>
                                   </div>
-                                  <div className="settings-model-row-meta">
-                                    {model.reasoning ? <span className="settings-model-tag">Reasoning</span> : null}
-                                    <span>{formatTokens(model.contextWindow)}</span>
-                                  </div>
-                                </div>
-                              ))}
+                                ))}
+                              </div>
                             </div>
-                          </div>
+                          </details>
                         ) : null}
                       </>
                     ) : (
