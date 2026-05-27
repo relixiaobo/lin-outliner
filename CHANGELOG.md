@@ -220,6 +220,11 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Register the `anti` dev clone** — a fourth parallel dev clone
+  (`lin-outliner-anti/`, Claude Code dev agent, branch prefix `anti/<topic>`) is
+  documented in `AGENT.md` / `CLAUDE.md`, with a matching `dev:anti` script
+  pointing `ELECTRON_USER_DATA_DIR` at `$HOME/.lin-outliner-anti` for userData
+  isolation. ([#41](https://github.com/relixiaobo/lin-outliner/pull/41))
 - **Drop dead `ProviderChoice` fields** — the Settings dialog's
   `buildProviderChoices` no longer populates `modelId` / `custom` on each
   provider choice; nothing read them (rendering, sort, and status label use only
