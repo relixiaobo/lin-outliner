@@ -1,8 +1,12 @@
 import { useMemo } from 'react';
+import { buildConfigIndexFromMap } from '../../../core/configProjection';
+import type { ProjectedFieldConfig, ProjectedTagConfig } from '../../../core/configSchema';
 import { api } from '../../api/client';
 import type {
   FieldConfigPatch,
+  FieldType,
   HideFieldMode,
+  NodeId,
   NodeProjection,
   TagConfigPatch,
 } from '../../api/types';
@@ -29,6 +33,7 @@ import {
   DefinitionColorControl,
   DefinitionAutoInitializeControl,
   DefinitionCardinalitySelect,
+  DefinitionDoneMappingControl,
   DefinitionFieldTypeSelect,
   DefinitionHideFieldSelect,
   DefinitionNumberControl,
@@ -45,17 +50,27 @@ interface DefinitionConfigPanelProps {
 }
 
 export function DefinitionConfigPanel({ node, index, run }: DefinitionConfigPanelProps) {
-  const items = definitionConfigItems(node);
+  // config-as-nodes: definition config is read from the defConfig subtree via
+  // the projected accessor, not flat Node fields.
+  const byId = index.byId;
+  const configIndex = useMemo(() => buildConfigIndexFromMap(byId), [byId]);
+  const tagConfig = configIndex.tag(node.id);
+  const fieldConfig = configIndex.field(node.id);
+  const items = definitionConfigItems(node, {
+    fieldType: fieldConfig?.fieldType,
+    showCheckbox: tagConfig?.showCheckbox,
+    doneStateEnabled: tagConfig?.doneStateEnabled,
+  });
   const tagOptions = useMemo(
     () => index.projection.nodes
       .filter((candidate) => candidate.type === 'tagDef' && candidate.id !== node.id)
       .map((candidate) => ({
-        color: resolveTagColor(candidate).text,
+        color: resolveTagColor(candidate, index.byId).text,
         id: candidate.id,
         label: textOf(candidate),
       }))
       .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' })),
-    [index.projection.nodes, node.id],
+    [index.projection.nodes, index.byId, node.id],
   );
 
   const updateTag = (patch: TagConfigPatch) => {
@@ -73,6 +88,9 @@ export function DefinitionConfigPanel({ node, index, run }: DefinitionConfigPane
           isLast={index === items.length - 1}
           item={item}
           node={node}
+          byId={byId}
+          tagConfig={tagConfig}
+          fieldConfig={fieldConfig}
           tagOptions={tagOptions}
           updateTag={updateTag}
           updateField={updateField}
@@ -86,6 +104,9 @@ function DefinitionConfigRow(props: {
   isLast: boolean;
   item: DefinitionConfigItem;
   node: NodeProjection;
+  byId: Map<NodeId, NodeProjection>;
+  tagConfig: ProjectedTagConfig | undefined;
+  fieldConfig: ProjectedFieldConfig | undefined;
   tagOptions: TagOption[];
   updateTag: (patch: TagConfigPatch) => void;
   updateField: (patch: FieldConfigPatch) => void;
@@ -94,15 +115,15 @@ function DefinitionConfigRow(props: {
     <DefinitionConfigRowShell
       configKey={props.item.key}
       control={<ConfigControl {...props} />}
-      icon={<ConfigIcon item={props.item} node={props.node} />}
+      icon={<ConfigIcon item={props.item} fieldType={props.fieldConfig?.fieldType} />}
       isLast={props.isLast}
       label={props.item.label}
     />
   );
 }
 
-function ConfigIcon({ item, node }: { item: DefinitionConfigItem; node: NodeProjection }) {
-  if (item.key === 'fieldType') return <FieldTypeIcon fieldType={node.fieldType} size={ICON_SIZE.rowGlyph} />;
+function ConfigIcon({ item, fieldType }: { item: DefinitionConfigItem; fieldType: FieldType | undefined }) {
+  if (item.key === 'fieldType') return <FieldTypeIcon fieldType={fieldType} size={ICON_SIZE.rowGlyph} />;
   if (item.key === 'color') return <ColorIcon size={ICON_SIZE.rowGlyph} />;
   if (item.key === 'extends' || item.key === 'childSupertag' || item.key === 'sourceSupertag') {
     return <SupertagIcon size={ICON_SIZE.rowGlyph} />;
@@ -122,19 +143,21 @@ function ConfigIcon({ item, node }: { item: DefinitionConfigItem; node: NodeProj
 function ConfigControl(props: {
   item: DefinitionConfigItem;
   node: NodeProjection;
+  byId: Map<NodeId, NodeProjection>;
+  tagConfig: ProjectedTagConfig | undefined;
+  fieldConfig: ProjectedFieldConfig | undefined;
   tagOptions: TagOption[];
   updateTag: (patch: TagConfigPatch) => void;
   updateField: (patch: FieldConfigPatch) => void;
 }) {
-  const { item, node, tagOptions, updateTag, updateField } = props;
+  const { item, node, byId, tagConfig, fieldConfig, tagOptions, updateTag, updateField } = props;
 
   switch (item.key) {
     case 'color':
       return (
         <DefinitionColorControl
           label={item.label}
-          value={node.color}
-          swatch={resolveTagColor(node).text}
+          value={tagConfig?.color}
           onCommit={(color) => updateTag({ color })}
         />
       );
@@ -142,7 +165,7 @@ function ConfigControl(props: {
       return (
         <DefinitionTagSelect
           label={item.label}
-          value={node.extends}
+          value={tagConfig?.extends}
           options={tagOptions}
           onChange={(tagId) => updateTag({ extends: tagId })}
         />
@@ -151,7 +174,7 @@ function ConfigControl(props: {
       return (
         <DefinitionTagSelect
           label={item.label}
-          value={node.childSupertag}
+          value={tagConfig?.childSupertag}
           options={tagOptions}
           onChange={(tagId) => updateTag({ childSupertag: tagId })}
         />
@@ -160,7 +183,7 @@ function ConfigControl(props: {
       return (
         <DefinitionSwitchControl
           label={item.label}
-          checked={node.showCheckbox}
+          checked={tagConfig?.showCheckbox ?? false}
           onChange={(showCheckbox) => updateTag({ showCheckbox })}
         />
       );
@@ -168,15 +191,28 @@ function ConfigControl(props: {
       return (
         <DefinitionSwitchControl
           label={item.label}
-          checked={node.doneStateEnabled}
+          checked={tagConfig?.doneStateEnabled ?? false}
           onChange={(doneStateEnabled) => updateTag({ doneStateEnabled })}
+        />
+      );
+    case 'doneMapChecked':
+    case 'doneMapUnchecked':
+      return (
+        <DefinitionDoneMappingControl
+          label={item.label}
+          byId={byId}
+          tagDefId={node.id}
+          value={item.key === 'doneMapChecked' ? (tagConfig?.doneMapChecked ?? []) : (tagConfig?.doneMapUnchecked ?? [])}
+          onChange={(optionIds) => updateTag(
+            item.key === 'doneMapChecked' ? { doneMapChecked: optionIds } : { doneMapUnchecked: optionIds },
+          )}
         />
       );
     case 'fieldType':
       return (
         <DefinitionFieldTypeSelect
           label={item.label}
-          value={node.fieldType ?? 'plain'}
+          value={fieldConfig?.fieldType ?? 'plain'}
           onChange={(fieldType) => updateField({ fieldType })}
         />
       );
@@ -184,7 +220,7 @@ function ConfigControl(props: {
       return (
         <DefinitionCardinalitySelect
           label={item.label}
-          value={node.cardinality ?? 'single'}
+          value={fieldConfig?.cardinality ?? 'single'}
           onChange={(cardinality) => updateField({ cardinality })}
         />
       );
@@ -192,7 +228,7 @@ function ConfigControl(props: {
       return (
         <DefinitionTagSelect
           label={item.label}
-          value={node.sourceSupertag}
+          value={fieldConfig?.sourceSupertag}
           options={tagOptions}
           onChange={(sourceSupertag) => updateField({ sourceSupertag })}
         />
@@ -201,7 +237,7 @@ function ConfigControl(props: {
       return (
         <DefinitionSwitchControl
           label={item.label}
-          checked={node.autocollectOptions}
+          checked={fieldConfig?.autocollectOptions ?? false}
           onChange={(autocollectOptions) => updateField({ autocollectOptions })}
         />
       );
@@ -209,8 +245,8 @@ function ConfigControl(props: {
       return (
         <DefinitionAutoInitializeControl
           label={item.label}
-          fieldType={node.fieldType ?? 'plain'}
-          value={node.autoInitialize}
+          fieldType={fieldConfig?.fieldType ?? 'plain'}
+          value={(fieldConfig?.autoInitialize ?? []).join(',')}
           onChange={(autoInitialize) => updateField({ autoInitialize })}
         />
       );
@@ -218,7 +254,7 @@ function ConfigControl(props: {
       return (
         <DefinitionSwitchControl
           label={item.label}
-          checked={node.nullable === false}
+          checked={fieldConfig?.nullable === false}
           onChange={(required) => updateField({ nullable: required ? false : true })}
         />
       );
@@ -226,7 +262,7 @@ function ConfigControl(props: {
       return (
         <DefinitionHideFieldSelect
           label={item.label}
-          value={(node.hideField as HideFieldMode | undefined) ?? 'never'}
+          value={(fieldConfig?.hideField as HideFieldMode | undefined) ?? 'never'}
           onChange={(hideField) => updateField({ hideField: hideField === 'never' ? null : hideField })}
         />
       );
@@ -234,7 +270,7 @@ function ConfigControl(props: {
       return (
         <DefinitionNumberControl
           label={item.label}
-          value={node.minValue}
+          value={fieldConfig?.minValue}
           onCommit={(minValue) => updateField({ minValue })}
         />
       );
@@ -242,7 +278,7 @@ function ConfigControl(props: {
       return (
         <DefinitionNumberControl
           label={item.label}
-          value={node.maxValue}
+          value={fieldConfig?.maxValue}
           onCommit={(maxValue) => updateField({ maxValue })}
         />
       );

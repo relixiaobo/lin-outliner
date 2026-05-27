@@ -2,6 +2,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
 import { plainText } from '../../api/types';
+import { projectFieldConfig } from '../../../core/configProjection';
 import type { DocumentIndex, FocusRequest, UiState } from '../../state/document';
 import {
   clearFocusRequestState,
@@ -10,10 +11,9 @@ import {
   requestFocusState,
   rowFocusTarget,
 } from '../focus/focusModel';
-import { fieldTypeInteraction, isOptionsFieldType } from '../fields/fieldTypeRegistry';
+import { fieldTypeInteraction } from '../fields/fieldTypeRegistry';
 import { appendImageNodes, appendRemoteImageNode } from '../interactions/imagePaste';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
-import { FieldOptionPicker } from './FieldOptionPicker';
 import { OutlinerFieldRow } from './OutlinerFieldRow';
 import { OutlinerItem } from './OutlinerItem';
 import { RowHost } from './RowHost';
@@ -52,21 +52,29 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
   const showTrailingInput = shouldShowTrailingInput(rows, { mode: 'fieldValue' });
   const empty = rows.length === 0;
   const singleValueNode = rows.length === 1 ? props.index.byId.get(rows[0].id) : undefined;
-  const singleValueField = props.optionField?.cardinality !== 'list';
-  const valueInteraction = fieldTypeInteraction(props.optionField?.fieldType);
-  const canUseOptionPicker = Boolean(
-    props.optionField
-    && singleValueField
-    && isOptionsFieldType(props.optionField.fieldType)
-    && rows.length <= 1,
+  const optionFieldConfig = props.optionField
+    ? projectFieldConfig(props.index.byId, props.optionField)
+    : undefined;
+  const optionFieldType = optionFieldConfig?.fieldType;
+  const singleValueField = optionFieldConfig?.cardinality !== 'list';
+  const valueInteraction = fieldTypeInteraction(optionFieldType);
+  // Typed values into an options field are always accepted. Auto-collect only
+  // decides whether the value also joins the reusable option pool: when on, the
+  // value becomes a collected option + reference; when off, it is stored as a
+  // plain free-text value on this entry alone.
+  const onCreateFieldValue = (name: string) => (
+    props.run(() => (
+      optionFieldConfig?.autocollectOptions === true
+        ? api.createCollectedFieldOption(props.entryId, name)
+        : api.setFieldFreeTextValue(props.entryId, name)
+    ))
   );
   const canUseTypedControl = Boolean(
     props.optionField
     && singleValueField
     && rows.length <= 1
     && valueInteraction !== 'outliner'
-    && valueInteraction !== 'optionPicker'
-    && valueInteraction !== 'reserved',
+    && valueInteraction !== 'optionPicker',
   );
   return (
     <div
@@ -74,24 +82,10 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
       data-field-value
       aria-label={empty ? props.placeholder : 'Field value'}
     >
-      {canUseOptionPicker && props.optionField ? (
-        <FieldOptionPicker
-          byId={props.index.byId}
-          field={props.optionField}
-          valueNode={singleValueNode}
-          placeholder={props.placeholder}
-          onSelectOption={(optionId) => (
-            props.run(() => api.selectFieldOption(props.entryId, optionId))
-          )}
-          onCreateOption={(name) => (
-            props.run(() => api.createCollectedFieldOption(props.entryId, name))
-          )}
-          onClearValue={() => props.run(() => api.clearFieldValue(props.entryId))}
-        />
-      ) : canUseTypedControl && props.optionField ? (
+      {canUseTypedControl && props.optionField ? (
         <TypedFieldValueControl
           entryId={props.entryId}
-          fieldType={props.optionField.fieldType ?? 'plain'}
+          fieldType={optionFieldType ?? 'plain'}
           placeholder={props.placeholder}
           run={props.run}
           valueNode={singleValueNode}
@@ -140,7 +134,7 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
           )}
         />
       )}
-      {!canUseOptionPicker && !canUseTypedControl && showTrailingInput && (
+      {!canUseTypedControl && showTrailingInput && (
         <TrailingInput
           panelId={props.panelId}
           parentId={props.entryId}
@@ -230,9 +224,7 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
           onSelectOption={(optionId) => (
             props.run(() => api.selectFieldOption(props.entryId, optionId))
           )}
-          onCreateOption={(name) => (
-            props.run(() => api.createCollectedFieldOption(props.entryId, name))
-          )}
+          onCreateOption={onCreateFieldValue}
         />
       )}
     </div>

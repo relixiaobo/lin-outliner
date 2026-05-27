@@ -5,13 +5,9 @@ export type FieldValueInteraction =
   | 'optionPicker'
   | 'datePicker'
   | 'numberInput'
-  | 'passwordInput'
   | 'urlLink'
   | 'emailLink'
-  | 'checkbox'
-  | 'boolean'
-  | 'colorPicker'
-  | 'reserved';
+  | 'checkbox';
 
 export interface FieldTypeMetadata {
   id: FieldType;
@@ -51,24 +47,6 @@ export const FIELD_TYPE_REGISTRY = {
     interaction: 'numberInput',
     exposedInConfig: true,
   },
-  password: {
-    id: 'password',
-    label: 'password',
-    interaction: 'passwordInput',
-    exposedInConfig: true,
-  },
-  formula: {
-    id: 'formula',
-    label: 'formula',
-    interaction: 'reserved',
-    exposedInConfig: false,
-  },
-  user: {
-    id: 'user',
-    label: 'user',
-    interaction: 'reserved',
-    exposedInConfig: false,
-  },
   url: {
     id: 'url',
     label: 'url',
@@ -87,25 +65,15 @@ export const FIELD_TYPE_REGISTRY = {
     interaction: 'checkbox',
     exposedInConfig: true,
   },
-  boolean: {
-    id: 'boolean',
-    label: 'boolean',
-    interaction: 'boolean',
-    exposedInConfig: true,
-  },
-  color: {
-    id: 'color',
-    label: 'color',
-    interaction: 'colorPicker',
-    exposedInConfig: true,
-  },
 } satisfies Record<FieldType, FieldTypeMetadata>;
 
 export const FIELD_TYPE_CONFIG_OPTIONS = (Object.keys(FIELD_TYPE_REGISTRY) as FieldType[])
   .filter((fieldType) => FIELD_TYPE_REGISTRY[fieldType].exposedInConfig);
 
 export function fieldTypeMetadata(fieldType: FieldType | undefined): FieldTypeMetadata {
-  return FIELD_TYPE_REGISTRY[fieldType ?? 'plain'];
+  // Fall back to plain for unknown/retired types (e.g. legacy dev data that
+  // still carries a since-removed field type).
+  return FIELD_TYPE_REGISTRY[fieldType ?? 'plain'] ?? FIELD_TYPE_REGISTRY.plain;
 }
 
 export function fieldTypeLabel(fieldType: FieldType | undefined): string {

@@ -13,6 +13,7 @@ import {
   WORKSPACE_ID,
   type DocumentProjection,
   type DocumentState,
+  type FieldType,
   type Node,
   type NodeId,
   type NodeProjection,
@@ -23,6 +24,7 @@ import {
   type SearchQueryExpr,
   type SearchQueryOperand,
 } from './types';
+import { projectFieldConfig, nodeIsDone, nodeShowsCheckbox } from './configProjection';
 import {
   dateFieldValueRangesInText,
   parseDateFieldValueRange,
@@ -37,6 +39,20 @@ import {
 
 type SearchDocument = DocumentState | DocumentProjection;
 type SearchNode = Node | NodeProjection;
+/** A node that carries query params — a `search` (inline rule) or a `queryCondition`. */
+type QueryBearingNode = Extract<SearchNode, { type: 'search' } | { type: 'queryCondition' }>;
+
+/** Narrow a looked-up node to its query-bearing variant, or undefined. */
+function asQueryBearing(node: SearchNode | undefined): QueryBearingNode | undefined {
+  return node && (node.type === 'search' || node.type === 'queryCondition') ? node : undefined;
+}
+
+/** The field's type, read from its defConfig subtree (config-as-nodes). */
+function fieldTypeOf(index: SearchIndex, fieldDefId: NodeId | undefined): FieldType | undefined {
+  if (!fieldDefId) return undefined;
+  const fieldDef = index.nodes.get(fieldDefId);
+  return fieldDef?.type === 'fieldDef' ? projectFieldConfig(index.nodes, fieldDef).fieldType : undefined;
+}
 
 const SYSTEM_IDS = new Set([
   WORKSPACE_ID,
@@ -231,10 +247,10 @@ function sortSearchHits(hits: SearchHit[], index: SearchIndex, searchNode: Searc
 function searchNodeSortRule(index: SearchIndex, searchNode: SearchNode): { field: string; direction: SortDirection } | null {
   const viewDef = searchNode.children
     .map((childId) => index.nodes.get(childId))
-    .find((child) => child?.type === 'viewDef');
+    .find((child): child is Extract<SearchNode, { type: 'viewDef' }> => child?.type === 'viewDef');
   const sortRule = viewDef?.children
     .map((childId) => index.nodes.get(childId))
-    .find((child) => child?.type === 'sortRule' && child.sortField);
+    .find((child): child is Extract<SearchNode, { type: 'sortRule' }> => child?.type === 'sortRule' && Boolean(child.sortField));
   return sortRule?.sortField
     ? { field: sortRule.sortField, direction: sortRule.sortDirection === 'desc' ? 'desc' : 'asc' }
     : null;
@@ -258,11 +274,12 @@ export function searchNodeToQueryExpr(document: SearchDocument, searchNodeId: No
 
   const conditionNodes = searchNode.children
     .map((childId) => index.nodes.get(childId))
-    .filter((child): child is SearchNode => child?.type === 'queryCondition' && !isInTrash(index, child.id));
+    .filter((child): child is QueryBearingNode => child?.type === 'queryCondition' && !isInTrash(index, child.id));
 
   if (conditionNodes.length === 0) {
-    if (!searchNode.queryOp) return { ok: true, query: null };
-    return queryExprFromConditionNode(index, searchNode);
+    const inlineRule = asQueryBearing(searchNode);
+    if (!inlineRule?.queryOp) return { ok: true, query: null };
+    return queryExprFromConditionNode(index, inlineRule);
   }
 
   const children: SearchQueryExpr[] = [];
@@ -321,7 +338,7 @@ function indexSearchDocument(document: SearchDocument): SearchIndex {
   };
 }
 
-function queryExprFromConditionNode(index: SearchIndex, conditionNode: SearchNode): SearchQueryResolution {
+function queryExprFromConditionNode(index: SearchIndex, conditionNode: QueryBearingNode): SearchQueryResolution {
   if (conditionNode.queryOp) {
     const text = QUERY_TEXT_CONTENT_OPS.has(conditionNode.queryOp)
       ? conditionNode.content.text.trim()
@@ -334,7 +351,7 @@ function queryExprFromConditionNode(index: SearchIndex, conditionNode: SearchNod
         ...(text ? { text } : {}),
         ...(conditionNode.queryFieldDefId ? { fieldDefId: conditionNode.queryFieldDefId } : {}),
         ...(conditionNode.queryTagDefId ? { tagDefId: conditionNode.queryTagDefId } : {}),
-        ...(conditionNode.targetId ? { targetId: conditionNode.targetId } : {}),
+        ...(conditionNode.queryTargetId ? { targetId: conditionNode.queryTargetId } : {}),
         ...queryOperandsFromConditionNode(index, conditionNode),
       },
     };
@@ -353,7 +370,7 @@ function queryExprFromConditionNode(index: SearchIndex, conditionNode: SearchNod
 
   const childConditions = conditionNode.children
     .map((childId) => index.nodes.get(childId))
-    .filter((child): child is SearchNode => child?.type === 'queryCondition' && !isInTrash(index, child.id));
+    .filter((child): child is QueryBearingNode => child?.type === 'queryCondition' && !isInTrash(index, child.id));
   const children: SearchQueryExpr[] = [];
   for (const childCondition of childConditions) {
     const resolved = queryExprFromConditionNode(index, childCondition);
@@ -364,7 +381,7 @@ function queryExprFromConditionNode(index: SearchIndex, conditionNode: SearchNod
   return { ok: true, query: { kind: 'group', logic: conditionNode.queryLogic, children } };
 }
 
-function queryOperandsFromConditionNode(index: SearchIndex, conditionNode: SearchNode): { operands?: SearchQueryOperand[] } {
+function queryOperandsFromConditionNode(index: SearchIndex, conditionNode: QueryBearingNode): { operands?: SearchQueryOperand[] } {
   const operands = conditionNode.children.flatMap((childId): SearchQueryOperand[] => {
     const child = index.nodes.get(childId);
     if (!child || child.type === 'queryCondition' || isInTrash(index, child.id)) return [];
@@ -390,14 +407,15 @@ function evaluateSearchNode(index: SearchIndex, candidate: SearchNode, searchNod
   const context = { searchNode };
   const conditionNodes = searchNode.children
     .map((childId) => index.nodes.get(childId))
-    .filter((child): child is SearchNode => child?.type === 'queryCondition' && !isInTrash(index, child.id));
+    .filter((child): child is QueryBearingNode => child?.type === 'queryCondition' && !isInTrash(index, child.id));
 
   if (conditionNodes.length > 0) return evaluateAnd(index, candidate, conditionNodes, context);
-  if (searchNode.queryOp) return evaluateLeafNode(index, candidate, searchNode, context);
+  const inlineRule = asQueryBearing(searchNode);
+  if (inlineRule?.queryOp) return evaluateLeafNode(index, candidate, inlineRule, context);
   return { ok: true, match: false, score: 0 };
 }
 
-function evaluateCondition(index: SearchIndex, candidate: SearchNode, conditionNode: SearchNode, context: SearchContext): SearchEvaluation {
+function evaluateCondition(index: SearchIndex, candidate: SearchNode, conditionNode: QueryBearingNode, context: SearchContext): SearchEvaluation {
   if (conditionNode.queryOp) return evaluateLeafNode(index, candidate, conditionNode, context);
   if (!conditionNode.queryLogic) {
     return {
@@ -412,7 +430,7 @@ function evaluateCondition(index: SearchIndex, candidate: SearchNode, conditionN
 
   const childConditions = conditionNode.children
     .map((childId) => index.nodes.get(childId))
-    .filter((child): child is SearchNode => child?.type === 'queryCondition' && !isInTrash(index, child.id));
+    .filter((child): child is QueryBearingNode => child?.type === 'queryCondition' && !isInTrash(index, child.id));
   if (childConditions.length === 0) {
     return {
       ok: false,
@@ -440,7 +458,7 @@ function evaluateCondition(index: SearchIndex, candidate: SearchNode, conditionN
   };
 }
 
-function evaluateAnd(index: SearchIndex, candidate: SearchNode, conditions: SearchNode[], context: SearchContext): SearchEvaluation {
+function evaluateAnd(index: SearchIndex, candidate: SearchNode, conditions: QueryBearingNode[], context: SearchContext): SearchEvaluation {
   let score = 0;
   for (const condition of conditions) {
     const evaluation = evaluateCondition(index, candidate, condition, context);
@@ -451,7 +469,7 @@ function evaluateAnd(index: SearchIndex, candidate: SearchNode, conditions: Sear
   return { ok: true, match: true, score: Math.max(score, 1) };
 }
 
-function evaluateOr(index: SearchIndex, candidate: SearchNode, conditions: SearchNode[], context: SearchContext): SearchEvaluation {
+function evaluateOr(index: SearchIndex, candidate: SearchNode, conditions: QueryBearingNode[], context: SearchContext): SearchEvaluation {
   let score = 0;
   let matched = false;
   for (const condition of conditions) {
@@ -464,7 +482,7 @@ function evaluateOr(index: SearchIndex, candidate: SearchNode, conditions: Searc
   return { ok: true, match: matched, score: matched ? Math.max(score, 1) : 0 };
 }
 
-function evaluateNot(index: SearchIndex, candidate: SearchNode, conditions: SearchNode[], context: SearchContext): SearchEvaluation {
+function evaluateNot(index: SearchIndex, candidate: SearchNode, conditions: QueryBearingNode[], context: SearchContext): SearchEvaluation {
   for (const condition of conditions) {
     const evaluation = evaluateCondition(index, candidate, condition, context);
     if (!evaluation.ok) return evaluation;
@@ -473,7 +491,7 @@ function evaluateNot(index: SearchIndex, candidate: SearchNode, conditions: Sear
   return { ok: true, match: true, score: 5 };
 }
 
-function evaluateLeafNode(index: SearchIndex, candidate: SearchNode, conditionNode: SearchNode, context: SearchContext): SearchEvaluation {
+function evaluateLeafNode(index: SearchIndex, candidate: SearchNode, conditionNode: QueryBearingNode, context: SearchContext): SearchEvaluation {
   if (conditionNode.queryLogic && conditionNode.queryLogic !== 'AND') {
     return {
       ok: false,
@@ -488,7 +506,7 @@ function evaluateLeafNode(index: SearchIndex, candidate: SearchNode, conditionNo
   return evaluateLeaf(index, candidate, conditionNode, context);
 }
 
-function evaluateLeaf(index: SearchIndex, candidate: SearchNode, conditionNode: SearchNode, context: SearchContext): SearchEvaluation {
+function evaluateLeaf(index: SearchIndex, candidate: SearchNode, conditionNode: QueryBearingNode, context: SearchContext): SearchEvaluation {
   const op = conditionNode.queryOp;
   if (!op) {
     return {
@@ -505,18 +523,18 @@ function evaluateLeaf(index: SearchIndex, candidate: SearchNode, conditionNode: 
     if (!conditionNode.queryTagDefId) return { ok: true, match: candidate.tags.length > 0, score: 12 };
     return { ok: true, match: candidate.tags.includes(conditionNode.queryTagDefId), score: 25 };
   }
-  if (op === 'TODO') return { ok: true, match: candidate.showCheckbox, score: 10 };
-  if (op === 'DONE') return { ok: true, match: Boolean(candidate.completedAt), score: 10 };
-  if (op === 'NOT_DONE') return { ok: true, match: candidate.showCheckbox && !candidate.completedAt, score: 10 };
+  if (op === 'TODO') return { ok: true, match: nodeShowsCheckbox(index.nodes, candidate), score: 10 };
+  if (op === 'DONE') return { ok: true, match: nodeIsDone(candidate), score: 10 };
+  if (op === 'NOT_DONE') return { ok: true, match: nodeShowsCheckbox(index.nodes, candidate) && !nodeIsDone(candidate), score: 10 };
 
   if (op === 'FIELD_IS' || op === 'FIELD_IS_NOT') {
     if (!conditionNode.queryFieldDefId) return missingEvaluationOperand(conditionNode, op, 'field id');
     const ruleOperands = conditionOperands(index, conditionNode, context);
     if (ruleOperands.length === 0) return missingEvaluationOperand(conditionNode, op, 'comparison value');
-    const fieldDef = index.nodes.get(conditionNode.queryFieldDefId);
+    const fieldType = fieldTypeOf(index, conditionNode.queryFieldDefId);
     const candidateField = comparableFieldState(index, candidate, conditionNode.queryFieldDefId);
     const hasMatch = candidateField.values.some((value) =>
-      ruleOperands.some((operand) => valueMatchesOperand(value, operand, fieldDef?.fieldType)));
+      ruleOperands.some((operand) => valueMatchesOperand(value, operand, fieldType)));
     return { ok: true, match: op === 'FIELD_IS' ? hasMatch : candidateField.hasField && !hasMatch, score: 18 };
   }
 
@@ -554,8 +572,7 @@ function evaluateLeaf(index: SearchIndex, candidate: SearchNode, conditionNode: 
     if (!conditionNode.queryFieldDefId) return missingEvaluationOperand(conditionNode, op, 'field id');
     const ruleScalar = conditionComparableScalar(index, conditionNode, context);
     if (ruleScalar === null) return missingEvaluationOperand(conditionNode, op, 'comparison value');
-    const fieldDef = index.nodes.get(conditionNode.queryFieldDefId);
-    const candidateScalars = comparableFieldScalars(index, candidate, conditionNode.queryFieldDefId, fieldDef?.fieldType);
+    const candidateScalars = comparableFieldScalars(index, candidate, conditionNode.queryFieldDefId, fieldTypeOf(index, conditionNode.queryFieldDefId));
     const match = candidateScalars.some((value) => op === 'GT' ? value > ruleScalar : value < ruleScalar);
     return { ok: true, match, score: 18 };
   }
@@ -681,7 +698,7 @@ function evaluateLeaf(index: SearchIndex, candidate: SearchNode, conditionNode: 
   };
 }
 
-function missingEvaluationOperand(conditionNode: SearchNode, op: QueryOp, operand: string): SearchEvaluation {
+function missingEvaluationOperand(conditionNode: QueryBearingNode, op: QueryOp, operand: string): SearchEvaluation {
   return {
     ok: false,
     issue: {
@@ -697,8 +714,8 @@ function virtualConditionTreeFromQueryExpr(
   query: SearchQueryExpr,
   parentId: NodeId | undefined,
   nextId: () => NodeId,
-): { root: SearchNode; nodes: SearchNode[] } {
-  const node = virtualNode(nextId(), parentId, 'queryCondition', query.kind === 'rule' ? query.text ?? '' : '');
+): { root: QueryBearingNode; nodes: SearchNode[] } {
+  const node = virtualNode(nextId(), parentId, 'queryCondition', query.kind === 'rule' ? query.text ?? '' : '') as QueryBearingNode;
   const nodes: SearchNode[] = [node];
 
   if (query.kind === 'group') {
@@ -714,10 +731,10 @@ function virtualConditionTreeFromQueryExpr(
   node.queryOp = query.op;
   if (query.fieldDefId) node.queryFieldDefId = query.fieldDefId;
   if (query.tagDefId) node.queryTagDefId = query.tagDefId;
-  if (query.targetId) node.targetId = query.targetId;
+  if (query.targetId) node.queryTargetId = query.targetId;
   for (const operand of query.operands ?? []) {
     const operandNode = virtualNode(nextId(), node.id, operand.targetId ? 'reference' : undefined, operand.text ?? '');
-    if (operand.targetId) operandNode.targetId = operand.targetId;
+    if (operand.targetId) (operandNode as Extract<SearchNode, { type: 'reference' }>).targetId = operand.targetId;
     node.children.push(operandNode.id);
     nodes.push(operandNode);
   }
@@ -744,9 +761,6 @@ function virtualNode(
     createdAt: 0,
     updatedAt: 0,
     locked: false,
-    showCheckbox: false,
-    doneStateEnabled: false,
-    autocollectOptions: false,
     autoCollected: false,
   };
 }
@@ -844,7 +858,7 @@ function nodeMatchesDateOperands(index: SearchIndex, node: SearchNode, dateOpera
   return ranges.some((range) => nodeMatchesDateRange(index, node, range));
 }
 
-function nodeIsOverdue(index: SearchIndex, node: SearchNode, conditionNode: SearchNode): boolean {
+function nodeIsOverdue(index: SearchIndex, node: SearchNode, conditionNode: QueryBearingNode): boolean {
   if (node.completedAt) return false;
   const todayStart = startOfLocalDay(new Date()).getTime();
   return overdueDateRanges(index, node, conditionNode.queryFieldDefId)
@@ -854,8 +868,7 @@ function nodeIsOverdue(index: SearchIndex, node: SearchNode, conditionNode: Sear
 function overdueDateRanges(index: SearchIndex, node: SearchNode, fieldDefId?: NodeId): DateRange[] {
   const entries = fieldEntryNodes(index, node).filter((fieldEntry) => {
     if (fieldDefId) return fieldEntry.fieldDefId === fieldDefId;
-    const fieldDef = fieldEntry.fieldDefId ? index.nodes.get(fieldEntry.fieldDefId) : undefined;
-    return fieldDef?.fieldType === 'date';
+    return fieldTypeOf(index, fieldEntry.fieldDefId) === 'date';
   });
   return uniqueDateRanges(entries.flatMap((fieldEntry) =>
     fieldEntry.children.flatMap((valueId) => {
@@ -864,20 +877,19 @@ function overdueDateRanges(index: SearchIndex, node: SearchNode, fieldDefId?: No
     })));
 }
 
-function conditionComparableValues(index: SearchIndex, conditionNode: SearchNode, context: SearchContext): string[] {
+function conditionComparableValues(index: SearchIndex, conditionNode: QueryBearingNode, context: SearchContext): string[] {
   return uniqueStrings(conditionOperands(index, conditionNode, context).map((operand) => operand.normalizedText));
 }
 
-function conditionComparableScalar(index: SearchIndex, conditionNode: SearchNode, context: SearchContext): number | null {
+function conditionComparableScalar(index: SearchIndex, conditionNode: QueryBearingNode, context: SearchContext): number | null {
   const operand = conditionOperands(index, conditionNode, context)[0];
   if (!operand) return null;
   if (operand.scalar !== undefined) return operand.scalar;
   if (operand.dateRange) return operand.dateRange.start;
-  const fieldType = conditionNode.queryFieldDefId ? index.nodes.get(conditionNode.queryFieldDefId)?.fieldType : undefined;
-  return comparableScalar(operand.text, fieldType);
+  return comparableScalar(operand.text, fieldTypeOf(index, conditionNode.queryFieldDefId));
 }
 
-function conditionTargetId(index: SearchIndex, conditionNode: SearchNode, context: SearchContext): NodeId | undefined {
+function conditionTargetId(index: SearchIndex, conditionNode: QueryBearingNode, context: SearchContext): NodeId | undefined {
   for (const operand of conditionOperands(index, conditionNode, context)) {
     if (operand.nodeId) return operand.nodeId;
     if (index.nodes.has(operand.text)) return operand.text;
@@ -885,7 +897,7 @@ function conditionTargetId(index: SearchIndex, conditionNode: SearchNode, contex
   return undefined;
 }
 
-function conditionOperands(index: SearchIndex, conditionNode: SearchNode, context: SearchContext): SearchOperand[] {
+function conditionOperands(index: SearchIndex, conditionNode: QueryBearingNode, context: SearchContext): SearchOperand[] {
   const options: OperandResolutionOptions = {
     resolveRelativeDates: shouldResolveRelativeDates(index, conditionNode),
   };
@@ -898,10 +910,10 @@ function conditionOperands(index: SearchIndex, conditionNode: SearchNode, contex
   return uniqueOperands(operandsFromNode(index, conditionNode, context, options));
 }
 
-function shouldResolveRelativeDates(index: SearchIndex, conditionNode: SearchNode): boolean {
+function shouldResolveRelativeDates(index: SearchIndex, conditionNode: QueryBearingNode): boolean {
   if (conditionNode.queryOp === 'FOR_RELATIVE_DATE') return true;
   if (!conditionNode.queryFieldDefId) return false;
-  return index.nodes.get(conditionNode.queryFieldDefId)?.fieldType === 'date';
+  return fieldTypeOf(index, conditionNode.queryFieldDefId) === 'date';
 }
 
 function operandsFromNode(
@@ -911,7 +923,10 @@ function operandsFromNode(
   options: OperandResolutionOptions,
 ): SearchOperand[] {
   const operands: SearchOperand[] = [];
-  if (node.targetId) operands.push(...nodeOperand(index, node.targetId));
+  if (node.type === 'reference' && node.targetId) operands.push(...nodeOperand(index, node.targetId));
+  if ((node.type === 'search' || node.type === 'queryCondition') && node.queryTargetId) {
+    operands.push(...nodeOperand(index, node.queryTargetId));
+  }
   for (const inlineRef of node.content.inlineRefs) {
     operands.push(...nodeOperand(index, inlineRef.targetNodeId));
   }
@@ -1250,7 +1265,7 @@ function rangesOverlap(left: DateRange, right: DateRange): boolean {
   return left.start < right.end && right.start < left.end;
 }
 
-function regexpFromCondition(conditionNode: SearchNode): RegExp | null {
+function regexpFromCondition(conditionNode: QueryBearingNode): RegExp | null {
   const raw = conditionNode.content.text.trim();
   if (!raw) return null;
   try {
@@ -1262,7 +1277,7 @@ function regexpFromCondition(conditionNode: SearchNode): RegExp | null {
   }
 }
 
-function conditionDays(conditionNode: SearchNode): number | null {
+function conditionDays(conditionNode: QueryBearingNode): number | null {
   const match = conditionNode.content.text.match(/\d+/);
   if (!match) return null;
   const days = Number(match[0]);
@@ -1370,11 +1385,11 @@ function fieldValueNodes(index: SearchIndex, node: SearchNode): SearchNode[] {
         .filter((value): value is SearchNode => value !== undefined && !isInTrash(index, value.id)));
 }
 
-function fieldEntryNodes(index: SearchIndex, node: SearchNode): SearchNode[] {
+function fieldEntryNodes(index: SearchIndex, node: SearchNode): Extract<SearchNode, { type: 'fieldEntry' }>[] {
   if (node.type === 'tagDef' || node.type === 'fieldDef' || node.type === 'search') return [];
   return node.children
     .map((childId) => index.nodes.get(childId))
-    .filter((child): child is SearchNode => child?.type === 'fieldEntry' && !isInTrash(index, child.id));
+    .filter((child): child is Extract<SearchNode, { type: 'fieldEntry' }> => child?.type === 'fieldEntry' && !isInTrash(index, child.id));
 }
 
 function fieldValueText(index: SearchIndex, value: SearchNode): string {
@@ -1469,11 +1484,22 @@ function isSearchCandidate(index: SearchIndex, nodeId: NodeId): boolean {
     && (node.type === undefined || ['tagDef', 'fieldDef', 'search', 'codeBlock', 'image', 'embed'].includes(node.type));
 }
 
+/** The image node's url, narrowed — only image nodes carry one. */
+function nodeMediaUrl(node: SearchNode): string | undefined {
+  return node.type === 'image' ? node.mediaUrl : undefined;
+}
+
+/** The embed node's fields, narrowed — only embed nodes carry them. */
+function nodeEmbedFields(node: SearchNode): { embedType?: string; embedId?: string; sourceUrl?: string } {
+  return node.type === 'embed' ? node : {};
+}
+
 function nodeHasMediaKind(node: SearchNode, op: Extract<QueryOp, 'HAS_MEDIA' | 'HAS_AUDIO' | 'HAS_VIDEO' | 'HAS_IMAGE'>): boolean {
   if (op === 'HAS_MEDIA') {
+    const embed = nodeEmbedFields(node);
     return node.type === 'image'
       || node.type === 'embed'
-      || Boolean(node.mediaUrl || node.embedType || node.embedId || node.sourceUrl);
+      || Boolean(nodeMediaUrl(node) || embed.embedType || embed.embedId || embed.sourceUrl);
   }
   if (op === 'HAS_IMAGE') {
     return node.type === 'image'
@@ -1484,9 +1510,10 @@ function nodeHasMediaKind(node: SearchNode, op: Extract<QueryOp, 'HAS_MEDIA' | '
 }
 
 function mediaKindFromNode(node: SearchNode): 'image' | 'audio' | 'video' | 'embed' | null {
-  const embedType = node.embedType?.trim().toLowerCase();
+  const embed = nodeEmbedFields(node);
+  const embedType = embed.embedType?.trim().toLowerCase();
   if (embedType === 'image' || embedType === 'audio' || embedType === 'video') return embedType;
-  const url = node.mediaUrl || node.sourceUrl || '';
+  const url = nodeMediaUrl(node) || embed.sourceUrl || '';
   const ext = url.split(/[?#]/)[0]?.split('.').pop()?.toLowerCase();
   if (!ext) return node.type === 'embed' ? 'embed' : null;
   if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'avif'].includes(ext)) return 'image';

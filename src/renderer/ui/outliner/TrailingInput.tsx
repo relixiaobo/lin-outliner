@@ -35,6 +35,7 @@ import {
 import { getTreeReferenceBlockReason } from '../interactions/referenceRules';
 import { isOptionsFieldType } from '../fields/fieldTypeRegistry';
 import { filterFieldOptions, resolveFieldOptions } from '../interactions/fieldOptions';
+import { projectFieldConfig } from '../../../core/configProjection';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { readPastedImages, type PastedImage } from '../interactions/imagePaste';
 import { classifyMediaPaste } from '../interactions/clipboardPaste';
@@ -220,13 +221,18 @@ export function TrailingInput(props: TrailingInputProps) {
     canCreateOption: false,
     optionsQuery: '',
   });
-  const isOptionsField = isOptionsFieldType(props.optionField?.fieldType);
+  const optionFieldConfig = props.optionField
+    ? projectFieldConfig(props.index.byId, props.optionField)
+    : undefined;
+  const optionFieldType = optionFieldConfig?.fieldType;
+  const isOptionsField = isOptionsFieldType(optionFieldType);
   const allOptions = resolveFieldOptions(props.optionField, props.index.byId);
   const filteredOptions = filterFieldOptions(allOptions, optionsQuery);
+  // Options fields always accept free-typed values; auto-collect only governs
+  // whether the value joins the reusable option pool (decided in onCreateOption).
   const canCreateOption = isOptionsField
-    && props.optionField?.fieldType === 'options'
+    && optionFieldType === 'options'
     && Boolean(optionsQuery.trim())
-    && props.optionField?.autocollectOptions !== false
     && !allOptions.some((option) => option.label.toLowerCase() === optionsQuery.trim().toLowerCase());
   const optionCount = filteredOptions.length + (canCreateOption ? 1 : 0);
   const trailingText = buffer.text;

@@ -17,6 +17,28 @@ export const TAG_DAY_ID = 'tag:day';
 export const TAG_WEEK_ID = 'tag:week';
 export const TAG_YEAR_ID = 'tag:year';
 
+// System option subtrees under SCHEMA_ID. Each holds the enum domain for a
+// config knob; selecting an enum value = referencing one of these nodes, so
+// an invalid enum value is unrepresentable. See docs/plans/config-as-nodes.md.
+export const SCHEMA_FIELD_TYPES_ID = 'schema:field-types';
+export const SCHEMA_HIDE_MODES_ID = 'schema:hide-modes';
+export const SCHEMA_CARDINALITIES_ID = 'schema:cardinalities';
+export const SCHEMA_AUTO_INIT_ID = 'schema:auto-init';
+
+/** Deterministic id for a system option node, e.g. `schema:field-types/number`. */
+export function systemOptionNodeId(subtreeId: string, value: string): NodeId {
+  return `${subtreeId}/${value}`;
+}
+
+/**
+ * Deterministic id for a definition's `defConfig` row, e.g. `tag123::cfg:color`.
+ * Stable so reconcile is idempotent and `setConfigValue` can address the row
+ * without scanning children.
+ */
+export function defConfigNodeId(defId: NodeId, configKey: string): NodeId {
+  return `${defId}::cfg:${configKey}`;
+}
+
 export type NodeType =
   | 'fieldEntry'
   | 'reference'
@@ -25,6 +47,8 @@ export type NodeType =
   | 'embed'
   | 'tagDef'
   | 'fieldDef'
+  | 'defConfig'
+  | 'systemOption'
   | 'viewDef'
   | 'sortRule'
   | 'filterRule'
@@ -38,14 +62,9 @@ export type FieldType =
   | 'options_from_supertag'
   | 'date'
   | 'number'
-  | 'password'
-  | 'formula'
-  | 'user'
   | 'url'
   | 'email'
-  | 'checkbox'
-  | 'boolean'
-  | 'color';
+  | 'checkbox';
 
 export type FieldCardinality = 'single' | 'list';
 
@@ -62,12 +81,73 @@ export type HideFieldMode =
   | 'value_is_default'
   | 'always';
 
+// ─── Config-as-nodes (see docs/plans/config-as-nodes.md) ───
+// A definition's configuration is stored as `defConfig` child nodes whose
+// `configKey` identifies the knob; the value is held as the defConfig node's
+// own child node(s) — the same mechanism field values use (U1). Reads go
+// through typed accessors over a config index, never the flat fields below;
+// those flat config fields are removed once every reader is cut over
+// (compiler-driven, no derive-back bridge — pre-launch, no data to preserve).
+export type TagConfigKey =
+  | 'color'
+  | 'extends'
+  | 'childSupertag'
+  | 'showCheckbox'
+  | 'doneStateEnabled'
+  // Done-state mapping: option nodes whose selection mirrors the checked /
+  // unchecked state. Field grouping is derived from each option's owning field.
+  | 'doneMapChecked'
+  | 'doneMapUnchecked';
+
+export type FieldConfigKey =
+  | 'fieldType'
+  | 'cardinality'
+  | 'sourceSupertag'
+  | 'nullable'
+  | 'hideField'
+  | 'autoInitialize'
+  | 'autocollectOptions'
+  | 'minValue'
+  | 'maxValue';
+
+export type DefConfigKey = TagConfigKey | FieldConfigKey;
+
+// How a config value is stored as child node(s) of its `defConfig` node:
+//   ref      → one child `reference` (refRole 'config') targeting a tagDef
+//   refList  → zero or more child `reference`s (refRole 'config') to nodes
+//   enum     → one child `reference` (refRole 'enum') targeting a system option
+//   enumList → zero or more child `reference`s (refRole 'enum') to options
+//   number   → one child value node; content text = codec-encoded number
+//   bool     → one child value node; content text = codec-encoded boolean
+//   color    → one child value node; content text = codec-encoded #RRGGBB
+// Registry-level domain of a config knob. Drives which control renders and how
+// the value is stored as a child node: ref/enum → a child reference (with a
+// config refRole so it stays out of the backlink graph); number/color/bool →
+// a child value node (same mechanism field values already use). See
+// docs/plans/config-as-nodes.md.
+export type ConfigValueDomain = 'ref' | 'refList' | 'enum' | 'enumList' | 'number' | 'bool' | 'color';
+
+// The role a `reference` node plays. Reads/backlinks/search use this to decide
+// whether a reference is a real edge (link/fieldValue) or an internal pointer
+// (config/enum/system/searchResult) that must stay out of the backlink graph.
+// See docs/plans/config-as-nodes.md (transitional rule 4) — explicit role, not
+// parent inference. Absent role is treated as 'link' (legacy user reference).
+export type RefRole =
+  | 'link'
+  | 'fieldValue'
+  | 'config'
+  | 'enum'
+  | 'searchResult'
+  | 'autoInit';
+
 export interface TagConfigPatch {
   color?: string | null;
   extends?: NodeId | null;
   childSupertag?: NodeId | null;
   showCheckbox?: boolean;
   doneStateEnabled?: boolean;
+  doneMapChecked?: NodeId[];
+  doneMapUnchecked?: NodeId[];
 }
 
 export interface FieldConfigPatch {
@@ -253,9 +333,18 @@ export const QUERY_OPS = [
 
 export type QueryOp = typeof QUERY_OPS[number];
 
-export interface Node {
+// ─── Node: discriminated union over `type` (A-full, see config-as-nodes.md) ───
+//
+// Stage 8 (additive, structural no-op): every node type gets a variant that
+// extends `NodeBase` and is distinguished by its `type` discriminant. The
+// field set is still shared on `NodeBase` for now, so existing field access
+// and construction keep compiling unchanged — the only new thing is that
+// `node.type` narrows to a variant. Stage 9 narrows access sites by
+// `node.type`; Stage 10 moves each field onto the variant that owns it and the
+// god-record is gone. Until then the variants are intentionally identical
+// apart from their discriminant.
+export interface NodeBase {
   id: NodeId;
-  type?: NodeType;
   parentId?: NodeId;
   children: NodeId[];
   content: RichText;
@@ -265,62 +354,119 @@ export interface Node {
   updatedAt: number;
   completedAt?: number;
   locked: boolean;
-  color?: string;
   icon?: string;
   iconKind?: IconKind;
   bannerAssetId?: string;
   bannerPositionX?: number;
   bannerPositionY?: number;
   bannerAlt?: string;
-  showCheckbox: boolean;
   templateId?: NodeId;
-  childSupertag?: NodeId;
-  extends?: NodeId;
-  doneStateEnabled: boolean;
-  fieldDefId?: NodeId;
-  fieldType?: FieldType;
-  cardinality?: FieldCardinality;
-  nullable?: boolean;
-  hideField?: string;
-  autoInitialize?: string;
-  autocollectOptions: boolean;
   autoCollected: boolean;
-  minValue?: number;
-  maxValue?: number;
-  sourceSupertag?: NodeId;
+  aiSummary?: string;
+  trashedFromParentId?: NodeId;
+  trashedFromIndex?: number;
+}
+
+/** A plain content node — the only variant whose `type` is absent. */
+export interface ContentNode extends NodeBase { type?: undefined; }
+export interface FieldEntryNode extends NodeBase {
+  type: 'fieldEntry';
+  /** The fieldDef this entry holds a value for. */
+  fieldDefId?: NodeId;
+}
+export interface ReferenceNode extends NodeBase {
+  type: 'reference';
+  /** The node this reference points to. */
   targetId?: NodeId;
+  /** The role this reference plays (backlink allowlist). */
+  refRole?: RefRole;
+}
+export interface CodeBlockNode extends NodeBase {
+  type: 'codeBlock';
+  /** CodeMirror language bundle id; '' means plain text. */
+  codeLanguage?: string;
+}
+export interface ImageNode extends NodeBase {
+  type: 'image';
+  assetId?: string;
+  mediaUrl?: string;
+  mediaAlt?: string;
+  imageWidth?: number;
+  imageHeight?: number;
+}
+export interface EmbedNode extends NodeBase {
+  type: 'embed';
+  embedType?: string;
+  embedId?: string;
+  sourceUrl?: string;
+}
+export interface TagDefNode extends NodeBase { type: 'tagDef'; }
+export interface FieldDefNode extends NodeBase { type: 'fieldDef'; }
+export interface DefConfigNode extends NodeBase {
+  type: 'defConfig';
+  /** Which config knob this row represents. */
+  configKey?: DefConfigKey;
+}
+export interface SystemOptionNode extends NodeBase { type: 'systemOption'; }
+export interface ViewDefNode extends NodeBase {
+  type: 'viewDef';
   viewMode?: ViewMode;
   toolbarVisible?: boolean;
   groupField?: ViewFieldRef;
+}
+export interface SortRuleNode extends NodeBase {
+  type: 'sortRule';
   sortField?: ViewFieldRef;
   sortDirection?: SortDirection;
+}
+export interface FilterRuleNode extends NodeBase {
+  type: 'filterRule';
   filterField?: ViewFieldRef;
   filterOperator?: FilterOperator;
   filterValueLogic?: FilterValueLogic;
   filterValues?: string[];
+}
+export interface DisplayFieldNode extends NodeBase {
+  type: 'displayField';
   displayField?: ViewFieldRef;
   displayVisible?: boolean;
   displayWidth?: number;
   displayOrder?: number;
   displayLabel?: string;
   displayPlacement?: DisplayPlacement;
+}
+/**
+ * Query parameters carried by both a `search` node (its inline top-level rule)
+ * and each `queryCondition` node (a rule/group in the search's condition tree).
+ */
+export interface QueryParams {
   queryLogic?: QueryLogic;
   queryOp?: QueryOp;
   queryTagDefId?: NodeId;
   queryFieldDefId?: NodeId;
-  codeLanguage?: string;
-  assetId?: string;
-  mediaUrl?: string;
-  mediaAlt?: string;
-  imageWidth?: number;
-  imageHeight?: number;
-  embedType?: string;
-  embedId?: string;
-  sourceUrl?: string;
-  aiSummary?: string;
-  trashedFromParentId?: NodeId;
-  trashedFromIndex?: number;
+  /** A rule's single-node target (e.g. "field is [node]"); mirrors SearchQueryRule.targetId. */
+  queryTargetId?: NodeId;
 }
+export interface SearchNode extends NodeBase, QueryParams { type: 'search'; }
+export interface QueryConditionNode extends NodeBase, QueryParams { type: 'queryCondition'; }
+
+export type Node =
+  | ContentNode
+  | FieldEntryNode
+  | ReferenceNode
+  | CodeBlockNode
+  | ImageNode
+  | EmbedNode
+  | TagDefNode
+  | FieldDefNode
+  | DefConfigNode
+  | SystemOptionNode
+  | ViewDefNode
+  | SortRuleNode
+  | FilterRuleNode
+  | DisplayFieldNode
+  | SearchNode
+  | QueryConditionNode;
 
 export interface DocumentState {
   schemaVersion: number;
@@ -329,7 +475,23 @@ export interface DocumentState {
   nodes: Record<NodeId, Node>;
 }
 
-export type NodeProjection = Omit<Node, 'trashedFromParentId' | 'trashedFromIndex'>;
+/** Omit that distributes over a union, preserving each member as its own type. */
+type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never;
+
+/** The union of keys across every union member (not the common-key intersection `keyof` gives). */
+type KeysOfUnion<T> = T extends unknown ? keyof T : never;
+
+/**
+ * Every field key any node variant can carry. Persistence enumerates this to
+ * read/write the flat scalar map generically, independent of a node's variant.
+ */
+export type NodeFieldKey = KeysOfUnion<Node>;
+
+// The projection mirrors the `Node` union variant-by-variant (minus the trash
+// bookkeeping fields), so consumers narrow a projected node by `type` exactly
+// as they would a `Node`. While the variants still share their field set this
+// is structurally the old broad projection.
+export type NodeProjection = DistributiveOmit<Node, 'trashedFromParentId' | 'trashedFromIndex'>;
 
 export const LIN_DOCUMENT_EVENT_CHANNEL = 'lin-document-event';
 
@@ -584,6 +746,8 @@ export function createNodeRecord(
   parentId: NodeId | undefined,
   now: number,
 ): Node {
+  // `type` is the broad `NodeType | undefined` here; the variants are
+  // structurally identical at Stage 8, so this widening to the union is sound.
   return {
     id,
     type,
@@ -594,9 +758,6 @@ export function createNodeRecord(
     createdAt: now,
     updatedAt: now,
     locked: false,
-    showCheckbox: false,
-    doneStateEnabled: false,
-    autocollectOptions: false,
     autoCollected: false,
-  };
+  } as Node;
 }

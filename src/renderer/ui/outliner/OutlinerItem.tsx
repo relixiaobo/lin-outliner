@@ -10,6 +10,7 @@ import { flushSync } from 'react-dom';
 import { api } from '../../api/client';
 import type { AssetMetadata, CreateNodeTree, NodeId, NodeProjection, RichText, RichTextPatch } from '../../api/types';
 import { EMPTY_RICH_TEXT, plainText, replaceAllRichTextPatch } from '../../api/types';
+import { projectFieldTypeById, nodeShowsCheckbox } from '../../../core/configProjection';
 import type { CursorPlacement } from '../../state/document';
 import {
   flattenVisibleRows,
@@ -159,7 +160,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
     if (rowEditorFocused) return;
     draftContentRef.current = nextContent;
     setDraftContent(nextContent);
-  }, [displayed?.id, displayed?.content, displayed?.targetId, rowEditorFocused]);
+  }, [displayed?.id, displayed?.content, displayed?.type === 'reference' ? displayed.targetId : undefined, rowEditorFocused]);
 
   if (!node || !displayed) return null;
 
@@ -219,11 +220,9 @@ export function OutlinerItem(props: OutlinerItemProps) {
   const appliedTags = displayed.tags
     .map((tagId) => props.index.byId.get(tagId))
     .filter((tag): tag is NodeProjection => Boolean(tag));
-  const appliedTagColors = tagBulletColors(appliedTags);
-  const tagDefColor = leadingVariant === 'tag' ? resolveTagColor(displayed).text : undefined;
-  const showDoneCheckbox = displayed.showCheckbox
-    || displayed.doneStateEnabled
-    || Boolean(displayed.completedAt);
+  const appliedTagColors = tagBulletColors(appliedTags, props.index.byId);
+  const tagDefColor = leadingVariant === 'tag' ? resolveTagColor(displayed, props.index.byId).text : undefined;
+  const showDoneCheckbox = nodeShowsCheckbox(props.index.byId, displayed);
   const descriptionEditing = props.ui.editingDescriptionId === targetEditId;
   const referenceLikeRow = node.type === 'reference' || pendingReferenceConversion;
   const isCodeBlock = displayed.type === 'codeBlock' && !referenceLikeRow;
@@ -1071,7 +1070,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
           hasChildren={row.hasChildren}
           expanded={row.expanded}
           variant={leadingVariant}
-          fieldType={displayed.fieldType}
+          fieldType={projectFieldTypeById(props.index.byId, displayed.id)}
           bulletColors={appliedTagColors}
           tagDefColor={tagDefColor}
           onToggleExpand={row.toggleExpandOrSelect}

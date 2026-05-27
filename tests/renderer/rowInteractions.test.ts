@@ -60,20 +60,41 @@ describe('row interaction resolvers', () => {
     createdAt: 0,
     updatedAt: 0,
     locked: false,
-	    showCheckbox: false,
-	    doneStateEnabled: false,
-	    autocollectOptions: false,
 	    autoCollected: false,
 	    ...overrides,
 	  });
 
+  // config-as-nodes: a fieldDef resolves enum config (fieldType, cardinality,
+  // hideField, …) from a defConfig subtree, not a flat field. These entries
+  // provide that subtree for a mock fieldDef; add `${defId}::cfg:${configKey}`
+  // to the fieldDef's children so the projector finds it.
+  const ENUM_CONFIG_SUBTREE: Record<string, string> = {
+    fieldType: 'schema:field-types',
+    cardinality: 'schema:cardinalities',
+    hideField: 'schema:hide-modes',
+    autoInitialize: 'schema:auto-init',
+  };
+  const enumConfigEntries = (defId: string, configKey: string, value: string): Array<[string, any]> => {
+    const rowId = `${defId}::cfg:${configKey}`;
+    const refId = `${rowId}/value`;
+    const optionId = `${ENUM_CONFIG_SUBTREE[configKey]}/${value}`;
+    return [
+      [rowId, makeNode(rowId, configKey, { type: 'defConfig', parentId: defId, configKey, children: [refId] })],
+      [refId, makeNode(refId, '', { type: 'reference', parentId: rowId, refRole: 'enum', targetId: optionId })],
+      [optionId, makeNode(optionId, value, { type: 'systemOption' })],
+    ];
+  };
+  const fieldTypeConfigEntries = (defId: string, fieldType: string): Array<[string, any]> =>
+    enumConfigEntries(defId, 'fieldType', fieldType);
+
   test('builds view rows with hidden field reveal placeholders', () => {
     const parent = makeNode('parent', 'Parent', { children: ['field'] });
-    const fieldDef = makeNode('field-def', 'Status', { type: 'fieldDef', hideField: 'always' });
+    const fieldDef = makeNode('field-def', 'Status', { type: 'fieldDef', children: ['field-def::cfg:hideField'] });
     const field = makeNode('field', '', { type: 'fieldEntry', parentId: 'parent', fieldDefId: 'field-def' });
     const byId = new Map<string, any>([
       ['parent', parent],
       ['field-def', fieldDef],
+      ...enumConfigEntries('field-def', 'hideField', 'always'),
       ['field', field],
     ]);
 
@@ -90,7 +111,7 @@ describe('row interaction resolvers', () => {
 	      children: ['view', 'status', 'beta', 'alpha', 'hidden'],
 	    });
 	    const statusDef = makeNode('status-def', 'Status', { type: 'fieldDef' });
-	    const hiddenDef = makeNode('hidden-def', 'Archive', { type: 'fieldDef', hideField: 'always' });
+	    const hiddenDef = makeNode('hidden-def', 'Archive', { type: 'fieldDef', children: ['hidden-def::cfg:hideField'] });
 	    const byId = new Map<string, any>([
 	      ['parent', parent],
 	      ['view', makeNode('view', '', { type: 'viewDef', parentId: 'parent', children: ['filter', 'sort'] })],
@@ -110,6 +131,7 @@ describe('row interaction resolvers', () => {
 	      })],
 	      ['status-def', statusDef],
 	      ['hidden-def', hiddenDef],
+	      ...enumConfigEntries('hidden-def', 'hideField', 'always'),
 	      ['status', makeNode('status', '', { type: 'fieldEntry', parentId: 'parent', fieldDefId: 'status-def' })],
       ['hidden', makeNode('hidden', '', { type: 'fieldEntry', parentId: 'parent', fieldDefId: 'hidden-def' })],
       ['alpha', makeNode('alpha', 'Alpha', { parentId: 'parent' })],
@@ -249,7 +271,8 @@ describe('row interaction resolvers', () => {
 	        filterValueLogic: 'any',
 	        filterValues: ['2026-01-01'],
 	      })],
-	      ['date-def', makeNode('date-def', 'Due', { type: 'fieldDef', fieldType: 'date' })],
+	      ['date-def', makeNode('date-def', 'Due', { type: 'fieldDef', children: ['date-def::cfg:fieldType'] })],
+	      ...fieldTypeConfigEntries('date-def', 'date'),
 	      ['early', makeNode('early', 'Early', { parentId: 'parent', children: ['early-date'] })],
 	      ['early-date', makeNode('early-date', '2025-06-01', { type: 'fieldEntry', parentId: 'early', fieldDefId: 'date-def' })],
 	      ['late', makeNode('late', 'Late', { parentId: 'parent', children: ['late-date'] })],
@@ -267,7 +290,8 @@ describe('row interaction resolvers', () => {
 	    const byId = new Map<string, any>([
 	      ['parent', parent],
 	      ['view', makeNode('view', '', { type: 'viewDef', parentId: 'parent', children: [], groupField: 'date-def' })],
-	      ['date-def', makeNode('date-def', 'Due', { type: 'fieldDef', fieldType: 'date' })],
+	      ['date-def', makeNode('date-def', 'Due', { type: 'fieldDef', children: ['date-def::cfg:fieldType'] })],
+	      ...fieldTypeConfigEntries('date-def', 'date'),
 	      ['a', makeNode('a', 'A', { parentId: 'parent', children: ['a-date'] })],
 	      ['a-date', makeNode('a-date', '2026-06-01', { type: 'fieldEntry', parentId: 'a', fieldDefId: 'date-def' })],
 	      ['b', makeNode('b', 'B', { parentId: 'parent', children: ['b-date'] })],
@@ -757,9 +781,6 @@ describe('row interaction resolvers', () => {
       createdAt: 0,
       updatedAt: 0,
       locked: false,
-      showCheckbox: false,
-      doneStateEnabled: false,
-      autocollectOptions: false,
       autoCollected: false,
       toolbarVisible: false,
       filterValues: [],
@@ -990,16 +1011,13 @@ describe('row interaction resolvers', () => {
     const field = {
       id: 'field_status',
       type: 'fieldDef',
-      children: ['opt_done'],
+      children: ['field_status::cfg:fieldType', 'opt_done'],
       content: { text: 'Status', marks: [], inlineRefs: [] },
       tags: [],
       createdAt: 0,
       updatedAt: 0,
       locked: false,
-      showCheckbox: false,
-      doneStateEnabled: false,
       fieldType: 'options',
-      autocollectOptions: true,
       autoCollected: false,
       toolbarVisible: false,
       filterValues: [],
@@ -1013,9 +1031,6 @@ describe('row interaction resolvers', () => {
       createdAt: 0,
       updatedAt: 0,
       locked: false,
-      showCheckbox: false,
-      doneStateEnabled: false,
-      autocollectOptions: false,
       autoCollected: true,
       toolbarVisible: false,
       filterValues: [],
@@ -1028,6 +1043,7 @@ describe('row interaction resolvers', () => {
     } as const;
     const byId = new Map<string, any>([
       [field.id, field],
+      ...fieldTypeConfigEntries('field_status', 'options'),
       [option.id, option],
       [value.id, value],
     ]);
@@ -1040,16 +1056,13 @@ describe('row interaction resolvers', () => {
     const field = {
       id: 'field_status',
       type: 'fieldDef',
-      children: ['collected_ref'],
+      children: ['field_status::cfg:fieldType', 'collected_ref'],
       content: { text: 'Status', marks: [], inlineRefs: [] },
       tags: [],
       createdAt: 0,
       updatedAt: 0,
       locked: false,
-      showCheckbox: false,
-      doneStateEnabled: false,
       fieldType: 'options',
-      autocollectOptions: true,
       autoCollected: false,
       toolbarVisible: false,
       filterValues: [],
@@ -1063,9 +1076,6 @@ describe('row interaction resolvers', () => {
       createdAt: 0,
       updatedAt: 0,
       locked: false,
-      showCheckbox: false,
-      doneStateEnabled: false,
-      autocollectOptions: false,
       autoCollected: false,
       toolbarVisible: false,
       filterValues: [],
@@ -1086,6 +1096,7 @@ describe('row interaction resolvers', () => {
     } as const;
     const byId = new Map<string, any>([
       [field.id, field],
+      ...fieldTypeConfigEntries('field_status', 'options'),
       [localValue.id, localValue],
       [collectedRef.id, collectedRef],
       [valueRef.id, valueRef],
@@ -1101,16 +1112,13 @@ describe('row interaction resolvers', () => {
     const field = {
       id: 'field_status',
       type: 'fieldDef',
-      children: ['opt_beta', 'opt_alpha'],
+      children: ['field_status::cfg:fieldType', 'opt_beta', 'opt_alpha'],
       content: { text: 'Status', marks: [], inlineRefs: [] },
       tags: [],
       createdAt: 0,
       updatedAt: 0,
       locked: false,
-      showCheckbox: false,
-      doneStateEnabled: false,
       fieldType: 'options',
-      autocollectOptions: true,
       autoCollected: false,
       toolbarVisible: false,
       filterValues: [],
@@ -1124,9 +1132,6 @@ describe('row interaction resolvers', () => {
       createdAt: 0,
       updatedAt: 0,
       locked: false,
-      showCheckbox: false,
-      doneStateEnabled: false,
-      autocollectOptions: false,
       autoCollected: true,
       toolbarVisible: false,
       filterValues: [],
@@ -1138,6 +1143,7 @@ describe('row interaction resolvers', () => {
     } as const;
     const byId = new Map<string, any>([
       [field.id, field],
+      ...fieldTypeConfigEntries('field_status', 'options'),
       [beta.id, beta],
       [alpha.id, alpha],
     ]);
@@ -1149,19 +1155,45 @@ describe('row interaction resolvers', () => {
     const field = {
       id: 'field_city',
       type: 'fieldDef',
-      children: ['ignored_child_option'],
+      // config-as-nodes: fieldType and sourceSupertag live in defConfig rows, not flat fields.
+      children: ['field_city::cfg:fieldType', 'cfg_source', 'ignored_child_option'],
       content: { text: 'City', marks: [], inlineRefs: [] },
       tags: [],
       createdAt: 0,
       updatedAt: 0,
       locked: false,
-      showCheckbox: false,
-      doneStateEnabled: false,
       fieldType: 'options_from_supertag',
-      sourceSupertag: 'tag_city',
-      autocollectOptions: false,
       autoCollected: false,
       toolbarVisible: false,
+      filterValues: [],
+    } as const;
+    const sourceConfigRow = {
+      id: 'cfg_source',
+      type: 'defConfig',
+      configKey: 'sourceSupertag',
+      parentId: 'field_city',
+      children: ['cfg_source_value'],
+      content: { text: 'Supertag', marks: [], inlineRefs: [] },
+      tags: [],
+      createdAt: 0,
+      updatedAt: 0,
+      locked: true,
+      autoCollected: false,
+      filterValues: [],
+    } as const;
+    const sourceConfigValue = {
+      id: 'cfg_source_value',
+      type: 'reference',
+      refRole: 'config',
+      targetId: 'tag_city',
+      parentId: 'cfg_source',
+      children: [],
+      content: { text: '', marks: [], inlineRefs: [] },
+      tags: [],
+      createdAt: 0,
+      updatedAt: 0,
+      locked: false,
+      autoCollected: false,
       filterValues: [],
     } as const;
     const taggedNode = {
@@ -1172,9 +1204,6 @@ describe('row interaction resolvers', () => {
       createdAt: 0,
       updatedAt: 0,
       locked: false,
-      showCheckbox: false,
-      doneStateEnabled: false,
-      autocollectOptions: false,
       autoCollected: false,
       toolbarVisible: false,
       filterValues: [],
@@ -1194,6 +1223,9 @@ describe('row interaction resolvers', () => {
     } as const;
     const byId = new Map<string, any>([
       [field.id, field],
+      ...fieldTypeConfigEntries('field_city', 'options_from_supertag'),
+      [sourceConfigRow.id, sourceConfigRow],
+      [sourceConfigValue.id, sourceConfigValue],
       [taggedNode.id, taggedNode],
       [otherTagNode.id, otherTagNode],
       [childOption.id, childOption],
@@ -1216,9 +1248,6 @@ describe('row interaction resolvers', () => {
       createdAt: 0,
       updatedAt: 0,
       locked: false,
-      showCheckbox: false,
-      doneStateEnabled: false,
-      autocollectOptions: false,
       autoCollected: false,
       toolbarVisible: false,
       filterValues: [],
@@ -1250,9 +1279,6 @@ describe('row interaction resolvers', () => {
       createdAt: 0,
       updatedAt: 0,
       locked: false,
-      showCheckbox: false,
-      doneStateEnabled: false,
-      autocollectOptions: false,
       autoCollected: false,
       toolbarVisible: false,
       filterValues: [],

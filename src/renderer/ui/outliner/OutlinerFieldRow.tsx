@@ -10,6 +10,7 @@ import {
 import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
 import { plainText } from '../../api/types';
+import { projectFieldConfig } from '../../../core/configProjection';
 import type { DocumentIndex, UiState } from '../../state/document';
 import {
   clearFocusState,
@@ -35,6 +36,8 @@ import { outlinerChildren } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
 import { fieldTypeLabel } from './fieldTypePresentation';
 import { FieldEntryGrid } from './FieldEntryGrid';
+import { ICON_SIZE, WarningIcon } from '../icons';
+import { validateFieldValue } from '../fields/fieldValueValidation';
 import { FieldValueOutliner } from './FieldValueOutliner';
 import { NodeContextMenu } from './NodeContextMenu';
 import { NodeDescription } from './NodeDescription';
@@ -66,7 +69,9 @@ function resolveFieldOwnerColor(
   field: NodeProjection | undefined,
   byId: Map<NodeId, NodeProjection>,
 ): string | undefined {
-  const lookupIds = [entry.templateId, field?.id ?? entry.fieldDefId, field?.sourceSupertag]
+  const fieldSource = field ? projectFieldConfig(byId, field).sourceSupertag : undefined;
+  const entryFieldDefId = entry.type === 'fieldEntry' ? entry.fieldDefId : undefined;
+  const lookupIds = [entry.templateId, field?.id ?? entryFieldDefId, fieldSource]
     .filter((id): id is NodeId => Boolean(id));
 
   for (const lookupId of lookupIds) {
@@ -76,10 +81,10 @@ function resolveFieldOwnerColor(
       : lookup?.type === 'fieldEntry'
         ? lookup.parentId
         : lookup?.type === 'fieldDef'
-          ? lookup.sourceSupertag ?? lookup.parentId
+          ? projectFieldConfig(byId, lookup).sourceSupertag ?? lookup.parentId
           : undefined;
     const owner = ownerId ? byId.get(ownerId) : undefined;
-    if (owner?.type === 'tagDef') return resolveTagColor(owner).text;
+    if (owner?.type === 'tagDef') return resolveTagColor(owner, byId).text;
   }
 
   return undefined;
@@ -87,7 +92,8 @@ function resolveFieldOwnerColor(
 
 export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   const entry = props.index.byId.get(props.entryId);
-  const field = entry?.fieldDefId ? props.index.byId.get(entry.fieldDefId) : undefined;
+  const entryFieldDefId = entry?.type === 'fieldEntry' ? entry.fieldDefId : undefined;
+  const field = entryFieldDefId ? props.index.byId.get(entryFieldDefId) : undefined;
   const rowChildIds = outlinerChildren(entry, props.index.byId);
   const primaryValueId = rowChildIds[0];
   const row = useOutlinerRowInteraction({
@@ -153,8 +159,16 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
 
   if (!entry) return null;
 
-  const fieldType = field?.fieldType ?? entry.fieldType ?? 'plain';
+  const fieldConfig = field ? projectFieldConfig(props.index.byId, field) : undefined;
+  const fieldType = fieldConfig?.fieldType ?? 'plain';
   const drillDownId = field?.id ?? props.entryId;
+  // #16: non-blocking min/max (and not-a-number) warning on the first value.
+  const firstValueId = entry.children[0];
+  const firstValueText = firstValueId ? props.index.byId.get(firstValueId)?.content.text ?? '' : '';
+  const valueWarning = validateFieldValue(fieldType, firstValueText, {
+    min: fieldConfig?.minValue,
+    max: fieldConfig?.maxValue,
+  });
   const fieldOwnerColor = resolveFieldOwnerColor(entry, field, props.index.byId);
 
   const commitName = async (nextName = nameDraft) => {
@@ -359,21 +373,28 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     ? 'Select option'
     : 'Empty';
   const valueControl = (
-    <FieldValueOutliner
-      panelId={props.panelId}
-      entryId={props.entryId}
-      onRoot={props.onRoot}
-      index={props.index}
-      ui={props.ui}
-      setUi={props.setUi}
-      run={props.run}
-      trigger={props.trigger}
-      setTrigger={props.setTrigger}
-      dragId={props.dragId}
-      setDragId={props.setDragId}
-      optionField={field}
-      placeholder={valuePlaceholder}
-    />
+    <div className="field-value-cell">
+      <FieldValueOutliner
+        panelId={props.panelId}
+        entryId={props.entryId}
+        onRoot={props.onRoot}
+        index={props.index}
+        ui={props.ui}
+        setUi={props.setUi}
+        run={props.run}
+        trigger={props.trigger}
+        setTrigger={props.setTrigger}
+        dragId={props.dragId}
+        setDragId={props.setDragId}
+        optionField={field}
+        placeholder={valuePlaceholder}
+      />
+      {valueWarning && (
+        <span className="field-value-warning" title={valueWarning} aria-label={valueWarning}>
+          <WarningIcon size={ICON_SIZE.menu} />
+        </span>
+      )}
+    </div>
   );
 
   const description = (

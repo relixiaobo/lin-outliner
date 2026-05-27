@@ -17,7 +17,7 @@ import { ImageRow } from './ImageRow';
  * sizing). `null` means the node has no usable source yet.
  */
 export function mediaSource(
-  node: Pick<NodeProjection, 'assetId' | 'mediaUrl'>,
+  node: { assetId?: string; mediaUrl?: string },
 ): { src: string; isRemote: boolean } | null {
   if (node.assetId) return { src: assetUrl(node.assetId), isRemote: false };
   if (node.mediaUrl) return { src: node.mediaUrl, isRemote: true };
@@ -34,7 +34,7 @@ export function mediaSource(
  * Returns false for types it cannot render yet (e.g. an `image` without an
  * `assetId`), so the caller can fall back to the normal text editor.
  */
-export function isBlockNodeType(node: Pick<NodeProjection, 'type' | 'assetId' | 'mediaUrl'>): boolean {
+export function isBlockNodeType(node: { type?: NodeProjection['type']; assetId?: string; mediaUrl?: string }): boolean {
   switch (node.type) {
     case 'image':
       return Boolean(node.assetId || node.mediaUrl);

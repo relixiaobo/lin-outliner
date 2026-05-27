@@ -18,6 +18,17 @@ import {
 import { buildDocumentProjection } from './projection';
 import { runSearchExpr, runSearchNode, searchNodeHasRules } from './searchEngine';
 import {
+  CONFIG_SCHEMA,
+  ENUM_DOMAINS,
+  boolCodec,
+  canonicalizeScalar,
+  configKeysForDefType,
+  configValueKind,
+  isInternalConfigNode,
+  refRoleCountsAsBacklink,
+  type SetConfigValueInput,
+} from './configSchema';
+import {
   AREAS_ID,
   DAILY_NOTES_ID,
   LIBRARY_ID,
@@ -32,8 +43,12 @@ import {
   TAG_YEAR_ID,
   TRASH_ID,
   WORKSPACE_ID,
+  defConfigNodeId,
   plainText,
+  systemOptionNodeId,
   type Backlink,
+  type DefConfigKey,
+  type RefRole,
   type CommandOutcome,
   type CreateNodeTree,
   type DocumentProjection,
@@ -48,6 +63,18 @@ import {
   type FocusHint,
   type IconKind,
   type Node,
+  type CodeBlockNode,
+  type DefConfigNode,
+  type DisplayFieldNode,
+  type EmbedNode,
+  type FieldEntryNode,
+  type FilterRuleNode,
+  type ImageNode,
+  type QueryConditionNode,
+  type ReferenceNode,
+  type SearchNode,
+  type SortRuleNode,
+  type ViewDefNode,
   type NodeId,
   type NodeType,
   type QueryLogic,
@@ -274,7 +301,7 @@ export class Core {
       const state = this.snapshot();
       ensureParentMutable(state, parentId);
       const id = freshId('image');
-      this.loro.createNodeWithId(id, parentId, index, 'image', (node) => {
+      this.loro.createNodeWithId<ImageNode>(id, parentId, index, 'image', (node) => {
         node.content = plainText('');
         if (source.assetId) node.assetId = source.assetId;
         else node.mediaUrl = source.mediaUrl;
@@ -305,18 +332,17 @@ export class Core {
       if (node.type !== undefined && node.type !== 'image') {
         throw CoreError.invalidOperation('only plain content nodes can become images');
       }
-      node.type = 'image';
-      if (source.assetId) {
-        node.assetId = source.assetId;
-        delete node.mediaUrl;
-      } else {
-        node.mediaUrl = source.mediaUrl;
-        delete node.assetId;
-      }
-      if (options.width != null) node.imageWidth = options.width;
-      else delete node.imageWidth;
-      if (options.height != null) node.imageHeight = options.height;
-      else delete node.imageHeight;
+      // Rebuild as an image node so the variant fields type-check; the source is
+      // exactly one of assetId/mediaUrl (the other stays cleared).
+      const image: ImageNode = {
+        ...node,
+        type: 'image',
+        assetId: source.assetId ? source.assetId : undefined,
+        mediaUrl: source.assetId ? undefined : source.mediaUrl,
+        imageWidth: options.width != null ? options.width : undefined,
+        imageHeight: options.height != null ? options.height : undefined,
+      };
+      return image;
     });
   }
 
@@ -446,7 +472,13 @@ export class Core {
 
   setNodeCheckboxVisible(nodeId: string, visible: boolean): CommandOutcome {
     return this.patchNode(nodeId, (node) => {
-      node.showCheckbox = visible;
+      // Manual checkbox: the `completedAt` sentinel carries presence. Adding a
+      // checkbox sets the undone sentinel (0); removing it clears the timestamp.
+      if (visible) {
+        if (node.completedAt === undefined) node.completedAt = 0;
+      } else {
+        delete node.completedAt;
+      }
     });
   }
 
@@ -455,8 +487,12 @@ export class Core {
       if (node.type !== undefined && node.type !== 'codeBlock') {
         throw CoreError.invalidOperation('only plain content nodes can become code blocks');
       }
-      node.type = 'codeBlock';
-      setOptional(node, 'codeLanguage', normalizeCodeLanguage(codeLanguage));
+      const block: CodeBlockNode = {
+        ...node,
+        type: 'codeBlock',
+        codeLanguage: normalizeCodeLanguage(codeLanguage) || undefined,
+      };
+      return block;
     });
   }
 
@@ -490,7 +526,7 @@ export class Core {
   addSortRule(nodeId: string, field: ViewFieldRef, direction: SortDirection = 'asc'): CommandOutcome {
     return this.mutate(() => {
       const viewDefId = this.ensureViewDefDirect(nodeId);
-      this.loro.createNodeWithId(freshId('sort'), viewDefId, undefined, 'sortRule', (node) => {
+      this.loro.createNodeWithId<SortRuleNode>(freshId('sort'), viewDefId, undefined, 'sortRule', (node) => {
         node.sortField = normalizeRequiredText(field, 'sort field');
         node.sortDirection = direction === 'desc' ? 'desc' : 'asc';
       });
@@ -539,7 +575,7 @@ export class Core {
   ): CommandOutcome {
     return this.mutate(() => {
       const viewDefId = this.ensureViewDefDirect(nodeId);
-      this.loro.createNodeWithId(freshId('filter'), viewDefId, undefined, 'filterRule', (node) => {
+      this.loro.createNodeWithId<FilterRuleNode>(freshId('filter'), viewDefId, undefined, 'filterRule', (node) => {
         node.filterField = normalizeRequiredText(field, 'filter field');
         node.filterOperator = normalizeFilterOperator(operator);
         node.filterValueLogic = valueLogic === 'all' ? 'all' : 'any';
@@ -603,7 +639,7 @@ export class Core {
   addDisplayField(nodeId: string, field: ViewFieldRef): CommandOutcome {
     return this.mutate(() => {
       const viewDefId = this.ensureViewDefDirect(nodeId);
-      this.loro.createNodeWithId(freshId('display'), viewDefId, undefined, 'displayField', (node) => {
+      this.loro.createNodeWithId<DisplayFieldNode>(freshId('display'), viewDefId, undefined, 'displayField', (node) => {
         node.displayField = normalizeRequiredText(field, 'display field');
         node.displayVisible = true;
       });
@@ -773,12 +809,7 @@ export class Core {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureNodeEditable(state, nodeId);
-      const node = clone(requiredNode(state, nodeId));
-      node.showCheckbox = true;
-      if (node.completedAt) delete node.completedAt;
-      else node.completedAt = nowMs();
-      node.updatedAt = nowMs();
-      this.loro.writeNode(node);
+      this.writeDoneStateDirect(state, nodeId, toggleNodeDone);
       return focus(nodeId);
     });
   }
@@ -787,10 +818,7 @@ export class Core {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureNodeEditable(state, nodeId);
-      const node = clone(requiredNode(state, nodeId));
-      cycleNodeDoneState(node);
-      node.updatedAt = nowMs();
-      this.loro.writeNode(node);
+      this.writeDoneStateDirect(state, nodeId, cycleNodeDoneState);
       return focus(nodeId);
     });
   }
@@ -844,12 +872,7 @@ export class Core {
         const state = this.snapshot();
         if (!state.nodes[nodeId]) continue;
         ensureNodeEditable(state, nodeId);
-        const node = clone(requiredNode(state, nodeId));
-        node.showCheckbox = true;
-        if (node.completedAt) delete node.completedAt;
-        else node.completedAt = nowMs();
-        node.updatedAt = nowMs();
-        this.loro.writeNode(node);
+        this.writeDoneStateDirect(state, nodeId, toggleNodeDone);
       }
       return undefined;
     });
@@ -861,13 +884,49 @@ export class Core {
         const state = this.snapshot();
         if (!state.nodes[nodeId]) continue;
         ensureNodeEditable(state, nodeId);
-        const node = clone(requiredNode(state, nodeId));
-        cycleNodeDoneState(node);
-        node.updatedAt = nowMs();
-        this.loro.writeNode(node);
+        this.writeDoneStateDirect(state, nodeId, cycleNodeDoneState);
       }
       return undefined;
     });
+  }
+
+  /**
+   * Mutate a node's done state and, when the done/undone state actually flips,
+   * push the change into mapped option fields (forward done-state mapping).
+   */
+  private writeDoneStateDirect(state: DocumentState, nodeId: string, mutate: (node: Node, tagDriven: boolean) => void) {
+    const node = clone(requiredNode(state, nodeId));
+    const wasDone = nodeIsDone(node);
+    mutate(node, nodeTagDrivenCheckbox(state, node));
+    node.updatedAt = nowMs();
+    this.loro.writeNode(node);
+    const nowDone = nodeIsDone(node);
+    if (nowDone !== wasDone) this.applyForwardDoneMappingDirect(nodeId, nowDone);
+  }
+
+  /** Forward mapping: set each mapped field to its first checked/unchecked option. */
+  private applyForwardDoneMappingDirect(nodeId: string, isDone: boolean) {
+    for (const mapping of getDoneStateMappings(this.snapshot(), requiredNode(this.snapshot(), nodeId))) {
+      const optionId = isDone ? mapping.checkedOptionIds[0] : mapping.uncheckedOptionIds[0];
+      if (!optionId) continue;
+      const entryId = this.ensureFieldEntryWithTemplateDirect(nodeId, mapping.fieldDefId, undefined, false);
+      this.selectFieldOptionDirect(entryId, mapping.fieldDefId, optionId);
+    }
+  }
+
+  /** Reverse mapping: selecting a mapped option flips the owner node's done state. */
+  private applyReverseDoneMappingDirect(ownerId: string | undefined, fieldDefId: string, optionNodeId: string) {
+    if (!ownerId) return;
+    const state = this.snapshot();
+    const owner = state.nodes[ownerId];
+    if (!owner) return;
+    const newDone = resolveReverseDoneMapping(state, owner, fieldDefId, optionNodeId);
+    if (newDone === null) return;
+    const node = clone(owner);
+    if (nodeIsDone(node) === newDone) return;
+    applyNodeDoneState(node, newDone, nodeTagDrivenCheckbox(state, node));
+    node.updatedAt = nowMs();
+    this.loro.writeNode(node);
   }
 
   batchDuplicateNodes(nodeIds: string[]): CommandOutcome {
@@ -964,13 +1023,30 @@ export class Core {
       }
       if (patch.childSupertag) ensureTagDefinition(state, patch.childSupertag);
       const node = clone(requiredNode(state, tagId));
-      if ('color' in patch) setOptional(node, 'color', normalizeOptionalText(patch.color));
-      if ('extends' in patch) setOptional(node, 'extends', normalizeOptionalText(patch.extends));
-      if ('childSupertag' in patch) setOptional(node, 'childSupertag', normalizeOptionalText(patch.childSupertag));
-      if (patch.showCheckbox !== undefined) node.showCheckbox = patch.showCheckbox;
-      if (patch.doneStateEnabled !== undefined) node.doneStateEnabled = patch.doneStateEnabled;
       node.updatedAt = nowMs();
       this.loro.writeNode(node);
+      // config-as-nodes: every tag knob is stored in the defConfig subtree.
+      if (patch.showCheckbox !== undefined) {
+        this.setConfigValueDirect(tagId, { kind: 'scalar', configKey: 'showCheckbox', text: patch.showCheckbox ? 'true' : 'false' });
+      }
+      if (patch.doneStateEnabled !== undefined) {
+        this.setConfigValueDirect(tagId, { kind: 'scalar', configKey: 'doneStateEnabled', text: patch.doneStateEnabled ? 'true' : 'false' });
+      }
+      if ('color' in patch) {
+        this.setConfigValueDirect(tagId, { kind: 'scalar', configKey: 'color', text: normalizeOptionalText(patch.color) ?? null });
+      }
+      if ('extends' in patch) {
+        this.setConfigValueDirect(tagId, { kind: 'ref', configKey: 'extends', targetId: normalizeOptionalText(patch.extends) ?? null });
+      }
+      if ('childSupertag' in patch) {
+        this.setConfigValueDirect(tagId, { kind: 'ref', configKey: 'childSupertag', targetId: normalizeOptionalText(patch.childSupertag) ?? null });
+      }
+      if (patch.doneMapChecked !== undefined) {
+        this.setConfigValueDirect(tagId, { kind: 'refList', configKey: 'doneMapChecked', targetIds: patch.doneMapChecked });
+      }
+      if (patch.doneMapUnchecked !== undefined) {
+        this.setConfigValueDirect(tagId, { kind: 'refList', configKey: 'doneMapUnchecked', targetIds: patch.doneMapUnchecked });
+      }
       return focus(tagId);
     });
   }
@@ -981,9 +1057,9 @@ export class Core {
       ensureNodeEditable(state, fieldId);
       ensureFieldDefinition(state, fieldId);
       const current = clone(requiredNode(state, fieldId));
-      const nextFieldType = patch.fieldType ?? current.fieldType ?? 'plain';
-      const nextMin = 'minValue' in patch ? patch.minValue ?? undefined : current.minValue;
-      const nextMax = 'maxValue' in patch ? patch.maxValue ?? undefined : current.maxValue;
+      const nextFieldType = patch.fieldType ?? fieldTypeOf(state, fieldId);
+      const nextMin = 'minValue' in patch ? patch.minValue ?? undefined : fieldNumberConfigOf(state, fieldId, 'minValue');
+      const nextMax = 'maxValue' in patch ? patch.maxValue ?? undefined : fieldNumberConfigOf(state, fieldId, 'maxValue');
       if (patch.sourceSupertag) {
         ensureTagDefinition(state, patch.sourceSupertag);
         if (nextFieldType !== 'options_from_supertag') {
@@ -1001,26 +1077,67 @@ export class Core {
       if (nextMin !== undefined && nextMax !== undefined && nextMin > nextMax) {
         throw CoreError.invalidOperation('minimum value cannot be greater than maximum value');
       }
-      if (patch.fieldType !== undefined) {
-        current.fieldType = patch.fieldType;
-        if (patch.fieldType !== 'options_from_supertag') delete current.sourceSupertag;
-        if (patch.fieldType !== 'options') current.autocollectOptions = false;
-        if (patch.fieldType !== 'number') {
-          delete current.minValue;
-          delete current.maxValue;
-        }
-      }
-      if ('cardinality' in patch) setOptional(current, 'cardinality', patch.cardinality ?? undefined);
-      if ('sourceSupertag' in patch) setOptional(current, 'sourceSupertag', normalizeOptionalText(patch.sourceSupertag));
-      if ('nullable' in patch) setOptional(current, 'nullable', patch.nullable ?? undefined);
-      if ('hideField' in patch) setOptional(current, 'hideField', normalizeOptionalText(patch.hideField));
-      if ('autoInitialize' in patch) setOptional(current, 'autoInitialize', normalizeOptionalText(patch.autoInitialize));
-      if (patch.autocollectOptions !== undefined) current.autocollectOptions = patch.autocollectOptions;
-      if ('minValue' in patch) setOptional(current, 'minValue', patch.minValue ?? undefined);
-      if ('maxValue' in patch) setOptional(current, 'maxValue', patch.maxValue ?? undefined);
       current.updatedAt = nowMs();
       this.loro.writeNode(current);
+      // config-as-nodes: fieldType lives in the defConfig subtree.
+      if (patch.fieldType !== undefined) {
+        this.setConfigValueDirect(fieldId, { kind: 'enum', configKey: 'fieldType', value: patch.fieldType });
+      }
+      if ('cardinality' in patch) {
+        this.setConfigValueDirect(fieldId, { kind: 'enum', configKey: 'cardinality', value: patch.cardinality ?? null });
+      }
+      if ('nullable' in patch) {
+        this.setConfigValueDirect(fieldId, { kind: 'scalar', configKey: 'nullable', text: patch.nullable == null ? null : (patch.nullable ? 'true' : 'false') });
+      }
+      if ('hideField' in patch) {
+        this.setConfigValueDirect(fieldId, { kind: 'enum', configKey: 'hideField', value: normalizeOptionalText(patch.hideField) ?? null });
+      }
+      if ('autoInitialize' in patch) {
+        this.setConfigValueDirect(fieldId, { kind: 'enumList', configKey: 'autoInitialize', values: parseAutoInitStrategies(normalizeOptionalText(patch.autoInitialize)) });
+      }
+      // minValue/maxValue: explicit set, or cleared when the type is no longer numeric.
+      const clearRange = patch.fieldType !== undefined && patch.fieldType !== 'number';
+      if ('minValue' in patch || clearRange) {
+        const min = clearRange && !('minValue' in patch) ? null : patch.minValue;
+        this.setConfigValueDirect(fieldId, { kind: 'scalar', configKey: 'minValue', text: min == null ? null : String(min) });
+      }
+      if ('maxValue' in patch || clearRange) {
+        const max = clearRange && !('maxValue' in patch) ? null : patch.maxValue;
+        this.setConfigValueDirect(fieldId, { kind: 'scalar', configKey: 'maxValue', text: max == null ? null : String(max) });
+      }
+      // autocollectOptions: explicit set, or cleared when the type no longer supports it.
+      if (patch.autocollectOptions !== undefined) {
+        this.setConfigValueDirect(fieldId, { kind: 'scalar', configKey: 'autocollectOptions', text: patch.autocollectOptions ? 'true' : 'false' });
+      } else if (patch.fieldType !== undefined && patch.fieldType !== 'options') {
+        this.setConfigValueDirect(fieldId, { kind: 'scalar', configKey: 'autocollectOptions', text: null });
+      }
+      // config-as-nodes: sourceSupertag lives in the defConfig subtree. Set it,
+      // or clear it when the field type no longer supports it.
+      if ('sourceSupertag' in patch) {
+        this.setConfigValueDirect(fieldId, { kind: 'ref', configKey: 'sourceSupertag', targetId: normalizeOptionalText(patch.sourceSupertag) ?? null });
+      } else if (patch.fieldType !== undefined && patch.fieldType !== 'options_from_supertag') {
+        this.setConfigValueDirect(fieldId, { kind: 'ref', configKey: 'sourceSupertag', targetId: null });
+      }
       return focus(fieldId);
+    });
+  }
+
+  // config-as-nodes Stage 4: ensure a definition carries the full set of
+  // `defConfig` rows for its kind (tag/field), pinned as a leading internal
+  // segment. Idempotent; values are untouched. Set values via setConfigValue.
+  reconcileConfigSubtree(defId: string): CommandOutcome {
+    return this.mutate(() => {
+      this.reconcileConfigSubtreeDirect(defId);
+      return focus(defId);
+    });
+  }
+
+  // config-as-nodes Stage 4: the registry-governed value-write chokepoint. The
+  // defConfig row's structure is locked; only its value child(ren) change here.
+  setConfigValue(defId: string, input: SetConfigValueInput): CommandOutcome {
+    return this.mutate(() => {
+      this.setConfigValueDirect(defId, input);
+      return focus(defId);
     });
   }
 
@@ -1049,14 +1166,17 @@ export class Core {
       if (!parentId) throw CoreError.noParent();
       ensureParentMutable(state, parentId);
       const fieldDefId = this.insertFieldDefNodeDirect(SCHEMA_ID, normalized, fieldType);
-      const node = clone(requiredNode(state, afterNodeId));
-      node.type = 'fieldEntry';
-      node.fieldDefId = fieldDefId;
-      node.content = plainText('');
-      node.tags = [];
-      node.showCheckbox = false;
-      node.doneStateEnabled = false;
-      delete node.completedAt;
+      const existing = clone(requiredNode(state, afterNodeId));
+      // Convert the row into a field entry: rebuild as the variant rather than
+      // mutating the discriminant in place.
+      const node: FieldEntryNode = {
+        ...existing,
+        type: 'fieldEntry',
+        fieldDefId,
+        content: plainText(''),
+        tags: [],
+        completedAt: undefined,
+      };
       this.loro.writeNode(node);
       return focus(afterNodeId, { parentId, surface: 'field-name', placement: { kind: 'all' } });
     });
@@ -1099,7 +1219,7 @@ export class Core {
         return focus(fieldEntryId);
       }
 
-      if (fieldDef.cardinality !== 'list') {
+      if (fieldCardinalityOf(state, fieldDefId) !== 'list') {
         this.clearFieldEntryValuesDirect(fieldEntryId, fieldDefId);
       }
 
@@ -1107,7 +1227,7 @@ export class Core {
       this.loro.createNodeWithId(valueId, fieldEntryId, undefined, undefined, (node) => {
         node.content = plainText(normalized);
       });
-      this.loro.createNodeWithId(freshId('option_ref'), fieldDefId, undefined, 'reference', (node) => {
+      this.loro.createNodeWithId<ReferenceNode>(freshId('option_ref'), fieldDefId, undefined, 'reference', (node) => {
         node.targetId = valueId;
         node.autoCollected = true;
       });
@@ -1125,6 +1245,33 @@ export class Core {
       ensureOptionsFieldDef(state, fieldDefId);
       ensureOptionBelongsToField(state, fieldDefId, optionNodeId);
       this.selectFieldOptionDirect(fieldEntryId, fieldDefId, optionNodeId);
+      this.applyReverseDoneMappingDirect(fieldEntry.parentId, fieldDefId, optionNodeId);
+      return focus(fieldEntryId);
+    });
+  }
+
+  /**
+   * Set a free-text value on an options field without collecting it as a
+   * reusable option (decoupled from autocollect). Single-cardinality fields
+   * replace their current value; an empty text clears it. The value is stored
+   * as a plain content child, never a reference into the option pool.
+   */
+  setFieldFreeTextValue(fieldEntryId: string, text: string): CommandOutcome {
+    const normalized = text.trim();
+    return this.mutate(() => {
+      const state = this.snapshot();
+      const fieldEntry = requiredNode(state, fieldEntryId);
+      if (fieldEntry.type !== 'fieldEntry') throw CoreError.invalidOperation('field values can only be set on field entries');
+      const fieldDefId = fieldEntry.fieldDefId;
+      if (!fieldDefId || fieldCardinalityOf(state, fieldDefId) !== 'list') {
+        if (fieldDefId) this.clearFieldEntryValuesDirect(fieldEntryId, fieldDefId);
+        else for (const childId of [...fieldEntry.children]) this.removeSubtreeDirect(childId);
+      }
+      if (!normalized) return focus(fieldEntryId);
+      const valueId = freshId('value');
+      this.loro.createNodeWithId(valueId, fieldEntryId, undefined, undefined, (node) => {
+        node.content = plainText(normalized);
+      });
       return focus(fieldEntryId);
     });
   }
@@ -1151,7 +1298,7 @@ export class Core {
       if (wouldCreateReferenceCycle(state, parentId, resolvedTargetId)) throw CoreError.referenceCycle();
       ensureParentCanContainChildInstance(state, parentId, resolvedTargetId);
       const id = freshId('ref');
-      this.loro.createNodeWithId(id, parentId, index, 'reference', (node) => {
+      this.loro.createNodeWithId<ReferenceNode>(id, parentId, index, 'reference', (node) => {
         node.targetId = resolvedTargetId;
       });
       return focus(id);
@@ -1214,7 +1361,7 @@ export class Core {
       }
       const index = childIndex(state, parentId, nodeId) ?? 0;
       const referenceId = freshId('ref');
-      this.loro.createNodeWithId(referenceId, parentId, index, 'reference', (node) => {
+      this.loro.createNodeWithId<ReferenceNode>(referenceId, parentId, index, 'reference', (node) => {
         node.targetId = resolvedTargetId;
       });
       current.trashedFromParentId = parentId;
@@ -1315,7 +1462,7 @@ export class Core {
       ensureParentCanContainChildInstance(state, parentId, resolvedTargetId, nodeId);
       const index = childIndex(state, parentId, nodeId) ?? 0;
       const referenceId = freshId('ref');
-      this.loro.createNodeWithId(referenceId, parentId, index, 'reference', (reference) => {
+      this.loro.createNodeWithId<ReferenceNode>(referenceId, parentId, index, 'reference', (reference) => {
         reference.targetId = resolvedTargetId;
       });
       this.removeSubtreeDirect(nodeId);
@@ -1394,7 +1541,7 @@ export class Core {
     const result: Backlink[] = [];
     for (const node of Object.values(this.stateValue.nodes)) {
       if (isInTrash(this.stateValue, node.id)) continue;
-      if (node.type === 'reference' && node.targetId === targetId && node.parentId) {
+      if (node.type === 'reference' && refRoleCountsAsBacklink(node) && node.targetId === targetId && node.parentId) {
         result.push({ sourceId: node.parentId, referenceId: node.id, kind: 'tree' });
       }
       for (const inlineRef of node.content.inlineRefs) {
@@ -1456,14 +1603,17 @@ export class Core {
     }
   }
 
-  private patchNode(nodeId: string, patch: (node: Node) => void): CommandOutcome {
+  // A patch may mutate the node in place (return void) or return a replacement
+  // node — the latter is how a type-changing patch rebuilds a different variant
+  // instead of mutating the discriminant in place.
+  private patchNode(nodeId: string, patch: (node: Node) => Node | void): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureNodeEditable(state, nodeId);
       const node = clone(requiredNode(state, nodeId));
-      patch(node);
-      node.updatedAt = nowMs();
-      this.loro.writeNode(node);
+      const patched = patch(node) ?? node;
+      patched.updatedAt = nowMs();
+      this.loro.writeNode(patched);
       return focus(nodeId);
     });
   }
@@ -1487,14 +1637,14 @@ export class Core {
       .find((child): child is Node => child?.type === 'viewDef');
     if (existing) return existing.id;
     const viewDefId = freshId('view');
-    this.loro.createNodeWithId(viewDefId, nodeId, 0, 'viewDef', (node) => {
+    this.loro.createNodeWithId<ViewDefNode>(viewDefId, nodeId, 0, 'viewDef', (node) => {
       node.viewMode = 'list';
       node.toolbarVisible = false;
     });
     return viewDefId;
   }
 
-  private patchViewDefDirect(nodeId: string, patch: (viewDef: Node) => void) {
+  private patchViewDefDirect(nodeId: string, patch: (viewDef: ViewDefNode) => void) {
     const viewDefId = this.ensureViewDefDirect(nodeId);
     const state = this.snapshot();
     const viewDef = clone(requiredNode(state, viewDefId));
@@ -1640,15 +1790,19 @@ export class Core {
 
   private writeSearchNodeConfigDirect(nodeId: string, config: SearchNodeConfig) {
     const state = this.snapshot();
-    const node = clone(requiredNode(state, nodeId));
-    node.type = 'search';
-    node.content = plainText(normalizeSearchTitle(config.title));
-    delete node.queryOp;
-    delete node.queryLogic;
-    delete node.queryTagDefId;
-    delete node.queryFieldDefId;
-    delete node.targetId;
-    node.updatedAt = nowMs();
+    const existing = clone(requiredNode(state, nodeId));
+    // Rebuild as a search node with its inline query cleared (the query lives in
+    // child queryCondition nodes); reconstructing avoids mutating the discriminant.
+    const node: SearchNode = {
+      ...existing,
+      type: 'search',
+      content: plainText(normalizeSearchTitle(config.title)),
+      queryOp: undefined,
+      queryLogic: undefined,
+      queryTagDefId: undefined,
+      queryFieldDefId: undefined,
+      updatedAt: nowMs(),
+    };
     this.loro.writeNode(node);
 
     const latest = this.snapshot();
@@ -1694,8 +1848,11 @@ export class Core {
     for (const targetId of hits) {
       if (existingRefs.has(targetId)) continue;
       if (!refreshedState.nodes[targetId]) continue;
-      this.loro.createNodeWithId(freshId('ref'), nodeId, undefined, 'reference', (node) => {
+      this.loro.createNodeWithId<ReferenceNode>(freshId('ref'), nodeId, undefined, 'reference', (node) => {
         node.targetId = targetId;
+        // Result refs are internal pointers, not user-authored links — keep them
+        // out of the backlink graph (refRoleOf treats an absent role as 'link').
+        node.refRole = 'searchResult';
       });
     }
 
@@ -1715,7 +1872,7 @@ export class Core {
   private createSearchQueryConditionDirect(parentId: string, query: SearchQueryExpr, index?: number | null) {
     const state = this.snapshot();
     const conditionId = freshId('condition');
-    this.loro.createNodeWithId(conditionId, parentId, index, 'queryCondition', (node) => {
+    this.loro.createNodeWithId<QueryConditionNode>(conditionId, parentId, index, 'queryCondition', (node) => {
       if (query.kind === 'group') {
         node.queryLogic = query.logic;
         node.content = plainText(query.logic);
@@ -1724,7 +1881,7 @@ export class Core {
         node.content = plainText(query.text ?? searchRuleTitle(state, query));
         if (query.fieldDefId) node.queryFieldDefId = query.fieldDefId;
         if (query.tagDefId) node.queryTagDefId = query.tagDefId;
-        if (query.targetId) node.targetId = query.targetId;
+        if (query.targetId) node.queryTargetId = query.targetId;
       }
     });
     if (query.kind === 'group') {
@@ -1735,10 +1892,17 @@ export class Core {
   }
 
   private createSearchQueryOperandDirect(parentId: string, operand: SearchQueryOperand) {
-    this.loro.createNodeWithId(freshId(operand.targetId ? 'ref' : 'operand'), parentId, undefined, operand.targetId ? 'reference' : undefined, (node) => {
-      node.content = plainText(operand.text ?? '');
-      if (operand.targetId) node.targetId = operand.targetId;
-    });
+    const targetId = operand.targetId;
+    if (targetId) {
+      this.loro.createNodeWithId<ReferenceNode>(freshId('ref'), parentId, undefined, 'reference', (node) => {
+        node.content = plainText(operand.text ?? '');
+        node.targetId = targetId;
+      });
+    } else {
+      this.loro.createNodeWithId(freshId('operand'), parentId, undefined, undefined, (node) => {
+        node.content = plainText(operand.text ?? '');
+      });
+    }
   }
 
   private ensureSystemNodesDirect() {
@@ -1761,6 +1925,7 @@ export class Core {
     [TAG_DAY_ID, TAG_WEEK_ID, TAG_YEAR_ID].forEach((id, index) => {
       this.loro.moveNode(id, SCHEMA_ID, index);
     });
+    this.ensureSystemOptionNodesDirect();
     this.migrateLegacyParaRootNodesDirect();
     this.ensureRecentsSearchDirect();
     this.moveLegacyWorkspaceNodesToLibraryDirect();
@@ -1772,13 +1937,13 @@ export class Core {
     if (!recents) return;
     const queryCondition = recents.children
       .map((childId) => state.nodes[childId])
-      .find((node) => node?.type === 'queryCondition');
+      .find((node): node is QueryConditionNode => node?.type === 'queryCondition');
     const viewDef = recents.children
       .map((childId) => state.nodes[childId])
-      .find((node) => node?.type === 'viewDef');
+      .find((node): node is ViewDefNode => node?.type === 'viewDef');
     const sortRule = viewDef?.children
       .map((childId) => state.nodes[childId])
-      .find((node) => node?.type === 'sortRule');
+      .find((node): node is SortRuleNode => node?.type === 'sortRule');
     const alreadyConfigured = recents.type === 'search'
       && recents.content.text === 'Recents'
       && viewDef?.viewMode === 'list'
@@ -1797,7 +1962,7 @@ export class Core {
     const latest = this.snapshot();
     for (const rule of this.viewDefChildren(latest, RECENTS_ID, 'sortRule')) this.removeSubtreeDirect(rule.id);
     const viewDefId = this.ensureViewDefDirect(RECENTS_ID);
-    this.loro.createNodeWithId(freshId('sort'), viewDefId, undefined, 'sortRule', (node) => {
+    this.loro.createNodeWithId<SortRuleNode>(freshId('sort'), viewDefId, undefined, 'sortRule', (node) => {
       node.sortField = 'sys:updatedAt';
       node.sortDirection = 'desc';
     });
@@ -1867,6 +2032,154 @@ export class Core {
     if (parentId && node.parentId !== parentId) this.loro.moveNode(id, parentId, undefined);
   }
 
+  // config-as-nodes Stage 4: idempotently seed the system enum option subtrees
+  // under SCHEMA_ID. Enum config values are references to these `systemOption`
+  // nodes (stable derived ids), so an invalid enum value is unrepresentable.
+  // They are `systemOption`-typed, hence excluded from outliner/search/agent/
+  // sidebar by isInternalConfigNode, but remain in the projection so config
+  // rows can resolve the selected value's label.
+  private ensureSystemOptionNodesDirect() {
+    const now = nowMs();
+    for (const [key, domain] of Object.entries(ENUM_DOMAINS)) {
+      this.ensureSystemNodeDirect(domain.subtreeId, 'systemOption', SCHEMA_ID, key, true, now);
+      domain.values.forEach((value, index) => {
+        const optionId = systemOptionNodeId(domain.subtreeId, value);
+        this.ensureSystemNodeDirect(optionId, 'systemOption', domain.subtreeId, value, true, now);
+        this.loro.moveNode(optionId, domain.subtreeId, index);
+      });
+    }
+  }
+
+  // config-as-nodes Stage 4: materialize the fixed `defConfig` row set for a
+  // definition (tag or field) as a leading internal segment, in registry order.
+  // Stable ids (defConfigNodeId) make this idempotent and let setConfigValue
+  // address a row without scanning. Rows are locked; values live as children.
+  private reconcileConfigSubtreeDirect(defId: string) {
+    const state = this.snapshot();
+    const def = requiredNode(state, defId);
+    const keys = configKeysForDefType(def.type);
+    if (!keys) return;
+    const now = nowMs();
+    keys.forEach((key, index) => {
+      const rowId = defConfigNodeId(defId, key);
+      if (this.loro.hasNode(rowId)) {
+        this.loro.moveNode(rowId, defId, index);
+        return;
+      }
+      this.loro.createNodeWithId<DefConfigNode>(rowId, defId, index, 'defConfig', (node) => {
+        node.configKey = key;
+        node.content = plainText(CONFIG_SCHEMA[key].label);
+        node.locked = true;
+        node.createdAt = now;
+        node.updatedAt = now;
+      });
+    });
+  }
+
+  private setConfigValueDirect(defId: string, input: SetConfigValueInput) {
+    const def = requiredNode(this.snapshot(), defId);
+    const schema = CONFIG_SCHEMA[input.configKey];
+    if (!schema) throw CoreError.invalidOperation(`unknown config key: ${input.configKey}`);
+    const expectedKind = configValueKind(input.configKey);
+    if (expectedKind !== input.kind) {
+      throw CoreError.invalidOperation(`config key ${input.configKey} expects a ${expectedKind} value`);
+    }
+    const allowedKeys = configKeysForDefType(def.type);
+    if (!allowedKeys || !allowedKeys.includes(input.configKey)) {
+      throw CoreError.invalidOperation(`config key ${input.configKey} does not apply to this definition`);
+    }
+    const rowId = this.ensureConfigRowDirect(defId, input.configKey);
+    this.clearConfigValueChildrenDirect(rowId);
+
+    switch (input.kind) {
+      case 'scalar': {
+        if (input.text == null || input.text.trim() === '') break;
+        const result = canonicalizeScalar(schema.domain, input.text);
+        if ('error' in result) throw CoreError.invalidOperation(result.error);
+        this.createConfigValueNodeDirect(rowId, result.text, undefined, undefined);
+        break;
+      }
+      case 'ref': {
+        if (input.targetId == null) break;
+        requiredNode(this.snapshot(), input.targetId);
+        this.createConfigValueNodeDirect(rowId, '', 'config', input.targetId);
+        break;
+      }
+      case 'refList': {
+        for (const targetId of input.targetIds) {
+          requiredNode(this.snapshot(), targetId);
+          this.createConfigValueNodeDirect(rowId, '', 'config', targetId);
+        }
+        break;
+      }
+      case 'enum': {
+        if (input.value == null) break;
+        const optionId = this.resolveEnumOption(input.configKey, input.value);
+        this.createConfigValueNodeDirect(rowId, '', 'enum', optionId);
+        break;
+      }
+      case 'enumList': {
+        for (const value of input.values) {
+          const optionId = this.resolveEnumOption(input.configKey, value);
+          this.createConfigValueNodeDirect(rowId, '', 'enum', optionId);
+        }
+        break;
+      }
+    }
+  }
+
+  private ensureConfigRowDirect(defId: string, configKey: DefConfigKey): string {
+    const rowId = defConfigNodeId(defId, configKey);
+    if (!this.loro.hasNode(rowId)) {
+      const now = nowMs();
+      this.loro.createNodeWithId<DefConfigNode>(rowId, defId, 0, 'defConfig', (node) => {
+        node.configKey = configKey;
+        node.content = plainText(CONFIG_SCHEMA[configKey].label);
+        node.locked = true;
+        node.createdAt = now;
+        node.updatedAt = now;
+      });
+    }
+    return rowId;
+  }
+
+  private clearConfigValueChildrenDirect(rowId: string) {
+    const row = requiredNode(this.snapshot(), rowId);
+    for (const childId of [...row.children]) this.loro.deleteNode(childId);
+  }
+
+  private createConfigValueNodeDirect(rowId: string, text: string, refRole: RefRole | undefined, targetId: string | undefined) {
+    const now = nowMs();
+    if (targetId) {
+      const id = freshId('ref');
+      this.loro.createNodeWithId<ReferenceNode>(id, rowId, undefined, 'reference', (node) => {
+        node.content = plainText(text);
+        if (refRole) node.refRole = refRole;
+        node.targetId = targetId;
+        node.createdAt = now;
+        node.updatedAt = now;
+      });
+      return id;
+    }
+    const id = freshId('node');
+    this.loro.createNodeWithId(id, rowId, undefined, undefined, (node) => {
+      node.content = plainText(text);
+      node.createdAt = now;
+      node.updatedAt = now;
+    });
+    return id;
+  }
+
+  private resolveEnumOption(configKey: DefConfigKey, value: string): string {
+    const domainKey = CONFIG_SCHEMA[configKey].enumDomain;
+    if (!domainKey) throw CoreError.invalidOperation(`config key ${configKey} has no enum domain`);
+    const domain = ENUM_DOMAINS[domainKey];
+    if (!(domain.values as readonly string[]).includes(value)) {
+      throw CoreError.invalidOperation(`invalid ${configKey} value: ${value}`);
+    }
+    return systemOptionNodeId(domain.subtreeId, value);
+  }
+
   private createPlainNode(
     parentId: string,
     index: number | null | undefined,
@@ -1912,8 +2225,9 @@ export class Core {
     const color = nextTagColor(this.snapshot());
     this.loro.createNodeWithId(id, SCHEMA_ID, undefined, 'tagDef', (node) => {
       node.content = plainText(name);
-      node.color = color;
     });
+    // config-as-nodes: the round-robin auto color lives in the defConfig subtree.
+    this.setConfigValueDirect(id, { kind: 'scalar', configKey: 'color', text: color });
     return id;
   }
 
@@ -1925,7 +2239,7 @@ export class Core {
     this.loro.createNodeWithId(id, parentId, index, type, (node) => {
       node.content = clone(tree.content);
       if (type === 'codeBlock') {
-        setOptional(node, 'codeLanguage', normalizeCodeLanguage(tree.codeLanguage));
+        (node as CodeBlockNode).codeLanguage = normalizeCodeLanguage(tree.codeLanguage) || undefined;
       }
     });
     this.applyChildTagsDirect(parentId, id);
@@ -1937,16 +2251,15 @@ export class Core {
     const id = freshId('field');
     this.loro.createNodeWithId(id, parentId, undefined, 'fieldDef', (node) => {
       node.content = plainText(name);
-      node.fieldType = fieldType;
-      node.cardinality = 'single';
-      node.nullable = true;
     });
+    // config-as-nodes: fieldType lives in the defConfig subtree, not a flat field.
+    this.setConfigValueDirect(id, { kind: 'enum', configKey: 'fieldType', value: fieldType });
     return id;
   }
 
   private insertFieldEntryNodeDirect(parentId: string, index: number | null | undefined, fieldDefId: string) {
     const id = freshId('field_entry');
-    this.loro.createNodeWithId(id, parentId, index, 'fieldEntry', (node) => {
+    this.loro.createNodeWithId<FieldEntryNode>(id, parentId, index, 'fieldEntry', (node) => {
       node.fieldDefId = fieldDefId;
       node.content = plainText('');
     });
@@ -1973,7 +2286,10 @@ export class Core {
       const next = clone(other);
       const before = JSON.stringify(next);
       next.tags = next.tags.filter((id) => !removedIds.has(id));
-      if (next.targetId && removedIds.has(next.targetId)) delete next.targetId;
+      if (next.type === 'reference' && next.targetId && removedIds.has(next.targetId)) delete next.targetId;
+      if ((next.type === 'search' || next.type === 'queryCondition') && next.queryTargetId && removedIds.has(next.queryTargetId)) {
+        delete next.queryTargetId;
+      }
       next.content.inlineRefs = next.content.inlineRefs.filter((ref) => !removedIds.has(ref.targetNodeId));
       if (JSON.stringify(next) !== before && this.loro.hasNode(next.id)) this.loro.writeNode(next);
     }
@@ -1996,7 +2312,12 @@ export class Core {
     const state = this.snapshot();
     const source = clone(requiredNode(state, sourceId));
     const sourceChildren = [...source.children];
-    const clonedId = freshId('copy');
+    // A defConfig row is addressed by the stable id defConfigNodeId(parent, key);
+    // cloning it under a fresh id would orphan it from ensureConfigRowDirect, so a
+    // later edit on the copy creates a *second* row that configRowsByKey shadows.
+    const clonedId = source.type === 'defConfig' && source.configKey
+      ? defConfigNodeId(parentId, source.configKey)
+      : freshId('copy');
     this.loro.createNodeWithId(clonedId, parentId, index, source.type, (node) => {
       const createdAt = node.createdAt;
       Object.assign(node, source);
@@ -2016,7 +2337,7 @@ export class Core {
     const state = this.snapshot();
     const tagIds = state.nodes[parentId]?.tags ?? [];
     for (const tagId of tagIds) {
-      const childSupertag = state.nodes[tagId]?.childSupertag;
+      const childSupertag = configRefTarget(state, tagId, 'childSupertag');
       if (childSupertag) this.applyTagDirect(childId, childSupertag);
     }
   }
@@ -2045,8 +2366,14 @@ export class Core {
         this.ensureFieldEntryWithTemplateDirect(nodeId, fieldRef.fieldDefId, fieldRef.templateOriginId, true);
       }
     }
-    for (const templateNodeId of getTemplateContentNodes(state, tagId)) {
-      this.cloneTemplateContentNodeShallowDirect(nodeId, templateNodeId);
+    // Default content is inherited along the extends chain too (Tana parity:
+    // template objects are inherited wholesale, not just fields). Ancestor-first
+    // so a base tag's content precedes the more specific tag's; dedup by
+    // templateId keeps re-application idempotent.
+    for (const chainTagId of [...getExtendsChain(state, tagId)].reverse()) {
+      for (const templateNodeId of getTemplateContentNodes(state, chainTagId)) {
+        this.cloneTemplateContentNodeShallowDirect(nodeId, templateNodeId);
+      }
     }
   }
 
@@ -2078,11 +2405,11 @@ export class Core {
   private applyAutoInitializeDirect(nodeId: string, fieldEntryId: string, fieldDefId: string) {
     const state = this.snapshot();
     const fieldDef = state.nodes[fieldDefId];
-    if (!fieldDef?.autoInitialize) return;
+    if (!fieldDef || fieldAutoInitOf(state, fieldDefId).length === 0) return;
     const result = resolveAutoInit(state, nodeId, fieldDef);
     if (!result) return;
     if (result.kind === 'reference') {
-      this.loro.createNodeWithId(freshId('auto_value'), fieldEntryId, undefined, 'reference', (node) => {
+      this.loro.createNodeWithId<ReferenceNode>(freshId('auto_value'), fieldEntryId, undefined, 'reference', (node) => {
         node.targetId = result.targetId;
       });
       return;
@@ -2098,12 +2425,13 @@ export class Core {
     for (const valueId of state.nodes[templateOriginId]?.children ?? []) {
       const value = state.nodes[valueId];
       if (!value) continue;
+      const sourceTargetId = value.type === 'reference' ? value.targetId : undefined;
+      const sourceCodeLanguage = value.type === 'codeBlock' ? value.codeLanguage : undefined;
       this.loro.createNodeWithId(freshId('value'), fieldEntryId, undefined, value.type, (node) => {
         node.content = clone(value.content);
         node.description = value.description;
-        node.fieldDefId = value.fieldDefId;
-        node.targetId = value.targetId;
-        node.codeLanguage = value.codeLanguage;
+        if (sourceTargetId) (node as ReferenceNode).targetId = sourceTargetId;
+        if (sourceCodeLanguage) (node as CodeBlockNode).codeLanguage = sourceCodeLanguage;
       });
     }
   }
@@ -2113,19 +2441,24 @@ export class Core {
     const parent = requiredNode(state, parentId);
     if (parent.children.some((childId) => state.nodes[childId]?.templateId === templateNodeId)) return;
     const template = requiredNode(state, templateNodeId);
+    const code = template as Partial<CodeBlockNode>;
+    const image = template as Partial<ImageNode>;
+    const embed = template as Partial<EmbedNode>;
     this.loro.createNodeWithId(freshId('template'), parentId, undefined, template.type, (node) => {
       node.templateId = templateNodeId;
       node.content = clone(template.content);
       node.description = template.description;
-      node.codeLanguage = template.codeLanguage;
-      node.mediaUrl = template.mediaUrl;
-      node.mediaAlt = template.mediaAlt;
-      node.imageWidth = template.imageWidth;
-      node.imageHeight = template.imageHeight;
-      node.embedType = template.embedType;
-      node.embedId = template.embedId;
-      node.sourceUrl = template.sourceUrl;
       node.aiSummary = template.aiSummary;
+      (node as CodeBlockNode).codeLanguage = code.codeLanguage;
+      const target = node as ImageNode;
+      target.mediaUrl = image.mediaUrl;
+      target.mediaAlt = image.mediaAlt;
+      target.imageWidth = image.imageWidth;
+      target.imageHeight = image.imageHeight;
+      const targetEmbed = node as EmbedNode;
+      targetEmbed.embedType = embed.embedType;
+      targetEmbed.embedId = embed.embedId;
+      targetEmbed.sourceUrl = embed.sourceUrl;
     });
   }
 
@@ -2167,19 +2500,20 @@ export class Core {
   private selectFieldOptionDirect(fieldEntryId: string, fieldDefId: string, optionNodeId: string) {
     const state = this.snapshot();
     const fieldEntry = requiredNode(state, fieldEntryId);
-    const fieldDef = requiredNode(state, fieldDefId);
+    requiredNode(state, fieldDefId);
     const optionTargetId = optionValueTargetId(state, optionNodeId);
-    const isList = fieldDef.cardinality === 'list';
-    const alreadySelected = fieldEntry.children.some((childId) => (
-      childId === optionTargetId || state.nodes[childId]?.targetId === optionTargetId
-    ));
+    const isList = fieldCardinalityOf(state, fieldDefId) === 'list';
+    const alreadySelected = fieldEntry.children.some((childId) => {
+      const child = state.nodes[childId];
+      return childId === optionTargetId || (child?.type === 'reference' && child.targetId === optionTargetId);
+    });
     if (alreadySelected) {
       return;
     }
     if (!isList) {
       this.clearFieldEntryValuesDirect(fieldEntryId, fieldDefId);
     }
-    this.loro.createNodeWithId(freshId('option_value'), fieldEntryId, undefined, 'reference', (node) => {
+    this.loro.createNodeWithId<ReferenceNode>(freshId('option_value'), fieldEntryId, undefined, 'reference', (node) => {
       node.targetId = optionTargetId;
     });
   }
@@ -2274,11 +2608,12 @@ export class Core {
     const current = clone(requiredNode(state, nodeId));
     const sourceParentId = current.parentId;
     const sourceIndex = sourceParentId ? childIndex(state, sourceParentId, nodeId) : undefined;
-    const target = clone(requiredNode(state, targetId));
+    let target = clone(requiredNode(state, targetId));
     if (target.type === 'reference' && target.targetId) {
       // A reference node renders its target, not its own content, so merging text
       // into it converts the reference into a *leading inline reference* on a
-      // now-plain node — the merged text then has somewhere to live.
+      // now-plain node — the merged text then has somewhere to live. Rebuild it
+      // as a content node rather than mutating the discriminant in place.
       const resolvedTargetId = resolveReferenceTargetId(state, target.targetId);
       const inlineRefContent: RichText = {
         text: '',
@@ -2289,9 +2624,12 @@ export class Core {
           displayName: state.nodes[resolvedTargetId]?.content.text || undefined,
         }],
       };
-      target.type = undefined;
-      target.targetId = undefined;
-      target.content = appendRichText(inlineRefContent, current.content);
+      const { targetId: _droppedTargetId, refRole: _droppedRefRole, ...rest } = target;
+      target = {
+        ...rest,
+        type: undefined,
+        content: appendRichText(inlineRefContent, current.content),
+      };
     } else {
       target.content = appendRichText(target.content, current.content);
     }
@@ -2414,20 +2752,30 @@ function nowMs() {
   return Date.now();
 }
 
-function cycleNodeDoneState(node: Node) {
-  const hasCheckboxAffordance = node.showCheckbox || node.doneStateEnabled || Boolean(node.completedAt);
-  if (!hasCheckboxAffordance) {
-    node.showCheckbox = true;
-    delete node.completedAt;
-    return;
-  }
-  if (!node.completedAt) {
-    node.showCheckbox = true;
+// Checkbox click (nodex `resolveCheckboxClick`): toggle undone ↔ done, never
+// removing the checkbox. Tag-driven nodes keep their checkbox via the tag, so
+// undone clears the timestamp entirely; manual nodes fall back to the undone
+// sentinel (0) to keep the box visible.
+function toggleNodeDone(node: Node, tagDriven: boolean) {
+  if (nodeIsDone(node)) {
+    if (tagDriven) delete node.completedAt;
+    else node.completedAt = 0;
+  } else {
     node.completedAt = nowMs();
+  }
+}
+
+// Cmd+Enter cycle (nodex `resolveCmdEnterCycle`): tag-driven nodes are a 2-state
+// toggle (undone ↔ done); manual nodes cycle no-checkbox → undone → done → none.
+function cycleNodeDoneState(node: Node, tagDriven: boolean) {
+  if (tagDriven) {
+    if (nodeIsDone(node)) delete node.completedAt;
+    else node.completedAt = nowMs();
     return;
   }
-  delete node.completedAt;
-  node.showCheckbox = Boolean(node.doneStateEnabled);
+  if (node.completedAt === undefined) node.completedAt = 0;
+  else if (node.completedAt === 0) node.completedAt = nowMs();
+  else delete node.completedAt;
 }
 
 function freshId(prefix: string): string {
@@ -2476,16 +2824,25 @@ function setOptional<T extends object, K extends keyof T>(object: T, key: K, val
 
 function ensureParentMutable(state: DocumentState, parentId: string) {
   if (!state.nodes[parentId]) throw CoreError.parentNotFound(parentId);
+  // config-as-nodes: defConfig/systemOption subtrees are registry-governed;
+  // user commands cannot insert children under them. Internal config machinery
+  // uses *Direct loro APIs that bypass this guard.
+  if (isInternalConfigNode(state.nodes[parentId])) {
+    throw CoreError.invalidOperation('config nodes are structurally locked');
+  }
 }
 
 function ensureNodeEditable(state: DocumentState, nodeId: string) {
   const node = requiredNode(state, nodeId);
   if (node.locked) throw CoreError.lockedNode(nodeId);
+  // The defConfig/systemOption node itself cannot be renamed/edited via user
+  // commands; its value is mutated only through the setConfigValue chokepoint.
+  if (isInternalConfigNode(node)) throw CoreError.invalidOperation('config nodes are structurally locked');
 }
 
 function ensureNodeMovable(state: DocumentState, nodeId: string) {
   const node = requiredNode(state, nodeId);
-  if (node.locked || isSystemId(nodeId)) throw CoreError.lockedNode(nodeId);
+  if (node.locked || isSystemId(nodeId) || isInternalConfigNode(node)) throw CoreError.lockedNode(nodeId);
 }
 
 function ensureTagDefinition(state: DocumentState, tagId: string) {
@@ -2552,7 +2909,7 @@ function searchNodeHasSingleTagQuery(state: DocumentState, nodeId: string, tagId
   }) ?? [];
   if (conditionIds.length !== 1) return false;
   const condition = state.nodes[conditionIds[0]!];
-  return condition?.queryOp === 'HAS_TAG' && condition.queryTagDefId === tagId;
+  return condition?.type === 'queryCondition' && condition.queryOp === 'HAS_TAG' && condition.queryTagDefId === tagId;
 }
 
 function reorderDirectChildren(
@@ -2677,7 +3034,6 @@ function isDisposableLegacyParaNode(node: Node, title: string) {
     && node.content.marks.length === 0
     && node.content.inlineRefs.length === 0
     && node.tags.length === 0
-    && (node.filterValues?.length ?? 0) === 0
     && !node.description;
 }
 
@@ -2699,6 +3055,200 @@ function touchNode(state: DocumentState, nodeId: string) {
   if (state.nodes[nodeId]) state.nodes[nodeId].updatedAt = nowMs();
 }
 
+// config-as-nodes: read a single ref-domain config value (extends /
+// childSupertag / sourceSupertag) from a definition's defConfig subtree.
+function configRefTarget(state: DocumentState, defId: string, configKey: DefConfigKey): string | undefined {
+  const def = state.nodes[defId];
+  if (!def) return undefined;
+  for (const rowId of def.children) {
+    const row = state.nodes[rowId];
+    if (row?.type === 'defConfig' && row.configKey === configKey) {
+      for (const valueId of row.children) {
+        const value = state.nodes[valueId];
+        if (value?.type === 'reference' && value.targetId) return value.targetId;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The field's type, read from its `defConfig(fieldType)` enum subtree (the value
+ * reference targets a system option whose text is the canonical value). Mirrors
+ * `projectFieldConfig`'s resolution; defaults to 'plain'. See configProjection.ts.
+ */
+function fieldTypeOf(state: DocumentState, fieldDefId: string): FieldType {
+  const optionId = configRefTarget(state, fieldDefId, 'fieldType');
+  const value = optionId ? state.nodes[optionId]?.content.text : undefined;
+  return (value as FieldType | undefined) ?? 'plain';
+}
+
+/** The field's cardinality, read from its `defConfig(cardinality)` enum subtree. Defaults to 'single'. */
+function fieldCardinalityOf(state: DocumentState, fieldDefId: string): FieldCardinality {
+  const optionId = configRefTarget(state, fieldDefId, 'cardinality');
+  const value = optionId ? state.nodes[optionId]?.content.text : undefined;
+  return (value as FieldCardinality | undefined) ?? 'single';
+}
+
+/** A scalar (number/bool/color) config value's stored text, read from the def's subtree. */
+function configScalarText(state: DocumentState, defId: string, configKey: DefConfigKey): string | undefined {
+  const def = state.nodes[defId];
+  if (!def) return undefined;
+  for (const rowId of def.children) {
+    const row = state.nodes[rowId];
+    if (row?.type === 'defConfig' && row.configKey === configKey) {
+      for (const valueId of row.children) {
+        const value = state.nodes[valueId];
+        if (value && value.type !== 'reference') return value.content.text;
+      }
+    }
+  }
+  return undefined;
+}
+
+/** A boolean config value read from the def's scalar subtree. */
+function configScalarBool(state: DocumentState, defId: string, configKey: DefConfigKey): boolean {
+  return boolCodec.decode(configScalarText(state, defId, configKey) ?? '') ?? false;
+}
+
+/** Whether a tag definition enables a checkbox, walking its `extends` chain. */
+function tagShowsCheckboxOf(state: DocumentState, tagDefId: string): boolean {
+  const visited = new Set<string>();
+  let current: string | undefined = tagDefId;
+  while (current && !visited.has(current)) {
+    visited.add(current);
+    if (configScalarBool(state, current, 'showCheckbox')) return true;
+    current = configRefTarget(state, current, 'extends');
+  }
+  return false;
+}
+
+/** True when any of the node's applied tags drives a checkbox (tag-driven visibility). */
+function nodeTagDrivenCheckbox(state: DocumentState, node: Node): boolean {
+  return node.tags.some((tagId) => tagShowsCheckboxOf(state, tagId));
+}
+
+/** Done = a completion timestamp is set (sentinel 0 means "has checkbox, undone"). */
+function nodeIsDone(node: Node): boolean {
+  return node.completedAt !== undefined && node.completedAt > 0;
+}
+
+// ─── Done-state mapping (Tana parity): a tag's checked/unchecked done state
+// mirrors option-field values both ways. See checkbox-utils in nodex. ───
+
+/** A tag's `extends` chain including itself, ancestor-last, deduped. */
+function tagExtendsChainSelf(state: DocumentState, tagDefId: string): string[] {
+  const chain: string[] = [];
+  const visited = new Set<string>();
+  let current: string | undefined = tagDefId;
+  while (current && !visited.has(current)) {
+    visited.add(current);
+    chain.push(current);
+    current = configRefTarget(state, current, 'extends');
+  }
+  return chain;
+}
+
+/** Every target of a ref-list config value (`doneMapChecked`/`doneMapUnchecked`), in order. */
+function configRefTargets(state: DocumentState, defId: string, configKey: DefConfigKey): string[] {
+  const def = state.nodes[defId];
+  if (!def) return [];
+  for (const rowId of def.children) {
+    const row = state.nodes[rowId];
+    if (row?.type === 'defConfig' && row.configKey === configKey) {
+      return row.children
+        .map((id) => state.nodes[id])
+        .filter((n): n is Extract<Node, { type: 'reference' }> => n?.type === 'reference' && Boolean(n.targetId))
+        .map((n) => n.targetId as string);
+    }
+  }
+  return [];
+}
+
+interface DoneStateFieldMapping {
+  fieldDefId: string;
+  checkedOptionIds: string[];
+  uncheckedOptionIds: string[];
+}
+
+/**
+ * The done-state mappings that apply to a node: for each of its tags (walking
+ * extends chains) whose `doneStateEnabled` is on, the checked/unchecked option
+ * lists grouped by the option's owning field definition.
+ */
+function getDoneStateMappings(state: DocumentState, node: Node): DoneStateFieldMapping[] {
+  const byField = new Map<string, { checked: string[]; unchecked: string[] }>();
+  const seenTags = new Set<string>();
+  const addOptions = (optionIds: string[], key: 'checked' | 'unchecked') => {
+    for (const optionId of optionIds) {
+      const fieldDefId = state.nodes[optionId]?.parentId;
+      if (!fieldDefId || state.nodes[fieldDefId]?.type !== 'fieldDef') continue;
+      let entry = byField.get(fieldDefId);
+      if (!entry) byField.set(fieldDefId, (entry = { checked: [], unchecked: [] }));
+      if (!entry[key].includes(optionId)) entry[key].push(optionId);
+    }
+  };
+  for (const tagId of node.tags) {
+    for (const tdId of tagExtendsChainSelf(state, tagId)) {
+      if (seenTags.has(tdId)) continue;
+      seenTags.add(tdId);
+      if (!configScalarBool(state, tdId, 'doneStateEnabled')) continue;
+      addOptions(configRefTargets(state, tdId, 'doneMapChecked'), 'checked');
+      addOptions(configRefTargets(state, tdId, 'doneMapUnchecked'), 'unchecked');
+    }
+  }
+  return [...byField].map(([fieldDefId, { checked, unchecked }]) => ({
+    fieldDefId,
+    checkedOptionIds: checked,
+    uncheckedOptionIds: unchecked,
+  }));
+}
+
+/**
+ * Reverse mapping: when an option is selected on a node's field, whether that
+ * implies a new done state (true/false) or has no mapping (null).
+ */
+function resolveReverseDoneMapping(state: DocumentState, node: Node, fieldDefId: string, optionNodeId: string): boolean | null {
+  for (const mapping of getDoneStateMappings(state, node)) {
+    if (mapping.fieldDefId !== fieldDefId) continue;
+    if (mapping.checkedOptionIds.includes(optionNodeId)) return true;
+    if (mapping.uncheckedOptionIds.includes(optionNodeId)) return false;
+  }
+  return null;
+}
+
+/** Apply a resolved done state to a node in place (tag-driven keeps the box on undo). */
+function applyNodeDoneState(node: Node, done: boolean, tagDriven: boolean) {
+  if (done) node.completedAt = nowMs();
+  else if (tagDriven) delete node.completedAt;
+  else node.completedAt = 0;
+}
+
+/** A numeric config value (minValue/maxValue) read from the def's scalar subtree. */
+function fieldNumberConfigOf(state: DocumentState, fieldDefId: string, configKey: DefConfigKey): number | undefined {
+  const text = configScalarText(state, fieldDefId, configKey);
+  if (text == null) return undefined;
+  const value = Number(text);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+/** The field's auto-initialize strategies, read from its `defConfig(autoInitialize)` enumList subtree. */
+function fieldAutoInitOf(state: DocumentState, fieldDefId: string): AutoInitStrategy[] {
+  const def = state.nodes[fieldDefId];
+  if (!def) return [];
+  const row = def.children
+    .map((id) => state.nodes[id])
+    .find((n) => n?.type === 'defConfig' && n.configKey === 'autoInitialize');
+  if (!row) return [];
+  const strategies: AutoInitStrategy[] = [];
+  for (const valueId of row.children) {
+    const ref = state.nodes[valueId];
+    const text = ref?.type === 'reference' && ref.targetId ? state.nodes[ref.targetId]?.content.text : undefined;
+    if (text && AUTO_INIT_STRATEGIES.includes(text as AutoInitStrategy)) strategies.push(text as AutoInitStrategy);
+  }
+  return strategies;
+}
+
 function getExtendsChain(state: DocumentState, tagId: string): string[] {
   const chain: string[] = [];
   const visited = new Set<string>();
@@ -2706,7 +3256,7 @@ function getExtendsChain(state: DocumentState, tagId: string): string[] {
   while (current && !visited.has(current)) {
     visited.add(current);
     chain.push(current);
-    current = state.nodes[current]?.extends;
+    current = configRefTarget(state, current, 'extends');
   }
   return chain;
 }
@@ -2757,7 +3307,7 @@ function tagExtendsWouldCycle(state: DocumentState, tagId: string, parentTagId: 
   while (current) {
     if (current === tagId || visited.has(current)) return true;
     visited.add(current);
-    current = state.nodes[current]?.extends;
+    current = configRefTarget(state, current, 'extends');
   }
   return false;
 }
@@ -2765,7 +3315,8 @@ function tagExtendsWouldCycle(state: DocumentState, tagId: string, parentTagId: 
 function ensureOptionsFieldDef(state: DocumentState, fieldDefId: string) {
   const fieldDef = requiredNode(state, fieldDefId);
   if (fieldDef.type !== 'fieldDef') throw CoreError.invalidOperation('options belong to field definitions');
-  if (fieldDef.fieldType !== 'options' && fieldDef.fieldType !== 'options_from_supertag') {
+  const fieldType = fieldTypeOf(state, fieldDefId);
+  if (fieldType !== 'options' && fieldType !== 'options_from_supertag') {
     throw CoreError.invalidOperation('field definition is not an options field');
   }
   return fieldDef;
@@ -2773,7 +3324,7 @@ function ensureOptionsFieldDef(state: DocumentState, fieldDefId: string) {
 
 function ensureCollectableOptionsFieldDef(state: DocumentState, fieldDefId: string) {
   const fieldDef = ensureOptionsFieldDef(state, fieldDefId);
-  if (fieldDef.fieldType !== 'options') {
+  if (fieldTypeOf(state, fieldDefId) !== 'options') {
     throw CoreError.invalidOperation('only direct options fields can collect new options');
   }
   return fieldDef;
@@ -2782,14 +3333,15 @@ function ensureCollectableOptionsFieldDef(state: DocumentState, fieldDefId: stri
 function findOptionByName(state: DocumentState, fieldDefId: string, name: string) {
   const needle = name.trim().toLowerCase();
   return state.nodes[fieldDefId]?.children.find((childId) =>
-    optionLabel(state, childId).trim().toLowerCase() === needle);
+    !isInternalConfigNode(state.nodes[childId])
+    && optionLabel(state, childId).trim().toLowerCase() === needle);
 }
 
 function ensureOptionBelongsToField(state: DocumentState, fieldDefId: string, optionNodeId: string) {
   const fieldDef = requiredNode(state, fieldDefId);
   const optionNode = requiredNode(state, optionNodeId);
-  if (fieldDef.fieldType === 'options_from_supertag') {
-    const sourceSupertag = fieldDef.sourceSupertag;
+  if (fieldTypeOf(state, fieldDefId) === 'options_from_supertag') {
+    const sourceSupertag = configRefTarget(state, fieldDef.id, 'sourceSupertag');
     if (
       sourceSupertag
       && (!optionNode.type || optionNode.type === 'codeBlock')
@@ -2847,7 +3399,7 @@ type AutoInitResult =
   | { kind: 'reference'; targetId: string };
 
 function resolveAutoInit(state: DocumentState, nodeId: string, fieldDef: Node): AutoInitResult | null {
-  const strategies = parseAutoInitStrategies(fieldDef.autoInitialize) as AutoInitStrategy[];
+  const strategies = fieldAutoInitOf(state, fieldDef.id);
   for (const strategy of AUTO_INIT_PRIORITY) {
     if (!strategies.includes(strategy)) continue;
     const result = resolveAutoInitStrategy(state, nodeId, fieldDef, strategy);
@@ -2884,9 +3436,11 @@ function resolveAutoInitStrategy(
       if (value) return { kind: 'text', value };
     }
   }
-  if (strategy === 'ancestor_supertag_ref' && fieldDef.sourceSupertag) {
+  if (strategy === 'ancestor_supertag_ref') {
+    const sourceSupertag = configRefTarget(state, fieldDef.id, 'sourceSupertag');
+    if (!sourceSupertag) return null;
     const target = ancestorsOf(state, nodeId).find((ancestor) =>
-      ancestor.tags.includes(fieldDef.sourceSupertag!));
+      ancestor.tags.includes(sourceSupertag));
     return target ? { kind: 'reference', targetId: target.id } : null;
   }
   return null;

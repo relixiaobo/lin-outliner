@@ -10,6 +10,7 @@ import {
 import { createPortal } from 'react-dom';
 import { api } from '../../api/client';
 import type { FilterOperator, NodeProjection, SortDirection } from '../../api/types';
+import { projectFieldTypeById } from '../../../core/configProjection';
 import type { DocumentIndex, ToolbarDropdownRequest, ToolbarDropdownSection } from '../../state/document';
 import {
   AddIcon,
@@ -57,8 +58,8 @@ function filterFieldKind(fieldId: string, byId: DocumentIndex['byId']): FilterKi
   if (fieldId === CREATED_FIELD || fieldId === UPDATED_FIELD || fieldId === DONE_AT_FIELD) return 'date';
   if (fieldId === REF_COUNT_FIELD) return 'number';
   if (fieldId === NAME_FIELD || fieldId === TAGS_FIELD) return 'text';
-  const fieldType = byId.get(fieldId)?.fieldType;
-  if (fieldType === 'checkbox' || fieldType === 'boolean') return 'boolean';
+  const fieldType = projectFieldTypeById(byId, fieldId);
+  if (fieldType === 'checkbox') return 'boolean';
   if (fieldType === 'date') return 'date';
   if (fieldType === 'number') return 'number';
   if (fieldType === 'options' || fieldType === 'options_from_supertag') return 'options';

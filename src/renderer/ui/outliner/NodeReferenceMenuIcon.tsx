@@ -29,7 +29,7 @@ export function NodeReferenceMenuIcon({ index, node }: NodeReferenceMenuIconProp
       expanded={false}
       hasChildren={node ? outlinerChildren(node, index.byId).length > 0 : false}
       variant="content"
-      bulletColors={tagBulletColors(appliedTags)}
+      bulletColors={tagBulletColors(appliedTags, index.byId)}
     />
   );
 }

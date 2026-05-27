@@ -1,5 +1,6 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { normalizeDateFieldValue } from '../core/dateFieldValue';
+import { projectFieldConfig, nodeIsDone, nodeShowsCheckbox } from '../core/configProjection';
 import {
   plainText,
   replaceAllRichTextPatch,
@@ -1374,8 +1375,9 @@ function normalizeDateOutlineValue(fieldName: string, value: OutlineValue): Outl
 
 function fieldTypeForEntry(index: ProjectionIndex, fieldEntryId: string): string {
   const fieldEntry = requiredNode(index, fieldEntryId);
-  const fieldDef = fieldEntry.fieldDefId ? index.nodes.get(fieldEntry.fieldDefId) : undefined;
-  return fieldDef?.fieldType ?? fieldEntry.fieldType ?? 'plain';
+  const fieldDefId = fieldEntry.type === 'fieldEntry' ? fieldEntry.fieldDefId : undefined;
+  const fieldDef = fieldDefId ? index.nodes.get(fieldDefId) : undefined;
+  return fieldDef?.type === 'fieldDef' ? projectFieldConfig(index.nodes, fieldDef).fieldType : 'plain';
 }
 
 async function syncNormalChildren(
@@ -1546,23 +1548,26 @@ async function trashNodeIds(host: OutlinerToolHost, nodeIds: string[]) {
 }
 
 async function setCheckboxState(host: OutlinerToolHost, nodeId: string, checked: boolean | null | undefined) {
-  const current = indexProjection(host.getProjection()).nodes.get(nodeId);
+  const index = indexProjection(host.getProjection());
+  const current = index.nodes.get(nodeId);
   if (!current) throw new Error(`Node not found: ${nodeId}`);
-  const isCompleted = Boolean(current.completedAt);
+  const isCompleted = nodeIsDone(current);
   if (checked === true) {
-    if (!current.showCheckbox) await host.handle('set_node_checkbox_visible', { nodeId, visible: true });
+    if (!nodeShowsCheckbox(index.nodes, current)) await host.handle('set_node_checkbox_visible', { nodeId, visible: true });
     if (!isCompleted) await host.handle('toggle_done', { nodeId });
     return;
   }
   if (checked === false) {
     if (isCompleted) await host.handle('toggle_done', { nodeId });
-    const latest = indexProjection(host.getProjection()).nodes.get(nodeId);
-    if (!latest?.showCheckbox) await host.handle('set_node_checkbox_visible', { nodeId, visible: true });
+    const latestIndex = indexProjection(host.getProjection());
+    const latest = latestIndex.nodes.get(nodeId);
+    if (!latest || !nodeShowsCheckbox(latestIndex.nodes, latest)) await host.handle('set_node_checkbox_visible', { nodeId, visible: true });
     return;
   }
   if (isCompleted) await host.handle('toggle_done', { nodeId });
-  const latest = indexProjection(host.getProjection()).nodes.get(nodeId);
-  if (latest?.showCheckbox) await host.handle('set_node_checkbox_visible', { nodeId, visible: false });
+  const latestIndex = indexProjection(host.getProjection());
+  const latest = latestIndex.nodes.get(nodeId);
+  if (latest && nodeShowsCheckbox(latestIndex.nodes, latest)) await host.handle('set_node_checkbox_visible', { nodeId, visible: false });
 }
 
 async function syncTags(host: OutlinerToolHost, nodeId: string, tagNames: string[], tracker: MutationTracker): Promise<string[]> {
@@ -2008,7 +2013,7 @@ async function createField(
   }));
   tracker.createdFieldEntryIds.push(fieldEntryId);
   const fieldEntry = indexProjection(host.getProjection()).nodes.get(fieldEntryId);
-  if (fieldEntry?.fieldDefId) tracker.createdFieldDefIds.push(fieldEntry.fieldDefId);
+  if (fieldEntry?.type === 'fieldEntry' && fieldEntry.fieldDefId) tracker.createdFieldDefIds.push(fieldEntry.fieldDefId);
   for (const value of field.values) {
     const valueNodeId = await createFieldValue(host, fieldEntryId, value);
     tracker.createdNodeIds.push(valueNodeId);

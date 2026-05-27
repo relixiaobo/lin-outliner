@@ -127,6 +127,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	      queryOp?: string;
 	      targetId?: string;
 	      codeLanguage?: string;
+	      configKey?: string;
+	      refRole?: string;
 	    };
     type CreateNodeTree = {
       content: RichText;
@@ -495,19 +497,115 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       }
       return null;
     };
-    const projection = () => ({
-      workspaceId: ids.workspace,
-      rootId: ids.root,
-      libraryId: ids.library,
-      dailyNotesId: ids.daily,
-      schemaId: ids.schema,
-      searchesId: ids.searches,
-      recentsId: ids.recents,
-      trashId: ids.trash,
-      settingsId: ids.settings,
-      todayId: ids.today,
-      nodes: [...nodes.values()],
+    // Config-as-nodes parity: the renderer reads tag/field config from a
+    // `defConfig` child subtree (pinned leading segment), not the flat node
+    // fields this mock authors with. At projection time we synthesize that
+    // subtree from the flat fields so the real renderer resolves
+    // color/checkbox/field-type exactly as in production. The flat fields stay
+    // on the emitted node (harmless extras some specs still read directly).
+    const cfgDefaults = () => ({
+      children: [] as string[],
+      tags: [] as string[],
+      createdAt: now,
+      updatedAt: now,
+      locked: false,
+      showCheckbox: false,
+      doneStateEnabled: false,
+      autocollectOptions: false,
+      autoCollected: false,
     });
+    const systemOptionId = (key: string, value: string) => `sysopt:${key}:${value}`;
+    const expandConfigForDef = (def: MockNode, sink: Map<string, MockNode>): string[] => {
+      const defId = def.id;
+      const configIds: string[] = [];
+      const cfgId = (key: string) => `${defId}::cfg::${key}`;
+      const valueNode = (id: string, text: string) => {
+        sink.set(id, { id, content: rich(text), parentId: '', ...cfgDefaults() });
+      };
+      const refNode = (id: string, targetId: string, role: string) => {
+        sink.set(id, { id, type: 'reference', targetId, refRole: role, content: rich(''), parentId: '', ...cfgDefaults() });
+      };
+      const option = (key: string, value: string) => {
+        const id = systemOptionId(key, value);
+        if (!sink.has(id)) sink.set(id, { id, type: 'systemOption', content: rich(value), parentId: ids.schema, ...cfgDefaults() });
+        return id;
+      };
+      const defConfig = (key: string, childIds: string[]) => {
+        const id = cfgId(key);
+        sink.set(id, { id, type: 'defConfig', configKey: key, parentId: defId, content: rich(''), ...cfgDefaults(), children: childIds });
+        configIds.push(id);
+      };
+      const addScalar = (key: string, value: string | number | boolean | undefined) => {
+        if (value === undefined || value === null) return;
+        const valueId = `${cfgId(key)}::v`;
+        valueNode(valueId, typeof value === 'boolean' ? (value ? 'true' : 'false') : String(value));
+        defConfig(key, [valueId]);
+      };
+      const addRef = (key: string, targetId: string | undefined) => {
+        if (!targetId) return;
+        const refId = `${cfgId(key)}::ref`;
+        refNode(refId, targetId, 'config');
+        defConfig(key, [refId]);
+      };
+      const addEnum = (key: string, value: string | undefined) => {
+        if (value === undefined || value === '') return;
+        const refId = `${cfgId(key)}::ref`;
+        refNode(refId, option(key, value), 'enum');
+        defConfig(key, [refId]);
+      };
+      const addEnumList = (key: string, values: string[]) => {
+        if (!values.length) return;
+        const refIds = values.map((value, i) => {
+          const refId = `${cfgId(key)}::ref::${i}`;
+          refNode(refId, option(key, value), 'enum');
+          return refId;
+        });
+        defConfig(key, refIds);
+      };
+
+      if (def.type === 'tagDef') {
+        addScalar('color', def.color);
+        addRef('extends', def.extends);
+        addRef('childSupertag', def.childSupertag);
+        addScalar('showCheckbox', def.showCheckbox);
+        addScalar('doneStateEnabled', def.doneStateEnabled);
+      } else if (def.type === 'fieldDef') {
+        addEnum('fieldType', def.fieldType);
+        addEnum('cardinality', def.cardinality);
+        addRef('sourceSupertag', def.sourceSupertag);
+        addScalar('autocollectOptions', def.autocollectOptions);
+        addEnumList(
+          'autoInitialize',
+          def.autoInitialize ? def.autoInitialize.split(',').map((s) => s.trim()).filter(Boolean) : [],
+        );
+        addScalar('nullable', def.nullable);
+        addEnum('hideField', def.hideField);
+        addScalar('minValue', def.minValue);
+        addScalar('maxValue', def.maxValue);
+      }
+      return configIds;
+    };
+    const projection = () => {
+      const sink = new Map<string, MockNode>();
+      const emitted = [...nodes.values()].map((node) => {
+        if (node.type !== 'tagDef' && node.type !== 'fieldDef') return node;
+        const configIds = expandConfigForDef(node, sink);
+        return configIds.length ? { ...node, children: [...configIds, ...node.children] } : node;
+      });
+      return {
+        workspaceId: ids.workspace,
+        rootId: ids.root,
+        libraryId: ids.library,
+        dailyNotesId: ids.daily,
+        schemaId: ids.schema,
+        searchesId: ids.searches,
+        recentsId: ids.recents,
+        trashId: ids.trash,
+        settingsId: ids.settings,
+        todayId: ids.today,
+        nodes: [...emitted, ...sink.values()],
+      };
+    };
     const outcome = (focus?: {
       nodeId: string;
       selectAll: boolean;
@@ -1265,20 +1363,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             const node = nodes.get(nodeId);
             if (!node) continue;
             if (cmd === 'cycle_done_state' || cmd === 'batch_cycle_done_state') {
-              const hasCheckboxAffordance = node.showCheckbox || node.doneStateEnabled || Boolean(node.completedAt);
-              if (!hasCheckboxAffordance) {
-                node.showCheckbox = true;
-                node.completedAt = undefined;
-              } else if (!node.completedAt) {
-                node.showCheckbox = true;
-                node.completedAt = ++now;
-              } else {
-                node.completedAt = undefined;
-                node.showCheckbox = Boolean(node.doneStateEnabled);
-              }
+              // Manual three-state cycle over the completedAt sentinel
+              // (undefined = no box → 0 = undone box → >0 = done → none).
+              if (node.completedAt === undefined) node.completedAt = 0;
+              else if (node.completedAt === 0) node.completedAt = ++now;
+              else node.completedAt = undefined;
             } else {
-              node.completedAt = node.completedAt ? undefined : ++now;
-              node.showCheckbox = true;
+              // Toggle keeps the box: done (>0) → undone (0); otherwise → done.
+              node.completedAt = node.completedAt ? 0 : ++now;
             }
           }
           return clone(outcome());

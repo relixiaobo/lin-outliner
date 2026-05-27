@@ -5,6 +5,7 @@ import type {
   AgentUserViewPanelContext,
 } from '../../../core/agentTypes';
 import { formatNodeReferenceMarker } from '../../../core/nodeReferenceMarkup';
+import { nodeIsDone, nodeShowsCheckbox } from '../../../core/configProjection';
 import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
 import { buildOutlinerRows, readViewConfig } from '../../state/outlinerRows';
@@ -136,10 +137,12 @@ function outlineTextForNode(node: NodeProjection, index: DocumentIndex): string 
 
   const parts: string[] = [];
   if (node.type === 'search') parts.push('%%search%%');
-  const viewMode = node.type === 'search' ? readViewConfig(node, index.byId).viewMode : node.viewMode;
+  const viewMode = node.type === 'search'
+    ? readViewConfig(node, index.byId).viewMode
+    : node.type === 'viewDef' ? node.viewMode : undefined;
   if (viewMode) parts.push(`%%view:${viewMode}%%`);
-  if (node.completedAt) parts.push('[x]');
-  else if (node.showCheckbox) parts.push('[ ]');
+  if (nodeIsDone(node)) parts.push('[x]');
+  else if (nodeShowsCheckbox(index.byId, node)) parts.push('[ ]');
   parts.push(referenceText(node, index) ?? titleForNode(node));
   if (node.description) parts.push(`- ${compactContextText(node.description, MAX_CONTEXT_TITLE_LENGTH)}`);
   parts.push(...tagLabels(node, index));

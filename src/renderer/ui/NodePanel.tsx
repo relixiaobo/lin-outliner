@@ -24,6 +24,7 @@ import {
 } from './editor/richTextCodec';
 import { DefinitionConfigPanel } from './definition/DefinitionConfigPanel';
 import { definitionKind, definitionOutlinerLabel } from './definition/definitionConfig';
+import { projectFieldTypeById, nodeShowsCheckbox } from '../../core/configProjection';
 import type { SlashCommandId } from './interactions/slashCommands';
 import type { CommandRunner, EditorTrigger, NavigateRootOptions, TriggerState } from './shared';
 import {
@@ -147,7 +148,9 @@ export function NodePanel(props: NodePanelProps) {
   const localTitleSyncRef = useRef<{ nodeId: NodeId; content: RichText } | null>(null);
   const descriptionReturnPlacementRef = useRef(cursorEnd());
   const rootDefinitionKind = definitionKind(rootNode);
-  const definitionTemplateLabel = rootNode ? definitionOutlinerLabel(rootNode) : null;
+  const definitionTemplateLabel = rootNode
+    ? definitionOutlinerLabel(rootNode, { fieldType: projectFieldTypeById(props.index.byId, rootNode.id) })
+    : null;
   const showOutliner = Boolean(rootNode && (!rootDefinitionKind || definitionTemplateLabel));
   const showTrailingInput = Boolean(rootNode && showOutliner && rootNode.type !== 'search');
   const breadcrumb = buildPanelBreadcrumb(rootNode, props.index);
@@ -235,17 +238,17 @@ export function NodePanel(props: NodePanelProps) {
     if (props.rootId === projection.searchesId || rootNode.type === 'search') return <SearchIcon size={PANEL_HEADER_ICON_SIZE} />;
     if (rootNode.type === 'tagDef') {
       return (
-        <span className="panel-header-tag-icon" style={{ background: resolveTagColor(rootNode).text }}>
+        <span className="panel-header-tag-icon" style={{ background: resolveTagColor(rootNode, props.index.byId).text }}>
           <HashIcon size={ICON_SIZE.rowGlyph} />
         </span>
       );
     }
-    if (rootNode.type === 'fieldDef') return <FieldTypeIcon fieldType={rootNode.fieldType} size={PANEL_HEADER_ICON_SIZE} />;
+    if (rootNode.type === 'fieldDef') return <FieldTypeIcon fieldType={projectFieldTypeById(props.index.byId, rootNode.id)} size={PANEL_HEADER_ICON_SIZE} />;
     return null;
   };
 
   const headerIcon = renderHeaderIcon();
-  const showDoneCheckbox = Boolean(rootNode?.showCheckbox || rootNode?.doneStateEnabled || rootNode?.completedAt);
+  const showDoneCheckbox = rootNode ? nodeShowsCheckbox(props.index.byId, rootNode) : false;
   const rootTagIds = rootNode?.tags ?? [];
   const hasTitleTags = rootTagIds.length > 0;
   const panelIsoDate = rootNode && rootTagIds.some((tagId) => isDayTagId(tagId, props.index.byId))

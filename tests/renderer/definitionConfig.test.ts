@@ -15,9 +15,6 @@ function makeNode(overrides: Partial<NodeProjection>): NodeProjection {
     createdAt: 0,
     updatedAt: 0,
     locked: false,
-    showCheckbox: false,
-    doneStateEnabled: false,
-    autocollectOptions: false,
     autoCollected: false,
     toolbarVisible: false,
     filterValues: [],
@@ -33,21 +30,30 @@ describe('definition config registry', () => {
   });
 
   test('shows tag done mapping only after checkbox is enabled', () => {
-    const withoutCheckbox = definitionConfigItems(makeNode({ type: 'tagDef' })).map((item) => item.key);
-    const withCheckbox = definitionConfigItems(makeNode({ type: 'tagDef', showCheckbox: true })).map((item) => item.key);
+    const withoutCheckbox = definitionConfigItems(makeNode({ type: 'tagDef' }), { showCheckbox: false }).map((item) => item.key);
+    const withCheckbox = definitionConfigItems(makeNode({ type: 'tagDef' }), { showCheckbox: true }).map((item) => item.key);
 
     expect(withoutCheckbox).not.toContain('doneStateEnabled');
     expect(withCheckbox).toContain('doneStateEnabled');
   });
 
+  test('reveals done-state mapping rows only when both checkbox and mapping are on', () => {
+    const tag = makeNode({ type: 'tagDef' });
+    const checkboxOnly = definitionConfigItems(tag, { showCheckbox: true, doneStateEnabled: false }).map((item) => item.key);
+    const mappingOn = definitionConfigItems(tag, { showCheckbox: true, doneStateEnabled: true }).map((item) => item.key);
+
+    expect(checkboxOnly).not.toContain('doneMapChecked');
+    expect(checkboxOnly).not.toContain('doneMapUnchecked');
+    expect(mappingOn).toContain('doneMapChecked');
+    expect(mappingOn).toContain('doneMapUnchecked');
+  });
+
   test('shows field type-specific rows without storing config as real children', () => {
-    const plain = definitionConfigItems(makeNode({ type: 'fieldDef', fieldType: 'plain' })).map((item) => item.key);
-    const options = definitionConfigItems(makeNode({ type: 'fieldDef', fieldType: 'options' })).map((item) => item.key);
-    const optionsFromTag = definitionConfigItems(makeNode({
-      type: 'fieldDef',
-      fieldType: 'options_from_supertag',
-    })).map((item) => item.key);
-    const number = definitionConfigItems(makeNode({ type: 'fieldDef', fieldType: 'number' })).map((item) => item.key);
+    const fieldNode = makeNode({ type: 'fieldDef' });
+    const plain = definitionConfigItems(fieldNode, { fieldType: 'plain' }).map((item) => item.key);
+    const options = definitionConfigItems(fieldNode, { fieldType: 'options' }).map((item) => item.key);
+    const optionsFromTag = definitionConfigItems(fieldNode, { fieldType: 'options_from_supertag' }).map((item) => item.key);
+    const number = definitionConfigItems(fieldNode, { fieldType: 'number' }).map((item) => item.key);
 
     expect(plain).toContain('cardinality');
     expect(plain).toContain('autoInitialize');
@@ -59,8 +65,8 @@ describe('definition config registry', () => {
   });
 
   test('only field options and tags expose template outliner sections', () => {
-    expect(definitionOutlinerLabel(makeNode({ type: 'tagDef' }))).toBe('Default content');
-    expect(definitionOutlinerLabel(makeNode({ type: 'fieldDef', fieldType: 'options' }))).toBe('Pre-determined options');
-    expect(definitionOutlinerLabel(makeNode({ type: 'fieldDef', fieldType: 'plain' }))).toBeNull();
+    expect(definitionOutlinerLabel(makeNode({ type: 'tagDef' }), {})).toBe('Default content');
+    expect(definitionOutlinerLabel(makeNode({ type: 'fieldDef' }), { fieldType: 'options' })).toBe('Pre-determined options');
+    expect(definitionOutlinerLabel(makeNode({ type: 'fieldDef' }), { fieldType: 'plain' })).toBeNull();
   });
 });

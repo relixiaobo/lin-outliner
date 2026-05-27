@@ -7,7 +7,7 @@ import {
   SEARCH_UNSUPPORTED_QUERY_OPS,
   searchNodeToQueryExpr,
 } from '../../src/core/searchEngine';
-import { QUERY_OPS, type QueryOp } from '../../src/core/types';
+import { QUERY_OPS, type EmbedNode, type ImageNode, type QueryOp } from '../../src/core/types';
 
 function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T) {
   expect(outcome.focus).toBeDefined();
@@ -363,12 +363,12 @@ describe('core search engine', () => {
     expect(regexp.ok ? regexp.hits.map((hit) => hit.nodeId) : []).not.toContain(outside);
 
     state.nodes[conditionId]!.queryOp = 'CHILD_OF';
-    state.nodes[conditionId]!.targetId = parent;
+    state.nodes[conditionId]!.queryTargetId = parent;
     const childOf = runSearchNode(state, searchId);
     expect(childOf.ok ? childOf.hits.map((hit) => hit.nodeId) : []).toEqual(expect.arrayContaining([alpha, beta]));
     expect(childOf.ok ? childOf.hits.map((hit) => hit.nodeId) : []).not.toContain(grandchild);
 
-    delete state.nodes[conditionId]!.targetId;
+    delete state.nodes[conditionId]!.queryTargetId;
     state.nodes[conditionId]!.queryOp = 'IS_TYPE';
     state.nodes[conditionId]!.content.text = 'tagDef';
     const typeSearch = runSearchNode(state, searchId);
@@ -429,7 +429,7 @@ describe('core search engine', () => {
     relationState.nodes[relationSearchId]!.type = 'search';
     relationState.nodes[relationConditionId]!.type = 'queryCondition';
     relationState.nodes[relationConditionId]!.queryOp = 'CHILD_OF';
-    relationState.nodes[relationConditionId]!.targetId = parent;
+    relationState.nodes[relationConditionId]!.queryTargetId = parent;
 
     const childOf = runSearchNode(relationState, relationSearchId);
     expect(childOf.ok ? childOf.hits.map((hit) => hit.nodeId) : []).toEqual(expect.arrayContaining([owned, referenced]));
@@ -748,12 +748,17 @@ describe('core search engine', () => {
     const conditionId = mustFocus(core.createNode(searchId, null, 'Media'));
     const state = core.state();
 
+    // Media fields live only on their owning variants now: mediaUrl on image
+    // nodes, embedType/sourceUrl on embed nodes. Audio/video are embeds whose
+    // kind is resolved from the embed type or the source URL extension.
     state.nodes[image]!.type = 'image';
-    state.nodes[image]!.mediaUrl = 'file:///tmp/screenshot.png';
-    state.nodes[audio]!.mediaUrl = 'file:///tmp/recording.mp3';
-    state.nodes[video]!.embedType = 'video';
+    (state.nodes[image] as ImageNode).mediaUrl = 'file:///tmp/screenshot.png';
+    state.nodes[audio]!.type = 'embed';
+    (state.nodes[audio] as EmbedNode).sourceUrl = 'file:///tmp/recording.mp3';
+    state.nodes[video]!.type = 'embed';
+    (state.nodes[video] as EmbedNode).embedType = 'video';
     state.nodes[embed]!.type = 'embed';
-    state.nodes[embed]!.sourceUrl = 'https://example.com/demo';
+    (state.nodes[embed] as EmbedNode).sourceUrl = 'https://example.com/demo';
     state.nodes[searchId]!.type = 'search';
     state.nodes[conditionId]!.type = 'queryCondition';
     state.nodes[conditionId]!.queryOp = 'HAS_MEDIA';
@@ -808,5 +813,36 @@ describe('core search engine', () => {
     state.nodes[conditionId]!.content.text = 'field';
     const fields = runSearchNode(state, searchId);
     expect(fields.ok ? fields.hits.map((hit) => hit.nodeId) : []).toContain(fieldDefId);
+  });
+
+  test('persists a node-target query rule (queryTargetId) across serialize/reload', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'Target parent'));
+    const child = mustFocus(core.createNode(target, null, 'Child note'));
+    const outsider = mustFocus(core.createNode(today, null, 'Unrelated'));
+    const searchId = mustFocus(core.createSearchNode(core.projection().searchesId, null, {
+      title: 'Children of Target',
+      query: { kind: 'rule', op: 'CHILD_OF', targetId: target },
+    }));
+
+    // Sanity: the target-based rule resolves before any round-trip.
+    const before = runSearchNode(core.state(), searchId);
+    expect(before.ok ? before.hits.map((hit) => hit.nodeId) : []).toContain(child);
+    expect(before.ok ? before.hits.map((hit) => hit.nodeId) : []).not.toContain(outsider);
+
+    // Round-trip through the Loro snapshot. The query-rule target now persists
+    // under `queryTargetId` (split from the reference-only `targetId`), so this
+    // proves NODE_SCALAR_KEYS carries the new key and the reloaded condition
+    // still resolves its target.
+    const reloaded = Core.fromState(Core.deserializeState(core.serializeState()));
+
+    const conditionNode = Object.values(reloaded.state().nodes)
+      .find((node) => node.type === 'queryCondition' && node.queryOp === 'CHILD_OF');
+    expect(conditionNode?.type === 'queryCondition' ? conditionNode.queryTargetId : undefined).toBe(target);
+
+    const after = runSearchNode(reloaded.state(), searchId);
+    expect(after.ok ? after.hits.map((hit) => hit.nodeId) : []).toContain(child);
+    expect(after.ok ? after.hits.map((hit) => hit.nodeId) : []).not.toContain(outsider);
   });
 });

@@ -270,7 +270,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
             ? (
               <span
                 className="tag-selector-hash"
-                style={{ color: resolveTagColor(tagItem.tag).text }}
+                style={{ color: resolveTagColor(tagItem.tag, props.index.byId).text }}
                 aria-hidden="true"
               >
                 #

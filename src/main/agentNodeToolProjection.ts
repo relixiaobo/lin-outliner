@@ -12,6 +12,8 @@ import {
   type NodeProjection,
 } from '../core/types';
 import { formatNodeReferenceMarker } from '../core/nodeReferenceMarkup';
+import { projectFieldConfig, nodeIsDone, nodeShowsCheckbox } from '../core/configProjection';
+import { isInternalConfigNode, refRoleCountsAsBacklink } from '../core/configSchema';
 import type {
   NodeBacklink,
   NodeFieldRead,
@@ -39,7 +41,7 @@ export function isSystemNodeId(nodeId: string): boolean {
 export function fieldReads(index: ProjectionIndex, node: NodeProjection, includeDeleted: boolean): NodeFieldRead[] {
   return node.children
     .map((childId) => index.nodes.get(childId))
-    .filter((child): child is NodeProjection => child !== undefined && child.type === 'fieldEntry' && (includeDeleted || !isInTrash(index, child.id)))
+    .filter((child): child is Extract<NodeProjection, { type: 'fieldEntry' }> => child !== undefined && child.type === 'fieldEntry' && (includeDeleted || !isInTrash(index, child.id)))
     .map((fieldEntry) => {
       const fieldDef = fieldEntry.fieldDefId ? index.nodes.get(fieldEntry.fieldDefId) : undefined;
       const values = fieldEntry.children
@@ -48,14 +50,16 @@ export function fieldReads(index: ProjectionIndex, node: NodeProjection, include
         .map((value) => ({
           text: referenceText(index, value) ?? value.content.text,
           valueNodeId: value.id,
-          targetId: value.targetId,
+          targetId: value.type === 'reference' ? value.targetId : undefined,
         }));
       const options = fieldDef?.children
-        .map((optionId) => index.nodes.get(optionId)?.content.text.trim())
+        .map((optionId) => index.nodes.get(optionId))
+        .filter((option): option is NodeProjection => Boolean(option) && !isInternalConfigNode(option!))
+        .map((option) => option.content.text.trim())
         .filter((value): value is string => Boolean(value));
       return {
         name: fieldDef?.content.text || fieldEntry.content.text || 'Field',
-        type: fieldDef?.fieldType ?? fieldEntry.fieldType ?? 'plain',
+        type: fieldDef?.type === 'fieldDef' ? projectFieldConfig(index.nodes, fieldDef).fieldType : 'plain',
         values,
         fieldEntryId: fieldEntry.id,
         options: options && options.length ? options : undefined,
@@ -67,7 +71,7 @@ export function backlinks(index: ProjectionIndex, targetId: string, includeDelet
   const result: NodeBacklink[] = [];
   for (const node of index.projection.nodes) {
     if (!includeDeleted && isInTrash(index, node.id)) continue;
-    if (node.type === 'reference' && node.targetId === targetId) {
+    if (node.type === 'reference' && refRoleCountsAsBacklink(node) && node.targetId === targetId) {
       const parent = node.parentId ? index.nodes.get(node.parentId) : undefined;
       const source = parent && parent.type === 'fieldEntry' && parent.parentId ? index.nodes.get(parent.parentId) : parent;
       result.push({
@@ -97,7 +101,7 @@ export function normalChildIds(index: ProjectionIndex, nodeId: string, includeDe
     const child = index.nodes.get(childId);
     return Boolean(child)
       && child!.type !== 'fieldEntry'
-      && !['queryCondition', 'viewDef', 'sortRule', 'filterRule', 'displayField'].includes(child!.type ?? '')
+      && !['queryCondition', 'viewDef', 'sortRule', 'filterRule', 'displayField', 'defConfig', 'systemOption'].includes(child!.type ?? '')
       && (includeDeleted || !isInTrash(index, childId));
   });
 }
@@ -125,9 +129,9 @@ export function nodeKind(node: NodeProjection): string {
   return node.type ?? 'node';
 }
 
-export function checkedState(node: NodeProjection): boolean | null | undefined {
-  if (node.completedAt) return true;
-  if (node.showCheckbox) return false;
+export function checkedState(index: ProjectionIndex, node: NodeProjection): boolean | null | undefined {
+  if (nodeIsDone(node)) return true;
+  if (nodeShowsCheckbox(index.nodes, node)) return false;
   return undefined;
 }
 
@@ -159,7 +163,8 @@ export function referenceText(index: ProjectionIndex, node: NodeProjection): str
 }
 
 export function fieldName(index: ProjectionIndex, fieldEntry: NodeProjection): string {
-  const fieldDef = fieldEntry.fieldDefId ? index.nodes.get(fieldEntry.fieldDefId) : undefined;
+  const fieldDefId = fieldEntry.type === 'fieldEntry' ? fieldEntry.fieldDefId : undefined;
+  const fieldDef = fieldDefId ? index.nodes.get(fieldDefId) : undefined;
   return fieldDef?.content.text || fieldEntry.content.text || 'Field';
 }
 
@@ -236,7 +241,7 @@ export function projectionFingerprint(projection: DocumentProjection): string {
     text: node.content.text,
     tags: node.tags,
     type: node.type,
-    targetId: node.targetId,
+    targetId: node.type === 'reference' ? node.targetId : undefined,
     updatedAt: node.updatedAt,
   })));
 }

@@ -218,7 +218,11 @@ function sidebarChildren(
     .filter((child): child is NodeProjection => Boolean(
       child
       && child.parentId === parent.id
-      && child.type !== 'queryCondition',
+      && child.type !== 'queryCondition'
+      // config-as-nodes: internal config rows + system enum options never
+      // appear in the workspace tree.
+      && child.type !== 'defConfig'
+      && child.type !== 'systemOption',
     ));
 }
 

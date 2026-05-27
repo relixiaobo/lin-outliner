@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { Core } from '../../src/core/core';
 import { LoroOutlinerDocument } from '../../src/core/loroDocument';
+import { buildConfigIndex, nodeShowsCheckbox } from '../../src/core/configProjection';
+import { isInternalConfigNode } from '../../src/core/configSchema';
 import { runSearchNode } from '../../src/core/searchEngine';
 import {
   AREAS_ID,
@@ -15,6 +17,7 @@ import {
   TAG_DAY_ID,
   TRASH_ID,
   WORKSPACE_ID,
+  defConfigNodeId,
   plainText,
   replaceAllRichTextPatch,
   type CreateNodeTree,
@@ -24,6 +27,21 @@ import {
 function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T) {
   expect(outcome.focus).toBeDefined();
   return outcome.focus!.nodeId;
+}
+
+// A fieldDef carries its config in a defConfig subtree alongside its option
+// children; option readers must skip those internal config nodes.
+function optionChildIds(core: Core, fieldDefId: string): string[] {
+  const state = core.state();
+  return state.nodes[fieldDefId].children.filter(
+    (childId) => !isInternalConfigNode(state.nodes[childId]));
+}
+
+// Checkbox visibility is tag-driven + completedAt-sentinel; derive it from state
+// the same way the renderer/search do, via the config projection.
+function showsCheckbox(core: Core, nodeId: string): boolean {
+  const byId = new Map(Object.values(core.state().nodes).map((node) => [node.id, node]));
+  return nodeShowsCheckbox(byId, core.state().nodes[nodeId]);
 }
 
 describe('Core', () => {
@@ -264,20 +282,21 @@ describe('Core', () => {
     expect(viewDef.groupField).toBeUndefined();
   });
 
-  test('toggle done enables and preserves checkbox affordance', () => {
+  test('toggle done marks a manual node done, then keeps the checkbox when undone', () => {
     const core = Core.new();
     const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Task'));
 
     core.toggleDone(nodeId);
-    expect(core.state().nodes[nodeId].completedAt).toBeDefined();
-    expect(core.state().nodes[nodeId].showCheckbox).toBe(true);
+    expect(core.state().nodes[nodeId].completedAt).toBeGreaterThan(0);
+    expect(showsCheckbox(core, nodeId)).toBe(true);
 
+    // Undone manual node keeps its checkbox via the sentinel completedAt = 0.
     core.toggleDone(nodeId);
-    expect(core.state().nodes[nodeId].completedAt).toBeUndefined();
-    expect(core.state().nodes[nodeId].showCheckbox).toBe(true);
+    expect(core.state().nodes[nodeId].completedAt).toBe(0);
+    expect(showsCheckbox(core, nodeId)).toBe(true);
   });
 
-  test('batch toggle done enables checkbox affordance on each target', () => {
+  test('batch toggle done marks each target done with a visible checkbox', () => {
     const core = Core.new();
     const today = core.projection().todayId;
     const first = mustFocus(core.createNode(today, null, 'First'));
@@ -285,44 +304,97 @@ describe('Core', () => {
 
     core.batchToggleDone([first, second]);
 
-    expect(core.state().nodes[first].completedAt).toBeDefined();
-    expect(core.state().nodes[first].showCheckbox).toBe(true);
-    expect(core.state().nodes[second].completedAt).toBeDefined();
-    expect(core.state().nodes[second].showCheckbox).toBe(true);
+    expect(core.state().nodes[first].completedAt).toBeGreaterThan(0);
+    expect(showsCheckbox(core, first)).toBe(true);
+    expect(core.state().nodes[second].completedAt).toBeGreaterThan(0);
+    expect(showsCheckbox(core, second)).toBe(true);
   });
 
-  test('keyboard cycle moves through no checkbox, undone, and done', () => {
+  test('keyboard cycle moves a manual node through no checkbox, undone, and done', () => {
     const core = Core.new();
     const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Task'));
 
-    expect(core.state().nodes[nodeId].showCheckbox).toBe(false);
+    expect(showsCheckbox(core, nodeId)).toBe(false);
     expect(core.state().nodes[nodeId].completedAt).toBeUndefined();
 
+    // No checkbox → undone (sentinel 0).
     core.cycleDoneState(nodeId);
-    expect(core.state().nodes[nodeId].showCheckbox).toBe(true);
-    expect(core.state().nodes[nodeId].completedAt).toBeUndefined();
+    expect(showsCheckbox(core, nodeId)).toBe(true);
+    expect(core.state().nodes[nodeId].completedAt).toBe(0);
 
+    // Undone → done.
     core.cycleDoneState(nodeId);
-    expect(core.state().nodes[nodeId].showCheckbox).toBe(true);
-    expect(core.state().nodes[nodeId].completedAt).toBeDefined();
+    expect(showsCheckbox(core, nodeId)).toBe(true);
+    expect(core.state().nodes[nodeId].completedAt).toBeGreaterThan(0);
 
+    // Done → no checkbox.
     core.cycleDoneState(nodeId);
-    expect(core.state().nodes[nodeId].showCheckbox).toBe(false);
+    expect(showsCheckbox(core, nodeId)).toBe(false);
     expect(core.state().nodes[nodeId].completedAt).toBeUndefined();
   });
 
-  test('keyboard cycle preserves forced done affordance', () => {
+  test('keyboard cycle on a tag-driven node toggles done without removing the checkbox', () => {
     const core = Core.new();
-    const nodeId = mustFocus(core.createTag('configured task'));
-    core.setTagConfig(nodeId, { doneStateEnabled: true });
+    const tagId = mustFocus(core.createTag('task'));
+    core.setTagConfig(tagId, { showCheckbox: true });
+    const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Launch'));
+    core.applyTag(nodeId, tagId);
+
+    // Tag-driven: the checkbox is always visible regardless of done state.
+    expect(showsCheckbox(core, nodeId)).toBe(true);
 
     core.cycleDoneState(nodeId);
-    expect(core.state().nodes[nodeId].showCheckbox).toBe(true);
-    expect(core.state().nodes[nodeId].completedAt).toBeDefined();
+    expect(showsCheckbox(core, nodeId)).toBe(true);
+    expect(core.state().nodes[nodeId].completedAt).toBeGreaterThan(0);
 
+    // Undone clears the timestamp; the tag keeps the checkbox visible.
     core.cycleDoneState(nodeId);
-    expect(core.state().nodes[nodeId].showCheckbox).toBe(true);
+    expect(showsCheckbox(core, nodeId)).toBe(true);
     expect(core.state().nodes[nodeId].completedAt).toBeUndefined();
+  });
+
+  test('done-state mapping syncs checkbox and an option field both ways', () => {
+    const core = Core.new();
+    const tagId = mustFocus(core.createTag('task'));
+    core.setTagConfig(tagId, { showCheckbox: true, doneStateEnabled: true });
+
+    const templateEntryId = mustFocus(core.createFieldDef(tagId, 'Status', 'options'));
+    const fieldDefId = core.state().nodes[templateEntryId].fieldDefId!;
+    const doneOption = mustFocus(core.registerCollectedOption(fieldDefId, 'Done'));
+    const todoOption = mustFocus(core.registerCollectedOption(fieldDefId, 'Todo'));
+    core.setConfigValue(tagId, { kind: 'refList', configKey: 'doneMapChecked', targetIds: [doneOption] });
+    core.setConfigValue(tagId, { kind: 'refList', configKey: 'doneMapUnchecked', targetIds: [todoOption] });
+
+    const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Ship it'));
+    core.applyTag(nodeId, tagId);
+
+    const entryOf = () => core.state().nodes[nodeId].children.find((childId) => {
+      const child = core.state().nodes[childId];
+      return child?.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
+    });
+    const selectedOption = () => {
+      const entryId = entryOf();
+      const valueId = entryId ? core.state().nodes[entryId].children[0] : undefined;
+      return valueId ? core.state().nodes[valueId].targetId : undefined;
+    };
+
+    // Forward: completing the node selects the mapped "done" option.
+    core.toggleDone(nodeId);
+    expect(core.state().nodes[nodeId].completedAt).toBeGreaterThan(0);
+    expect(selectedOption()).toBe(doneOption);
+
+    // Forward: un-completing selects the mapped "not done" option.
+    core.toggleDone(nodeId);
+    expect(selectedOption()).toBe(todoOption);
+
+    // Reverse: selecting the "done" option marks the node done.
+    core.selectFieldOption(entryOf()!, doneOption);
+    expect(core.state().nodes[nodeId].completedAt).toBeGreaterThan(0);
+
+    // Reverse: selecting the "not done" option clears completion (tag keeps the box).
+    core.selectFieldOption(entryOf()!, todoOption);
+    expect(core.state().nodes[nodeId].completedAt).toBeUndefined();
+    expect(showsCheckbox(core, nodeId)).toBe(true);
   });
 
   test('merge preserves UTF-16 rich text offsets', () => {
@@ -371,6 +443,32 @@ describe('Core', () => {
     expect(clonedChild).not.toBe(child);
     expect(core.state().nodes[clonedChild].parentId).toBe(cloneId);
     expect(core.state().nodes[clonedChild].content.text).toBe('Child');
+  });
+
+  test('duplicating a definition keeps its config editable (stable defConfig ids)', () => {
+    const core = Core.new();
+    const tagId = mustFocus(core.createTag('event'));
+    core.setConfigValue(tagId, { kind: 'scalar', configKey: 'color', text: 'red' });
+
+    const cloneId = mustFocus(core.batchDuplicateNodes([tagId]));
+    expect(cloneId).not.toBe(tagId);
+    // The clone inherits the source config value.
+    expect(buildConfigIndex(core.state()).tag(cloneId)?.color).toBe('red');
+
+    // Editing a knob on the clone must actually take effect — it would not if the
+    // cloned defConfig row carried a fresh id (ensureConfigRowDirect would add a
+    // second row that configRowsByKey shadows by child order).
+    core.setConfigValue(cloneId, { kind: 'scalar', configKey: 'color', text: 'blue' });
+    expect(buildConfigIndex(core.state()).tag(cloneId)?.color).toBe('blue');
+
+    const colorRows = Object.values(core.state().nodes).filter(
+      (n) => n.type === 'defConfig' && n.parentId === cloneId && n.configKey === 'color',
+    );
+    expect(colorRows).toHaveLength(1);
+    expect(colorRows[0]!.id).toBe(defConfigNodeId(cloneId, 'color'));
+
+    // The original is untouched.
+    expect(buildConfigIndex(core.state()).tag(tagId)?.color).toBe('red');
   });
 
   test('tag template instantiates fields and removal cleans them up', () => {
@@ -427,7 +525,7 @@ describe('Core', () => {
     expect(value.type).toBeUndefined();
     expect(value.content.text).toBe('Urgent');
 
-    const collectedRefId = core.state().nodes[fieldDefId].children[0];
+    const collectedRefId = optionChildIds(core, fieldDefId)[0];
     const collectedRef = core.state().nodes[collectedRefId];
     expect(collectedRef.type).toBe('reference');
     expect(collectedRef.targetId).toBe(valueId);
@@ -438,7 +536,34 @@ describe('Core', () => {
 
     core.clearFieldValue(fieldEntryId);
     expect(core.state().nodes[fieldEntryId].children).toEqual([]);
-    expect(core.state().nodes[fieldDefId].children).toEqual([]);
+    expect(optionChildIds(core, fieldDefId)).toEqual([]);
+  });
+
+  test('free-text value on an options field stays local without collecting an option', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const fieldEntryId = mustFocus(core.createInlineField(today, null, 'Status', 'options'));
+    const fieldDefId = core.state().nodes[fieldEntryId].fieldDefId!;
+
+    // Auto-collect defaults off: a typed value is stored as a plain text value on
+    // the entry and is NOT promoted into the reusable option pool.
+    core.setFieldFreeTextValue(fieldEntryId, 'One-off');
+
+    const valueId = core.state().nodes[fieldEntryId].children[0];
+    const value = core.state().nodes[valueId];
+    expect(value.type).toBeUndefined();
+    expect(value.content.text).toBe('One-off');
+    expect(optionChildIds(core, fieldDefId)).toEqual([]);
+
+    // Single-cardinality replaces the prior value; whitespace-only text clears it.
+    core.setFieldFreeTextValue(fieldEntryId, 'Revised');
+    const children = core.state().nodes[fieldEntryId].children;
+    expect(children.length).toBe(1);
+    expect(core.state().nodes[children[0]].content.text).toBe('Revised');
+
+    core.setFieldFreeTextValue(fieldEntryId, '   ');
+    expect(core.state().nodes[fieldEntryId].children).toEqual([]);
+    expect(optionChildIds(core, fieldDefId)).toEqual([]);
   });
 
   test('clearing an auto-collected source preserves references by promoting the option', () => {
@@ -464,7 +589,7 @@ describe('Core', () => {
 
     core.createCollectedFieldOption(firstEntryId, 'Urgent');
     const sourceValueId = core.state().nodes[firstEntryId].children[0];
-    const collectedRefId = core.state().nodes[fieldDefId].children[0];
+    const collectedRefId = optionChildIds(core, fieldDefId)[0];
     core.selectFieldOption(secondEntryId, collectedRefId);
     const secondValueId = core.state().nodes[secondEntryId].children[0];
     expect(core.state().nodes[secondValueId].targetId).toBe(sourceValueId);
@@ -476,7 +601,7 @@ describe('Core', () => {
     expect(state.nodes[sourceValueId].parentId).toBe(fieldDefId);
     expect(state.nodes[sourceValueId].autoCollected).toBe(true);
     expect(state.nodes[secondValueId].targetId).toBe(sourceValueId);
-    expect(state.nodes[fieldDefId].children).toEqual([sourceValueId]);
+    expect(optionChildIds(core, fieldDefId)).toEqual([sourceValueId]);
   });
 
   test('list options append unique values instead of replacing', () => {
@@ -532,28 +657,28 @@ describe('Core', () => {
       minValue: 1,
       maxValue: 5,
     });
-    expect(core.state().nodes[fieldId].fieldType).toBe('number');
-    expect(core.state().nodes[fieldId].cardinality).toBe('list');
-    expect(core.state().nodes[fieldId].nullable).toBe(false);
-    expect(core.state().nodes[fieldId].hideField).toBe('empty');
-    expect(core.state().nodes[fieldId].autoInitialize).toBe('ancestor_field_value');
-    expect(core.state().nodes[fieldId].minValue).toBe(1);
-    expect(core.state().nodes[fieldId].maxValue).toBe(5);
+    expect(buildConfigIndex(core.state()).field(fieldId)?.fieldType).toBe('number');
+    expect(buildConfigIndex(core.state()).field(fieldId)?.cardinality).toBe('list');
+    expect(buildConfigIndex(core.state()).field(fieldId)?.nullable).toBe(false);
+    expect(buildConfigIndex(core.state()).field(fieldId)?.hideField).toBe('empty');
+    expect(buildConfigIndex(core.state()).field(fieldId)?.autoInitialize).toEqual(['ancestor_field_value']);
+    expect(buildConfigIndex(core.state()).field(fieldId)?.minValue).toBe(1);
+    expect(buildConfigIndex(core.state()).field(fieldId)?.maxValue).toBe(5);
 
     core.setFieldConfig(fieldId, { fieldType: 'options', autocollectOptions: true });
-    expect(core.state().nodes[fieldId].fieldType).toBe('options');
-    expect(core.state().nodes[fieldId].autocollectOptions).toBe(true);
-    expect(core.state().nodes[fieldId].minValue).toBeUndefined();
-    expect(core.state().nodes[fieldId].maxValue).toBeUndefined();
+    expect(buildConfigIndex(core.state()).field(fieldId)?.fieldType).toBe('options');
+    expect(buildConfigIndex(core.state()).field(fieldId)?.autocollectOptions).toBe(true);
+    expect(buildConfigIndex(core.state()).field(fieldId)?.minValue).toBeUndefined();
+    expect(buildConfigIndex(core.state()).field(fieldId)?.maxValue).toBeUndefined();
 
     const sourceTagId = mustFocus(core.createTag('source'));
     core.setFieldConfig(fieldId, {
       fieldType: 'options_from_supertag',
       sourceSupertag: sourceTagId,
     });
-    expect(core.state().nodes[fieldId].fieldType).toBe('options_from_supertag');
-    expect(core.state().nodes[fieldId].sourceSupertag).toBe(sourceTagId);
-    expect(core.state().nodes[fieldId].autocollectOptions).toBe(false);
+    expect(buildConfigIndex(core.state()).field(fieldId)?.fieldType).toBe('options_from_supertag');
+    expect(buildConfigIndex(core.state()).field(fieldId)?.sourceSupertag).toBe(sourceTagId);
+    expect(buildConfigIndex(core.state()).field(fieldId)?.autocollectOptions).toBe(false);
 
     expect(() => core.setFieldConfig(fieldId, { autocollectOptions: true }))
       .toThrow('auto-collect options');
@@ -717,6 +842,31 @@ describe('Core', () => {
     expect(JSON.stringify(core.state())).toBe(afterRefresh);
   });
 
+  test('saved search result references do not pollute backlinks', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const tagId = mustFocus(core.createTag('project'));
+    const alpha = mustFocus(core.createNode(today, null, 'Alpha'));
+    const beta = mustFocus(core.createNode(today, null, 'Beta'));
+    core.applyTag(alpha, tagId);
+    core.applyTag(beta, tagId);
+
+    const searchId = mustFocus(core.createSearchNode(core.projection().searchesId, null, {
+      title: 'Projects',
+      query: { kind: 'rule', op: 'HAS_TAG', tagDefId: tagId },
+    }));
+
+    // The search materialized a result reference per hit...
+    const resultRefs = core.state().nodes[searchId]!.children
+      .map((childId) => core.state().nodes[childId]!)
+      .filter((child) => child.type === 'reference');
+    expect(new Set(resultRefs.map((ref) => ref.targetId))).toEqual(new Set([alpha, beta]));
+    // ...each tagged with the searchResult role, kept out of the backlink graph.
+    expect(resultRefs.every((ref) => ref.refRole === 'searchResult')).toBe(true);
+    expect(core.backlinks(alpha)).toHaveLength(0);
+    expect(core.backlinks(beta)).toHaveLength(0);
+  });
+
   test('saved search refresh keeps result references in hit order', () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -766,10 +916,36 @@ describe('Core', () => {
 
     const childNodeId = mustFocus(core.createNode(nodeId, null, 'Checklist item'));
     expect(core.state().nodes[childNodeId].tags).toContain(defaultChildTagId);
-    expect(core.state().nodes[childTagId].showCheckbox).toBe(true);
-    expect(core.state().nodes[childTagId].doneStateEnabled).toBe(true);
+    expect(buildConfigIndex(core.state()).tag(childTagId)?.showCheckbox).toBe(true);
+    expect(buildConfigIndex(core.state()).tag(childTagId)?.doneStateEnabled).toBe(true);
     expect(() => core.setTagConfig(parentTagId, { extends: childTagId }))
       .toThrow('tag inheritance cannot create a cycle');
+  });
+
+  test('tag inheritance instantiates default content along the extends chain (ancestor-first)', () => {
+    const core = Core.new();
+    const parentTagId = mustFocus(core.createTag('project'));
+    const childTagId = mustFocus(core.createTag('task'));
+    const parentContentId = mustFocus(core.createNode(parentTagId, null, 'From project'));
+    core.setTagConfig(childTagId, { extends: parentTagId });
+    const childContentId = mustFocus(core.createNode(childTagId, null, 'From task'));
+
+    const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Launch'));
+    core.applyTag(nodeId, childTagId);
+
+    const contentChildren = core.state().nodes[nodeId].children
+      .map((id) => core.state().nodes[id]!)
+      .filter((child) => child.type === undefined || child.type === 'codeBlock');
+    // ancestor-first: the base tag's content precedes the more specific tag's.
+    expect(contentChildren.map((child) => child.content.text)).toEqual(['From project', 'From task']);
+    expect(contentChildren.map((child) => child.templateId)).toEqual([parentContentId, childContentId]);
+
+    // Re-applying is idempotent (dedup by templateId — no duplicate clones).
+    core.applyTag(nodeId, childTagId);
+    const afterReapply = core.state().nodes[nodeId].children
+      .map((id) => core.state().nodes[id]!)
+      .filter((child) => child.type === undefined || child.type === 'codeBlock');
+    expect(afterReapply.length).toBe(2);
   });
 
   test('replace node with reference creates backlinks and remains undoable', () => {
@@ -800,6 +976,27 @@ describe('Core', () => {
     expect(core.state().nodes[today].children).toEqual([targetParent, trigger, inlineSource]);
     expect(core.state().nodes[trigger].parentId).toBe(today);
     expect(core.state().nodes[referenceId]).toBeUndefined();
+  });
+
+  test('persists a tree reference (targetId) and its backlink across serialize/reload', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const targetParent = mustFocus(core.createNode(today, null, 'Targets'));
+    const target = mustFocus(core.createNode(targetParent, null, 'Target'));
+    const source = mustFocus(core.createNode(today, null, 'Source'));
+    const referenceId = mustFocus(core.addReference(source, target, null));
+
+    const expectedBacklink = { sourceId: source, referenceId, kind: 'tree' as const };
+    expect(core.backlinks(target)).toEqual(expect.arrayContaining([expectedBacklink]));
+
+    // `targetId` now lives on ReferenceNode and is enumerated by NODE_SCALAR_KEYS;
+    // round-tripping the snapshot proves it survives persistence and that the
+    // backlink graph still resolves from the reloaded reference.
+    const reloaded = Core.fromState(Core.deserializeState(core.serializeState()));
+    const reloadedRef = reloaded.state().nodes[referenceId];
+    expect(reloadedRef.type).toBe('reference');
+    expect(reloadedRef.targetId).toBe(target);
+    expect(reloaded.backlinks(target)).toEqual(expect.arrayContaining([expectedBacklink]));
   });
 
   test('trashing a reference target keeps references restorable', () => {

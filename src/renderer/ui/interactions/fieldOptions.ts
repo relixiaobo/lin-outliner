@@ -1,4 +1,6 @@
 import type { NodeId, NodeProjection } from '../../api/types';
+import { projectFieldConfig } from '../../../core/configProjection';
+import { isInternalConfigNode } from '../../../core/configSchema';
 import { isOptionsFieldType } from '../fields/fieldTypeRegistry';
 
 export interface FieldOption {
@@ -12,13 +14,14 @@ export function resolveFieldOptions(
   field: NodeProjection | undefined,
   byId: Map<NodeId, NodeProjection>,
 ): FieldOption[] {
-  if (!field || !isOptionsFieldType(field.fieldType)) return [];
+  const fieldType = field ? projectFieldConfig(byId, field).fieldType : undefined;
+  if (!field || !isOptionsFieldType(fieldType)) return [];
 
-  const optionNodes = field.fieldType === 'options_from_supertag'
+  const optionNodes = fieldType === 'options_from_supertag'
     ? resolveOptionsFromSourceSupertag(field, byId)
     : field.children
       .map((childId) => byId.get(childId))
-      .filter((node): node is NodeProjection => Boolean(node));
+      .filter((node): node is NodeProjection => Boolean(node) && !isInternalConfigNode(node!));
 
   const options = dedupeOptions(optionNodes.flatMap((node) => {
     const target = node.type === 'reference' && node.targetId ? byId.get(node.targetId) : node;
@@ -31,7 +34,7 @@ export function resolveFieldOptions(
     }];
   }));
 
-  return field.fieldType === 'options_from_supertag'
+  return fieldType === 'options_from_supertag'
     ? options.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
     : options;
 }
@@ -40,7 +43,7 @@ function resolveOptionsFromSourceSupertag(
   field: NodeProjection,
   byId: Map<NodeId, NodeProjection>,
 ): NodeProjection[] {
-  const sourceSupertag = field.sourceSupertag;
+  const sourceSupertag = projectFieldConfig(byId, field).sourceSupertag;
   if (!sourceSupertag) return [];
   return [...byId.values()].filter((node) => (
     node.id !== field.id
@@ -71,8 +74,9 @@ export function resolveSelectedOptionId(
   options: readonly FieldOption[],
 ): NodeId | undefined {
   if (!valueNode) return undefined;
-  if (valueNode.targetId) {
-    return options.find((option) => option.id === valueNode.targetId || option.targetId === valueNode.targetId)?.id;
+  const valueTargetId = valueNode.type === 'reference' ? valueNode.targetId : undefined;
+  if (valueTargetId) {
+    return options.find((option) => option.id === valueTargetId || option.targetId === valueTargetId)?.id;
   }
   const raw = valueNode.content.text.trim();
   if (!raw) return undefined;

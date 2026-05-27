@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
-import type { AutoInitStrategy, FieldCardinality, FieldType, HideFieldMode, NodeId } from '../../api/types';
+import type { AutoInitStrategy, FieldCardinality, FieldType, HideFieldMode, NodeId, NodeProjection } from '../../api/types';
+import { projectTagConfig } from '../../../core/configProjection';
+import { resolveFieldOptions } from '../interactions/fieldOptions';
 import { fieldTypeLabel } from '../outliner/fieldTypePresentation';
 import { NodeValuePicker, type NodeValuePickerMarker } from '../outliner/NodeValuePicker';
 import { NumberInputControl } from '../primitives/NumberInputControl';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
-import { TextInputControl } from '../primitives/TextInputControl';
+import { TAG_COLOR_PRESETS } from '../tags/tagColors';
 import {
   FIELD_TYPE_CONFIG_OPTIONS,
   FIELD_CARDINALITY_OPTIONS,
@@ -24,8 +26,6 @@ interface ChoiceOption<T extends string> {
   value: T;
   label: string;
 }
-
-const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 
 const AUTO_INIT_LABELS: Record<AutoInitStrategy, string> = {
   current_date: 'Current date',
@@ -132,6 +132,81 @@ export function DefinitionTagSelect(props: {
   );
 }
 
+interface TagOptionField {
+  fieldDefId: NodeId;
+  label: string;
+  options: Array<{ id: NodeId; label: string }>;
+}
+
+/** Every options field carried by a tag (own + inherited via extends), with its options. */
+function tagOptionFields(byId: Map<NodeId, NodeProjection>, tagDefId: NodeId): TagOptionField[] {
+  const fields: TagOptionField[] = [];
+  const seenFields = new Set<NodeId>();
+  const visitedTags = new Set<NodeId>();
+  let current: NodeId | undefined = tagDefId;
+  while (current && !visitedTags.has(current)) {
+    visitedTags.add(current);
+    const tag = byId.get(current);
+    if (!tag) break;
+    for (const childId of tag.children) {
+      const child = byId.get(childId);
+      const fieldDefId = child?.type === 'fieldEntry' ? child.fieldDefId : undefined;
+      if (!fieldDefId || seenFields.has(fieldDefId)) continue;
+      const fieldDef = byId.get(fieldDefId);
+      if (fieldDef?.type !== 'fieldDef') continue;
+      const options = resolveFieldOptions(fieldDef, byId);
+      if (options.length === 0) continue;
+      seenFields.add(fieldDefId);
+      fields.push({
+        fieldDefId,
+        label: fieldDef.content.text || 'Field',
+        options: options.map((option) => ({ id: option.id, label: option.label })),
+      });
+    }
+    current = projectTagConfig(byId, tag).extends;
+  }
+  return fields;
+}
+
+export function DefinitionDoneMappingControl(props: {
+  label: string;
+  byId: Map<NodeId, NodeProjection>;
+  tagDefId: NodeId;
+  value: NodeId[];
+  onChange: (optionIds: NodeId[]) => void;
+}) {
+  const fields = tagOptionFields(props.byId, props.tagDefId);
+  if (fields.length === 0) {
+    return <span className="definition-done-mapping-empty">Add an options field to map its done state.</span>;
+  }
+  return (
+    <span className="definition-done-mapping" aria-label={props.label}>
+      {fields.map((field) => {
+        const selected = props.value.find((id) => field.options.some((option) => option.id === id));
+        const setOption = (optionId: NodeId | null) => {
+          const next = props.value.filter((id) => !field.options.some((option) => option.id === id));
+          if (optionId) next.push(optionId);
+          props.onChange(next);
+        };
+        return (
+          <span key={field.fieldDefId} className="definition-done-mapping-row">
+            <span className="definition-done-mapping-field">{field.label}</span>
+            <NodeValuePicker
+              allowClear={Boolean(selected)}
+              ariaLabel={`${props.label}: ${field.label}`}
+              onClear={() => setOption(null)}
+              onSelect={(optionId) => setOption(optionId as NodeId)}
+              options={field.options.map((option) => ({ id: option.id, label: option.label || 'Untitled' }))}
+              placeholder="None"
+              selectedId={selected}
+            />
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
 function DefinitionChoicePicker<T extends string>(props: {
   label: string;
   value: T;
@@ -207,49 +282,36 @@ export function DefinitionSwitchControl(props: {
 export function DefinitionColorControl(props: {
   label: string;
   value?: string;
-  swatch: string;
   onCommit: (value: string | null) => void;
 }) {
-  const [draft, setDraft] = useState(props.value ?? '');
-
-  useEffect(() => {
-    setDraft(props.value ?? '');
-  }, [props.value]);
-
-  const commit = (value: string) => {
-    const normalized = value.trim();
-    props.onCommit(normalized ? normalized : null);
-  };
-  const swatchValue = HEX_COLOR.test(draft) ? draft : props.swatch;
-
+  const selected = props.value ?? null;
   return (
-    <span className="definition-color-control">
-      <TextInputControl
-        type="color"
-        label={`${props.label} swatch`}
-        value={swatchValue}
-        onChange={(event) => {
-          setDraft(event.target.value);
-          commit(event.target.value);
-        }}
+    <span className="definition-color-control" role="radiogroup" aria-label={props.label}>
+      <button
+        type="button"
+        className={`definition-color-swatch definition-color-swatch-none ${selected ? '' : 'selected'}`}
+        role="radio"
+        aria-checked={!selected}
+        aria-label="No color"
+        title="No color"
+        onClick={() => props.onCommit(null)}
       />
-      <TextInputControl
-        className="definition-text-input"
-        label={props.label}
-        value={draft}
-        placeholder="auto"
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={() => commit(draft)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') {
-            event.currentTarget.blur();
-          }
-          if (event.key === 'Escape') {
-            setDraft(props.value ?? '');
-            event.currentTarget.blur();
-          }
-        }}
-      />
+      {TAG_COLOR_PRESETS.map((preset) => {
+        const isSelected = selected === preset.token;
+        return (
+          <button
+            key={preset.token}
+            type="button"
+            className={`definition-color-swatch ${isSelected ? 'selected' : ''}`}
+            role="radio"
+            aria-checked={isSelected}
+            aria-label={preset.label}
+            title={preset.label}
+            style={{ background: preset.color.text }}
+            onClick={() => props.onCommit(preset.token)}
+          />
+        );
+      })}
     </span>
   );
 }

@@ -31,7 +31,7 @@ test.describe('definition configuration parity', () => {
     await row(page, ids.dayTag).getByRole('button', { name: 'Open' }).click();
 
     await expect(page.getByRole('region', { name: 'Definition configuration' })).toBeVisible();
-    await page.locator('[data-config-key="color"] input[type="color"]').fill('#446655');
+    await page.locator('[data-config-key="color"]').getByRole('radio', { name: 'Green', exact: true }).click();
     await chooseConfigOption(page, 'Extend from', 'project');
     await page.getByRole('switch', { name: 'Show as checkbox' }).click();
     await chooseConfigOption(page, 'Default child supertag', 'project');
@@ -45,7 +45,7 @@ test.describe('definition configuration parity', () => {
         showCheckbox: node?.showCheckbox,
       };
     }).toEqual({
-      color: '#446655',
+      color: 'green',
       extends: ids.projectTag,
       childSupertag: ids.projectTag,
       showCheckbox: true,

@@ -1,4 +1,5 @@
 import type { NodeProjection } from '../core/types';
+import { nodeIsDone, nodeShowsCheckbox } from '../core/configProjection';
 import {
   backlinks,
   breadcrumb,
@@ -50,7 +51,7 @@ export function buildReadItem(index: ProjectionIndex, nodeId: string, params: No
     description: node.description ?? null,
     tags: tagLabels(index, node),
     fields: fieldReads(index, node, params.includeDeleted),
-    checked: checkedState(node),
+    checked: checkedState(index, node),
     parent: parentRef(index, node),
     breadcrumb: breadcrumb(index, nodeId),
     children: buildChildrenPage(index, nodeId, params.depth, params.childOffset, params.childLimit, params.includeDeleted),
@@ -92,11 +93,11 @@ function childSummary(
     title: nodeTitle(index, node),
     type: nodeKind(node),
     tags: tagLabels(index, node),
-    checked: checkedState(node),
+    checked: checkedState(index, node),
     hasChildren: children.length > 0,
     childCount: children.length,
     isReference: node.type === 'reference' || undefined,
-    targetId: node.targetId,
+    targetId: node.type === 'reference' ? node.targetId : undefined,
     children: remainingDepth > 0 ? buildChildrenPage(index, nodeId, remainingDepth, 0, childLimit, includeDeleted) : undefined,
   };
 }
@@ -209,10 +210,12 @@ function serializeOutlineNode(
 function outlineNodeText(index: ProjectionIndex, node: NodeProjection): string {
   const parts: string[] = [];
   if (node.type === 'search') parts.push('%%search%%');
-  const viewMode = node.type === 'search' ? searchViewModeOf(index, node) : node.viewMode;
+  const viewMode = node.type === 'search'
+    ? searchViewModeOf(index, node)
+    : node.type === 'viewDef' ? node.viewMode : undefined;
   if (viewMode) parts.push(`%%view:${viewMode}%%`);
-  if (node.completedAt) parts.push('[x]');
-  else if (node.showCheckbox) parts.push('[ ]');
+  if (nodeIsDone(node)) parts.push('[x]');
+  else if (nodeShowsCheckbox(index.nodes, node)) parts.push('[ ]');
   parts.push((referenceText(index, node) ?? node.content.text) || '(untitled)');
   if (node.description) parts.push(`- ${node.description}`);
   parts.push(...tagLabels(index, node));

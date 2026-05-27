@@ -152,7 +152,7 @@ export function BatchTagSelector(props: BatchTagSelectorProps) {
               ? (
                 <span
                   className="tag-selector-hash"
-                  style={{ color: resolveTagColor(item.tag).text }}
+                  style={{ color: resolveTagColor(item.tag, props.index.byId).text }}
                   aria-hidden="true"
                 >
                   #

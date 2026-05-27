@@ -465,13 +465,9 @@ type FieldType =
   | "options_from_supertag"
   | "date"
   | "number"
-  | "password"
-  | "formula"
   | "url"
   | "email"
-  | "checkbox"
-  | "boolean"
-  | "color";
+  | "checkbox";
 ```
 
 ### Resolution

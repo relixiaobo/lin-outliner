@@ -1,4 +1,5 @@
 import { parseDateFieldValueRange, type FilterOperator, type NodeId, type NodeProjection, type SortDirection, type ViewMode } from '../api/types';
+import { projectFieldConfig, projectFieldTypeById } from '../../core/configProjection';
 
 export const NAME_FIELD = 'sys:name';
 export const CREATED_FIELD = 'sys:createdAt';
@@ -14,6 +15,11 @@ const INTERNAL_NODE_TYPES = new Set<NodeProjection['type']>([
   'sortRule',
   'filterRule',
   'displayField',
+  // config-as-nodes: definition config rows + system enum options are never
+  // ordinary outliner children. The config surface renders defConfig rows
+  // explicitly (opt-in); everything else excludes them here.
+  'defConfig',
+  'systemOption',
 ]);
 
 export type OutlinerRowItem =
@@ -68,7 +74,8 @@ export function hiddenFieldKey(parentId: NodeId, fieldEntryId: NodeId): string {
 }
 
 export function readViewConfig(parent: NodeProjection | undefined, byId: Map<NodeId, NodeProjection>): ViewConfig {
-  const viewDef = directChildren(parent, byId).find((child) => child.type === 'viewDef');
+  const viewDef = directChildren(parent, byId)
+    .find((child): child is Extract<NodeProjection, { type: 'viewDef' }> => child.type === 'viewDef');
   if (!viewDef) {
     return {
       viewDefId: null,
@@ -88,14 +95,14 @@ export function readViewConfig(parent: NodeProjection | undefined, byId: Map<Nod
     toolbarVisible: Boolean(viewDef.toolbarVisible),
     groupField: viewDef.groupField ?? null,
     sortRules: viewChildren
-      .filter((child) => child.type === 'sortRule' && child.sortField)
+      .filter((child): child is Extract<NodeProjection, { type: 'sortRule' }> => child.type === 'sortRule' && Boolean(child.sortField))
       .map((child) => ({
         id: child.id,
         field: child.sortField!,
         direction: child.sortDirection === 'desc' ? 'desc' : 'asc',
       })),
     filterRules: viewChildren
-      .filter((child) => child.type === 'filterRule' && child.filterField)
+      .filter((child): child is Extract<NodeProjection, { type: 'filterRule' }> => child.type === 'filterRule' && Boolean(child.filterField))
       .map((child) => ({
         id: child.id,
         field: child.filterField!,
@@ -104,7 +111,7 @@ export function readViewConfig(parent: NodeProjection | undefined, byId: Map<Nod
         values: child.filterValues ?? [],
       })),
     displayFields: viewChildren
-      .filter((child) => child.type === 'displayField' && child.displayField)
+      .filter((child): child is Extract<NodeProjection, { type: 'displayField' }> => child.type === 'displayField' && Boolean(child.displayField))
       .map((child) => ({
         id: child.id,
         field: child.displayField!,
@@ -134,7 +141,8 @@ function displayNode(node: NodeProjection, byId: Map<NodeId, NodeProjection>): N
 }
 
 function fieldLabel(entry: NodeProjection, byId: Map<NodeId, NodeProjection>): string {
-  const field = entry.fieldDefId ? byId.get(entry.fieldDefId) : undefined;
+  const fieldDefId = entry.type === 'fieldEntry' ? entry.fieldDefId : undefined;
+  const field = fieldDefId ? byId.get(fieldDefId) : undefined;
   return nodeTitle(field) || nodeTitle(entry) || 'Field';
 }
 
@@ -199,7 +207,7 @@ function hiddenFieldValue(entry: NodeProjection, byId: Map<NodeId, NodeProjectio
 function isHiddenFieldEntry(entry: NodeProjection, byId: Map<NodeId, NodeProjection>): boolean {
   if (entry.type !== 'fieldEntry') return false;
   const field = entry.fieldDefId ? byId.get(entry.fieldDefId) : undefined;
-  const mode = entry.hideField ?? field?.hideField;
+  const mode = field ? projectFieldConfig(byId, field).hideField : undefined;
   if (mode === 'always' || mode === 'hidden') return true;
   const value = hiddenFieldValue(entry, byId).trim();
   if (mode === 'empty') return value.length === 0;
@@ -256,7 +264,7 @@ function filterRows(
 
 function isDateFilterField(fieldId: string, byId: Map<NodeId, NodeProjection>): boolean {
   if (fieldId === CREATED_FIELD || fieldId === UPDATED_FIELD || fieldId === DONE_AT_FIELD) return true;
-  return byId.get(fieldId)?.fieldType === 'date';
+  return projectFieldTypeById(byId, fieldId) === 'date';
 }
 
 // Resolves a date filter operand to an absolute [start, endExclusive) span. Handles
@@ -335,8 +343,8 @@ function sortRows(
 
 function isBooleanGroupField(fieldId: string, byId: Map<NodeId, NodeProjection>): boolean {
   if (fieldId === DONE_FIELD) return true;
-  const fieldType = byId.get(fieldId)?.fieldType;
-  return fieldType === 'checkbox' || fieldType === 'boolean';
+  const fieldType = projectFieldTypeById(byId, fieldId);
+  return fieldType === 'checkbox';
 }
 
 const GROUP_DATE_FORMAT = new Intl.DateTimeFormat(undefined, {

@@ -19,6 +19,7 @@ import {
   plainText,
   type DocumentState,
   type Node,
+  type NodeFieldKey,
   type NodeType,
   type RichText,
   type RichTextPatch,
@@ -43,36 +44,24 @@ const UNDO_EXCLUDED_ORIGIN_PREFIXES = ['__seed__', 'system:'];
 const AGENT_UNDO_EXCLUDED_ORIGIN_PREFIXES = ['__seed__', 'system:', 'user:'];
 const USER_UNDO_EXCLUDED_ORIGIN_PREFIXES = ['__seed__', 'system:', 'agent:'];
 const LORO_DELETED_ROOT_ID = '2147483647@18446744073709551615' as TreeID;
-const NODE_SCALAR_KEYS: Array<keyof Node> = [
+const NODE_SCALAR_KEYS: NodeFieldKey[] = [
   'type',
   'description',
   'createdAt',
   'updatedAt',
   'completedAt',
   'locked',
-  'color',
   'icon',
   'iconKind',
   'bannerAssetId',
   'bannerPositionX',
   'bannerPositionY',
   'bannerAlt',
-  'showCheckbox',
   'templateId',
-  'childSupertag',
-  'extends',
-  'doneStateEnabled',
   'fieldDefId',
-  'fieldType',
-  'cardinality',
-  'nullable',
-  'hideField',
-  'autoInitialize',
-  'autocollectOptions',
+  'configKey',
+  'refRole',
   'autoCollected',
-  'minValue',
-  'maxValue',
-  'sourceSupertag',
   'targetId',
   'viewMode',
   'toolbarVisible',
@@ -93,6 +82,7 @@ const NODE_SCALAR_KEYS: Array<keyof Node> = [
   'queryOp',
   'queryTagDefId',
   'queryFieldDefId',
+  'queryTargetId',
   'codeLanguage',
   'assetId',
   'mediaUrl',
@@ -270,12 +260,12 @@ export class LoroOutlinerDocument {
     this.touchNode(nodeId);
   }
 
-  createNodeWithId(
+  createNodeWithId<T extends Node = Node>(
     id: string,
     parentId: string | undefined,
     index: number | null | undefined,
     type: NodeType | undefined,
-    configure: (node: Node) => void,
+    configure: (node: T) => void,
   ) {
     const state = this.materializeState();
     if (parentId && !state.nodes[parentId]) throw CoreError.parentNotFound(parentId);
@@ -285,7 +275,9 @@ export class LoroOutlinerDocument {
       ? clampInsertIndex(index, parentTreeNode.children()?.length ?? 0)
       : clampInsertIndex(index, this.tree.roots().length);
     const treeNode = this.tree.createNode(parentTreeId, targetIndex);
-    const node = createNodeRecord(id, type, parentId, nowMs());
+    // The caller's `type` argument fixes the variant; `T` lets it set
+    // variant-specific fields on the configured node without a local cast.
+    const node = createNodeRecord(id, type, parentId, nowMs()) as T;
     configure(node);
     writeNodeData(treeNode.data, normalizeNode(node));
     this.nodeIdToTreeId.set(id, treeNode.id);
@@ -338,12 +330,11 @@ export class LoroOutlinerDocument {
         createdAt: readNumber(data.get('createdAt')) ?? nowMs(),
         updatedAt: readNumber(data.get('updatedAt')) ?? nowMs(),
         locked: readBoolean(data.get('locked')) ?? false,
-        showCheckbox: readBoolean(data.get('showCheckbox')) ?? false,
-        doneStateEnabled: readBoolean(data.get('doneStateEnabled')) ?? false,
-        autocollectOptions: readBoolean(data.get('autocollectOptions')) ?? false,
         autoCollected: readBoolean(data.get('autoCollected')) ?? false,
       } as Node);
-      if (filterValues !== undefined) node.filterValues = readStringList(filterValues);
+      // filterValues lives on the filterRule variant; persistence writes it
+      // generically (only filterRule data carries it).
+      if (filterValues !== undefined) (node as { filterValues?: string[] }).filterValues = readStringList(filterValues);
 
       for (const key of NODE_SCALAR_KEYS) {
         if ([
@@ -351,9 +342,6 @@ export class LoroOutlinerDocument {
           'createdAt',
           'updatedAt',
           'locked',
-          'showCheckbox',
-          'doneStateEnabled',
-          'autocollectOptions',
           'autoCollected',
           'filterValues',
         ].includes(key)) continue;
@@ -505,7 +493,6 @@ function isDisposableLegacyParaNode(node: Node, title: string) {
     && node.content.marks.length === 0
     && node.content.inlineRefs.length === 0
     && node.tags.length === 0
-    && (node.filterValues?.length ?? 0) === 0
     && !node.description;
 }
 
