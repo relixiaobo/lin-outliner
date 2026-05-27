@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { commandCalls, openMockedApp } from './outlinerMock';
 
 test.describe('agent settings dialog', () => {
@@ -7,7 +7,7 @@ test.describe('agent settings dialog', () => {
   });
 
   test('uses modal focus behavior and restores focus on close', async ({ page }) => {
-    const { dialog, trigger } = await openAgentSettings(page);
+    const { dialog, trigger } = await openSettings(page);
     await expect(dialog).toBeVisible();
     await expect(dialog).toBeFocused();
     await expect(dialog).toHaveAttribute('aria-modal', 'true');
@@ -26,8 +26,26 @@ test.describe('agent settings dialog', () => {
     await expect(trigger).toBeFocused();
   });
 
+  test('separates providers and agent behaviour into categories', async ({ page }) => {
+    const { dialog } = await openSettings(page);
+    // Providers category is the default and lists connectable providers.
+    await expect(dialog.getByRole('heading', { name: 'Providers' })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'OpenAI Active' })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: /Anthropic/ })).toBeVisible();
+    await expect(dialog.getByLabel('API key')).toHaveAttribute('placeholder', 'Configured');
+    await expect(dialog.getByRole('button', { name: 'Remove key' })).toBeEnabled();
+    // Model / reasoning / permission live under the Agent category, not Providers.
+    await expect(dialog.getByRole('combobox', { name: 'Model' })).toHaveCount(0);
+
+    await gotoCategory(dialog, 'Agent');
+    await expect(dialog.getByRole('heading', { name: 'Model' })).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'Behavior' })).toBeVisible();
+    await expect(dialog.getByRole('combobox', { name: 'Model' })).toBeVisible();
+    await expect(dialog.getByLabel('Permission mode')).toBeVisible();
+  });
+
   test('uses the shared checkbox mark for provider enablement', async ({ page }) => {
-    const { dialog } = await openAgentSettings(page);
+    const { dialog } = await openSettings(page);
     const enabled = dialog.getByLabel('Enabled');
     const enabledLabel = enabled.locator('xpath=..');
     const mark = enabledLabel.locator('.checkbox-mark');
@@ -44,36 +62,55 @@ test.describe('agent settings dialog', () => {
     await expect(mark).not.toHaveClass(/checked/);
   });
 
-  test('groups provider, connection, and model settings', async ({ page }) => {
-    const { dialog } = await openAgentSettings(page);
-    await expect(dialog.getByRole('heading', { name: 'Provider' })).toBeVisible();
-    await expect(dialog.getByRole('heading', { name: 'Connection' })).toBeVisible();
-    await expect(dialog.getByRole('heading', { name: 'Model behavior' })).toBeVisible();
-    await expect(dialog.getByRole('heading', { name: 'Agent behavior' })).toBeVisible();
-    await expect(dialog.getByRole('button', { name: 'OpenAI Active gpt-5.4' })).toBeVisible();
-    await expect(dialog.getByLabel('API key')).toHaveAttribute('placeholder', 'Configured');
-    await expect(dialog.getByRole('button', { name: 'Remove key' })).toBeEnabled();
-  });
+  test('gates model selection behind a key and hides connection details for known providers', async ({ page }) => {
+    const { dialog } = await openSettings(page);
 
-  test('only exposes model controls after the selected provider has a key', async ({ page }) => {
-    const { dialog } = await openAgentSettings(page);
-    await expect(dialog.getByRole('button', { name: /Anthropic/ })).toHaveCount(0);
-
-    await dialog.getByLabel('Provider ID').fill('anthropic');
-
+    // A known provider exposes no Provider ID / Base URL fields — just the key.
+    await dialog.locator('.settings-provider-row', { hasText: 'Anthropic' }).click();
+    await expect(dialog.getByLabel('Provider ID')).toHaveCount(0);
+    await expect(dialog.getByLabel('Base URL')).toHaveCount(0);
     await expect(dialog.getByLabel('API key')).toHaveAttribute('placeholder', 'Paste key');
-    await expect(dialog.getByLabel('Model ID')).toHaveCount(0);
-    await expect(dialog.getByText('Add an API key for this provider before choosing a model.')).toBeVisible();
 
+    await gotoCategory(dialog, 'Agent');
+    await expect(dialog.getByText('Add an API key in Providers before choosing a model.')).toBeVisible();
+    await expect(dialog.getByRole('combobox', { name: 'Model' })).toHaveCount(0);
+
+    await gotoCategory(dialog, 'Providers');
     await dialog.getByLabel('API key').fill('sk-ant-test');
-    await expect(dialog.getByLabel('Model ID')).toBeVisible();
+    await gotoCategory(dialog, 'Agent');
+    await expect(dialog.getByRole('combobox', { name: 'Model' })).toBeVisible();
   });
 
-  test('saves grouped provider configuration', async ({ page }) => {
-    const { dialog } = await openAgentSettings(page);
+  test('reveals connection fields only for a custom provider', async ({ page }) => {
+    const { dialog } = await openSettings(page);
+    await dialog.locator('.settings-provider-row', { hasText: 'Custom' }).click();
+
+    await dialog.getByLabel('Provider ID').fill('my-proxy');
     await dialog.getByLabel('Base URL').fill('https://example.test/v1');
+    await dialog.getByLabel('API key').fill('sk-test');
+
+    await gotoCategory(dialog, 'Agent');
+    await dialog.getByRole('textbox', { name: 'Model' }).fill('custom-model');
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_upsert_provider_config')?.args;
+    }).toMatchObject({
+      provider: {
+        providerId: 'my-proxy',
+        modelId: 'custom-model',
+        baseUrl: 'https://example.test/v1',
+        enabled: true,
+      },
+    });
+  });
+
+  test('saves the active provider model and reasoning', async ({ page }) => {
+    const { dialog } = await openSettings(page);
+    await gotoCategory(dialog, 'Agent');
     await dialog.getByLabel('Reasoning').selectOption('high');
-    await dialog.getByRole('button', { name: 'Save' }).click();
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click();
 
     await expect.poll(async () => {
       const calls = await commandCalls(page);
@@ -83,20 +120,21 @@ test.describe('agent settings dialog', () => {
         providerId: 'openai',
         modelId: 'gpt-5.4',
         reasoningLevel: 'high',
-        baseUrl: 'https://example.test/v1',
+        baseUrl: null,
         enabled: true,
       },
     });
   });
 
   test('saves agent behavior settings', async ({ page }) => {
-    const { dialog } = await openAgentSettings(page);
+    const { dialog } = await openSettings(page);
+    await gotoCategory(dialog, 'Agent');
     await dialog.getByLabel('Permission mode').selectOption('restricted');
     await dialog.getByText('Automatic skills').click();
     await dialog.getByText('Slash skills').click();
     await dialog.getByText('Compact command').click();
     await dialog.getByLabel('Additional skill directories').fill('~/skills, .agents/team-skills');
-    await dialog.getByRole('button', { name: 'Save' }).click();
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click();
 
     await expect.poll(async () => {
       const calls = await commandCalls(page);
@@ -113,11 +151,15 @@ test.describe('agent settings dialog', () => {
   });
 });
 
-async function openAgentSettings(page: import('@playwright/test').Page) {
+async function gotoCategory(dialog: Locator, name: 'Providers' | 'Agent') {
+  await dialog.locator('.settings-nav-item', { hasText: name }).click();
+}
+
+async function openSettings(page: Page) {
   const trigger = page.locator('.top-chrome-right').getByRole('button', { name: 'More', exact: true });
   await trigger.click();
-  await page.getByRole('menuitem', { name: 'Provider settings' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Agent settings' });
+  await page.getByRole('menuitem', { name: 'Settings', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Settings' });
   await expect(dialog).toBeVisible();
   return { dialog, trigger };
 }

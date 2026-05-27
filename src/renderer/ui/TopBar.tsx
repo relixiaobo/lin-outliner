@@ -186,7 +186,7 @@ export function TopBar(props: TopBarProps) {
             className="top-chrome-more-item"
             icon={<SettingsIcon size={ICON_SIZE.menu} />}
             iconClassName="top-chrome-more-item-icon"
-            label="Provider settings"
+            label="Settings"
             labelClassName="top-chrome-more-item-label"
             onClick={openProviderSettings}
             role="menuitem"

@@ -4671,65 +4671,120 @@ button.panel-resize-handle::after {
   color: var(--text-strong);
 }
 
-.agent-settings-provider-list {
+.settings-dialog {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.settings-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-7);
+}
+
+.settings-nav {
+  display: flex;
+  flex: 0 0 auto;
+  width: 156px;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.settings-nav-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-hairline);
+  border-radius: var(--radius-control-md);
+  color: var(--text-soft);
+  cursor: pointer;
+  padding: var(--space-3) var(--space-5);
+  text-align: left;
+}
+
+.settings-nav-item:hover {
+  background: var(--control-hover);
+}
+
+.settings-nav-item.is-active {
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text-strong);
+}
+
+.settings-nav-label {
+  font-size: var(--font-ui-sm);
+  font-weight: 600;
+  line-height: var(--line-ui-sm-tight);
+}
+
+.settings-nav-hint {
+  color: var(--muted-2);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+}
+
+.settings-content {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.settings-provider-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: var(--space-3);
 }
 
-.agent-settings-provider-pill {
+.settings-provider-row {
   display: flex;
   max-width: 100%;
-  flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-control-md);
   background: rgba(255, 255, 255, 0.42);
   color: var(--text-strong);
   cursor: pointer;
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-3) var(--space-5);
+  text-align: left;
 }
 
-.agent-settings-provider-pill.is-active {
-  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
-  background: var(--primary-soft);
+.settings-provider-row:hover {
+  background: var(--control-hover);
 }
 
-.agent-settings-provider-title,
-.agent-settings-provider-pill small {
-  width: 100%;
+.settings-provider-row.is-selected {
+  border-color: var(--focus-border);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.settings-provider-name {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
+  font-size: var(--font-meta);
+  font-weight: 600;
+  line-height: var(--line-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.agent-settings-provider-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  font-size: var(--font-meta);
-  font-weight: 600;
-  line-height: var(--line-meta);
-}
-
-.agent-settings-provider-state {
-  flex: 0 0 auto;
+.settings-provider-status {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
   color: var(--muted-2);
   font-size: var(--font-ui-2xs);
   font-weight: 500;
   line-height: var(--line-ui-2xs);
+  text-overflow: ellipsis;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
-.agent-settings-provider-state.is-active {
+.settings-provider-status.is-active {
   color: color-mix(in srgb, var(--primary) 82%, var(--text-strong));
-}
-
-.agent-settings-provider-pill small {
-  color: var(--muted-2);
-  font-size: var(--font-ui-xs);
-  line-height: var(--line-ui-xs);
 }
 
 .agent-settings-grid {

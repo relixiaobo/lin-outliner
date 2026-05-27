@@ -23,6 +23,8 @@ interface AgentSettingsDialogProps {
   restoreFocus?: () => HTMLElement | null;
 }
 
+type SettingsCategory = 'providers' | 'agent';
+
 interface DraftConfig {
   providerId: string;
   modelId: string;
@@ -43,6 +45,7 @@ interface ProviderChoice {
   active: boolean;
   enabled: boolean;
   hasCredential: boolean;
+  custom: boolean;
 }
 
 const EMPTY_DRAFT: DraftConfig = {
@@ -58,6 +61,11 @@ const EMPTY_DRAFT: DraftConfig = {
   additionalSkillDirectoriesText: '',
 };
 
+const SETTINGS_CATEGORIES: Array<{ id: SettingsCategory; label: string; hint: string }> = [
+  { id: 'providers', label: 'Providers', hint: 'Connections & API keys' },
+  { id: 'agent', label: 'Agent', hint: 'Model, reasoning & behavior' },
+];
+
 const PREFERRED_PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'openrouter'];
 const REASONING_LABELS: Record<AgentReasoningLevel, string> = {
   off: 'Off',
@@ -72,6 +80,8 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
   const [settings, setSettings] = useState<AgentProviderSettingsView | null>(null);
   const [draft, setDraft] = useState<DraftConfig>(EMPTY_DRAFT);
   const [apiKey, setApiKey] = useState('');
+  const [category, setCategory] = useState<SettingsCategory>('providers');
+  const [creatingCustom, setCreatingCustom] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -106,6 +116,8 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
     setLoading(true);
     setError(null);
     setNotice(null);
+    setCategory('providers');
+    setCreatingCustom(false);
     void api.agentGetProviderSettings()
       .then((next) => {
         if (!isCurrentRequest(requestId)) return;
@@ -131,10 +143,13 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
 
   const configuredProvider = settings?.providers.find((provider) => provider.providerId === draft.providerId);
   const selectedCatalog = providerCatalog.get(draft.providerId);
+  const isCustomProvider = Boolean(draft.providerId) && !providerCatalog.has(draft.providerId);
+  const showConnectionFields = creatingCustom || isCustomProvider;
   const hasPendingApiKey = apiKey.trim().length > 0;
   const hasSavedCredential = providerHasCredential(configuredProvider, selectedCatalog);
-  const canChooseModels = draft.enabled && (hasSavedCredential || hasPendingApiKey);
-  const selectedModels = canChooseModels ? selectedCatalog?.models ?? [] : [];
+  const canChooseModels = draft.enabled && (hasSavedCredential || hasPendingApiKey) && Boolean(draft.providerId);
+  const catalogModels = selectedCatalog?.models ?? [];
+  const selectedModels = canChooseModels ? catalogModels : [];
   const selectedModel = selectedModels.find((model) => model.id === draft.modelId);
   const selectedReasoningLevels: AgentReasoningLevel[] = selectedModel?.supportedThinkingLevels.length
     ? selectedModel.supportedThinkingLevels
@@ -142,18 +157,20 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
   const hasAnyKey = hasSavedCredential || hasPendingApiKey;
   const keyStatus = configuredProvider?.hasApiKey
     ? 'Saved key'
-    : configuredProvider?.hasEnvApiKey || selectedCatalog?.hasEnvApiKey ? 'Environment key' : hasPendingApiKey ? 'Unsaved key' : 'No key';
+    : configuredProvider?.hasEnvApiKey || selectedCatalog?.hasEnvApiKey ? 'Environment key' : hasPendingApiKey ? 'Unsaved key' : 'No key yet';
   const modelContext = canChooseModels
     ? selectedModel?.contextWindow ? `${formatTokens(selectedModel.contextWindow)} context` : 'Custom model'
     : 'Key required';
   const providerChoices = useMemo(
-    () => settings ? buildProviderChoices(settings, draft.providerId) : [],
-    [draft.providerId, settings],
+    () => settings ? buildProviderChoices(settings, draft.providerId, providerCatalog) : [],
+    [draft.providerId, providerCatalog, settings],
   );
+  const activeRowProviderId = creatingCustom ? '' : draft.providerId;
 
   if (!open) return null;
 
-  function updateProvider(providerId: string) {
+  function selectProvider(providerId: string) {
+    setCreatingCustom(false);
     const existing = settings?.providers.find((provider) => provider.providerId === providerId);
     const catalog = providerCatalog.get(providerId);
     setDraft((current) => ({
@@ -169,15 +186,32 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
     setError(null);
   }
 
+  function startCustomProvider() {
+    setCreatingCustom(true);
+    setDraft((current) => ({
+      ...current,
+      providerId: '',
+      modelId: '',
+      reasoningLevel: 'off',
+      baseUrl: '',
+      enabled: true,
+    }));
+    setApiKey('');
+    setNotice(null);
+    setError(null);
+  }
+
   async function save() {
     const providerId = draft.providerId.trim();
     const modelId = draft.modelId.trim() || selectedCatalog?.models[0]?.id || '';
     if (!providerId) {
       setError('provider is required');
+      setCategory('providers');
       return;
     }
     if (!modelId) {
       setError('model is required');
+      setCategory('agent');
       return;
     }
 
@@ -208,6 +242,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
       if (isCurrentRequest(requestId)) {
         setSettings(next);
         setDraft(resolveDraftForProvider(next, providerId));
+        setCreatingCustom(false);
         setApiKey('');
         setNotice('Saved');
       }
@@ -254,6 +289,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
       if (isCurrentRequest(requestId)) {
         setSettings(next);
         setDraft(resolveInitialDraft(next));
+        setCreatingCustom(false);
         setApiKey('');
         setNotice('Provider removed');
       }
@@ -265,6 +301,12 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
     }
   }
 
+  const headerSummary = canChooseModels && draft.providerId && draft.modelId
+    ? `${draft.modelId} · ${formatProviderName(draft.providerId)}`
+    : draft.providerId
+      ? `${formatProviderName(draft.providerId)} · add an API key`
+      : 'No provider connected';
+
   return (
     <Dialog
       backdropClassName="agent-settings-backdrop"
@@ -272,12 +314,12 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
       onBackdropMouseDown={onClose}
       onEscapeKeyDown={onClose}
       restoreFocus={restoreFocus}
-      surfaceClassName="agent-settings-dialog"
+      surfaceClassName="agent-settings-dialog settings-dialog"
     >
       <header className="agent-settings-header">
         <div>
-          <h2 id="agent-settings-title">Agent settings</h2>
-          <p>{canChooseModels && draft.providerId && draft.modelId ? `${draft.providerId}/${draft.modelId}` : draft.providerId ? formatProviderName(draft.providerId) : 'No provider connected'}</p>
+          <h2 id="agent-settings-title">Settings</h2>
+          <p>{headerSummary}</p>
         </div>
         <ButtonControl className="agent-settings-close" onClick={onClose}>
           Close
@@ -287,246 +329,278 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
       {loading ? (
         <div className="agent-settings-empty">Loading...</div>
       ) : (
-        <div className="agent-settings-body">
-          <section className="agent-settings-section" aria-labelledby="agent-settings-provider-heading">
-            <div className="agent-settings-section-header">
-              <h3 id="agent-settings-provider-heading">Provider</h3>
-            </div>
-            <div className="agent-settings-provider-list">
-              {providerChoices.map((provider) => (
-                <ButtonControl
-                  className={`agent-settings-provider-pill ${provider.providerId === draft.providerId ? 'is-active' : ''}`}
-                  key={provider.providerId}
-                  onClick={() => updateProvider(provider.providerId)}
-                >
-                  <span className="agent-settings-provider-title">
-                    {formatProviderName(provider.providerId)}
-                    <span className={provider.active && provider.enabled && provider.hasCredential ? 'agent-settings-provider-state is-active' : 'agent-settings-provider-state'}>
-                      {providerStatusLabel(provider)}
-                    </span>
-                  </span>
-                  <small>{provider.hasCredential && provider.enabled ? provider.modelId || 'No model' : provider.configured ? 'Add API key' : 'Set up provider'}</small>
-                </ButtonControl>
-              ))}
-            </div>
-          </section>
+        <div className="settings-layout">
+          <nav className="settings-nav" aria-label="Settings categories">
+            {SETTINGS_CATEGORIES.map((item) => (
+              <button
+                aria-current={category === item.id ? 'page' : undefined}
+                className={`settings-nav-item ${category === item.id ? 'is-active' : ''}`}
+                key={item.id}
+                onClick={() => setCategory(item.id)}
+                type="button"
+              >
+                <span className="settings-nav-label">{item.label}</span>
+                <span className="settings-nav-hint">{item.hint}</span>
+              </button>
+            ))}
+          </nav>
 
-          <section className="agent-settings-section" aria-labelledby="agent-settings-connection-heading">
-            <div className="agent-settings-section-header">
-              <h3 id="agent-settings-connection-heading">Connection</h3>
-              <span>{keyStatus}</span>
-            </div>
-            <div className="agent-settings-grid">
-              <FormField className="agent-settings-field" label="Provider ID">
-                <TextInputControl
-                  label="Provider ID"
-                  list="agent-provider-options"
-                  onChange={(event) => updateProvider(event.target.value)}
-                  placeholder="anthropic"
-                  value={draft.providerId}
-                />
-                <datalist id="agent-provider-options">
-                  {settings?.availableProviders.map((provider) => (
-                    <option key={provider.providerId} value={provider.providerId} />
+          <div className="settings-content">
+            {category === 'providers' ? (
+              <section className="agent-settings-section" aria-labelledby="agent-settings-provider-heading">
+                <div className="agent-settings-section-header">
+                  <h3 id="agent-settings-provider-heading">Providers</h3>
+                  <span>Where requests go and the key they use.</span>
+                </div>
+
+                <div className="settings-provider-list">
+                  {providerChoices.map((provider) => (
+                    <button
+                      aria-pressed={provider.providerId === activeRowProviderId}
+                      className={`settings-provider-row ${provider.providerId === activeRowProviderId ? 'is-selected' : ''}`}
+                      key={provider.providerId}
+                      onClick={() => selectProvider(provider.providerId)}
+                      type="button"
+                    >
+                      <span className="settings-provider-name">{formatProviderName(provider.providerId)}</span>
+                      <span className={`settings-provider-status ${provider.active && provider.enabled && provider.hasCredential ? 'is-active' : ''}`}>
+                        {providerStatusLabel(provider)}
+                      </span>
+                    </button>
                   ))}
-                </datalist>
-              </FormField>
-              <FormField className="agent-settings-field" label="Base URL">
-                <TextInputControl
-                  label="Base URL"
-                  onChange={(event) => setDraft((current) => ({ ...current, baseUrl: event.target.value }))}
-                  placeholder="Optional OpenAI-compatible endpoint"
-                  value={draft.baseUrl}
-                />
-              </FormField>
+                  <button
+                    aria-pressed={creatingCustom}
+                    className={`settings-provider-row ${creatingCustom ? 'is-selected' : ''}`}
+                    onClick={startCustomProvider}
+                    type="button"
+                  >
+                    <span className="settings-provider-name">Custom</span>
+                    <span className="settings-provider-status">New</span>
+                  </button>
+                </div>
 
-              <FormField as="div" className="agent-settings-field agent-settings-field-wide" label="API key">
-                <div className="agent-settings-key-line">
-                  <div className="agent-settings-key-row">
-                    <PasswordIcon size={ICON_SIZE.menu} />
-                    <TextInputControl
-                      label="API key"
-                      onChange={(event) => setApiKey(event.target.value)}
-                      placeholder={hasAnyKey ? 'Configured' : 'Paste key'}
-                      type="password"
-                      value={apiKey}
-                    />
+                <div className="agent-settings-grid">
+                  {showConnectionFields ? (
+                    <>
+                      <FormField className="agent-settings-field" label="Provider ID">
+                        <TextInputControl
+                          label="Provider ID"
+                          onChange={(event) => setDraft((current) => ({ ...current, providerId: event.target.value.trim() }))}
+                          placeholder="my-provider"
+                          value={draft.providerId}
+                        />
+                      </FormField>
+                      <FormField className="agent-settings-field" label="Base URL">
+                        <TextInputControl
+                          label="Base URL"
+                          onChange={(event) => setDraft((current) => ({ ...current, baseUrl: event.target.value }))}
+                          placeholder="https://api.example.com/v1"
+                          value={draft.baseUrl}
+                        />
+                      </FormField>
+                    </>
+                  ) : null}
+
+                  <FormField as="div" className="agent-settings-field agent-settings-field-wide" label="API key">
+                    <div className="agent-settings-key-line">
+                      <div className="agent-settings-key-row">
+                        <PasswordIcon size={ICON_SIZE.menu} />
+                        <TextInputControl
+                          label="API key"
+                          onChange={(event) => setApiKey(event.target.value)}
+                          placeholder={hasAnyKey ? 'Configured' : 'Paste key'}
+                          type="password"
+                          value={apiKey}
+                        />
+                      </div>
+                      <ButtonControl
+                        className="agent-settings-secondary"
+                        disabled={saving || !configuredProvider?.hasApiKey}
+                        onClick={removeApiKey}
+                      >
+                        Remove key
+                      </ButtonControl>
+                    </div>
+                    <span className="agent-settings-field-meta">{keyStatus}</span>
+                  </FormField>
+
+                  <div className="agent-settings-row agent-settings-field-wide">
+                    <CheckboxControl
+                      checked={draft.enabled}
+                      className="agent-settings-checkbox"
+                      onCheckedChange={(enabled) => setDraft((current) => ({ ...current, enabled }))}
+                    >
+                      <span>Enabled</span>
+                    </CheckboxControl>
                   </div>
-                  <ButtonControl
-                    className="agent-settings-secondary"
-                    disabled={saving || !configuredProvider?.hasApiKey}
-                    onClick={removeApiKey}
-                  >
-                    Remove key
-                  </ButtonControl>
                 </div>
-                <span className="agent-settings-field-meta">{keyStatus}</span>
-              </FormField>
-
-              <div className="agent-settings-row agent-settings-field-wide">
-                <CheckboxControl
-                  checked={draft.enabled}
-                  className="agent-settings-checkbox"
-                  onCheckedChange={(enabled) => setDraft((current) => ({ ...current, enabled }))}
-                >
-                  <span>Enabled</span>
-                </CheckboxControl>
-              </div>
-            </div>
-          </section>
-
-          <section className="agent-settings-section" aria-labelledby="agent-settings-model-heading">
-            <div className="agent-settings-section-header">
-              <h3 id="agent-settings-model-heading">Model behavior</h3>
-              <span>{modelContext}</span>
-            </div>
-            {canChooseModels ? (
-              <div className="agent-settings-grid">
-                <FormField className="agent-settings-field agent-settings-field-wide" label="Model ID">
-                  <TextInputControl
-                    label="Model ID"
-                    list="agent-model-options"
-                    onChange={(event) => {
-                      const modelId = event.target.value;
-                      const model = selectedModels.find((candidate) => candidate.id === modelId);
-                      const supportedLevels: AgentReasoningLevel[] = model?.supportedThinkingLevels.length
-                        ? model.supportedThinkingLevels
-                        : ['off'];
-                      setDraft((current) => ({
-                        ...current,
-                        modelId,
-                        reasoningLevel: coerceReasoningLevel(current.reasoningLevel, supportedLevels),
-                      }));
-                    }}
-                    placeholder="model id"
-                    value={draft.modelId}
-                  />
-                  <datalist id="agent-model-options">
-                    {selectedModels.map((model) => (
-                      <option key={model.id} value={model.id}>{model.name}</option>
-                    ))}
-                  </datalist>
-                </FormField>
-
-                <FormField className="agent-settings-field" label="Reasoning">
-                  <SelectControl
-                    label="Reasoning"
-                    onChange={(event) => {
-                      setDraft((current) => ({
-                        ...current,
-                        reasoningLevel: event.target.value as AgentReasoningLevel,
-                      }));
-                    }}
-                    value={coerceReasoningLevel(draft.reasoningLevel, selectedReasoningLevels)}
-                  >
-                    {selectedReasoningLevels.map((reasoningLevel) => (
-                      <option key={reasoningLevel} value={reasoningLevel}>
-                        {REASONING_LABELS[reasoningLevel]}
-                      </option>
-                    ))}
-                  </SelectControl>
-                </FormField>
-
-                <div className="agent-settings-model-stat">
-                  <span>Context</span>
-                  <strong>{modelContext}</strong>
-                </div>
-              </div>
+              </section>
             ) : (
-              <div className="agent-settings-model-placeholder">
-                Add an API key for this provider before choosing a model.
-              </div>
+              <>
+                <section className="agent-settings-section" aria-labelledby="agent-settings-model-heading">
+                  <div className="agent-settings-section-header">
+                    <h3 id="agent-settings-model-heading">Model</h3>
+                    <span>{draft.providerId ? `${modelContext} · ${formatProviderName(draft.providerId)}` : modelContext}</span>
+                  </div>
+                  {canChooseModels ? (
+                    <div className="agent-settings-grid">
+                      <FormField className="agent-settings-field agent-settings-field-wide" label="Model">
+                        {selectedModels.length > 0 ? (
+                          <SelectControl
+                            label="Model"
+                            onChange={(event) => {
+                              const modelId = event.target.value;
+                              const model = selectedModels.find((candidate) => candidate.id === modelId);
+                              const supportedLevels: AgentReasoningLevel[] = model?.supportedThinkingLevels.length
+                                ? model.supportedThinkingLevels
+                                : ['off'];
+                              setDraft((current) => ({
+                                ...current,
+                                modelId,
+                                reasoningLevel: coerceReasoningLevel(current.reasoningLevel, supportedLevels),
+                              }));
+                            }}
+                            value={selectedModel ? draft.modelId : ''}
+                          >
+                            {selectedModel ? null : <option value="">Select a model…</option>}
+                            {selectedModels.map((model) => (
+                              <option key={model.id} value={model.id}>{model.name}</option>
+                            ))}
+                          </SelectControl>
+                        ) : (
+                          <TextInputControl
+                            label="Model"
+                            onChange={(event) => setDraft((current) => ({ ...current, modelId: event.target.value }))}
+                            placeholder="model id"
+                            value={draft.modelId}
+                          />
+                        )}
+                      </FormField>
+
+                      <FormField className="agent-settings-field" label="Reasoning">
+                        <SelectControl
+                          label="Reasoning"
+                          onChange={(event) => {
+                            setDraft((current) => ({
+                              ...current,
+                              reasoningLevel: event.target.value as AgentReasoningLevel,
+                            }));
+                          }}
+                          value={coerceReasoningLevel(draft.reasoningLevel, selectedReasoningLevels)}
+                        >
+                          {selectedReasoningLevels.map((reasoningLevel) => (
+                            <option key={reasoningLevel} value={reasoningLevel}>
+                              {REASONING_LABELS[reasoningLevel]}
+                            </option>
+                          ))}
+                        </SelectControl>
+                      </FormField>
+
+                      <div className="agent-settings-model-stat">
+                        <span>Context</span>
+                        <strong>{modelContext}</strong>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="agent-settings-model-placeholder">
+                      Add an API key in Providers before choosing a model.
+                    </div>
+                  )}
+                </section>
+
+                <section className="agent-settings-section" aria-labelledby="agent-settings-behavior-heading">
+                  <div className="agent-settings-section-header">
+                    <h3 id="agent-settings-behavior-heading">Behavior</h3>
+                    <span>{draft.permissionMode === 'trusted' ? 'Trusted workspace' : 'Restricted tools'}</span>
+                  </div>
+                  <div className="agent-settings-grid">
+                    <FormField className="agent-settings-field" label="Permission mode">
+                      <SelectControl
+                        label="Permission mode"
+                        onChange={(event) => setDraft((current) => ({
+                          ...current,
+                          permissionMode: event.target.value === 'restricted' ? 'restricted' : 'trusted',
+                        }))}
+                        value={draft.permissionMode}
+                      >
+                        <option value="trusted">Trusted</option>
+                        <option value="restricted">Restricted</option>
+                      </SelectControl>
+                    </FormField>
+
+                    <FormField className="agent-settings-field agent-settings-field-wide" label="Additional skill directories">
+                      <TextInputControl
+                        label="Additional skill directories"
+                        onChange={(event) => setDraft((current) => ({
+                          ...current,
+                          additionalSkillDirectoriesText: event.target.value,
+                        }))}
+                        placeholder="Optional paths, comma separated"
+                        value={draft.additionalSkillDirectoriesText}
+                      />
+                      <span className="agent-settings-field-meta">
+                        Default directories stay enabled: ~/.agents/skills and .agents/skills.
+                      </span>
+                    </FormField>
+
+                    <div className="agent-settings-row agent-settings-field-wide">
+                      <CheckboxControl
+                        checked={draft.automaticSkillsEnabled}
+                        className="agent-settings-checkbox"
+                        onCheckedChange={(automaticSkillsEnabled) => setDraft((current) => ({ ...current, automaticSkillsEnabled }))}
+                      >
+                        <span>Automatic skills</span>
+                      </CheckboxControl>
+                      <CheckboxControl
+                        checked={draft.slashSkillsEnabled}
+                        className="agent-settings-checkbox"
+                        onCheckedChange={(slashSkillsEnabled) => setDraft((current) => ({ ...current, slashSkillsEnabled }))}
+                      >
+                        <span>Slash skills</span>
+                      </CheckboxControl>
+                      <CheckboxControl
+                        checked={draft.compactEnabled}
+                        className="agent-settings-checkbox"
+                        onCheckedChange={(compactEnabled) => setDraft((current) => ({ ...current, compactEnabled }))}
+                      >
+                        <span>Compact command</span>
+                      </CheckboxControl>
+                    </div>
+                  </div>
+                </section>
+              </>
             )}
-          </section>
 
-          <section className="agent-settings-section" aria-labelledby="agent-settings-behavior-heading">
-            <div className="agent-settings-section-header">
-              <h3 id="agent-settings-behavior-heading">Agent behavior</h3>
-              <span>{draft.permissionMode === 'trusted' ? 'Trusted workspace' : 'Restricted tools'}</span>
-            </div>
-            <div className="agent-settings-grid">
-              <FormField className="agent-settings-field" label="Permission mode">
-                <SelectControl
-                  label="Permission mode"
-                  onChange={(event) => setDraft((current) => ({
-                    ...current,
-                    permissionMode: event.target.value === 'restricted' ? 'restricted' : 'trusted',
-                  }))}
-                  value={draft.permissionMode}
-                >
-                  <option value="trusted">Trusted</option>
-                  <option value="restricted">Restricted</option>
-                </SelectControl>
-              </FormField>
-
-              <FormField className="agent-settings-field agent-settings-field-wide" label="Additional skill directories">
-                <TextInputControl
-                  label="Additional skill directories"
-                  onChange={(event) => setDraft((current) => ({
-                    ...current,
-                    additionalSkillDirectoriesText: event.target.value,
-                  }))}
-                  placeholder="Optional paths, comma separated"
-                  value={draft.additionalSkillDirectoriesText}
-                />
-                <span className="agent-settings-field-meta">
-                  Default directories stay enabled: ~/.agents/skills and .agents/skills.
-                </span>
-              </FormField>
-
-              <div className="agent-settings-row agent-settings-field-wide">
-                <CheckboxControl
-                  checked={draft.automaticSkillsEnabled}
-                  className="agent-settings-checkbox"
-                  onCheckedChange={(automaticSkillsEnabled) => setDraft((current) => ({ ...current, automaticSkillsEnabled }))}
-                >
-                  <span>Automatic skills</span>
-                </CheckboxControl>
-                <CheckboxControl
-                  checked={draft.slashSkillsEnabled}
-                  className="agent-settings-checkbox"
-                  onCheckedChange={(slashSkillsEnabled) => setDraft((current) => ({ ...current, slashSkillsEnabled }))}
-                >
-                  <span>Slash skills</span>
-                </CheckboxControl>
-                <CheckboxControl
-                  checked={draft.compactEnabled}
-                  className="agent-settings-checkbox"
-                  onCheckedChange={(compactEnabled) => setDraft((current) => ({ ...current, compactEnabled }))}
-                >
-                  <span>Compact command</span>
-                </CheckboxControl>
+            {error ? (
+              <div className="agent-settings-alert" role="alert">
+                <WarningIcon size={ICON_SIZE.menu} />
+                <span>{error}</span>
               </div>
-            </div>
-          </section>
+            ) : null}
+            {notice ? <div className="agent-settings-notice">{notice}</div> : null}
 
-          {error ? (
-            <div className="agent-settings-alert" role="alert">
-              <WarningIcon size={ICON_SIZE.menu} />
-              <span>{error}</span>
-            </div>
-          ) : null}
-          {notice ? <div className="agent-settings-notice">{notice}</div> : null}
-
-          <footer className="agent-settings-footer">
-            <ButtonControl
-              className="agent-settings-danger"
-              disabled={saving || !configuredProvider}
-              onClick={removeProvider}
-              title="Remove provider"
-            >
-              <TrashIcon size={ICON_SIZE.menu} />
-              <span>Remove provider</span>
-            </ButtonControl>
-            <div className="agent-settings-footer-actions">
-              <ButtonControl className="agent-settings-secondary" onClick={onClose}>
-                Cancel
-              </ButtonControl>
-              <ButtonControl className="agent-settings-primary" disabled={saving} onClick={save}>
-                {saving ? 'Saving...' : 'Save'}
-              </ButtonControl>
-            </div>
-          </footer>
+            <footer className="agent-settings-footer">
+              {category === 'providers' ? (
+                <ButtonControl
+                  className="agent-settings-danger"
+                  disabled={saving || !configuredProvider}
+                  onClick={removeProvider}
+                  title="Remove provider"
+                >
+                  <TrashIcon size={ICON_SIZE.menu} />
+                  <span>Remove provider</span>
+                </ButtonControl>
+              ) : <span />}
+              <div className="agent-settings-footer-actions">
+                <ButtonControl className="agent-settings-secondary" onClick={onClose}>
+                  Cancel
+                </ButtonControl>
+                <ButtonControl className="agent-settings-primary" disabled={saving} onClick={save}>
+                  {saving ? 'Saving...' : 'Save'}
+                </ButtonControl>
+              </div>
+            </footer>
+          </div>
         </div>
       )}
     </Dialog>
@@ -557,31 +631,49 @@ function resolveDraftForProvider(settings: AgentProviderSettingsView, providerId
   return resolveInitialDraft(settings);
 }
 
-function buildProviderChoices(settings: AgentProviderSettingsView, draftProviderId: string): ProviderChoice[] {
+function buildProviderChoices(
+  settings: AgentProviderSettingsView,
+  draftProviderId: string,
+  catalog: Map<string, AgentProviderOption>,
+): ProviderChoice[] {
   const activeProviderId = resolveUsableActiveProvider(settings)?.providerId ?? '';
   const choices = new Map<string, ProviderChoice>();
 
   for (const provider of settings.providers) {
-    const catalog = settings.availableProviders.find((candidate) => candidate.providerId === provider.providerId);
+    const providerCatalog = catalog.get(provider.providerId);
     choices.set(provider.providerId, {
       providerId: provider.providerId,
       modelId: provider.modelId,
       configured: true,
       active: provider.providerId === activeProviderId,
       enabled: provider.enabled,
-      hasCredential: providerHasCredential(provider, catalog),
+      hasCredential: providerHasCredential(provider, providerCatalog),
+      custom: !catalog.has(provider.providerId),
+    });
+  }
+
+  for (const provider of settings.availableProviders) {
+    if (choices.has(provider.providerId)) continue;
+    choices.set(provider.providerId, {
+      providerId: provider.providerId,
+      modelId: provider.models[0]?.id ?? '',
+      configured: false,
+      active: provider.providerId === activeProviderId,
+      enabled: true,
+      hasCredential: Boolean(provider.hasEnvApiKey),
+      custom: false,
     });
   }
 
   if (draftProviderId && !choices.has(draftProviderId)) {
-    const catalog = settings.availableProviders.find((candidate) => candidate.providerId === draftProviderId);
     choices.set(draftProviderId, {
       providerId: draftProviderId,
-      modelId: catalog?.models[0]?.id ?? '',
+      modelId: catalog.get(draftProviderId)?.models[0]?.id ?? '',
       configured: false,
       active: draftProviderId === activeProviderId,
       enabled: true,
-      hasCredential: Boolean(catalog?.hasEnvApiKey),
+      hasCredential: Boolean(catalog.get(draftProviderId)?.hasEnvApiKey),
+      custom: !catalog.has(draftProviderId),
     });
   }
 
@@ -621,7 +713,7 @@ function resolveUsableActiveProvider(settings: AgentProviderSettingsView): Agent
 }
 
 function providerStatusLabel(provider: ProviderChoice): string {
-  if (!provider.configured) return 'Setup';
+  if (!provider.configured) return provider.hasCredential ? 'Ready' : 'Add key';
   if (!provider.enabled) return 'Disabled';
   if (!provider.hasCredential) return 'Needs key';
   return provider.active ? 'Active' : 'Ready';
@@ -685,7 +777,16 @@ function formatTokens(value: number): string {
   return String(value);
 }
 
+const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+  anthropic: 'Anthropic',
+  openai: 'OpenAI',
+  google: 'Google',
+  openrouter: 'OpenRouter',
+};
+
 function formatProviderName(providerId: string): string {
+  const known = PROVIDER_DISPLAY_NAMES[providerId];
+  if (known) return known;
   return providerId
     .split(/[-_]/g)
     .filter(Boolean)
