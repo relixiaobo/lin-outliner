@@ -194,6 +194,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
   const detailDescription = showConnectionFields
     ? 'Connect any OpenAI-compatible endpoint.'
     : providerDescription(selectedCatalog);
+  const authInfo = showConnectionFields ? undefined : PROVIDER_AUTH[draft.providerId];
   const docsUrl = showConnectionFields ? undefined : PROVIDER_DOCS_URL[draft.providerId];
   const baseUrlPlaceholder = selectedCatalog?.defaultBaseUrl ?? 'https://api.example.com/v1';
   const showModelList = !creatingCustom && catalogModels.length > 0;
@@ -475,6 +476,22 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
                           </SwitchControl>
                         </div>
 
+                        {authInfo ? (
+                          <div className="settings-provider-note">
+                            <p>{authInfo.note}</p>
+                            {authInfo.docsUrl ? (
+                              <button
+                                className="agent-settings-doc-link"
+                                onClick={() => void api.openExternalUrl(authInfo.docsUrl as string)}
+                                type="button"
+                              >
+                                <span>{authInfo.docsLabel ?? 'Learn more'}</span>
+                                <OpenIcon size={ICON_SIZE.tiny} />
+                              </button>
+                            ) : null}
+                          </div>
+                        ) : (
+                        <>
                         <div className="agent-settings-grid">
                           {showConnectionFields ? (
                             <FormField className="agent-settings-field agent-settings-field-wide" label="Provider ID">
@@ -544,6 +561,8 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
                             </summary>
                             <div className="settings-disclosure-body">{baseUrlField}</div>
                           </details>
+                        )}
+                        </>
                         )}
 
                         {showModelList ? (
@@ -974,6 +993,41 @@ const PROVIDER_DOCS_URL: Record<string, string> = {
   xai: 'https://console.x.ai',
   groq: 'https://console.groq.com/keys',
   mistral: 'https://console.mistral.ai/api-keys',
+};
+
+// Providers pi-ai authenticates with something other than a pasteable API key.
+// Until the OAuth sign-in flow lands (docs/plans/agent-oauth-providers.md), we
+// at least stop showing a misleading "Paste key" field for them.
+interface ProviderAuthInfo {
+  kind: 'oauth' | 'managed';
+  note: string;
+  docsUrl?: string;
+  docsLabel?: string;
+}
+
+const PROVIDER_AUTH: Record<string, ProviderAuthInfo> = {
+  'github-copilot': {
+    kind: 'oauth',
+    note: 'GitHub Copilot signs in with your GitHub account — there is no API key to paste. Sign-in support is coming soon.',
+    docsUrl: 'https://github.com/features/copilot',
+    docsLabel: 'About GitHub Copilot',
+  },
+  'openai-codex': {
+    kind: 'oauth',
+    note: 'Codex uses your ChatGPT sign-in rather than an API key. Sign-in support is coming soon.',
+  },
+  'amazon-bedrock': {
+    kind: 'managed',
+    note: 'Bedrock uses your AWS credentials (a named profile, IAM role, or AWS_* environment variables) — there is no API key to paste here.',
+    docsUrl: 'https://docs.aws.amazon.com/bedrock/latest/userguide/getting-started.html',
+    docsLabel: 'AWS credential setup',
+  },
+  'google-vertex': {
+    kind: 'managed',
+    note: 'Vertex AI uses Google Cloud Application Default Credentials (run `gcloud auth application-default login`) — there is no API key to paste here.',
+    docsUrl: 'https://cloud.google.com/docs/authentication/provide-credentials-adc',
+    docsLabel: 'Set up ADC',
+  },
 };
 
 function formatProviderName(providerId: string): string {

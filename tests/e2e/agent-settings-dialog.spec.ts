@@ -90,6 +90,16 @@ test.describe('agent settings dialog', () => {
     await expect(dialog.getByRole('button', { name: /Custom provider/ })).toBeVisible();
   });
 
+  test('shows a credential note instead of a key field for non-key providers', async ({ page }) => {
+    const { dialog } = await openSettings(page);
+    await dialog.locator('.settings-provider-row', { hasText: 'Amazon Bedrock' }).click();
+    // No misleading key/base-url fields for an AWS-credential provider.
+    await expect(dialog.getByLabel('API key')).toHaveCount(0);
+    await expect(dialog.getByText('Advanced', { exact: true })).toHaveCount(0);
+    await expect(dialog.getByText(/uses your AWS credentials/i)).toBeVisible();
+    await expect(dialog.getByRole('button', { name: /AWS credential setup/ })).toBeVisible();
+  });
+
   test('lists provider models behind a Models disclosure', async ({ page }) => {
     const { dialog } = await openSettings(page);
     // Collapsed by default so it doesn't bury the key field.

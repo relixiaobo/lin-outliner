@@ -4935,6 +4935,24 @@ button.panel-resize-handle::after {
   padding: var(--space-6) 0;
 }
 
+.settings-provider-note {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control-md);
+  background: var(--control-hover);
+  padding: var(--space-4) var(--space-5);
+}
+
+.settings-provider-note p {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
 .agent-settings-key-reveal {
   display: inline-flex;
   flex: 0 0 auto;
