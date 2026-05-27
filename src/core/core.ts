@@ -2216,8 +2216,14 @@ export class Core {
         this.ensureFieldEntryWithTemplateDirect(nodeId, fieldRef.fieldDefId, fieldRef.templateOriginId, true);
       }
     }
-    for (const templateNodeId of getTemplateContentNodes(state, tagId)) {
-      this.cloneTemplateContentNodeShallowDirect(nodeId, templateNodeId);
+    // Default content is inherited along the extends chain too (Tana parity:
+    // template objects are inherited wholesale, not just fields). Ancestor-first
+    // so a base tag's content precedes the more specific tag's; dedup by
+    // templateId keeps re-application idempotent.
+    for (const chainTagId of [...getExtendsChain(state, tagId)].reverse()) {
+      for (const templateNodeId of getTemplateContentNodes(state, chainTagId)) {
+        this.cloneTemplateContentNodeShallowDirect(nodeId, templateNodeId);
+      }
     }
   }
 

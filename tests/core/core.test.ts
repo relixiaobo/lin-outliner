@@ -772,6 +772,32 @@ describe('Core', () => {
       .toThrow('tag inheritance cannot create a cycle');
   });
 
+  test('tag inheritance instantiates default content along the extends chain (ancestor-first)', () => {
+    const core = Core.new();
+    const parentTagId = mustFocus(core.createTag('project'));
+    const childTagId = mustFocus(core.createTag('task'));
+    const parentContentId = mustFocus(core.createNode(parentTagId, null, 'From project'));
+    core.setTagConfig(childTagId, { extends: parentTagId });
+    const childContentId = mustFocus(core.createNode(childTagId, null, 'From task'));
+
+    const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Launch'));
+    core.applyTag(nodeId, childTagId);
+
+    const contentChildren = core.state().nodes[nodeId].children
+      .map((id) => core.state().nodes[id]!)
+      .filter((child) => child.type === undefined || child.type === 'codeBlock');
+    // ancestor-first: the base tag's content precedes the more specific tag's.
+    expect(contentChildren.map((child) => child.content.text)).toEqual(['From project', 'From task']);
+    expect(contentChildren.map((child) => child.templateId)).toEqual([parentContentId, childContentId]);
+
+    // Re-applying is idempotent (dedup by templateId — no duplicate clones).
+    core.applyTag(nodeId, childTagId);
+    const afterReapply = core.state().nodes[nodeId].children
+      .map((id) => core.state().nodes[id]!)
+      .filter((child) => child.type === undefined || child.type === 'codeBlock');
+    expect(afterReapply.length).toBe(2);
+  });
+
   test('replace node with reference creates backlinks and remains undoable', () => {
     const core = Core.new();
     const today = core.projection().todayId;
