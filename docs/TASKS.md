@@ -67,6 +67,18 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **settings-refactor** (P2) — reorganized the agent Settings dialog into three
+  categories (Providers / Skills / Agent Profiles). Providers infer credential
+  state automatically ("Set as Active" replaces the enablement toggle from #38;
+  status dot green = active / soft = configured), the API key field gains a
+  remove action, Base URL moves back into an "Advanced Settings" disclosure, and
+  a "Test Connection" button reports classified diagnostics. Skills and Agent
+  Profiles tabs add per-item enable/disable (`disabledSkills` / `disabledAgents`,
+  enforced at listing + invocation/spawn) plus global behavior switches and a
+  read-only agent persona detail card. New IPC: `agent_list_all_skills`,
+  `agent_list_all_definitions`, `agent_test_provider_connection`. Post-merge
+  follow-up unnested the agent-row toggle from the select button and dropped a
+  dead dot rule (PR #42).
 - **settings-provider-add-and-search** (P2, cc) — moved the "Custom provider" add
   affordance from a bottom pinned row to a compact "+" button beside the provider
   search (active when the custom draft is open), and made the model search expand

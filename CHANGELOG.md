@@ -71,6 +71,23 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Settings panel info architecture & style normalization** — the agent
+  Settings dialog is reorganized from two categories into three: **Providers**,
+  **Skills**, and **Agent Profiles**. Providers now infer credential state
+  automatically — the "Enabled" toggle (introduced in #38) is replaced by a
+  "Set as Active" action with `Active` / `Configured` badges and a list status
+  dot (green = active, filled-soft = configured-but-inactive); the API key field
+  gains a reveal mask plus a remove (trash) action, Base URL collapses into an
+  "Advanced Settings" disclosure, and a "Test Connection" button reports a
+  one-shot diagnostic (401 / 404 / 403 / timeout classified). The **Skills** tab
+  adds global behavior switches (Automatic Skills, Slash Skills, Compact) and a
+  per-skill enable/disable list; the **Agent Profiles** tab pairs a list with a
+  read-only detail card (persona prompt, model / reasoning / permission / max-turns,
+  tools) and per-agent enable/disable. Disabled skills and agents are filtered
+  from model/slash listings and rejected at invocation and spawn. Backed by new
+  IPC: `agent_list_all_skills`, `agent_list_all_definitions`, and
+  `agent_test_provider_connection`. Supersedes parts of #38 (enablement toggle)
+  and #39 (inline Base URL). ([#42](https://github.com/relixiaobo/lin-outliner/pull/42))
 - **Custom-provider add button at the top; in-place model search** — the pinned
   "Custom provider" row at the bottom of the provider list is replaced by a
   compact "+" button beside the search box (active fill while the custom draft is
