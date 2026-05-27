@@ -227,7 +227,7 @@ function ConfigControl(props: {
         <DefinitionAutoInitializeControl
           label={item.label}
           fieldType={fieldConfig?.fieldType ?? 'plain'}
-          value={node.autoInitialize}
+          value={(fieldConfig?.autoInitialize ?? []).join(',')}
           onChange={(autoInitialize) => updateField({ autoInitialize })}
         />
       );

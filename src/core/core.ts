@@ -1028,7 +1028,6 @@ export class Core {
           delete current.maxValue;
         }
       }
-      if ('autoInitialize' in patch) setOptional(current, 'autoInitialize', normalizeOptionalText(patch.autoInitialize));
       if ('minValue' in patch) setOptional(current, 'minValue', patch.minValue ?? undefined);
       if ('maxValue' in patch) setOptional(current, 'maxValue', patch.maxValue ?? undefined);
       current.updatedAt = nowMs();
@@ -1045,6 +1044,9 @@ export class Core {
       }
       if ('hideField' in patch) {
         this.setConfigValueDirect(fieldId, { kind: 'enum', configKey: 'hideField', value: normalizeOptionalText(patch.hideField) ?? null });
+      }
+      if ('autoInitialize' in patch) {
+        this.setConfigValueDirect(fieldId, { kind: 'enumList', configKey: 'autoInitialize', values: parseAutoInitStrategies(normalizeOptionalText(patch.autoInitialize)) });
       }
       // autocollectOptions: explicit set, or cleared when the type no longer supports it.
       if (patch.autocollectOptions !== undefined) {
@@ -2274,7 +2276,7 @@ export class Core {
   private applyAutoInitializeDirect(nodeId: string, fieldEntryId: string, fieldDefId: string) {
     const state = this.snapshot();
     const fieldDef = state.nodes[fieldDefId];
-    if (!fieldDef?.autoInitialize) return;
+    if (!fieldDef || fieldAutoInitOf(state, fieldDefId).length === 0) return;
     const result = resolveAutoInit(state, nodeId, fieldDef);
     if (!result) return;
     if (result.kind === 'reference') {
@@ -2939,6 +2941,23 @@ function fieldCardinalityOf(state: DocumentState, fieldDefId: string): FieldCard
   return (value as FieldCardinality | undefined) ?? 'single';
 }
 
+/** The field's auto-initialize strategies, read from its `defConfig(autoInitialize)` enumList subtree. */
+function fieldAutoInitOf(state: DocumentState, fieldDefId: string): AutoInitStrategy[] {
+  const def = state.nodes[fieldDefId];
+  if (!def) return [];
+  const row = def.children
+    .map((id) => state.nodes[id])
+    .find((n) => n?.type === 'defConfig' && n.configKey === 'autoInitialize');
+  if (!row) return [];
+  const strategies: AutoInitStrategy[] = [];
+  for (const valueId of row.children) {
+    const ref = state.nodes[valueId];
+    const text = ref?.type === 'reference' && ref.targetId ? state.nodes[ref.targetId]?.content.text : undefined;
+    if (text && AUTO_INIT_STRATEGIES.includes(text as AutoInitStrategy)) strategies.push(text as AutoInitStrategy);
+  }
+  return strategies;
+}
+
 function getExtendsChain(state: DocumentState, tagId: string): string[] {
   const chain: string[] = [];
   const visited = new Set<string>();
@@ -3089,7 +3108,7 @@ type AutoInitResult =
   | { kind: 'reference'; targetId: string };
 
 function resolveAutoInit(state: DocumentState, nodeId: string, fieldDef: Node): AutoInitResult | null {
-  const strategies = parseAutoInitStrategies(fieldDef.autoInitialize) as AutoInitStrategy[];
+  const strategies = fieldAutoInitOf(state, fieldDef.id);
   for (const strategy of AUTO_INIT_PRIORITY) {
     if (!strategies.includes(strategy)) continue;
     const result = resolveAutoInitStrategy(state, nodeId, fieldDef, strategy);
