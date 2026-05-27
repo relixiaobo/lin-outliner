@@ -367,7 +367,6 @@ export interface Node {
   autoCollected: boolean;
   minValue?: number;
   maxValue?: number;
-  sourceSupertag?: NodeId;
   targetId?: NodeId;
   viewMode?: ViewMode;
   toolbarVisible?: boolean;

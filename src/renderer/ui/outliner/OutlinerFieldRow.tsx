@@ -10,6 +10,7 @@ import {
 import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
 import { plainText } from '../../api/types';
+import { projectFieldConfig } from '../../../core/configProjection';
 import type { DocumentIndex, UiState } from '../../state/document';
 import {
   clearFocusState,
@@ -66,7 +67,8 @@ function resolveFieldOwnerColor(
   field: NodeProjection | undefined,
   byId: Map<NodeId, NodeProjection>,
 ): string | undefined {
-  const lookupIds = [entry.templateId, field?.id ?? entry.fieldDefId, field?.sourceSupertag]
+  const fieldSource = field ? projectFieldConfig(byId, field).sourceSupertag : undefined;
+  const lookupIds = [entry.templateId, field?.id ?? entry.fieldDefId, fieldSource]
     .filter((id): id is NodeId => Boolean(id));
 
   for (const lookupId of lookupIds) {
@@ -76,7 +78,7 @@ function resolveFieldOwnerColor(
       : lookup?.type === 'fieldEntry'
         ? lookup.parentId
         : lookup?.type === 'fieldDef'
-          ? lookup.sourceSupertag ?? lookup.parentId
+          ? projectFieldConfig(byId, lookup).sourceSupertag ?? lookup.parentId
           : undefined;
     const owner = ownerId ? byId.get(ownerId) : undefined;
     if (owner?.type === 'tagDef') return resolveTagColor(owner).text;

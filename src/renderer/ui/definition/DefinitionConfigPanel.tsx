@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { buildConfigIndexFromMap } from '../../../core/configProjection';
-import type { ProjectedTagConfig } from '../../../core/configSchema';
+import type { ProjectedFieldConfig, ProjectedTagConfig } from '../../../core/configSchema';
 import { api } from '../../api/client';
 import type {
   FieldConfigPatch,
@@ -50,7 +50,9 @@ export function DefinitionConfigPanel({ node, index, run }: DefinitionConfigPane
   const items = definitionConfigItems(node);
   // config-as-nodes: definition config is read from the defConfig subtree via
   // the projected accessor, not flat Node fields.
-  const tagConfig = useMemo(() => buildConfigIndexFromMap(index.byId).tag(node.id), [index.byId, node.id]);
+  const configIndex = useMemo(() => buildConfigIndexFromMap(index.byId), [index.byId]);
+  const tagConfig = configIndex.tag(node.id);
+  const fieldConfig = configIndex.field(node.id);
   const tagOptions = useMemo(
     () => index.projection.nodes
       .filter((candidate) => candidate.type === 'tagDef' && candidate.id !== node.id)
@@ -79,6 +81,7 @@ export function DefinitionConfigPanel({ node, index, run }: DefinitionConfigPane
           item={item}
           node={node}
           tagConfig={tagConfig}
+          fieldConfig={fieldConfig}
           tagOptions={tagOptions}
           updateTag={updateTag}
           updateField={updateField}
@@ -93,6 +96,7 @@ function DefinitionConfigRow(props: {
   item: DefinitionConfigItem;
   node: NodeProjection;
   tagConfig: ProjectedTagConfig | undefined;
+  fieldConfig: ProjectedFieldConfig | undefined;
   tagOptions: TagOption[];
   updateTag: (patch: TagConfigPatch) => void;
   updateField: (patch: FieldConfigPatch) => void;
@@ -130,11 +134,12 @@ function ConfigControl(props: {
   item: DefinitionConfigItem;
   node: NodeProjection;
   tagConfig: ProjectedTagConfig | undefined;
+  fieldConfig: ProjectedFieldConfig | undefined;
   tagOptions: TagOption[];
   updateTag: (patch: TagConfigPatch) => void;
   updateField: (patch: FieldConfigPatch) => void;
 }) {
-  const { item, node, tagConfig, tagOptions, updateTag, updateField } = props;
+  const { item, node, tagConfig, fieldConfig, tagOptions, updateTag, updateField } = props;
 
   switch (item.key) {
     case 'color':
@@ -200,7 +205,7 @@ function ConfigControl(props: {
       return (
         <DefinitionTagSelect
           label={item.label}
-          value={node.sourceSupertag}
+          value={fieldConfig?.sourceSupertag}
           options={tagOptions}
           onChange={(sourceSupertag) => updateField({ sourceSupertag })}
         />

@@ -1022,7 +1022,6 @@ export class Core {
       }
       if (patch.fieldType !== undefined) {
         current.fieldType = patch.fieldType;
-        if (patch.fieldType !== 'options_from_supertag') delete current.sourceSupertag;
         if (patch.fieldType !== 'options') current.autocollectOptions = false;
         if (patch.fieldType !== 'number') {
           delete current.minValue;
@@ -1030,7 +1029,6 @@ export class Core {
         }
       }
       if ('cardinality' in patch) setOptional(current, 'cardinality', patch.cardinality ?? undefined);
-      if ('sourceSupertag' in patch) setOptional(current, 'sourceSupertag', normalizeOptionalText(patch.sourceSupertag));
       if ('nullable' in patch) setOptional(current, 'nullable', patch.nullable ?? undefined);
       if ('hideField' in patch) setOptional(current, 'hideField', normalizeOptionalText(patch.hideField));
       if ('autoInitialize' in patch) setOptional(current, 'autoInitialize', normalizeOptionalText(patch.autoInitialize));
@@ -1039,6 +1037,13 @@ export class Core {
       if ('maxValue' in patch) setOptional(current, 'maxValue', patch.maxValue ?? undefined);
       current.updatedAt = nowMs();
       this.loro.writeNode(current);
+      // config-as-nodes: sourceSupertag lives in the defConfig subtree. Set it,
+      // or clear it when the field type no longer supports it.
+      if ('sourceSupertag' in patch) {
+        this.setConfigValueDirect(fieldId, { kind: 'ref', configKey: 'sourceSupertag', targetId: normalizeOptionalText(patch.sourceSupertag) ?? null });
+      } else if (patch.fieldType !== undefined && patch.fieldType !== 'options_from_supertag') {
+        this.setConfigValueDirect(fieldId, { kind: 'ref', configKey: 'sourceSupertag', targetId: null });
+      }
       return focus(fieldId);
     });
   }
@@ -2992,7 +2997,7 @@ function ensureOptionBelongsToField(state: DocumentState, fieldDefId: string, op
   const fieldDef = requiredNode(state, fieldDefId);
   const optionNode = requiredNode(state, optionNodeId);
   if (fieldDef.fieldType === 'options_from_supertag') {
-    const sourceSupertag = fieldDef.sourceSupertag;
+    const sourceSupertag = configRefTarget(state, fieldDef.id, 'sourceSupertag');
     if (
       sourceSupertag
       && (!optionNode.type || optionNode.type === 'codeBlock')
@@ -3087,9 +3092,11 @@ function resolveAutoInitStrategy(
       if (value) return { kind: 'text', value };
     }
   }
-  if (strategy === 'ancestor_supertag_ref' && fieldDef.sourceSupertag) {
+  if (strategy === 'ancestor_supertag_ref') {
+    const sourceSupertag = configRefTarget(state, fieldDef.id, 'sourceSupertag');
+    if (!sourceSupertag) return null;
     const target = ancestorsOf(state, nodeId).find((ancestor) =>
-      ancestor.tags.includes(fieldDef.sourceSupertag!));
+      ancestor.tags.includes(sourceSupertag));
     return target ? { kind: 'reference', targetId: target.id } : null;
   }
   return null;

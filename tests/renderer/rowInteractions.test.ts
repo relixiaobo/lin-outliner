@@ -1149,7 +1149,8 @@ describe('row interaction resolvers', () => {
     const field = {
       id: 'field_city',
       type: 'fieldDef',
-      children: ['ignored_child_option'],
+      // config-as-nodes: sourceSupertag lives in a defConfig row, not a flat field.
+      children: ['cfg_source', 'ignored_child_option'],
       content: { text: 'City', marks: [], inlineRefs: [] },
       tags: [],
       createdAt: 0,
@@ -1158,10 +1159,44 @@ describe('row interaction resolvers', () => {
       showCheckbox: false,
       doneStateEnabled: false,
       fieldType: 'options_from_supertag',
-      sourceSupertag: 'tag_city',
       autocollectOptions: false,
       autoCollected: false,
       toolbarVisible: false,
+      filterValues: [],
+    } as const;
+    const sourceConfigRow = {
+      id: 'cfg_source',
+      type: 'defConfig',
+      configKey: 'sourceSupertag',
+      parentId: 'field_city',
+      children: ['cfg_source_value'],
+      content: { text: 'Supertag', marks: [], inlineRefs: [] },
+      tags: [],
+      createdAt: 0,
+      updatedAt: 0,
+      locked: true,
+      showCheckbox: false,
+      doneStateEnabled: false,
+      autocollectOptions: false,
+      autoCollected: false,
+      filterValues: [],
+    } as const;
+    const sourceConfigValue = {
+      id: 'cfg_source_value',
+      type: 'reference',
+      refRole: 'config',
+      targetId: 'tag_city',
+      parentId: 'cfg_source',
+      children: [],
+      content: { text: '', marks: [], inlineRefs: [] },
+      tags: [],
+      createdAt: 0,
+      updatedAt: 0,
+      locked: false,
+      showCheckbox: false,
+      doneStateEnabled: false,
+      autocollectOptions: false,
+      autoCollected: false,
       filterValues: [],
     } as const;
     const taggedNode = {
@@ -1194,6 +1229,8 @@ describe('row interaction resolvers', () => {
     } as const;
     const byId = new Map<string, any>([
       [field.id, field],
+      [sourceConfigRow.id, sourceConfigRow],
+      [sourceConfigValue.id, sourceConfigValue],
       [taggedNode.id, taggedNode],
       [otherTagNode.id, otherTagNode],
       [childOption.id, childOption],

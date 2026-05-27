@@ -1,4 +1,5 @@
 import type { NodeId, NodeProjection } from '../../api/types';
+import { projectFieldConfig } from '../../../core/configProjection';
 import { isOptionsFieldType } from '../fields/fieldTypeRegistry';
 
 export interface FieldOption {
@@ -40,7 +41,7 @@ function resolveOptionsFromSourceSupertag(
   field: NodeProjection,
   byId: Map<NodeId, NodeProjection>,
 ): NodeProjection[] {
-  const sourceSupertag = field.sourceSupertag;
+  const sourceSupertag = projectFieldConfig(byId, field).sourceSupertag;
   if (!sourceSupertag) return [];
   return [...byId.values()].filter((node) => (
     node.id !== field.id

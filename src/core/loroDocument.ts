@@ -72,7 +72,6 @@ const NODE_SCALAR_KEYS: Array<keyof Node> = [
   'autoCollected',
   'minValue',
   'maxValue',
-  'sourceSupertag',
   'targetId',
   'viewMode',
   'toolbarVisible',

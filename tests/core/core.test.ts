@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { Core } from '../../src/core/core';
 import { LoroOutlinerDocument } from '../../src/core/loroDocument';
+import { buildConfigIndex } from '../../src/core/configProjection';
 import { runSearchNode } from '../../src/core/searchEngine';
 import {
   AREAS_ID,
@@ -552,7 +553,7 @@ describe('Core', () => {
       sourceSupertag: sourceTagId,
     });
     expect(core.state().nodes[fieldId].fieldType).toBe('options_from_supertag');
-    expect(core.state().nodes[fieldId].sourceSupertag).toBe(sourceTagId);
+    expect(buildConfigIndex(core.state()).field(fieldId)?.sourceSupertag).toBe(sourceTagId);
     expect(core.state().nodes[fieldId].autocollectOptions).toBe(false);
 
     expect(() => core.setFieldConfig(fieldId, { autocollectOptions: true }))
