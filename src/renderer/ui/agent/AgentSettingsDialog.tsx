@@ -8,7 +8,7 @@ import type {
   AgentReasoningLevel,
 } from '../../api/types';
 import { api } from '../../api/client';
-import { HideIcon, ICON_SIZE, OpenIcon, PasswordIcon, SearchIcon, ShowIcon, TrashIcon, WarningIcon } from '../icons';
+import { AddIcon, CloseIcon, HideIcon, ICON_SIZE, OpenIcon, PasswordIcon, SearchIcon, ShowIcon, TrashIcon, WarningIcon } from '../icons';
 import { providerIconUrl } from './providerIcon';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { CheckboxControl } from '../primitives/CheckboxControl';
@@ -405,14 +405,26 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
               <section className="agent-settings-section settings-providers-section" aria-label="Providers">
                 <div className="settings-providers">
                   <div className="settings-provider-aside">
-                    <div className="settings-provider-search">
-                      <SearchIcon size={ICON_SIZE.menu} />
-                      <TextInputControl
-                        label="Search providers"
-                        onChange={(event) => setProviderQuery(event.target.value)}
-                        placeholder="Search providers…"
-                        value={providerQuery}
-                      />
+                    <div className="settings-provider-search-row">
+                      <div className="settings-provider-search">
+                        <SearchIcon size={ICON_SIZE.menu} />
+                        <TextInputControl
+                          label="Search providers"
+                          onChange={(event) => setProviderQuery(event.target.value)}
+                          placeholder="Search providers…"
+                          value={providerQuery}
+                        />
+                      </div>
+                      <button
+                        aria-current={creatingCustom ? 'true' : undefined}
+                        aria-label="Custom provider"
+                        className={`settings-provider-add ${creatingCustom ? 'is-active' : ''}`}
+                        onClick={startCustomProvider}
+                        title="Add a custom OpenAI-compatible provider"
+                        type="button"
+                      >
+                        <AddIcon size={ICON_SIZE.menu} />
+                      </button>
                     </div>
                     <div className="settings-provider-list" role="list" aria-label="Available providers">
                       {visibleProviderChoices.length === 0 ? (
@@ -442,16 +454,6 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
                         );
                       })}
                     </div>
-                    <button
-                      aria-current={creatingCustom ? 'true' : undefined}
-                      aria-label="Custom provider, OpenAI-compatible"
-                      className={`settings-provider-row settings-provider-custom ${creatingCustom ? 'is-selected' : ''}`}
-                      onClick={startCustomProvider}
-                      type="button"
-                    >
-                      <span className="settings-provider-avatar" aria-hidden="true">+</span>
-                      <span className="settings-provider-name">Custom provider</span>
-                    </button>
                   </div>
 
                   <div className="settings-provider-detail">
@@ -579,34 +581,41 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
                               <span className="settings-models-title">Models</span>
                               <span className="settings-models-count">{catalogModels.length}</span>
                               {showModelSearch ? (
-                                <button
-                                  aria-expanded={modelSearchOpen}
-                                  aria-label="Search models"
-                                  className={`settings-models-search-toggle ${modelSearchOpen ? 'is-active' : ''}`}
-                                  onClick={() =>
-                                    setModelSearchOpen((openNow) => {
-                                      if (openNow) setModelQuery('');
-                                      return !openNow;
-                                    })
-                                  }
-                                  type="button"
-                                >
-                                  <SearchIcon size={ICON_SIZE.menu} />
-                                </button>
+                                modelSearchOpen ? (
+                                  <div className="settings-model-search">
+                                    <SearchIcon size={ICON_SIZE.menu} />
+                                    <TextInputControl
+                                      autoFocus
+                                      label="Search models"
+                                      onChange={(event) => setModelQuery(event.target.value)}
+                                      placeholder="Search models…"
+                                      value={modelQuery}
+                                    />
+                                    <button
+                                      aria-label="Close model search"
+                                      className="settings-model-search-close"
+                                      onClick={() => {
+                                        setModelQuery('');
+                                        setModelSearchOpen(false);
+                                      }}
+                                      type="button"
+                                    >
+                                      <CloseIcon size={ICON_SIZE.tiny} />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    aria-expanded={false}
+                                    aria-label="Search models"
+                                    className="settings-models-search-toggle"
+                                    onClick={() => setModelSearchOpen(true)}
+                                    type="button"
+                                  >
+                                    <SearchIcon size={ICON_SIZE.menu} />
+                                  </button>
+                                )
                               ) : null}
                             </div>
-                            {showModelSearch && modelSearchOpen ? (
-                              <div className="settings-model-search">
-                                <SearchIcon size={ICON_SIZE.menu} />
-                                <TextInputControl
-                                  autoFocus
-                                  label="Search models"
-                                  onChange={(event) => setModelQuery(event.target.value)}
-                                  placeholder="Search models…"
-                                  value={modelQuery}
-                                />
-                              </div>
-                            ) : null}
                             <div className="settings-model-list" role="list">
                               {visibleModels.length === 0 ? (
                                 <p className="settings-model-empty">No models match “{modelQuery.trim()}”.</p>

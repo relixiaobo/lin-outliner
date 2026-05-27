@@ -84,8 +84,8 @@ test.describe('agent settings dialog', () => {
     await dialog.getByLabel('Search providers').fill('anth');
     await expect(dialog.getByRole('button', { name: /Anthropic/ })).toBeVisible();
     await expect(dialog.getByRole('button', { name: 'OpenAI, Active' })).toHaveCount(0);
-    // The custom entry is pinned outside the filtered list.
-    await expect(dialog.getByRole('button', { name: /Custom provider/ })).toBeVisible();
+    // The custom-provider add button lives beside the search, outside the list.
+    await expect(dialog.getByRole('button', { name: 'Custom provider' })).toBeVisible();
   });
 
   test('gates the enable toggle on a credential and auto-enables on key entry', async ({ page }) => {
@@ -126,6 +126,11 @@ test.describe('agent settings dialog', () => {
     await search.fill('mini');
     await expect(dialog.getByText('GPT-5.4 Mini', { exact: true })).toBeVisible();
     await expect(dialog.getByText('GPT-5.4', { exact: true })).toHaveCount(0);
+
+    // Closing the search clears the query and restores the full list.
+    await dialog.getByRole('button', { name: 'Close model search' }).click();
+    await expect(dialog.getByRole('textbox', { name: 'Search models' })).toHaveCount(0);
+    await expect(dialog.getByText('GPT-5.4', { exact: true })).toBeVisible();
   });
 
   test('toggles API key visibility', async ({ page }) => {
@@ -142,7 +147,7 @@ test.describe('agent settings dialog', () => {
 
   test('reveals connection fields only for a custom provider', async ({ page }) => {
     const { dialog } = await openSettings(page);
-    await dialog.locator('.settings-provider-row', { hasText: 'Custom' }).click();
+    await dialog.getByRole('button', { name: 'Custom provider' }).click();
 
     await dialog.getByLabel('Provider ID').fill('my-proxy');
     await dialog.getByLabel('Base URL').fill('https://example.test/v1');
