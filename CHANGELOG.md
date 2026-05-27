@@ -12,6 +12,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **`` ``` `` / `~~~` shortcut converts a row to a code block** — typing a lone
+  triple-backtick (or triple-tilde) fence that owns an empty, plain row now turns
+  the row into an empty `codeBlock` and drops the fence text, a markdown-style
+  shortcut alongside the `/code` slash command and pasting a fenced block. Fires
+  the instant the row text equals the bare fence (mirroring the `>` field
+  trigger), focuses the new code editor, and is gated to plain content rows so
+  reference / image / existing-code rows opt out. The eager trailing draft
+  materializes first, then converts. Language is left unset (pick it from the
+  picker). ([#28](https://github.com/relixiaobo/lin-outliner/pull/28))
 - **Local file mentions in the agent composer** — the `@` mention menu now
   combines recent nodes, local files, folders, and live file-search results
   (Spotlight `mdfind` on macOS, `rg` fallback elsewhere); selected entries

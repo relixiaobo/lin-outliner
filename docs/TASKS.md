@@ -62,6 +62,11 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **code-fence row shortcut** (P3, cc) — typing a bare `` ``` ``/`~~~` that owns
+  a plain row converts it to an empty `codeBlock` (drops the fence text), fired
+  the instant the row text equals the fence via a guarded `create_code_block`
+  resolver action + `RichTextEditor` `onCodeFenceFire`; gated to plain content
+  rows, focuses the new code editor, draft materializes first (PR #28).
 - **local-file-mentions** (P1, Codex) — the agent composer `@` menu now mixes
   recent nodes, local files, folders, and live file search (Spotlight `mdfind`
   on macOS, `rg` fallback); selections render as inline tokens with native
