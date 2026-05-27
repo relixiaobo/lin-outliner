@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, protocol, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, protocol, session, shell } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
@@ -75,6 +75,94 @@ documentService.onProjectionChanged((event) => {
   mainWindow?.webContents.send(LIN_DOCUMENT_EVENT_CHANNEL, event);
 });
 
+// ─── Security shell (the native host owns navigation + capabilities) ───
+
+const RENDERER_DEV_URL = process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL;
+const RENDERER_DEV_ORIGIN = RENDERER_DEV_URL ? safeOrigin(RENDERER_DEV_URL) : null;
+
+// navigator.clipboard.writeText is the only renderer capability we rely on; deny
+// everything else (geolocation, media, notifications, …) by default.
+const ALLOWED_PERMISSIONS = new Set(['clipboard-sanitized-write']);
+
+// Production locks the renderer to its own resources. wasm-unsafe-eval covers
+// loro-crdt, 'unsafe-inline' styles cover React style props, and remote http(s)
+// is allowed only as <img>/<video> sources. The renderer makes no direct
+// network calls (everything else goes through IPC), so connect-src stays tight.
+const RENDERER_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'wasm-unsafe-eval'",
+  "style-src 'self' 'unsafe-inline'",
+  `img-src 'self' data: blob: https: http: ${ASSET_URL_SCHEME}:`,
+  `media-src 'self' data: blob: https: http: ${ASSET_URL_SCHEME}:`,
+  "font-src 'self' data:",
+  `connect-src 'self' ${ASSET_URL_SCHEME}:`,
+  "object-src 'none'",
+  "frame-src 'none'",
+  "base-uri 'self'",
+  "form-action 'none'",
+].join('; ');
+
+function safeOrigin(url: string): string | null {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
+// Only http(s) may reach the OS browser — never file:// or a custom scheme.
+function openExternalUrl(url: string): boolean {
+  if (!/^https?:\/\//i.test(url)) return false;
+  void shell.openExternal(url);
+  return true;
+}
+
+function isAppDocumentUrl(url: string): boolean {
+  if (url.startsWith('file:')) return true; // packaged renderer
+  return RENDERER_DEV_ORIGIN != null && safeOrigin(url) === RENDERER_DEV_ORIGIN; // vite dev
+}
+
+// The renderer is a fixed local surface. Block any attempt to navigate it away
+// (clicked links, injected redirects) or to spawn child windows; real http(s)
+// links open in the OS browser instead.
+function hardenWebContents(contents: Electron.WebContents) {
+  contents.setWindowOpenHandler(({ url }) => {
+    openExternalUrl(url);
+    return { action: 'deny' };
+  });
+  const guardNavigation = (event: Electron.Event, url: string) => {
+    if (isAppDocumentUrl(url)) return;
+    event.preventDefault();
+    openExternalUrl(url);
+  };
+  contents.on('will-navigate', guardNavigation);
+  contents.on('will-redirect', guardNavigation);
+}
+
+function configureSessionSecurity() {
+  const ses = session.defaultSession;
+  ses.setPermissionRequestHandler((_contents, permission, callback) => {
+    callback(ALLOWED_PERMISSIONS.has(permission));
+  });
+  ses.setPermissionCheckHandler((_contents, permission) => ALLOWED_PERMISSIONS.has(permission));
+  // Dev runs through Vite, which needs a relaxed policy for HMR; enforce CSP in
+  // production only, scoped to the renderer's own document so the agent's remote
+  // web-fetch windows are unaffected.
+  if (!app.isPackaged) return;
+  ses.webRequest.onHeadersReceived((details, callback) => {
+    if (details.resourceType !== 'mainFrame' || !isAppDocumentUrl(details.url)) {
+      callback({});
+      return;
+    }
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [RENDERER_CSP],
+      },
+    });
+  });
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     title: 'Lin Outliner',
@@ -93,9 +181,10 @@ function createWindow() {
     },
   });
 
-  const rendererUrl = process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL;
-  if (rendererUrl) {
-    void mainWindow.loadURL(rendererUrl);
+  hardenWebContents(mainWindow.webContents);
+
+  if (RENDERER_DEV_URL) {
+    void mainWindow.loadURL(RENDERER_DEV_URL);
   } else {
     void mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
   }
@@ -251,10 +340,7 @@ async function handleAssetCommand(command: AssetCommand, args: Record<string, un
       // Opens a remote media node's source in the OS default browser. Only
       // http(s) is allowed so a node can never smuggle a file:// or other
       // scheme into shell.openExternal.
-      const url = String(args.url);
-      if (!/^https?:\/\//i.test(url)) return { opened: false };
-      await shell.openExternal(url);
-      return { opened: true };
+      return { opened: openExternalUrl(String(args.url)) };
     }
     default:
       throw new Error(`Unknown asset command: ${command}`);
@@ -848,6 +934,7 @@ app.whenReady().then(() => {
     const id = new URL(request.url).hostname;
     return assetService.serve(id);
   });
+  configureSessionSecurity();
   registerIpc();
   createWindow();
   app.on('activate', () => {
