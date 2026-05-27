@@ -201,7 +201,7 @@ function ConfigControl(props: {
       return (
         <DefinitionCardinalitySelect
           label={item.label}
-          value={node.cardinality ?? 'single'}
+          value={fieldConfig?.cardinality ?? 'single'}
           onChange={(cardinality) => updateField({ cardinality })}
         />
       );

@@ -1029,7 +1029,6 @@ export class Core {
           delete current.maxValue;
         }
       }
-      if ('cardinality' in patch) setOptional(current, 'cardinality', patch.cardinality ?? undefined);
       if ('nullable' in patch) setOptional(current, 'nullable', patch.nullable ?? undefined);
       if ('hideField' in patch) setOptional(current, 'hideField', normalizeOptionalText(patch.hideField));
       if ('autoInitialize' in patch) setOptional(current, 'autoInitialize', normalizeOptionalText(patch.autoInitialize));
@@ -1041,6 +1040,9 @@ export class Core {
       // config-as-nodes: fieldType lives in the defConfig subtree.
       if (patch.fieldType !== undefined) {
         this.setConfigValueDirect(fieldId, { kind: 'enum', configKey: 'fieldType', value: patch.fieldType });
+      }
+      if ('cardinality' in patch) {
+        this.setConfigValueDirect(fieldId, { kind: 'enum', configKey: 'cardinality', value: patch.cardinality ?? null });
       }
       // config-as-nodes: sourceSupertag lives in the defConfig subtree. Set it,
       // or clear it when the field type no longer supports it.
@@ -1147,7 +1149,7 @@ export class Core {
         return focus(fieldEntryId);
       }
 
-      if (fieldDef.cardinality !== 'list') {
+      if (fieldCardinalityOf(state, fieldDefId) !== 'list') {
         this.clearFieldEntryValuesDirect(fieldEntryId, fieldDefId);
       }
 
@@ -2118,7 +2120,6 @@ export class Core {
     const id = freshId('field');
     this.loro.createNodeWithId(id, parentId, undefined, 'fieldDef', (node) => {
       node.content = plainText(name);
-      node.cardinality = 'single';
       node.nullable = true;
     });
     // config-as-nodes: fieldType lives in the defConfig subtree, not a flat field.
@@ -2355,9 +2356,9 @@ export class Core {
   private selectFieldOptionDirect(fieldEntryId: string, fieldDefId: string, optionNodeId: string) {
     const state = this.snapshot();
     const fieldEntry = requiredNode(state, fieldEntryId);
-    const fieldDef = requiredNode(state, fieldDefId);
+    requiredNode(state, fieldDefId);
     const optionTargetId = optionValueTargetId(state, optionNodeId);
-    const isList = fieldDef.cardinality === 'list';
+    const isList = fieldCardinalityOf(state, fieldDefId) === 'list';
     const alreadySelected = fieldEntry.children.some((childId) => (
       childId === optionTargetId || state.nodes[childId]?.targetId === optionTargetId
     ));
@@ -2922,6 +2923,13 @@ function fieldTypeOf(state: DocumentState, fieldDefId: string): FieldType {
   const optionId = configRefTarget(state, fieldDefId, 'fieldType');
   const value = optionId ? state.nodes[optionId]?.content.text : undefined;
   return (value as FieldType | undefined) ?? 'plain';
+}
+
+/** The field's cardinality, read from its `defConfig(cardinality)` enum subtree. Defaults to 'single'. */
+function fieldCardinalityOf(state: DocumentState, fieldDefId: string): FieldCardinality {
+  const optionId = configRefTarget(state, fieldDefId, 'cardinality');
+  const value = optionId ? state.nodes[optionId]?.content.text : undefined;
+  return (value as FieldCardinality | undefined) ?? 'single';
 }
 
 function getExtendsChain(state: DocumentState, tagId: string): string[] {

@@ -358,7 +358,6 @@ export interface Node {
   configKey?: DefConfigKey;
   /** For `reference` nodes: the role this reference plays (backlink allowlist). */
   refRole?: RefRole;
-  cardinality?: FieldCardinality;
   nullable?: boolean;
   hideField?: string;
   autoInitialize?: string;

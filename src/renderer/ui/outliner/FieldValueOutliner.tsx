@@ -53,10 +53,11 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
   const showTrailingInput = shouldShowTrailingInput(rows, { mode: 'fieldValue' });
   const empty = rows.length === 0;
   const singleValueNode = rows.length === 1 ? props.index.byId.get(rows[0].id) : undefined;
-  const singleValueField = props.optionField?.cardinality !== 'list';
-  const optionFieldType = props.optionField
-    ? projectFieldConfig(props.index.byId, props.optionField).fieldType
+  const optionFieldConfig = props.optionField
+    ? projectFieldConfig(props.index.byId, props.optionField)
     : undefined;
+  const optionFieldType = optionFieldConfig?.fieldType;
+  const singleValueField = optionFieldConfig?.cardinality !== 'list';
   const valueInteraction = fieldTypeInteraction(optionFieldType);
   const canUseOptionPicker = Boolean(
     props.optionField
