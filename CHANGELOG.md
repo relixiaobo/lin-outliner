@@ -12,6 +12,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Done-state mapping + free-typed options + color swatch picker** — three
+  user-facing additions ride with the config-as-nodes refactor. A supertag with
+  "Show as checkbox" on can map its done/undone state to one or more option-field
+  values (Tana parity): checking the box sets each mapped field's checked value,
+  and selecting a mapped checked/unchecked value toggles the box (two-way, single
+  write each direction, loop-guarded). Number fields gain a non-blocking
+  out-of-range warning (`minValue`/`maxValue`) that never rejects a write. Options
+  fields now accept **free-typed** values decoupled from auto-collect (collect on
+  ⇒ value becomes a reusable collected option; off ⇒ stored as a plain free-text
+  value on that entry alone) and render as inline editable rows. The supertag
+  display color is now a preset **swatch picker** (8 base colors + "no color")
+  storing a theme-aware token instead of raw hex.
+  ([#18](https://github.com/relixiaobo/lin-outliner/pull/18))
 - **`` ``` `` / `~~~` shortcut converts a row to a code block** — typing a lone
   triple-backtick (or triple-tilde) fence that owns an empty, plain row now turns
   the row into an empty `codeBlock` and drops the fence text, a markdown-style
@@ -71,6 +84,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Config-as-nodes — definition config lives in the node tree** — definition
+  (tag/field) configuration no longer lives as flat typed `Node` fields. Each
+  knob is a `defConfig` child node (stable id, locked structure) whose value is
+  held as its own child node(s) — the same mechanism field values use: scalars as
+  a value node (codec-validated text), refs/enums as a `reference` to a target or
+  a derived `systemOption` node. Reads go through typed accessors over
+  `buildConfigIndex`; writes go through one registry-governed `setConfigValue`
+  chokepoint. Config nodes stay in the projection (so reference labels resolve)
+  but are excluded per-consumer via a shared `isInternalConfigNode` predicate. The
+  cutover migrated `color`, `extends`, `childSupertag`, `fieldType`, `cardinality`,
+  `nullable`, `hideField`, `autocollectOptions`, `autoInitialize`,
+  `minValue`/`maxValue`, `sourceSupertag`, `showCheckbox`, and `doneStateEnabled`.
+  `FieldType` is slimmed 13 → 8 (`plain`, `options`, `options_from_supertag`,
+  `date`, `number`, `url`, `email`, `checkbox`); retired types fall back to `plain`
+  instead of crashing. ([#18](https://github.com/relixiaobo/lin-outliner/pull/18))
 - **Settings panel info architecture & style normalization** — the agent
   Settings dialog is reorganized from two categories into three: **Providers**,
   **Skills**, and **Agent Profiles**. Providers now infer credential state
@@ -237,6 +265,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Discriminated `Node` union — god-record removed** — the ~57-field `Node`
+  god-record is now a discriminated union of per-`NodeType` variant interfaces
+  over a small uniform `NodeBase` (`ContentNode` = the `type?: undefined`
+  variant). Content-type-specialized fields moved onto their owning variant
+  (media → `CodeBlockNode`/`ImageNode`/`EmbedNode`; query params → a
+  `QueryParams` mixin on `SearchNode`/`QueryConditionNode`; view rules →
+  `ViewDefNode`/`SortRuleNode`/`FilterRuleNode`/`DisplayFieldNode`; `configKey` →
+  `DefConfigNode`; `fieldDefId` → `FieldEntryNode`; `targetId`/`refRole` →
+  `ReferenceNode`). The query-rule target that `search`/`queryCondition` shared
+  with references was split out to `queryTargetId` so `targetId` is unambiguously
+  the reference pointer. Persistence enumerates `NodeFieldKey = KeysOfUnion<Node>`
+  to read/write the flat scalar map generically. References carry an explicit
+  `refRole` (`link`/`fieldValue`/`config`/`enum`/`searchResult`/`autoInit`) and
+  backlinks use an allowlist instead of parent inference.
+  ([#18](https://github.com/relixiaobo/lin-outliner/pull/18))
 - **Register the `anti` dev clone** — a fourth parallel dev clone
   (`lin-outliner-anti/`, Claude Code dev agent, branch prefix `anti/<topic>`) is
   documented in `AGENT.md` / `CLAUDE.md`, with a matching `dev:anti` script

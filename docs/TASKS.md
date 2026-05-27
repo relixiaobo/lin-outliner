@@ -67,6 +67,17 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **config-as-nodes + Node union refactor** (P1, cc) — definition config moved
+  off flat `Node` fields into per-definition `defConfig` subtrees (value =
+  child node/reference, read via accessors over `buildConfigIndex`, written via
+  the `setConfigValue` chokepoint); the ~57-field god-record `Node` became a
+  discriminated union of per-type variants over `NodeBase`; done-state two-way
+  mapping (#15) + non-blocking min/max warning (#16); `FieldType` slimmed 13 → 8;
+  options fields accept free-typed values and render as inline rows; supertag
+  color is a token-based swatch picker. Review found and fixed three correctness
+  issues pre-merge (stable `defConfig` ids on clone, `searchResult` refRole on
+  result refs, `outlinerChildren` config exclusion). See
+  `docs/plans/config-as-nodes.md` (PR #18).
 - **settings-refactor** (P2) — reorganized the agent Settings dialog into three
   categories (Providers / Skills / Agent Profiles). Providers infer credential
   state automatically ("Set as Active" replaces the enablement toggle from #38;

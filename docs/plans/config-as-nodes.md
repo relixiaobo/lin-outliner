@@ -1,10 +1,15 @@
 ---
-status: in-progress
+status: done
 priority: P1
 owner: relixiaobo
 created: 2026-05-26
 updated: 2026-05-27
 ---
+
+> **Shipped in PR #18** (merged 2026-05-27). All stages (0–10) complete. Three
+> correctness issues were found and fixed in review before merge: stable
+> `defConfig` ids on subtree clone, `searchResult` refRole on saved-search result
+> refs, and `outlinerChildren` excluding internal config nodes.
 
 # Config as Nodes — node unification (U1)
 

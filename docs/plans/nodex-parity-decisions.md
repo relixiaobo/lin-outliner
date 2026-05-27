@@ -35,7 +35,7 @@ re-plan them:
 | `JOURNAL` system node + journal date-nav UI | Replaced by `DAILY_NOTES_ID` and `PanelDateNavigation.tsx`. Different concept, same coverage. |
 | `CLIPS` web-clip system node + content-script highlight pipeline | Local app, not a browser extension. Page capture is out of scope; if it returns, it returns as a separate plan. |
 | Tana import (nodex `services/tana-import.ts`) | No active user demand. Reconsider if a real migration request appears. |
-| `Filter` rules as child nodes of `viewDef` | lin stores filter fields directly on the view node with typed enums. nodex's child-node encoding is more composable but less type-safe; we chose typed. |
+| `Filter` rules as child nodes of `viewDef` | lin keeps **view** config typed (filter fields with typed enums), now on the dedicated `FilterRuleNode` union variant rather than the god-record (PR #18, A-full). Note: **definition** config (tag/field knobs) *did* move to child nodes as of PR #18 (`defConfig` subtrees) — config-as-nodes reverses this decision for definition config only; view config stays typed. |
 | Chat panel as workspace panel kind (`isChatPanel`, `CHAT_PANEL_PREFIX`) | Same reason as "inline chat". |
 | Wider trigger characters (`>` for create-field, `!` actions, `[[` wikilink) | Only `>`/`#`/`@`/`/` are in lin today. Open to per-trigger additions if a real workflow needs them, but no blanket parity. |
 | Sync (`stores/sync-store.ts`) | lin is single-device today. Sync is a separate large plan, not nodex parity. |
