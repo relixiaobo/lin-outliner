@@ -84,6 +84,14 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Prod install isolation + signing** — `userData` now resolves in three
+  tiers (`ELECTRON_USER_DATA_DIR` → `$HOME/.lin-outliner-dev` for unpackaged
+  source runs → the default path for installed builds), so a bare `bun run dev`
+  can never touch the installed prod app's daily-use data. An `afterPack` hook
+  deep ad-hoc signs the packaged macOS `.app` (electron-builder skips bundle
+  signing under `mac.identity: null`), sealing it so the unsigned arm64 build
+  launches on Apple Silicon. Docs cover the resolution order and the build /
+  install flow. ([#23](https://github.com/relixiaobo/lin-outliner/pull/23))
 - **Bounded local-file caches** — the local file search / icon / thumbnail
   caches now evict oldest-first via a shared bounded helper instead of clearing
   wholesale at 1000 entries. The wholesale clear could drop the `id -> path`
