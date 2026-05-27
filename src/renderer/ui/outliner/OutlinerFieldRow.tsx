@@ -36,7 +36,7 @@ import { outlinerChildren } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
 import { fieldTypeLabel } from './fieldTypePresentation';
 import { FieldEntryGrid } from './FieldEntryGrid';
-import { WarningIcon } from '../icons';
+import { ICON_SIZE, WarningIcon } from '../icons';
 import { validateFieldValue } from '../fields/fieldValueValidation';
 import { FieldValueOutliner } from './FieldValueOutliner';
 import { NodeContextMenu } from './NodeContextMenu';
@@ -391,7 +391,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       />
       {valueWarning && (
         <span className="field-value-warning" title={valueWarning} aria-label={valueWarning}>
-          <WarningIcon size={14} />
+          <WarningIcon size={ICON_SIZE.menu} />
         </span>
       )}
     </div>

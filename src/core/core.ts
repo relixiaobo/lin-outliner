@@ -1850,6 +1850,9 @@ export class Core {
       if (!refreshedState.nodes[targetId]) continue;
       this.loro.createNodeWithId<ReferenceNode>(freshId('ref'), nodeId, undefined, 'reference', (node) => {
         node.targetId = targetId;
+        // Result refs are internal pointers, not user-authored links — keep them
+        // out of the backlink graph (refRoleOf treats an absent role as 'link').
+        node.refRole = 'searchResult';
       });
     }
 
@@ -2309,7 +2312,12 @@ export class Core {
     const state = this.snapshot();
     const source = clone(requiredNode(state, sourceId));
     const sourceChildren = [...source.children];
-    const clonedId = freshId('copy');
+    // A defConfig row is addressed by the stable id defConfigNodeId(parent, key);
+    // cloning it under a fresh id would orphan it from ensureConfigRowDirect, so a
+    // later edit on the copy creates a *second* row that configRowsByKey shadows.
+    const clonedId = source.type === 'defConfig' && source.configKey
+      ? defConfigNodeId(parentId, source.configKey)
+      : freshId('copy');
     this.loro.createNodeWithId(clonedId, parentId, index, source.type, (node) => {
       const createdAt = node.createdAt;
       Object.assign(node, source);

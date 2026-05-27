@@ -330,7 +330,6 @@ export class LoroOutlinerDocument {
         createdAt: readNumber(data.get('createdAt')) ?? nowMs(),
         updatedAt: readNumber(data.get('updatedAt')) ?? nowMs(),
         locked: readBoolean(data.get('locked')) ?? false,
-        autocollectOptions: readBoolean(data.get('autocollectOptions')) ?? false,
         autoCollected: readBoolean(data.get('autoCollected')) ?? false,
       } as Node);
       // filterValues lives on the filterRule variant; persistence writes it
@@ -343,7 +342,6 @@ export class LoroOutlinerDocument {
           'createdAt',
           'updatedAt',
           'locked',
-          'autocollectOptions',
           'autoCollected',
           'filterValues',
         ].includes(key)) continue;

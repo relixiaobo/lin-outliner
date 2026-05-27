@@ -17,6 +17,7 @@ import {
   TAG_DAY_ID,
   TRASH_ID,
   WORKSPACE_ID,
+  defConfigNodeId,
   plainText,
   replaceAllRichTextPatch,
   type CreateNodeTree,
@@ -444,6 +445,32 @@ describe('Core', () => {
     expect(core.state().nodes[clonedChild].content.text).toBe('Child');
   });
 
+  test('duplicating a definition keeps its config editable (stable defConfig ids)', () => {
+    const core = Core.new();
+    const tagId = mustFocus(core.createTag('event'));
+    core.setConfigValue(tagId, { kind: 'scalar', configKey: 'color', text: 'red' });
+
+    const cloneId = mustFocus(core.batchDuplicateNodes([tagId]));
+    expect(cloneId).not.toBe(tagId);
+    // The clone inherits the source config value.
+    expect(buildConfigIndex(core.state()).tag(cloneId)?.color).toBe('red');
+
+    // Editing a knob on the clone must actually take effect — it would not if the
+    // cloned defConfig row carried a fresh id (ensureConfigRowDirect would add a
+    // second row that configRowsByKey shadows by child order).
+    core.setConfigValue(cloneId, { kind: 'scalar', configKey: 'color', text: 'blue' });
+    expect(buildConfigIndex(core.state()).tag(cloneId)?.color).toBe('blue');
+
+    const colorRows = Object.values(core.state().nodes).filter(
+      (n) => n.type === 'defConfig' && n.parentId === cloneId && n.configKey === 'color',
+    );
+    expect(colorRows).toHaveLength(1);
+    expect(colorRows[0]!.id).toBe(defConfigNodeId(cloneId, 'color'));
+
+    // The original is untouched.
+    expect(buildConfigIndex(core.state()).tag(tagId)?.color).toBe('red');
+  });
+
   test('tag template instantiates fields and removal cleans them up', () => {
     const core = Core.new();
     const tagId = mustFocus(core.createTag('project'));
@@ -813,6 +840,31 @@ describe('Core', () => {
     const afterRefresh = JSON.stringify(state);
     core.refreshSearchNodeResults(searchId);
     expect(JSON.stringify(core.state())).toBe(afterRefresh);
+  });
+
+  test('saved search result references do not pollute backlinks', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const tagId = mustFocus(core.createTag('project'));
+    const alpha = mustFocus(core.createNode(today, null, 'Alpha'));
+    const beta = mustFocus(core.createNode(today, null, 'Beta'));
+    core.applyTag(alpha, tagId);
+    core.applyTag(beta, tagId);
+
+    const searchId = mustFocus(core.createSearchNode(core.projection().searchesId, null, {
+      title: 'Projects',
+      query: { kind: 'rule', op: 'HAS_TAG', tagDefId: tagId },
+    }));
+
+    // The search materialized a result reference per hit...
+    const resultRefs = core.state().nodes[searchId]!.children
+      .map((childId) => core.state().nodes[childId]!)
+      .filter((child) => child.type === 'reference');
+    expect(new Set(resultRefs.map((ref) => ref.targetId))).toEqual(new Set([alpha, beta]));
+    // ...each tagged with the searchResult role, kept out of the backlink graph.
+    expect(resultRefs.every((ref) => ref.refRole === 'searchResult')).toBe(true);
+    expect(core.backlinks(alpha)).toHaveLength(0);
+    expect(core.backlinks(beta)).toHaveLength(0);
   });
 
   test('saved search refresh keeps result references in hit order', () => {

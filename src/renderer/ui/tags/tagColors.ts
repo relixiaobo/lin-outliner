@@ -86,9 +86,11 @@ export function resolveTagColor(tag: NodeProjection | undefined, byId: ConfigNod
   const color = projectTagConfig(byId, tag).color;
   if (color) {
     if (color.startsWith('#')) {
+      // Legacy raw-hex tags (preset picker now stores tokens). Mix toward the
+      // surface token rather than literal white so the tint follows the theme.
       return {
         text: color,
-        background: `color-mix(in srgb, ${color} 10%, white)`,
+        background: `color-mix(in srgb, ${color} 10%, var(--surface))`,
       };
     }
     const mapped = TAG_COLOR_MAP[color];
