@@ -425,13 +425,29 @@ export class AgentRuntime {
   }
 
   async listAllAgentDefinitions(sessionId: string) {
-    const session = await this.ensureSessionWithId(sessionId);
-    return session.subagentRuntime.listAllAgentDefinitions();
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      return session.subagentRuntime.listAllAgentDefinitions();
+    }
+    const tempRuntime = new AgentSubagentRuntime({
+      sessionId: 'temp-settings-list',
+      localRoot: this.options.localFileRoot,
+      host: {} as any,
+    });
+    return tempRuntime.listAllAgentDefinitions();
   }
 
   async listAllSkills(sessionId: string) {
-    const session = await this.ensureSessionWithId(sessionId);
-    return session.skillRuntime.listAllSkills();
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      return session.skillRuntime.listAllSkills();
+    }
+    const runtimeSettings = await this.getRuntimeSettings();
+    const tempRuntime = new AgentSkillRuntime({
+      localRoot: this.options.localFileRoot,
+      additionalSkillDirectories: runtimeSettings.additionalSkillDirectories,
+    });
+    return tempRuntime.listAllSkills();
   }
 
   async renameSession(sessionId: string, title: string) {

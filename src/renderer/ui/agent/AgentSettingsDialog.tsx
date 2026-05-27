@@ -309,7 +309,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus, se
     try {
       const res = await api.agentTestProviderConnection({
         providerId,
-        modelId: draft.modelId || selectedCatalog?.models[0]?.id || 'gpt-4o',
+        modelId: draft.modelId || selectedCatalog?.models[0]?.id || getFallbackModelId(providerId),
         baseUrl: draft.baseUrl.trim() || undefined,
         apiKey: apiKey.trim() || undefined,
       });
@@ -356,12 +356,9 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus, se
   async function save() {
     const providerId = draft.providerId.trim();
     const modelId = draft.modelId.trim() || selectedCatalog?.models[0]?.id || '';
-    if (!providerId) {
-      setError('provider is required');
-      setCategory('providers');
-      return;
-    }
-    if (!modelId) {
+
+    // Only validate modelId if a providerId is actively selected/provided.
+    if (providerId && !modelId) {
       setError('model is required');
       setCategory('providers');
       return;
@@ -372,14 +369,21 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus, se
     setError(null);
     setNotice(null);
     try {
-      let next = await api.agentUpsertProviderConfig({
-        providerId,
-        modelId,
-        reasoningLevel: coerceReasoningLevel(draft.reasoningLevel, selectedReasoningLevels),
-        baseUrl: draft.baseUrl.trim() || null,
-        enabled: true,
-      });
-      next = await api.agentUpdateRuntimeSettings({
+      if (providerId) {
+        await api.agentUpsertProviderConfig({
+          providerId,
+          modelId,
+          reasoningLevel: coerceReasoningLevel(draft.reasoningLevel, selectedReasoningLevels),
+          baseUrl: draft.baseUrl.trim() || null,
+          enabled: true,
+        });
+        if (apiKey.trim()) {
+          await api.agentSetProviderApiKey(providerId, apiKey.trim());
+          setApiKey('');
+        }
+      }
+
+      let next = await api.agentUpdateRuntimeSettings({
         permissionMode: draft.permissionMode,
         automaticSkillsEnabled: draft.automaticSkillsEnabled,
         slashSkillsEnabled: draft.slashSkillsEnabled,
@@ -388,14 +392,15 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus, se
         disabledSkills: draft.disabledSkills,
         disabledAgents: draft.disabledAgents,
       });
-      if (apiKey.trim()) {
-        await api.agentSetProviderApiKey(providerId, apiKey.trim());
-        setApiKey('');
-      }
+
       next = await api.agentGetProviderSettings();
       if (isCurrentRequest(requestId)) {
         setSettings(next);
-        setDraft(resolveDraftForProvider(next, providerId));
+        if (providerId) {
+          setDraft(resolveDraftForProvider(next, providerId));
+        } else {
+          setDraft(resolveInitialDraft(next));
+        }
         setCreatingCustom(false);
         setApiKey('');
         setNotice('Saved');
@@ -894,12 +899,13 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus, se
                           const disabled = isAgentDisabled(agent.name);
                           const isSelected = agent.name === selectedAgentName;
                           return (
-                            <div
+                            <button
                               className={`settings-agent-item-row ${isSelected ? 'is-selected' : ''} ${disabled ? 'is-disabled' : ''}`}
                               key={agent.name}
                               onClick={() => setSelectedAgentName(agent.name)}
+                              type="button"
                             >
-                              <div className="agent-item-switch" onClick={(e) => e.stopPropagation()}>
+                              <span className="agent-item-switch" onClick={(e) => e.stopPropagation()}>
                                 <SwitchControl
                                   checked={!disabled}
                                   onCheckedChange={() => toggleAgent(agent.name)}
@@ -907,12 +913,12 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus, se
                                 >
                                   <SwitchMark checked={!disabled} />
                                 </SwitchControl>
-                              </div>
-                              <div className="agent-item-content">
+                              </span>
+                              <span className="agent-item-content">
                                 <span className="agent-item-name">{agent.name}</span>
                                 <span className="agent-item-desc">{agent.description}</span>
-                              </div>
-                            </div>
+                              </span>
+                            </button>
                           );
                         })}
                       </div>
@@ -1294,4 +1300,15 @@ function providerDescription(catalog: AgentProviderOption | undefined): string {
   const names = catalog.models.slice(0, 3).map((model) => model.name.replace(/\s*\(latest\)/i, ''));
   const suffix = catalog.models.length > names.length ? ', and more' : '';
   return `Includes ${names.join(', ')}${suffix}.`;
+}
+
+function getFallbackModelId(providerId: string): string {
+  const lower = providerId.toLowerCase();
+  if (lower.includes('anthropic') || lower.includes('claude')) {
+    return 'claude-3-5-sonnet-latest';
+  }
+  if (lower.includes('google') || lower.includes('gemini')) {
+    return 'gemini-2.5-flash';
+  }
+  return 'gpt-4o';
 }

@@ -4912,6 +4912,11 @@ button.panel-resize-handle::after {
   background: var(--semantic-success);
 }
 
+.settings-provider-dot.is-configured {
+  border-color: var(--text-soft);
+  background: var(--text-soft);
+}
+
 .settings-provider-dot.is-off {
   border-color: var(--text-soft);
   background: transparent;
