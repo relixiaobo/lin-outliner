@@ -397,6 +397,22 @@ export function OutlinerItem(props: OutlinerItemProps) {
     children: CreateNodeTree[];
     siblingsAfter: CreateNodeTree[];
   }) => {
+    // The pristine trailing draft has no core node yet (it materializes on the
+    // first committed character), so there is nothing to paste *into*: calling
+    // paste_nodes_into_node with its client-proposed id throws "node not found".
+    // Append the pasted trees at the trailing position instead and leave the
+    // draft empty — it re-spawns below the new rows.
+    if (props.draft && !realNode && !materializeStartedRef.current) {
+      const trees: CreateNodeTree[] = [];
+      const firstHasBody = payload.content.text.trim().length > 0
+        || payload.content.inlineRefs.length > 0
+        || payload.children.length > 0;
+      if (firstHasBody) trees.push({ content: payload.content, children: payload.children });
+      trees.push(...payload.siblingsAfter);
+      if (trees.length > 0) void props.run(() => api.createNodesFromTree(props.parentId, trees));
+      return;
+    }
+
     localDraftSyncRef.current = { nodeId: targetEditId, content: payload.content };
     draftContentRef.current = payload.content;
     setDraftContent(payload.content);
@@ -407,12 +423,20 @@ export function OutlinerItem(props: OutlinerItemProps) {
         return { ...prev, expanded };
       });
     }
-    void props.run(() => api.pasteNodesIntoNode(
+    const pasteIntoNode = () => api.pasteNodesIntoNode(
       props.nodeId,
       payload.content,
       payload.children,
       payload.siblingsAfter,
-    ));
+    );
+    if (props.draft && !realNode) {
+      // A materialize for this draft is already in flight; paste once the row
+      // lands in core so its id is no longer missing.
+      pendingTextPatchRef.current = pendingTextPatchRef.current.then(() => props.run(pasteIntoNode));
+      void pendingTextPatchRef.current;
+      return;
+    }
+    void props.run(pasteIntoNode);
   };
 
   const insertImagesFromAssets = async (assets: AssetMetadata[]) => {
