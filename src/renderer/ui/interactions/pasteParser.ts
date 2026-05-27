@@ -127,7 +127,16 @@ function applyHeadingMark(content: RichText): RichText {
 // Block-level markdown parser → CreateNodeTree[]
 // ---------------------------------------------------------------------------
 
-const FENCE_RE = /^(\s*)(```|~~~)[ \t]*([\w+#.-]*)[ \t]*$/u;
+// A fence is any line that is just an indent + ``` (or ~~~) + an optional info
+// string. Per CommonMark the info string may contain spaces; only its first
+// token is the language (e.g. ```tool node_create -> "tool"). Capturing the
+// whole info string here is what keeps a fence with a multi-word info string
+// from leaking as plain text and desyncing every later open/close pairing.
+const FENCE_RE = /^(\s*)(```|~~~)[ \t]*([^\n]*?)[ \t]*$/u;
+
+function fenceLanguage(info: string): string {
+  return normalizeCodeLanguage(info.trim().split(/\s+/u)[0] ?? '');
+}
 
 function lineToTree(rawText: string): CreateNodeTree {
   const heading = rawText.match(/^(#{1,6})\s+(.*)$/u);
@@ -155,7 +164,7 @@ export function parseMarkdownBlocks(text: string): CreateNodeTree[] {
     if (fence) {
       const indent = fence[1] ?? '';
       const marker = fence[2];
-      const lang = normalizeCodeLanguage(fence[3]);
+      const lang = fenceLanguage(fence[3] ?? '');
       const depth = lineDepth(rawLine);
       const body: string[] = [];
       i += 1;
