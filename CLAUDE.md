@@ -33,6 +33,7 @@ separate machines that share a remote.
   lin-outliner-cc/      ← Claude Code dev agent
   lin-outliner-cc-2/    ← Claude Code dev agent (second)
   lin-outliner-codex/   ← Codex dev agent
+  lin-outliner-anti/    ← Claude Code dev agent (anti)
 ```
 
 ### Roles (determined by working directory)
@@ -46,8 +47,9 @@ directory at the start of a session and act accordingly.
 | `lin-outliner-cc/` | Claude Code dev agent | Build features on `cc/<topic>` branches; open Draft PRs. |
 | `lin-outliner-cc-2/` | Claude Code dev agent | Build features on `cc-2/<topic>` branches; open Draft PRs. |
 | `lin-outliner-codex/` | Codex dev agent | Build features on `codex/<topic>` branches; open Draft PRs. |
+| `lin-outliner-anti/` | Claude Code dev agent | Build features on `anti/<topic>` branches; open Draft PRs. |
 
-**Dev agents (cc / cc-2 / codex) must NOT:**
+**Dev agents (cc / cc-2 / codex / anti) must NOT:**
 
 - `gh pr merge` or otherwise merge any PR.
 - Push to `main` (work only on feature branches).
@@ -64,8 +66,8 @@ there.
    `docs/plans/`. Either create a feature branch + Draft PR whose body is a
    self-contained task spec for a dev agent, or hand the topic to a dev agent
    to self-initiate.
-2. **Build (dev agent).** On `cc/<topic>`, `cc-2/<topic>`, or `codex/<topic>`,
-   implement the change, run `bun run typecheck` + relevant tests, commit,
+2. **Build (dev agent).** On `cc/<topic>`, `cc-2/<topic>`, `codex/<topic>`, or
+   `anti/<topic>`, implement the change, run `bun run typecheck` + relevant tests, commit,
    push, and open a Draft PR (or mark an assigned one ready). The PR body is
    the contract.
 3. **Review + merge (main agent).** Review the PR (typecheck, tests, build,
@@ -75,8 +77,8 @@ there.
 4. **Resync.** After a merge, dev agents `git fetch && git rebase origin/main`
    on their active branches.
 
-Branch naming: `cc/<topic>` and `cc-2/<topic>` (Claude Code), `codex/<topic>`
-(Codex). Topic should map to a plan in `docs/plans/` whenever possible. One
+Branch naming: `cc/<topic>`, `cc-2/<topic>`, and `anti/<topic>` (Claude Code),
+`codex/<topic>` (Codex). Topic should map to a plan in `docs/plans/` whenever possible. One
 branch per plan; close it when merged. Avoid long-lived catch-all branches.
 
 ### userData isolation (required)
@@ -103,6 +105,7 @@ fallback above is only a safety net:
 - Claude Code:   `bun run dev:cc`    → `$HOME/.lin-outliner-cc`
 - Claude Code 2: `bun run dev:cc-2`  → `$HOME/.lin-outliner-cc-2`
 - Codex:         `bun run dev:codex` → `$HOME/.lin-outliner-codex`
+- Anti:          `bun run dev:anti`  → `$HOME/.lin-outliner-anti`
 - Bare source run (no env): `$HOME/.lin-outliner-dev` (step 2 above).
 - Installed prod app: the default path (step 3). This is the daily-use
   data; never point a dev run at it.
