@@ -4917,11 +4917,6 @@ button.panel-resize-handle::after {
   background: var(--text-soft);
 }
 
-.settings-provider-dot.is-off {
-  border-color: var(--text-soft);
-  background: transparent;
-}
-
 .settings-provider-detail {
   display: flex;
   min-width: 0;
@@ -5743,7 +5738,6 @@ button.panel-resize-handle::after {
   padding: var(--space-3) var(--space-4);
   border: 1px solid transparent;
   border-radius: var(--radius-control-md);
-  cursor: pointer;
   transition: background var(--motion-fast);
 }
 
@@ -5769,6 +5763,15 @@ button.panel-resize-handle::after {
   gap: var(--space-hairline);
   min-width: 0;
   flex: 1 1 auto;
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .agent-item-name {

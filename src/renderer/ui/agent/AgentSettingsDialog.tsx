@@ -899,13 +899,11 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus, se
                           const disabled = isAgentDisabled(agent.name);
                           const isSelected = agent.name === selectedAgentName;
                           return (
-                            <button
+                            <div
                               className={`settings-agent-item-row ${isSelected ? 'is-selected' : ''} ${disabled ? 'is-disabled' : ''}`}
                               key={agent.name}
-                              onClick={() => setSelectedAgentName(agent.name)}
-                              type="button"
                             >
-                              <span className="agent-item-switch" onClick={(e) => e.stopPropagation()}>
+                              <span className="agent-item-switch">
                                 <SwitchControl
                                   checked={!disabled}
                                   onCheckedChange={() => toggleAgent(agent.name)}
@@ -914,11 +912,15 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus, se
                                   <SwitchMark checked={!disabled} />
                                 </SwitchControl>
                               </span>
-                              <span className="agent-item-content">
+                              <button
+                                className="agent-item-content"
+                                onClick={() => setSelectedAgentName(agent.name)}
+                                type="button"
+                              >
                                 <span className="agent-item-name">{agent.name}</span>
                                 <span className="agent-item-desc">{agent.description}</span>
-                              </span>
-                            </button>
+                              </button>
+                            </div>
                           );
                         })}
                       </div>
