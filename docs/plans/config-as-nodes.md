@@ -106,8 +106,51 @@ dual-write, no backfill: field-by-field, each step compiles green.
    `DefinitionConfigPanel`/`Controls`/`RowShell`; full suite + build; visual
    verify; mark ready.
 
+## Scope addendum (2026-05-27): full discriminated `Node` union (A-full)
+
+The user expanded scope: **this same PR** also turns the entire ~60-field
+god-record `Node` into a **discriminated union of all node types** (A-full),
+eliminating the god-record. This coexists with defConfig rather than reversing
+it — the two answer different questions:
+
+- **Where config values live** (defConfig): *semantic/queryable* config →
+  child nodes; *presentation state* (view rules) → typed fields.
+- **How each node is typed** (A-full): every node type gets a precise variant
+  shape. `defConfig` variant = `{ configKey }`; `sortRule` = `{ sortField,
+  sortDirection }`; `tagDef`/`fieldDef` = clean base (config in child nodes);
+  content node = clean base.
+
+So **view-rule params stay typed fields** (view = presentation state → typed),
+but on their dedicated node-type *variants*, off the shared interface. This
+reverses the earlier "migrate view into the value mechanism" idea (rule 6):
+view is NOT defConfig-ified; it is typed via the union. Definition config alone
+uses defConfig.
+
+### Coordination caveats (record in PR body for the main agent)
+
+`src/core/types.ts` is a coordination-required protocol file; cc-2 + codex
+build concurrently on `Node` (conflict storms on rebase); a dev agent can't
+merge, so the main agent receives a large, hard-to-review change; persistence
+(`loroDocument` flat scalar map) is touched. The user accepted these. Mitigate
+with tight, individually-green commits and explicit PR notes.
+
+### A-full stages (after defConfig Stages 0–7; each stays green)
+
+8. **Per-type variant interfaces** — define `BaseNode` + one interface per
+   `NodeType` (and the `type?: undefined` content variant). Introduce `Node`
+   as their union additively; keep field set identical at first so nothing
+   breaks (structural no-op), then start narrowing.
+9. **Narrow access sites by `node.type`** — subsystem by subsystem (core,
+   projection, persistence, searchEngine, agent, renderer), replace god-record
+   field reads with type-narrowed access. Each subsystem green + tested.
+10. **Remove cross-variant fields** — once readers narrow, delete fields from
+    variants that shouldn't carry them; god-record gone. Persistence reads/writes
+    per-variant key sets.
+
 ## Consistency note
 
-Node-encodes definition + view config, reversing `nodex-parity-decisions.md:38`
-("we chose typed" for viewDef filters). Deliberate, for a uniform end-state.
+Node-encodes **definition** config (defConfig); **view** config stays typed but
+moves onto per-type union variants (A-full). This reverses
+`nodex-parity-decisions.md:38` for definition config only ("we chose typed" for
+viewDef filters) — view config remains typed, just no longer on the god-record.
 Update that entry on merge — main-agent call.
