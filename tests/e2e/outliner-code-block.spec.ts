@@ -92,7 +92,8 @@ test.describe('code block editor', () => {
     await page.keyboard.press('Enter');
     await expect.poll(async () => (await nodeById(page, codeRowId!))?.type ?? null).toBe('codeBlock');
 
-    await row(page, codeRowId!).locator('.code-block-language').selectOption('python');
+    await row(page, codeRowId!).locator('.code-block-language').click();
+    await page.getByRole('menuitemradio', { name: 'Python', exact: true }).click();
     await expect.poll(async () => (await nodeById(page, codeRowId!))?.codeLanguage ?? null).toBe('python');
 
     const childrenBeforeExit = await todayChildren(page);

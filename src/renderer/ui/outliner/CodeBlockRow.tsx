@@ -5,7 +5,9 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
 } from 'react';
+import { createPortal } from 'react-dom';
 import type {
   CursorPlacement,
   FocusRequest,
@@ -13,9 +15,11 @@ import type {
   PendingInputChar,
 } from '../../state/document';
 import { focusTargetMatches } from '../focus/focusModel';
-import { CheckIcon, CopyIcon, ICON_SIZE } from '../icons';
+import { CheckIcon, ChevronDownIcon, CopyIcon, ICON_SIZE } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
-import { SelectControl } from '../primitives/SelectControl';
+import { MenuItem } from '../primitives/MenuItem';
+import { MenuSurface } from '../primitives/MenuSurface';
+import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import {
   CODE_LANGUAGE_OPTIONS,
   codeLanguageLabel,
@@ -70,7 +74,9 @@ export function CodeBlockRow(props: CodeBlockRowProps) {
   const [value, setValue] = useState(props.text);
   const [highlightedHtml, setHighlightedHtml] = useState(() => plainCodeHtml(props.text));
   const [copied, setCopied] = useState(false);
+  const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   const copyTimerRef = useRef<number | null>(null);
+  const languageTriggerRef = useRef<HTMLButtonElement>(null);
 
   propsRef.current = props;
   // Fall back to Plain text for fence info strings Shiki can't highlight (e.g.
@@ -293,29 +299,35 @@ export function CodeBlockRow(props: CodeBlockRowProps) {
     highlight.scrollTop = event.currentTarget.scrollTop;
   };
 
-  const knownLanguage = CODE_LANGUAGE_OPTIONS.some((option) => option.id === language);
   const CopyStateIcon = copied ? CheckIcon : CopyIcon;
 
   return (
     <div className="code-block" data-language={language || 'text'}>
       <div className="code-block-chrome" contentEditable={false}>
-        <SelectControl
-          label="Code language"
+        <ButtonControl
+          ref={languageTriggerRef}
+          aria-expanded={languageMenuOpen}
+          aria-haspopup="menu"
+          aria-label="Code language"
           className="code-block-language"
           disabled={props.readOnly}
-          value={language}
-          onChange={(event) => props.onSetLanguage(event.currentTarget.value)}
+          onClick={() => setLanguageMenuOpen((open) => !open)}
           onMouseDown={(event) => event.stopPropagation()}
         >
-          {!knownLanguage && language && (
-            <option value={language}>{codeLanguageLabel(language)}</option>
-          )}
-          {CODE_LANGUAGE_OPTIONS.map((option) => (
-            <option key={option.id || 'plain'} value={option.id}>
-              {option.label}
-            </option>
-          ))}
-        </SelectControl>
+          <span className="code-block-language-label">{codeLanguageLabel(language)}</span>
+          <ChevronDownIcon size={ICON_SIZE.tiny} />
+        </ButtonControl>
+        {languageMenuOpen ? (
+          <CodeLanguageMenu
+            anchorRef={languageTriggerRef}
+            language={language}
+            onClose={() => setLanguageMenuOpen(false)}
+            onSelect={(id) => {
+              props.onSetLanguage(id);
+              setLanguageMenuOpen(false);
+            }}
+          />
+        ) : null}
         <ButtonControl
           aria-label="Copy code"
           className="code-block-copy"
@@ -359,5 +371,81 @@ export function CodeBlockRow(props: CodeBlockRowProps) {
         />
       </div>
     </div>
+  );
+}
+
+// Custom language picker so the dropdown matches the design system (the OS
+// native <select> popup can't be styled). A compact trigger keeps the chevron
+// next to the label; the list reuses the shared MenuSurface / MenuItem look.
+function CodeLanguageMenu({
+  anchorRef,
+  language,
+  onClose,
+  onSelect,
+}: {
+  anchorRef: RefObject<HTMLButtonElement | null>;
+  language: string;
+  onClose: () => void;
+  onSelect: (id: string) => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const knownLanguage = CODE_LANGUAGE_OPTIONS.some((option) => option.id === language);
+  const options = knownLanguage || !language
+    ? CODE_LANGUAGE_OPTIONS
+    : [{ id: language, label: codeLanguageLabel(language) }, ...CODE_LANGUAGE_OPTIONS];
+  const style = useAnchoredOverlay(menuRef, {
+    anchorRef,
+    layoutKey: `${language}:${options.length}`,
+    maxHeight: 320,
+    placement: 'bottom-start',
+    width: 184,
+  });
+
+  useEffect(() => {
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target as Node;
+      if (menuRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
+      onClose();
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      onClose();
+    }
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+      document.removeEventListener('keydown', handleKeyDown, true);
+    };
+  }, [anchorRef, onClose]);
+
+  return createPortal(
+    <MenuSurface
+      ref={menuRef}
+      aria-label="Code language"
+      className="code-block-language-menu"
+      role="menu"
+      style={style}
+    >
+      {options.map((option) => (
+        <MenuItem
+          key={option.id || 'plain'}
+          active={option.id === language}
+          activeClassName="is-selected"
+          aria-checked={option.id === language}
+          className="code-block-language-item"
+          icon={(
+            <span className="code-block-language-check">
+              {option.id === language ? <CheckIcon size={ICON_SIZE.menu} /> : null}
+            </span>
+          )}
+          label={option.label}
+          onClick={() => onSelect(option.id)}
+          role="menuitemradio"
+        />
+      ))}
+    </MenuSurface>,
+    document.body,
   );
 }
