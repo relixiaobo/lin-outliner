@@ -58,6 +58,7 @@
   "build": {
     "appId": "com.linoutliner.desktop",
     "productName": "Lin Outliner",
+    "afterPack": "build/afterPack.cjs",
     "directories": {
       "output": "release"
     },

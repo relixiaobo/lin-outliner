@@ -25,6 +25,13 @@ import type { AgentProviderConfigInput, AgentRuntimeSettingsInput } from '../cor
 
 if (process.env.ELECTRON_USER_DATA_DIR) {
   app.setPath('userData', process.env.ELECTRON_USER_DATA_DIR);
+} else if (!app.isPackaged) {
+  // Running from source (electron-vite dev) with no explicit override. Never
+  // share the installed prod app's default userData, so a bare `bun run dev`
+  // can't read or clobber daily-use documents, agent sessions, or assets. The
+  // clone-specific dev scripts still set ELECTRON_USER_DATA_DIR for per-clone
+  // isolation; this is the catch-all for runs that forget to.
+  app.setPath('userData', join(app.getPath('home'), '.lin-outliner-dev'));
 }
 
 // Must run before the app `ready` event so the renderer can load assets with

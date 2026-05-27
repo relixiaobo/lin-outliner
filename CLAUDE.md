@@ -86,16 +86,35 @@ Electron resolves `userData` from the application's `appId`. All clones share
 `~/Library/Application Support/Lin Outliner/` and clobber each other's
 documents, agent sessions, and tests.
 
-`src/main/main.ts` reads `ELECTRON_USER_DATA_DIR` early in startup and calls
-`app.setPath('userData', ...)`. Use the clone-specific dev script, not the
-bare `bun run dev`:
+`src/main/main.ts` resolves `userData` early in startup, before any service
+reads it:
+
+1. If `ELECTRON_USER_DATA_DIR` is set, use it verbatim (`app.setPath`).
+2. Else if running from source (`!app.isPackaged`), fall back to
+   `$HOME/.lin-outliner-dev` so a bare `bun run dev` can never read or clobber
+   the installed prod app's daily-use data.
+3. Else (a packaged/installed build) use Electron's default path,
+   `~/Library/Application Support/Lin Outliner/`.
+
+Use the clone-specific dev script so each clone stays isolated; the bare-dev
+fallback above is only a safety net:
 
 - Main agent:    `bun run dev:main`  → `$HOME/.lin-outliner-main`
 - Claude Code:   `bun run dev:cc`    → `$HOME/.lin-outliner-cc`
 - Claude Code 2: `bun run dev:cc-2`  → `$HOME/.lin-outliner-cc-2`
 - Codex:         `bun run dev:codex` → `$HOME/.lin-outliner-codex`
-- Production: leave `ELECTRON_USER_DATA_DIR` unset to use the default
-  user-data path.
+- Bare source run (no env): `$HOME/.lin-outliner-dev` (step 2 above).
+- Installed prod app: the default path (step 3). This is the daily-use
+  data; never point a dev run at it.
+
+### Building and installing the prod app
+
+`bun run app:build` runs `electron-vite build` then `electron-builder`, emitting
+an unsigned (`mac.identity: null`) `.dmg` to `release/` (gitignored). Install by
+opening the dmg and dragging the app to `/Applications`; on first launch,
+right-click → Open to clear Gatekeeper (the build is unsigned). The installed
+app and any `bun run dev:*` testing run keep separate `userData`, so daily-use
+documents are safe from test churn.
 
 The env-var-prefix syntax works on macOS/Linux. On Windows, prefix with
 `cross-env` or set the variable in the shell first. macOS is the
