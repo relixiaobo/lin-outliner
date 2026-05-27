@@ -7,7 +7,7 @@ import { NodeValuePicker, type NodeValuePickerMarker } from '../outliner/NodeVal
 import { NumberInputControl } from '../primitives/NumberInputControl';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
-import { TextInputControl } from '../primitives/TextInputControl';
+import { TAG_COLOR_PRESETS } from '../tags/tagColors';
 import {
   FIELD_TYPE_CONFIG_OPTIONS,
   FIELD_CARDINALITY_OPTIONS,
@@ -26,8 +26,6 @@ interface ChoiceOption<T extends string> {
   value: T;
   label: string;
 }
-
-const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 
 const AUTO_INIT_LABELS: Record<AutoInitStrategy, string> = {
   current_date: 'Current date',
@@ -284,49 +282,36 @@ export function DefinitionSwitchControl(props: {
 export function DefinitionColorControl(props: {
   label: string;
   value?: string;
-  swatch: string;
   onCommit: (value: string | null) => void;
 }) {
-  const [draft, setDraft] = useState(props.value ?? '');
-
-  useEffect(() => {
-    setDraft(props.value ?? '');
-  }, [props.value]);
-
-  const commit = (value: string) => {
-    const normalized = value.trim();
-    props.onCommit(normalized ? normalized : null);
-  };
-  const swatchValue = HEX_COLOR.test(draft) ? draft : props.swatch;
-
+  const selected = props.value ?? null;
   return (
-    <span className="definition-color-control">
-      <TextInputControl
-        type="color"
-        label={`${props.label} swatch`}
-        value={swatchValue}
-        onChange={(event) => {
-          setDraft(event.target.value);
-          commit(event.target.value);
-        }}
+    <span className="definition-color-control" role="radiogroup" aria-label={props.label}>
+      <button
+        type="button"
+        className={`definition-color-swatch definition-color-swatch-none ${selected ? '' : 'selected'}`}
+        role="radio"
+        aria-checked={!selected}
+        aria-label="No color"
+        title="No color"
+        onClick={() => props.onCommit(null)}
       />
-      <TextInputControl
-        className="definition-text-input"
-        label={props.label}
-        value={draft}
-        placeholder="auto"
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={() => commit(draft)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') {
-            event.currentTarget.blur();
-          }
-          if (event.key === 'Escape') {
-            setDraft(props.value ?? '');
-            event.currentTarget.blur();
-          }
-        }}
-      />
+      {TAG_COLOR_PRESETS.map((preset) => {
+        const isSelected = selected === preset.token;
+        return (
+          <button
+            key={preset.token}
+            type="button"
+            className={`definition-color-swatch ${isSelected ? 'selected' : ''}`}
+            role="radio"
+            aria-checked={isSelected}
+            aria-label={preset.label}
+            title={preset.label}
+            style={{ background: preset.color.text }}
+            onClick={() => props.onCommit(preset.token)}
+          />
+        );
+      })}
     </span>
   );
 }

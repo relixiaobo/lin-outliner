@@ -41,6 +41,29 @@ const TAG_COLOR_MAP: Record<string, TagColor> = {
   gray: TAG_COLOR_GRAY,
 };
 
+export interface TagColorPreset {
+  /** Canonical token persisted on the tag's `color` config. */
+  token: string;
+  label: string;
+  color: TagColor;
+}
+
+/**
+ * The pickable supertag colors, in display order. One canonical token per base
+ * color in TAG_COLORS; resolveTagColor maps the token back through
+ * TAG_COLOR_MAP, so storage stays token-based (theme-aware) rather than raw hex.
+ */
+export const TAG_COLOR_PRESETS: readonly TagColorPreset[] = [
+  { token: 'red', label: 'Red', color: TAG_COLORS[0] },
+  { token: 'orange', label: 'Orange', color: TAG_COLORS[1] },
+  { token: 'amber', label: 'Amber', color: TAG_COLORS[2] },
+  { token: 'green', label: 'Green', color: TAG_COLORS[3] },
+  { token: 'blue', label: 'Blue', color: TAG_COLORS[4] },
+  { token: 'purple', label: 'Purple', color: TAG_COLORS[5] },
+  { token: 'pink', label: 'Pink', color: TAG_COLORS[6] },
+  { token: 'gray', label: 'Gray', color: TAG_COLOR_GRAY },
+];
+
 const JOURNAL_TAG_IDS = new Set(['tag:day', 'tag:week', 'tag:year']);
 
 function hashTagColor(tagId: string): TagColor {

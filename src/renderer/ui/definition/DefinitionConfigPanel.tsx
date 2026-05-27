@@ -158,7 +158,6 @@ function ConfigControl(props: {
         <DefinitionColorControl
           label={item.label}
           value={tagConfig?.color}
-          swatch={resolveTagColor(node, byId).text}
           onCommit={(color) => updateTag({ color })}
         />
       );
