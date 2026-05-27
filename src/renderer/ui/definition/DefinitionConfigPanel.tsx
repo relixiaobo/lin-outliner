@@ -251,7 +251,7 @@ function ConfigControl(props: {
       return (
         <DefinitionNumberControl
           label={item.label}
-          value={node.minValue}
+          value={fieldConfig?.minValue}
           onCommit={(minValue) => updateField({ minValue })}
         />
       );
@@ -259,7 +259,7 @@ function ConfigControl(props: {
       return (
         <DefinitionNumberControl
           label={item.label}
-          value={node.maxValue}
+          value={fieldConfig?.maxValue}
           onCommit={(maxValue) => updateField({ maxValue })}
         />
       );

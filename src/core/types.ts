@@ -359,8 +359,6 @@ export interface Node {
   /** For `reference` nodes: the role this reference plays (backlink allowlist). */
   refRole?: RefRole;
   autoCollected: boolean;
-  minValue?: number;
-  maxValue?: number;
   targetId?: NodeId;
   viewMode?: ViewMode;
   toolbarVisible?: boolean;

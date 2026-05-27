@@ -64,8 +64,6 @@ const NODE_SCALAR_KEYS: Array<keyof Node> = [
   'configKey',
   'refRole',
   'autoCollected',
-  'minValue',
-  'maxValue',
   'targetId',
   'viewMode',
   'toolbarVisible',

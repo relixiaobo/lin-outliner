@@ -547,14 +547,14 @@ describe('Core', () => {
     expect(buildConfigIndex(core.state()).field(fieldId)?.nullable).toBe(false);
     expect(buildConfigIndex(core.state()).field(fieldId)?.hideField).toBe('empty');
     expect(buildConfigIndex(core.state()).field(fieldId)?.autoInitialize).toEqual(['ancestor_field_value']);
-    expect(core.state().nodes[fieldId].minValue).toBe(1);
-    expect(core.state().nodes[fieldId].maxValue).toBe(5);
+    expect(buildConfigIndex(core.state()).field(fieldId)?.minValue).toBe(1);
+    expect(buildConfigIndex(core.state()).field(fieldId)?.maxValue).toBe(5);
 
     core.setFieldConfig(fieldId, { fieldType: 'options', autocollectOptions: true });
     expect(buildConfigIndex(core.state()).field(fieldId)?.fieldType).toBe('options');
     expect(buildConfigIndex(core.state()).field(fieldId)?.autocollectOptions).toBe(true);
-    expect(core.state().nodes[fieldId].minValue).toBeUndefined();
-    expect(core.state().nodes[fieldId].maxValue).toBeUndefined();
+    expect(buildConfigIndex(core.state()).field(fieldId)?.minValue).toBeUndefined();
+    expect(buildConfigIndex(core.state()).field(fieldId)?.maxValue).toBeUndefined();
 
     const sourceTagId = mustFocus(core.createTag('source'));
     core.setFieldConfig(fieldId, {

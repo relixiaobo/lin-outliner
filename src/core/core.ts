@@ -1001,8 +1001,8 @@ export class Core {
       ensureFieldDefinition(state, fieldId);
       const current = clone(requiredNode(state, fieldId));
       const nextFieldType = patch.fieldType ?? fieldTypeOf(state, fieldId);
-      const nextMin = 'minValue' in patch ? patch.minValue ?? undefined : current.minValue;
-      const nextMax = 'maxValue' in patch ? patch.maxValue ?? undefined : current.maxValue;
+      const nextMin = 'minValue' in patch ? patch.minValue ?? undefined : fieldNumberConfigOf(state, fieldId, 'minValue');
+      const nextMax = 'maxValue' in patch ? patch.maxValue ?? undefined : fieldNumberConfigOf(state, fieldId, 'maxValue');
       if (patch.sourceSupertag) {
         ensureTagDefinition(state, patch.sourceSupertag);
         if (nextFieldType !== 'options_from_supertag') {
@@ -1020,16 +1020,6 @@ export class Core {
       if (nextMin !== undefined && nextMax !== undefined && nextMin > nextMax) {
         throw CoreError.invalidOperation('minimum value cannot be greater than maximum value');
       }
-      if (patch.fieldType !== undefined) {
-        // fieldType is written to the defConfig subtree below (config-as-nodes);
-        // this clears type-incompatible sibling config when the type changes.
-        if (patch.fieldType !== 'number') {
-          delete current.minValue;
-          delete current.maxValue;
-        }
-      }
-      if ('minValue' in patch) setOptional(current, 'minValue', patch.minValue ?? undefined);
-      if ('maxValue' in patch) setOptional(current, 'maxValue', patch.maxValue ?? undefined);
       current.updatedAt = nowMs();
       this.loro.writeNode(current);
       // config-as-nodes: fieldType lives in the defConfig subtree.
@@ -1047,6 +1037,16 @@ export class Core {
       }
       if ('autoInitialize' in patch) {
         this.setConfigValueDirect(fieldId, { kind: 'enumList', configKey: 'autoInitialize', values: parseAutoInitStrategies(normalizeOptionalText(patch.autoInitialize)) });
+      }
+      // minValue/maxValue: explicit set, or cleared when the type is no longer numeric.
+      const clearRange = patch.fieldType !== undefined && patch.fieldType !== 'number';
+      if ('minValue' in patch || clearRange) {
+        const min = clearRange && !('minValue' in patch) ? null : patch.minValue;
+        this.setConfigValueDirect(fieldId, { kind: 'scalar', configKey: 'minValue', text: min == null ? null : String(min) });
+      }
+      if ('maxValue' in patch || clearRange) {
+        const max = clearRange && !('maxValue' in patch) ? null : patch.maxValue;
+        this.setConfigValueDirect(fieldId, { kind: 'scalar', configKey: 'maxValue', text: max == null ? null : String(max) });
       }
       // autocollectOptions: explicit set, or cleared when the type no longer supports it.
       if (patch.autocollectOptions !== undefined) {
@@ -2939,6 +2939,30 @@ function fieldCardinalityOf(state: DocumentState, fieldDefId: string): FieldCard
   const optionId = configRefTarget(state, fieldDefId, 'cardinality');
   const value = optionId ? state.nodes[optionId]?.content.text : undefined;
   return (value as FieldCardinality | undefined) ?? 'single';
+}
+
+/** A scalar (number/bool/color) config value's stored text, read from the def's subtree. */
+function configScalarText(state: DocumentState, defId: string, configKey: DefConfigKey): string | undefined {
+  const def = state.nodes[defId];
+  if (!def) return undefined;
+  for (const rowId of def.children) {
+    const row = state.nodes[rowId];
+    if (row?.type === 'defConfig' && row.configKey === configKey) {
+      for (const valueId of row.children) {
+        const value = state.nodes[valueId];
+        if (value && value.type !== 'reference') return value.content.text;
+      }
+    }
+  }
+  return undefined;
+}
+
+/** A numeric config value (minValue/maxValue) read from the def's scalar subtree. */
+function fieldNumberConfigOf(state: DocumentState, fieldDefId: string, configKey: DefConfigKey): number | undefined {
+  const text = configScalarText(state, fieldDefId, configKey);
+  if (text == null) return undefined;
+  const value = Number(text);
+  return Number.isFinite(value) ? value : undefined;
 }
 
 /** The field's auto-initialize strategies, read from its `defConfig(autoInitialize)` enumList subtree. */
