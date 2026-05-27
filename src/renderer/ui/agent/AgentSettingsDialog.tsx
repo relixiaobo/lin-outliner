@@ -40,12 +40,10 @@ interface DraftConfig {
 
 interface ProviderChoice {
   providerId: string;
-  modelId: string;
   configured: boolean;
   active: boolean;
   enabled: boolean;
   hasCredential: boolean;
-  custom: boolean;
 }
 
 const EMPTY_DRAFT: DraftConfig = {
@@ -643,12 +641,10 @@ function buildProviderChoices(
     const providerCatalog = catalog.get(provider.providerId);
     choices.set(provider.providerId, {
       providerId: provider.providerId,
-      modelId: provider.modelId,
       configured: true,
       active: provider.providerId === activeProviderId,
       enabled: provider.enabled,
       hasCredential: providerHasCredential(provider, providerCatalog),
-      custom: !catalog.has(provider.providerId),
     });
   }
 
@@ -656,24 +652,20 @@ function buildProviderChoices(
     if (choices.has(provider.providerId)) continue;
     choices.set(provider.providerId, {
       providerId: provider.providerId,
-      modelId: provider.models[0]?.id ?? '',
       configured: false,
       active: provider.providerId === activeProviderId,
       enabled: true,
       hasCredential: Boolean(provider.hasEnvApiKey),
-      custom: false,
     });
   }
 
   if (draftProviderId && !choices.has(draftProviderId)) {
     choices.set(draftProviderId, {
       providerId: draftProviderId,
-      modelId: catalog.get(draftProviderId)?.models[0]?.id ?? '',
       configured: false,
       active: draftProviderId === activeProviderId,
       enabled: true,
       hasCredential: Boolean(catalog.get(draftProviderId)?.hasEnvApiKey),
-      custom: !catalog.has(draftProviderId),
     });
   }
 
