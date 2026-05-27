@@ -84,6 +84,12 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Pasting into the trailing draft row** — pasting structured content into the
+  blank line at the bottom of the outline threw `CoreError: node not found`,
+  because the eager draft row has no core node until its first character
+  materializes it. The paste path now appends the pasted trees under the parent
+  (via `create_nodes_from_tree`) for a pristine draft, and waits for an in-flight
+  materialize otherwise. ([#25](https://github.com/relixiaobo/lin-outliner/pull/25))
 - **Pasting fenced code blocks with multi-word info strings** — the paste
   parser only recognized a fence whose info string was a single token, so a
   CommonMark-valid fence like ` ```tool node_create ` leaked as plain text and
