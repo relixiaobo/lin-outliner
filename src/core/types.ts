@@ -30,6 +30,15 @@ export function systemOptionNodeId(subtreeId: string, value: string): NodeId {
   return `${subtreeId}/${value}`;
 }
 
+/**
+ * Deterministic id for a definition's `defConfig` row, e.g. `tag123::cfg:color`.
+ * Stable so reconcile is idempotent and `setConfigValue` can address the row
+ * without scanning children.
+ */
+export function defConfigNodeId(defId: NodeId, configKey: string): NodeId {
+  return `${defId}::cfg:${configKey}`;
+}
+
 export type NodeType =
   | 'fieldEntry'
   | 'reference'
@@ -79,9 +88,11 @@ export type HideFieldMode =
 
 // ─── Config-as-nodes (see docs/plans/config-as-nodes.md) ───
 // A definition's configuration is stored as `defConfig` child nodes whose
-// `configKey` identifies the knob. The projection derives the legacy flat
-// fields (color/extends/fieldType/…) back onto the parent NodeProjection so
-// existing readers are unchanged; these keys are the bridge.
+// `configKey` identifies the knob; the value is held as the defConfig node's
+// own child node(s) — the same mechanism field values use (U1). Reads go
+// through typed accessors over a config index, never the flat fields below;
+// those flat config fields are removed once every reader is cut over
+// (compiler-driven, no derive-back bridge — pre-launch, no data to preserve).
 export type TagConfigKey =
   | 'color'
   | 'extends'
@@ -102,13 +113,13 @@ export type FieldConfigKey =
 
 export type DefConfigKey = TagConfigKey | FieldConfigKey;
 
-// How a config value is stored on / under its `defConfig` node:
-//   ref      → one child `reference` node targeting a tagDef
-//   enum     → one child `reference` node targeting a system option node
-//   enumList → zero or more child `reference`s to system option nodes
-//   number   → typed leaf field on the defConfig node
-//   bool     → typed leaf field on the defConfig node
-//   color    → typed leaf field on the defConfig node
+// How a config value is stored as child node(s) of its `defConfig` node:
+//   ref      → one child `reference` (refRole 'config') targeting a tagDef
+//   enum     → one child `reference` (refRole 'enum') targeting a system option
+//   enumList → zero or more child `reference`s (refRole 'enum') to options
+//   number   → one child value node; content text = codec-encoded number
+//   bool     → one child value node; content text = codec-encoded boolean
+//   color    → one child value node; content text = codec-encoded #RRGGBB
 // Registry-level domain of a config knob. Drives which control renders and how
 // the value is stored as a child node: ref/enum → a child reference (with a
 // config refRole so it stays out of the backlink graph); number/color/bool →

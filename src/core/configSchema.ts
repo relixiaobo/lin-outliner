@@ -214,8 +214,56 @@ export interface ConfigIndex {
   field(fieldDefId: NodeId): ProjectedFieldConfig | undefined;
 }
 
-/** A single config-value mutation routed through the registry-governed chokepoint. */
+/**
+ * A single config-value mutation routed through the registry-governed chokepoint.
+ * The caller passes the value semantically; `setConfigValue` maps it to storage
+ * per the key's domain (scalar value node / `config` ref / `enum` option ref(s)).
+ *   scalar   → number/bool/color (free text, codec-validated)
+ *   ref      → a tagDef target (extends / childSupertag / sourceSupertag)
+ *   enum     → a single option value (fieldType / cardinality / hideField)
+ *   enumList → a set of option values (autoInitialize)
+ * A null/empty payload clears the value.
+ */
 export type SetConfigValueInput =
   | { kind: 'scalar'; configKey: DefConfigKey; text: string | null }
   | { kind: 'ref'; configKey: DefConfigKey; targetId: NodeId | null }
+  | { kind: 'enum'; configKey: DefConfigKey; value: string | null }
   | { kind: 'enumList'; configKey: DefConfigKey; values: string[] };
+
+/** Map a config knob's domain → the codec used for scalar storage (number/bool/color). */
+export function scalarCodecFor(domain: ConfigValueDomain): ScalarCodec<number> | ScalarCodec<boolean> | ScalarCodec<string> | null {
+  switch (domain) {
+    case 'number': return numberCodec;
+    case 'bool': return boolCodec;
+    case 'color': return colorCodec;
+    default: return null;
+  }
+}
+
+/** Decode → validate → re-encode a scalar to canonical storage text, or report why not. */
+export function canonicalizeScalar(domain: ConfigValueDomain, text: string): { text: string } | { error: string } {
+  const codec = scalarCodecFor(domain) as ScalarCodec<number | boolean | string> | null;
+  if (!codec) return { error: `domain ${domain} is not scalar` };
+  const decoded = codec.decode(text);
+  if (decoded === undefined) return { error: `invalid ${domain} value` };
+  const message = codec.validate(decoded);
+  if (message) return { error: message };
+  return { text: codec.encode(decoded) };
+}
+
+/** Which `SetConfigValueInput.kind` a knob expects, derived from its domain. */
+export function configValueKind(key: DefConfigKey): SetConfigValueInput['kind'] {
+  switch (CONFIG_SCHEMA[key].domain) {
+    case 'ref': return 'ref';
+    case 'enum': return 'enum';
+    case 'enumList': return 'enumList';
+    default: return 'scalar';
+  }
+}
+
+/** The fixed config-key set a definition node type carries (null = not a definition). */
+export function configKeysForDefType(type: NodeType | undefined): DefConfigKey[] | null {
+  if (type === 'tagDef') return TAG_CONFIG_KEYS;
+  if (type === 'fieldDef') return FIELD_CONFIG_KEYS;
+  return null;
+}

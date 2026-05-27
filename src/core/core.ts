@@ -17,7 +17,16 @@ import {
 } from './operationJournal';
 import { buildDocumentProjection } from './projection';
 import { runSearchExpr, runSearchNode, searchNodeHasRules } from './searchEngine';
-import { ENUM_DOMAINS, isInternalConfigNode, refRoleCountsAsBacklink } from './configSchema';
+import {
+  CONFIG_SCHEMA,
+  ENUM_DOMAINS,
+  canonicalizeScalar,
+  configKeysForDefType,
+  configValueKind,
+  isInternalConfigNode,
+  refRoleCountsAsBacklink,
+  type SetConfigValueInput,
+} from './configSchema';
 import {
   AREAS_ID,
   DAILY_NOTES_ID,
@@ -33,9 +42,12 @@ import {
   TAG_YEAR_ID,
   TRASH_ID,
   WORKSPACE_ID,
+  defConfigNodeId,
   plainText,
   systemOptionNodeId,
   type Backlink,
+  type DefConfigKey,
+  type RefRole,
   type CommandOutcome,
   type CreateNodeTree,
   type DocumentProjection,
@@ -1026,6 +1038,25 @@ export class Core {
     });
   }
 
+  // config-as-nodes Stage 4: ensure a definition carries the full set of
+  // `defConfig` rows for its kind (tag/field), pinned as a leading internal
+  // segment. Idempotent; values are untouched. Set values via setConfigValue.
+  reconcileConfigSubtree(defId: string): CommandOutcome {
+    return this.mutate(() => {
+      this.reconcileConfigSubtreeDirect(defId);
+      return focus(defId);
+    });
+  }
+
+  // config-as-nodes Stage 4: the registry-governed value-write chokepoint. The
+  // defConfig row's structure is locked; only its value child(ren) change here.
+  setConfigValue(defId: string, input: SetConfigValueInput): CommandOutcome {
+    return this.mutate(() => {
+      this.setConfigValueDirect(defId, input);
+      return focus(defId);
+    });
+  }
+
   createFieldDef(tagId: string, name: string, fieldType: FieldType): CommandOutcome {
     const normalized = name.trim();
     if (!normalized) throw CoreError.invalidOperation('field name cannot be empty');
@@ -1886,6 +1917,120 @@ export class Core {
         this.loro.moveNode(optionId, domain.subtreeId, index);
       });
     }
+  }
+
+  // config-as-nodes Stage 4: materialize the fixed `defConfig` row set for a
+  // definition (tag or field) as a leading internal segment, in registry order.
+  // Stable ids (defConfigNodeId) make this idempotent and let setConfigValue
+  // address a row without scanning. Rows are locked; values live as children.
+  private reconcileConfigSubtreeDirect(defId: string) {
+    const state = this.snapshot();
+    const def = requiredNode(state, defId);
+    const keys = configKeysForDefType(def.type);
+    if (!keys) return;
+    const now = nowMs();
+    keys.forEach((key, index) => {
+      const rowId = defConfigNodeId(defId, key);
+      if (this.loro.hasNode(rowId)) {
+        this.loro.moveNode(rowId, defId, index);
+        return;
+      }
+      this.loro.createNodeWithId(rowId, defId, index, 'defConfig', (node) => {
+        node.configKey = key;
+        node.content = plainText(CONFIG_SCHEMA[key].label);
+        node.locked = true;
+        node.createdAt = now;
+        node.updatedAt = now;
+      });
+    });
+  }
+
+  private setConfigValueDirect(defId: string, input: SetConfigValueInput) {
+    const def = requiredNode(this.snapshot(), defId);
+    const schema = CONFIG_SCHEMA[input.configKey];
+    if (!schema) throw CoreError.invalidOperation(`unknown config key: ${input.configKey}`);
+    const expectedKind = configValueKind(input.configKey);
+    if (expectedKind !== input.kind) {
+      throw CoreError.invalidOperation(`config key ${input.configKey} expects a ${expectedKind} value`);
+    }
+    const allowedKeys = configKeysForDefType(def.type);
+    if (!allowedKeys || !allowedKeys.includes(input.configKey)) {
+      throw CoreError.invalidOperation(`config key ${input.configKey} does not apply to this definition`);
+    }
+    const rowId = this.ensureConfigRowDirect(defId, input.configKey);
+    this.clearConfigValueChildrenDirect(rowId);
+
+    switch (input.kind) {
+      case 'scalar': {
+        if (input.text == null || input.text.trim() === '') break;
+        const result = canonicalizeScalar(schema.domain, input.text);
+        if ('error' in result) throw CoreError.invalidOperation(result.error);
+        this.createConfigValueNodeDirect(rowId, result.text, undefined, undefined);
+        break;
+      }
+      case 'ref': {
+        if (input.targetId == null) break;
+        requiredNode(this.snapshot(), input.targetId);
+        this.createConfigValueNodeDirect(rowId, '', 'config', input.targetId);
+        break;
+      }
+      case 'enum': {
+        if (input.value == null) break;
+        const optionId = this.resolveEnumOption(input.configKey, input.value);
+        this.createConfigValueNodeDirect(rowId, '', 'enum', optionId);
+        break;
+      }
+      case 'enumList': {
+        for (const value of input.values) {
+          const optionId = this.resolveEnumOption(input.configKey, value);
+          this.createConfigValueNodeDirect(rowId, '', 'enum', optionId);
+        }
+        break;
+      }
+    }
+  }
+
+  private ensureConfigRowDirect(defId: string, configKey: DefConfigKey): string {
+    const rowId = defConfigNodeId(defId, configKey);
+    if (!this.loro.hasNode(rowId)) {
+      const now = nowMs();
+      this.loro.createNodeWithId(rowId, defId, 0, 'defConfig', (node) => {
+        node.configKey = configKey;
+        node.content = plainText(CONFIG_SCHEMA[configKey].label);
+        node.locked = true;
+        node.createdAt = now;
+        node.updatedAt = now;
+      });
+    }
+    return rowId;
+  }
+
+  private clearConfigValueChildrenDirect(rowId: string) {
+    const row = requiredNode(this.snapshot(), rowId);
+    for (const childId of [...row.children]) this.loro.deleteNode(childId);
+  }
+
+  private createConfigValueNodeDirect(rowId: string, text: string, refRole: RefRole | undefined, targetId: string | undefined) {
+    const id = freshId(targetId ? 'ref' : 'node');
+    const now = nowMs();
+    this.loro.createNodeWithId(id, rowId, undefined, targetId ? 'reference' : undefined, (node) => {
+      node.content = plainText(text);
+      if (refRole) node.refRole = refRole;
+      if (targetId) node.targetId = targetId;
+      node.createdAt = now;
+      node.updatedAt = now;
+    });
+    return id;
+  }
+
+  private resolveEnumOption(configKey: DefConfigKey, value: string): string {
+    const domainKey = CONFIG_SCHEMA[configKey].enumDomain;
+    if (!domainKey) throw CoreError.invalidOperation(`config key ${configKey} has no enum domain`);
+    const domain = ENUM_DOMAINS[domainKey];
+    if (!(domain.values as readonly string[]).includes(value)) {
+      throw CoreError.invalidOperation(`invalid ${configKey} value: ${value}`);
+    }
+    return systemOptionNodeId(domain.subtreeId, value);
   }
 
   private createPlainNode(
