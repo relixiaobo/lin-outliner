@@ -84,6 +84,12 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Code-block language picker redesign** — replaced the native `<select>` (which
+  opened an OS-styled, uncoordinated dropdown) with the shared menu primitives: a
+  compact trigger whose chevron sits next to the label, opening a portaled
+  `MenuSurface` popover that matches the design system. Hover now deepens text /
+  icon color instead of adding a background fill, for both the language trigger
+  and the copy button. ([#27](https://github.com/relixiaobo/lin-outliner/pull/27))
 - **Unknown code-block languages fall back to Plain text** — a pasted fence with
   a non-language info string (e.g. `tool` / `tool-error` from an agent
   transcript) no longer shows a bogus language in the picker. A Shiki-backed
