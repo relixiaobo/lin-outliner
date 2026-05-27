@@ -84,6 +84,14 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Unknown code-block languages fall back to Plain text** — a pasted fence with
+  a non-language info string (e.g. `tool` / `tool-error` from an agent
+  transcript) no longer shows a bogus language in the picker. A Shiki-backed
+  `isKnownCodeLanguage` check coerces any language Shiki cannot highlight to
+  Plain text for the label, selected value, and highlighting, while preserving
+  real grammars outside the picker list (e.g. `kotlin`). The code block's
+  language picker now uses the `SelectControl` primitive and `--control-size-*`
+  tokens. ([#26](https://github.com/relixiaobo/lin-outliner/pull/26))
 - **Pasting into the trailing draft row** — pasting structured content into the
   blank line at the bottom of the outline threw `CoreError: node not found`,
   because the eager draft row has no core node until its first character
