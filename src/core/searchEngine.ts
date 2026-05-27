@@ -752,7 +752,6 @@ function virtualNode(
     createdAt: 0,
     updatedAt: 0,
     locked: false,
-    doneStateEnabled: false,
     autoCollected: false,
   };
 }

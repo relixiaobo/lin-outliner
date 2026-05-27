@@ -981,12 +981,14 @@ export class Core {
       }
       if (patch.childSupertag) ensureTagDefinition(state, patch.childSupertag);
       const node = clone(requiredNode(state, tagId));
-      if (patch.doneStateEnabled !== undefined) node.doneStateEnabled = patch.doneStateEnabled;
       node.updatedAt = nowMs();
       this.loro.writeNode(node);
-      // config-as-nodes: color/showCheckbox/extends/childSupertag are stored in the defConfig subtree.
+      // config-as-nodes: every tag knob is stored in the defConfig subtree.
       if (patch.showCheckbox !== undefined) {
         this.setConfigValueDirect(tagId, { kind: 'scalar', configKey: 'showCheckbox', text: patch.showCheckbox ? 'true' : 'false' });
+      }
+      if (patch.doneStateEnabled !== undefined) {
+        this.setConfigValueDirect(tagId, { kind: 'scalar', configKey: 'doneStateEnabled', text: patch.doneStateEnabled ? 'true' : 'false' });
       }
       if ('color' in patch) {
         this.setConfigValueDirect(tagId, { kind: 'scalar', configKey: 'color', text: normalizeOptionalText(patch.color) ?? null });
@@ -1121,7 +1123,6 @@ export class Core {
       node.fieldDefId = fieldDefId;
       node.content = plainText('');
       node.tags = [];
-      node.doneStateEnabled = false;
       delete node.completedAt;
       this.loro.writeNode(node);
       return focus(afterNodeId, { parentId, surface: 'field-name', placement: { kind: 'all' } });

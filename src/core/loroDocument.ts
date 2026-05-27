@@ -57,7 +57,6 @@ const NODE_SCALAR_KEYS: Array<keyof Node> = [
   'bannerPositionY',
   'bannerAlt',
   'templateId',
-  'doneStateEnabled',
   'fieldDefId',
   'configKey',
   'refRole',
@@ -327,7 +326,6 @@ export class LoroOutlinerDocument {
         createdAt: readNumber(data.get('createdAt')) ?? nowMs(),
         updatedAt: readNumber(data.get('updatedAt')) ?? nowMs(),
         locked: readBoolean(data.get('locked')) ?? false,
-        doneStateEnabled: readBoolean(data.get('doneStateEnabled')) ?? false,
         autocollectOptions: readBoolean(data.get('autocollectOptions')) ?? false,
         autoCollected: readBoolean(data.get('autoCollected')) ?? false,
       } as Node);
@@ -339,7 +337,6 @@ export class LoroOutlinerDocument {
           'createdAt',
           'updatedAt',
           'locked',
-          'doneStateEnabled',
           'autocollectOptions',
           'autoCollected',
           'filterValues',

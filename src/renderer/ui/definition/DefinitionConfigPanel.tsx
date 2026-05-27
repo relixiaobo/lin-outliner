@@ -189,7 +189,7 @@ function ConfigControl(props: {
       return (
         <DefinitionSwitchControl
           label={item.label}
-          checked={node.doneStateEnabled}
+          checked={tagConfig?.doneStateEnabled ?? false}
           onChange={(doneStateEnabled) => updateTag({ doneStateEnabled })}
         />
       );

@@ -9,9 +9,6 @@ const makeNode = (id: string, text: string, overrides: Record<string, unknown> =
   createdAt: 0,
   updatedAt: 0,
   locked: false,
-  showCheckbox: false,
-  doneStateEnabled: false,
-  autocollectOptions: false,
   autoCollected: false,
   ...overrides,
 });

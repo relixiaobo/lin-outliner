@@ -350,7 +350,6 @@ export interface Node {
   bannerPositionY?: number;
   bannerAlt?: string;
   templateId?: NodeId;
-  doneStateEnabled: boolean;
   fieldDefId?: NodeId;
   /** For `defConfig` nodes: which config knob this row represents. */
   configKey?: DefConfigKey;
@@ -615,7 +614,6 @@ export function createNodeRecord(
     createdAt: now,
     updatedAt: now,
     locked: false,
-    doneStateEnabled: false,
     autoCollected: false,
   };
 }

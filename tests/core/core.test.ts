@@ -794,7 +794,7 @@ describe('Core', () => {
     const childNodeId = mustFocus(core.createNode(nodeId, null, 'Checklist item'));
     expect(core.state().nodes[childNodeId].tags).toContain(defaultChildTagId);
     expect(buildConfigIndex(core.state()).tag(childTagId)?.showCheckbox).toBe(true);
-    expect(core.state().nodes[childTagId].doneStateEnabled).toBe(true);
+    expect(buildConfigIndex(core.state()).tag(childTagId)?.doneStateEnabled).toBe(true);
     expect(() => core.setTagConfig(parentTagId, { extends: childTagId }))
       .toThrow('tag inheritance cannot create a cycle');
   });
