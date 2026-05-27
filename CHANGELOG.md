@@ -71,6 +71,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Settings window with provider / agent categories** — the cramped "Agent
+  settings" dialog (which stacked provider connection, model + reasoning, and
+  global behavior in one scroll, with a duplicate "Provider ID" field, a doubled
+  "No key", and a pink "SETUP" box) is now a "Settings" window with a left
+  category nav. **Providers** is connection-only: a clean provider row list
+  (known providers + a `Custom` OpenAI-compatible entry), one API key with a
+  single status line, and Enabled — Provider ID / Base URL surface only for a
+  custom provider. **Agent** holds model + reasoning (active-provider defaults,
+  key-gated) and behavior (permission mode, skills, directories). The composer
+  model menu and the backend commands are unchanged.
+  ([#31](https://github.com/relixiaobo/lin-outliner/pull/31))
 - **Sidebar tree shows only a node's own icon** — the workspace tree no longer
   paints hardcoded fallback glyphs on system nodes (the calendar on Daily notes,
   plus the library / search / trash glyphs), since those nodes carry no icon of

@@ -62,6 +62,13 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **settings-window restructure** (P2, cc) — the "Agent settings" dialog became
+  a "Settings" window with a left category nav: **Providers** (connection only —
+  provider row list incl. a Custom OpenAI-compatible entry, one key + status,
+  Enabled; Provider ID / Base URL only for custom) and **Agent** (model +
+  reasoning defaults, permission mode, skills, directories). Separates "where it
+  connects" from "how the agent runs"; nav is extensible for Appearance/General.
+  Backend commands and the composer model menu unchanged (PR #31).
 - **sidebar system-icon cleanup** (P3, cc) — the workspace tree drops hardcoded
   fallback glyphs for system nodes (calendar on Daily notes, plus library /
   search / trash), rendering only a node's own icon. Top primary-nav shortcuts
