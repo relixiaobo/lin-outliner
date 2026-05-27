@@ -1021,7 +1021,8 @@ export class Core {
         throw CoreError.invalidOperation('minimum value cannot be greater than maximum value');
       }
       if (patch.fieldType !== undefined) {
-        current.fieldType = patch.fieldType;
+        // fieldType is written to the defConfig subtree below (config-as-nodes);
+        // these clear type-incompatible sibling config when the type changes.
         if (patch.fieldType !== 'options') current.autocollectOptions = false;
         if (patch.fieldType !== 'number') {
           delete current.minValue;
@@ -1037,8 +1038,7 @@ export class Core {
       if ('maxValue' in patch) setOptional(current, 'maxValue', patch.maxValue ?? undefined);
       current.updatedAt = nowMs();
       this.loro.writeNode(current);
-      // config-as-nodes: fieldType is migrating to the subtree (transient
-      // dual-write — flat field above + subtree enum here).
+      // config-as-nodes: fieldType lives in the defConfig subtree.
       if (patch.fieldType !== undefined) {
         this.setConfigValueDirect(fieldId, { kind: 'enum', configKey: 'fieldType', value: patch.fieldType });
       }
@@ -2118,12 +2118,10 @@ export class Core {
     const id = freshId('field');
     this.loro.createNodeWithId(id, parentId, undefined, 'fieldDef', (node) => {
       node.content = plainText(name);
-      node.fieldType = fieldType;
       node.cardinality = 'single';
       node.nullable = true;
     });
-    // config-as-nodes: fieldType is migrating to the defConfig subtree. Dual-write
-    // (transient) so readers can switch to the accessor before the flat field goes.
+    // config-as-nodes: fieldType lives in the defConfig subtree, not a flat field.
     this.setConfigValueDirect(id, { kind: 'enum', configKey: 'fieldType', value: fieldType });
     return id;
   }

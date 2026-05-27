@@ -542,7 +542,7 @@ describe('Core', () => {
       minValue: 1,
       maxValue: 5,
     });
-    expect(core.state().nodes[fieldId].fieldType).toBe('number');
+    expect(buildConfigIndex(core.state()).field(fieldId)?.fieldType).toBe('number');
     expect(core.state().nodes[fieldId].cardinality).toBe('list');
     expect(core.state().nodes[fieldId].nullable).toBe(false);
     expect(core.state().nodes[fieldId].hideField).toBe('empty');
@@ -551,7 +551,7 @@ describe('Core', () => {
     expect(core.state().nodes[fieldId].maxValue).toBe(5);
 
     core.setFieldConfig(fieldId, { fieldType: 'options', autocollectOptions: true });
-    expect(core.state().nodes[fieldId].fieldType).toBe('options');
+    expect(buildConfigIndex(core.state()).field(fieldId)?.fieldType).toBe('options');
     expect(core.state().nodes[fieldId].autocollectOptions).toBe(true);
     expect(core.state().nodes[fieldId].minValue).toBeUndefined();
     expect(core.state().nodes[fieldId].maxValue).toBeUndefined();
@@ -561,7 +561,7 @@ describe('Core', () => {
       fieldType: 'options_from_supertag',
       sourceSupertag: sourceTagId,
     });
-    expect(core.state().nodes[fieldId].fieldType).toBe('options_from_supertag');
+    expect(buildConfigIndex(core.state()).field(fieldId)?.fieldType).toBe('options_from_supertag');
     expect(buildConfigIndex(core.state()).field(fieldId)?.sourceSupertag).toBe(sourceTagId);
     expect(core.state().nodes[fieldId].autocollectOptions).toBe(false);
 
