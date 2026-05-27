@@ -1472,11 +1472,22 @@ function isSearchCandidate(index: SearchIndex, nodeId: NodeId): boolean {
     && (node.type === undefined || ['tagDef', 'fieldDef', 'search', 'codeBlock', 'image', 'embed'].includes(node.type));
 }
 
+/** The image node's url, narrowed — only image nodes carry one. */
+function nodeMediaUrl(node: SearchNode): string | undefined {
+  return node.type === 'image' ? node.mediaUrl : undefined;
+}
+
+/** The embed node's fields, narrowed — only embed nodes carry them. */
+function nodeEmbedFields(node: SearchNode): { embedType?: string; embedId?: string; sourceUrl?: string } {
+  return node.type === 'embed' ? node : {};
+}
+
 function nodeHasMediaKind(node: SearchNode, op: Extract<QueryOp, 'HAS_MEDIA' | 'HAS_AUDIO' | 'HAS_VIDEO' | 'HAS_IMAGE'>): boolean {
   if (op === 'HAS_MEDIA') {
+    const embed = nodeEmbedFields(node);
     return node.type === 'image'
       || node.type === 'embed'
-      || Boolean(node.mediaUrl || node.embedType || node.embedId || node.sourceUrl);
+      || Boolean(nodeMediaUrl(node) || embed.embedType || embed.embedId || embed.sourceUrl);
   }
   if (op === 'HAS_IMAGE') {
     return node.type === 'image'
@@ -1487,9 +1498,10 @@ function nodeHasMediaKind(node: SearchNode, op: Extract<QueryOp, 'HAS_MEDIA' | '
 }
 
 function mediaKindFromNode(node: SearchNode): 'image' | 'audio' | 'video' | 'embed' | null {
-  const embedType = node.embedType?.trim().toLowerCase();
+  const embed = nodeEmbedFields(node);
+  const embedType = embed.embedType?.trim().toLowerCase();
   if (embedType === 'image' || embedType === 'audio' || embedType === 'video') return embedType;
-  const url = node.mediaUrl || node.sourceUrl || '';
+  const url = nodeMediaUrl(node) || embed.sourceUrl || '';
   const ext = url.split(/[?#]/)[0]?.split('.').pop()?.toLowerCase();
   if (!ext) return node.type === 'embed' ? 'embed' : null;
   if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'avif'].includes(ext)) return 'image';

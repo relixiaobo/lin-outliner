@@ -63,6 +63,9 @@ import {
   type FocusHint,
   type IconKind,
   type Node,
+  type CodeBlockNode,
+  type EmbedNode,
+  type ImageNode,
   type NodeId,
   type NodeType,
   type QueryLogic,
@@ -289,7 +292,7 @@ export class Core {
       const state = this.snapshot();
       ensureParentMutable(state, parentId);
       const id = freshId('image');
-      this.loro.createNodeWithId(id, parentId, index, 'image', (node) => {
+      this.loro.createNodeWithId<ImageNode>(id, parentId, index, 'image', (node) => {
         node.content = plainText('');
         if (source.assetId) node.assetId = source.assetId;
         else node.mediaUrl = source.mediaUrl;
@@ -320,18 +323,17 @@ export class Core {
       if (node.type !== undefined && node.type !== 'image') {
         throw CoreError.invalidOperation('only plain content nodes can become images');
       }
-      node.type = 'image';
-      if (source.assetId) {
-        node.assetId = source.assetId;
-        delete node.mediaUrl;
-      } else {
-        node.mediaUrl = source.mediaUrl;
-        delete node.assetId;
-      }
-      if (options.width != null) node.imageWidth = options.width;
-      else delete node.imageWidth;
-      if (options.height != null) node.imageHeight = options.height;
-      else delete node.imageHeight;
+      // Rebuild as an image node so the variant fields type-check; the source is
+      // exactly one of assetId/mediaUrl (the other stays cleared).
+      const image: ImageNode = {
+        ...node,
+        type: 'image',
+        assetId: source.assetId ? source.assetId : undefined,
+        mediaUrl: source.assetId ? undefined : source.mediaUrl,
+        imageWidth: options.width != null ? options.width : undefined,
+        imageHeight: options.height != null ? options.height : undefined,
+      };
+      return image;
     });
   }
 
@@ -476,8 +478,12 @@ export class Core {
       if (node.type !== undefined && node.type !== 'codeBlock') {
         throw CoreError.invalidOperation('only plain content nodes can become code blocks');
       }
-      node.type = 'codeBlock';
-      setOptional(node, 'codeLanguage', normalizeCodeLanguage(codeLanguage));
+      const block: CodeBlockNode = {
+        ...node,
+        type: 'codeBlock',
+        codeLanguage: normalizeCodeLanguage(codeLanguage) || undefined,
+      };
+      return block;
     });
   }
 
@@ -1557,14 +1563,17 @@ export class Core {
     }
   }
 
-  private patchNode(nodeId: string, patch: (node: Node) => void): CommandOutcome {
+  // A patch may mutate the node in place (return void) or return a replacement
+  // node — the latter is how a type-changing patch rebuilds a different variant
+  // instead of mutating the discriminant in place.
+  private patchNode(nodeId: string, patch: (node: Node) => Node | void): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureNodeEditable(state, nodeId);
       const node = clone(requiredNode(state, nodeId));
-      patch(node);
-      node.updatedAt = nowMs();
-      this.loro.writeNode(node);
+      const patched = patch(node) ?? node;
+      patched.updatedAt = nowMs();
+      this.loro.writeNode(patched);
       return focus(nodeId);
     });
   }
@@ -2167,7 +2176,7 @@ export class Core {
     this.loro.createNodeWithId(id, parentId, index, type, (node) => {
       node.content = clone(tree.content);
       if (type === 'codeBlock') {
-        setOptional(node, 'codeLanguage', normalizeCodeLanguage(tree.codeLanguage));
+        (node as CodeBlockNode).codeLanguage = normalizeCodeLanguage(tree.codeLanguage) || undefined;
       }
     });
     this.applyChildTagsDirect(parentId, id);
@@ -2345,12 +2354,13 @@ export class Core {
     for (const valueId of state.nodes[templateOriginId]?.children ?? []) {
       const value = state.nodes[valueId];
       if (!value) continue;
+      const source = value as Partial<CodeBlockNode>;
       this.loro.createNodeWithId(freshId('value'), fieldEntryId, undefined, value.type, (node) => {
         node.content = clone(value.content);
         node.description = value.description;
         node.fieldDefId = value.fieldDefId;
         node.targetId = value.targetId;
-        node.codeLanguage = value.codeLanguage;
+        (node as CodeBlockNode).codeLanguage = source.codeLanguage;
       });
     }
   }
@@ -2360,19 +2370,24 @@ export class Core {
     const parent = requiredNode(state, parentId);
     if (parent.children.some((childId) => state.nodes[childId]?.templateId === templateNodeId)) return;
     const template = requiredNode(state, templateNodeId);
+    const code = template as Partial<CodeBlockNode>;
+    const image = template as Partial<ImageNode>;
+    const embed = template as Partial<EmbedNode>;
     this.loro.createNodeWithId(freshId('template'), parentId, undefined, template.type, (node) => {
       node.templateId = templateNodeId;
       node.content = clone(template.content);
       node.description = template.description;
-      node.codeLanguage = template.codeLanguage;
-      node.mediaUrl = template.mediaUrl;
-      node.mediaAlt = template.mediaAlt;
-      node.imageWidth = template.imageWidth;
-      node.imageHeight = template.imageHeight;
-      node.embedType = template.embedType;
-      node.embedId = template.embedId;
-      node.sourceUrl = template.sourceUrl;
       node.aiSummary = template.aiSummary;
+      (node as CodeBlockNode).codeLanguage = code.codeLanguage;
+      const target = node as ImageNode;
+      target.mediaUrl = image.mediaUrl;
+      target.mediaAlt = image.mediaAlt;
+      target.imageWidth = image.imageWidth;
+      target.imageHeight = image.imageHeight;
+      const targetEmbed = node as EmbedNode;
+      targetEmbed.embedType = embed.embedType;
+      targetEmbed.embedId = embed.embedId;
+      targetEmbed.sourceUrl = embed.sourceUrl;
     });
   }
 

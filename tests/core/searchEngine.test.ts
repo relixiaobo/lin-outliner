@@ -7,7 +7,7 @@ import {
   SEARCH_UNSUPPORTED_QUERY_OPS,
   searchNodeToQueryExpr,
 } from '../../src/core/searchEngine';
-import { QUERY_OPS, type QueryOp } from '../../src/core/types';
+import { QUERY_OPS, type EmbedNode, type ImageNode, type QueryOp } from '../../src/core/types';
 
 function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T) {
   expect(outcome.focus).toBeDefined();
@@ -748,12 +748,17 @@ describe('core search engine', () => {
     const conditionId = mustFocus(core.createNode(searchId, null, 'Media'));
     const state = core.state();
 
+    // Media fields live only on their owning variants now: mediaUrl on image
+    // nodes, embedType/sourceUrl on embed nodes. Audio/video are embeds whose
+    // kind is resolved from the embed type or the source URL extension.
     state.nodes[image]!.type = 'image';
-    state.nodes[image]!.mediaUrl = 'file:///tmp/screenshot.png';
-    state.nodes[audio]!.mediaUrl = 'file:///tmp/recording.mp3';
-    state.nodes[video]!.embedType = 'video';
+    (state.nodes[image] as ImageNode).mediaUrl = 'file:///tmp/screenshot.png';
+    state.nodes[audio]!.type = 'embed';
+    (state.nodes[audio] as EmbedNode).sourceUrl = 'file:///tmp/recording.mp3';
+    state.nodes[video]!.type = 'embed';
+    (state.nodes[video] as EmbedNode).embedType = 'video';
     state.nodes[embed]!.type = 'embed';
-    state.nodes[embed]!.sourceUrl = 'https://example.com/demo';
+    (state.nodes[embed] as EmbedNode).sourceUrl = 'https://example.com/demo';
     state.nodes[searchId]!.type = 'search';
     state.nodes[conditionId]!.type = 'queryCondition';
     state.nodes[conditionId]!.queryOp = 'HAS_MEDIA';

@@ -392,15 +392,6 @@ export interface NodeBase {
   queryOp?: QueryOp;
   queryTagDefId?: NodeId;
   queryFieldDefId?: NodeId;
-  codeLanguage?: string;
-  assetId?: string;
-  mediaUrl?: string;
-  mediaAlt?: string;
-  imageWidth?: number;
-  imageHeight?: number;
-  embedType?: string;
-  embedId?: string;
-  sourceUrl?: string;
   aiSummary?: string;
   trashedFromParentId?: NodeId;
   trashedFromIndex?: number;
@@ -410,9 +401,25 @@ export interface NodeBase {
 export interface ContentNode extends NodeBase { type?: undefined; }
 export interface FieldEntryNode extends NodeBase { type: 'fieldEntry'; }
 export interface ReferenceNode extends NodeBase { type: 'reference'; }
-export interface CodeBlockNode extends NodeBase { type: 'codeBlock'; }
-export interface ImageNode extends NodeBase { type: 'image'; }
-export interface EmbedNode extends NodeBase { type: 'embed'; }
+export interface CodeBlockNode extends NodeBase {
+  type: 'codeBlock';
+  /** CodeMirror language bundle id; '' means plain text. */
+  codeLanguage?: string;
+}
+export interface ImageNode extends NodeBase {
+  type: 'image';
+  assetId?: string;
+  mediaUrl?: string;
+  mediaAlt?: string;
+  imageWidth?: number;
+  imageHeight?: number;
+}
+export interface EmbedNode extends NodeBase {
+  type: 'embed';
+  embedType?: string;
+  embedId?: string;
+  sourceUrl?: string;
+}
 export interface TagDefNode extends NodeBase { type: 'tagDef'; }
 export interface FieldDefNode extends NodeBase { type: 'fieldDef'; }
 export interface DefConfigNode extends NodeBase { type: 'defConfig'; }
@@ -451,6 +458,15 @@ export interface DocumentState {
 
 /** Omit that distributes over a union, preserving each member as its own type. */
 type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never;
+
+/** The union of keys across every union member (not the common-key intersection `keyof` gives). */
+type KeysOfUnion<T> = T extends unknown ? keyof T : never;
+
+/**
+ * Every field key any node variant can carry. Persistence enumerates this to
+ * read/write the flat scalar map generically, independent of a node's variant.
+ */
+export type NodeFieldKey = KeysOfUnion<Node>;
 
 // The projection mirrors the `Node` union variant-by-variant (minus the trash
 // bookkeeping fields), so consumers narrow a projected node by `type` exactly

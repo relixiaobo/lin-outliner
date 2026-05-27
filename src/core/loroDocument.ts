@@ -19,6 +19,7 @@ import {
   plainText,
   type DocumentState,
   type Node,
+  type NodeFieldKey,
   type NodeType,
   type RichText,
   type RichTextPatch,
@@ -43,7 +44,7 @@ const UNDO_EXCLUDED_ORIGIN_PREFIXES = ['__seed__', 'system:'];
 const AGENT_UNDO_EXCLUDED_ORIGIN_PREFIXES = ['__seed__', 'system:', 'user:'];
 const USER_UNDO_EXCLUDED_ORIGIN_PREFIXES = ['__seed__', 'system:', 'agent:'];
 const LORO_DELETED_ROOT_ID = '2147483647@18446744073709551615' as TreeID;
-const NODE_SCALAR_KEYS: Array<keyof Node> = [
+const NODE_SCALAR_KEYS: NodeFieldKey[] = [
   'type',
   'description',
   'createdAt',
@@ -258,12 +259,12 @@ export class LoroOutlinerDocument {
     this.touchNode(nodeId);
   }
 
-  createNodeWithId(
+  createNodeWithId<T extends Node = Node>(
     id: string,
     parentId: string | undefined,
     index: number | null | undefined,
     type: NodeType | undefined,
-    configure: (node: Node) => void,
+    configure: (node: T) => void,
   ) {
     const state = this.materializeState();
     if (parentId && !state.nodes[parentId]) throw CoreError.parentNotFound(parentId);
@@ -273,7 +274,9 @@ export class LoroOutlinerDocument {
       ? clampInsertIndex(index, parentTreeNode.children()?.length ?? 0)
       : clampInsertIndex(index, this.tree.roots().length);
     const treeNode = this.tree.createNode(parentTreeId, targetIndex);
-    const node = createNodeRecord(id, type, parentId, nowMs());
+    // The caller's `type` argument fixes the variant; `T` lets it set
+    // variant-specific fields on the configured node without a local cast.
+    const node = createNodeRecord(id, type, parentId, nowMs()) as T;
     configure(node);
     writeNodeData(treeNode.data, normalizeNode(node));
     this.nodeIdToTreeId.set(id, treeNode.id);
