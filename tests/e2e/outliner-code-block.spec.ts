@@ -110,6 +110,24 @@ test.describe('code block editor', () => {
     await expect.poll(async () => (await nodeById(page, codeRowId!))?.content.text).toBe('print(1)');
   });
 
+  test('typing ``` in an empty row converts it into a code block', async ({ page }) => {
+    await placeCursorAtEnd(page, ids.gamma);
+    await page.keyboard.press('Enter');
+
+    const codeRowId = await lastTodayChildId(page);
+    expect(codeRowId).toBeTruthy();
+    await expect(rowEditor(page, codeRowId!)).toBeFocused();
+
+    await page.keyboard.type('```');
+    await expect.poll(async () => (await nodeById(page, codeRowId!))?.type ?? null).toBe('codeBlock');
+    // The fence text is dropped; the new code block starts empty.
+    await expect.poll(async () => (await nodeById(page, codeRowId!))?.content.text).toBe('');
+
+    const textarea = row(page, codeRowId!).locator('.code-block-textarea');
+    await expect(textarea).toBeVisible();
+    await expect(textarea).toBeFocused();
+  });
+
   test('long lines scroll horizontally instead of wrapping', async ({ page }) => {
     const rowId = await createCodeBlockViaTrailing(page);
     const textarea = row(page, rowId).locator('.code-block-textarea');

@@ -638,6 +638,21 @@ export function OutlinerItem(props: OutlinerItemProps) {
     return null;
   };
 
+  // Markdown-style shortcut: a bare ``` / ~~~ owning a plain row converts it into
+  // an empty code block (the fence text is dropped), mirroring the `/code` command
+  // and how a pasted fence becomes a `codeBlock` node. Focus lands in the new
+  // code editor via a focus request the CodeBlockRow consumes on mount.
+  const convertRowToCodeBlock = () => {
+    void (async () => {
+      if (props.draft && !realNode) materializeDraft();
+      await pendingTextPatchRef.current;
+      replaceLocalDraftContent(EMPTY_RICH_TEXT);
+      await props.run(() => api.replaceNodeText(targetEditId, EMPTY_RICH_TEXT));
+      await props.run(() => api.setCodeBlock(targetEditId));
+      requestRowFocus(props.nodeId, cursorEnd());
+    })();
+  };
+
   // From the empty trailing draft, step focus up to the visually-previous row
   // without creating or deleting anything (the draft has no real node).
   const focusPreviousFromDraft = (placement: CursorPlacement = cursorEnd()) => {
@@ -1167,6 +1182,11 @@ export function OutlinerItem(props: OutlinerItemProps) {
                 createPlaceholderInlineFieldAfterNode(props.nodeId, 'plain')
               )));
             }}
+            onCodeFenceFire={
+              node.type === undefined && !pendingReferenceConversion && !displayed.locked
+                ? convertRowToCodeBlock
+                : undefined
+            }
             onTriggerChange={(nextTrigger) => {
               if (nextTrigger) {
                 props.setTrigger({ nodeId: props.nodeId, ...nextTrigger });

@@ -55,12 +55,19 @@ export function resolveEditorTriggerText(params: {
 
 export type ContentRowUpdateAction =
   | { type: 'none' }
-  | { type: 'create_field' };
+  | { type: 'create_field' }
+  | { type: 'create_code_block' };
+
+// A bare ``` or ~~~ that owns the whole row (no other text, no inline refs) is a
+// markdown-style shortcut to turn the row into a code block, mirroring how a
+// pasted fence becomes a `codeBlock` node.
+const CODE_FENCE_RE = /^(```|~~~)$/u;
 
 export function resolveContentRowUpdateAction(params: {
   text: string;
   inlineRefCount: number;
   enableFieldTrigger: boolean;
+  enableCodeFence?: boolean;
 }): ContentRowUpdateAction {
   if (
     params.enableFieldTrigger
@@ -68,6 +75,13 @@ export function resolveContentRowUpdateAction(params: {
     && params.text === '>'
   ) {
     return { type: 'create_field' };
+  }
+  if (
+    params.enableCodeFence
+    && params.inlineRefCount === 0
+    && CODE_FENCE_RE.test(params.text)
+  ) {
+    return { type: 'create_code_block' };
   }
   return { type: 'none' };
 }
