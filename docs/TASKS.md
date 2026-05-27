@@ -62,6 +62,11 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **settings-provider-detail-polish** (P2, cc) — provider detail feedback: Enabled
+  becomes the shared switch toggle, API key moves above Base URL (Optional),
+  "Remove key" shows only when a key is saved (danger link), and a read-only
+  catalog model list (name/id/reasoning/context + search for large catalogs) is
+  added. Per-model enable/fetch deferred (needs backend) (PR #35).
 - **settings-provider-list-polish** (P2, cc) — follow-up to the three-pane
   Providers settings for the real ~32-provider catalog: provider search box,
   pinned "Custom provider" entry, acronym-aware display names (Azure OpenAI /

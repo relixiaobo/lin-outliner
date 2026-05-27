@@ -71,6 +71,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Provider detail: toggle, key-first order, read-only model list** — the
+  Enabled control is now the shared switch toggle (was a checkbox); the API key
+  is the first field with Base URL ("Optional") below it (was reversed);
+  "Remove key" appears only when a key is actually saved, as a subtle danger link
+  in the key's meta row (was a permanently-disabled button); and each provider
+  shows a read-only list of its catalog models (name, id, reasoning, context)
+  with a count and a search box for large catalogs (OpenRouter exposes 266). No
+  per-model enable/disable or fetch — that needs backend work.
+  ([#35](https://github.com/relixiaobo/lin-outliner/pull/35))
 - **Searchable provider list with pinned Custom + correct names** — follow-up to
   the three-pane Providers settings for the real ~32-provider catalog: a
   "Search providers…" box filters the list, the "Custom provider" entry is pinned
