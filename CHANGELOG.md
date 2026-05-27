@@ -71,6 +71,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Correct auth class for OAuth / managed-credential providers** — pi-ai
+  authenticates providers three ways, but settings modeled every one as a
+  pasteable API key. OAuth providers (GitHub Copilot, OpenAI Codex) and
+  managed-credential providers (Amazon Bedrock via AWS, Google Vertex via gcloud
+  ADC) now show a credential note explaining the real auth method (+ docs link)
+  instead of a misleading key field; the Models disclosure stays. API-key
+  providers are unchanged. Full OAuth sign-in is specced in
+  `docs/plans/agent-oauth-providers.md`.
+  ([#37](https://github.com/relixiaobo/lin-outliner/pull/37))
 - **Declutter provider detail (progressive disclosure)** — the provider detail
   had buried its primary task (paste an API key) under repeated status and two
   long lists. The API key is now the hero; Base URL moves into a collapsed

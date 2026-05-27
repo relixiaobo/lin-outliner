@@ -28,6 +28,11 @@ workflow.
 
 Ordered by priority; lower items may depend on higher ones.
 
+- **agent-oauth-providers** (P2) — OAuth sign-in (Anthropic Pro/Max, GitHub
+  Copilot, OpenAI Codex) + managed credentials (Bedrock AWS, Vertex ADC) for the
+  provider settings: credential storage, Electron-main login over IPC, view-model
+  `authKind`, sign-in / connected / sign-out UI. Lightweight UI fix shipped in
+  #37; see `docs/plans/agent-oauth-providers.md`.
 - **file-attachments** (P1) — `attachment` node type for arbitrary local files
   (plugs into `BlockNodeRow` via `renderBlockBody` + `isBlockNodeType`).
 - **media-types** (P2) — audio/video players + PDF thumbnail on the
@@ -62,6 +67,10 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **settings-provider-auth-classes** (P2, cc) — OAuth (GitHub Copilot, OpenAI
+  Codex) and managed-credential (Bedrock AWS, Vertex ADC) providers show a
+  credential note + docs link instead of a misleading "Paste key" field. Full
+  OAuth sign-in specced in `docs/plans/agent-oauth-providers.md` (PR #37).
 - **settings-provider-declutter** (P2, cc) — design pass: API key is the hero;
   Base URL → collapsed "Advanced" disclosure, read-only models → collapsed
   "Models (N)" disclosure; dropped the dialog subtitle, duplicate "Providers"
