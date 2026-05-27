@@ -30,7 +30,10 @@ export function FieldOptionPicker({
     : valueNode?.content.text;
   const selectedMarker = valueNode?.type === 'reference' ? 'reference' : 'bullet';
   const fieldConfig = projectFieldConfig(byId, field);
-  const canCreate = fieldConfig.fieldType === 'options' && fieldConfig.autocollectOptions !== false;
+  // Options fields always accept free-typed values. `autocollectOptions` only
+  // governs whether the typed value joins the reusable option pool (handled by
+  // the parent's onCreateOption) — not whether typing is allowed at all.
+  const canCreate = fieldConfig.fieldType === 'options';
   const pickerOptions: NodeValuePickerOption[] = options.map((option) => ({
     id: option.id,
     label: option.label,

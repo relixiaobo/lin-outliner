@@ -404,6 +404,8 @@ export class DocumentService {
         return this.core.createCollectedFieldOption(String(args.fieldEntryId), String(args.name));
       case 'select_field_option':
         return this.core.selectFieldOption(String(args.fieldEntryId), String(args.optionNodeId));
+      case 'set_field_free_text_value':
+        return this.core.setFieldFreeTextValue(String(args.fieldEntryId), String(args.text));
       case 'clear_field_value':
         return this.core.clearFieldValue(String(args.fieldEntryId));
       case 'add_reference':

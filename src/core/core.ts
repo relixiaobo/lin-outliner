@@ -1250,6 +1250,32 @@ export class Core {
     });
   }
 
+  /**
+   * Set a free-text value on an options field without collecting it as a
+   * reusable option (decoupled from autocollect). Single-cardinality fields
+   * replace their current value; an empty text clears it. The value is stored
+   * as a plain content child, never a reference into the option pool.
+   */
+  setFieldFreeTextValue(fieldEntryId: string, text: string): CommandOutcome {
+    const normalized = text.trim();
+    return this.mutate(() => {
+      const state = this.snapshot();
+      const fieldEntry = requiredNode(state, fieldEntryId);
+      if (fieldEntry.type !== 'fieldEntry') throw CoreError.invalidOperation('field values can only be set on field entries');
+      const fieldDefId = fieldEntry.fieldDefId;
+      if (!fieldDefId || fieldCardinalityOf(state, fieldDefId) !== 'list') {
+        if (fieldDefId) this.clearFieldEntryValuesDirect(fieldEntryId, fieldDefId);
+        else for (const childId of [...fieldEntry.children]) this.removeSubtreeDirect(childId);
+      }
+      if (!normalized) return focus(fieldEntryId);
+      const valueId = freshId('value');
+      this.loro.createNodeWithId(valueId, fieldEntryId, undefined, undefined, (node) => {
+        node.content = plainText(normalized);
+      });
+      return focus(fieldEntryId);
+    });
+  }
+
   clearFieldValue(fieldEntryId: string): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();

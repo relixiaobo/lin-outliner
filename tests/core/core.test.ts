@@ -512,6 +512,33 @@ describe('Core', () => {
     expect(optionChildIds(core, fieldDefId)).toEqual([]);
   });
 
+  test('free-text value on an options field stays local without collecting an option', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const fieldEntryId = mustFocus(core.createInlineField(today, null, 'Status', 'options'));
+    const fieldDefId = core.state().nodes[fieldEntryId].fieldDefId!;
+
+    // Auto-collect defaults off: a typed value is stored as a plain text value on
+    // the entry and is NOT promoted into the reusable option pool.
+    core.setFieldFreeTextValue(fieldEntryId, 'One-off');
+
+    const valueId = core.state().nodes[fieldEntryId].children[0];
+    const value = core.state().nodes[valueId];
+    expect(value.type).toBeUndefined();
+    expect(value.content.text).toBe('One-off');
+    expect(optionChildIds(core, fieldDefId)).toEqual([]);
+
+    // Single-cardinality replaces the prior value; whitespace-only text clears it.
+    core.setFieldFreeTextValue(fieldEntryId, 'Revised');
+    const children = core.state().nodes[fieldEntryId].children;
+    expect(children.length).toBe(1);
+    expect(core.state().nodes[children[0]].content.text).toBe('Revised');
+
+    core.setFieldFreeTextValue(fieldEntryId, '   ');
+    expect(core.state().nodes[fieldEntryId].children).toEqual([]);
+    expect(optionChildIds(core, fieldDefId)).toEqual([]);
+  });
+
   test('clearing an auto-collected source preserves references by promoting the option', () => {
     const core = Core.new();
     const today = core.projection().todayId;

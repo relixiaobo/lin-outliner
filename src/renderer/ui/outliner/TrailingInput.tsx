@@ -228,10 +228,11 @@ export function TrailingInput(props: TrailingInputProps) {
   const isOptionsField = isOptionsFieldType(optionFieldType);
   const allOptions = resolveFieldOptions(props.optionField, props.index.byId);
   const filteredOptions = filterFieldOptions(allOptions, optionsQuery);
+  // Options fields always accept free-typed values; auto-collect only governs
+  // whether the value joins the reusable option pool (decided in onCreateOption).
   const canCreateOption = isOptionsField
     && optionFieldType === 'options'
     && Boolean(optionsQuery.trim())
-    && optionFieldConfig?.autocollectOptions !== false
     && !allOptions.some((option) => option.label.toLowerCase() === optionsQuery.trim().toLowerCase());
   const optionCount = filteredOptions.length + (canCreateOption ? 1 : 0);
   const trailingText = buffer.text;

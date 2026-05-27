@@ -185,6 +185,8 @@ export const api = {
     command<CommandOutcome>('create_collected_field_option', { fieldEntryId, name }),
   selectFieldOption: (fieldEntryId: string, optionNodeId: string) =>
     command<CommandOutcome>('select_field_option', { fieldEntryId, optionNodeId }),
+  setFieldFreeTextValue: (fieldEntryId: string, text: string) =>
+    command<CommandOutcome>('set_field_free_text_value', { fieldEntryId, text }),
   clearFieldValue: (fieldEntryId: string) =>
     command<CommandOutcome>('clear_field_value', { fieldEntryId }),
   addReference: (parentId: string, targetId: string, index: number | null = null) =>

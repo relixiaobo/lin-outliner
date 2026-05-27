@@ -59,6 +59,17 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
   const optionFieldType = optionFieldConfig?.fieldType;
   const singleValueField = optionFieldConfig?.cardinality !== 'list';
   const valueInteraction = fieldTypeInteraction(optionFieldType);
+  // Typed values into an options field are always accepted. Auto-collect only
+  // decides whether the value also joins the reusable option pool: when on, the
+  // value becomes a collected option + reference; when off, it is stored as a
+  // plain free-text value on this entry alone.
+  const onCreateFieldValue = (name: string) => (
+    props.run(() => (
+      optionFieldConfig?.autocollectOptions === true
+        ? api.createCollectedFieldOption(props.entryId, name)
+        : api.setFieldFreeTextValue(props.entryId, name)
+    ))
+  );
   const canUseOptionPicker = Boolean(
     props.optionField
     && singleValueField
@@ -88,9 +99,7 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
           onSelectOption={(optionId) => (
             props.run(() => api.selectFieldOption(props.entryId, optionId))
           )}
-          onCreateOption={(name) => (
-            props.run(() => api.createCollectedFieldOption(props.entryId, name))
-          )}
+          onCreateOption={onCreateFieldValue}
           onClearValue={() => props.run(() => api.clearFieldValue(props.entryId))}
         />
       ) : canUseTypedControl && props.optionField ? (
@@ -235,9 +244,7 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
           onSelectOption={(optionId) => (
             props.run(() => api.selectFieldOption(props.entryId, optionId))
           )}
-          onCreateOption={(name) => (
-            props.run(() => api.createCollectedFieldOption(props.entryId, name))
-          )}
+          onCreateOption={onCreateFieldValue}
         />
       )}
     </div>
