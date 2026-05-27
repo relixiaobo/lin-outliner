@@ -71,6 +71,14 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Humanized day-note titles, no date header icon** — a daily-note panel titled
+  with its raw ISO date (`2026-05-13`) above a calendar icon now shows a humanized
+  read-only label instead: the weekday/month/day (`Wed, May 27`), prefixed with
+  `Today` / `Tomorrow` / `Yesterday` for the adjacent days (`Today, Wed, May 27`),
+  matching nodex. The docked breadcrumb's current-page label uses the same string,
+  and the today panel's calendar header icon is removed so date nodes carry no
+  header icon. Day nodes are locked, so this is display-only — the `YYYY-MM-DD`
+  content is untouched. ([#29](https://github.com/relixiaobo/lin-outliner/pull/29))
 - **Tool output shows the model-visible payload** — the agent tool-call Output
   region now renders exactly the slimmed `content` the model received (a
   syntax-highlighted JSON envelope) instead of reconstructing the fuller

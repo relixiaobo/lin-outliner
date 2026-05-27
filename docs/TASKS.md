@@ -62,6 +62,11 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **day-node title humanization** (P3, cc) — daily-note panel titles show a
+  humanized read-only label (`Wed, May 27`, prefixed `Today` / `Tomorrow` /
+  `Yesterday` for adjacent days) instead of the raw ISO date, and the date
+  header calendar icon is removed. Display-only over the locked `YYYY-MM-DD`
+  node; the docked breadcrumb reuses the same label. nodex-style (PR #29).
 - **code-fence row shortcut** (P3, cc) — typing a bare `` ``` ``/`~~~` that owns
   a plain row converts it to an empty `codeBlock` (drops the fence text), fired
   the instant the row text equals the fence via a guarded `create_code_block`
