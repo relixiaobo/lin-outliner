@@ -71,6 +71,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Three-pane Providers settings with metadata** — the Settings dialog's
+  Providers category becomes a three-pane layout: category nav, an always-visible
+  scrollable provider list (a monogram avatar + name + a status dot), and the
+  selected provider's detail. The textual status moves to a badge in the detail
+  header next to the Enabled toggle and a data-driven description
+  (`Includes <top models>`). The API key field gains a show/hide reveal toggle
+  and a "Get your <provider> API key" docs link (for providers we can link), and
+  Base URL is now offered as an optional override for every provider — placeheld
+  with the provider's default endpoint — not just custom ones (Provider ID stays
+  custom-only). Backed by a new optional `AgentProviderOption.defaultBaseUrl`
+  sourced from the catalog. ([#33](https://github.com/relixiaobo/lin-outliner/pull/33))
 - **Settings window with provider / agent categories** — the cramped "Agent
   settings" dialog (which stacked provider connection, model + reasoning, and
   global behavior in one scroll, with a duplicate "Provider ID" field, a doubled

@@ -62,6 +62,13 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **settings-providers-three-pane** (P2, cc) — Providers settings reworked toward
+  the shared reference (Cherry Studio): three panes (nav | provider list | detail),
+  monogram avatars + status dots, a status badge + data-driven description in the
+  detail header, an API-key reveal toggle, a "Get your <provider> API key" docs
+  link, and an optional Base URL for every provider (default-endpoint placeholder)
+  with Provider ID custom-only. New optional `AgentProviderOption.defaultBaseUrl`.
+  Provider search / model fetch / autosave left out of scope (PR #33).
 - **settings-provider-choice-cleanup** (P3, cc) — self-review follow-up to #31:
   drop the unread `modelId` / `custom` fields from the Settings dialog's
   `ProviderChoice` (nothing consumed them). Behavior-preserving (PR #32).
