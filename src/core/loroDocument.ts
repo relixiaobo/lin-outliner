@@ -50,7 +50,6 @@ const NODE_SCALAR_KEYS: Array<keyof Node> = [
   'updatedAt',
   'completedAt',
   'locked',
-  'color',
   'icon',
   'iconKind',
   'bannerAssetId',

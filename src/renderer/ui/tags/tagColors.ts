@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 import type { NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
+import { projectTagConfig, type ConfigNodeMap } from '../../../core/configProjection';
 
 export interface TagColor {
   text: string;
@@ -55,24 +56,26 @@ function hashTagColor(tagId: string): TagColor {
   return TAG_COLORS[(hash >>> 0) % TAG_COLORS.length];
 }
 
-export function resolveTagColor(tag: NodeProjection | undefined): TagColor {
+export function resolveTagColor(tag: NodeProjection | undefined, byId: ConfigNodeMap): TagColor {
   if (!tag) return TAG_COLOR_GRAY;
   if (JOURNAL_TAG_IDS.has(tag.id)) return TAG_COLOR_GRAY;
-  if (tag.color) {
-    if (tag.color.startsWith('#')) {
+  // config-as-nodes: the tag's color token lives in its defConfig subtree.
+  const color = projectTagConfig(byId, tag).color;
+  if (color) {
+    if (color.startsWith('#')) {
       return {
-        text: tag.color,
-        background: `color-mix(in srgb, ${tag.color} 10%, white)`,
+        text: color,
+        background: `color-mix(in srgb, ${color} 10%, white)`,
       };
     }
-    const mapped = TAG_COLOR_MAP[tag.color];
+    const mapped = TAG_COLOR_MAP[color];
     if (mapped) return mapped;
   }
   return hashTagColor(tag.id);
 }
 
-export function tagBulletColors(tags: readonly NodeProjection[]): string[] {
-  return tags.map((tag) => resolveTagColor(tag).text);
+export function tagBulletColors(tags: readonly NodeProjection[], byId: ConfigNodeMap): string[] {
+  return tags.map((tag) => resolveTagColor(tag, byId).text);
 }
 
 export function conicColorStyle(colors: readonly string[]): CSSProperties | undefined {
@@ -92,5 +95,5 @@ export function inlineReferenceTextColor(
   const target = index.byId.get(targetNodeId);
   const firstTagId = target?.tags[0];
   if (!firstTagId) return undefined;
-  return resolveTagColor(index.byId.get(firstTagId)).text;
+  return resolveTagColor(index.byId.get(firstTagId), index.byId).text;
 }

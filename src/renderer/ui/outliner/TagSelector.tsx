@@ -29,7 +29,7 @@ export function TagSelector(props: TagSelectorProps) {
   }).map((item) => {
     if (item.type === 'existing') {
       const tag = item.tag;
-      const color = resolveTagColor(tag).text;
+      const color = resolveTagColor(tag, props.index.byId).text;
       return {
         key: `tag:${tag.id}`,
         label: tagSelectorItemLabel(item),

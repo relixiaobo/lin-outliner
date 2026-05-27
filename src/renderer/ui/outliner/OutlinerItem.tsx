@@ -220,8 +220,8 @@ export function OutlinerItem(props: OutlinerItemProps) {
   const appliedTags = displayed.tags
     .map((tagId) => props.index.byId.get(tagId))
     .filter((tag): tag is NodeProjection => Boolean(tag));
-  const appliedTagColors = tagBulletColors(appliedTags);
-  const tagDefColor = leadingVariant === 'tag' ? resolveTagColor(displayed).text : undefined;
+  const appliedTagColors = tagBulletColors(appliedTags, props.index.byId);
+  const tagDefColor = leadingVariant === 'tag' ? resolveTagColor(displayed, props.index.byId).text : undefined;
   const showDoneCheckbox = displayed.showCheckbox
     || displayed.doneStateEnabled
     || Boolean(displayed.completedAt);

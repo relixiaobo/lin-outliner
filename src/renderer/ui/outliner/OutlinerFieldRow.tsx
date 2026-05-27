@@ -83,7 +83,7 @@ function resolveFieldOwnerColor(
           ? projectFieldConfig(byId, lookup).sourceSupertag ?? lookup.parentId
           : undefined;
     const owner = ownerId ? byId.get(ownerId) : undefined;
-    if (owner?.type === 'tagDef') return resolveTagColor(owner).text;
+    if (owner?.type === 'tagDef') return resolveTagColor(owner, byId).text;
   }
 
   return undefined;

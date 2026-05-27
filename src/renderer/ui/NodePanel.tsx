@@ -238,7 +238,7 @@ export function NodePanel(props: NodePanelProps) {
     if (props.rootId === projection.searchesId || rootNode.type === 'search') return <SearchIcon size={PANEL_HEADER_ICON_SIZE} />;
     if (rootNode.type === 'tagDef') {
       return (
-        <span className="panel-header-tag-icon" style={{ background: resolveTagColor(rootNode).text }}>
+        <span className="panel-header-tag-icon" style={{ background: resolveTagColor(rootNode, props.index.byId).text }}>
           <HashIcon size={ICON_SIZE.rowGlyph} />
         </span>
       );

@@ -343,7 +343,6 @@ export interface Node {
   updatedAt: number;
   completedAt?: number;
   locked: boolean;
-  color?: string;
   icon?: string;
   iconKind?: IconKind;
   bannerAssetId?: string;

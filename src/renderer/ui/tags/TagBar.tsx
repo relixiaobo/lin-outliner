@@ -29,7 +29,7 @@ interface TagBadgeProps {
 }
 
 function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
-  const color = resolveTagColor(tag);
+  const color = resolveTagColor(tag, index.byId);
   const label = textOf(tag);
   const trashed = isNodeInTrash(index, tag.id);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);

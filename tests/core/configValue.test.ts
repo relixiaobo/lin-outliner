@@ -96,8 +96,9 @@ describe('config-as-nodes value mechanism (Stage 4)', () => {
     const core = Core.new();
     const tagId = mustFocus(core.createTag('event'));
 
-    // invalid color text
-    expect(() => core.setConfigValue(tagId, { kind: 'scalar', configKey: 'color', text: 'red' })).toThrow();
+    // color is a free token: a named palette key is accepted (no hex constraint)
+    core.setConfigValue(tagId, { kind: 'scalar', configKey: 'color', text: 'red' });
+    expect(buildConfigIndex(core.state()).tag(tagId)?.color).toBe('red');
     // wrong kind for the key (color is scalar, not ref)
     expect(() => core.setConfigValue(tagId, { kind: 'ref', configKey: 'color', targetId: tagId })).toThrow();
     // a field-only key cannot be set on a tag definition
@@ -105,6 +106,8 @@ describe('config-as-nodes value mechanism (Stage 4)', () => {
 
     const fieldDefId = fieldDefOf(core, mustFocus(core.createFieldDef(tagId, 'f', 'plain')));
     expect(() => core.setConfigValue(fieldDefId, { kind: 'enum', configKey: 'fieldType', value: 'bogus' })).toThrow();
+    // a non-numeric scalar is still rejected by its codec
+    expect(() => core.setConfigValue(fieldDefId, { kind: 'scalar', configKey: 'minValue', text: 'abc' })).toThrow();
   });
 
   test('config-value references carry config/enum refRole and stay out of backlinks', () => {

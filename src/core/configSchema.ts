@@ -63,8 +63,6 @@ export interface ScalarCodec<T> {
   validate(value: T): string | null;
 }
 
-const HEX_COLOR = /^#[0-9a-f]{6}$/i;
-
 export const numberCodec: ScalarCodec<number> = {
   decode: (text) => {
     const trimmed = text.trim();
@@ -87,13 +85,17 @@ export const boolCodec: ScalarCodec<boolean> = {
   validate: () => null,
 };
 
+// Color is a free token: either a named palette key (`green`, `blue`, …) as
+// produced by auto-assignment, or a custom `#RRGGBB` hex from the swatch picker.
+// Resolution to concrete RGB happens at render time (renderer `resolveTagColor`),
+// so storage keeps the raw token and only normalizes whitespace.
 export const colorCodec: ScalarCodec<string> = {
   decode: (text) => {
     const t = text.trim();
-    return HEX_COLOR.test(t) ? t : undefined;
+    return t === '' ? undefined : t;
   },
   encode: (value) => value,
-  validate: (value) => (HEX_COLOR.test(value) ? null : 'color must be a #RRGGBB hex value'),
+  validate: () => null,
 };
 
 // ─── Enum domains (system option subtrees, stable derived IDs) ───

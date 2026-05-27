@@ -978,12 +978,14 @@ export class Core {
       }
       if (patch.childSupertag) ensureTagDefinition(state, patch.childSupertag);
       const node = clone(requiredNode(state, tagId));
-      if ('color' in patch) setOptional(node, 'color', normalizeOptionalText(patch.color));
       if (patch.showCheckbox !== undefined) node.showCheckbox = patch.showCheckbox;
       if (patch.doneStateEnabled !== undefined) node.doneStateEnabled = patch.doneStateEnabled;
       node.updatedAt = nowMs();
       this.loro.writeNode(node);
-      // config-as-nodes: extends/childSupertag are stored in the defConfig subtree.
+      // config-as-nodes: color/extends/childSupertag are stored in the defConfig subtree.
+      if ('color' in patch) {
+        this.setConfigValueDirect(tagId, { kind: 'scalar', configKey: 'color', text: normalizeOptionalText(patch.color) ?? null });
+      }
       if ('extends' in patch) {
         this.setConfigValueDirect(tagId, { kind: 'ref', configKey: 'extends', targetId: normalizeOptionalText(patch.extends) ?? null });
       }
@@ -2105,8 +2107,9 @@ export class Core {
     const color = nextTagColor(this.snapshot());
     this.loro.createNodeWithId(id, SCHEMA_ID, undefined, 'tagDef', (node) => {
       node.content = plainText(name);
-      node.color = color;
     });
+    // config-as-nodes: the round-robin auto color lives in the defConfig subtree.
+    this.setConfigValueDirect(id, { kind: 'scalar', configKey: 'color', text: color });
     return id;
   }
 

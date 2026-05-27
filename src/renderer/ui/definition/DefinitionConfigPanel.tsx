@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { buildConfigIndexFromMap } from '../../../core/configProjection';
+import { buildConfigIndexFromMap, type ConfigNodeMap } from '../../../core/configProjection';
 import type { ProjectedFieldConfig, ProjectedTagConfig } from '../../../core/configSchema';
 import { api } from '../../api/client';
 import type {
@@ -50,7 +50,8 @@ interface DefinitionConfigPanelProps {
 export function DefinitionConfigPanel({ node, index, run }: DefinitionConfigPanelProps) {
   // config-as-nodes: definition config is read from the defConfig subtree via
   // the projected accessor, not flat Node fields.
-  const configIndex = useMemo(() => buildConfigIndexFromMap(index.byId), [index.byId]);
+  const byId = index.byId;
+  const configIndex = useMemo(() => buildConfigIndexFromMap(byId), [byId]);
   const tagConfig = configIndex.tag(node.id);
   const fieldConfig = configIndex.field(node.id);
   const items = definitionConfigItems(node, {
@@ -61,12 +62,12 @@ export function DefinitionConfigPanel({ node, index, run }: DefinitionConfigPane
     () => index.projection.nodes
       .filter((candidate) => candidate.type === 'tagDef' && candidate.id !== node.id)
       .map((candidate) => ({
-        color: resolveTagColor(candidate).text,
+        color: resolveTagColor(candidate, index.byId).text,
         id: candidate.id,
         label: textOf(candidate),
       }))
       .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' })),
-    [index.projection.nodes, node.id],
+    [index.projection.nodes, index.byId, node.id],
   );
 
   const updateTag = (patch: TagConfigPatch) => {
@@ -84,6 +85,7 @@ export function DefinitionConfigPanel({ node, index, run }: DefinitionConfigPane
           isLast={index === items.length - 1}
           item={item}
           node={node}
+          byId={byId}
           tagConfig={tagConfig}
           fieldConfig={fieldConfig}
           tagOptions={tagOptions}
@@ -99,6 +101,7 @@ function DefinitionConfigRow(props: {
   isLast: boolean;
   item: DefinitionConfigItem;
   node: NodeProjection;
+  byId: ConfigNodeMap;
   tagConfig: ProjectedTagConfig | undefined;
   fieldConfig: ProjectedFieldConfig | undefined;
   tagOptions: TagOption[];
@@ -137,21 +140,22 @@ function ConfigIcon({ item, fieldType }: { item: DefinitionConfigItem; fieldType
 function ConfigControl(props: {
   item: DefinitionConfigItem;
   node: NodeProjection;
+  byId: ConfigNodeMap;
   tagConfig: ProjectedTagConfig | undefined;
   fieldConfig: ProjectedFieldConfig | undefined;
   tagOptions: TagOption[];
   updateTag: (patch: TagConfigPatch) => void;
   updateField: (patch: FieldConfigPatch) => void;
 }) {
-  const { item, node, tagConfig, fieldConfig, tagOptions, updateTag, updateField } = props;
+  const { item, node, byId, tagConfig, fieldConfig, tagOptions, updateTag, updateField } = props;
 
   switch (item.key) {
     case 'color':
       return (
         <DefinitionColorControl
           label={item.label}
-          value={node.color}
-          swatch={resolveTagColor(node).text}
+          value={tagConfig?.color}
+          swatch={resolveTagColor(node, byId).text}
           onCommit={(color) => updateTag({ color })}
         />
       );
