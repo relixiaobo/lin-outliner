@@ -9,7 +9,7 @@ import { parse as parseYaml } from 'yaml';
 import type { AgentMessage, AgentSubagentActionResult } from '../core/agentTypes';
 import { systemReminder } from '../core/agentAttachments';
 import type { AgentPayloadRef, AgentSubagentRunRecord } from '../core/agentEventLog';
-import type { AgentPermissionMode, AgentReasoningLevel, AgentRuntimeSettings } from '../core/types';
+import type { AgentPermissionMode, AgentReasoningLevel, AgentRuntimeSettings, AgentDefinition } from '../core/types';
 import { createAgentLocalWorkspaceContext, restorePostCompactReadFiles, type AgentLocalWorkspaceContext } from './agentLocalTools';
 import { AgentSkillRuntime } from './agentSkills';
 import {
@@ -127,23 +127,7 @@ const AGENT_STOP_PARAMETERS = {
   },
 };
 
-export interface AgentDefinition {
-  name: string;
-  displayName?: string;
-  source: 'built-in' | 'user' | 'project';
-  rootDir: string;
-  agentFile: string;
-  description: string;
-  tools?: string[];
-  disallowedTools?: string[];
-  model?: string;
-  effort?: AgentReasoningLevel | string;
-  permissionMode?: AgentPermissionMode;
-  maxTurns?: number;
-  skills?: string[];
-  background?: boolean;
-  body: string;
-}
+
 
 export type AgentSubagentToolData = AgentSubagentActionResult;
 
@@ -290,6 +274,7 @@ export class AgentSubagentRuntime {
   private readonly names = new Map<string, string>();
   private readonly listedAgents = new Map<string, string | null>();
   private reservedRunningSlots = 0;
+  private disabledAgents: string[] = [];
 
   constructor(options: AgentSubagentRuntimeOptions) {
     this.sessionId = options.sessionId;
@@ -313,9 +298,17 @@ export class AgentSubagentRuntime {
     this.registry.updateAdditionalAgentDirectories(normalized);
   }
 
+  updateDisabledAgents(disabledAgents: string[]): void {
+    this.disabledAgents = disabledAgents;
+  }
+
+  async listAllAgentDefinitions(): Promise<AgentDefinition[]> {
+    return this.registry.listAgents();
+  }
+
   async reserveAgentListingReminderText(contextWindowTokens?: number | null): Promise<string | null> {
     const agents = await this.registry.listAgents();
-    const newAgents = agents.filter((agent) => !this.isAgentListed(agent));
+    const newAgents = agents.filter((agent) => !this.isAgentListed(agent) && !this.disabledAgents.includes(agent.name));
     if (newAgents.length === 0) return null;
     const listing = formatAgentListing(newAgents, contextWindowTokens ?? undefined);
     if (!listing) return null;
@@ -493,6 +486,10 @@ export class AgentSubagentRuntime {
       ? createForkAgentDefinition()
       : await this.resolveFreshAgent(params.subagent_type);
 
+    if (contextMode !== 'fork' && this.disabledAgents.includes(definition.name)) {
+      throw new Error(`Agent '${definition.name}' is currently disabled in settings.`);
+    }
+
     if (contextMode === 'fork') this.assertCanFork();
     this.assertCanDescend(definition.name);
     const name = params.name?.trim();
@@ -501,9 +498,10 @@ export class AgentSubagentRuntime {
     const runId = `subagent-${randomUUID()}`;
     const subagentSessionId = `${this.hostSessionPrefix()}-${runId}`;
     let childRuntime: AgentSubagentRuntime;
+    const runtimeSettings = await this.host.getRuntimeSettings();
     const skillRuntime = new AgentSkillRuntime({
       localRoot: this.localRoot,
-      additionalSkillDirectories: (await this.host.getRuntimeSettings()).additionalSkillDirectories,
+      additionalSkillDirectories: runtimeSettings.additionalSkillDirectories,
       sessionId: subagentSessionId,
       executeForkedSkill: async ({ skill, renderedContent, parentToolCallId }) => {
         const data = await childRuntime.invokeSkillSubagent({
@@ -524,6 +522,8 @@ export class AgentSubagentRuntime {
         };
       },
     });
+    skillRuntime.updateDisabledSkills(runtimeSettings.disabledSkills ?? []);
+
     const localWorkspace = createAgentLocalWorkspaceContext(this.localRoot, skillRuntime);
     let childAgent: Agent | null = null;
     let run: AgentRunRecord | null = null;
@@ -549,6 +549,7 @@ export class AgentSubagentRuntime {
         ),
       },
     });
+    childRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
     const preloadMessages = await this.preloadAgentSkills(definition, skillRuntime);
     const promptMessages = contextMode === 'fork'
       ? buildForkSubagentMessages(this.host.getParentMessages(), params.prompt)

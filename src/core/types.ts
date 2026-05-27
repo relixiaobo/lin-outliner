@@ -444,6 +444,8 @@ export interface AgentRuntimeSettings {
   providerMaxRetries: number | null;
   providerMaxRetryDelayMs: number | null;
   providerCacheRetention: AgentCacheRetention;
+  disabledSkills?: string[];
+  disabledAgents?: string[];
 }
 
 export interface AgentRuntimeSettingsInput {
@@ -457,6 +459,52 @@ export interface AgentRuntimeSettingsInput {
   providerMaxRetries?: number | null;
   providerMaxRetryDelayMs?: number | null;
   providerCacheRetention?: AgentCacheRetention;
+  disabledSkills?: string[];
+  disabledAgents?: string[];
+}
+
+export interface AgentDefinition {
+  name: string;
+  displayName?: string;
+  source: 'built-in' | 'user' | 'project';
+  rootDir: string;
+  agentFile: string;
+  description: string;
+  tools?: string[];
+  disallowedTools?: string[];
+  model?: string;
+  effort?: AgentReasoningLevel | string;
+  permissionMode?: AgentPermissionMode;
+  maxTurns?: number;
+  skills?: string[];
+  background?: boolean;
+  body: string;
+}
+
+export interface SkillDefinition {
+  name: string;
+  identity?: string;
+  displayName?: string;
+  source: 'user' | 'project' | 'dynamic';
+  rootDir: string;
+  skillFile: string;
+  description: string;
+  hasUserSpecifiedDescription: boolean;
+  whenToUse?: string;
+  userInvocable: boolean;
+  modelInvocable: boolean;
+  allowedTools: string[];
+  argumentHint?: string;
+  argumentNames: string[];
+  version?: string;
+  model?: string;
+  effort?: string;
+  shell?: string;
+  context: 'inline' | 'fork';
+  agent?: string;
+  paths?: string[];
+  contentLength: number;
+  body: string;
 }
 
 export type AgentSlashCommandKind = 'runtime' | 'skill';

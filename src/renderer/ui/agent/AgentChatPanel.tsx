@@ -1111,6 +1111,7 @@ export function AgentChatPanel({
         }}
         open={settingsDialogOpen}
         restoreFocus={providerSettingsRestoreFocus}
+        sessionId={sessionId ?? undefined}
       />
       <AgentSubagentDetailsPanel
         onClose={() => setSelectedSubagentId(null)}

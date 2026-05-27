@@ -11,6 +11,8 @@ export type {
   AgentSlashCommandView,
   AgentProviderSecretStatus,
   AgentProviderSettingsView,
+  AgentDefinition,
+  SkillDefinition,
   AgentSession,
   AgentSessionMeta,
   Backlink,

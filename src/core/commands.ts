@@ -117,6 +117,9 @@ export const AGENT_COMMANDS = [
   'agent_set_provider_api_key',
   'agent_delete_provider_api_key',
   'agent_get_provider_secret_status',
+  'agent_list_all_definitions',
+  'agent_test_provider_connection',
+  'agent_list_all_skills',
 ] as const;
 
 export const ASSET_COMMANDS = [

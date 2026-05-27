@@ -6,12 +6,13 @@ import type {
   AgentProviderOption,
   AgentProviderSettingsView,
   AgentReasoningLevel,
+  AgentDefinition,
+  SkillDefinition,
 } from '../../api/types';
 import { api } from '../../api/client';
 import { AddIcon, CloseIcon, HideIcon, ICON_SIZE, OpenIcon, PasswordIcon, SearchIcon, ShowIcon, TrashIcon, WarningIcon } from '../icons';
 import { providerIconUrl } from './providerIcon';
 import { ButtonControl } from '../primitives/ButtonControl';
-import { CheckboxControl } from '../primitives/CheckboxControl';
 import { Dialog } from '../primitives/Dialog';
 import { FormField } from '../primitives/FormField';
 import { SelectControl } from '../primitives/SelectControl';
@@ -24,9 +25,10 @@ interface AgentSettingsDialogProps {
   onClose: () => void;
   onApplied: () => Promise<void>;
   restoreFocus?: () => HTMLElement | null;
+  sessionId?: string;
 }
 
-type SettingsCategory = 'providers' | 'agent';
+type SettingsCategory = 'providers' | 'skills' | 'agents';
 
 interface DraftConfig {
   providerId: string;
@@ -39,6 +41,8 @@ interface DraftConfig {
   slashSkillsEnabled: boolean;
   compactEnabled: boolean;
   additionalSkillDirectoriesText: string;
+  disabledSkills: string[];
+  disabledAgents: string[];
 }
 
 interface ProviderChoice {
@@ -60,11 +64,14 @@ const EMPTY_DRAFT: DraftConfig = {
   slashSkillsEnabled: true,
   compactEnabled: true,
   additionalSkillDirectoriesText: '',
+  disabledSkills: [],
+  disabledAgents: [],
 };
 
 const SETTINGS_CATEGORIES: Array<{ id: SettingsCategory; label: string; hint: string }> = [
   { id: 'providers', label: 'Providers', hint: 'Connections & API keys' },
-  { id: 'agent', label: 'Agent', hint: 'Model, reasoning & behavior' },
+  { id: 'skills', label: 'Skills', hint: 'Extension Capabilities' },
+  { id: 'agents', label: 'Agent Profiles', hint: 'Persona Definitions' },
 ];
 
 const PREFERRED_PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'openrouter'];
@@ -77,7 +84,7 @@ const REASONING_LABELS: Record<AgentReasoningLevel, string> = {
   xhigh: 'XHigh',
 };
 
-export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: AgentSettingsDialogProps) {
+export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus, sessionId }: AgentSettingsDialogProps) {
   const [settings, setSettings] = useState<AgentProviderSettingsView | null>(null);
   const [draft, setDraft] = useState<DraftConfig>(EMPTY_DRAFT);
   const [apiKey, setApiKey] = useState('');
@@ -93,6 +100,14 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
   const [notice, setNotice] = useState<string | null>(null);
   const mountedRef = useRef(false);
   const requestRef = useRef(0);
+
+  const [allSkills, setAllSkills] = useState<SkillDefinition[]>([]);
+  const [loadingSkills, setLoadingSkills] = useState(false);
+  const [allAgents, setAllAgents] = useState<AgentDefinition[]>([]);
+  const [loadingAgents, setLoadingAgents] = useState(false);
+  const [selectedAgentName, setSelectedAgentName] = useState<string>('general');
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string; statusCode?: number } | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -126,6 +141,8 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
     setProviderQuery('');
     setModelQuery('');
     setModelSearchOpen(false);
+    setTestResult(null);
+
     void api.agentGetProviderSettings()
       .then((next) => {
         if (!isCurrentRequest(requestId)) return;
@@ -141,6 +158,46 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
       });
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    if (category === 'skills') {
+      const id = beginRequest();
+      setLoadingSkills(true);
+      setError(null);
+      setNotice(null);
+      api.agentListAllSkills(sessionId || 'workspace')
+        .then((skills) => {
+          if (isCurrentRequest(id)) setAllSkills(skills);
+        })
+        .catch((caught) => {
+          if (isCurrentRequest(id)) setError(caught instanceof Error ? caught.message : String(caught));
+        })
+        .finally(() => {
+          if (isCurrentRequest(id)) setLoadingSkills(false);
+        });
+    } else if (category === 'agents') {
+      const id = beginRequest();
+      setLoadingAgents(true);
+      setError(null);
+      setNotice(null);
+      api.agentListAllDefinitions(sessionId || 'workspace')
+        .then((agents) => {
+          if (isCurrentRequest(id)) {
+            setAllAgents(agents);
+            if (agents.length > 0 && !agents.some((a) => a.name === selectedAgentName)) {
+              setSelectedAgentName(agents[0].name);
+            }
+          }
+        })
+        .catch((caught) => {
+          if (isCurrentRequest(id)) setError(caught instanceof Error ? caught.message : String(caught));
+        })
+        .finally(() => {
+          if (isCurrentRequest(id)) setLoadingAgents(false);
+        });
+    }
+  }, [category, open]);
+
   const providerCatalog = useMemo(() => {
     const catalog = new Map<string, AgentProviderOption>();
     for (const provider of settings?.availableProviders ?? []) {
@@ -155,7 +212,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
   const showConnectionFields = creatingCustom || isCustomProvider;
   const hasPendingApiKey = apiKey.trim().length > 0;
   const hasSavedCredential = providerHasCredential(configuredProvider, selectedCatalog);
-  const canChooseModels = draft.enabled && (hasSavedCredential || hasPendingApiKey) && Boolean(draft.providerId);
+  const canChooseModels = (hasSavedCredential || hasPendingApiKey) && Boolean(draft.providerId);
   const catalogModels = selectedCatalog?.models ?? [];
   const selectedModels = canChooseModels ? catalogModels : [];
   const selectedModel = selectedModels.find((model) => model.id === draft.modelId);
@@ -166,9 +223,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
   const keyStatus = configuredProvider?.hasApiKey
     ? 'Saved key'
     : configuredProvider?.hasEnvApiKey || selectedCatalog?.hasEnvApiKey ? 'Environment key' : hasPendingApiKey ? 'Unsaved key' : 'No key yet';
-  const modelContext = canChooseModels
-    ? selectedModel?.contextWindow ? `${formatTokens(selectedModel.contextWindow)} context` : 'Custom model'
-    : 'Key required';
+
   const providerChoices = useMemo(
     () => settings ? buildProviderChoices(settings, draft.providerId, providerCatalog) : [],
     [draft.providerId, providerCatalog, settings],
@@ -186,23 +241,12 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
   const detailName = creatingCustom
     ? 'Custom provider'
     : draft.providerId ? formatProviderName(draft.providerId) : '';
-  const detailBadgeActive = Boolean(selectedChoice?.active && selectedChoice.enabled && selectedChoice.hasCredential);
-  // Only surface a badge for states the key field itself can't convey; "needs a
-  // key" is already obvious from the empty key field below.
-  const detailBadge = creatingCustom
-    ? 'New'
-    : detailBadgeActive
-      ? 'Active'
-      : selectedChoice?.configured && !selectedChoice.enabled ? 'Disabled' : '';
   const detailDescription = showConnectionFields
     ? 'Connect any OpenAI-compatible endpoint.'
     : providerDescription(selectedCatalog);
   const authInfo = showConnectionFields ? undefined : PROVIDER_AUTH[draft.providerId];
   const docsUrl = showConnectionFields ? undefined : PROVIDER_DOCS_URL[draft.providerId];
-  // A provider can only be enabled once it has a credential (a key, an env key,
-  // or a non-key auth method). Without one, enabling is meaningless.
-  const canEnable = hasAnyKey || Boolean(authInfo);
-  const effectiveEnabled = draft.enabled && canEnable;
+  
   const baseUrlPlaceholder = selectedCatalog?.defaultBaseUrl ?? 'https://api.example.com/v1';
   const showModelList = !creatingCustom && catalogModels.length > 0;
   const showModelSearch = catalogModels.length > 1;
@@ -212,6 +256,8 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
     return catalogModels.filter((model) =>
       model.name.toLowerCase().includes(query) || model.id.toLowerCase().includes(query));
   }, [catalogModels, modelQuery]);
+
+  const selectedAgent = allAgents.find((a) => a.name === selectedAgentName) || allAgents[0];
 
   if (!open) return null;
 
@@ -233,6 +279,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
     setModelSearchOpen(false);
     setNotice(null);
     setError(null);
+    setTestResult(null);
   }
 
   function startCustomProvider() {
@@ -251,19 +298,69 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
     setModelSearchOpen(false);
     setNotice(null);
     setError(null);
+    setTestResult(null);
+  }
+
+  async function testConnection() {
+    const providerId = draft.providerId.trim();
+    if (!providerId) return;
+    setTestingConnection(true);
+    setTestResult(null);
+    try {
+      const res = await api.agentTestProviderConnection({
+        providerId,
+        modelId: draft.modelId || selectedCatalog?.models[0]?.id || getFallbackModelId(providerId),
+        baseUrl: draft.baseUrl.trim() || undefined,
+        apiKey: apiKey.trim() || undefined,
+      });
+      setTestResult(res);
+    } catch (caught) {
+      setTestResult({
+        success: false,
+        message: caught instanceof Error ? caught.message : String(caught),
+      });
+    } finally {
+      setTestingConnection(false);
+    }
+  }
+
+  async function makeActive() {
+    const providerId = draft.providerId.trim();
+    if (!providerId) return;
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      if (apiKey.trim()) {
+        await api.agentSetProviderApiKey(providerId, apiKey.trim());
+        setApiKey('');
+      }
+      let next = await api.agentUpsertProviderConfig({
+        providerId,
+        modelId: draft.modelId || selectedCatalog?.models[0]?.id || '',
+        baseUrl: draft.baseUrl.trim() || null,
+        enabled: true,
+      });
+      next = await api.agentSetActiveProvider(providerId);
+      setSettings(next);
+      setDraft(resolveDraftForProvider(next, providerId));
+      setNotice('Provider set as active');
+      await onApplied();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function save() {
     const providerId = draft.providerId.trim();
     const modelId = draft.modelId.trim() || selectedCatalog?.models[0]?.id || '';
-    if (!providerId) {
-      setError('provider is required');
-      setCategory('providers');
-      return;
-    }
-    if (!modelId) {
+
+    // Only validate modelId if a providerId is actively selected/provided.
+    if (providerId && !modelId) {
       setError('model is required');
-      setCategory('agent');
+      setCategory('providers');
       return;
     }
 
@@ -272,28 +369,38 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
     setError(null);
     setNotice(null);
     try {
-      let next = await api.agentUpsertProviderConfig({
-        providerId,
-        modelId,
-        reasoningLevel: coerceReasoningLevel(draft.reasoningLevel, selectedReasoningLevels),
-        baseUrl: draft.baseUrl.trim() || null,
-        enabled: effectiveEnabled,
-      });
-      next = await api.agentUpdateRuntimeSettings({
+      if (providerId) {
+        await api.agentUpsertProviderConfig({
+          providerId,
+          modelId,
+          reasoningLevel: coerceReasoningLevel(draft.reasoningLevel, selectedReasoningLevels),
+          baseUrl: draft.baseUrl.trim() || null,
+          enabled: true,
+        });
+        if (apiKey.trim()) {
+          await api.agentSetProviderApiKey(providerId, apiKey.trim());
+          setApiKey('');
+        }
+      }
+
+      let next = await api.agentUpdateRuntimeSettings({
         permissionMode: draft.permissionMode,
         automaticSkillsEnabled: draft.automaticSkillsEnabled,
         slashSkillsEnabled: draft.slashSkillsEnabled,
         compactEnabled: draft.compactEnabled,
         additionalSkillDirectories: parseSkillDirectoryInput(draft.additionalSkillDirectoriesText),
+        disabledSkills: draft.disabledSkills,
+        disabledAgents: draft.disabledAgents,
       });
-      next = await api.agentSetActiveProvider(providerId);
-      if (apiKey.trim()) {
-        await api.agentSetProviderApiKey(providerId, apiKey.trim());
-        next = await api.agentGetProviderSettings();
-      }
+
+      next = await api.agentGetProviderSettings();
       if (isCurrentRequest(requestId)) {
         setSettings(next);
-        setDraft(resolveDraftForProvider(next, providerId));
+        if (providerId) {
+          setDraft(resolveDraftForProvider(next, providerId));
+        } else {
+          setDraft(resolveInitialDraft(next));
+        }
         setCreatingCustom(false);
         setApiKey('');
         setNotice('Saved');
@@ -352,6 +459,26 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
       if (isCurrentRequest(requestId)) setSaving(false);
     }
   }
+
+  const isSkillDisabled = (skillName: string) => draft.disabledSkills.includes(skillName);
+  const toggleSkill = (skillName: string) => {
+    setDraft((current) => {
+      const disabled = current.disabledSkills.includes(skillName)
+        ? current.disabledSkills.filter((n) => n !== skillName)
+        : [...current.disabledSkills, skillName];
+      return { ...current, disabledSkills: disabled };
+    });
+  };
+
+  const isAgentDisabled = (agentName: string) => draft.disabledAgents.includes(agentName);
+  const toggleAgent = (agentName: string) => {
+    setDraft((current) => {
+      const disabled = current.disabledAgents.includes(agentName)
+        ? current.disabledAgents.filter((n) => n !== agentName)
+        : [...current.disabledAgents, agentName];
+      return { ...current, disabledAgents: disabled };
+    });
+  };
 
   const baseUrlField = (
     <FormField className="agent-settings-field agent-settings-field-wide" label="Base URL">
@@ -432,10 +559,8 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
                       ) : null}
                       {visibleProviderChoices.map((provider) => {
                         const selected = provider.providerId === activeRowProviderId;
-                        // On = set up and turned on; Off = configured but disabled;
-                        // unconfigured providers get no dot to keep the list quiet.
-                        const enabledOn = provider.enabled && provider.hasCredential;
-                        const dotState = enabledOn ? 'is-on' : provider.configured ? 'is-off' : '';
+                        const enabledOn = provider.hasCredential;
+                        const dotState = provider.active ? 'is-on' : enabledOn ? 'is-configured' : '';
                         return (
                           <button
                             aria-current={selected ? 'true' : undefined}
@@ -469,26 +594,24 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
                             <div className="settings-provider-detail-text">
                               <div className="settings-provider-detail-name">
                                 {detailName}
-                                {detailBadge ? (
-                                  <span className={`settings-provider-badge ${detailBadgeActive ? 'is-active' : ''}`}>
-                                    {detailBadge}
-                                  </span>
+                                {selectedChoice?.active ? (
+                                  <span className="settings-provider-badge is-active">Active</span>
+                                ) : hasSavedCredential ? (
+                                  <span className="settings-provider-badge">Configured</span>
                                 ) : null}
                               </div>
                               <span className="settings-provider-detail-desc">{detailDescription}</span>
                             </div>
                           </div>
-                          <SwitchControl
-                            checked={effectiveEnabled}
-                            className="settings-provider-toggle"
-                            disabled={!canEnable}
-                            label="Enabled"
-                            onCheckedChange={(enabled) => setDraft((current) => ({ ...current, enabled }))}
-                            title={canEnable ? undefined : 'Add an API key to enable this provider'}
-                          >
-                            <span>Enabled</span>
-                            <SwitchMark checked={effectiveEnabled} />
-                          </SwitchControl>
+                          {!selectedChoice?.active && hasAnyKey ? (
+                            <ButtonControl
+                              className="agent-settings-primary"
+                              disabled={saving}
+                              onClick={makeActive}
+                            >
+                              Set as Active
+                            </ButtonControl>
+                          ) : null}
                         </div>
 
                         {authInfo ? (
@@ -506,135 +629,160 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
                             ) : null}
                           </div>
                         ) : (
-                        <>
-                        <div className="agent-settings-grid">
-                          {showConnectionFields ? (
-                            <FormField className="agent-settings-field agent-settings-field-wide" label="Provider ID">
-                              <TextInputControl
-                                label="Provider ID"
-                                onChange={(event) => setDraft((current) => ({ ...current, providerId: event.target.value.trim() }))}
-                                placeholder="my-provider"
-                                value={draft.providerId}
-                              />
-                            </FormField>
-                          ) : null}
-
-                          <FormField as="div" className="agent-settings-field agent-settings-field-wide" label="API key">
-                            <div className="agent-settings-key-row">
-                              <PasswordIcon size={ICON_SIZE.menu} />
-                              <TextInputControl
-                                label="API key"
-                                onChange={(event) => {
-                                  const value = event.target.value;
-                                  setApiKey(value);
-                                  // A pasted key enables the provider by default.
-                                  if (value.trim()) setDraft((current) => ({ ...current, enabled: true }));
-                                }}
-                                placeholder={hasAnyKey ? 'Configured' : 'Paste key'}
-                                type={revealKey ? 'text' : 'password'}
-                                value={apiKey}
-                              />
-                              <button
-                                aria-label={revealKey ? 'Hide key' : 'Show key'}
-                                aria-pressed={revealKey}
-                                className="agent-settings-key-reveal"
-                                onClick={() => setRevealKey((current) => !current)}
-                                type="button"
-                              >
-                                {revealKey
-                                  ? <HideIcon size={ICON_SIZE.menu} />
-                                  : <ShowIcon size={ICON_SIZE.menu} />}
-                              </button>
-                            </div>
-                            <div className="agent-settings-key-meta">
-                              <span className="agent-settings-field-meta">{keyStatus}</span>
-                              {configuredProvider?.hasApiKey ? (
-                                <button
-                                  className="agent-settings-doc-link is-danger"
-                                  disabled={saving}
-                                  onClick={removeApiKey}
-                                  type="button"
-                                >
-                                  Remove key
-                                </button>
-                              ) : docsUrl ? (
-                                <button
-                                  className="agent-settings-doc-link"
-                                  onClick={() => void api.openExternalUrl(docsUrl)}
-                                  type="button"
-                                >
-                                  <span>Get your {detailName} API key</span>
-                                  <OpenIcon size={ICON_SIZE.tiny} />
-                                </button>
+                          <>
+                            <div className="agent-settings-grid">
+                              {showConnectionFields ? (
+                                <FormField className="agent-settings-field agent-settings-field-wide" label="Provider ID">
+                                  <TextInputControl
+                                    label="Provider ID"
+                                    onChange={(event) => setDraft((current) => ({ ...current, providerId: event.target.value.trim() }))}
+                                    placeholder="my-provider"
+                                    value={draft.providerId}
+                                  />
+                                </FormField>
                               ) : null}
-                            </div>
-                          </FormField>
 
-                          {baseUrlField}
-                        </div>
-                        </>
-                        )}
-
-                        {showModelList ? (
-                          <div className="settings-models">
-                            <div className="settings-models-header">
-                              <span className="settings-models-title">Models</span>
-                              <span className="settings-models-count">{catalogModels.length}</span>
-                              {showModelSearch ? (
-                                modelSearchOpen ? (
-                                  <div className="settings-model-search">
-                                    <SearchIcon size={ICON_SIZE.menu} />
-                                    <TextInputControl
-                                      autoFocus
-                                      label="Search models"
-                                      onChange={(event) => setModelQuery(event.target.value)}
-                                      placeholder="Search models…"
-                                      value={modelQuery}
-                                    />
+                              <FormField as="div" className="agent-settings-field agent-settings-field-wide" label="API key">
+                                <div className="agent-settings-key-row">
+                                  <PasswordIcon size={ICON_SIZE.menu} />
+                                  <TextInputControl
+                                    label="API key"
+                                    onChange={(event) => setApiKey(event.target.value)}
+                                    placeholder={hasAnyKey ? 'Configured (Encrypted)' : 'Paste API key'}
+                                    type={revealKey ? 'text' : 'password'}
+                                    value={apiKey}
+                                  />
+                                  <div className="agent-settings-key-actions">
                                     <button
-                                      aria-label="Close model search"
-                                      className="settings-model-search-close"
-                                      onClick={() => {
-                                        setModelQuery('');
-                                        setModelSearchOpen(false);
-                                      }}
+                                      aria-label={revealKey ? 'Hide key' : 'Show key'}
+                                      aria-pressed={revealKey}
+                                      className="agent-settings-key-reveal"
+                                      onClick={() => setRevealKey((current) => !current)}
                                       type="button"
                                     >
-                                      <CloseIcon size={ICON_SIZE.tiny} />
+                                      {revealKey ? <HideIcon size={ICON_SIZE.menu} /> : <ShowIcon size={ICON_SIZE.menu} />}
                                     </button>
-                                  </div>
-                                ) : (
-                                  <button
-                                    aria-expanded={false}
-                                    aria-label="Search models"
-                                    className="settings-models-search-toggle"
-                                    onClick={() => setModelSearchOpen(true)}
-                                    type="button"
-                                  >
-                                    <SearchIcon size={ICON_SIZE.menu} />
-                                  </button>
-                                )
-                              ) : null}
-                            </div>
-                            <div className="settings-model-list" role="list">
-                              {visibleModels.length === 0 ? (
-                                <p className="settings-model-empty">No models match “{modelQuery.trim()}”.</p>
-                              ) : null}
-                              {visibleModels.map((model) => (
-                                <div className="settings-model-row" key={model.id} role="listitem">
-                                  <div className="settings-model-row-main">
-                                    <span className="settings-model-name">{model.name}</span>
-                                    <span className="settings-model-id">{model.id}</span>
-                                  </div>
-                                  <div className="settings-model-row-meta">
-                                    {model.reasoning ? <span className="settings-model-tag">Reasoning</span> : null}
-                                    <span>{formatTokens(model.contextWindow)}</span>
+                                    {hasSavedCredential && (
+                                      <button
+                                        aria-label="Remove key"
+                                        className="agent-settings-key-remove"
+                                        disabled={saving}
+                                        onClick={removeApiKey}
+                                        type="button"
+                                        title="Remove key"
+                                      >
+                                        <TrashIcon size={ICON_SIZE.menu} />
+                                      </button>
+                                    )}
                                   </div>
                                 </div>
-                              ))}
+                                <div className="agent-settings-key-meta">
+                                  <span className="agent-settings-field-meta">{keyStatus}</span>
+                                  {!hasSavedCredential && docsUrl ? (
+                                    <button
+                                      className="agent-settings-doc-link"
+                                      onClick={() => void api.openExternalUrl(docsUrl)}
+                                      type="button"
+                                    >
+                                      <span>Get API key</span>
+                                      <OpenIcon size={ICON_SIZE.tiny} />
+                                    </button>
+                                  ) : null}
+                                </div>
+                              </FormField>
+                            </div>
+
+                            <details className="settings-url-details">
+                              <summary className="settings-url-summary">Advanced Settings</summary>
+                              <div className="settings-url-content">
+                                {baseUrlField}
+                              </div>
+                            </details>
+                          </>
+                        )}
+
+                        {canChooseModels ? (
+                          <div className="settings-provider-model-section">
+                            <h4 className="settings-detail-subheading">Model & Reasoning</h4>
+                            <div className="agent-settings-grid">
+                              <FormField className="agent-settings-field" label="Model">
+                                {selectedModels.length > 0 ? (
+                                  <SelectControl
+                                    label="Model"
+                                    onChange={(event) => {
+                                      const modelId = event.target.value;
+                                      const model = selectedModels.find((candidate) => candidate.id === modelId);
+                                      const supportedLevels = (model?.supportedThinkingLevels.length
+                                        ? model.supportedThinkingLevels
+                                        : ['off']) as AgentReasoningLevel[];
+                                      setDraft((current) => ({
+                                        ...current,
+                                        modelId,
+                                        reasoningLevel: coerceReasoningLevel(current.reasoningLevel, supportedLevels),
+                                      }));
+                                    }}
+                                    value={selectedModel ? draft.modelId : ''}
+                                  >
+                                    {selectedModel ? null : <option value="">Select a model…</option>}
+                                    {selectedModels.map((model) => (
+                                      <option key={model.id} value={model.id}>{model.name}</option>
+                                    ))}
+                                  </SelectControl>
+                                ) : (
+                                  <TextInputControl
+                                    label="Model"
+                                    onChange={(event) => setDraft((current) => ({ ...current, modelId: event.target.value }))}
+                                    placeholder="Model ID"
+                                    value={draft.modelId}
+                                  />
+                                )}
+                              </FormField>
+
+                              <FormField className="agent-settings-field" label="Reasoning">
+                                <SelectControl
+                                  label="Reasoning"
+                                  onChange={(event) => {
+                                    setDraft((current) => ({
+                                      ...current,
+                                      reasoningLevel: event.target.value as AgentReasoningLevel,
+                                    }));
+                                  }}
+                                  value={coerceReasoningLevel(draft.reasoningLevel, selectedReasoningLevels)}
+                                >
+                                  {selectedReasoningLevels.map((reasoningLevel) => (
+                                    <option key={reasoningLevel} value={reasoningLevel}>
+                                      {REASONING_LABELS[reasoningLevel]}
+                                    </option>
+                                  ))}
+                                </SelectControl>
+                              </FormField>
                             </div>
                           </div>
                         ) : null}
+
+                        <div className="connection-test-section">
+                          <div className="connection-test-row">
+                            <ButtonControl
+                              className="agent-settings-secondary"
+                              disabled={testingConnection || !draft.providerId}
+                              onClick={testConnection}
+                            >
+                              {testingConnection ? 'Testing...' : 'Test Connection'}
+                            </ButtonControl>
+                          </div>
+                          {testResult && (
+                            <div className={`connection-test-feedback ${testResult.success ? 'is-success' : 'is-error'}`}>
+                              {testResult.success ? (
+                                <span className="feedback-text">✓ Connection Successful</span>
+                              ) : (
+                                <div className="feedback-error-container">
+                                  <span className="feedback-text">✗ Connection Failed</span>
+                                  <p className="feedback-diagnostic">{testResult.message}</p>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </>
                     ) : (
                       <div className="settings-provider-empty">Select a provider to connect.</div>
@@ -642,140 +790,196 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
                   </div>
                 </div>
               </section>
-            ) : (
-              <>
-                <section className="agent-settings-section" aria-labelledby="agent-settings-model-heading">
-                  <div className="agent-settings-section-header">
-                    <h3 id="agent-settings-model-heading">Model</h3>
-                    <span>{draft.providerId ? `${modelContext} · ${formatProviderName(draft.providerId)}` : modelContext}</span>
-                  </div>
-                  {canChooseModels ? (
-                    <div className="agent-settings-grid">
-                      <FormField className="agent-settings-field agent-settings-field-wide" label="Model">
-                        {selectedModels.length > 0 ? (
-                          <SelectControl
-                            label="Model"
-                            onChange={(event) => {
-                              const modelId = event.target.value;
-                              const model = selectedModels.find((candidate) => candidate.id === modelId);
-                              const supportedLevels: AgentReasoningLevel[] = model?.supportedThinkingLevels.length
-                                ? model.supportedThinkingLevels
-                                : ['off'];
-                              setDraft((current) => ({
-                                ...current,
-                                modelId,
-                                reasoningLevel: coerceReasoningLevel(current.reasoningLevel, supportedLevels),
-                              }));
-                            }}
-                            value={selectedModel ? draft.modelId : ''}
-                          >
-                            {selectedModel ? null : <option value="">Select a model…</option>}
-                            {selectedModels.map((model) => (
-                              <option key={model.id} value={model.id}>{model.name}</option>
-                            ))}
-                          </SelectControl>
-                        ) : (
-                          <TextInputControl
-                            label="Model"
-                            onChange={(event) => setDraft((current) => ({ ...current, modelId: event.target.value }))}
-                            placeholder="model id"
-                            value={draft.modelId}
-                          />
-                        )}
-                      </FormField>
-
-                      <FormField className="agent-settings-field" label="Reasoning">
-                        <SelectControl
-                          label="Reasoning"
-                          onChange={(event) => {
-                            setDraft((current) => ({
-                              ...current,
-                              reasoningLevel: event.target.value as AgentReasoningLevel,
-                            }));
-                          }}
-                          value={coerceReasoningLevel(draft.reasoningLevel, selectedReasoningLevels)}
-                        >
-                          {selectedReasoningLevels.map((reasoningLevel) => (
-                            <option key={reasoningLevel} value={reasoningLevel}>
-                              {REASONING_LABELS[reasoningLevel]}
-                            </option>
-                          ))}
-                        </SelectControl>
-                      </FormField>
-
-                      <div className="agent-settings-model-stat">
-                        <span>Context</span>
-                        <strong>{modelContext}</strong>
+            ) : category === 'skills' ? (
+              <section className="agent-settings-section settings-skills-section" aria-labelledby="settings-skills-heading">
+                <div className="settings-section-title-row">
+                  <h3 id="settings-skills-heading">Skills & Behaviors</h3>
+                  <span className="settings-section-desc">Manage installed capabilities and agent automation.</span>
+                </div>
+                
+                <div className="settings-skills-behavior">
+                  <h4 className="settings-subheading">Behavior Rules</h4>
+                  <div className="agent-settings-behavior-switches">
+                    <div className="behavior-switch-item">
+                      <div className="behavior-switch-info">
+                        <span className="behavior-switch-title">Automatic Skills</span>
+                        <p className="behavior-switch-desc">Allow agent to autonomously invoke skills to solve tasks.</p>
                       </div>
+                      <SwitchControl
+                        checked={draft.automaticSkillsEnabled}
+                        onCheckedChange={(automaticSkillsEnabled) => setDraft((current) => ({ ...current, automaticSkillsEnabled }))}
+                        label="Automatic Skills"
+                      >
+                        <SwitchMark checked={draft.automaticSkillsEnabled} />
+                      </SwitchControl>
                     </div>
+
+                    <div className="behavior-switch-item">
+                      <div className="behavior-switch-info">
+                        <span className="behavior-switch-title">Slash Skills</span>
+                        <p className="behavior-switch-desc">Enable users to directly invoke skills in chat via slash commands.</p>
+                      </div>
+                      <SwitchControl
+                        checked={draft.slashSkillsEnabled}
+                        onCheckedChange={(slashSkillsEnabled) => setDraft((current) => ({ ...current, slashSkillsEnabled }))}
+                        label="Slash Skills"
+                      >
+                        <SwitchMark checked={draft.slashSkillsEnabled} />
+                      </SwitchControl>
+                    </div>
+
+                    <div className="behavior-switch-item">
+                      <div className="behavior-switch-info">
+                        <span className="behavior-switch-title">Compact Command</span>
+                        <p className="behavior-switch-desc">Enable automatic conversation context compaction when token budget runs low.</p>
+                      </div>
+                      <SwitchControl
+                        checked={draft.compactEnabled}
+                        onCheckedChange={(compactEnabled) => setDraft((current) => ({ ...current, compactEnabled }))}
+                        label="Compact Command"
+                      >
+                        <SwitchMark checked={draft.compactEnabled} />
+                      </SwitchControl>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="settings-skills-list-section">
+                  <h4 className="settings-subheading">Installed Capabilities</h4>
+                  
+                  {loadingSkills ? (
+                    <div className="settings-loading-placeholder">Loading installed skills...</div>
+                  ) : allSkills.length === 0 ? (
+                    <div className="settings-empty-placeholder">No skills installed in ~/.agents/skills or .agents/skills.</div>
                   ) : (
-                    <div className="agent-settings-model-placeholder">
-                      Add an API key in Providers before choosing a model.
+                    <div className="settings-skills-table">
+                      {allSkills.map((skill) => {
+                        const disabled = isSkillDisabled(skill.name);
+                        return (
+                          <div className={`settings-skill-row ${disabled ? 'is-disabled' : ''}`} key={skill.name}>
+                            <div className="skill-row-action">
+                              <SwitchControl
+                                checked={!disabled}
+                                onCheckedChange={() => toggleSkill(skill.name)}
+                                label={`Toggle ${skill.name}`}
+                              >
+                                <SwitchMark checked={!disabled} />
+                              </SwitchControl>
+                            </div>
+                            <div className="skill-row-info">
+                              <div className="skill-row-title">
+                                <span className="skill-name">/{skill.displayName || skill.name}</span>
+                                <span className="skill-source-badge">{skill.source}</span>
+                              </div>
+                              <p className="skill-desc">{skill.description}</p>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
-                </section>
+                </div>
+              </section>
+            ) : (
+              <section className="agent-settings-section settings-agents-section" aria-labelledby="settings-agents-heading">
+                <div className="settings-section-title-row">
+                  <h3 id="settings-agents-heading">Agent Profiles</h3>
+                  <span className="settings-section-desc">Manage system subagents and view their persona details.</span>
+                </div>
 
-                <section className="agent-settings-section" aria-labelledby="agent-settings-behavior-heading">
-                  <div className="agent-settings-section-header">
-                    <h3 id="agent-settings-behavior-heading">Behavior</h3>
-                    <span>{draft.permissionMode === 'trusted' ? 'Trusted workspace' : 'Restricted tools'}</span>
+                <div className="settings-agents-split">
+                  <div className="settings-agents-aside">
+                    {loadingAgents ? (
+                      <div className="settings-loading-placeholder">Loading profiles...</div>
+                    ) : allAgents.length === 0 ? (
+                      <div className="settings-empty-placeholder">No agent definitions found.</div>
+                    ) : (
+                      <div className="settings-agents-list">
+                        {allAgents.map((agent) => {
+                          const disabled = isAgentDisabled(agent.name);
+                          const isSelected = agent.name === selectedAgentName;
+                          return (
+                            <button
+                              className={`settings-agent-item-row ${isSelected ? 'is-selected' : ''} ${disabled ? 'is-disabled' : ''}`}
+                              key={agent.name}
+                              onClick={() => setSelectedAgentName(agent.name)}
+                              type="button"
+                            >
+                              <span className="agent-item-switch" onClick={(e) => e.stopPropagation()}>
+                                <SwitchControl
+                                  checked={!disabled}
+                                  onCheckedChange={() => toggleAgent(agent.name)}
+                                  label={`Toggle ${agent.name}`}
+                                >
+                                  <SwitchMark checked={!disabled} />
+                                </SwitchControl>
+                              </span>
+                              <span className="agent-item-content">
+                                <span className="agent-item-name">{agent.name}</span>
+                                <span className="agent-item-desc">{agent.description}</span>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
-                  <div className="agent-settings-grid">
-                    <FormField className="agent-settings-field" label="Permission mode">
-                      <SelectControl
-                        label="Permission mode"
-                        onChange={(event) => setDraft((current) => ({
-                          ...current,
-                          permissionMode: event.target.value === 'restricted' ? 'restricted' : 'trusted',
-                        }))}
-                        value={draft.permissionMode}
-                      >
-                        <option value="trusted">Trusted</option>
-                        <option value="restricted">Restricted</option>
-                      </SelectControl>
-                    </FormField>
 
-                    <FormField className="agent-settings-field agent-settings-field-wide" label="Additional skill directories">
-                      <TextInputControl
-                        label="Additional skill directories"
-                        onChange={(event) => setDraft((current) => ({
-                          ...current,
-                          additionalSkillDirectoriesText: event.target.value,
-                        }))}
-                        placeholder="Optional paths, comma separated"
-                        value={draft.additionalSkillDirectoriesText}
-                      />
-                      <span className="agent-settings-field-meta">
-                        Default directories stay enabled: ~/.agents/skills and .agents/skills.
-                      </span>
-                    </FormField>
+                  <div className="settings-agents-detail-panel">
+                    {selectedAgent ? (
+                      <div className="agent-profile-detail-card">
+                        <div className="agent-profile-detail-header">
+                          <div>
+                            <h4 className="agent-profile-title">{selectedAgent.name}</h4>
+                            <span className="agent-profile-source-label">Source: {selectedAgent.source}</span>
+                          </div>
+                        </div>
 
-                    <div className="agent-settings-row agent-settings-field-wide">
-                      <CheckboxControl
-                        checked={draft.automaticSkillsEnabled}
-                        className="agent-settings-checkbox"
-                        onCheckedChange={(automaticSkillsEnabled) => setDraft((current) => ({ ...current, automaticSkillsEnabled }))}
-                      >
-                        <span>Automatic skills</span>
-                      </CheckboxControl>
-                      <CheckboxControl
-                        checked={draft.slashSkillsEnabled}
-                        className="agent-settings-checkbox"
-                        onCheckedChange={(slashSkillsEnabled) => setDraft((current) => ({ ...current, slashSkillsEnabled }))}
-                      >
-                        <span>Slash skills</span>
-                      </CheckboxControl>
-                      <CheckboxControl
-                        checked={draft.compactEnabled}
-                        className="agent-settings-checkbox"
-                        onCheckedChange={(compactEnabled) => setDraft((current) => ({ ...current, compactEnabled }))}
-                      >
-                        <span>Compact command</span>
-                      </CheckboxControl>
-                    </div>
+                        <div className="agent-profile-field">
+                          <span className="agent-profile-field-label">Persona prompt (System instructions)</span>
+                          <textarea
+                            className="agent-profile-prompt-preview"
+                            readOnly
+                            value={selectedAgent.body || '(No instruction body)'}
+                          />
+                        </div>
+
+                        <div className="agent-profile-specs">
+                          <div className="spec-item">
+                            <span className="spec-label">Model Override</span>
+                            <span className="spec-value">{selectedAgent.model || 'Inherit parent'}</span>
+                          </div>
+                          <div className="spec-item">
+                            <span className="spec-label">Thinking Level</span>
+                            <span className="spec-value">{selectedAgent.effort || 'Default'}</span>
+                          </div>
+                          <div className="spec-item">
+                            <span className="spec-label">Permission Mode</span>
+                            <span className="spec-value">{selectedAgent.permissionMode || 'Restricted'}</span>
+                          </div>
+                          <div className="spec-item">
+                            <span className="spec-label">Max Turns</span>
+                            <span className="spec-value">{selectedAgent.maxTurns || 'Unlimited'}</span>
+                          </div>
+                        </div>
+
+                        {selectedAgent.tools && selectedAgent.tools.length > 0 && (
+                          <div className="agent-profile-field">
+                            <span className="agent-profile-field-label">Enabled Tools</span>
+                            <div className="agent-profile-tags-container">
+                              {selectedAgent.tools.map((tool) => (
+                                <span className="agent-profile-tag" key={tool}>{tool}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="settings-agents-detail-empty">Select an agent profile to view details.</div>
+                    )}
                   </div>
-                </section>
-              </>
+                </div>
+              </section>
             )}
 
             {error ? (
@@ -828,6 +1032,8 @@ function resolveInitialDraft(settings: AgentProviderSettingsView): DraftConfig {
     reasoningLevel: defaultReasoningLevel(preferredCatalog?.models[0]),
     baseUrl: '',
     enabled: true,
+    disabledSkills: settings.agent.disabledSkills ?? [],
+    disabledAgents: settings.agent.disabledAgents ?? [],
     ...runtimeSettingsToDraft(settings),
   };
 }
@@ -932,6 +1138,8 @@ function providerToDraft(provider: AgentProviderConfigView, settings: AgentProvi
     reasoningLevel: provider.reasoningLevel,
     baseUrl: provider.baseUrl ?? '',
     enabled: provider.enabled,
+    disabledSkills: settings.agent.disabledSkills ?? [],
+    disabledAgents: settings.agent.disabledAgents ?? [],
     ...runtimeSettingsToDraft(settings),
   };
 }
@@ -1092,4 +1300,15 @@ function providerDescription(catalog: AgentProviderOption | undefined): string {
   const names = catalog.models.slice(0, 3).map((model) => model.name.replace(/\s*\(latest\)/i, ''));
   const suffix = catalog.models.length > names.length ? ', and more' : '';
   return `Includes ${names.join(', ')}${suffix}.`;
+}
+
+function getFallbackModelId(providerId: string): string {
+  const lower = providerId.toLowerCase();
+  if (lower.includes('anthropic') || lower.includes('claude')) {
+    return 'claude-3-5-sonnet-latest';
+  }
+  if (lower.includes('google') || lower.includes('gemini')) {
+    return 'gemini-2.5-flash';
+  }
+  return 'gpt-4o';
 }

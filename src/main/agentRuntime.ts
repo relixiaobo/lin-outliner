@@ -424,6 +424,32 @@ export class AgentRuntime {
     });
   }
 
+  async listAllAgentDefinitions(sessionId: string) {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      return session.subagentRuntime.listAllAgentDefinitions();
+    }
+    const tempRuntime = new AgentSubagentRuntime({
+      sessionId: 'temp-settings-list',
+      localRoot: this.options.localFileRoot,
+      host: {} as any,
+    });
+    return tempRuntime.listAllAgentDefinitions();
+  }
+
+  async listAllSkills(sessionId: string) {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      return session.skillRuntime.listAllSkills();
+    }
+    const runtimeSettings = await this.getRuntimeSettings();
+    const tempRuntime = new AgentSkillRuntime({
+      localRoot: this.options.localFileRoot,
+      additionalSkillDirectories: runtimeSettings.additionalSkillDirectories,
+    });
+    return tempRuntime.listAllSkills();
+  }
+
   async renameSession(sessionId: string, title: string) {
     const normalized = normalizeSessionTitle(title);
     const session = this.sessions.get(sessionId);
@@ -789,6 +815,7 @@ export class AgentRuntime {
         };
       },
     });
+    skillRuntime.updateDisabledSkills(runtimeSettings.disabledSkills ?? []);
     skillRuntime.restoreInvokedSkillsFromMessages(activePath);
     const localWorkspace = createAgentLocalWorkspaceContext(this.options.localFileRoot, skillRuntime);
     const subagentRuntime = new AgentSubagentRuntime({
@@ -821,6 +848,7 @@ export class AgentRuntime {
         ),
       },
     });
+    subagentRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
     subagentRuntime.restoreListedAgentsFromMessages(activePath);
     const agent = providerConfig
       ? createConfiguredAgent(sessionId, providerConfig, activePath, this.outlinerToolHost, {
@@ -959,6 +987,8 @@ export class AgentRuntime {
     const runtimeSettings = await this.getRuntimeSettings();
     session.runtimeSettings = runtimeSettings;
     session.skillRuntime.updateAdditionalSkillDirectories(runtimeSettings.additionalSkillDirectories);
+    session.skillRuntime.updateDisabledSkills(runtimeSettings.disabledSkills ?? []);
+    session.subagentRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
     this.applyRuntimeToolSettings(session);
     return runtimeSettings;
   }

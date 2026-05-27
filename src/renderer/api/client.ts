@@ -8,6 +8,8 @@ import type {
   AgentSession,
   AgentSessionMeta,
   AgentSlashCommandView,
+  AgentDefinition,
+  SkillDefinition,
   CommandOutcome,
   CreateNodeTree,
   DocumentProjection,
@@ -287,4 +289,10 @@ export const api = {
     command<AgentProviderSecretStatus>('agent_delete_provider_api_key', { providerId }),
   agentGetProviderSecretStatus: (providerId: string) =>
     command<AgentProviderSecretStatus>('agent_get_provider_secret_status', { providerId }),
+  agentListAllDefinitions: (sessionId: string) =>
+    command<AgentDefinition[]>('agent_list_all_definitions', { sessionId }),
+  agentTestProviderConnection: (options: { providerId: string; modelId: string; baseUrl?: string; apiKey?: string }) =>
+    command<{ success: boolean; message: string; statusCode?: number }>('agent_test_provider_connection', options),
+  agentListAllSkills: (sessionId: string) =>
+    command<SkillDefinition[]>('agent_list_all_skills', { sessionId }),
 };
