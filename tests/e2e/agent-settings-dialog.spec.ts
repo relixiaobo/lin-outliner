@@ -46,21 +46,17 @@ test.describe('agent settings dialog', () => {
     await expect(dialog.getByLabel('Permission mode')).toBeVisible();
   });
 
-  test('uses the shared checkbox mark for provider enablement', async ({ page }) => {
+  test('uses a switch for provider enablement', async ({ page }) => {
     const { dialog } = await openSettings(page);
-    const enabled = dialog.getByLabel('Enabled');
-    const enabledLabel = enabled.locator('xpath=..');
-    const mark = enabledLabel.locator('.checkbox-mark');
+    const enabled = dialog.getByRole('switch', { name: 'Enabled' });
+    const mark = enabled.locator('.switch-mark');
 
-    await expect(enabled).toBeChecked();
+    await expect(enabled).toHaveAttribute('aria-checked', 'true');
     await expect(mark).toHaveClass(/checked/);
-    await expect(mark).toHaveCSS('width', '16px');
-    await expect(mark).toHaveCSS('height', '16px');
-    await expect(mark).toHaveCSS('border-radius', '3px');
 
-    await enabledLabel.click();
+    await enabled.click();
 
-    await expect(enabled).not.toBeChecked();
+    await expect(enabled).toHaveAttribute('aria-checked', 'false');
     await expect(mark).not.toHaveClass(/checked/);
   });
 
