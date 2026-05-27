@@ -1,4 +1,6 @@
 import {
+  bundledLanguages,
+  bundledLanguagesAlias,
   createHighlighter,
   type BundledLanguage,
   type Highlighter,
@@ -59,6 +61,18 @@ function escapeHtml(value: string): string {
 // identical before/while a grammar loads (or for unsupported languages).
 export function plainCodeHtml(code: string): string {
   return `<pre class="shiki" tabindex="-1"><code>${escapeHtml(code) || '​'}</code></pre>`;
+}
+
+// True when Shiki can actually highlight the language (a real bundled grammar
+// or alias). Lets callers fall back to Plain text for fence info strings that
+// are not languages (e.g. `tool`, `tool-error`) instead of surfacing them as a
+// bogus language label, while still preserving real grammars not in the picker
+// list (e.g. `kotlin`). Synchronous: it only inspects the bundle's id map, it
+// does not load any grammar.
+export function isKnownCodeLanguage(language: string | undefined | null): boolean {
+  const id = normalizeCodeLanguage(language);
+  if (!id) return false;
+  return id in bundledLanguages || id in bundledLanguagesAlias;
 }
 
 export async function highlightCode(code: string, language: string | undefined | null): Promise<string> {
