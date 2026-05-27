@@ -90,6 +90,19 @@ test.describe('agent settings dialog', () => {
     await expect(dialog.getByRole('button', { name: /Custom provider/ })).toBeVisible();
   });
 
+  test('gates the enable toggle on a credential and auto-enables on key entry', async ({ page }) => {
+    const { dialog } = await openSettings(page);
+    await dialog.locator('.settings-provider-row', { hasText: 'Anthropic' }).click();
+
+    const toggle = dialog.getByRole('switch', { name: 'Enabled' });
+    await expect(toggle).toBeDisabled();
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+
+    await dialog.getByLabel('API key').fill('sk-ant-test');
+    await expect(toggle).toBeEnabled();
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+  });
+
   test('shows a credential note instead of a key field for non-key providers', async ({ page }) => {
     const { dialog } = await openSettings(page);
     await dialog.locator('.settings-provider-row', { hasText: 'Amazon Bedrock' }).click();

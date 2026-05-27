@@ -8,7 +8,7 @@ import type {
   AgentReasoningLevel,
 } from '../../api/types';
 import { api } from '../../api/client';
-import { ChevronRightIcon, HideIcon, ICON_SIZE, OpenIcon, PasswordIcon, ShowIcon, TrashIcon, WarningIcon } from '../icons';
+import { ChevronRightIcon, HideIcon, ICON_SIZE, OpenIcon, PasswordIcon, SearchIcon, ShowIcon, TrashIcon, WarningIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { CheckboxControl } from '../primitives/CheckboxControl';
 import { Dialog } from '../primitives/Dialog';
@@ -196,6 +196,10 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
     : providerDescription(selectedCatalog);
   const authInfo = showConnectionFields ? undefined : PROVIDER_AUTH[draft.providerId];
   const docsUrl = showConnectionFields ? undefined : PROVIDER_DOCS_URL[draft.providerId];
+  // A provider can only be enabled once it has a credential (a key, an env key,
+  // or a non-key auth method). Without one, enabling is meaningless.
+  const canEnable = hasAnyKey || Boolean(authInfo);
+  const effectiveEnabled = draft.enabled && canEnable;
   const baseUrlPlaceholder = selectedCatalog?.defaultBaseUrl ?? 'https://api.example.com/v1';
   const showModelList = !creatingCustom && catalogModels.length > 0;
   const showModelSearch = catalogModels.length > 8;
@@ -268,7 +272,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
         modelId,
         reasoningLevel: coerceReasoningLevel(draft.reasoningLevel, selectedReasoningLevels),
         baseUrl: draft.baseUrl.trim() || null,
-        enabled: draft.enabled,
+        enabled: effectiveEnabled,
       });
       next = await api.agentUpdateRuntimeSettings({
         permissionMode: draft.permissionMode,
@@ -396,23 +400,25 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
               <section className="agent-settings-section settings-providers-section" aria-label="Providers">
                 <div className="settings-providers">
                   <div className="settings-provider-aside">
-                    <TextInputControl
-                      className="settings-provider-search"
-                      label="Search providers"
-                      onChange={(event) => setProviderQuery(event.target.value)}
-                      placeholder="Search providers…"
-                      value={providerQuery}
-                    />
+                    <div className="settings-provider-search">
+                      <SearchIcon size={ICON_SIZE.menu} />
+                      <TextInputControl
+                        label="Search providers"
+                        onChange={(event) => setProviderQuery(event.target.value)}
+                        placeholder="Search providers…"
+                        value={providerQuery}
+                      />
+                    </div>
                     <div className="settings-provider-list" role="list" aria-label="Available providers">
                       {visibleProviderChoices.length === 0 ? (
                         <p className="settings-provider-list-empty">No providers match “{providerQuery.trim()}”.</p>
                       ) : null}
                       {visibleProviderChoices.map((provider) => {
                         const selected = provider.providerId === activeRowProviderId;
-                        const ready = provider.enabled && provider.hasCredential;
-                        const dotState = provider.active && ready
-                          ? 'is-active'
-                          : ready ? 'is-ready' : provider.configured ? 'is-warn' : '';
+                        // On = set up and turned on; Off = configured but disabled;
+                        // unconfigured providers get no dot to keep the list quiet.
+                        const enabledOn = provider.enabled && provider.hasCredential;
+                        const dotState = enabledOn ? 'is-on' : provider.configured ? 'is-off' : '';
                         return (
                           <button
                             aria-current={selected ? 'true' : undefined}
@@ -466,13 +472,15 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
                             </div>
                           </div>
                           <SwitchControl
-                            checked={draft.enabled}
+                            checked={effectiveEnabled}
                             className="settings-provider-toggle"
+                            disabled={!canEnable}
                             label="Enabled"
                             onCheckedChange={(enabled) => setDraft((current) => ({ ...current, enabled }))}
+                            title={canEnable ? undefined : 'Add an API key to enable this provider'}
                           >
                             <span>Enabled</span>
-                            <SwitchMark checked={draft.enabled} />
+                            <SwitchMark checked={effectiveEnabled} />
                           </SwitchControl>
                         </div>
 
@@ -509,7 +517,12 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
                               <PasswordIcon size={ICON_SIZE.menu} />
                               <TextInputControl
                                 label="API key"
-                                onChange={(event) => setApiKey(event.target.value)}
+                                onChange={(event) => {
+                                  const value = event.target.value;
+                                  setApiKey(value);
+                                  // A pasted key enables the provider by default.
+                                  if (value.trim()) setDraft((current) => ({ ...current, enabled: true }));
+                                }}
                                 placeholder={hasAnyKey ? 'Configured' : 'Paste key'}
                                 type={revealKey ? 'text' : 'password'}
                                 value={apiKey}
