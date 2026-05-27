@@ -82,6 +82,7 @@ const NODE_SCALAR_KEYS: NodeFieldKey[] = [
   'queryOp',
   'queryTagDefId',
   'queryFieldDefId',
+  'queryTargetId',
   'codeLanguage',
   'assetId',
   'mediaUrl',

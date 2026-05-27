@@ -284,7 +284,7 @@ function conditionOutlineLines(index: DocumentIndex, condition: QueryBearingProj
   const lines = [`${indent}- ${condition.queryOp}`];
   if (condition.queryFieldDefId) lines.push(`${indent}  - field:: ${nodeReference(index, condition.queryFieldDefId)}`);
   if (condition.queryTagDefId) lines.push(`${indent}  - tag:: ${nodeReference(index, condition.queryTagDefId, tagName(index, condition.queryTagDefId))}`);
-  if (condition.targetId) lines.push(`${indent}  - target:: ${nodeReference(index, condition.targetId)}`);
+  if (condition.queryTargetId) lines.push(`${indent}  - target:: ${nodeReference(index, condition.queryTargetId)}`);
   for (const operand of operandOutlineTexts(index, condition)) {
     lines.push(`${indent}  - value:: ${operand}`);
   }
@@ -402,8 +402,8 @@ function fieldRuleLabel(index: DocumentIndex, condition: QueryBearingProjection,
 }
 
 function targetRuleLabel(index: DocumentIndex, condition: QueryBearingProjection, op: QueryOp): string {
-  const target = condition.targetId
-    ? nodeTitle(index, condition.targetId)
+  const target = condition.queryTargetId
+    ? nodeTitle(index, condition.queryTargetId)
     : valueLabels(index, condition)[0] ?? 'target';
   switch (op) {
     case 'LINKS_TO':

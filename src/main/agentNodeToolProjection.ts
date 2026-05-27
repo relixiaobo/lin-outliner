@@ -50,7 +50,7 @@ export function fieldReads(index: ProjectionIndex, node: NodeProjection, include
         .map((value) => ({
           text: referenceText(index, value) ?? value.content.text,
           valueNodeId: value.id,
-          targetId: value.targetId,
+          targetId: value.type === 'reference' ? value.targetId : undefined,
         }));
       const options = fieldDef?.children
         .map((optionId) => index.nodes.get(optionId))
@@ -71,7 +71,7 @@ export function backlinks(index: ProjectionIndex, targetId: string, includeDelet
   const result: NodeBacklink[] = [];
   for (const node of index.projection.nodes) {
     if (!includeDeleted && isInTrash(index, node.id)) continue;
-    if (refRoleCountsAsBacklink(node) && node.targetId === targetId) {
+    if (node.type === 'reference' && refRoleCountsAsBacklink(node) && node.targetId === targetId) {
       const parent = node.parentId ? index.nodes.get(node.parentId) : undefined;
       const source = parent && parent.type === 'fieldEntry' && parent.parentId ? index.nodes.get(parent.parentId) : parent;
       result.push({
@@ -241,7 +241,7 @@ export function projectionFingerprint(projection: DocumentProjection): string {
     text: node.content.text,
     tags: node.tags,
     type: node.type,
-    targetId: node.targetId,
+    targetId: node.type === 'reference' ? node.targetId : undefined,
     updatedAt: node.updatedAt,
   })));
 }

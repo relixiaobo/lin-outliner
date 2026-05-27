@@ -24,8 +24,9 @@ export function FieldOptionPicker({
 }: FieldOptionPickerProps) {
   const options = resolveFieldOptions(field, byId);
   const selectedOptionId = resolveSelectedOptionId(valueNode, options);
-  const selectedFallback = valueNode?.targetId
-    ? byId.get(valueNode.targetId)?.content.text
+  const valueTargetId = valueNode?.type === 'reference' ? valueNode.targetId : undefined;
+  const selectedFallback = valueTargetId
+    ? byId.get(valueTargetId)?.content.text
     : valueNode?.content.text;
   const selectedMarker = valueNode?.type === 'reference' ? 'reference' : 'bullet';
   const fieldConfig = projectFieldConfig(byId, field);

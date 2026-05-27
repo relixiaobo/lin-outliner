@@ -366,10 +366,7 @@ export interface NodeBase {
   bannerPositionY?: number;
   bannerAlt?: string;
   templateId?: NodeId;
-  /** For `reference` nodes: the role this reference plays (backlink allowlist). */
-  refRole?: RefRole;
   autoCollected: boolean;
-  targetId?: NodeId;
   aiSummary?: string;
   trashedFromParentId?: NodeId;
   trashedFromIndex?: number;
@@ -382,7 +379,13 @@ export interface FieldEntryNode extends NodeBase {
   /** The fieldDef this entry holds a value for. */
   fieldDefId?: NodeId;
 }
-export interface ReferenceNode extends NodeBase { type: 'reference'; }
+export interface ReferenceNode extends NodeBase {
+  type: 'reference';
+  /** The node this reference points to. */
+  targetId?: NodeId;
+  /** The role this reference plays (backlink allowlist). */
+  refRole?: RefRole;
+}
 export interface CodeBlockNode extends NodeBase {
   type: 'codeBlock';
   /** CodeMirror language bundle id; '' means plain text. */
@@ -446,6 +449,8 @@ export interface QueryParams {
   queryOp?: QueryOp;
   queryTagDefId?: NodeId;
   queryFieldDefId?: NodeId;
+  /** A rule's single-node target (e.g. "field is [node]"); mirrors SearchQueryRule.targetId. */
+  queryTargetId?: NodeId;
 }
 export interface SearchNode extends NodeBase, QueryParams { type: 'search'; }
 export interface QueryConditionNode extends NodeBase, QueryParams { type: 'queryCondition'; }

@@ -97,7 +97,7 @@ function childSummary(
     hasChildren: children.length > 0,
     childCount: children.length,
     isReference: node.type === 'reference' || undefined,
-    targetId: node.targetId,
+    targetId: node.type === 'reference' ? node.targetId : undefined,
     children: remainingDepth > 0 ? buildChildrenPage(index, nodeId, remainingDepth, 0, childLimit, includeDeleted) : undefined,
   };
 }

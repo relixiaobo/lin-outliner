@@ -363,12 +363,12 @@ describe('core search engine', () => {
     expect(regexp.ok ? regexp.hits.map((hit) => hit.nodeId) : []).not.toContain(outside);
 
     state.nodes[conditionId]!.queryOp = 'CHILD_OF';
-    state.nodes[conditionId]!.targetId = parent;
+    state.nodes[conditionId]!.queryTargetId = parent;
     const childOf = runSearchNode(state, searchId);
     expect(childOf.ok ? childOf.hits.map((hit) => hit.nodeId) : []).toEqual(expect.arrayContaining([alpha, beta]));
     expect(childOf.ok ? childOf.hits.map((hit) => hit.nodeId) : []).not.toContain(grandchild);
 
-    delete state.nodes[conditionId]!.targetId;
+    delete state.nodes[conditionId]!.queryTargetId;
     state.nodes[conditionId]!.queryOp = 'IS_TYPE';
     state.nodes[conditionId]!.content.text = 'tagDef';
     const typeSearch = runSearchNode(state, searchId);
@@ -429,7 +429,7 @@ describe('core search engine', () => {
     relationState.nodes[relationSearchId]!.type = 'search';
     relationState.nodes[relationConditionId]!.type = 'queryCondition';
     relationState.nodes[relationConditionId]!.queryOp = 'CHILD_OF';
-    relationState.nodes[relationConditionId]!.targetId = parent;
+    relationState.nodes[relationConditionId]!.queryTargetId = parent;
 
     const childOf = runSearchNode(relationState, relationSearchId);
     expect(childOf.ok ? childOf.hits.map((hit) => hit.nodeId) : []).toEqual(expect.arrayContaining([owned, referenced]));

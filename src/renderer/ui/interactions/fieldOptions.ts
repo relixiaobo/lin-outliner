@@ -74,8 +74,9 @@ export function resolveSelectedOptionId(
   options: readonly FieldOption[],
 ): NodeId | undefined {
   if (!valueNode) return undefined;
-  if (valueNode.targetId) {
-    return options.find((option) => option.id === valueNode.targetId || option.targetId === valueNode.targetId)?.id;
+  const valueTargetId = valueNode.type === 'reference' ? valueNode.targetId : undefined;
+  if (valueTargetId) {
+    return options.find((option) => option.id === valueTargetId || option.targetId === valueTargetId)?.id;
   }
   const raw = valueNode.content.text.trim();
   if (!raw) return undefined;

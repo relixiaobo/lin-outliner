@@ -160,7 +160,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
     if (rowEditorFocused) return;
     draftContentRef.current = nextContent;
     setDraftContent(nextContent);
-  }, [displayed?.id, displayed?.content, displayed?.targetId, rowEditorFocused]);
+  }, [displayed?.id, displayed?.content, displayed?.type === 'reference' ? displayed.targetId : undefined, rowEditorFocused]);
 
   if (!node || !displayed) return null;
 

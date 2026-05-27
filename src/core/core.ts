@@ -71,6 +71,7 @@ import {
   type FilterRuleNode,
   type ImageNode,
   type QueryConditionNode,
+  type ReferenceNode,
   type SearchNode,
   type SortRuleNode,
   type ViewDefNode,
@@ -1226,7 +1227,7 @@ export class Core {
       this.loro.createNodeWithId(valueId, fieldEntryId, undefined, undefined, (node) => {
         node.content = plainText(normalized);
       });
-      this.loro.createNodeWithId(freshId('option_ref'), fieldDefId, undefined, 'reference', (node) => {
+      this.loro.createNodeWithId<ReferenceNode>(freshId('option_ref'), fieldDefId, undefined, 'reference', (node) => {
         node.targetId = valueId;
         node.autoCollected = true;
       });
@@ -1271,7 +1272,7 @@ export class Core {
       if (wouldCreateReferenceCycle(state, parentId, resolvedTargetId)) throw CoreError.referenceCycle();
       ensureParentCanContainChildInstance(state, parentId, resolvedTargetId);
       const id = freshId('ref');
-      this.loro.createNodeWithId(id, parentId, index, 'reference', (node) => {
+      this.loro.createNodeWithId<ReferenceNode>(id, parentId, index, 'reference', (node) => {
         node.targetId = resolvedTargetId;
       });
       return focus(id);
@@ -1334,7 +1335,7 @@ export class Core {
       }
       const index = childIndex(state, parentId, nodeId) ?? 0;
       const referenceId = freshId('ref');
-      this.loro.createNodeWithId(referenceId, parentId, index, 'reference', (node) => {
+      this.loro.createNodeWithId<ReferenceNode>(referenceId, parentId, index, 'reference', (node) => {
         node.targetId = resolvedTargetId;
       });
       current.trashedFromParentId = parentId;
@@ -1435,7 +1436,7 @@ export class Core {
       ensureParentCanContainChildInstance(state, parentId, resolvedTargetId, nodeId);
       const index = childIndex(state, parentId, nodeId) ?? 0;
       const referenceId = freshId('ref');
-      this.loro.createNodeWithId(referenceId, parentId, index, 'reference', (reference) => {
+      this.loro.createNodeWithId<ReferenceNode>(referenceId, parentId, index, 'reference', (reference) => {
         reference.targetId = resolvedTargetId;
       });
       this.removeSubtreeDirect(nodeId);
@@ -1514,7 +1515,7 @@ export class Core {
     const result: Backlink[] = [];
     for (const node of Object.values(this.stateValue.nodes)) {
       if (isInTrash(this.stateValue, node.id)) continue;
-      if (refRoleCountsAsBacklink(node) && node.targetId === targetId && node.parentId) {
+      if (node.type === 'reference' && refRoleCountsAsBacklink(node) && node.targetId === targetId && node.parentId) {
         result.push({ sourceId: node.parentId, referenceId: node.id, kind: 'tree' });
       }
       for (const inlineRef of node.content.inlineRefs) {
@@ -1774,7 +1775,6 @@ export class Core {
       queryLogic: undefined,
       queryTagDefId: undefined,
       queryFieldDefId: undefined,
-      targetId: undefined,
       updatedAt: nowMs(),
     };
     this.loro.writeNode(node);
@@ -1822,7 +1822,7 @@ export class Core {
     for (const targetId of hits) {
       if (existingRefs.has(targetId)) continue;
       if (!refreshedState.nodes[targetId]) continue;
-      this.loro.createNodeWithId(freshId('ref'), nodeId, undefined, 'reference', (node) => {
+      this.loro.createNodeWithId<ReferenceNode>(freshId('ref'), nodeId, undefined, 'reference', (node) => {
         node.targetId = targetId;
       });
     }
@@ -1852,7 +1852,7 @@ export class Core {
         node.content = plainText(query.text ?? searchRuleTitle(state, query));
         if (query.fieldDefId) node.queryFieldDefId = query.fieldDefId;
         if (query.tagDefId) node.queryTagDefId = query.tagDefId;
-        if (query.targetId) node.targetId = query.targetId;
+        if (query.targetId) node.queryTargetId = query.targetId;
       }
     });
     if (query.kind === 'group') {
@@ -1863,10 +1863,17 @@ export class Core {
   }
 
   private createSearchQueryOperandDirect(parentId: string, operand: SearchQueryOperand) {
-    this.loro.createNodeWithId(freshId(operand.targetId ? 'ref' : 'operand'), parentId, undefined, operand.targetId ? 'reference' : undefined, (node) => {
-      node.content = plainText(operand.text ?? '');
-      if (operand.targetId) node.targetId = operand.targetId;
-    });
+    const targetId = operand.targetId;
+    if (targetId) {
+      this.loro.createNodeWithId<ReferenceNode>(freshId('ref'), parentId, undefined, 'reference', (node) => {
+        node.content = plainText(operand.text ?? '');
+        node.targetId = targetId;
+      });
+    } else {
+      this.loro.createNodeWithId(freshId('operand'), parentId, undefined, undefined, (node) => {
+        node.content = plainText(operand.text ?? '');
+      });
+    }
   }
 
   private ensureSystemNodesDirect() {
@@ -2113,12 +2120,21 @@ export class Core {
   }
 
   private createConfigValueNodeDirect(rowId: string, text: string, refRole: RefRole | undefined, targetId: string | undefined) {
-    const id = freshId(targetId ? 'ref' : 'node');
     const now = nowMs();
-    this.loro.createNodeWithId(id, rowId, undefined, targetId ? 'reference' : undefined, (node) => {
+    if (targetId) {
+      const id = freshId('ref');
+      this.loro.createNodeWithId<ReferenceNode>(id, rowId, undefined, 'reference', (node) => {
+        node.content = plainText(text);
+        if (refRole) node.refRole = refRole;
+        node.targetId = targetId;
+        node.createdAt = now;
+        node.updatedAt = now;
+      });
+      return id;
+    }
+    const id = freshId('node');
+    this.loro.createNodeWithId(id, rowId, undefined, undefined, (node) => {
       node.content = plainText(text);
-      if (refRole) node.refRole = refRole;
-      if (targetId) node.targetId = targetId;
       node.createdAt = now;
       node.updatedAt = now;
     });
@@ -2241,7 +2257,10 @@ export class Core {
       const next = clone(other);
       const before = JSON.stringify(next);
       next.tags = next.tags.filter((id) => !removedIds.has(id));
-      if (next.targetId && removedIds.has(next.targetId)) delete next.targetId;
+      if (next.type === 'reference' && next.targetId && removedIds.has(next.targetId)) delete next.targetId;
+      if ((next.type === 'search' || next.type === 'queryCondition') && next.queryTargetId && removedIds.has(next.queryTargetId)) {
+        delete next.queryTargetId;
+      }
       next.content.inlineRefs = next.content.inlineRefs.filter((ref) => !removedIds.has(ref.targetNodeId));
       if (JSON.stringify(next) !== before && this.loro.hasNode(next.id)) this.loro.writeNode(next);
     }
@@ -2356,7 +2375,7 @@ export class Core {
     const result = resolveAutoInit(state, nodeId, fieldDef);
     if (!result) return;
     if (result.kind === 'reference') {
-      this.loro.createNodeWithId(freshId('auto_value'), fieldEntryId, undefined, 'reference', (node) => {
+      this.loro.createNodeWithId<ReferenceNode>(freshId('auto_value'), fieldEntryId, undefined, 'reference', (node) => {
         node.targetId = result.targetId;
       });
       return;
@@ -2372,12 +2391,13 @@ export class Core {
     for (const valueId of state.nodes[templateOriginId]?.children ?? []) {
       const value = state.nodes[valueId];
       if (!value) continue;
-      const source = value as Partial<CodeBlockNode>;
+      const sourceTargetId = value.type === 'reference' ? value.targetId : undefined;
+      const sourceCodeLanguage = value.type === 'codeBlock' ? value.codeLanguage : undefined;
       this.loro.createNodeWithId(freshId('value'), fieldEntryId, undefined, value.type, (node) => {
         node.content = clone(value.content);
         node.description = value.description;
-        node.targetId = value.targetId;
-        (node as CodeBlockNode).codeLanguage = source.codeLanguage;
+        if (sourceTargetId) (node as ReferenceNode).targetId = sourceTargetId;
+        if (sourceCodeLanguage) (node as CodeBlockNode).codeLanguage = sourceCodeLanguage;
       });
     }
   }
@@ -2449,16 +2469,17 @@ export class Core {
     requiredNode(state, fieldDefId);
     const optionTargetId = optionValueTargetId(state, optionNodeId);
     const isList = fieldCardinalityOf(state, fieldDefId) === 'list';
-    const alreadySelected = fieldEntry.children.some((childId) => (
-      childId === optionTargetId || state.nodes[childId]?.targetId === optionTargetId
-    ));
+    const alreadySelected = fieldEntry.children.some((childId) => {
+      const child = state.nodes[childId];
+      return childId === optionTargetId || (child?.type === 'reference' && child.targetId === optionTargetId);
+    });
     if (alreadySelected) {
       return;
     }
     if (!isList) {
       this.clearFieldEntryValuesDirect(fieldEntryId, fieldDefId);
     }
-    this.loro.createNodeWithId(freshId('option_value'), fieldEntryId, undefined, 'reference', (node) => {
+    this.loro.createNodeWithId<ReferenceNode>(freshId('option_value'), fieldEntryId, undefined, 'reference', (node) => {
       node.targetId = optionTargetId;
     });
   }
@@ -2569,10 +2590,10 @@ export class Core {
           displayName: state.nodes[resolvedTargetId]?.content.text || undefined,
         }],
       };
+      const { targetId: _droppedTargetId, refRole: _droppedRefRole, ...rest } = target;
       target = {
-        ...target,
+        ...rest,
         type: undefined,
-        targetId: undefined,
         content: appendRichText(inlineRefContent, current.content),
       };
     } else {
@@ -3103,7 +3124,7 @@ function configRefTargets(state: DocumentState, defId: string, configKey: DefCon
     if (row?.type === 'defConfig' && row.configKey === configKey) {
       return row.children
         .map((id) => state.nodes[id])
-        .filter((n): n is Node => n?.type === 'reference' && Boolean(n.targetId))
+        .filter((n): n is Extract<Node, { type: 'reference' }> => n?.type === 'reference' && Boolean(n.targetId))
         .map((n) => n.targetId as string);
     }
   }

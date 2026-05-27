@@ -351,7 +351,7 @@ function queryExprFromConditionNode(index: SearchIndex, conditionNode: QueryBear
         ...(text ? { text } : {}),
         ...(conditionNode.queryFieldDefId ? { fieldDefId: conditionNode.queryFieldDefId } : {}),
         ...(conditionNode.queryTagDefId ? { tagDefId: conditionNode.queryTagDefId } : {}),
-        ...(conditionNode.targetId ? { targetId: conditionNode.targetId } : {}),
+        ...(conditionNode.queryTargetId ? { targetId: conditionNode.queryTargetId } : {}),
         ...queryOperandsFromConditionNode(index, conditionNode),
       },
     };
@@ -731,10 +731,10 @@ function virtualConditionTreeFromQueryExpr(
   node.queryOp = query.op;
   if (query.fieldDefId) node.queryFieldDefId = query.fieldDefId;
   if (query.tagDefId) node.queryTagDefId = query.tagDefId;
-  if (query.targetId) node.targetId = query.targetId;
+  if (query.targetId) node.queryTargetId = query.targetId;
   for (const operand of query.operands ?? []) {
     const operandNode = virtualNode(nextId(), node.id, operand.targetId ? 'reference' : undefined, operand.text ?? '');
-    if (operand.targetId) operandNode.targetId = operand.targetId;
+    if (operand.targetId) (operandNode as Extract<SearchNode, { type: 'reference' }>).targetId = operand.targetId;
     node.children.push(operandNode.id);
     nodes.push(operandNode);
   }
@@ -923,7 +923,10 @@ function operandsFromNode(
   options: OperandResolutionOptions,
 ): SearchOperand[] {
   const operands: SearchOperand[] = [];
-  if (node.targetId) operands.push(...nodeOperand(index, node.targetId));
+  if (node.type === 'reference' && node.targetId) operands.push(...nodeOperand(index, node.targetId));
+  if ((node.type === 'search' || node.type === 'queryCondition') && node.queryTargetId) {
+    operands.push(...nodeOperand(index, node.queryTargetId));
+  }
   for (const inlineRef of node.content.inlineRefs) {
     operands.push(...nodeOperand(index, inlineRef.targetNodeId));
   }
