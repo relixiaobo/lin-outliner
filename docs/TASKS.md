@@ -62,6 +62,9 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **settings-provider-choice-cleanup** (P3, cc) — self-review follow-up to #31:
+  drop the unread `modelId` / `custom` fields from the Settings dialog's
+  `ProviderChoice` (nothing consumed them). Behavior-preserving (PR #32).
 - **settings-window restructure** (P2, cc) — the "Agent settings" dialog became
   a "Settings" window with a left category nav: **Providers** (connection only —
   provider row list incl. a Custom OpenAI-compatible entry, one key + status,

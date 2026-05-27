@@ -147,6 +147,12 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Drop dead `ProviderChoice` fields** — the Settings dialog's
+  `buildProviderChoices` no longer populates `modelId` / `custom` on each
+  provider choice; nothing read them (rendering, sort, and status label use only
+  `providerId` / `configured` / `active` / `enabled` / `hasCredential`).
+  Self-review follow-up to #31, behavior-preserving.
+  ([#32](https://github.com/relixiaobo/lin-outliner/pull/32))
 - **Prod install isolation + signing** — `userData` now resolves in three
   tiers (`ELECTRON_USER_DATA_DIR` → `$HOME/.lin-outliner-dev` for unpackaged
   source runs → the default path for installed builds), so a bare `bun run dev`
