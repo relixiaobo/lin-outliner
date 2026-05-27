@@ -5,6 +5,7 @@ import {
   getModels,
   getProviders,
   getSupportedThinkingLevels,
+  completeSimple,
 } from '@earendil-works/pi-ai';
 import type { Api, KnownProvider, Model, SimpleStreamOptions } from '@earendil-works/pi-ai';
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
@@ -83,6 +84,8 @@ const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
   providerMaxRetries: null,
   providerMaxRetryDelayMs: 60_000,
   providerCacheRetention: 'short',
+  disabledSkills: [],
+  disabledAgents: [],
 };
 
 export interface AgentProviderRuntimeConfig extends AgentProviderConfig {
@@ -254,6 +257,8 @@ function normalizeAgentRuntimeSettings(input?: Partial<AgentRuntimeSettings> | n
     providerCacheRetention: isAgentCacheRetention(input?.providerCacheRetention)
       ? input.providerCacheRetention
       : DEFAULT_AGENT_RUNTIME_SETTINGS.providerCacheRetention,
+    disabledSkills: normalizeStringList(input?.disabledSkills),
+    disabledAgents: normalizeStringList(input?.disabledAgents),
   };
 }
 
@@ -421,4 +426,90 @@ function providerPath() {
 
 function secretPath() {
   return join(app.getPath('userData'), SECRETS_FILE);
+}
+
+export async function testProviderConnection(input: {
+  providerId: string;
+  modelId: string;
+  baseUrl?: string | null;
+  apiKey?: string | null;
+}): Promise<{ success: boolean; message: string; statusCode?: number }> {
+  try {
+    const providerId = normalizeProviderId(input.providerId);
+    const modelId = input.modelId.trim();
+    if (!modelId) {
+      return { success: false, message: 'Model ID is required.' };
+    }
+
+    let apiKey = input.apiKey?.trim();
+    if (!apiKey) {
+      const secrets = await readSecretFile();
+      apiKey = secrets.keys[providerId] ?? getEnvApiKey(providerId);
+    }
+
+    if (!apiKey) {
+      return { success: false, message: 'API Key is missing.' };
+    }
+
+    const model = getTempModelForTest(providerId, modelId);
+    
+    const streamOptions: SimpleStreamOptions = {
+      apiKey,
+      timeoutMs: 8000,
+      maxTokens: 1,
+    };
+    
+    const baseUrl = input.baseUrl?.trim();
+    if (baseUrl) {
+      model.baseUrl = baseUrl;
+    }
+
+    await completeSimple(model as Model<any>, {
+      messages: [{ role: 'user', content: 'Ping', timestamp: Date.now() }],
+    }, streamOptions);
+
+    return { success: true, message: 'Connection successful.' };
+  } catch (error: any) {
+    console.error('Test connection failed:', error);
+    const errMsg = error?.message || String(error);
+    let message = `Connection failed: ${errMsg}`;
+    let statusCode: number | undefined;
+
+    if (errMsg.includes('401') || errMsg.toLowerCase().includes('unauthorized') || errMsg.toLowerCase().includes('invalid api key')) {
+      statusCode = 401;
+      message = 'Unauthorized (401): Please check your API Key.';
+    } else if (errMsg.includes('404') || errMsg.toLowerCase().includes('not found') || errMsg.toLowerCase().includes('model_not_found')) {
+      statusCode = 404;
+      message = 'Not Found (404): Please check your Base URL or Model ID.';
+    } else if (errMsg.includes('403') || errMsg.toLowerCase().includes('forbidden')) {
+      statusCode = 403;
+      message = 'Forbidden (403): You do not have permission to access this model.';
+    } else if (errMsg.toLowerCase().includes('timeout') || errMsg.toLowerCase().includes('abort')) {
+      message = 'Timeout: The request took longer than 8 seconds. Please check your network or Base URL.';
+    }
+
+    return { success: false, message, statusCode };
+  }
+}
+
+function getTempModelForTest(providerId: string, modelId: string): Model<any> {
+  const known = findKnownModel(providerId, modelId);
+  if (known) return { ...known };
+  let first: any = null;
+  try {
+    const list = getModels(providerId as KnownProvider);
+    first = list[0];
+  } catch {}
+  return {
+    id: modelId,
+    name: modelId,
+    api: first ? first.api : 'openai-completions',
+    provider: providerId,
+    baseUrl: first ? first.baseUrl : '',
+    reasoning: false,
+    input: ['text'],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 8192,
+    maxTokens: 1024,
+  };
 }

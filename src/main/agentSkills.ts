@@ -6,6 +6,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { parse as parseYaml } from 'yaml';
 import type { AgentMessage, TextContent, UserMessage } from '../core/agentTypes';
+import type { SkillDefinition } from '../core/types';
 import { systemReminder } from '../core/agentAttachments';
 import {
   errorEnvelope,
@@ -43,31 +44,7 @@ const SKILL_TOOL_PARAMETERS = {
   },
 };
 
-export interface SkillDefinition {
-  name: string;
-  identity?: string;
-  displayName?: string;
-  source: 'user' | 'project' | 'dynamic';
-  rootDir: string;
-  skillFile: string;
-  description: string;
-  hasUserSpecifiedDescription: boolean;
-  whenToUse?: string;
-  userInvocable: boolean;
-  modelInvocable: boolean;
-  allowedTools: string[];
-  argumentHint?: string;
-  argumentNames: string[];
-  version?: string;
-  model?: string;
-  effort?: string;
-  shell?: string;
-  context: 'inline' | 'fork';
-  agent?: string;
-  paths?: string[];
-  contentLength: number;
-  body: string;
-}
+
 
 export interface InvokedSkillRecord {
   skillName: string;
@@ -226,6 +203,7 @@ export class AgentSkillRuntime {
   private readonly activePermissionRules = new Set<string>();
   private pendingTurnEffect: SkillTurnEffect | null = null;
   private readonly invokedSkills = new Map<string, InvokedSkillRecord>();
+  private disabledSkills: string[] = [];
 
   constructor(options: SkillLoadOptions = {}) {
     this.registry = new SkillRegistry(options);
@@ -236,6 +214,10 @@ export class AgentSkillRuntime {
 
   updateAdditionalSkillDirectories(directories: readonly string[]): void {
     this.registry.updateAdditionalSkillDirectories(directories);
+  }
+
+  updateDisabledSkills(disabledSkills: string[]): void {
+    this.disabledSkills = disabledSkills;
   }
 
   resetSessionState(): void {
@@ -283,7 +265,7 @@ export class AgentSkillRuntime {
 
   async reserveSkillListingReminderText(contextWindowTokens?: number | null): Promise<SkillListingReservation | null> {
     const skills = await this.registry.getModelInvocableSkills();
-    const newSkills = skills.filter((skill) => !this.listedSkills.has(skill));
+    const newSkills = skills.filter((skill) => !this.listedSkills.has(skill) && !this.disabledSkills.includes(skill.name));
     if (newSkills.length === 0) return null;
 
     const content = formatSkillListing(newSkills, contextWindowTokens ?? undefined);
@@ -335,7 +317,12 @@ export class AgentSkillRuntime {
   }
 
   async listUserInvocableSkills(): Promise<SkillDefinition[]> {
-    return this.registry.getUserInvocableSkills();
+    const skills = await this.registry.getUserInvocableSkills();
+    return skills.filter((skill) => !this.disabledSkills.includes(skill.name));
+  }
+
+  async listAllSkills(): Promise<SkillDefinition[]> {
+    return this.registry.listAllSkills();
   }
 
   async invokeSkill(input: InvokeSkillInput): Promise<SkillInvocationResult> {
@@ -347,6 +334,9 @@ export class AgentSkillRuntime {
     const skill = await this.registry.resolveSkill(requestedName);
     if (!skill) {
       return { ok: false, code: 'unknown_skill', message: `Unknown skill: ${requestedName}` };
+    }
+    if (this.disabledSkills.includes(skill.name)) {
+      return { ok: false, code: 'skill_disabled', message: `Skill ${skill.name} is currently disabled in settings.` };
     }
     if (input.trigger === 'agent' && !skill.modelInvocable) {
       return {
@@ -636,6 +626,12 @@ class SkillRegistry {
   async getUserInvocableSkills(): Promise<SkillDefinition[]> {
     await this.ensureLoaded();
     return [...this.skills.values()].filter((skill) => skill.userInvocable);
+  }
+
+  async listAllSkills(): Promise<SkillDefinition[]> {
+    await this.ensureLoaded();
+    return [...this.skills.values(), ...this.conditionalSkills.values()]
+      .sort((left, right) => left.name.localeCompare(right.name));
   }
 
   async resolveSkill(name: string): Promise<SkillDefinition | null> {

@@ -19,6 +19,7 @@ import {
   setProviderApiKey,
   updateAgentRuntimeSettings,
   upsertProviderConfig,
+  testProviderConnection,
 } from './agentSettings';
 import { isAgentCommand, isAssetCommand, isDocumentCommand, type AgentCommand, type AssetCommand } from '../core/commands';
 import type { AgentProviderConfigInput, AgentRuntimeSettingsInput } from '../core/types';
@@ -826,6 +827,17 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
       return deleteProviderApiKey(String(args.providerId));
     case 'agent_get_provider_secret_status':
       return getProviderSecretStatus(String(args.providerId));
+    case 'agent_list_all_definitions':
+      return agentRuntime.listAllAgentDefinitions(String(args.sessionId));
+    case 'agent_test_provider_connection':
+      return testProviderConnection({
+        providerId: String(args.providerId),
+        modelId: String(args.modelId),
+        baseUrl: args.baseUrl ? String(args.baseUrl) : undefined,
+        apiKey: args.apiKey ? String(args.apiKey) : undefined,
+      });
+    case 'agent_list_all_skills':
+      return agentRuntime.listAllSkills(String(args.sessionId));
     default:
       throw new Error(`Unknown agent command: ${command}`);
   }
