@@ -4736,16 +4736,55 @@ button.panel-resize-handle::after {
   min-height: 340px;
 }
 
-.settings-provider-list {
+.settings-provider-aside {
   display: flex;
   flex: 0 0 auto;
-  width: 208px;
+  width: 216px;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-right: var(--space-4);
+  border-right: 1px solid var(--border-subtle);
+}
+
+.settings-provider-search input {
+  width: 100%;
+}
+
+.settings-provider-list {
+  display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: var(--space-1);
-  max-height: 440px;
+  max-height: 348px;
   overflow-y: auto;
-  padding-right: var(--space-3);
-  border-right: 1px solid var(--border-subtle);
+}
+
+.settings-provider-list-empty {
+  margin: 0;
+  padding: var(--space-3);
+  color: var(--muted-2);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+}
+
+.settings-provider-custom {
+  flex: 0 0 auto;
+  margin-top: var(--space-1);
+  border-top: 1px solid var(--border-subtle);
+  border-radius: 0;
+  padding-top: var(--space-3);
+  color: var(--text-soft);
+}
+
+.settings-provider-custom:hover {
+  border-radius: var(--radius-control-md);
+  border-top-color: transparent;
+}
+
+.settings-provider-custom.is-selected {
+  border-radius: var(--radius-control-md);
+  border-top-color: var(--focus-border);
+  color: var(--text-strong);
 }
 
 .settings-provider-row {
@@ -5159,13 +5198,16 @@ button.panel-resize-handle::after {
     flex-direction: column;
   }
 
-  .settings-provider-list {
+  .settings-provider-aside {
     width: auto;
-    max-height: 200px;
     padding-right: 0;
     padding-bottom: var(--space-3);
     border-right: none;
     border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .settings-provider-list {
+    max-height: 180px;
   }
 }
 

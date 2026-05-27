@@ -84,6 +84,15 @@ test.describe('agent settings dialog', () => {
     await expect(dialog.getByRole('combobox', { name: 'Model' })).toBeVisible();
   });
 
+  test('filters the provider list by search and keeps Custom reachable', async ({ page }) => {
+    const { dialog } = await openSettings(page);
+    await dialog.getByLabel('Search providers').fill('anth');
+    await expect(dialog.getByRole('button', { name: /Anthropic/ })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'OpenAI, Active' })).toHaveCount(0);
+    // The custom entry is pinned outside the filtered list.
+    await expect(dialog.getByRole('button', { name: /Custom provider/ })).toBeVisible();
+  });
+
   test('toggles API key visibility', async ({ page }) => {
     const { dialog } = await openSettings(page);
     const key = dialog.getByLabel('API key');

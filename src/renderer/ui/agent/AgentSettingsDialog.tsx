@@ -79,6 +79,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
   const [draft, setDraft] = useState<DraftConfig>(EMPTY_DRAFT);
   const [apiKey, setApiKey] = useState('');
   const [revealKey, setRevealKey] = useState(false);
+  const [providerQuery, setProviderQuery] = useState('');
   const [category, setCategory] = useState<SettingsCategory>('providers');
   const [creatingCustom, setCreatingCustom] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -117,6 +118,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
     setNotice(null);
     setCategory('providers');
     setCreatingCustom(false);
+    setProviderQuery('');
     void api.agentGetProviderSettings()
       .then((next) => {
         if (!isCurrentRequest(requestId)) return;
@@ -165,6 +167,13 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
     [draft.providerId, providerCatalog, settings],
   );
   const activeRowProviderId = creatingCustom ? '' : draft.providerId;
+  const visibleProviderChoices = useMemo(() => {
+    const query = providerQuery.trim().toLowerCase();
+    if (!query) return providerChoices;
+    return providerChoices.filter((choice) =>
+      formatProviderName(choice.providerId).toLowerCase().includes(query)
+      || choice.providerId.toLowerCase().includes(query));
+  }, [providerChoices, providerQuery]);
   const selectedChoice = providerChoices.find((choice) => choice.providerId === activeRowProviderId);
   const showDetail = creatingCustom || Boolean(draft.providerId);
   const detailName = creatingCustom
@@ -367,40 +376,53 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus }: 
                 </div>
 
                 <div className="settings-providers">
-                  <div className="settings-provider-list" role="list" aria-label="Available providers">
-                    {providerChoices.map((provider) => {
-                      const selected = provider.providerId === activeRowProviderId;
-                      const ready = provider.enabled && provider.hasCredential;
-                      const dotState = provider.active && ready
-                        ? 'is-active'
-                        : ready ? 'is-ready' : provider.configured ? 'is-warn' : '';
-                      return (
-                        <button
-                          aria-current={selected ? 'true' : undefined}
-                          aria-label={`${formatProviderName(provider.providerId)}, ${providerStatusLabel(provider)}`}
-                          className={`settings-provider-row ${selected ? 'is-selected' : ''}`}
-                          key={provider.providerId}
-                          onClick={() => selectProvider(provider.providerId)}
-                          type="button"
-                        >
-                          <span className="settings-provider-avatar" aria-hidden="true">
-                            {providerInitial(provider.providerId)}
-                          </span>
-                          <span className="settings-provider-name">{formatProviderName(provider.providerId)}</span>
-                          <span className={`settings-provider-dot ${dotState}`} aria-hidden="true" />
-                        </button>
-                      );
-                    })}
+                  <div className="settings-provider-aside">
+                    <TextInputControl
+                      className="settings-provider-search"
+                      label="Search providers"
+                      onChange={(event) => setProviderQuery(event.target.value)}
+                      placeholder="Search providers…"
+                      value={providerQuery}
+                    />
+                    <div className="settings-provider-list" role="list" aria-label="Available providers">
+                      {visibleProviderChoices.length === 0 ? (
+                        <p className="settings-provider-list-empty">No providers match “{providerQuery.trim()}”.</p>
+                      ) : null}
+                      {visibleProviderChoices.map((provider) => {
+                        const selected = provider.providerId === activeRowProviderId;
+                        const ready = provider.enabled && provider.hasCredential;
+                        const dotState = provider.active && ready
+                          ? 'is-active'
+                          : ready ? 'is-ready' : provider.configured ? 'is-warn' : '';
+                        return (
+                          <button
+                            aria-current={selected ? 'true' : undefined}
+                            aria-label={`${formatProviderName(provider.providerId)}, ${providerStatusLabel(provider)}`}
+                            className={`settings-provider-row ${selected ? 'is-selected' : ''}`}
+                            key={provider.providerId}
+                            onClick={() => selectProvider(provider.providerId)}
+                            type="button"
+                          >
+                            <span className="settings-provider-avatar" aria-hidden="true">
+                              {providerInitial(provider.providerId)}
+                            </span>
+                            <span className="settings-provider-name">{formatProviderName(provider.providerId)}</span>
+                            {dotState ? (
+                              <span className={`settings-provider-dot ${dotState}`} aria-hidden="true" />
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
                     <button
                       aria-current={creatingCustom ? 'true' : undefined}
                       aria-label="Custom provider, OpenAI-compatible"
-                      className={`settings-provider-row ${creatingCustom ? 'is-selected' : ''}`}
+                      className={`settings-provider-row settings-provider-custom ${creatingCustom ? 'is-selected' : ''}`}
                       onClick={startCustomProvider}
                       type="button"
                     >
                       <span className="settings-provider-avatar" aria-hidden="true">+</span>
-                      <span className="settings-provider-name">Custom</span>
-                      <span className="settings-provider-dot" aria-hidden="true" />
+                      <span className="settings-provider-name">Custom provider</span>
                     </button>
                   </div>
 
@@ -850,7 +872,10 @@ function formatTokens(value: number): string {
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   anthropic: 'Anthropic',
   openai: 'OpenAI',
+  'openai-codex': 'OpenAI Codex',
+  'azure-openai-responses': 'Azure OpenAI',
   google: 'Google Gemini',
+  'google-vertex': 'Google Vertex AI',
   openrouter: 'OpenRouter',
   deepseek: 'DeepSeek',
   xai: 'xAI',
@@ -863,6 +888,22 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   fireworks: 'Fireworks AI',
   cerebras: 'Cerebras',
   minimax: 'MiniMax',
+  huggingface: 'Hugging Face',
+  'kimi-coding': 'Kimi Coding',
+  'github-copilot': 'GitHub Copilot',
+};
+
+// Tokens that should keep a specific casing when a provider id falls through to
+// the generic title-case path (e.g. `cloudflare-ai-gateway` -> Cloudflare AI Gateway).
+const NAME_TOKEN_OVERRIDES: Record<string, string> = {
+  ai: 'AI',
+  openai: 'OpenAI',
+  api: 'API',
+  cn: 'CN',
+  ams: 'AMS',
+  sgp: 'SGP',
+  gpt: 'GPT',
+  github: 'GitHub',
 };
 
 // Where to mint an API key, for the providers we can link directly. Omitted
@@ -884,7 +925,7 @@ function formatProviderName(providerId: string): string {
   return providerId
     .split(/[-_]/g)
     .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .map((part) => NAME_TOKEN_OVERRIDES[part] ?? part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ') || providerId;
 }
 
