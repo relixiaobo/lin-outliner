@@ -4746,9 +4746,43 @@ button.panel-resize-handle::after {
   border-right: 1px solid var(--border-subtle);
 }
 
-.settings-provider-search {
+.settings-provider-search-row {
   display: flex;
   flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.settings-provider-add {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control-md);
+  background: rgba(255, 255, 255, 0.56);
+  color: var(--text-soft);
+  cursor: pointer;
+}
+
+.settings-provider-add:hover {
+  border-color: var(--focus-border);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text-strong);
+}
+
+.settings-provider-add.is-active {
+  border-color: var(--focus-border);
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  color: var(--text-strong);
+}
+
+.settings-provider-search {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
   align-items: center;
   gap: var(--space-3);
   height: 32px;
@@ -4793,26 +4827,6 @@ button.panel-resize-handle::after {
   color: var(--muted-2);
   font-size: var(--font-ui-2xs);
   line-height: var(--line-ui-2xs);
-}
-
-.settings-provider-custom {
-  flex: 0 0 auto;
-  margin-top: var(--space-1);
-  border-top: 1px solid var(--border-subtle);
-  border-radius: 0;
-  padding-top: var(--space-3);
-  color: var(--text-soft);
-}
-
-.settings-provider-custom:hover {
-  border-radius: var(--radius-control-md);
-  border-top-color: transparent;
-}
-
-.settings-provider-custom.is-selected {
-  border-radius: var(--radius-control-md);
-  border-top-color: var(--focus-border);
-  color: var(--text-strong);
 }
 
 .settings-provider-row {
@@ -5107,14 +5121,17 @@ button.panel-resize-handle::after {
 
 .settings-model-search {
   display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
   align-items: center;
   gap: var(--space-3);
-  height: 32px;
+  margin-left: var(--space-3);
+  height: 30px;
   border: 1px solid var(--border);
   border-radius: var(--radius-control-md);
   background: rgba(255, 255, 255, 0.56);
   color: var(--muted-2);
-  padding: 0 var(--space-4);
+  padding: 0 var(--space-3) 0 var(--space-4);
 }
 
 .settings-model-search:focus-within {
@@ -5134,6 +5151,25 @@ button.panel-resize-handle::after {
   background: transparent;
   color: var(--text-strong);
   font-size: var(--font-ui-sm);
+}
+
+.settings-model-search-close {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius-control-md);
+  background: transparent;
+  color: var(--muted-2);
+  cursor: pointer;
+}
+
+.settings-model-search-close:hover {
+  background: var(--control-hover);
+  color: var(--text-strong);
 }
 
 .settings-model-list {
