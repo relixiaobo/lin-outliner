@@ -265,6 +265,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Security shell — host owns navigation + capabilities (native-feel stage 1)**
+  — the main process now closes the renderer's default-open Chromium surface.
+  `setWindowOpenHandler` denies all child windows (http(s) `target="_blank"`
+  links route to the OS browser via `shell.openExternal`); `will-navigate` /
+  `will-redirect` block navigating the renderer away from its own document
+  (`file://` in prod, the Vite origin in dev) and send external http(s) to the
+  OS browser. Permission request/check handlers deny every capability except
+  `clipboard-sanitized-write` (the only one the renderer uses). A strict
+  `Content-Security-Policy` (`script-src 'self'`, no `unsafe-inline`/`eval`;
+  `unsafe-inline` styles only; remote http(s) only as img/media sources;
+  `connect-src 'self'`) is injected on the packaged renderer's own `file://`
+  main-frame document — scoped so the agent's remote web-fetch windows are
+  untouched. Verified against the built bundle and an `electron out/main` run
+  (CSP applies, zero violations). The applied behavior remains scoped to the
+  main window; agent web-fetch/search windows keep their own navigation
+  lifecycle. ([#43](https://github.com/relixiaobo/lin-outliner/pull/43))
 - **Discriminated `Node` union — god-record removed** — the ~57-field `Node`
   god-record is now a discriminated union of per-`NodeType` variant interfaces
   over a small uniform `NodeBase` (`ContentNode` = the `type?: undefined`

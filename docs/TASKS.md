@@ -67,6 +67,16 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **native-feel stage 1: security shell** (cc) — main process now owns the
+  renderer's navigation + capability surface: `setWindowOpenHandler` denies
+  child windows (http(s) → OS browser), `will-navigate`/`will-redirect` lock the
+  renderer to its own document, permission handlers deny all but
+  `clipboard-sanitized-write`, and a strict prod CSP is injected on the
+  `file://` main-frame (scoped past the agent web-fetch windows). Stage 1 of a
+  multi-stage native-feel remediation program; remaining stages (startup/window
+  state, vibrancy/native chrome, native menu, IPC envelope, packaging + smoke
+  tests) are scoped in PR #43's description and still need a `docs/plans/` doc.
+  (PR #43).
 - **config-as-nodes + Node union refactor** (P1, cc) — definition config moved
   off flat `Node` fields into per-definition `defConfig` subtrees (value =
   child node/reference, read via accessors over `buildConfigIndex`, written via
