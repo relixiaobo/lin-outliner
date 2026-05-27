@@ -2758,19 +2758,16 @@ button.panel-resize-handle::after {
 
 .code-block {
   overflow: hidden;
+  margin: var(--space-1) 0;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--surface-soft);
 }
 
-.code-block {
-  margin: var(--space-1) 0;
-}
-
 .agent-code-header,
 .code-block-chrome {
   display: flex;
-  height: 28px;
+  height: var(--control-size-xl);
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
@@ -2784,8 +2781,8 @@ button.panel-resize-handle::after {
 .agent-code-copy,
 .code-block-copy {
   display: inline-flex;
-  width: 24px;
-  height: 24px;
+  width: var(--control-size-md);
+  height: var(--control-size-md);
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-sm);

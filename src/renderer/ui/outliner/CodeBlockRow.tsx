@@ -15,10 +15,12 @@ import type {
 import { focusTargetMatches } from '../focus/focusModel';
 import { CheckIcon, CopyIcon, ICON_SIZE } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { SelectControl } from '../primitives/SelectControl';
 import {
   CODE_LANGUAGE_OPTIONS,
   codeLanguageLabel,
   highlightCode,
+  isKnownCodeLanguage,
   normalizeCodeLanguage,
   plainCodeHtml,
 } from '../editor/shikiHighlighter';
@@ -71,7 +73,12 @@ export function CodeBlockRow(props: CodeBlockRowProps) {
   const copyTimerRef = useRef<number | null>(null);
 
   propsRef.current = props;
-  const language = normalizeCodeLanguage(props.language);
+  // Fall back to Plain text for fence info strings Shiki can't highlight (e.g.
+  // `tool`, `tool-error` from a pasted agent transcript) so the picker never
+  // shows a bogus language; real grammars not in the picker list still display
+  // and highlight.
+  const rawLanguage = normalizeCodeLanguage(props.language);
+  const language = isKnownCodeLanguage(rawLanguage) ? rawLanguage : '';
 
   // Keep the editable value in sync with external document updates (undo,
   // agent edits). Skip mid-composition; normal typing keeps them equal so this
@@ -292,8 +299,8 @@ export function CodeBlockRow(props: CodeBlockRowProps) {
   return (
     <div className="code-block" data-language={language || 'text'}>
       <div className="code-block-chrome" contentEditable={false}>
-        <select
-          aria-label="Code language"
+        <SelectControl
+          label="Code language"
           className="code-block-language"
           disabled={props.readOnly}
           value={language}
@@ -308,7 +315,7 @@ export function CodeBlockRow(props: CodeBlockRowProps) {
               {option.label}
             </option>
           ))}
-        </select>
+        </SelectControl>
         <ButtonControl
           aria-label="Copy code"
           className="code-block-copy"
