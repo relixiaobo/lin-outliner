@@ -3,7 +3,7 @@ status: in-progress
 priority: P1
 owner: relixiaobo
 created: 2026-05-26
-updated: 2026-05-26
+updated: 2026-05-27
 ---
 
 # Config as Nodes — node unification (U1)
@@ -146,6 +146,33 @@ with tight, individually-green commits and explicit PR notes.
 10. **Remove cross-variant fields** — once readers narrow, delete fields from
     variants that shouldn't carry them; god-record gone. Persistence reads/writes
     per-variant key sets.
+
+#### A-full status (2026-05-27): DONE
+
+Stages 8–10 are complete. Every **content-type-specialized** field now lives on
+its owning variant, moved group-by-group (each group = one green commit):
+
+- media → `CodeBlockNode.codeLanguage`, `ImageNode.{assetId,mediaUrl,mediaAlt,
+  imageWidth,imageHeight}`, `EmbedNode.{embedType,embedId,sourceUrl}`
+- query → `QueryParams` mixin `{queryLogic,queryOp,queryTagDefId,queryFieldDefId,
+  queryTargetId}` on `SearchNode` + `QueryConditionNode`
+- view → `ViewDefNode.{viewMode,toolbarVisible,groupField}`, `SortRuleNode`,
+  `FilterRuleNode`, `DisplayFieldNode`
+- defConfig → `DefConfigNode.configKey`; fieldEntry → `FieldEntryNode.fieldDefId`
+- reference → `ReferenceNode.{targetId,refRole}`
+
+The query-rule target that `search`/`queryCondition` nodes shared with references
+under the bare name `targetId` was split out to `queryTargetId` (a `QueryParams`
+sibling of `queryFieldDefId`/`queryTagDefId`), so `targetId` is now unambiguously
+the reference pointer.
+
+`NodeBase` deliberately keeps the fields that are **uniform across every node**:
+structural identity (`id`/`parentId`/`children`/`content`/`tags`/timestamps/
+`locked`/`trashedFrom*`) plus the presentation/state any node may carry
+(`completedAt`, `icon`/`iconKind`, `banner*`, `description`, `aiSummary`,
+`templateId`, `autoCollected`). These are written through generic per-node
+setters (any node can be a task or carry an icon/banner) — they are domain-correct
+on the base, not god-record residue, and do not block `node.type` narrowing.
 
 ## Behavioral parity (nodex/Tana-verified, 2026-05-27)
 
