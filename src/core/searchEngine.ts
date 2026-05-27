@@ -13,6 +13,7 @@ import {
   WORKSPACE_ID,
   type DocumentProjection,
   type DocumentState,
+  type FieldType,
   type Node,
   type NodeId,
   type NodeProjection,
@@ -23,6 +24,7 @@ import {
   type SearchQueryExpr,
   type SearchQueryOperand,
 } from './types';
+import { projectFieldConfig } from './configProjection';
 import {
   dateFieldValueRangesInText,
   parseDateFieldValueRange,
@@ -37,6 +39,13 @@ import {
 
 type SearchDocument = DocumentState | DocumentProjection;
 type SearchNode = Node | NodeProjection;
+
+/** The field's type, read from its defConfig subtree (config-as-nodes). */
+function fieldTypeOf(index: SearchIndex, fieldDefId: NodeId | undefined): FieldType | undefined {
+  if (!fieldDefId) return undefined;
+  const fieldDef = index.nodes.get(fieldDefId);
+  return fieldDef?.type === 'fieldDef' ? projectFieldConfig(index.nodes, fieldDef).fieldType : undefined;
+}
 
 const SYSTEM_IDS = new Set([
   WORKSPACE_ID,
@@ -513,10 +522,10 @@ function evaluateLeaf(index: SearchIndex, candidate: SearchNode, conditionNode: 
     if (!conditionNode.queryFieldDefId) return missingEvaluationOperand(conditionNode, op, 'field id');
     const ruleOperands = conditionOperands(index, conditionNode, context);
     if (ruleOperands.length === 0) return missingEvaluationOperand(conditionNode, op, 'comparison value');
-    const fieldDef = index.nodes.get(conditionNode.queryFieldDefId);
+    const fieldType = fieldTypeOf(index, conditionNode.queryFieldDefId);
     const candidateField = comparableFieldState(index, candidate, conditionNode.queryFieldDefId);
     const hasMatch = candidateField.values.some((value) =>
-      ruleOperands.some((operand) => valueMatchesOperand(value, operand, fieldDef?.fieldType)));
+      ruleOperands.some((operand) => valueMatchesOperand(value, operand, fieldType)));
     return { ok: true, match: op === 'FIELD_IS' ? hasMatch : candidateField.hasField && !hasMatch, score: 18 };
   }
 
@@ -554,8 +563,7 @@ function evaluateLeaf(index: SearchIndex, candidate: SearchNode, conditionNode: 
     if (!conditionNode.queryFieldDefId) return missingEvaluationOperand(conditionNode, op, 'field id');
     const ruleScalar = conditionComparableScalar(index, conditionNode, context);
     if (ruleScalar === null) return missingEvaluationOperand(conditionNode, op, 'comparison value');
-    const fieldDef = index.nodes.get(conditionNode.queryFieldDefId);
-    const candidateScalars = comparableFieldScalars(index, candidate, conditionNode.queryFieldDefId, fieldDef?.fieldType);
+    const candidateScalars = comparableFieldScalars(index, candidate, conditionNode.queryFieldDefId, fieldTypeOf(index, conditionNode.queryFieldDefId));
     const match = candidateScalars.some((value) => op === 'GT' ? value > ruleScalar : value < ruleScalar);
     return { ok: true, match, score: 18 };
   }
@@ -854,8 +862,7 @@ function nodeIsOverdue(index: SearchIndex, node: SearchNode, conditionNode: Sear
 function overdueDateRanges(index: SearchIndex, node: SearchNode, fieldDefId?: NodeId): DateRange[] {
   const entries = fieldEntryNodes(index, node).filter((fieldEntry) => {
     if (fieldDefId) return fieldEntry.fieldDefId === fieldDefId;
-    const fieldDef = fieldEntry.fieldDefId ? index.nodes.get(fieldEntry.fieldDefId) : undefined;
-    return fieldDef?.fieldType === 'date';
+    return fieldTypeOf(index, fieldEntry.fieldDefId) === 'date';
   });
   return uniqueDateRanges(entries.flatMap((fieldEntry) =>
     fieldEntry.children.flatMap((valueId) => {
@@ -873,8 +880,7 @@ function conditionComparableScalar(index: SearchIndex, conditionNode: SearchNode
   if (!operand) return null;
   if (operand.scalar !== undefined) return operand.scalar;
   if (operand.dateRange) return operand.dateRange.start;
-  const fieldType = conditionNode.queryFieldDefId ? index.nodes.get(conditionNode.queryFieldDefId)?.fieldType : undefined;
-  return comparableScalar(operand.text, fieldType);
+  return comparableScalar(operand.text, fieldTypeOf(index, conditionNode.queryFieldDefId));
 }
 
 function conditionTargetId(index: SearchIndex, conditionNode: SearchNode, context: SearchContext): NodeId | undefined {
@@ -901,7 +907,7 @@ function conditionOperands(index: SearchIndex, conditionNode: SearchNode, contex
 function shouldResolveRelativeDates(index: SearchIndex, conditionNode: SearchNode): boolean {
   if (conditionNode.queryOp === 'FOR_RELATIVE_DATE') return true;
   if (!conditionNode.queryFieldDefId) return false;
-  return index.nodes.get(conditionNode.queryFieldDefId)?.fieldType === 'date';
+  return fieldTypeOf(index, conditionNode.queryFieldDefId) === 'date';
 }
 
 function operandsFromNode(

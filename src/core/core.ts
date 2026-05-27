@@ -1000,7 +1000,7 @@ export class Core {
       ensureNodeEditable(state, fieldId);
       ensureFieldDefinition(state, fieldId);
       const current = clone(requiredNode(state, fieldId));
-      const nextFieldType = patch.fieldType ?? current.fieldType ?? 'plain';
+      const nextFieldType = patch.fieldType ?? fieldTypeOf(state, fieldId);
       const nextMin = 'minValue' in patch ? patch.minValue ?? undefined : current.minValue;
       const nextMax = 'maxValue' in patch ? patch.maxValue ?? undefined : current.maxValue;
       if (patch.sourceSupertag) {
@@ -2915,6 +2915,17 @@ function configRefTarget(state: DocumentState, defId: string, configKey: DefConf
   return undefined;
 }
 
+/**
+ * The field's type, read from its `defConfig(fieldType)` enum subtree (the value
+ * reference targets a system option whose text is the canonical value). Mirrors
+ * `projectFieldConfig`'s resolution; defaults to 'plain'. See configProjection.ts.
+ */
+function fieldTypeOf(state: DocumentState, fieldDefId: string): FieldType {
+  const optionId = configRefTarget(state, fieldDefId, 'fieldType');
+  const value = optionId ? state.nodes[optionId]?.content.text : undefined;
+  return (value as FieldType | undefined) ?? 'plain';
+}
+
 function getExtendsChain(state: DocumentState, tagId: string): string[] {
   const chain: string[] = [];
   const visited = new Set<string>();
@@ -2981,7 +2992,8 @@ function tagExtendsWouldCycle(state: DocumentState, tagId: string, parentTagId: 
 function ensureOptionsFieldDef(state: DocumentState, fieldDefId: string) {
   const fieldDef = requiredNode(state, fieldDefId);
   if (fieldDef.type !== 'fieldDef') throw CoreError.invalidOperation('options belong to field definitions');
-  if (fieldDef.fieldType !== 'options' && fieldDef.fieldType !== 'options_from_supertag') {
+  const fieldType = fieldTypeOf(state, fieldDefId);
+  if (fieldType !== 'options' && fieldType !== 'options_from_supertag') {
     throw CoreError.invalidOperation('field definition is not an options field');
   }
   return fieldDef;
@@ -2989,7 +3001,7 @@ function ensureOptionsFieldDef(state: DocumentState, fieldDefId: string) {
 
 function ensureCollectableOptionsFieldDef(state: DocumentState, fieldDefId: string) {
   const fieldDef = ensureOptionsFieldDef(state, fieldDefId);
-  if (fieldDef.fieldType !== 'options') {
+  if (fieldTypeOf(state, fieldDefId) !== 'options') {
     throw CoreError.invalidOperation('only direct options fields can collect new options');
   }
   return fieldDef;
@@ -3005,7 +3017,7 @@ function findOptionByName(state: DocumentState, fieldDefId: string, name: string
 function ensureOptionBelongsToField(state: DocumentState, fieldDefId: string, optionNodeId: string) {
   const fieldDef = requiredNode(state, fieldDefId);
   const optionNode = requiredNode(state, optionNodeId);
-  if (fieldDef.fieldType === 'options_from_supertag') {
+  if (fieldTypeOf(state, fieldDefId) === 'options_from_supertag') {
     const sourceSupertag = configRefTarget(state, fieldDef.id, 'sourceSupertag');
     if (
       sourceSupertag
