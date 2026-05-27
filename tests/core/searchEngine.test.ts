@@ -814,4 +814,35 @@ describe('core search engine', () => {
     const fields = runSearchNode(state, searchId);
     expect(fields.ok ? fields.hits.map((hit) => hit.nodeId) : []).toContain(fieldDefId);
   });
+
+  test('persists a node-target query rule (queryTargetId) across serialize/reload', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'Target parent'));
+    const child = mustFocus(core.createNode(target, null, 'Child note'));
+    const outsider = mustFocus(core.createNode(today, null, 'Unrelated'));
+    const searchId = mustFocus(core.createSearchNode(core.projection().searchesId, null, {
+      title: 'Children of Target',
+      query: { kind: 'rule', op: 'CHILD_OF', targetId: target },
+    }));
+
+    // Sanity: the target-based rule resolves before any round-trip.
+    const before = runSearchNode(core.state(), searchId);
+    expect(before.ok ? before.hits.map((hit) => hit.nodeId) : []).toContain(child);
+    expect(before.ok ? before.hits.map((hit) => hit.nodeId) : []).not.toContain(outsider);
+
+    // Round-trip through the Loro snapshot. The query-rule target now persists
+    // under `queryTargetId` (split from the reference-only `targetId`), so this
+    // proves NODE_SCALAR_KEYS carries the new key and the reloaded condition
+    // still resolves its target.
+    const reloaded = Core.fromState(Core.deserializeState(core.serializeState()));
+
+    const conditionNode = Object.values(reloaded.state().nodes)
+      .find((node) => node.type === 'queryCondition' && node.queryOp === 'CHILD_OF');
+    expect(conditionNode?.type === 'queryCondition' ? conditionNode.queryTargetId : undefined).toBe(target);
+
+    const after = runSearchNode(reloaded.state(), searchId);
+    expect(after.ok ? after.hits.map((hit) => hit.nodeId) : []).toContain(child);
+    expect(after.ok ? after.hits.map((hit) => hit.nodeId) : []).not.toContain(outsider);
+  });
 });

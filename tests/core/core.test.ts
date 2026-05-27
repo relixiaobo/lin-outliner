@@ -899,6 +899,27 @@ describe('Core', () => {
     expect(core.state().nodes[referenceId]).toBeUndefined();
   });
 
+  test('persists a tree reference (targetId) and its backlink across serialize/reload', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const targetParent = mustFocus(core.createNode(today, null, 'Targets'));
+    const target = mustFocus(core.createNode(targetParent, null, 'Target'));
+    const source = mustFocus(core.createNode(today, null, 'Source'));
+    const referenceId = mustFocus(core.addReference(source, target, null));
+
+    const expectedBacklink = { sourceId: source, referenceId, kind: 'tree' as const };
+    expect(core.backlinks(target)).toEqual(expect.arrayContaining([expectedBacklink]));
+
+    // `targetId` now lives on ReferenceNode and is enumerated by NODE_SCALAR_KEYS;
+    // round-tripping the snapshot proves it survives persistence and that the
+    // backlink graph still resolves from the reloaded reference.
+    const reloaded = Core.fromState(Core.deserializeState(core.serializeState()));
+    const reloadedRef = reloaded.state().nodes[referenceId];
+    expect(reloadedRef.type).toBe('reference');
+    expect(reloadedRef.targetId).toBe(target);
+    expect(reloaded.backlinks(target)).toEqual(expect.arrayContaining([expectedBacklink]));
+  });
+
   test('trashing a reference target keeps references restorable', () => {
     const core = Core.new();
     const today = core.projection().todayId;
