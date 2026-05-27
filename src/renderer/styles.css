@@ -2790,9 +2790,9 @@ button.panel-resize-handle::after {
   cursor: pointer;
 }
 
+/* Quiet icon button: hover deepens the icon color rather than adding a fill. */
 .agent-code-copy:hover:not(:disabled),
 .code-block-copy:hover:not(:disabled) {
-  background: var(--control-hover);
   color: var(--text-strong);
 }
 
@@ -2802,21 +2802,74 @@ button.panel-resize-handle::after {
   opacity: 0.4;
 }
 
+/* Compact language trigger: the chevron sits right next to the label, with no
+   resting fill, so hover only deepens the text/icon color. */
 .code-block-language {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   font-family: var(--font-family-sans);
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
   color: var(--text-soft);
   background: transparent;
   border: 0;
-  border-radius: var(--radius-sm);
-  padding: var(--space-1) var(--space-2);
+  padding: var(--space-1) 0;
   cursor: pointer;
 }
 
-.code-block-language:hover:not(:disabled) {
-  background: var(--control-hover);
+.code-block-language svg {
+  color: var(--text-faint);
+}
+
+.code-block-language:hover:not(:disabled),
+.code-block-language[aria-expanded="true"] {
   color: var(--text-strong);
+}
+
+.code-block-language:hover:not(:disabled) svg,
+.code-block-language[aria-expanded="true"] svg {
+  color: var(--text-soft);
+}
+
+.code-block-language-menu {
+  z-index: var(--z-popover);
+  min-width: 160px;
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  padding: var(--space-2);
+  overflow-y: auto;
+}
+
+.code-block-language-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-control-md);
+  color: var(--text-soft);
+  cursor: pointer;
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm-tight);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+}
+
+.code-block-language-item:hover,
+.code-block-language-item.is-selected {
+  background: var(--control-hover);
+  color: var(--surface-inverse);
+}
+
+.code-block-language-check {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
 }
 
 /* Shared code text metrics across every text-bearing surface. */
