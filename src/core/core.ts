@@ -979,12 +979,17 @@ export class Core {
       if (patch.childSupertag) ensureTagDefinition(state, patch.childSupertag);
       const node = clone(requiredNode(state, tagId));
       if ('color' in patch) setOptional(node, 'color', normalizeOptionalText(patch.color));
-      if ('extends' in patch) setOptional(node, 'extends', normalizeOptionalText(patch.extends));
-      if ('childSupertag' in patch) setOptional(node, 'childSupertag', normalizeOptionalText(patch.childSupertag));
       if (patch.showCheckbox !== undefined) node.showCheckbox = patch.showCheckbox;
       if (patch.doneStateEnabled !== undefined) node.doneStateEnabled = patch.doneStateEnabled;
       node.updatedAt = nowMs();
       this.loro.writeNode(node);
+      // config-as-nodes: extends/childSupertag are stored in the defConfig subtree.
+      if ('extends' in patch) {
+        this.setConfigValueDirect(tagId, { kind: 'ref', configKey: 'extends', targetId: normalizeOptionalText(patch.extends) ?? null });
+      }
+      if ('childSupertag' in patch) {
+        this.setConfigValueDirect(tagId, { kind: 'ref', configKey: 'childSupertag', targetId: normalizeOptionalText(patch.childSupertag) ?? null });
+      }
       return focus(tagId);
     });
   }
@@ -2182,7 +2187,7 @@ export class Core {
     const state = this.snapshot();
     const tagIds = state.nodes[parentId]?.tags ?? [];
     for (const tagId of tagIds) {
-      const childSupertag = state.nodes[tagId]?.childSupertag;
+      const childSupertag = configRefTarget(state, tagId, 'childSupertag');
       if (childSupertag) this.applyTagDirect(childId, childSupertag);
     }
   }
@@ -2874,6 +2879,23 @@ function touchNode(state: DocumentState, nodeId: string) {
   if (state.nodes[nodeId]) state.nodes[nodeId].updatedAt = nowMs();
 }
 
+// config-as-nodes: read a single ref-domain config value (extends /
+// childSupertag / sourceSupertag) from a definition's defConfig subtree.
+function configRefTarget(state: DocumentState, defId: string, configKey: DefConfigKey): string | undefined {
+  const def = state.nodes[defId];
+  if (!def) return undefined;
+  for (const rowId of def.children) {
+    const row = state.nodes[rowId];
+    if (row?.type === 'defConfig' && row.configKey === configKey) {
+      for (const valueId of row.children) {
+        const value = state.nodes[valueId];
+        if (value?.type === 'reference' && value.targetId) return value.targetId;
+      }
+    }
+  }
+  return undefined;
+}
+
 function getExtendsChain(state: DocumentState, tagId: string): string[] {
   const chain: string[] = [];
   const visited = new Set<string>();
@@ -2881,7 +2903,7 @@ function getExtendsChain(state: DocumentState, tagId: string): string[] {
   while (current && !visited.has(current)) {
     visited.add(current);
     chain.push(current);
-    current = state.nodes[current]?.extends;
+    current = configRefTarget(state, current, 'extends');
   }
   return chain;
 }
@@ -2932,7 +2954,7 @@ function tagExtendsWouldCycle(state: DocumentState, tagId: string, parentTagId: 
   while (current) {
     if (current === tagId || visited.has(current)) return true;
     visited.add(current);
-    current = state.nodes[current]?.extends;
+    current = configRefTarget(state, current, 'extends');
   }
   return false;
 }

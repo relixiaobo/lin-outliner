@@ -1,4 +1,6 @@
 import { useMemo } from 'react';
+import { buildConfigIndexFromMap } from '../../../core/configProjection';
+import type { ProjectedTagConfig } from '../../../core/configSchema';
 import { api } from '../../api/client';
 import type {
   FieldConfigPatch,
@@ -46,6 +48,9 @@ interface DefinitionConfigPanelProps {
 
 export function DefinitionConfigPanel({ node, index, run }: DefinitionConfigPanelProps) {
   const items = definitionConfigItems(node);
+  // config-as-nodes: definition config is read from the defConfig subtree via
+  // the projected accessor, not flat Node fields.
+  const tagConfig = useMemo(() => buildConfigIndexFromMap(index.byId).tag(node.id), [index.byId, node.id]);
   const tagOptions = useMemo(
     () => index.projection.nodes
       .filter((candidate) => candidate.type === 'tagDef' && candidate.id !== node.id)
@@ -73,6 +78,7 @@ export function DefinitionConfigPanel({ node, index, run }: DefinitionConfigPane
           isLast={index === items.length - 1}
           item={item}
           node={node}
+          tagConfig={tagConfig}
           tagOptions={tagOptions}
           updateTag={updateTag}
           updateField={updateField}
@@ -86,6 +92,7 @@ function DefinitionConfigRow(props: {
   isLast: boolean;
   item: DefinitionConfigItem;
   node: NodeProjection;
+  tagConfig: ProjectedTagConfig | undefined;
   tagOptions: TagOption[];
   updateTag: (patch: TagConfigPatch) => void;
   updateField: (patch: FieldConfigPatch) => void;
@@ -122,11 +129,12 @@ function ConfigIcon({ item, node }: { item: DefinitionConfigItem; node: NodeProj
 function ConfigControl(props: {
   item: DefinitionConfigItem;
   node: NodeProjection;
+  tagConfig: ProjectedTagConfig | undefined;
   tagOptions: TagOption[];
   updateTag: (patch: TagConfigPatch) => void;
   updateField: (patch: FieldConfigPatch) => void;
 }) {
-  const { item, node, tagOptions, updateTag, updateField } = props;
+  const { item, node, tagConfig, tagOptions, updateTag, updateField } = props;
 
   switch (item.key) {
     case 'color':
@@ -142,7 +150,7 @@ function ConfigControl(props: {
       return (
         <DefinitionTagSelect
           label={item.label}
-          value={node.extends}
+          value={tagConfig?.extends}
           options={tagOptions}
           onChange={(tagId) => updateTag({ extends: tagId })}
         />
@@ -151,7 +159,7 @@ function ConfigControl(props: {
       return (
         <DefinitionTagSelect
           label={item.label}
-          value={node.childSupertag}
+          value={tagConfig?.childSupertag}
           options={tagOptions}
           onChange={(tagId) => updateTag({ childSupertag: tagId })}
         />

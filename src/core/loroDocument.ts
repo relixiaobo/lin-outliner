@@ -59,8 +59,6 @@ const NODE_SCALAR_KEYS: Array<keyof Node> = [
   'bannerAlt',
   'showCheckbox',
   'templateId',
-  'childSupertag',
-  'extends',
   'doneStateEnabled',
   'fieldDefId',
   'configKey',

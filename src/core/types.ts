@@ -352,8 +352,6 @@ export interface Node {
   bannerAlt?: string;
   showCheckbox: boolean;
   templateId?: NodeId;
-  childSupertag?: NodeId;
-  extends?: NodeId;
   doneStateEnabled: boolean;
   fieldDefId?: NodeId;
   /** For `defConfig` nodes: which config knob this row represents. */
