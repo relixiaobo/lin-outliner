@@ -612,14 +612,9 @@ function fieldType(value: unknown): FieldType {
     || value === 'options_from_supertag'
     || value === 'date'
     || value === 'number'
-    || value === 'password'
-    || value === 'formula'
-    || value === 'user'
     || value === 'url'
     || value === 'email'
     || value === 'checkbox'
-    || value === 'boolean'
-    || value === 'color'
   ) {
     return value;
   }

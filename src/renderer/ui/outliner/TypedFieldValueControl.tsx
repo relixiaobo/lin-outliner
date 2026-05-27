@@ -3,7 +3,6 @@ import { api } from '../../api/client';
 import type { FieldType, NodeProjection } from '../../api/types';
 import { normalizeDateFieldValue, plainText } from '../../api/types';
 import { CheckboxMark } from '../primitives/CheckboxMark';
-import { SwitchMark } from '../primitives/SwitchMark';
 import type { CommandRunner } from '../shared';
 import { DateFieldControl } from './DateFieldControl';
 
@@ -58,22 +57,6 @@ export function TypedFieldValueControl({
     );
   }
 
-  if (fieldType === 'boolean') {
-    const checked = booleanValue(value);
-    return (
-      <button
-        type="button"
-        className={`typed-field-boolean typed-field-boolean-value ${checked ? 'checked' : ''}`}
-        role="switch"
-        aria-checked={checked}
-        onClick={() => commit(checked ? 'false' : 'true')}
-      >
-        <SwitchMark checked={checked} />
-        <span>{checked ? 'Yes' : 'No'}</span>
-      </button>
-    );
-  }
-
   if (fieldType === 'date') {
     return (
       <DateFieldControl
@@ -98,24 +81,11 @@ export function TypedFieldValueControl({
 
   return (
     <span className={`typed-field-control typed-field-control-${fieldType}`}>
-      {fieldType === 'color' && (
-        <input
-          className="typed-field-color-swatch"
-          type="color"
-          value={hexColor(draft) ?? '#a1a1aa'}
-          aria-label={`${placeholder} color`}
-          onChange={(event) => {
-            setDraft(event.target.value);
-            commit(event.target.value);
-          }}
-        />
-      )}
       <input
         className="typed-field-input"
         type={inputType}
         value={draft}
         placeholder={placeholder}
-        spellCheck={fieldType !== 'password'}
         onChange={(event) => setDraft(event.target.value)}
         onBlur={() => commit(draft)}
         onKeyDown={onKeyDown}
@@ -128,7 +98,6 @@ function inputTypeForField(fieldType: FieldType) {
   if (fieldType === 'number') return 'number';
   if (fieldType === 'url') return 'url';
   if (fieldType === 'email') return 'email';
-  if (fieldType === 'password') return 'password';
   return 'text';
 }
 
@@ -142,9 +111,4 @@ function normalizeValue(fieldType: FieldType, value: string) {
 function booleanValue(value: string) {
   const normalized = value.trim().toLowerCase();
   return normalized === 'true' || normalized === 'yes' || normalized === '1';
-}
-
-function hexColor(value: string) {
-  const normalized = value.trim();
-  return /^#[0-9a-f]{6}$/i.test(normalized) ? normalized : null;
 }

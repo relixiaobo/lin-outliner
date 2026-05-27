@@ -111,12 +111,9 @@ const EXPOSED_FIELD_TYPES: readonly FieldType[] = [
   'options_from_supertag',
   'date',
   'number',
-  'password',
   'url',
   'email',
   'checkbox',
-  'boolean',
-  'color',
 ];
 
 const AUTO_INIT_STRATEGIES: readonly AutoInitStrategy[] = [

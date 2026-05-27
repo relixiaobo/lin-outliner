@@ -62,14 +62,9 @@ export type FieldType =
   | 'options_from_supertag'
   | 'date'
   | 'number'
-  | 'password'
-  | 'formula'
-  | 'user'
   | 'url'
   | 'email'
-  | 'checkbox'
-  | 'boolean'
-  | 'color';
+  | 'checkbox';
 
 export type FieldCardinality = 'single' | 'list';
 

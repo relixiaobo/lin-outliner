@@ -1203,43 +1203,6 @@ test.describe('outliner trigger parity', () => {
     }).toBe('true');
   });
 
-  test('boolean field values use the shared switch mark', async ({ page }) => {
-    await invokeMockCommand(page, 'create_inline_field', {
-      parentId: ids.today,
-      index: null,
-      name: 'Enabled',
-      fieldType: 'boolean',
-    });
-
-    let fieldId: string | undefined;
-    await expect.poll(async () => {
-      const projection = await e2eProjection(page);
-      fieldId = projection.nodes.find((node) => (
-        node.parentId === ids.today
-        && node.type === 'fieldEntry'
-        && node.fieldType === 'boolean'
-      ))?.id;
-      return fieldId;
-    }).not.toBeUndefined();
-    if (!fieldId) throw new Error('missing boolean field');
-
-    const fieldValueSwitch = row(page, fieldId).getByRole('switch');
-    const mark = fieldValueSwitch.locator('.switch-mark');
-    await expect(mark).toHaveCount(1);
-    await expect(fieldValueSwitch.locator('.checkbox-mark')).toHaveCount(0);
-    await expect(mark).not.toHaveClass(/checked/);
-    await expect(mark).toHaveCSS('width', '30px');
-    await expect(mark).toHaveCSS('height', '18px');
-    await expect(fieldValueSwitch.locator('.switch-mark-thumb')).toHaveCSS('width', '14px');
-
-    await fieldValueSwitch.click();
-    await expect(mark).toHaveClass(/checked/);
-    await expect.poll(async () => {
-      const projection = await e2eProjection(page);
-      return projection.nodes.find((node) => node.parentId === fieldId)?.content.text;
-    }).toBe('true');
-  });
-
 });
 
 test.describe('outliner options field inline value', () => {

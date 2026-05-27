@@ -344,7 +344,7 @@ function sortRows(
 function isBooleanGroupField(fieldId: string, byId: Map<NodeId, NodeProjection>): boolean {
   if (fieldId === DONE_FIELD) return true;
   const fieldType = projectFieldTypeById(byId, fieldId);
-  return fieldType === 'checkbox' || fieldType === 'boolean';
+  return fieldType === 'checkbox';
 }
 
 const GROUP_DATE_FORMAT = new Intl.DateTimeFormat(undefined, {

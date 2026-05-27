@@ -1424,18 +1424,6 @@
   color: var(--text-main);
 }
 
-.typed-field-color-swatch {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 18px;
-  height: 18px;
-  flex: 0 0 18px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  padding: 0;
-}
-
 .typed-field-boolean {
   display: inline-flex;
   min-height: var(--content-control-height);

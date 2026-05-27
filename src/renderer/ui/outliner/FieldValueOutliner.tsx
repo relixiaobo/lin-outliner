@@ -74,8 +74,7 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
     && singleValueField
     && rows.length <= 1
     && valueInteraction !== 'outliner'
-    && valueInteraction !== 'optionPicker'
-    && valueInteraction !== 'reserved',
+    && valueInteraction !== 'optionPicker',
   );
   return (
     <div

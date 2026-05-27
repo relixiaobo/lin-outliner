@@ -59,7 +59,7 @@ function filterFieldKind(fieldId: string, byId: DocumentIndex['byId']): FilterKi
   if (fieldId === REF_COUNT_FIELD) return 'number';
   if (fieldId === NAME_FIELD || fieldId === TAGS_FIELD) return 'text';
   const fieldType = projectFieldTypeById(byId, fieldId);
-  if (fieldType === 'checkbox' || fieldType === 'boolean') return 'boolean';
+  if (fieldType === 'checkbox') return 'boolean';
   if (fieldType === 'date') return 'date';
   if (fieldType === 'number') return 'number';
   if (fieldType === 'options' || fieldType === 'options_from_supertag') return 'options';
