@@ -770,6 +770,7 @@ export function NodePanel(props: NodePanelProps) {
                 dragId={props.dragId}
                 setDragId={props.setDragId}
                 trailingDraft={showTrailingInput ? 'always' : 'none'}
+                scrollParentRef={mainPanelRef}
               />
             ) : (
               <OutlinerView

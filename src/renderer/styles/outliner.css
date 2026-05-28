@@ -18,6 +18,29 @@
   transform: translateX(calc(-1 * var(--outliner-leading-bleed)));
 }
 
+/* Windowed (flat) outliner: a spacer of the full content height holds each
+   visible row absolutely positioned at its measured offset. The leading-bleed
+   rule above targets `.outliner > .row-wrap`, so it is replicated here for rows
+   nested under the absolute wrapper. */
+.outliner-flat {
+  position: relative;
+  width: 100%;
+}
+
+.outliner-flat > .outliner-flat-row {
+  position: absolute;
+  right: 0;
+  left: 0;
+  min-width: 0;
+  will-change: transform;
+}
+
+.outliner-flat-row > .row-wrap,
+.outliner-flat-row > .trailing-row {
+  width: calc(100% + var(--outliner-leading-bleed) - var(--row-inline-indent, 0px));
+  transform: translateX(calc(-1 * var(--outliner-leading-bleed)));
+}
+
 .definition-config-panel {
   display: flex;
   max-width: 760px;
