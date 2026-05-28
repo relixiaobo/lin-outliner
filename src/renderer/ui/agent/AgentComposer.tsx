@@ -5,7 +5,11 @@ import {
   type ChangeEvent,
   type DragEvent,
 } from 'react';
-import type { AgentMessageAttachmentInput } from '../../../core/agentTypes';
+import type {
+  AgentApprovalRequestView,
+  AgentApprovalResolutionScope,
+  AgentMessageAttachmentInput,
+} from '../../../core/agentTypes';
 import { sanitizeFileReferenceRef } from '../../../core/agentFileReferenceMarkup';
 import type {
   AgentModelOption,
@@ -50,8 +54,14 @@ interface AgentComposerProps {
   onSteer: (message: string) => Promise<void>;
   onCancelSteer: () => Promise<void>;
   onStop: () => void;
+  onResolveApproval: (
+    requestId: string,
+    approved: boolean,
+    scope?: AgentApprovalResolutionScope,
+  ) => Promise<boolean>;
   onModelChange: (providerId: string, modelId: string) => Promise<void>;
   onReasoningChange: (reasoningLevel: AgentReasoningLevel) => Promise<void>;
+  pendingApproval: AgentApprovalRequestView | null;
   settings: AgentProviderSettingsView | null;
   slashCommands: AgentSlashCommandView[];
   steeringNote: string | null;
@@ -150,9 +160,11 @@ export function AgentComposer({
   onNodeReferenceOpen,
   onReasoningChange,
   onCancelSteer,
+  onResolveApproval,
   onSend,
   onSteer,
   onStop,
+  pendingApproval,
   settings,
   slashCommands,
   steeringNote,
@@ -176,7 +188,7 @@ export function AgentComposer({
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const hasDraft = !draft.empty;
   const hasAttachments = attachments.length > 0;
-  const canSubmit = isStreaming
+  const canSubmit = pendingApproval ? false : isStreaming
     ? hasDraft && !hasAttachments
     : !sending && (hasDraft || hasAttachments);
   const activeProvider = getActiveProvider(settings);
@@ -192,7 +204,7 @@ export function AgentComposer({
     : reasoningOptions[0] ?? 'off';
   const supportsReasoning = !!selectedModel?.reasoning || reasoningOptions.some((level) => level !== 'off');
   const reasoningEnabled = selectedReasoning !== 'off';
-  const configDisabled = isStreaming || configSubmitting || modelOptions.length === 0;
+  const configDisabled = isStreaming || !!pendingApproval || configSubmitting || modelOptions.length === 0;
 
   useEffect(() => {
     if (!modelMenuOpen) {
@@ -602,81 +614,176 @@ export function AgentComposer({
       >
         {dragActive ? <div className="agent-composer-drop-overlay">Drop files to attach</div> : null}
         {attachmentError ? <div className="agent-composer-error">{attachmentError}</div> : null}
-        <AgentComposerEditor
-          ref={editorRef}
-          currentNodeId={currentNodeId}
-          index={index}
-          isStreaming={isStreaming}
-          onChange={handleDraftChange}
-          onFilesPasted={(files) => void addFilesInline(files)}
-          onLocalFilePreview={previewLocalFile}
-          onLocalFileSearch={searchLocalFiles}
-          onLocalFileSelect={attachLocalFileCandidate}
-          onNodeReferenceClick={onNodeReferenceOpen}
-          recentLocalFiles={recentLocalFiles}
-          onStop={onStop}
-          onSubmit={() => void submit()}
-          placeholder={
-            isStreaming
-              ? steeringNote ? 'Append another steer...' : 'Steer the conversation...'
-              : 'Ask anything...'
-          }
-          slashCommands={slashCommands}
-        />
-        <AgentComposerToolbar
-          attachmentDisabled={isStreaming || attachments.length >= MAX_ATTACHMENTS}
-          fileInputRef={fileInputRef}
-          onAttachmentClick={() => void handleAttachmentClick()}
-          onFileInputChange={handleFileInputChange}
-          modelControl={(
-            <div className="agent-composer-model" ref={modelMenuRef}>
-              <AgentComposerModelButton
-                disabled={configDisabled || modelOptions.length === 0}
-                modelLabel={modelLabel}
-                modelTitle={activeProvider ? `${activeProvider.providerId}/${activeProvider.modelId}` : 'No model configured'}
-                onToggle={() => setModelMenuOpen((open) => !open)}
-                open={modelMenuOpen}
-                reasoningEnabled={reasoningEnabled}
-                selectedReasoning={selectedReasoning}
-                supportsReasoning={supportsReasoning}
-              />
-
-              {modelMenuOpen ? (
-                <AgentComposerModelMenu
-                  activeProvider={activeProvider}
-                  anchorRef={modelMenuRef}
-                  configDisabled={configDisabled}
-                  models={modelOptions}
-                  moreModelsOpen={moreModelsOpen}
-                  onClose={() => setModelMenuOpen(false)}
-                  onModelSelect={(model) => void changeModel(model)}
-                  onMoreModelsOpenChange={setMoreModelsOpen}
-                  onReasoningLevelSelect={(reasoningLevel) => {
-                    setReasoningMenuOpen(false);
-                    void changeReasoning(reasoningLevel);
-                  }}
-                  onReasoningMenuOpenChange={setReasoningMenuOpen}
-                  onReasoningToggle={() => void changeReasoning(reasoningEnabled ? 'off' : defaultEnabledReasoning())}
-                  reasoningEnabled={reasoningEnabled}
-                  reasoningMenuOpen={reasoningMenuOpen}
-                  reasoningOptions={reasoningOptions}
-                  selectedReasoning={selectedReasoning}
-                  supportsReasoning={supportsReasoning}
-                />
-              ) : null}
-            </div>
-          )}
-          primaryAction={(
-            <AgentComposerPrimaryAction
-              canSubmit={canSubmit}
-              hasDraft={hasDraft}
+        {pendingApproval ? (
+          <AgentApprovalCard
+            approval={pendingApproval}
+            onResolve={onResolveApproval}
+          />
+        ) : (
+          <>
+            <AgentComposerEditor
+              ref={editorRef}
+              currentNodeId={currentNodeId}
+              index={index}
               isStreaming={isStreaming}
+              onChange={handleDraftChange}
+              onFilesPasted={(files) => void addFilesInline(files)}
+              onLocalFilePreview={previewLocalFile}
+              onLocalFileSearch={searchLocalFiles}
+              onLocalFileSelect={attachLocalFileCandidate}
+              onNodeReferenceClick={onNodeReferenceOpen}
+              recentLocalFiles={recentLocalFiles}
               onStop={onStop}
+              onSubmit={() => void submit()}
+              placeholder={
+                isStreaming
+                  ? steeringNote ? 'Append another steer...' : 'Steer the conversation...'
+                  : 'Ask anything...'
+              }
+              slashCommands={slashCommands}
             />
-          )}
-        />
+            <AgentComposerToolbar
+              attachmentDisabled={isStreaming || attachments.length >= MAX_ATTACHMENTS}
+              fileInputRef={fileInputRef}
+              onAttachmentClick={() => void handleAttachmentClick()}
+              onFileInputChange={handleFileInputChange}
+              modelControl={(
+                <div className="agent-composer-model" ref={modelMenuRef}>
+                  <AgentComposerModelButton
+                    disabled={configDisabled || modelOptions.length === 0}
+                    modelLabel={modelLabel}
+                    modelTitle={activeProvider ? `${activeProvider.providerId}/${activeProvider.modelId}` : 'No model configured'}
+                    onToggle={() => setModelMenuOpen((open) => !open)}
+                    open={modelMenuOpen}
+                    reasoningEnabled={reasoningEnabled}
+                    selectedReasoning={selectedReasoning}
+                    supportsReasoning={supportsReasoning}
+                  />
+
+                  {modelMenuOpen ? (
+                    <AgentComposerModelMenu
+                      activeProvider={activeProvider}
+                      anchorRef={modelMenuRef}
+                      configDisabled={configDisabled}
+                      models={modelOptions}
+                      moreModelsOpen={moreModelsOpen}
+                      onClose={() => setModelMenuOpen(false)}
+                      onModelSelect={(model) => void changeModel(model)}
+                      onMoreModelsOpenChange={setMoreModelsOpen}
+                      onReasoningLevelSelect={(reasoningLevel) => {
+                        setReasoningMenuOpen(false);
+                        void changeReasoning(reasoningLevel);
+                      }}
+                      onReasoningMenuOpenChange={setReasoningMenuOpen}
+                      onReasoningToggle={() => void changeReasoning(reasoningEnabled ? 'off' : defaultEnabledReasoning())}
+                      reasoningEnabled={reasoningEnabled}
+                      reasoningMenuOpen={reasoningMenuOpen}
+                      reasoningOptions={reasoningOptions}
+                      selectedReasoning={selectedReasoning}
+                      supportsReasoning={supportsReasoning}
+                    />
+                  ) : null}
+                </div>
+              )}
+              primaryAction={(
+                <AgentComposerPrimaryAction
+                  canSubmit={canSubmit}
+                  hasDraft={hasDraft}
+                  isStreaming={isStreaming}
+                  onStop={onStop}
+                />
+              )}
+            />
+          </>
+        )}
       </div>
     </form>
+  );
+}
+
+function AgentApprovalCard({
+  approval,
+  onResolve,
+}: {
+  approval: AgentApprovalRequestView;
+  onResolve: (
+    requestId: string,
+    approved: boolean,
+    scope?: AgentApprovalResolutionScope,
+  ) => Promise<boolean>;
+}) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [submitting, setSubmitting] = useState<AgentApprovalResolutionScope | 'deny' | null>(null);
+
+  async function resolve(approved: boolean, scope: AgentApprovalResolutionScope = 'once') {
+    if (submitting) return;
+    setSubmitting(approved ? scope : 'deny');
+    try {
+      await onResolve(approval.requestId, approved, scope);
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
+  return (
+    <div className="agent-approval-card" role="group" aria-label={approval.title}>
+      <div className="agent-approval-copy">
+        <div className="agent-approval-title">{approval.title}</div>
+        <div className="agent-approval-target" title={approval.target}>{approval.target}</div>
+        <button
+          aria-expanded={detailsOpen}
+          className="agent-approval-details-toggle"
+          onClick={() => setDetailsOpen((open) => !open)}
+          type="button"
+        >
+          {detailsOpen ? 'Hide details' : 'Show details'}
+        </button>
+        {detailsOpen ? (
+          <div className="agent-approval-details-panel">
+            {approval.details.map((detail) => (
+              <div className="agent-approval-detail" key={`${detail.label}:${detail.value}`}>
+                <span className="agent-approval-detail-label">{detail.label}</span>
+                <span className="agent-approval-detail-value">{detail.value}</span>
+              </div>
+            ))}
+            {approval.suggestedSessionRule ? (
+              <div className="agent-approval-detail">
+                <span className="agent-approval-detail-label">Session rule</span>
+                <span className="agent-approval-detail-value">{approval.suggestedSessionRule}</span>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+      <div className="agent-approval-actions">
+        <button
+          className="agent-approval-button is-primary"
+          disabled={!!submitting}
+          onClick={() => void resolve(true, 'once')}
+          type="button"
+        >
+          Allow once
+        </button>
+        {approval.suggestedSessionRule ? (
+          <button
+            className="agent-approval-button"
+            disabled={!!submitting}
+            onClick={() => void resolve(true, 'session')}
+            type="button"
+          >
+            This session
+          </button>
+        ) : null}
+        <button
+          className="agent-approval-button"
+          disabled={!!submitting}
+          onClick={() => void resolve(false, 'once')}
+          type="button"
+        >
+          Deny
+        </button>
+      </div>
+    </div>
   );
 }
 

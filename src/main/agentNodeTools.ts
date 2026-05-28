@@ -259,7 +259,7 @@ function createNodeDeleteTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
       const locked = requestedNodeIds.find((nodeId) => isSystemNodeId(nodeId));
       if (locked) {
         return nodeErrorResult(errorEnvelope('node_delete', 'locked_node', `System node cannot be deleted: ${locked}`, {
-          instructions: 'Choose a user-created node instead of a workspace/system node.',
+          instructions: 'Choose a user-created node instead of a protected system node.',
           metrics: { durationMs: elapsed(started) },
         }));
       }
@@ -402,7 +402,7 @@ async function executeOutlineEdit(
   const parsed = parseLinOutline(replacement.afterOutline, { annotations: 'allow' });
   if (!parsed.ok) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'parse_error', parsed.error.message, {
-      instructions: `Fix new_string so the complete outline remains valid Lin Outline Format. Line ${parsed.error.line}, column ${parsed.error.column}.`,
+      instructions: `Fix new_string so the complete outline remains valid outline format. Line ${parsed.error.line}, column ${parsed.error.column}.`,
       metrics: { durationMs: elapsed(started) },
     }));
   }

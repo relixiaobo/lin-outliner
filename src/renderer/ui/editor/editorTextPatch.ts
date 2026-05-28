@@ -2,7 +2,7 @@ import type { Mark, Node as PMNode, Slice } from 'prosemirror-model';
 import type { Transaction } from 'prosemirror-state';
 import { AddMarkStep, RemoveMarkStep, ReplaceStep } from 'prosemirror-transform';
 import type { InlineRef, RichText, RichTextPatch, RichTextPatchOp, TextMarkKind } from '../../api/types';
-import { docPosToTextOffset, docToRichText, INLINE_REF_TEXT_SENTINEL, richTextEquals } from './richTextCodec';
+import { docPosToTextOffset, docToRichText, TRANSIENT_TEXT_SENTINEL, richTextEquals } from './richTextCodec';
 
 const MARK_KINDS = new Set<TextMarkKind>(['bold', 'italic', 'strike', 'code', 'highlight', 'headingMark', 'link']);
 
@@ -114,7 +114,7 @@ function richTextFromSlice(slice: Slice): RichText {
 
 function collectNode(node: PMNode, content: RichText) {
   if (node.isText) {
-    const text = (node.text ?? '').replaceAll(INLINE_REF_TEXT_SENTINEL, '');
+    const text = (node.text ?? '').replaceAll(TRANSIENT_TEXT_SENTINEL, '');
     if (text.length === 0) return;
     const start = content.text.length;
     content.text += text;

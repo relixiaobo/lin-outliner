@@ -503,8 +503,10 @@ export function AgentChatPanel({
     regenerateMessage,
     reloadSession,
     newSession,
+    pendingApproval,
     revision,
     retryMessage,
+    resolveApproval,
     selectSession,
     sendMessage: sendRuntimeMessage,
     sessionId,
@@ -1100,6 +1102,8 @@ export function AgentChatPanel({
         onSend={sendMessage}
         onStop={stop}
         onSteer={handleSteerMessage}
+        onResolveApproval={resolveApproval}
+        pendingApproval={pendingApproval}
         settings={providerSettings}
         slashCommands={slashCommands}
         steeringNote={steeringNote}

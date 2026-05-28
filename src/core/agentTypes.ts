@@ -271,11 +271,39 @@ export interface AgentToolResultEvent {
   timestamp: number;
 }
 
+export type AgentApprovalResolutionScope = 'once' | 'session';
+
+export interface AgentApprovalRequestDetail {
+  label: string;
+  value: string;
+}
+
+export interface AgentApprovalRequestView {
+  requestId: string;
+  sessionId: string;
+  toolCallId: string;
+  toolName: string;
+  title: string;
+  target: string;
+  reason: string;
+  details: AgentApprovalRequestDetail[];
+  suggestedSessionRule?: string;
+}
+
+export interface AgentApprovalResolvedEvent {
+  type: 'approval_resolved';
+  sessionId: string;
+  requestId: string;
+  approved: boolean;
+  scope?: AgentApprovalResolutionScope;
+  timestamp: number;
+}
+
 export interface AgentApprovalRequestEvent {
   type: 'approval_request';
   sessionId: string;
   requestId: string;
-  payload?: unknown;
+  request: AgentApprovalRequestView;
   timestamp: number;
 }
 
@@ -286,4 +314,5 @@ export type AgentRuntimeEvent =
   | AgentClosedEvent
   | AgentToolCallEvent
   | AgentToolResultEvent
-  | AgentApprovalRequestEvent;
+  | AgentApprovalRequestEvent
+  | AgentApprovalResolvedEvent;

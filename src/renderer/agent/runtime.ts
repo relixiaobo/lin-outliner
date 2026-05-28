@@ -3,6 +3,8 @@ import { api } from '../api/client';
 import { isSystemReminderBlock } from '../../core/agentAttachments';
 import type {
   AgentConversationMessage,
+  AgentApprovalRequestView,
+  AgentApprovalResolutionScope,
   AgentMessageAttachmentInput,
   AgentMessageBranchState,
   AgentRuntimeEvent,
@@ -367,6 +369,12 @@ export interface AgentRuntimeClient {
   clearFollowUp: (sessionId: string) => Promise<void>;
   steerSession: (sessionId: string, message: string) => Promise<{ queued: boolean }>;
   clearSteer: (sessionId: string) => Promise<void>;
+  resolveApproval: (
+    sessionId: string,
+    requestId: string,
+    approved: boolean,
+    scope?: AgentApprovalResolutionScope,
+  ) => Promise<{ resolved: boolean }>;
   stopSession: (sessionId: string) => Promise<void>;
   onEvent: (listener: (event: AgentRuntimeEvent) => void) => (() => void) | null;
 }
@@ -386,6 +394,7 @@ export interface LinAgentRuntimeView {
   subagentRunIds: string[];
   subagents: Record<string, AgentRenderSubagentEntity>;
   subagentsByParentToolCallId: Map<string, AgentRenderSubagentEntity>;
+  pendingApproval: AgentApprovalRequestView | null;
   toolResults: Map<string, AgentToolResultWithPayloads>;
   turnPhase: AgentTurnPhase;
   selectSession: (targetSessionId: string) => Promise<void>;
@@ -403,6 +412,11 @@ export interface LinAgentRuntimeView {
   clearFollowUp: () => Promise<void>;
   steer: (prompt: string) => Promise<boolean>;
   clearSteer: () => Promise<void>;
+  resolveApproval: (
+    requestId: string,
+    approved: boolean,
+    scope?: AgentApprovalResolutionScope,
+  ) => Promise<boolean>;
   stop: () => void;
   reset: () => void;
   reloadSession: () => Promise<void>;
@@ -425,6 +439,8 @@ const defaultAgentRuntimeClient: AgentRuntimeClient = {
   clearFollowUp: (sessionId) => api.agentClearFollowUp(sessionId),
   steerSession: (sessionId, message) => api.agentSteerSession(sessionId, message),
   clearSteer: (sessionId) => api.agentClearSteer(sessionId),
+  resolveApproval: (sessionId, requestId, approved, scope = 'once') =>
+    api.agentResolveApproval(sessionId, requestId, approved, scope),
   stopSession: (sessionId) => api.agentStopSession(sessionId),
   onEvent: (listener) => typeof window === 'undefined' ? null : window.lin?.onAgentEvent(listener) ?? null,
 };
@@ -434,6 +450,8 @@ export class AgentRuntimeStore {
   private projection: AgentRenderProjection = EMPTY_PROJECTION;
   private sessionId: string | null = null;
   private error: string | null = null;
+  private readonly pendingApprovals = new Map<string, AgentApprovalRequestView>();
+  private pendingApprovalOrder: string[] = [];
   private restorePromise: Promise<string> | null = null;
   private requestVersion = 0;
   private started = false;
@@ -460,6 +478,7 @@ export class AgentRuntimeStore {
     this.sessionId = targetSessionId;
     this.projection = EMPTY_PROJECTION;
     this.error = null;
+    this.clearPendingApprovalState();
     this.publish();
     try {
       const session = await this.client.restoreSession(targetSessionId);
@@ -478,6 +497,7 @@ export class AgentRuntimeStore {
     this.sessionId = null;
     this.projection = EMPTY_PROJECTION;
     this.error = null;
+    this.clearPendingApprovalState();
     this.publish();
     try {
       const session = await this.client.createSession();
@@ -593,6 +613,25 @@ export class AgentRuntimeStore {
     }
   };
 
+  resolveApproval = async (
+    requestId: string,
+    approved: boolean,
+    scope: AgentApprovalResolutionScope = 'once',
+  ) => {
+    if (!this.sessionId) return false;
+    try {
+      const result = await this.client.resolveApproval(this.sessionId, requestId, approved, scope);
+      if (result.resolved && this.pendingApprovals.has(requestId)) {
+        this.removePendingApproval(requestId);
+        this.publish();
+      }
+      return result.resolved;
+    } catch (caught) {
+      this.reportError(caught);
+      throw caught;
+    }
+  };
+
   stop = () => {
     if (!this.sessionId) return;
     void this.client.stopSession(this.sessionId).catch((caught) => {
@@ -609,6 +648,7 @@ export class AgentRuntimeStore {
     const requestVersion = this.beginSessionRequest();
     this.projection = EMPTY_PROJECTION;
     this.error = null;
+    this.clearPendingApprovalState();
     this.publish();
     try {
       if (currentSessionId) {
@@ -664,6 +704,7 @@ export class AgentRuntimeStore {
     this.sessionId = session.sessionId;
     this.projection = session.renderProjection;
     this.error = session.renderProjection.errorMessage;
+    this.clearPendingApprovalState();
     this.publish();
   }
 
@@ -677,6 +718,7 @@ export class AgentRuntimeStore {
         this.restorePromise = null;
         this.projection = EMPTY_PROJECTION;
         this.error = null;
+        this.clearPendingApprovalState();
         this.publish();
       }
       return;
@@ -685,6 +727,25 @@ export class AgentRuntimeStore {
     if (payload.type === 'error') {
       if (!this.sessionId || payload.sessionId === this.sessionId) {
         this.error = payload.error;
+        this.publish();
+      }
+      return;
+    }
+
+    if (payload.type === 'approval_request') {
+      if (!this.sessionId) {
+        this.sessionId = payload.sessionId;
+      }
+      if (payload.sessionId !== this.sessionId) return;
+      this.addPendingApproval(payload.request);
+      this.publish();
+      return;
+    }
+
+    if (payload.type === 'approval_resolved') {
+      if (payload.sessionId !== this.sessionId) return;
+      if (this.pendingApprovals.has(payload.requestId)) {
+        this.removePendingApproval(payload.requestId);
         this.publish();
       }
       return;
@@ -751,6 +812,7 @@ export class AgentRuntimeStore {
       subagentRunIds: this.projection.subagentRunIds,
       subagents,
       subagentsByParentToolCallId,
+      pendingApproval: this.currentPendingApproval(),
       toolResults,
       turnPhase,
       selectSession: this.selectSession,
@@ -764,11 +826,38 @@ export class AgentRuntimeStore {
       clearFollowUp: this.clearFollowUp,
       steer: this.steer,
       clearSteer: this.clearSteer,
+      resolveApproval: this.resolveApproval,
       stop: this.stop,
       reset: this.reset,
       reloadSession: this.reloadSession,
       seedUserMessage: this.seedUserMessage,
     };
+  }
+
+  private addPendingApproval(request: AgentApprovalRequestView) {
+    if (!this.pendingApprovals.has(request.requestId)) {
+      this.pendingApprovalOrder.push(request.requestId);
+    }
+    this.pendingApprovals.set(request.requestId, request);
+  }
+
+  private removePendingApproval(requestId: string) {
+    this.pendingApprovals.delete(requestId);
+    this.pendingApprovalOrder = this.pendingApprovalOrder.filter((id) => id !== requestId);
+  }
+
+  private clearPendingApprovalState() {
+    this.pendingApprovals.clear();
+    this.pendingApprovalOrder = [];
+  }
+
+  private currentPendingApproval(): AgentApprovalRequestView | null {
+    while (this.pendingApprovalOrder.length > 0) {
+      const request = this.pendingApprovals.get(this.pendingApprovalOrder[0]);
+      if (request) return request;
+      this.pendingApprovalOrder.shift();
+    }
+    return null;
   }
 }
 

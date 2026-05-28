@@ -19,6 +19,7 @@ import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
 import type { AgentRenderProjection } from '../../src/core/agentRenderProjection';
+import { AgentEventStore } from '../../src/main/agentEventStore';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
 
 const EMPTY_USAGE: Usage = {
@@ -126,9 +127,9 @@ function deferred<T>() {
   return { promise, reject, resolve };
 }
 
-async function waitFor(condition: () => boolean, timeoutMs = 1000) {
+async function waitFor(condition: () => boolean | Promise<boolean>, timeoutMs = 1000) {
   const start = Date.now();
-  while (!condition()) {
+  while (!(await condition())) {
     if (Date.now() - start > timeoutMs) throw new Error('Timed out waiting for condition.');
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
@@ -676,6 +677,214 @@ describe('agent runtime skill integration', () => {
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(script.pendingCount()).toBe(0);
     expect(contextTexts.join('\n')).toContain('Shell output: skill-shell-ok');
+  });
+
+  test('routes skill shell approval requests through the runtime approval flow', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-shell-approval-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-shell-approval-data-'));
+    const outsideTarget = path.join(tmpdir(), `lin-agent-skill-shell-outside-${Date.now()}`);
+    roots.push(localRoot, dataRoot, outsideTarget);
+
+    await createSkill(localRoot, 'shell-approval-skill', [
+      '---',
+      'description: Use when checking skill shell approval.',
+      '---',
+      `Shell output: !\`rm -rf ${outsideTarget} && echo skill-shell-approved\``,
+    ].join('\n'));
+
+    const contextTexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('skill', { skill: 'shell-approval-skill' }, { id: 'tool-skill-shell-approval-1' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('Shell approval skill loaded.')),
+      ],
+      (_model, context) => {
+        contextTexts.push(JSON.stringify(context.messages));
+      },
+    );
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: true,
+          slashSkillsEnabled: true,
+          compactEnabled: true,
+          additionalSkillDirectories: [],
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.createSession();
+    const sendPromise = runtime.sendMessage(created.sessionId, 'Please load the shell approval skill.');
+    await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
+    const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
+      event.type === 'approval_request'
+    ));
+    if (!approvalEvent) throw new Error('Expected skill shell approval request.');
+
+    expect(approvalEvent.request.toolName).toBe('bash');
+    expect(approvalEvent.request.toolCallId).toStartWith('skill-shell-');
+    expect(approvalEvent.request.target).toContain(outsideTarget);
+
+    await runtime.resolveApproval(created.sessionId, approvalEvent.requestId, true);
+    await sendPromise;
+
+    expect(script.pendingCount()).toBe(0);
+    expect(contextTexts.join('\n')).toContain('Shell output: skill-shell-approved');
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+  });
+
+  test('reports rejected approvals as user-denied tool results', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-denied-approval-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-denied-approval-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const followUpContexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('bash', {
+            command: 'git push --dry-run origin codex/agent-permissions',
+            description: 'Dry-run git push',
+          }, { id: 'tool-denied-push' }),
+        ], { stopReason: 'toolUse' }),
+        (context) => {
+          followUpContexts.push(JSON.stringify(context.messages));
+          return fauxAssistantMessage(fauxText('Approval denial handled.'));
+        },
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: true,
+          slashSkillsEnabled: true,
+          compactEnabled: true,
+          additionalSkillDirectories: [],
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.createSession();
+    const sendPromise = runtime.sendMessage(created.sessionId, 'Try the dry-run push.');
+    await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
+    const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
+      event.type === 'approval_request'
+    ));
+    if (!approvalEvent) throw new Error('Expected approval request event.');
+
+    await runtime.resolveApproval(created.sessionId, approvalEvent.requestId, false);
+    await sendPromise;
+
+    const contextText = followUpContexts.join('\n');
+    expect(contextText).toContain('User denied permission. The requested tool call was not executed.');
+    expect(contextText).not.toContain('Permission denied: This changes external state on a git remote.');
+  });
+
+  test('records runtime-denied approval resolutions when closing a session', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-close-approval-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-close-approval-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('bash', {
+            command: 'git push --dry-run origin codex/agent-permissions',
+            description: 'Dry-run git push',
+          }, { id: 'tool-close-push' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('This should not be needed after close.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: true,
+          slashSkillsEnabled: true,
+          compactEnabled: true,
+          additionalSkillDirectories: [],
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.createSession();
+    const sendPromise = runtime.sendMessage(created.sessionId, 'Try the dry-run push before close.')
+      .catch(() => undefined);
+    await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
+    const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
+      event.type === 'approval_request'
+    ));
+    if (!approvalEvent) throw new Error('Expected approval request event.');
+
+    runtime.closeSession(created.sessionId);
+    await waitFor(() => sink.events.some((event) => (
+      event.type === 'approval_resolved'
+      && event.requestId === approvalEvent.requestId
+      && event.approved === false
+    )));
+
+    const store = new AgentEventStore(dataRoot);
+    await waitFor(async () => {
+      const events = await store.readEvents(created.sessionId);
+      return events.some((event) => (
+        event.type === 'approval.resolved'
+        && event.requestId === approvalEvent.requestId
+        && event.approved === false
+      ));
+    });
+    await sendPromise;
   });
 
   test('honors runtime switches for automatic skills and compact', async () => {

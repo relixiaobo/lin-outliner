@@ -51,6 +51,11 @@ export type {
   ViewMode,
 } from '../../core/types';
 
+export type {
+  AgentApprovalRequestView,
+  AgentApprovalResolutionScope,
+} from '../../core/agentTypes';
+
 export { EMPTY_RICH_TEXT, plainText, replaceAllRichTextPatch } from '../../core/types';
 export {
   dateFieldEndpointDate,

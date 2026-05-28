@@ -168,6 +168,7 @@ function createFakeClient(options: {
     restoreLatestSession: 0,
     restoreSession: [] as string[],
     queueFollowUp: [] as Array<{ sessionId: string; message: string; userViewContext?: AgentUserViewContext | null }>,
+    resolveApproval: [] as Array<{ sessionId: string; requestId: string; approved: boolean; scope: 'once' | 'session' | undefined }>,
     steerSession: [] as Array<{ sessionId: string; message: string }>,
     sendMessage: [] as Array<{
       sessionId: string;
@@ -209,6 +210,10 @@ function createFakeClient(options: {
       return { queued: true };
     },
     clearSteer: async () => {},
+    resolveApproval: async (sessionId, requestId, approved, scope) => {
+      calls.resolveApproval.push({ sessionId, requestId, approved, scope });
+      return { resolved: true };
+    },
     stopSession: async () => {},
     onEvent: (listener) => {
       listeners.add(listener);
@@ -242,6 +247,90 @@ describe('agent runtime store', () => {
     expect(store.getSnapshot().entries.map((entry) => entry.nodeId))
       .toEqual(['u1', 'a1']);
     expect(fake.calls.closeSession).toEqual([]);
+    unsubscribe();
+  });
+
+  test('tracks pending approval requests and clears them after resolve', async () => {
+    const fake = createFakeClient({ latestSession: session('saved', projection([], { isStreaming: true })) });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+
+    await flushMicrotasks();
+
+    fake.emit({
+      type: 'approval_request',
+      sessionId: 'saved',
+      requestId: 'approval-1',
+      request: {
+        requestId: 'approval-1',
+        sessionId: 'saved',
+        toolCallId: 'tool-1',
+        toolName: 'bash',
+        title: 'Approve GitHub push?',
+        target: 'git push origin codex/foo',
+        reason: 'This changes external state on a git remote.',
+        details: [{ label: 'Command', value: 'git push origin codex/foo' }],
+        suggestedSessionRule: 'Bash(git push origin codex/foo)',
+      },
+      timestamp: 10,
+    });
+
+    expect(store.getSnapshot().pendingApproval?.requestId).toBe('approval-1');
+
+    await store.getSnapshot().resolveApproval('approval-1', true, 'session');
+
+    expect(fake.calls.resolveApproval).toEqual([{
+      sessionId: 'saved',
+      requestId: 'approval-1',
+      approved: true,
+      scope: 'session',
+    }]);
+    expect(store.getSnapshot().pendingApproval).toBeNull();
+    unsubscribe();
+  });
+
+  test('queues multiple pending approval requests and shows the next one after resolution', async () => {
+    const fake = createFakeClient({ latestSession: session('saved', projection([], { isStreaming: true })) });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+
+    await flushMicrotasks();
+
+    const request = (requestId: string, target: string): AgentRuntimeEvent => ({
+      type: 'approval_request',
+      sessionId: 'saved',
+      requestId,
+      request: {
+        requestId,
+        sessionId: 'saved',
+        toolCallId: `tool-${requestId}`,
+        toolName: 'bash',
+        title: 'Approve command?',
+        target,
+        reason: 'This needs approval.',
+        details: [{ label: 'Command', value: target }],
+      },
+      timestamp: 10,
+    });
+
+    fake.emit(request('approval-1', 'git push origin codex/foo'));
+    fake.emit(request('approval-2', 'npm publish'));
+
+    expect(store.getSnapshot().pendingApproval?.requestId).toBe('approval-1');
+
+    await store.getSnapshot().resolveApproval('approval-1', true, 'once');
+
+    expect(store.getSnapshot().pendingApproval?.requestId).toBe('approval-2');
+
+    fake.emit({
+      type: 'approval_resolved',
+      sessionId: 'saved',
+      requestId: 'approval-2',
+      approved: false,
+      timestamp: 20,
+    });
+
+    expect(store.getSnapshot().pendingApproval).toBeNull();
     unsubscribe();
   });
 

@@ -27,8 +27,11 @@ import {
   richTextToDoc,
   richTextEquals,
   sliceRichText,
+  TRANSIENT_TEXT_SENTINEL,
 } from './richTextCodec';
 import { richTextPatchFromTransaction } from './editorTextPatch';
+import { createInlineMarkShortcutTransaction } from './inlineMarkShortcuts';
+import { moveInlineCodeCaretAcrossBoundary, setDomSelectionAtDocSide } from './inlineCodeBoundaryNavigation';
 import { pmSchema } from './pmSchema';
 import {
   applyCursorPlacement,
@@ -191,8 +194,11 @@ function toolbarAnchor(view: EditorView): OverlayAnchorRect | null {
 }
 
 function isEmptyDoc(doc: EditorState['doc']) {
-  const content = docToRichText(doc);
-  return content.text.replace(/\u200B/g, '').trim().length === 0 && content.inlineRefs.length === 0;
+  return isEmptyRichText(docToRichText(doc));
+}
+
+function isEmptyRichText(content: RichText) {
+  return content.text.replaceAll(TRANSIENT_TEXT_SENTINEL, '').trim().length === 0 && content.inlineRefs.length === 0;
 }
 
 export function RichTextEditor(props: RichTextEditorProps) {
@@ -205,7 +211,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
   const codeFenceFiredRef = useRef(false);
   const composingRef = useRef(false);
   const compositionDocChangedRef = useRef(false);
-  const [isEmpty, setIsEmpty] = useState(() => props.content.text.trim().length === 0 && props.content.inlineRefs.length === 0);
+  const [isEmpty, setIsEmpty] = useState(() => isEmptyRichText(props.content));
   const [toolbar, setToolbar] = useState({
     visible: false,
     anchorRect: null as OverlayAnchorRect | null,
@@ -324,18 +330,34 @@ export function RichTextEditor(props: RichTextEditorProps) {
         }
         if (transaction.docChanged) {
           const nextContent = docToRichText(nextState.doc);
-          setIsEmpty(nextContent.text.replace(/\u200B/g, '').trim().length === 0 && nextContent.inlineRefs.length === 0);
+          setIsEmpty(isEmptyRichText(nextContent));
           if (composing) {
             compositionDocChangedRef.current = true;
+            return;
+          }
+          const patch = richTextPatchFromTransaction(transaction);
+          if (patch.ops.length === 0 && richTextEquals(nextContent, lastExternalContentRef.current)) {
+            compositionDocChangedRef.current = false;
             return;
           }
           compositionDocChangedRef.current = false;
           lastExternalContentRef.current = nextContent;
           propsRef.current.onChange(nextContent);
-          const patch = richTextPatchFromTransaction(transaction);
           if (patch.ops.length > 0) propsRef.current.onPatch(patch);
           if (!composing) handleContentUpdateAction(nextContent);
         }
+      },
+      handleTextInput(viewInstance, from, to, text) {
+        if (propsRef.current.readOnly || composingRef.current || viewInstance.composing) return false;
+        const tr = createInlineMarkShortcutTransaction(viewInstance.state, from, to, text);
+        if (!tr) return false;
+
+        const selectionPosition = tr.selection.from;
+        viewInstance.dispatch(tr);
+        queueMicrotask(() => {
+          if (!viewInstance.isDestroyed) setDomSelectionAtDocSide(viewInstance, selectionPosition, 'after');
+        });
+        return true;
       },
       handleDOMEvents: {
         keydown(_viewInstance, event) {
@@ -590,6 +612,12 @@ export function RichTextEditor(props: RichTextEditorProps) {
         if (mod && event.shiftKey && event.key.toLowerCase() === 'h') {
           event.preventDefault();
           return toggleMark(pmSchema.marks.highlight)(viewInstance.state, viewInstance.dispatch);
+        }
+        if (!mod && !event.shiftKey && !event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+          if (moveInlineCodeCaretAcrossBoundary(viewInstance, event.key === 'ArrowRight' ? 'right' : 'left')) {
+            event.preventDefault();
+            return true;
+          }
         }
         if (matchesShortcutEvent(event, 'editor.checkbox')) {
           event.preventDefault();

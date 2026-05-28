@@ -20,6 +20,10 @@
   --line-ui-md: 1.375rem;
   --font-content: 1rem;
   --line-content: 1.625rem;
+  --font-code-inline: 0.875em;
+  --line-code-inline: 1.18;
+  --font-code-block: var(--font-ui-sm);
+  --line-code-block: var(--line-ui-sm);
   --content-control-height: var(--line-content);
   --font-description: var(--font-ui-sm);
   --line-description: 1.125rem;
@@ -201,6 +205,8 @@
   --primary: var(--accent-brand);
   --primary-hover: var(--accent-danger);
   --primary-soft: color-mix(in srgb, var(--accent-brand) 9%, transparent);
+  --primary-muted-text: color-mix(in srgb, var(--accent-brand) 58%, var(--text-strong));
+  --inline-code-bg: color-mix(in srgb, var(--text-main) 7%, transparent);
   --danger: var(--accent-danger);
   --row-hover: #f4f4f5;
   --row-selected: #f4f4f5;
@@ -2637,10 +2643,13 @@ button.panel-resize-handle::after {
 
 .agent-inline-code {
   border-radius: var(--radius-control-xs);
-  background: rgba(0, 0, 0, 0.055);
-  color: var(--text-strong);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.92em;
+  background: var(--inline-code-bg);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  color: var(--primary-muted-text);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-code-inline);
+  line-height: var(--line-code-inline);
   padding: var(--space-hairline) var(--space-2);
 }
 
@@ -2648,7 +2657,14 @@ button.panel-resize-handle::after {
    one look. Only the functional differences diverge: the agent block is a
    read-only, bounded-height <pre>; the outliner row is an editable textarea
    layered over a Shiki highlight layer with a language <select>. */
-.agent-code-block,
+.agent-code-block {
+  overflow: hidden;
+  margin: var(--space-1) 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+}
+
 .outliner-image {
   margin: var(--space-1) 0;
   user-select: none;
@@ -2880,8 +2896,8 @@ button.panel-resize-handle::after {
   margin: 0;
   padding: var(--space-4) var(--space-5);
   font-family: var(--font-family-mono);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta);
+  font-size: var(--font-code-block);
+  line-height: var(--line-code-block);
   white-space: pre;
   tab-size: 2;
   border: 0;
@@ -2909,7 +2925,7 @@ button.panel-resize-handle::after {
   visibility: hidden;
   pointer-events: none;
   overflow: hidden;
-  min-height: var(--line-meta);
+  min-height: var(--line-code-block);
 }
 
 .code-block-highlight {
@@ -3802,8 +3818,8 @@ button.panel-resize-handle::after {
   max-height: 280px;
   overflow: auto;
   font-family: var(--font-family-mono);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta);
+  font-size: var(--font-code-block);
+  line-height: var(--line-code-block);
   white-space: pre;
   tab-size: 2;
   background: transparent !important;
@@ -3931,6 +3947,140 @@ button.panel-resize-handle::after {
   color: var(--semantic-danger-muted);
   font-size: var(--font-meta);
   line-height: var(--line-meta-tight);
+}
+
+.agent-approval-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-1);
+}
+
+.agent-approval-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.agent-approval-title {
+  min-width: 0;
+  color: var(--text-strong);
+  font-size: var(--font-ui-sm);
+  font-weight: 650;
+  line-height: var(--line-ui-sm-tight);
+  overflow-wrap: anywhere;
+}
+
+.agent-approval-target {
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta-tight);
+  overflow-wrap: anywhere;
+}
+
+.agent-approval-details-toggle {
+  align-self: flex-start;
+  border-radius: var(--radius-sm);
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: var(--font-meta);
+  line-height: var(--line-meta-tight);
+  padding: var(--space-1) 0;
+}
+
+.agent-approval-details-toggle:hover,
+.agent-approval-details-toggle[aria-expanded="true"] {
+  color: var(--text-strong);
+}
+
+.agent-approval-details-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface-2) 72%, transparent);
+  padding: var(--space-4);
+}
+
+.agent-approval-actions {
+  display: flex;
+  min-width: 0;
+  width: 100%;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
+.agent-approval-button {
+  display: inline-flex;
+  height: var(--control-size-xl);
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--agent-composer-corner-radius);
+  color: var(--text-soft);
+  cursor: pointer;
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm-tight);
+  padding: 0 var(--space-4);
+  white-space: nowrap;
+}
+
+.agent-approval-button:not(.is-primary) {
+  background: color-mix(in srgb, var(--surface-2) 62%, transparent);
+}
+
+.agent-approval-button:not(.is-primary):hover:not(:disabled) {
+  background: var(--control-hover);
+  color: var(--surface-inverse);
+}
+
+.agent-approval-button.is-primary {
+  background: var(--surface-inverse);
+  color: var(--panel-bg);
+}
+
+.agent-approval-button.is-primary:hover:not(:disabled) {
+  background: var(--surface-inverse-strong);
+  color: var(--panel-bg);
+}
+
+.agent-approval-button:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+.agent-approval-button.is-primary:disabled {
+  background: var(--surface-disabled);
+  color: var(--panel-bg);
+}
+
+.agent-approval-details-toggle:focus-visible,
+.agent-approval-button:focus-visible {
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.agent-approval-detail {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: var(--space-1);
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta-tight);
+}
+
+.agent-approval-detail-label {
+  color: var(--text-faint);
+}
+
+.agent-approval-detail-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .agent-attachment-list {

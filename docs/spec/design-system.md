@@ -79,6 +79,10 @@ Use these default desktop tokens before adding component-specific values:
   --line-ui-md: 1.375rem; /* 22px */
   --font-content: 1rem; /* 16px */
   --line-content: 1.625rem; /* 26px */
+  --font-code-inline: 0.875em;
+  --line-code-inline: 1.18;
+  --font-code-block: var(--font-ui-sm); /* 13px */
+  --line-code-block: var(--line-ui-sm); /* 20px */
   --content-control-height: var(--line-content);
   --font-description: var(--font-ui-sm);
   --line-description: 1.125rem; /* 18px */
@@ -130,6 +134,8 @@ Use these default desktop tokens before adding component-specific values:
   --surface-inverse: #2e2e32;
   --surface-inverse-strong: #1f1f23;
   --surface-disabled: #d6d6da;
+  --primary-muted-text: color-mix(in srgb, var(--accent-brand) 58%, var(--text-strong));
+  --inline-code-bg: color-mix(in srgb, var(--text-main) 7%, transparent);
   --overlay-bg: var(--panel-bg);
   --overlay-active-bg: var(--row-selected);
   --overlay-shadow-level-1: 0 8px 20px -12px rgba(0, 0, 0, 0.22), 0 2px 8px -4px rgba(0, 0, 0, 0.10);
@@ -228,6 +234,13 @@ Use these default desktop tokens before adding component-specific values:
   prose, user bubbles, and the agent composer use
   `--font-content / --line-content`.
 - Do not scale font size with viewport width.
+- Inline code uses `--font-family-mono`, `--font-code-inline`, and the shared
+  inline code color/background tokens. It should read as a compact badge inside
+  prose, slightly smaller than body text. Use `--line-code-inline` so Latin and
+  CJK fallback glyphs share a stable visual box.
+- Code blocks use `--font-family-mono`, `--font-code-block`, and
+  `--line-code-block`. They should be compact but not meta-sized; reserve
+  `--font-meta / --line-meta` for labels and tool summaries.
 - `--workspace-surface-radius` is the canonical outer radius for workspace
   structural surfaces. `--panel-radius` and `--agent-composer-radius` both map
   to it.
@@ -248,6 +261,11 @@ Use these default desktop tokens before adding component-specific values:
 - Soft utility surfaces: `--surface-soft`.
 - Active navigation rows use neutral gray, not brand color.
 - Rose is sparse brand/status color, not the everyday active state.
+- `--primary-muted-text` is for low-intensity inline semantic emphasis such as
+  inline code, where rose should be recognizable without competing with body
+  text.
+- `--inline-code-bg` is a neutral transparent overlay for inline code and
+  similar compact text badges that should inherit the surrounding surface.
 - Warning uses Mustard, success uses Sage, info uses Sapphire.
 
 User-defined tag palette:
