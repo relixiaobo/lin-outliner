@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../core/agentTypes';
 import { LIN_DOCUMENT_EVENT_CHANNEL, type DocumentProjectionChangedEvent } from '../core/types';
+import { windowMaterialKind } from '../core/windowMaterial';
 
 export interface LinPickedLocalFile {
   entryKind?: 'file' | 'directory';
@@ -75,6 +76,9 @@ const nativeAttachmentPickerDisabled = process.env.LIN_ATTACHMENT_PICKER_METHOD 
   || process.env.LIN_DISABLE_NATIVE_ATTACHMENT_PICKER === '1';
 
 const api = {
+  // Which OS window material the main process applied, so the renderer can make
+  // its chrome surfaces translucent only when there's a material behind them.
+  windowMaterial: windowMaterialKind(process.platform),
   invoke: <T>(command: string, args?: Record<string, unknown>) =>
     ipcRenderer.invoke('lin:invoke', command, args) as Promise<T>,
   onAgentEvent: (listener: (event: AgentRuntimeEvent) => void) => {

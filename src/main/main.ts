@@ -8,6 +8,7 @@ import { DocumentService } from './documentService';
 import { AssetService } from './assetService';
 import { AgentRuntime } from './agentRuntime';
 import { MAC_TRAFFIC_LIGHT_POSITION } from '../core/chromeGeometry';
+import { windowMaterialKind } from '../core/windowMaterial';
 import { ASSET_URL_SCHEME } from '../core/assets';
 import { LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput } from '../core/types';
 import {
@@ -168,6 +169,7 @@ function configureSessionSecurity() {
 
 function createWindow() {
   const windowState = loadWindowState();
+  const material = windowMaterialKind(process.platform);
   mainWindow = new BrowserWindow({
     title: 'Lin Outliner',
     width: windowState.bounds?.width ?? 1120,
@@ -178,7 +180,12 @@ function createWindow() {
     // Create hidden and reveal on first paint so launch never flashes an empty
     // white frame; the platform animates the show.
     show: false,
-    backgroundColor: '#f7f6f1',
+    // With a window material the background must be transparent so the OS
+    // material (vibrancy / mica) shows through; otherwise keep the opaque deck
+    // colour as the pre-paint frame.
+    backgroundColor: material ? '#00000000' : '#f7f6f1',
+    ...(material === 'vibrancy' ? { vibrancy: 'under-window' as const } : {}),
+    ...(material === 'mica' ? { backgroundMaterial: 'mica' as const } : {}),
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: MAC_TRAFFIC_LIGHT_POSITION,
     webPreferences: {
