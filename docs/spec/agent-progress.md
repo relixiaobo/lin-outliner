@@ -114,8 +114,13 @@ Finish runtime polish on top of the event log and subagent foundation.
 - [ ] Add richer non-text media payload lazy loading UI in debug/render details.
 - [ ] Add performance instrumentation around replay, projection, IPC payload size,
   and long transcript rendering.
-- [ ] Emit and render schema-reserved runtime events that are not active yet:
-  approvals, persisted follow-ups, metrics, and explicit cancellation details.
+- [x] Permission approvals wired end to end: `allow | ask | deny` policy
+  computed in TypeScript, `ask` suspends the tool call and requests user
+  approval (composer card, subagent + skill-shell bubbling, pending-request
+  queue), session-scoped allow rules, and `approval.requested` /
+  `approval.resolved` events persisted to the log (PR #51).
+- [ ] Emit and render the remaining schema-reserved runtime events that are not
+  active yet: persisted follow-ups, metrics, and explicit cancellation details.
 - [ ] Refine checkpoint retention settings if real user sessions show unusual
   storage pressure.
 

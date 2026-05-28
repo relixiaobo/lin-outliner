@@ -67,6 +67,20 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **agent permission approvals** (codex) — agent tool permission decisions
+  evolved from boolean to `allow | ask | deny`, computed in TypeScript policy.
+  High-consequence bash/file actions (external GitHub mutations, package/deploy/
+  publish, db migrations, background commands, sandbox overrides, sensitive-path
+  access, unscoped recursive deletes) suspend and request approval; machine
+  destruction, RCE pipes, shell obfuscation, and sensitive-data exfiltration are
+  redline `deny`. `ask` routes through `requestToolApproval` (composer card,
+  subagent + skill-shell bubbling, pending-request queue, session-scoped allow
+  rules) and is recorded as `approval.requested`/`approval.resolved`. Bundled
+  with two same-thread follow-ups: inline Markdown formatting shortcuts while
+  typing (`code`/bold/strike/highlight/link + code-boundary arrow nav) and a
+  wording/styling cleanup (design-token code styling, simplified agent/tool
+  copy keeping the `Lin Agent` identity). Plan: `docs/plans/agent-permissions.md`
+  (still `draft` — management UI and persistent `always` rules remain). (PR #51).
 - **native-feel stage 1: security shell** (cc) — main process now owns the
   renderer's navigation + capability surface: `setWindowOpenHandler` denies
   child windows (http(s) → OS browser), `will-navigate`/`will-redirect` lock the

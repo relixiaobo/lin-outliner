@@ -12,6 +12,29 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent tool permissions — `allow | ask | deny` with an approval flow** — the
+  runtime permission decision evolved from a boolean to a three-state behavior
+  computed entirely in TypeScript policy (never from model prose). High-consequence
+  actions now suspend the agent and request user approval instead of silently
+  running or hard-failing: external GitHub mutations (`git push`, `gh pr/issue/
+  release/repo/workflow`), package/deploy/publish changes, database migrations,
+  background commands, sandbox overrides, sensitive local-path access
+  (`~/.ssh`, `.env`, credential/keychain files), and unscoped recursive deletes
+  ask; machine destruction, remote-code-execution pipes, shell obfuscation, and
+  sensitive-data network exfiltration are redline `deny` that session rules and
+  skills cannot approve. Approvals render in the agent composer (Allow once /
+  this session / Deny + details popover), bubble up from subagents and skill-shell
+  commands through one path, queue when multiple are pending, and are recorded as
+  `approval.requested` / `approval.resolved` in the event log.
+  ([#51](https://github.com/relixiaobo/lin-outliner/pull/51))
+- **Inline Markdown formatting while typing** — typing the closing delimiter now
+  converts low-ambiguity inline syntax in the row editor and agent composer into
+  the matching mark and drops the delimiters: `` `code` ``, `**bold**`,
+  `~~strike~~`, `==highlight==`, and `[text](url)`. `*italic*` and underscore
+  variants are intentionally ignored to avoid accidental conversion. The `code`
+  mark is non-inclusive and ArrowLeft/ArrowRight can move the caret out of an
+  inline code mark even with no adjacent plain text.
+  ([#51](https://github.com/relixiaobo/lin-outliner/pull/51))
 - **Done-state mapping + free-typed options + color swatch picker** — three
   user-facing additions ride with the config-as-nodes refactor. A supertag with
   "Show as checkbox" on can map its done/undone state to one or more option-field
@@ -84,6 +107,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Inline/code styling on design tokens + simplified agent wording** — inline
+  code and code blocks now use shared `--font-code-inline` / `--font-code-block`,
+  `--line-code-*`, `--inline-code-bg`, and `--primary-muted-text` tokens (inline
+  code reads as a compact badge with `box-decoration-break: clone`) instead of
+  ad-hoc font stacks and rgba backgrounds. Product-facing agent/tool wording was
+  simplified so the agent keeps the `Lin Agent` identity without over-describing
+  itself as a separately branded outliner: "Lin Outline Format" → "outline
+  format", "local file root" → "default file area"/"allowed file area", and the
+  system-prompt identity line is trimmed. The `dangerouslyDisableSandbox` bash
+  parameter is removed from the tool schema (still checked in the policy layer as
+  defense-in-depth). ([#51](https://github.com/relixiaobo/lin-outliner/pull/51))
 - **Config-as-nodes — definition config lives in the node tree** — definition
   (tag/field) configuration no longer lives as flat typed `Node` fields. Each
   knob is a `defConfig` child node (stable id, locked structure) whose value is
