@@ -36,7 +36,10 @@ export function measureRenderIndex<T>(run: () => T): T {
   if (!RENDER_PROBE_ENABLED) return run();
   const start = performance.now();
   const result = run();
-  lastIndexMs = performance.now() - start;
+  // Keep the max since the last measureRender reset: React StrictMode invokes
+  // the memo factory twice in dev and the second (idempotent) pass takes a cheap
+  // cache-hit path, which would otherwise mask the real first-pass cost.
+  lastIndexMs = Math.max(lastIndexMs, performance.now() - start);
   return result;
 }
 
