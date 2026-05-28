@@ -260,15 +260,18 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     const parent = props.scrollParentRef.current;
     if (!parent) return undefined;
     updateScrollMetrics();
+    // `scroll` events do not bubble, and the element that actually scrolls may be
+    // an ancestor/descendant of the passed container, so listen in the capture
+    // phase on the window — that receives scroll from any element in the tree.
     const onScroll = () => scheduleScrollMetrics();
-    parent.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('scroll', onScroll, { capture: true, passive: true });
     let observer: ResizeObserver | undefined;
     if (typeof ResizeObserver !== 'undefined') {
       observer = new ResizeObserver(() => updateScrollMetrics());
       observer.observe(parent);
     }
     return () => {
-      parent.removeEventListener('scroll', onScroll);
+      window.removeEventListener('scroll', onScroll, { capture: true });
       observer?.disconnect();
       if (scrollFrameRef.current !== null) {
         window.cancelAnimationFrame(scrollFrameRef.current);
