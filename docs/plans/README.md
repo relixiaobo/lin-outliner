@@ -45,6 +45,7 @@ items above.
 | [`node-line-editor-step1-extraction.md`](node-line-editor-step1-extraction.md) | done | P1 | Step 1: extract shared node-line trigger detection + structural keymap resolvers as pure modules (#16). |
 | [`node-line-editor-step2-eager-materialization.md`](node-line-editor-step2-eager-materialization.md) | done | P1 | Step 2: eager-materialize the trailing draft row — client-proposed node id + materialize undo grouping; type-to-create with no editor remount (#16). |
 | [`keyboard-shortcut-parity.md`](keyboard-shortcut-parity.md) | done | P2 | Nodex shortcut audit completed; remaining gaps shipped for empty-selection Cmd+A, go-to-today, nav-history keys, and selected option-reference menu navigation. |
+| [`agent-reversible-execution.md`](agent-reversible-execution.md) | draft | P0 | Reversibility-first foundation for agent permissions: a checkpoint/undo engine + a single `reversible ⇒ allow, else ask` rule that shrinks `agent-permissions.md`'s matrix and replaces pre-approval with approve-after undo. |
 | [`nodex-parity-decisions.md`](nodex-parity-decisions.md) | meta | — | Catalog of nodex features we explicitly will not port and why. |
 
 ## Working Rules
