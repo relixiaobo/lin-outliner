@@ -1,4 +1,4 @@
-import { useEffect, type Dispatch, type SetStateAction } from 'react';
+import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import { api } from '../../api/client';
 import type { NodeId } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
@@ -19,6 +19,7 @@ interface OutlinerViewProps {
   depth: number;
   index: DocumentIndex;
   ui: UiState;
+  uiRef: MutableRefObject<UiState>;
   setUi: Dispatch<SetStateAction<UiState>>;
   run: CommandRunner;
   trigger: TriggerState;
@@ -110,6 +111,7 @@ export function OutlinerView(props: OutlinerViewProps) {
             depth={props.depth}
             index={props.index}
             ui={props.ui}
+            uiRef={props.uiRef}
             setUi={props.setUi}
             run={props.run}
             trigger={props.trigger}
@@ -130,6 +132,7 @@ export function OutlinerView(props: OutlinerViewProps) {
             depth={props.depth}
             index={props.index}
             ui={props.ui}
+            uiRef={props.uiRef}
             setUi={props.setUi}
             run={props.run}
             trigger={props.trigger}

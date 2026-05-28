@@ -5,6 +5,7 @@ import {
   type Dispatch,
   type DragEvent,
   type MouseEvent,
+  type MutableRefObject,
   type SetStateAction,
 } from 'react';
 import { api } from '../../api/client';
@@ -40,6 +41,10 @@ interface UseOutlinerRowInteractionOptions {
   childIds: NodeId[];
   index: DocumentIndex;
   ui: UiState;
+  // Always-current ui, created by an ancestor that re-renders on every ui change.
+  // Handlers read selection/expansion from here so a row that skips re-render
+  // (per-row memo) still computes against live state, never a stale closure.
+  uiRef: MutableRefObject<UiState>;
   setUi: Dispatch<SetStateAction<UiState>>;
   run: CommandRunner;
   locked?: boolean;
@@ -58,6 +63,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     childIds,
     index,
     ui,
+    uiRef,
     setUi,
     run,
     locked,
@@ -129,7 +135,8 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
       }
     }
 
-    const rows = flattenVisibleRows(rootId, byId, ui.expanded, ui.expandedHiddenFields);
+    const liveUi = uiRef.current;
+    const rows = flattenVisibleRows(rootId, byId, liveUi.expanded, liveUi.expandedHiddenFields);
     const at = rows.indexOf(rowId);
     const nextId = rows[at + direction];
     if (!nextId) {
@@ -156,12 +163,12 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     rootId,
     rowId,
     setUi,
-    ui.expanded,
-    ui.expandedHiddenFields,
+    uiRef,
   ]);
 
   const focusLastVisibleChild = useCallback(() => {
-    const rows = flattenVisibleRows(childParentId, byId, ui.expanded, ui.expandedHiddenFields);
+    const liveUi = uiRef.current;
+    const rows = flattenVisibleRows(childParentId, byId, liveUi.expanded, liveUi.expandedHiddenFields);
     const last = rows[rows.length - 1] ?? childIds[childIds.length - 1];
     if (!last) return;
     const lastNode = byId.get(last);
@@ -170,7 +177,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
       rowFocusTarget(last, lastNode?.parentId ?? rowId, panelId),
       cursorEnd(),
     ));
-  }, [byId, childIds, childParentId, panelId, rowId, setUi, ui.expanded, ui.expandedHiddenFields]);
+  }, [byId, childIds, childParentId, panelId, rowId, setUi, uiRef]);
 
   const collapseToSelf = useCallback(() => {
     setUi((prev) => {
@@ -206,11 +213,12 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
   }, [childIds, setUi]);
 
   const selectFromPointer = useCallback((event: MouseEvent<HTMLDivElement>) => {
+    const liveUi = uiRef.current;
     const target = event.target as HTMLElement;
     if (target.closest('button')) return;
     if (shouldPreserveSelectedRowContextClick({
       button: event.button,
-      rowSelected: ui.selectedIds.has(rowId),
+      rowSelected: liveUi.selectedIds.has(rowId),
     })) {
       event.preventDefault();
       event.stopPropagation();
@@ -239,7 +247,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
-    const rows = flattenVisibleRows(rootId, byId, ui.expanded, ui.expandedHiddenFields);
+    const rows = flattenVisibleRows(rootId, byId, liveUi.expanded, liveUi.expandedHiddenFields);
     const selectionMeta: Pick<UiState, 'selectionRootId' | 'selectionSource'> = {
       selectionRootId: rootId,
       selectionSource: 'global',
@@ -251,9 +259,9 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     } | null = null;
 
     if (action === 'range') {
-      const anchor = ui.selectionAnchorId && rows.includes(ui.selectionAnchorId)
-        ? ui.selectionAnchorId
-        : ui.selectedId ?? rowId;
+      const anchor = liveUi.selectionAnchorId && rows.includes(liveUi.selectionAnchorId)
+        ? liveUi.selectionAnchorId
+        : liveUi.selectedId ?? rowId;
       const from = rows.indexOf(anchor);
       const to = rows.indexOf(rowId);
       if (from >= 0 && to >= 0) {
@@ -266,7 +274,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
       }
     }
     if (!appliedSelection && action === 'toggle') {
-      const selectedIds = toggleVisibleSelection(rows, ui.selectedIds, rowId);
+      const selectedIds = toggleVisibleSelection(rows, liveUi.selectedIds, rowId);
       const selectedId = selectedIds.has(rowId)
         ? rowId
         : [...selectedIds].at(-1) ?? null;
@@ -295,17 +303,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     });
 
     setUi(applySelection);
-  }, [
-    byId,
-    rootId,
-    rowId,
-    setUi,
-    ui.expanded,
-    ui.expandedHiddenFields,
-    ui.selectedId,
-    ui.selectedIds,
-    ui.selectionAnchorId,
-  ]);
+  }, [byId, rootId, rowId, setUi, uiRef]);
 
   const onDragStart = useCallback((event: DragEvent<HTMLElement>) => {
     event.dataTransfer.effectAllowed = 'move';

@@ -55,6 +55,7 @@ import { DoneCheckbox } from './outliner/DoneCheckbox';
 import { NodeContextMenu } from './outliner/NodeContextMenu';
 import { NodeDescription } from './outliner/NodeDescription';
 import { OutlinerView } from './outliner/OutlinerView';
+import { FLAT_OUTLINER_ENABLED, OutlinerFlatView } from './outliner/OutlinerFlatView';
 import { buildOutlinerRows } from './outliner/row-model';
 import { TriggerPopover } from './outliner/TriggerPopover';
 import { ButtonControl } from './primitives/ButtonControl';
@@ -142,6 +143,10 @@ export function NodePanel(props: NodePanelProps) {
   const [titleDocked, setTitleDocked] = useState(false);
   const [searchQueryOpen, setSearchQueryOpen] = useState(false);
   const mainPanelRef = useRef<HTMLElement | null>(null);
+  // Always-current ui for row handlers. NodePanel re-renders on every ui change,
+  // so this ref stays live even for rows whose per-row memo skips re-render.
+  const uiRef = useRef(props.ui);
+  uiRef.current = props.ui;
   const stickyBreadcrumbRef = useRef<HTMLDivElement | null>(null);
   const titleRowRef = useRef<HTMLDivElement | null>(null);
   const pendingTitlePatchRef = useRef<Promise<unknown>>(Promise.resolve());
@@ -754,25 +759,46 @@ export function NodePanel(props: NodePanelProps) {
             {definitionTemplateLabel && (
               <div className="definition-template-label">{definitionTemplateLabel}</div>
             )}
-            <OutlinerView
-              panelId={props.panelId}
-              parentId={props.rootId}
-              rootId={props.rootId}
-              onRoot={props.onRoot}
-              depth={0}
-              index={props.index}
-              ui={props.ui}
-              setUi={props.setUi}
-              run={props.run}
-              trigger={props.trigger}
-              setTrigger={props.setTrigger}
-              dragId={props.dragId}
-              setDragId={props.setDragId}
-              rows={panelRows}
-              // The body always offers a place to add a node; the trailing draft
-              // (eager materialization) subsumes the old body TrailingInput.
-              trailingDraft={showTrailingInput ? 'always' : 'none'}
-            />
+            {FLAT_OUTLINER_ENABLED ? (
+              <OutlinerFlatView
+                panelId={props.panelId}
+                parentId={props.rootId}
+                rootId={props.rootId}
+                onRoot={props.onRoot}
+                index={props.index}
+                ui={props.ui}
+                uiRef={uiRef}
+                setUi={props.setUi}
+                run={props.run}
+                trigger={props.trigger}
+                setTrigger={props.setTrigger}
+                dragId={props.dragId}
+                setDragId={props.setDragId}
+                trailingDraft={showTrailingInput ? 'always' : 'none'}
+                scrollParentRef={mainPanelRef}
+              />
+            ) : (
+              <OutlinerView
+                panelId={props.panelId}
+                parentId={props.rootId}
+                rootId={props.rootId}
+                onRoot={props.onRoot}
+                depth={0}
+                index={props.index}
+                ui={props.ui}
+                uiRef={uiRef}
+                setUi={props.setUi}
+                run={props.run}
+                trigger={props.trigger}
+                setTrigger={props.setTrigger}
+                dragId={props.dragId}
+                setDragId={props.setDragId}
+                rows={panelRows}
+                // The body always offers a place to add a node; the trailing draft
+                // (eager materialization) subsumes the old body TrailingInput.
+                trailingDraft={showTrailingInput ? 'always' : 'none'}
+              />
+            )}
           </div>
         )}
       </div>

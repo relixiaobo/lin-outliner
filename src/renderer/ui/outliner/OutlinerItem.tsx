@@ -1,9 +1,11 @@
 import {
+  memo,
   useEffect,
   useRef,
   useState,
   type Dispatch,
   type MouseEvent,
+  type MutableRefObject,
   type RefObject,
   type SetStateAction,
 } from 'react';
@@ -19,6 +21,7 @@ import {
   type DocumentIndex,
   type UiState,
 } from '../../state/document';
+import { deriveRowMemoState, rowMemoStateEqual } from '../../state/rowUiState';
 import { RichTextEditor, type EditorSplitPayload } from '../editor/RichTextEditor';
 import {
   deleteRichTextRange,
@@ -76,6 +79,7 @@ import {
   PopoverListbox,
   PopoverListItem,
 } from './PopoverList';
+import { noteOutlinerItemRender } from './renderProbe';
 
 interface OutlinerItemProps {
   panelId: string;
@@ -86,6 +90,8 @@ interface OutlinerItemProps {
   depth: number;
   index: DocumentIndex;
   ui: UiState;
+  // Always-current ui (stable ref) for handlers; see useOutlinerRowInteraction.
+  uiRef: MutableRefObject<UiState>;
   setUi: Dispatch<SetStateAction<UiState>>;
   run: CommandRunner;
   trigger: TriggerState;
@@ -100,9 +106,14 @@ interface OutlinerItemProps {
   // under `nodeId` (kept stable so the editor is never remounted), after which
   // the row is rendered like any other content row.
   draft?: boolean;
+  // Flat (virtualized) rendering: the row's children are emitted as sibling rows
+  // by the flat producer, so this row must not render its own nested OutlinerView.
+  // Indentation comes from `depth` (cumulative) instead of nested `.children`.
+  flat?: boolean;
 }
 
-export function OutlinerItem(props: OutlinerItemProps) {
+function OutlinerItemImpl(props: OutlinerItemProps) {
+  noteOutlinerItemRender();
   const realNode = props.index.byId.get(props.nodeId);
   // A draft row synthesizes an empty plain node so the normal render path runs;
   // `realNode` distinguishes "not materialized yet" from a real node.
@@ -138,6 +149,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
     childIds: rowChildIds,
     index: props.index,
     ui: props.ui,
+    uiRef: props.uiRef,
     setUi: props.setUi,
     run: props.run,
     locked: node?.locked ?? true,
@@ -671,8 +683,8 @@ export function OutlinerItem(props: OutlinerItemProps) {
       const visible = flattenVisibleRows(
         props.rootId,
         props.index.byId,
-        props.ui.expanded,
-        props.ui.expandedHiddenFields,
+        props.uiRef.current.expanded,
+        props.uiRef.current.expandedHiddenFields,
       );
       const previousId = visible[visible.length - 1];
       if (previousId) {
@@ -781,8 +793,8 @@ export function OutlinerItem(props: OutlinerItemProps) {
     const visibleRows = flattenVisibleRows(
       props.rootId,
       props.index.byId,
-      props.ui.expanded,
-      props.ui.expandedHiddenFields,
+      props.uiRef.current.expanded,
+      props.uiRef.current.expandedHiddenFields,
     );
     const previousId = previousVisibleRowId(visibleRows, props.nodeId);
     if (!previousId) return;
@@ -1024,7 +1036,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
 
     event.preventDefault();
     event.stopPropagation();
-    if (props.ui.selectedIds.size > 1 && !displayed.locked) {
+    if (props.uiRef.current.selectedIds.size > 1 && !displayed.locked) {
       if (!editor) return;
       const offset = resolveTextOffsetFromPoint({
         container: editor,
@@ -1337,7 +1349,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
         />
       )}
 
-      {row.expanded && (
+      {!props.flat && row.expanded && (
         <div className="children">
           <OutlinerView
             panelId={props.panelId}
@@ -1347,6 +1359,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
             depth={0}
             index={props.index}
             ui={props.ui}
+            uiRef={props.uiRef}
             setUi={props.setUi}
             run={props.run}
             trigger={props.trigger}
@@ -1470,6 +1483,50 @@ function SelectedReferenceOptionPicker({
     document.body,
   );
 }
+
+function referencePathEqual(a: readonly NodeId[], b: readonly NodeId[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+// Skip re-rendering a row when neither its tracked data revision nor the global
+// UI generation changed and its structural position is unchanged. Function props
+// (run/onRoot/setUi/...) are intentionally not compared: they are either stable
+// (useState/useCallback) or close only over stable values, so a retained closure
+// stays correct. Draft rows are never memoized — they are not in the projection,
+// so renderRev cannot track them. Missing revision info forces a re-render.
+function outlinerItemPropsEqual(prev: OutlinerItemProps, next: OutlinerItemProps): boolean {
+  if (prev.draft || next.draft) return false;
+  if (prev.nodeId !== next.nodeId) return false;
+  if (prev.panelId !== next.panelId) return false;
+  if (prev.parentId !== next.parentId) return false;
+  if (prev.rootId !== next.rootId) return false;
+  if (prev.depth !== next.depth) return false;
+  // Drag start/end is infrequent; re-render every row so drag handlers close over
+  // the current dragId and the dragged row picks up its 'dragging' class.
+  if (prev.dragId !== next.dragId) return false;
+  // Description editing toggles rarely and a reference row edits its target's
+  // description (keyed by the resolved target, not nodeId), so a per-row check
+  // would miss reference rows — compare it globally instead.
+  if (prev.ui.editingDescriptionId !== next.ui.editingDescriptionId) return false;
+  const prevRev = prev.index.renderRev?.get(prev.nodeId);
+  const nextRev = next.index.renderRev?.get(next.nodeId);
+  if (prevRev === undefined || nextRev === undefined || prevRev !== nextRev) return false;
+  if (!referencePathEqual(prev.referencePath, next.referencePath)) return false;
+  // Re-render only when *this row's* UI state moved (focus/selection/expand/…),
+  // not on every global UI change. Behavioural ui reads go through a live ref
+  // (useOutlinerRowInteraction), so a row that skips re-render stays correct.
+  return rowMemoStateEqual(
+    deriveRowMemoState(prev.ui, prev.trigger, prev.nodeId, prev.parentId, prev.panelId),
+    deriveRowMemoState(next.ui, next.trigger, next.nodeId, next.parentId, next.panelId),
+  );
+}
+
+export const OutlinerItem = memo(OutlinerItemImpl, outlinerItemPropsEqual);
 
 function isOnlyInlineReference(content: RichText, targetId: NodeId) {
   const textEmpty = content.text.replace(/\u200B/g, '').trim().length === 0;
