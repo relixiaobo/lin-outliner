@@ -1,4 +1,5 @@
 import {
+  memo,
   useEffect,
   useRef,
   useState,
@@ -92,7 +93,7 @@ interface OutlinerItemProps {
   draft?: boolean;
 }
 
-export function OutlinerItem(props: OutlinerItemProps) {
+function OutlinerItemImpl(props: OutlinerItemProps) {
   noteOutlinerItemRender();
   const realNode = props.index.byId.get(props.nodeId);
   // A draft row synthesizes an empty plain node so the normal render path runs;
@@ -1336,6 +1337,37 @@ export function OutlinerItem(props: OutlinerItemProps) {
     </OutlinerRowShell>
   );
 }
+
+function referencePathEqual(a: readonly NodeId[], b: readonly NodeId[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+// Skip re-rendering a row when neither its tracked data revision nor the global
+// UI generation changed and its structural position is unchanged. Function props
+// (run/onRoot/setUi/...) are intentionally not compared: they are either stable
+// (useState/useCallback) or close only over stable values, so a retained closure
+// stays correct. Draft rows are never memoized — they are not in the projection,
+// so renderRev cannot track them. Missing revision info forces a re-render.
+function outlinerItemPropsEqual(prev: OutlinerItemProps, next: OutlinerItemProps): boolean {
+  if (prev.draft || next.draft) return false;
+  if (prev.nodeId !== next.nodeId) return false;
+  if (prev.panelId !== next.panelId) return false;
+  if (prev.parentId !== next.parentId) return false;
+  if (prev.rootId !== next.rootId) return false;
+  if (prev.depth !== next.depth) return false;
+  if (prev.index.uiGen !== next.index.uiGen) return false;
+  const prevRev = prev.index.renderRev?.get(prev.nodeId);
+  const nextRev = next.index.renderRev?.get(next.nodeId);
+  if (prevRev === undefined || nextRev === undefined || prevRev !== nextRev) return false;
+  return referencePathEqual(prev.referencePath, next.referencePath);
+}
+
+export const OutlinerItem = memo(OutlinerItemImpl, outlinerItemPropsEqual);
 
 function isOnlyInlineReference(content: RichText, targetId: NodeId) {
   const textEmpty = content.text.replace(/\u200B/g, '').trim().length === 0;
