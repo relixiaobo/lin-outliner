@@ -67,6 +67,7 @@ import {
   triggerOwnsWholeText,
 } from './trailingTriggers';
 import { useOutlinerRowInteraction } from './useOutlinerRowInteraction';
+import { noteOutlinerItemRender } from './renderProbe';
 
 interface OutlinerItemProps {
   panelId: string;
@@ -92,6 +93,7 @@ interface OutlinerItemProps {
 }
 
 export function OutlinerItem(props: OutlinerItemProps) {
+  noteOutlinerItemRender();
   const realNode = props.index.byId.get(props.nodeId);
   // A draft row synthesizes an empty plain node so the normal render path runs;
   // `realNode` distinguishes "not materialized yet" from a real node.
