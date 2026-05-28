@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { ids, openMockedApp, row } from './outlinerMock';
+import { ids, installElectronMock, openMockedApp, row } from './outlinerMock';
 
 // The app must never fall back to window.prompt / window.confirm — blocking
 // browser dialogs that look foreign and freeze the renderer. A page-level dialog
@@ -32,5 +32,16 @@ test.describe('in-app dialogs replace native browser prompts', () => {
     // fired during the whole interaction.
     await expect(page.getByRole('dialog', { name: 'Set icon' })).toHaveCount(0);
     expect(browserDialogs).toEqual([]);
+  });
+
+  test('the ?surface=settings route renders the standalone settings window', async ({ page }) => {
+    await installElectronMock(page);
+    await page.goto('/?surface=settings');
+
+    // The settings surface renders its own full-window page, not the outliner.
+    await expect(page.locator('.settings-window')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+    await expect(page.locator('.app-shell')).toHaveCount(0);
+    await expect(row(page, ids.alpha)).toHaveCount(0);
   });
 });

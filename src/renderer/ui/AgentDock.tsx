@@ -10,11 +10,8 @@ interface AgentDockProps {
   userViewContext: AgentUserViewContext;
   onOpenNodeReference: AgentNodeReferenceOpenHandler;
   onOpenDebugPanel: (sessionId: string | null) => void;
-  onProviderSettingsOpenChange: (open: boolean) => void;
-  providerSettingsRestoreFocus?: () => HTMLElement | null;
   onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
   onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
-  providerSettingsOpen: boolean;
 }
 
 export function AgentDock(props: AgentDockProps) {
@@ -25,9 +22,6 @@ export function AgentDock(props: AgentDockProps) {
         userViewContext={props.userViewContext}
         onOpenNodeReference={props.onOpenNodeReference}
         onOpenDebugPanel={props.onOpenDebugPanel}
-        onProviderSettingsOpenChange={props.onProviderSettingsOpenChange}
-        providerSettingsRestoreFocus={props.providerSettingsRestoreFocus}
-        providerSettingsOpen={props.providerSettingsOpen}
       />
       <ResizeHandle
         className="dock-resize-handle agent-resize-handle"

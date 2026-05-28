@@ -9,6 +9,7 @@ import { AssetService } from './assetService';
 import { AgentRuntime } from './agentRuntime';
 import { MAC_TRAFFIC_LIGHT_POSITION } from '../core/chromeGeometry';
 import { windowMaterialKind } from '../core/windowMaterial';
+import { LIN_SETTINGS_CHANGED_CHANNEL, WINDOW_SURFACE_QUERY_PARAM } from '../core/settingsWindow';
 import { ASSET_URL_SCHEME } from '../core/assets';
 import { LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput } from '../core/types';
 import {
@@ -51,6 +52,7 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const documentService = new DocumentService();
 const assetService = new AssetService(() => join(app.getPath('userData'), 'assets'));
 let mainWindow: BrowserWindow | null = null;
+let settingsWindow: BrowserWindow | null = null;
 let quitAfterFlush = false;
 let lastAttachmentPickerDirectory: string | null = null;
 const DEFAULT_ATTACHMENT_PICKER_LIMIT = 6;
@@ -221,6 +223,52 @@ function focusMainWindow() {
   mainWindow.focus();
 }
 
+// Settings open in their own window — the native "Preferences" convention —
+// reusing the single renderer bundle via a ?surface=settings query. Unlike the
+// main window it keeps a native title bar (the settings surface draws no custom
+// chrome) and isn't persisted across launches.
+function openSettingsWindow() {
+  if (settingsWindow) {
+    if (settingsWindow.isMinimized()) settingsWindow.restore();
+    settingsWindow.show();
+    settingsWindow.focus();
+    return;
+  }
+  // A utilitarian Preferences window: opaque content, native title bar, no OS
+  // material (unlike the main window) — matching how system settings panes read.
+  settingsWindow = new BrowserWindow({
+    title: 'Settings',
+    width: 760,
+    height: 620,
+    minWidth: 560,
+    minHeight: 480,
+    show: false,
+    backgroundColor: '#f7f6f1',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  const target = settingsWindow;
+  hardenWebContents(target.webContents);
+  target.once('ready-to-show', () => target.show());
+
+  if (RENDERER_DEV_URL) {
+    void target.loadURL(`${RENDERER_DEV_URL}?${WINDOW_SURFACE_QUERY_PARAM}=settings`);
+  } else {
+    void target.loadFile(join(__dirname, '../renderer/index.html'), {
+      query: { [WINDOW_SURFACE_QUERY_PARAM]: 'settings' },
+    });
+  }
+
+  target.on('closed', () => {
+    settingsWindow = null;
+  });
+}
+
 function registerIpc() {
   ipcMain.handle('lin:invoke', async (_event, command: string, args?: Record<string, unknown>) => {
     if (isAgentCommand(command)) return handleAgentCommand(command, args ?? {});
@@ -238,6 +286,14 @@ function registerIpc() {
       else window.maximize();
     }
     if (command === 'close') window.close();
+  });
+
+  ipcMain.handle('lin:open-settings', () => openSettingsWindow());
+  ipcMain.handle('lin:close-settings', () => settingsWindow?.close());
+  // The settings window mutated provider/agent settings; tell the main window so
+  // it re-fetches instead of rendering stale provider state.
+  ipcMain.handle('lin:settings-changed', () => {
+    mainWindow?.webContents.send(LIN_SETTINGS_CHANGED_CHANNEL);
   });
 
   ipcMain.handle('lin:pick-local-files', async (event, rawOptions?: {

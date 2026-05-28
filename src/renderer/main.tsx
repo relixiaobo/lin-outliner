@@ -1,17 +1,26 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { windowSurfaceFromSearch } from '../core/settingsWindow';
 import { App } from './ui/App';
+import { SettingsWindow } from './ui/SettingsWindow';
 import './styles.css';
 import './styles/outliner.css';
 
+// The same bundle serves the main window and the dedicated settings window; the
+// surface is selected by a ?surface= query param the main process sets.
+const surface = windowSurfaceFromSearch(window.location.search);
+
 // Mark the document with the active OS window material so chrome surfaces turn
-// translucent in the first painted frame (no opaque -> frosted flash). Absent in
-// the browser/dev preview, where there is no material to show through.
+// translucent in the first painted frame (no opaque -> frosted flash). Only the
+// main window carries a material; the settings window is an opaque Preferences
+// surface, and the browser/dev preview has no material to show through.
 const windowMaterial = window.lin?.windowMaterial ?? null;
-if (windowMaterial) document.documentElement.dataset.windowMaterial = windowMaterial;
+if (windowMaterial && surface === 'main') {
+  document.documentElement.dataset.windowMaterial = windowMaterial;
+}
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    <App />
+    {surface === 'settings' ? <SettingsWindow /> : <App />}
   </React.StrictMode>,
 );

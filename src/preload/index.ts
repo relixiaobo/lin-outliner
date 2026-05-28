@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../core/agentTypes';
 import { LIN_DOCUMENT_EVENT_CHANNEL, type DocumentProjectionChangedEvent } from '../core/types';
 import { windowMaterialKind } from '../core/windowMaterial';
+import { LIN_SETTINGS_CHANGED_CHANNEL } from '../core/settingsWindow';
 
 export interface LinPickedLocalFile {
   entryKind?: 'file' | 'directory';
@@ -99,6 +100,16 @@ const api = {
     minimize: () => ipcRenderer.invoke('lin:window', 'minimize') as Promise<void>,
     toggleMaximize: () => ipcRenderer.invoke('lin:window', 'toggle_maximize') as Promise<void>,
     close: () => ipcRenderer.invoke('lin:window', 'close') as Promise<void>,
+  },
+  openSettings: () => ipcRenderer.invoke('lin:open-settings') as Promise<void>,
+  closeSettings: () => ipcRenderer.invoke('lin:close-settings') as Promise<void>,
+  notifySettingsChanged: () => ipcRenderer.invoke('lin:settings-changed') as Promise<void>,
+  onSettingsChanged: (listener: () => void) => {
+    const handler = () => listener();
+    ipcRenderer.on(LIN_SETTINGS_CHANGED_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(LIN_SETTINGS_CHANGED_CHANNEL, handler);
+    };
   },
   getFilePath: (file: File) => webUtils.getPathForFile(file),
   ...(nativeAttachmentPickerDisabled ? {} : {
