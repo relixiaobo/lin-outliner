@@ -215,7 +215,9 @@ test.describe('outliner bullet parity', () => {
     expectClose(restingMetrics.chevronLeft, 6);
     expectClose(restingMetrics.bulletLeft, 25);
     expectClose(restingMetrics.chevronShellWidth, restingMetrics.bulletShapeWidth);
-    expect(restingMetrics.bulletCursor).toBe('pointer');
+    // Strict-native cursor policy: the bullet is a chrome control, not a content
+    // hyperlink, so it keeps the arrow cursor instead of switching to the hand.
+    expect(restingMetrics.bulletCursor).toBe('default');
 
     await dailyRow.hover();
 

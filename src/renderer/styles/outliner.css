@@ -107,7 +107,6 @@
   border: 2px solid transparent;
   border-radius: var(--radius-pill);
   background: transparent;
-  cursor: pointer;
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
 }
 
@@ -166,7 +165,6 @@
   gap: var(--space-4);
   border-radius: var(--radius-sm);
   color: var(--muted);
-  cursor: pointer;
   font-size: var(--font-ui-md);
 }
 
@@ -342,7 +340,6 @@
   background: transparent;
   padding: var(--space-2) var(--space-4);
   color: var(--text);
-  cursor: pointer;
   text-align: left;
   transition: background var(--motion-fast);
 }
@@ -475,7 +472,6 @@
   border-radius: var(--radius-control-xs);
   padding: 0 var(--space-3);
   color: var(--muted);
-  cursor: pointer;
 }
 
 .view-toolbar-add-field:hover {
@@ -489,7 +485,6 @@
   background: transparent;
   padding: 0;
   color: inherit;
-  cursor: pointer;
 }
 
 .view-toolbar-reset {
@@ -541,7 +536,6 @@
   padding: var(--space-2) var(--space-3);
   margin-bottom: var(--space-2);
   color: var(--text);
-  cursor: pointer;
   font-size: var(--font-ui-sm);
   font-weight: 600;
 }
@@ -757,7 +751,6 @@
   border-radius: var(--radius-sm);
   background: rgba(26, 26, 26, 0.045);
   color: var(--muted);
-  cursor: pointer;
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
   padding: 0 var(--space-4);
@@ -781,7 +774,6 @@
   width: 16px;
   border: 0;
   background: transparent;
-  cursor: pointer;
   padding: 0;
 }
 
@@ -1281,7 +1273,6 @@
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text);
-  cursor: pointer;
   font: inherit;
   font-size: var(--font-content);
   line-height: var(--line-content);
@@ -1417,7 +1408,6 @@
   border: 0;
   border-radius: var(--radius-pill);
   background: transparent;
-  cursor: pointer;
   padding: 0;
 }
 
@@ -1441,7 +1431,6 @@
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-soft);
-  cursor: pointer;
   font: inherit;
   font-size: var(--font-meta);
   padding: 0 var(--space-3);
@@ -1462,7 +1451,6 @@
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--muted);
-  cursor: pointer;
   font: inherit;
   font-size: var(--font-content);
   line-height: var(--line-content);
@@ -1543,7 +1531,6 @@
   height: var(--row-leading-height);
   background: transparent;
   box-shadow: none;
-  cursor: pointer;
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--motion-fast), color var(--motion-fast);
@@ -1601,7 +1588,6 @@
   border-radius: var(--radius-pill);
   background: transparent;
   box-shadow: none;
-  cursor: pointer;
 }
 
 .row-bullet-button.inert {
@@ -1775,7 +1761,6 @@
   justify-content: center;
   border-radius: var(--radius-control-xs);
   color: var(--panel-bg);
-  cursor: pointer;
   vertical-align: top;
   transition: background var(--motion-fast);
 }
@@ -1963,7 +1948,6 @@
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--muted);
-  cursor: pointer;
   transition: background var(--motion-fast), color var(--motion-fast);
 }
 
@@ -2034,7 +2018,6 @@
   height: 22px;
   justify-content: center;
   color: inherit;
-  cursor: pointer;
 }
 
 .tag-badge-hash {
@@ -2128,7 +2111,6 @@
   gap: calc(var(--space-4) + var(--space-hairline));
   border-radius: var(--radius-sm);
   color: var(--muted);
-  cursor: pointer;
   font-size: var(--font-ui-sm);
   padding: var(--space-2) var(--space-4);
   text-align: left;
@@ -2157,7 +2139,6 @@
 
 .node-context-subhead button {
   color: var(--muted);
-  cursor: pointer;
   font: inherit;
   font-weight: 500;
 }
@@ -2229,7 +2210,6 @@
   gap: calc(var(--space-4) + var(--space-hairline));
   border-radius: var(--radius-sm);
   color: var(--muted);
-  cursor: pointer;
   font-size: var(--font-ui-sm);
   padding: var(--space-2) var(--space-4);
   text-align: left;
