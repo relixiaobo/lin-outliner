@@ -5,6 +5,7 @@ import {
   type Dispatch,
   type KeyboardEvent,
   type MouseEvent,
+  type MutableRefObject,
   type SetStateAction,
 } from 'react';
 import { api } from '../../api/client';
@@ -54,6 +55,7 @@ interface OutlinerFieldRowProps {
   depth: number;
   index: DocumentIndex;
   ui: UiState;
+  uiRef: MutableRefObject<UiState>;
   setUi: Dispatch<SetStateAction<UiState>>;
   run: CommandRunner;
   trigger: TriggerState;
@@ -105,6 +107,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     childIds: rowChildIds,
     index: props.index,
     ui: props.ui,
+    uiRef: props.uiRef,
     setUi: props.setUi,
     run: props.run,
     locked: entry?.locked ?? true,
@@ -380,6 +383,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
         onRoot={props.onRoot}
         index={props.index}
         ui={props.ui}
+        uiRef={props.uiRef}
         setUi={props.setUi}
         run={props.run}
         trigger={props.trigger}

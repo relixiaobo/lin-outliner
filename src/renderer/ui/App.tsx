@@ -3,7 +3,7 @@ import type { CSSProperties } from 'react';
 import type { AgentUserViewContext } from '../../core/agentTypes';
 import { api } from '../api/client';
 import type { DocumentProjection, FocusHint, NodeId, NodeProjection } from '../api/types';
-import { useDocumentIndex, useUiState } from '../state/document';
+import { useRenderIndex, useUiState } from '../state/document';
 import { AgentDock } from './AgentDock';
 import { CommandPalette } from './CommandPalette';
 import { Sidebar } from './Sidebar';
@@ -51,7 +51,7 @@ export function App() {
   const [dragId, setDragId] = useState<NodeId | null>(null);
   const pendingLocalUserCommandsRef = useRef(0);
   const ignoreLocalUserEventsThroughRef = useRef(0);
-  const index = useDocumentIndex(projection);
+  const index = useRenderIndex(projection);
   const commandRunnerLifecycle = useMemo(() => ({
     onLocalCommandStart: () => {
       pendingLocalUserCommandsRef.current += 1;

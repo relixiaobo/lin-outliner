@@ -1,4 +1,4 @@
-import type { Dispatch, SetStateAction } from 'react';
+import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
 import { plainText } from '../../api/types';
@@ -34,6 +34,7 @@ interface FieldValueOutlinerProps {
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   index: DocumentIndex;
   ui: UiState;
+  uiRef: MutableRefObject<UiState>;
   setUi: Dispatch<SetStateAction<UiState>>;
   run: CommandRunner;
   trigger: TriggerState;
@@ -103,6 +104,7 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
               depth={0}
               index={props.index}
               ui={props.ui}
+              uiRef={props.uiRef}
               setUi={props.setUi}
               run={props.run}
               trigger={props.trigger}
@@ -123,6 +125,7 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
               depth={0}
               index={props.index}
               ui={props.ui}
+              uiRef={props.uiRef}
               setUi={props.setUi}
               run={props.run}
               trigger={props.trigger}

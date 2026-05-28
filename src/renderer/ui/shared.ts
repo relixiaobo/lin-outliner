@@ -9,6 +9,7 @@ import type {
 } from '../api/types';
 import { isInternalConfigNode } from '../../core/configSchema';
 import { FIELD_TYPE_CONFIG_OPTIONS } from './fields/fieldTypeRegistry';
+import { measureRender } from './outliner/renderProbe';
 
 export interface CommandRunnerOptions {
   applyFocus?: boolean;
@@ -108,15 +109,15 @@ export function useCommandRunner(
         return result;
       }
       if ('projection' in result) {
-        flushSync(() => {
+        measureRender(() => flushSync(() => {
           setProjection(result.projection);
           setFocus(options?.applyFocus === false ? null : result.focus ?? null);
-        });
+        }));
       } else {
-        flushSync(() => {
+        measureRender(() => flushSync(() => {
           setProjection(result);
           setFocus(null);
-        });
+        }));
       }
       setError(null);
       return result;

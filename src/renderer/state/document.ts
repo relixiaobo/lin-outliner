@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type {
   DocumentProjection,
   FocusPlacement,
@@ -8,10 +8,18 @@ import type {
   NodeProjection,
 } from '../api/types';
 import { buildOutlinerRows } from './outlinerRows';
+import { collectChangedNodes, nextRevisions, nodeSignatures, propagateDirty, type SignatureMap } from './renderRev';
+import { measureRenderIndex } from '../ui/outliner/renderProbe';
 
 export interface DocumentIndex {
   projection: DocumentProjection;
   byId: Map<NodeId, NodeProjection>;
+  // Per-node data revision, used by OutlinerItem's React.memo to skip rows whose
+  // data did not change. Optional because `buildIndex` (tests, non-outliner
+  // callers) does not track it; the live app always supplies it through
+  // `useRenderIndex`. UI state (focus/selection/…) is compared per-row in the
+  // memo from the `ui` prop, not carried here.
+  renderRev?: ReadonlyMap<NodeId, number>;
 }
 
 export type FocusSurface = CoreFocusSurface;
@@ -26,8 +34,34 @@ export function buildIndex(projection: DocumentProjection): DocumentIndex {
   };
 }
 
-export function useDocumentIndex(projection: DocumentProjection | null): DocumentIndex | null {
-  return useMemo(() => (projection ? buildIndex(projection) : null), [projection]);
+interface RenderIndexCache {
+  projection: DocumentProjection;
+  byId: Map<NodeId, NodeProjection>;
+  signatures: SignatureMap;
+  renderRev: Map<NodeId, number>;
+}
+
+// Like buildIndex, but also tracks `renderRev` (per-node data revisions) across
+// renders so OutlinerItem can memoize: data changes (typing) bump only the
+// touched subtree's revisions, so unaffected rows skip re-render. The index does
+// not depend on UI state — focus/selection/drag are compared per-row in the memo
+// comparator (see rowUiState), so this only recomputes when the projection moves.
+export function useRenderIndex(projection: DocumentProjection | null): DocumentIndex | null {
+  const cacheRef = useRef<RenderIndexCache | null>(null);
+  return useMemo(() => measureRenderIndex((): DocumentIndex | null => {
+    if (!projection) {
+      cacheRef.current = null;
+      return null;
+    }
+    const previous = cacheRef.current;
+    const { byId } = buildIndex(projection);
+    const signatures = nodeSignatures(byId);
+    const changed = collectChangedNodes(previous?.signatures ?? null, signatures);
+    const affected = propagateDirty(changed, byId);
+    const renderRev = nextRevisions(previous?.renderRev ?? null, affected, byId.keys());
+    cacheRef.current = { projection, byId, signatures, renderRev };
+    return { projection, byId, renderRev };
+  }), [projection]);
 }
 
 export interface UiState {
