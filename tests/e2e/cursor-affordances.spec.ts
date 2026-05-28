@@ -1,8 +1,13 @@
 import { expect, test } from '@playwright/test';
 import { ids, openMockedApp, row } from './outlinerMock';
 
+// Strict-native cursor policy: chrome (buttons, toggles, rows, bullets) keeps the
+// default arrow cursor the way a native macOS/Windows app does. The pointing-hand
+// cursor is reserved for genuine content hyperlinks (inline references / links in
+// rendered text). Changing the cursor on hoverable chrome is exactly what makes an
+// app feel like a web page, so these assertions guard against it regressing.
 test.describe('cursor affordances', () => {
-  test('core controls expose interaction-specific cursors', async ({ page }) => {
+  test('core controls keep the native arrow cursor', async ({ page }) => {
     await openMockedApp(page);
 
     const cursors = await page.evaluate((ids) => {
@@ -15,22 +20,21 @@ test.describe('cursor affordances', () => {
       return {
         panelMore: cursor('.panel-title-more-button'),
         rowBullet: cursor(`[data-node-id="${ids.alpha}"] .row-bullet-button`),
-        trailingBullet: cursor(`[data-trailing-parent-id="${ids.today}"] .row-bullet-button`),
         composerSend: cursor('.agent-composer-action-button'),
         composerModel: cursor('.agent-composer-model-button'),
         agentTitle: cursor('.agent-dock-title-button'),
       };
     }, ids);
 
-    expect(cursors.panelMore).toBe('pointer');
-    expect(cursors.rowBullet).toBe('pointer');
-    expect(cursors.trailingBullet).toBe('default');
+    // Every chrome control uses the arrow cursor — no pointer affordance anywhere.
+    expect(cursors.panelMore).toBe('default');
+    expect(cursors.rowBullet).toBe('default');
     expect(cursors.composerSend).toBe('default');
-    expect(cursors.composerModel).toBe('pointer');
-    expect(cursors.agentTitle).toBe('pointer');
+    expect(cursors.composerModel).toBe('default');
+    expect(cursors.agentTitle).toBe('default');
   });
 
-  test('shared icon buttons and definition switches own pointer semantics', async ({ page }) => {
+  test('shared icon buttons and definition switches stay on the arrow cursor', async ({ page }) => {
     await openMockedApp(page);
 
     const iconButtonCursors = await page.evaluate(() => {
@@ -51,7 +55,7 @@ test.describe('cursor affordances', () => {
       };
     });
 
-    expect(iconButtonCursors.enabled).toBe('pointer');
+    expect(iconButtonCursors.enabled).toBe('default');
     expect(iconButtonCursors.disabled).toBe('default');
 
     await page.getByRole('button', { name: 'Schema' }).click();
@@ -60,6 +64,26 @@ test.describe('cursor affordances', () => {
     const definitionSwitchCursor = await page.locator('.definition-switch').first().evaluate((element) =>
       getComputedStyle(element).cursor);
 
-    expect(definitionSwitchCursor).toBe('pointer');
+    expect(definitionSwitchCursor).toBe('default');
+  });
+
+  test('content references show the pointer cursor on hover', async ({ page }) => {
+    await openMockedApp(page);
+
+    // Inline references behave like content hyperlinks, so hovering one is the single
+    // place the pointing-hand cursor is allowed under the strict-native policy.
+    await page.evaluate(() => {
+      const link = document.createElement('a');
+      link.className = 'inline-ref';
+      link.id = 'cursor-affordance-probe';
+      link.textContent = 'reference';
+      document.body.appendChild(link);
+    });
+
+    const probe = page.locator('#cursor-affordance-probe');
+    await probe.hover();
+    const hoverCursor = await probe.evaluate((element) => getComputedStyle(element).cursor);
+
+    expect(hoverCursor).toBe('pointer');
   });
 });

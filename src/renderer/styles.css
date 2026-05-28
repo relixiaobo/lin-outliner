@@ -1,5 +1,5 @@
 :root {
-  --font-family-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-family-sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, ui-sans-serif, Inter, sans-serif;
   --font-family-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --font-scale: 100%;
   --font-ui-3xs: 0.375rem;
@@ -313,9 +313,6 @@ button {
   color: inherit;
 }
 
-button:not(:disabled) {
-  cursor: pointer;
-}
 
 button:disabled {
   cursor: default;
@@ -354,9 +351,6 @@ button:focus-visible {
   box-shadow: var(--inline-ref-selection-shadow);
 }
 
-.icon-button {
-  cursor: pointer;
-}
 
 .icon-button:disabled {
   cursor: default;
@@ -479,7 +473,6 @@ button:focus-visible {
   justify-content: center;
   border-radius: var(--radius-sm);
   color: currentColor;
-  cursor: pointer;
   transition: background var(--motion-fast), color var(--motion-fast);
   -webkit-app-region: no-drag;
 }
@@ -530,7 +523,6 @@ button:focus-visible {
   gap: var(--space-3);
   border-radius: var(--radius-control-md);
   color: var(--text-soft);
-  cursor: pointer;
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
   padding: 0 var(--space-4);
@@ -606,7 +598,6 @@ button:focus-visible {
   height: 100%;
   align-items: center;
   border-radius: inherit;
-  cursor: pointer;
   overflow: hidden;
   padding: 0 var(--space-2) 0 var(--space-3);
 }
@@ -700,7 +691,6 @@ button:focus-visible {
   justify-content: center;
   border-radius: var(--radius-control-xs);
   color: var(--text-faint);
-  cursor: pointer;
   opacity: 0;
   transition: background var(--motion-fast), color var(--motion-fast), opacity var(--motion-fast);
 }
@@ -807,7 +797,6 @@ button:focus-visible {
   align-items: center;
   border-radius: var(--radius-sm);
   color: var(--text-body);
-  cursor: pointer;
   font-size: var(--font-ui-md);
   font-weight: 400;
   gap: var(--space-2);
@@ -881,7 +870,6 @@ button:focus-visible {
   column-gap: 0;
   border-radius: var(--radius-sm);
   color: var(--text-soft);
-  cursor: pointer;
   font-size: var(--font-ui-md);
   font-weight: 600;
   line-height: var(--line-ui-md);
@@ -944,7 +932,6 @@ button:focus-visible {
   justify-content: center;
   border-radius: var(--radius-control-xs);
   color: var(--text-muted);
-  cursor: pointer;
   padding: 0;
 }
 
@@ -965,7 +952,6 @@ button:focus-visible {
   align-items: center;
   border-radius: var(--radius-control-xs);
   color: inherit;
-  cursor: pointer;
   font-size: var(--font-ui-md);
   font-weight: 400;
   gap: var(--space-2);
@@ -1040,7 +1026,6 @@ button:focus-visible {
   justify-content: center;
   border-radius: var(--radius-control-xs);
   color: var(--text-faint);
-  cursor: pointer;
 }
 
 .outline-panel-close:hover {
@@ -1119,7 +1104,6 @@ button:focus-visible {
   justify-content: center;
   border-radius: var(--radius-sm);
   color: var(--text-soft);
-  cursor: pointer;
 }
 
 .agent-debug-icon-button:hover {
@@ -1252,7 +1236,6 @@ button:focus-visible {
   align-items: center;
   gap: var(--space-3);
   color: var(--text-soft);
-  cursor: pointer;
   font-size: var(--font-meta);
   line-height: var(--line-meta);
   list-style: none;
@@ -1359,7 +1342,6 @@ button:focus-visible {
   grid-template-columns: auto minmax(90px, 0.32fr) minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-3);
-  cursor: pointer;
   list-style: none;
 }
 
@@ -1482,7 +1464,6 @@ button:focus-visible {
   grid-template-columns: auto auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: var(--space-4);
-  cursor: pointer;
   list-style: none;
   padding: var(--space-6);
 }
@@ -1641,7 +1622,6 @@ button:focus-visible {
   align-items: center;
   gap: var(--space-3);
   color: var(--text-soft);
-  cursor: pointer;
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs-relaxed);
   list-style: none;
@@ -1670,7 +1650,6 @@ button:focus-visible {
   justify-content: center;
   border-radius: var(--radius-control-xs);
   color: var(--text-faint);
-  cursor: pointer;
 }
 
 .agent-debug-copy-button:hover {
@@ -1763,7 +1742,6 @@ button:focus-visible {
   justify-content: center;
   border-radius: var(--radius-control-xs);
   color: color-mix(in srgb, var(--text) 42%, transparent);
-  cursor: pointer;
   justify-self: center;
 }
 
@@ -1804,7 +1782,6 @@ button:focus-visible {
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--text) 9%, transparent);
   color: color-mix(in srgb, var(--text) 44%, transparent);
-  cursor: pointer;
 }
 
 .panel-breadcrumb-origin:hover {
@@ -1835,7 +1812,6 @@ button:focus-visible {
 
 .panel-breadcrumb-button {
   border-radius: var(--radius-control-xs);
-  cursor: pointer;
   padding: 0 var(--space-1);
 }
 
@@ -1853,7 +1829,6 @@ button:focus-visible {
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--text) 6%, transparent);
   color: var(--text-faint);
-  cursor: pointer;
 }
 
 .panel-breadcrumb-ellipsis:hover,
@@ -1965,7 +1940,6 @@ button.panel-resize-handle::after {
   gap: var(--space-2);
   border-radius: var(--radius-control-md);
   color: var(--text-soft);
-  cursor: pointer;
   margin-left: calc(var(--space-2) * -1);
   padding: 0 var(--space-2);
   transition: color var(--motion-fast);
@@ -2024,7 +1998,6 @@ button.panel-resize-handle::after {
   justify-content: center;
   border-radius: var(--radius-control-md);
   color: var(--text-faint);
-  cursor: pointer;
   transition: background var(--motion-fast), color var(--motion-fast);
 }
 
@@ -2105,7 +2078,6 @@ button.panel-resize-handle::after {
   flex-direction: column;
   gap: var(--space-1);
   justify-content: center;
-  cursor: pointer;
   padding: var(--space-4) var(--space-5);
   text-align: left;
 }
@@ -2222,7 +2194,6 @@ button.panel-resize-handle::after {
   border-radius: var(--radius-md);
   background: rgba(255, 255, 255, 0.44);
   color: var(--text-soft);
-  cursor: pointer;
   font-size: var(--font-ui-sm);
   line-height: var(--line-meta);
   padding: var(--space-4) var(--space-6);
@@ -2273,7 +2244,6 @@ button.panel-resize-handle::after {
   gap: var(--space-2);
   border-radius: var(--radius-control-md);
   color: var(--text-muted);
-  cursor: pointer;
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
   padding: 0 var(--space-3);
@@ -2474,7 +2444,6 @@ button.panel-resize-handle::after {
   justify-content: center;
   border-radius: var(--radius-control-md);
   color: var(--text-faint);
-  cursor: pointer;
 }
 
 .agent-message-action-button:hover {
@@ -2697,7 +2666,6 @@ button.panel-resize-handle::after {
   height: var(--control-size-lg);
   border-radius: var(--radius-sm);
   color: var(--text-soft);
-  cursor: pointer;
   transition: background var(--motion-fast), color var(--motion-fast);
 }
 
@@ -2787,7 +2755,6 @@ button.panel-resize-handle::after {
   justify-content: center;
   border-radius: var(--radius-sm);
   color: var(--text-faint);
-  cursor: pointer;
 }
 
 /* Quiet icon button: hover deepens the icon color rather than adding a fill. */
@@ -2815,7 +2782,6 @@ button.panel-resize-handle::after {
   background: transparent;
   border: 0;
   padding: var(--space-1) 0;
-  cursor: pointer;
 }
 
 .code-block-language svg {
@@ -2849,7 +2815,6 @@ button.panel-resize-handle::after {
   gap: var(--space-2);
   border-radius: var(--radius-control-md);
   color: var(--text-soft);
-  cursor: pointer;
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm-tight);
   padding: var(--space-2) var(--space-3);
@@ -3024,7 +2989,6 @@ button.panel-resize-handle::after {
   align-items: center;
   gap: var(--space-3);
   color: inherit;
-  cursor: pointer;
   font-size: var(--font-meta);
   line-height: var(--line-meta);
   padding: var(--space-2) 0;
@@ -3092,9 +3056,6 @@ button.panel-resize-handle::after {
   text-align: left;
 }
 
-.agent-thinking-row.is-toggle {
-  cursor: pointer;
-}
 
 .agent-thinking-row.is-toggle:hover {
   color: var(--text-strong);
@@ -3192,7 +3153,6 @@ button.panel-resize-handle::after {
   align-items: flex-start;
   gap: var(--space-3);
   color: inherit;
-  cursor: pointer;
   font-size: var(--font-meta);
   line-height: var(--line-meta);
   padding: var(--space-1) 0;
@@ -3270,7 +3230,6 @@ button.panel-resize-handle::after {
   justify-content: center;
   border-radius: var(--radius-sm);
   color: var(--text-faint);
-  cursor: pointer;
 }
 
 .agent-tool-call-copy:hover:not(:disabled) {
@@ -3303,7 +3262,6 @@ button.panel-resize-handle::after {
   gap: var(--space-2);
   border-radius: var(--radius-sm);
   color: var(--text-soft);
-  cursor: pointer;
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
   padding: 0 var(--space-3);
@@ -3366,7 +3324,6 @@ button.panel-resize-handle::after {
   gap: var(--space-2);
   border-radius: var(--radius-sm);
   color: var(--text-soft);
-  cursor: pointer;
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
   padding: 0 var(--space-3);
@@ -3479,7 +3436,6 @@ button.panel-resize-handle::after {
   min-height: 28px;
   border-radius: var(--radius-sm);
   color: var(--text-soft);
-  cursor: pointer;
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
   padding: 0 var(--space-4);
@@ -3544,7 +3500,6 @@ button.panel-resize-handle::after {
 .agent-subagent-stop-button {
   min-height: 30px;
   border-radius: var(--radius-sm);
-  cursor: pointer;
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
   padding: 0 var(--space-5);
@@ -3657,9 +3612,6 @@ button.panel-resize-handle::after {
   line-height: var(--line-meta);
 }
 
-.agent-subagent-thinking summary {
-  cursor: pointer;
-}
 
 .agent-subagent-thinking pre,
 .agent-subagent-transcript-message.is-tool-result pre,
@@ -3766,7 +3718,6 @@ button.panel-resize-handle::after {
   gap: var(--space-2);
   border-radius: var(--radius-sm);
   color: var(--text-soft);
-  cursor: pointer;
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
   padding: 0 var(--space-3);
@@ -4003,7 +3954,6 @@ button.panel-resize-handle::after {
   justify-content: center;
   border-radius: var(--radius-sm);
   color: var(--text-faint);
-  cursor: pointer;
   opacity: 0;
   transition: opacity var(--motion-fast), background var(--motion-fast), color var(--motion-fast);
 }
@@ -4087,7 +4037,6 @@ button.panel-resize-handle::after {
 }
 
 .agent-composer-inline-file:hover {
-  cursor: pointer;
   text-decoration-line: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 0.12em;
@@ -4276,7 +4225,6 @@ button.panel-resize-handle::after {
   gap: var(--space-2);
   border-radius: var(--agent-composer-corner-radius);
   color: var(--text-soft);
-  cursor: pointer;
   font-size: var(--font-ui-sm);
   line-height: var(--line-meta);
   padding: 0 var(--space-4);
@@ -4343,7 +4291,6 @@ button.panel-resize-handle::after {
   gap: var(--space-5);
   border-radius: var(--radius-md);
   color: var(--text-soft);
-  cursor: pointer;
   font-size: var(--font-ui-md);
   line-height: var(--line-ui-sm);
   padding: 6px var(--space-4);
@@ -4430,7 +4377,6 @@ button.panel-resize-handle::after {
   gap: var(--space-2);
   border-radius: var(--radius-md);
   color: var(--text-soft);
-  cursor: pointer;
   font-size: var(--font-ui-sm);
   font-weight: 500;
   line-height: var(--line-ui-sm-tight);
@@ -4460,7 +4406,6 @@ button.panel-resize-handle::after {
   width: 100%;
   border-radius: var(--radius-control-md);
   color: var(--text-soft);
-  cursor: pointer;
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm-tight);
   padding: var(--space-3) var(--space-4);
@@ -4478,7 +4423,6 @@ button.panel-resize-handle::after {
   flex: 0 0 auto;
   align-items: center;
   border-radius: var(--radius-pill);
-  cursor: pointer;
 }
 
 .agent-composer-thinking-switch:disabled {
@@ -4499,7 +4443,6 @@ button.panel-resize-handle::after {
   align-items: center;
   justify-content: center;
   border-radius: var(--agent-composer-corner-radius);
-  cursor: pointer;
 }
 
 .agent-composer-tool-button {
@@ -4639,7 +4582,6 @@ button.panel-resize-handle::after {
 .agent-settings-danger {
   height: 28px;
   border-radius: var(--radius-control-md);
-  cursor: pointer;
   font-size: var(--font-meta);
   line-height: var(--line-meta);
   padding: 0 var(--space-6);
@@ -4695,7 +4637,6 @@ button.panel-resize-handle::after {
   gap: var(--space-hairline);
   border-radius: var(--radius-control-md);
   color: var(--text-soft);
-  cursor: pointer;
   padding: var(--space-3) var(--space-5);
   text-align: left;
 }
@@ -4764,7 +4705,6 @@ button.panel-resize-handle::after {
   border-radius: var(--radius-control-md);
   background: rgba(255, 255, 255, 0.56);
   color: var(--text-soft);
-  cursor: pointer;
 }
 
 .settings-provider-add:hover {
@@ -4838,7 +4778,6 @@ button.panel-resize-handle::after {
   border-radius: var(--radius-control-md);
   background: transparent;
   color: var(--text-strong);
-  cursor: pointer;
   padding: var(--space-2) var(--space-3);
   text-align: left;
 }
@@ -5012,7 +4951,6 @@ button.panel-resize-handle::after {
   justify-content: center;
   border-radius: var(--radius-control-md);
   color: var(--text-soft);
-  cursor: pointer;
   padding: var(--space-2);
 }
 
@@ -5059,7 +4997,6 @@ button.panel-resize-handle::after {
   align-items: center;
   gap: var(--space-3);
   color: var(--text-soft);
-  cursor: pointer;
   font-size: var(--font-meta);
 }
 
@@ -5110,7 +5047,6 @@ button.panel-resize-handle::after {
   border-radius: var(--radius-control-md);
   background: transparent;
   color: var(--muted-2);
-  cursor: pointer;
 }
 
 .settings-models-search-toggle:hover,
@@ -5164,7 +5100,6 @@ button.panel-resize-handle::after {
   border-radius: var(--radius-control-md);
   background: transparent;
   color: var(--muted-2);
-  cursor: pointer;
 }
 
 .settings-model-search-close:hover {
@@ -5334,7 +5269,6 @@ button.panel-resize-handle::after {
   gap: var(--space-4);
   color: var(--text-soft);
   font-size: var(--font-meta);
-  cursor: pointer;
 }
 
 .agent-settings-checkbox input {
@@ -5474,7 +5408,6 @@ button.panel-resize-handle::after {
   color: var(--text-soft);
   font-size: var(--font-meta);
   font-weight: 600;
-  cursor: pointer;
   user-select: none;
   list-style: none;
 }
@@ -5771,7 +5704,6 @@ button.panel-resize-handle::after {
   font: inherit;
   color: inherit;
   text-align: left;
-  cursor: pointer;
 }
 
 .agent-item-name {
@@ -6116,7 +6048,6 @@ button.panel-resize-handle::after {
   border: 0;
   background: transparent;
   color: inherit;
-  cursor: pointer;
 }
 
 .panel-date-nav-button,
@@ -6133,7 +6064,6 @@ button.panel-resize-handle::after {
 
 .panel-date-nav-today {
   padding: 0 var(--space-4);
-  cursor: pointer;
   font: inherit;
   font-weight: 500;
 }
@@ -6287,7 +6217,6 @@ button.panel-resize-handle::after {
   border-radius: var(--radius-control-md);
   background: var(--row-hover);
   color: var(--muted);
-  cursor: pointer;
   transition: background var(--motion-fast), color var(--motion-fast);
 }
 
@@ -6337,7 +6266,6 @@ button.panel-resize-handle::after {
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--muted);
-  cursor: pointer;
   min-height: 32px;
   padding: var(--space-2) var(--space-4);
   text-align: left;
@@ -6517,7 +6445,6 @@ button.panel-resize-handle::after {
   gap: var(--space-3);
   border-radius: var(--radius-sm);
   color: var(--muted);
-  cursor: pointer;
   font-size: var(--font-meta);
   padding: 0 var(--space-3);
   transition: background var(--motion-fast), color var(--motion-fast);
@@ -6568,7 +6495,6 @@ button.panel-resize-handle::after {
   justify-content: center;
   border-radius: var(--radius-pill);
   color: var(--muted);
-  cursor: pointer;
 }
 
 .error-close-button:hover {
