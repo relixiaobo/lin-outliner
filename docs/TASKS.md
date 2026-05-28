@@ -67,6 +67,14 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **keyboard-shortcut-parity** (codex) — nodex shortcut audit plus the
+  remaining gaps: empty-selection `Cmd/Ctrl+A`, scoped `Cmd/Ctrl+Shift+D`
+  go-to-today (vs batch duplicate), panel nav history on `Cmd/Ctrl+[`/`]` and
+  `Alt+Arrow` (document undo/redo kept on `Cmd/Ctrl+Z`), and a keyboard-driven
+  selected option-reference menu (Arrow/Enter/Escape). Audit confirmed
+  drag-select and click-away dismissal already shipped. New/changed bindings
+  live in `shortcutRegistry.ts`. See `docs/plans/keyboard-shortcut-parity.md`
+  (PR #53).
 - **agent permission approvals** (codex) — agent tool permission decisions
   evolved from boolean to `allow | ask | deny`, computed in TypeScript policy.
   High-consequence bash/file actions (external GitHub mutations, package/deploy/

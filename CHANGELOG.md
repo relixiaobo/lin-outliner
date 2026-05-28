@@ -12,6 +12,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Keyboard shortcut parity with nodex** — closes the audited gaps against the
+  nodex reference. `Cmd/Ctrl+A` now selects every visible row in the current
+  root even from an empty selection (focused editors still get native text
+  select-all); `Cmd/Ctrl+Shift+D` goes to today's daily note when no row is
+  selected while keeping batch-duplicate when a selection is active; panel
+  navigation history gets dedicated `Cmd/Ctrl+[` / `Cmd/Ctrl+]` and
+  `Alt+ArrowLeft` / `Alt+ArrowRight` bindings (document undo/redo stays on
+  `Cmd/Ctrl+Z`, never overloaded); and a selected option-reference field value
+  opens a keyboard-owned option menu where `ArrowUp`/`ArrowDown` move, `Enter`
+  selects, and `Escape` closes the menu before clearing the row selection. The
+  audit confirmed drag-select and click-away dismissal were already present.
+  ([#53](https://github.com/relixiaobo/lin-outliner/pull/53))
 - **Agent tool permissions — `allow | ask | deny` with an approval flow** — the
   runtime permission decision evolved from a boolean to a three-state behavior
   computed entirely in TypeScript policy (never from model prose). High-consequence
