@@ -45,6 +45,11 @@ function priorityValueEditor(page: import('@playwright/test').Page) {
   return trailingEditor(page, ids.priorityEntry);
 }
 
+async function selectedPriorityValueId(page: import('@playwright/test').Page) {
+  const projection = await e2eProjection(page);
+  return projection.nodes.find((node) => node.parentId === ids.priorityEntry)?.id ?? '';
+}
+
 async function placeCursor(page: import('@playwright/test').Page, nodeId: string, placement: 'start' | 'end') {
   const editor = rowEditor(page, nodeId);
   await editor.click();
@@ -1257,6 +1262,46 @@ test.describe('outliner options field inline value', () => {
 
     await listbox.getByRole('option', { name: 'Low' }).click();
     await expect(valuePreview).toHaveText(/Low/);
+  });
+
+  test('selected option reference values can be changed with Arrow and Enter', async ({ page }) => {
+    const valuePreview = row(page, ids.priorityEntry).locator('.field-value-node-preview');
+    await invokeMockCommand(page, 'select_field_option', {
+      fieldEntryId: ids.priorityEntry,
+      optionNodeId: ids.priorityLow,
+    });
+    await expect(valuePreview).toHaveText(/Low/);
+    const valueId = await selectedPriorityValueId(page);
+
+    await rowBody(page, valueId).click();
+    const listbox = page.getByRole('listbox', { name: 'Selected field options' });
+    await expect(listbox).toBeVisible();
+    await expect(listbox.getByRole('option', { name: 'Low' })).toHaveAttribute('aria-selected', 'true');
+
+    await page.keyboard.press('ArrowUp');
+    await expect(listbox.getByRole('option', { name: 'High' })).toHaveAttribute('aria-selected', 'true');
+    await page.keyboard.press('Enter');
+
+    await expect(listbox).toHaveCount(0);
+    await expect(valuePreview).toHaveText(/High/);
+  });
+
+  test('Escape closes selected option list before clearing row selection', async ({ page }) => {
+    await invokeMockCommand(page, 'select_field_option', {
+      fieldEntryId: ids.priorityEntry,
+      optionNodeId: ids.priorityLow,
+    });
+    const valueId = await selectedPriorityValueId(page);
+
+    await rowBody(page, valueId).click();
+    await expect(page.getByRole('listbox', { name: 'Selected field options' })).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('listbox', { name: 'Selected field options' })).toHaveCount(0);
+    await expect(rowBody(page, valueId)).toHaveClass(/ref-click-selected/);
+
+    await page.keyboard.press('Escape');
+    await expect(rowBody(page, valueId)).not.toHaveClass(/ref-click-selected|selected/);
   });
 
   test('clearing an inline-created auto-collected value removes the local value and collected reference', async ({ page }) => {

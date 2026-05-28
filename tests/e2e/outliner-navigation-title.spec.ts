@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import {
+  commandCalls,
   ids,
   nodeById,
   openMockedApp,
@@ -67,6 +68,40 @@ test.describe('outliner navigation and page title parity', () => {
         __LIN_E2E__?: { calls: Array<{ cmd: string }> };
       }).__LIN_E2E__?.calls.filter((call) => call.cmd === 'undo' || call.cmd === 'redo').length ?? 0
     ))).toBe(0);
+  });
+
+  test('keyboard back and forward navigate page history without document undo', async ({ page }) => {
+    await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
+    await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
+    await page.getByRole('button', { name: 'Collapse sidebar' }).focus();
+
+    await page.keyboard.press('Alt+ArrowLeft');
+    await expect(page.locator('.panel-title-editor').first()).toContainText('2026-05-13');
+
+    await page.keyboard.press('Alt+ArrowRight');
+    await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
+    await expect.poll(async () => page.evaluate(() => (
+      (window as typeof window & {
+        __LIN_E2E__?: { calls: Array<{ cmd: string }> };
+      }).__LIN_E2E__?.calls.filter((call) => call.cmd === 'undo' || call.cmd === 'redo').length ?? 0
+    ))).toBe(0);
+  });
+
+  test('Cmd+Shift+D opens today when there is no active row selection', async ({ page }) => {
+    const todayLabel = await page.evaluate(() => {
+      const date = new Date();
+      const year = String(date.getFullYear()).padStart(4, '0');
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    });
+    await row(page, ids.beta).click({ modifiers: ['Meta'] });
+    await page.keyboard.press('Escape');
+
+    await page.keyboard.press('Meta+Shift+D');
+
+    await expect(page.locator('.panel-title-editor').first()).toContainText(todayLabel);
+    expect((await commandCalls(page)).map((call) => call.cmd)).toContain('ensure_date_node');
   });
 
   test('top chrome navigation keeps the tab outliner context when a debug panel is active', async ({ page }) => {

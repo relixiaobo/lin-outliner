@@ -53,7 +53,7 @@ Reference sources:
 | Printable char | Edit first selected row and insert/append char. | `type_char`. | `outlinerParity.test.ts` |
 | ArrowUp / ArrowDown | Move editing focus before/after selected block. | `navigate_up/down`. | `outlinerParity.test.ts` |
 | Shift+ArrowUp / Shift+ArrowDown | Extend selection from anchor. | `extend_up/down`. | `outlinerParity.test.ts` |
-| Cmd/Ctrl+A | Select all visible rows in current root scope. | `select_all`. | `outlinerParity.test.ts` |
+| Cmd/Ctrl+A | Select all visible rows in current root scope, even when no row is currently selected. | `select_all`. | `outlinerParity.test.ts`, `outliner-selection-keyboard.spec.ts` |
 | Backspace / Delete | Trash selected root rows. | `batch_delete`. | `outlinerParity.test.ts` |
 | Tab / Shift+Tab | Batch indent/outdent selected root rows. | `batch_indent/outdent`. | `outlinerParity.test.ts` |
 | Cmd/Ctrl+Shift+D | Batch duplicate selected root rows. | `batch_duplicate`. | `outlinerParity.test.ts` |
@@ -63,6 +63,15 @@ Reference sources:
 | Selection printable char | Focus first selected row and insert/append char. | `type_char` followed by row focus. | `outliner-selection-keyboard.spec.ts` |
 | Selection ArrowUp/Down | Focus adjacent row outside selected block. | `navigationTarget`. | `outliner-selection-keyboard.spec.ts` |
 | IME composition | Do not run selection shortcuts while browser reports composition, `Process`, or legacy key code `229`. | `isImeComposingEvent`. | `rowInteractions.test.ts` |
+
+## Global Keyboard
+
+| Key | nodex behavior | lin-outliner effect | Test coverage |
+| --- | --- | --- | --- |
+| Cmd/Ctrl+Shift+D with no row selection | Go to today's daily note. | `global.go_to_today` ensures today's date node and navigates the active panel. With a selection, `selection.duplicate` keeps owning the same chord. | `rowInteractions.test.ts`, `outliner-navigation-title.spec.ts`, `outliner-selection-keyboard.spec.ts` |
+| Cmd/Ctrl+Z / Cmd/Ctrl+Shift+Z / Cmd/Ctrl+Y | nodex overloads no-editor Cmd/Ctrl+Z for page history. | Lin keeps these as document undo/redo globally and in editors. | `rowInteractions.test.ts`, `outliner-navigation-title.spec.ts` |
+| Cmd/Ctrl+[ / Cmd/Ctrl+] | Not the nodex binding. | Navigate the active panel back/forward through page history. | `rowInteractions.test.ts` |
+| Alt+ArrowLeft / Alt+ArrowRight | Not the nodex binding. | Navigate the active panel back/forward through page history. | `rowInteractions.test.ts`, `outliner-navigation-title.spec.ts` |
 
 ## Row Editing
 

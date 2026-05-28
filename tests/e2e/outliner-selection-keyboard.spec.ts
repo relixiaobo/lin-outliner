@@ -128,6 +128,18 @@ test.describe('outliner selection keyboard parity', () => {
     await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
   });
 
+  test('Cmd+A selects visible rows from an empty selection', async ({ page }) => {
+    await multiSelect(page, [ids.beta]);
+    await page.keyboard.press('Escape');
+    await expect(rowBody(page, ids.beta)).not.toHaveClass(/selected/);
+
+    await page.keyboard.press('Meta+A');
+
+    await expect(rowBody(page, ids.alpha)).toHaveClass(/selected/);
+    await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
+    await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
+  });
+
   test('Cmd+A selects visible field value rows in their own value scope', async ({ page }) => {
     const { entryId, firstValueId, secondValueId } = await createFieldValueFixture(page);
 
