@@ -67,6 +67,23 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **native-feel stages 2–5b + renderer perf** (cc) — serially merged the stacked
+  native-feel remediation program on top of the stage-1 security shell: startup
+  first-frame / window-state restore / single-instance (#45); strict-native
+  cursor policy + system-font-first stack (#46); macOS vibrancy / Windows mica
+  window material (#47); in-app dialogs replacing `window.prompt`/`confirm` via a
+  shared `ConfirmDialog` (#48); settings in their own native window over a
+  `?surface=settings` marker (#49); opt-in `LIN_TRACE_IPC` instrumentation that
+  proved serialization was cheap (#50), redirecting the perf work to incremental
+  O(touched) Core state + projection caches (~770ms→0.27ms keystroke at 1000
+  nodes, public contract unchanged) (#52); and a renderer perf line (per-node
+  `renderRev` memo, per-row focus memo replacing global `uiGen`, opt-in windowed
+  flat view, default OFF) (#54). The stage-4 native right-click `Menu` was
+  dropped by decision. #54 was reconciled against the already-merged #53 keyboard
+  work (one positional conflict in `OutlinerItem.tsx`, both additions kept). #46
+  landed as a direct `main` commit — its PR branch was force-pushed after an
+  accidental close during the serial merge, which blocked reopening it. Plan PR
+  #44 (the remediation doc) remains open and unmerged.
 - **keyboard-shortcut-parity** (codex) — nodex shortcut audit plus the
   remaining gaps: empty-selection `Cmd/Ctrl+A`, scoped `Cmd/Ctrl+Shift+D`
   go-to-today (vs batch duplicate), panel nav history on `Cmd/Ctrl+[`/`]` and

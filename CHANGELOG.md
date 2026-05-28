@@ -12,6 +12,33 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Native-feel stage 2 — startup polish, window-state, single-instance** — the
+  window is created `show: false` and revealed on `ready-to-show` (no white
+  launch flash); a new `windowState.ts` persists and restores normal bounds +
+  the maximized flag (validated against connected displays so a now-disconnected
+  monitor can't strand the window off-screen); and `requestSingleInstanceLock()`
+  focuses the running window instead of spawning a duplicate.
+  ([#45](https://github.com/relixiaobo/lin-outliner/pull/45))
+- **Native-feel stage 3b — OS window material** — macOS draws `under-window`
+  vibrancy and Windows draws `mica` behind the chrome, driven by a shared
+  `core/windowMaterial.ts` mapping read by both the main process and preload; the
+  renderer tags `<html>` with `data-window-material` on the first painted frame
+  so there is no opaque→frosted flash. Other platforms keep the opaque deck.
+  ([#47](https://github.com/relixiaobo/lin-outliner/pull/47))
+- **Native-feel stage 4a — in-app dialogs (no `window.prompt`/`confirm`)** — the
+  remaining blocking browser dialogs are gone: node icon/banner edits use an
+  in-menu text-input sub-mode (consistent with the existing tag/move inputs), and
+  destructive session-delete uses a reusable `ConfirmDialog` primitive (focus
+  trap, Escape-to-cancel, Cancel takes initial focus so a stray Enter can't
+  delete). ([#48](https://github.com/relixiaobo/lin-outliner/pull/48))
+- **Native-feel stage 4b — settings in its own window** — settings moved from an
+  in-app modal into a dedicated Preferences-style window with a native title bar,
+  served from the single `index.html` via a `?surface=settings` marker (no second
+  build entry) and going through the same stage-1 navigation hardening + CSP. New
+  IPC: `lin:open-settings` / `lin:close-settings` / `lin:settings-changed`. The
+  stage-4 native right-click `Menu` was intentionally dropped — the rich DOM
+  context menu outweighs the native-feel gain.
+  ([#49](https://github.com/relixiaobo/lin-outliner/pull/49))
 - **Keyboard shortcut parity with nodex** — closes the audited gaps against the
   nodex reference. `Cmd/Ctrl+A` now selects every visible row in the current
   root even from an empty selection (focused editors still get native text
@@ -119,6 +146,14 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Native-feel stage 3 — strict-native cursor + system font** — removed
+  `cursor: pointer` from every chrome control (buttons, toggles, bullets, rows,
+  tabs, `summary` disclosures); the pointing-hand cursor is now reserved for
+  genuine content hyperlinks (inline references, clickable tag chips, external
+  doc links). `--font-family-sans` now leads with `-apple-system` /
+  `Segoe UI Variable` so text renders in the platform UI font, keeping `Inter`
+  only as a late fallback.
+  ([#46](https://github.com/relixiaobo/lin-outliner/pull/46))
 - **Inline/code styling on design tokens + simplified agent wording** — inline
   code and code blocks now use shared `--font-code-inline` / `--font-code-block`,
   `--line-code-*`, `--inline-code-bg`, and `--primary-muted-text` tokens (inline
@@ -311,6 +346,29 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Renderer perf — per-node memo, focus memo, opt-in flat virtualization** —
+  `OutlinerItem` is memoized on a per-node `renderRev` (a dev-only
+  `LIN_RENDER_PROBE` measures per-command re-render cost), and the global
+  `uiGen` re-render is replaced by `deriveRowMemoState` / `rowMemoStateEqual` so a
+  row re-renders only when its own UI state moves (behavioural reads route
+  through a live `uiRef`, so skipped rows stay correct). A windowed
+  `OutlinerFlatView` is gated behind `localStorage 'lin:flat-outliner'`, so
+  default behavior is unchanged. Resolved one positional merge conflict in
+  `OutlinerItem.tsx` against the #53 keyboard work on the way in (both additions
+  kept). ([#54](https://github.com/relixiaobo/lin-outliner/pull/54))
+- **Native-feel stage 5b — incremental core state + projection caches** — the
+  Core mutation/read path is now O(touched) instead of rematerializing the whole
+  document and deep-cloning every node per command; the public IPC contract
+  (`DocumentProjection`, `CommandOutcome`, `DocumentState`) is byte-for-byte
+  unchanged. A single keystroke in a 1000-node doc dropped from ~770ms to
+  ~0.27ms and the old ~2000-node loro crash is gone.
+  ([#52](https://github.com/relixiaobo/lin-outliner/pull/52))
+- **Native-feel stage 5a — opt-in IPC tracing (measure-first)** — `LIN_TRACE_IPC=1`
+  logs one line per command (`[ipc] <command> <ms> <payload kB> nodes=<n>`) around
+  the `lin:invoke` chokepoint, with zero overhead when off. The measurement proved
+  serialization was a non-issue (<1ms at 1000 nodes), redirecting the stage-5b
+  perf work to the Core layer.
+  ([#50](https://github.com/relixiaobo/lin-outliner/pull/50))
 - **Security shell — host owns navigation + capabilities (native-feel stage 1)**
   — the main process now closes the renderer's default-open Chromium surface.
   `setWindowOpenHandler` denies all child windows (http(s) `target="_blank"`
