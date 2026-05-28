@@ -13,18 +13,15 @@ import { api } from '../../api/client';
 import { AddIcon, CloseIcon, HideIcon, ICON_SIZE, OpenIcon, PasswordIcon, SearchIcon, ShowIcon, TrashIcon, WarningIcon } from '../icons';
 import { providerIconUrl } from './providerIcon';
 import { ButtonControl } from '../primitives/ButtonControl';
-import { Dialog } from '../primitives/Dialog';
 import { FormField } from '../primitives/FormField';
 import { SelectControl } from '../primitives/SelectControl';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
 import { TextInputControl } from '../primitives/TextInputControl';
 
-interface AgentSettingsDialogProps {
-  open: boolean;
+interface AgentSettingsViewProps {
   onClose: () => void;
   onApplied: () => Promise<void>;
-  restoreFocus?: () => HTMLElement | null;
   sessionId?: string;
 }
 
@@ -84,7 +81,7 @@ const REASONING_LABELS: Record<AgentReasoningLevel, string> = {
   xhigh: 'XHigh',
 };
 
-export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus, sessionId }: AgentSettingsDialogProps) {
+export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettingsViewProps) {
   const [settings, setSettings] = useState<AgentProviderSettingsView | null>(null);
   const [draft, setDraft] = useState<DraftConfig>(EMPTY_DRAFT);
   const [apiKey, setApiKey] = useState('');
@@ -127,11 +124,6 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus, se
   }
 
   useEffect(() => {
-    if (!open) {
-      beginRequest();
-      setSaving(false);
-      return;
-    }
     const requestId = beginRequest();
     setLoading(true);
     setError(null);
@@ -156,10 +148,9 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus, se
       .finally(() => {
         if (isCurrentRequest(requestId)) setLoading(false);
       });
-  }, [open]);
+  }, []);
 
   useEffect(() => {
-    if (!open) return;
     if (category === 'skills') {
       const id = beginRequest();
       setLoadingSkills(true);
@@ -196,7 +187,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus, se
           if (isCurrentRequest(id)) setLoadingAgents(false);
         });
     }
-  }, [category, open]);
+  }, [category]);
 
   const providerCatalog = useMemo(() => {
     const catalog = new Map<string, AgentProviderOption>();
@@ -258,8 +249,6 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus, se
   }, [catalogModels, modelQuery]);
 
   const selectedAgent = allAgents.find((a) => a.name === selectedAgentName) || allAgents[0];
-
-  if (!open) return null;
 
   function selectProvider(providerId: string) {
     setCreatingCustom(false);
@@ -493,14 +482,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus, se
   );
 
   return (
-    <Dialog
-      backdropClassName="agent-settings-backdrop"
-      labelledBy="agent-settings-title"
-      onBackdropMouseDown={onClose}
-      onEscapeKeyDown={onClose}
-      restoreFocus={restoreFocus}
-      surfaceClassName="agent-settings-dialog settings-dialog"
-    >
+    <main className="settings-window" aria-labelledby="agent-settings-title">
       <header className="agent-settings-header">
         <h2 id="agent-settings-title">Settings</h2>
         <ButtonControl className="agent-settings-close" onClick={onClose}>
@@ -1016,7 +998,7 @@ export function AgentSettingsDialog({ open, onApplied, onClose, restoreFocus, se
           </div>
         </div>
       )}
-    </Dialog>
+    </main>
   );
 }
 

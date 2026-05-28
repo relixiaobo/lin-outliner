@@ -48,7 +48,6 @@ import { AgentCompactionBoundary } from './AgentCompactionBoundary';
 import { AgentComposer } from './AgentComposer';
 import type { AgentComposerNodeReference } from './AgentComposerEditor';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
-import { AgentSettingsDialog } from './AgentSettingsDialog';
 import { AgentMessageRow } from './AgentMessageRow';
 import { AgentSubagentDetailsPanel } from './AgentSubagentDetailsPanel';
 import { ButtonControl } from '../primitives/ButtonControl';
@@ -72,9 +71,6 @@ interface AgentChatPanelProps {
   userViewContext: AgentUserViewContext;
   onOpenNodeReference: AgentNodeReferenceOpenHandler;
   onOpenDebugPanel?: (sessionId: string | null) => void;
-  onProviderSettingsOpenChange?: (open: boolean) => void;
-  providerSettingsRestoreFocus?: () => HTMLElement | null;
-  providerSettingsOpen?: boolean;
 }
 
 function shouldStickToBottom(element: HTMLDivElement): boolean {
@@ -489,9 +485,6 @@ export function AgentChatPanel({
   index,
   onOpenNodeReference,
   onOpenDebugPanel,
-  onProviderSettingsOpenChange,
-  providerSettingsRestoreFocus,
-  providerSettingsOpen = false,
   userViewContext,
 }: AgentChatPanelProps) {
   const {
@@ -775,11 +768,22 @@ export function AgentChatPanel({
     await updateProviderConfig(providerId, patch);
   }
 
-  async function applySettingsDialogChanges() {
+  async function refreshAfterSettingsChange() {
     await loadProviderSettings();
     await loadSlashCommands();
     await reloadSession();
   }
+
+  // Settings now live in a separate window; when it applies changes the main
+  // process broadcasts here so the panel re-syncs provider/slash/session state
+  // instead of showing stale providers. A ref keeps the subscription mounted once
+  // while always calling the latest closure.
+  const refreshAfterSettingsChangeRef = useRef(refreshAfterSettingsChange);
+  refreshAfterSettingsChangeRef.current = refreshAfterSettingsChange;
+  useEffect(
+    () => window.lin?.onSettingsChanged?.(() => void refreshAfterSettingsChangeRef.current()),
+    [],
+  );
 
   async function handleSteerMessage(message: string) {
     const trimmed = message.trim();
@@ -880,7 +884,6 @@ export function AgentChatPanel({
 
   const visibleError = error ?? settingsError;
   const displayTitle = readableSessionTitle(sessionTitle, 'conversation');
-  const settingsDialogOpen = providerSettingsOpen;
   const historyMenuStyle = useAnchoredOverlay(historyMenuRef, {
     anchorRef: historyButtonRef,
     disabled: !historyOpen,
@@ -1114,15 +1117,6 @@ export function AgentChatPanel({
         settings={providerSettings}
         slashCommands={slashCommands}
         steeringNote={steeringNote}
-      />
-      <AgentSettingsDialog
-        onApplied={applySettingsDialogChanges}
-        onClose={() => {
-          onProviderSettingsOpenChange?.(false);
-        }}
-        open={settingsDialogOpen}
-        restoreFocus={providerSettingsRestoreFocus}
-        sessionId={sessionId ?? undefined}
       />
       <AgentSubagentDetailsPanel
         onClose={() => setSelectedSubagentId(null)}
