@@ -8,6 +8,7 @@ import type {
   AgentSession,
   AgentSessionMeta,
   AgentSlashCommandView,
+  AgentApprovalResolutionScope,
   AgentDefinition,
   SkillDefinition,
   CommandOutcome,
@@ -267,6 +268,12 @@ export const api = {
     command<{ queued: boolean }>('agent_steer_session', { sessionId, message }),
   agentClearSteer: (sessionId: string) =>
     command<void>('agent_clear_steer', { sessionId }),
+  agentResolveApproval: (
+    sessionId: string,
+    requestId: string,
+    approved: boolean,
+    scope: AgentApprovalResolutionScope = 'once',
+  ) => command<{ resolved: boolean }>('agent_resolve_approval', { sessionId, requestId, approved, scope }),
   agentStopSession: (sessionId: string) =>
     command<void>('agent_stop_session', { sessionId }),
   agentResetSession: (sessionId: string) =>

@@ -678,6 +678,70 @@ describe('agent runtime skill integration', () => {
     expect(contextTexts.join('\n')).toContain('Shell output: skill-shell-ok');
   });
 
+  test('reports rejected approvals as user-denied tool results', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-denied-approval-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-denied-approval-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const followUpContexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('bash', {
+            command: 'git push --dry-run origin codex/agent-permissions',
+            description: 'Dry-run git push',
+          }, { id: 'tool-denied-push' }),
+        ], { stopReason: 'toolUse' }),
+        (context) => {
+          followUpContexts.push(JSON.stringify(context.messages));
+          return fauxAssistantMessage(fauxText('Approval denial handled.'));
+        },
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: true,
+          slashSkillsEnabled: true,
+          compactEnabled: true,
+          additionalSkillDirectories: [],
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.createSession();
+    const sendPromise = runtime.sendMessage(created.sessionId, 'Try the dry-run push.');
+    await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
+    const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
+      event.type === 'approval_request'
+    ));
+    if (!approvalEvent) throw new Error('Expected approval request event.');
+
+    await runtime.resolveApproval(created.sessionId, approvalEvent.requestId, false);
+    await sendPromise;
+
+    const contextText = followUpContexts.join('\n');
+    expect(contextText).toContain('User denied permission. The requested tool call was not executed.');
+    expect(contextText).not.toContain('Permission denied: This changes external state on a git remote.');
+  });
+
   test('honors runtime switches for automatic skills and compact', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-switches-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-switch-data-'));

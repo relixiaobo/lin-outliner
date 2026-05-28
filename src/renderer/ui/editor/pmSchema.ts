@@ -67,6 +67,7 @@ export const pmSchema = new Schema({
       },
     },
     code: {
+      inclusive: false,
       parseDOM: [{ tag: 'code' }],
       toDOM() {
         return ['code', { class: 'pm-code' }, 0];

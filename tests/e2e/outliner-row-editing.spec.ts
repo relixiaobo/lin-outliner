@@ -320,6 +320,69 @@ test.describe('outliner row editing parity', () => {
     await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe('AlXYpha');
   });
 
+  test('backtick inline code shortcut exits the mark and Arrow keys can cross code boundaries', async ({ page }) => {
+    await selectEditorContents(page, ids.alpha);
+    await page.keyboard.type('`nihao`');
+
+    await expect.poll(async () => nodeById(page, ids.alpha)).toMatchObject({
+      content: {
+        text: 'nihao',
+        marks: [{ start: 0, end: 5, type: 'code' }],
+      },
+    });
+    await expect(rowEditor(page, ids.alpha).locator('code.pm-code')).toHaveText('nihao');
+
+    await page.keyboard.type('x');
+    await expect.poll(async () => nodeById(page, ids.alpha)).toMatchObject({
+      content: {
+        text: 'nihaox',
+        marks: [{ start: 0, end: 5, type: 'code' }],
+      },
+    });
+
+    await selectEditorContents(page, ids.alpha);
+    await page.keyboard.type('`nihao`');
+    await rowEditor(page, ids.alpha).locator('code.pm-code').evaluate((element) => {
+      const text = element.firstChild;
+      if (!text) throw new Error('missing code text');
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.setStart(text, text.textContent?.length ?? 0);
+      range.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    });
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.type('x');
+    await expect.poll(async () => nodeById(page, ids.alpha)).toMatchObject({
+      content: {
+        text: 'nihaox',
+        marks: [{ start: 0, end: 5, type: 'code' }],
+      },
+    });
+
+    await selectEditorContents(page, ids.alpha);
+    await page.keyboard.type('`nihao`');
+    await rowEditor(page, ids.alpha).locator('code.pm-code').evaluate((element) => {
+      const text = element.firstChild;
+      if (!text) throw new Error('missing code text');
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.setStart(text, 0);
+      range.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    });
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.type('x');
+    await expect.poll(async () => nodeById(page, ids.alpha)).toMatchObject({
+      content: {
+        text: 'xnihao',
+        marks: [{ start: 1, end: 6, type: 'code' }],
+      },
+    });
+  });
+
   test('delayed ordinary row text patches do not replay partial text after focus moves away', async ({ page }) => {
     await delayTextPatchCommands(page, 80);
     const text = 'ordinaryfastinputguard';

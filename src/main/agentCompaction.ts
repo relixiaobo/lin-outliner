@@ -23,7 +23,7 @@ const DETAILED_ANALYSIS_INSTRUCTIONS = `Before providing your final summary, wra
 
 - The user's explicit requests, decisions, corrections, and preferences.
 - The assistant's actions, tool results, edits, and reasoning-relevant outcomes.
-- Lin Outliner workspace context: outline nodes, document structure, selected/focused content, schemas, searches, settings, or UI state when relevant.
+- Outliner context: outline nodes, document structure, selected/focused content, schemas, searches, settings, or UI state when relevant.
 - Files, code, commands, tests, errors, and architectural decisions when the work involves implementation.
 - The exact current state needed to continue without asking the user to restate context.
 
@@ -32,7 +32,7 @@ Double-check that the summary distinguishes completed work from pending work and
 const SUMMARY_SECTIONS = `Your final summary must be wrapped in <summary> tags and include:
 
 1. Primary Request and Intent: capture the user's explicit requests and the latest intent.
-2. Key Context and Decisions: preserve important decisions, constraints, preferences, outline/workspace context, and technical concepts.
+2. Key Context and Decisions: preserve important decisions, constraints, preferences, outliner context, and technical concepts.
 3. Files, Nodes, and Code Sections: list relevant files, outline nodes, schemas, searches, settings, code sections, or UI areas examined or changed, with why they matter.
 4. Errors and Fixes: list errors, failed attempts, user corrections, and how they were handled.
 5. Problem Solving: document solved problems, reasoning outcomes, and ongoing troubleshooting.
@@ -44,7 +44,7 @@ const SUMMARY_SECTIONS = `Your final summary must be wrapped in <summary> tags a
 const UP_TO_SUMMARY_SECTIONS = `Your final summary must be wrapped in <summary> tags and include:
 
 1. Primary Request and Intent: capture the user's explicit requests and intent from the shown transcript.
-2. Key Context and Decisions: preserve important decisions, constraints, preferences, outline/workspace context, and technical concepts.
+2. Key Context and Decisions: preserve important decisions, constraints, preferences, outliner context, and technical concepts.
 3. Files, Nodes, and Code Sections: list relevant files, outline nodes, schemas, searches, settings, code sections, or UI areas examined or changed, with why they matter.
 4. Errors and Fixes: list errors, failed attempts, user corrections, and how they were handled.
 5. Problem Solving: document solved problems, reasoning outcomes, and ongoing troubleshooting.
@@ -54,7 +54,7 @@ const UP_TO_SUMMARY_SECTIONS = `Your final summary must be wrapped in <summary> 
 9. Context for Continuing Work: summarize the state, decisions, and assumptions needed to understand the preserved newer messages that will follow.`;
 
 const FULL_COMPACT_PROMPT_BODY = `Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.
-This summary is for Lin Outliner, where work may involve outline editing, knowledge organization, UI state, agent skills/subagents, tools, files, code, tests, and product decisions. Preserve whichever of these are relevant.
+This summary is for a continuing assistant session where work may involve outliner editing, knowledge organization, UI state, agent skills/subagents, tools, files, code, tests, and product decisions. Preserve whichever of these are relevant.
 
 ${DETAILED_ANALYSIS_INSTRUCTIONS}
 
@@ -65,7 +65,7 @@ If there is a next step, make sure it follows directly from the most recent expl
 const UP_TO_COMPACT_PROMPT_BODY = `Your task is to create a detailed summary of the transcript shown below. This summary will be placed at the start of a continuing session, and newer messages that build on this context will follow after your summary verbatim. You do not see those newer messages here.
 Summarize thoroughly so that the assistant can read your summary plus the preserved newer messages and continue naturally.
 
-This summary is for Lin Outliner, where work may involve outline editing, knowledge organization, UI state, agent skills/subagents, tools, files, code, tests, and product decisions. Preserve whichever of these are relevant.
+This summary is for a continuing assistant session where work may involve outliner editing, knowledge organization, UI state, agent skills/subagents, tools, files, code, tests, and product decisions. Preserve whichever of these are relevant.
 
 ${DETAILED_ANALYSIS_INSTRUCTIONS}
 

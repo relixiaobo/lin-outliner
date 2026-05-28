@@ -106,6 +106,7 @@ export const AGENT_COMMANDS = [
   'agent_clear_follow_up',
   'agent_steer_session',
   'agent_clear_steer',
+  'agent_resolve_approval',
   'agent_stop_session',
   'agent_reset_session',
   'agent_close_session',

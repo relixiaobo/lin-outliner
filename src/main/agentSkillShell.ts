@@ -30,10 +30,10 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
       preapprovedToolRules: input.allowedTools ?? [],
     },
   });
-  if (!decision.allow) {
+  if (decision.behavior !== 'allow') {
     throw new AgentSkillShellError(
       'permission_denied',
-      `Shell command permission check failed: ${decision.reason ?? 'Permission denied.'}`,
+      `Shell command was not run: ${decision.reason ?? 'permission was denied.'}`,
     );
   }
 

@@ -243,6 +243,8 @@ describe('agent local tools', () => {
     expect(fileEdit.description).not.toContain('notebook_edit');
     expect(JSON.stringify(bash.parameters)).toContain('Clear, concise description');
     expect(JSON.stringify(bash.parameters)).toContain('Do not use vague words');
+    expect(JSON.stringify(bash.parameters)).not.toContain('dangerouslyDisableSandbox');
+    expect(JSON.stringify(bash.parameters).toLowerCase()).not.toContain('sandbox');
     expect(JSON.stringify(taskStop.parameters)).toContain('task_id returned by bash');
     expect(JSON.stringify(taskStop.parameters)).not.toContain('shell_id');
   });

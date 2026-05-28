@@ -92,7 +92,8 @@ describe('agent compaction', () => {
     const text = Array.isArray(request.content) ? request.content[0]?.type === 'text' ? request.content[0].text : '' : request.content;
 
     expect(text).toContain('Do NOT call any tools');
-    expect(text).toContain('Lin Outliner');
+    expect(text).toContain('continuing assistant session');
+    expect(text).toContain('outliner editing');
     expect(text).toContain('Files, Nodes, and Code Sections');
     expect(text).toContain('Additional Instructions');
     expect(text).toContain('keep errors');

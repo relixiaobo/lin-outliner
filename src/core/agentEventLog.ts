@@ -25,6 +25,7 @@ export type AgentPayloadRole =
   | 'text_extract'
   | 'tool_output'
   | 'subagent_transcript'
+  | 'approval'
   | 'debug';
 
 export interface AgentPayloadDisplayMetadata {

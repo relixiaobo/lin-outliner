@@ -803,6 +803,13 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
       );
     case 'agent_clear_steer':
       return agentRuntime.clearSteer(String(args.sessionId));
+    case 'agent_resolve_approval':
+      return agentRuntime.resolveApproval(
+        String(args.sessionId),
+        String(args.requestId),
+        args.approved === true,
+        args.scope === 'session' ? 'session' : 'once',
+      );
     case 'agent_stop_session':
       return agentRuntime.stopSession(String(args.sessionId));
     case 'agent_reset_session':

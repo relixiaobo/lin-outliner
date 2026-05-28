@@ -8,7 +8,7 @@ export const FINAL_ANSWER_NODE_REFERENCE_GUIDANCE =
   'For final answers, never show %%node:id%% edit handles. Mention concrete nodes with [[Display^node:...]], or [[^node:...]] when only the id is known.';
 
 export const LIN_OUTLINE_CREATE_GUIDANCE = [
-  'Lin Outline Format uses "- Title" lines with exactly 2 spaces per child level.',
+  'Outline format uses "- Title" lines with exactly 2 spaces per child level.',
   'It supports "Title - description", #tags, #[[multi word tags]], Field:: value, references, nested children, search nodes, and [ ]/[x] checkbox state.',
   DATE_FIELD_VALUE_GUIDANCE,
   'Do not include %%node:id%% markers when creating new nodes; those markers belong to node_read/node_edit protocol.',
@@ -86,7 +86,7 @@ export const NODE_CREATE_DESCRIPTION = [
 ].join('\n');
 
 export const NODE_CREATE_OUTLINE_PARAMETER_DESCRIPTION = [
-  'Lin Outline Format to create.',
+  'Outline format to create.',
   LIN_OUTLINE_CREATE_GUIDANCE,
   `Saved search nodes use the same search query outline syntax as node_search. ${SEARCH_QUERY_SHAPE_GUIDANCE}`,
 ].join(' ');
@@ -104,7 +104,7 @@ export const NODE_EDIT_DESCRIPTION = [
 ].join('\n');
 
 export const NODE_EDIT_NEW_STRING_PARAMETER_DESCRIPTION = [
-  'Replacement fragment. The full outline after replacement must parse as Lin Outline Format and may keep %%node:id%% markers for existing nodes.',
+  'Replacement fragment. The full outline after replacement must parse as outline format and may keep %%node:id%% markers for existing nodes.',
   ANNOTATED_OUTLINE_EDIT_GUIDANCE,
   DATE_FIELD_VALUE_GUIDANCE,
 ].join(' ');

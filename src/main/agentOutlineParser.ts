@@ -74,7 +74,7 @@ export function parseLinOutline(
     const line = index + 1;
     const leading = rawLine.match(/^ */)?.[0].length ?? 0;
     if (rawLine.includes('\t')) {
-      return { ok: false, error: { message: 'Tabs are not allowed in Lin Outline Format.', line, column: rawLine.indexOf('\t') + 1 } };
+      return { ok: false, error: { message: 'Tabs are not allowed in outline format.', line, column: rawLine.indexOf('\t') + 1 } };
     }
     if (leading % 2 !== 0) {
       return { ok: false, error: { message: 'Indentation must use exactly 2 spaces per level.', line, column: leading + 1 } };

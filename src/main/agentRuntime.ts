@@ -40,6 +40,8 @@ import {
   type AgentDebugTotals,
   type AgentMessage,
   type AgentRuntimeEvent,
+  type AgentApprovalRequestView,
+  type AgentApprovalResolutionScope,
   type AgentUserViewContext,
   type ImageContent,
   type TextContent,
@@ -101,7 +103,7 @@ import {
   type AgentSubagentRunSnapshot,
 } from './agentSubagents';
 import { executeAgentSkillShellCommand } from './agentSkillShell';
-import { evaluateAgentToolPermission } from './agentPermissions';
+import { evaluateAgentToolPermission, type AgentPermissionAskDecision } from './agentPermissions';
 import {
   createAgentLocalWorkspaceContext,
   type AgentLocalWorkspaceContext,
@@ -194,6 +196,19 @@ interface AgentRuntimeOptions {
   streamFn?: StreamFn;
 }
 
+interface AgentToolApprovalInput {
+  toolCall: ToolCall;
+  args: unknown;
+  decision: AgentPermissionAskDecision;
+}
+
+interface AgentToolApprovalResolution {
+  approved: boolean;
+  deniedBy?: 'abort' | 'runtime' | 'user';
+  scope?: AgentApprovalResolutionScope;
+  sessionRule?: string;
+}
+
 interface AgentSessionState {
   agent: Agent;
   autoCompactConsecutiveFailures: number;
@@ -222,6 +237,7 @@ interface AgentSessionState {
   toolOutputPayloads: Map<string, { payload: AgentPayloadRef; label: string }>;
   toolResultBudgetState: ToolResultBudgetState;
   toolCallMessageIds: Map<string, string>;
+  permissionSessionAllowRules: string[];
   unsubscribe: (() => void) | null;
 }
 
@@ -239,6 +255,12 @@ export class AgentRuntime {
   }>();
   private eventStore: AgentEventStore | null = null;
   private pastChatsService: AgentPastChatsService | null = null;
+  private pendingApprovals = new Map<string, {
+    sessionId: string;
+    request: AgentApprovalRequestView;
+    suggestedSessionRule?: string;
+    resolve: (resolution: AgentToolApprovalResolution) => void;
+  }>();
   private nextSessionId = 1;
   private readonly userViewContextReminderTracker = new AgentUserViewContextReminderTracker();
   private readonly contextManager: AgentRuntimeContextManager<AgentSessionState>;
@@ -359,6 +381,43 @@ export class AgentRuntime {
       slashCommandKindRank(left.kind) - slashCommandKindRank(right.kind)
       || left.label.localeCompare(right.label)
     ));
+  }
+
+  async resolveApproval(
+    sessionId: string,
+    requestId: string,
+    approved: boolean,
+    scope: AgentApprovalResolutionScope = 'once',
+  ) {
+    const pending = this.pendingApprovals.get(requestId);
+    if (!pending || pending.sessionId !== sessionId) return { resolved: false };
+    const session = this.sessions.get(sessionId);
+    if (!session) return { resolved: false };
+
+    this.pendingApprovals.delete(requestId);
+    const sessionRule = approved && scope === 'session' ? pending.suggestedSessionRule : undefined;
+    if (sessionRule && !session.permissionSessionAllowRules.includes(sessionRule)) {
+      session.permissionSessionAllowRules.push(sessionRule);
+    }
+
+    await this.appendSessionEvents(sessionId, session, [{
+      type: 'approval.resolved',
+      actor: userActor(),
+      runId: session.activeRunId ?? undefined,
+      requestId,
+      approved,
+    }]);
+    this.emit({
+      type: 'approval_resolved',
+      sessionId,
+      requestId,
+      approved,
+      scope,
+      timestamp: Date.now(),
+    });
+    this.emitProjection(sessionId, 'approval.resolved');
+    pending.resolve({ approved, deniedBy: approved ? undefined : 'user', scope, sessionRule });
+    return { resolved: true };
   }
 
   async debugSnapshot(sessionId: string) {
@@ -723,6 +782,7 @@ export class AgentRuntime {
   resetSession(sessionId: string) {
     const session = this.sessions.get(sessionId);
     if (!session) return;
+    this.clearPendingApprovalsForSession(sessionId);
     session.agent.reset();
     this.cleanupProviderSessionResources(sessionId);
     this.userViewContextReminderTracker.reset(sessionId);
@@ -756,6 +816,7 @@ export class AgentRuntime {
   closeSession(sessionId: string) {
     const session = this.sessions.get(sessionId);
     if (!session) return;
+    this.clearPendingApprovalsForSession(sessionId);
     session.agent.abort();
     session.unsubscribe?.();
     clearPendingProjection(session);
@@ -763,6 +824,21 @@ export class AgentRuntime {
     this.userViewContextReminderTracker.reset(sessionId);
     this.cleanupProviderSessionResources(sessionId);
     this.emit({ type: 'closed', sessionId, timestamp: Date.now() });
+  }
+
+  private clearPendingApprovalsForSession(sessionId: string) {
+    for (const [requestId, pending] of [...this.pendingApprovals]) {
+      if (pending.sessionId !== sessionId) continue;
+      this.pendingApprovals.delete(requestId);
+      this.emit({
+        type: 'approval_resolved',
+        sessionId,
+        requestId,
+        approved: false,
+        timestamp: Date.now(),
+      });
+      pending.resolve({ approved: false, deniedBy: 'runtime' });
+    }
   }
 
   private async createSessionWithEventState(eventState: AgentEventReplayState) {
@@ -825,7 +901,7 @@ export class AgentRuntime {
       host: {
         createChildAgent: (input) => {
           if (!providerConfig) throw new Error('No enabled agent provider is configured.');
-          return this.createSubagentAgent(providerConfig, input);
+          return this.createSubagentAgent(sessionId, sessionRef, providerConfig, input);
         },
         getParentMessages: () => agentRef.current?.state.messages as AgentMessage[] ?? activePath,
         getParentSystemPrompt: () => agentRef.current?.state.systemPrompt ?? LIN_AGENT_SYSTEM_PROMPT,
@@ -866,6 +942,12 @@ export class AgentRuntime {
           },
           streamFn: this.options.streamFn,
           providerApiKeyLoader: this.options.providerApiKeyLoader,
+          sessionAllowRules: () => sessionRef.current?.permissionSessionAllowRules ?? [],
+          approvalHandler: (input, signal) => {
+            const current = sessionRef.current;
+            if (!current) return Promise.resolve({ approved: false, deniedBy: 'runtime' });
+            return this.requestToolApproval(sessionId, current, input, signal);
+          },
           afterToolResult: (toolCallId, toolName, result, isError) => {
             const current = sessionRef.current;
             if (!current) return undefined;
@@ -917,6 +999,7 @@ export class AgentRuntime {
       toolOutputPayloads: new Map(),
       toolResultBudgetState: restoreToolResultBudgetStateFromMessages(getAgentEventActivePath(eventState)),
       toolCallMessageIds: new Map(),
+      permissionSessionAllowRules: [],
       unsubscribe: null,
     };
     sessionRef.current = session;
@@ -1008,7 +1091,12 @@ export class AgentRuntime {
     });
   }
 
-  private createSubagentAgent(providerConfig: AgentProviderRuntimeConfig, input: AgentSubagentCreateInput): Agent {
+  private createSubagentAgent(
+    parentSessionId: string,
+    parentSessionRef: { current: AgentSessionState | null },
+    providerConfig: AgentProviderRuntimeConfig,
+    input: AgentSubagentCreateInput,
+  ): Agent {
     const inheritedModel = this.resolveProviderModel(providerConfig);
     const model = input.model
       ? resolveSkillModelOverride(input.model, providerConfig, inheritedModel)
@@ -1032,6 +1120,12 @@ export class AgentRuntime {
       allowedTools: input.allowedTools,
       disallowedTools: input.disallowedTools,
       preapprovedToolRules: input.preapprovedToolRules,
+      sessionAllowRules: () => parentSessionRef.current?.permissionSessionAllowRules ?? [],
+      approvalHandler: (approvalInput, signal) => {
+        const parentSession = parentSessionRef.current;
+        if (!parentSession) return Promise.resolve({ approved: false, deniedBy: 'runtime' });
+        return this.requestToolApproval(parentSessionId, parentSession, approvalInput, signal);
+      },
       afterToolResult: input.afterToolResult,
     }, async (payload, modelForPayload) => {
       try {
@@ -1603,6 +1697,102 @@ export class AgentRuntime {
     session.pendingEventAppend = operation.then(() => undefined, () => undefined);
     await operation;
     return events;
+  }
+
+  private async requestToolApproval(
+    sessionId: string,
+    session: AgentSessionState,
+    input: AgentToolApprovalInput,
+    signal?: AbortSignal,
+  ): Promise<AgentToolApprovalResolution> {
+    if (signal?.aborted) return { approved: false, deniedBy: 'abort' };
+
+    const requestId = randomUUID();
+    const request: AgentApprovalRequestView = {
+      requestId,
+      sessionId,
+      toolCallId: input.toolCall.id,
+      toolName: input.toolCall.name,
+      title: input.decision.request.title,
+      target: input.decision.request.target,
+      reason: input.decision.reason,
+      details: input.decision.request.details,
+      suggestedSessionRule: input.decision.request.suggestedSessionRule,
+    };
+    const payload = await this.getEventStore().writePayload(sessionId, {
+      id: `approval-${requestId}`,
+      data: JSON.stringify({
+        request,
+        decision: {
+          behavior: input.decision.behavior,
+          code: input.decision.code,
+          reason: input.decision.reason,
+          access: input.decision.access,
+        },
+        args: input.args,
+      }, null, 2),
+      mimeType: 'application/json',
+      role: 'approval',
+      summary: request.title,
+    });
+
+    await this.appendSessionEvents(sessionId, session, [{
+      type: 'payload.created',
+      actor: systemActor(),
+      runId: session.activeRunId ?? undefined,
+      payload,
+    }, {
+      type: 'approval.requested',
+      actor: systemActor(),
+      runId: session.activeRunId ?? undefined,
+      requestId,
+      summary: `${request.title} ${request.target}`.trim(),
+      payloadRef: payload,
+    }]);
+
+    this.emit({
+      type: 'approval_request',
+      sessionId,
+      requestId,
+      request,
+      timestamp: Date.now(),
+    });
+    this.emitProjection(sessionId, 'approval.requested');
+
+    return new Promise<AgentToolApprovalResolution>((resolve) => {
+      const onAbort = () => {
+        const pending = this.pendingApprovals.get(requestId);
+        if (!pending) return;
+        this.pendingApprovals.delete(requestId);
+        signal?.removeEventListener('abort', onAbort);
+        void this.appendSessionEvents(sessionId, session, [{
+          type: 'approval.resolved',
+          actor: systemActor(),
+          runId: session.activeRunId ?? undefined,
+          requestId,
+          approved: false,
+        }]).catch((error) => this.emitError(sessionId, error instanceof Error ? error.message : String(error)));
+        this.emit({
+          type: 'approval_resolved',
+          sessionId,
+          requestId,
+          approved: false,
+          timestamp: Date.now(),
+        });
+        resolve({ approved: false, deniedBy: 'abort' });
+      };
+
+      this.pendingApprovals.set(requestId, {
+        sessionId,
+        request,
+        suggestedSessionRule: request.suggestedSessionRule,
+        resolve: (resolution) => {
+          signal?.removeEventListener('abort', onAbort);
+          resolve(resolution);
+        },
+      });
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
   }
 
   private async appendUserPromptEvent(sessionId: string, session: AgentSessionState, prompt: UserMessage) {
@@ -2908,6 +3098,17 @@ async function continueFromActivePath(agent: Agent) {
   await agent.continue();
 }
 
+function approvalDeniedToolResultMessage(approval: AgentToolApprovalResolution): string {
+  switch (approval.deniedBy) {
+    case 'user':
+      return 'User denied permission. The requested tool call was not executed.';
+    case 'abort':
+      return 'Permission request was cancelled before approval. The requested tool call was not executed.';
+    default:
+      return 'Permission request was not approved. The requested tool call was not executed.';
+  }
+}
+
 function createConfiguredAgent(
   sessionId: string,
   providerConfig: AgentProviderRuntimeConfig,
@@ -2929,6 +3130,8 @@ function createConfiguredAgent(
     allowedTools?: string[];
     disallowedTools?: string[];
     preapprovedToolRules?: string[];
+    sessionAllowRules?: () => readonly string[];
+    approvalHandler?: (input: AgentToolApprovalInput, signal?: AbortSignal) => Promise<AgentToolApprovalResolution>;
     streamFn?: StreamFn;
     afterToolResult?: (
       toolCallId: string,
@@ -2972,7 +3175,7 @@ function createConfiguredAgent(
       }
       return options.providerApiKeyLoader?.(provider) ?? getProviderApiKey(provider);
     },
-    beforeToolCall: async ({ toolCall, args }) => {
+    beforeToolCall: async ({ toolCall, args }, signal) => {
       const runtimeSettings = await options.runtimeSettingsLoader?.();
       const decision = evaluateAgentToolPermission({
         toolName: toolCall.name,
@@ -2984,9 +3187,15 @@ function createConfiguredAgent(
             ...(skillRuntime?.getActivePermissionRules() ?? []),
             ...(options.preapprovedToolRules ?? []),
           ],
+          sessionAllowRules: options.sessionAllowRules?.() ?? [],
         },
       });
-      if (decision.allow) return undefined;
+      if (decision.behavior === 'allow') return undefined;
+      if (decision.behavior === 'ask' && options.approvalHandler) {
+        const approval = await options.approvalHandler({ toolCall, args, decision }, signal);
+        if (approval.approved) return undefined;
+        return { block: true, reason: approvalDeniedToolResultMessage(approval) };
+      }
       return { block: true, reason: decision.reason };
     },
     afterToolCall: async ({ toolCall, result, isError }) => {

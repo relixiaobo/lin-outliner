@@ -19,7 +19,7 @@ describe('agent system prompt', () => {
 
   test('defines Lin-specific behavior and tool boundaries', () => {
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('Lin Agent');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('local-first outliner');
+    expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('local-first outliner');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('<system-reminder>');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('node_read');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('node_edit');

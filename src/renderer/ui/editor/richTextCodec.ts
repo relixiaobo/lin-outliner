@@ -3,7 +3,8 @@ import type { InlineRef, RichText, TextMark, TextMarkKind } from '../../api/type
 import { EMPTY_RICH_TEXT } from '../../api/types';
 import { pmSchema } from './pmSchema';
 
-export const INLINE_REF_TEXT_SENTINEL = '\u200B';
+export const TRANSIENT_TEXT_SENTINEL = '\u200B';
+export const INLINE_REF_TEXT_SENTINEL = TRANSIENT_TEXT_SENTINEL;
 
 const MARK_NAMES: Record<TextMarkKind, string> = {
   bold: 'bold',
@@ -31,7 +32,7 @@ function marksForRange(schema: Schema, marks: TextMark[], start: number, end: nu
 }
 
 function visibleText(text: string): string {
-  return text.replaceAll(INLINE_REF_TEXT_SENTINEL, '');
+  return text.replaceAll(TRANSIENT_TEXT_SENTINEL, '');
 }
 
 function visibleTextLength(text: string): number {
@@ -42,7 +43,7 @@ function rawOffsetForVisibleOffset(text: string, targetOffset: number): number {
   const target = Math.max(0, targetOffset);
   let visibleOffset = 0;
   for (let rawOffset = 0; rawOffset < text.length; rawOffset += 1) {
-    if (text[rawOffset] === INLINE_REF_TEXT_SENTINEL) continue;
+    if (text[rawOffset] === TRANSIENT_TEXT_SENTINEL) continue;
     if (visibleOffset === target) return rawOffset;
     visibleOffset += 1;
   }

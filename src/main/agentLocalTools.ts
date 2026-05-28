@@ -379,7 +379,7 @@ const FILE_GLOB_PARAMETERS = {
   required: ['pattern'],
   properties: {
     pattern: { type: 'string', minLength: 1, description: 'The glob pattern to match files against.' },
-    path: { type: 'string', minLength: 1, description: 'The directory to search in. If not specified, the local file root will be used. Omit this field for the default behavior.' },
+    path: { type: 'string', minLength: 1, description: 'The directory to search in. If not specified, the default file area will be used. Omit this field for the default behavior.' },
   },
 };
 
@@ -389,7 +389,7 @@ const FILE_GREP_PARAMETERS = {
   required: ['pattern'],
   properties: {
     pattern: { type: 'string', minLength: 1, description: 'The regular expression pattern to search for in file contents.' },
-    path: { type: 'string', minLength: 1, description: 'File or directory to search in. Defaults to the local file root.' },
+    path: { type: 'string', minLength: 1, description: 'File or directory to search in. Defaults to the default file area.' },
     glob: { type: 'string', minLength: 1, description: 'Glob pattern to filter files, for example "*.js" or "*.{ts,tsx}".' },
     output_mode: { type: 'string', enum: ['content', 'files_with_matches', 'count'], description: 'Output mode: "content" shows matching lines, "files_with_matches" shows file paths, "count" shows match counts. Defaults to "files_with_matches".' },
     '-B': { type: 'integer', minimum: 0, description: 'Number of lines to show before each match. Requires output_mode: "content", ignored otherwise.' },
@@ -399,7 +399,7 @@ const FILE_GREP_PARAMETERS = {
     '-n': { type: 'boolean', description: 'Show line numbers in output. Requires output_mode: "content", ignored otherwise. Defaults to true.' },
     '-i': { type: 'boolean', description: 'Case insensitive search.' },
     type: { type: 'string', minLength: 1, description: 'File type to search, such as js, py, rust, go, java, ts, md, or json.' },
-    head_limit: { type: 'integer', minimum: 0, description: 'Limit output to first N lines or entries, equivalent to "| head -N". Works across all output modes. Defaults to 250. Pass 0 for unlimited within Lin hard caps.' },
+    head_limit: { type: 'integer', minimum: 0, description: 'Limit output to first N lines or entries, equivalent to "| head -N". Works across all output modes. Defaults to 250. Pass 0 for unlimited within tool hard caps.' },
     offset: { type: 'integer', minimum: 0, description: 'Skip first N lines or entries before applying head_limit, equivalent to "| tail -n +N | head -N". Works across all output modes. Defaults to 0.' },
     multiline: { type: 'boolean', description: 'Enable multiline mode where patterns can span lines. Default false.' },
   },
@@ -444,7 +444,6 @@ const BASH_PARAMETERS = {
     },
     timeout: { type: 'integer', minimum: 1, maximum: BASH_MAX_TIMEOUT_MS, description: `Optional timeout in milliseconds. Maximum ${BASH_MAX_TIMEOUT_MS}.` },
     run_in_background: { type: 'boolean', description: 'Set to true to run this command in the background. You do not need to append "&"; use file_read on the returned output path later if needed.' },
-    dangerouslyDisableSandbox: { type: 'boolean', description: 'Compatibility parameter for tools that expose sandbox overrides. Lin currently runs local shell commands without an extra sandbox layer.' },
   },
 };
 
@@ -738,7 +737,7 @@ function createFileGlobTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
     name: 'file_glob',
     label: 'File Glob',
     description: [
-      'Fast file pattern matching tool that works with any workspace size.',
+      'Fast file pattern matching tool that works with large file trees.',
       'Supports glob patterns like "**/*.js" or "src/**/*.ts".',
       'Returns matching file paths sorted by modification time.',
       'Use this tool when you need to find files by name patterns.',
@@ -959,7 +958,7 @@ function createBashTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelop
     name: 'bash',
     label: 'Bash',
     description: [
-      'Executes a shell command in the local file root.',
+      'Executes a shell command in the default file area.',
       'Use file_read, file_edit, file_write, file_glob, and file_grep for filesystem operations when possible.',
       'Use run_in_background for long-running commands. You do not need to append "&"; use task_stop if the task needs to be stopped.',
       'Commands should include a clear description of what they do in active voice.',
@@ -2179,7 +2178,7 @@ function resolveWorkspacePath(workspace: WorkspaceContext, inputPath: string): s
   const resolved = path.resolve(path.isAbsolute(expanded) ? expanded : path.join(workspace.root, expanded));
   const relative = path.relative(workspace.root, resolved);
   if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    throw new LocalToolFailure('path_outside_local_root', `Path is outside the local file root: ${resolved}`, 'Use a path under the local file root.');
+    throw new LocalToolFailure('path_outside_local_root', `Path is outside the allowed file area: ${resolved}`, 'Use a path under the allowed file area.');
   }
   return resolved;
 }
@@ -2189,7 +2188,7 @@ function localFsError(error: unknown, filePath: string): LocalToolFailure {
     return new LocalToolFailure('file_not_found', `File not found: ${filePath}`, 'Use file_glob to find the current path, or file_write if you need to create a new file.');
   }
   if (isNodeError(error) && error.code === 'EACCES') {
-    return new LocalToolFailure('permission_denied', `Permission denied: ${filePath}`, 'Choose another path or update workspace permissions.');
+    return new LocalToolFailure('permission_denied', `Permission denied: ${filePath}`, 'Choose another path or update file access settings.');
   }
   return new LocalToolFailure('filesystem_error', errorMessage(error));
 }
@@ -2197,7 +2196,7 @@ function localFsError(error: unknown, filePath: string): LocalToolFailure {
 function localErrorResult<TData>(tool: string, error: unknown, started: number) {
   const failure = error instanceof LocalToolFailure
     ? error
-    : new LocalToolFailure('unexpected_error', errorMessage(error), 'Retry if this looks transient; otherwise inspect the input and workspace state.');
+    : new LocalToolFailure('unexpected_error', errorMessage(error), 'Retry if this looks transient; otherwise inspect the input and tool state.');
   return agentToolResult(errorEnvelope<TData>(tool, failure.code, failure.message, {
     instructions: failure.instructions,
     metrics: { durationMs: elapsed(started) },
