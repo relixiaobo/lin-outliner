@@ -10,6 +10,7 @@ import type {
 import type { TriggerState } from '../ui/shared';
 import { buildOutlinerRows } from './outlinerRows';
 import { collectChangedNodes, nextRevisions, nodeSignatures, propagateDirty, type SignatureMap } from './renderRev';
+import { measureRenderIndex } from '../ui/outliner/renderProbe';
 
 export interface DocumentIndex {
   projection: DocumentProjection;
@@ -58,7 +59,7 @@ export function useRenderIndex(
   dragId: NodeId | null,
 ): DocumentIndex | null {
   const cacheRef = useRef<RenderIndexCache | null>(null);
-  return useMemo(() => {
+  return useMemo(() => measureRenderIndex((): DocumentIndex | null => {
     if (!projection) {
       cacheRef.current = null;
       return null;
@@ -82,7 +83,7 @@ export function useRenderIndex(
     const uiGen = previous ? (uiChanged ? previous.uiGen + 1 : previous.uiGen) : 0;
     cacheRef.current = { projection, byId, signatures, renderRev, ui, trigger, dragId, uiGen };
     return { projection, byId, renderRev, uiGen };
-  }, [projection, ui, trigger, dragId]);
+  }), [projection, ui, trigger, dragId]);
 }
 
 export interface UiState {

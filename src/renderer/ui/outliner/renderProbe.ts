@@ -23,19 +23,32 @@ function readFlag(): boolean {
 export const RENDER_PROBE_ENABLED = readFlag();
 
 let outlinerItemRenders = 0;
+let lastIndexMs = 0;
 
 export function noteOutlinerItemRender(): void {
   if (RENDER_PROBE_ENABLED) outlinerItemRenders += 1;
 }
 
-// Wrap a synchronous re-render (the command `flushSync`). Logs the number of
-// OutlinerItem renders observed during `run` and the elapsed wall time.
+// Wrap the per-command index recomputation (signatures + revision diff). The
+// duration is reported by the next measureRender as `index=`, so we can tell how
+// much of a command's cost is index bookkeeping vs React render/reconcile.
+export function measureRenderIndex<T>(run: () => T): T {
+  if (!RENDER_PROBE_ENABLED) return run();
+  const start = performance.now();
+  const result = run();
+  lastIndexMs = performance.now() - start;
+  return result;
+}
+
+// Wrap a synchronous re-render (the command `flushSync`). Logs total wall time,
+// the index time observed during it, and how many OutlinerItem renders ran.
 export function measureRender<T>(run: () => T): T {
   if (!RENDER_PROBE_ENABLED) return run();
   const before = outlinerItemRenders;
+  lastIndexMs = 0;
   const start = performance.now();
   const result = run();
   const ms = performance.now() - start;
-  console.log(`[render] ${ms.toFixed(1)}ms items=${outlinerItemRenders - before}`);
+  console.log(`[render] ${ms.toFixed(1)}ms index=${lastIndexMs.toFixed(1)}ms items=${outlinerItemRenders - before}`);
   return result;
 }
