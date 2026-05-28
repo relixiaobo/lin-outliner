@@ -49,6 +49,9 @@
   --deck-bg: #f4f4f5;
   --app-bg: var(--deck-bg);
   --panel-bg: #ffffff;
+  /* Tint applied to the window chrome when an OS material sits behind it; the
+     transparent remainder is what lets vibrancy / mica show through. */
+  --window-material-frost: color-mix(in srgb, var(--deck-bg) 62%, transparent);
   --surface-soft: #fafafa;
   --text-main: #09090b;
   --text-sub: #52525b;
@@ -748,6 +751,23 @@ button:focus-visible {
 .agent-dock {
   min-width: 0;
   background: var(--deck-bg);
+}
+
+/* OS window material (macOS vibrancy / Windows mica). Content panels stay opaque
+   for readability; only the chrome turns translucent. The frost lives on the two
+   non-overlapping regions — the title bar and the content deck — while the layers
+   above and below them go transparent, so translucency never stacks (stacked
+   alpha would compound to near-opaque and hide the material). */
+:root[data-window-material],
+[data-window-material] .app,
+[data-window-material] .sidebar-dock,
+[data-window-material] .agent-dock {
+  background: transparent;
+}
+
+[data-window-material] .top-chrome,
+[data-window-material] .app-shell {
+  background: var(--window-material-frost);
 }
 
 .app-shell.sidebar-collapsed .sidebar-dock,
