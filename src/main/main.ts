@@ -24,6 +24,7 @@ import {
   testProviderConnection,
 } from './agentSettings';
 import { isAgentCommand, isAssetCommand, isDocumentCommand, type AgentCommand, type AssetCommand } from '../core/commands';
+import { IPC_TRACE_ENABLED, traceIpc } from './ipcTrace';
 import type { AgentProviderConfigInput, AgentRuntimeSettingsInput } from '../core/types';
 import { loadWindowState, trackWindowState } from './windowState';
 
@@ -271,10 +272,17 @@ function openSettingsWindow() {
 
 function registerIpc() {
   ipcMain.handle('lin:invoke', async (_event, command: string, args?: Record<string, unknown>) => {
-    if (isAgentCommand(command)) return handleAgentCommand(command, args ?? {});
-    if (isAssetCommand(command)) return handleAssetCommand(command, args ?? {});
-    if (isDocumentCommand(command)) return documentService.handle(command, args);
-    throw new Error(`Unknown command: ${command}`);
+    const dispatch = () => {
+      if (isAgentCommand(command)) return handleAgentCommand(command, args ?? {});
+      if (isAssetCommand(command)) return handleAssetCommand(command, args ?? {});
+      if (isDocumentCommand(command)) return documentService.handle(command, args);
+      throw new Error(`Unknown command: ${command}`);
+    };
+    if (!IPC_TRACE_ENABLED) return dispatch();
+    const start = performance.now();
+    const result = await dispatch();
+    traceIpc(command, result, performance.now() - start);
+    return result;
   });
 
   ipcMain.handle('lin:window', (_event, command: string) => {
