@@ -1,22 +1,8 @@
 import { LoroDoc, LoroList, LoroText, UndoManager, type LoroMap, type LoroTree, type LoroTreeNode, type TreeID, type Value } from 'loro-crdt';
 import { CoreError } from './errors';
 import {
-  AREAS_ID,
-  DAILY_NOTES_ID,
-  LIBRARY_ID,
-  PROJECTS_ID,
-  RECENTS_ID,
-  RESOURCES_ID,
-  SCHEMA_ID,
-  SEARCHES_ID,
-  SETTINGS_ID,
-  TAG_DAY_ID,
-  TAG_WEEK_ID,
-  TAG_YEAR_ID,
-  TRASH_ID,
   WORKSPACE_ID,
   createNodeRecord,
-  plainText,
   type DocumentState,
   type Node,
   type NodeFieldKey,
@@ -107,6 +93,19 @@ export class LoroOutlinerDocument {
   private touchedNodeIds = new Set<string>();
   private pendingUndoValue: Value | undefined;
   private undoGroupActive = false;
+  // The id→TreeID map is maintained incrementally (create sets, delete removes,
+  // move is a no-op since TreeIDs are stable). Only operations that rewrite the
+  // tree wholesale — import, revertTo, loro undo/redo — invalidate it; they set
+  // this flag so the next lookup rebuilds once instead of every lookup paying O(N).
+  private mappingsDirty = false;
+  // Live materialized-state cache. `materializeState()` is on every read/mutation
+  // path, so it must not walk the whole tree each time. The cache is patched
+  // write-through: `touchNode` records the dirty ids in `statePatch`, and a read
+  // re-materializes only those. Whole-tree rewrites (import/undo/redo/revert) set
+  // `stateDirtyFull` to force one full rebuild. `null` means "never built yet".
+  private stateCacheNodes: Record<string, Node> | null = null;
+  private statePatch = new Set<string>();
+  private stateDirtyFull = false;
 
   constructor(state?: SerializedLoroDocumentState) {
     this.doc = new LoroDoc();
@@ -153,8 +152,9 @@ export class LoroOutlinerDocument {
   commit(origin: string, undoValue?: unknown) {
     this.pendingUndoValue = undoValue as Value | undefined;
     try {
+      // Committing finalizes pending ops; it never reassigns TreeIDs, so the
+      // incrementally-maintained map stays valid and needs no rebuild here.
       this.doc.commit({ origin });
-      this.rebuildMappings();
     } finally {
       this.pendingUndoValue = undefined;
     }
@@ -168,6 +168,11 @@ export class LoroOutlinerDocument {
       if (!id) continue;
       this.nodeIdToTreeId.set(id, treeNode.id);
     }
+    this.mappingsDirty = false;
+  }
+
+  private ensureMappings() {
+    if (this.mappingsDirty) this.rebuildMappings();
   }
 
   clearRedo() {
@@ -177,11 +182,18 @@ export class LoroOutlinerDocument {
   }
 
   undo(scope: LoroUndoScope) {
-    return this.undoManagerFor(scope).undo();
+    const result = this.undoManagerFor(scope).undo();
+    // Undo replays ops directly on the doc without our touchNode hooks, so it
+    // can recreate/remove arbitrary nodes — the map and the state cache must be
+    // rebuilt from scratch before the next lookup.
+    this.invalidateWholeTree();
+    return result;
   }
 
   redo(scope: LoroUndoScope) {
-    return this.undoManagerFor(scope).redo();
+    const result = this.undoManagerFor(scope).redo();
+    this.invalidateWholeTree();
+    return result;
   }
 
   canUndo(scope: LoroUndoScope) {
@@ -223,6 +235,13 @@ export class LoroOutlinerDocument {
   revertTo(frontiers: ReturnType<LoroDoc['frontiers']>, origin: string) {
     this.doc.revertTo(frontiers);
     this.commit(origin);
+    // Reverting rewrites the tree to an earlier state; map and cache are stale.
+    this.invalidateWholeTree();
+  }
+
+  private invalidateWholeTree() {
+    this.mappingsDirty = true;
+    this.stateDirtyFull = true;
   }
 
   clearTouchedNodeIds() {
@@ -302,73 +321,125 @@ export class LoroOutlinerDocument {
 
   deleteNode(nodeId: string) {
     const state = this.materializeState();
-    for (const id of subtreeIds(state, nodeId)) this.touchNode(id);
+    const removed = subtreeIds(state, nodeId);
+    for (const id of removed) this.touchNode(id);
     const parentId = state.nodes[nodeId]?.parentId;
     if (parentId) this.touchNode(parentId);
     this.tree.delete(this.requiredTreeNode(nodeId).id);
-    this.rebuildMappings();
+    // Drop the deleted subtree from the map incrementally — TreeIDs of the
+    // surviving nodes are unchanged, so a full rebuild is unnecessary.
+    for (const id of removed) this.nodeIdToTreeId.delete(id);
   }
 
   materializeState(): DocumentState {
+    this.reconcileStateCache();
+    // Return a fresh container over the cached node objects: callers may add or
+    // remove `nodes` entries without corrupting the cache. The node objects are
+    // shared (read-only by contract — mutators clone before writing), so this is
+    // an O(N) reference copy rather than a full re-materialize.
+    return {
+      schemaVersion: 1,
+      workspaceId: WORKSPACE_ID,
+      rootId: WORKSPACE_ID,
+      nodes: { ...this.stateCacheNodes },
+    };
+  }
+
+  private reconcileStateCache() {
+    if (this.stateCacheNodes === null || this.stateDirtyFull) {
+      this.stateCacheNodes = this.buildAllNodes();
+      this.statePatch.clear();
+      this.stateDirtyFull = false;
+      return;
+    }
+    if (this.statePatch.size === 0) return;
+    for (const id of this.statePatch) {
+      const node = this.materializeNode(id);
+      if (node) this.stateCacheNodes[id] = node;
+      else delete this.stateCacheNodes[id];
+    }
+    this.statePatch.clear();
+  }
+
+  // Full walk of the tree into a normalized node map. The Loro tree is the single
+  // source of truth: system-node seeding and legacy migration are persisted into
+  // it once at construction (Core's `ensureSystemNodesDirect`), so reads no longer
+  // re-apply them as a per-read view transform. That keeps materialization a pure,
+  // cacheable projection of the tree and lets the incremental patch path stay
+  // consistent with the full build.
+  private buildAllNodes(): Record<string, Node> {
     const nodes: Record<string, Node> = {};
     const visit = (treeNode: LoroTreeNode) => {
-      if (isDeletedTreeNode(treeNode)) return;
-      const data = treeNode.data;
-      const id = readString(data.get('id'));
-      if (!id) return;
-      const parentTreeNode = treeNode.parent();
-      const parentId = parentTreeNode ? readString(parentTreeNode.data.get('id')) : undefined;
-      const content = readRichText(data);
-      const filterValues = data.get('filterValues');
-      const node = normalizeNode({
-        id,
-        type: readString(data.get('type')) as NodeType | undefined,
-        parentId,
-        children: [],
-        content,
-        tags: readStringList(data.get('tags')),
-        createdAt: readNumber(data.get('createdAt')) ?? nowMs(),
-        updatedAt: readNumber(data.get('updatedAt')) ?? nowMs(),
-        locked: readBoolean(data.get('locked')) ?? false,
-        autoCollected: readBoolean(data.get('autoCollected')) ?? false,
-      } as Node);
-      // filterValues lives on the filterRule variant; persistence writes it
-      // generically (only filterRule data carries it).
-      if (filterValues !== undefined) (node as { filterValues?: string[] }).filterValues = readStringList(filterValues);
-
-      for (const key of NODE_SCALAR_KEYS) {
-        if ([
-          'type',
-          'createdAt',
-          'updatedAt',
-          'locked',
-          'autoCollected',
-          'filterValues',
-        ].includes(key)) continue;
-        const value = data.get(key);
-        if (value !== undefined && value !== null) {
-          (node as unknown as Record<string, unknown>)[key] = clone(value);
-        }
-      }
-
-      nodes[id] = node;
-      const children = treeNode.children() ?? [];
-      for (const child of children) {
-        const childId = readString(child.data.get('id'));
-        if (childId) node.children.push(childId);
-        visit(child);
-      }
+      const node = this.readNodeFromTree(treeNode);
+      if (node) nodes[node.id] = node;
+      for (const child of treeNode.children() ?? []) visit(child);
     };
 
     for (const root of this.tree.roots()) visit(root);
-    const state = normalizeState({
+    return normalizeState({
       schemaVersion: 1,
       workspaceId: WORKSPACE_ID,
       rootId: WORKSPACE_ID,
       nodes,
-    });
-    ensureSystemNodes(state);
-    return state;
+    }).nodes;
+  }
+
+  // Materialize a single node by id from the tree, mirroring exactly what
+  // `materializeState` produces per node (minus the whole-state normalization
+  // and system-node seeding, which are not per-node concerns). This is the
+  // building block for the incremental cache: re-read only the touched nodes.
+  materializeNode(id: string): Node | undefined {
+    const treeNode = this.treeNodeOrUndefined(id);
+    if (!treeNode) return undefined;
+    return this.readNodeFromTree(treeNode);
+  }
+
+  private readNodeFromTree(treeNode: LoroTreeNode): Node | undefined {
+    if (isDeletedTreeNode(treeNode)) return undefined;
+    const data = treeNode.data;
+    const id = readString(data.get('id'));
+    if (!id) return undefined;
+    const parentTreeNode = treeNode.parent();
+    const parentId = parentTreeNode ? readString(parentTreeNode.data.get('id')) : undefined;
+    const content = readRichText(data);
+    const filterValues = data.get('filterValues');
+    const node = normalizeNode({
+      id,
+      type: readString(data.get('type')) as NodeType | undefined,
+      parentId,
+      children: [],
+      content,
+      tags: readStringList(data.get('tags')),
+      createdAt: readNumber(data.get('createdAt')) ?? nowMs(),
+      updatedAt: readNumber(data.get('updatedAt')) ?? nowMs(),
+      locked: readBoolean(data.get('locked')) ?? false,
+      autoCollected: readBoolean(data.get('autoCollected')) ?? false,
+    } as Node);
+    // filterValues lives on the filterRule variant; persistence writes it
+    // generically (only filterRule data carries it).
+    if (filterValues !== undefined) (node as { filterValues?: string[] }).filterValues = readStringList(filterValues);
+
+    for (const key of NODE_SCALAR_KEYS) {
+      if ([
+        'type',
+        'createdAt',
+        'updatedAt',
+        'locked',
+        'autoCollected',
+        'filterValues',
+      ].includes(key)) continue;
+      const value = data.get(key);
+      if (value !== undefined && value !== null) {
+        (node as unknown as Record<string, unknown>)[key] = clone(value);
+      }
+    }
+
+    const children = treeNode.children() ?? [];
+    for (const child of children) {
+      const childId = readString(child.data.get('id'));
+      if (childId) node.children.push(childId);
+    }
+    return node;
   }
 
   private undoManagerFor(scope: LoroUndoScope) {
@@ -394,7 +465,7 @@ export class LoroOutlinerDocument {
   }
 
   private requiredTreeNode(nodeId: string) {
-    this.rebuildMappings();
+    this.ensureMappings();
     const treeId = this.nodeIdToTreeId.get(nodeId);
     const treeNode = treeId ? this.tree.getNodeByID(treeId) : undefined;
     if (!treeNode || isDeletedTreeNode(treeNode)) throw CoreError.nodeNotFound(nodeId);
@@ -402,7 +473,7 @@ export class LoroOutlinerDocument {
   }
 
   private treeNodeOrUndefined(nodeId: string) {
-    this.rebuildMappings();
+    this.ensureMappings();
     const treeId = this.nodeIdToTreeId.get(nodeId);
     const treeNode = treeId ? this.tree.getNodeByID(treeId) : undefined;
     return treeNode && !isDeletedTreeNode(treeNode) ? treeNode : undefined;
@@ -410,6 +481,7 @@ export class LoroOutlinerDocument {
 
   private touchNode(nodeId: string) {
     this.touchedNodeIds.add(nodeId);
+    this.statePatch.add(nodeId);
   }
 }
 
@@ -434,123 +506,6 @@ function normalizeNode(node: Node): Node {
     },
     tags: node.tags ?? [],
   };
-}
-
-function ensureSystemNodes(state: DocumentState) {
-  const now = nowMs();
-  state.workspaceId = WORKSPACE_ID;
-  state.rootId = WORKSPACE_ID;
-  ensureNode(state, WORKSPACE_ID, undefined, undefined, 'Lin Outliner', true, now);
-  ensureNode(state, DAILY_NOTES_ID, undefined, WORKSPACE_ID, 'Daily notes', true, now);
-  ensureNode(state, LIBRARY_ID, undefined, WORKSPACE_ID, 'Library', true, now);
-  ensureNode(state, SCHEMA_ID, undefined, WORKSPACE_ID, 'Schema', true, now);
-  ensureNode(state, SEARCHES_ID, undefined, WORKSPACE_ID, 'Saved searches', true, now);
-  ensureNode(state, RECENTS_ID, 'search', SEARCHES_ID, 'Recents', true, now);
-  ensureNode(state, TRASH_ID, undefined, WORKSPACE_ID, 'Trash', true, now);
-  ensureNode(state, SETTINGS_ID, undefined, WORKSPACE_ID, 'Settings', true, now);
-  ensureNode(state, TAG_DAY_ID, 'tagDef', SCHEMA_ID, 'day', true, now);
-  ensureNode(state, TAG_WEEK_ID, 'tagDef', SCHEMA_ID, 'week', true, now);
-  ensureNode(state, TAG_YEAR_ID, 'tagDef', SCHEMA_ID, 'year', true, now);
-  for (const id of [DAILY_NOTES_ID, LIBRARY_ID, SCHEMA_ID, SEARCHES_ID, TRASH_ID, SETTINGS_ID]) {
-    attachChildOnce(state, WORKSPACE_ID, id, undefined);
-  }
-  attachChildOnce(state, SEARCHES_ID, RECENTS_ID, 0);
-  for (const id of [TAG_DAY_ID, TAG_WEEK_ID, TAG_YEAR_ID]) {
-    attachChildOnce(state, SCHEMA_ID, id, undefined);
-  }
-  migrateLegacyParaNodes(state);
-  moveLegacyWorkspaceNodesToLibrary(state);
-}
-
-const LEGACY_PARA_NODE_NAMES = new Map([
-  [PROJECTS_ID, 'Projects'],
-  [AREAS_ID, 'Areas'],
-  [RESOURCES_ID, 'Resources'],
-]);
-
-function migrateLegacyParaNodes(state: DocumentState) {
-  const library = state.nodes[LIBRARY_ID];
-  if (!library) return;
-  for (const [id, title] of LEGACY_PARA_NODE_NAMES) {
-    const node = state.nodes[id];
-    if (!node) continue;
-    detachFromParent(state, id);
-    if (isDisposableLegacyParaNode(node, title)) {
-      delete state.nodes[id];
-      continue;
-    }
-    node.locked = false;
-    node.parentId = LIBRARY_ID;
-    library.children = library.children.filter((childId) => childId !== id);
-    library.children.push(id);
-  }
-}
-
-function isDisposableLegacyParaNode(node: Node, title: string) {
-  return node.type === undefined
-    && node.children.length === 0
-    && node.content.text === title
-    && node.content.marks.length === 0
-    && node.content.inlineRefs.length === 0
-    && node.tags.length === 0
-    && !node.description;
-}
-
-function detachFromParent(state: DocumentState, nodeId: string) {
-  const parentId = state.nodes[nodeId]?.parentId;
-  const parent = parentId ? state.nodes[parentId] : undefined;
-  if (parent) parent.children = parent.children.filter((childId) => childId !== nodeId);
-}
-
-function moveLegacyWorkspaceNodesToLibrary(state: DocumentState) {
-  const root = state.nodes[WORKSPACE_ID];
-  const library = state.nodes[LIBRARY_ID];
-  if (!root || !library) return;
-  const systemRootIds = new Set([
-    LIBRARY_ID,
-    DAILY_NOTES_ID,
-    SCHEMA_ID,
-    SEARCHES_ID,
-    RECENTS_ID,
-    TRASH_ID,
-    SETTINGS_ID,
-  ]);
-  const legacyIds = root.children.filter((childId) => !systemRootIds.has(childId) && Boolean(state.nodes[childId]));
-  if (legacyIds.length === 0) return;
-  root.children = root.children.filter((childId) => !legacyIds.includes(childId));
-  for (const childId of legacyIds) {
-    library.children = library.children.filter((id) => id !== childId);
-    library.children.push(childId);
-    state.nodes[childId]!.parentId = LIBRARY_ID;
-  }
-}
-
-function ensureNode(
-  state: DocumentState,
-  id: string,
-  type: NodeType | undefined,
-  parentId: string | undefined,
-  name: string,
-  locked: boolean,
-  now: number,
-) {
-  const node = state.nodes[id] ?? createNodeRecord(id, type, parentId, now);
-  node.type = type;
-  node.parentId = parentId;
-  if (!node.content.text) node.content = plainText(name);
-  node.locked = locked;
-  state.nodes[id] = normalizeNode(node);
-}
-
-function attachChildOnce(state: DocumentState, parentId: string, childId: string, index: number | null | undefined) {
-  const parent = state.nodes[parentId];
-  if (parent) {
-    parent.children = parent.children.filter((id) => id !== childId);
-    const pos = Math.max(0, Math.min(index ?? parent.children.length, parent.children.length));
-    parent.children.splice(pos, 0, childId);
-  }
-  const child = state.nodes[childId];
-  if (child) child.parentId = parentId;
 }
 
 function isDeletedTreeNode(treeNode: LoroTreeNode) {
