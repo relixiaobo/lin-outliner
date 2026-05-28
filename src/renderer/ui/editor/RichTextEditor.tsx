@@ -716,10 +716,18 @@ export function RichTextEditor(props: RichTextEditorProps) {
     view.setProps({ editable: () => !props.readOnly });
   }, [props.readOnly]);
 
+  // Depend only on the focus request itself. The matching target and the
+  // consume callback are read from `propsRef` (the latest-props ref this
+  // component already maintains) instead of the dependency array: both change
+  // identity on every parent render, and listing them here made the effect
+  // re-run every render. Under a large document with an active editor trigger
+  // that re-entrancy looped (applyCursorPlacement -> updateTrigger ->
+  // onTriggerChange -> setTrigger -> render -> effect again) until React's
+  // update-depth limit tripped.
   useEffect(() => {
     const view = viewRef.current;
     const request = props.focusRequest;
-    const target = props.focusTarget;
+    const target = propsRef.current.focusTarget;
     if (!view || view.isDestroyed || !request || !target) return;
     if (!focusTargetMatches(request.target, target)) return;
 
@@ -727,16 +735,16 @@ export function RichTextEditor(props: RichTextEditorProps) {
     applyCursorPlacement(view, request.placement);
     updateToolbar(view);
     if (!composingRef.current && !view.composing) updateTrigger(view);
-    props.onFocusRequestConsumed?.(request);
-  }, [props.focusRequest, props.focusTarget, props.onFocusRequestConsumed]);
+    propsRef.current.onFocusRequestConsumed?.(request);
+  }, [props.focusRequest]);
 
   useEffect(() => {
     const view = viewRef.current;
     const input = props.pendingInput;
-    const target = props.focusTarget;
+    const target = propsRef.current.focusTarget;
     if (!view || view.isDestroyed || !input || !target) return;
     if (!focusTargetMatches(input.target, target)) return;
-    if (props.readOnly || composingRef.current || view.composing) return;
+    if (propsRef.current.readOnly || composingRef.current || view.composing) return;
 
     focusEditorDom(view);
     const insertFrom = view.state.selection.from;
@@ -748,8 +756,8 @@ export function RichTextEditor(props: RichTextEditorProps) {
     updateToolbar(view);
     updateTrigger(view);
     handleContentUpdateAction(docToRichText(view.state.doc));
-    props.onPendingInputConsumed?.(input);
-  }, [props.pendingInput, props.focusTarget, props.readOnly, props.onPendingInputConsumed]);
+    propsRef.current.onPendingInputConsumed?.(input);
+  }, [props.pendingInput]);
 
   return (
     <>
