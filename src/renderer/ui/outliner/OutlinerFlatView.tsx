@@ -19,6 +19,7 @@ import type { DocumentIndex, UiState } from '../../state/document';
 import { buildVisualRows, type VisualRow } from '../../state/visualRows';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
 import { hiddenFieldKey, readViewConfig } from './row-model';
+import { RENDER_PROBE_ENABLED } from './renderProbe';
 import { OutlinerFieldRow } from './OutlinerFieldRow';
 import { OutlinerItem } from './OutlinerItem';
 import { ViewToolbar } from './ViewToolbar';
@@ -230,10 +231,29 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     [rows, measureVersion],
   );
 
+  // The element that actually scrolls is whichever ancestor has overflow and
+  // taller content — not necessarily the passed container. Using a non-scrolling
+  // reference would freeze the window (its rect moves together with the list), so
+  // detect the real scroll container and use it as the fixed viewport reference.
+  const scrollerRef = useRef<HTMLElement | null>(null);
+  const resolveScroller = useCallback((): HTMLElement | null => {
+    if (scrollerRef.current) return scrollerRef.current;
+    let el: HTMLElement | null = listRef.current?.parentElement ?? null;
+    while (el) {
+      const style = getComputedStyle(el);
+      if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && el.scrollHeight > el.clientHeight) {
+        break;
+      }
+      el = el.parentElement;
+    }
+    scrollerRef.current = el ?? props.scrollParentRef.current;
+    return scrollerRef.current;
+  }, [props.scrollParentRef]);
+
   // Effective scroll offset = how far the flat list has scrolled above the scroll
   // container's top. Recomputed on scroll and on container resize.
   const updateScrollMetrics = useCallback(() => {
-    const parent = props.scrollParentRef.current;
+    const parent = resolveScroller();
     const list = listRef.current;
     if (!parent || !list) return;
     const parentRect = parent.getBoundingClientRect();
@@ -244,7 +264,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
         ? current
         : next
     ));
-  }, [props.scrollParentRef]);
+  }, [resolveScroller]);
 
   const scrollFrameRef = useRef<number | null>(null);
   const scheduleScrollMetrics = useCallback(() => {
@@ -257,8 +277,11 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
 
   useLayoutEffect(() => {
     if (!virtualize) return undefined;
-    const parent = props.scrollParentRef.current;
-    if (!parent) return undefined;
+    scrollerRef.current = null;
+    const parent = resolveScroller();
+    if (RENDER_PROBE_ENABLED) {
+      console.log('[flat] scroller=', parent?.className ?? parent?.tagName ?? 'none');
+    }
     updateScrollMetrics();
     // `scroll` events do not bubble, and the element that actually scrolls may be
     // an ancestor/descendant of the passed container, so listen in the capture
@@ -266,7 +289,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     const onScroll = () => scheduleScrollMetrics();
     window.addEventListener('scroll', onScroll, { capture: true, passive: true });
     let observer: ResizeObserver | undefined;
-    if (typeof ResizeObserver !== 'undefined') {
+    if (parent && typeof ResizeObserver !== 'undefined') {
       observer = new ResizeObserver(() => updateScrollMetrics());
       observer.observe(parent);
     }
@@ -278,7 +301,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
         scrollFrameRef.current = null;
       }
     };
-  }, [virtualize, props.scrollParentRef, updateScrollMetrics, scheduleScrollMetrics]);
+  }, [virtualize, resolveScroller, updateScrollMetrics, scheduleScrollMetrics]);
 
   // ── Window selection ──────────────────────────────────────────────────────
   // Force-mount rows that must accept focus even when scrolled out of view: the
