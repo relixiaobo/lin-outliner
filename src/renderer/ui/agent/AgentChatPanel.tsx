@@ -52,6 +52,7 @@ import { AgentSettingsDialog } from './AgentSettingsDialog';
 import { AgentMessageRow } from './AgentMessageRow';
 import { AgentSubagentDetailsPanel } from './AgentSubagentDetailsPanel';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { ConfirmDialog } from '../primitives/ConfirmDialog';
 import { IconButton } from '../primitives/IconButton';
 import { TextInputControl } from '../primitives/TextInputControl';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
@@ -526,6 +527,7 @@ export function AgentChatPanel({
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [slashCommands, setSlashCommands] = useState<AgentSlashCommandView[]>([]);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [pendingDeleteSession, setPendingDeleteSession] = useState<{ id: string; title: string | null } | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [selectedSubagentId, setSelectedSubagentId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -815,11 +817,16 @@ export function AgentChatPanel({
     await loadSessions();
   }
 
-  async function handleDeleteSession(targetSessionId: string, title: string | null) {
-    const label = readableSessionTitle(title, 'Untitled');
-    if (!window.confirm(`Delete "${label}"? This cannot be undone.`)) return;
-    await api.agentDeleteSession(targetSessionId);
-    if (targetSessionId === sessionId) {
+  function handleDeleteSession(targetSessionId: string, title: string | null) {
+    setPendingDeleteSession({ id: targetSessionId, title });
+  }
+
+  async function confirmDeleteSession() {
+    const target = pendingDeleteSession;
+    if (!target) return;
+    setPendingDeleteSession(null);
+    await api.agentDeleteSession(target.id);
+    if (target.id === sessionId) {
       await newSession();
       setHistoryOpen(false);
     }
@@ -1119,6 +1126,17 @@ export function AgentChatPanel({
         subagent={selectedSubagent}
         subagentsByParentToolCallId={subagentsByParentToolCallId}
       />
+      {pendingDeleteSession ? (
+        <ConfirmDialog
+          title="Delete conversation?"
+          message={`"${readableSessionTitle(pendingDeleteSession.title, 'Untitled')}" will be permanently deleted. This cannot be undone.`}
+          confirmLabel="Delete"
+          cancelLabel="Cancel"
+          danger
+          onConfirm={() => void confirmDeleteSession()}
+          onCancel={() => setPendingDeleteSession(null)}
+        />
+      ) : null}
     </div>
   );
 }

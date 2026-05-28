@@ -73,7 +73,7 @@ async function writeClipboardText(text: string): Promise<void> {
 }
 
 export function NodeContextMenu(props: NodeContextMenuProps) {
-  const [mode, setMode] = useState<'main' | 'tag' | 'move' | 'appearance'>('main');
+  const [mode, setMode] = useState<'main' | 'tag' | 'move' | 'appearance' | 'icon' | 'banner'>('main');
   const [query, setQuery] = useState('');
   const menuRef = useRef<HTMLDivElement | null>(null);
   const menuAnchor = useMemo(() => overlayAnchorFromPoint(props.x, props.y), [props.x, props.y]);
@@ -333,10 +333,8 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
         icon={<ColorIcon size={ICON_SIZE.menu} />}
         label="Set icon"
         onClick={() => {
-          const icon = window.prompt('Icon', target.icon ?? '');
-          if (icon === null) return;
-          void props.run(() => api.setNodeIcon(props.targetId, icon.trim() || null, icon.trim() ? 'emoji' : null));
-          props.onClose();
+          setQuery(target.icon ?? '');
+          setMode('icon');
         }}
       />
       <MenuItem
@@ -354,10 +352,8 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
         icon={<FieldIcon size={ICON_SIZE.menu} />}
         label="Upload banner image"
         onClick={() => {
-          const assetId = window.prompt('Banner asset id or path', target.bannerAssetId ?? '');
-          if (assetId === null) return;
-          void props.run(() => api.setNodeBanner(props.targetId, assetId.trim() || null));
-          props.onClose();
+          setQuery(target.bannerAssetId ?? '');
+          setMode('banner');
         }}
       />
       <MenuItem
@@ -372,10 +368,65 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     </>
   );
 
+  // Inline text entry for the single-field appearance prompts (icon, banner),
+  // replacing window.prompt — a blocking browser dialog that telegraphs "web app"
+  // — with an in-menu input consistent with the tag/move search sub-modes.
+  const renderPromptMode = (config: {
+    title: string;
+    label: string;
+    placeholder: string;
+    apply: (value: string) => void;
+  }) => (
+    <>
+      <div className="node-context-subhead">
+        <ButtonControl onClick={() => setMode('appearance')}>Back</ButtonControl>
+        <span>{config.title}</span>
+      </div>
+      <TextInputControl
+        className="node-context-search"
+        label={config.label}
+        value={query}
+        placeholder={config.placeholder}
+        autoFocus
+        onChange={(event) => setQuery(event.currentTarget.value)}
+        onKeyDown={(event) => {
+          if (isImeComposingEvent(event)) return;
+          if (event.key !== 'Enter') return;
+          event.preventDefault();
+          config.apply(query);
+        }}
+      />
+      <MenuItem
+        className="node-context-item"
+        icon={<ColorIcon size={ICON_SIZE.menu} />}
+        label="Save"
+        onClick={() => config.apply(query)}
+      />
+    </>
+  );
+
+  const applyIcon = (value: string) => {
+    const trimmed = value.trim();
+    void props.run(() => api.setNodeIcon(props.targetId, trimmed || null, trimmed ? 'emoji' : null));
+    props.onClose();
+  };
+  const applyBanner = (value: string) => {
+    const trimmed = value.trim();
+    void props.run(() => api.setNodeBanner(props.targetId, trimmed || null));
+    props.onClose();
+  };
+
+  const modeLabel = mode === 'main' ? 'Node actions'
+    : mode === 'tag' ? 'Add tag'
+      : mode === 'appearance' ? 'Appearance'
+        : mode === 'icon' ? 'Set icon'
+          : mode === 'banner' ? 'Banner image'
+            : 'Move node';
+
   return createPortal(
     <MenuSurface
       ref={menuRef}
-      aria-label={mode === 'main' ? 'Node actions' : mode === 'tag' ? 'Add tag' : mode === 'appearance' ? 'Appearance' : 'Move node'}
+      aria-label={modeLabel}
       className="node-context-menu"
       preserveSelection
       role={mode === 'main' ? 'menu' : 'dialog'}
@@ -388,7 +439,11 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
           ? renderTagMode()
           : mode === 'appearance'
             ? renderAppearanceMode()
-            : renderMoveMode()}
+            : mode === 'icon'
+              ? renderPromptMode({ title: 'Set icon', label: 'Icon', placeholder: 'emoji or short text', apply: applyIcon })
+              : mode === 'banner'
+                ? renderPromptMode({ title: 'Banner image', label: 'Banner asset', placeholder: 'asset id or path', apply: applyBanner })
+                : renderMoveMode()}
     </MenuSurface>,
     document.body,
   );
