@@ -274,7 +274,6 @@
 .agent-composer-editor,
 .agent-composer-model-menu,
 .agent-composer-more-model-list,
-.agent-settings-dialog,
 .command-list,
 .trigger-popover,
 .node-picker-popover {
@@ -4578,24 +4577,16 @@ button.panel-resize-handle::after {
   box-shadow: var(--focus-ring-shadow);
 }
 
-.agent-settings-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-modal);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(20, 20, 22, 0.14);
-  padding: var(--space-8);
-}
-
-.agent-settings-dialog {
-  width: min(560px, calc(100vw - 32px));
-  max-height: min(680px, calc(100vh - 32px));
+/* The settings window is a full-bleed opaque Preferences surface (it has its own
+   native title bar), not a centered modal card. */
+.settings-window {
+  display: block;
+  box-sizing: border-box;
+  width: 100vw;
+  height: 100vh;
   overflow-y: auto;
-  border-radius: var(--radius-md);
+  scrollbar-gutter: stable;
   background: var(--bg);
-  box-shadow: var(--shadow);
   padding: var(--space-8);
 }
 
@@ -4702,10 +4693,6 @@ button.panel-resize-handle::after {
 .agent-settings-secondary:hover:not(:disabled) {
   background: var(--control-hover);
   color: var(--text-strong);
-}
-
-.settings-dialog {
-  width: min(880px, calc(100vw - 32px));
 }
 
 .settings-layout {

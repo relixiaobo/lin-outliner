@@ -46,8 +46,6 @@ export function App() {
   const [sidebarExpandedIds, setSidebarExpandedIds] = useState<Set<NodeId>>(() => new Set());
   const [pendingFocus, setPendingFocus] = useState<FocusHint | null>(null);
   const [agentSessionTitles, setAgentSessionTitles] = useState<Record<string, string>>({});
-  const [providerSettingsOpen, setProviderSettingsOpen] = useState(false);
-  const providerSettingsRestoreTargetRef = useRef<HTMLElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [trigger, setTrigger] = useState<TriggerState>(null);
   const [dragId, setDragId] = useState<NodeId | null>(null);
@@ -352,9 +350,8 @@ export function App() {
         onCloseTab={closeTab}
         onNavigateBack={navigateActivePanelBack}
         onNavigateForward={navigateActivePanelForward}
-        onOpenProviderSettings={(restoreFocusTarget) => {
-          providerSettingsRestoreTargetRef.current = restoreFocusTarget ?? null;
-          setProviderSettingsOpen(true);
+        onOpenProviderSettings={() => {
+          void window.lin?.openSettings();
         }}
         onSelectTab={selectTab}
         onToggleAgent={() => setAgentOpen((open) => !open)}
@@ -401,11 +398,8 @@ export function App() {
           userViewContext={agentUserViewContext}
           onOpenNodeReference={openNodeReferenceFromAgent}
           onOpenDebugPanel={openAgentDebugPanel}
-          onProviderSettingsOpenChange={setProviderSettingsOpen}
-          providerSettingsRestoreFocus={() => providerSettingsRestoreTargetRef.current}
           onResizeKeyDown={resizeAgentWithKeyboard}
           onResizeStart={beginAgentResize}
-          providerSettingsOpen={providerSettingsOpen}
         />
       </div>
 
