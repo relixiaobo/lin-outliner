@@ -91,6 +91,10 @@ interface OutlinerItemProps {
   // under `nodeId` (kept stable so the editor is never remounted), after which
   // the row is rendered like any other content row.
   draft?: boolean;
+  // Flat (virtualized) rendering: the row's children are emitted as sibling rows
+  // by the flat producer, so this row must not render its own nested OutlinerView.
+  // Indentation comes from `depth` (cumulative) instead of nested `.children`.
+  flat?: boolean;
 }
 
 function OutlinerItemImpl(props: OutlinerItemProps) {
@@ -1310,7 +1314,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         />
       )}
 
-      {row.expanded && (
+      {!props.flat && row.expanded && (
         <div className="children">
           <OutlinerView
             panelId={props.panelId}
