@@ -348,6 +348,7 @@ export class LoroOutlinerDocument {
   private reconcileStateCache() {
     if (this.stateCacheNodes === null || this.stateDirtyFull) {
       this.stateCacheNodes = this.buildAllNodes();
+      if (cacheFreezeEnabled()) for (const id of Object.keys(this.stateCacheNodes)) deepFreeze(this.stateCacheNodes[id]);
       this.statePatch.clear();
       this.stateDirtyFull = false;
       return;
@@ -355,7 +356,7 @@ export class LoroOutlinerDocument {
     if (this.statePatch.size === 0) return;
     for (const id of this.statePatch) {
       const node = this.materializeNode(id);
-      if (node) this.stateCacheNodes[id] = node;
+      if (node) this.stateCacheNodes[id] = cacheFreezeEnabled() ? deepFreeze(node) : node;
       else delete this.stateCacheNodes[id];
     }
     this.statePatch.clear();
@@ -506,6 +507,22 @@ function normalizeNode(node: Node): Node {
     },
     tags: node.tags ?? [],
   };
+}
+
+// Read-only contract enforcement (dev/test only). The state cache hands out
+// shared node objects; callers must clone before mutating. With LIN_VERIFY_CACHE
+// set, cached nodes are frozen so any in-place mutation throws immediately rather
+// than silently corrupting the cache. Off (and free) in production.
+function cacheFreezeEnabled() {
+  return process.env.LIN_VERIFY_CACHE === '1';
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const key of Object.keys(value)) deepFreeze((value as Record<string, unknown>)[key]);
+  }
+  return value;
 }
 
 function isDeletedTreeNode(treeNode: LoroTreeNode) {
