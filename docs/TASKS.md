@@ -82,8 +82,9 @@ Ordered by priority; lower items may depend on higher ones.
   dropped by decision. #54 was reconciled against the already-merged #53 keyboard
   work (one positional conflict in `OutlinerItem.tsx`, both additions kept). #46
   landed as a direct `main` commit — its PR branch was force-pushed after an
-  accidental close during the serial merge, which blocked reopening it. Plan PR
-  #44 (the remediation doc) remains open and unmerged.
+  accidental close during the serial merge, which blocked reopening it. The
+  remediation plan doc landed in #44 (`docs/plans/native-feel-remediation.md`,
+  still `in-progress` — stage 6 packaging/smoke remains).
 - **keyboard-shortcut-parity** (codex) — nodex shortcut audit plus the
   remaining gaps: empty-selection `Cmd/Ctrl+A`, scoped `Cmd/Ctrl+Shift+D`
   go-to-today (vs batch duplicate), panel nav history on `Cmd/Ctrl+[`/`]` and
