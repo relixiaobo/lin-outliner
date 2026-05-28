@@ -450,7 +450,8 @@ export class AgentRuntimeStore {
   private projection: AgentRenderProjection = EMPTY_PROJECTION;
   private sessionId: string | null = null;
   private error: string | null = null;
-  private pendingApproval: AgentApprovalRequestView | null = null;
+  private readonly pendingApprovals = new Map<string, AgentApprovalRequestView>();
+  private pendingApprovalOrder: string[] = [];
   private restorePromise: Promise<string> | null = null;
   private requestVersion = 0;
   private started = false;
@@ -477,7 +478,7 @@ export class AgentRuntimeStore {
     this.sessionId = targetSessionId;
     this.projection = EMPTY_PROJECTION;
     this.error = null;
-    this.pendingApproval = null;
+    this.clearPendingApprovalState();
     this.publish();
     try {
       const session = await this.client.restoreSession(targetSessionId);
@@ -496,7 +497,7 @@ export class AgentRuntimeStore {
     this.sessionId = null;
     this.projection = EMPTY_PROJECTION;
     this.error = null;
-    this.pendingApproval = null;
+    this.clearPendingApprovalState();
     this.publish();
     try {
       const session = await this.client.createSession();
@@ -620,8 +621,8 @@ export class AgentRuntimeStore {
     if (!this.sessionId) return false;
     try {
       const result = await this.client.resolveApproval(this.sessionId, requestId, approved, scope);
-      if (result.resolved && this.pendingApproval?.requestId === requestId) {
-        this.pendingApproval = null;
+      if (result.resolved && this.pendingApprovals.has(requestId)) {
+        this.removePendingApproval(requestId);
         this.publish();
       }
       return result.resolved;
@@ -647,7 +648,7 @@ export class AgentRuntimeStore {
     const requestVersion = this.beginSessionRequest();
     this.projection = EMPTY_PROJECTION;
     this.error = null;
-    this.pendingApproval = null;
+    this.clearPendingApprovalState();
     this.publish();
     try {
       if (currentSessionId) {
@@ -703,7 +704,7 @@ export class AgentRuntimeStore {
     this.sessionId = session.sessionId;
     this.projection = session.renderProjection;
     this.error = session.renderProjection.errorMessage;
-    this.pendingApproval = null;
+    this.clearPendingApprovalState();
     this.publish();
   }
 
@@ -717,6 +718,7 @@ export class AgentRuntimeStore {
         this.restorePromise = null;
         this.projection = EMPTY_PROJECTION;
         this.error = null;
+        this.clearPendingApprovalState();
         this.publish();
       }
       return;
@@ -735,15 +737,15 @@ export class AgentRuntimeStore {
         this.sessionId = payload.sessionId;
       }
       if (payload.sessionId !== this.sessionId) return;
-      this.pendingApproval = payload.request;
+      this.addPendingApproval(payload.request);
       this.publish();
       return;
     }
 
     if (payload.type === 'approval_resolved') {
       if (payload.sessionId !== this.sessionId) return;
-      if (this.pendingApproval?.requestId === payload.requestId) {
-        this.pendingApproval = null;
+      if (this.pendingApprovals.has(payload.requestId)) {
+        this.removePendingApproval(payload.requestId);
         this.publish();
       }
       return;
@@ -810,7 +812,7 @@ export class AgentRuntimeStore {
       subagentRunIds: this.projection.subagentRunIds,
       subagents,
       subagentsByParentToolCallId,
-      pendingApproval: this.pendingApproval,
+      pendingApproval: this.currentPendingApproval(),
       toolResults,
       turnPhase,
       selectSession: this.selectSession,
@@ -830,6 +832,32 @@ export class AgentRuntimeStore {
       reloadSession: this.reloadSession,
       seedUserMessage: this.seedUserMessage,
     };
+  }
+
+  private addPendingApproval(request: AgentApprovalRequestView) {
+    if (!this.pendingApprovals.has(request.requestId)) {
+      this.pendingApprovalOrder.push(request.requestId);
+    }
+    this.pendingApprovals.set(request.requestId, request);
+  }
+
+  private removePendingApproval(requestId: string) {
+    this.pendingApprovals.delete(requestId);
+    this.pendingApprovalOrder = this.pendingApprovalOrder.filter((id) => id !== requestId);
+  }
+
+  private clearPendingApprovalState() {
+    this.pendingApprovals.clear();
+    this.pendingApprovalOrder = [];
+  }
+
+  private currentPendingApproval(): AgentApprovalRequestView | null {
+    while (this.pendingApprovalOrder.length > 0) {
+      const request = this.pendingApprovals.get(this.pendingApprovalOrder[0]);
+      if (request) return request;
+      this.pendingApprovalOrder.shift();
+    }
+    return null;
   }
 }
 

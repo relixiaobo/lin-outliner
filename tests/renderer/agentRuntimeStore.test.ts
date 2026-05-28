@@ -289,6 +289,51 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
+  test('queues multiple pending approval requests and shows the next one after resolution', async () => {
+    const fake = createFakeClient({ latestSession: session('saved', projection([], { isStreaming: true })) });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+
+    await flushMicrotasks();
+
+    const request = (requestId: string, target: string): AgentRuntimeEvent => ({
+      type: 'approval_request',
+      sessionId: 'saved',
+      requestId,
+      request: {
+        requestId,
+        sessionId: 'saved',
+        toolCallId: `tool-${requestId}`,
+        toolName: 'bash',
+        title: 'Approve command?',
+        target,
+        reason: 'This needs approval.',
+        details: [{ label: 'Command', value: target }],
+      },
+      timestamp: 10,
+    });
+
+    fake.emit(request('approval-1', 'git push origin codex/foo'));
+    fake.emit(request('approval-2', 'npm publish'));
+
+    expect(store.getSnapshot().pendingApproval?.requestId).toBe('approval-1');
+
+    await store.getSnapshot().resolveApproval('approval-1', true, 'once');
+
+    expect(store.getSnapshot().pendingApproval?.requestId).toBe('approval-2');
+
+    fake.emit({
+      type: 'approval_resolved',
+      sessionId: 'saved',
+      requestId: 'approval-2',
+      approved: false,
+      timestamp: 20,
+    });
+
+    expect(store.getSnapshot().pendingApproval).toBeNull();
+    unsubscribe();
+  });
+
   test('filters hidden system reminder user rows from the visible conversation', async () => {
     const restored = session('saved', projection([
       { nodeId: 'system-notification', message: userMessage(systemReminder('Background subagent completed.')), branches: null },

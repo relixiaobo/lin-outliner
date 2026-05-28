@@ -782,11 +782,11 @@ export class AgentRuntime {
   resetSession(sessionId: string) {
     const session = this.sessions.get(sessionId);
     if (!session) return;
-    this.clearPendingApprovalsForSession(sessionId);
     session.agent.reset();
     this.cleanupProviderSessionResources(sessionId);
     this.userViewContextReminderTracker.reset(sessionId);
     void (async () => {
+      await this.clearPendingApprovalsForSession(sessionId, session);
       await this.getEventStore().deleteSession(sessionId);
       this.debugProjectionCache.delete(sessionId);
       const eventState = createEmptyAgentEventReplayState();
@@ -816,7 +816,8 @@ export class AgentRuntime {
   closeSession(sessionId: string) {
     const session = this.sessions.get(sessionId);
     if (!session) return;
-    this.clearPendingApprovalsForSession(sessionId);
+    void this.clearPendingApprovalsForSession(sessionId, session)
+      .catch((error) => this.emitError(sessionId, error instanceof Error ? error.message : String(error)));
     session.agent.abort();
     session.unsubscribe?.();
     clearPendingProjection(session);
@@ -826,10 +827,18 @@ export class AgentRuntime {
     this.emit({ type: 'closed', sessionId, timestamp: Date.now() });
   }
 
-  private clearPendingApprovalsForSession(sessionId: string) {
+  private async clearPendingApprovalsForSession(sessionId: string, session: AgentSessionState) {
+    const resolvedEvents: AgentEventInput[] = [];
     for (const [requestId, pending] of [...this.pendingApprovals]) {
       if (pending.sessionId !== sessionId) continue;
       this.pendingApprovals.delete(requestId);
+      resolvedEvents.push({
+        type: 'approval.resolved',
+        actor: systemActor(),
+        runId: session.activeRunId ?? undefined,
+        requestId,
+        approved: false,
+      });
       this.emit({
         type: 'approval_resolved',
         sessionId,
@@ -838,6 +847,10 @@ export class AgentRuntime {
         timestamp: Date.now(),
       });
       pending.resolve({ approved: false, deniedBy: 'runtime' });
+    }
+    if (resolvedEvents.length > 0) {
+      await this.appendSessionEvents(sessionId, session, resolvedEvents);
+      this.emitProjection(sessionId, 'approval.resolved');
     }
   }
 
@@ -863,11 +876,17 @@ export class AgentRuntime {
       sessionId,
       executeSkillShell: async ({ command, skill }) => {
         const activeSettings = await this.getRuntimeSettings();
+        const current = sessionRef.current;
         return executeAgentSkillShellCommand({
+          approvalHandler: current
+            ? (input, signal) => this.requestToolApproval(sessionId, current, input, signal)
+            : undefined,
           command,
           localRoot: this.options.localFileRoot,
           permissionMode: this.options.permissionMode ?? activeSettings.permissionMode,
           allowedTools: skill.allowedTools,
+          sessionAllowRules: current?.permissionSessionAllowRules ?? [],
+          toolCallId: `skill-shell-${randomUUID()}`,
         });
       },
       executeForkedSkill: async ({ skill, renderedContent, parentToolCallId }) => {

@@ -1,13 +1,31 @@
+import type { ToolCall } from '@earendil-works/pi-ai';
 import type { AgentPermissionMode } from '../core/types';
-import { evaluateAgentToolPermission } from './agentPermissions';
+import type { AgentApprovalResolutionScope } from '../core/agentTypes';
+import { evaluateAgentToolPermission, type AgentPermissionAskDecision } from './agentPermissions';
 import { runLocalBashCommand, type LocalBashRunResult } from './agentLocalTools';
 
+export interface AgentSkillShellApprovalInput {
+  toolCall: ToolCall;
+  args: { command: string };
+  decision: AgentPermissionAskDecision;
+}
+
+export interface AgentSkillShellApprovalResolution {
+  approved: boolean;
+  deniedBy?: 'abort' | 'runtime' | 'user';
+  scope?: AgentApprovalResolutionScope;
+  sessionRule?: string;
+}
+
 export interface AgentSkillShellCommandInput {
+  approvalHandler?: (input: AgentSkillShellApprovalInput, signal?: AbortSignal) => Promise<AgentSkillShellApprovalResolution>;
   command: string;
   localRoot?: string;
   permissionMode?: AgentPermissionMode;
   allowedTools?: readonly string[];
+  sessionAllowRules?: readonly string[];
   signal?: AbortSignal;
+  toolCallId?: string;
 }
 
 export class AgentSkillShellError extends Error {
@@ -28,9 +46,24 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
       mode: input.permissionMode,
       workspaceRoot: input.localRoot,
       preapprovedToolRules: input.allowedTools ?? [],
+      sessionAllowRules: input.sessionAllowRules ?? [],
     },
   });
-  if (decision.behavior !== 'allow') {
+  if (decision.behavior === 'ask' && input.approvalHandler) {
+    const approval = await input.approvalHandler({
+      toolCall: {
+        type: 'toolCall',
+        id: input.toolCallId ?? 'skill-shell-bash',
+        name: 'bash',
+        arguments: { command: input.command },
+      },
+      args: { command: input.command },
+      decision,
+    }, input.signal);
+    if (!approval.approved) {
+      throw new AgentSkillShellError('permission_denied', skillShellApprovalDeniedMessage(approval));
+    }
+  } else if (decision.behavior !== 'allow') {
     throw new AgentSkillShellError(
       'permission_denied',
       `Shell command was not run: ${decision.reason ?? 'permission was denied.'}`,
@@ -55,6 +88,12 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
   }
 
   return formatSkillShellOutput(result);
+}
+
+function skillShellApprovalDeniedMessage(approval: AgentSkillShellApprovalResolution): string {
+  if (approval.deniedBy === 'abort') return 'Shell command was not run because the request was cancelled.';
+  if (approval.deniedBy === 'runtime') return 'Shell command was not run because the runtime stopped before approval.';
+  return 'Shell command was not run because the user denied permission.';
 }
 
 function formatSkillShellOutput(result: Pick<LocalBashRunResult, 'stdout' | 'stderr' | 'persistedOutputPath'>): string {
