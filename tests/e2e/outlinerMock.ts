@@ -408,10 +408,32 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             candidate.offset === ref.offset
             && candidate.targetNodeId === ref.targetNodeId
             && (candidate.displayName === undefined || candidate.displayName === ref.displayName));
-          const delta = op.content.text.length - (to - from);
+          const insertedLength = op.content.text.length;
+          const delta = insertedLength - (to - from);
+          // Mirror the real splice semantics (loroDocument.replaceRichTextRange):
+          // marks outside the replaced range survive (shifted by delta), marks
+          // inside it collapse, and the replacement content's marks are placed at
+          // `from`. Boundaries are non-inclusive on the right and inclusive-after
+          // on the left so typing next to a mark does not extend or drop it.
+          const mapPos = (pos: number, isStart: boolean) => {
+            if (pos < from) return pos;
+            if (pos > to) return pos + delta;
+            return isStart ? from + insertedLength : from;
+          };
+          const remappedMarks = next.marks
+            .map((mark) => {
+              const typed = mark as { start: number; end: number; type: string; attrs?: unknown };
+              return { ...typed, start: mapPos(typed.start, true), end: mapPos(typed.end, false) };
+            })
+            .filter((mark) => mark.end > mark.start);
+          const insertedMarks = op.content.marks.map((mark) => ({
+            ...mark,
+            start: from + mark.start,
+            end: from + mark.end,
+          }));
           next = {
             text: `${next.text.slice(0, from)}${op.content.text}${next.text.slice(to)}`,
-            marks: clone(op.content.marks),
+            marks: [...remappedMarks, ...insertedMarks],
             inlineRefs: [
               ...next.inlineRefs
                 .filter((ref) => !removesRef(ref))
