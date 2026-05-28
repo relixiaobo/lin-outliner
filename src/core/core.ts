@@ -15,7 +15,7 @@ import {
   type OperationHistoryScope,
   type OperationStackState,
 } from './operationJournal';
-import { buildDocumentProjection } from './projection';
+import { assembleProjection, buildDocumentProjection, projectNode } from './projection';
 import { runSearchExpr, runSearchNode, searchNodeHasRules } from './searchEngine';
 import {
   CONFIG_SCHEMA,
@@ -53,6 +53,7 @@ import {
   type CreateNodeTree,
   type DocumentProjection,
   type DocumentState,
+  type NodeProjection,
   type AutoInitStrategy,
   type FieldCardinality,
   type FieldConfigPatch,
@@ -147,6 +148,17 @@ export class Core {
   private activeTransaction?: CoreTransaction;
   private stateValue: DocumentState;
   private history: OperationJournal;
+  // Projection cache: the per-node projections plus their sorted id order.
+  // Patched incrementally for the touched nodes after each mutation, so the
+  // hot path no longer deep-clones every node on every command. `projectionReady`
+  // is false until first built or after a whole-tree rewrite (undo/redo/load).
+  private projectionNodes = new Map<string, NodeProjection>();
+  private projectionOrder: string[] = [];
+  private projectionReady = false;
+  // Monotonic counter bumped only when a mutation actually changes state. The
+  // service layer compares it before/after a command for O(1) change detection
+  // instead of stringifying the whole document.
+  private revisionValue = 0;
 
   constructor(state?: CoreSerializedState) {
     this.loro = new LoroOutlinerDocument(state);
@@ -205,9 +217,75 @@ export class Core {
   }
 
   projection(): DocumentProjection {
-    this.refreshStateFromLoro();
+    // Inside a transaction the cache is not folded until commit, so build fresh
+    // to reflect in-flight mutations. Outside one, serve the incremental cache.
+    if (this.activeTransaction) return this.freshProjection();
+    this.ensureProjectionCache();
+    const state = this.loro.materializeState();
     const todayId = this.currentTodayNodeId();
-    return buildDocumentProjection(this.stateValue, todayId);
+    return assembleProjection(state.workspaceId, state.rootId, todayId, this.projectionOrder, this.projectionNodes);
+  }
+
+  // The revision changes only when a mutation actually alters the document, so
+  // the caller can detect "did anything change" without comparing snapshots.
+  revision(): number {
+    return this.revisionValue;
+  }
+
+  private ensureProjectionCache() {
+    if (this.projectionReady) return;
+    const state = this.loro.materializeState();
+    this.projectionNodes.clear();
+    for (const id of Object.keys(state.nodes)) this.projectionNodes.set(id, projectNode(state.nodes[id]));
+    this.projectionOrder = [...this.projectionNodes.keys()].sort();
+    this.projectionReady = true;
+  }
+
+  // Fold the touched nodes into the projection cache. Re-sort the id order only
+  // when membership changed (create/delete), not on plain content edits.
+  private patchProjectionCache(affectedNodeIds: readonly string[], state: DocumentState) {
+    this.ensureProjectionCache();
+    let membershipChanged = false;
+    for (const id of affectedNodeIds) {
+      const node = state.nodes[id];
+      if (node) {
+        if (!this.projectionNodes.has(id)) membershipChanged = true;
+        this.projectionNodes.set(id, projectNode(node));
+      } else if (this.projectionNodes.delete(id)) {
+        membershipChanged = true;
+      }
+    }
+    if (membershipChanged) this.projectionOrder = [...this.projectionNodes.keys()].sort();
+  }
+
+  // Discard the projection cache after a whole-tree rewrite (undo/redo) where the
+  // set of changed nodes is not tracked; the next read rebuilds it from scratch.
+  private invalidateProjectionCache() {
+    this.projectionReady = false;
+    this.projectionNodes.clear();
+    this.projectionOrder = [];
+  }
+
+  // Build a projection straight from current Loro state, bypassing the cache.
+  // Used for intermediate outcomes inside a transaction, where the cache is not
+  // folded until commit. Transactions are batch operations, not the per-keystroke
+  // hot path, so an O(N) build here is acceptable.
+  private freshProjection(): DocumentProjection {
+    const state = this.loro.materializeState();
+    return buildDocumentProjection(state, this.currentTodayNodeId());
+  }
+
+  // Opt-in invariant check (LIN_VERIFY_CACHE=1): the incrementally-patched
+  // projection cache must match a full rebuild. A mismatch means a mutation
+  // changed a node without touching it. Off (and free) in production; on in the
+  // test suite so any missing `touchNode` surfaces immediately.
+  private verifyCaches() {
+    if (process.env.LIN_VERIFY_CACHE !== '1') return;
+    const cached = JSON.stringify(this.projection());
+    const fresh = JSON.stringify(this.freshProjection());
+    if (cached !== fresh) {
+      throw new Error('[core] projection cache diverged from a full rebuild — a mutation changed a node without touching it');
+    }
   }
 
   beginUndoGroup() {
@@ -233,16 +311,22 @@ export class Core {
       const transaction = this.activeTransaction;
       const after = this.loro.materializeState();
       const affectedNodeIds = this.loro.drainTouchedNodeIds();
-      if (transaction && !sameJson(after, transaction.before)) {
+      if (transaction && changedTouchedNodes(affectedNodeIds, transaction.before, after)) {
         this.commitCurrentTransaction(transaction.origin, transaction.before, after, transaction.metadata, affectedNodeIds);
+        this.patchProjectionCache(affectedNodeIds, after);
+        this.revisionValue += 1;
       }
       this.activeTransaction = undefined;
       this.refreshStateFromLoro();
+      this.verifyCaches();
       return result;
     } catch (error) {
       this.loro.revertTo(rollbackFrontiers, SYSTEM_COMMIT_ORIGIN);
       this.loro.clearTouchedNodeIds();
       this.activeTransaction = undefined;
+      // The revert rewrites the tree wholesale; drop the projection cache so the
+      // next read rebuilds it from the rolled-back state.
+      this.invalidateProjectionCache();
       this.refreshStateFromLoro();
       throw error;
     }
@@ -1667,8 +1751,7 @@ export class Core {
   private mutate(mutator: Mutator): CommandOutcome {
     if (this.activeTransaction) {
       const focusHint = mutator();
-      this.refreshStateFromLoro();
-      return { projection: this.projection(), ...(focusHint ? { focus: focusHint } : {}) };
+      return { projection: this.freshProjection(), ...(focusHint ? { focus: focusHint } : {}) };
     }
 
     const before = this.loro.materializeState();
@@ -1676,8 +1759,15 @@ export class Core {
     const focusHint = mutator();
     const after = this.loro.materializeState();
     const affectedNodeIds = this.loro.drainTouchedNodeIds();
-    if (!sameJson(after, before)) {
+    // Exact change detection at O(touched): a node is changed iff its pre/post
+    // materialization differs. This preserves the prior whole-state `sameJson`
+    // semantics (idempotent writes that touch but don't change are not commits)
+    // without stringifying the entire document.
+    if (changedTouchedNodes(affectedNodeIds, before, after)) {
       this.commitCurrentTransaction(this.currentCommitOrigin(), before, after, this.currentCommitMetadata(), affectedNodeIds);
+      this.patchProjectionCache(affectedNodeIds, after);
+      this.revisionValue += 1;
+      this.verifyCaches();
     }
     this.stateValue = after;
     return { projection: this.projection(), ...(focusHint ? { focus: focusHint } : {}) };
@@ -1697,7 +1787,9 @@ export class Core {
   }
 
   private refreshStateFromLoro() {
-    this.loro.rebuildMappings();
+    // The id→TreeID map is now maintained incrementally and rebuilt lazily on
+    // demand, so no explicit rebuild is needed here. materializeState is a cheap
+    // cache read.
     this.stateValue = this.loro.materializeState();
   }
 
@@ -1748,6 +1840,10 @@ export class Core {
       changed.push(decorateHistoryItem(entry ?? synthesizeHistoryEntry(action, origin, before, after), stackAfter));
     }
 
+    if (changed.length > 0) this.revisionValue += 1;
+    // Undo/redo rewrites the tree without per-node touch tracking, so the
+    // incremental caches cannot be patched — rebuild them from scratch.
+    this.invalidateProjectionCache();
     this.refreshStateFromLoro();
     const stackState = stackStateResult(this.operationStackState(origin));
     return {
@@ -1918,7 +2014,10 @@ export class Core {
     this.ensureSystemNodeDirect(TAG_DAY_ID, 'tagDef', SCHEMA_ID, 'day', true, now);
     this.ensureSystemNodeDirect(TAG_WEEK_ID, 'tagDef', SCHEMA_ID, 'week', true, now);
     this.ensureSystemNodeDirect(TAG_YEAR_ID, 'tagDef', SCHEMA_ID, 'year', true, now);
-    [DAILY_NOTES_ID, LIBRARY_ID, SEARCHES_ID, TRASH_ID].forEach((id, index) => {
+    // Persist the canonical root child order into the tree. Materialization now
+    // reflects the tree verbatim (no read-time re-ordering), so every system node
+    // must be placed here, matching the historical projection order.
+    [DAILY_NOTES_ID, LIBRARY_ID, SCHEMA_ID, SEARCHES_ID, TRASH_ID, SETTINGS_ID].forEach((id, index) => {
       this.loro.moveNode(id, WORKSPACE_ID, index);
     });
     this.loro.moveNode(RECENTS_ID, SEARCHES_ID, 0);
@@ -2729,6 +2828,13 @@ function hasExternalReferencesToTarget(
 
 function sameJson(left: unknown, right: unknown) {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+// True iff any of the touched nodes actually differs between the pre- and
+// post-mutation states (covers creates, deletes, and content edits). Compares
+// only the touched nodes, so change detection is O(touched) rather than O(N).
+function changedTouchedNodes(touched: readonly string[], before: DocumentState, after: DocumentState): boolean {
+  return touched.some((id) => !sameJson(before.nodes[id], after.nodes[id]));
 }
 
 function commitOriginFor(origin: CommitOrigin) {

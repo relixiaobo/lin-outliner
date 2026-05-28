@@ -96,10 +96,10 @@ export class DocumentService {
   async transaction<T>(meta: DocumentMutationMeta, fn: () => Promise<T>) {
     const task = this.mutationQueue.then(async () => {
       await this.flushTextEditGroupNow();
-      const before = this.core.intoState();
+      const revisionBefore = this.core.revision();
       const result = await this.core.transaction(meta.origin ?? 'user', async () =>
         this.transactionContext.run(true, fn), transactionMetadata(meta));
-      if (!sameJson(before, this.core.intoState())) {
+      if (this.core.revision() !== revisionBefore) {
         await this.saveCore();
         this.emitProjectionChanged(meta.origin ?? 'user');
       }
@@ -143,7 +143,7 @@ export class DocumentService {
       if (command !== 'apply_node_text_patch') {
         await this.flushTextEditGroupNow();
       }
-      const before = this.core.intoState();
+      const revisionBefore = this.core.revision();
       const effectiveMeta = command === 'apply_node_text_patch'
         ? await this.textEditMetadata(String(args.nodeId), mutationMeta)
         : isMaterialize
@@ -154,7 +154,7 @@ export class DocumentService {
         () => this.runMutation(command, args, effectiveMeta),
         transactionMetadata({ ...effectiveMeta, command }),
       );
-      const changed = !sameJson(before, this.core.intoState());
+      const changed = this.core.revision() !== revisionBefore;
       if (command === 'apply_node_text_patch') {
         if (changed) this.scheduleTextEditFlush();
       } else if (isMaterialize) {
@@ -558,10 +558,6 @@ function historyOrigin(value: unknown, fallback?: DocumentMutationMeta['origin']
 function historyChangeOrigin(value: unknown): DocumentProjectionChangedEvent['origin'] {
   if (value === 'agent' || value === 'user' || value === 'system') return value;
   return 'agent';
-}
-
-function sameJson(left: unknown, right: unknown) {
-  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function sortDirection(value: unknown): SortDirection | null {
