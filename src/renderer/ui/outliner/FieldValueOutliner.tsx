@@ -130,6 +130,10 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
               dragId={props.dragId}
               setDragId={props.setDragId}
               referencePath={[props.entryId]}
+              optionField={props.optionField}
+              onSelectOption={(optionId) => (
+                props.run(() => api.selectFieldOption(props.entryId, optionId))
+              )}
             />
           )}
         />

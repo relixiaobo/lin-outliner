@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { api } from '../api/client';
-import type { NodeId } from '../api/types';
+import { parseIsoLocalDate, todayIsoLocalDate, type NodeId } from '../api/types';
 import { flattenVisibleRows, resolveReferenceTargetId } from '../state/document';
 import type { DocumentIndex, UiState } from '../state/document';
 import { targetIdsForRows } from './interactions/contextMenuSelection';
@@ -90,6 +90,9 @@ function selectKeyboardRowsState(
 interface UseWorkspaceKeyboardOptions {
   appendTypedCharToRow: (rowId: NodeId, char: string) => void;
   index: DocumentIndex | null;
+  onGoToRoot: (nodeId: NodeId) => void;
+  onNavigateBack: () => void;
+  onNavigateForward: () => void;
   onOpenPanel: () => void;
   requestEditFocus: (nodeId: NodeId) => void;
   rootId: NodeId | null;
@@ -103,6 +106,9 @@ interface UseWorkspaceKeyboardOptions {
 export function useWorkspaceKeyboard({
   appendTypedCharToRow,
   index,
+  onGoToRoot,
+  onNavigateBack,
+  onNavigateForward,
   onOpenPanel,
   requestEditFocus,
   rootId,
@@ -181,6 +187,7 @@ export function useWorkspaceKeyboard({
       ) {
         return;
       }
+      const targetIsEditable = shouldIgnoreSelectionKeyboardTarget(event.target);
       if (matchesShortcutEvent(event, 'global.command_palette')) {
         event.preventDefault();
         setCommandOpen(true);
@@ -189,6 +196,36 @@ export function useWorkspaceKeyboard({
       if (matchesShortcutEvent(event, 'global.open_agent_panel')) {
         event.preventDefault();
         onOpenPanel();
+        return;
+      }
+      if (
+        matchesShortcutEvent(event, 'global.go_to_today')
+        && currentIndex
+        && currentUi.selectedIds.size === 0
+        && !targetIsEditable
+      ) {
+        const today = parseIsoLocalDate(todayIsoLocalDate());
+        if (!today) return;
+        event.preventDefault();
+        void run(() => api.ensureDateNode(
+          today.getFullYear(),
+          today.getMonth() + 1,
+          today.getDate(),
+        )).then((result) => {
+          if (result && 'focus' in result && result.focus?.nodeId) {
+            onGoToRoot(result.focus.nodeId);
+          }
+        });
+        return;
+      }
+      if (matchesShortcutEvent(event, 'global.nav_back') && !targetIsEditable) {
+        event.preventDefault();
+        onNavigateBack();
+        return;
+      }
+      if (matchesShortcutEvent(event, 'global.nav_forward') && !targetIsEditable) {
+        event.preventDefault();
+        onNavigateForward();
         return;
       }
       if (matchesShortcutEvent(event, 'global.redo')) {
@@ -201,7 +238,7 @@ export function useWorkspaceKeyboard({
         void run(() => api.undo());
         return;
       }
-      if (!currentRootId || !currentIndex || currentUi.focusedId || currentUi.selectedIds.size === 0) {
+      if (!currentRootId || !currentIndex || currentUi.focusedId) {
         return;
       }
       if (shouldIgnoreSelectionKeyboardTarget(event.target, {
@@ -223,7 +260,10 @@ export function useWorkspaceKeyboard({
         selectedId: currentUi.selectedId,
         selectionAnchorId: currentUi.selectionAnchorId,
       });
-      if (!anchor) {
+      if (currentUi.selectedIds.size === 0 && action !== 'select_all') {
+        return;
+      }
+      if (!anchor && action !== 'select_all') {
         return;
       }
 
@@ -271,6 +311,7 @@ export function useWorkspaceKeyboard({
         return;
       }
       if (action === 'enter_edit') {
+        if (!anchor) return;
         requestEditFocus(orderedSelected[0] ?? anchor);
         return;
       }
@@ -303,6 +344,7 @@ export function useWorkspaceKeyboard({
         return;
       }
       if (action === 'extend_up' || action === 'extend_down') {
+        if (!anchor) return;
         const selectedIds = extendSelection(
           rows,
           currentUi.selectedIds,
@@ -318,6 +360,7 @@ export function useWorkspaceKeyboard({
         return;
       }
       if (action === 'navigate_up' || action === 'navigate_down') {
+        if (!anchor) return;
         const next = navigationTarget(
           rows,
           currentUi.selectedIds,
@@ -330,6 +373,7 @@ export function useWorkspaceKeyboard({
         return;
       }
 
+      if (!anchor) return;
       const batchIds = selectedRootIds(orderedSelected.length > 0 ? orderedSelected : [anchor], currentIndex.byId);
       const batchTargetIds = targetIdsForRows(batchIds, currentIndex.byId);
       if (action === 'batch_copy' || action === 'batch_cut') {
@@ -433,5 +477,19 @@ export function useWorkspaceKeyboard({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [appendTypedCharToRow, index, onOpenPanel, requestEditFocus, rootId, run, setCommandOpen, setError, setUi, ui]);
+  }, [
+    appendTypedCharToRow,
+    index,
+    onGoToRoot,
+    onNavigateBack,
+    onNavigateForward,
+    onOpenPanel,
+    requestEditFocus,
+    rootId,
+    run,
+    setCommandOpen,
+    setError,
+    setUi,
+    ui,
+  ]);
 }

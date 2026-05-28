@@ -265,6 +265,9 @@ export function App() {
   useWorkspaceKeyboard({
     appendTypedCharToRow,
     index,
+    onGoToRoot: navigateRoot,
+    onNavigateBack: navigateActivePanelBack,
+    onNavigateForward: navigateActivePanelForward,
     onOpenPanel: openActiveRootInPanel,
     requestEditFocus,
     rootId,

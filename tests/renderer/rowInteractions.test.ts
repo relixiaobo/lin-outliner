@@ -968,6 +968,10 @@ describe('row interaction resolvers', () => {
     expect(resolveSelectedReferenceShortcut(keyboard('x'))).toBe('convert_printable');
     expect(resolveSelectedReferenceShortcut(keyboard('x', { metaKey: true }))).toBeNull();
     expect(resolveSelectedReferenceShortcut(keyboard('Escape'))).toBe('escape');
+    expect(resolveSelectedReferenceShortcut(keyboard('ArrowUp'), { optionsOpen: true })).toBe('options_up');
+    expect(resolveSelectedReferenceShortcut(keyboard('ArrowDown'), { optionsOpen: true })).toBe('options_down');
+    expect(resolveSelectedReferenceShortcut(keyboard('Enter'), { optionsOpen: true })).toBe('options_confirm');
+    expect(resolveSelectedReferenceShortcut(keyboard('Escape'), { optionsOpen: true })).toBe('options_cancel');
   });
 
   test('central shortcut registry maps editor and trailing commands', () => {
@@ -986,6 +990,14 @@ describe('row interaction resolvers', () => {
     expect(matchesShortcutEvent(keyboard('z', { metaKey: true, shiftKey: true }), 'editor.redo')).toBe(true);
     expect(matchesShortcutEvent(keyboard('y', { ctrlKey: true }), 'trailing.redo')).toBe(true);
     expect(matchesShortcutEvent(keyboard('y', { metaKey: true }), 'global.redo')).toBe(true);
+    expect(matchesShortcutEvent(keyboard('d', { metaKey: true, shiftKey: true }), 'global.go_to_today')).toBe(true);
+    expect(matchesShortcutEvent(keyboard('[', { metaKey: true }), 'global.nav_back')).toBe(true);
+    expect(matchesShortcutEvent(keyboard(']', { metaKey: true }), 'global.nav_forward')).toBe(true);
+    expect(matchesShortcutEvent(keyboard('å', { code: 'BracketLeft', metaKey: true }), 'global.nav_back')).toBe(true);
+    expect(matchesShortcutEvent(keyboard('Dead', { code: 'BracketRight', metaKey: true }), 'global.nav_forward')).toBe(true);
+    expect(matchesShortcutEvent(keyboard('BracketLeft', { metaKey: true }), 'global.nav_back')).toBe(false);
+    expect(matchesShortcutEvent(keyboard('ArrowLeft', { altKey: true }), 'global.nav_back')).toBe(true);
+    expect(matchesShortcutEvent(keyboard('ArrowRight', { altKey: true }), 'global.nav_forward')).toBe(true);
     expect(matchesShortcutEvent(keyboard('i', { ctrlKey: true }), 'trailing.description')).toBe(true);
     expect(matchesShortcutEvent(keyboard('i', { metaKey: true }), 'trailing.description')).toBe(false);
   });

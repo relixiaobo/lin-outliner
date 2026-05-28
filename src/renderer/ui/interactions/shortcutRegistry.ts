@@ -30,6 +30,10 @@ export type ShortcutId =
   | 'selected_reference.delete'
   | 'selected_reference.convert_arrow_right'
   | 'selected_reference.convert_printable'
+  | 'selected_reference.options_up'
+  | 'selected_reference.options_down'
+  | 'selected_reference.options_confirm'
+  | 'selected_reference.options_cancel'
   | 'selected_reference.escape'
   | 'editor.description'
   | 'editor.undo'
@@ -43,6 +47,9 @@ export type ShortcutId =
   | 'trailing.checkbox'
   | 'global.command_palette'
   | 'global.open_agent_panel'
+  | 'global.go_to_today'
+  | 'global.nav_back'
+  | 'global.nav_forward'
   | 'global.undo'
   | 'global.redo';
 
@@ -50,6 +57,7 @@ type ModifierValue = boolean | 'any';
 
 export interface ShortcutBinding {
   key?: string;
+  code?: string;
   printable?: boolean;
   mod?: ModifierValue;
   ctrl?: ModifierValue;
@@ -67,13 +75,20 @@ export interface ShortcutDefinition {
 
 function binding(
   key: string,
-  modifiers: Omit<ShortcutBinding, 'key' | 'printable'> = {},
+  modifiers: Omit<ShortcutBinding, 'key' | 'code' | 'printable'> = {},
 ): ShortcutBinding {
   return { key, ...modifiers };
 }
 
+function codeBinding(
+  code: string,
+  modifiers: Omit<ShortcutBinding, 'key' | 'code' | 'printable'> = {},
+): ShortcutBinding {
+  return { code, ...modifiers };
+}
+
 function printable(
-  modifiers: Omit<ShortcutBinding, 'key' | 'printable'> = {},
+  modifiers: Omit<ShortcutBinding, 'key' | 'code' | 'printable'> = {},
 ): ShortcutBinding {
   return { printable: true, shift: 'any', ...modifiers };
 }
@@ -102,6 +117,10 @@ export const OUTLINER_SHORTCUTS: ShortcutDefinition[] = [
   { id: 'selected_reference.delete', scope: 'selected_reference', bindings: [binding('Backspace'), binding('Delete')], description: 'Delete selected reference link' },
   { id: 'selected_reference.convert_arrow_right', scope: 'selected_reference', bindings: [binding('ArrowRight')], description: 'Convert selected reference to inline mode' },
   { id: 'selected_reference.convert_printable', scope: 'selected_reference', bindings: [printable()], description: 'Convert selected reference and append typed character' },
+  { id: 'selected_reference.options_up', scope: 'selected_reference', bindings: [binding('ArrowUp')], description: 'Move up in selected reference options' },
+  { id: 'selected_reference.options_down', scope: 'selected_reference', bindings: [binding('ArrowDown')], description: 'Move down in selected reference options' },
+  { id: 'selected_reference.options_confirm', scope: 'selected_reference', bindings: [binding('Enter')], description: 'Confirm selected reference option' },
+  { id: 'selected_reference.options_cancel', scope: 'selected_reference', bindings: [binding('Escape')], description: 'Close selected reference options' },
   { id: 'selected_reference.escape', scope: 'selected_reference', bindings: [binding('Escape')], description: 'Clear selected reference' },
 
   { id: 'editor.description', scope: 'editor', bindings: [binding('i', { ctrl: true }), binding('Tab', { ctrl: true })], description: 'Edit node description' },
@@ -118,6 +137,9 @@ export const OUTLINER_SHORTCUTS: ShortcutDefinition[] = [
 
   { id: 'global.command_palette', scope: 'global', bindings: [binding('k', { mod: true })], description: 'Open command palette' },
   { id: 'global.open_agent_panel', scope: 'global', bindings: [binding('m', { mod: true })], description: 'Open agent panel' },
+  { id: 'global.go_to_today', scope: 'global', bindings: [binding('d', { mod: true, shift: true })], description: 'Go to today' },
+  { id: 'global.nav_back', scope: 'global', bindings: [binding('[', { mod: true }), codeBinding('BracketLeft', { mod: true }), binding('ArrowLeft', { alt: true })], description: 'Navigate active panel back' },
+  { id: 'global.nav_forward', scope: 'global', bindings: [binding(']', { mod: true }), codeBinding('BracketRight', { mod: true }), binding('ArrowRight', { alt: true })], description: 'Navigate active panel forward' },
   { id: 'global.undo', scope: 'global', bindings: [binding('z', { mod: true })], description: 'Undo document edit' },
   { id: 'global.redo', scope: 'global', bindings: [binding('z', { mod: true, shift: true }), binding('y', { mod: true })], description: 'Redo document edit' },
 ];
@@ -136,6 +158,12 @@ function keyMatches(bindingKey: string | undefined, eventKey: string): boolean {
     : eventKey === bindingKey;
 }
 
+function keyOrCodeMatches(candidate: ShortcutBinding, event: KeyboardEvent): boolean {
+  if (candidate.key && keyMatches(candidate.key, event.key)) return true;
+  if (candidate.code && candidate.code === event.code) return true;
+  return false;
+}
+
 export function matchesShortcutEvent(event: KeyboardEvent, shortcutId: ShortcutId): boolean {
   if (isImeComposingEvent(event)) return false;
   const shortcut = SHORTCUT_BY_ID.get(shortcutId);
@@ -143,7 +171,7 @@ export function matchesShortcutEvent(event: KeyboardEvent, shortcutId: ShortcutI
 
   return shortcut.bindings.some((candidate) => {
     if (candidate.printable && event.key.length !== 1) return false;
-    if (!candidate.printable && !keyMatches(candidate.key, event.key)) return false;
+    if (!candidate.printable && !keyOrCodeMatches(candidate, event)) return false;
 
     const modActual = event.metaKey || event.ctrlKey;
     if (candidate.mod !== undefined) {

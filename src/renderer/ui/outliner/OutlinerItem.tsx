@@ -4,9 +4,10 @@ import {
   useState,
   type Dispatch,
   type MouseEvent,
+  type RefObject,
   type SetStateAction,
 } from 'react';
-import { flushSync } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import { api } from '../../api/client';
 import type { AssetMetadata, CreateNodeTree, NodeId, NodeProjection, RichText, RichTextPatch } from '../../api/types';
 import { EMPTY_RICH_TEXT, plainText, replaceAllRichTextPatch } from '../../api/types';
@@ -30,6 +31,8 @@ import { indentTargetParentId, previousVisibleRowId } from '../interactions/outl
 import { ingestPastedImages, shouldConvertRowToImage, type PastedImage } from '../interactions/imagePaste';
 import { getTreeReferenceBlockReason } from '../interactions/referenceRules';
 import { armReferenceTypeAhead } from '../interactions/referenceTypeAhead';
+import { resolveFieldOptions, resolveSelectedOptionId, type FieldOption } from '../interactions/fieldOptions';
+import { resolveSelectedReferenceShortcut } from '../interactions/selectedReferenceShortcuts';
 import {
   resolveContentRowBackspaceAtStartIntent,
   resolveReferenceSelectionAction,
@@ -67,6 +70,12 @@ import {
   triggerOwnsWholeText,
 } from './trailingTriggers';
 import { useOutlinerRowInteraction } from './useOutlinerRowInteraction';
+import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import {
+  PopoverBulletIcon,
+  PopoverListbox,
+  PopoverListItem,
+} from './PopoverList';
 
 interface OutlinerItemProps {
   panelId: string;
@@ -84,6 +93,8 @@ interface OutlinerItemProps {
   dragId: NodeId | null;
   setDragId: (nodeId: NodeId | null) => void;
   referencePath: readonly NodeId[];
+  optionField?: NodeProjection;
+  onSelectOption?: (optionId: NodeId) => Promise<unknown> | unknown;
   // Eager materialization: when true, this row's node is not in the projection
   // yet — it is the trailing draft. The first committed text materializes it
   // under `nodeId` (kept stable so the editor is never remounted), after which
@@ -106,6 +117,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
   const materializeStartedRef = useRef(false);
   const restoredReferenceConversionNodeRef = useRef<NodeId | null>(null);
   const descriptionReturnPlacementRef = useRef<CursorPlacement>(cursorEnd());
+  const optionAnchorRef = useRef<HTMLDivElement | null>(null);
   const referenceTargetId = node?.type === 'reference' && node.targetId
     ? resolveReferenceTargetId(node.targetId, props.index.byId)
     : null;
@@ -1048,6 +1060,14 @@ export function OutlinerItem(props: OutlinerItemProps) {
     const inlineRefBias = event.clientX <= editorRect.left + 2 ? 'before' : 'after';
     requestRowFocus(props.nodeId, cursorAtOffset(offset, inlineRefBias), props.parentId);
   };
+  const showSelectedReferenceOptionPicker = Boolean(
+    props.optionField
+    && props.onSelectOption
+    && node.type === 'reference'
+    && !props.ui.focusedId
+    && props.ui.selectedIds.size === 1
+    && props.ui.selectedIds.has(props.nodeId),
+  );
 
   return (
     <OutlinerRowShell
@@ -1080,6 +1100,7 @@ export function OutlinerItem(props: OutlinerItemProps) {
           onDragEnd={row.dragHandleProps.onDragEnd}
         />
         <div
+          ref={optionAnchorRef}
           className={isBlockNode ? 'row-content-line row-content-line--block' : 'row-content-line'}
           onMouseDownCapture={referenceLikeRow ? selectReferenceLikeRowFromPointer : undefined}
           onMouseDown={referenceLikeRow ? undefined : focusEditorFromRowClick}
@@ -1253,6 +1274,15 @@ export function OutlinerItem(props: OutlinerItemProps) {
               props.setUi((prev) => clearPendingInputState(prev, input));
             }}
           />
+          {showSelectedReferenceOptionPicker && props.optionField && props.onSelectOption && (
+            <SelectedReferenceOptionPicker
+              anchorRef={optionAnchorRef}
+              byId={props.index.byId}
+              optionField={props.optionField}
+              valueNode={node}
+              onSelectOption={props.onSelectOption}
+            />
+          )}
         </div>
         </>
       )}
@@ -1332,6 +1362,112 @@ export function OutlinerItem(props: OutlinerItemProps) {
         </div>
       )}
     </OutlinerRowShell>
+  );
+}
+
+interface SelectedReferenceOptionPickerProps {
+  anchorRef: RefObject<HTMLDivElement | null>;
+  byId: Map<NodeId, NodeProjection>;
+  optionField: NodeProjection;
+  valueNode: NodeProjection;
+  onSelectOption: (optionId: NodeId) => Promise<unknown> | unknown;
+}
+
+function selectedOptionIndex(options: readonly FieldOption[], selectedOptionId: NodeId | undefined) {
+  const index = selectedOptionId ? options.findIndex((option) => option.id === selectedOptionId) : -1;
+  return Math.max(0, index);
+}
+
+function SelectedReferenceOptionPicker({
+  anchorRef,
+  byId,
+  optionField,
+  valueNode,
+  onSelectOption,
+}: SelectedReferenceOptionPickerProps) {
+  const options = resolveFieldOptions(optionField, byId);
+  const selectedOptionId = resolveSelectedOptionId(valueNode, options);
+  const [open, setOpen] = useState(true);
+  const [activeIndex, setActiveIndex] = useState(() => selectedOptionIndex(options, selectedOptionId));
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const stateRef = useRef({ activeIndex, options });
+  const menuStyle = useAnchoredOverlay(menuRef, {
+    anchorRef,
+    disabled: !open || options.length === 0,
+    layoutKey: `${options.map((option) => option.id).join('|')}:${activeIndex}`,
+    maxHeight: 240,
+    placement: 'bottom-start',
+    width: 280,
+  });
+  stateRef.current = { activeIndex, options };
+
+  useEffect(() => {
+    setOpen(true);
+    setActiveIndex(selectedOptionIndex(options, selectedOptionId));
+  }, [options.length, selectedOptionId, valueNode.id]);
+
+  const selectOption = (optionId: NodeId) => {
+    setOpen(false);
+    void onSelectOption(optionId);
+  };
+
+  useEffect(() => {
+    if (!open || options.length === 0) return;
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      const action = resolveSelectedReferenceShortcut(event, { optionsOpen: true });
+      if (
+        action !== 'options_up'
+        && action !== 'options_down'
+        && action !== 'options_confirm'
+        && action !== 'options_cancel'
+      ) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      const state = stateRef.current;
+      if (action === 'options_cancel') {
+        setOpen(false);
+        return;
+      }
+      if (action === 'options_up') {
+        setActiveIndex((current) => Math.max(0, current - 1));
+        return;
+      }
+      if (action === 'options_down') {
+        setActiveIndex((current) => Math.min(state.options.length - 1, current + 1));
+        return;
+      }
+      const option = state.options[state.activeIndex];
+      if (option) selectOption(option.id);
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [onSelectOption, open, options.length]);
+
+  if (!open || options.length === 0) return null;
+
+  return createPortal(
+    <div data-preserve-selection>
+      <PopoverListbox
+        ref={menuRef}
+        className="node-picker-popover trailing-options-popover"
+        label="Selected field options"
+        style={menuStyle}
+      >
+        {options.map((option, index) => (
+          <PopoverListItem
+            key={option.id}
+            active={index === activeIndex}
+            icon={<PopoverBulletIcon />}
+            label={option.label}
+            onMouseEnter={() => setActiveIndex(index)}
+            onClick={() => selectOption(option.id)}
+          />
+        ))}
+      </PopoverListbox>
+    </div>,
+    document.body,
   );
 }
 
