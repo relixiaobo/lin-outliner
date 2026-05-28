@@ -134,7 +134,11 @@ export function buildVisualRows(
     if (showDraft) {
       const draftId = options.draftIdFor?.(parentId) ?? null;
       if (draftId) {
-        out.push({ kind: 'content', key: `draft>${prefix}`, nodeId: draftId, depth, parentId, referencePath, draft: true });
+        // Key by the draft's own id (not its position), identical to the key the
+        // row will have once the draft materializes into a real child under the
+        // same id. This keeps the React component — and its editor — mounted
+        // across materialization, so eager input is never interrupted.
+        out.push({ kind: 'content', key: `${prefix}>${draftId}`, nodeId: draftId, depth, parentId, referencePath, draft: true });
       }
     }
   };

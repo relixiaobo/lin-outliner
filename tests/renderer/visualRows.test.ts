@@ -85,6 +85,37 @@ describe('buildVisualRows depth and extras', () => {
     expect(visualRowNodeIds(rows)).toEqual(['a', 'b']);
   });
 
+  test('trailing draft is keyed by its id so it survives materialization', () => {
+    const draftId = 'node:draft1';
+    const before = buildVisualRows('lib', fixture(), {
+      expanded: new Set(),
+      rootTrailingDraft: 'always',
+      draftIdFor: () => draftId,
+    });
+    const draftRow = before[before.length - 1];
+    expect(draftRow).toMatchObject({ kind: 'content', nodeId: draftId, draft: true });
+
+    // Once the draft materializes it is a real last child under the same id; its
+    // content row must carry the identical key so React keeps the same component
+    // (and its editor) mounted across materialization.
+    const materialized = byIdOf([
+      node('lib', { children: ['a', 'b', draftId] }),
+      node('a', { parentId: 'lib', children: ['a1', 'a2'] }),
+      node('a1', { parentId: 'a' }),
+      node('a2', { parentId: 'a' }),
+      node('b', { parentId: 'lib', children: ['refA'] }),
+      node('refA', { parentId: 'b', type: 'reference', targetId: 'a' }),
+      node(draftId, { parentId: 'lib' }),
+    ]);
+    const after = buildVisualRows('lib', materialized, {
+      expanded: new Set(),
+      rootTrailingDraft: 'none',
+      draftIdFor: () => null,
+    });
+    const realRow = after.find((r) => (r.kind === 'content') && r.nodeId === draftId);
+    expect(realRow?.key).toBe(draftRow.key);
+  });
+
   test('emits a toolbar row (owned by the parent) when a nested view has its toolbar visible', () => {
     // toolbarVisible is read from a viewDef child node, not the node itself.
     const byId = byIdOf([
