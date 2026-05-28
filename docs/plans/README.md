@@ -44,6 +44,7 @@ items above.
 | [`node-line-editor-core-design.md`](node-line-editor-core-design.md) | design | P1 | Build contract for Phase 2b of the unification: shared pure modules over a monolithic hook; trigger application routed through `resolveTargetId`. |
 | [`node-line-editor-step1-extraction.md`](node-line-editor-step1-extraction.md) | done | P1 | Step 1: extract shared node-line trigger detection + structural keymap resolvers as pure modules (#16). |
 | [`node-line-editor-step2-eager-materialization.md`](node-line-editor-step2-eager-materialization.md) | done | P1 | Step 2: eager-materialize the trailing draft row — client-proposed node id + materialize undo grouping; type-to-create with no editor remount (#16). |
+| [`keyboard-shortcut-parity.md`](keyboard-shortcut-parity.md) | draft | P2 | Close the keyboard-shortcut gap vs nodex: Cmd+A from empty selection, go-to-today, nav history, drag-select, click-away dismiss, reference-options keyboard nav. Requires an exhaustive nodex audit to confirm the gap list is complete. |
 | [`nodex-parity-decisions.md`](nodex-parity-decisions.md) | meta | — | Catalog of nodex features we explicitly will not port and why. |
 
 ## Working Rules
