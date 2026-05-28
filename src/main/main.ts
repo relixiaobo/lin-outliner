@@ -23,6 +23,7 @@ import {
 } from './agentSettings';
 import { isAgentCommand, isAssetCommand, isDocumentCommand, type AgentCommand, type AssetCommand } from '../core/commands';
 import type { AgentProviderConfigInput, AgentRuntimeSettingsInput } from '../core/types';
+import { loadWindowState, trackWindowState } from './windowState';
 
 if (process.env.ELECTRON_USER_DATA_DIR) {
   app.setPath('userData', process.env.ELECTRON_USER_DATA_DIR);
@@ -166,12 +167,17 @@ function configureSessionSecurity() {
 }
 
 function createWindow() {
+  const windowState = loadWindowState();
   mainWindow = new BrowserWindow({
     title: 'Lin Outliner',
-    width: 1120,
-    height: 820,
+    width: windowState.bounds?.width ?? 1120,
+    height: windowState.bounds?.height ?? 820,
+    ...(windowState.bounds ? { x: windowState.bounds.x, y: windowState.bounds.y } : {}),
     minWidth: 760,
     minHeight: 560,
+    // Create hidden and reveal on first paint so launch never flashes an empty
+    // white frame; the platform animates the show.
+    show: false,
     backgroundColor: '#f7f6f1',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: MAC_TRAFFIC_LIGHT_POSITION,
@@ -183,7 +189,11 @@ function createWindow() {
     },
   });
 
+  if (windowState.maximized) mainWindow.maximize();
   hardenWebContents(mainWindow.webContents);
+  trackWindowState(mainWindow);
+
+  mainWindow.once('ready-to-show', () => mainWindow?.show());
 
   if (RENDERER_DEV_URL) {
     void mainWindow.loadURL(RENDERER_DEV_URL);
@@ -195,6 +205,13 @@ function createWindow() {
     mainWindow = null;
   });
   mainWindow.webContents.once('did-finish-load', () => agentRuntime.ready());
+}
+
+function focusMainWindow() {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
 }
 
 function registerIpc() {
@@ -938,31 +955,41 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
   }
 }
 
-app.whenReady().then(() => {
-  protocol.handle(ASSET_URL_SCHEME, (request) => {
-    const id = new URL(request.url).hostname;
-    return assetService.serve(id);
-  });
-  configureSessionSecurity();
-  registerIpc();
-  createWindow();
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
-}).catch((error) => {
-  console.error(error);
-  app.exit(1);
-});
+// Single-instance: a second launch focuses the running window instead of
+// spawning a duplicate process (macOS enforces this for packaged apps, Windows
+// does not). If we don't hold the lock, another instance owns the session — let
+// it surface its window and exit immediately.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', focusMainWindow);
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
+  app.whenReady().then(() => {
+    protocol.handle(ASSET_URL_SCHEME, (request) => {
+      const id = new URL(request.url).hostname;
+      return assetService.serve(id);
+    });
+    configureSessionSecurity();
+    registerIpc();
+    createWindow();
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  }).catch((error) => {
+    console.error(error);
+    app.exit(1);
+  });
 
-app.on('before-quit', (event) => {
-  if (quitAfterFlush) return;
-  event.preventDefault();
-  quitAfterFlush = true;
-  void documentService.flushPendingChanges()
-    .catch((error) => console.error(error))
-    .finally(() => app.quit());
-});
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit();
+  });
+
+  app.on('before-quit', (event) => {
+    if (quitAfterFlush) return;
+    event.preventDefault();
+    quitAfterFlush = true;
+    void documentService.flushPendingChanges()
+      .catch((error) => console.error(error))
+      .finally(() => app.quit());
+  });
+}
