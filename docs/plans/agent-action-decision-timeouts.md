@@ -226,6 +226,13 @@ targetTool({ ...targetArgs, approval_request })
 The action and the agent's attention policy are emitted atomically in the same
 tool call.
 
+`approval_request` is the agent's normal approval intent, not a guarantee that a
+visible card will be shown. User-owned policy may satisfy the request before UI:
+a no-confirm mode can approve it immediately, and class approval rules can
+approve matching future requests. The agent should still include
+`approval_request` whenever it would normally ask, even if a user setting later
+causes the runtime to auto-approve it.
+
 ## Runtime Responsibilities
 
 The runtime's job is mechanical, not judgmental:
@@ -233,16 +240,20 @@ The runtime's job is mechanical, not judgmental:
 1. Extract `approval_request` before executing the tool.
 2. Run the platform safety floor and any temporary legacy policy still active
    during migration.
-3. If `approval_request` is absent and no runtime block applies, run the tool
+3. If `approval_request` is present and a user-owned approval policy satisfies
+   it, record the policy resolution and run the tool without showing a card.
+4. If `approval_request` is absent and no runtime block applies, run the tool
    normally.
-4. If present, create an approval request with the fixed 90 second deadline.
-5. Resolve the request from user input, session approval, abort, or timeout.
-6. On approved, strip `approval_request` from the tool arguments and execute the
+5. If present and unsatisfied by policy, create a visible approval request with
+   the fixed 90 second deadline.
+6. Resolve the visible request from user input, class approval, abort, or
+   timeout.
+7. On approved, strip `approval_request` from the tool arguments and execute the
    underlying tool.
-7. On denied, return a denied tool result to the agent so it can continue with a
+8. On denied, return a denied tool result to the agent so it can continue with a
    fallback.
-8. Record whether the result came from the user, a session rule, timeout, abort,
-   or runtime.
+9. Record whether the result came from the user, a session rule, persistent
+   rule, user setting, timeout, abort, or runtime.
 
 The runtime may still enforce technical invariants such as invalid schema,
 unknown tool, abort, missing file, or process failure. Those are execution
@@ -297,6 +308,10 @@ request. That preference belongs to the user and runtime, not to the model. The
 agent should keep emitting `approval_request` when it believes a confirmation
 window would normally be appropriate; the runtime may then resolve or skip the
 request according to user-owned policy.
+
+This distinction matters for audit and future behavior: the agent's judgment is
+preserved in the tool call, while the runtime records that the user chose not to
+be interrupted for that request or class of requests.
 
 There are two separate product needs:
 
