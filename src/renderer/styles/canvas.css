@@ -1,7 +1,17 @@
 /* Full-bleed opaque content base. It fills the window and extends UNDER the
    floating rails; left/right padding keeps outliner rows clear of the rails while
    the base background still shows through them (vibrancy). The padding tracks the
-   rail widths + gaps and collapses when a rail is gone. */
+   rail widths + gaps and collapses when a rail is gone.
+
+   The TOP padding reserves the persistent window-chrome strip (traffic lights +
+   the two fixed rail toggles, height --chrome-height at the --layout-gap inset).
+   Reserving it here is what keeps every pane's sticky breadcrumb — itself an
+   -webkit-app-region: drag region — BELOW the fixed toggles. Without it the
+   breadcrumb's drag region sits under a toggle (a no-drag control in a different
+   DOM subtree, whose carve-out is unreliable across stacking contexts on macOS),
+   and the OS swallows the toggle's click. Aligning pad-top with the sidebar's
+   rail-top (layout-gap + chrome-height) also lines pane content up with the rail
+   contents. */
 .workspace-canvas {
   position: absolute;
   inset: 0;
@@ -12,9 +22,11 @@
   background: var(--bg-content);
   overflow-x: hidden;
   overflow-y: hidden;
+  padding-top: var(--canvas-pad-top);
   padding-left: var(--canvas-pad-left);
   padding-right: var(--canvas-pad-right);
   transition: padding var(--motion-layout);
+  --canvas-pad-top: calc(var(--layout-gap) + var(--chrome-height));
   --canvas-pad-left: calc(var(--layout-gap) + var(--sidebar-width) + var(--layout-gap));
   --canvas-pad-right: calc(var(--layout-gap) + var(--agent-width) + var(--layout-gap));
 }

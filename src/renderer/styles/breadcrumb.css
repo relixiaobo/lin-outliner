@@ -21,17 +21,10 @@
   -webkit-app-region: drag;
 }
 
-/* The first pane's breadcrumb clears the traffic lights + sidebar toggle when the
-   sidebar is collapsed (the content base reaches the left window edge there). */
-.app.sidebar-collapsed .workspace-canvas .outline-panel-surface:first-of-type .panel-sticky-breadcrumb {
-  padding-left: calc(var(--traffic-light-x) + 3 * var(--traffic-light-size) + 2 * var(--space-4) + 2 * var(--space-5) + var(--chrome-control-height));
-}
-
-/* The last pane's breadcrumb clears the fixed agent toggle (top-right corner)
-   when the agent rail is collapsed to its seed. */
-.app:not(.agent-open) .workspace-canvas .outline-panel-surface:last-of-type .panel-sticky-breadcrumb {
-  padding-right: calc(var(--layout-gap) + var(--space-3) + var(--chrome-control-height) + var(--space-3));
-}
+/* No corner-clearance overrides are needed: the canvas reserves --chrome-height +
+   --layout-gap of top padding (canvas.css), so every breadcrumb — drag region and
+   all — sits BELOW the fixed traffic lights and rail toggles. Nothing interactive
+   in window chrome overlaps the breadcrumb, in any collapse state. */
 
 /* Interactive breadcrumb controls must remain clickable inside the drag region. */
 .panel-page-back-button,
