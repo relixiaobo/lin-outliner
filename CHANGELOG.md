@@ -12,6 +12,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Design system — spec, rollout plan, and Phase 1 token foundation** — adds
+  `docs/spec/design-system.md` (the design language as a contract: two-theme
+  alpha-on-ink tokens, material/overlay taxonomy, concentric radius chain,
+  neutral-functional state with sparse rose brand) and `design-system-rollout.md`
+  (4-phase staged plan). Phase 1 is CSS-only in `styles.css`: introduces the
+  `--ink` semantic layer (text / fill / separator / surface / material / accent /
+  status / selection / focus / elevation / outline) as the source of truth and
+  re-points every legacy alias onto it, so components keep working and move to the
+  designed light palette. The dark theme is fully defined but **gated behind
+  `:root[data-theme="dark"]`** (not `prefers-color-scheme`) so it stays inert
+  until the component layer is theme-aware — Phase 2 wires `nativeTheme.themeSource`
+  → `data-theme`. ([#55](https://github.com/relixiaobo/lin-outliner/pull/55))
 - **Native-feel stage 2 — startup polish, window-state, single-instance** — the
   window is created `show: false` and revealed on `ready-to-show` (no white
   launch flash); a new `windowState.ts` persists and restores normal bounds +

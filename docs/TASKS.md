@@ -28,6 +28,13 @@ workflow.
 
 Ordered by priority; lower items may depend on higher ones.
 
+- **design-system-rollout** (P1) — staged migration to `docs/spec/design-system.md`.
+  Phase 1 (token foundation + gated dark theme) landed (PR #55). Remaining:
+  Phase 2 (real vibrancy + `nativeTheme.themeSource` → `data-theme` toggle + rail
+  materials), Phase 3 (neutralize `--primary*`, inline-ref blue→rose, make the
+  component layer + `outliner.css` theme-aware, then un-gate dark to the
+  `prefers-color-scheme` target), Phase 4 (floating-rails shell). See
+  `docs/plans/design-system-rollout.md`.
 - **agent-oauth-providers** (P2) — OAuth sign-in (Anthropic Pro/Max, GitHub
   Copilot, OpenAI Codex) + managed credentials (Bedrock AWS, Vertex ADC) for the
   provider settings: credential storage, Electron-main login over IPC, view-model
