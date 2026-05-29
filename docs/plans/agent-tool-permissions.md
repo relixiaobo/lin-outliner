@@ -66,6 +66,10 @@ decisions into one product-owned permission system.
    action may be necessary for the task. The user can deny the current request,
    but the global permission center should not store "always deny this kind" as
    a normal rule.
+7. **Permanent disable is capability availability.** Users still need a way to
+   say "never use this capability." That belongs to a global enable/disable
+   layer for tools or capability groups, not to the permission rule for a
+   supported action kind.
 
 ## Decision Trail
 
@@ -99,16 +103,18 @@ The user manages one global table:
 ```txt
 Agent Tool Permissions
 
-Read local data                         Allow
-Search external information             Allow
-Edit local documents                     Allow
-Run local validation / project scripts   Allow / Ask
-Install dependencies                     Allow / Ask
-Delete local data                        Allow / Ask
-Publish to a remote service              Allow / Ask
-Send external messages                   Allow / Ask
-Payment or purchase actions              Allow / Ask if supported
-Modify agent permission settings         Platform blocked
+Capability / action kind                Availability   Permission when enabled
+
+Read local data                         Enabled        Allow
+Search external information             Enabled        Allow
+Edit local documents                     Enabled        Allow
+Run local validation / project scripts   Enabled        Allow / Ask
+Install dependencies                     Enabled        Allow / Ask
+Delete local data                        Enabled        Allow / Ask
+Publish to a remote service              Enabled        Allow / Ask
+Send external messages                   Enabled/Off    Allow / Ask
+Payment or purchase actions              Off by default Allow / Ask if supported
+Modify agent permission settings         Platform      Blocked
 ```
 
 These rules are global across the whole software. They do not depend on the
@@ -120,6 +126,11 @@ This simplicity is intentional. A more granular system can be added later, but
 v1 should optimize for a user being able to understand and manage the complete
 permission state at a glance.
 
+Availability answers whether the agent may use a capability at all. Permission
+answers whether an enabled action kind may run without asking. Disabling a
+capability is the user's permanent "do not use this" control; it should hard
+block matching calls without opening a confirmation dialog.
+
 ## Runtime Flow
 
 Every tool call follows the same path:
@@ -127,6 +138,7 @@ Every tool call follows the same path:
 ```txt
 tool call
   -> validate tool schema and platform hard blocks
+  -> check global capability availability
   -> derive one or more action descriptors from tool name and arguments
   -> read global permission rules for the derived action kinds
   -> allow: execute immediately
@@ -226,8 +238,9 @@ Required rules:
    - otherwise any `ask` action kind asks for the whole command;
    - only all-`allow` segments may execute without a dialog.
 4. If the parser cannot decompose a compound command confidently, classify it as
-   unknown shell execution and apply the conservative global rule for unknown
-   shell commands.
+   unknown shell execution. Unknown shell execution must never default to
+   `allow`. v1 should hard block it unless the product explicitly defines a
+   narrow unknown-shell action kind whose only configurable permission is `ask`.
 
 Examples:
 
@@ -246,6 +259,11 @@ bash -c "git push origin main"
 
 This "most restrictive segment wins" rule is mandatory. Without it, a harmless
 prefix could hide a publishing or destructive suffix.
+
+Unknown shell is a fail-safe boundary. Obfuscation forms such as dynamic command
+construction, unreadable command substitution, encoded scripts piped into an
+interpreter, or `bash -c` with a non-static string must not fall through to a
+generic shell allow rule.
 
 ### Path And Mode Boundaries
 
@@ -274,7 +292,7 @@ without turning global rules into broad filesystem capabilities.
 
 ## Global Permission Rules
 
-The permission store is a single global map:
+The permission store is a single global map for enabled action kinds:
 
 ```ts
 interface GlobalToolPermissionRule {
@@ -301,6 +319,39 @@ temporary grants.
 The global permission store is not a blocklist. It stores only whether a
 supported action kind can run without asking (`allow`) or must ask (`ask`).
 Platform hard blocks live outside the user permission table.
+
+## Capability Availability
+
+Capability availability is the permanent disable mechanism. It lives in the
+same global settings surface as the permission table, but it is evaluated before
+action-kind permissions and has different semantics.
+
+```ts
+interface AgentCapabilityAvailabilityRule {
+  capability: AgentCapabilityKind;
+  enabled: boolean;
+  updatedAt: number;
+}
+```
+
+Examples of capability groups:
+
+- shell execution;
+- filesystem read/write;
+- dependency management;
+- browser or computer control;
+- external publishing;
+- external messaging;
+- payments or purchases.
+
+If a capability is disabled, matching tool calls return a structured denied
+result with `reason: 'capability_disabled'`. The runtime should not show a
+confirmation dialog, because the user has already expressed a durable product
+preference.
+
+This fills the gap left by removing persistent permission-level deny rules:
+users can still permanently disable whole capabilities, while normal action-kind
+permissions stay focused on `allow | ask`.
 
 ## Confirmation Dialog
 
@@ -348,7 +399,7 @@ interface ToolDeniedResult {
   kind: 'permission_denied';
   primaryActionKind: AgentToolActionKind;
   actionKinds: AgentToolActionKind[];
-  reason: 'platform_hard_block' | 'user_denied';
+  reason: 'platform_hard_block' | 'capability_disabled' | 'user_denied';
   message: string;
 }
 ```
@@ -380,6 +431,9 @@ Examples:
 
 These are product safety boundaries, not prompts. They should return
 `platform_hard_block` results rather than asking the user to approve them.
+Capability-disabled calls are also blocked before permission checks, but they
+should be recorded separately as `capability_disabled` because they come from a
+user-owned availability setting.
 
 ## Agent Behavior
 
@@ -411,7 +465,11 @@ interface ToolPermissionCheckedEvent {
   primaryActionKind: AgentToolActionKind;
   actionKinds: AgentToolActionKind[];
   outcome: ToolPermissionOutcome;
-  source: 'global_rule' | 'default_rule' | 'platform_hard_block';
+  source:
+    | 'global_rule'
+    | 'default_rule'
+    | 'capability_disabled'
+    | 'platform_hard_block';
   descriptorRef?: AgentPayloadRef;
 }
 ```
@@ -439,7 +497,7 @@ current:
 tool policy matrix -> allow / ask / deny
 
 proposed:
-tool action descriptor -> hard block check -> global permission rule -> allow / ask
+hard block check -> capability availability -> action descriptor -> global permission rule -> allow / ask
 ```
 
 The difference is that the decision should be user-manageable and action-kind
@@ -469,36 +527,39 @@ often or silently allows ambiguous actions.
    types.
 2. Add a global permission store with one `allow | ask` rule per supported
    action kind.
-3. Add a permission center UI for viewing and editing the global rules.
-4. Build descriptor resolvers for existing agent tools.
-5. Preserve existing path-boundary, sensitive-path, restricted-mode, and skill
+3. Add a global capability availability store for durable enable/disable
+   preferences.
+4. Add a permission center UI for viewing and editing capability availability
+   and global permission rules.
+5. Build descriptor resolvers for existing agent tools.
+6. Preserve existing path-boundary, sensitive-path, restricted-mode, and skill
    preapproval safety properties while mapping them into action descriptors or
    platform hard blocks.
-6. For `bash`, classify known command families first, evaluate compound
-   commands by the most restrictive segment, and map unknown commands to a
-   conservative action kind.
-7. Replace hidden `ask` prompts with global-rule-backed permission checks.
-8. Update the approval dialog to remove countdowns and session-scope language.
-9. Add "approve once", "deny once", and "always allow this kind" resolution
+7. For `bash`, classify known command families first, evaluate compound
+   commands by the most restrictive segment, and hard block unknown shell unless
+   a narrow ask-only unknown-shell action kind is explicitly defined.
+8. Replace hidden `ask` prompts with global-rule-backed permission checks.
+9. Update the approval dialog to remove countdowns and session-scope language.
+10. Add "approve once", "deny once", and "always allow this kind" resolution
    paths.
-10. Return structured `permission_denied` tool results for user-denied and
-    hard-block cases.
-11. Update agent instructions so denied results are handled as normal tool
+11. Return structured `permission_denied` tool results for user-denied,
+    capability-disabled, and hard-block cases.
+12. Update agent instructions so denied results are handled as normal tool
     results with fallbacks.
-12. Add event log entries for permission checks and user resolutions.
-13. Add tests for default allow, explicit ask, approve once, deny once, always
-    allow, platform hard blocks, denied-result fallback, path boundaries,
-    restricted mode, and shell compound-command classification.
+13. Add event log entries for permission checks and user resolutions.
+14. Add tests for default allow, explicit ask, approve once, deny once, always
+    allow, disabled capability, unknown shell fail-safe, platform hard blocks,
+    denied-result fallback, path boundaries, restricted mode, and shell
+    compound-command classification.
 
 ## Open Questions
 
 - What is the initial global default for dependency installation?
 - Which local editing operations are reversible enough to default to `allow`?
-- Which unknown shell commands are plausible user-owned actions that should ask,
-  and which should be platform hard blocks?
 - Should repeated identical `ask` actions in one run be coalesced in the UI
   without creating a session permission grant?
 - Should project script execution default to `allow` for productivity or `ask`
   because it is arbitrary local code execution?
 - Which permission categories should be visible in the first version of the
   permission center?
+- Which capability groups should be user-disableable in v1?
