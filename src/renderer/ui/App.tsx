@@ -447,7 +447,7 @@ export function App() {
       {error && (
         <div className="error">
           <span>{error}</span>
-          <ButtonControl className="error-close-button" onClick={() => setError(null)}>
+          <ButtonControl className="error-close-button" aria-label="Dismiss error" onClick={() => setError(null)}>
             <CloseIcon size={ICON_SIZE.menu} />
           </ButtonControl>
         </div>

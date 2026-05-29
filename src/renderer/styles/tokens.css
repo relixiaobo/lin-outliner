@@ -115,6 +115,7 @@
   --status-info: #3b82c4;
 
   --inline-code-bg: rgb(var(--ink) / 0.06);
+  --highlight-mark: rgba(247, 236, 139, 0.6);
 
   /* elevation: rail (softest) < level-1 (menus) < level-2 (dialogs) */
   --shadow-rail: 0 8px 26px -10px rgba(0, 0, 0, 0.26), 0 1px 3px rgba(0, 0, 0, 0.10);
@@ -131,7 +132,7 @@
   --tag-focus-shadow: 0 0 0 2px color-mix(in srgb, var(--tag-text, currentColor) 22%, transparent);
   --inline-ref-selection-shadow: inset 0 0 0 1px var(--row-selection-border);
   --inline-ref-focus-shadow: 0 0 0 2px color-mix(in srgb, var(--inline-ref-accent, var(--inline-ref-default)) 22%, transparent);
-  --agent-side-panel-shadow: -18px 0 48px rgba(15, 23, 42, 0.12);
+  --agent-side-panel-shadow: -18px 0 48px rgba(0, 0, 0, 0.12);
   --view-radio-shadow: inset 0 0 0 1.5px var(--separator-opaque);
   --view-radio-checked-shadow: inset 0 0 0 1.5px var(--text-primary);
   --search-builder-focus-shadow: var(--focus-ring-shadow);
@@ -245,7 +246,7 @@
   --checkbox-mark-radius: var(--radius-xs);
   --workspace-surface-radius: var(--radius-xl);
   --panel-radius: var(--workspace-surface-radius);
-  --agent-composer-radius: var(--workspace-surface-radius);
+  --agent-composer-radius: calc(var(--workspace-surface-radius) - var(--layout-gap));
   --agent-composer-corner-inset: var(--space-3);
   --agent-composer-corner-radius: calc(var(--agent-composer-radius) - var(--agent-composer-corner-inset));
   --motion-fast: 120ms ease;

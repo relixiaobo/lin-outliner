@@ -302,6 +302,6 @@
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-pill);
-  color: white;
+  color: var(--text-on-accent);
 }
 

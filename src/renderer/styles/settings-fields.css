@@ -149,8 +149,8 @@
   align-items: center;
   gap: var(--space-4);
   border-radius: var(--radius-control-md);
-  background: var(--status-danger-muted);
-  color: var(--danger);
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  color: var(--status-danger);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
   margin-bottom: var(--space-5);
@@ -189,7 +189,7 @@
 }
 
 .agent-settings-danger:hover:not(:disabled) {
-  background: var(--status-danger-muted);
+  background: color-mix(in srgb, var(--status-danger) 12%, transparent);
 }
 
 .agent-settings-primary:disabled,

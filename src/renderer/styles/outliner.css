@@ -1661,11 +1661,11 @@
 
 .row-bullet-shape.tag {
   background: var(--accent);
-  color: white;
+  color: var(--text-on-accent);
 }
 
 .row-bullet-tag-glyph {
-  color: white;
+  color: var(--text-on-accent);
   font-size: 9px;
   font-weight: 700;
   line-height: 1;
@@ -1947,7 +1947,7 @@
 
 .row-editor .pm-highlight {
   border-radius: var(--radius-2xs);
-  background: rgba(247, 236, 139, 0.6);
+  background: var(--highlight-mark);
 }
 
 .floating-editor-toolbar {

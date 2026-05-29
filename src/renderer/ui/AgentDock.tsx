@@ -32,7 +32,7 @@ export function AgentDock(props: AgentDockProps) {
       className={`agent-dock agent-dock-${props.railState}`}
       data-rail-state={props.railState}
       aria-label="Agent"
-      aria-hidden={open ? undefined : true}
+      inert={open ? undefined : true}
     >
       <AgentChatPanel
         index={props.index}
