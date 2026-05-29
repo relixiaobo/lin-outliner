@@ -233,12 +233,14 @@ function createWindow() {
   mainWindow.on('enter-full-screen', () => mainWindow && applyMacWindowCorner(mainWindow, 0));
   mainWindow.on('leave-full-screen', refreshWindowCorner);
   mainWindow.webContents.on('before-input-event', (_event, input) => {
+    // Match by physical key code: holding ⌥ remaps the 'c' character to 'ç', so
+    // input.key would not equal 'c'. input.code is layout/modifier independent.
     if (
       input.type === 'keyDown' &&
       input.meta &&
       input.control &&
       input.alt &&
-      input.key.toLowerCase() === 'c'
+      input.code === 'KeyC'
     ) {
       cornerEnabled = !cornerEnabled;
       refreshWindowCorner();
