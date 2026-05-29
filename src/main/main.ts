@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, protocol, session, shell } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
@@ -171,6 +171,15 @@ function configureSessionSecurity() {
   });
 }
 
+// Opaque pre-paint frame colour for non-material windows. Mirrors the renderer
+// deck colour per OS scheme (light `--bg-window` ≈ #f7f6f1, dark #2a2a2c) so a
+// dark-OS launch never flashes a light backing behind the first paint. The
+// renderer sets [data-theme] before React mounts, so this only backs the window
+// before that; keeping it scheme-matched closes the residual gap.
+function prePaintBackgroundColor(): string {
+  return nativeTheme.shouldUseDarkColors ? '#2a2a2c' : '#f7f6f1';
+}
+
 function createWindow() {
   const windowState = loadWindowState();
   const material = windowMaterialKind(process.platform);
@@ -187,7 +196,7 @@ function createWindow() {
     // With a window material the background must be transparent so the OS
     // material (vibrancy / mica) shows through; otherwise keep the opaque deck
     // colour as the pre-paint frame.
-    backgroundColor: material ? '#00000000' : '#f7f6f1',
+    backgroundColor: material ? '#00000000' : prePaintBackgroundColor(),
     ...(material === 'vibrancy' ? { vibrancy: 'under-window' as const } : {}),
     ...(material === 'mica' ? { backgroundMaterial: 'mica' as const } : {}),
     // Standard window: hiddenInset keeps the native traffic lights (the OS draws
@@ -267,7 +276,7 @@ function openSettingsWindow() {
     minWidth: 560,
     minHeight: 480,
     show: false,
-    backgroundColor: '#f7f6f1',
+    backgroundColor: prePaintBackgroundColor(),
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,

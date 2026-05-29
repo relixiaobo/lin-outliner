@@ -136,9 +136,11 @@ export function Sidebar(props: SidebarProps) {
   return (
     <aside className="sidebar-dock" aria-label="Primary navigation">
       {/* Top spacer keeps the rail's first row clear of the traffic lights +
-          sidebar toggle (window chrome on the shared centreline), and doubles as a
-          window drag region. */}
-      <div className="rail-top" data-electron-drag-region="deep" aria-hidden="true" />
+          sidebar toggle (window chrome on the shared centreline). It is NOT a drag
+          region: a drag region here would underlap the chrome toggle from a
+          different DOM subtree and the OS would swallow the toggle's click (see
+          sidebar.css). Dragging is owned by the chrome zones + breadcrumb. */}
+      <div className="rail-top" aria-hidden="true" />
       <div className="sidebar-scroll">
       <nav className="sidebar-primary-nav">
         {primaryNavItems.map((item) => {

@@ -144,7 +144,7 @@
   min-height: 20px;
   align-items: center;
   border-radius: var(--radius-sm);
-  background: var(--control-bg);
+  background: var(--fill-2);
   color: var(--text-soft);
   padding: 0 var(--space-2);
 }
