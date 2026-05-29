@@ -137,6 +137,45 @@ silent bypass.
 The timeout can later become a user setting or runtime policy, but it should not
 be model-authored in v1.
 
+### Parameter Description
+
+The tool schema should give the agent direct guidance, not just types:
+
+```ts
+user_approval: {
+  type: 'object',
+  description: [
+    'Optional. Include only when this exact tool action should give the user a confirmation window.',
+    'Omit for routine actions that should run without interruption.',
+    'Use default_on_timeout="approve" when you believe the action should run, but the user may want a chance to stop it.',
+    'Use default_on_timeout="deny" when the action may be appropriate, but should require explicit user consent if the user is present.',
+    'Do not use this for actions you believe should not be done; choose a different approach instead.',
+    'The runtime owns the timeout length. Provide only the default outcome and a concise consequence-oriented reason.',
+  ].join(' '),
+  additionalProperties: false,
+  required: ['default_on_timeout', 'reason'],
+  properties: {
+    default_on_timeout: {
+      type: 'string',
+      enum: ['approve', 'deny'],
+      description: [
+        'What happens if the user does not respond within the runtime timeout.',
+        'approve means proceed by default; deny means do not run unless the user explicitly approves.',
+      ].join(' '),
+    },
+    reason: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 500,
+      description: [
+        'One concise sentence explaining the concrete consequence that makes user approval useful.',
+        'Do not restate the command; explain why the user might care.',
+      ].join(' '),
+    },
+  },
+}
+```
+
 Examples:
 
 ```json
@@ -269,6 +308,38 @@ Subagent requests bubble through the parent approval path. The card should label
 which agent requested the action, and any session rule should stay scoped to the
 parent run/session rather than becoming a persistent tool permission.
 
+### User-Owned No-Confirm Mode
+
+Some users will explicitly want the agent to proceed without confirmation, even
+for actions that the agent would normally mark with `user_approval`.
+
+That should be a user-owned runtime setting or session rule, not a model-owned
+choice:
+
+```txt
+normal
+  -> honor user_approval countdowns
+
+auto-approve user approval requests
+  -> resolve user_approval immediately as approved
+```
+
+In auto-approve mode, the agent should still include `user_approval` when it
+believes a confirmation window would normally be appropriate. The field remains
+useful for audit, transcript clarity, and for users who later turn the mode off.
+The runtime simply resolves the request immediately according to the user's
+explicit preference.
+
+This setting may approve both `default_on_timeout: 'approve'` and
+`default_on_timeout: 'deny'` requests, because the user is intentionally saying
+they do not want confirmation. It must still not bypass the platform safety
+floor: unknown tools, invalid schema, workspace-boundary violations, hard deny
+rules, and permission self-modification remain blocked.
+
+The first implementation should prefer a session-scoped no-confirm switch over a
+persistent global switch. A persistent version can be added later, but it should
+be visible in the UI while active and recorded in approval events.
+
 ## Event Log Changes
 
 `approval.requested` should capture the default behavior and deadline:
@@ -292,7 +363,7 @@ interface ApprovalResolvedEvent {
   type: 'approval.resolved';
   requestId: string;
   approved: boolean;
-  resolvedBy?: 'user' | 'session' | 'timeout' | 'abort' | 'runtime';
+  resolvedBy?: 'user' | 'session' | 'user_setting' | 'timeout' | 'abort' | 'runtime';
 }
 ```
 
@@ -389,16 +460,18 @@ needed. The agent owns that decision because it knows the task intent.
 6. Use the fixed 90 second runtime timeout when creating approval requests.
 7. Extend `requestToolApproval` to accept `defaultOnTimeout` and `deadlineAt`.
 8. Preserve `once | session` approval behavior for countdown cards.
-9. Add renderer countdown UI to `AgentApprovalCard`, including pause/resume
+9. Add a user-owned session-scoped no-confirm mode that immediately approves
+   `user_approval` requests without bypassing the platform safety floor.
+10. Add renderer countdown UI to `AgentApprovalCard`, including pause/resume
    semantics.
-10. Append timeout metadata to `approval.requested` and `resolvedBy` to
+11. Append timeout metadata to `approval.requested` and `resolvedBy` to
    `approval.resolved`.
-11. On timeout-deny, return a normal denied tool result to the agent instead of
+12. On timeout-deny, return a normal denied tool result to the agent instead of
     leaving the run blocked.
-12. Strip `user_approval` before invoking the underlying tool executor.
-13. Add tests for absent approval, hard-block precedence, fixed timeout,
-    timeout approve, timeout deny, user override, session approval, abort, and
-    stale request resolution.
+13. Strip `user_approval` before invoking the underlying tool executor.
+14. Add tests for absent approval, hard-block precedence, fixed timeout,
+    timeout approve, timeout deny, user override, session approval,
+    user-setting approval, abort, and stale request resolution.
 
 ## Open Questions
 
