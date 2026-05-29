@@ -247,6 +247,10 @@
   --workspace-surface-radius: var(--radius-xl);
   --panel-radius: var(--workspace-surface-radius);
   --agent-composer-radius: var(--workspace-surface-radius);
+  /* Custom window corner, concentric with the floating rails: window 24 →
+     rail/panel 16 → composer 8. Matches MAC_WINDOW_CORNER_RADIUS; the native
+     window_corner addon rounds the OS vibrancy backing, this clips the web. */
+  --window-radius: calc(var(--panel-radius) + var(--layout-gap));
   --agent-composer-corner-inset: var(--space-3);
   --agent-composer-corner-radius: calc(var(--agent-composer-radius) - var(--agent-composer-corner-inset));
   --motion-fast: 120ms ease;
@@ -887,6 +891,16 @@ button:focus-visible {
 [data-window-material] .top-chrome,
 [data-window-material] .app-shell {
   background: var(--window-material-frost);
+}
+
+/* Custom window corner: clip the web layer (the CSS frost + all content) to the
+   rounded window shape. The native window_corner addon rounds the OS vibrancy
+   backing that shows through; both layers must round or the corner shows a
+   square edge. Only under a window material — that is the macOS path that owns
+   the 24pt corner (and where the window is non-opaque so the corners read). */
+[data-window-material] .app {
+  border-radius: var(--window-radius);
+  overflow: hidden;
 }
 
 .app-shell.sidebar-collapsed .sidebar-dock,

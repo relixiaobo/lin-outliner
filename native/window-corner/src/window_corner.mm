@@ -29,10 +29,46 @@
 #import <QuartzCore/QuartzCore.h>
 #include <node_api.h>
 
+// Build a resizable rounded-rectangle image whose alpha is used as a view mask:
+// opaque inside the rounded rect, transparent in the corners. capInsets keep the
+// corners crisp while the centre stretches to any size.
+static NSImage* RoundedMaskImage(CGFloat radius) {
+  CGFloat side = radius * 2 + 1;
+  NSImage* image = [[[NSImage alloc] initWithSize:NSMakeSize(side, side)] autorelease];
+  [image lockFocus];
+  [[NSColor blackColor] setFill];
+  NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:NSMakeRect(0, 0, side, side)
+                                                       xRadius:radius
+                                                       yRadius:radius];
+  [path fill];
+  [image unlockFocus];
+  [image setCapInsets:NSEdgeInsetsMake(radius, radius, radius, radius)];
+  [image setResizingMode:NSImageResizingModeStretch];
+  return image;
+}
+
+// Round every NSVisualEffectView in the subtree via its maskImage. Masking the
+// effect view this way (rather than clipping an ancestor layer with
+// masksToBounds) preserves its behind-window vibrancy blending — masksToBounds
+// on an ancestor turns the frost into raw transparency.
+static void RoundEffectViews(NSView* view, NSImage* mask) {
+  if ([view isKindOfClass:[NSVisualEffectView class]]) {
+    [(NSVisualEffectView*)view setMaskImage:mask];
+  }
+  for (NSView* sub in [view subviews]) {
+    RoundEffectViews(sub, mask);
+  }
+}
+
 // setWindowCornerRadius(handle: Buffer, radius?: number) -> boolean
 //
 // `handle` is BrowserWindow.getNativeWindowHandle(): on macOS its bytes are the
 // NSView* of the window's content view container.
+//
+// Rounds the OS vibrancy backing (NSVisualEffectView maskImage) and recomputes
+// the window shadow so it follows the rounded shape. The web layer's own frost
+// is rounded separately in CSS (border-radius on .app under a window material) —
+// both layers must round or the corner shows a square edge.
 static napi_value SetWindowCornerRadius(napi_env env, napi_callback_info info) {
   size_t argc = 2;
   napi_value args[2];
@@ -61,24 +97,13 @@ static napi_value SetWindowCornerRadius(napi_env env, napi_callback_info info) {
   if (view != nil) {
     NSWindow* window = [view window];
     if (window != nil) {
-      NSView* content = [window contentView];
-      [content setWantsLayer:YES];
-      CALayer* layer = [content layer];
-      if (layer != nil) {
-        [layer setCornerRadius:radius];
-        [layer setMasksToBounds:YES];
-        // Continuous (squircle) curve matches the macOS window-corner shape
-        // rather than a circular arc. Available since macOS 10.15.
-        if (@available(macOS 10.15, *)) {
-          layer.cornerCurve = kCACornerCurveContinuous;
-        }
-      }
-      // Do NOT touch window.opaque / backgroundColor here. A vibrancy window is
-      // already non-opaque with its NSVisualEffectView backing; forcing
-      // opaque=NO + clearColor strips that frost and makes the whole deck show
-      // the raw desktop. Clipping the content layer above already makes the
-      // corners transparent, so the system shadow follows the rounded shape
-      // once we invalidate it.
+      // radius 0 means "remove the rounding" (e.g. entering fullscreen): a nil
+      // maskImage restores the square effect view.
+      NSImage* mask = radius > 0 ? RoundedMaskImage(radius) : nil;
+      RoundEffectViews([window contentView], mask);
+      // Do NOT set masksToBounds on the content view — that clips the vibrancy
+      // ancestor and kills behind-window blending (the deck would show the raw
+      // desktop). The maskImage above rounds the frost without breaking it.
       [window invalidateShadow];
       ok = true;
     }
