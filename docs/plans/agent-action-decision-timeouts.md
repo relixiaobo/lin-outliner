@@ -290,32 +290,28 @@ focus inside the card, opening details, pressing a button, or pointer down on th
 card. Mere pointer hover may pause while the pointer remains over the card, but
 leaving the card should resume with at least a 5 second grace window.
 
-### Session Approval
+### User-Owned Approval Policy
 
-The existing `once | session` approval scope should continue to work.
+Some users explicitly want fewer confirmations than the agent would normally
+request. That preference belongs to the user and runtime, not to the model. The
+agent should keep emitting `approval_request` when it believes a confirmation
+window would normally be appropriate; the runtime may then resolve or skip the
+request according to user-owned policy.
 
-Session approval creates or reuses a narrow session rule for the resolved
-action. A later matching action skips the countdown card and runs immediately,
-with `approval.resolved` recorded as session-resolved if an approval event was
-already open. The session rule must be derived from the actual tool name and
-target arguments, not from the model's `reason`, and must not broaden beyond the
-same match rules used today.
+There are two separate product needs:
 
-For `default_on_timeout: 'deny'`, session approval means the user has explicitly
-granted that class of action for the current session. Without that explicit
-grant, the default remains fail-closed.
+1. **No-confirm mode.** The user wants approval requests to auto-approve.
+2. **Class approval.** After approving one action, the user wants similar
+   actions to stop prompting.
 
-Subagent requests bubble through the parent approval path. The card should label
-which agent requested the action, and any session rule should stay scoped to the
-parent run/session rather than becoming a persistent tool permission.
+Both may approve requests whose `default_on_timeout` is `deny`, because the user
+has explicitly chosen to remove that confirmation step. Neither may bypass the
+platform safety floor: unknown tools, invalid schema, workspace-boundary
+violations, hard deny rules, and permission self-modification remain blocked.
 
-### User-Owned No-Confirm Mode
+#### No-Confirm Mode
 
-Some users will explicitly want the agent to proceed without confirmation, even
-for actions that the agent would normally mark with `approval_request`.
-
-That should be a user-owned runtime setting or session rule, not a model-owned
-choice:
+No-confirm mode resolves `approval_request` immediately as approved:
 
 ```txt
 normal
@@ -325,21 +321,48 @@ auto-approve approval requests
   -> resolve approval_request immediately as approved
 ```
 
-In auto-approve mode, the agent should still include `approval_request` when it
-believes a confirmation window would normally be appropriate. The field remains
-useful for audit, transcript clarity, and for users who later turn the mode off.
-The runtime simply resolves the request immediately according to the user's
-explicit preference.
-
-This setting may approve both `default_on_timeout: 'approve'` and
-`default_on_timeout: 'deny'` requests, because the user is intentionally saying
-they do not want confirmation. It must still not bypass the platform safety
-floor: unknown tools, invalid schema, workspace-boundary violations, hard deny
-rules, and permission self-modification remain blocked.
-
 The first implementation should prefer a session-scoped no-confirm switch over a
 persistent global switch. A persistent version can be added later, but it should
 be visible in the UI while active and recorded in approval events.
+
+#### Class Approval
+
+The existing `once | session` approval scope should become an explicit set of
+approval scopes:
+
+```txt
+Approve once
+  -> approve this exact pending action
+
+Allow similar this session
+  -> create a runtime-derived session rule for this action class
+
+Always allow similar
+  -> create a persistent user rule for this action class, if persistent rules
+     are enabled
+```
+
+The class rule must be derived from the actual tool name and target arguments,
+not from the model's `reason`, and must not broaden beyond runtime-defined rule
+templates. If no safe class template exists for a tool action, the UI should only
+offer exact-action approval.
+
+Examples of class templates:
+
+| Action | Possible class rule |
+| --- | --- |
+| package install in the current workspace | allow package-manager dependency changes in this workspace |
+| `git push` for the current repository | allow pushes for this repository or branch, depending on selected scope |
+| file edits under one workspace directory | allow edits under that directory |
+| node trash/restore | allow reversible node trash/restore operations |
+
+For `default_on_timeout: 'deny'`, class approval means the user has explicitly
+granted that class of action. Without that explicit grant, the default remains
+fail-closed.
+
+Subagent requests bubble through the parent approval path. The card should label
+which agent requested the action, and session class rules should stay scoped to
+the parent run/session rather than becoming persistent tool permissions.
 
 ## Event Log Changes
 
@@ -364,7 +387,7 @@ interface ApprovalResolvedEvent {
   type: 'approval.resolved';
   requestId: string;
   approved: boolean;
-  resolvedBy?: 'user' | 'session' | 'user_setting' | 'timeout' | 'abort' | 'runtime';
+  resolvedBy?: 'user' | 'session_rule' | 'persistent_rule' | 'user_setting' | 'timeout' | 'abort' | 'runtime';
 }
 ```
 
@@ -460,7 +483,8 @@ needed. The agent owns that decision because it knows the task intent.
    evaluation, but keep the platform safety floor above it.
 6. Use the fixed 90 second runtime timeout when creating approval requests.
 7. Extend `requestToolApproval` to accept `defaultOnTimeout` and `deadlineAt`.
-8. Preserve `once | session` approval behavior for countdown cards.
+8. Implement approval scopes: approve once, allow similar this session, and
+   optionally always allow similar when persistent rules are enabled.
 9. Add a user-owned session-scoped no-confirm mode that immediately approves
    `approval_request` requests without bypassing the platform safety floor.
 10. Add renderer countdown UI to `AgentApprovalCard`, including pause/resume
@@ -471,8 +495,9 @@ needed. The agent owns that decision because it knows the task intent.
     leaving the run blocked.
 13. Strip `approval_request` before invoking the underlying tool executor.
 14. Add tests for absent approval, hard-block precedence, fixed timeout,
-    timeout approve, timeout deny, user override, session approval,
-    user-setting approval, abort, and stale request resolution.
+    timeout approve, timeout deny, user override, session class approval,
+    persistent class approval if enabled, user-setting approval, abort, and
+    stale request resolution.
 
 ## Open Questions
 
