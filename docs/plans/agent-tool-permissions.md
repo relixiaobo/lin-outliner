@@ -62,14 +62,14 @@ decisions into one product-owned permission system.
 5. **Prompts must be rare.** `ask` is reserved for actions where the user must
    personally make the decision. Otherwise the runtime should `allow` without
    interrupting or return a platform hard block.
-6. **No persistent user `deny` rules.** If the agent requested an action, the
-   action may be necessary for the task. The user can deny the current request,
-   but the global permission center should not store "always deny this kind" as
-   a normal rule.
-7. **Permanent disable is capability availability.** Users still need a way to
-   say "never use this capability." That belongs to a global enable/disable
-   layer for tools or capability groups, not to the permission rule for a
-   supported action kind.
+6. **No in-dialog "always deny".** If the agent requested an action, the action
+   may be necessary for the task. The confirmation dialog should support
+   `Deny once`, but it should not encourage one-click permanent denial.
+7. **Use a cc-2.1-style settings shape.** Persistent rules live in one global
+   JSON settings file with `permissions.allow`, `permissions.ask`, and
+   `permissions.deny` arrays. The product UI can manage common allow/ask
+   choices, while advanced users may edit the file directly for durable deny
+   rules. v1 does not need a dedicated capability-disable management surface.
 
 ## Decision Trail
 
@@ -91,6 +91,10 @@ The design moved through several rejected shapes:
 5. **Session or workspace grants.** These add management overhead and make it
    hard for the user to know the current permission state. The product does not
    need that complexity for v1.
+6. **A separate capability availability UI.** This creates another permission
+   surface to explain and maintain. A cc-2.1-style settings file already gives
+   advanced users a durable deny mechanism without adding a dedicated product
+   manager for disabled capabilities.
 
 The resulting design keeps the useful part of the original runtime policy
 approach: the runtime owns permission enforcement. It changes the user
@@ -103,18 +107,18 @@ The user manages one global table:
 ```txt
 Agent Tool Permissions
 
-Capability / action kind                Availability   Permission when enabled
+Action kind                             Permission
 
-Read local data                         Enabled        Allow
-Search external information             Enabled        Allow
-Edit local documents                     Enabled        Allow
-Run local validation / project scripts   Enabled        Allow / Ask
-Install dependencies                     Enabled        Allow / Ask
-Delete local data                        Enabled        Allow / Ask
-Publish to a remote service              Enabled        Allow / Ask
-Send external messages                   Enabled/Off    Allow / Ask
-Payment or purchase actions              Off by default Allow / Ask if supported
-Modify agent permission settings         Platform      Blocked
+Read local data                         Allow
+Search external information             Allow
+Edit local documents                     Allow
+Run local validation / project scripts   Allow / Ask
+Install dependencies                     Allow / Ask
+Delete local data                        Allow / Ask
+Publish to a remote service              Allow / Ask
+Send external messages                   Allow / Ask
+Payment or purchase actions              Ask if supported
+Modify agent permission settings         Platform block
 ```
 
 These rules are global across the whole software. They do not depend on the
@@ -126,10 +130,34 @@ This simplicity is intentional. A more granular system can be added later, but
 v1 should optimize for a user being able to understand and manage the complete
 permission state at a glance.
 
-Availability answers whether the agent may use a capability at all. Permission
-answers whether an enabled action kind may run without asking. Disabling a
-capability is the user's permanent "do not use this" control; it should hard
-block matching calls without opening a confirmation dialog.
+The backing file should stay compatible in spirit with cc-2.1's settings model:
+rules are grouped by behavior, not by UI page. Lin does not need to expose every
+rule form in the UI, but it should keep the on-disk model legible for advanced
+users:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Action(file.edit.allowed_file_area)",
+      "Action(web.search)"
+    ],
+    "ask": [
+      "Action(shell.dependency_install)",
+      "Action(git.publish_remote)"
+    ],
+    "deny": [
+      "Action(agent.permission.modify)",
+      "Capability(external_messaging)"
+    ]
+  }
+}
+```
+
+The product should write action-kind rules by default. Tool-specific rule
+strings, such as future `Bash(...)` prefix rules, can be added only where the
+runtime has a safe parser and validator. Users should not need to write these
+rules for normal operation.
 
 ## Runtime Flow
 
@@ -138,11 +166,11 @@ Every tool call follows the same path:
 ```txt
 tool call
   -> validate tool schema and platform hard blocks
-  -> check global capability availability
   -> derive one or more action descriptors from tool name and arguments
   -> read global permission rules for the derived action kinds
   -> allow: execute immediately
   -> ask: show a confirmation dialog and wait for explicit user input
+  -> deny: return a structured denied result to the agent
   -> hard block: return a structured denied result to the agent
 ```
 
@@ -190,7 +218,7 @@ them as local code execution, not as harmless validation.
 Sketch:
 
 ```ts
-type GlobalToolPermissionDecision = 'allow' | 'ask';
+type GlobalToolPermissionDecision = 'allow' | 'ask' | 'deny';
 type ToolPermissionOutcome = 'allow' | 'ask' | 'blocked';
 type ToolAccessScope =
   | 'allowed_file_area'
@@ -292,13 +320,26 @@ without turning global rules into broad filesystem capabilities.
 
 ## Global Permission Rules
 
-The permission store is a single global map for enabled action kinds:
+The permission store is a single global settings object, shaped like cc-2.1's
+`permissions` section:
 
 ```ts
 interface GlobalToolPermissionRule {
-  actionKind: AgentToolActionKind;
+  ruleValue: string;
   decision: GlobalToolPermissionDecision;
   updatedAt: number;
+}
+```
+
+The persisted form should be grouped by behavior:
+
+```json
+{
+  "permissions": {
+    "allow": ["Action(file.edit.allowed_file_area)"],
+    "ask": ["Action(git.publish_remote)"],
+    "deny": ["Action(agent.permission.modify)"]
+  }
 }
 ```
 
@@ -306,52 +347,31 @@ No session state is stored. No workspace-specific override is stored. A pending
 dialog can still be approved or denied once, but that does not create a stored
 permission rule unless the user explicitly chooses an "always" action.
 
-The permission center should show all supported action kinds, their current
-decision, and enough examples for the user to understand what each rule covers.
-High-risk `allow` choices should be visually explicit, because they apply
-globally.
+The permission center should show supported action kinds, their effective
+allow/ask decision, and enough examples for the user to understand what each
+rule covers. High-risk `allow` choices should be visually explicit, because
+they apply globally.
 
 If a user does not want confirmation for a risky action kind, the answer is to
 change that global rule to `allow`. The model should not bypass confirmation by
 adding metadata to the tool call, and the runtime should not silently create
 temporary grants.
 
-The global permission store is not a blocklist. It stores only whether a
-supported action kind can run without asking (`allow`) or must ask (`ask`).
-Platform hard blocks live outside the user permission table.
+The global settings file can also contain `deny` rules. These are the advanced
+user escape hatch for "never do this" preferences, but they are not the normal
+product flow:
 
-## Capability Availability
+- the confirmation dialog has no `Always deny this kind` button;
+- v1 does not need a dedicated disabled-capabilities management UI;
+- the permission center may show effective deny rules as read-only advanced
+  state, but it should not require users to understand rule strings for common
+  setup;
+- invalid or unsupported deny rules should be ignored with a diagnostic rather
+  than widening access.
 
-Capability availability is the permanent disable mechanism. It lives in the
-same global settings surface as the permission table, but it is evaluated before
-action-kind permissions and has different semantics.
-
-```ts
-interface AgentCapabilityAvailabilityRule {
-  capability: AgentCapabilityKind;
-  enabled: boolean;
-  updatedAt: number;
-}
-```
-
-Examples of capability groups:
-
-- shell execution;
-- filesystem read/write;
-- dependency management;
-- browser or computer control;
-- external publishing;
-- external messaging;
-- payments or purchases.
-
-If a capability is disabled, matching tool calls return a structured denied
-result with `reason: 'capability_disabled'`. The runtime should not show a
-confirmation dialog, because the user has already expressed a durable product
-preference.
-
-This fills the gap left by removing persistent permission-level deny rules:
-users can still permanently disable whole capabilities, while normal action-kind
-permissions stay focused on `allow | ask`.
+Persistent deny is evaluated before ask/allow rules and returns a structured
+denied result without opening a dialog. Platform hard blocks still live outside
+the user permission table and cannot be relaxed by any settings file rule.
 
 ## Confirmation Dialog
 
@@ -369,9 +389,9 @@ Dialog buttons:
 
 `Always allow this kind` updates the global permission rule for the action kind.
 The once buttons only resolve the pending tool call and are recorded in the
-event log. There is intentionally no `Always deny this kind` button; persistent
-denial is a platform/tool-availability concern, not a normal user permission
-rule.
+event log. There is intentionally no `Always deny this kind` button. Durable
+deny is reserved for advanced settings-file edits, not for the main approval
+flow.
 
 The dialog should show:
 
@@ -390,8 +410,8 @@ that also publishes to a remote service.
 
 ## Denied Results
 
-Only platform hard blocks and explicit `Deny once` choices return denied
-results. They should return structured data to the agent:
+Platform hard blocks, configured deny rules, and explicit `Deny once` choices
+return denied results. They should return structured data to the agent:
 
 ```ts
 interface ToolDeniedResult {
@@ -399,7 +419,7 @@ interface ToolDeniedResult {
   kind: 'permission_denied';
   primaryActionKind: AgentToolActionKind;
   actionKinds: AgentToolActionKind[];
-  reason: 'platform_hard_block' | 'capability_disabled' | 'user_denied';
+  reason: 'platform_hard_block' | 'configured_deny' | 'user_denied';
   message: string;
 }
 ```
@@ -431,9 +451,9 @@ Examples:
 
 These are product safety boundaries, not prompts. They should return
 `platform_hard_block` results rather than asking the user to approve them.
-Capability-disabled calls are also blocked before permission checks, but they
-should be recorded separately as `capability_disabled` because they come from a
-user-owned availability setting.
+Configured deny rules should be recorded separately as `configured_deny`
+because they come from user-owned settings, but they still cannot override hard
+blocks or expand access.
 
 ## Agent Behavior
 
@@ -468,7 +488,7 @@ interface ToolPermissionCheckedEvent {
   source:
     | 'global_rule'
     | 'default_rule'
-    | 'capability_disabled'
+    | 'configured_deny'
     | 'platform_hard_block';
   descriptorRef?: AgentPayloadRef;
 }
@@ -497,7 +517,7 @@ current:
 tool policy matrix -> allow / ask / deny
 
 proposed:
-hard block check -> capability availability -> action descriptor -> global permission rule -> allow / ask
+hard block check -> action descriptor -> global permission rules -> deny / ask / allow
 ```
 
 The difference is that the decision should be user-manageable and action-kind
@@ -514,7 +534,8 @@ This plan supersedes the previous action-decision timeout design:
 - do not implement timeout approval or timeout denial;
 - do not add session-scoped permission grants;
 - keep explicit confirmation only for `ask`;
-- implement a global permission center as the user-facing source of truth.
+- implement a global permission center for common allow/ask management;
+- store the source of truth in a cc-2.1-style global JSON settings file.
 
 P0 should start with a small set of high-confidence action kinds. It is better
 to classify fewer things well than to create a broad classifier that asks too
@@ -525,12 +546,13 @@ often or silently allows ambiguous actions.
 1. Define `AgentToolActionKind`, `GlobalToolPermissionDecision`,
    `ToolPermissionOutcome`, and `ToolActionDescriptor` in shared TypeScript
    types.
-2. Add a global permission store with one `allow | ask` rule per supported
-   action kind.
-3. Add a global capability availability store for durable enable/disable
-   preferences.
-4. Add a permission center UI for viewing and editing capability availability
-   and global permission rules.
+2. Add a global JSON permission store with `permissions.allow`,
+   `permissions.ask`, and `permissions.deny` arrays.
+3. Add a parser/validator for action-kind rules such as
+   `Action(file.edit.allowed_file_area)` and advanced durable deny rules such as
+   `Capability(external_messaging)`.
+4. Add a permission center UI for common allow/ask management. Do not require a
+   dedicated disabled-capabilities manager in v1.
 5. Build descriptor resolvers for existing agent tools.
 6. Preserve existing path-boundary, sensitive-path, restricted-mode, and skill
    preapproval safety properties while mapping them into action descriptors or
@@ -543,12 +565,12 @@ often or silently allows ambiguous actions.
 10. Add "approve once", "deny once", and "always allow this kind" resolution
    paths.
 11. Return structured `permission_denied` tool results for user-denied,
-    capability-disabled, and hard-block cases.
+    configured-deny, and hard-block cases.
 12. Update agent instructions so denied results are handled as normal tool
     results with fallbacks.
 13. Add event log entries for permission checks and user resolutions.
 14. Add tests for default allow, explicit ask, approve once, deny once, always
-    allow, disabled capability, unknown shell fail-safe, platform hard blocks,
+    allow, configured deny, unknown shell fail-safe, platform hard blocks,
     denied-result fallback, path boundaries, restricted mode, and shell
     compound-command classification.
 
@@ -562,4 +584,5 @@ often or silently allows ambiguous actions.
   because it is arbitrary local code execution?
 - Which permission categories should be visible in the first version of the
   permission center?
-- Which capability groups should be user-disableable in v1?
+- Should v1 support only action-kind rule strings, or also a small subset of
+  tool-specific strings such as `Bash(...)` once shell parsing is robust enough?
