@@ -15,6 +15,12 @@ The goal is not to make Lin better at interrupting the user. The goal is to keep
 agent work moving when the user steps away, while still giving the user a clear
 chance to intervene on actions the agent itself believes need human attention.
 
+This mainly helps actions where the agent is inclined to proceed and only wants
+to give the user an interruption window. Actions that require explicit consent,
+such as publishing to a remote, still fail closed when the user is absent; the
+improvement is that they return a denied result to the agent instead of leaving
+the whole run stuck forever.
+
 ## Problem
 
 The current approval model blocks the run on `ask`. This fails in two common
@@ -49,8 +55,14 @@ bash: git push origin codex/foo
   -> countdown defaults to deny
 ```
 
-The runtime does not classify risk. It executes the action-decision protocol
-when the agent provides one.
+The runtime does not classify task risk. It executes the action-decision
+protocol when the agent provides one.
+
+This proposal still assumes a platform safety floor below the attention policy:
+unknown tools, invalid schemas, aborts, workspace-boundary violations, and
+non-negotiable hard blocks stay runtime-enforced. That safety floor is not a
+runtime attempt to decide whether the user should be bothered; it is the product
+boundary that a model-authored decision cannot override.
 
 ## Action Decision Contract
 
@@ -68,7 +80,7 @@ The field has only three states:
 
 ```txt
 no actionDecision
-  -> run immediately, with no notification
+  -> no agent-requested interruption
 
 timeoutDefault: 'approve'
   -> show an approval card; if the user does nothing, approve after the timeout
@@ -84,6 +96,43 @@ There is intentionally no `allow`, `notify`, or standalone `deny` state:
 - A true "do not do this" decision should simply avoid the tool call; `deny`
   default means "this may be the right action, but it requires explicit user
   consent."
+
+Absence does not bypass the platform safety floor. During the P0 migration,
+absence also falls back to the existing legacy permission policy for tools that
+still have hard-coded `ask` rules. The end-state is:
+
+```txt
+runtime hard block
+  -> always block
+
+agent actionDecision
+  -> countdown protocol
+
+no actionDecision and no hard block
+  -> run immediately
+```
+
+Legacy `ask` rules should be removed only when the corresponding tool guidance
+and `actionDecision` support are strong enough that the rule no longer carries
+the product experience.
+
+### Timeout Bounds
+
+The runtime, not the agent, owns the actual deadline. `timeoutSeconds` is an
+agent request that must be clamped to product bounds:
+
+```ts
+const ACTION_DECISION_TIMEOUT_MIN_SECONDS = 10;
+const ACTION_DECISION_TIMEOUT_MAX_SECONDS = 120;
+```
+
+Values below the minimum are raised to the minimum. Values above the maximum are
+lowered to the maximum. Missing, non-finite, or invalid values reject the
+`actionDecision` and return a recoverable tool-input error asking the agent to
+retry with a valid timeout.
+
+This prevents `timeoutDefault: 'approve', timeoutSeconds: 1` from becoming a
+silent bypass of the user's intervention window.
 
 Examples:
 
@@ -141,22 +190,26 @@ tool call.
 The runtime's job is mechanical, not judgmental:
 
 1. Extract `actionDecision` before executing the tool.
-2. If absent, run the tool normally.
-3. If present, create an approval request with a deadline.
-4. Resolve the request from user input or timeout.
-5. On approved, strip `actionDecision` from the tool arguments and execute the
+2. Run the platform safety floor and any temporary legacy policy still active
+   during migration.
+3. If `actionDecision` is absent and no runtime block applies, run the tool
+   normally.
+4. If present, clamp the timeout and create an approval request with a deadline.
+5. Resolve the request from user input, session approval, abort, or timeout.
+6. On approved, strip `actionDecision` from the tool arguments and execute the
    underlying tool.
-6. On denied, return a denied tool result to the agent so it can continue with a
+7. On denied, return a denied tool result to the agent so it can continue with a
    fallback.
-7. Record whether the result came from the user or timeout.
+8. Record whether the result came from the user, a session rule, timeout, abort,
+   or runtime.
 
 The runtime may still enforce technical invariants such as invalid schema,
 unknown tool, abort, missing file, or process failure. Those are execution
 constraints, not an action safety classifier.
 
-If Lin keeps non-negotiable hard blocks such as machine-destruction commands,
-they should remain explicitly outside this proposal. They are platform safety
-boundaries, not user-attention policy.
+Non-negotiable hard blocks such as machine-destruction commands, workspace
+boundary violations, and permission self-modification are outside this proposal.
+They are platform safety boundaries, not user-attention policy.
 
 ## Approval UX
 
@@ -173,7 +226,7 @@ local project files.
 
 Will approve in 30s.
 
-[Approve now] [Deny]
+[Approve now] [This session] [Deny]
 ```
 
 Auto-deny example:
@@ -187,11 +240,33 @@ only happen with explicit user approval.
 
 Will deny in 60s.
 
-[Approve once] [Deny now]
+[Approve once] [This session] [Deny now]
 ```
 
-When the user interacts with the card, the countdown should pause or stop so a
-near-expired timer does not race the user's decision.
+When the user interacts with the card, the countdown should pause so a
+near-expired timer does not race the user's decision. "Interacts" means keyboard
+focus inside the card, opening details, pressing a button, or pointer down on the
+card. Mere pointer hover may pause while the pointer remains over the card, but
+leaving the card should resume with at least a 5 second grace window.
+
+### Session Approval
+
+The existing `once | session` approval scope should continue to work.
+
+Session approval creates or reuses a narrow session rule for the resolved
+action. A later matching action skips the countdown card and runs immediately,
+with `approval.resolved` recorded as session-resolved if an approval event was
+already open. The session rule must be derived from the actual tool name and
+target arguments, not from the model's `reason`, and must not broaden beyond the
+same match rules used today.
+
+For `timeoutDefault: 'deny'`, session approval means the user has explicitly
+granted that class of action for the current session. Without that explicit
+grant, the default remains fail-closed.
+
+Subagent requests bubble through the parent approval path. The card should label
+which agent requested the action, and any session rule should stay scoped to the
+parent run/session rather than becoming a persistent tool permission.
 
 ## Event Log Changes
 
@@ -216,7 +291,7 @@ interface ApprovalResolvedEvent {
   type: 'approval.resolved';
   requestId: string;
   approved: boolean;
-  resolvedBy?: 'user' | 'timeout' | 'abort' | 'runtime';
+  resolvedBy?: 'user' | 'session' | 'timeout' | 'abort' | 'runtime';
 }
 ```
 
@@ -284,15 +359,16 @@ migration can keep legacy ask rules as a fallback while the agent prompt and
 tool schemas are updated. The end-state for this proposal is that common
 user-attention decisions come from `actionDecision`, not a runtime ask matrix.
 
-## Known Tradeoff
+## Safety Model
 
 This is not a security classifier.
 
-If the agent omits `actionDecision`, the action runs. That is an intentional
-product tradeoff: the system optimizes for agent autonomy and avoids blocking on
-routine work. Safety must come from model behavior, task instructions,
-reversibility/undo where available, and any separately defined platform hard
-blocks.
+If the agent omits `actionDecision`, the action does not receive an
+agent-requested interruption window. That is an intentional product tradeoff:
+the system optimizes for agent autonomy and avoids blocking on routine work.
+Safety still depends on the platform safety floor, model behavior, task
+instructions, reversibility/undo where available, and any hard blocks defined
+outside this attention policy.
 
 The benefit is that no runtime rule has to guess whether the user's attention is
 needed. The agent owns that decision because it knows the task intent.
@@ -304,26 +380,29 @@ needed. The agent owns that decision because it knows the task intent.
    tool schemas.
 3. Update the agent system prompt/tool guidance to explain the three states:
    no decision, timeout approve, timeout deny.
-4. In `beforeToolCall`, extract `actionDecision` before legacy permission
-   evaluation.
-5. Extend `requestToolApproval` to accept `timeoutDefault`, `timeoutSeconds`,
+4. Define the platform safety floor that `actionDecision` cannot bypass:
+   invalid tool/schema, abort, workspace boundary, hard deny, and permission
+   self-modification.
+5. In `beforeToolCall`, extract `actionDecision` before legacy permission
+   evaluation, but keep the platform safety floor above it.
+6. Clamp `timeoutSeconds` to the product min/max and reject invalid values.
+7. Extend `requestToolApproval` to accept `timeoutDefault`, `timeoutSeconds`,
    and `deadlineAt`.
-6. Add renderer countdown UI to `AgentApprovalCard`.
-7. Append timeout metadata to `approval.requested` and `resolvedBy` to
+8. Preserve `once | session` approval behavior for countdown cards.
+9. Add renderer countdown UI to `AgentApprovalCard`, including pause/resume
+   semantics.
+10. Append timeout metadata to `approval.requested` and `resolvedBy` to
    `approval.resolved`.
-8. On timeout-deny, return a normal denied tool result to the agent instead of
-   leaving the run blocked.
-9. Strip `actionDecision` before invoking the underlying tool executor.
-10. Add tests for absent decision, timeout approve, timeout deny, user override,
-    abort, and stale request resolution.
+11. On timeout-deny, return a normal denied tool result to the agent instead of
+    leaving the run blocked.
+12. Strip `actionDecision` before invoking the underlying tool executor.
+13. Add tests for absent decision, hard-block precedence, timeout clamp, timeout
+    approve, timeout deny, user override, session approval, abort, and stale
+    request resolution.
 
 ## Open Questions
 
-- Should `timeoutSeconds` have global min/max bounds, such as 5s to 120s?
 - Should action decisions be allowed inside skill shell commands, and if so what
   syntax carries the metadata?
-- Should subagents inherit the same countdown policy automatically, or should
-  their approval cards explicitly label the requesting subagent?
-- During migration, should legacy runtime `ask` rules still fire when
-  `actionDecision` is absent, or should absence immediately mean allow for all
-  selected tools?
+- Which legacy `ask` rules should be removed first after the agent prompt and
+  schemas support `actionDecision`?
