@@ -135,7 +135,7 @@
   height: 26px;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
   color: var(--text-faint);
 }
 

@@ -36,7 +36,7 @@
   flex: 0 0 30px;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
   background: var(--fill-1);
   color: var(--muted-2);
   margin-top: 1px;
@@ -221,7 +221,7 @@
   position: relative;
   width: var(--calendar-day-size);
   height: var(--calendar-day-size);
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-sub);
   font-size: var(--font-meta);
@@ -234,7 +234,7 @@
 
 .calendar-month-day.is-in-range:not(.is-selected) {
   background: var(--fill-2);
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
 }
 
 .calendar-month-day.is-today:not(.is-selected) {
@@ -278,7 +278,7 @@
   flex: 0 0 30px;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
   background: var(--row-hover);
   color: var(--muted);
   transition: background var(--motion-fast), color var(--motion-fast);

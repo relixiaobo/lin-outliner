@@ -186,7 +186,7 @@ button.panel-resize-handle::after {
   flex: 0 1 auto;
   align-items: center;
   gap: var(--space-2);
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
   color: var(--text-soft);
   margin-left: calc(var(--space-2) * -1);
   padding: 0 var(--space-2);
@@ -244,7 +244,7 @@ button.panel-resize-handle::after {
   height: 24px;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
   color: var(--text-faint);
   transition: background var(--motion-fast), color var(--motion-fast);
 }
@@ -306,7 +306,7 @@ button.panel-resize-handle::after {
   min-height: 54px;
   align-items: center;
   gap: var(--space-2);
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
 }
 
 .agent-session-row:hover,

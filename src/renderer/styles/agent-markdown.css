@@ -28,14 +28,14 @@
 }
 
 .agent-markdown h2 {
-  font-size: var(--font-heading-md);
-  line-height: var(--line-heading-md);
+  font-size: var(--font-content);
+  line-height: var(--line-content);
 }
 
 .agent-markdown h3,
 .agent-markdown h4 {
-  font-size: var(--font-heading-sm);
-  line-height: var(--line-heading-sm);
+  font-size: var(--font-ui-md);
+  line-height: var(--line-ui-md);
 }
 
 .agent-markdown ul,
@@ -83,7 +83,7 @@
 }
 
 .agent-inline-code {
-  border-radius: var(--radius-control-xs);
+  border-radius: var(--radius-row);
   background: var(--inline-code-bg);
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;

@@ -37,7 +37,7 @@
   gap: var(--space-6);
   padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
   background: var(--fill-1);
 }
 
@@ -70,7 +70,7 @@
 .settings-empty-placeholder {
   padding: var(--space-8);
   border: 1px dashed var(--border-muted);
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
   color: var(--muted-2);
   font-size: var(--font-meta);
   text-align: center;
@@ -92,7 +92,7 @@
   gap: var(--space-4);
   padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
   background: var(--surface);
   transition: opacity var(--motion-fast), border-color var(--motion-fast);
 }
@@ -135,7 +135,7 @@
   border-radius: var(--radius-xs);
   background: var(--control-hover);
   color: var(--text-soft);
-  font-size: var(--font-ui-3xs);
+  font-size: var(--font-ui-2xs);
   padding: 1px var(--space-3);
   text-transform: uppercase;
   font-weight: 500;

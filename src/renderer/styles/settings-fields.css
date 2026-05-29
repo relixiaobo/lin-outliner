@@ -26,7 +26,7 @@
   width: 100%;
   height: 32px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
   outline: none;
   background: var(--fill-2);
   color: var(--text-strong);
@@ -45,7 +45,7 @@
   align-items: center;
   gap: var(--space-4);
   border: 1px solid var(--border);
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
   background: var(--fill-2);
   color: var(--text-soft);
   padding-left: var(--space-5);
@@ -116,7 +116,7 @@
   flex-direction: column;
   justify-content: center;
   gap: var(--space-hairline);
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
   background: var(--fill-1);
   padding: 0 var(--space-6);
 }
@@ -136,7 +136,7 @@
 }
 
 .agent-settings-model-placeholder {
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
   background: var(--fill-1);
   color: var(--muted-2);
   font-size: var(--font-meta);
@@ -148,7 +148,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--status-danger) 10%, transparent);
   color: var(--status-danger);
   font-size: var(--font-meta);

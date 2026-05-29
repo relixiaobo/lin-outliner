@@ -75,7 +75,7 @@
   align-items: center;
   justify-content: center;
   border: 1px dashed var(--drop-line);
-  border-radius: var(--radius-control-lg);
+  border-radius: var(--radius-md);
   background: var(--bg-window);
   color: var(--text-soft);
   font-size: var(--font-ui-sm);
@@ -238,7 +238,7 @@
   align-items: center;
   gap: var(--space-3);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-control-lg);
+  border-radius: var(--radius-md);
   background: var(--fill-2);
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
 }
@@ -251,7 +251,7 @@
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
   background: var(--fill-1);
   color: var(--text-soft);
 }
@@ -400,9 +400,9 @@
   border-radius: var(--radius-2xs);
   margin-right: var(--space-hairline);
   padding-bottom: 1px;
-  font-size: var(--font-ui-3xs);
+  font-size: var(--font-ui-2xs);
   font-weight: 700;
-  line-height: var(--line-ui-3xs);
+  line-height: var(--line-ui-2xs);
 }
 
 .agent-composer-inline-file-icon.is-fallback-icon::before {
@@ -744,7 +744,7 @@
 .agent-composer-thinking-level-item {
   display: block;
   width: 100%;
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
   color: var(--text-soft);
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm-tight);

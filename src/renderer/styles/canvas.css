@@ -75,7 +75,7 @@
   height: 22px;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-control-xs);
+  border-radius: var(--radius-row);
   color: var(--text-faint);
 }
 
@@ -101,7 +101,7 @@
 }
 
 .outline-panel-surface .panel-header {
-  padding: 0 0 var(--space-7);
+  padding: 0 0 var(--space-6);
 }
 
 .outline-panel-surface.is-agent-debug {

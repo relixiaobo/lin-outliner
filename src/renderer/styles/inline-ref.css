@@ -19,7 +19,7 @@
 }
 
 .inline-ref.ProseMirror-selectednode {
-  border-radius: var(--radius-control-xs);
+  border-radius: var(--radius-row);
   background: var(--row-selection-frame-bg);
   box-shadow: var(--inline-ref-selection-shadow);
 }

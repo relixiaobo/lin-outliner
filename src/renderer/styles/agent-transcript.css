@@ -12,7 +12,7 @@
   flex: 1;
   flex-direction: column;
   overflow-y: auto;
-  padding: var(--space-8) var(--agent-dock-inset-x) var(--space-7);
+  padding: var(--space-8) var(--agent-dock-inset-x) var(--space-6);
   scrollbar-width: thin;
 }
 
@@ -22,7 +22,7 @@
   min-width: 0;
   flex: 0 0 auto;
   flex-direction: column;
-  gap: var(--space-7);
+  gap: var(--space-6);
 }
 
 .agent-chat-transcript.is-virtual {
@@ -107,7 +107,7 @@
   height: 28px;
   align-items: center;
   gap: var(--space-2);
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);

@@ -255,7 +255,7 @@
   max-height: 280px;
   overflow: auto;
   margin: 0;
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
   background: var(--fill-1);
   color: var(--text-strong);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -271,7 +271,7 @@
   min-width: 0;
   flex-direction: column;
   gap: var(--space-3);
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
   background: var(--fill-1);
   padding: var(--space-4);
 }
@@ -526,7 +526,7 @@
   flex-direction: column;
   gap: var(--space-4);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
   background: var(--surface);
   padding: var(--space-5);
 }
@@ -588,7 +588,7 @@
   flex: 0 0 20px;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-control-xs);
+  border-radius: var(--radius-row);
   color: var(--text-faint);
 }
 

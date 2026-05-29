@@ -14,7 +14,7 @@
   border-radius: var(--radius-md);
   background: var(--surface);
   box-shadow: var(--shadow);
-  padding: var(--space-7) var(--space-7) var(--space-6);
+  padding: var(--space-6) var(--space-6) var(--space-6);
 }
 
 .confirm-dialog-title {
@@ -36,14 +36,14 @@
   display: flex;
   justify-content: flex-end;
   gap: var(--space-3);
-  margin-top: var(--space-7);
+  margin-top: var(--space-6);
 }
 
 .confirm-dialog-cancel,
 .confirm-dialog-confirm {
   height: 30px;
   padding: 0 var(--space-6);
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   font-size: var(--font-meta);
   line-height: var(--line-meta);

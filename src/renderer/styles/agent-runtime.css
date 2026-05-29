@@ -45,7 +45,7 @@
   flex: 0 0 34px;
   align-items: center;
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-control-md);
+  border-radius: var(--radius-sm);
   color: var(--text-disabled);
   font-size: var(--font-ui-sm);
   margin-bottom: 0;

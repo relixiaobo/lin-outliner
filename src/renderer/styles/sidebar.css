@@ -93,7 +93,7 @@
   height: var(--control-size-md);
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-control-xs);
+  border-radius: var(--radius-row);
   color: var(--text-faint);
 }
 
@@ -204,7 +204,7 @@
   align-items: center;
   justify-content: center;
   margin-right: var(--space-2);
-  border-radius: var(--radius-control-xs);
+  border-radius: var(--radius-row);
   color: var(--text-faint);
   opacity: 0;
   transition: background var(--motion-fast), color var(--motion-fast), opacity var(--motion-fast);
@@ -407,7 +407,7 @@
   height: var(--sidebar-row-height);
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-control-xs);
+  border-radius: var(--radius-row);
   color: var(--text-muted);
   padding: 0;
 }
@@ -427,7 +427,7 @@
   min-width: 0;
   height: var(--sidebar-row-height);
   align-items: center;
-  border-radius: var(--radius-control-xs);
+  border-radius: var(--radius-row);
   color: inherit;
   font-size: var(--font-ui-md);
   font-weight: 400;

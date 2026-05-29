@@ -108,7 +108,7 @@
   justify-content: space-between;
   gap: var(--space-5);
   border-bottom: 1px solid var(--border-subtle);
-  padding: var(--space-7) var(--space-7) var(--space-6);
+  padding: var(--space-6) var(--space-6) var(--space-6);
 }
 
 .agent-subagent-title-block {
@@ -128,8 +128,8 @@
   margin: var(--space-3) 0 var(--space-2);
   overflow-wrap: anywhere;
   color: var(--text-strong);
-  font-size: var(--font-heading-sm);
-  line-height: var(--line-heading-sm);
+  font-size: var(--font-ui-md);
+  line-height: var(--line-ui-md);
 }
 
 .agent-subagent-title-block p {
@@ -174,7 +174,7 @@
   flex: 0 0 auto;
   gap: var(--space-2);
   border-bottom: 1px solid var(--border-subtle);
-  padding: var(--space-4) var(--space-7);
+  padding: var(--space-4) var(--space-6);
 }
 
 .agent-subagent-tab {
@@ -199,7 +199,7 @@
   flex-direction: column;
   gap: var(--space-3);
   border-bottom: 1px solid var(--border-subtle);
-  padding: var(--space-5) var(--space-7);
+  padding: var(--space-5) var(--space-6);
 }
 
 .agent-subagent-followup {
@@ -284,7 +284,7 @@
   min-height: 0;
   flex: 1;
   overflow: auto;
-  padding: var(--space-6) var(--space-7) var(--space-8);
+  padding: var(--space-6) var(--space-6) var(--space-8);
 }
 
 .agent-subagent-empty {

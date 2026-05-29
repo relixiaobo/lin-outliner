@@ -50,7 +50,7 @@
   height: var(--control-size-md);
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-control-xs);
+  border-radius: var(--radius-row);
   color: color-mix(in srgb, var(--text) 42%, transparent);
 }
 
@@ -123,7 +123,7 @@
 }
 
 .panel-breadcrumb-button {
-  border-radius: var(--radius-control-xs);
+  border-radius: var(--radius-row);
   padding: 0 var(--space-1);
 }
 
