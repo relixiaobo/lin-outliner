@@ -188,17 +188,7 @@ function createWindow() {
     // material (vibrancy / mica) shows through; otherwise keep the opaque deck
     // colour as the pre-paint frame.
     backgroundColor: material ? '#00000000' : '#f7f6f1',
-    // macOS: a transparent shell with the OS corner-rounding disabled, so the
-    // renderer can draw a 24px window corner that is concentric with the 16px
-    // floating rails (the OS only rounds to ~10px and exposes no radius API —
-    // electron/electron#47833). titleBarStyle stays 'hiddenInset' so the window
-    // keeps its frame (native resize + traffic lights); we DROP under-window
-    // vibrancy because the opaque content base already covers it, and a square
-    // NSVisualEffectView would poke past the rounded corners. hasShadow lets macOS
-    // contour the window shadow to the opaque rounded content.
-    ...(material === 'vibrancy'
-      ? { transparent: true, roundedCorners: false, hasShadow: true }
-      : {}),
+    ...(material === 'vibrancy' ? { vibrancy: 'under-window' as const } : {}),
     ...(material === 'mica' ? { backgroundMaterial: 'mica' as const } : {}),
     // Standard window: hiddenInset keeps the native traffic lights (the OS draws
     // and manages close/minimize/zoom — focus graying, ⌥-zoom, real fullscreen —
