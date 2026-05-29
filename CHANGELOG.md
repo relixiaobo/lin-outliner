@@ -170,6 +170,26 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Design system — floating-rails shell, neutral token migration,
+  dark-follows-OS** — dissolves `TopBar` into a persistent `WindowChrome` (a top
+  drag strip that reserves the traffic-light inset plus two centreline rail
+  toggles) and per-pane breadcrumb headers; the global tab strip, `WorkspaceTab`,
+  and global Back/Forward are gone — the sidebar is now the tab switcher (select /
+  create / close), per-pane Back lives in the breadcrumb, and page-nav is on
+  `Cmd+[` / `Cmd+]`. The sidebar and agent rails **float** (inset, rounded
+  `--radius-panel`, `--shadow-rail`, material + `backdrop-filter` + `--rail-edge`)
+  over a full-bleed opaque canvas; the agent rail unfurls from a collapsed seed
+  to the open panel without ever remounting `AgentChatPanel` (chat scroll +
+  composer draft survive). Components move onto the alpha-on-ink token layer:
+  `rgba` → alpha-on-ink tokens, the deprecated rose `--primary*` family →
+  neutral `--fill-*` / `--focus-ring` / `--outline-focus` (the family is now
+  deleted, zero references), inline-ref blue → rose centralized at the token
+  layer, `--danger` → `--status-danger`, new `--text-on-accent`. `theme.ts`
+  mirrors the OS colour scheme onto `[data-theme]` so **dark follows the OS**
+  (a persisted in-app light/dark/system toggle via `nativeTheme.themeSource` is
+  deferred to #45). Resize handles gain double-click-to-reset; the pre-paint
+  window background follows `nativeTheme` so a dark-OS launch never flashes a
+  light frame. ([#57](https://github.com/relixiaobo/lin-outliner/pull/57))
 - **Native-feel stage 3 — strict-native cursor + system font** — removed
   `cursor: pointer` from every chrome control (buttons, toggles, bullets, rows,
   tabs, `summary` disclosures); the pointing-hand cursor is now reserved for
@@ -370,6 +390,13 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Modularize `styles.css` into per-surface modules** — the 6851-line monolith
+  is split into 30 cascade-ordered modules under `src/renderer/styles/` behind a
+  `styles/index.css` barrel; concatenating the modules in barrel order reproduces
+  the original byte-for-byte at the split commit. Also fixes two long-standing
+  undefined-token references the split surfaced (`--font-mono` →
+  `--font-family-mono`, `--control-bg` → `--fill-2`).
+  ([#57](https://github.com/relixiaobo/lin-outliner/pull/57))
 - **Renderer perf — per-node memo, focus memo, opt-in flat virtualization** —
   `OutlinerItem` is memoized on a per-node `renderRev` (a dev-only
   `LIN_RENDER_PROBE` measures per-command re-render cost), and the global

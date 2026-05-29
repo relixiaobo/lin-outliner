@@ -29,11 +29,14 @@ workflow.
 Ordered by priority; lower items may depend on higher ones.
 
 - **design-system-rollout** (P1) — staged migration to `docs/spec/design-system.md`.
-  Phase 1 (token foundation + gated dark theme) landed (PR #55). Remaining:
-  Phase 2 (real vibrancy + `nativeTheme.themeSource` → `data-theme` toggle + rail
-  materials), Phase 3 (neutralize `--primary*`, inline-ref blue→rose, make the
-  component layer + `outliner.css` theme-aware, then un-gate dark to the
-  `prefers-color-scheme` target), Phase 4 (floating-rails shell). See
+  Phase 1 (token foundation + gated dark theme) landed (PR #55). Phases 2–4 landed
+  in PR #57: CSS modularized into per-surface modules; components migrated to the
+  alpha-on-ink token layer; `--primary*` neutralized + deleted; inline-ref
+  blue→rose; dark follows the OS via `theme.ts`; floating-rails shell
+  (`WindowChrome` + per-pane breadcrumbs + sidebar-as-tab-switcher). Remaining:
+  persisted in-app light/dark/system toggle via `nativeTheme.themeSource` (#45);
+  light-mode + interaction (unfurl / drag / resize) visual pass (verified dark
+  only at merge); real OS vibrancy tuning. See
   `docs/plans/design-system-rollout.md`.
 - **agent-oauth-providers** (P2) — OAuth sign-in (Anthropic Pro/Max, GitHub
   Copilot, OpenAI Codex) + managed credentials (Bedrock AWS, Vertex ADC) for the
