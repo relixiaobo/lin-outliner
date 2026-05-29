@@ -64,27 +64,28 @@ non-negotiable hard blocks stay runtime-enforced. That safety floor is not a
 runtime attempt to decide whether the user should be bothered; it is the product
 boundary that a model-authored decision cannot override.
 
-## User Approval Contract
+## Approval Request Contract
 
-Important tools may accept an optional `user_approval` parameter:
+Important tools may accept an optional `approval_request` parameter:
 
 ```ts
-interface UserApprovalParameter {
+interface ApprovalRequestParameter {
   default_on_timeout: 'approve' | 'deny';
   reason: string;
 }
 ```
 
-The model-facing name is intentionally `user_approval`, not `actionDecision`.
-From the agent's perspective the action is already expressed by the surrounding
-tool call. The extra parameter is only for cases where the agent wants a user
-approval window before that concrete action resolves. The lower snake case also
-matches the rest of Lin's tool parameter surface.
+The model-facing name is intentionally `approval_request`, not
+`actionDecision` or `user_approval`. From the agent's perspective the action is
+already expressed by the surrounding tool call. The extra parameter is a request
+to create a user approval window before that concrete action resolves; it is not
+a claim that the user already approved. The lower snake case also matches the
+rest of Lin's tool parameter surface.
 
 The field has only three states:
 
 ```txt
-no user_approval
+no approval_request
   -> no agent-requested interruption
 
 default_on_timeout: 'approve'
@@ -96,7 +97,7 @@ default_on_timeout: 'deny'
 
 There is intentionally no `allow`, `notify`, or standalone `deny` state:
 
-- `allow` is the absence of `user_approval`.
+- `allow` is the absence of `approval_request`.
 - `notify` creates noise the user is unlikely to care about later.
 - A true "do not do this" decision should simply avoid the tool call; `deny`
   default means "this may be the right action, but it requires explicit user
@@ -110,15 +111,15 @@ still have hard-coded `ask` rules. The end-state is:
 runtime hard block
   -> always block
 
-agent user_approval
+agent approval_request
   -> countdown protocol
 
-no user_approval and no hard block
+no approval_request and no hard block
   -> run immediately
 ```
 
 Legacy `ask` rules should be removed only when the corresponding tool guidance
-and `user_approval` support are strong enough that the rule no longer carries
+and `approval_request` support are strong enough that the rule no longer carries
 the product experience.
 
 ### Timeout Duration
@@ -126,7 +127,7 @@ the product experience.
 The runtime, not the agent, owns the deadline. v1 uses one fixed timeout:
 
 ```ts
-const USER_APPROVAL_TIMEOUT_SECONDS = 90;
+const APPROVAL_REQUEST_TIMEOUT_SECONDS = 90;
 ```
 
 The agent chooses the default outcome and writes the reason. It does not choose
@@ -142,7 +143,7 @@ be model-authored in v1.
 The tool schema should give the agent direct guidance, not just types:
 
 ```ts
-user_approval: {
+approval_request: {
   type: 'object',
   description: [
     'Optional. Include only when this exact tool action should give the user a confirmation window.',
@@ -168,7 +169,7 @@ user_approval: {
       minLength: 1,
       maxLength: 500,
       description: [
-        'One concise sentence explaining the concrete consequence that makes user approval useful.',
+        'One concise sentence explaining the concrete consequence that makes approval useful.',
         'Do not restate the command; explain why the user might care.',
       ].join(' '),
     },
@@ -181,7 +182,7 @@ Examples:
 ```json
 {
   "command": "bun add zod",
-  "user_approval": {
+  "approval_request": {
     "default_on_timeout": "approve",
     "reason": "This dependency is needed for the implementation and only changes local project files."
   }
@@ -191,9 +192,9 @@ Examples:
 ```json
 {
   "command": "git push origin codex/agent-action-decision-doc",
-  "user_approval": {
+  "approval_request": {
     "default_on_timeout": "deny",
-    "reason": "This publishes local commits to the remote repository and should only happen with explicit user approval."
+    "reason": "This publishes local commits to the remote repository and should only happen with explicit approval."
   }
 }
 ```
@@ -219,7 +220,7 @@ blocking failure mode.
 The stable version is inline:
 
 ```txt
-targetTool({ ...targetArgs, user_approval })
+targetTool({ ...targetArgs, approval_request })
 ```
 
 The action and the agent's attention policy are emitted atomically in the same
@@ -229,14 +230,14 @@ tool call.
 
 The runtime's job is mechanical, not judgmental:
 
-1. Extract `user_approval` before executing the tool.
+1. Extract `approval_request` before executing the tool.
 2. Run the platform safety floor and any temporary legacy policy still active
    during migration.
-3. If `user_approval` is absent and no runtime block applies, run the tool
+3. If `approval_request` is absent and no runtime block applies, run the tool
    normally.
 4. If present, create an approval request with the fixed 90 second deadline.
 5. Resolve the request from user input, session approval, abort, or timeout.
-6. On approved, strip `user_approval` from the tool arguments and execute the
+6. On approved, strip `approval_request` from the tool arguments and execute the
    underlying tool.
 7. On denied, return a denied tool result to the agent so it can continue with a
    fallback.
@@ -276,7 +277,7 @@ Push branch to GitHub?
 git push origin codex/agent-action-decision-doc
 
 The agent says this publishes local commits to the remote repository and should
-only happen with explicit user approval.
+only happen with explicit approval.
 
 Will deny in 90s.
 
@@ -311,20 +312,20 @@ parent run/session rather than becoming a persistent tool permission.
 ### User-Owned No-Confirm Mode
 
 Some users will explicitly want the agent to proceed without confirmation, even
-for actions that the agent would normally mark with `user_approval`.
+for actions that the agent would normally mark with `approval_request`.
 
 That should be a user-owned runtime setting or session rule, not a model-owned
 choice:
 
 ```txt
 normal
-  -> honor user_approval countdowns
+  -> honor approval_request countdowns
 
-auto-approve user approval requests
-  -> resolve user_approval immediately as approved
+auto-approve approval requests
+  -> resolve approval_request immediately as approved
 ```
 
-In auto-approve mode, the agent should still include `user_approval` when it
+In auto-approve mode, the agent should still include `approval_request` when it
 believes a confirmation window would normally be appropriate. The field remains
 useful for audit, transcript clarity, and for users who later turn the mode off.
 The runtime simply resolves the request immediately according to the user's
@@ -382,9 +383,9 @@ Read-only and retrieval tools do not need this parameter:
 - `web_fetch`
 - `past_chats`
 
-They can continue to omit `user_approval` and run immediately.
+They can continue to omit `approval_request` and run immediately.
 
-Tools that can benefit from optional `user_approval`:
+Tools that can benefit from optional `approval_request`:
 
 - `bash`
 - `file_edit`
@@ -403,13 +404,13 @@ same property into their JSON schema.
 Prefer a shared helper instead of hand-editing every schema:
 
 ```ts
-withUserApprovalParameter(tool)
+withApprovalRequestParameter(tool)
 ```
 
 The wrapper can:
 
 - add the optional schema property;
-- extract and validate `user_approval` in `beforeToolCall`;
+- extract and validate `approval_request` in `beforeToolCall`;
 - pass cleaned arguments to the real tool executor;
 - keep tool implementations focused on their domain behavior.
 
@@ -423,19 +424,19 @@ current:
 runtime classifies action -> ask -> user approves/denies
 
 proposed:
-agent attaches user_approval -> runtime runs countdown protocol
+agent attaches approval_request -> runtime runs countdown protocol
 ```
 
 This does not require deleting all existing permission code in one step. A
 migration can keep legacy ask rules as a fallback while the agent prompt and
 tool schemas are updated. The end-state for this proposal is that common
-user-attention decisions come from `user_approval`, not a runtime ask matrix.
+user-attention decisions come from `approval_request`, not a runtime ask matrix.
 
 ## Safety Model
 
 This is not a security classifier.
 
-If the agent omits `user_approval`, the action does not receive an
+If the agent omits `approval_request`, the action does not receive an
 agent-requested interruption window. That is an intentional product tradeoff:
 the system optimizes for agent autonomy and avoids blocking on routine work.
 Safety still depends on the platform safety floor, model behavior, task
@@ -447,35 +448,35 @@ needed. The agent owns that decision because it knows the task intent.
 
 ## Implementation Checklist
 
-1. Define `UserApproval` in a shared main/core type location.
-2. Add a registry helper that injects optional `user_approval` into selected
+1. Define `ApprovalRequest` in a shared main/core type location.
+2. Add a registry helper that injects optional `approval_request` into selected
    tool schemas.
 3. Update the agent system prompt/tool guidance to explain the three states:
    no decision, timeout approve, timeout deny.
-4. Define the platform safety floor that `user_approval` cannot bypass:
+4. Define the platform safety floor that `approval_request` cannot bypass:
    invalid tool/schema, abort, workspace boundary, hard deny, and permission
    self-modification.
-5. In `beforeToolCall`, extract `user_approval` before legacy permission
+5. In `beforeToolCall`, extract `approval_request` before legacy permission
    evaluation, but keep the platform safety floor above it.
 6. Use the fixed 90 second runtime timeout when creating approval requests.
 7. Extend `requestToolApproval` to accept `defaultOnTimeout` and `deadlineAt`.
 8. Preserve `once | session` approval behavior for countdown cards.
 9. Add a user-owned session-scoped no-confirm mode that immediately approves
-   `user_approval` requests without bypassing the platform safety floor.
+   `approval_request` requests without bypassing the platform safety floor.
 10. Add renderer countdown UI to `AgentApprovalCard`, including pause/resume
    semantics.
 11. Append timeout metadata to `approval.requested` and `resolvedBy` to
    `approval.resolved`.
 12. On timeout-deny, return a normal denied tool result to the agent instead of
     leaving the run blocked.
-13. Strip `user_approval` before invoking the underlying tool executor.
+13. Strip `approval_request` before invoking the underlying tool executor.
 14. Add tests for absent approval, hard-block precedence, fixed timeout,
     timeout approve, timeout deny, user override, session approval,
     user-setting approval, abort, and stale request resolution.
 
 ## Open Questions
 
-- Should `user_approval` be allowed inside skill shell commands, and if so what
-  syntax carries the metadata?
+- Should `approval_request` be allowed inside skill shell commands, and if so
+  what syntax carries the metadata?
 - Which legacy `ask` rules should be removed first after the agent prompt and
-  schemas support `user_approval`?
+  schemas support `approval_request`?
