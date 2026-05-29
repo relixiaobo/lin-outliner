@@ -148,6 +148,7 @@ approval_request: {
   description: [
     'Optional. Include only when this exact tool action should give the user a confirmation window.',
     'Omit for routine actions that should run without interruption.',
+    'Also omit when active approval policy shown in context already covers this action.',
     'Use default_on_timeout="approve" when you believe the action should run, but the user may want a chance to stop it.',
     'Use default_on_timeout="deny" when the action may be appropriate, but should require explicit user consent if the user is present.',
     'Do not use this for actions you believe should not be done; choose a different approach instead.',
@@ -229,9 +230,14 @@ tool call.
 `approval_request` is the agent's normal approval intent, not a guarantee that a
 visible card will be shown. User-owned policy may satisfy the request before UI:
 a no-confirm mode can approve it immediately, and class approval rules can
-approve matching future requests. The agent should still include
-`approval_request` whenever it would normally ask, even if a user setting later
-causes the runtime to auto-approve it.
+approve matching future requests.
+
+To avoid wasting tool-call tokens, the runtime should expose the active
+user-owned approval policy to the agent as run context. When the agent can tell
+that the current action is already covered by no-confirm mode or a visible class
+approval rule, it should omit `approval_request`. If the action is not covered,
+or the agent is unsure whether it is covered, it should include
+`approval_request` and let runtime resolve or display it.
 
 ## Runtime Responsibilities
 
@@ -242,17 +248,19 @@ The runtime's job is mechanical, not judgmental:
    during migration.
 3. If `approval_request` is present and a user-owned approval policy satisfies
    it, record the policy resolution and run the tool without showing a card.
-4. If `approval_request` is absent and no runtime block applies, run the tool
-   normally.
-5. If present and unsatisfied by policy, create a visible approval request with
+4. If `approval_request` is absent and a user-owned approval policy covers the
+   action, run the tool and record the policy that covered it.
+5. If `approval_request` is absent and no runtime block or policy applies, run
+   the tool normally.
+6. If present and unsatisfied by policy, create a visible approval request with
    the fixed 90 second deadline.
-6. Resolve the visible request from user input, class approval, abort, or
+7. Resolve the visible request from user input, class approval, abort, or
    timeout.
-7. On approved, strip `approval_request` from the tool arguments and execute the
+8. On approved, strip `approval_request` from the tool arguments and execute the
    underlying tool.
-8. On denied, return a denied tool result to the agent so it can continue with a
+9. On denied, return a denied tool result to the agent so it can continue with a
    fallback.
-9. Record whether the result came from the user, a session rule, persistent
+10. Record whether the result came from the user, a session rule, persistent
    rule, user setting, timeout, abort, or runtime.
 
 The runtime may still enforce technical invariants such as invalid schema,
@@ -305,13 +313,16 @@ leaving the card should resume with at least a 5 second grace window.
 
 Some users explicitly want fewer confirmations than the agent would normally
 request. That preference belongs to the user and runtime, not to the model. The
-agent should keep emitting `approval_request` when it believes a confirmation
-window would normally be appropriate; the runtime may then resolve or skip the
-request according to user-owned policy.
+runtime should expose active approval policy to the agent so covered actions do
+not need to carry redundant `approval_request` fields. If the agent cannot tell
+whether a policy covers the action, it should include `approval_request` and let
+runtime decide.
 
-This distinction matters for audit and future behavior: the agent's judgment is
-preserved in the tool call, while the runtime records that the user chose not to
-be interrupted for that request or class of requests.
+This distinction keeps the field meaningful: `approval_request` means the agent
+still expects a possible confirmation path. A missing `approval_request` may mean
+either the action is routine or the agent knows a user-owned approval policy
+already covers it; runtime audit records which case applied when a policy was
+used.
 
 There are two separate product needs:
 
@@ -333,7 +344,9 @@ normal
   -> honor approval_request countdowns
 
 auto-approve approval requests
-  -> resolve approval_request immediately as approved
+  -> tell the agent approval requests are auto-approved
+  -> agent omits approval_request for actions it would otherwise ask about
+  -> runtime still auto-approves approval_request if the agent includes one
 ```
 
 The first implementation should prefer a session-scoped no-confirm switch over a
@@ -361,6 +374,17 @@ The class rule must be derived from the actual tool name and target arguments,
 not from the model's `reason`, and must not broaden beyond runtime-defined rule
 templates. If no safe class template exists for a tool action, the UI should only
 offer exact-action approval.
+
+Active class rules should be summarized in the agent run context in model-facing
+terms. For example:
+
+```txt
+Approval policy:
+- package-manager dependency changes in this workspace are already approved for
+  this session; omit approval_request for matching commands.
+- pushes to relixiaobo/lin-outliner on branch codex/foo are already approved
+  for this session; omit approval_request for matching commands.
+```
 
 Examples of class templates:
 
@@ -502,14 +526,16 @@ needed. The agent owns that decision because it knows the task intent.
    optionally always allow similar when persistent rules are enabled.
 9. Add a user-owned session-scoped no-confirm mode that immediately approves
    `approval_request` requests without bypassing the platform safety floor.
-10. Add renderer countdown UI to `AgentApprovalCard`, including pause/resume
+10. Expose active no-confirm and class approval policy in agent run context so
+    covered actions can omit redundant `approval_request` fields.
+11. Add renderer countdown UI to `AgentApprovalCard`, including pause/resume
    semantics.
-11. Append timeout metadata to `approval.requested` and `resolvedBy` to
+12. Append timeout metadata to `approval.requested` and `resolvedBy` to
    `approval.resolved`.
-12. On timeout-deny, return a normal denied tool result to the agent instead of
+13. On timeout-deny, return a normal denied tool result to the agent instead of
     leaving the run blocked.
-13. Strip `approval_request` before invoking the underlying tool executor.
-14. Add tests for absent approval, hard-block precedence, fixed timeout,
+14. Strip `approval_request` before invoking the underlying tool executor.
+15. Add tests for absent approval, hard-block precedence, fixed timeout,
     timeout approve, timeout deny, user override, session class approval,
     persistent class approval if enabled, user-setting approval, abort, and
     stale request resolution.
