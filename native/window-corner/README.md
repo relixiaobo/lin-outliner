@@ -18,10 +18,16 @@ underlying `NSWindow` directly and sets:
 
 - `contentView.layer.cornerRadius` + `masksToBounds` → the visible 24pt corner
   (with `cornerCurve = continuous` for the macOS squircle shape)
-- `window.opaque = NO` + a clear `backgroundColor` → the area outside the rounded
-  content is transparent, so the system shadow follows the rounded shape instead
-  of the square frame
-- `[window invalidateShadow]` → recompute the shadow immediately
+- `[window invalidateShadow]` → recompute the shadow so it follows the now-rounded
+  content instead of the square frame
+
+We deliberately **do not** touch `window.opaque` or `window.backgroundColor`. The
+main window already uses `vibrancy: 'under-window'`, which makes the window
+non-opaque with an `NSVisualEffectView` frost backing — that is exactly the
+non-opacity the rounded corners need. Forcing `opaque = NO` + a clear
+`backgroundColor` on top of that strips the frost and makes the whole deck show
+the raw desktop. Clipping the content layer is enough to make the corners
+transparent; `invalidateShadow` then makes the shadow trace the rounded shape.
 
 Because we never touch Electron's `transparent` flag, the window keeps its title
 bar buttons. `main.ts` also sets `roundedCorners: false` on macOS so the OS's own

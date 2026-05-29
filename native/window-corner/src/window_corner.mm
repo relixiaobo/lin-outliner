@@ -73,10 +73,12 @@ static napi_value SetWindowCornerRadius(napi_env env, napi_callback_info info) {
           layer.cornerCurve = kCACornerCurveContinuous;
         }
       }
-      // Let the area outside the rounded content be transparent so the system
-      // shadow traces the rounded corners instead of the square window frame.
-      [window setOpaque:NO];
-      [window setBackgroundColor:[NSColor clearColor]];
+      // Do NOT touch window.opaque / backgroundColor here. A vibrancy window is
+      // already non-opaque with its NSVisualEffectView backing; forcing
+      // opaque=NO + clearColor strips that frost and makes the whole deck show
+      // the raw desktop. Clipping the content layer above already makes the
+      // corners transparent, so the system shadow follows the rounded shape
+      // once we invalidate it.
       [window invalidateShadow];
       ok = true;
     }
