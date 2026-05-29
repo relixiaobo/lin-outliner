@@ -6,9 +6,11 @@ export const MAC_TRAFFIC_LIGHT_POSITION = {
 } as const;
 
 // Custom window corner radius (points), applied natively on macOS via the
-// window_corner addon (src/main/nativeWindowCorner.ts) which overrides the
-// window's _cornerMask. Circular-arc mask tuned so the visible corner matches
-// Raycast's window (a circular arc reads a touch tighter than Raycast's
-// continuous curve, so the radius runs a bit larger). Adjust to taste; this
-// single value drives the corner + shadow.
-export const MAC_WINDOW_CORNER_RADIUS = 80;
+// window_corner addon (src/main/nativeWindowCorner.ts). On macOS 26 Tahoe it
+// overrides the private _cornerRadius / _effectiveCornerRadius selectors (an
+// Electron window's Tahoe default is 16pt, smaller than Finder/Raycast); on
+// older macOS it falls back to the _cornerMask override. Uses Apple's own
+// corner + default shadow path, so it does not reintroduce the Tahoe
+// WindowServer GPU regression of electron/electron#48376. Adjust to taste;
+// changing this needs only a restart (no native rebuild).
+export const MAC_WINDOW_CORNER_RADIUS = 24;

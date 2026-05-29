@@ -18,26 +18,37 @@ from the window frame, not the content layer).
 
 ## How it works
 
-This replicates exactly what Electron itself used to do in `ElectronNSWindow`
-before it was removed for Tahoe (electron/electron#48376):
+**macOS 26 "Tahoe" drives the window frame + shadow corner from the private
+*radius* selectors, not from `_cornerMask`.** An Electron window's Tahoe default
+is `16pt` — smaller than Finder/Raycast — which is why the window looked under-
+rounded. Electron removed its own `_cornerMask` override in
+electron/electron#48376, and on Tahoe that selector is ignored for frame/shadow
+shaping (verified on-device: overriding it returned the right mask yet the frame
+kept its default corner). So we set the radius the way
+[CornerFix](https://github.com/makalin/CornerFix) reshapes Tahoe windows:
 
-1. **`NSVisualEffectView.maskImage`** — round the vibrancy frost with a resizable
+1. **Swizzle the radius getters** (`_cornerRadius`, `_effectiveCornerRadius`,
+   `_topCornerRadius`, `_bottomCornerRadius`) to return our per-window radius.
+   The system reads these on every relayout, so the value persists (unlike the
+   `_cornerMask` field, which the system re-queried and reverted to default after
+   startup). We can't recompile Electron, so the swizzle is injected at runtime
+   on the live window's *real* dispatch class (`object_getClass`, i.e. the KVO
+   `NSKVONotifying_*` subclass), with the radius stored per-window as an
+   associated object so other windows keep the OS default.
+2. **Call the setters** (`_setCornerRadius:`, `_setEffectiveCornerRadius:`) once
+   so any cached backing field updates immediately.
+3. **`NSVisualEffectView.maskImage`** — round the vibrancy frost with a resizable
    rounded-rect mask (public API; preserves behind-window blending, unlike an
-   ancestor `masksToBounds`).
-2. **Override `-[NSWindow _cornerMask]`** to return the same rounded image.
-   WindowServer uses `_cornerMask` to shape **both the window clip and its
-   shadow**, so this is what rounds the *shadow* at a custom radius. We can't
-   recompile Electron, so the override is injected at runtime by replacing
-   `_cornerMask` on the live window's class and storing the per-window mask as an
-   associated object (other windows of the same class keep the OS default).
+   ancestor `masksToBounds`). A **`_cornerMask` override** is also kept, as the
+   corner mechanism for macOS < 26 where that path is still honored.
 
 The window stays standard (`titleBarStyle: 'hiddenInset'`, never `transparent`),
 so native traffic lights, the OS shadow, and vibrancy are all preserved.
 
-**Trade-off (measured, acceptable here):** the custom `_cornerMask` is the reason
-Electron dropped this on macOS 15/26 Tahoe — it can raise WindowServer GPU load.
-On-device `powermetrics` A/B (corner on vs off) showed no measurable difference in
-GPU active residency, so it is kept. Re-measure if that changes.
+**No GPU regression:** this uses Apple's own corner + *default* shadow path. The
+reason #48376 dropped `_cornerMask` was that it forced the shadow to render from a
+transparent surface (persistent WindowServer GPU load); setting the native radius
+does not, so that cost is not reintroduced.
 
 See `src/main/nativeWindowCorner.ts` for the loader (which degrades to a silent
 no-op when the addon is missing / off-darwin / load fails).

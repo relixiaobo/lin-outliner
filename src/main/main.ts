@@ -210,16 +210,16 @@ function createWindow() {
   trackWindowState(mainWindow);
 
   // Custom window corner via the native window_corner addon (no-op off macOS /
-  // if unbuilt): it overrides the window's _cornerMask so WindowServer shapes the
-  // window + shadow at MAC_WINDOW_CORNER_RADIUS while the standard window keeps
-  // its native traffic lights, OS shadow, and vibrancy. Re-apply on show (the
-  // mask is read during window setup); drop to 0 in fullscreen, where a rounded
-  // corner would clip the full-screen content into empty triangles.
+  // if unbuilt): it sets MAC_WINDOW_CORNER_RADIUS on the window's native corner
+  // (macOS 26 reads the private _cornerRadius selectors; older macOS the
+  // _cornerMask) so the standard window keeps its native traffic lights, OS
+  // shadow, and vibrancy. Apply once before show (so the first paint is already
+  // rounded, no default-corner flash) and again on ready-to-show; drop to 0 in
+  // fullscreen, where a rounded corner would clip content into empty triangles.
   applyMacWindowCorner(mainWindow, MAC_WINDOW_CORNER_RADIUS);
   mainWindow.once('ready-to-show', () => {
     if (!mainWindow) return;
-    const applied = applyMacWindowCorner(mainWindow, MAC_WINDOW_CORNER_RADIUS);
-    console.log(`[window-corner] applied=${applied} radius=${MAC_WINDOW_CORNER_RADIUS}`);
+    applyMacWindowCorner(mainWindow, MAC_WINDOW_CORNER_RADIUS);
     mainWindow.show();
   });
   mainWindow.on('enter-full-screen', () => mainWindow && applyMacWindowCorner(mainWindow, 0));

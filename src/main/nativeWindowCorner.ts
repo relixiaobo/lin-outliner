@@ -9,8 +9,8 @@ import { join } from 'node:path';
 //
 // Everything here degrades to a silent no-op: if the platform is not macOS, if
 // the addon was never built, or if loading/calling it throws, the window simply
-// keeps the OS-default ~10pt corner. The app must never fail to launch because
-// the native corner could not be applied.
+// keeps the OS-default corner (16pt on macOS 26). The app must never fail to
+// launch because the native corner could not be applied.
 
 interface WindowCornerAddon {
   setWindowCornerRadius(handle: Buffer, radius: number): boolean;
