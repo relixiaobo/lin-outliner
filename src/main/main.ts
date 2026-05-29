@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, protocol, session, shell } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
@@ -171,6 +171,15 @@ function configureSessionSecurity() {
   });
 }
 
+// Opaque pre-paint frame colour for non-material windows. Mirrors the renderer
+// deck colour per OS scheme (light `--bg-window` ≈ #f7f6f1, dark #2a2a2c) so a
+// dark-OS launch never flashes a light backing behind the first paint. The
+// renderer sets [data-theme] before React mounts, so this only backs the window
+// before that; keeping it scheme-matched closes the residual gap.
+function prePaintBackgroundColor(): string {
+  return nativeTheme.shouldUseDarkColors ? '#2a2a2c' : '#f7f6f1';
+}
+
 function createWindow() {
   const windowState = loadWindowState();
   const material = windowMaterialKind(process.platform);
@@ -187,7 +196,7 @@ function createWindow() {
     // With a window material the background must be transparent so the OS
     // material (vibrancy / mica) shows through; otherwise keep the opaque deck
     // colour as the pre-paint frame.
-    backgroundColor: material ? '#00000000' : '#f7f6f1',
+    backgroundColor: material ? '#00000000' : prePaintBackgroundColor(),
     ...(material === 'vibrancy' ? { vibrancy: 'under-window' as const } : {}),
     ...(material === 'mica' ? { backgroundMaterial: 'mica' as const } : {}),
     // Standard window: hiddenInset keeps the native traffic lights (the OS draws
@@ -267,7 +276,7 @@ function openSettingsWindow() {
     minWidth: 560,
     minHeight: 480,
     show: false,
-    backgroundColor: '#f7f6f1',
+    backgroundColor: prePaintBackgroundColor(),
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
@@ -1057,6 +1066,37 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', focusMainWindow);
+
+  // Dev only: electron-vite spawns this GUI process as a child of the dev server
+  // (`spawn(electron, …, { stdio: 'inherit' })`) and only binds child→parent exit
+  // (`ps.on('close', process.exit)`), never parent→child. So on Ctrl+C the dev
+  // server dies but this app lingers, its renderer spamming ERR_CONNECTION_REFUSED
+  // against the now-dead Vite server until a manual ⌘Q.
+  //
+  // We do NOT rely on receiving the signal: on macOS Chromium's browser process
+  // owns SIGINT/SIGTERM handling, so a `process.on('SIGINT')` here fires
+  // unreliably (it didn't). Instead detect the dev server's death directly —
+  // record its pid at startup and poll `process.kill(pid, 0)` (a 0-signal
+  // existence probe, sends nothing); once it throws ESRCH the parent is gone, so
+  // we quit too. This is independent of signal delivery. Packaged builds are never
+  // launched this way, so it is gated to dev. The signal handlers stay as a
+  // best-effort fast path for the cases where a signal *does* arrive.
+  if (!app.isPackaged) {
+    for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+      process.on(signal, () => app.quit());
+    }
+    const devServerPid = process.ppid;
+    const watchDevServer = setInterval(() => {
+      try {
+        process.kill(devServerPid, 0);
+      } catch {
+        clearInterval(watchDevServer);
+        app.quit();
+      }
+    }, 1000);
+    // Don't let the watchdog timer itself keep the event loop (and the app) alive.
+    watchDevServer.unref();
+  }
 
   app.whenReady().then(() => {
     protocol.handle(ASSET_URL_SCHEME, (request) => {

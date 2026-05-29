@@ -1,0 +1,220 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   FLOATING-RAILS SHELL (design-system.md → Shell, Materials & Liquid Glass).
+   Two layers:
+     • LOWER — a full-bleed opaque content base (.workspace-canvas) that fills the
+       window edge to edge and extends UNDER the floating rails.
+     • UPPER — the sidebar + agent rails float on top: inset by --layout-gap,
+       rounded --panel-radius, soft --shadow-rail, --material-sidebar tint +
+       backdrop-filter + a --rail-edge hairline ring.
+   Persistent window chrome (traffic lights + two symmetric rail toggles) is fixed
+   to the window, not the rails.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.app {
+  position: relative;
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg-content);
+  color: var(--text);
+}
+
+/* The shell is no longer a grid that reserves rail width. It's a positioning
+   context: the canvas is full-bleed (absolute inset:0) and the rails float over
+   it via z-index. Content padding (set on the canvas) keeps rows clear of the
+   rails — the base still fills underneath them. */
+.app-shell {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+  background: var(--bg-content);
+}
+
+/* ── Persistent window chrome ──────────────────────────────────────────────── */
+
+/* The title-bar band is shared by ZONES, not one full-width strip (Apple's
+   unified-toolbar / Liquid Glass model: navigation floats above edge-to-edge
+   content that reaches the top). Window chrome owns only two CORNER drag zones —
+   left (traffic lights + sidebar toggle) and right (agent toggle); the centre is
+   left uncovered for the pane breadcrumb, which is itself a drag region and now
+   reaches the top (see canvas.css --canvas-pad-top, breadcrumb.css).
+
+   Each zone is -webkit-app-region: drag. The OS treats a drag region as a
+   non-client title bar — it ignores ALL pointer events inside, so a clickable
+   control must be carved back out with no-drag. Per the documented Electron limit
+   (electron/electron #7605, #18529, #27149) that carve-out is reliable ONLY when
+   the control is a DOM DESCENDANT of the drag region — a no-drag element that
+   merely overlaps a drag region from another subtree has its click swallowed. So
+   each toggle is a CHILD of its zone, and the zones are kept narrow enough to
+   never overlap the centre breadcrumb's controls. Dragging the window: the two
+   corner zones + the centre breadcrumb; the sidebar nav / agent header sit below
+   and are not drag regions (they would underlap a toggle from another subtree). */
+.window-chrome-zone {
+  position: absolute;
+  top: 0;
+  z-index: var(--z-popover);
+  height: var(--chrome-height);
+  -webkit-app-region: drag;
+  user-select: none; /* don't rubber-band-select chrome text while dragging */
+}
+
+.window-chrome-zone-left {
+  left: 0;
+  width: var(--chrome-left-zone-width);
+}
+
+.window-chrome-zone-right {
+  right: 0;
+  width: var(--chrome-right-zone-width);
+}
+
+/* Chrome controls (the rail toggles + the global page-nav back/forward) sit on the
+   traffic-light centreline. Each lives inside a CLUSTER positioned at that line —
+   the cluster is the only positioned element; the controls flow in a flex row. They
+   are window chrome anchored to the window, so they never move when a rail
+   collapses. */
+.window-chrome-cluster {
+  position: absolute;
+  top: var(--chrome-control-inset);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Left cluster begins past the traffic lights (--chrome-sidebar-toggle-left); right
+   cluster hugs the corner with the same inset as the top, so the agent toggle is
+   centred in the rounded corner (--chrome-control-inset; see tokens.css). */
+.window-chrome-cluster-left {
+  left: var(--chrome-sidebar-toggle-left);
+}
+
+/* The agent toggle is the agent rail's corner control, so it is inset by the rail's own
+   concentric inset (--rail-pad) from the rail edge — i.e. --layout-gap (the rail float) +
+   --rail-pad from the window edge. That puts its right edge on the very line the agent
+   content (header / transcript / composer, all at --rail-pad) sits on: one shared edge. */
+.window-chrome-cluster-right {
+  right: calc(var(--layout-gap) + var(--rail-pad));
+}
+
+/* On hover a control gets a subtle centred fill tint (native toolbar-icon-button
+   affordance), concentric with its 26px box. */
+.rail-toggle {
+  display: inline-flex;
+  width: var(--chrome-control-height);
+  height: var(--chrome-control-height);
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  transition: color var(--motion-fast);
+  -webkit-app-region: no-drag;
+}
+
+.rail-toggle:hover {
+  background: var(--control-hover);
+  color: var(--text-primary);
+}
+
+/* Pressed reads stronger than hover — neutral fill ladder's --fill-4, per
+   design-system.md's control state spec (rest → hover --fill-2 → pressed --fill-4). */
+.rail-toggle:active {
+  background: var(--fill-4);
+  color: var(--text-primary);
+}
+
+.rail-toggle:focus-visible {
+  box-shadow: var(--focus-ring-shadow);
+}
+
+/* When a rail is collapsed its zone sits over the pane (not the rail), so give it an
+   opaque content backing: it caps the top band so content scrolling up cannot peek
+   behind the toggle / traffic lights, and pairs with the collapsed breadcrumb's
+   margin (canvas.css) so the two abut instead of overlapping (no cross-subtree drag
+   flicker). When the rail is open the zone is transparent so the rail shows through. */
+.app.sidebar-collapsed .window-chrome-zone-left {
+  background: var(--bg-content);
+}
+
+.app:not(.agent-open) .window-chrome-zone-right {
+  background: var(--bg-content);
+}
+
+/* open-state toggles read slightly stronger (no fill, just colour) */
+.app:not(.sidebar-collapsed) .sidebar-toggle,
+.app.agent-open .agent-toggle {
+  color: var(--text-primary);
+}
+
+/* ── OS window material (macOS vibrancy / Windows mica) ────────────────────────
+   The content base stays opaque for readability; only the floating rails turn
+   translucent. With floating rails, the frost lives on the rails themselves (in
+   sidebar.css / agent-dock.css), so here we only neutralise the wrappers so the
+   translucency never stacks (stacked alpha would compound to near-opaque). */
+:root[data-window-material] .app,
+:root[data-window-material] .app-shell {
+  background: var(--bg-content);
+}
+
+/* ── Top-left more menu (kept for the agent/session menus that reuse it) ─────── */
+.top-chrome-more-menu {
+  z-index: var(--z-popover);
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  padding: var(--space-3);
+  -webkit-app-region: no-drag;
+}
+
+.top-chrome-more-item {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  padding: 0 var(--space-4);
+  text-align: left;
+}
+
+.top-chrome-more-item:hover:not(:disabled),
+.top-chrome-more-item:focus-visible:not(:disabled) {
+  background: var(--control-hover);
+  color: var(--text-strong);
+}
+
+.top-chrome-more-item:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+.top-chrome-more-item-icon {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  color: currentColor;
+}
+
+.top-chrome-more-item-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outline-panel-close:focus-visible {
+  box-shadow: var(--focus-ring-shadow);
+}

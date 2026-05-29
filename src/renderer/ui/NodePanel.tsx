@@ -41,6 +41,7 @@ import {
 } from './focus/focusModel';
 import {
   ChevronLeftIcon,
+  CloseIcon,
   HashIcon,
   ICON_SIZE,
   FilterIcon,
@@ -74,6 +75,8 @@ interface NodePanelProps {
   rootId: NodeId;
   canGoBack: boolean;
   onBack: () => void;
+  showClose: boolean;
+  onClose: () => void;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   index: DocumentIndex;
   ui: UiState;
@@ -509,6 +512,9 @@ export function NodePanel(props: NodePanelProps) {
       {rootNode && (
         <div className="panel-sticky-breadcrumb" ref={stickyBreadcrumbRef}>
           <div className="panel-breadcrumb-leading">
+            {/* Per-pane back only. Forward (and the active-pane back) live in the
+                global window chrome next to the sidebar toggle (Cmd+[ / Cmd+]) —
+                see WindowChrome. */}
             <IconButton
               className="panel-page-back-button"
               disabled={!props.canGoBack}
@@ -565,6 +571,20 @@ export function NodePanel(props: NodePanelProps) {
               </span>
             )}
           </nav>
+          {/* Close lives INSIDE the breadcrumb (the pane's toolbar row): it is a no-drag
+              DOM descendant of the breadcrumb's drag region — the only reliable carve-out
+              on macOS (see breadcrumb.css) — and aligns to the same --panel-content-x as
+              the content on the right. */}
+          {props.showClose && (
+            <IconButton
+              className="panel-breadcrumb-close"
+              icon={CloseIcon}
+              label="Close panel"
+              onClick={props.onClose}
+              title="Close panel"
+              variant="panel"
+            />
+          )}
         </div>
       )}
       <div className="panel-inner">

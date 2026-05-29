@@ -1,0 +1,69 @@
+.icon-button:disabled {
+  cursor: default;
+}
+
+.icon-button > svg {
+  flex: 0 0 auto;
+  pointer-events: none;
+}
+
+.checkbox-mark {
+  display: inline-flex;
+  inline-size: var(--checkbox-mark-size);
+  block-size: var(--checkbox-mark-size);
+  min-inline-size: var(--checkbox-mark-size);
+  min-block-size: var(--checkbox-mark-size);
+  flex: 0 0 var(--checkbox-mark-size);
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid color-mix(in srgb, var(--text) 28%, transparent);
+  border-radius: var(--checkbox-mark-radius);
+  background: transparent;
+  color: var(--panel-bg);
+  transition: background var(--motion-fast), border-color var(--motion-fast);
+}
+
+.checkbox-mark.checked {
+  border-color: var(--semantic-success);
+  background: var(--semantic-success);
+  color: var(--panel-bg);
+}
+
+.checkbox-mark-check {
+  display: block;
+  pointer-events: none;
+}
+
+.switch-mark {
+  position: relative;
+  display: inline-flex;
+  inline-size: var(--switch-mark-width);
+  block-size: var(--switch-mark-height);
+  min-inline-size: var(--switch-mark-width);
+  min-block-size: var(--switch-mark-height);
+  flex: 0 0 var(--switch-mark-width);
+  align-items: center;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  transition: background var(--motion-fast);
+}
+
+.switch-mark.checked {
+  background: var(--semantic-success);
+}
+
+.switch-mark-thumb {
+  position: absolute;
+  inset-inline-start: var(--switch-mark-inset);
+  inline-size: var(--switch-mark-thumb-size);
+  block-size: var(--switch-mark-thumb-size);
+  border-radius: var(--radius-pill);
+  background: var(--panel-bg);
+  box-shadow: var(--shadow-thumb);
+  transition: transform var(--motion-fast);
+}
+
+.switch-mark.checked .switch-mark-thumb {
+  transform: translateX(calc(var(--switch-mark-width) - var(--switch-mark-thumb-size) - (var(--switch-mark-inset) * 2)));
+}
+

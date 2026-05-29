@@ -1,0 +1,100 @@
+/* Neutral text-selection highlight (never the system accent). */
+::selection {
+  background: var(--text-selection-bg);
+}
+
+* {
+  box-sizing: border-box;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+  scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: var(--radius-pill);
+  background-clip: content-box;
+  background-color: var(--scrollbar-thumb);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+.main-panel,
+.agent-debug-panel,
+.agent-debug-card pre,
+.agent-debug-part-details pre,
+.agent-debug-tool-row pre,
+.agent-chat-scroll,
+.agent-session-list,
+.agent-code-block pre,
+.agent-thinking-body,
+.agent-tool-call-section pre,
+.agent-tool-persisted-output pre,
+.agent-steer-preview,
+.agent-composer-input,
+.agent-composer-editor,
+.agent-composer-model-menu,
+.agent-composer-more-model-list,
+.command-list,
+.trigger-popover,
+.node-picker-popover {
+  scrollbar-gutter: stable;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+}
+
+body.drag-selecting,
+body.drag-selecting * {
+  user-select: none !important;
+}
+
+body.is-resizing-layout,
+body.is-resizing-layout * {
+  cursor: var(--resize-cursor) !important;
+  user-select: none !important;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+
+button:disabled {
+  cursor: default;
+}
+
+button:focus,
+button:focus-visible {
+  outline: none;
+  box-shadow: none;
+  -webkit-focus-ring-color: transparent;
+}
+

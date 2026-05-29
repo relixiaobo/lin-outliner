@@ -1,0 +1,373 @@
+:root {
+  --font-family-sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, ui-sans-serif, Inter, sans-serif;
+  --font-family-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --font-scale: 100%;
+  --font-ui-2xs: 0.625rem;
+  --line-ui-2xs-tight: 0.8125rem;
+  --line-ui-2xs: 0.875rem;
+  --font-ui-xs: 0.6875rem;
+  --line-ui-xs: 0.9375rem;
+  --line-ui-xs-relaxed: 1rem;
+  --font-meta: 0.75rem;
+  --line-meta-tight: 1.0625rem;
+  --line-meta: 1.125rem;
+  --font-ui-sm: 0.8125rem;
+  --line-ui-sm-tight: 1.1875rem;
+  --line-ui-sm: 1.25rem;
+  --font-ui-md: 0.875rem;
+  --line-ui-md: 1.375rem;
+  --font-content: 1rem;
+  --line-content: 1.625rem;
+  --font-code-inline: 0.875em;
+  --line-code-inline: 1.18;
+  --font-code-block: var(--font-ui-sm);
+  --line-code-block: var(--line-ui-sm);
+  --content-control-height: var(--line-content);
+  --font-description: var(--font-ui-sm);
+  --line-description: 1.125rem;
+  /* the one large heading size (markdown h1); h2/h3 reuse content/ui-md */
+  --font-heading-lg: 1.125rem;
+  --line-heading-lg: 1.625rem;
+  /* panel display title — 24px, the top of the concentric type scale */
+  --font-panel-title: 1.5rem;
+  --line-panel-title: 2rem;
+  font-family: var(--font-family-sans);
+  font-size: var(--font-scale);
+  color: var(--text-main);
+  background: var(--deck-bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  /* Light is the base palette. Dark lives in theme-dark.css, activated by
+     [data-theme='dark'] on <html>. The component + shell layer is now fully
+     alpha-on-ink token-based, so dark is safe: renderer/theme.ts mirrors the OS
+     colour scheme onto data-theme (Track B / #45 extends it with a persisted
+     light/dark/system preference via nativeTheme.themeSource). */
+  color-scheme: light;
+  /* ════════════════════════════════════════════════════════════════════════
+     SEMANTIC FOUNDATION (design-system.md). Two themes over one ink base: every
+     text/fill/separator/outline value is an alpha over --ink (black in light,
+     white in dark), so the dark @media block at the end only flips --ink + a few
+     opaque/material literals. Legacy aliases (--text-main, --deck-bg, …) are
+     re-pointed onto this layer below so existing component CSS keeps working.
+     ════════════════════════════════════════════════════════════════════════ */
+  --ink: 0 0 0;
+
+  /* text (label) levels — alpha on ink, identical alphas in both themes */
+  --text-primary: rgb(var(--ink) / 0.88);
+  --text-secondary: rgb(var(--ink) / 0.55);
+  --text-tertiary: rgb(var(--ink) / 0.30);
+  --text-quaternary: rgb(var(--ink) / 0.16);
+
+  /* neutral fills — control / hover / active / selection backgrounds */
+  --fill-1: rgb(var(--ink) / 0.04);
+  --fill-2: rgb(var(--ink) / 0.07);
+  --fill-3: rgb(var(--ink) / 0.10);
+  --fill-4: rgb(var(--ink) / 0.16);
+
+  /* separators */
+  --separator: rgb(var(--ink) / 0.10);
+  --separator-opaque: #d8d8dc;
+
+  /* opaque surfaces (per-theme literals) */
+  --bg-window: #ececec;
+  --bg-content: #ffffff;
+  --bg-elevated: #ffffff;
+
+  /* materials: translucent chrome tint over OS vibrancy + backdrop-filter */
+  --material-sidebar: rgba(246, 246, 246, 0.60);
+  --material-popover: rgba(250, 250, 250, 0.80);
+  --material-blur: 30px;
+  --material-saturate: 112%;
+  --rail-edge: rgb(var(--ink) / 0.10);
+
+  /* selection & focus = NEUTRAL (never brand, never system accent) */
+  --selection-bg: var(--fill-3);
+  --selection-soft: var(--fill-2);
+  --focus-ring: rgb(var(--ink) / 0.45);
+  --focus-ring-shadow: 0 0 0 2px rgb(var(--ink) / 0.22);
+  --text-selection-bg: rgb(var(--ink) / 0.14); /* neutral ::selection */
+  --drop-line: var(--focus-ring);               /* neutral drag insertion line */
+
+  /* accent = brand rose, used SPARSELY (links, caret, brand marks, status) */
+  --accent: #f43f5e;
+  --accent-strong: #e11d48;
+  --link: var(--accent);
+  --caret: var(--accent);
+  /* foreground for text/glyphs sitting on a saturated accent or status fill;
+     stays white in both themes because those fills never invert */
+  --text-on-accent: #ffffff;
+
+  /* status — genuine semantic state only, never interactive meaning */
+  --status-success: #3f9e6a;
+  --status-success-strong: #3f865d;
+  --status-warning: #d99a1c;
+  --status-danger: #e5484d;
+  --status-danger-muted: #9a3f34;
+  --status-info: #3b82c4;
+
+  --inline-code-bg: rgb(var(--ink) / 0.06);
+  --highlight-mark: rgba(247, 236, 139, 0.6);
+
+  /* elevation: rail (softest) < level-1 (menus) < level-2 (dialogs) */
+  --shadow-rail: 0 8px 26px -10px rgba(0, 0, 0, 0.26), 0 1px 3px rgba(0, 0, 0, 0.10);
+  --overlay-shadow-level-1: 0 8px 20px -12px rgba(0, 0, 0, 0.22), 0 2px 8px -4px rgba(0, 0, 0, 0.10);
+  --overlay-shadow-level-2: 0 18px 48px -20px rgba(0, 0, 0, 0.24), 0 6px 18px -10px rgba(0, 0, 0, 0.14);
+
+  /* inset outline ladder — alpha-on-ink so strokes invert with the theme */
+  /* inset stroke ladder — shares the fill ladder's alphas (.04/.07/.10/.16)
+     so strokes and fills read as one neutral scale. */
+  --outline-faint: inset 0 0 0 1px rgb(var(--ink) / 0.04);
+  --outline-subtle: inset 0 0 0 1px rgb(var(--ink) / 0.07);
+  --outline-muted: inset 0 0 0 1px rgb(var(--ink) / 0.10);
+  --outline-emphasis: inset 0 0 0 1px rgb(var(--ink) / 0.16);
+  --outline-focus: inset 0 0 0 1px var(--focus-ring);
+  --underline-focus-shadow: inset 0 -1px 0 rgb(var(--ink) / 0.20);
+  --tag-focus-shadow: 0 0 0 2px color-mix(in srgb, var(--tag-text, currentColor) 22%, transparent);
+  --inline-ref-selection-shadow: inset 0 0 0 1px var(--row-selection-border);
+  --inline-ref-focus-shadow: 0 0 0 2px color-mix(in srgb, var(--inline-ref-accent, var(--inline-ref-default)) 22%, transparent);
+  --agent-side-panel-shadow: -18px 0 48px rgba(0, 0, 0, 0.12);
+  --view-radio-shadow: inset 0 0 0 1.5px var(--separator-opaque);
+  --view-radio-checked-shadow: inset 0 0 0 1.5px var(--text-primary);
+  --search-builder-focus-shadow: var(--focus-ring-shadow);
+  --typed-field-section-shadow: inset 0 1px 0 var(--separator);
+  --shadow-thumb: 0 1px 2px rgba(0, 0, 0, 0.14);
+  --shadow-thumb-strong: 0 1px 2px rgba(0, 0, 0, 0.18);
+
+  /* ── Legacy product-token aliases → semantic layer. Migrate opportunistically.
+        The rose --primary family was deleted once every consumer moved to the
+        neutral fill / focus-ring / outline tokens (rollout Phase 3). ── */
+  --deck-bg: var(--bg-window);
+  --app-bg: var(--bg-window);
+  --panel-bg: var(--bg-content);
+  --window-material-frost: color-mix(in srgb, var(--bg-window) 62%, transparent);
+  --surface-soft: var(--bg-elevated);
+  --text-main: var(--text-primary);
+  --text-strong: var(--text-primary);
+  --text-body: var(--text-primary);
+  --text-sub: var(--text-secondary);
+  --text-soft: var(--text-secondary);
+  --text-muted: var(--text-tertiary);
+  --text-faint: var(--text-tertiary);
+  --text-disabled: var(--text-quaternary);
+  --border-subtle: var(--separator);
+  --border-muted: var(--separator);
+  /* a strong control border (view-radio ring, etc.) — NOT the hairline divider;
+     keep it a visible neutral that inverts with the theme */
+  --border-strong: rgb(var(--ink) / 0.30);
+  --accent-brand: var(--accent);
+  --accent-danger: var(--accent-strong);
+  --semantic-success: var(--status-success);
+  --semantic-success-strong: var(--status-success-strong);
+  --semantic-danger-muted: var(--status-danger-muted);
+  --semantic-warning: var(--status-warning);
+  --semantic-info: var(--status-info);
+  --surface-user-bubble: var(--fill-3);
+  --surface-inverse: #2e2e32;
+  --surface-inverse-strong: #1f1f23;
+  --surface-disabled: var(--fill-3);
+  --overlay-bg: var(--bg-elevated);
+  --overlay-active-bg: var(--fill-2);
+  --overlay-backdrop: rgba(26, 26, 26, 0.30);
+  --overlay-backdrop-strong: rgba(0, 0, 0, 0.82);
+  --space-hairline: 1px;
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 10px;
+  --space-6: 12px;
+  --space-8: 16px;
+  --space-micro: var(--space-2);
+  --space-sm: var(--space-4);
+  --space-md: var(--space-8);
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --layout-gap: var(--space-4);
+  --chrome-control-height: 26px;
+  --workspace-tab-width: 168px;
+  /* ── OS-window geometry. SINGLE SOURCE OF TRUTH: core/chromeGeometry.ts. The
+     main process reads it to build the native window; the renderer re-injects the
+     same constants onto :root at boot (src/renderer/main.tsx), so layout below
+     derives from them via calc(). The literals here are ONLY a fallback for the
+     dev/browser preview (no native window to inject) — exact corner alignment is
+     irrelevant there, so a drift from chromeGeometry.ts cannot reach the product. */
+  --traffic-light-size: 12px;
+  --traffic-light-x: 24px;
+  --traffic-light-y: 24px;
+  /* Height of the top chrome strip: tall enough to contain the rail toggles, which
+     are centred on the traffic-light centreline (y + size/2). A toggle box bottom =
+     centreline + control/2, so height = traffic-light-y + size/2 + control/2.
+     Derived (not a magic constant) so it tracks any traffic-light-y change. */
+  --chrome-height: calc(
+    var(--traffic-light-y) + var(--traffic-light-size) / 2 + var(--chrome-control-height) / 2
+  );
+  /* THE single corner inset for a chrome control box (rail toggles, collapsed
+     agent seed). It positions a --chrome-control-height box so its CENTRE sits on
+     the traffic-light centre (light centre = traffic-light-{axis} + size/2). Used
+     for the `top` of every toggle (so the chrome row aligns with the lights) AND
+     the `right` of the corner agent toggle — there it makes the icon's centre
+     mirror the leftmost light's centre, so it reads as balanced in the rounded
+     corner instead of hugging the edge. One value serves both axes because the
+     corner is symmetric (traffic-light-x == traffic-light-y); anchoring to the
+     CENTRE, not the light's edge, is what keeps a 26px box and a 12px light
+     visually concentric. Replaces three drifting call-site expressions (24 / 17 /
+     14) with one source. */
+  --chrome-control-inset: calc(
+    var(--traffic-light-y) + var(--traffic-light-size) / 2 - var(--chrome-control-height) / 2
+  );
+  /* The title-bar band is shared by ZONES, not an exclusive full-width strip
+     (Apple's unified toolbar / Liquid Glass model: navigation floats above
+     edge-to-edge content). Window chrome owns only the LEFT zone (traffic lights +
+     sidebar toggle) and the RIGHT zone (agent toggle); the centre is owned by the
+     pane breadcrumb, which reaches the top. These widths size the two drag zones
+     and the inset a pane's breadcrumb needs when it extends under a zone (sidebar /
+     agent collapsed). --chrome-sidebar-toggle-left also replaces the magic `left`
+     calc that used to live inline in shell.css's .sidebar-toggle. */
+  --chrome-sidebar-toggle-left: calc(
+    var(--traffic-light-x) + 3 * var(--traffic-light-size) + 2 * var(--space-4) + var(--space-8)
+  );
+  /* Left zone holds the sidebar toggle (starting at --chrome-sidebar-toggle-left)
+     plus a trailing gap. Also the inset a pane's breadcrumb takes when the sidebar
+     is collapsed and the pane reaches the left edge (so it clears this zone). */
+  --chrome-left-zone-width: calc(
+    var(--chrome-sidebar-toggle-left) + var(--chrome-control-height) + var(--space-4)
+  );
+  --chrome-right-zone-width: calc(
+    var(--chrome-control-inset) + var(--chrome-control-height) + var(--space-4)
+  );
+  --sidebar-width: 196px;
+  --sidebar-min-width: 152px;
+  --sidebar-max-width: 280px;
+  --sidebar-collapsed-width: 0px;
+  --sidebar-section-gap: var(--space-xl);
+  --agent-width: 344px;
+  --agent-min-width: 280px;
+  --agent-max-width: 520px;
+  --agent-collapsed-width: 0px;
+  /* The single rail content inset, shared by BOTH floating rails (sidebar + agent). It
+     is the rail's concentric inset — its rounded corner minus the row hover-block's, so
+     content sits evenly inside the rail. Each rail's toggle is positioned to this same
+     inset, so the toggle and the content under it share one edge. One source, no drift. */
+  --rail-pad: var(--space-4);
+  --agent-dock-inset-x: var(--rail-pad);
+  /* The agent rail's TEXT reading column. --rail-pad / --agent-dock-inset-x is the
+     concentric BLOCK edge (where the composer card, hover fills and rail ring sit) —
+     prose placed directly on it reads as glued to the edge. The composer's INPUT text
+     already sits one reading gutter further in (card inset --agent-composer-corner-inset
+     + input pad --space-2). This token reproduces that exact x so the title, the
+     transcript messages, and the composer input all share ONE text column, instead of
+     the title/messages hugging the block edge while the composer breathes. */
+  --agent-content-x: calc(
+    var(--agent-dock-inset-x) + var(--agent-composer-corner-inset) + var(--space-2)
+  );
+  --outline-panel-min-width: 360px;
+  --outline-panel-ideal-width: 520px;
+  --shell-padding-x: var(--layout-gap);
+  --shell-padding-top: var(--layout-gap);
+  --shell-padding-bottom: var(--layout-gap);
+  --shell-gap: var(--layout-gap);
+  --panel-gap: var(--layout-gap);
+  /* Control box sizes — a tight 3-step ladder (20 / 24 / 28). */
+  --control-size-xs: 20px;
+  --control-size-md: 24px;
+  --control-size-xl: 28px;
+  --switch-mark-width: var(--control-size-xl);
+  --icon-size-xs: 12px;
+  --icon-size-sm: 14px;
+  --icon-size-md: 16px;
+  --icon-size-lg: 18px;
+  --workspace-tab-close-size: var(--control-size-xs);
+  --workspace-tab-icon-slot: var(--icon-size-md);
+  --switch-mark-height: var(--icon-size-lg);
+  --switch-mark-thumb-size: var(--icon-size-sm);
+  --switch-mark-inset: var(--space-1);
+  --checkbox-mark-size: var(--icon-size-md);
+  /* Radius — one short ladder. Marks 2/3; everyday 5/6/8 (rows, controls/chips,
+     small surfaces); structural 10/12/16/24 (menus → … → rail → OS window);
+     pill for capsules/circles. Interactive controls prefer pill; content +
+     dense rows keep the soft-rect ladder. */
+  --radius-2xs: 2px;
+  --radius-xs: 3px;          /* checkbox / switch marks */
+  --radius-row: 5px;         /* outliner rows + small dense controls */
+  --radius-sm: 6px;          /* controls, chips, icon buttons */
+  --radius-md: 8px;          /* small surfaces, composer */
+  --radius-overlay-sm: 10px; /* menus / popovers */
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  /* OS window outer radius (macOS Tahoe). We don't draw it — the OS does — but it
+     is the head of the concentric chain the floating rails inset from:
+     window 24 − gap 8 = rail 16 − gap 8 = composer 8. SINGLE SOURCE: the value is
+     MAC_WINDOW_CORNER_RADIUS in core/chromeGeometry.ts, injected onto :root at boot
+     (see the OS-window geometry note above). This literal is the preview fallback. */
+  --radius-window: 24px;
+  --radius-pill: 999px;
+  --checkbox-mark-radius: var(--radius-xs);
+  /* concentric chain in code: rail = window − gap; composer = rail − gap. */
+  --workspace-surface-radius: calc(var(--radius-window) - var(--layout-gap));
+  --panel-radius: var(--workspace-surface-radius);
+  --agent-composer-radius: calc(var(--panel-radius) - var(--layout-gap));
+  --agent-composer-corner-inset: var(--space-3);
+  --agent-composer-corner-radius: calc(var(--agent-composer-radius) - var(--agent-composer-corner-inset));
+  --motion-fast: 120ms ease;
+  --motion-layout: 160ms ease;
+  --panel-size: 1;
+  --panel-content-x: 28px;
+  --panel-content-top: 10px;
+  /* Generous bottom reading gutter: the pane is full-bleed to the window floor, so
+     the scroll content needs its own end padding to keep the last lines off the very
+     edge (a comfortable end-of-document margin, mirroring the top breathing space). */
+  --panel-content-bottom: 64px;
+  --panel-content-max: 720px;
+  --resize-cursor: ew-resize;
+  --resize-hit-width: 10px;
+  /* tab tokens are subtle and die with the global tab strip in Phase 4 */
+  --tab-bg: rgb(var(--ink) / 0.03);
+  --tab-active-bg: rgb(var(--ink) / 0.05);
+  --tab-hover-bg: rgb(var(--ink) / 0.07);
+  --control-hover: var(--fill-2);
+  --control-active: var(--fill-3);
+  --focus-border: var(--focus-ring);
+  --scrollbar-thumb: rgb(var(--ink) / 0.22);
+  --scrollbar-thumb-hover: rgb(var(--ink) / 0.34);
+  --agent-accent: var(--accent);
+  --bg: var(--surface-soft);
+  --surface: var(--panel-bg);
+  --surface-2: var(--bg-window);
+  --border: var(--border-muted);
+  --border-emphasis: rgb(var(--ink) / 0.18);
+  --muted: var(--text-secondary);
+  --muted-2: var(--text-tertiary);
+  --text: var(--text-primary);
+  /* the one link colour — rose (design-system.md: exactly one link colour) */
+  --inline-ref-default: var(--link);
+  --inline-ref-hover: color-mix(in srgb, var(--link) 78%, var(--text));
+  /* danger affordances use the genuine status red, not brand rose */
+  --danger: var(--status-danger);
+  --row-hover: var(--fill-2);
+  --row-selected: var(--fill-3);
+  --row-selection-bg: var(--row-selected);
+  --row-selection-frame-bg: color-mix(in srgb, var(--row-selected) 72%, transparent);
+  --row-selection-border: color-mix(in srgb, var(--text) 18%, transparent);
+  --shadow: var(--overlay-shadow-level-1);
+  --z-base: 0;
+  --z-raised: 10;
+  --z-resize: 30;
+  --z-popover: 100;
+  --z-agent-menu: 120;
+  --z-editor-toolbar: 140;
+  --z-modal: 200;
+  --z-toast: 300;
+  --row-edge: 6px;
+  --row-leading-width: 42px;
+  --row-leading-height: var(--line-content);
+  --row-chevron-width: 15px;
+  --row-chevron-gap: var(--space-2);
+  --row-bullet-width: 15px;
+  --row-content-gap: var(--space-4);
+  --row-bullet-start: calc(var(--row-edge) + var(--row-chevron-width) + var(--row-chevron-gap));
+  --row-bullet-center: 32.5px;
+  --row-selection-start: 21px;
+  --row-depth: 28px;
+}
+

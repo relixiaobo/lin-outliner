@@ -35,7 +35,10 @@ export function WorkspacePanelSurface({
         '--panel-size': size,
       } as CSSProperties}
     >
-      {showClose && (
+      {/* Outliner panes render their own close INSIDE the breadcrumb (NodePanel) so it's a
+          no-drag descendant of the drag region and aligns to the content inset. Only the
+          breadcrumb-less agent-debug pane keeps the absolute corner close here. */}
+      {showClose && panel.type !== 'outliner' && (
         <IconButton
           className="outline-panel-close"
           icon={CloseIcon}

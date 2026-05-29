@@ -2,18 +2,37 @@ import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent a
 import type { DocumentProjection, NodeId, NodeProjection } from '../api/types';
 import { resolveReferenceTargetId, type DocumentIndex } from '../state/document';
 import {
+  AddIcon,
   CalendarIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  CloseIcon,
+  DebugIcon,
   ICON_SIZE,
   LibraryIcon,
   PinIcon,
   RecentsIcon,
+  SettingsIcon,
   SupertagIcon,
 } from './icons';
 import { ButtonControl } from './primitives/ButtonControl';
+import { IconButton } from './primitives/IconButton';
 import { ResizeHandle } from './primitives/ResizeHandle';
 import { textOf } from './shared';
+
+export interface SidebarTabSegment {
+  active: boolean;
+  icon?: string | null;
+  id: string;
+  kind: 'node' | 'agent-debug';
+  title: string;
+}
+
+export interface SidebarTab {
+  id: string;
+  segments: SidebarTabSegment[];
+  title: string;
+}
 
 const primaryNavItems = [
   { label: 'Today', key: 'today', icon: CalendarIcon },
@@ -23,15 +42,22 @@ const primaryNavItems = [
 ] as const;
 
 interface SidebarProps {
+  activeTabId: string | null;
   expandedIds: Set<NodeId>;
   index: DocumentIndex;
+  onCloseTab: (tabId: string) => void;
+  onCreateTab: () => void;
   onNavigateRoot: (nodeId: NodeId) => void;
   onOpenPanel: (nodeId: NodeId) => void;
+  onOpenSettings: () => void;
   onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
+  onResizeReset: () => void;
   onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  onSelectTab: (tabId: string, panelId?: string) => void;
   onToggleTreeNode: (nodeId: NodeId) => void;
   projection: DocumentProjection;
   rootId: NodeId | null;
+  tabs: SidebarTab[];
 }
 
 export function Sidebar(props: SidebarProps) {
@@ -105,8 +131,17 @@ export function Sidebar(props: SidebarProps) {
     );
   };
 
+  const canCloseTab = props.tabs.length > 1;
+
   return (
     <aside className="sidebar-dock" aria-label="Primary navigation">
+      {/* Top spacer keeps the rail's first row clear of the traffic lights +
+          sidebar toggle (window chrome on the shared centreline). It is NOT a drag
+          region: a drag region here would underlap the chrome toggle from a
+          different DOM subtree and the OS would swallow the toggle's click (see
+          sidebar.css). Dragging is owned by the chrome zones + breadcrumb. */}
+      <div className="rail-top" aria-hidden="true" />
+      <div className="sidebar-scroll">
       <nav className="sidebar-primary-nav">
         {primaryNavItems.map((item) => {
           const target = navTargets[item.key];
@@ -129,6 +164,85 @@ export function Sidebar(props: SidebarProps) {
           );
         })}
       </nav>
+
+      {/* The sidebar is the tab switcher now that the global tab strip is gone:
+          select / create / close all live here. */}
+      <div className="sidebar-section sidebar-tabs-section">
+        <div className="sidebar-section-title sidebar-tabs-title">
+          <span>Tabs</span>
+          <IconButton
+            className="sidebar-tab-add"
+            icon={AddIcon}
+            iconSize={ICON_SIZE.menu}
+            label="New tab"
+            onClick={props.onCreateTab}
+            strokeWidth={2}
+            title="New tab"
+            variant="chrome"
+          />
+        </div>
+        <div className="sidebar-tab-list" aria-label="Open tabs">
+          {props.tabs.map((tab) => {
+            const active = tab.id === props.activeTabId;
+            return (
+              <div
+                className={`sidebar-tab ${active ? 'active' : ''}`}
+                key={tab.id}
+                title={tab.title}
+              >
+                <ButtonControl
+                  aria-current={active ? 'page' : undefined}
+                  className="sidebar-tab-trigger"
+                  onClick={(event) => {
+                    const target = event.target;
+                    const segment = target instanceof Element
+                      ? target.closest('[data-workspace-panel-id]')
+                      : null;
+                    const panelId = segment instanceof HTMLElement
+                      ? segment.dataset.workspacePanelId
+                      : undefined;
+                    props.onSelectTab(tab.id, panelId);
+                  }}
+                >
+                  {tab.segments.map((segment) => (
+                    <span
+                      className={`sidebar-tab-segment ${segment.active ? 'is-active' : ''}`}
+                      data-workspace-panel-id={segment.id}
+                      key={segment.id}
+                    >
+                      {segment.kind === 'agent-debug' ? (
+                        <DebugIcon aria-hidden="true" className="sidebar-tab-segment-icon" size={ICON_SIZE.rowGlyph} />
+                      ) : segment.icon?.trim() ? (
+                        <span className="sidebar-tab-segment-icon sidebar-tab-segment-emoji" aria-hidden="true">
+                          {segment.icon.trim()}
+                        </span>
+                      ) : (
+                        <span className="sidebar-tab-segment-icon sidebar-tab-segment-bullet" aria-hidden="true" />
+                      )}
+                      <span className="sidebar-tab-segment-title">{segment.title}</span>
+                    </span>
+                  ))}
+                </ButtonControl>
+                {canCloseTab && (
+                  <IconButton
+                    className="sidebar-tab-close"
+                    icon={CloseIcon}
+                    iconSize={ICON_SIZE.rowGlyph}
+                    label={`Close ${tab.title}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      props.onCloseTab(tab.id);
+                    }}
+                    strokeWidth={2.2}
+                    title="Close tab"
+                    variant="chrome"
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
 
       <div className="sidebar-section">
         <div className="sidebar-section-title">Pinned</div>
@@ -168,12 +282,23 @@ export function Sidebar(props: SidebarProps) {
           </div>
         </div>
       )}
+      </div>
+      <div className="sidebar-bottom">
+        <ButtonControl
+          className="sidebar-bottom-item"
+          onClick={props.onOpenSettings}
+        >
+          <SettingsIcon className="sidebar-nav-icon" size={ICON_SIZE.toolbar} strokeWidth={1.8} />
+          <span>Settings</span>
+        </ButtonControl>
+      </div>
       <ResizeHandle
         className="dock-resize-handle sidebar-resize-handle"
         label="Resize sidebar"
+        onDoubleClick={props.onResizeReset}
         onKeyDown={props.onResizeKeyDown}
         onPointerDown={props.onResizeStart}
-        title="Resize sidebar"
+        title="Resize sidebar (double-click to reset)"
       />
     </aside>
   );

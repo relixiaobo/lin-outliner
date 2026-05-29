@@ -251,6 +251,19 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const referenceLikeRow = node.type === 'reference' || pendingReferenceConversion;
   const isCodeBlock = displayed.type === 'codeBlock' && !referenceLikeRow;
   const isBlockNode = !referenceLikeRow && isBlockNodeType(displayed);
+  // Plain text rows host their tag chips INSIDE the editor (an inline widget at the
+  // end of the text) so the chips flow after the last word and wrap with it. Block /
+  // code rows have no inline text editor, so they keep the tag bar as a sibling below.
+  const isPlainTextRow = !isBlockNode && !isCodeBlock;
+  const hasTags = displayed.tags.length > 0;
+  const inlineTagSlotRef = useRef<HTMLSpanElement | null>(null);
+  if (isPlainTextRow && hasTags && inlineTagSlotRef.current === null) {
+    const el = document.createElement('span');
+    el.className = 'row-inline-tag-slot';
+    el.contentEditable = 'false';
+    inlineTagSlotRef.current = el;
+  }
+  const inlineTagSlot = isPlainTextRow && hasTags ? inlineTagSlotRef.current : null;
   const editorContentRevision = pendingReferenceConversion
     ? displayed.updatedAt
     : draftContentRevision;
@@ -1182,6 +1195,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             nodeId={props.nodeId}
             content={draftContent}
             contentRevision={editorContentRevision}
+            inlineSlotEl={inlineTagSlot}
             readOnly={displayed.locked}
             completed={Boolean(displayed.completedAt)}
             onFocus={row.updateSelection}
@@ -1246,14 +1260,30 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             }}
           />
           )}
-          {displayed.tags.length > 0 && (
-            <TagBar
-              nodeId={targetEditId}
-              tagIds={displayed.tags}
-              index={props.index}
-              run={props.run}
-              onRoot={props.onRoot}
-            />
+          {hasTags && (
+            isPlainTextRow ? (
+              // Portal the chips into the editor's inline slot so they sit in the
+              // text flow (after the last word, wrapping with it). The slot node
+              // lives inside this row's editor DOM, so it stays within the row.
+              inlineTagSlot && createPortal(
+                <TagBar
+                  nodeId={targetEditId}
+                  tagIds={displayed.tags}
+                  index={props.index}
+                  run={props.run}
+                  onRoot={props.onRoot}
+                />,
+                inlineTagSlot,
+              )
+            ) : (
+              <TagBar
+                nodeId={targetEditId}
+                tagIds={displayed.tags}
+                index={props.index}
+                run={props.run}
+                onRoot={props.onRoot}
+              />
+            )
           )}
           <NodeDescription
             node={displayed}

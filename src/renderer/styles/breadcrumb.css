@@ -1,0 +1,186 @@
+/* The per-pane breadcrumb is the canonical pane header now that the global one is
+   gone. It is sticky against .main-panel and doubles as a window drag region (the
+   top strip). Interactive controls inside opt back out with no-drag below. */
+.panel-sticky-breadcrumb {
+  position: sticky;
+  z-index: var(--z-raised);
+  top: 0;
+  display: grid;
+  min-width: 0;
+  min-height: calc(var(--panel-content-top) + var(--control-size-md));
+  align-items: center;
+  /* leading (back + origin) · path · trailing (close). The trailing column is auto so
+     it collapses to nothing when no close is rendered (single pane). */
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  margin: 0 0 calc(var(--space-lg) + var(--space-2));
+  background: var(--bg-content);
+  padding:
+    var(--panel-content-top)
+    var(--panel-content-x)
+    0
+    calc(var(--panel-content-x) - var(--row-chevron-width) - var(--row-chevron-gap));
+  -webkit-app-region: drag;
+}
+
+/* Scroll-edge effect (Apple Liquid Glass): the sticky breadcrumb is an opaque backing,
+   so content scrolling up under it was cut by a HARD horizontal line at the breadcrumb's
+   bottom — unnatural (the big page title looked sliced mid-glyph). Soften it: a short
+   gradient that continues the opaque backing and fades to transparent over the gap below
+   the breadcrumb, so content dissolves into the toolbar instead of being clipped. It
+   tracks the sticky breadcrumb (absolute to it) and never eats clicks. */
+.panel-sticky-breadcrumb::after {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  left: 0;
+  height: var(--space-lg);
+  background: linear-gradient(to bottom, var(--bg-content), transparent);
+  content: "";
+  pointer-events: none;
+}
+
+/* No corner-clearance overrides are needed: the canvas reserves --chrome-height +
+   --layout-gap of top padding (canvas.css), so every breadcrumb — drag region and
+   all — sits BELOW the fixed traffic lights and rail toggles. Nothing interactive
+   in window chrome overlaps the breadcrumb, in any collapse state. */
+
+/* Interactive breadcrumb controls must remain clickable inside the drag region. */
+.panel-page-back-button,
+.panel-breadcrumb-origin,
+.panel-breadcrumb-button,
+.panel-breadcrumb-ellipsis,
+.panel-breadcrumb-close,
+.outline-panel-close {
+  -webkit-app-region: no-drag;
+}
+
+/* Trailing close: a no-drag descendant of the breadcrumb drag region (so its click is
+   reliably carved out on macOS) sitting in the trailing grid column, hugging the right
+   --panel-content-x inset (the breadcrumb's own right padding) so it aligns with content. */
+.panel-breadcrumb-close {
+  display: inline-flex;
+  width: var(--control-size-md);
+  height: var(--control-size-md);
+  align-items: center;
+  justify-content: center;
+  justify-self: end;
+  border-radius: var(--radius-row);
+  color: color-mix(in srgb, var(--text) 42%, transparent);
+}
+
+.panel-breadcrumb-close:hover,
+.panel-breadcrumb-close:focus-visible {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+.panel-breadcrumb-leading {
+  display: inline-flex;
+  height: var(--control-size-md);
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.panel-page-back-button {
+  display: inline-flex;
+  width: var(--control-size-md);
+  height: var(--control-size-md);
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-row);
+  color: color-mix(in srgb, var(--text) 42%, transparent);
+}
+
+.panel-page-back-button:hover:not(:disabled),
+.panel-page-back-button:focus-visible:not(:disabled) {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+.panel-page-back-button:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+.panel-breadcrumb {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  margin: 0;
+  white-space: nowrap;
+}
+
+.panel-breadcrumb-origin {
+  display: inline-flex;
+  grid-column: 3;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  justify-self: center;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  color: color-mix(in srgb, var(--text) 44%, transparent);
+}
+
+.panel-breadcrumb-origin:hover {
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+  color: color-mix(in srgb, var(--text) 62%, transparent);
+}
+
+.panel-breadcrumb-segment {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.panel-breadcrumb-divider {
+  flex: 0 0 auto;
+  color: var(--text-disabled);
+  margin: 0 var(--space-3);
+}
+
+.panel-breadcrumb-button {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-breadcrumb-button {
+  border-radius: var(--radius-row);
+  padding: 0 var(--space-1);
+}
+
+.panel-breadcrumb-button:hover {
+  color: var(--text-soft);
+}
+
+.panel-breadcrumb-ellipsis {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text-faint);
+}
+
+.panel-breadcrumb-ellipsis:hover,
+.panel-breadcrumb-ellipsis:focus-visible {
+  background: color-mix(in srgb, var(--text) 11%, transparent);
+  color: var(--text-soft);
+}
+

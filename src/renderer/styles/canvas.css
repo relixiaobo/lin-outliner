@@ -1,0 +1,145 @@
+/* Full-bleed opaque content base. It fills the window and extends UNDER the
+   floating rails; left/right padding keeps outliner rows clear of the rails while
+   the base background still shows through them (vibrancy). The padding tracks the
+   rail widths + gaps and collapses when a rail is gone.
+
+   The TOP padding is just --layout-gap: panes reach the top of the window (Apple's
+   Liquid Glass model — content is edge-to-edge and scrolls UNDER the floating
+   navigation). Each pane's sticky breadcrumb is the floating toolbar in the title-
+   bar row; its opaque background is the "hard" scroll-edge backing. Window chrome
+   no longer spans the full width pushing content down — it owns only the two corner
+   drag zones (shell.css), so the centre breadcrumb sits at the top with its drag +
+   no-drag controls intact. The two cases where a pane DOES underlap a corner zone
+   (a rail collapsed, so the pane reaches that edge) inset the breadcrumb below. The
+   --layout-gap top inset also matches the floating rails' own top inset, so all
+   three regions start on one line. */
+.workspace-canvas {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  gap: 0;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-content);
+  overflow-x: hidden;
+  overflow-y: hidden;
+  padding-top: var(--canvas-pad-top);
+  padding-left: var(--canvas-pad-left);
+  padding-right: var(--canvas-pad-right);
+  transition: padding var(--motion-layout);
+  --canvas-pad-top: var(--layout-gap);
+  --canvas-pad-left: calc(var(--layout-gap) + var(--sidebar-width) + var(--layout-gap));
+  --canvas-pad-right: calc(var(--layout-gap) + var(--agent-width) + var(--layout-gap));
+}
+
+/* When a rail is collapsed, the pane on that side extends to the window edge and so
+   underlaps that side's corner chrome zone. Inset only that pane's breadcrumb (the
+   toolbar row) past the zone with a MARGIN — the breadcrumb is a drag region, so it
+   must not merely pad its content but actually not overlap the zone's drag region
+   from the other DOM subtree (an overlap makes the toggle's clicks flicker / get
+   swallowed on macOS). The pane body below stays full-bleed; the zone's opaque
+   backing (shell.css) caps the top band the breadcrumb no longer covers. */
+.app.sidebar-collapsed .outline-panel-surface:first-child .panel-sticky-breadcrumb {
+  margin-left: var(--chrome-left-zone-width);
+}
+
+.app:not(.agent-open) .outline-panel-surface:last-child .panel-sticky-breadcrumb {
+  margin-right: var(--chrome-right-zone-width);
+}
+
+/* Same reason for the per-pane close button (only shown with >1 pane): when the
+   agent is collapsed the last pane reaches the right edge, so its close button —
+   pinned to the pane's top-right — would land under the agent toggle. Clear it. */
+.app:not(.agent-open) .outline-panel-surface:last-child .outline-panel-close {
+  right: var(--chrome-right-zone-width);
+}
+
+.app.sidebar-collapsed .workspace-canvas {
+  /* No sidebar: base extends to the left edge, but keep enough inset for the
+     traffic lights + sidebar toggle (window chrome) and the first pane header. */
+  --canvas-pad-left: 0px;
+}
+
+.app:not(.agent-open) .workspace-canvas {
+  /* Agent collapsed to its seed: only reserve the seed/toggle corner. */
+  --canvas-pad-right: 0px;
+}
+
+.outline-panel-surface {
+  position: relative;
+  height: 100%;
+  min-width: 0;
+  flex: var(--panel-size) 1 0;
+  overflow: visible;
+  /* Flush opaque pane — part of the content base, NOT a floating card: no radius,
+     no shadow. Panes are divided only by the 1px separator drag handle. */
+  background: var(--bg-content);
+  /* Lift the scroll viewport off the window floor by the same gap the floating rails
+     leave at their bottom, so pane CONTENT bottom-aligns with the rails and never sits
+     jammed against the window edge mid-scroll. This pads the surface (shrinking the
+     .main-panel viewport inside it), NOT the canvas — so the inter-pane divider, which
+     lives at the canvas level, still runs full-height to the window floor. The opaque
+     surface bg fills this strip, so the full-bleed base is preserved. */
+  padding-bottom: var(--layout-gap);
+}
+
+/* The visible divider between panes is the 1px .panel-resize-slot itself (agent-dock.css),
+   not a per-surface inset shadow — so panes need no own separator. */
+
+.workspace-canvas.single-panel .outline-panel-surface {
+  max-width: none;
+}
+
+/* Active pane indication stays subtle + neutral (handled by header strength in
+   breadcrumb.css); no full box outline on the surface. */
+
+.outline-panel-close {
+  position: absolute;
+  z-index: var(--z-resize);
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-row);
+  color: var(--text-faint);
+}
+
+.outline-panel-close:hover {
+  background: var(--fill-1);
+  color: var(--text-strong);
+}
+
+/* The pane's scroll VIEWPORT. Single owner of the scroll gutters: the sticky breadcrumb
+   sits flush at the top and content is full-bleed, so the only viewport padding is the
+   bottom reading gutter — put it on the scroller itself (Chromium reliably counts a
+   scroll container's padding-bottom into the scroll-end), not on a child, so it survives
+   the virtualizer's absolutely-positioned rows. Horizontal content inset lives on
+   .panel-inner; the breadcrumb owns its own inset. */
+.outline-panel-surface .main-panel {
+  height: 100%;
+  min-width: 0;
+  overflow: auto;
+  background: var(--surface);
+  padding: 0 0 var(--panel-content-bottom);
+  scrollbar-gutter: stable;
+}
+
+/* The centred reading column inside the viewport. Owns the horizontal content inset
+   (--panel-content-x); vertical spacing is the breadcrumb (top) + viewport gutter
+   (bottom), so it carries none of its own. */
+.outline-panel-surface .panel-inner {
+  width: min(100%, var(--panel-content-max));
+  max-width: none;
+  min-height: 100%;
+  margin: 0 auto;
+  padding: 0 var(--panel-content-x);
+}
+
+.outline-panel-surface.is-agent-debug {
+  overflow: hidden;
+  background: var(--surface);
+}
+

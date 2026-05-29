@@ -17,6 +17,7 @@ interface WorkspaceCanvasProps {
   onClosePanel: (panelId: string) => void;
   onNavigatePanelBack: (panelId: string) => void;
   onNavigatePanelRoot: (panelId: string, nodeId: NodeId, options?: NavigateRootOptions) => void;
+  onPanelResizeReset: (leftPanelId: string, rightPanelId: string) => void;
   onPanelResizeStart: (
     leftPanelId: string,
     rightPanelId: string,
@@ -60,6 +61,8 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 rootId={panel.rootId}
                 canGoBack={Boolean(panel.pageBackStack?.length)}
                 onBack={() => props.onNavigatePanelBack(panel.id)}
+                showClose={activePanels.length > 1}
+                onClose={() => props.onClosePanel(panel.id)}
                 onRoot={(nodeId, options) => props.onNavigatePanelRoot(panel.id, nodeId, options)}
                 index={props.index}
                 ui={props.ui}
@@ -79,12 +82,16 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
               <ResizeHandle
                 className="panel-resize-handle"
                 label="Resize panels"
+                onDoubleClick={() => (
+                  props.onPanelResizeReset(panel.id, activePanels[panelIndex + 1].id)
+                )}
                 onKeyDown={(event) => (
                   props.onPanelResizeKeyDown(panel.id, activePanels[panelIndex + 1].id, event)
                 )}
                 onPointerDown={(event) => (
                   props.onPanelResizeStart(panel.id, activePanels[panelIndex + 1].id, event)
                 )}
+                title="Resize panels (double-click to reset)"
               />
             </div>
           )}

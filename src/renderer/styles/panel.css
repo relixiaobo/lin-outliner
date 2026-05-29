@@ -1,0 +1,303 @@
+/* The pane scroll viewport (.main-panel) and centred reading column (.panel-inner) are
+   owned entirely by canvas.css — they only ever exist inside .outline-panel-surface, so
+   defining them here too just produced dead, specificity-overridden duplicates. This
+   module keeps only the panel's INNER header widgets below. */
+
+.panel-header {
+  /* No horizontal padding: .panel-inner (canvas.css) owns the content inset. Just the
+     space below the title block before the rows. */
+  padding: 0 0 var(--space-6);
+}
+
+.panel-title-row {
+  display: flex;
+  min-width: 0;
+  max-width: 720px;
+  align-items: center;
+  gap: var(--space-3);
+  justify-content: space-between;
+}
+
+.panel-heading-icon-row {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  margin: var(--space-2) 0 var(--space-5);
+}
+
+.panel-header-icon {
+  display: flex;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--fill-1);
+  color: var(--muted-2);
+  margin-top: 1px;
+  mix-blend-mode: multiply;
+}
+
+.panel-title-editor {
+  display: flex;
+  max-width: 720px;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 0;
+}
+
+.panel-title-editor .row-editor {
+  display: inline-block;
+  color: var(--text);
+  font-size: var(--font-panel-title);
+  font-weight: 600;
+  line-height: var(--line-panel-title);
+  letter-spacing: 0;
+}
+
+.panel-title-editor .row-editor .ProseMirror {
+  min-height: 36px;
+}
+
+.panel-header > .node-description {
+  margin: var(--space-2) 0 0;
+}
+
+.panel-title-toolbar-row {
+  display: flex;
+  max-width: 720px;
+  min-height: 32px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  margin-top: 12px;
+}
+
+.panel-title-toolbar-row .tag-bar {
+  margin-left: 0;
+}
+
+.panel-date-nav-wrap {
+  position: relative;
+  max-width: 720px;
+}
+
+.panel-date-nav {
+  display: flex;
+  max-width: 720px;
+  min-height: 26px;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-5);
+  color: var(--muted-2);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.panel-date-nav-button,
+.panel-date-nav-today,
+.panel-date-picker-button,
+.calendar-month-nav,
+.calendar-month-day {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.panel-date-nav-button,
+.panel-date-nav-today,
+.panel-date-picker-button {
+  height: 24px;
+  border-radius: var(--radius-sm);
+}
+
+.panel-date-nav-button {
+  width: 24px;
+  padding: 0;
+}
+
+.panel-date-nav-today {
+  padding: 0 var(--space-4);
+  font: inherit;
+  font-weight: 500;
+}
+
+.panel-date-nav-button:hover,
+.panel-date-nav-button:focus-visible,
+.panel-date-nav-today:hover,
+.panel-date-nav-today:focus-visible,
+.panel-date-picker-button:hover,
+.panel-date-picker-button:focus-visible,
+.panel-date-picker-button[aria-expanded="true"],
+.calendar-month-nav:hover,
+.calendar-month-nav:focus-visible,
+.calendar-month-day:hover,
+.calendar-month-day:focus-visible {
+  background: var(--control-hover);
+  color: var(--text-sub);
+}
+
+.panel-date-nav-divider {
+  width: 1px;
+  height: 12px;
+  margin: 0 var(--space-2);
+  background: var(--border-subtle);
+}
+
+.panel-date-picker-button {
+  width: 24px;
+  padding: 0;
+  font: inherit;
+}
+
+.panel-date-popover {
+  position: absolute;
+  z-index: var(--z-popover);
+  top: calc(100% + 6px);
+  left: 0;
+  width: 252px;
+  border-radius: var(--radius-md);
+  background: var(--overlay-bg);
+  box-shadow: var(--overlay-shadow-level-2);
+  padding: var(--space-5);
+}
+
+.calendar-month {
+  --calendar-day-size: 28px;
+  --calendar-day-gap: var(--space-3);
+}
+
+.calendar-month-header {
+  display: grid;
+  height: 28px;
+  grid-template-columns: 28px 1fr 28px;
+  align-items: center;
+  color: var(--text-sub);
+  font-size: var(--font-ui-sm);
+  font-weight: 600;
+  line-height: var(--line-ui-sm);
+  text-align: center;
+}
+
+.calendar-month-nav {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+}
+
+.calendar-month-weekdays,
+.calendar-month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, var(--calendar-day-size));
+  justify-content: center;
+}
+
+.calendar-month-weekdays {
+  column-gap: var(--calendar-day-gap);
+  margin-top: var(--space-4);
+  color: var(--muted-2);
+  font-size: var(--font-ui-2xs);
+  font-weight: 600;
+  line-height: var(--line-meta);
+  text-align: center;
+}
+
+.calendar-month-grid {
+  gap: var(--calendar-day-gap);
+  margin-top: var(--space-2);
+}
+
+.calendar-month-day {
+  position: relative;
+  width: var(--calendar-day-size);
+  height: var(--calendar-day-size);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-sub);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.calendar-month-day.is-outside-month {
+  color: var(--text-tertiary);
+}
+
+.calendar-month-day.is-in-range:not(.is-selected) {
+  background: var(--fill-2);
+  border-radius: var(--radius-sm);
+}
+
+.calendar-month-day.is-today:not(.is-selected) {
+  box-shadow: var(--outline-emphasis);
+}
+
+.panel-date-calendar-day.has-note-count:not(.is-selected) {
+  color: var(--text-strong);
+}
+
+.panel-date-calendar-day.note-density-1:not(.is-selected) {
+  background: var(--fill-1);
+}
+
+.panel-date-calendar-day.note-density-2:not(.is-selected) {
+  background: var(--fill-2);
+}
+
+.panel-date-calendar-day.note-density-3:not(.is-selected) {
+  background: var(--fill-3);
+}
+
+.panel-date-calendar-day.note-density-4:not(.is-selected) {
+  background: var(--fill-4);
+}
+
+.panel-date-calendar-day.has-note-count:hover:not(.is-selected),
+.panel-date-calendar-day.has-note-count:focus-visible:not(.is-selected) {
+  background: var(--control-hover);
+}
+
+.calendar-month-day.is-selected {
+  background: var(--surface-inverse);
+  color: var(--panel-bg);
+}
+
+.panel-title-more-button {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--row-hover);
+  color: var(--muted);
+  transition: background var(--motion-fast), color var(--motion-fast);
+}
+
+.panel-title-more-button:hover,
+.panel-title-more-button:focus-visible {
+  background: var(--tab-active-bg);
+  color: var(--text);
+}
+
+.panel-title-more-button.is-active {
+  background: var(--tab-active-bg);
+  color: var(--text);
+}
+
+.panel-header-tag-icon {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  color: var(--text-on-accent);
+}
+

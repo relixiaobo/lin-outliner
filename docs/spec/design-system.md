@@ -116,18 +116,12 @@ Use these default desktop tokens before adding component-specific values:
   --content-control-height: var(--line-content);
   --font-description: var(--font-ui-sm);
   --line-description: 1.125rem; /* 18px */
-  --font-heading-sm: 0.875rem; /* 14px */
-  --line-heading-sm: 1.375rem; /* 22px */
-  --font-heading-md: 1rem; /* 16px */
-  --line-heading-md: 1.5rem; /* 24px */
+  /* One large heading size (markdown h1); h2/h3 reuse --font-content (16) and
+     --font-ui-md (14) rather than a parallel heading ladder. */
   --font-heading-lg: 1.125rem; /* 18px */
   --line-heading-lg: 1.625rem; /* 26px */
-  --font-heading-xl: 1.25rem; /* 20px */
-  --line-heading-xl: 1.75rem; /* 28px */
-  --font-heading-2xl: 1.5rem; /* 24px */
-  --line-heading-2xl: 2rem; /* 32px */
-  --font-panel-title: 1.625rem; /* 26px */
-  --line-panel-title: 2.25rem; /* 36px */
+  --font-panel-title: 1.5rem; /* 24px — top of the type scale */
+  --line-panel-title: 2rem; /* 32px */
   font-size: var(--font-scale);
 
   color-scheme: light dark;
@@ -215,8 +209,8 @@ Use these default desktop tokens before adding component-specific values:
   --overlay-shadow-level-2: 0 18px 48px -20px rgba(0, 0, 0, 0.24), 0 6px 18px -10px rgba(0, 0, 0, 0.14);
   --outline-faint: inset 0 0 0 1px rgb(var(--ink) / 0.04);
   --outline-subtle: inset 0 0 0 1px rgb(var(--ink) / 0.07);
-  --outline-muted: inset 0 0 0 1px rgb(var(--ink) / 0.12);
-  --outline-emphasis: inset 0 0 0 1px rgb(var(--ink) / 0.18);
+  --outline-muted: inset 0 0 0 1px rgb(var(--ink) / 0.10);
+  --outline-emphasis: inset 0 0 0 1px rgb(var(--ink) / 0.16);
   --outline-focus: inset 0 0 0 1px var(--focus-ring);
   --outline-primary: inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent);
   --outline-primary-strong: inset 0 0 0 1px color-mix(in srgb, var(--accent) 58%, var(--separator));
@@ -275,7 +269,6 @@ Use these default desktop tokens before adding component-specific values:
   --space-4: 8px;
   --space-5: 10px;
   --space-6: 12px;
-  --space-7: 14px;
   --space-8: 16px;
   --space-micro: var(--space-2);
   --space-sm: var(--space-4);
@@ -284,20 +277,17 @@ Use these default desktop tokens before adding component-specific values:
   --space-xl: 32px;
   --layout-gap: var(--space-sm);
 
+  /* Control box sizes — a tight 3-step ladder (20 / 24 / 28). */
   --control-size-xs: 20px;
-  --control-size-sm: 22px;
   --control-size-md: 24px;
-  --control-size-lg: 26px;
   --control-size-xl: 28px;
-  --control-size-2xl: 30px;
-  --control-size-3xl: 32px;
   --icon-size-xs: 12px;
   --icon-size-sm: 14px;
   --icon-size-md: 16px;
   --icon-size-lg: 18px;
   --checkbox-mark-size: var(--icon-size-md);
   --checkbox-mark-radius: var(--radius-xs);
-  --switch-mark-width: var(--control-size-2xl);
+  --switch-mark-width: var(--control-size-xl);
   --switch-mark-height: var(--icon-size-lg);
   --switch-mark-thumb-size: var(--icon-size-sm);
   --switch-mark-inset: var(--space-1);
@@ -321,7 +311,8 @@ Use these default desktop tokens before adding component-specific values:
                             subtracts the gap, so all the nested corners share
                             one centre. */
   --radius-pill: 999px;
-  --workspace-surface-radius: var(--radius-xl); /* 16px — the floating rail radius */
+  /* concentric chain in code: rail = window − gap (24 − 8 = 16). */
+  --workspace-surface-radius: calc(var(--radius-window) - var(--layout-gap));
   --panel-radius: var(--workspace-surface-radius);
   /* Composer is inset by --layout-gap inside the agent rail, so its bottom
      corners are CONCENTRIC with the rail's bottom corners: 16 − 8 = 8. */
@@ -602,8 +593,10 @@ rail's own material.
 Type roles map onto the Foundations font tokens; do not introduce new sizes.
 
 - **Panel title:** `--font-panel-title / --line-panel-title`, weight `600`.
-- **Headings:** `--font-heading-sm … --font-heading-2xl` with matching line
-  tokens; weight `600`.
+- **Headings:** one large heading size `--font-heading-lg` (18, markdown h1);
+  smaller headings reuse `--font-content` (16) and `--font-ui-md` (14) rather
+  than a parallel ladder. The panel display title is `--font-panel-title` (24).
+  Weight `600`.
 - **Body / content (the reading + editing baseline):** `--font-content /
   --line-content` (16/26). Outliner rows, field values, agent assistant prose,
   user bubbles, and the composer all share this — primary-text parity is a rule.
