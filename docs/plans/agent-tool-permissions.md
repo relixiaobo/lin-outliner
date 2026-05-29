@@ -111,6 +111,29 @@ The resulting design keeps the useful part of the original runtime policy
 approach: the runtime owns permission enforcement. It changes the user
 experience by making that policy visible, global, and action-kind based.
 
+## Reference Project
+
+This plan uses cc-2.1 as the primary reference project for permission settings
+and classifier-backed permission resolution. File names below refer to the
+cc-2.1 source tree used during planning:
+
+- `src/utils/permissions/permissions.ts`: classifier resolution runs only after
+  deterministic permission handling returns `ask`; it does not override hard
+  blocks, explicit deny, or explicit allow.
+- `src/utils/permissions/yoloClassifier.ts`: classifier context is a compact
+  transcript made from user text and assistant `tool_use` records, with the
+  current action appended last and assistant prose excluded.
+- `src/Tool.ts`: every tool exposes `toAutoClassifierInput`; tools that have no
+  security-relevant classifier input may return an empty projection.
+- `src/utils/permissions/classifierDecision.ts`: narrow safe-tool allowlists can
+  bypass the classifier call.
+- `src/utils/permissions/permissionSetup.ts`: overly broad allow rules are
+  rejected or stripped before they can bypass classifier-backed safety checks.
+
+Lin should borrow those mechanics, but not cc-2.1's user-facing permission mode
+set. Lin has one global policy, and the classifier is an internal `ask`
+resolver inside that policy.
+
 ## Mental Model
 
 The user manages one global table:
