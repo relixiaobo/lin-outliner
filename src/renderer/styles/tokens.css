@@ -246,6 +246,10 @@
   --checkbox-mark-radius: var(--radius-xs);
   --workspace-surface-radius: var(--radius-xl);
   --panel-radius: var(--workspace-surface-radius);
+  /* Self-drawn macOS window corner (main.ts disables the OS ~10px rounding). It is
+     the outer link of the concentric chain: window 24 → rail/panel 16 → composer 8,
+     so window = panel-radius + the rail's --layout-gap inset (shared centre). */
+  --window-radius: calc(var(--panel-radius) + var(--layout-gap));
   --agent-composer-radius: calc(var(--workspace-surface-radius) - var(--layout-gap));
   --agent-composer-corner-inset: var(--space-3);
   --agent-composer-corner-radius: calc(var(--agent-composer-radius) - var(--agent-composer-corner-inset));
