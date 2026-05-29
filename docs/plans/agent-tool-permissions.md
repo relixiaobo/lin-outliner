@@ -22,8 +22,8 @@ request.
 The product goal is still to prevent agent runs from getting stuck on low-value
 prompts. The way to do that is not to add an approval parameter to every tool.
 It is to make prompts rare: common actions should be allowed by global policy,
-actions the product should not take autonomously should be denied without a
-dialog, and only genuinely user-owned decisions should ask.
+non-negotiable platform boundaries should be hard-blocked without a dialog, and
+only genuinely user-owned decisions should ask.
 
 ## Problem
 
@@ -60,8 +60,12 @@ decisions into one product-owned permission system.
 4. **Runtime classifies tool actions.** The runtime maps a concrete tool call to
    an action kind, then checks the global rule for that kind.
 5. **Prompts must be rare.** `ask` is reserved for actions where the user must
-   personally make the decision. Otherwise the runtime should `allow` or `deny`
-   without interrupting.
+   personally make the decision. Otherwise the runtime should `allow` without
+   interrupting or return a platform hard block.
+6. **No persistent user `deny` rules.** If the agent requested an action, the
+   action may be necessary for the task. The user can deny the current request,
+   but the global permission center should not store "always deny this kind" as
+   a normal rule.
 
 ## Decision Trail
 
@@ -98,13 +102,13 @@ Agent Tool Permissions
 Read local data                         Allow
 Search external information             Allow
 Edit local documents                     Allow
-Run local validation / project scripts   Allow / Ask / Deny
-Install dependencies                     Allow / Ask / Deny
-Delete local data                        Ask / Deny
-Publish to a remote service              Ask / Deny
-Send external messages                   Ask / Deny
-Payment or purchase actions              Deny
-Modify agent permission settings         Deny
+Run local validation / project scripts   Allow / Ask
+Install dependencies                     Allow / Ask
+Delete local data                        Allow / Ask
+Publish to a remote service              Allow / Ask
+Send external messages                   Allow / Ask
+Payment or purchase actions              Allow / Ask if supported
+Modify agent permission settings         Platform blocked
 ```
 
 These rules are global across the whole software. They do not depend on the
@@ -126,8 +130,8 @@ tool call
   -> derive one or more action descriptors from tool name and arguments
   -> read global permission rules for the derived action kinds
   -> allow: execute immediately
-  -> deny: return a structured denied result to the agent
   -> ask: show a confirmation dialog and wait for explicit user input
+  -> hard block: return a structured denied result to the agent
 ```
 
 `ask` is allowed to block, because it means the product genuinely needs the
@@ -136,9 +140,9 @@ routine actions as `ask`.
 
 `ask` is not the fallback for runtime uncertainty. If an action is unknown,
 ambiguous, or outside the supported classification surface, the product should
-prefer `deny` unless the action category is important enough that the user must
-decide. This keeps popups meaningful instead of turning them into a generic
-"runtime is unsure" bucket.
+ask only when the action is plausible and user-owned. Otherwise it should return
+a platform hard block. This keeps popups meaningful instead of turning them into
+a generic "runtime is unsure" bucket.
 
 ## Action Kinds
 
@@ -174,7 +178,8 @@ them as local code execution, not as harmless validation.
 Sketch:
 
 ```ts
-type ToolPermissionDecision = 'allow' | 'ask' | 'deny';
+type GlobalToolPermissionDecision = 'allow' | 'ask';
+type ToolPermissionOutcome = 'allow' | 'ask' | 'blocked';
 type ToolAccessScope =
   | 'allowed_file_area'
   | 'outside_allowed_file_area'
@@ -189,7 +194,7 @@ interface ToolActionDescriptor {
   title: string;
   summary: string;
   consequence: string;
-  defaultDecision: ToolPermissionDecision;
+  defaultDecision: GlobalToolPermissionDecision;
   reversible: boolean;
   externalEffect: boolean;
 }
@@ -218,7 +223,6 @@ Required rules:
 2. Classify every executable segment that can be identified.
 3. Compute the effective decision from all segments:
    - any platform hard block blocks the whole command;
-   - any `deny` action kind denies the whole command;
    - otherwise any `ask` action kind asks for the whole command;
    - only all-`allow` segments may execute without a dialog.
 4. If the parser cannot decompose a compound command confidently, classify it as
@@ -263,7 +267,7 @@ properties:
 - existing restricted-mode denies must remain in force during migration until
   equivalent global action-kind rules exist;
 - skill preapproval metadata may narrow what a skill can do, but it must not
-  bypass global `deny` rules, path boundaries, or platform hard blocks.
+  bypass path boundaries or platform hard blocks.
 
 This keeps "one global permission table" as the user-facing management model
 without turning global rules into broad filesystem capabilities.
@@ -275,7 +279,7 @@ The permission store is a single global map:
 ```ts
 interface GlobalToolPermissionRule {
   actionKind: AgentToolActionKind;
-  decision: ToolPermissionDecision;
+  decision: GlobalToolPermissionDecision;
   updatedAt: number;
 }
 ```
@@ -294,6 +298,10 @@ change that global rule to `allow`. The model should not bypass confirmation by
 adding metadata to the tool call, and the runtime should not silently create
 temporary grants.
 
+The global permission store is not a blocklist. It stores only whether a
+supported action kind can run without asking (`allow`) or must ask (`ask`).
+Platform hard blocks live outside the user permission table.
+
 ## Confirmation Dialog
 
 A confirmation dialog is not a notification and not a timer. It means:
@@ -305,12 +313,14 @@ This action will not run until the user makes a decision.
 Dialog buttons:
 
 ```txt
-[Approve once] [Always allow this kind] [Deny once] [Always deny this kind]
+[Approve once] [Always allow this kind] [Deny once]
 ```
 
-The "always" buttons update the global permission rule for the action kind. The
-"once" buttons only resolve the pending tool call and are recorded in the event
-log.
+`Always allow this kind` updates the global permission rule for the action kind.
+The once buttons only resolve the pending tool call and are recorded in the
+event log. There is intentionally no `Always deny this kind` button; persistent
+denial is a platform/tool-availability concern, not a normal user permission
+rule.
 
 The dialog should show:
 
@@ -329,8 +339,8 @@ that also publishes to a remote service.
 
 ## Denied Results
 
-`deny` should not open a dialog. It should return a structured result to the
-agent:
+Only platform hard blocks and explicit `Deny once` choices return denied
+results. They should return structured data to the agent:
 
 ```ts
 interface ToolDeniedResult {
@@ -338,7 +348,7 @@ interface ToolDeniedResult {
   kind: 'permission_denied';
   primaryActionKind: AgentToolActionKind;
   actionKinds: AgentToolActionKind[];
-  reason: 'global_rule' | 'platform_hard_block' | 'user_denied';
+  reason: 'platform_hard_block' | 'user_denied';
   message: string;
 }
 ```
@@ -348,8 +358,8 @@ fallback, explain what could not be done, or ask the user in chat to change the
 global permission if the action is essential.
 
 This matters more than countdowns for unattended work. A denied result lets the
-run keep moving when the product can already decide that the action should not
-run.
+run keep moving when the user or product boundary has already decided that the
+current action should not run.
 
 ## Platform Hard Blocks
 
@@ -400,7 +410,7 @@ interface ToolPermissionCheckedEvent {
   toolName: string;
   primaryActionKind: AgentToolActionKind;
   actionKinds: AgentToolActionKind[];
-  decision: ToolPermissionDecision;
+  outcome: ToolPermissionOutcome;
   source: 'global_rule' | 'default_rule' | 'platform_hard_block';
   descriptorRef?: AgentPayloadRef;
 }
@@ -411,7 +421,7 @@ interface ToolPermissionResolvedEvent {
   type: 'tool.permission.resolved';
   requestId: string;
   approved: boolean;
-  resolvedBy: 'user_once' | 'global_rule_update' | 'abort';
+  resolvedBy: 'user_once' | 'allow_rule_update' | 'abort';
   updatedRule?: GlobalToolPermissionRule;
 }
 ```
@@ -429,7 +439,7 @@ current:
 tool policy matrix -> allow / ask / deny
 
 proposed:
-tool action descriptor -> global permission rule -> allow / ask / deny
+tool action descriptor -> hard block check -> global permission rule -> allow / ask
 ```
 
 The difference is that the decision should be user-manageable and action-kind
@@ -454,9 +464,11 @@ often or silently allows ambiguous actions.
 
 ## Implementation Checklist
 
-1. Define `AgentToolActionKind`, `ToolPermissionDecision`, and
-   `ToolActionDescriptor` in shared TypeScript types.
-2. Add a global permission store with one rule per supported action kind.
+1. Define `AgentToolActionKind`, `GlobalToolPermissionDecision`,
+   `ToolPermissionOutcome`, and `ToolActionDescriptor` in shared TypeScript
+   types.
+2. Add a global permission store with one `allow | ask` rule per supported
+   action kind.
 3. Add a permission center UI for viewing and editing the global rules.
 4. Build descriptor resolvers for existing agent tools.
 5. Preserve existing path-boundary, sensitive-path, restricted-mode, and skill
@@ -467,23 +479,23 @@ often or silently allows ambiguous actions.
    conservative action kind.
 7. Replace hidden `ask` prompts with global-rule-backed permission checks.
 8. Update the approval dialog to remove countdowns and session-scope language.
-9. Add "approve once", "deny once", "always allow this kind", and "always deny
-   this kind" resolution paths.
-10. Return structured `permission_denied` tool results for `deny` and hard-block
-   cases.
+9. Add "approve once", "deny once", and "always allow this kind" resolution
+   paths.
+10. Return structured `permission_denied` tool results for user-denied and
+    hard-block cases.
 11. Update agent instructions so denied results are handled as normal tool
     results with fallbacks.
 12. Add event log entries for permission checks and user resolutions.
-13. Add tests for default allow, default deny, explicit ask, approve once, deny
-    once, always allow, always deny, platform hard blocks, denied-result
-    fallback, path boundaries, restricted mode, and shell compound-command
-    classification.
+13. Add tests for default allow, explicit ask, approve once, deny once, always
+    allow, platform hard blocks, denied-result fallback, path boundaries,
+    restricted mode, and shell compound-command classification.
 
 ## Open Questions
 
 - What is the initial global default for dependency installation?
 - Which local editing operations are reversible enough to default to `allow`?
-- Should unknown shell commands default to `ask` or `deny`?
+- Which unknown shell commands are plausible user-owned actions that should ask,
+  and which should be platform hard blocks?
 - Should repeated identical `ask` actions in one run be coalesced in the UI
   without creating a session permission grant?
 - Should project script execution default to `allow` for productivity or `ask`
