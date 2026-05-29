@@ -216,20 +216,35 @@ function createWindow() {
   // hide/restore; drop to 0 in fullscreen (a rounded corner would clip the
   // full-screen content into empty triangles).
   //
-  // A/B switch for measuring the _cornerMask GPU cost: `LIN_WINDOW_CORNER=off`
-  // applies radius 0 (system default corner, no _cornerMask) so the same build
-  // can be compared with vs without the override in Activity Monitor.
-  const cornerRadius = process.env.LIN_WINDOW_CORNER === 'off' ? 0 : MAC_WINDOW_CORNER_RADIUS;
-  applyMacWindowCorner(mainWindow, cornerRadius);
+  // A/B for measuring the _cornerMask GPU cost. `LIN_WINDOW_CORNER=off` sets the
+  // initial state to the system corner (no _cornerMask); the ⌘⌃⌥C shortcut below
+  // toggles it live so the cost shows up as a step on a single GPU History graph
+  // (Activity Monitor → Window → GPU History, ⌘4) without restarting.
+  let cornerEnabled = process.env.LIN_WINDOW_CORNER !== 'off';
+  const refreshWindowCorner = () => {
+    if (mainWindow) applyMacWindowCorner(mainWindow, cornerEnabled ? MAC_WINDOW_CORNER_RADIUS : 0);
+  };
+  refreshWindowCorner();
   mainWindow.once('ready-to-show', () => {
     if (!mainWindow) return;
-    applyMacWindowCorner(mainWindow, cornerRadius);
+    refreshWindowCorner();
     mainWindow.show();
   });
   mainWindow.on('enter-full-screen', () => mainWindow && applyMacWindowCorner(mainWindow, 0));
-  mainWindow.on('leave-full-screen', () =>
-    mainWindow && applyMacWindowCorner(mainWindow, cornerRadius),
-  );
+  mainWindow.on('leave-full-screen', refreshWindowCorner);
+  mainWindow.webContents.on('before-input-event', (_event, input) => {
+    if (
+      input.type === 'keyDown' &&
+      input.meta &&
+      input.control &&
+      input.alt &&
+      input.key.toLowerCase() === 'c'
+    ) {
+      cornerEnabled = !cornerEnabled;
+      refreshWindowCorner();
+      console.log(`[window-corner] _cornerMask ${cornerEnabled ? 'ON (24pt)' : 'OFF (system)'}`);
+    }
+  });
 
   if (RENDERER_DEV_URL) {
     void mainWindow.loadURL(RENDERER_DEV_URL);
