@@ -209,53 +209,22 @@ function createWindow() {
   hardenWebContents(mainWindow.webContents);
   trackWindowState(mainWindow);
 
-  // Custom 24pt window corner via the native window_corner addon (no-op off
-  // macOS / if unbuilt). It overrides the window's _cornerMask so WindowServer
-  // shapes the window + shadow at our radius while the standard window keeps its
-  // native traffic lights and OS shadow. Re-apply on show so it survives a
-  // hide/restore; drop to 0 in fullscreen (a rounded corner would clip the
-  // full-screen content into empty triangles).
-  //
-  // A/B for measuring the _cornerMask GPU cost. `LIN_WINDOW_CORNER=off` sets the
-  // initial state to the system corner (no _cornerMask); the ⌘⌃⌥C shortcut below
-  // toggles it live so the cost shows up as a step on a single GPU History graph
-  // (Activity Monitor → Window → GPU History, ⌘4) without restarting.
-  let cornerEnabled = process.env.LIN_WINDOW_CORNER !== 'off';
-  const refreshWindowCorner = () => {
-    if (!mainWindow) return;
-    applyMacWindowCorner(mainWindow, cornerEnabled ? MAC_WINDOW_CORNER_RADIUS : 0);
-    // WindowServer caches _cornerMask and only re-reads it on a geometry change,
-    // so a runtime toggle needs a 1px size bounce to actually take effect (both
-    // the visible corner and the GPU cost). Skip before first show.
-    if (mainWindow.isVisible()) {
-      const bounds = mainWindow.getBounds();
-      mainWindow.setBounds({ ...bounds, height: bounds.height + 1 });
-      mainWindow.setBounds(bounds);
-    }
-  };
-  refreshWindowCorner();
+  // Custom window corner via the native window_corner addon (no-op off macOS /
+  // if unbuilt): it overrides the window's _cornerMask so WindowServer shapes the
+  // window + shadow at MAC_WINDOW_CORNER_RADIUS while the standard window keeps
+  // its native traffic lights, OS shadow, and vibrancy. Re-apply on show (the
+  // mask is read during window setup); drop to 0 in fullscreen, where a rounded
+  // corner would clip the full-screen content into empty triangles.
+  applyMacWindowCorner(mainWindow, MAC_WINDOW_CORNER_RADIUS);
   mainWindow.once('ready-to-show', () => {
     if (!mainWindow) return;
-    refreshWindowCorner();
+    applyMacWindowCorner(mainWindow, MAC_WINDOW_CORNER_RADIUS);
     mainWindow.show();
   });
   mainWindow.on('enter-full-screen', () => mainWindow && applyMacWindowCorner(mainWindow, 0));
-  mainWindow.on('leave-full-screen', refreshWindowCorner);
-  mainWindow.webContents.on('before-input-event', (_event, input) => {
-    // Match by physical key code: holding ⌥ remaps the 'c' character to 'ç', so
-    // input.key would not equal 'c'. input.code is layout/modifier independent.
-    if (
-      input.type === 'keyDown' &&
-      input.meta &&
-      input.control &&
-      input.alt &&
-      input.code === 'KeyC'
-    ) {
-      cornerEnabled = !cornerEnabled;
-      refreshWindowCorner();
-      console.log(`[window-corner] _cornerMask ${cornerEnabled ? 'ON (24pt)' : 'OFF (system)'}`);
-    }
-  });
+  mainWindow.on('leave-full-screen', () =>
+    mainWindow && applyMacWindowCorner(mainWindow, MAC_WINDOW_CORNER_RADIUS),
+  );
 
   if (RENDERER_DEV_URL) {
     void mainWindow.loadURL(RENDERER_DEV_URL);

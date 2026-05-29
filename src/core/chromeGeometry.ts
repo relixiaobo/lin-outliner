@@ -5,7 +5,9 @@ export const MAC_TRAFFIC_LIGHT_POSITION = {
   y: 15,
 } as const;
 
-// Custom window corner radius (points). Concentric with the floating rails:
-// window 24 → rail/panel 16 → composer 8. Applied natively on macOS via the
-// window_corner addon (src/main/nativeWindowCorner.ts); the OS default is ~10pt.
-export const MAC_WINDOW_CORNER_RADIUS = 24;
+// Custom window corner radius (points), applied natively on macOS via the
+// window_corner addon (src/main/nativeWindowCorner.ts) which overrides the
+// window's _cornerMask. Tuned to match the large macOS Tahoe window corner of
+// Finder / Raycast (bigger than the ~10pt pre-Tahoe default). Adjust to taste —
+// this single value drives the whole window corner + its shadow.
+export const MAC_WINDOW_CORNER_RADIUS = 30;

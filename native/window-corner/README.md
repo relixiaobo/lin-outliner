@@ -1,41 +1,46 @@
 # window_corner — macOS custom window corner radius
 
 A minimal Node-API native addon that gives the Electron `BrowserWindow` a custom
-corner radius (24pt, concentric with the floating rails) while keeping the
-**standard** window: traffic-light buttons, the system drop shadow, and live
-resize all survive.
+corner radius while keeping the **standard** window: native traffic-light buttons,
+the OS drop shadow, vibrancy, and live resize all survive. The radius is
+`MAC_WINDOW_CORNER_RADIUS` in `src/core/chromeGeometry.ts`.
 
 ## Why this exists
 
-Electron exposes only `roundedCorners: true | false` — the OS default is ~10pt on
-recent macOS, with no API to set the radius. The pure-web alternative
-(`transparent: true` + CSS `border-radius`) works for the corner but on macOS
-switches the window into frameless behaviour, which **removes the traffic-light
-buttons and the OS shadow**.
+Electron exposes only `roundedCorners: true | false` (no radius API; the default
+is small on recent macOS). The pure-web alternative (`transparent: true` + CSS
+`border-radius`) rounds the corner but on macOS switches the window into frameless
+behaviour, which **removes the traffic-light buttons and the OS shadow**. And a
+plain `contentView.layer.cornerRadius + masksToBounds` clips the
+`NSVisualEffectView` ancestor, which **kills behind-window vibrancy** (the deck
+shows the raw desktop), and does not round the *window shadow* anyway (that comes
+from the window frame, not the content layer).
 
-So instead of going through Electron's `transparent` flag, this addon reaches the
-underlying `NSWindow` directly and sets:
+## How it works
 
-- `contentView.layer.cornerRadius` + `masksToBounds` → the visible 24pt corner
-  (with `cornerCurve = continuous` for the macOS squircle shape)
-- `[window invalidateShadow]` → recompute the shadow so it follows the now-rounded
-  content instead of the square frame
+This replicates exactly what Electron itself used to do in `ElectronNSWindow`
+before it was removed for Tahoe (electron/electron#48376):
 
-We deliberately **do not** touch `window.opaque` or `window.backgroundColor`. The
-main window already uses `vibrancy: 'under-window'`, which makes the window
-non-opaque with an `NSVisualEffectView` frost backing — that is exactly the
-non-opacity the rounded corners need. Forcing `opaque = NO` + a clear
-`backgroundColor` on top of that strips the frost and makes the whole deck show
-the raw desktop. Clipping the content layer is enough to make the corners
-transparent; `invalidateShadow` then makes the shadow trace the rounded shape.
+1. **`NSVisualEffectView.maskImage`** — round the vibrancy frost with a resizable
+   rounded-rect mask (public API; preserves behind-window blending, unlike an
+   ancestor `masksToBounds`).
+2. **Override `-[NSWindow _cornerMask]`** to return the same rounded image.
+   WindowServer uses `_cornerMask` to shape **both the window clip and its
+   shadow**, so this is what rounds the *shadow* at a custom radius. We can't
+   recompile Electron, so the override is injected at runtime by replacing
+   `_cornerMask` on the live window's class and storing the per-window mask as an
+   associated object (other windows of the same class keep the OS default).
 
-Because we never touch Electron's `transparent` flag, the window keeps its title
-bar buttons. `main.ts` also sets `roundedCorners: false` on macOS so the OS's own
-~10pt rounding does not fight the 24pt layer corner.
+The window stays standard (`titleBarStyle: 'hiddenInset'`, never `transparent`),
+so native traffic lights, the OS shadow, and vibrancy are all preserved.
+
+**Trade-off (measured, acceptable here):** the custom `_cornerMask` is the reason
+Electron dropped this on macOS 15/26 Tahoe — it can raise WindowServer GPU load.
+On-device `powermetrics` A/B (corner on vs off) showed no measurable difference in
+GPU active residency, so it is kept. Re-measure if that changes.
 
 See `src/main/nativeWindowCorner.ts` for the loader (which degrades to a silent
-no-op when the addon is missing) and `src/core/chromeGeometry.ts` for the radius
-constant.
+no-op when the addon is missing / off-darwin / load fails).
 
 ## Building
 
