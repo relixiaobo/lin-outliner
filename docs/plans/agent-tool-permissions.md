@@ -9,7 +9,7 @@ updated: 2026-05-30
 # Agent Tool Permissions
 
 This plan replaces the earlier `approval_request` timeout proposal with a
-simpler global permission model for agent tools.
+single global runtime permission policy for agent tools.
 
 The core rule is:
 
@@ -23,7 +23,8 @@ The product goal is still to prevent agent runs from getting stuck on low-value
 prompts. The way to do that is not to add an approval parameter to every tool.
 It is to make prompts rare: common actions should be allowed by global policy,
 non-negotiable platform boundaries should be hard-blocked without a dialog, and
-only genuinely user-owned decisions should ask.
+the runtime should use an independent classifier to resolve most actions that
+would otherwise ask the user.
 
 ## Problem
 
@@ -55,13 +56,14 @@ decisions into one product-owned permission system.
 2. **No countdowns.** A dialog means explicit user confirmation is required.
    Nothing auto-approves because time passed.
 3. **One global permission rule set.** There are no session-scoped,
-   run-scoped, or workspace-scoped permission grants in v1. The same rules apply
+   run-scoped, or workspace-scoped permission grants. The same rules apply
    everywhere in the app.
 4. **Runtime classifies tool actions.** The runtime maps a concrete tool call to
    an action kind, then checks the global rule for that kind.
-5. **Prompts must be rare.** `ask` is reserved for actions where the user must
-   personally make the decision. Otherwise the runtime should `allow` without
-   interrupting or return a platform hard block.
+5. **Classifier is the default `ask` resolver.** `ask` does not immediately mean
+   "show a dialog." It means the action needs a resolver. The resolver first
+   uses a runtime-owned classifier when the action is classifier-eligible; a
+   dialog is only shown when the product truly needs explicit user judgement.
 6. **No in-dialog "always deny".** If the agent requested an action, the action
    may be necessary for the task. The confirmation dialog should support
    `Deny once`, but it should not encourage one-click permanent denial.
@@ -69,7 +71,12 @@ decisions into one product-owned permission system.
    JSON settings file with `permissions.allow`, `permissions.ask`, and
    `permissions.deny` arrays. The product UI can manage common allow/ask
    choices, while advanced users may edit the file directly for durable deny
-   rules. v1 does not need a dedicated capability-disable management surface.
+   rules. The product does not need a dedicated capability-disable management
+   surface.
+8. **No user-facing permission modes.** Lin should not expose a mode carousel
+   like default / auto / bypass. There is one policy: deterministic rules first,
+   classifier for eligible `ask` actions, and explicit confirmation only when
+   needed. This plan describes the full target design, not a staged roadmap.
 
 ## Decision Trail
 
@@ -90,11 +97,15 @@ The design moved through several rejected shapes:
    an explicit decision.
 5. **Session or workspace grants.** These add management overhead and make it
    hard for the user to know the current permission state. The product does not
-   need that complexity for v1.
+   need that complexity.
 6. **A separate capability availability UI.** This creates another permission
    surface to explain and maintain. A cc-2.1-style settings file already gives
    advanced users a durable deny mechanism without adding a dedicated product
    manager for disabled capabilities.
+7. **Separate permission modes.** cc-2.1 exposes default, accept-edits, bypass,
+   don't-ask, and an automatic classifier-backed path. Lin should not expose
+   those as user-facing modes. The classifier is useful, but it belongs inside
+   the single permission flow rather than as a user-visible mode.
 
 The resulting design keeps the useful part of the original runtime policy
 approach: the runtime owns permission enforcement. It changes the user
@@ -126,9 +137,8 @@ current document, run, session, directory, or project. If the user sets
 `Install dependencies` to `Allow`, that is the rule everywhere until the user
 changes it in the permission center.
 
-This simplicity is intentional. A more granular system can be added later, but
-v1 should optimize for a user being able to understand and manage the complete
-permission state at a glance.
+This simplicity is intentional. The design should optimize for a user being able
+to understand and manage the complete permission state at a glance.
 
 The backing file should stay compatible in spirit with cc-2.1's settings model:
 rules are grouped by behavior, not by UI page. Lin does not need to expose every
@@ -159,6 +169,9 @@ strings, such as future `Bash(...)` prefix rules, can be added only where the
 runtime has a safe parser and validator. Users should not need to write these
 rules for normal operation.
 
+There is no separate automatic-permissions setting in the normal product.
+Automatic classification is part of how `ask` is resolved.
+
 ## Runtime Flow
 
 Every tool call follows the same path:
@@ -168,15 +181,28 @@ tool call
   -> validate tool schema and platform hard blocks
   -> derive one or more action descriptors from tool name and arguments
   -> read global permission rules for the derived action kinds
-  -> allow: execute immediately
-  -> ask: show a confirmation dialog and wait for explicit user input
   -> deny: return a structured denied result to the agent
+  -> allow: execute immediately
+  -> ask: run the ask resolver
   -> hard block: return a structured denied result to the agent
 ```
 
-`ask` is allowed to block, because it means the product genuinely needs the
-user's decision. The way to protect unattended runs is to avoid classifying
-routine actions as `ask`.
+The ask resolver is:
+
+```txt
+ask action
+  -> non-classifier-eligible safety check: show dialog, or deny if prompts are unavailable
+  -> deterministic fast path or safe allowlist: allow
+  -> runtime classifier
+       -> allow: execute
+       -> block: return permission_denied and let the agent continue
+       -> needs_user: show dialog, or deny if prompts are unavailable
+       -> unavailable: show dialog in interactive contexts, deny in unattended contexts
+```
+
+This is the key difference from countdown approval. The user being absent never
+means approval. It either means the classifier can safely allow the action, or
+the agent receives a structured denied result and continues with a fallback.
 
 `ask` is not the fallback for runtime uncertainty. If an action is unknown,
 ambiguous, or outside the supported classification surface, the product should
@@ -220,6 +246,7 @@ Sketch:
 ```ts
 type GlobalToolPermissionDecision = 'allow' | 'ask' | 'deny';
 type ToolPermissionOutcome = 'allow' | 'ask' | 'blocked';
+type AskResolverOutcome = 'allow' | 'block' | 'needs_user';
 type ToolAccessScope =
   | 'allowed_file_area'
   | 'outside_allowed_file_area'
@@ -237,6 +264,13 @@ interface ToolActionDescriptor {
   defaultDecision: GlobalToolPermissionDecision;
   reversible: boolean;
   externalEffect: boolean;
+}
+
+interface ToolPermissionClassifierResult {
+  outcome: AskResolverOutcome;
+  reason: string;
+  model: string;
+  unavailable?: boolean;
 }
 ```
 
@@ -267,8 +301,8 @@ Required rules:
    - only all-`allow` segments may execute without a dialog.
 4. If the parser cannot decompose a compound command confidently, classify it as
    unknown shell execution. Unknown shell execution must never default to
-   `allow`. v1 should hard block it unless the product explicitly defines a
-   narrow unknown-shell action kind whose only configurable permission is `ask`.
+   `allow`. It should hard block unless the product explicitly defines a narrow
+   unknown-shell action kind whose only configurable permission is `ask`.
 
 Examples:
 
@@ -318,6 +352,69 @@ properties:
 This keeps "one global permission table" as the user-facing management model
 without turning global rules into broad filesystem capabilities.
 
+## Ask Resolver Classifier
+
+Lin should ship with classifier-backed ask resolution as part of the same
+permission implementation. The classifier is inspired by cc-2.1's automatic
+permission classifier, but it should be framed as a resolver inside the single
+permission policy.
+
+The classifier is a separate runtime-owned model call. The working agent does
+not provide a safety decision and does not add permission metadata to tool
+arguments.
+
+The classifier is called only after deterministic permission checks:
+
+```txt
+platform hard block > configured deny > configured allow > ask resolver
+```
+
+It must not override hard blocks, configured deny rules, invalid schemas,
+sensitive-path rules that are not classifier-eligible, or unsupported tool
+surfaces.
+
+Classifier input should be smaller and less injectable than the main model
+context:
+
+- include user text that establishes intent;
+- include previous `tool_use` records;
+- include the current tool action as the final record;
+- exclude assistant prose, because it is model-authored and may be crafted to
+  influence the classifier;
+- let each tool expose a `toPermissionClassifierInput` projection so only
+  security-relevant fields are sent.
+
+Classifier output should be structured:
+
+```ts
+interface ToolPermissionClassifierResult {
+  outcome: 'allow' | 'block' | 'needs_user';
+  reason: string;
+}
+```
+
+The outcomes mean:
+
+- `allow`: execute the pending tool call without showing a dialog;
+- `block`: return `permission_denied` with `reason: 'classifier_blocked'`;
+- `needs_user`: show a confirmation dialog when interaction is available, or
+  return `permission_denied` when interaction is unavailable.
+
+The classifier should have deterministic fast paths before the model call:
+
+- if the action would already be allowed by the local-edit fast path, allow it;
+- if the tool is on a narrow safe allowlist, allow it;
+- if a safety check is explicitly non-classifier-eligible, skip the classifier.
+
+When the classifier is unavailable, malformed, or unparseable, it must not
+silently allow. Interactive contexts may fall back to the confirmation dialog;
+unattended contexts should return a structured denied result so the agent can
+continue with a fallback.
+
+Entering this single policy should also prevent dangerous allow rules from
+bypassing the classifier. Overly broad shell or agent allow rules that would
+skip ask resolution should be ignored or rejected with diagnostics.
+
 ## Global Permission Rules
 
 The permission store is a single global settings object, shaped like cc-2.1's
@@ -362,7 +459,7 @@ user escape hatch for "never do this" preferences, but they are not the normal
 product flow:
 
 - the confirmation dialog has no `Always deny this kind` button;
-- v1 does not need a dedicated disabled-capabilities management UI;
+- the product does not need a dedicated disabled-capabilities management UI;
 - the permission center may show effective deny rules as read-only advanced
   state, but it should not require users to understand rule strings for common
   setup;
@@ -410,8 +507,9 @@ that also publishes to a remote service.
 
 ## Denied Results
 
-Platform hard blocks, configured deny rules, and explicit `Deny once` choices
-return denied results. They should return structured data to the agent:
+Platform hard blocks, configured deny rules, classifier blocks, classifier
+unavailability in unattended contexts, and explicit `Deny once` choices return
+denied results. They should return structured data to the agent:
 
 ```ts
 interface ToolDeniedResult {
@@ -419,7 +517,12 @@ interface ToolDeniedResult {
   kind: 'permission_denied';
   primaryActionKind: AgentToolActionKind;
   actionKinds: AgentToolActionKind[];
-  reason: 'platform_hard_block' | 'configured_deny' | 'user_denied';
+  reason:
+    | 'platform_hard_block'
+    | 'configured_deny'
+    | 'classifier_blocked'
+    | 'classifier_unavailable'
+    | 'user_denied';
   message: string;
 }
 ```
@@ -489,7 +592,9 @@ interface ToolPermissionCheckedEvent {
     | 'global_rule'
     | 'default_rule'
     | 'configured_deny'
+    | 'classifier'
     | 'platform_hard_block';
+  classifierResult?: ToolPermissionClassifierResult;
   descriptorRef?: AgentPayloadRef;
 }
 ```
@@ -499,7 +604,11 @@ interface ToolPermissionResolvedEvent {
   type: 'tool.permission.resolved';
   requestId: string;
   approved: boolean;
-  resolvedBy: 'user_once' | 'allow_rule_update' | 'abort';
+  resolvedBy:
+    | 'classifier'
+    | 'user_once'
+    | 'allow_rule_update'
+    | 'abort';
   updatedRule?: GlobalToolPermissionRule;
 }
 ```
@@ -517,13 +626,13 @@ current:
 tool policy matrix -> allow / ask / deny
 
 proposed:
-hard block check -> action descriptor -> global permission rules -> deny / ask / allow
+hard block check -> action descriptor -> global permission rules -> deny / allow / ask resolver
 ```
 
 The difference is that the decision should be user-manageable and action-kind
-based, not a hidden one-off prompt matrix. Runtime rules are still necessary;
-they are just product permission rules rather than agent-authored approval
-requests.
+based, not a hidden one-off prompt matrix. Runtime rules and classifier checks
+are still necessary; they are product permission mechanisms rather than
+agent-authored approval requests.
 
 ## Migration Notes
 
@@ -533,13 +642,15 @@ This plan supersedes the previous action-decision timeout design:
 - do not add approval metadata to tool schemas;
 - do not implement timeout approval or timeout denial;
 - do not add session-scoped permission grants;
-- keep explicit confirmation only for `ask`;
+- keep explicit confirmation only for ask-resolver outcomes that need the user;
+- include classifier-backed ask resolution in the shipped permission flow;
 - implement a global permission center for common allow/ask management;
 - store the source of truth in a cc-2.1-style global JSON settings file.
 
-P0 should start with a small set of high-confidence action kinds. It is better
-to classify fewer things well than to create a broad classifier that asks too
-often or silently allows ambiguous actions.
+The shipped implementation should include a bounded, high-confidence set of
+action kinds and classifier projections. It is better to classify fewer things
+well than to create a broad classifier that asks too often or silently allows
+ambiguous actions.
 
 ## Implementation Checklist
 
@@ -552,7 +663,7 @@ often or silently allows ambiguous actions.
    `Action(file.edit.allowed_file_area)` and advanced durable deny rules such as
    `Capability(external_messaging)`.
 4. Add a permission center UI for common allow/ask management. Do not require a
-   dedicated disabled-capabilities manager in v1.
+   dedicated disabled-capabilities manager.
 5. Build descriptor resolvers for existing agent tools.
 6. Preserve existing path-boundary, sensitive-path, restricted-mode, and skill
    preapproval safety properties while mapping them into action descriptors or
@@ -560,18 +671,24 @@ often or silently allows ambiguous actions.
 7. For `bash`, classify known command families first, evaluate compound
    commands by the most restrictive segment, and hard block unknown shell unless
    a narrow ask-only unknown-shell action kind is explicitly defined.
-8. Replace hidden `ask` prompts with global-rule-backed permission checks.
-9. Update the approval dialog to remove countdowns and session-scope language.
-10. Add "approve once", "deny once", and "always allow this kind" resolution
+8. Add `toPermissionClassifierInput` projections for classifier-eligible tools.
+9. Add the ask resolver with local-edit fast path, safe allowlist, classifier,
+   classifier unavailable handling, and non-classifier-eligible safety checks.
+10. Replace hidden `ask` prompts with global-rule-backed permission checks.
+11. Update the approval dialog to remove countdowns and session-scope language.
+12. Add "approve once", "deny once", and "always allow this kind" resolution
    paths.
-11. Return structured `permission_denied` tool results for user-denied,
-    configured-deny, and hard-block cases.
-12. Update agent instructions so denied results are handled as normal tool
+13. Return structured `permission_denied` tool results for user-denied,
+    configured-deny, classifier-blocked, classifier-unavailable, and hard-block
+    cases.
+14. Update agent instructions so denied results are handled as normal tool
     results with fallbacks.
-13. Add event log entries for permission checks and user resolutions.
-14. Add tests for default allow, explicit ask, approve once, deny once, always
-    allow, configured deny, unknown shell fail-safe, platform hard blocks,
-    denied-result fallback, path boundaries, restricted mode, and shell
+15. Add event log entries for permission checks, classifier decisions, and user
+    resolutions.
+16. Add tests for default allow, explicit ask, classifier allow, classifier
+    block, classifier unavailable, approve once, deny once, always allow,
+    configured deny, unknown shell fail-safe, platform hard blocks,
+    denied-result fallback, path boundaries, restricted checks, and shell
     compound-command classification.
 
 ## Open Questions
@@ -582,7 +699,10 @@ often or silently allows ambiguous actions.
   without creating a session permission grant?
 - Should project script execution default to `allow` for productivity or `ask`
   because it is arbitrary local code execution?
-- Which permission categories should be visible in the first version of the
-  permission center?
-- Should v1 support only action-kind rule strings, or also a small subset of
-  tool-specific strings such as `Bash(...)` once shell parsing is robust enough?
+- Which permission categories should be visible in the permission center?
+- Should the classifier output be binary (`allow` / `block`) like cc-2.1, or
+  tri-state (`allow` / `block` / `needs_user`) so prompts stay possible without
+  treating risk as automatic denial?
+- Should the settings file support only action-kind rule strings, or also a
+  small subset of tool-specific strings such as `Bash(...)` once shell parsing
+  is robust enough?
