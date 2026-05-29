@@ -222,7 +222,16 @@ function createWindow() {
   // (Activity Monitor → Window → GPU History, ⌘4) without restarting.
   let cornerEnabled = process.env.LIN_WINDOW_CORNER !== 'off';
   const refreshWindowCorner = () => {
-    if (mainWindow) applyMacWindowCorner(mainWindow, cornerEnabled ? MAC_WINDOW_CORNER_RADIUS : 0);
+    if (!mainWindow) return;
+    applyMacWindowCorner(mainWindow, cornerEnabled ? MAC_WINDOW_CORNER_RADIUS : 0);
+    // WindowServer caches _cornerMask and only re-reads it on a geometry change,
+    // so a runtime toggle needs a 1px size bounce to actually take effect (both
+    // the visible corner and the GPU cost). Skip before first show.
+    if (mainWindow.isVisible()) {
+      const bounds = mainWindow.getBounds();
+      mainWindow.setBounds({ ...bounds, height: bounds.height + 1 });
+      mainWindow.setBounds(bounds);
+    }
   };
   refreshWindowCorner();
   mainWindow.once('ready-to-show', () => {
