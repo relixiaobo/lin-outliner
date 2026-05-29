@@ -64,6 +64,19 @@ Ordered by priority; lower items may depend on higher ones.
   Phase 2a view helpers (#12), and the eager-materialized trailing draft +
   step-1 trigger/keymap extraction (#16) shipped; the `resolveTargetId`
   trigger-application unification remains.
+- **checkbox-row-long-text-wrap** (P3) — a done-checkbox row wraps its text onto
+  the next line when the text is long (checkbox sits alone on line 1). Root cause:
+  in `.row-content-line` (display: block) the `.done-checkbox` and `.row-editor`
+  are inline-level siblings, and the editor's `max-width: 100%`
+  (`outliner.css:1805-1817`) is relative to the full line width without
+  subtracting the ~21px the checkbox takes — so once long text pushes the editor
+  to its max-width, `checkbox + editor > 100%` and the editor wraps below.
+  Fix options: (a) switch `.row-content-line` to `display: flex; align-items:
+  flex-start` with the editor `flex: 1; min-width: 0` (cleanest, but must give
+  `TagBar` / `NodeDescription` `flex-basis: 100%` since they currently rely on
+  block flow to wrap below); (b) minimal — `.row-content-line:has(> .done-checkbox)
+  > .row-editor { max-width: calc(100% - 21px); }`. Prefer (a); verify visually
+  with a long-text checkbox row.
 - **embed-strategy** (P3) — decide live iframe vs cached-metadata embeds.
 - **past-chats-output-polish** (P3) — minor cleanups deferred from PR #7:
   (1) drop the now-redundant `returned_items` / `returned_hits` / `message_count`
@@ -74,6 +87,16 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **macOS window corner radius** (cc) — standard macOS window gets a custom 24pt
+  continuous corner (matching Raycast) while keeping native traffic lights, OS
+  shadow, vibrancy, and live resize. A zero-dependency Node-API addon
+  (`native/window-corner/`) drives the corner via the private `_cornerRadius` /
+  `_effectiveCornerRadius` selectors on macOS 26 Tahoe (`_cornerMask` is ignored
+  there) with a `_cornerMask` fallback on older macOS; frost rounded via
+  `NSVisualEffectView.maskImage`. Loader is a silent no-op off-darwin / unbuilt;
+  `app:build` runs `build:native` and ships the `.node` via `extraResources`.
+  Inner concentric-corner alignment of design-system surfaces is out of scope
+  (separate branch). (#58)
 - **native-feel stages 2–5b + renderer perf** (cc) — serially merged the stacked
   native-feel remediation program on top of the stage-1 security shell: startup
   first-frame / window-state restore / single-instance (#45); strict-native

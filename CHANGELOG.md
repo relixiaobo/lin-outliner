@@ -12,6 +12,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **macOS window corner radius (native)** — gives the standard macOS window a
+  custom `24pt` continuous corner (matching Raycast) while keeping native traffic
+  lights, the OS drop shadow, vibrancy, and live resize. A tiny zero-dependency
+  Node-API addon (`native/window-corner/`) sets the corner via the private
+  `_cornerRadius`/`_effectiveCornerRadius` selectors on macOS 26 Tahoe (where
+  `_cornerMask` is ignored for frame/shadow shaping) and falls back to a
+  `_cornerMask` override on older macOS; the vibrancy frost is rounded via the
+  public `NSVisualEffectView.maskImage`. The loader degrades to a silent no-op
+  off-darwin / when unbuilt, the radius is the `MAC_WINDOW_CORNER_RADIUS` JS
+  const (restart-only to tune), and `app:build` runs `build:native` before
+  packaging (the `.node` ships via `extraResources`, outside the asar).
+  ([#58](https://github.com/relixiaobo/lin-outliner/pull/58))
 - **Design system — spec, rollout plan, and Phase 1 token foundation** — adds
   `docs/spec/design-system.md` (the design language as a contract: two-theme
   alpha-on-ink tokens, material/overlay taxonomy, concentric radius chain,
