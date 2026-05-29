@@ -218,7 +218,8 @@ function createWindow() {
   applyMacWindowCorner(mainWindow, MAC_WINDOW_CORNER_RADIUS);
   mainWindow.once('ready-to-show', () => {
     if (!mainWindow) return;
-    applyMacWindowCorner(mainWindow, MAC_WINDOW_CORNER_RADIUS);
+    const applied = applyMacWindowCorner(mainWindow, MAC_WINDOW_CORNER_RADIUS);
+    console.log(`[window-corner] applied=${applied} radius=${MAC_WINDOW_CORNER_RADIUS}`);
     mainWindow.show();
   });
   mainWindow.on('enter-full-screen', () => mainWindow && applyMacWindowCorner(mainWindow, 0));
