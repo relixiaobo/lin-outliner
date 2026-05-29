@@ -4,7 +4,8 @@ import {
   MAC_TRAFFIC_LIGHT_SIZE,
 } from '../../core/chromeGeometry';
 import {
-  AgentIcon,
+  AgentCollapseIcon,
+  AgentExpandIcon,
   ICON_SIZE,
   SidebarCollapseIcon,
   SidebarExpandIcon,
@@ -61,7 +62,7 @@ export function WindowChrome(props: WindowChromeProps) {
 
       <IconButton
         className="rail-toggle agent-toggle"
-        icon={AgentIcon}
+        icon={props.agentOpen ? AgentCollapseIcon : AgentExpandIcon}
         iconSize={ICON_SIZE.toolbar}
         label={props.agentOpen ? 'Collapse agent' : 'Expand agent'}
         onClick={props.onToggleAgent}

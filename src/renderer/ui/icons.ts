@@ -74,6 +74,8 @@ export {
   Paperclip as AttachmentIcon,
   PanelLeftClose as SidebarCollapseIcon,
   PanelLeftOpen as SidebarExpandIcon,
+  PanelRightClose as AgentCollapseIcon,
+  PanelRightOpen as AgentExpandIcon,
   Pencil as PencilIcon,
   Pin as PinIcon,
   Plus as AddIcon,
