@@ -7,8 +7,9 @@ import { fileURLToPath } from 'node:url';
 import { DocumentService } from './documentService';
 import { AssetService } from './assetService';
 import { AgentRuntime } from './agentRuntime';
-import { MAC_TRAFFIC_LIGHT_POSITION } from '../core/chromeGeometry';
+import { MAC_TRAFFIC_LIGHT_POSITION, MAC_WINDOW_CORNER_RADIUS } from '../core/chromeGeometry';
 import { windowMaterialKind } from '../core/windowMaterial';
+import { applyMacWindowCorner } from './nativeWindowCorner';
 import { LIN_SETTINGS_CHANGED_CHANNEL, WINDOW_SURFACE_QUERY_PARAM } from '../core/settingsWindow';
 import { ASSET_URL_SCHEME } from '../core/assets';
 import { LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput } from '../core/types';
@@ -191,6 +192,12 @@ function createWindow() {
     ...(material === 'mica' ? { backgroundMaterial: 'mica' as const } : {}),
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: MAC_TRAFFIC_LIGHT_POSITION,
+    // On macOS we draw the corner ourselves at MAC_WINDOW_CORNER_RADIUS (24pt)
+    // via the native window_corner addon, so disable the OS's ~10pt rounding to
+    // avoid a double corner. The native layer + non-opaque backing keep the
+    // shadow following the rounded shape; traffic lights stay because we never
+    // use Electron's `transparent` flag. Elsewhere keep the OS default.
+    ...(process.platform === 'darwin' ? { roundedCorners: false } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
@@ -203,7 +210,24 @@ function createWindow() {
   hardenWebContents(mainWindow.webContents);
   trackWindowState(mainWindow);
 
-  mainWindow.once('ready-to-show', () => mainWindow?.show());
+  // Custom 24pt window corner (no-op off macOS / if the addon is unbuilt). The
+  // NSWindow exists as soon as the BrowserWindow is constructed; re-apply on
+  // each show so the rounded layer + shadow survive a hide/restore cycle.
+  applyMacWindowCorner(mainWindow, MAC_WINDOW_CORNER_RADIUS);
+
+  mainWindow.once('ready-to-show', () => {
+    if (!mainWindow) return;
+    applyMacWindowCorner(mainWindow, MAC_WINDOW_CORNER_RADIUS);
+    mainWindow.show();
+  });
+
+  // In fullscreen the content view fills the screen, so a rounded corner would
+  // clip the content into empty triangles. Drop to 0 on the way in and restore
+  // the 24pt corner on the way out.
+  mainWindow.on('enter-full-screen', () => mainWindow && applyMacWindowCorner(mainWindow, 0));
+  mainWindow.on('leave-full-screen', () =>
+    mainWindow && applyMacWindowCorner(mainWindow, MAC_WINDOW_CORNER_RADIUS),
+  );
 
   if (RENDERER_DEV_URL) {
     void mainWindow.loadURL(RENDERER_DEV_URL);
