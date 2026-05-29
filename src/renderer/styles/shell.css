@@ -24,9 +24,18 @@
    (main.ts), so the opaque content base draws the 24px window corner here. With
    the rails inset by --layout-gap and rounded --panel-radius (16), this corner is
    concentric with them (24 = 16 + 8, shared centre). Gated to vibrancy so it never
-   double-rounds the Windows (mica) or Linux OS-framed window. */
+   double-rounds the Windows (mica) or Linux OS-framed window.
+
+   Clip with clip-path, NOT overflow: hidden + border-radius: Chromium's overflow
+   clip does not reliably round COMPOSITED descendants (our rails carry
+   backdrop-filter; the content base is its own layer), which leaked a square corner
+   at the bottom. clip-path is a true subtree clip that the compositor honours, and
+   (unlike transform) it does not turn .app into a containing block for the fixed
+   overlays. */
 :root[data-window-material='vibrancy'] .app {
   border-radius: var(--window-radius);
+  -webkit-clip-path: inset(0 round var(--window-radius));
+  clip-path: inset(0 round var(--window-radius));
 }
 
 /* The shell is no longer a grid that reserves rail width. It's a positioning
