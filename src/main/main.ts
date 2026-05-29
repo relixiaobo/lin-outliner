@@ -215,15 +215,20 @@ function createWindow() {
   // native traffic lights and OS shadow. Re-apply on show so it survives a
   // hide/restore; drop to 0 in fullscreen (a rounded corner would clip the
   // full-screen content into empty triangles).
-  applyMacWindowCorner(mainWindow, MAC_WINDOW_CORNER_RADIUS);
+  //
+  // A/B switch for measuring the _cornerMask GPU cost: `LIN_WINDOW_CORNER=off`
+  // applies radius 0 (system default corner, no _cornerMask) so the same build
+  // can be compared with vs without the override in Activity Monitor.
+  const cornerRadius = process.env.LIN_WINDOW_CORNER === 'off' ? 0 : MAC_WINDOW_CORNER_RADIUS;
+  applyMacWindowCorner(mainWindow, cornerRadius);
   mainWindow.once('ready-to-show', () => {
     if (!mainWindow) return;
-    applyMacWindowCorner(mainWindow, MAC_WINDOW_CORNER_RADIUS);
+    applyMacWindowCorner(mainWindow, cornerRadius);
     mainWindow.show();
   });
   mainWindow.on('enter-full-screen', () => mainWindow && applyMacWindowCorner(mainWindow, 0));
   mainWindow.on('leave-full-screen', () =>
-    mainWindow && applyMacWindowCorner(mainWindow, MAC_WINDOW_CORNER_RADIUS),
+    mainWindow && applyMacWindowCorner(mainWindow, cornerRadius),
   );
 
   if (RENDERER_DEV_URL) {
