@@ -193,10 +193,10 @@ The ask resolver is:
 ask action
   -> non-classifier-eligible safety check: show dialog, or deny if prompts are unavailable
   -> deterministic fast path or safe allowlist: allow
+  -> missing classifier projection: show dialog, or deny if prompts are unavailable
   -> runtime classifier
        -> allow: execute
        -> block: return permission_denied and let the agent continue
-       -> needs_user: show dialog, or deny if prompts are unavailable
        -> unavailable: show dialog in interactive contexts, deny in unattended contexts
 ```
 
@@ -247,6 +247,7 @@ Sketch:
 type GlobalToolPermissionDecision = 'allow' | 'ask' | 'deny';
 type ToolPermissionOutcome = 'allow' | 'ask' | 'blocked';
 type AskResolverOutcome = 'allow' | 'block' | 'needs_user';
+type ToolPermissionClassifierOutcome = 'allow' | 'block';
 type ToolAccessScope =
   | 'allowed_file_area'
   | 'outside_allowed_file_area'
@@ -267,7 +268,7 @@ interface ToolActionDescriptor {
 }
 
 interface ToolPermissionClassifierResult {
-  outcome: AskResolverOutcome;
+  outcome: ToolPermissionClassifierOutcome;
   reason: string;
   model: string;
   unavailable?: boolean;
@@ -377,18 +378,49 @@ Classifier input should be smaller and less injectable than the main model
 context:
 
 - include user text that establishes intent;
+- include stable user-owned agent configuration, such as app-level agent
+  instructions, only as a clearly delimited prefix;
 - include previous `tool_use` records;
 - include the current tool action as the final record;
 - exclude assistant prose, because it is model-authored and may be crafted to
   influence the classifier;
+- exclude prior tool results by default, unless a tool explicitly projects a
+  result field as security-relevant user intent;
 - let each tool expose a `toPermissionClassifierInput` projection so only
   security-relevant fields are sent.
+
+The transcript format should follow the same shape as cc-2.1:
+
+```txt
+{"user":"implement the feature and open a PR"}
+{"FileEdit":"src/foo.ts: new content"}
+{"Bash":"git push origin branch"}
+```
+
+That is a compact JSONL-style transcript, not the full agent conversation. JSON
+escaping prevents command text, file contents, or user text from forging extra
+transcript records.
+
+Tool definitions have two separate roles:
+
+- the runtime tool registry is used server-side to find
+  `toPermissionClassifierInput`;
+- the classifier model is not given the real agent tools as callable tools;
+- the classifier call gets only a classification output contract, such as a
+  forced `classify_permission_result` tool or a strict structured-output/XML
+  schema.
+
+Each classifier-eligible tool must implement `toPermissionClassifierInput`.
+The default projection may be empty only for tools declared to have no security
+relevance. A security-relevant `ask` action with no projection is not
+classifier-eligible; it should fall back to `needs_user` in interactive contexts
+or a structured denied result in unattended contexts.
 
 Classifier output should be structured:
 
 ```ts
 interface ToolPermissionClassifierResult {
-  outcome: 'allow' | 'block' | 'needs_user';
+  outcome: 'allow' | 'block';
   reason: string;
 }
 ```
@@ -396,9 +428,13 @@ interface ToolPermissionClassifierResult {
 The outcomes mean:
 
 - `allow`: execute the pending tool call without showing a dialog;
-- `block`: return `permission_denied` with `reason: 'classifier_blocked'`;
-- `needs_user`: show a confirmation dialog when interaction is available, or
-  return `permission_denied` when interaction is unavailable.
+- `block`: return `permission_denied` with `reason: 'classifier_blocked'`.
+
+The classifier should not produce "ask the user" as an output. That keeps it
+aligned with cc-2.1's classifier contract: the classifier decides whether the
+runtime may auto-allow the action. Prompt fallback is runtime behavior for
+non-classifier-eligible actions, unavailable classifiers, or deliberately
+interactive safety checks.
 
 The classifier should have deterministic fast paths before the model call:
 
@@ -674,6 +710,8 @@ ambiguous actions.
 8. Add `toPermissionClassifierInput` projections for classifier-eligible tools.
 9. Add the ask resolver with local-edit fast path, safe allowlist, classifier,
    classifier unavailable handling, and non-classifier-eligible safety checks.
+   The classifier call must provide only a classification output contract, not
+   the real agent tool definitions.
 10. Replace hidden `ask` prompts with global-rule-backed permission checks.
 11. Update the approval dialog to remove countdowns and session-scope language.
 12. Add "approve once", "deny once", and "always allow this kind" resolution
@@ -700,9 +738,6 @@ ambiguous actions.
 - Should project script execution default to `allow` for productivity or `ask`
   because it is arbitrary local code execution?
 - Which permission categories should be visible in the permission center?
-- Should the classifier output be binary (`allow` / `block`) like cc-2.1, or
-  tri-state (`allow` / `block` / `needs_user`) so prompts stay possible without
-  treating risk as automatic denial?
 - Should the settings file support only action-kind rule strings, or also a
   small subset of tool-specific strings such as `Bash(...)` once shell parsing
   is robust enough?
