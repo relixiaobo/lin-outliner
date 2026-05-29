@@ -98,7 +98,7 @@ Agent Tool Permissions
 Read local data                         Allow
 Search external information             Allow
 Edit local documents                     Allow
-Run local validation commands            Allow
+Run local validation / project scripts   Allow / Ask / Deny
 Install dependencies                     Allow / Ask / Deny
 Delete local data                        Ask / Deny
 Publish to a remote service              Ask / Deny
@@ -123,8 +123,8 @@ Every tool call follows the same path:
 ```txt
 tool call
   -> validate tool schema and platform hard blocks
-  -> derive action kind from tool name and arguments
-  -> read global permission rule for that action kind
+  -> derive one or more action descriptors from tool name and arguments
+  -> read global permission rules for the derived action kinds
   -> allow: execute immediately
   -> deny: return a structured denied result to the agent
   -> ask: show a confirmation dialog and wait for explicit user input
@@ -151,7 +151,7 @@ bash: rg TODO src
   -> read/search local data
 
 bash: bun test
-  -> run local validation command
+  -> run local validation / project script
 
 bash: bun add zod
   -> install dependencies
@@ -166,14 +166,26 @@ classification. For shell commands this likely means a conservative parser for
 known command families, with unknown or ambiguous commands mapped to a safer
 default action kind.
 
+Local validation commands need explicit wording in the product. `bun test`,
+`npm test`, and similar commands execute project code. They are often necessary
+for agent work, but they are not read-only. The permission center should label
+them as local code execution, not as harmless validation.
+
 Sketch:
 
 ```ts
 type ToolPermissionDecision = 'allow' | 'ask' | 'deny';
+type ToolAccessScope =
+  | 'allowed_file_area'
+  | 'outside_allowed_file_area'
+  | 'sensitive_local_path'
+  | 'external_system'
+  | 'none';
 
 interface ToolActionDescriptor {
   toolName: string;
   actionKind: AgentToolActionKind;
+  accessScope: ToolAccessScope;
   title: string;
   summary: string;
   consequence: string;
@@ -185,6 +197,76 @@ interface ToolActionDescriptor {
 
 The descriptor is product data. It is derived by runtime/tool code from the
 actual call. It is not supplied by the model.
+
+Action kinds must encode important safety scope rather than relying only on UI
+flags. For example, `file.edit.allowed_file_area`,
+`file.write.outside_allowed_file_area`, and `file.read.sensitive_local_path`
+should be distinct rule keys. `accessScope` helps display and audit the
+descriptor, but broad rules must not silently cover narrower high-risk scopes.
+
+### Shell Command Classification
+
+Shell commands are the riskiest part of the model because one `bash` call can
+contain several actions. The classifier must evaluate the whole command, not the
+first recognizable fragment.
+
+Required rules:
+
+1. Parse known command separators and composition forms such as `;`, `&&`, `||`,
+   pipes, subshells, command substitution, `env` prefixes, and `bash -c` when the
+   inner command is statically visible.
+2. Classify every executable segment that can be identified.
+3. Compute the effective decision from all segments:
+   - any platform hard block blocks the whole command;
+   - any `deny` action kind denies the whole command;
+   - otherwise any `ask` action kind asks for the whole command;
+   - only all-`allow` segments may execute without a dialog.
+4. If the parser cannot decompose a compound command confidently, classify it as
+   unknown shell execution and apply the conservative global rule for unknown
+   shell commands.
+
+Examples:
+
+```txt
+rg TODO src && git push origin main
+  -> read/search local data + publish to remote service
+  -> effective decision follows the publish action, not the rg action
+
+npm test | curl -X POST --data-binary @- https://example.com
+  -> local code execution + network write
+  -> effective decision follows the network write action
+
+bash -c "git push origin main"
+  -> publish to remote service when the inner command is visible
+```
+
+This "most restrictive segment wins" rule is mandatory. Without it, a harmless
+prefix could hide a publishing or destructive suffix.
+
+### Path And Mode Boundaries
+
+Global permissions do not replace existing platform boundaries. They sit above
+tool execution, but below non-negotiable runtime checks.
+
+The current code already has boundary concepts such as an allowed file area,
+outside-file read/write flags, sensitive local paths, trusted/restricted modes,
+and skill preapproval rules. The new model must preserve those safety
+properties:
+
+- a generic `Edit local documents = Allow` rule only applies inside the allowed
+  file area;
+- reads or writes outside the allowed file area must be a separate action kind
+  or a hard block, never silently covered by generic local read/write rules;
+- sensitive local paths such as credentials, `.env` files, keychains, SSH keys,
+  and package registry tokens must be separate high-risk action kinds or hard
+  blocks;
+- existing restricted-mode denies must remain in force during migration until
+  equivalent global action-kind rules exist;
+- skill preapproval metadata may narrow what a skill can do, but it must not
+  bypass global `deny` rules, path boundaries, or platform hard blocks.
+
+This keeps "one global permission table" as the user-facing management model
+without turning global rules into broad filesystem capabilities.
 
 ## Global Permission Rules
 
@@ -240,6 +322,11 @@ The dialog should show:
 
 The dialog should not mention countdowns or imply that silence will approve.
 
+If one tool call contains multiple action kinds, the dialog should identify the
+action kind that forced the prompt and show the other material effects in
+details. The user should not see "read local data" as the headline for a command
+that also publishes to a remote service.
+
 ## Denied Results
 
 `deny` should not open a dialog. It should return a structured result to the
@@ -249,7 +336,8 @@ agent:
 interface ToolDeniedResult {
   ok: false;
   kind: 'permission_denied';
-  actionKind: AgentToolActionKind;
+  primaryActionKind: AgentToolActionKind;
+  actionKinds: AgentToolActionKind[];
   reason: 'global_rule' | 'platform_hard_block' | 'user_denied';
   message: string;
 }
@@ -273,6 +361,7 @@ Examples:
 - invalid tool schema;
 - unknown tool;
 - aborted run;
+- disallowed access outside the allowed file area;
 - permission self-modification by the agent;
 - commands that attempt to destroy the host machine or bypass app safety
   boundaries;
@@ -309,7 +398,8 @@ interface ToolPermissionCheckedEvent {
   type: 'tool.permission.checked';
   requestId: string;
   toolName: string;
-  actionKind: AgentToolActionKind;
+  primaryActionKind: AgentToolActionKind;
+  actionKinds: AgentToolActionKind[];
   decision: ToolPermissionDecision;
   source: 'global_rule' | 'default_rule' | 'platform_hard_block';
   descriptorRef?: AgentPayloadRef;
@@ -369,25 +459,34 @@ often or silently allows ambiguous actions.
 2. Add a global permission store with one rule per supported action kind.
 3. Add a permission center UI for viewing and editing the global rules.
 4. Build descriptor resolvers for existing agent tools.
-5. For `bash`, classify known command families first and map unknown commands to
-   a conservative action kind.
-6. Replace hidden `ask` prompts with global-rule-backed permission checks.
-7. Update the approval dialog to remove countdowns and session-scope language.
-8. Add "approve once", "deny once", "always allow this kind", and "always deny
+5. Preserve existing path-boundary, sensitive-path, restricted-mode, and skill
+   preapproval safety properties while mapping them into action descriptors or
+   platform hard blocks.
+6. For `bash`, classify known command families first, evaluate compound
+   commands by the most restrictive segment, and map unknown commands to a
+   conservative action kind.
+7. Replace hidden `ask` prompts with global-rule-backed permission checks.
+8. Update the approval dialog to remove countdowns and session-scope language.
+9. Add "approve once", "deny once", "always allow this kind", and "always deny
    this kind" resolution paths.
-9. Return structured `permission_denied` tool results for `deny` and hard-block
+10. Return structured `permission_denied` tool results for `deny` and hard-block
    cases.
-10. Update agent instructions so denied results are handled as normal tool
+11. Update agent instructions so denied results are handled as normal tool
     results with fallbacks.
-11. Add event log entries for permission checks and user resolutions.
-12. Add tests for default allow, default deny, explicit ask, approve once, deny
+12. Add event log entries for permission checks and user resolutions.
+13. Add tests for default allow, default deny, explicit ask, approve once, deny
     once, always allow, always deny, platform hard blocks, denied-result
-    fallback, and shell command classification.
+    fallback, path boundaries, restricted mode, and shell compound-command
+    classification.
 
 ## Open Questions
 
 - What is the initial global default for dependency installation?
 - Which local editing operations are reversible enough to default to `allow`?
 - Should unknown shell commands default to `ask` or `deny`?
+- Should repeated identical `ask` actions in one run be coalesced in the UI
+  without creating a session permission grant?
+- Should project script execution default to `allow` for productivity or `ask`
+  because it is arbitrary local code execution?
 - Which permission categories should be visible in the first version of the
   permission center?
