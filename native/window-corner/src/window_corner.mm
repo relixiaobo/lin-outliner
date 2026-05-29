@@ -37,19 +37,43 @@ static const void* kCornerMaskKey = &kCornerMaskKey;
 // Original -[NSWindow _cornerMask] implementation, used as the fallback.
 static IMP g_originalCornerMask = NULL;
 
-// Build a resizable rounded-rectangle image whose alpha is the mask: opaque
-// inside the rounded rect, transparent in the corners. capInsets keep the
-// corners crisp while the centre stretches to any window size.
+// Build a resizable corner-mask image whose alpha is the mask: opaque inside the
+// rounded rect, transparent in the corners. capInsets keep the corners crisp
+// while the centre stretches to any window size.
+//
+// The corner uses Apple's *continuous* curve (squircle), not a circular arc, to
+// match real macOS windows (Finder / Raycast). Rather than hand-rolling a
+// superellipse bezier (magic control points), we let CoreAnimation render its
+// own continuous corner: a CALayer with cornerCurve = continuous rendered into a
+// bitmap gives the exact system shape.
 static NSImage* RoundedMaskImage(CGFloat radius) {
-  CGFloat side = radius * 2 + 1;
+  NSInteger side = (NSInteger)(radius * 2 + 1);
+
+  CALayer* layer = [CALayer layer];
+  layer.frame = CGRectMake(0, 0, side, side);
+  layer.backgroundColor = [[NSColor blackColor] CGColor];
+  layer.cornerRadius = radius;
+  layer.masksToBounds = YES;
+  if (@available(macOS 10.15, *)) {
+    layer.cornerCurve = kCACornerCurveContinuous;
+  }
+
+  NSBitmapImageRep* rep =
+      [[[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
+                                               pixelsWide:side
+                                               pixelsHigh:side
+                                            bitsPerSample:8
+                                          samplesPerPixel:4
+                                                 hasAlpha:YES
+                                                 isPlanar:NO
+                                           colorSpaceName:NSDeviceRGBColorSpace
+                                              bytesPerRow:0
+                                             bitsPerPixel:0] autorelease];
+  NSGraphicsContext* gc = [NSGraphicsContext graphicsContextWithBitmapImageRep:rep];
+  [layer renderInContext:[gc CGContext]];
+
   NSImage* image = [[[NSImage alloc] initWithSize:NSMakeSize(side, side)] autorelease];
-  [image lockFocus];
-  [[NSColor blackColor] setFill];
-  NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:NSMakeRect(0, 0, side, side)
-                                                       xRadius:radius
-                                                       yRadius:radius];
-  [path fill];
-  [image unlockFocus];
+  [image addRepresentation:rep];
   [image setCapInsets:NSEdgeInsetsMake(radius, radius, radius, radius)];
   [image setResizingMode:NSImageResizingModeStretch];
   return image;
