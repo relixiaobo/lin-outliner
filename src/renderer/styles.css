@@ -46,59 +46,136 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  --deck-bg: #f4f4f5;
-  --app-bg: var(--deck-bg);
-  --panel-bg: #ffffff;
-  /* Tint applied to the window chrome when an OS material sits behind it; the
-     transparent remainder is what lets vibrancy / mica show through. */
-  --window-material-frost: color-mix(in srgb, var(--deck-bg) 62%, transparent);
-  --surface-soft: #fafafa;
-  --text-main: #09090b;
-  --text-sub: #52525b;
-  --text-muted: #a1a1aa;
-  --text-strong: #1f1f22;
-  --text-body: #29292d;
-  --text-soft: #66666b;
-  --text-faint: #8b8b91;
-  --text-disabled: #c4c4c8;
-  --border-subtle: #e4e4e7;
-  --border-muted: #d4d4d8;
-  --border-strong: #9d9da3;
-  --accent-brand: #f43f5e;
-  --accent-danger: #e11d48;
-  --semantic-success: #4cb27b;
-  --semantic-success-strong: #3f865d;
-  --semantic-danger-muted: #9a3f34;
-  --semantic-warning: #e9b43d;
-  --semantic-info: #3288d0;
-  --surface-user-bubble: #dedfe2;
-  --surface-inverse: #2e2e32;
-  --surface-inverse-strong: #1f1f23;
-  --surface-disabled: #d6d6da;
-  --overlay-bg: var(--panel-bg);
-  --overlay-active-bg: var(--row-selected);
-  --overlay-backdrop: rgba(26, 26, 26, 0.30);
-  --overlay-backdrop-strong: rgba(0, 0, 0, 0.82);
+  /* Light by default. Dark is defined below but GATED behind [data-theme="dark"]
+     so it never auto-activates on an OS-dark machine — the component layer
+     (outliner.css + hardcoded glass/material rgba) is not theme-aware yet, so
+     auto-dark would be a broken half-dark regression. Phase 2 sets data-theme
+     via nativeTheme.themeSource; dark only becomes user-facing once Phase 3
+     migrates the components. */
+  color-scheme: light;
+  /* ════════════════════════════════════════════════════════════════════════
+     SEMANTIC FOUNDATION (design-system.md). Two themes over one ink base: every
+     text/fill/separator/outline value is an alpha over --ink (black in light,
+     white in dark), so the dark @media block at the end only flips --ink + a few
+     opaque/material literals. Legacy aliases (--text-main, --deck-bg, …) are
+     re-pointed onto this layer below so existing component CSS keeps working.
+     ════════════════════════════════════════════════════════════════════════ */
+  --ink: 0 0 0;
+
+  /* text (label) levels — alpha on ink, identical alphas in both themes */
+  --text-primary: rgb(var(--ink) / 0.88);
+  --text-secondary: rgb(var(--ink) / 0.55);
+  --text-tertiary: rgb(var(--ink) / 0.30);
+  --text-quaternary: rgb(var(--ink) / 0.16);
+
+  /* neutral fills — control / hover / active / selection backgrounds */
+  --fill-1: rgb(var(--ink) / 0.04);
+  --fill-2: rgb(var(--ink) / 0.07);
+  --fill-3: rgb(var(--ink) / 0.10);
+  --fill-4: rgb(var(--ink) / 0.16);
+
+  /* separators */
+  --separator: rgb(var(--ink) / 0.10);
+  --separator-opaque: #d8d8dc;
+
+  /* opaque surfaces (per-theme literals) */
+  --bg-window: #ececec;
+  --bg-content: #ffffff;
+  --bg-elevated: #ffffff;
+
+  /* materials: translucent chrome tint over OS vibrancy + backdrop-filter */
+  --material-sidebar: rgba(246, 246, 246, 0.60);
+  --material-popover: rgba(250, 250, 250, 0.80);
+  --material-blur: 30px;
+  --material-saturate: 112%;
+  --rail-edge: rgb(var(--ink) / 0.10);
+
+  /* selection & focus = NEUTRAL (never brand, never system accent) */
+  --selection-bg: var(--fill-3);
+  --selection-soft: var(--fill-2);
+  --focus-ring: rgb(var(--ink) / 0.45);
+  --focus-ring-shadow: 0 0 0 2px rgb(var(--ink) / 0.22);
+  --text-selection-bg: rgb(var(--ink) / 0.14); /* neutral ::selection */
+  --drop-line: var(--focus-ring);               /* neutral drag insertion line */
+
+  /* accent = brand rose, used SPARSELY (links, caret, brand marks, status) */
+  --accent: #f43f5e;
+  --accent-strong: #e11d48;
+  --link: var(--accent);
+  --caret: var(--accent);
+
+  /* status — genuine semantic state only, never interactive meaning */
+  --status-success: #3f9e6a;
+  --status-success-strong: #3f865d;
+  --status-warning: #d99a1c;
+  --status-danger: #e5484d;
+  --status-danger-muted: #9a3f34;
+  --status-info: #3b82c4;
+
+  --primary-muted-text: color-mix(in srgb, var(--accent) 58%, var(--text-primary));
+  --inline-code-bg: rgb(var(--ink) / 0.06);
+
+  /* elevation: rail (softest) < level-1 (menus) < level-2 (dialogs) */
+  --shadow-rail: 0 8px 26px -10px rgba(0, 0, 0, 0.26), 0 1px 3px rgba(0, 0, 0, 0.10);
   --overlay-shadow-level-1: 0 8px 20px -12px rgba(0, 0, 0, 0.22), 0 2px 8px -4px rgba(0, 0, 0, 0.10);
   --overlay-shadow-level-2: 0 18px 48px -20px rgba(0, 0, 0, 0.24), 0 6px 18px -10px rgba(0, 0, 0, 0.14);
-  --outline-faint: inset 0 0 0 1px rgba(0, 0, 0, 0.035);
-  --outline-subtle: inset 0 0 0 1px rgba(0, 0, 0, 0.055);
-  --outline-muted: inset 0 0 0 1px rgba(9, 9, 11, 0.12);
-  --outline-emphasis: inset 0 0 0 1px var(--border-emphasis);
-  --outline-focus: inset 0 0 0 1px var(--focus-border);
-  --outline-primary: inset 0 0 0 1px color-mix(in srgb, var(--accent-brand) 26%, transparent);
-  --outline-primary-strong: inset 0 0 0 1px color-mix(in srgb, var(--accent-brand) 58%, var(--border-subtle));
-  --underline-focus-shadow: inset 0 -1px 0 rgba(26, 26, 26, 0.18);
+
+  /* inset outline ladder — alpha-on-ink so strokes invert with the theme */
+  --outline-faint: inset 0 0 0 1px rgb(var(--ink) / 0.04);
+  --outline-subtle: inset 0 0 0 1px rgb(var(--ink) / 0.07);
+  --outline-muted: inset 0 0 0 1px rgb(var(--ink) / 0.12);
+  --outline-emphasis: inset 0 0 0 1px rgb(var(--ink) / 0.18);
+  --outline-focus: inset 0 0 0 1px var(--focus-ring);
+  --outline-primary: inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent);
+  --outline-primary-strong: inset 0 0 0 1px color-mix(in srgb, var(--accent) 58%, var(--separator));
+  --underline-focus-shadow: inset 0 -1px 0 rgb(var(--ink) / 0.20);
   --tag-focus-shadow: 0 0 0 2px color-mix(in srgb, var(--tag-text, currentColor) 22%, transparent);
   --inline-ref-selection-shadow: inset 0 0 0 1px var(--row-selection-border);
   --inline-ref-focus-shadow: 0 0 0 2px color-mix(in srgb, var(--inline-ref-accent, var(--inline-ref-default)) 22%, transparent);
   --agent-side-panel-shadow: -18px 0 48px rgba(15, 23, 42, 0.12);
-  --view-radio-shadow: inset 0 0 0 1.5px var(--border-strong);
-  --view-radio-checked-shadow: inset 0 0 0 1.5px var(--text-main);
-  --search-builder-focus-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 16%, transparent);
-  --typed-field-section-shadow: inset 0 1px 0 var(--border-subtle);
+  --view-radio-shadow: inset 0 0 0 1.5px var(--separator-opaque);
+  --view-radio-checked-shadow: inset 0 0 0 1.5px var(--text-primary);
+  --search-builder-focus-shadow: var(--focus-ring-shadow);
+  --typed-field-section-shadow: inset 0 1px 0 var(--separator);
   --shadow-thumb: 0 1px 2px rgba(0, 0, 0, 0.14);
   --shadow-thumb-strong: 0 1px 2px rgba(0, 0, 0, 0.18);
+
+  /* ── Legacy product-token aliases → semantic layer. Migrate opportunistically.
+        --primary stays DEPRECATED (still → accent so light is unchanged); its
+        usages are neutralized and the alias deleted in rollout Phase 3. ── */
+  --deck-bg: var(--bg-window);
+  --app-bg: var(--bg-window);
+  --panel-bg: var(--bg-content);
+  --window-material-frost: color-mix(in srgb, var(--bg-window) 62%, transparent);
+  --surface-soft: var(--bg-elevated);
+  --text-main: var(--text-primary);
+  --text-strong: var(--text-primary);
+  --text-body: var(--text-primary);
+  --text-sub: var(--text-secondary);
+  --text-soft: var(--text-secondary);
+  --text-muted: var(--text-tertiary);
+  --text-faint: var(--text-tertiary);
+  --text-disabled: var(--text-quaternary);
+  --border-subtle: var(--separator);
+  --border-muted: var(--separator);
+  /* a strong control border (view-radio ring, etc.) — NOT the hairline divider;
+     keep it a visible neutral that inverts with the theme */
+  --border-strong: rgb(var(--ink) / 0.30);
+  --accent-brand: var(--accent);
+  --accent-danger: var(--accent-strong);
+  --semantic-success: var(--status-success);
+  --semantic-success-strong: var(--status-success-strong);
+  --semantic-danger-muted: var(--status-danger-muted);
+  --semantic-warning: var(--status-warning);
+  --semantic-info: var(--status-info);
+  --surface-user-bubble: var(--fill-3);
+  --surface-inverse: #2e2e32;
+  --surface-inverse-strong: #1f1f23;
+  --surface-disabled: var(--fill-3);
+  --overlay-bg: var(--bg-elevated);
+  --overlay-active-bg: var(--fill-2);
+  --overlay-backdrop: rgba(26, 26, 26, 0.30);
+  --overlay-backdrop-strong: rgba(0, 0, 0, 0.82);
   --space-hairline: 1px;
   --space-1: 2px;
   --space-2: 4px;
@@ -184,35 +261,33 @@
   --resize-hit-width: 10px;
   --resize-pill-width: 4px;
   --resize-pill-height: 32px;
-  --tab-bg: rgba(0, 0, 0, 0.028);
-  --tab-active-bg: rgba(0, 0, 0, 0.052);
-  --tab-hover-bg: rgba(0, 0, 0, 0.068);
-  --control-hover: rgba(0, 0, 0, 0.055);
-  --control-active: rgba(0, 0, 0, 0.08);
-  --focus-border: rgba(9, 9, 11, 0.52);
-  --focus-ring: rgba(9, 9, 11, 0.24);
-  --focus-ring-shadow: 0 0 0 2px var(--focus-ring);
-  --scrollbar-thumb: rgba(9, 9, 11, 0.16);
-  --scrollbar-thumb-hover: rgba(9, 9, 11, 0.28);
-  --agent-accent: var(--accent-brand);
+  /* tab tokens are subtle and die with the global tab strip in Phase 4 */
+  --tab-bg: rgb(var(--ink) / 0.03);
+  --tab-active-bg: rgb(var(--ink) / 0.05);
+  --tab-hover-bg: rgb(var(--ink) / 0.07);
+  --control-hover: var(--fill-2);
+  --control-active: var(--fill-3);
+  --focus-border: var(--focus-ring);
+  --scrollbar-thumb: rgb(var(--ink) / 0.22);
+  --scrollbar-thumb-hover: rgb(var(--ink) / 0.34);
+  --agent-accent: var(--accent);
   --bg: var(--surface-soft);
   --surface: var(--panel-bg);
-  --surface-2: #f4f4f5;
+  --surface-2: var(--bg-window);
   --border: var(--border-muted);
-  --border-emphasis: rgba(9, 9, 11, 0.18);
-  --muted: var(--text-sub);
-  --muted-2: var(--text-muted);
-  --text: var(--text-main);
+  --border-emphasis: rgb(var(--ink) / 0.18);
+  --muted: var(--text-secondary);
+  --muted-2: var(--text-tertiary);
+  --text: var(--text-primary);
+  /* --inline-ref-default stays blue until Phase 3 re-points it to --link (rose) */
   --inline-ref-default: var(--semantic-info);
   --inline-ref-hover: color-mix(in srgb, var(--semantic-info) 78%, var(--text));
-  --primary: var(--accent-brand);
-  --primary-hover: var(--accent-danger);
-  --primary-soft: color-mix(in srgb, var(--accent-brand) 9%, transparent);
-  --primary-muted-text: color-mix(in srgb, var(--accent-brand) 58%, var(--text-strong));
-  --inline-code-bg: color-mix(in srgb, var(--text-main) 7%, transparent);
-  --danger: var(--accent-danger);
-  --row-hover: #f4f4f5;
-  --row-selected: #f4f4f5;
+  --primary: var(--accent);
+  --primary-hover: var(--accent-strong);
+  --primary-soft: color-mix(in srgb, var(--accent) 9%, transparent);
+  --danger: var(--accent-strong);
+  --row-hover: var(--fill-2);
+  --row-selected: var(--fill-3);
   --row-selection-bg: var(--row-selected);
   --row-selection-frame-bg: color-mix(in srgb, var(--row-selected) 72%, transparent);
   --row-selection-border: color-mix(in srgb, var(--text) 18%, transparent);
@@ -236,6 +311,51 @@
   --row-bullet-center: 32.5px;
   --row-selection-start: 21px;
   --row-depth: 28px;
+}
+
+/* Dark appearance — GATED, not auto-activated. This block only takes effect when
+   something sets data-theme="dark" on <html>; it deliberately does NOT key off
+   @media (prefers-color-scheme: dark), so an OS-dark machine stays on the
+   (complete) light theme until the component layer is theme-aware (Phase 3) and
+   Phase 2 wires nativeTheme.themeSource → data-theme. Only the per-theme literals
+   change here — every alpha-on-ink token above (text, fills, separators,
+   outlines, selection) inverts for free when --ink flips to white. Elevated
+   surfaces are LIGHTER than content so floating surfaces still read as elevated. */
+:root[data-theme='dark'] {
+    color-scheme: dark;
+    --ink: 255 255 255;
+
+    --separator-opaque: #3a3a3c;
+
+    --bg-window: #2a2a2c;
+    --bg-content: #1e1e1e;
+    --bg-elevated: #2e2e30;
+
+    --material-sidebar: rgba(40, 40, 42, 0.55);
+    --material-popover: rgba(48, 48, 50, 0.72);
+    --rail-edge: rgb(var(--ink) / 0.12);
+    --shadow-rail: 0 8px 26px -8px rgba(0, 0, 0, 0.60), 0 1px 3px rgba(0, 0, 0, 0.40);
+
+    /* brand + status nudged up for legibility on dark */
+    --accent: #ff5d76;
+    --accent-strong: #ff7088;
+    --status-info: #5aa0e0;
+
+    /* inverse chips invert (dark-on-light in light → light-on-dark here) */
+    --surface-inverse: #e6e6ea;
+    --surface-inverse-strong: #f4f4f6;
+
+    /* drop shadows deepen so elevation still reads on a dark backdrop */
+    --overlay-shadow-level-1: 0 8px 22px -12px rgba(0, 0, 0, 0.55), 0 2px 8px -4px rgba(0, 0, 0, 0.40);
+    --overlay-shadow-level-2: 0 18px 50px -20px rgba(0, 0, 0, 0.60), 0 6px 18px -10px rgba(0, 0, 0, 0.45);
+
+    --overlay-backdrop: rgba(0, 0, 0, 0.45);
+    --overlay-backdrop-strong: rgba(0, 0, 0, 0.88);
+}
+
+/* Neutral text-selection highlight (never the system accent). */
+::selection {
+  background: var(--text-selection-bg);
 }
 
 * {
