@@ -53,9 +53,10 @@
   user-select: none; /* don't rubber-band-select chrome text while dragging */
 }
 
-/* Two symmetric fixed rail toggles on the traffic-light centreline. Icon controls
-   signal hover by COLOUR, not a fill background. They are window chrome anchored
-   to the window — they never move when a rail collapses. */
+/* Two symmetric fixed rail toggles on the traffic-light centreline. On hover they
+   get a subtle centred fill tint (the native toolbar-icon-button affordance),
+   concentric with the 26px square so it reads as centred on the icon. They are
+   window chrome anchored to the window — they never move when a rail collapses. */
 .rail-toggle {
   position: absolute;
   z-index: 1;
@@ -74,7 +75,7 @@
 }
 
 .rail-toggle:hover {
-  background: transparent;
+  background: var(--control-hover);
   color: var(--text-primary);
 }
 

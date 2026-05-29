@@ -1,11 +1,9 @@
-/* Floating glass rail on the right, with a 3-state unfurl (Motion → Rail unfurl):
+/* Floating glass rail on the right, with two states:
      open      — full rail, inset by --layout-gap, rounded --panel-radius
      collapsed — a bare 26x26 icon seed at the top-right toggle footprint (no
-                 material/shadow/edge — restraint)
-     chip      — hover over the agent toggle materialises the glass chip (same
-                 material/shadow/edge/radius as the rail), seeding the unfurl
-   The same glass corner (edge/shadow/radius) is continuous across states; the
-   panel body is never unmounted (chat scroll + composer draft survive). */
+                 material/shadow/edge — restraint). Hover feedback is on the toggle
+                 itself (shell.css), not a glass chip behind it.
+   The panel body is never unmounted (chat scroll + composer draft survive). */
 .agent-dock {
   position: absolute;
   z-index: var(--z-raised);
@@ -47,18 +45,9 @@
   pointer-events: none;
 }
 
-/* Hover over the agent toggle while collapsed reveals the glass chip — the seed
-   of the unfurl (same material/shadow/edge/radius as the open rail). */
-.app.agent-collapsed:has(.agent-toggle:hover) .agent-dock.agent-dock-collapsed {
-  background: var(--bg-elevated);
-  box-shadow: var(--shadow-rail), inset 0 0 0 0.5px var(--rail-edge);
-}
-
-:root[data-window-material] .app.agent-collapsed:has(.agent-toggle:hover) .agent-dock.agent-dock-collapsed {
-  background: var(--material-sidebar);
-  -webkit-backdrop-filter: blur(var(--material-blur)) saturate(var(--material-saturate));
-  backdrop-filter: blur(var(--material-blur)) saturate(var(--material-saturate));
-}
+/* No hover "chip": the seed stays invisible when collapsed. Hover feedback lives
+   on the toggle itself (.rail-toggle:hover in shell.css) as a centred fill tint —
+   the rail-sized --shadow-rail on a 26px chip read as a box offset from the icon. */
 
 /* The panel body fades out (but stays mounted) when not open. */
 .agent-dock.agent-dock-collapsed .agent-chat-panel {
@@ -84,8 +73,7 @@
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  :root[data-window-material] .agent-dock.agent-dock-open,
-  :root[data-window-material] .app.agent-collapsed:has(.agent-toggle:hover) .agent-dock.agent-dock-collapsed {
+  :root[data-window-material] .agent-dock.agent-dock-open {
     background: var(--bg-window);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
