@@ -4,11 +4,10 @@ import type { AgentUserViewContext } from '../../core/agentTypes';
 import { api } from '../api/client';
 import type { DocumentProjection, FocusHint, NodeId, NodeProjection } from '../api/types';
 import { useRenderIndex, useUiState } from '../state/document';
-import { AgentDock } from './AgentDock';
+import { AgentDock, type AgentRailState } from './AgentDock';
 import { CommandPalette } from './CommandPalette';
-import { Sidebar } from './Sidebar';
-import type { TopBarTab } from './TopBar';
-import { TopBar } from './TopBar';
+import { Sidebar, type SidebarTab } from './Sidebar';
+import { WindowChrome } from './WindowChrome';
 import { CloseIcon, ICON_SIZE } from './icons';
 import {
   clearFocusState,
@@ -42,7 +41,11 @@ export function App() {
   const [projection, setProjection] = useState<DocumentProjection | null>(null);
   const [ui, setUi] = useUiState();
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Agent rail is a 3-state model: collapsed seed (bare icon) -> hover glass chip
+  // (CSS-only, no React state) -> open full panel. We persist only the binary
+  // open/collapsed in React; the chip is a pure :hover affordance in CSS.
   const [agentOpen, setAgentOpen] = useState(true);
+  const agentRailState: AgentRailState = agentOpen ? 'open' : 'collapsed';
   const [sidebarExpandedIds, setSidebarExpandedIds] = useState<Set<NodeId>>(() => new Set());
   const [pendingFocus, setPendingFocus] = useState<FocusHint | null>(null);
   const [agentSessionTitles, setAgentSessionTitles] = useState<Record<string, string>>({});
@@ -318,7 +321,7 @@ export function App() {
     }
     return textOf(index.byId.get(panel.rootId)) || 'Workspace';
   };
-  const topBarTabs: TopBarTab[] = tabs.map((tab) => {
+  const sidebarTabs: SidebarTab[] = tabs.map((tab) => {
     const segments = tab.panels.map((panel) => {
       const node = panel.type === 'outliner' ? index.byId.get(panel.rootId) : undefined;
       return {
@@ -341,40 +344,44 @@ export function App() {
   } as CSSProperties;
 
   return (
-    <div className="app">
-      <TopBar
+    <div
+      className={[
+        'app',
+        sidebarOpen ? '' : 'sidebar-collapsed',
+        `agent-${agentRailState}`,
+      ].filter(Boolean).join(' ')}
+      style={appShellStyle}
+    >
+      {/* Persistent window chrome: a top-left drag strip that reserves the
+          traffic-light inset + the two symmetric fixed rail toggles. This is the
+          ONLY -webkit-app-region:drag host now that TopBar is gone (rail tops and
+          pane headers add further drag regions in CSS). */}
+      <WindowChrome
         agentOpen={agentOpen}
         sidebarOpen={sidebarOpen}
-        tabs={topBarTabs}
-        activeTabId={activeTabId}
-        canNavigateBack={Boolean(pageHistoryPanel?.pageBackStack?.length)}
-        canNavigateForward={Boolean(pageHistoryPanel?.pageForwardStack?.length)}
-        onCreateTab={() => createTab()}
-        onCloseTab={closeTab}
-        onNavigateBack={navigateActivePanelBack}
-        onNavigateForward={navigateActivePanelForward}
-        onOpenProviderSettings={() => {
-          void window.lin?.openSettings();
-        }}
-        onSelectTab={selectTab}
         onToggleAgent={() => setAgentOpen((open) => !open)}
         onToggleSidebar={() => setSidebarOpen((open) => !open)}
       />
 
-      <div
-        className={`app-shell ${sidebarOpen ? '' : 'sidebar-collapsed'} ${agentOpen ? '' : 'agent-collapsed'}`}
-        style={appShellStyle}
-      >
+      <div className="app-shell">
         <Sidebar
+          activeTabId={activeTabId}
           expandedIds={sidebarExpandedIds}
           index={index}
+          onCloseTab={closeTab}
+          onCreateTab={() => createTab()}
           onNavigateRoot={navigateRoot}
           onOpenPanel={openRootInPanel}
+          onOpenSettings={() => {
+            void window.lin?.openSettings();
+          }}
           onResizeKeyDown={resizeSidebarWithKeyboard}
           onResizeStart={beginSidebarResize}
+          onSelectTab={selectTab}
           onToggleTreeNode={toggleSidebarTreeNode}
           projection={projection}
           rootId={rootId}
+          tabs={sidebarTabs}
         />
 
         <WorkspaceCanvas
@@ -385,6 +392,7 @@ export function App() {
           onActivatePanel={activatePanel}
           onClosePanel={closePanel}
           onNavigatePanelBack={navigatePanelBack}
+          onNavigatePanelForward={navigatePanelForward}
           onNavigatePanelRoot={navigatePanelRoot}
           onPanelResizeKeyDown={resizePanelPairWithKeyboard}
           onPanelResizeStart={beginPanelResize}
@@ -398,6 +406,7 @@ export function App() {
 
         <AgentDock
           index={index}
+          railState={agentRailState}
           userViewContext={agentUserViewContext}
           onOpenNodeReference={openNodeReferenceFromAgent}
           onOpenDebugPanel={openAgentDebugPanel}

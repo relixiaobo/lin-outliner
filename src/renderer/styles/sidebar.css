@@ -1,16 +1,243 @@
+/* Floating glass rail: inset from the window edges, rounded, soft elevation,
+   translucent material over the OS vibrancy (the content base shows through). */
 .sidebar-dock {
-  position: relative;
-  grid-area: sidebar;
+  position: absolute;
+  z-index: var(--z-raised);
+  top: var(--layout-gap);
+  bottom: var(--layout-gap);
+  left: var(--layout-gap);
+  width: var(--sidebar-width);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   --sidebar-row-height: var(--control-size-xl);
   --sidebar-tree-chevron-width: var(--icon-size-md);
   --sidebar-tree-chevron-start: 0px;
   --sidebar-tree-icon-size: var(--icon-size-md);
   --sidebar-tree-indent: var(--space-5);
   --sidebar-content-start: var(--space-8);
+  border-radius: var(--panel-radius);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-rail), inset 0 0 0 0.5px var(--rail-edge);
+  transition:
+    transform var(--motion-layout),
+    opacity var(--motion-layout);
+}
+
+/* The rail's first row is reserved for window chrome (lights + toggle); it is a
+   drag region and a vertical spacer so the nav clears the chrome centreline. */
+.sidebar-dock .rail-top {
+  height: var(--chrome-height);
+  flex: 0 0 var(--chrome-height);
+  -webkit-app-region: drag;
+}
+
+.sidebar-scroll {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
   gap: var(--sidebar-section-gap);
-  padding: calc(var(--space-8) + var(--space-2)) var(--agent-dock-inset-x) 0 var(--space-2);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 var(--agent-dock-inset-x) 0 var(--space-2);
+}
+
+/* Collapsed: the rail slides out to the left and fades; the content base then
+   extends to the left window edge. The lights/toggle stay (window chrome). */
+.app.sidebar-collapsed .sidebar-dock {
+  transform: translateX(calc(-100% - var(--layout-gap) - 4px));
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sidebar-bottom {
+  flex: 0 0 auto;
+  padding: var(--space-4) var(--space-2);
+}
+
+.sidebar-bottom-item {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: var(--sidebar-row-height);
+  align-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  font-size: var(--font-ui-md);
+  font-weight: 400;
+  gap: var(--space-2);
+  line-height: var(--line-ui-md);
+  padding: 0 var(--space-4) 0 var(--sidebar-content-start);
+  text-align: left;
+}
+
+.sidebar-bottom-item:hover {
+  background: var(--control-hover);
+}
+
+/* ── Tab switcher (the sidebar replaces the global tab strip) ───────────────── */
+.sidebar-tabs-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-right: var(--space-2);
+}
+
+.sidebar-tab-add {
+  display: inline-flex;
+  width: var(--control-size-md);
+  height: var(--control-size-md);
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-control-xs);
+  color: var(--text-faint);
+}
+
+.sidebar-tab-add:hover {
+  background: var(--control-hover);
+  color: var(--text-strong);
+}
+
+.sidebar-tab-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.sidebar-tab {
+  display: grid;
+  min-width: 0;
+  height: var(--sidebar-row-height);
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+}
+
+.sidebar-tab:hover {
+  background: var(--control-hover);
+}
+
+.sidebar-tab.active {
+  background: var(--control-active);
+}
+
+.sidebar-tab-trigger {
+  display: inline-flex;
+  min-width: 0;
+  height: 100%;
+  align-items: center;
+  border-radius: inherit;
+  overflow: hidden;
+  padding: 0 var(--space-2) 0 var(--sidebar-content-start);
+}
+
+.sidebar-tab-segment {
+  display: inline-flex;
+  min-width: 0;
+  flex: 1 1 0;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-faint);
+  font-size: var(--font-ui-md);
+  line-height: var(--line-ui-md);
+}
+
+.sidebar-tab.active .sidebar-tab-segment,
+.sidebar-tab:hover .sidebar-tab-segment {
+  color: var(--text-soft);
+}
+
+.sidebar-tab.active .sidebar-tab-segment.is-active {
+  color: var(--text-strong);
+  font-weight: 500;
+}
+
+.sidebar-tab-segment + .sidebar-tab-segment::before {
+  width: 1px;
+  height: 12px;
+  flex: 0 0 auto;
+  margin: 0 var(--space-2);
+  background: var(--border-subtle);
+  content: "";
+}
+
+.sidebar-tab-segment-icon {
+  display: inline-flex;
+  width: var(--icon-size-md);
+  height: var(--icon-size-md);
+  flex: 0 0 var(--icon-size-md);
+  align-items: center;
+  justify-content: center;
+  color: currentColor;
+  opacity: 0.72;
+}
+
+.sidebar-tab-segment-emoji {
+  font-size: var(--font-ui-sm);
+  line-height: var(--icon-size-md);
+}
+
+.sidebar-tab-segment-bullet::before {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+  content: "";
+}
+
+.sidebar-tab-segment-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-tab-close {
+  display: inline-flex;
+  width: var(--control-size-xs);
+  height: var(--control-size-xs);
+  align-items: center;
+  justify-content: center;
+  margin-right: var(--space-2);
+  border-radius: var(--radius-control-xs);
+  color: var(--text-faint);
+  opacity: 0;
+  transition: background var(--motion-fast), color var(--motion-fast), opacity var(--motion-fast);
+}
+
+.sidebar-tab:hover .sidebar-tab-close,
+.sidebar-tab.active .sidebar-tab-close,
+.sidebar-tab-close:focus-visible {
+  opacity: 1;
+}
+
+.sidebar-tab-close:hover {
+  background: var(--control-hover);
+  color: var(--text-strong);
+}
+
+/* Material: the rail goes translucent only when the OS provides vibrancy. */
+:root[data-window-material] .sidebar-dock {
+  background: var(--material-sidebar);
+  -webkit-backdrop-filter: blur(var(--material-blur)) saturate(var(--material-saturate));
+  backdrop-filter: blur(var(--material-blur)) saturate(var(--material-saturate));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-dock {
+    transition: none;
+  }
+}
+
+/* Reduced transparency → opaque seed, no blur. */
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-window-material] .sidebar-dock {
+    background: var(--bg-window);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
 }
 
 .sidebar-primary-nav,

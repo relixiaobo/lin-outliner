@@ -41,6 +41,7 @@ import {
 } from './focus/focusModel';
 import {
   ChevronLeftIcon,
+  ChevronRightIcon,
   HashIcon,
   ICON_SIZE,
   FilterIcon,
@@ -73,7 +74,9 @@ interface NodePanelProps {
   panelId: string;
   rootId: NodeId;
   canGoBack: boolean;
+  canGoForward: boolean;
   onBack: () => void;
+  onForward: () => void;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   index: DocumentIndex;
   ui: UiState;
@@ -517,6 +520,16 @@ export function NodePanel(props: NodePanelProps) {
               label="Previous page"
               onClick={props.onBack}
               title="Previous page"
+              variant="panel"
+            />
+            <IconButton
+              className="panel-page-forward-button"
+              disabled={!props.canGoForward}
+              icon={ChevronRightIcon}
+              iconSize={14}
+              label="Next page"
+              onClick={props.onForward}
+              title="Next page"
               variant="panel"
             />
             <ButtonControl

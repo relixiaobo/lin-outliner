@@ -1,10 +1,95 @@
+/* Floating glass rail on the right, with a 3-state unfurl (Motion → Rail unfurl):
+     open      — full rail, inset by --layout-gap, rounded --panel-radius
+     collapsed — a bare 26x26 icon seed at the top-right toggle footprint (no
+                 material/shadow/edge — restraint)
+     chip      — hover over the agent toggle materialises the glass chip (same
+                 material/shadow/edge/radius as the rail), seeding the unfurl
+   The same glass corner (edge/shadow/radius) is continuous across states; the
+   panel body is never unmounted (chat scroll + composer draft survive). */
 .agent-dock {
-  grid-area: agent;
-  position: relative;
+  position: absolute;
+  z-index: var(--z-raised);
+  top: var(--layout-gap);
+  bottom: var(--layout-gap);
+  right: var(--layout-gap);
+  width: var(--agent-width);
   display: flex;
   min-height: 0;
   flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--panel-radius);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-rail), inset 0 0 0 0.5px var(--rail-edge);
   padding: 0;
+  transition:
+    top var(--motion-layout),
+    right var(--motion-layout),
+    bottom var(--motion-layout),
+    width var(--motion-layout),
+    border-radius var(--motion-layout),
+    background var(--motion-fast),
+    box-shadow var(--motion-fast);
+}
+
+/* Collapsed seed: shrink into the agent toggle's 26x26 footprint at the top-right
+   corner, with no material/shadow/edge. The toggle itself (window chrome) sits on
+   top of this footprint. */
+.agent-dock.agent-dock-collapsed {
+  top: var(--chrome-centreline);
+  right: calc(var(--layout-gap) + var(--space-3));
+  bottom: auto;
+  width: var(--chrome-control-height);
+  height: var(--chrome-control-height);
+  background: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  pointer-events: none;
+}
+
+/* Hover over the agent toggle while collapsed reveals the glass chip — the seed
+   of the unfurl (same material/shadow/edge/radius as the open rail). */
+.app.agent-collapsed:has(.agent-toggle:hover) .agent-dock.agent-dock-collapsed {
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-rail), inset 0 0 0 0.5px var(--rail-edge);
+}
+
+:root[data-window-material] .app.agent-collapsed:has(.agent-toggle:hover) .agent-dock.agent-dock-collapsed {
+  background: var(--material-sidebar);
+  -webkit-backdrop-filter: blur(var(--material-blur)) saturate(var(--material-saturate));
+  backdrop-filter: blur(var(--material-blur)) saturate(var(--material-saturate));
+}
+
+/* The panel body fades out (but stays mounted) when not open. */
+.agent-dock.agent-dock-collapsed .agent-chat-panel {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.agent-dock .agent-chat-panel {
+  transition: opacity var(--motion-fast);
+}
+
+/* Material: translucent only under OS vibrancy. */
+:root[data-window-material] .agent-dock.agent-dock-open {
+  background: var(--material-sidebar);
+  -webkit-backdrop-filter: blur(var(--material-blur)) saturate(var(--material-saturate));
+  backdrop-filter: blur(var(--material-blur)) saturate(var(--material-saturate));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-dock {
+    transition: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-window-material] .agent-dock.agent-dock-open,
+  :root[data-window-material] .app.agent-collapsed:has(.agent-toggle:hover) .agent-dock.agent-dock-collapsed {
+    background: var(--bg-window);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
 }
 
 button.dock-resize-handle,
@@ -51,16 +136,23 @@ button.panel-resize-handle::after {
   background: var(--text-tertiary);
 }
 
+/* Rails clip overflow, so the handles sit just INSIDE each rail's outer edge
+   (a hit strip flush against the resizable edge) rather than poking into the gap. */
 .sidebar-resize-handle {
   top: 0;
-  right: calc(var(--shell-gap) / -2 - var(--resize-hit-width) / 2);
+  right: 0;
   bottom: 0;
 }
 
 .agent-resize-handle {
   top: 0;
   bottom: 0;
-  left: calc(var(--shell-gap) / -2 - var(--resize-hit-width) / 2);
+  left: 0;
+}
+
+/* Collapsed/chip agent rail has no resizable width — disable the handle. */
+.agent-resize-handle:disabled {
+  display: none;
 }
 
 .panel-resize-handle {

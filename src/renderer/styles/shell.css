@@ -1,81 +1,113 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   FLOATING-RAILS SHELL (design-system.md → Shell, Materials & Liquid Glass).
+   Two layers:
+     • LOWER — a full-bleed opaque content base (.workspace-canvas) that fills the
+       window edge to edge and extends UNDER the floating rails.
+     • UPPER — the sidebar + agent rails float on top: inset by --layout-gap,
+       rounded --panel-radius, soft --shadow-rail, --material-sidebar tint +
+       backdrop-filter + a --rail-edge hairline ring.
+   Persistent window chrome (traffic lights + two symmetric rail toggles) is fixed
+   to the window, not the rails.
+   ════════════════════════════════════════════════════════════════════════════ */
+
 .app {
-  display: flex;
+  position: relative;
+  display: block;
+  width: 100vw;
   height: 100vh;
-  flex-direction: column;
-  background: var(--deck-bg);
+  overflow: hidden;
+  background: var(--bg-content);
   color: var(--text);
 }
 
-.top-chrome {
-  display: grid;
+/* The shell is no longer a grid that reserves rail width. It's a positioning
+   context: the canvas is full-bleed (absolute inset:0) and the rails float over
+   it via z-index. Content padding (set on the canvas) keeps rows clear of the
+   rails — the base still fills underneath them. */
+.app-shell {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+  background: var(--bg-content);
+}
+
+/* ── Persistent window chrome ──────────────────────────────────────────────── */
+
+.window-chrome {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: var(--z-popover);
   height: var(--chrome-height);
-  flex: 0 0 var(--chrome-height);
-  grid-template-columns: 182px minmax(0, 1fr) 100px;
-  align-items: center;
-  gap: var(--panel-gap);
-  background: var(--deck-bg);
-  padding: var(--layout-gap) var(--shell-padding-x) 0;
+  pointer-events: none; /* only the explicit children below catch events */
+}
+
+/* Top-left → top-right drag strip. The ONLY -webkit-app-region:drag host at App
+   root now that TopBar is gone; rail tops + pane headers add more drag regions. */
+.window-chrome-drag {
+  position: absolute;
+  inset: 0;
+  height: var(--chrome-height);
   -webkit-app-region: drag;
 }
 
-.top-chrome-left,
-.top-chrome-right,
-.tab-strip {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-}
-
-.top-chrome-left {
-  gap: var(--space-5);
-}
-
-.top-chrome-right {
-  justify-content: flex-end;
-  gap: var(--space-2);
-  color: var(--text-strong);
-}
-
-.window-controls-spacer {
-  width: 66px;
-  flex: 0 0 66px;
-}
-
-.top-chrome-icon-button {
+/* Two symmetric fixed rail toggles on the traffic-light centreline. Icon controls
+   signal hover by COLOUR, not a fill background. They are window chrome anchored
+   to the window — they never move when a rail collapses. */
+.rail-toggle {
+  position: absolute;
+  z-index: 1;
+  top: var(--chrome-centreline);
   display: inline-flex;
   width: var(--chrome-control-height);
   height: var(--chrome-control-height);
-  flex: 0 0 var(--chrome-control-height);
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-sm);
-  color: currentColor;
-  transition: background var(--motion-fast), color var(--motion-fast);
+  background: transparent;
+  color: var(--text-secondary);
+  pointer-events: auto;
+  transition: color var(--motion-fast);
   -webkit-app-region: no-drag;
 }
 
-.top-chrome-icon-button:hover:not(:disabled) {
-  background: var(--control-hover);
+.rail-toggle:hover {
+  background: transparent;
+  color: var(--text-primary);
 }
 
-.top-chrome-icon-button[aria-pressed="true"] {
-  background: var(--control-active);
-  color: var(--text-strong);
-}
-
-.top-chrome-icon-button:focus-visible,
-.workspace-tab-trigger:focus-visible,
-.workspace-tab-close:focus-visible,
-.outline-panel-close:focus-visible {
+.rail-toggle:focus-visible {
   box-shadow: var(--focus-ring-shadow);
 }
 
-.top-chrome-icon-button:disabled {
-  color: var(--text-disabled);
-  cursor: default;
-  opacity: 1;
+/* sidebar toggle sits just right of the traffic lights (lights span
+   x .. x + 3*size + 2*8 ≈ 66, then a gap). */
+.sidebar-toggle {
+  left: calc(var(--traffic-light-x) + 3 * var(--traffic-light-size) + 2 * var(--space-4) + var(--space-5));
 }
 
+/* agent toggle pinned to the top-right corner with an equal corner margin
+   (mirrors the lights' top-left corner margin). */
+.agent-toggle {
+  right: calc(var(--layout-gap) + var(--space-3));
+}
+
+/* open-state toggles read slightly stronger (no fill, just colour) */
+.app:not(.sidebar-collapsed) .sidebar-toggle,
+.app.agent-open .agent-toggle {
+  color: var(--text-primary);
+}
+
+/* ── OS window material (macOS vibrancy / Windows mica) ────────────────────────
+   The content base stays opaque for readability; only the floating rails turn
+   translucent. With floating rails, the frost lives on the rails themselves (in
+   sidebar.css / agent-dock.css), so here we only neutralise the wrappers so the
+   translucency never stacks (stacked alpha would compound to near-opaque). */
+:root[data-window-material] .app,
+:root[data-window-material] .app-shell {
+  background: var(--bg-content);
+}
+
+/* ── Top-left more menu (kept for the agent/session menus that reuse it) ─────── */
 .top-chrome-more-menu {
   z-index: var(--z-popover);
   display: flex;
@@ -133,215 +165,6 @@
   white-space: nowrap;
 }
 
-.tab-strip {
-  gap: var(--space-3);
-  overflow: hidden;
+.outline-panel-close:focus-visible {
+  box-shadow: var(--focus-ring-shadow);
 }
-
-.workspace-tab {
-  display: grid;
-  width: var(--workspace-tab-width);
-  height: var(--chrome-control-height);
-  flex: 0 0 var(--workspace-tab-width);
-  grid-template-columns: minmax(0, 1fr) var(--workspace-tab-close-size);
-  align-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--tab-bg);
-  color: var(--text-soft);
-  font-size: var(--font-ui-sm);
-  font-weight: 400;
-  line-height: var(--line-ui-sm);
-  overflow: hidden;
-  padding-right: var(--space-2);
-  transition: background var(--motion-fast), color var(--motion-fast);
-  -webkit-app-region: no-drag;
-}
-
-.workspace-tab.active {
-  background: var(--tab-active-bg);
-}
-
-.workspace-tab:hover {
-  background: var(--tab-hover-bg);
-}
-
-.workspace-tab.active:hover {
-  background: var(--tab-hover-bg);
-}
-
-.workspace-tab-trigger {
-  display: inline-flex;
-  min-width: 0;
-  height: 100%;
-  align-items: center;
-  border-radius: inherit;
-  overflow: hidden;
-  padding: 0 var(--space-2) 0 var(--space-3);
-}
-
-.workspace-tab-segments {
-  display: inline-flex;
-  width: 100%;
-  min-width: 0;
-  align-items: center;
-  overflow: hidden;
-}
-
-.workspace-tab-segment {
-  display: inline-flex;
-  min-width: 0;
-  flex: 1 1 0;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--text-faint);
-  transition: color var(--motion-fast);
-}
-
-.workspace-tab.active .workspace-tab-segment {
-  color: var(--text-soft);
-}
-
-.workspace-tab.active .workspace-tab-segment.is-active,
-.workspace-tab:hover .workspace-tab-segment.is-active,
-.workspace-tab:focus-within .workspace-tab-segment.is-active {
-  color: var(--text-strong);
-}
-
-.workspace-tab.active .workspace-tab-segment.is-active {
-  font-weight: 500;
-}
-
-.workspace-tab:hover .workspace-tab-segment,
-.workspace-tab:focus-within .workspace-tab-segment {
-  color: var(--text-soft);
-}
-
-.workspace-tab-segment + .workspace-tab-segment::before {
-  width: 1px;
-  height: 12px;
-  flex: 0 0 auto;
-  margin: 0 var(--space-2);
-  background: var(--border-subtle);
-  content: "";
-}
-
-.workspace-tab-segment-icon {
-  display: inline-flex;
-  width: var(--workspace-tab-icon-slot);
-  height: var(--workspace-tab-icon-slot);
-  flex: 0 0 var(--workspace-tab-icon-slot);
-  align-items: center;
-  justify-content: center;
-  color: currentColor;
-  opacity: 0.72;
-}
-
-.workspace-tab-node-icon {
-  font-size: var(--font-ui-sm);
-  line-height: var(--workspace-tab-icon-slot);
-}
-
-.workspace-tab-bullet {
-  background: transparent;
-}
-
-.workspace-tab-bullet::before {
-  width: 5px;
-  height: 5px;
-  border-radius: var(--radius-pill);
-  background: currentColor;
-  content: "";
-}
-
-.workspace-tab-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-tab-close {
-  display: inline-flex;
-  width: var(--workspace-tab-close-size);
-  height: var(--workspace-tab-close-size);
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-control-xs);
-  color: var(--text-faint);
-  opacity: 0;
-  transition: background var(--motion-fast), color var(--motion-fast), opacity var(--motion-fast);
-}
-
-.workspace-tab:hover .workspace-tab-close,
-.workspace-tab.active .workspace-tab-close,
-.workspace-tab-close:focus-visible {
-  opacity: 1;
-}
-
-.workspace-tab-close:hover {
-  background: var(--control-hover);
-  color: var(--text-strong);
-}
-
-.add-tab-button {
-  margin-left: 2px;
-}
-
-.app-shell {
-  display: grid;
-  min-height: 0;
-  flex: 1;
-  grid-template-areas: "sidebar canvas agent";
-  grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--agent-width);
-  column-gap: var(--shell-gap);
-  row-gap: 0;
-  background: var(--deck-bg);
-  padding: var(--shell-padding-top) var(--shell-padding-x) var(--shell-padding-bottom);
-  transition: grid-template-columns var(--motion-layout);
-}
-
-.app-shell.sidebar-collapsed {
-  grid-template-areas: "canvas agent";
-  grid-template-columns: minmax(0, 1fr) var(--agent-width);
-}
-
-.app-shell.agent-collapsed {
-  grid-template-areas: "sidebar canvas";
-  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
-}
-
-.app-shell.sidebar-collapsed.agent-collapsed {
-  grid-template-areas: "canvas";
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.sidebar-dock,
-.agent-dock {
-  min-width: 0;
-  background: var(--deck-bg);
-}
-
-/* OS window material (macOS vibrancy / Windows mica). Content panels stay opaque
-   for readability; only the chrome turns translucent. The frost lives on the two
-   non-overlapping regions — the title bar and the content deck — while the layers
-   above and below them go transparent, so translucency never stacks (stacked
-   alpha would compound to near-opaque and hide the material). */
-:root[data-window-material],
-[data-window-material] .app,
-[data-window-material] .sidebar-dock,
-[data-window-material] .agent-dock {
-  background: transparent;
-}
-
-[data-window-material] .top-chrome,
-[data-window-material] .app-shell {
-  background: var(--window-material-frost);
-}
-
-.app-shell.sidebar-collapsed .sidebar-dock,
-.app-shell.agent-collapsed .agent-dock {
-  display: none;
-  overflow: hidden;
-  visibility: hidden;
-}
-

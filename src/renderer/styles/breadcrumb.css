@@ -1,3 +1,6 @@
+/* The per-pane breadcrumb is the canonical pane header now that the global one is
+   gone. It is sticky against .main-panel and doubles as a window drag region (the
+   top strip). Interactive controls inside opt back out with no-drag below. */
 .panel-sticky-breadcrumb {
   position: sticky;
   z-index: var(--z-raised);
@@ -6,47 +9,68 @@
   min-width: 0;
   min-height: calc(var(--panel-content-top) + var(--control-size-md));
   align-items: center;
-  grid-template-columns: var(--row-leading-width) minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-2);
   margin: 0 0 calc(var(--space-lg) + var(--space-2));
-  background: var(--surface);
+  background: var(--bg-content);
   padding:
     var(--panel-content-top)
     var(--panel-content-x)
     0
     calc(var(--panel-content-x) - var(--row-chevron-width) - var(--row-chevron-gap));
+  -webkit-app-region: drag;
+}
+
+/* The first pane's breadcrumb clears the traffic lights + sidebar toggle when the
+   sidebar is collapsed (the content base reaches the left window edge there). */
+.app.sidebar-collapsed .workspace-canvas .outline-panel-surface:first-of-type .panel-sticky-breadcrumb {
+  padding-left: calc(var(--traffic-light-x) + 3 * var(--traffic-light-size) + 2 * var(--space-4) + 2 * var(--space-5) + var(--chrome-control-height));
+}
+
+/* The last pane's breadcrumb clears the fixed agent toggle (top-right corner)
+   when the agent rail is collapsed to its seed. */
+.app:not(.agent-open) .workspace-canvas .outline-panel-surface:last-of-type .panel-sticky-breadcrumb {
+  padding-right: calc(var(--layout-gap) + var(--space-3) + var(--chrome-control-height) + var(--space-3));
+}
+
+/* Interactive breadcrumb controls must remain clickable inside the drag region. */
+.panel-page-back-button,
+.panel-breadcrumb-origin,
+.panel-breadcrumb-button,
+.panel-breadcrumb-ellipsis,
+.panel-page-forward-button,
+.outline-panel-close {
+  -webkit-app-region: no-drag;
 }
 
 .panel-breadcrumb-leading {
-  display: grid;
-  width: var(--row-leading-width);
+  display: inline-flex;
   height: var(--control-size-md);
-  grid-template-columns:
-    var(--row-chevron-width)
-    var(--row-chevron-gap)
-    var(--row-bullet-width)
-    var(--row-content-gap);
   align-items: center;
+  gap: var(--space-1);
 }
 
-.panel-page-back-button {
+.panel-page-back-button,
+.panel-page-forward-button {
   display: inline-flex;
   width: var(--control-size-md);
   height: var(--control-size-md);
-  grid-column: 1;
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-control-xs);
   color: color-mix(in srgb, var(--text) 42%, transparent);
-  justify-self: center;
 }
 
 .panel-page-back-button:hover:not(:disabled),
-.panel-page-back-button:focus-visible:not(:disabled) {
+.panel-page-back-button:focus-visible:not(:disabled),
+.panel-page-forward-button:hover:not(:disabled),
+.panel-page-forward-button:focus-visible:not(:disabled) {
   background: var(--control-hover);
   color: var(--text);
 }
 
-.panel-page-back-button:disabled {
+.panel-page-back-button:disabled,
+.panel-page-forward-button:disabled {
   color: var(--text-disabled);
   cursor: default;
 }
