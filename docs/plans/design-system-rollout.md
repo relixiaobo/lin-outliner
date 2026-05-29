@@ -51,75 +51,71 @@ spec as it lands (per the plans convention: a done plan's substance lives in
 
 ## Staged delivery
 
-Ordered by dependency. Each phase is one (or a small stack of) Draft PR(s) on a
-`cc/<topic>` branch.
+**Phase 1 (token foundation) shipped in #55.** What remains is split into **two
+parallel tracks that both depend only on Phase 1 and are otherwise independent**,
+so they can run concurrently on separate clones. The original linear "chrome →
+component → shell" order was mis-scoped: the #55 review showed dark depends on
+component theme-awareness (not the token layer), and rail material + the theme
+toggle depend on the shell — so the work regroups by dependency, not by concept.
 
-### Phase 1 — Token foundation (CSS-only; light active, dark gated)
-- Introduce `--ink` + the semantic text/fill/separator/surface/material/accent/
-  status tokens; define the dark palette (flip `--ink` + a few per-theme literals).
-- **Dark is GATED, not auto-activated.** The dark block keys off
-  `:root[data-theme='dark']`, *not* `@media (prefers-color-scheme: dark)`, and
-  `color-scheme` stays `light` by default. Reason: the component layer
-  (`outliner.css` + ~60 hardcoded glass/material `rgba()` in `styles.css`) is not
-  theme-aware yet, so auto-dark on an OS-dark machine would be a broken half-dark
-  regression. Light is the only active theme this phase ships.
-- Map every legacy alias (`--deck-bg`, `--panel-bg`, `--text-main`, …) onto the
-  semantic layer so components work unchanged. `--primary` stays a deprecated
-  alias (still → accent); its usages are NOT yet neutralized here.
-- **Why defer `--primary` neutralization to Phase 3:** recolouring buttons/active
-  rows changes light visuals. Phase 1 lays the layer; Phase 3 flips functional
-  state to neutral and deletes the alias.
-- Live-token audit: classify each existing token as foundation / component-private
-  / delete (the `--tab-*` set dies with the global tab strip in Phase 4).
-- Verify: `bun run typecheck`, build, light renders normally, dark stays inert
-  (no auto-activation on OS-dark).
+Coordination boundary (the one shared file): **Track A owns the `styles.css`
+token block + component colour usages + `outliner.css`; Track B owns the shell
+layout CSS + the rail rules.** Avoid both editing the same rule; rebase on each
+merge. Convergence points: Track B's rail material (B4) consumes Track A's
+theme-aware tokens, and B5's theme toggle surfaces Track A's dark — whichever
+lands first, the other rebases onto it.
 
-> The dark-mode *target* (auto via `prefers-color-scheme` + nativeTheme override,
-> as `design-system.md` describes) is reached only after Phase 3 makes components
-> theme-aware. Until then dark is reachable only by explicitly setting
-> `data-theme="dark"` (dev / Phase 2 plumbing), never automatically.
+### Phase 1 — Token foundation ✅ (shipped, #55)
+`--ink` + the semantic layer; legacy aliases re-pointed; dark palette defined but
+**gated** behind `:root[data-theme='dark']` (not auto-activated — `color-scheme:
+light` default). `--primary` kept as a deprecated alias. Light renders normally;
+dark is inert until Track A un-gates it.
 
-### Phase 2 — Chrome / material
-- `main.ts`: `vibrancy: 'sidebar'` + transparent `backgroundColor`; wire
-  `nativeTheme.themeSource` + a persisted theme preference (task #45). While dark
-  is still gated (pre-Phase-3), the toggle drives the `data-theme` gate; the
-  target wiring (themeSource → renderer `prefers-color-scheme`) lands when the
-  gate is removed in Phase 3.
-- `prefers-reduced-transparency` fallback: materials collapse to opaque seeds.
-- NOTE: per-rail `--material-*` tints + `backdrop-filter` presuppose the floating
-  rails, which are built in Phase 4 — so rail tinting moves there; Phase 2 does
-  the window-level material + theme plumbing only.
-- Verify: light unaffected; reduced-transparency degrades cleanly.
+---
 
-### Phase 3 — Component migration (neutral functional + overlay taxonomy)
-- Make selection/hover/active/primary buttons neutral everywhere (kill residual
-  rose/blue); confirm sparse rose only on links/caret/brand marks/status.
-- **Delete the `--primary` alias** (deprecated in Phase 1): migrate every
-  `--primary` / `--primary-soft` / `--primary-hover` / `--outline-primary` usage
-  to the neutral `--fill-*` ladder + `--focus-ring`, and re-point
-  `--inline-ref-*` off `--semantic-info` (blue) to `--link` (rose). See the
-  Outliner impact notes.
-- Apply the material-vs-overlay tiers: `MenuSurface` → `--material-popover`;
-  `Dialog`/command palette → opaque `--bg-elevated`; clean up overlay borders.
-- **Make the components theme-aware and UN-GATE dark.** Migrate `outliner.css` +
-  the hardcoded glass/material `rgba()` in `styles.css` to the alpha-on-ink layer
-  so dark is fully legible, then switch the gate from `[data-theme='dark']` to the
-  target (`@media (prefers-color-scheme: dark)` + nativeTheme override) — this is
-  what makes dark safe to ship.
-- Light/dark screenshot matrix for outliner, panels, overlays, agent.
+### Track A — Component correctness → dark  (CSS/token sweeps; `cc/<topic>`)
 
-### Phase 4 — Shell / layout redesign (the big React restructure)
-- `App.tsx`: full-height floating sidebar + agent rails over a full-bleed content
-  base; content panes flush with 1px `--separator` (resize handle).
-- `TopBar.tsx`: dissolve into the single top strip of per-pane breadcrumb headers
-  + symmetric fixed rail toggles (sidebar top-left / agent top-right).
-- Remove the global tab strip (sidebar becomes the switcher) and Back/Forward.
-- Agent dock: right rail toggled by the fixed top-right control; header (`✦` +
-  title) in the top strip.
-- Traffic lights: `titleBarStyle` + `trafficLightPosition` aligned to the top
-  strip via shared geometry constants; handle sidebar-collapse reflow.
-- Verify: single / split / agent-open states; collapse; light + dark; keyboard
-  parity; no regression in outliner editing.
+One coherent migration **per surface** (single-touch: each surface PR does both
+neutralization *and* theme-awareness, since both are just "use the token layer").
+Dark stays gated until A5; each PR is verified in light + via the dev `data-theme`
+gate in dark.
+
+- **A1 — outliner.css** (#: the biggest surface): `--primary*` → neutral
+  `--fill-*`/`--focus-ring`; hardcoded `rgba()` glass/text → alpha-on-ink tokens;
+  inline-ref `--semantic-info` (blue) → `--link` (rose). Keep the row grid /
+  editing model untouched.
+- **A2 — agent surfaces**: chat/composer/message/tool CSS → token layer; neutral
+  functional state.
+- **A3 — menus / overlays / dialogs + primitives**: overlay taxonomy
+  (`MenuSurface` → `--material-popover`; `Dialog`/palette → `--bg-elevated`);
+  migrate primitive control CSS.
+- **A4 — remaining `styles.css` hardcoded `rgba()` + fields/definition-config**;
+  then **delete the `--primary` alias** once no usage remains.
+- **A5 — un-gate dark + window material**: switch the gate from
+  `[data-theme='dark']` to the target (`@media (prefers-color-scheme: dark)` +
+  nativeTheme override); `main.ts` `vibrancy: 'sidebar'` + transparent
+  `backgroundColor`; `prefers-reduced-transparency` fallback. Full light/dark
+  screenshot matrix. **Deliverable: dark mode ships (follows OS).**
+
+### Track B — Shell restructure → identity  (React; separate clone, e.g. `cc-2/` or `anti/`)
+
+The big `App.tsx` / `TopBar.tsx` restructure to the floating-rails shell.
+
+- **B1 — shell scaffold**: full-bleed opaque content base + floating sidebar &
+  agent rails (rounded, inset, soft `--shadow-rail`); panes flush with 1px
+  `--separator` + drag divider.
+- **B2 — top strip**: dissolve `TopBar` into per-pane breadcrumb headers + the two
+  symmetric fixed rail toggles on the shared centreline; remove the global tab
+  strip (sidebar becomes the switcher) and Back/Forward.
+- **B3 — agent dock + window chrome**: right rail toggled top-right with the
+  agent-seed unfurl interaction; traffic-light geometry via shared constants;
+  sidebar-collapsed chrome anchoring.
+- **B4 — rail material**: per-rail `--material-*` tint + `backdrop-filter`
+  (`--material-blur`/`--material-saturate`) + `rail-edge`; reduced-transparency on
+  rails. (Consumes Track A's theme-aware tokens.)
+- **B5 — theme toggle home**: `nativeTheme.themeSource` + persisted preference +
+  the light/dark/system control in the new sidebar Settings (task #45).
+  **Deliverable: the floating-rails identity + in-app theme switch.**
 
 ## Outliner impact (migration notes)
 
@@ -130,7 +126,7 @@ field rows, reference semantics, the keyboard model, and multi-select/drag are a
 untouched (multi-select drag and field-value `Enter` are separate feature tasks,
 not design-system work). Row radius `5px`, row height, and padding stay.
 
-Concrete migrations the outliner needs (mostly Phase 3, recolour only):
+Concrete migrations the outliner needs (Track A / A1, recolour + theme-aware):
 
 - **Inline references go blue → rose.** Today `--inline-ref-default: var(--semantic-info)`
   (blue) in `styles.css`. The spec allows exactly one link colour: rose `--link`
@@ -149,7 +145,7 @@ Concrete migrations the outliner needs (mostly Phase 3, recolour only):
   (chevron, row controls) switch to colour-only feedback; no `cursor: pointer` on
   rows (inline references are real links and may keep the pointer).
 
-Structural reframe (Phase 4 — changes the outliner's *frame*, not its tree):
+Structural reframe (Track B — changes the outliner's *frame*, not its tree):
 
 - The per-pane **breadcrumb header relocates into the single top strip**; the
   outliner's internal tree layout is unchanged but its header/container placement
@@ -164,6 +160,13 @@ Structural reframe (Phase 4 — changes the outliner's *frame*, not its tree):
 
 - Touches `App.tsx`, `TopBar.tsx`, `styles.css`, `main.ts`. Does **not** touch
   `src/core/types.ts` or `commands.ts` (no protocol change).
-- Phase 4 is a large restructure — keep it isolated from token/material PRs.
-- This file is added to `docs/plans/README.md` (a coordination-owned index);
-  flag that addition for the main agent.
+- **Two-track parallelism (the shared file is `styles.css`).** Track A edits the
+  token block + component colour usages + `outliner.css`; Track B edits shell
+  layout + rail rules. They should not edit the same CSS rule; whoever merges
+  first, the other rebases. Track B is a large React restructure — keep it
+  isolated from Track A's token sweeps.
+- Suggested ownership: **Track A → `cc/`** (owns the token layer from #55, and the
+  dark un-gate is the critical path); **Track B → a separate clone** (`cc-2/` or
+  `anti/`) so the two run concurrently. Main agent assigns + sequences merges.
+- `docs/plans/README.md` index row for this plan landed with #55 (coordination
+  file).
