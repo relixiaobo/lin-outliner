@@ -7,7 +7,8 @@ export const MAC_TRAFFIC_LIGHT_POSITION = {
 
 // Custom window corner radius (points), applied natively on macOS via the
 // window_corner addon (src/main/nativeWindowCorner.ts) which overrides the
-// window's _cornerMask. The addon renders Apple's continuous (squircle) curve,
-// so this matches Raycast's window corner (measured ~20pt) rather than a tighter
-// circular arc. Adjust to taste; this single value drives the corner + shadow.
-export const MAC_WINDOW_CORNER_RADIUS = 22;
+// window's _cornerMask. Circular-arc mask tuned so the visible corner matches
+// Raycast's window (a circular arc reads a touch tighter than Raycast's
+// continuous curve, so the radius runs a bit larger). Adjust to taste; this
+// single value drives the corner + shadow.
+export const MAC_WINDOW_CORNER_RADIUS = 28;
