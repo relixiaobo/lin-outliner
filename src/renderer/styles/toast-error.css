@@ -1,0 +1,32 @@
+.error {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: var(--z-toast);
+  display: grid;
+  max-width: 480px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-5);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  color: var(--danger);
+  padding: var(--space-5) var(--space-6);
+  font-size: var(--font-ui-sm);
+}
+
+.error-close-button {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  color: var(--muted);
+}
+
+.error-close-button:hover {
+  background: var(--row-hover);
+  color: var(--text);
+}

@@ -1,0 +1,81 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  background: var(--overlay-backdrop);
+  padding-top: 12vh;
+}
+
+.command-palette {
+  position: relative;
+  width: min(600px, calc(100vw - 32px));
+  overflow: hidden;
+  padding: 0;
+}
+
+.command-input {
+  width: 100%;
+  height: 40px;
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--font-ui-md);
+  padding: 0 var(--space-8);
+}
+
+.command-input::placeholder,
+.row-input::placeholder {
+  color: var(--muted-2);
+}
+
+.command-list {
+  max-height: 360px;
+  overflow: auto;
+  padding: var(--space-3);
+}
+
+.command-action-bar {
+  display: flex;
+  height: 40px;
+  align-items: center;
+  justify-content: flex-end;
+  border-top: 1px solid var(--border-subtle);
+  padding: 0 var(--space-6);
+}
+
+.command-action-button {
+  display: inline-flex;
+  height: 26px;
+  align-items: center;
+  gap: var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: var(--font-meta);
+  padding: 0 var(--space-3);
+  transition: background var(--motion-fast), color var(--motion-fast);
+}
+
+.command-action-button:hover {
+  background: var(--row-hover);
+  color: var(--text);
+}
+
+.kbd {
+  display: inline-flex;
+  min-width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: rgba(26, 26, 26, 0.04);
+  color: var(--muted-2);
+  font-size: var(--font-ui-xs);
+  font-weight: 500;
+  padding: 0 var(--space-2);
+}
+

@@ -1,0 +1,62 @@
+@keyframes agent-caret {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes agent-capsule {
+  0%,
+  100% {
+    opacity: 0.35;
+    filter: brightness(0.94);
+    transform: scaleY(0.94);
+  }
+  50% {
+    opacity: 1;
+    filter: brightness(1.06);
+    transform: scaleY(1);
+  }
+}
+
+@keyframes agent-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.agent-placeholder {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  color: rgba(0, 0, 0, 0.18);
+  font-size: var(--font-content);
+  font-weight: 500;
+}
+
+.agent-input-placeholder {
+  display: flex;
+  height: 34px;
+  flex: 0 0 34px;
+  align-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control-md);
+  color: var(--text-disabled);
+  font-size: var(--font-ui-sm);
+  margin-bottom: 0;
+  padding: 0 var(--space-6);
+}
+
+.loading-panel {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+

@@ -1,0 +1,297 @@
+/* Code surfaces — the agent transcript block and the outliner code row share
+   one look. Only the functional differences diverge: the agent block is a
+   read-only, bounded-height <pre>; the outliner row is an editable textarea
+   layered over a Shiki highlight layer with a language <select>. */
+.agent-code-block {
+  overflow: hidden;
+  margin: var(--space-1) 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+}
+
+.outliner-image {
+  margin: var(--space-1) 0;
+  user-select: none;
+}
+
+.outliner-image-frame {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  line-height: 0;
+}
+
+.outliner-image-el {
+  display: block;
+  max-width: min(100%, 720px);
+  height: auto;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  cursor: zoom-in;
+}
+
+/* Hidden until the image is hovered, then three independent, background-less
+   icon buttons (same grammar as the chrome icon buttons): each gains a
+   `--control-hover` fill only on its own hover/focus — no shared pill. */
+.outliner-image-toolbar {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  display: flex;
+  gap: var(--space-1);
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+  line-height: 1;
+}
+
+.outliner-image-frame:hover .outliner-image-toolbar,
+.outliner-image-toolbar:focus-within {
+  opacity: 1;
+}
+
+.outliner-image-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-size-lg);
+  height: var(--control-size-lg);
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  transition: background var(--motion-fast), color var(--motion-fast);
+}
+
+.outliner-image-tool:hover {
+  background: var(--control-hover);
+  color: var(--text-main);
+}
+
+.outliner-image-tool:focus-visible {
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.outliner-image--missing {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: var(--font-meta);
+}
+
+.outliner-image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4vmin;
+  background: var(--overlay-backdrop-strong);
+  cursor: zoom-out;
+  outline: none;
+}
+
+.outliner-image-lightbox-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: var(--radius-md);
+  box-shadow: var(--overlay-shadow-level-2);
+}
+
+/* Block nodes (image today; attachments / embeds later) replace the row's text
+   editor with a focusable, caret-less body. Their caption is the node's
+   `description`, added on demand via the hover toolbar and rendered below as
+   `.node-description`. The shell shows a neutral focus ring on keyboard focus
+   so arrow-key navigation reads as landing on the block. */
+.block-node-row {
+  display: block;
+  outline: none;
+}
+
+.block-node-row:focus-visible .outliner-image-el {
+  border-color: var(--focus-border);
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.code-block {
+  overflow: hidden;
+  margin: var(--space-1) 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+}
+
+.agent-code-header,
+.code-block-chrome {
+  display: flex;
+  height: var(--control-size-xl);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 0 var(--space-3) 0 var(--space-4);
+  color: var(--text-soft);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
+
+.agent-code-copy,
+.code-block-copy {
+  display: inline-flex;
+  width: var(--control-size-md);
+  height: var(--control-size-md);
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-faint);
+}
+
+/* Quiet icon button: hover deepens the icon color rather than adding a fill. */
+.agent-code-copy:hover:not(:disabled),
+.code-block-copy:hover:not(:disabled) {
+  color: var(--text-strong);
+}
+
+.agent-code-copy:disabled,
+.code-block-copy:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+/* Compact language trigger: the chevron sits right next to the label, with no
+   resting fill, so hover only deepens the text/icon color. */
+.code-block-language {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-family: var(--font-family-sans);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  color: var(--text-soft);
+  background: transparent;
+  border: 0;
+  padding: var(--space-1) 0;
+}
+
+.code-block-language svg {
+  color: var(--text-faint);
+}
+
+.code-block-language:hover:not(:disabled),
+.code-block-language[aria-expanded="true"] {
+  color: var(--text-strong);
+}
+
+.code-block-language:hover:not(:disabled) svg,
+.code-block-language[aria-expanded="true"] svg {
+  color: var(--text-soft);
+}
+
+.code-block-language-menu {
+  z-index: var(--z-popover);
+  min-width: 160px;
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  padding: var(--space-2);
+  overflow-y: auto;
+}
+
+.code-block-language-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-control-md);
+  color: var(--text-soft);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm-tight);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+}
+
+.code-block-language-item:hover,
+.code-block-language-item.is-selected {
+  background: var(--control-hover);
+  color: var(--surface-inverse);
+}
+
+.code-block-language-check {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+}
+
+/* Shared code text metrics across every text-bearing surface. */
+.agent-code-block pre,
+.code-block-sizer,
+.code-block-highlight pre.shiki,
+.code-block-textarea {
+  margin: 0;
+  padding: var(--space-4) var(--space-5);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-code-block);
+  line-height: var(--line-code-block);
+  white-space: pre;
+  tab-size: 2;
+  border: 0;
+}
+
+.agent-code-block pre.shiki,
+.code-block-highlight pre.shiki {
+  background: transparent !important;
+}
+
+/* Agent transcript code is read-only and scrolls within a bounded height. */
+.agent-code-block pre {
+  max-height: 280px;
+  overflow: auto;
+  color: var(--text-strong);
+}
+
+/* Outliner code rows are editable: a transparent textarea over the highlight
+   layer, sized by a hidden <pre> so the height stays exact while Shiki resolves. */
+.code-block-editor {
+  position: relative;
+}
+
+.code-block-sizer {
+  visibility: hidden;
+  pointer-events: none;
+  overflow: hidden;
+  min-height: var(--line-code-block);
+}
+
+.code-block-highlight {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.code-block-highlight pre.shiki {
+  color: var(--text-strong);
+}
+
+.code-block-textarea {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  resize: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text-strong);
+  outline: none;
+}
+

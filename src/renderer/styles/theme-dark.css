@@ -1,0 +1,40 @@
+/* Dark appearance — GATED, not auto-activated. This block only takes effect when
+   something sets data-theme="dark" on <html>; it deliberately does NOT key off
+   @media (prefers-color-scheme: dark), so an OS-dark machine stays on the
+   (complete) light theme until the component layer is theme-aware (Phase 3) and
+   Phase 2 wires nativeTheme.themeSource → data-theme. Only the per-theme literals
+   change here — every alpha-on-ink token above (text, fills, separators,
+   outlines, selection) inverts for free when --ink flips to white. Elevated
+   surfaces are LIGHTER than content so floating surfaces still read as elevated. */
+:root[data-theme='dark'] {
+    color-scheme: dark;
+    --ink: 255 255 255;
+
+    --separator-opaque: #3a3a3c;
+
+    --bg-window: #2a2a2c;
+    --bg-content: #1e1e1e;
+    --bg-elevated: #2e2e30;
+
+    --material-sidebar: rgba(40, 40, 42, 0.55);
+    --material-popover: rgba(48, 48, 50, 0.72);
+    --rail-edge: rgb(var(--ink) / 0.12);
+    --shadow-rail: 0 8px 26px -8px rgba(0, 0, 0, 0.60), 0 1px 3px rgba(0, 0, 0, 0.40);
+
+    /* brand + status nudged up for legibility on dark */
+    --accent: #ff5d76;
+    --accent-strong: #ff7088;
+    --status-info: #5aa0e0;
+
+    /* inverse chips invert (dark-on-light in light → light-on-dark here) */
+    --surface-inverse: #e6e6ea;
+    --surface-inverse-strong: #f4f4f6;
+
+    /* drop shadows deepen so elevation still reads on a dark backdrop */
+    --overlay-shadow-level-1: 0 8px 22px -12px rgba(0, 0, 0, 0.55), 0 2px 8px -4px rgba(0, 0, 0, 0.40);
+    --overlay-shadow-level-2: 0 18px 50px -20px rgba(0, 0, 0, 0.60), 0 6px 18px -10px rgba(0, 0, 0, 0.45);
+
+    --overlay-backdrop: rgba(0, 0, 0, 0.45);
+    --overlay-backdrop-strong: rgba(0, 0, 0, 0.88);
+}
+

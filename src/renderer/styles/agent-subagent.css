@@ -1,0 +1,540 @@
+.agent-subagent-running-button {
+  display: inline-flex;
+  height: 28px;
+  min-width: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  padding: 0 var(--space-3);
+}
+
+.agent-subagent-running-button:hover,
+.agent-subagent-running-button:focus-visible {
+  background: var(--control-hover);
+  color: var(--text-strong);
+}
+
+.agent-subagent-inline {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.agent-subagent-meta-grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  margin: 0;
+}
+
+.agent-subagent-meta-grid > div {
+  min-width: 0;
+}
+
+.agent-subagent-meta-grid dt,
+.agent-subagent-metadata dt {
+  color: var(--text-faint);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
+
+.agent-subagent-meta-grid dd,
+.agent-subagent-metadata dd {
+  min-width: 0;
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.agent-subagent-inline-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.agent-subagent-transcript-button,
+.agent-subagent-small-button {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  padding: 0 var(--space-3);
+}
+
+.agent-subagent-transcript-button:hover:not(:disabled),
+.agent-subagent-small-button:hover:not(:disabled) {
+  background: var(--control-hover);
+  color: var(--text-strong);
+}
+
+.agent-subagent-transcript-button:disabled,
+.agent-subagent-small-button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.agent-subagent-details-panel {
+  position: absolute;
+  z-index: var(--z-popover);
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  width: min(540px, 100%);
+  min-width: 0;
+  flex-direction: column;
+  border-left: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface) 96%, white);
+  box-shadow: var(--agent-side-panel-shadow);
+}
+
+.agent-subagent-details-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-5);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: var(--space-7) var(--space-7) var(--space-6);
+}
+
+.agent-subagent-title-block {
+  min-width: 0;
+}
+
+.agent-subagent-title-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-faint);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
+
+.agent-subagent-title-block h3 {
+  margin: var(--space-3) 0 var(--space-2);
+  overflow-wrap: anywhere;
+  color: var(--text-strong);
+  font-size: var(--font-heading-sm);
+  line-height: var(--line-heading-sm);
+}
+
+.agent-subagent-title-block p {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.agent-subagent-status {
+  display: inline-flex;
+  min-height: 20px;
+  align-items: center;
+  border-radius: var(--radius-sm);
+  background: var(--control-bg);
+  color: var(--text-soft);
+  padding: 0 var(--space-2);
+}
+
+.agent-subagent-status.is-running {
+  background: color-mix(in srgb, var(--agent-accent) 12%, transparent);
+  color: var(--agent-accent);
+}
+
+.agent-subagent-status.is-completed {
+  background: color-mix(in srgb, var(--semantic-success) 12%, transparent);
+  color: var(--semantic-success-strong);
+}
+
+.agent-subagent-status.is-failed,
+.agent-subagent-status.is-stopped {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+}
+
+.agent-subagent-close {
+  flex: 0 0 auto;
+}
+
+.agent-subagent-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: var(--space-4) var(--space-7);
+}
+
+.agent-subagent-tab {
+  min-height: 28px;
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  padding: 0 var(--space-4);
+}
+
+.agent-subagent-tab:hover,
+.agent-subagent-tab:focus-visible,
+.agent-subagent-tab.is-active {
+  background: var(--control-hover);
+  color: var(--text-strong);
+}
+
+.agent-subagent-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: var(--space-5) var(--space-7);
+}
+
+.agent-subagent-followup {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-4);
+  align-items: end;
+}
+
+.agent-subagent-followup textarea {
+  min-width: 0;
+  resize: vertical;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--text-body);
+  font: inherit;
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  max-height: 140px;
+  min-height: 42px;
+  padding: var(--space-3) var(--space-4);
+}
+
+.agent-subagent-followup textarea:focus {
+  border-color: color-mix(in srgb, var(--agent-accent) 44%, var(--border-subtle));
+  outline: none;
+}
+
+.agent-subagent-followup textarea:disabled {
+  background: var(--surface-soft);
+  color: var(--text-disabled);
+}
+
+.agent-subagent-action-buttons {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.agent-subagent-send-button,
+.agent-subagent-stop-button {
+  min-height: 30px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  padding: 0 var(--space-5);
+}
+
+.agent-subagent-send-button {
+  background: var(--text-strong);
+  color: var(--surface);
+}
+
+.agent-subagent-stop-button {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+}
+
+.agent-subagent-send-button:hover:not(:disabled),
+.agent-subagent-stop-button:hover:not(:disabled) {
+  filter: brightness(0.96);
+}
+
+.agent-subagent-send-button:disabled,
+.agent-subagent-stop-button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.agent-subagent-action-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--danger);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.agent-subagent-details-body {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: var(--space-6) var(--space-7) var(--space-8);
+}
+
+.agent-subagent-empty {
+  display: flex;
+  min-height: 140px;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.agent-subagent-empty.is-error {
+  color: var(--danger);
+}
+
+.agent-subagent-transcript-list {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.agent-subagent-transcript-message {
+  min-width: 0;
+  border-left: 2px solid var(--border-subtle);
+  padding-left: var(--space-5);
+}
+
+.agent-subagent-transcript-message.is-user {
+  border-left-color: var(--agent-accent);
+}
+
+.agent-subagent-transcript-message.is-assistant {
+  border-left-color: var(--text-faint);
+}
+
+.agent-subagent-transcript-message.is-system {
+  border-left-color: var(--border-strong);
+}
+
+.agent-subagent-transcript-message.is-tool-result {
+  border-left-color: var(--semantic-warning);
+}
+
+.agent-subagent-transcript-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+  color: var(--text-faint);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  text-transform: lowercase;
+}
+
+.agent-subagent-assistant-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.agent-subagent-thinking {
+  min-width: 0;
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+
+.agent-subagent-thinking pre,
+.agent-subagent-transcript-message.is-tool-result pre,
+.agent-subagent-result-box pre {
+  max-height: 280px;
+  overflow: auto;
+  margin: var(--space-3) 0 0;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  white-space: pre-wrap;
+}
+
+.agent-subagent-image-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.agent-subagent-image-list img {
+  max-width: min(240px, 100%);
+  max-height: 180px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  object-fit: contain;
+}
+
+.agent-subagent-result-box {
+  position: relative;
+  min-width: 0;
+}
+
+.agent-subagent-result-actions {
+  position: sticky;
+  top: 0;
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-3);
+}
+
+.agent-subagent-metadata {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(96px, max-content) minmax(0, 1fr);
+  gap: var(--space-4) var(--space-6);
+  margin: 0;
+}
+
+.agent-subagent-metadata > div {
+  display: contents;
+}
+
+@media (max-width: 720px) {
+  .agent-subagent-followup {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .agent-subagent-action-buttons {
+    justify-content: flex-end;
+  }
+}
+
+.agent-tool-persisted-output {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.agent-tool-persisted-meta,
+.agent-tool-persisted-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.agent-tool-persisted-meta span {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-tool-persisted-meta small,
+.agent-tool-persisted-actions small {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.agent-tool-persisted-actions small.is-error {
+  color: var(--danger);
+}
+
+.agent-tool-persisted-load {
+  display: inline-flex;
+  height: 24px;
+  align-items: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  padding: 0 var(--space-3);
+}
+
+.agent-tool-persisted-load:hover:not(:disabled) {
+  background: var(--control-hover);
+  color: var(--text-strong);
+}
+
+.agent-tool-persisted-load:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.agent-tool-persisted-output pre {
+  max-height: 280px;
+  content-visibility: auto;
+}
+
+/* Highlighted JSON for tool input/output. The bordered container matches the
+   outliner code block; the Shiki <pre> inside owns scrolling and code metrics. */
+.agent-tool-code {
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+}
+
+.agent-tool-code pre.shiki {
+  margin: 0;
+  padding: var(--space-4) var(--space-5);
+  max-height: 280px;
+  overflow: auto;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-code-block);
+  line-height: var(--line-code-block);
+  white-space: pre;
+  tab-size: 2;
+  background: transparent !important;
+  color: var(--text-strong);
+}
+
+.agent-tool-image-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin: var(--space-2) 0 0 20px;
+}
+
+.agent-tool-image-list a {
+  display: block;
+  overflow: hidden;
+  max-width: min(100%, 420px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.agent-tool-image-list img {
+  display: block;
+  max-width: 100%;
+  max-height: 260px;
+}
+
+.agent-tool-image-placeholder {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  padding: var(--space-1) 0;
+}
+

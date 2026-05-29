@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { windowSurfaceFromSearch } from '../core/settingsWindow';
 import { App } from './ui/App';
 import { SettingsWindow } from './ui/SettingsWindow';
-import './styles.css';
+import './styles/index.css';
 import './styles/outliner.css';
 
 // The same bundle serves the main window and the dedicated settings window; the

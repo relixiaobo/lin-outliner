@@ -1,0 +1,27 @@
+.inline-ref {
+  display: inline;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  color: var(--inline-ref-accent, var(--inline-ref-default));
+  font-weight: inherit;
+  padding: 0 var(--space-hairline);
+  text-decoration: none;
+}
+
+.inline-ref:hover {
+  color: var(--inline-ref-hover-accent, var(--inline-ref-accent, var(--inline-ref-hover)));
+  cursor: pointer;
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.12em;
+}
+
+.inline-ref.ProseMirror-selectednode {
+  border-radius: var(--radius-control-xs);
+  background: var(--row-selection-frame-bg);
+  box-shadow: var(--inline-ref-selection-shadow);
+}
+
+
