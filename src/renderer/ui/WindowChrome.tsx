@@ -38,19 +38,16 @@ const chromeStyle: ChromeStyle = {
 };
 
 // Persistent, fixed window chrome that survives the dissolved TopBar:
-//  • a top-left drag strip that reserves the traffic-light inset (the lights are
-//    OS-drawn; this just keeps them clear of content and provides the drag region)
 //  • the sidebar toggle (top-left, beside the lights)
 //  • the agent toggle (top-right corner)
 // Both toggles are window chrome anchored to the window, not the rails — they
 // stay put when a rail collapses. Toggles signal hover by colour, not a fill.
+// Window dragging is provided by the per-pane breadcrumb headers and the sidebar
+// rail-top (both -webkit-app-region: drag) — NOT a full-width overlay here, which
+// would sit on top of these no-drag toggles and have the OS swallow their clicks.
 export function WindowChrome(props: WindowChromeProps) {
   return (
     <div className="window-chrome" style={chromeStyle}>
-      {/* Drag strip across the whole top: the only -webkit-app-region:drag host at
-          App root. Interactive controls below opt back out with no-drag. */}
-      <div className="window-chrome-drag" data-electron-drag-region="deep" aria-hidden="true" />
-
       <IconButton
         className="rail-toggle sidebar-toggle"
         icon={props.sidebarOpen ? SidebarCollapseIcon : SidebarExpandIcon}

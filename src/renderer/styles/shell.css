@@ -41,14 +41,9 @@
   pointer-events: none; /* only the explicit children below catch events */
 }
 
-/* Top-left → top-right drag strip. The ONLY -webkit-app-region:drag host at App
-   root now that TopBar is gone; rail tops + pane headers add more drag regions. */
-.window-chrome-drag {
-  position: absolute;
-  inset: 0;
-  height: var(--chrome-height);
-  -webkit-app-region: drag;
-}
+/* Window dragging is NOT a full-width overlay here — that would sit on top of the
+   no-drag toggles and have macOS swallow their clicks. Drag is provided by the
+   per-pane breadcrumb headers + the sidebar rail-top (both app-region: drag). */
 
 /* Two symmetric fixed rail toggles on the traffic-light centreline. Icon controls
    signal hover by COLOUR, not a fill background. They are window chrome anchored
@@ -79,10 +74,11 @@
   box-shadow: var(--focus-ring-shadow);
 }
 
-/* sidebar toggle sits just right of the traffic lights (lights span
-   x .. x + 3*size + 2*8 ≈ 66, then a gap). */
+/* sidebar toggle sits right of the traffic lights. The lights span
+   x .. x + 3*size + 2 inter-light gaps; we then clear them by --space-8 (16px) —
+   comfortably MORE than the ~8px gap between the lights themselves. */
 .sidebar-toggle {
-  left: calc(var(--traffic-light-x) + 3 * var(--traffic-light-size) + 2 * var(--space-4) + var(--space-5));
+  left: calc(var(--traffic-light-x) + 3 * var(--traffic-light-size) + 2 * var(--space-4) + var(--space-8));
 }
 
 /* agent toggle pinned to the top-right corner with an equal corner margin
