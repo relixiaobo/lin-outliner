@@ -1,0 +1,156 @@
+---
+status: draft
+priority: P1
+owner: relixiaobo
+created: 2026-05-28
+updated: 2026-05-28
+---
+
+# Design System Rollout (two-theme · materials · shell redesign)
+
+## Why this plan exists
+
+`docs/spec/design-system.md` was upgraded to describe the **target design
+language**: a two-theme alpha-on-ink token system, a Liquid-Glass-inspired
+material layer (approximated in Electron), neutral functional state with sparse
+rose brand, and a floating-rails shell (full-height sidebar + per-pane headers +
+no global tab strip + right-side agent toggle).
+
+That document is the design contract; it intentionally describes the system as
+designed, not what each release ships. **This plan tracks the gap to current code
+and stages the work** so the spec and the code converge without the spec becoming
+an implementation tracker. (Origin: a Codex review flagged that landing the whole
+target into a `spec/` file at once would make the spec describe unbuilt behavior.)
+
+Related: [`native-feel-remediation.md`](native-feel-remediation.md) — overlapping
+native-feel work; the main agent should reconcile any duplicate scope on merge.
+
+## Current state (the gap)
+
+Measured on the `cc/native-sidebar-vibrancy` branch:
+
+- `styles.css` has **no `--ink`** / no alpha-on-ink semantic layer. It has
+  `color-scheme: light dark` and a first-pass dark `@media` palette that is *not*
+  the `--ink` system, plus the legacy light tokens. Font stack leads with
+  `-apple-system` but still includes Inter as a fallback.
+- `main.ts` has a conditional `vibrancy: 'sidebar'` behind a `material` flag, but
+  **no `nativeTheme.themeSource`** (no in-app light/dark/system toggle).
+- Shell is still the old model: a full-width top chrome with a **global tab
+  strip** and **Back/Forward**; sidebar and agent are flat grid columns, not
+  floating rails; panes are card-ish, not flush hairline columns.
+- `--primary` is a live rose alias used by many action/active/focus surfaces.
+- Live tokens exist that the design doc doesn't enumerate (`--tab-*`,
+  `--scrollbar-thumb`, `--panel-content-*`, `--inline-ref-*`,
+  `--agent-side-panel-shadow`, `--overlay-backdrop`, `--font-ui-3xs`, …).
+
+## Target
+
+`docs/spec/design-system.md` in full. Each phase below folds its slice into the
+spec as it lands (per the plans convention: a done plan's substance lives in
+`spec/`).
+
+## Staged delivery
+
+Ordered by dependency. Each phase is one (or a small stack of) Draft PR(s) on a
+`cc/<topic>` branch.
+
+### Phase 1 — Token foundation (CSS-only, light-mode unchanged)
+- Introduce `--ink` + the semantic text/fill/separator/surface/material/accent/
+  status tokens; replace the first-pass dark palette with the proper
+  `@media (prefers-color-scheme: dark)` block that just flips `--ink` + the
+  per-theme literals.
+- Map every legacy alias (`--deck-bg`, `--panel-bg`, `--text-main`, …) onto the
+  semantic layer so the app looks **identical in light mode** and gains correct
+  dark mode for free. `--primary` is kept as a deprecated alias for now (still →
+  accent) and clearly marked — its usages are NOT yet neutralized here.
+- **Why defer `--primary` neutralization to Phase 3:** deleting the alias and
+  recolouring buttons/active rows would change light-mode visuals, which breaks
+  this phase's "light unchanged" guarantee. Phase 1 lays the layer; Phase 3
+  (component migration) flips functional state to neutral and deletes the alias.
+- Live-token audit: classify each existing token as foundation / component-private
+  / delete (the `--tab-*` set dies with the global tab strip in Phase 4).
+- Enforce the alpha-on-ink validity boundary and token discipline via
+  `tests/e2e/typography-tokens.spec.ts` (extend it).
+- Verify: `bun run typecheck`, token test, light-mode pixel-unchanged, dark mode
+  legible.
+
+### Phase 2 — Chrome / material
+- `main.ts`: real `vibrancy` + transparent `backgroundColor` for the material
+  window; wire `nativeTheme.themeSource` so the in-app light/dark/system control
+  drives the renderer's `prefers-color-scheme` (task #45).
+- Rail material tints (`--material-*`), `backdrop-filter` on the rails only.
+- `prefers-reduced-transparency` fallback: materials collapse to opaque seeds.
+- Verify: dark mode follows OS + in-app toggle; reduced-transparency degrades
+  cleanly; reduced-motion respected.
+
+### Phase 3 — Component migration (neutral functional + overlay taxonomy)
+- Make selection/hover/active/primary buttons neutral everywhere (kill residual
+  rose/blue); confirm sparse rose only on links/caret/brand marks/status.
+- **Delete the `--primary` alias** (deprecated in Phase 1): migrate every
+  `--primary` / `--primary-soft` / `--primary-hover` / `--outline-primary` usage
+  to the neutral `--fill-*` ladder + `--focus-ring`, and re-point
+  `--inline-ref-*` off `--semantic-info` (blue) to `--link` (rose). See the
+  Outliner impact notes.
+- Apply the material-vs-overlay tiers: `MenuSurface` → `--material-popover`;
+  `Dialog`/command palette → opaque `--bg-elevated`; clean up overlay borders.
+- Light/dark screenshot matrix for outliner, panels, overlays, agent.
+
+### Phase 4 — Shell / layout redesign (the big React restructure)
+- `App.tsx`: full-height floating sidebar + agent rails over a full-bleed content
+  base; content panes flush with 1px `--separator` (resize handle).
+- `TopBar.tsx`: dissolve into the single top strip of per-pane breadcrumb headers
+  + symmetric fixed rail toggles (sidebar top-left / agent top-right).
+- Remove the global tab strip (sidebar becomes the switcher) and Back/Forward.
+- Agent dock: right rail toggled by the fixed top-right control; header (`✦` +
+  title) in the top strip.
+- Traffic lights: `titleBarStyle` + `trafficLightPosition` aligned to the top
+  strip via shared geometry constants; handle sidebar-collapse reflow.
+- Verify: single / split / agent-open states; collapse; light + dark; keyboard
+  parity; no regression in outliner editing.
+
+## Outliner impact (migration notes)
+
+The design system reskins the outliner's **colour + outer frame**; it does **not**
+change the editing model or internal interactions. Node/tree model, the row grid
+(`15/4/15/8`, `42px` leading), indentation, bullet/chevron, triggers (`/ # >`),
+field rows, reference semantics, the keyboard model, and multi-select/drag are all
+untouched (multi-select drag and field-value `Enter` are separate feature tasks,
+not design-system work). Row radius `5px`, row height, and padding stay.
+
+Concrete migrations the outliner needs (mostly Phase 3, recolour only):
+
+- **Inline references go blue → rose.** Today `--inline-ref-default: var(--semantic-info)`
+  (blue) in `styles.css`. The spec allows exactly one link colour: rose `--link`
+  (or the first-supertag colour). Re-point `--inline-ref-*` off `--semantic-info`.
+  This is the most visible outliner change.
+- **Rose `--primary*` leaks go neutral.** `src/renderer/styles/outliner.css` uses
+  `--primary` / `--primary-soft` / `--primary-hover` / `--outline-primary` in
+  several spots (definition-config, field surfaces, drop-target indicators, etc.).
+  Migrate each to the neutral `--fill-*` ladder + `--focus-ring`; some faint-rose
+  fills/borders become grey. Done as part of deleting the `--primary` alias.
+- **Row selection is already neutral** (`--row-selection-bg → --row-selected`,
+  border `text 18%`) — verify it stays neutral; no blue/rose selection.
+- **Dark mode** must be verified for the outliner specifically (alpha-on-ink
+  inverts automatically, but it was never visually checked in dark before).
+- **Hover/cursor discipline:** rows keep fill-on-hover; icon affordances
+  (chevron, row controls) switch to colour-only feedback; no `cursor: pointer` on
+  rows (inline references are real links and may keep the pointer).
+
+Structural reframe (Phase 4 — changes the outliner's *frame*, not its tree):
+
+- The per-pane **breadcrumb header relocates into the single top strip**; the
+  outliner's internal tree layout is unchanged but its header/container placement
+  moves. Sticky-breadcrumb + title-dock behaviour is preserved.
+- Panes become the flush opaque content base **under** the floating rails; outliner
+  content gains padding to clear the rails; 1px `--separator` + drag divider
+  between panes.
+- Top-strip **Back/Forward is removed**; in-pane page history stays, driven by
+  breadcrumb path segments (existing interaction).
+
+## Coordination / risk notes
+
+- Touches `App.tsx`, `TopBar.tsx`, `styles.css`, `main.ts`. Does **not** touch
+  `src/core/types.ts` or `commands.ts` (no protocol change).
+- Phase 4 is a large restructure — keep it isolated from token/material PRs.
+- This file is added to `docs/plans/README.md` (a coordination-owned index);
+  flag that addition for the main agent.

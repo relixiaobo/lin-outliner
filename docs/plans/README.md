@@ -47,6 +47,7 @@ items above.
 | [`keyboard-shortcut-parity.md`](keyboard-shortcut-parity.md) | done | P2 | Nodex shortcut audit completed; remaining gaps shipped for empty-selection Cmd+A, go-to-today, nav-history keys, and selected option-reference menu navigation. |
 | [`agent-reversible-execution.md`](agent-reversible-execution.md) | draft | P0 | Reversibility-first foundation for agent permissions: a checkpoint/undo engine + a single `reversible ⇒ allow, else ask` rule that shrinks `agent-permissions.md`'s matrix and replaces pre-approval with approve-after undo. |
 | [`native-feel-remediation.md`](native-feel-remediation.md) | in-progress | P1 | Make the Electron app feel native (macOS + Windows) without leaving Electron. 6 stages: security shell (#43), startup/window (#45), cursor/font + material (#46, #47), native interactions — dialogs + settings window (#48, #49), IPC tracing + incremental core (#50, #52) and renderer perf (#54) shipped; packaging/smoke (stage 6) remains. |
+| [`design-system-rollout.md`](design-system-rollout.md) | draft | P1 | Stage the design-system.md target into code: two-theme alpha-on-ink tokens + dark mode, Electron material/vibrancy + nativeTheme toggle, neutral-functional component migration, and the floating-rails shell redesign (full-height sidebar, per-pane headers, no global tabs, right-side agent toggle). |
 | [`nodex-parity-decisions.md`](nodex-parity-decisions.md) | meta | — | Catalog of nodex features we explicitly will not port and why. |
 
 ## Working Rules
