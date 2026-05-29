@@ -7,8 +7,9 @@ import { fileURLToPath } from 'node:url';
 import { DocumentService } from './documentService';
 import { AssetService } from './assetService';
 import { AgentRuntime } from './agentRuntime';
-import { MAC_TRAFFIC_LIGHT_POSITION } from '../core/chromeGeometry';
+import { MAC_TRAFFIC_LIGHT_POSITION, MAC_WINDOW_CORNER_RADIUS } from '../core/chromeGeometry';
 import { windowMaterialKind } from '../core/windowMaterial';
+import { applyMacWindowCorner } from './nativeWindowCorner';
 import { LIN_SETTINGS_CHANGED_CHANNEL, WINDOW_SURFACE_QUERY_PARAM } from '../core/settingsWindow';
 import { ASSET_URL_SCHEME } from '../core/assets';
 import { LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput } from '../core/types';
@@ -189,6 +190,12 @@ function createWindow() {
     backgroundColor: material ? '#00000000' : '#f7f6f1',
     ...(material === 'vibrancy' ? { vibrancy: 'under-window' as const } : {}),
     ...(material === 'mica' ? { backgroundMaterial: 'mica' as const } : {}),
+    // Standard window: hiddenInset keeps the native traffic lights (the OS draws
+    // and manages close/minimize/zoom — focus graying, ⌥-zoom, real fullscreen —
+    // exactly like Raycast, which repositions standardWindowButton rather than
+    // self-drawing). The corner radius is set on the window's *native* corner by
+    // the window_corner addon below (see applyMacWindowCorner), so the OS still
+    // owns the corner clip + shadow and the native chrome is preserved.
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: MAC_TRAFFIC_LIGHT_POSITION,
     webPreferences: {
@@ -203,7 +210,23 @@ function createWindow() {
   hardenWebContents(mainWindow.webContents);
   trackWindowState(mainWindow);
 
-  mainWindow.once('ready-to-show', () => mainWindow?.show());
+  // Custom window corner via the native window_corner addon (no-op off macOS /
+  // if unbuilt): it sets MAC_WINDOW_CORNER_RADIUS on the window's native corner
+  // (macOS 26 reads the private _cornerRadius selectors; older macOS the
+  // _cornerMask) so the standard window keeps its native traffic lights, OS
+  // shadow, and vibrancy. Apply once before show (so the first paint is already
+  // rounded, no default-corner flash) and again on ready-to-show; drop to 0 in
+  // fullscreen, where a rounded corner would clip content into empty triangles.
+  applyMacWindowCorner(mainWindow, MAC_WINDOW_CORNER_RADIUS);
+  mainWindow.once('ready-to-show', () => {
+    if (!mainWindow) return;
+    applyMacWindowCorner(mainWindow, MAC_WINDOW_CORNER_RADIUS);
+    mainWindow.show();
+  });
+  mainWindow.on('enter-full-screen', () => mainWindow && applyMacWindowCorner(mainWindow, 0));
+  mainWindow.on('leave-full-screen', () =>
+    mainWindow && applyMacWindowCorner(mainWindow, MAC_WINDOW_CORNER_RADIUS),
+  );
 
   if (RENDERER_DEV_URL) {
     void mainWindow.loadURL(RENDERER_DEV_URL);

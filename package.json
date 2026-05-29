@@ -16,7 +16,8 @@
     "preview": "vite preview",
     "app:dev": "electron-vite dev",
     "renderer:dev": "vite --host 127.0.0.1",
-    "app:build": "electron-vite build && electron-builder",
+    "build:native": "node-gyp rebuild --directory=native/window-corner --runtime=electron --target=$(node -p \"require('electron/package.json').version\") --dist-url=https://electronjs.org/headers",
+    "app:build": "bun run build:native && electron-vite build && electron-builder",
     "typecheck": "tsc --noEmit",
     "test:core": "bun test --path-ignore-patterns 'tmp/**' tests/core",
     "test:renderer": "bun test --path-ignore-patterns 'tmp/**' tests/renderer",
@@ -66,6 +67,12 @@
     "files": [
       "out/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "native/window-corner/build/Release/window_corner.node",
+        "to": "native/window_corner.node"
+      }
     ],
     "mac": {
       "target": "dmg",

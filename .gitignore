@@ -6,6 +6,7 @@ target
 test-results
 playwright-report
 scripts/.out/
+native/**/build/
 tmp/
 .DS_Store
 *.log
