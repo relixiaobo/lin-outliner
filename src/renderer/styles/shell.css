@@ -79,6 +79,13 @@
   color: var(--text-primary);
 }
 
+/* Pressed reads stronger than hover — neutral fill ladder's --fill-4, per
+   design-system.md's control state spec (rest → hover --fill-2 → pressed --fill-4). */
+.rail-toggle:active {
+  background: var(--fill-4);
+  color: var(--text-primary);
+}
+
 .rail-toggle:focus-visible {
   box-shadow: var(--focus-ring-shadow);
 }
