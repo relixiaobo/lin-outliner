@@ -193,8 +193,9 @@ function createWindow() {
     // Standard window: hiddenInset keeps the native traffic lights (the OS draws
     // and manages close/minimize/zoom — focus graying, ⌥-zoom, real fullscreen —
     // exactly like Raycast, which repositions standardWindowButton rather than
-    // self-drawing). The window corner + shadow are the OS's own; we do not chase
-    // a custom radius (that path fights the platform and breaks native chrome).
+    // self-drawing). The corner radius is set on the window's *native* corner by
+    // the window_corner addon below (see applyMacWindowCorner), so the OS still
+    // owns the corner clip + shadow and the native chrome is preserved.
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: MAC_TRAFFIC_LIGHT_POSITION,
     webPreferences: {
