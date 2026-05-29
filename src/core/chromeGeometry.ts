@@ -11,4 +11,4 @@ export const MAC_TRAFFIC_LIGHT_POSITION = {
 // Raycast's window (a circular arc reads a touch tighter than Raycast's
 // continuous curve, so the radius runs a bit larger). Adjust to taste; this
 // single value drives the corner + shadow.
-export const MAC_WINDOW_CORNER_RADIUS = 28;
+export const MAC_WINDOW_CORNER_RADIUS = 80;
