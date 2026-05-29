@@ -223,14 +223,14 @@
   height: 7px;
   overflow: hidden;
   border-radius: var(--radius-pill);
-  background: rgba(0, 0, 0, 0.075);
+  background: var(--fill-2);
   margin: var(--space-5) 0 var(--space-4);
 }
 
 .agent-debug-token-bar-fill {
   height: 100%;
   border-radius: inherit;
-  background: var(--primary);
+  background: var(--fill-4);
 }
 
 .agent-debug-stat-row {
@@ -256,7 +256,7 @@
   overflow: auto;
   margin: 0;
   border-radius: var(--radius-control-md);
-  background: rgba(0, 0, 0, 0.035);
+  background: var(--fill-1);
   color: var(--text-strong);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: var(--font-ui-xs);
@@ -272,7 +272,7 @@
   flex-direction: column;
   gap: var(--space-3);
   border-radius: var(--radius-control-md);
-  background: rgba(0, 0, 0, 0.025);
+  background: var(--fill-1);
   padding: var(--space-4);
 }
 
@@ -319,7 +319,7 @@
   cursor: help;
   font-weight: 650;
   outline: none;
-  text-decoration: underline dotted rgba(0, 0, 0, 0.24);
+  text-decoration: underline dotted var(--text-tertiary);
   text-underline-offset: 3px;
 }
 
@@ -331,7 +331,7 @@
   width: max-content;
   max-width: 260px;
   border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.98);
+  background: var(--material-popover);
   box-shadow: var(--shadow);
   color: var(--text-soft);
   content: attr(data-tooltip);
@@ -359,7 +359,7 @@
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-pill);
-  background: rgba(0, 0, 0, 0.055);
+  background: var(--fill-1);
   color: var(--text-soft);
   font-size: var(--font-ui-xs);
   font-weight: 600;
@@ -369,19 +369,19 @@
 }
 
 .agent-debug-status-pill.is-running {
-  background: color-mix(in srgb, var(--primary) 12%, transparent);
-  color: color-mix(in srgb, var(--primary) 78%, var(--text-strong));
+  background: var(--fill-2);
+  color: var(--text-secondary);
 }
 
 .agent-debug-status-pill.is-completed {
-  background: rgba(80, 160, 112, 0.12);
+  background: color-mix(in srgb, var(--status-success) 12%, transparent);
   color: var(--semantic-success-strong);
 }
 
 .agent-debug-status-pill.is-error,
 .agent-debug-status-pill.is-aborted,
 .agent-debug-status-pill.is-interrupted {
-  background: rgba(244, 63, 94, 0.12);
+  background: color-mix(in srgb, var(--status-danger) 12%, transparent);
   color: var(--danger);
 }
 
@@ -500,7 +500,7 @@
 }
 
 .agent-debug-round-meta .agent-debug-status-pill.is-running {
-  color: color-mix(in srgb, var(--primary) 78%, var(--text-strong));
+  color: var(--text-secondary);
 }
 
 .agent-debug-round-meta .agent-debug-status-pill.is-completed {
@@ -619,9 +619,9 @@
 }
 
 .agent-debug-error {
-  border: 1px solid rgba(170, 80, 72, 0.22);
+  border: 1px solid color-mix(in srgb, var(--status-danger-muted) 22%, transparent);
   border-radius: var(--radius-md);
-  background: rgba(170, 80, 72, 0.075);
+  background: color-mix(in srgb, var(--status-danger-muted) 7.5%, transparent);
   color: var(--danger);
   font-size: var(--font-meta);
   line-height: var(--line-meta);

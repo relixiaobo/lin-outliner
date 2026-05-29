@@ -25,7 +25,7 @@ button.panel-resize-handle::after {
   width: var(--resize-pill-width);
   height: var(--resize-pill-height);
   border-radius: var(--radius-pill);
-  background: rgba(0, 0, 0, 0.28);
+  background: var(--text-tertiary);
   content: "";
   cursor: var(--resize-cursor);
   opacity: 0;
@@ -48,7 +48,7 @@ button.panel-resize-handle::after {
 .panel-resize-handle:hover::after,
 .panel-resize-handle:focus-visible::after,
 .panel-resize-handle.is-resizing::after {
-  background: rgba(0, 0, 0, 0.34);
+  background: var(--text-tertiary);
 }
 
 .sidebar-resize-handle {

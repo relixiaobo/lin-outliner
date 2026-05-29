@@ -57,7 +57,7 @@
   min-height: 34px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.44);
+  background: var(--material-popover);
   color: var(--text-soft);
   font-size: var(--font-ui-sm);
   line-height: var(--line-meta);
@@ -66,7 +66,7 @@
 }
 
 .agent-suggestion:hover {
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--material-popover);
   color: var(--text-strong);
 }
 

@@ -26,7 +26,7 @@
   max-height: 128px;
   overflow: auto;
   border-radius: var(--radius-md);
-  background: rgba(222, 223, 226, 0.72);
+  background: var(--fill-3);
   color: var(--text-strong);
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
@@ -38,19 +38,19 @@
 .agent-composer-surface {
   position: relative;
   border-radius: var(--agent-composer-radius);
-  background: rgba(255, 255, 255, 0.62);
+  background: var(--material-sidebar);
   box-shadow: var(--outline-faint);
   padding: var(--space-4) var(--agent-composer-corner-inset) var(--agent-composer-corner-inset);
   transition: background var(--motion-fast), box-shadow var(--motion-fast);
 }
 
 .agent-composer-surface:focus-within {
-  background: rgba(255, 255, 255, 0.82);
+  background: var(--material-popover);
   box-shadow: var(--outline-focus);
 }
 
 .agent-composer-surface:hover {
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--material-popover);
 }
 
 .agent-composer-surface.is-streaming {
@@ -58,8 +58,8 @@
 }
 
 .agent-composer-surface.is-dragging {
-  background: rgba(255, 255, 255, 0.78);
-  box-shadow: var(--outline-primary-strong);
+  background: var(--material-popover);
+  box-shadow: var(--outline-focus);
 }
 
 .agent-composer-surface.is-streaming:focus-within {
@@ -73,9 +73,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px dashed color-mix(in srgb, var(--primary) 52%, var(--border));
+  border: 1px dashed var(--drop-line);
   border-radius: var(--radius-control-lg);
-  background: rgba(247, 246, 241, 0.88);
+  background: var(--bg-window);
   color: var(--text-soft);
   font-size: var(--font-ui-sm);
   font-weight: 500;
@@ -84,7 +84,7 @@
 
 .agent-composer-error {
   margin: 0 2px var(--space-4);
-  color: var(--semantic-danger-muted);
+  color: var(--status-danger-muted);
   font-size: var(--font-meta);
   line-height: var(--line-meta-tight);
 }
@@ -140,7 +140,7 @@
   flex-direction: column;
   gap: var(--space-3);
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--surface-2) 72%, transparent);
+  background: var(--fill-2);
   padding: var(--space-4);
 }
 
@@ -170,7 +170,7 @@
 }
 
 .agent-approval-button:not(.is-primary) {
-  background: color-mix(in srgb, var(--surface-2) 62%, transparent);
+  background: var(--fill-2);
 }
 
 .agent-approval-button:not(.is-primary):hover:not(:disabled) {
@@ -238,7 +238,7 @@
   gap: var(--space-3);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-control-lg);
-  background: rgba(255, 255, 255, 0.64);
+  background: var(--fill-2);
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
 }
 
@@ -251,7 +251,7 @@
   justify-content: center;
   overflow: hidden;
   border-radius: var(--radius-control-md);
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--fill-1);
   color: var(--text-soft);
 }
 

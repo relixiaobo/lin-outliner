@@ -62,9 +62,9 @@
 }
 
 .agent-markdown a {
-  color: color-mix(in srgb, var(--primary) 78%, var(--text-strong));
+  color: var(--link);
   text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, var(--primary) 34%, transparent);
+  text-decoration-color: color-mix(in srgb, var(--link) 34%, transparent);
   text-underline-offset: 2px;
 }
 
@@ -87,7 +87,7 @@
   background: var(--inline-code-bg);
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
-  color: var(--primary-muted-text);
+  color: var(--text-primary);
   font-family: var(--font-family-mono);
   font-size: var(--font-code-inline);
   line-height: var(--line-code-inline);

@@ -55,13 +55,19 @@
 }
 
 .confirm-dialog-confirm {
-  background: var(--primary);
+  background: var(--fill-3);
   border-color: transparent;
-  color: #ffffff;
+  color: var(--text-primary);
 }
 
+.confirm-dialog-confirm:hover:not(:disabled) {
+  background: var(--fill-4);
+}
+
+/* destructive confirm is the rare justified colour button — genuine status red */
 .confirm-dialog-confirm.is-danger {
-  background: var(--danger);
+  background: var(--status-danger);
+  color: var(--text-on-accent);
 }
 
 .confirm-dialog-cancel:focus-visible,

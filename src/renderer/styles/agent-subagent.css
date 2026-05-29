@@ -215,7 +215,7 @@
   resize: vertical;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--bg-elevated);
   color: var(--text-body);
   font: inherit;
   font-size: var(--font-ui-sm);
@@ -519,7 +519,7 @@
   max-width: min(100%, 420px);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.42);
+  background: var(--fill-2);
 }
 
 .agent-tool-image-list img {

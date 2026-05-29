@@ -28,7 +28,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-control-md);
   outline: none;
-  background: rgba(255, 255, 255, 0.56);
+  background: var(--fill-2);
   color: var(--text-strong);
   font-size: var(--font-ui-sm);
   padding: 0 var(--space-6);
@@ -37,7 +37,7 @@
 .agent-settings-field input:focus,
 .agent-settings-field select:focus {
   border-color: var(--focus-border);
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--fill-3);
 }
 
 .agent-settings-key-row {
@@ -46,7 +46,7 @@
   gap: var(--space-4);
   border: 1px solid var(--border);
   border-radius: var(--radius-control-md);
-  background: rgba(255, 255, 255, 0.56);
+  background: var(--fill-2);
   color: var(--text-soft);
   padding-left: var(--space-5);
   padding-right: var(--space-2);
@@ -54,7 +54,7 @@
 
 .agent-settings-key-row:focus-within {
   border-color: var(--focus-border);
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--fill-3);
 }
 
 .agent-settings-key-row input {
@@ -96,8 +96,8 @@
 }
 
 .agent-settings-checkbox:hover .checkbox-mark:not(.checked) {
-  border-color: color-mix(in srgb, var(--text) 42%, transparent);
-  background: color-mix(in srgb, var(--text) 5%, transparent);
+  border-color: var(--text-secondary);
+  background: var(--fill-1);
 }
 
 .agent-settings-checkbox:focus-within .checkbox-mark {
@@ -117,7 +117,7 @@
   justify-content: center;
   gap: var(--space-hairline);
   border-radius: var(--radius-control-md);
-  background: rgba(255, 255, 255, 0.34);
+  background: var(--fill-1);
   padding: 0 var(--space-6);
 }
 
@@ -137,7 +137,7 @@
 
 .agent-settings-model-placeholder {
   border-radius: var(--radius-control-md);
-  background: rgba(255, 255, 255, 0.34);
+  background: var(--fill-1);
   color: var(--muted-2);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
@@ -149,7 +149,7 @@
   align-items: center;
   gap: var(--space-4);
   border-radius: var(--radius-control-md);
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  background: var(--status-danger-muted);
   color: var(--danger);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
@@ -189,7 +189,7 @@
 }
 
 .agent-settings-danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  background: var(--status-danger-muted);
 }
 
 .agent-settings-primary:disabled,

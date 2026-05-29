@@ -4,7 +4,7 @@
   margin-top: var(--space-4);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-control-md);
-  background: rgba(0, 0, 0, 0.015);
+  background: var(--fill-1);
   overflow: hidden;
 }
 
@@ -63,15 +63,15 @@
 }
 
 .connection-test-feedback.is-success {
-  background: color-mix(in srgb, var(--semantic-success) 8%, transparent);
-  color: var(--semantic-success-strong);
-  border: 1px solid color-mix(in srgb, var(--semantic-success) 20%, transparent);
+  background: color-mix(in srgb, var(--status-success) 8%, transparent);
+  color: var(--status-success-strong);
+  border: 1px solid color-mix(in srgb, var(--status-success) 20%, transparent);
 }
 
 .connection-test-feedback.is-error {
-  background: color-mix(in srgb, var(--accent-danger) 8%, transparent);
-  color: var(--accent-danger);
-  border: 1px solid color-mix(in srgb, var(--accent-danger) 20%, transparent);
+  background: color-mix(in srgb, var(--status-danger) 8%, transparent);
+  color: var(--status-danger);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 20%, transparent);
 }
 
 .feedback-text {

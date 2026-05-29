@@ -19,7 +19,7 @@
 }
 
 .agent-markdown th {
-  background: rgba(0, 0, 0, 0.035);
+  background: var(--fill-1);
   font-weight: 600;
 }
 
@@ -190,7 +190,7 @@
   height: 14px;
   margin-left: 2px;
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--primary) 82%, transparent);
+  background: color-mix(in srgb, var(--caret) 82%, transparent);
   vertical-align: -2px;
   animation: agent-caret 950ms ease-in-out infinite;
 }
@@ -206,7 +206,7 @@
   width: 6px;
   height: 14px;
   border-radius: var(--radius-pill);
-  background: var(--primary);
+  background: var(--accent);
   transform-origin: center;
   animation: agent-capsule 1.35s ease-in-out infinite;
 }
@@ -287,7 +287,7 @@
   margin: var(--space-1) 0 0 20px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.36);
+  background: var(--fill-2);
   padding: var(--space-5) var(--space-6);
 }
 

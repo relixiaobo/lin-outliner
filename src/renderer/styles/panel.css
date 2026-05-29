@@ -37,7 +37,7 @@
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-control-md);
-  background: rgba(26, 26, 26, 0.04);
+  background: var(--fill-1);
   color: var(--muted-2);
   margin-top: 1px;
   mix-blend-mode: multiply;
@@ -229,11 +229,11 @@
 }
 
 .calendar-month-day.is-outside-month {
-  color: color-mix(in srgb, var(--muted-2) 42%, transparent);
+  color: var(--text-tertiary);
 }
 
 .calendar-month-day.is-in-range:not(.is-selected) {
-  background: color-mix(in srgb, var(--text-main) 8%, transparent);
+  background: var(--fill-2);
   border-radius: var(--radius-control-md);
 }
 
@@ -246,19 +246,19 @@
 }
 
 .panel-date-calendar-day.note-density-1:not(.is-selected) {
-  background: rgba(9, 9, 11, 0.032);
+  background: var(--fill-1);
 }
 
 .panel-date-calendar-day.note-density-2:not(.is-selected) {
-  background: rgba(9, 9, 11, 0.055);
+  background: var(--fill-2);
 }
 
 .panel-date-calendar-day.note-density-3:not(.is-selected) {
-  background: rgba(9, 9, 11, 0.082);
+  background: var(--fill-3);
 }
 
 .panel-date-calendar-day.note-density-4:not(.is-selected) {
-  background: rgba(9, 9, 11, 0.11);
+  background: var(--fill-4);
 }
 
 .panel-date-calendar-day.has-note-count:hover:not(.is-selected),

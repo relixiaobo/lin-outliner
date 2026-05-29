@@ -103,6 +103,9 @@
   --accent-strong: #e11d48;
   --link: var(--accent);
   --caret: var(--accent);
+  /* foreground for text/glyphs sitting on a saturated accent or status fill;
+     stays white in both themes because those fills never invert */
+  --text-on-accent: #ffffff;
 
   /* status — genuine semantic state only, never interactive meaning */
   --status-success: #3f9e6a;
@@ -279,9 +282,9 @@
   --muted: var(--text-secondary);
   --muted-2: var(--text-tertiary);
   --text: var(--text-primary);
-  /* --inline-ref-default stays blue until Phase 3 re-points it to --link (rose) */
-  --inline-ref-default: var(--semantic-info);
-  --inline-ref-hover: color-mix(in srgb, var(--semantic-info) 78%, var(--text));
+  /* the one link colour — rose (design-system.md: exactly one link colour) */
+  --inline-ref-default: var(--link);
+  --inline-ref-hover: color-mix(in srgb, var(--link) 78%, var(--text));
   --primary: var(--accent);
   --primary-hover: var(--accent-strong);
   --primary-soft: color-mix(in srgb, var(--accent) 9%, transparent);

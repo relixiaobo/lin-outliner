@@ -34,7 +34,7 @@
   flex: 1;
   align-items: center;
   justify-content: center;
-  color: rgba(0, 0, 0, 0.18);
+  color: var(--text-quaternary);
   font-size: var(--font-content);
   font-weight: 500;
 }

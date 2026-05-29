@@ -33,7 +33,7 @@
 .popover-item.active,
 .command-item:hover,
 .command-item.active {
-  background: var(--primary-soft);
+  background: var(--fill-2);
   color: var(--text);
 }
 

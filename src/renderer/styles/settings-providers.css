@@ -21,7 +21,7 @@
 }
 
 .settings-nav-item.is-active {
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--fill-3);
   color: var(--text-strong);
 }
 
@@ -78,19 +78,19 @@
   height: 32px;
   border: 1px solid var(--border);
   border-radius: var(--radius-control-md);
-  background: rgba(255, 255, 255, 0.56);
+  background: var(--fill-2);
   color: var(--text-soft);
 }
 
 .settings-provider-add:hover {
   border-color: var(--focus-border);
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--fill-3);
   color: var(--text-strong);
 }
 
 .settings-provider-add.is-active {
   border-color: var(--focus-border);
-  background: color-mix(in srgb, var(--text) 9%, transparent);
+  background: var(--fill-3);
   color: var(--text-strong);
 }
 
@@ -103,14 +103,14 @@
   height: 32px;
   border: 1px solid var(--border);
   border-radius: var(--radius-control-md);
-  background: rgba(255, 255, 255, 0.56);
+  background: var(--fill-2);
   color: var(--muted-2);
   padding: 0 var(--space-4);
 }
 
 .settings-provider-search:focus-within {
   border-color: var(--focus-border);
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--fill-3);
 }
 
 .settings-provider-search > svg {
@@ -162,7 +162,7 @@
 }
 
 .settings-provider-row.is-selected {
-  background: color-mix(in srgb, var(--text) 9%, transparent);
+  background: var(--selection-bg);
 }
 
 .settings-provider-avatar {
@@ -186,7 +186,7 @@
 }
 
 .settings-provider-avatar.has-logo {
-  background: #fff;
+  background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
 }
 
@@ -290,8 +290,8 @@
 }
 
 .settings-provider-badge.is-active {
-  background: color-mix(in srgb, var(--primary) 16%, transparent);
-  color: color-mix(in srgb, var(--primary) 82%, var(--text-strong));
+  background: var(--fill-3);
+  color: var(--text-primary);
 }
 
 .settings-provider-empty {
@@ -346,7 +346,7 @@
   flex: 0 0 auto;
   align-items: center;
   gap: var(--space-2);
-  color: var(--primary);
+  color: var(--link);
   cursor: pointer;
   font-size: var(--font-ui-2xs);
   line-height: var(--line-ui-2xs);
@@ -357,7 +357,7 @@
 }
 
 .agent-settings-doc-link.is-danger {
-  color: var(--danger, #c0392b);
+  color: var(--status-danger);
 }
 
 .agent-settings-doc-link:disabled {
@@ -440,14 +440,14 @@
   height: 30px;
   border: 1px solid var(--border);
   border-radius: var(--radius-control-md);
-  background: rgba(255, 255, 255, 0.56);
+  background: var(--fill-2);
   color: var(--muted-2);
   padding: 0 var(--space-3) 0 var(--space-4);
 }
 
 .settings-model-search:focus-within {
   border-color: var(--focus-border);
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--fill-3);
 }
 
 .settings-model-search > svg {
