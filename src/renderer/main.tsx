@@ -3,12 +3,16 @@ import ReactDOM from 'react-dom/client';
 import { windowSurfaceFromSearch } from '../core/settingsWindow';
 import { App } from './ui/App';
 import { SettingsWindow } from './ui/SettingsWindow';
+import { initTheme } from './theme';
 import './styles/index.css';
 import './styles/outliner.css';
 
 // The same bundle serves the main window and the dedicated settings window; the
 // surface is selected by a ?surface= query param the main process sets.
 const surface = windowSurfaceFromSearch(window.location.search);
+
+// Follow the OS colour scheme (dark/light) on both surfaces.
+initTheme();
 
 // Mark the document with the active OS window material so chrome surfaces turn
 // translucent in the first painted frame (no opaque -> frosted flash). Only the

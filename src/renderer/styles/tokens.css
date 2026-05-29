@@ -46,12 +46,11 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  /* Light by default. Dark is defined below but GATED behind [data-theme="dark"]
-     so it never auto-activates on an OS-dark machine — the component layer
-     (outliner.css + hardcoded glass/material rgba) is not theme-aware yet, so
-     auto-dark would be a broken half-dark regression. Phase 2 sets data-theme
-     via nativeTheme.themeSource; dark only becomes user-facing once Phase 3
-     migrates the components. */
+  /* Light is the base palette. Dark lives in theme-dark.css, activated by
+     [data-theme='dark'] on <html>. The component + shell layer is now fully
+     alpha-on-ink token-based, so dark is safe: renderer/theme.ts mirrors the OS
+     colour scheme onto data-theme (Track B / #45 extends it with a persisted
+     light/dark/system preference via nativeTheme.themeSource). */
   color-scheme: light;
   /* ════════════════════════════════════════════════════════════════════════
      SEMANTIC FOUNDATION (design-system.md). Two themes over one ink base: every
@@ -115,7 +114,6 @@
   --status-danger-muted: #9a3f34;
   --status-info: #3b82c4;
 
-  --primary-muted-text: color-mix(in srgb, var(--accent) 58%, var(--text-primary));
   --inline-code-bg: rgb(var(--ink) / 0.06);
 
   /* elevation: rail (softest) < level-1 (menus) < level-2 (dialogs) */
@@ -129,8 +127,6 @@
   --outline-muted: inset 0 0 0 1px rgb(var(--ink) / 0.12);
   --outline-emphasis: inset 0 0 0 1px rgb(var(--ink) / 0.18);
   --outline-focus: inset 0 0 0 1px var(--focus-ring);
-  --outline-primary: inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent);
-  --outline-primary-strong: inset 0 0 0 1px color-mix(in srgb, var(--accent) 58%, var(--separator));
   --underline-focus-shadow: inset 0 -1px 0 rgb(var(--ink) / 0.20);
   --tag-focus-shadow: 0 0 0 2px color-mix(in srgb, var(--tag-text, currentColor) 22%, transparent);
   --inline-ref-selection-shadow: inset 0 0 0 1px var(--row-selection-border);
@@ -144,8 +140,8 @@
   --shadow-thumb-strong: 0 1px 2px rgba(0, 0, 0, 0.18);
 
   /* ── Legacy product-token aliases → semantic layer. Migrate opportunistically.
-        --primary stays DEPRECATED (still → accent so light is unchanged); its
-        usages are neutralized and the alias deleted in rollout Phase 3. ── */
+        The rose --primary family was deleted once every consumer moved to the
+        neutral fill / focus-ring / outline tokens (rollout Phase 3). ── */
   --deck-bg: var(--bg-window);
   --app-bg: var(--bg-window);
   --panel-bg: var(--bg-content);
@@ -285,10 +281,8 @@
   /* the one link colour — rose (design-system.md: exactly one link colour) */
   --inline-ref-default: var(--link);
   --inline-ref-hover: color-mix(in srgb, var(--link) 78%, var(--text));
-  --primary: var(--accent);
-  --primary-hover: var(--accent-strong);
-  --primary-soft: color-mix(in srgb, var(--accent) 9%, transparent);
-  --danger: var(--accent-strong);
+  /* danger affordances use the genuine status red, not brand rose */
+  --danger: var(--status-danger);
   --row-hover: var(--fill-2);
   --row-selected: var(--fill-3);
   --row-selection-bg: var(--row-selected);

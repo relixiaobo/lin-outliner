@@ -1,9 +1,7 @@
-/* Dark appearance — GATED, not auto-activated. This block only takes effect when
-   something sets data-theme="dark" on <html>; it deliberately does NOT key off
-   @media (prefers-color-scheme: dark), so an OS-dark machine stays on the
-   (complete) light theme until the component layer is theme-aware (Phase 3) and
-   Phase 2 wires nativeTheme.themeSource → data-theme. Only the per-theme literals
-   change here — every alpha-on-ink token above (text, fills, separators,
+/* Dark appearance — activated by data-theme='dark' on <html>, which
+   renderer/theme.ts drives from the OS colour scheme (and, per Track B / #45, a
+   persisted preference via nativeTheme.themeSource). Only the per-theme literals
+   change here — every alpha-on-ink token in tokens.css (text, fills, separators,
    outlines, selection) inverts for free when --ink flips to white. Elevated
    surfaces are LIGHTER than content so floating surfaces still read as elevated. */
 :root[data-theme='dark'] {
