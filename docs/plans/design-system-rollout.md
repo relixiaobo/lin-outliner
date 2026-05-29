@@ -1,9 +1,9 @@
 ---
-status: draft
+status: in-progress
 priority: P1
 owner: relixiaobo
 created: 2026-05-28
-updated: 2026-05-28
+updated: 2026-05-29
 ---
 
 # Design System Rollout (two-theme · materials · shell redesign)
@@ -53,6 +53,35 @@ spec as it lands (per the plans convention: a done plan's substance lives in
 
 Ordered by dependency. Each phase is one (or a small stack of) Draft PR(s) on a
 `cc/<topic>` branch.
+
+> ### Execution log (as shipped)
+>
+> Phase 1 (token foundation) shipped in **#55**. The remaining phases were then
+> executed as **one in-clone agent team** on a single branch
+> (`cc/design-system-implementation`) producing **one large PR** for the main
+> agent to review — rather than the originally-floated separate-clone two-track
+> split. The dependency order proved the components/shell were the gating
+> concern, so the work ran as:
+>
+> - **P0 — modularize** `styles.css` (6851 lines) into 30 cascade-ordered
+>   per-surface modules + an `index.css` barrel (byte-equivalent, brace-balanced;
+>   pure move). This unblocked file-level parallelism for the migration.
+> - **Token migration** — a read-only audit fanned out over the modules mapped
+>   151 colour findings; 8 parallel per-module agents migrated `rgba`→alpha-on-ink
+>   and `--primary*`→neutral `--fill-*`/`--focus-ring`; inline-ref blue→rose was
+>   centralized at the token layer. Added `--text-on-accent`; neutralized the
+>   confirm button; `--danger`→`--status-danger`.
+> - **Alias cleanup + dark** — deleted the now-unused `--primary*` family;
+>   `src/renderer/theme.ts` mirrors the OS colour scheme onto `[data-theme]`, so
+>   dark follows the OS (single activation path; #45 extends it with a persisted
+>   pref via `nativeTheme.themeSource`).
+> - **Shell restructure** — dissolved `TopBar` into `WindowChrome` (fixed drag
+>   strip + two centreline rail toggles) + per-pane breadcrumb headers; removed
+>   the global tab strip/Back-Forward (sidebar is the switcher); floated the
+>   sidebar/agent rails over a full-bleed opaque canvas; agent-seed unfurl.
+>
+> The phase write-ups below remain the rationale of record; the labels P0/token/
+> alias/shell map onto Phases 1–4 here.
 
 ### Phase 1 — Token foundation (CSS-only; light active, dark gated)
 - Introduce `--ink` + the semantic text/fill/separator/surface/material/accent/
