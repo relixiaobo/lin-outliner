@@ -54,34 +54,42 @@ spec as it lands (per the plans convention: a done plan's substance lives in
 Ordered by dependency. Each phase is one (or a small stack of) Draft PR(s) on a
 `cc/<topic>` branch.
 
-### Phase 1 — Token foundation (CSS-only, light-mode unchanged)
+### Phase 1 — Token foundation (CSS-only; light active, dark gated)
 - Introduce `--ink` + the semantic text/fill/separator/surface/material/accent/
-  status tokens; replace the first-pass dark palette with the proper
-  `@media (prefers-color-scheme: dark)` block that just flips `--ink` + the
-  per-theme literals.
+  status tokens; define the dark palette (flip `--ink` + a few per-theme literals).
+- **Dark is GATED, not auto-activated.** The dark block keys off
+  `:root[data-theme='dark']`, *not* `@media (prefers-color-scheme: dark)`, and
+  `color-scheme` stays `light` by default. Reason: the component layer
+  (`outliner.css` + ~60 hardcoded glass/material `rgba()` in `styles.css`) is not
+  theme-aware yet, so auto-dark on an OS-dark machine would be a broken half-dark
+  regression. Light is the only active theme this phase ships.
 - Map every legacy alias (`--deck-bg`, `--panel-bg`, `--text-main`, …) onto the
-  semantic layer so the app looks **identical in light mode** and gains correct
-  dark mode for free. `--primary` is kept as a deprecated alias for now (still →
-  accent) and clearly marked — its usages are NOT yet neutralized here.
-- **Why defer `--primary` neutralization to Phase 3:** deleting the alias and
-  recolouring buttons/active rows would change light-mode visuals, which breaks
-  this phase's "light unchanged" guarantee. Phase 1 lays the layer; Phase 3
-  (component migration) flips functional state to neutral and deletes the alias.
+  semantic layer so components work unchanged. `--primary` stays a deprecated
+  alias (still → accent); its usages are NOT yet neutralized here.
+- **Why defer `--primary` neutralization to Phase 3:** recolouring buttons/active
+  rows changes light visuals. Phase 1 lays the layer; Phase 3 flips functional
+  state to neutral and deletes the alias.
 - Live-token audit: classify each existing token as foundation / component-private
   / delete (the `--tab-*` set dies with the global tab strip in Phase 4).
-- Enforce the alpha-on-ink validity boundary and token discipline via
-  `tests/e2e/typography-tokens.spec.ts` (extend it).
-- Verify: `bun run typecheck`, token test, light-mode pixel-unchanged, dark mode
-  legible.
+- Verify: `bun run typecheck`, build, light renders normally, dark stays inert
+  (no auto-activation on OS-dark).
+
+> The dark-mode *target* (auto via `prefers-color-scheme` + nativeTheme override,
+> as `design-system.md` describes) is reached only after Phase 3 makes components
+> theme-aware. Until then dark is reachable only by explicitly setting
+> `data-theme="dark"` (dev / Phase 2 plumbing), never automatically.
 
 ### Phase 2 — Chrome / material
-- `main.ts`: real `vibrancy` + transparent `backgroundColor` for the material
-  window; wire `nativeTheme.themeSource` so the in-app light/dark/system control
-  drives the renderer's `prefers-color-scheme` (task #45).
-- Rail material tints (`--material-*`), `backdrop-filter` on the rails only.
+- `main.ts`: `vibrancy: 'sidebar'` + transparent `backgroundColor`; wire
+  `nativeTheme.themeSource` + a persisted theme preference (task #45). While dark
+  is still gated (pre-Phase-3), the toggle drives the `data-theme` gate; the
+  target wiring (themeSource → renderer `prefers-color-scheme`) lands when the
+  gate is removed in Phase 3.
 - `prefers-reduced-transparency` fallback: materials collapse to opaque seeds.
-- Verify: dark mode follows OS + in-app toggle; reduced-transparency degrades
-  cleanly; reduced-motion respected.
+- NOTE: per-rail `--material-*` tints + `backdrop-filter` presuppose the floating
+  rails, which are built in Phase 4 — so rail tinting moves there; Phase 2 does
+  the window-level material + theme plumbing only.
+- Verify: light unaffected; reduced-transparency degrades cleanly.
 
 ### Phase 3 — Component migration (neutral functional + overlay taxonomy)
 - Make selection/hover/active/primary buttons neutral everywhere (kill residual
@@ -93,6 +101,11 @@ Ordered by dependency. Each phase is one (or a small stack of) Draft PR(s) on a
   Outliner impact notes.
 - Apply the material-vs-overlay tiers: `MenuSurface` → `--material-popover`;
   `Dialog`/command palette → opaque `--bg-elevated`; clean up overlay borders.
+- **Make the components theme-aware and UN-GATE dark.** Migrate `outliner.css` +
+  the hardcoded glass/material `rgba()` in `styles.css` to the alpha-on-ink layer
+  so dark is fully legible, then switch the gate from `[data-theme='dark']` to the
+  target (`@media (prefers-color-scheme: dark)` + nativeTheme override) — this is
+  what makes dark safe to ship.
 - Light/dark screenshot matrix for outliner, panels, overlays, agent.
 
 ### Phase 4 — Shell / layout redesign (the big React restructure)

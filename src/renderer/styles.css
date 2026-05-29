@@ -46,7 +46,13 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  color-scheme: light dark;
+  /* Light by default. Dark is defined below but GATED behind [data-theme="dark"]
+     so it never auto-activates on an OS-dark machine — the component layer
+     (outliner.css + hardcoded glass/material rgba) is not theme-aware yet, so
+     auto-dark would be a broken half-dark regression. Phase 2 sets data-theme
+     via nativeTheme.themeSource; dark only becomes user-facing once Phase 3
+     migrates the components. */
+  color-scheme: light;
   /* ════════════════════════════════════════════════════════════════════════
      SEMANTIC FOUNDATION (design-system.md). Two themes over one ink base: every
      text/fill/separator/outline value is an alpha over --ink (black in light,
@@ -152,7 +158,9 @@
   --text-disabled: var(--text-quaternary);
   --border-subtle: var(--separator);
   --border-muted: var(--separator);
-  --border-strong: var(--separator-opaque);
+  /* a strong control border (view-radio ring, etc.) — NOT the hairline divider;
+     keep it a visible neutral that inverts with the theme */
+  --border-strong: rgb(var(--ink) / 0.30);
   --accent-brand: var(--accent);
   --accent-danger: var(--accent-strong);
   --semantic-success: var(--status-success);
@@ -305,14 +313,16 @@
   --row-depth: 28px;
 }
 
-/* Dark appearance. Follows the OS via prefers-color-scheme; later the in-app
-   light/dark/system control drives it through nativeTheme.themeSource (Phase 2),
-   so this one block is the whole dark theme. Only the per-theme literals change —
-   every alpha-on-ink token above (text, fills, separators, outlines, selection)
-   inverts for free when --ink flips to white. Elevated surfaces are LIGHTER than
-   content so floating surfaces still read as elevated. */
-@media (prefers-color-scheme: dark) {
-  :root {
+/* Dark appearance — GATED, not auto-activated. This block only takes effect when
+   something sets data-theme="dark" on <html>; it deliberately does NOT key off
+   @media (prefers-color-scheme: dark), so an OS-dark machine stays on the
+   (complete) light theme until the component layer is theme-aware (Phase 3) and
+   Phase 2 wires nativeTheme.themeSource → data-theme. Only the per-theme literals
+   change here — every alpha-on-ink token above (text, fills, separators,
+   outlines, selection) inverts for free when --ink flips to white. Elevated
+   surfaces are LIGHTER than content so floating surfaces still read as elevated. */
+:root[data-theme='dark'] {
+    color-scheme: dark;
     --ink: 255 255 255;
 
     --separator-opaque: #3a3a3c;
@@ -341,7 +351,6 @@
 
     --overlay-backdrop: rgba(0, 0, 0, 0.45);
     --overlay-backdrop-strong: rgba(0, 0, 0, 0.88);
-  }
 }
 
 /* Neutral text-selection highlight (never the system accent). */

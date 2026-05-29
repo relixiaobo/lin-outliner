@@ -252,7 +252,7 @@ Use these default desktop tokens before adding component-specific values:
   --border-subtle: var(--separator);
   --border-muted: var(--separator);
   --border-emphasis: rgb(var(--ink) / 0.18);
-  --border-strong: var(--separator-opaque);
+  --border-strong: rgb(var(--ink) / 0.30); /* strong control border, not the hairline */
   --control-hover: var(--fill-2);
   --control-active: var(--fill-3);
   --focus-border: var(--focus-ring);
