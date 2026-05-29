@@ -1,8 +1,13 @@
 export const MAC_TRAFFIC_LIGHT_SIZE = 12;
 
+// Traffic-light corner inset. A symmetric corner: x and y are equal, so the
+// gap above the lights matches the gap to their left. x aligns the lights' left
+// edge with the sidebar nav icons (rail gap 8 + rail-pad 8 + row content-start 8
+// = 24) and clears the 24px window corner (MAC_WINDOW_CORNER_RADIUS); y gives the
+// same 24px top inset. Keep --traffic-light-x/y in tokens.css in sync with these.
 export const MAC_TRAFFIC_LIGHT_POSITION = {
-  x: 15,
-  y: 15,
+  x: 24,
+  y: 24,
 } as const;
 
 // Custom window corner radius (points), applied natively on macOS via the

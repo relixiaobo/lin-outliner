@@ -33,34 +33,73 @@
 
 /* ── Persistent window chrome ──────────────────────────────────────────────── */
 
-/* THE single title-bar drag region (Electron best practice). The OS treats an
-   -webkit-app-region: drag area as a non-client title bar: it ignores ALL pointer
-   events inside it, so any clickable control there must be carved back out with
-   no-drag. Per the documented Electron limitation (and issues electron/electron
-   #7605, #18529, #27149) that no-drag carve-out is ONLY reliable when the control
-   is a DOM DESCENDANT of the drag region — a no-drag element that merely overlaps a
-   drag region from a different subtree/stacking context has its click swallowed.
-   So: this strip is the one drag region, and the two rail toggles below are its
-   direct children (no-drag). Every other interactive surface (sidebar nav, pane
-   breadcrumbs, agent header) is laid out BELOW this strip — see canvas.css
-   --canvas-pad-top, sidebar .rail-top, and agent-dock .agent-dock-header. */
-.window-chrome {
+/* The title-bar band is shared by ZONES, not one full-width strip (Apple's
+   unified-toolbar / Liquid Glass model: navigation floats above edge-to-edge
+   content that reaches the top). Window chrome owns only two CORNER drag zones —
+   left (traffic lights + sidebar toggle) and right (agent toggle); the centre is
+   left uncovered for the pane breadcrumb, which is itself a drag region and now
+   reaches the top (see canvas.css --canvas-pad-top, breadcrumb.css).
+
+   Each zone is -webkit-app-region: drag. The OS treats a drag region as a
+   non-client title bar — it ignores ALL pointer events inside, so a clickable
+   control must be carved back out with no-drag. Per the documented Electron limit
+   (electron/electron #7605, #18529, #27149) that carve-out is reliable ONLY when
+   the control is a DOM DESCENDANT of the drag region — a no-drag element that
+   merely overlaps a drag region from another subtree has its click swallowed. So
+   each toggle is a CHILD of its zone, and the zones are kept narrow enough to
+   never overlap the centre breadcrumb's controls. Dragging the window: the two
+   corner zones + the centre breadcrumb; the sidebar nav / agent header sit below
+   and are not drag regions (they would underlap a toggle from another subtree). */
+.window-chrome-zone {
   position: absolute;
-  inset: 0 0 auto 0;
+  top: 0;
   z-index: var(--z-popover);
   height: var(--chrome-height);
   -webkit-app-region: drag;
   user-select: none; /* don't rubber-band-select chrome text while dragging */
 }
 
-/* Two symmetric fixed rail toggles on the traffic-light centreline. On hover they
-   get a subtle centred fill tint (the native toolbar-icon-button affordance),
-   concentric with the 26px square so it reads as centred on the icon. They are
-   window chrome anchored to the window — they never move when a rail collapses. */
-.rail-toggle {
+.window-chrome-zone-left {
+  left: 0;
+  width: var(--chrome-left-zone-width);
+}
+
+.window-chrome-zone-right {
+  right: 0;
+  width: var(--chrome-right-zone-width);
+}
+
+/* Chrome controls (the rail toggles + the global page-nav back/forward) sit on the
+   traffic-light centreline. Each lives inside a CLUSTER positioned at that line —
+   the cluster is the only positioned element; the controls flow in a flex row. They
+   are window chrome anchored to the window, so they never move when a rail
+   collapses. */
+.window-chrome-cluster {
   position: absolute;
-  z-index: 1;
-  top: var(--chrome-centreline);
+  top: var(--chrome-control-inset);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Left cluster begins past the traffic lights (--chrome-sidebar-toggle-left); right
+   cluster hugs the corner with the same inset as the top, so the agent toggle is
+   centred in the rounded corner (--chrome-control-inset; see tokens.css). */
+.window-chrome-cluster-left {
+  left: var(--chrome-sidebar-toggle-left);
+}
+
+/* The agent toggle is the agent rail's corner control, so it is inset by the rail's own
+   concentric inset (--rail-pad) from the rail edge — i.e. --layout-gap (the rail float) +
+   --rail-pad from the window edge. That puts its right edge on the very line the agent
+   content (header / transcript / composer, all at --rail-pad) sits on: one shared edge. */
+.window-chrome-cluster-right {
+  right: calc(var(--layout-gap) + var(--rail-pad));
+}
+
+/* On hover a control gets a subtle centred fill tint (native toolbar-icon-button
+   affordance), concentric with its 26px box. */
+.rail-toggle {
   display: inline-flex;
   width: var(--chrome-control-height);
   height: var(--chrome-control-height);
@@ -69,7 +108,6 @@
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
-  pointer-events: auto;
   transition: color var(--motion-fast);
   -webkit-app-region: no-drag;
 }
@@ -90,17 +128,17 @@
   box-shadow: var(--focus-ring-shadow);
 }
 
-/* sidebar toggle sits right of the traffic lights. The lights span
-   x .. x + 3*size + 2 inter-light gaps; we then clear them by --space-8 (16px) —
-   comfortably MORE than the ~8px gap between the lights themselves. */
-.sidebar-toggle {
-  left: calc(var(--traffic-light-x) + 3 * var(--traffic-light-size) + 2 * var(--space-4) + var(--space-8));
+/* When a rail is collapsed its zone sits over the pane (not the rail), so give it an
+   opaque content backing: it caps the top band so content scrolling up cannot peek
+   behind the toggle / traffic lights, and pairs with the collapsed breadcrumb's
+   margin (canvas.css) so the two abut instead of overlapping (no cross-subtree drag
+   flicker). When the rail is open the zone is transparent so the rail shows through. */
+.app.sidebar-collapsed .window-chrome-zone-left {
+  background: var(--bg-content);
 }
 
-/* agent toggle pinned to the top-right corner with an equal corner margin
-   (mirrors the lights' top-left corner margin). */
-.agent-toggle {
-  right: calc(var(--layout-gap) + var(--space-3));
+.app:not(.agent-open) .window-chrome-zone-right {
+  background: var(--bg-content);
 }
 
 /* open-state toggles read slightly stronger (no fill, just colour) */

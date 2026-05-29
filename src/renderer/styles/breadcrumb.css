@@ -9,7 +9,9 @@
   min-width: 0;
   min-height: calc(var(--panel-content-top) + var(--control-size-md));
   align-items: center;
-  grid-template-columns: auto minmax(0, 1fr);
+  /* leading (back + origin) · path · trailing (close). The trailing column is auto so
+     it collapses to nothing when no close is rendered (single pane). */
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: var(--space-2);
   margin: 0 0 calc(var(--space-lg) + var(--space-2));
   background: var(--bg-content);
@@ -19,6 +21,23 @@
     0
     calc(var(--panel-content-x) - var(--row-chevron-width) - var(--row-chevron-gap));
   -webkit-app-region: drag;
+}
+
+/* Scroll-edge effect (Apple Liquid Glass): the sticky breadcrumb is an opaque backing,
+   so content scrolling up under it was cut by a HARD horizontal line at the breadcrumb's
+   bottom — unnatural (the big page title looked sliced mid-glyph). Soften it: a short
+   gradient that continues the opaque backing and fades to transparent over the gap below
+   the breadcrumb, so content dissolves into the toolbar instead of being clipped. It
+   tracks the sticky breadcrumb (absolute to it) and never eats clicks. */
+.panel-sticky-breadcrumb::after {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  left: 0;
+  height: var(--space-lg);
+  background: linear-gradient(to bottom, var(--bg-content), transparent);
+  content: "";
+  pointer-events: none;
 }
 
 /* No corner-clearance overrides are needed: the canvas reserves --chrome-height +
@@ -31,9 +50,29 @@
 .panel-breadcrumb-origin,
 .panel-breadcrumb-button,
 .panel-breadcrumb-ellipsis,
-.panel-page-forward-button,
+.panel-breadcrumb-close,
 .outline-panel-close {
   -webkit-app-region: no-drag;
+}
+
+/* Trailing close: a no-drag descendant of the breadcrumb drag region (so its click is
+   reliably carved out on macOS) sitting in the trailing grid column, hugging the right
+   --panel-content-x inset (the breadcrumb's own right padding) so it aligns with content. */
+.panel-breadcrumb-close {
+  display: inline-flex;
+  width: var(--control-size-md);
+  height: var(--control-size-md);
+  align-items: center;
+  justify-content: center;
+  justify-self: end;
+  border-radius: var(--radius-row);
+  color: color-mix(in srgb, var(--text) 42%, transparent);
+}
+
+.panel-breadcrumb-close:hover,
+.panel-breadcrumb-close:focus-visible {
+  background: var(--control-hover);
+  color: var(--text);
 }
 
 .panel-breadcrumb-leading {
@@ -43,8 +82,7 @@
   gap: var(--space-1);
 }
 
-.panel-page-back-button,
-.panel-page-forward-button {
+.panel-page-back-button {
   display: inline-flex;
   width: var(--control-size-md);
   height: var(--control-size-md);
@@ -55,15 +93,12 @@
 }
 
 .panel-page-back-button:hover:not(:disabled),
-.panel-page-back-button:focus-visible:not(:disabled),
-.panel-page-forward-button:hover:not(:disabled),
-.panel-page-forward-button:focus-visible:not(:disabled) {
+.panel-page-back-button:focus-visible:not(:disabled) {
   background: var(--control-hover);
   color: var(--text);
 }
 
-.panel-page-back-button:disabled,
-.panel-page-forward-button:disabled {
+.panel-page-back-button:disabled {
   color: var(--text-disabled);
   cursor: default;
 }

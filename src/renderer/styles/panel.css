@@ -1,16 +1,12 @@
-.main-panel {
-  min-width: 0;
-  overflow: auto;
-  padding: calc(var(--space-8) + var(--space-2)) var(--space-8) calc(var(--space-xl) + var(--space-8));
-}
-
-.panel-inner {
-  max-width: 980px;
-  margin: 0 auto;
-}
+/* The pane scroll viewport (.main-panel) and centred reading column (.panel-inner) are
+   owned entirely by canvas.css — they only ever exist inside .outline-panel-surface, so
+   defining them here too just produced dead, specificity-overridden duplicates. This
+   module keeps only the panel's INNER header widgets below. */
 
 .panel-header {
-  padding: 0 0 var(--space-6) var(--space-8);
+  /* No horizontal padding: .panel-inner (canvas.css) owns the content inset. Just the
+     space below the title block before the rows. */
+  padding: 0 0 var(--space-6);
 }
 
 .panel-title-row {

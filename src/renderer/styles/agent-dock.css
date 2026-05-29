@@ -31,10 +31,11 @@
 
 /* Collapsed seed: shrink into the agent toggle's 26x26 footprint at the top-right
    corner, with no material/shadow/edge. The toggle itself (window chrome) sits on
-   top of this footprint. */
+   top of this footprint, so the seed shares the toggle's exact corner inset on
+   BOTH axes (--chrome-control-inset) — they must coincide. */
 .agent-dock.agent-dock-collapsed {
-  top: var(--chrome-centreline);
-  right: calc(var(--layout-gap) + var(--space-3));
+  top: var(--chrome-control-inset);
+  right: var(--chrome-control-inset);
   bottom: auto;
   width: var(--chrome-control-height);
   height: var(--chrome-control-height);
@@ -90,39 +91,11 @@ button.panel-resize-handle {
   padding: 0;
 }
 
-button.dock-resize-handle::after,
-button.panel-resize-handle::after {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: var(--resize-pill-width);
-  height: var(--resize-pill-height);
-  border-radius: var(--radius-pill);
-  background: var(--text-tertiary);
-  content: "";
-  cursor: var(--resize-cursor);
-  opacity: 0;
-  transform: translate(-50%, -50%);
-  transition: opacity var(--motion-fast), background var(--motion-fast);
-}
-
-.dock-resize-handle:hover::after,
-.dock-resize-handle:focus-visible::after,
-.dock-resize-handle.is-resizing::after,
-.panel-resize-handle:hover::after,
-.panel-resize-handle:focus-visible::after,
-.panel-resize-handle.is-resizing::after {
-  opacity: 1;
-}
-
-.dock-resize-handle:hover::after,
-.dock-resize-handle:focus-visible::after,
-.dock-resize-handle.is-resizing::after,
-.panel-resize-handle:hover::after,
-.panel-resize-handle:focus-visible::after,
-.panel-resize-handle.is-resizing::after {
-  background: var(--text-tertiary);
-}
+/* No grab pill anywhere. A handle is an INVISIBLE hit strip whose only affordance
+   is the ew-resize cursor on hover (inherited from the base rule above): you hover
+   the edge / divider line itself and drag it. The visible "line" is the rail's own
+   --rail-edge ring (sidebar / agent) or the 1px inter-pane divider (the panel slot
+   below) — the handle just widens that line's grab target. */
 
 /* Rails clip overflow, so the handles sit just INSIDE each rail's outer edge
    (a hit strip flush against the resizable edge) rather than poking into the gap. */
@@ -143,6 +116,9 @@ button.panel-resize-handle::after {
   display: none;
 }
 
+/* The handle straddles the 1px divider (left:50% of a 1px slot) as a --resize-hit-width
+   grab strip overflowing equally into both panes. It's invisible; hovering it (even the
+   overflow) sets :hover on its ancestor slot, which brightens the divider line. */
 .panel-resize-handle {
   top: 0;
   bottom: 0;
@@ -151,30 +127,58 @@ button.panel-resize-handle::after {
   transform: translateX(-50%);
 }
 
+/* The inter-pane divider is a 1px hairline drawn by this slot's ::before. The slot is a
+   flex item that lives below the canvas's top padding (--canvas-pad-top), so the line is
+   drawn by a pseudo that pulls UP through that padding to the very top of the window —
+   otherwise it would start --layout-gap below and leave the gap visible in the image.
+   The bottom has no canvas padding, so it already reaches the floor. It brightens while
+   the straddling handle is hovered / dragged. */
 .panel-resize-slot {
   position: relative;
-  width: var(--panel-gap);
-  flex: 0 0 var(--panel-gap);
-  cursor: var(--resize-cursor);
-  min-width: var(--panel-gap);
+  width: 1px;
+  flex: 0 0 1px;
+  min-width: 1px;
 }
 
-/* The header drops below the window-chrome title-bar strip (the single
-   -webkit-app-region: drag region, shell.css). Without this gap the header's
-   title/menu buttons sit UNDER the full-width drag strip and the OS swallows their
-   clicks (the no-drag carve-out is unreliable across DOM subtrees). The
-   --chrome-height top margin mirrors the sidebar's .rail-top spacer, so the agent
-   title lines up with the sidebar nav and the pane breadcrumbs. */
+.panel-resize-slot::before {
+  position: absolute;
+  top: calc(-1 * var(--canvas-pad-top));
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: var(--separator);
+  content: "";
+  transition: background var(--motion-fast);
+}
+
+.panel-resize-slot:hover::before,
+.panel-resize-slot:has(.panel-resize-handle.is-resizing)::before {
+  background: var(--border-strong);
+}
+
+/* The header drops below the RIGHT corner chrome zone, which hosts the agent
+   toggle (shell.css). Without this gap the header's title/menu buttons would sit
+   under that drag zone and the OS would swallow their clicks (the no-drag carve-out
+   is unreliable across DOM subtrees). The --chrome-height top margin mirrors the
+   sidebar's .rail-top spacer, so the agent title lines up with the sidebar nav.
+   (The pane breadcrumbs now sit higher, at the top — they own the centre of the
+   title-bar band, which no chrome zone covers.) */
 .agent-dock-header {
   position: relative;
   display: flex;
   height: 28px;
   flex: 0 0 28px;
-  margin-top: var(--chrome-height);
+  /* Sit on the SAME row as the agent toggle (a real title bar), centred on the chrome
+     control line: rail top (--layout-gap) + --rail-pad + height/2 lands on the toggle's
+     centre. Left inset = --rail-pad (the title aligns with the content column below).
+     Right inset clears the toggle's drag zone: the actions must not underlap the right
+     chrome zone (a drag region in another DOM subtree — the OS would swallow their
+     clicks), so they stop at the zone's inner edge, just left of the toggle. */
+  margin-top: var(--rail-pad);
   align-items: center;
   justify-content: flex-start;
   gap: var(--space-4);
-  padding: 0 var(--agent-dock-inset-x);
+  padding: 0 calc(var(--chrome-right-zone-width) - var(--layout-gap)) 0 var(--agent-content-x);
 }
 
 .agent-dock-title-button {

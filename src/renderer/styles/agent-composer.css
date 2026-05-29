@@ -37,7 +37,10 @@
 
 .agent-composer-surface {
   position: relative;
-  margin: var(--space-3) var(--layout-gap) var(--layout-gap);
+  /* Same toggle-derived inset as the header + transcript (--agent-dock-inset-x) so the
+     composer's edges align with them and with the toggle, instead of its own --layout-gap
+     (the previous odd-one-out). Top is the gap to the transcript above. */
+  margin: var(--space-3) var(--agent-dock-inset-x) var(--agent-dock-inset-x);
   border-radius: var(--agent-composer-radius);
   background: var(--material-sidebar);
   box-shadow: var(--outline-faint);

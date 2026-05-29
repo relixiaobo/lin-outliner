@@ -51,6 +51,7 @@ interface SidebarProps {
   onOpenPanel: (nodeId: NodeId) => void;
   onOpenSettings: () => void;
   onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
+  onResizeReset: () => void;
   onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   onSelectTab: (tabId: string, panelId?: string) => void;
   onToggleTreeNode: (nodeId: NodeId) => void;
@@ -292,9 +293,10 @@ export function Sidebar(props: SidebarProps) {
       <ResizeHandle
         className="dock-resize-handle sidebar-resize-handle"
         label="Resize sidebar"
+        onDoubleClick={props.onResizeReset}
         onKeyDown={props.onResizeKeyDown}
         onPointerDown={props.onResizeStart}
-        title="Resize sidebar"
+        title="Resize sidebar (double-click to reset)"
       />
     </aside>
   );

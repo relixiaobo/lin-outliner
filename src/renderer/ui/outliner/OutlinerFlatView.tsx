@@ -305,6 +305,38 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     };
   }, [virtualize, resolveScroller, updateScrollMetrics, scheduleScrollMetrics]);
 
+  // ── Scroll anchoring ───────────────────────────────────────────────────────
+  // Row heights start at ROW_ESTIMATE_PX and are corrected once a row mounts and is
+  // measured. When a row ABOVE the viewport is corrected, every offset below it (the
+  // whole visible window) shifts — but scrollTop does not, so the content visibly
+  // jumps. Only felt scrolling UP: scrolling down, corrections land below the viewport
+  // (off-screen). Fix: when the layout changes for the SAME rows (a pure height
+  // correction), find the row sitting at the viewport top and shift scrollTop by how
+  // far that row moved — synchronously, before paint — so the visible rows stay put.
+  const prevLayoutRef = useRef<RowLayout | null>(null);
+  const prevRowsRef = useRef<readonly VisualRow[]>(rows);
+  useLayoutEffect(() => {
+    const prevLayout = prevLayoutRef.current;
+    const prevRows = prevRowsRef.current;
+    prevLayoutRef.current = layout;
+    prevRowsRef.current = rows;
+    // Only compensate for height-only changes (same rows array): row add/remove or a
+    // re-projection is a different scroll context and must not be anchored blindly.
+    if (!virtualize || !prevLayout || prevRows !== rows) return;
+    if (prevLayout.items.length !== layout.items.length) return;
+    const scroller = resolveScroller();
+    const list = listRef.current;
+    if (!scroller || !list) return;
+    // List-Y currently at the scroller's top edge (= viewport top, in row coordinates).
+    // Independent of internal row layout, so it reflects the pre-adjustment scroll pos.
+    const anchorY = scroller.getBoundingClientRect().top - list.getBoundingClientRect().top;
+    if (anchorY <= 0) return; // at/above the list top — nothing above to shift us.
+    const idx = firstRowEndingAfter(prevLayout.items, anchorY);
+    if (idx >= layout.items.length) return;
+    const delta = layout.items[idx]!.top - prevLayout.items[idx]!.top;
+    if (delta !== 0) scroller.scrollTop += delta;
+  }, [layout, rows, virtualize, resolveScroller]);
+
   // ── Window selection ──────────────────────────────────────────────────────
   // Force-mount rows that must accept focus even when scrolled out of view: the
   // focused row, the focus-request target, the pending-input target, and every

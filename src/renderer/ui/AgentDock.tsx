@@ -21,6 +21,7 @@ interface AgentDockProps {
   onOpenNodeReference: AgentNodeReferenceOpenHandler;
   onOpenDebugPanel: (sessionId: string | null) => void;
   onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
+  onResizeReset: () => void;
   onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
 }
 
@@ -45,9 +46,10 @@ export function AgentDock(props: AgentDockProps) {
         className="dock-resize-handle agent-resize-handle"
         disabled={!open}
         label="Resize agent"
+        onDoubleClick={props.onResizeReset}
         onKeyDown={props.onResizeKeyDown}
         onPointerDown={props.onResizeStart}
-        title="Resize agent"
+        title="Resize agent (double-click to reset)"
       />
     </aside>
   );

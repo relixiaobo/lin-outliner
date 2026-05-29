@@ -76,6 +76,10 @@ export function useResizableLayout({ activeTab, resizePanelPair }: UseResizableL
     window.addEventListener('pointercancel', endResize);
   }, [sidebarWidth]);
 
+  const resetSidebarWidth = useCallback(() => {
+    setSidebarWidth(DEFAULT_SIDEBAR_WIDTH);
+  }, []);
+
   const resizeSidebarWithKeyboard = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>) => {
     const delta = resizeKeyDelta(event);
     if (delta === null && event.key !== 'Home' && event.key !== 'End') return;
@@ -116,6 +120,10 @@ export function useResizableLayout({ activeTab, resizePanelPair }: UseResizableL
     window.addEventListener('pointerup', endResize);
     window.addEventListener('pointercancel', endResize);
   }, [agentWidth]);
+
+  const resetAgentWidth = useCallback(() => {
+    setAgentWidth(DEFAULT_AGENT_WIDTH);
+  }, []);
 
   const resizeAgentWithKeyboard = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>) => {
     const delta = resizeKeyDelta(event);
@@ -191,6 +199,15 @@ export function useResizableLayout({ activeTab, resizePanelPair }: UseResizableL
     window.addEventListener('pointercancel', endResize);
   }, [activeTab, resizePanelPairByPixels]);
 
+  const resetPanelPair = useCallback((leftPanelId: string, rightPanelId: string) => {
+    const tab = activeTab;
+    if (!tab) return;
+    const leftStart = tab.panelSizes[leftPanelId] ?? 1;
+    const rightStart = tab.panelSizes[rightPanelId] ?? 1;
+    const half = (leftStart + rightStart) / 2;
+    resizePanelPair(tab.id, leftPanelId, rightPanelId, half, half);
+  }, [activeTab, resizePanelPair]);
+
   const resizePanelPairWithKeyboard = useCallback((
     leftPanelId: string,
     rightPanelId: string,
@@ -209,6 +226,9 @@ export function useResizableLayout({ activeTab, resizePanelPair }: UseResizableL
     beginPanelResize,
     beginSidebarResize,
     canvasRef,
+    resetAgentWidth,
+    resetPanelPair,
+    resetSidebarWidth,
     resizeAgentWithKeyboard,
     resizePanelPairWithKeyboard,
     resizeSidebarWithKeyboard,

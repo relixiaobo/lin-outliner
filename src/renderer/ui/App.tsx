@@ -105,6 +105,9 @@ export function App() {
     beginPanelResize,
     beginSidebarResize,
     canvasRef,
+    resetAgentWidth,
+    resetPanelPair,
+    resetSidebarWidth,
     resizeAgentWithKeyboard,
     resizePanelPairWithKeyboard,
     resizeSidebarWithKeyboard,
@@ -376,6 +379,7 @@ export function App() {
             void window.lin?.openSettings();
           }}
           onResizeKeyDown={resizeSidebarWithKeyboard}
+          onResizeReset={resetSidebarWidth}
           onResizeStart={beginSidebarResize}
           onSelectTab={selectTab}
           onToggleTreeNode={toggleSidebarTreeNode}
@@ -392,9 +396,9 @@ export function App() {
           onActivatePanel={activatePanel}
           onClosePanel={closePanel}
           onNavigatePanelBack={navigatePanelBack}
-          onNavigatePanelForward={navigatePanelForward}
           onNavigatePanelRoot={navigatePanelRoot}
           onPanelResizeKeyDown={resizePanelPairWithKeyboard}
+          onPanelResizeReset={resetPanelPair}
           onPanelResizeStart={beginPanelResize}
           run={run}
           setDragId={setDragId}
@@ -411,6 +415,7 @@ export function App() {
           onOpenNodeReference={openNodeReferenceFromAgent}
           onOpenDebugPanel={openAgentDebugPanel}
           onResizeKeyDown={resizeAgentWithKeyboard}
+          onResizeReset={resetAgentWidth}
           onResizeStart={beginAgentResize}
         />
       </div>

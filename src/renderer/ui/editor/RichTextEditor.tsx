@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { toggleMark } from 'prosemirror-commands';
 import type { Node as PMNode } from 'prosemirror-model';
 import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
-import { EditorView } from 'prosemirror-view';
+import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { replaceAllRichTextPatch, type CreateNodeTree, type RichText, type RichTextPatch } from '../../api/types';
 import type { FocusRequest, FocusTarget, PendingInputChar } from '../../state/document';
 import type { EditorTrigger, NavigateRootOptions } from '../shared';
@@ -107,6 +107,28 @@ interface RichTextEditorProps {
   pendingInput?: PendingInputChar | null;
   onFocusRequestConsumed?: (request: FocusRequest) => void;
   onPendingInputConsumed?: (input: PendingInputChar) => void;
+  /**
+   * A non-editable element rendered as an inline widget at the very end of the
+   * last paragraph's text, so trailing chrome (the row's tag chips) flows right
+   * after the last word and wraps WITH the text instead of dropping to its own
+   * line. The owner portals its content into this node and toggles it to `null`
+   * when empty. Placed inside the paragraph's inline content (not as a sibling),
+   * which is the only way a separate element can join the editor's last line.
+   */
+  inlineSlotEl?: HTMLElement | null;
+}
+
+/**
+ * Document position just inside the end of the last textblock's inline content —
+ * where a `side: 1` widget renders after the final character, on the last line.
+ * Outliner rows are single-paragraph, but this stays correct for any textblock.
+ */
+function lastTextblockInlineEnd(doc: PMNode): number | null {
+  let pos: number | null = null;
+  doc.forEach((node, offset) => {
+    if (node.isTextblock) pos = offset + 1 + node.content.size;
+  });
+  return pos;
 }
 
 function focusEditorDom(view: EditorView) {
@@ -320,6 +342,23 @@ export function RichTextEditor(props: RichTextEditorProps) {
     const view = new EditorView(mount, {
       state: initialState,
       editable: () => !propsRef.current.readOnly,
+      // Inline trailing slot (the row's tag chips). A view-level prop, not a state
+      // plugin, so it survives the bare `updateState(EditorState.create(...))` calls
+      // on the paste path. Recomputed every update, so its position tracks edits.
+      decorations: (state) => {
+        const el = propsRef.current.inlineSlotEl;
+        if (!el) return null;
+        const pos = lastTextblockInlineEnd(state.doc);
+        if (pos == null) return null;
+        return DecorationSet.create(state.doc, [
+          Decoration.widget(pos, el, {
+            side: 1,
+            key: 'inline-tag-slot',
+            stopEvent: () => true,
+            ignoreSelection: true,
+          }),
+        ]);
+      },
       dispatchTransaction(transaction) {
         const nextState = view.state.apply(transaction);
         view.updateState(nextState);
@@ -743,6 +782,15 @@ export function RichTextEditor(props: RichTextEditorProps) {
     if (!view) return;
     view.setProps({ editable: () => !props.readOnly });
   }, [props.readOnly]);
+
+  // The inline tag slot appears/disappears (node <-> null) when tags are added or
+  // removed — events that don't dispatch a transaction to THIS editor. Force a
+  // redraw so the `decorations` prop is recomputed and the widget added/removed.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.setProps({});
+  }, [props.inlineSlotEl]);
 
   // Depend only on the focus request itself. The matching target and the
   // consume callback are read from `propsRef` (the latest-props ref this

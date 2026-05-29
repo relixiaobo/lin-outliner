@@ -41,7 +41,7 @@ import {
 } from './focus/focusModel';
 import {
   ChevronLeftIcon,
-  ChevronRightIcon,
+  CloseIcon,
   HashIcon,
   ICON_SIZE,
   FilterIcon,
@@ -74,9 +74,9 @@ interface NodePanelProps {
   panelId: string;
   rootId: NodeId;
   canGoBack: boolean;
-  canGoForward: boolean;
   onBack: () => void;
-  onForward: () => void;
+  showClose: boolean;
+  onClose: () => void;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   index: DocumentIndex;
   ui: UiState;
@@ -512,6 +512,9 @@ export function NodePanel(props: NodePanelProps) {
       {rootNode && (
         <div className="panel-sticky-breadcrumb" ref={stickyBreadcrumbRef}>
           <div className="panel-breadcrumb-leading">
+            {/* Per-pane back only. Forward (and the active-pane back) live in the
+                global window chrome next to the sidebar toggle (Cmd+[ / Cmd+]) —
+                see WindowChrome. */}
             <IconButton
               className="panel-page-back-button"
               disabled={!props.canGoBack}
@@ -520,16 +523,6 @@ export function NodePanel(props: NodePanelProps) {
               label="Previous page"
               onClick={props.onBack}
               title="Previous page"
-              variant="panel"
-            />
-            <IconButton
-              className="panel-page-forward-button"
-              disabled={!props.canGoForward}
-              icon={ChevronRightIcon}
-              iconSize={14}
-              label="Next page"
-              onClick={props.onForward}
-              title="Next page"
               variant="panel"
             />
             <ButtonControl
@@ -578,6 +571,20 @@ export function NodePanel(props: NodePanelProps) {
               </span>
             )}
           </nav>
+          {/* Close lives INSIDE the breadcrumb (the pane's toolbar row): it is a no-drag
+              DOM descendant of the breadcrumb's drag region — the only reliable carve-out
+              on macOS (see breadcrumb.css) — and aligns to the same --panel-content-x as
+              the content on the right. */}
+          {props.showClose && (
+            <IconButton
+              className="panel-breadcrumb-close"
+              icon={CloseIcon}
+              label="Close panel"
+              onClick={props.onClose}
+              title="Close panel"
+              variant="panel"
+            />
+          )}
         </div>
       )}
       <div className="panel-inner">

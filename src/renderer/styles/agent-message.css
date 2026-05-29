@@ -7,7 +7,10 @@
   color: var(--text-strong);
   font-size: var(--font-content);
   line-height: var(--line-content);
-  padding: var(--space-5) var(--space-6);
+  /* Tighter than the old --space-5/--space-6 (10/12): a short message read as a puffy
+     box. --space-4/--space-5 (8/10) keeps the bubble compact while staying on the
+     radius-md ladder shared with the composer + suggestion chips. */
+  padding: var(--space-4) var(--space-5);
   white-space: pre-wrap;
 }
 

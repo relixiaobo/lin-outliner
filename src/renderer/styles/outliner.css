@@ -1980,6 +1980,23 @@
   color: var(--text);
 }
 
+/* The editor renders this as a non-editable inline widget at the end of a row's
+   text (see RichTextEditor inlineSlotEl). Being inside the paragraph's inline flow
+   is what lets the tag chips sit right after the last word and wrap WITH the text
+   instead of dropping to their own line. The chips are portaled in by OutlinerItem. */
+.row-inline-tag-slot {
+  display: inline-flex;
+  /* Center the chip in a box exactly as tall as the text line, then top-align that
+     box to the line. Both the chip and the glyphs end up centred in the same
+     --line-content band, so the chip tracks the text line — unlike vertical-align:
+     middle, which centres on the Latin x-height and rides high over CJK glyphs. */
+  height: var(--line-content);
+  align-items: center;
+  vertical-align: top;
+  white-space: normal;
+  user-select: none;
+}
+
 .tag-bar {
   display: inline-flex;
   align-items: center;
@@ -1993,17 +2010,19 @@
   --tag-bg: var(--bg-elevated);
   --tag-text: var(--text-secondary);
   display: inline-flex;
-  height: 22px;
+  height: 20px;
   align-items: center;
   gap: var(--space-1);
   flex: 0 0 auto;
   border-radius: var(--radius-sm);
   background: var(--tag-bg);
   color: var(--tag-text);
-  font-size: var(--font-ui-sm);
-  font-weight: 650;
+  /* Compact inline chip: smaller + lighter than the old 13px/650/22px so the
+     background hugs the text rather than reading as an oversized box on the line. */
+  font-size: var(--font-meta);
+  font-weight: 600;
   letter-spacing: 0;
-  line-height: var(--line-ui-md);
+  line-height: var(--line-meta);
   transition: background var(--motion-fast), color var(--motion-fast);
 }
 
@@ -2037,8 +2056,8 @@
 
 .tag-badge-remove {
   position: relative;
-  width: 18px;
-  height: 22px;
+  width: 14px;
+  height: 20px;
   justify-content: center;
   color: inherit;
 }
@@ -2053,8 +2072,11 @@
   position: absolute;
   inset: 0;
   margin: auto;
+  /* Neutral grey at rest — the remove affordance isn't part of the tag's colour.
+     It only turns danger-red when the remove target itself is hovered (below). */
+  color: var(--text-faint);
   opacity: 0;
-  transition: opacity var(--motion-fast);
+  transition: opacity var(--motion-fast), color var(--motion-fast);
 }
 
 .tag-badge:hover .tag-badge-hash,
@@ -2068,13 +2090,13 @@
 }
 
 .tag-badge-label {
-  height: 22px;
+  height: 20px;
   max-width: 180px;
   align-items: center;
   border-radius: var(--radius-sm);
   cursor: default;
   overflow: hidden;
-  padding: 0 var(--space-3);
+  padding: 0 var(--space-2);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2093,8 +2115,8 @@
   cursor: pointer;
 }
 
-.tag-badge-remove:hover,
-.tag-badge-remove:focus-visible {
+.tag-badge-remove:hover .tag-badge-x,
+.tag-badge-remove:focus-visible .tag-badge-x {
   color: var(--status-danger);
 }
 

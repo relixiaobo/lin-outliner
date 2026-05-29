@@ -8,18 +8,37 @@ export interface TagColor {
   background: string;
 }
 
-const TAG_COLORS: TagColor[] = [
-  { text: '#e11d48', background: '#fff1f2' },
-  { text: '#ea580c', background: '#fff7ed' },
-  { text: '#ca8a04', background: '#fefce8' },
-  { text: '#059669', background: '#ecfdf5' },
-  { text: '#2563eb', background: '#eff6ff' },
-  { text: '#9333ea', background: '#faf5ff' },
-  { text: '#db2777', background: '#fdf2f8' },
-  { text: '#475569', background: '#f8fafc' },
-];
+// Tag chips must follow the theme. The accent is a fixed hue, but the chip's
+// background is mixed toward the LIVE --surface token (resolved per element) so the
+// same tag reads as a soft light tint in light mode and a soft dark tint in dark
+// mode — never the baked near-white box that glared against a dark panel. The accent
+// stays the text colour (legible on both the light and dark tint). One rule, shared
+// with the legacy raw-hex branch in resolveTagColor below.
+const TAG_SURFACE_TINT = '12%';
 
-const TAG_COLOR_GRAY: TagColor = { text: '#475569', background: '#f8fafc' };
+function accentTagColor(accent: string): TagColor {
+  return {
+    text: accent,
+    background: `color-mix(in srgb, ${accent} ${TAG_SURFACE_TINT}, var(--surface))`,
+  };
+}
+
+const TAG_COLORS: TagColor[] = [
+  '#e11d48', // red
+  '#ea580c', // orange
+  '#ca8a04', // amber
+  '#059669', // green
+  '#2563eb', // blue
+  '#9333ea', // purple
+  '#db2777', // pink
+].map(accentTagColor);
+
+// The neutral tag can't tint an accent: a baked slate (#475569) vanishes on a dark
+// surface. It uses theme tokens directly, matching the default .tag-badge neutral.
+const TAG_COLOR_GRAY: TagColor = {
+  text: 'var(--text-secondary)',
+  background: 'var(--fill-3)',
+};
 
 const TAG_COLOR_MAP: Record<string, TagColor> = {
   red: TAG_COLORS[0],
@@ -86,12 +105,9 @@ export function resolveTagColor(tag: NodeProjection | undefined, byId: ConfigNod
   const color = projectTagConfig(byId, tag).color;
   if (color) {
     if (color.startsWith('#')) {
-      // Legacy raw-hex tags (preset picker now stores tokens). Mix toward the
-      // surface token rather than literal white so the tint follows the theme.
-      return {
-        text: color,
-        background: `color-mix(in srgb, ${color} 10%, var(--surface))`,
-      };
+      // Legacy raw-hex tags (preset picker now stores tokens). Same theme-aware
+      // tint as the preset accents above so both paths read identically.
+      return accentTagColor(color);
     }
     const mapped = TAG_COLOR_MAP[color];
     if (mapped) return mapped;

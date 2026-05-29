@@ -12,7 +12,7 @@
   flex: 1;
   flex-direction: column;
   overflow-y: auto;
-  padding: var(--space-8) var(--agent-dock-inset-x) var(--space-6);
+  padding: var(--space-8) var(--agent-content-x) var(--space-6);
   scrollbar-width: thin;
 }
 

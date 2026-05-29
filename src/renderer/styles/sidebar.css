@@ -12,10 +12,26 @@
   overflow: hidden;
   --sidebar-row-height: var(--control-size-xl);
   --sidebar-tree-chevron-width: var(--icon-size-md);
-  --sidebar-tree-chevron-start: 0px;
+  /* The workspace tree holds the ROOT's children, so it is nested one level under the
+     root. Its chevron sits in the same leading "control" column as the root avatar /
+     nav icons (--sidebar-content-start) — not poking out to the rail edge — and the
+     label is indented after it. So the tree reads as indented children, not as a
+     sibling of the top nav group. */
+  --sidebar-tree-chevron-start: var(--sidebar-content-start);
   --sidebar-tree-icon-size: var(--icon-size-md);
+  /* --rail-pad (the rail content inset, concentric with the rail corner) is now a
+     shared global token in tokens.css — the agent rail uses the same one. */
   --sidebar-tree-indent: var(--space-5);
-  --sidebar-content-start: var(--space-8);
+  /* The line the nav icons and the root avatar start on, measured inside the row's
+     hover block. Small — just enough to clear the block's rounded corner (--radius-sm)
+     — so the nav doesn't waste a wide empty left margin. (The block itself is already
+     inset from the rail edge by --rail-pad.) Tree-row text does NOT share this line; it
+     sits further right, off the chevron (see --sidebar-tree-label-gap). */
+  --sidebar-content-start: var(--space-3);
+  /* Breathing room between a tree row's chevron and its label text. Without it the
+     label butts right against the chevron gutter (cramped). Tree text therefore starts
+     at content-start + this gap — intentionally off the icon/avatar content line. */
+  --sidebar-tree-label-gap: var(--space-3);
   border-radius: var(--panel-radius);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-rail), inset 0 0 0 0.5px var(--rail-edge);
@@ -25,11 +41,11 @@
 }
 
 /* The rail's first row is a vertical spacer that drops the nav below the window
-   chrome (lights + toggles). It is NOT a drag region: the single title-bar drag
-   region is .window-chrome (shell.css). A drag region here would underlap the
-   fixed sidebar toggle (a no-drag control in a different DOM subtree) and, per the
-   documented Electron carve-out limitation, the OS would swallow the toggle's
-   click — which is exactly the bug this avoids. */
+   chrome (traffic lights + sidebar toggle). It is NOT a drag region: the left
+   corner chrome zone (shell.css) is the drag region here and hosts the toggle. A
+   drag region on the rail-top would underlap that toggle (a no-drag control in a
+   different DOM subtree) and, per the documented Electron carve-out limitation, the
+   OS would swallow the toggle's click — which is exactly the bug this avoids. */
 .sidebar-dock .rail-top {
   height: var(--chrome-height);
   flex: 0 0 var(--chrome-height);
@@ -43,7 +59,10 @@
   gap: var(--sidebar-section-gap);
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 0 var(--agent-dock-inset-x) 0 var(--space-2);
+  /* Uniform rail inset so hover/selection blocks float inside the rail with
+     equal margins on both edges (Raycast/Finder rail rhythm), concentric with
+     the rail's rounded corner. */
+  padding: 0 var(--rail-pad);
 }
 
 /* Collapsed: the rail slides out to the left and fades; the content base then
@@ -56,7 +75,7 @@
 
 .sidebar-bottom {
   flex: 0 0 auto;
-  padding: var(--space-4) var(--space-2);
+  padding: var(--rail-pad);
 }
 
 .sidebar-bottom-item {
@@ -252,10 +271,6 @@
 }
 
 .sidebar-primary-nav,
-.sidebar-section {
-  margin-right: calc(-1 * var(--agent-dock-inset-x));
-}
-
 .sidebar-primary-nav,
 .sidebar-section {
   gap: var(--space-2);
@@ -391,7 +406,14 @@
   align-items: center;
   border-radius: var(--radius-sm);
   color: var(--text-body);
-  padding-left: calc(var(--sidebar-content-start) + var(--tree-depth, 0) * var(--sidebar-tree-indent));
+  /* Label starts right after the chevron gutter + a breathing gap, then one extra
+     --sidebar-tree-indent per nesting depth. Derived from the chevron geometry so the
+     label always clears the chevron with the same air, whatever the chevron size. */
+  padding-left: calc(
+    var(--sidebar-tree-chevron-start) + var(--sidebar-tree-chevron-width)
+    + var(--sidebar-tree-label-gap)
+    + var(--tree-depth, 0) * var(--sidebar-tree-indent)
+  );
 }
 
 .workspace-tree-row:hover {
