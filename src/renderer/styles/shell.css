@@ -33,17 +33,25 @@
 
 /* ── Persistent window chrome ──────────────────────────────────────────────── */
 
+/* THE single title-bar drag region (Electron best practice). The OS treats an
+   -webkit-app-region: drag area as a non-client title bar: it ignores ALL pointer
+   events inside it, so any clickable control there must be carved back out with
+   no-drag. Per the documented Electron limitation (and issues electron/electron
+   #7605, #18529, #27149) that no-drag carve-out is ONLY reliable when the control
+   is a DOM DESCENDANT of the drag region — a no-drag element that merely overlaps a
+   drag region from a different subtree/stacking context has its click swallowed.
+   So: this strip is the one drag region, and the two rail toggles below are its
+   direct children (no-drag). Every other interactive surface (sidebar nav, pane
+   breadcrumbs, agent header) is laid out BELOW this strip — see canvas.css
+   --canvas-pad-top, sidebar .rail-top, and agent-dock .agent-dock-header. */
 .window-chrome {
   position: absolute;
   inset: 0 0 auto 0;
   z-index: var(--z-popover);
   height: var(--chrome-height);
-  pointer-events: none; /* only the explicit children below catch events */
+  -webkit-app-region: drag;
+  user-select: none; /* don't rubber-band-select chrome text while dragging */
 }
-
-/* Window dragging is NOT a full-width overlay here — that would sit on top of the
-   no-drag toggles and have macOS swallow their clicks. Drag is provided by the
-   per-pane breadcrumb headers + the sidebar rail-top (both app-region: drag). */
 
 /* Two symmetric fixed rail toggles on the traffic-light centreline. Icon controls
    signal hover by COLOUR, not a fill background. They are window chrome anchored

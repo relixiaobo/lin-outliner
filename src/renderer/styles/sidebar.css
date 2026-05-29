@@ -24,12 +24,15 @@
     opacity var(--motion-layout);
 }
 
-/* The rail's first row is reserved for window chrome (lights + toggle); it is a
-   drag region and a vertical spacer so the nav clears the chrome centreline. */
+/* The rail's first row is a vertical spacer that drops the nav below the window
+   chrome (lights + toggles). It is NOT a drag region: the single title-bar drag
+   region is .window-chrome (shell.css). A drag region here would underlap the
+   fixed sidebar toggle (a no-drag control in a different DOM subtree) and, per the
+   documented Electron carve-out limitation, the OS would swallow the toggle's
+   click — which is exactly the bug this avoids. */
 .sidebar-dock .rail-top {
   height: var(--chrome-height);
   flex: 0 0 var(--chrome-height);
-  -webkit-app-region: drag;
 }
 
 .sidebar-scroll {

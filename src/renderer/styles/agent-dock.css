@@ -171,11 +171,18 @@ button.panel-resize-handle::after {
   min-width: var(--panel-gap);
 }
 
+/* The header drops below the window-chrome title-bar strip (the single
+   -webkit-app-region: drag region, shell.css). Without this gap the header's
+   title/menu buttons sit UNDER the full-width drag strip and the OS swallows their
+   clicks (the no-drag carve-out is unreliable across DOM subtrees). The
+   --chrome-height top margin mirrors the sidebar's .rail-top spacer, so the agent
+   title lines up with the sidebar nav and the pane breadcrumbs. */
 .agent-dock-header {
   position: relative;
   display: flex;
   height: 28px;
   flex: 0 0 28px;
+  margin-top: var(--chrome-height);
   align-items: center;
   justify-content: flex-start;
   gap: var(--space-4);
