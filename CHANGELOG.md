@@ -24,7 +24,14 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   denylist and an agent/sub-agent-spawn allow ban, sensitive-data exfiltration
   redlines, and a defined interactive/unattended fail-safe. Plan refined on merge
   per a cc-2.1 source comparison (precedence wording, the two borrowed validation
-  rules, and classifier-callable vs auto-allow-eligible terminology).
+  rules, and classifier-callable vs auto-allow-eligible terminology). A second
+  pass pinned the concrete defaults cc-2.1 ships (per-action-kind
+  `defaultDecision` table — outside-area read / web fetch / delete / publish /
+  send-message default to `ask`; in-area read/edit and web search to `allow`),
+  added a Classifier Prompt Contract (named block-category taxonomy mirroring
+  the deterministic redlines + operational params) and a concrete safe
+  auto-allow tool allowlist + outward-facing shell-command list, so the defaults
+  are implementable rather than left as `Allow / Ask` placeholders.
   ([#59](https://github.com/relixiaobo/lin-outliner/pull/59))
 - **macOS window corner radius (native)** — gives the standard macOS window a
   custom `24pt` continuous corner (matching Raycast) while keeping native traffic

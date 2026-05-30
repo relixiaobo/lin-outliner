@@ -222,19 +222,33 @@ The user manages one global table:
 ```txt
 Agent Tool Permissions
 
-Action kind                             Permission
+Action kind                              Default decision
 
-Read local data                         Allow
-Search external information             Allow
-Edit local documents                     Allow
-Run local validation / project scripts   Ask by default / Allow by explicit rule
-Install dependencies                     Ask by default / Allow by explicit rule
-Delete local data                        Allow / Ask
-Publish to a remote service              Allow / Ask
-Send external messages                   Allow / Ask
+Read local data (inside allowed area)    Allow
+Read outside the allowed area            Ask
+Search external information (web search)  Allow
+Fetch external content (web fetch)       Ask
+Edit local documents (inside area)       Allow
+Run local validation / project scripts   Ask   (opt into Allow by explicit rule)
+Install dependencies                     Ask   (opt into Allow by explicit rule)
+Delete local data                        Ask   (reversible/to-trash may default Allow once checkpoint/undo lands)
+Publish to a remote service              Ask
+Send external messages                   Ask
 Payment or purchase actions              Platform block until audited support exists
 Modify agent permission settings         Platform block
 ```
+
+The second column is each action kind's `defaultDecision` — the value used when
+the user has set no explicit global rule. Every `Ask` row is a single pinned
+default, not "allow or ask": it asks unless the user opts into `Allow` with a
+validated, non-broad global rule. Outward-facing and sensitive rows
+(`Read outside the allowed area`, `Fetch external content`, `Publish`,
+`Send external messages`) are also not classifier-auto-allow-eligible, so the
+classifier may only `block` them, never silently allow them (see
+[Ask Resolver Classifier](#ask-resolver-classifier)). These pinned defaults are
+deliberately a touch more permissive than cc-2.1's shipped `default` mode for
+in-area edits and web search (cc asks for both; Lin allows), and stricter for
+payment and sensitive writes (cc asks; Lin hard-blocks).
 
 These rules are global across the whole software. They do not depend on the
 current document, run, session, directory, or project. If the user sets
@@ -455,6 +469,18 @@ Required rules:
    unknown shell execution. Unknown shell execution must never default to
    `allow`. It should hard block unless the product explicitly defines a narrow
    unknown-shell action kind whose only configurable permission is `ask`.
+
+The classifier needs two concrete seed lists so segment classification is
+deterministic rather than left to the implementer:
+
+- the arbitrary-code prefix list (see [Rule Validation](#rule-validation)):
+  `python`/`node`/`eval`/`exec`/`xargs`/`sudo`/… — any segment whose head is on
+  it is local code execution, never auto-allow;
+- an outward-facing command list mapping a segment to `publish to a remote
+  service` / `network write`: `curl`, `wget`, `scp`, `rsync` (to a remote),
+  `ssh`, `gh` (and `gh api`), `git push`/`git remote`/`git fetch`-with-write,
+  `kubectl`, `aws`, `gcloud`, `gsutil`, `docker push`, `npm publish`. A segment
+  on this list is `externalEffect` and therefore not classifier-auto-allow.
 
 Examples:
 
@@ -677,7 +703,7 @@ deliberately interactive safety checks.
 The classifier should have deterministic fast paths before the model call:
 
 - if the action would already be allowed by the local-edit fast path, allow it;
-- if the tool is on a narrow safe allowlist, allow it;
+- if the tool is on the safe auto-allow allowlist below, allow it;
 - if a safety check is explicitly deliberately-interactive, skip the classifier.
 
 When the classifier is unavailable, malformed, or unparseable, it must not
@@ -688,6 +714,78 @@ continue with a fallback.
 Entering this single policy should also prevent dangerous allow rules from
 bypassing the classifier. Overly broad shell or agent allow rules that would
 skip ask resolution should be ignored or rejected with diagnostics.
+
+### Safe Auto-Allow Allowlist
+
+The "narrow safe allowlist" is a concrete, named set of tools, membership by
+tool name, that skip the classifier API call and auto-allow. This mirrors
+cc-2.1's `SAFE_YOLO_ALLOWLISTED_TOOLS` but must be authored for Lin's own tool
+surface, not copied verbatim. Seed membership:
+
+- read/search-only tools: file read, grep/glob, project/outline read, option
+  and reference lookups;
+- agent bookkeeping with no side effects: todo/task-list state, plan-mode
+  enter/exit, tool search, idle/sleep.
+
+Explicitly NOT on the allowlist:
+
+- any file edit/write (those go through the local-edit fast path, scoped to the
+  allowed area, not a blanket tool allowance);
+- agent / sub-agent spawn (gated per action; see Rule Validation);
+- anything `externalEffect: true` — notably external messaging. (cc-2.1 places
+  `SendMessage` on its safe list because it is an internal mailbox; Lin's
+  external-messaging surface is gated by `Capability(external_messaging)`, so it
+  must NOT be allowlisted. Do not port cc's membership blindly.)
+
+Allowlist membership must agree with each tool's descriptor: a tool on the
+allowlist must have `externalEffect: false`, `highConsequence: false`, and an
+`allowed_file_area`/`none` access scope.
+
+### Classifier Prompt Contract
+
+The classifier output is binary (`allow` | `block`), but the model still needs a
+concrete decision rubric. The classifier system prompt should enumerate `block`
+categories. Reuse the deterministic redlines as the named categories so the
+prompt is defense-in-depth — every category below is ALSO enforced by a
+deterministic rule above the classifier, so a prompt miss cannot by itself allow
+a redline:
+
+- **External-Code-Execution** — download-and-run and arbitrary-interpreter
+  invocation (`curl … | bash`, `iex (iwr …)`, piping into `python`/`node`/`sh`).
+  Deterministic backstop: the arbitrary-code prefix denylist + unknown-shell
+  hard block.
+- **Irreversible-Local-Destruction** — `rm -rf`, truncating redirects, recursive
+  force-deletes, disk/format operations. Backstop: host-destruction hard block +
+  irreversible-not-auto-allow.
+- **Data-Exfiltration** — reading sensitive/secret data and sending it outward.
+  Backstop: sensitive-read-plus-network-write hard block.
+- **Unauthorized-Persistence** — writes to shell-startup, cron/launch agents,
+  `.git/hooks`, or autostart paths. Backstop: persistence-write hard block.
+- **Security-Weaken** — disabling protections, privilege elevation, relaxing
+  permission/credential controls. Backstop: permission-self-modification hard
+  block + sensitive-config-write hard block.
+- **Outward-Mutation** — publishing, deploying, external API mutation, sending
+  messages, uploading. Backstop: `externalEffect` kinds are not
+  auto-allow-eligible.
+
+The `allow` guidance is the complement: ordinary local, reversible,
+in-allowed-area, non-outward work that the user's intent (from the transcript)
+plausibly requested. The classifier must default to `block` when uncertain.
+
+Operational parameters (pin so latency/cost/false-positives are not left open):
+
+- temperature `0`; the classifier model is configurable but defaults to a small
+  fast model;
+- `tool_choice` forced to the single `classify_permission_result` contract; the
+  real agent tools are never provided;
+- prompt-cache the static system prompt;
+- optional two-stage flow (a cheap fast pass that only has to emit
+  block/allow, escalating to a reasoning pass on a tentative block to cut false
+  positives) — adopt it if classifier latency on the common allow path matters,
+  otherwise a single pass is acceptable;
+- transcript-too-long is treated like classifier-unavailable: do not silently
+  allow — `needs_user` in interactive contexts, a structured denied result when
+  unattended.
 
 ## Global Permission Rules
 
@@ -1029,7 +1127,11 @@ auto-allow them by default.
    and reject any `allow` for the agent / sub-agent spawn action kind.
 4. Add a permission center UI for common allow/ask management. Do not require a
    dedicated disabled-capabilities manager.
-5. Build descriptor resolvers for existing agent tools.
+5. Build descriptor resolvers for existing agent tools, setting each
+   descriptor's `defaultDecision` to the pinned Mental Model value (in-area
+   read/edit and web search = allow; outside-area read, web fetch, delete,
+   publish, send-message, install, project-script = ask; payment and
+   permission-modify = platform block).
 6. Preserve existing path-boundary, sensitive-path, restricted-mode, and skill
    supplied `preapprovedToolRules` safety properties while mapping them into
    action descriptors or platform hard blocks.
@@ -1067,6 +1169,16 @@ auto-allow them by default.
     `Bash(eval:*)`, `Bash(*)`, and any agent / sub-agent spawn kind are rejected
     and fall back to the built-in default; a rejected `allow` never silently
     widens access.
+20. Enumerate the safe auto-allow allowlist (membership by tool name;
+    `externalEffect: false` / `highConsequence: false` only; exclude edits,
+    agent-spawn, and external messaging) and the outward-facing shell-command
+    list (`curl`/`wget`/`gh`/`git push`/`kubectl`/`aws`/`gcloud`/`gsutil`/…)
+    used by segment classification.
+21. Author the classifier prompt contract: the block-category taxonomy
+    (External-Code-Execution, Irreversible-Local-Destruction, Data-Exfiltration,
+    Unauthorized-Persistence, Security-Weaken, Outward-Mutation), the allow
+    guidance, default-to-block-when-uncertain, temperature `0`, the forced
+    `classify_permission_result` tool, and the transcript-too-long fallback.
 
 ## Open Questions
 
