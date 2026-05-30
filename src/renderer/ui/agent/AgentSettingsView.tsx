@@ -7,6 +7,7 @@ import type {
   AgentProviderSettingsView,
   AgentReasoningLevel,
   AgentDefinition,
+  AgentToolPermissionSettingsView,
   SkillDefinition,
 } from '../../api/types';
 import { api } from '../../api/client';
@@ -25,7 +26,7 @@ interface AgentSettingsViewProps {
   sessionId?: string;
 }
 
-type SettingsCategory = 'providers' | 'skills' | 'agents';
+type SettingsCategory = 'providers' | 'permissions' | 'skills' | 'agents';
 
 interface DraftConfig {
   providerId: string;
@@ -67,8 +68,77 @@ const EMPTY_DRAFT: DraftConfig = {
 
 const SETTINGS_CATEGORIES: Array<{ id: SettingsCategory; label: string; hint: string }> = [
   { id: 'providers', label: 'Providers', hint: 'Connections & API keys' },
+  { id: 'permissions', label: 'Permissions', hint: 'Tool Allow / Ask Rules' },
   { id: 'skills', label: 'Skills', hint: 'Extension Capabilities' },
   { id: 'agents', label: 'Agent Profiles', hint: 'Persona Definitions' },
+];
+
+const COMMON_PERMISSION_RULES: Array<{
+  ruleValue: string;
+  label: string;
+  description: string;
+  allowable: boolean;
+}> = [
+  {
+    ruleValue: 'Action(file.read.outside_allowed_file_area)',
+    label: 'Read outside allowed area',
+    description: 'Local reads outside the configured file boundary.',
+    allowable: true,
+  },
+  {
+    ruleValue: 'Action(file.read.sensitive_local_path)',
+    label: 'Read sensitive local paths',
+    description: 'Credential-like paths such as SSH keys, env files, and package tokens.',
+    allowable: true,
+  },
+  {
+    ruleValue: 'Action(web.fetch)',
+    label: 'Fetch web pages',
+    description: 'Directly contact a URL and read its response.',
+    allowable: true,
+  },
+  {
+    ruleValue: 'Action(file.delete.allowed_file_area)',
+    label: 'Delete local files',
+    description: 'Remove files inside the allowed file area.',
+    allowable: true,
+  },
+  {
+    ruleValue: 'Action(shell.project_script)',
+    label: 'Run project scripts',
+    description: 'Execute local validation commands and package scripts.',
+    allowable: true,
+  },
+  {
+    ruleValue: 'Action(shell.dependency_install)',
+    label: 'Install dependencies',
+    description: 'Run package manager commands that change dependencies or lockfiles.',
+    allowable: true,
+  },
+  {
+    ruleValue: 'Action(git.publish_remote)',
+    label: 'Publish to Git remotes',
+    description: 'Push commits or mutate GitHub/Git remotes.',
+    allowable: true,
+  },
+  {
+    ruleValue: 'Action(deploy.publish_remote)',
+    label: 'Deploy or publish',
+    description: 'Publish packages, deployments, or remote environments.',
+    allowable: true,
+  },
+  {
+    ruleValue: 'Action(shell.network_write)',
+    label: 'Network write commands',
+    description: 'Shell commands that send data outward or mutate network services.',
+    allowable: true,
+  },
+  {
+    ruleValue: 'Action(agent.subagent.spawn)',
+    label: 'Spawn subagents',
+    description: 'Start another agent process. Global allow is intentionally unavailable.',
+    allowable: false,
+  },
 ];
 
 const PREFERRED_PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'openrouter'];
@@ -83,6 +153,8 @@ const REASONING_LABELS: Record<AgentReasoningLevel, string> = {
 
 export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettingsViewProps) {
   const [settings, setSettings] = useState<AgentProviderSettingsView | null>(null);
+  const [permissionSettings, setPermissionSettings] = useState<AgentToolPermissionSettingsView | null>(null);
+  const [permissionDraft, setPermissionDraft] = useState<AgentToolPermissionSettingsView | null>(null);
   const [draft, setDraft] = useState<DraftConfig>(EMPTY_DRAFT);
   const [apiKey, setApiKey] = useState('');
   const [revealKey, setRevealKey] = useState(false);
@@ -135,10 +207,15 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     setModelSearchOpen(false);
     setTestResult(null);
 
-    void api.agentGetProviderSettings()
-      .then((next) => {
+    void Promise.all([
+      api.agentGetProviderSettings(),
+      api.agentGetToolPermissionSettings(),
+    ])
+      .then(([next, nextPermissions]) => {
         if (!isCurrentRequest(requestId)) return;
         setSettings(next);
+        setPermissionSettings(nextPermissions);
+        setPermissionDraft(nextPermissions);
         setDraft(resolveInitialDraft(next));
         setApiKey('');
       })
@@ -249,6 +326,35 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
   }, [catalogModels, modelQuery]);
 
   const selectedAgent = allAgents.find((a) => a.name === selectedAgentName) || allAgents[0];
+  const permissionDiagnostics = permissionDraft?.diagnostics ?? permissionSettings?.diagnostics ?? [];
+
+  function permissionDecision(ruleValue: string): 'deny' | 'allow' | 'ask' {
+    const permissions = permissionDraft?.permissions;
+    if (permissions?.deny.includes(ruleValue)) return 'deny';
+    if (permissions?.allow.includes(ruleValue)) return 'allow';
+    return 'ask';
+  }
+
+  function setPermissionDecision(ruleValue: string, decision: 'allow' | 'ask') {
+    setPermissionDraft((current) => {
+      const base = current ?? { permissions: { allow: [], ask: [], deny: [] }, diagnostics: [] };
+      const allow = removeRule(base.permissions.allow, ruleValue);
+      const ask = removeRule(base.permissions.ask, ruleValue);
+      const deny = [...base.permissions.deny];
+      if (decision === 'allow') allow.push(ruleValue);
+      else ask.push(ruleValue);
+      return {
+        ...base,
+        permissions: {
+          allow: uniqueStrings(allow),
+          ask: uniqueStrings(ask),
+          deny: uniqueStrings(deny),
+        },
+      };
+    });
+    setNotice(null);
+    setError(null);
+  }
 
   function selectProvider(providerId: string) {
     setCreatingCustom(false);
@@ -381,10 +487,17 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
         disabledSkills: draft.disabledSkills,
         disabledAgents: draft.disabledAgents,
       });
+      const nextPermissions = permissionDraft && permissionDraft !== permissionSettings
+        ? await api.agentUpdateToolPermissionSettings(permissionDraft)
+        : null;
 
       next = await api.agentGetProviderSettings();
       if (isCurrentRequest(requestId)) {
         setSettings(next);
+        if (nextPermissions) {
+          setPermissionSettings(nextPermissions);
+          setPermissionDraft(nextPermissions);
+        }
         if (providerId) {
           setDraft(resolveDraftForProvider(next, providerId));
         } else {
@@ -772,6 +885,66 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                   </div>
                 </div>
               </section>
+            ) : category === 'permissions' ? (
+              <section className="agent-settings-section settings-permissions-section" aria-labelledby="settings-permissions-heading">
+                <div className="settings-section-title-row">
+                  <h3 id="settings-permissions-heading">Tool Permissions</h3>
+                  <span className="settings-section-desc">Choose which common agent actions run automatically and which ask first.</span>
+                </div>
+
+                <div className="settings-skills-list-section">
+                  <h4 className="settings-subheading">Common Actions</h4>
+                  <div className="settings-skills-table">
+                    {COMMON_PERMISSION_RULES.map((rule) => {
+                      const decision = permissionDecision(rule.ruleValue);
+                      const denied = decision === 'deny';
+                      return (
+                        <div className={`settings-skill-row ${denied ? 'is-disabled' : ''}`} key={rule.ruleValue}>
+                          <div className="skill-row-info">
+                            <div className="skill-row-title">
+                              <span className="skill-name">{rule.label}</span>
+                              <span className="skill-source-badge">{denied ? 'Deny in JSON' : decision === 'allow' ? 'Allow' : 'Ask'}</span>
+                            </div>
+                            <p className="skill-desc">{rule.description}</p>
+                            <p className="skill-desc">{rule.ruleValue}</p>
+                          </div>
+                          <div className="agent-settings-field">
+                            <SelectControl
+                              disabled={denied}
+                              label={`${rule.label} permission`}
+                              onChange={(event) => setPermissionDecision(rule.ruleValue, event.target.value as 'allow' | 'ask')}
+                              value={denied ? 'deny' : decision}
+                            >
+                              <option value="ask">Ask first</option>
+                              {rule.allowable ? <option value="allow">Always allow</option> : null}
+                              {denied ? <option value="deny">Denied in JSON</option> : null}
+                            </SelectControl>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {permissionDiagnostics.length > 0 ? (
+                  <div className="settings-skills-list-section">
+                    <h4 className="settings-subheading">Ignored JSON Rules</h4>
+                    <div className="settings-skills-table">
+                      {permissionDiagnostics.map((diagnostic) => (
+                        <div className="settings-skill-row is-disabled" key={`${diagnostic.decision}:${diagnostic.ruleValue}:${diagnostic.code}`}>
+                          <div className="skill-row-info">
+                            <div className="skill-row-title">
+                              <span className="skill-name">{diagnostic.ruleValue}</span>
+                              <span className="skill-source-badge">{diagnostic.code}</span>
+                            </div>
+                            <p className="skill-desc">{diagnostic.message}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </section>
             ) : category === 'skills' ? (
               <section className="agent-settings-section settings-skills-section" aria-labelledby="settings-skills-heading">
                 <div className="settings-section-title-row">
@@ -1147,6 +1320,14 @@ function parseSkillDirectoryInput(value: string): string[] {
     .map((item) => item.trim())
     .filter(Boolean))]
     .slice(0, 20);
+}
+
+function removeRule(rules: readonly string[], ruleValue: string): string[] {
+  return rules.filter((rule) => rule !== ruleValue);
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values)];
 }
 
 function defaultReasoningLevel(model: AgentModelOption | undefined): AgentReasoningLevel {

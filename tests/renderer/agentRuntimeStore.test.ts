@@ -4,6 +4,7 @@ import {
   type AgentRuntimeClient,
 } from '../../src/renderer/agent/runtime';
 import type {
+  AgentApprovalResolutionScope,
   AgentRuntimeEvent,
   AgentUserViewContext,
   AssistantMessage,
@@ -168,7 +169,7 @@ function createFakeClient(options: {
     restoreLatestSession: 0,
     restoreSession: [] as string[],
     queueFollowUp: [] as Array<{ sessionId: string; message: string; userViewContext?: AgentUserViewContext | null }>,
-    resolveApproval: [] as Array<{ sessionId: string; requestId: string; approved: boolean; scope: 'once' | 'session' | undefined }>,
+    resolveApproval: [] as Array<{ sessionId: string; requestId: string; approved: boolean; scope: AgentApprovalResolutionScope | undefined }>,
     steerSession: [] as Array<{ sessionId: string; message: string }>,
     sendMessage: [] as Array<{
       sessionId: string;

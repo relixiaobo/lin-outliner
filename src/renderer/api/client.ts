@@ -9,6 +9,7 @@ import type {
   AgentSessionMeta,
   AgentSlashCommandView,
   AgentApprovalResolutionScope,
+  AgentToolPermissionSettingsView,
   AgentDefinition,
   SkillDefinition,
   CommandOutcome,
@@ -286,6 +287,10 @@ export const api = {
     command<AgentProviderSettingsView>('agent_get_provider_settings'),
   agentUpdateRuntimeSettings: (settings: AgentRuntimeSettingsInput) =>
     command<AgentProviderSettingsView>('agent_update_runtime_settings', { settings }),
+  agentGetToolPermissionSettings: () =>
+    command<AgentToolPermissionSettingsView>('agent_get_tool_permission_settings'),
+  agentUpdateToolPermissionSettings: (settings: AgentToolPermissionSettingsView) =>
+    command<AgentToolPermissionSettingsView>('agent_update_tool_permission_settings', { settings }),
   agentUpsertProviderConfig: (provider: AgentProviderConfigInput) =>
     command<AgentProviderSettingsView>('agent_upsert_provider_config', { provider }),
   agentDeleteProviderConfig: (providerId: string) =>

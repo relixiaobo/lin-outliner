@@ -86,6 +86,8 @@ export type AgentEventType =
   | 'tool_call.failed'
   | 'tool_result.created'
   | 'tool_result.replaced'
+  | 'tool.permission.checked'
+  | 'tool.permission.resolved'
   | 'approval.requested'
   | 'approval.resolved'
   | 'follow_up.queued'
@@ -261,6 +263,54 @@ export interface ToolResultReplacedEvent extends AgentEventBase {
   outputRef?: AgentPayloadRef;
 }
 
+export interface ToolPermissionCheckedEvent extends AgentEventBase {
+  type: 'tool.permission.checked';
+  requestId: string;
+  toolCallId: string;
+  toolName: string;
+  primaryActionKind?: string;
+  actionKinds: string[];
+  outcome: 'allow' | 'ask' | 'blocked';
+  source:
+    | 'global_rule'
+    | 'action_default'
+    | 'configured_deny'
+    | 'classifier'
+    | 'classifier_unavailable'
+    | 'safe_allowlist'
+    | 'user'
+    | 'platform_hard_block'
+    | 'runtime';
+  classifierResult?: {
+    outcome: 'allow' | 'block';
+    reason: string;
+    model?: string;
+    unavailable?: boolean;
+  };
+  descriptorRef?: AgentPayloadRef;
+}
+
+export interface ToolPermissionResolvedEvent extends AgentEventBase {
+  type: 'tool.permission.resolved';
+  requestId: string;
+  toolCallId: string;
+  toolName: string;
+  status: 'approved' | 'denied' | 'aborted';
+  resolvedBy:
+    | 'classifier'
+    | 'safe_allowlist'
+    | 'user_once'
+    | 'allow_rule_update'
+    | 'global_rule'
+    | 'configured_deny'
+    | 'classifier_unavailable'
+    | 'platform_hard_block'
+    | 'runtime'
+    | 'system_abort';
+  updatedRule?: string;
+  deniedReason?: string;
+}
+
 export interface ApprovalRequestedEvent extends AgentEventBase {
   type: 'approval.requested';
   requestId: string;
@@ -372,6 +422,8 @@ export type AgentEvent =
   | ToolCallFailedEvent
   | ToolResultCreatedEvent
   | ToolResultReplacedEvent
+  | ToolPermissionCheckedEvent
+  | ToolPermissionResolvedEvent
   | ApprovalRequestedEvent
   | ApprovalResolvedEvent
   | FollowUpQueuedEvent
@@ -848,6 +900,8 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
     case 'tool_call.delta':
     case 'tool_call.completed':
     case 'tool_call.failed':
+    case 'tool.permission.checked':
+    case 'tool.permission.resolved':
     case 'approval.requested':
     case 'approval.resolved':
     case 'follow_up.queued':

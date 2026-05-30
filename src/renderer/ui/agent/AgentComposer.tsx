@@ -746,10 +746,10 @@ function AgentApprovalCard({
                 <span className="agent-approval-detail-value">{detail.value}</span>
               </div>
             ))}
-            {approval.suggestedSessionRule ? (
+            {approval.alwaysAllowRule ? (
               <div className="agent-approval-detail">
-                <span className="agent-approval-detail-label">Session rule</span>
-                <span className="agent-approval-detail-value">{approval.suggestedSessionRule}</span>
+                <span className="agent-approval-detail-label">Always allow rule</span>
+                <span className="agent-approval-detail-value">{approval.alwaysAllowRule}</span>
               </div>
             ) : null}
           </div>
@@ -762,16 +762,16 @@ function AgentApprovalCard({
           onClick={() => void resolve(true, 'once')}
           type="button"
         >
-          Allow once
+          Approve once
         </button>
-        {approval.suggestedSessionRule ? (
+        {approval.alwaysAllowRule ? (
           <button
             className="agent-approval-button"
             disabled={!!submitting}
-            onClick={() => void resolve(true, 'session')}
+            onClick={() => void resolve(true, 'always')}
             type="button"
           >
-            This session
+            Always allow
           </button>
         ) : null}
         <button
@@ -780,7 +780,7 @@ function AgentApprovalCard({
           onClick={() => void resolve(false, 'once')}
           type="button"
         >
-          Deny
+          Deny once
         </button>
       </div>
     </div>
