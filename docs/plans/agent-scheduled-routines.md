@@ -166,9 +166,10 @@ so the chip, read-only renders, and agent text share one vocabulary.
 calendar gains a small "Repeat" section (presets + a custom form: based-on /
 every N unit / ends). Both paths write the same structured value.
 
-Whether this **extends the generic `date` FieldType** (recurrence becomes a
-general capability) or introduces a **dedicated command-only schedule value** is
-an open decision — see Open questions (B1 vs B2).
+This **extends the generic `date` FieldType** (decision **B1**): any date value
+may carry an optional recurrence rule, so recurrence becomes a general
+capability — reusable later for recurring events / todos — not a command-only
+concept. See Open questions for the consequences this pulls into scope.
 
 ### Run now ↔ Enable schedule (orthogonal)
 
@@ -349,11 +350,13 @@ Counted, ordered:
 2. **Add a `protected` field property** (or equivalent type×field
    user-only-write enforcement at the node-tool gateway) so that `date` writes
    on a `command` node are rejected for non-user origins.
-3. **Extend the `date` value** to carry an optional `RRULE` (single kind only):
-   `parseDateFieldValue` returns the rule; add `formatRecurrence(rule)` and
-   `mostRecentDue(date, now)` as pure functions in core, unit-tested. The date
-   chip renders the canonical string (text-only); the popover gains a Repeat
-   section.
+3. **Extend the generic `date` value** (decision B1) to carry an optional
+   `RRULE` (single kind only): `parseDateFieldValue` returns the rule; add
+   `formatRecurrence(rule)` and `mostRecentDue(date, now)` as pure functions in
+   core, unit-tested. The date chip renders the canonical string (text-only);
+   the popover gains a Repeat section. Teach the date search ops
+   (`DATE_OVERLAPS`, `OVERDUE`) and `DateFieldControl` to tolerate a trailing
+   rule (ignored by range math; values sort/overlap by anchor).
 4. **Add `sys:lastRunAt`** to `ViewSystemField` (`src/core/types.ts`).
 5. **Anacron scheduler** in main process: tick on launch / `powerMonitor.resume`
    / 60 s heartbeat; for each command node compute `mostRecentDue` and compare.
@@ -368,10 +371,10 @@ Counted, ordered:
 9. **Builder panel UI** mirroring the Query builder (likewise deferrable —
    inline editing works as a first cut).
 
-**The `When` half is the `date` value extended with an `RRULE` subset.** Whether
-that extends the generic `date` FieldType (B1) or is a dedicated command-only
-value (B2) is open — see Open questions. Either way the recurrence is structured
-and offline-readable, not Todoist's NL string.
+**The `When` half is the generic `date` FieldType extended with an optional
+`RRULE` subset (decision B1).** Recurrence is a general date capability, not a
+command-only value. The rule is structured and offline-readable, not Todoist's
+NL string.
 
 ## Negative space — what we are not building
 
@@ -459,17 +462,18 @@ Each of these was considered during design and explicitly dropped:
    `scheduled_fire` context projection (both cut), this is mostly: extract the
    shared execution path below `sendMessage`, add a no-human-turn entry, attach
    to the command's session. Materially smaller than the prior plan assumed.
-5. **Where recurrence lives (B1 vs B2).** Two homes for the structured rule:
-   **B1** — extend the generic `date` FieldType so any date value may carry an
-   `RRULE` (one type, one control; recurrence becomes a general capability for
-   future recurring events/todos), at the cost of teaching the date codec,
-   `DateFieldControl`, and search semantics (`DATE_OVERLAPS`, `OVERDUE`) to
-   tolerate an optional rule. **B2** — a dedicated `recurrence`/`schedule`
-   value used only by `command` nodes (smaller blast radius; a second date-like
-   concept overlapping `date`). Leaning **B1** — it is the Todoist `due` / iCal
-   `DTSTART`+`RRULE` model and recurrence is optional, so a plain date field
-   never sets it. The storage-vs-Todoist question is already settled: structured
-   `RRULE` subset, not the NL string.
+5. **Where recurrence lives — DECIDED: B1 (extend the generic `date`
+   FieldType).** Any date value may carry an optional `RRULE`; recurrence is a
+   general capability (reusable for future recurring events / todos), not a
+   command-only value. Rejected **B2** (a dedicated `recurrence`/`schedule`
+   value used only by `command` nodes) — it would add a second date-like
+   concept overlapping `date`. This is the Todoist `due` / iCal
+   `DTSTART`+`RRULE` shape, and the rule is optional, so a plain date field
+   simply never sets one. Consequence pulled into scope: the date codec,
+   `DateFieldControl`, and date search semantics (`DATE_OVERLAPS`, `OVERDUE`)
+   must tolerate an optional rule — rule-bearing values still sort and overlap
+   by their anchor; the rule is ignored by range math. Storage is settled: a
+   structured `RRULE` subset, never the NL string.
 
 ## MVP slice
 
