@@ -33,6 +33,68 @@ describe('agent permissions', () => {
     expect(decision).toMatchObject({ behavior: 'ask', code: 'local_file_delete' });
   });
 
+  test('find mutations and inline edits do not use the read-only shell fast path', () => {
+    const findDelete = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'find . -name "*.tmp" -delete' },
+      policy: { workspaceRoot: '/tmp/workspace' },
+    });
+    const findExec = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'find . -name "*.tmp" -exec rm -rf ./dist {} \\;' },
+      policy: { workspaceRoot: '/tmp/workspace' },
+    });
+    const findOk = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'find . -name "*.tmp" -ok sh -c "echo {}" \\;' },
+      policy: { workspaceRoot: '/tmp/workspace' },
+    });
+    const sedEdit = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'sed -i "s/a/b/" src/file.ts' },
+      policy: { workspaceRoot: '/tmp/workspace' },
+    });
+    const sedRead = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'sed -n "1,10p" src/file.ts' },
+      policy: { workspaceRoot: '/tmp/workspace' },
+    });
+
+    expect(findDelete).toMatchObject({ behavior: 'ask', code: 'find_delete' });
+    expect(findExec).toMatchObject({ behavior: 'ask', code: 'find_exec' });
+    expect(findOk).toMatchObject({ behavior: 'ask', code: 'find_exec' });
+    expect(sedEdit).toMatchObject({ behavior: 'ask', code: 'local_file_edit' });
+    expect(sedRead).toMatchObject({ behavior: 'allow' });
+  });
+
+  test('find and inline-edit writes to sensitive persistence paths are hard blocks', () => {
+    const sedShellStartup = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'sed -i "s/a/b/" ~/.zshrc' },
+      policy: { workspaceRoot: '/tmp/workspace' },
+    });
+    const perlShellStartup = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'perl -i -pe "s/a/b/" ~/.zshrc' },
+      policy: { workspaceRoot: '/tmp/workspace' },
+    });
+    const findHookDelete = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'find .git/hooks -type f -delete' },
+      policy: { workspaceRoot: '/tmp/workspace' },
+    });
+    const findHookExec = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'find . -exec rm -f .git/hooks/pre-commit {} \\;' },
+      policy: { workspaceRoot: '/tmp/workspace' },
+    });
+
+    expect(sedShellStartup).toMatchObject({ behavior: 'deny', code: 'sensitive_persistence_write', redline: true });
+    expect(perlShellStartup).toMatchObject({ behavior: 'deny', code: 'sensitive_persistence_write', redline: true });
+    expect(findHookDelete).toMatchObject({ behavior: 'deny', code: 'sensitive_persistence_write', redline: true });
+    expect(findHookExec).toMatchObject({ behavior: 'deny', code: 'sensitive_persistence_write', redline: true });
+  });
+
   test('asks for recursive cleanup outside the workspace', () => {
     const decision = evaluateAgentToolPermission({
       toolName: 'bash',
@@ -56,11 +118,18 @@ describe('agent permissions', () => {
       args: { command: 'rm -rf .' },
       policy: { workspaceRoot: '/tmp/workspace' },
     });
+    const findRootDelete = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'find . -exec rm -rf / {} \\;' },
+      policy: { workspaceRoot: '/tmp/workspace' },
+    });
 
     expect(rootDelete.behavior).toBe('deny');
     expect(rootDelete.code).toBe('dangerous_root_delete');
     expect(workspaceDelete.behavior).toBe('deny');
     expect(workspaceDelete.code).toBe('dangerous_root_delete');
+    expect(findRootDelete.behavior).toBe('deny');
+    expect(findRootDelete.code).toBe('dangerous_root_delete');
   });
 
   test('enforces workspace boundary for file writes', () => {
@@ -396,8 +465,18 @@ describe('agent permissions', () => {
         allow: [
           'Bash(*)',
           'Bash(python:*)',
+          'Bash(ssh:*)',
+          'Bash(npm:*)',
+          'Bash(pnpm:*)',
+          'Bash(yarn:*)',
+          'Bash(bun:*)',
+          'Bash(npx:*)',
+          'Bash(bunx:*)',
+          'Bash(tsx:*)',
+          'Bash(PowerShell:*)',
           'Action(shell.unknown)',
           'Action(agent.subagent.spawn)',
+          'Capability(agent_spawn)',
           'Capability(external_messaging)',
         ],
       },
@@ -410,16 +489,61 @@ describe('agent permissions', () => {
         globalPermissions: config,
       },
     });
+    const packageScript = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'npm run build' },
+      policy: {
+        workspaceRoot: '/tmp/workspace',
+        globalPermissions: config,
+      },
+    });
+    const sshMutation = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'ssh example.com deploy' },
+      policy: {
+        workspaceRoot: '/tmp/workspace',
+        globalPermissions: config,
+      },
+    });
 
     expect(config.rules).toHaveLength(0);
-    expect(config.diagnostics.map((item) => item.code)).toEqual([
-      'forbidden_allow_rule',
-      'forbidden_allow_rule',
-      'forbidden_allow_rule',
-      'forbidden_allow_rule',
-      'forbidden_capability_rule',
-    ]);
+    expect(config.diagnostics).toHaveLength(15);
+    expect(config.diagnostics.every((item) => item.code === 'forbidden_allow_rule'
+      || item.code === 'forbidden_capability_rule'
+      || item.code === 'unsupported_rule')).toBe(true);
+    expect(config.diagnostics.find((item) => item.ruleValue === 'Capability(external_messaging)')?.code)
+      .toBe('unsupported_rule');
     expect(decision).toMatchObject({ behavior: 'ask', code: 'local_code_execution' });
+    expect(packageScript).toMatchObject({ behavior: 'ask', code: 'project_script' });
+    expect(sshMutation).toMatchObject({ behavior: 'ask', code: 'network_write' });
+  });
+
+  test('capability rules are accepted only for capabilities emitted by descriptors', () => {
+    const config = parseGlobalToolPermissionSettings({
+      permissions: {
+        deny: [
+          'Capability(agent_spawn)',
+          'Capability(external_messaging)',
+        ],
+      },
+    });
+    const decision = evaluateAgentToolPermission({
+      toolName: 'agent',
+      args: { description: 'Investigate' },
+      policy: {
+        workspaceRoot: '/tmp/workspace',
+        globalPermissions: config,
+      },
+    });
+
+    expect(config.rules.map((rule) => rule.ruleValue)).toEqual(['Capability(agent_spawn)']);
+    expect(config.diagnostics).toEqual([{
+      ruleValue: 'Capability(external_messaging)',
+      decision: 'deny',
+      code: 'unsupported_rule',
+      message: 'Unsupported capability: external_messaging.',
+    }]);
+    expect(decision).toMatchObject({ behavior: 'deny', code: 'configured_deny' });
   });
 
   test('classifier projections keep only bounded stable tool inputs', () => {

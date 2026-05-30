@@ -155,10 +155,7 @@ export const SUPPORTED_AGENT_TOOL_ACTION_KINDS: readonly AgentToolActionKind[] =
 ];
 
 export const SUPPORTED_AGENT_TOOL_CAPABILITIES: readonly AgentToolCapability[] = [
-  'external_messaging',
   'agent_spawn',
-  'permission_management',
-  'payments',
 ];
 
 export const ARBITRARY_CODE_SHELL_PREFIXES: readonly string[] = [
@@ -225,7 +222,17 @@ export const SAFE_AUTO_ALLOW_TOOL_NAMES: readonly string[] = [
 
 const SUPPORTED_ACTION_KIND_SET = new Set<string>(SUPPORTED_AGENT_TOOL_ACTION_KINDS);
 const SUPPORTED_CAPABILITY_SET = new Set<string>(SUPPORTED_AGENT_TOOL_CAPABILITIES);
-const ARBITRARY_CODE_PREFIX_SET = new Set<string>(ARBITRARY_CODE_SHELL_PREFIXES);
+const BASH_ALLOW_FORBIDDEN_PREFIX_SET = new Set<string>([
+  ...ARBITRARY_CODE_SHELL_PREFIXES,
+  'bun',
+  'bunx',
+  'npm',
+  'npx',
+  'pnpm',
+  'ssh',
+  'tsx',
+  'yarn',
+]);
 const SAFE_TOOL_SET = new Set<string>(SAFE_AUTO_ALLOW_TOOL_NAMES);
 const KNOWN_TOOL_NAMES = new Set<string>([
   ...SAFE_AUTO_ALLOW_TOOL_NAMES,
@@ -410,7 +417,7 @@ function parseGlobalToolPermissionRule(
     if (!prefix) {
       return diagnostic(ruleValue, decision, 'unsupported_rule', 'Bash rules must be exact commands or safe command-prefix patterns.');
     }
-    if (decision === 'allow' && ARBITRARY_CODE_PREFIX_SET.has(prefix)) {
+    if (decision === 'allow' && BASH_ALLOW_FORBIDDEN_PREFIX_SET.has(prefix)) {
       return diagnostic(ruleValue, decision, 'forbidden_allow_rule', `Bash ${prefix} rules cannot be globally allowed.`);
     }
     if (decision === 'allow' && (prefix === 'agent' || prefix === 'subagent')) {

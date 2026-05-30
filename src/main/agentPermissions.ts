@@ -177,7 +177,7 @@ const BASH_HARD_DENY_RULES: readonly BashDenyRule[] = [
   {
     code: 'dangerous_root_delete',
     reason: 'Blocked a command that appears to recursively delete the filesystem root, home directory, or entire allowed file area.',
-    pattern: /(?:^|[;&|]\s*)rm\s+(?:-[^\s]*r[^\s]*f[^\s]*|-[^\s]*f[^\s]*r[^\s]*)\s+(?:\/(?:\s|$)|\/\*(?:\s|$)|~(?:\/?(?:\s|$))|\$HOME(?:\/?(?:\s|$))|\$\{HOME\}(?:\/?(?:\s|$))|\.(?:\/?\s|$)|\*(?:\s|$))/i,
+    pattern: /(?:^|[;&|]\s*|\s-(?:exec|execdir|ok|okdir)\s+)rm\s+(?:-[^\s]*r[^\s]*f[^\s]*|-[^\s]*f[^\s]*r[^\s]*)\s+(?:\/(?:\s|$)|\/\*(?:\s|$)|~(?:\/?(?:\s|$))|\$HOME(?:\/?(?:\s|$))|\$\{HOME\}(?:\/?(?:\s|$))|\.(?:\/?\s|$)|\*(?:\s|$))/i,
   },
   {
     code: 'dangerous_disk_format',
@@ -857,6 +857,42 @@ function classifyShellSegment(segmentInput: string, fullCommand: string, workspa
     });
   }
 
+  if (head === 'find' && hasFindExecFlag(words)) {
+    return descriptor('bash', 'shell.local_code_execution', {
+      accessScope: 'allowed_file_area',
+      title: 'local code execution',
+      summary: fullCommand,
+      consequence: 'This runs commands selected by find for matching local files.',
+      defaultDecision: 'ask',
+      reversible: false,
+      externalEffect: false,
+      highConsequence: true,
+      classifierAutoAllowEligible: false,
+      command: fullCommand,
+      code: 'find_exec',
+      requestTitle: 'Approve find execution?',
+      requestTarget: fullCommand,
+    });
+  }
+
+  if (head === 'find' && hasFindDeleteFlag(words)) {
+    return descriptor('bash', 'file.delete.allowed_file_area', {
+      accessScope: 'allowed_file_area',
+      title: 'local file delete',
+      summary: fullCommand,
+      consequence: 'This deletes local files matched by find.',
+      defaultDecision: 'ask',
+      reversible: false,
+      externalEffect: false,
+      highConsequence: false,
+      classifierAutoAllowEligible: false,
+      command: fullCommand,
+      code: 'find_delete',
+      requestTitle: 'Approve local delete?',
+      requestTarget: fullCommand,
+    });
+  }
+
   if (head === 'git' && second === 'push') {
     return descriptor('bash', 'git.publish_remote', {
       accessScope: 'external_system',
@@ -979,6 +1015,24 @@ function classifyShellSegment(segmentInput: string, fullCommand: string, workspa
       command: fullCommand,
       code: 'local_code_execution',
       requestTitle: 'Approve local code execution?',
+      requestTarget: fullCommand,
+    });
+  }
+
+  if (head === 'sed' && hasInlineEditFlag(words)) {
+    return descriptor('bash', 'file.edit.allowed_file_area', {
+      accessScope: 'allowed_file_area',
+      title: 'local file edit',
+      summary: fullCommand,
+      consequence: 'This edits local files in place.',
+      defaultDecision: 'ask',
+      reversible: false,
+      externalEffect: false,
+      highConsequence: false,
+      classifierAutoAllowEligible: false,
+      command: fullCommand,
+      code: 'local_file_edit',
+      requestTitle: 'Approve local file edit?',
       requestTarget: fullCommand,
     });
   }
@@ -1201,8 +1255,16 @@ function stripShellEnvPrefix(segment: string): string {
 }
 
 function isReadOnlyShellCommand(head: string, words: readonly string[]): boolean {
-  if (['cat', 'date', 'du', 'echo', 'find', 'git', 'grep', 'head', 'ls', 'pwd', 'rg', 'sed', 'tail', 'wc'].includes(head)) {
-    if (head !== 'git') return true;
+  if (['cat', 'date', 'du', 'echo', 'grep', 'head', 'ls', 'pwd', 'rg', 'tail', 'wc'].includes(head)) {
+    return true;
+  }
+  if (head === 'find') {
+    return !hasFindExecFlag(words) && !hasFindDeleteFlag(words);
+  }
+  if (head === 'sed') {
+    return !hasInlineEditFlag(words);
+  }
+  if (head === 'git') {
     const sub = words[1]?.toLowerCase();
     return ['branch', 'diff', 'log', 'show', 'status'].includes(sub ?? '');
   }
@@ -1286,8 +1348,9 @@ function isAgentPermissionConfigPath(filePath: string): boolean {
 }
 
 function looksLikeSensitivePersistenceWrite(command: string, workspaceRoot: string): boolean {
-  if (!/(?:^|[;&|]\s*)(?:touch|tee|chmod|chown)\b|>>?/i.test(command)) return false;
-  return parseShellWords(command).some((word) => {
+  const words = parseShellWords(command);
+  if (!hasSensitivePersistenceWriteTrigger(command, words)) return false;
+  return words.some((word) => {
     const cleaned = stripShellPathDecoration(word);
     if (!looksLikePath(cleaned)) return false;
     const resolved = resolvePermissionPath(workspaceRoot, cleaned);
@@ -1295,23 +1358,80 @@ function looksLikeSensitivePersistenceWrite(command: string, workspaceRoot: stri
   });
 }
 
-function looksLikeWorkspaceRootDelete(command: string, workspaceRoot: string): boolean {
-  if (!/(?:^|[;&|]\s*)rm\s+(?:-[^\s]*r[^\s]*f[^\s]*|-[^\s]*f[^\s]*r[^\s]*)/i.test(command)) {
-    return false;
+function hasSensitivePersistenceWriteTrigger(command: string, words: readonly string[]): boolean {
+  if (containsShellWriteOperator(command)) return true;
+  for (let index = 0; index < words.length; index += 1) {
+    const word = normalizeToolName(words[index] ?? '');
+    if (SENSITIVE_PERSISTENCE_WRITE_COMMANDS.has(word)) return true;
+    if (word === 'find' && (hasFindDeleteFlag(words.slice(index)) || hasFindExecFlag(words.slice(index)))) return true;
+    if ((word === 'sed' || word === 'perl' || word === 'ruby') && hasInlineEditFlag(words.slice(index))) return true;
   }
-  const words = parseShellWords(command).map((word) => resolvePermissionPath(workspaceRoot, stripShellPathDecoration(word)));
-  return words.some((word) => word === workspaceRoot);
+  return false;
+}
+
+function containsShellWriteOperator(command: string): boolean {
+  let quote: '"' | "'" | null = null;
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index]!;
+    const next = command[index + 1];
+    if (quote) {
+      if (char === quote) quote = null;
+      if (char === '\\' && quote === '"' && next) index += 1;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === '>') return true;
+  }
+  return false;
+}
+
+const SENSITIVE_PERSISTENCE_WRITE_COMMANDS = new Set([
+  'chmod',
+  'chown',
+  'chgrp',
+  'cp',
+  'install',
+  'mkdir',
+  'mv',
+  'rm',
+  'rmdir',
+  'tee',
+  'touch',
+  'truncate',
+]);
+
+const FIND_EXEC_FLAGS = new Set(['-exec', '-execdir', '-ok', '-okdir']);
+
+function hasFindExecFlag(words: readonly string[]): boolean {
+  return words.some((word) => FIND_EXEC_FLAGS.has(word.toLowerCase()));
+}
+
+function hasFindDeleteFlag(words: readonly string[]): boolean {
+  return words.some((word) => word.toLowerCase() === '-delete');
+}
+
+function hasInlineEditFlag(words: readonly string[]): boolean {
+  return words.slice(1).some((word) => (
+    word === '-i'
+    || word.startsWith('-i.')
+    || word.startsWith('-i')
+    || /^-[A-Za-z]*i(?:[A-Za-z.]*)?$/.test(word)
+    || word === '--in-place'
+    || word.startsWith('--in-place=')
+  ));
+}
+
+function looksLikeWorkspaceRootDelete(command: string, workspaceRoot: string): boolean {
+  return recursiveRmTargetGroups(command).some((targets) => targets.some((word) => (
+    resolvePermissionPath(workspaceRoot, stripShellPathDecoration(word)) === workspaceRoot
+  )));
 }
 
 function looksLikeUnscopedRecursiveDelete(command: string, workspaceRoot: string): boolean {
-  const deletePattern = /(?:^|[;&|]\s*)rm\s+([^;&|]*)/gi;
-  let match: RegExpExecArray | null;
-  while ((match = deletePattern.exec(command)) !== null) {
-    const part = match[0].replace(/^[;&|]\s*/, '');
-    if (!/^rm\s+(?:-[^\s]*r[^\s]*f[^\s]*|-[^\s]*f[^\s]*r[^\s]*)/i.test(part)) continue;
-    const targets = parseShellWords(part)
-      .slice(1)
-      .filter((word) => !word.startsWith('-'));
+  for (const targets of recursiveRmTargetGroups(command)) {
     if (targets.length === 0) return true;
     if (targets.some((word) => {
       const resolved = resolvePermissionPath(workspaceRoot, stripShellPathDecoration(word));
@@ -1321,6 +1441,21 @@ function looksLikeUnscopedRecursiveDelete(command: string, workspaceRoot: string
     }
   }
   return false;
+}
+
+function recursiveRmTargetGroups(command: string): string[][] {
+  const deletePattern = /(?:^|[;&|]\s*|\s-(?:exec|execdir|ok|okdir)\s+)rm\s+([^;&|]*)/gi;
+  const groups: string[][] = [];
+  let match: RegExpExecArray | null;
+  while ((match = deletePattern.exec(command)) !== null) {
+    const part = match[0].replace(/^(?:[;&|]\s*|\s-(?:exec|execdir|ok|okdir)\s+)/i, '');
+    if (!/^rm\s+(?:-[^\s]*r[^\s]*f[^\s]*|-[^\s]*f[^\s]*r[^\s]*)/i.test(part)) continue;
+    const targets = parseShellWords(part)
+      .slice(1)
+      .filter((word) => !word.startsWith('-') && word !== '{}');
+    groups.push(targets);
+  }
+  return groups;
 }
 
 function commandMentionsSensitivePath(command: string, workspaceRoot: string): boolean {
