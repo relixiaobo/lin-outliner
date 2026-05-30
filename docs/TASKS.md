@@ -38,6 +38,15 @@ Ordered by priority; lower items may depend on higher ones.
   light-mode + interaction (unfurl / drag / resize) visual pass (verified dark
   only at merge); real OS vibrancy tuning. See
   `docs/plans/design-system-rollout.md`.
+- **agent-tool-permissions-hardening** (P2) — non-blocking follow-ups after the
+  #60 permission implementation: move the `sessionApproved` short-circuit below
+  configured-ask (don't silently relax a configured `ask`); re-validate
+  pre-shaped configs in `parseGlobalToolPermissionSettings`; extend the exfil
+  redline to interpreter/ssh sinks + bare `id_ecdsa`/`id_dsa`; collapse the dual
+  `approval.*`/`tool.permission.*` event vocabulary; align denied-reason literals
+  with the plan contract (`platform_hard_block`/`user_denied`, `recoverable`
+  set). None is a live fail-open. Self-contained spec in
+  `docs/plans/agent-tool-permissions-hardening.md`.
 - **agent-oauth-providers** (P2) — OAuth sign-in (Anthropic Pro/Max, GitHub
   Copilot, OpenAI Codex) + managed credentials (Bedrock AWS, Vertex ADC) for the
   provider settings: credential storage, Electron-main login over IPC, view-model
