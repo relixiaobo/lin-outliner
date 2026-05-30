@@ -1,11 +1,19 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, mock, test } from 'bun:test';
+import { fauxAssistantMessage, fauxToolCall, type Api, type Context, type Model, type SimpleStreamOptions } from '@earendil-works/pi-ai';
 import type { AgentPermissionAskDecision } from '../../src/main/agentPermissions';
 import { resolveAgentPermissionAsk } from '../../src/main/agentPermissionAskResolver';
 import {
+  PERMISSION_CLASSIFIER_TOOL_NAME,
   PERMISSION_CLASSIFIER_SYSTEM_PROMPT,
   buildPermissionClassifierTranscript,
   parsePermissionClassifierResponse,
 } from '../../src/main/agentPermissionClassifierPrompt';
+
+mock.module('electron', () => ({
+  app: {
+    getPath: () => '/tmp/lin-agent-permission-classifier-test-user-data',
+  },
+}));
 
 function askDecision(overrides: Partial<AgentPermissionAskDecision> = {}): AgentPermissionAskDecision {
   const descriptor = {
@@ -135,5 +143,72 @@ describe('agent permission ask resolver', () => {
     expect(parsePermissionClassifierResponse('not json')).toBeNull();
     expect(buildPermissionClassifierTranscript([{ ok: true }])).toBe('{"ok":true}');
     expect(buildPermissionClassifierTranscript([{ text: 'x'.repeat(30_000) }])).toBeNull();
+  });
+
+  test('default classifier uses a constrained tool contract and temperature zero', async () => {
+    const { createDefaultPermissionClassifier } = await import('../../src/main/agentPermissionClassifier');
+    const model = {
+      id: 'classifier-model',
+      name: 'Classifier Model',
+      api: 'openai-completions',
+      provider: 'openai',
+      reasoning: false,
+      input: ['text'],
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      contextWindow: 128000,
+      maxTokens: 8192,
+    } satisfies Model<Api>;
+    let capturedContext: Context | undefined;
+    let capturedOptions: SimpleStreamOptions & { toolChoice?: unknown } | undefined;
+    const classifier = createDefaultPermissionClassifier({
+      sessionId: 'session-1',
+      model: () => model,
+      providerConfig: {
+        providerId: 'openai',
+        modelId: model.id,
+        reasoningLevel: 'low',
+        enabled: true,
+      },
+      providerApiKeyLoader: () => 'test-key',
+      runtimeSettingsLoader: async () => ({
+        permissionMode: 'trusted',
+        automaticSkillsEnabled: true,
+        slashSkillsEnabled: true,
+        compactEnabled: true,
+        additionalSkillDirectories: [],
+      }),
+      completeSimpleFn: async (_model, context, options) => {
+        capturedContext = context;
+        capturedOptions = options as SimpleStreamOptions & { toolChoice?: unknown };
+        return fauxAssistantMessage([
+          fauxToolCall(PERMISSION_CLASSIFIER_TOOL_NAME, {
+            outcome: 'allow',
+            reason: 'Ordinary local edit.',
+          }),
+        ], { stopReason: 'toolUse' });
+      },
+    });
+
+    await expect(classifier({
+      decision: askDecision(),
+      projection: { tool: 'file_edit', input: { file_path: '/tmp/workspace/a.ts' } },
+      contextRecords: [{ user: 'Edit the local file.' }],
+    })).resolves.toEqual({
+      outcome: 'allow',
+      reason: 'Ordinary local edit.',
+      model: model.id,
+    });
+    expect(capturedContext?.tools?.map((tool) => tool.name)).toEqual([PERMISSION_CLASSIFIER_TOOL_NAME]);
+    expect(capturedContext?.systemPrompt).toContain('Default to block when uncertain.');
+    expect(capturedOptions?.temperature).toBe(0);
+    expect(capturedOptions?.toolChoice).toEqual({
+      type: 'function',
+      function: { name: PERMISSION_CLASSIFIER_TOOL_NAME },
+    });
   });
 });

@@ -68,8 +68,9 @@ interface AgentPermissionDecisionBase {
   preapproved: boolean;
   sessionApproved: boolean;
   ruleId?: string;
-  permissionSource?: 'configured_ask' | 'default';
+  permissionSource?: 'configured_allow' | 'configured_ask' | 'default';
   descriptor?: ToolActionDescriptor;
+  descriptors?: readonly ToolActionDescriptor[];
 }
 
 export interface AgentPermissionAllowDecision extends AgentPermissionDecisionBase {
@@ -270,6 +271,10 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
       preapproved,
       sessionApproved,
       platformBlock.redline,
+      {
+        descriptor: platformBlock,
+        descriptors,
+      },
     );
   }
 
@@ -281,6 +286,11 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
       access,
       preapproved,
       sessionApproved,
+      undefined,
+      {
+        descriptor: globalResolution.descriptor,
+        descriptors,
+      },
     );
   }
 
@@ -291,11 +301,17 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
       access,
       preapproved,
       sessionApproved,
+      undefined,
+      {
+        descriptors,
+      },
     );
   }
 
   if (sessionApproved && !descriptors.some((descriptor) => descriptor.actionKind === 'shell.sandbox_override' || descriptor.actionKind === 'shell.background_process')) {
-    return allow(access, preapproved, sessionApproved, 'Allowed by a session permission rule.', 'important');
+    return allow(access, preapproved, sessionApproved, 'Allowed by a session permission rule.', 'important', {
+      descriptors,
+    });
   }
 
   if (globalResolution?.decision === 'allow') {
@@ -306,6 +322,12 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
       globalResolution.source === 'configured_allow'
         ? `Allowed by global rule ${globalResolution.rule?.ruleValue ?? globalResolution.descriptor.actionKind}.`
         : undefined,
+      undefined,
+      {
+        descriptor: globalResolution.descriptor,
+        descriptors,
+        permissionSource: globalResolution.source === 'configured_allow' ? 'configured_allow' : 'default',
+      },
     );
   }
 
@@ -316,10 +338,18 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
       preapproved,
       sessionApproved,
       globalResolution.source === 'configured_ask' ? 'configured_ask' : 'default',
+      descriptors,
     );
   }
 
-  return allow(access, preapproved, sessionApproved, sessionApproved ? 'Allowed by a session permission rule.' : undefined, sessionApproved ? 'important' : undefined);
+  return allow(
+    access,
+    preapproved,
+    sessionApproved,
+    sessionApproved ? 'Allowed by a session permission rule.' : undefined,
+    sessionApproved ? 'important' : undefined,
+    { descriptors },
+  );
 }
 
 export function matchesAgentToolRule(rule: string, toolNameInput: string, args: unknown): boolean {
@@ -977,6 +1007,7 @@ function askForDescriptor(
   preapproved: boolean,
   sessionApproved: boolean,
   permissionSource: 'configured_ask' | 'default',
+  descriptors: readonly DerivedToolActionDescriptor[],
 ): AgentPermissionAskDecision {
   const reason = descriptor.consequence;
   const target = descriptor.requestTarget ?? descriptor.command ?? descriptor.summary;
@@ -999,6 +1030,7 @@ function askForDescriptor(
     },
     {
       descriptor,
+      descriptors,
       permissionSource,
     },
   );
@@ -1418,8 +1450,9 @@ function allow(
   sessionApproved: boolean,
   reason?: string,
   visibility?: 'normal' | 'important',
+  options: Pick<AgentPermissionAllowDecision, 'descriptor' | 'descriptors' | 'permissionSource'> = {},
 ): AgentPermissionAllowDecision {
-  return { behavior: 'allow', access, preapproved, sessionApproved, reason, visibility };
+  return { behavior: 'allow', access, preapproved, sessionApproved, reason, visibility, ...options };
 }
 
 function ask(
@@ -1429,7 +1462,7 @@ function ask(
   preapproved: boolean,
   sessionApproved: boolean,
   request: AgentApprovalRequest,
-  options: Pick<AgentPermissionAskDecision, 'descriptor' | 'permissionSource'>,
+  options: Pick<AgentPermissionAskDecision, 'descriptor' | 'descriptors' | 'permissionSource'>,
 ): AgentPermissionAskDecision {
   return { behavior: 'ask', code, reason, access, preapproved, sessionApproved, request, ...options };
 }
@@ -1441,6 +1474,7 @@ function deny(
   preapproved: boolean,
   sessionApproved: boolean,
   redline?: true,
+  options: Pick<AgentPermissionDenyDecision, 'descriptor' | 'descriptors'> = {},
 ): AgentPermissionDenyDecision {
-  return { behavior: 'deny', code, reason, access, preapproved, sessionApproved, redline };
+  return { behavior: 'deny', code, reason, access, preapproved, sessionApproved, redline, ...options };
 }

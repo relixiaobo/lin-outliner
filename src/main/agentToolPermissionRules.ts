@@ -305,6 +305,7 @@ export function resolveGlobalToolPermissionDecision(
   descriptorResolutions.sort((left, right) => (
     decisionRank(right.decision) - decisionRank(left.decision)
     || descriptorRiskRank(right.descriptor) - descriptorRiskRank(left.descriptor)
+    || sourceRank(right.source) - sourceRank(left.source)
   ));
   return descriptorResolutions[0] ?? null;
 }
@@ -450,8 +451,13 @@ function descriptorRiskRank(descriptor: ToolActionDescriptor): number {
   if (descriptor.highConsequence) rank += 2;
   if (descriptor.accessScope === 'sensitive_local_path') rank += 2;
   if (descriptor.accessScope === 'outside_allowed_file_area') rank += 1;
+  if (!descriptor.reversible) rank += 1;
   if (descriptor.actionKind.includes('unknown')) rank += 5;
   return rank;
+}
+
+function sourceRank(source: GlobalToolPermissionResolution['source']): number {
+  return source === 'default' ? 0 : 1;
 }
 
 function isGlobalToolPermissionConfig(value: unknown): value is GlobalToolPermissionConfig {

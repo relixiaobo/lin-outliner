@@ -313,6 +313,31 @@ describe('agent permissions', () => {
     expect(denied).toMatchObject({ behavior: 'deny', code: 'configured_deny' });
   });
 
+  test('compound shell decisions retain all action kinds and the configured source', () => {
+    const decision = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'ls && rm -rf ./dist' },
+      policy: {
+        workspaceRoot: '/tmp/workspace',
+        globalPermissions: {
+          permissions: {
+            allow: ['Action(file.delete.allowed_file_area)'],
+          },
+        },
+      },
+    });
+
+    expect(decision).toMatchObject({
+      behavior: 'allow',
+      permissionSource: 'configured_allow',
+      descriptor: { actionKind: 'file.delete.allowed_file_area' },
+    });
+    expect(decision.descriptors?.map((descriptor) => descriptor.actionKind)).toEqual([
+      'shell.read_search',
+      'file.delete.allowed_file_area',
+    ]);
+  });
+
   test('unknown shell and sensitive persistence writes fail closed', () => {
     const unknown = evaluateAgentToolPermission({
       toolName: 'bash',

@@ -301,6 +301,7 @@ export interface ToolPermissionResolvedEvent extends AgentEventBase {
     | 'safe_allowlist'
     | 'user_once'
     | 'allow_rule_update'
+    | 'global_rule'
     | 'configured_deny'
     | 'classifier_unavailable'
     | 'platform_hard_block'

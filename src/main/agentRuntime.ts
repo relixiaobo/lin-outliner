@@ -108,20 +108,25 @@ import {
   evaluateAgentToolPermission,
   toPermissionClassifierInput,
   type AgentPermissionAskDecision,
-  type AgentPermissionAllowDecision,
-  type AgentPermissionClassifierProjection,
-  type AgentPermissionDenyDecision,
 } from './agentPermissions';
 import {
   resolveAgentPermissionAsk,
   type AgentPermissionClassifier,
-  type PermissionDeniedReason,
 } from './agentPermissionAskResolver';
 import {
-  PERMISSION_CLASSIFIER_SYSTEM_PROMPT,
-  buildPermissionClassifierTranscript,
-  parsePermissionClassifierResponse,
-} from './agentPermissionClassifierPrompt';
+  buildPermissionClassifierContextRecords,
+  createDefaultPermissionClassifier,
+} from './agentPermissionClassifier';
+import {
+  permissionActionKinds,
+  permissionDeniedReasonForDecision,
+  permissionDeniedToolResultMessage,
+  permissionEventSourceForDecision,
+  permissionPrimaryActionKind,
+  permissionResolvedByForAllowDecision,
+  permissionResolvedByForDeniedReason,
+  type AgentToolPermissionLogInput,
+} from './agentPermissionEvents';
 import {
   createAgentLocalWorkspaceContext,
   type AgentLocalWorkspaceContext,
@@ -227,21 +232,6 @@ interface AgentToolApprovalResolution {
   scope?: AgentApprovalResolutionScope;
   sessionRule?: string;
   alwaysAllowRule?: string;
-}
-
-interface AgentToolPermissionLogInput {
-  requestId: string;
-  toolCall: ToolCall;
-  decision: AgentPermissionAllowDecision | AgentPermissionAskDecision | AgentPermissionDenyDecision;
-  outcome: 'allow' | 'ask' | 'blocked';
-  includeChecked?: boolean;
-  source?: 'global_rule' | 'action_default' | 'configured_deny' | 'classifier' | 'classifier_unavailable' | 'safe_allowlist' | 'user' | 'platform_hard_block' | 'runtime';
-  resolved?: {
-    status: 'approved' | 'denied' | 'aborted';
-    resolvedBy: 'classifier' | 'safe_allowlist' | 'user_once' | 'allow_rule_update' | 'configured_deny' | 'classifier_unavailable' | 'platform_hard_block' | 'runtime' | 'system_abort';
-    updatedRule?: string;
-    deniedReason?: string;
-  };
 }
 
 interface AgentSessionState {
@@ -430,33 +420,53 @@ export class AgentRuntime {
     const session = this.sessions.get(sessionId);
     if (!session) return { resolved: false };
 
-    this.pendingApprovals.delete(requestId);
     const sessionRule = approved && scope === 'session' ? pending.suggestedSessionRule : undefined;
     if (sessionRule && !session.permissionSessionAllowRules.includes(sessionRule)) {
       session.permissionSessionAllowRules.push(sessionRule);
     }
-    const alwaysAllowRule = approved && scope === 'always' ? pending.alwaysAllowRule : undefined;
+    let resolvedScope = scope;
+    let alwaysAllowRule = approved && scope === 'always' ? pending.alwaysAllowRule : undefined;
+    if (approved && scope === 'always' && !alwaysAllowRule) {
+      resolvedScope = 'once';
+    }
     if (alwaysAllowRule) {
-      await appendAgentToolPermissionAllowRule(alwaysAllowRule);
+      try {
+        await appendAgentToolPermissionAllowRule(alwaysAllowRule);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.emitError(sessionId, `Failed to persist always-allow rule; approved once instead. ${message}`);
+        resolvedScope = 'once';
+        alwaysAllowRule = undefined;
+      }
     }
 
-    await this.appendSessionEvents(sessionId, session, [{
-      type: 'approval.resolved',
-      actor: userActor(),
-      runId: session.activeRunId ?? undefined,
-      requestId,
-      approved,
-    }]);
-    this.emit({
-      type: 'approval_resolved',
-      sessionId,
-      requestId,
-      approved,
-      scope,
-      timestamp: Date.now(),
-    });
-    this.emitProjection(sessionId, 'approval.resolved');
-    pending.resolve({ approved, deniedBy: approved ? undefined : 'user', scope, sessionRule, alwaysAllowRule });
+    this.pendingApprovals.delete(requestId);
+    try {
+      await this.appendSessionEvents(sessionId, session, [{
+        type: 'approval.resolved',
+        actor: userActor(),
+        runId: session.activeRunId ?? undefined,
+        requestId,
+        approved,
+      }]);
+      this.emit({
+        type: 'approval_resolved',
+        sessionId,
+        requestId,
+        approved,
+        scope: resolvedScope,
+        timestamp: Date.now(),
+      });
+      this.emitProjection(sessionId, 'approval.resolved');
+    } finally {
+      pending.resolve({
+        approved,
+        deniedBy: approved ? undefined : 'user',
+        scope: resolvedScope,
+        sessionRule,
+        alwaysAllowRule,
+      });
+    }
     return { resolved: true };
   }
 
@@ -1875,8 +1885,8 @@ export class AgentRuntime {
     session: AgentSessionState,
     input: AgentToolPermissionLogInput,
   ) {
-    const descriptor = input.decision.descriptor;
     const source = input.source ?? permissionEventSourceForDecision(input.decision);
+    const actionKinds = permissionActionKinds(input.decision);
     const events: AgentEventInput[] = input.includeChecked === false ? [] : [{
       type: 'tool.permission.checked',
       actor: systemActor(),
@@ -1884,8 +1894,8 @@ export class AgentRuntime {
       requestId: input.requestId,
       toolCallId: input.toolCall.id,
       toolName: input.toolCall.name,
-      primaryActionKind: descriptor?.actionKind,
-      actionKinds: descriptor ? [descriptor.actionKind] : [],
+      primaryActionKind: permissionPrimaryActionKind(input.decision),
+      actionKinds,
       outcome: input.outcome,
       source,
     }];
@@ -3232,166 +3242,6 @@ function approvalDeniedToolResultMessage(toolName: string, approval: AgentToolAp
   }
 }
 
-function permissionDeniedReasonForDecision(decision: AgentPermissionDenyDecision): PermissionDeniedReason {
-  if (decision.code === 'configured_deny') return 'configured_deny';
-  if (decision.redline || decision.descriptor?.platformHardBlock) return 'hard_block';
-  return 'runtime';
-}
-
-function permissionEventSourceForDecision(
-  decision: AgentPermissionAllowDecision | AgentPermissionAskDecision | AgentPermissionDenyDecision,
-): AgentToolPermissionLogInput['source'] {
-  if (decision.behavior === 'deny') {
-    if (decision.code === 'configured_deny') return 'configured_deny';
-    if (decision.redline || decision.descriptor?.platformHardBlock) return 'platform_hard_block';
-    return 'runtime';
-  }
-  if (decision.behavior === 'ask' && decision.permissionSource === 'configured_ask') return 'global_rule';
-  if (decision.reason?.startsWith('Allowed by global rule')) return 'global_rule';
-  return 'action_default';
-}
-
-function permissionResolvedByForDeniedReason(reason: PermissionDeniedReason): NonNullable<AgentToolPermissionLogInput['resolved']>['resolvedBy'] {
-  switch (reason) {
-    case 'configured_deny':
-      return 'configured_deny';
-    case 'classifier_blocked':
-      return 'classifier';
-    case 'classifier_unavailable':
-      return 'classifier_unavailable';
-    case 'hard_block':
-      return 'platform_hard_block';
-    case 'run_aborted':
-      return 'system_abort';
-    case 'user':
-      return 'user_once';
-    case 'runtime':
-    default:
-      return 'runtime';
-  }
-}
-
-function permissionDeniedToolResultMessage(input: {
-  toolName: string;
-  reason: PermissionDeniedReason;
-  message: string;
-}): string {
-  return JSON.stringify({
-    ok: false,
-    tool: input.toolName,
-    status: 'denied',
-    error: {
-      code: 'permission_denied',
-      message: input.message,
-      recoverable: input.reason !== 'hard_block',
-      details: {
-        reason: input.reason,
-      },
-    },
-    instructions: 'Treat this as a normal denied tool result. Continue with a safe fallback or explain the blocker.',
-  }, null, 2);
-}
-
-function createDefaultPermissionClassifier(options: {
-  sessionId: string;
-  model: () => Model<Api>;
-  providerConfig: AgentProviderRuntimeConfig;
-  providerApiKeyLoader?: (providerId: string) => Promise<string | undefined> | string | undefined;
-  runtimeSettingsLoader?: () => Promise<AgentRuntimeSettings>;
-  completeSimpleFn?: CompleteSimpleFn;
-}): AgentPermissionClassifier {
-  return async (input, signal) => {
-    const model = options.model();
-    const transcript = buildPermissionClassifierTranscript(input.contextRecords ?? [{
-      pending_tool_use: {
-        tool: input.projection.tool,
-        input: input.projection.input,
-      },
-    }]);
-    if (!transcript) {
-      return permissionClassifierUnavailable(model.id, 'Permission classifier transcript is too long.');
-    }
-
-    try {
-      const runtimeSettings = await loadRuntimeSettingsForStream(options.runtimeSettingsLoader);
-      const apiKey = options.providerConfig.apiKey
-        ?? await options.providerApiKeyLoader?.(options.providerConfig.providerId)
-        ?? await getProviderApiKey(options.providerConfig.providerId);
-      const response = await awaitWithAbort((options.completeSimpleFn ?? completeSimple)(model, {
-        messages: [{
-          role: 'user',
-          content: `${PERMISSION_CLASSIFIER_SYSTEM_PROMPT}\n\nClassifier transcript:\n${transcript}`,
-          timestamp: Date.now(),
-        }],
-        tools: [],
-      }, {
-        ...providerStreamOptionsFromRuntimeSettings(runtimeSettings),
-        apiKey,
-        maxTokens: Math.min(model.maxTokens ?? 256, 256),
-        sessionId: options.sessionId,
-        signal,
-      }), { signal });
-      if (response.stopReason === 'error' || response.stopReason === 'aborted') {
-        return permissionClassifierUnavailable(model.id, response.errorMessage || 'Permission classifier failed.');
-      }
-      const parsed = parsePermissionClassifierResponse(assistantMessageText(response));
-      return parsed
-        ? { ...parsed, model: model.id }
-        : permissionClassifierUnavailable(model.id, 'Permission classifier returned malformed output.');
-    } catch (error) {
-      return permissionClassifierUnavailable(model.id, error instanceof Error ? error.message : String(error));
-    }
-  };
-}
-
-function permissionClassifierUnavailable(model: string, reason: string) {
-  return {
-    outcome: 'block' as const,
-    reason,
-    model,
-    unavailable: true,
-  };
-}
-
-function buildPermissionClassifierContextRecords(
-  messages: readonly AgentMessage[],
-  currentProjection: AgentPermissionClassifierProjection,
-): unknown[] {
-  const records: unknown[] = [];
-  for (const message of messages.slice(-16)) {
-    if (message.role === 'user') {
-      const text = messageTextContent(message).trim();
-      if (text) records.push({ user: text.slice(0, 4000) });
-    } else if (message.role === 'assistant') {
-      for (const part of message.content) {
-        if (part.type !== 'toolCall') continue;
-        const projection = toPermissionClassifierInput(part.name, part.arguments);
-        records.push({
-          tool_use: {
-            tool: projection?.tool ?? part.name,
-            input: projection?.input ?? {},
-          },
-        });
-      }
-    }
-  }
-  records.push({
-    pending_tool_use: {
-      tool: currentProjection.tool,
-      input: currentProjection.input,
-    },
-  });
-  return records;
-}
-
-function messageTextContent(message: Extract<AgentMessage, { role: 'user' }>): string {
-  if (typeof message.content === 'string') return message.content;
-  return message.content
-    .filter((part): part is PiTextContent => part.type === 'text')
-    .map((part) => part.text)
-    .join('\n\n');
-}
-
 function createConfiguredAgent(
   sessionId: string,
   providerConfig: AgentProviderRuntimeConfig,
@@ -3495,7 +3345,7 @@ function createConfiguredAgent(
           outcome: 'allow',
           resolved: {
             status: 'approved',
-            resolvedBy: permissionEventSourceForDecision(decision) === 'global_rule' ? 'allow_rule_update' : 'runtime',
+            resolvedBy: permissionResolvedByForAllowDecision(decision),
           },
         });
         return undefined;
