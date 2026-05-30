@@ -271,7 +271,7 @@ export interface AgentToolResultEvent {
   timestamp: number;
 }
 
-export type AgentApprovalResolutionScope = 'once' | 'session';
+export type AgentApprovalResolutionScope = 'once' | 'session' | 'always';
 
 export interface AgentApprovalRequestDetail {
   label: string;
@@ -288,6 +288,7 @@ export interface AgentApprovalRequestView {
   reason: string;
   details: AgentApprovalRequestDetail[];
   suggestedSessionRule?: string;
+  alwaysAllowRule?: string;
 }
 
 export interface AgentApprovalResolvedEvent {

@@ -56,6 +56,20 @@ export type {
   AgentApprovalResolutionScope,
 } from '../../core/agentTypes';
 
+export interface AgentToolPermissionSettingsView {
+  permissions: {
+    allow: string[];
+    ask: string[];
+    deny: string[];
+  };
+  diagnostics: Array<{
+    ruleValue: string;
+    decision: 'allow' | 'ask' | 'deny';
+    code: string;
+    message: string;
+  }>;
+}
+
 export { EMPTY_RICH_TEXT, plainText, replaceAllRichTextPatch } from '../../core/types';
 export {
   dateFieldEndpointDate,

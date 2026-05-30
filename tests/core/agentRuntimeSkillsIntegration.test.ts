@@ -195,8 +195,9 @@ function normalizeAssistantMessage(message: AssistantMessage, model: Model<Api>)
 describe('agent runtime skill integration', () => {
   let roots: string[] = [];
 
-  beforeEach(() => {
-    roots = [];
+  beforeEach(async () => {
+    await rm(electronUserDataRoot, { recursive: true, force: true });
+    roots = [electronUserDataRoot];
   });
 
   afterEach(async () => {
@@ -813,6 +814,69 @@ describe('agent runtime skill integration', () => {
     const contextText = followUpContexts.join('\n');
     expect(contextText).toContain('User denied permission. The requested tool call was not executed.');
     expect(contextText).not.toContain('Permission denied: This changes external state on a git remote.');
+  });
+
+  test('persists always-allow approval rules globally', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-always-approval-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-always-approval-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('bash', {
+            command: 'rm -rf ./dist',
+            description: 'Remove build output',
+          }, { id: 'tool-always-rm' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('Cleanup handled.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: true,
+          slashSkillsEnabled: true,
+          compactEnabled: true,
+          additionalSkillDirectories: [],
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.createSession();
+    const sendPromise = runtime.sendMessage(created.sessionId, 'Clean build output.');
+    await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
+    const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
+      event.type === 'approval_request'
+    ));
+    if (!approvalEvent) throw new Error('Expected approval request event.');
+
+    expect(approvalEvent.request.alwaysAllowRule).toBe('Action(file.delete.allowed_file_area)');
+
+    await runtime.resolveApproval(created.sessionId, approvalEvent.requestId, true, 'always');
+    await sendPromise;
+
+    const settings = JSON.parse(await readFile(path.join(electronUserDataRoot, 'agent-tool-permissions.json'), 'utf8')) as {
+      permissions?: { allow?: string[] };
+    };
+    expect(settings.permissions?.allow).toContain('Action(file.delete.allowed_file_area)');
   });
 
   test('records runtime-denied approval resolutions when closing a session', async () => {

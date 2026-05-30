@@ -24,6 +24,10 @@ import {
   upsertProviderConfig,
   testProviderConnection,
 } from './agentSettings';
+import {
+  readAgentToolPermissionSettingsView,
+  writeAgentToolPermissionSettingsView,
+} from './agentToolPermissionStore';
 import { isAgentCommand, isAssetCommand, isDocumentCommand, type AgentCommand, type AssetCommand } from '../core/commands';
 import { IPC_TRACE_ENABLED, traceIpc } from './ipcTrace';
 import type { AgentProviderConfigInput, AgentRuntimeSettingsInput } from '../core/types';
@@ -1016,7 +1020,7 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
         String(args.sessionId),
         String(args.requestId),
         args.approved === true,
-        args.scope === 'session' ? 'session' : 'once',
+        args.scope === 'always' ? 'always' : args.scope === 'session' ? 'session' : 'once',
       );
     case 'agent_stop_session':
       return agentRuntime.stopSession(String(args.sessionId));
@@ -1030,6 +1034,10 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
       return getProviderSettings();
     case 'agent_update_runtime_settings':
       return updateAgentRuntimeSettings(args.settings as AgentRuntimeSettingsInput);
+    case 'agent_get_tool_permission_settings':
+      return readAgentToolPermissionSettingsView();
+    case 'agent_update_tool_permission_settings':
+      return writeAgentToolPermissionSettingsView(args.settings as { permissions?: { allow?: unknown; ask?: unknown; deny?: unknown } });
     case 'agent_upsert_provider_config':
       return upsertProviderConfig(args.provider as AgentProviderConfigInput);
     case 'agent_delete_provider_config':

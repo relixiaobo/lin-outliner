@@ -3,6 +3,7 @@ import path from 'node:path';
 import {
   evaluateAgentToolPermission,
   matchesAgentToolRule,
+  toPermissionClassifierInput,
 } from '../../src/main/agentPermissions';
 import { parseGlobalToolPermissionSettings } from '../../src/main/agentToolPermissionRules';
 import { executeAgentSkillShellCommand } from '../../src/main/agentSkillShell';
@@ -148,6 +149,24 @@ describe('agent permissions', () => {
 
     expect(asked).toMatchObject({ behavior: 'ask', code: 'external_git_push' });
     expect(allowed).toMatchObject({ behavior: 'allow', sessionApproved: true, visibility: 'important' });
+  });
+
+  test('approval requests expose validated always-allow rules', () => {
+    const gitPush = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'git push origin codex/foo' },
+      policy: { workspaceRoot: '/tmp/workspace' },
+    });
+    const subagent = evaluateAgentToolPermission({
+      toolName: 'agent',
+      args: { description: 'Investigate' },
+      policy: { workspaceRoot: '/tmp/workspace' },
+    });
+
+    expect(gitPush.behavior === 'ask' ? gitPush.request.alwaysAllowRule : undefined)
+      .toBe('Action(git.publish_remote)');
+    expect(subagent.behavior === 'ask' ? subagent.request.alwaysAllowRule : undefined)
+      .toBeUndefined();
   });
 
   test('asks for sensitive local paths and blocks sensitive network exfiltration', () => {
@@ -317,6 +336,32 @@ describe('agent permissions', () => {
       'forbidden_capability_rule',
     ]);
     expect(decision).toMatchObject({ behavior: 'ask', code: 'local_code_execution' });
+  });
+
+  test('classifier projections keep only bounded stable tool inputs', () => {
+    expect(toPermissionClassifierInput('bash', {
+      command: 'bun test',
+      description: 'Run tests',
+      ignored: 'nope',
+    })).toEqual({
+      tool: 'bash',
+      input: {
+        command: 'bun test',
+        description: 'Run tests',
+      },
+    });
+
+    expect(toPermissionClassifierInput('file_write', {
+      file_path: '/tmp/workspace/a.ts',
+      content: 'freeform content should not be projected',
+    })).toEqual({
+      tool: 'file_write',
+      input: {
+        file_path: '/tmp/workspace/a.ts',
+      },
+    });
+
+    expect(toPermissionClassifierInput('unknown_tool', {})).toBeNull();
   });
 
   test('skill shell expansion uses the same restricted preapproval rules', async () => {

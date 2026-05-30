@@ -53,6 +53,7 @@ export const LIN_AGENT_SYSTEM_PROMPT_SECTIONS = [
       `- Use bash only for terminal operations that truly require a shell, such as running tests, build commands, package managers, or system commands.`,
       `- Use background execution for long-running shell commands when the tool supports it, then inspect background task output with the provided task or file tools.`,
       `- Respect the file boundary enforced by tools. If a path is rejected as outside that boundary, explain the limitation or ask the user to provide an allowed path.`,
+      `- Permission-denied tool results are normal tool results. If one is recoverable, continue with a safe fallback; if it blocks the task, explain the blocker plainly.`,
     ],
   },
   {

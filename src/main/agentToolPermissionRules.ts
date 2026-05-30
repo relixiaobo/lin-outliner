@@ -313,6 +313,12 @@ export function isSafeAutoAllowToolName(toolName: string): boolean {
   return SAFE_TOOL_SET.has(normalizePermissionToolName(toolName));
 }
 
+export function alwaysAllowRuleForDescriptor(descriptor: ToolActionDescriptor): string | undefined {
+  const ruleValue = `Action(${descriptor.actionKind})`;
+  const config = parseGlobalToolPermissionSettings({ permissions: { allow: [ruleValue] } });
+  return config.rules.length === 1 && config.rules[0]?.decision === 'allow' ? ruleValue : undefined;
+}
+
 export function normalizePermissionToolName(value: string): string {
   return value.trim().replace(/-/g, '_').toLowerCase();
 }

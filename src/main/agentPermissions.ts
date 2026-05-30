@@ -4,6 +4,7 @@ import type { AgentPermissionMode } from '../core/types';
 import {
   ARBITRARY_CODE_SHELL_PREFIXES,
   OUTWARD_FACING_SHELL_PREFIXES,
+  alwaysAllowRuleForDescriptor,
   parseGlobalToolPermissionSettings,
   resolveGlobalToolPermissionDecision,
   type AgentToolActionKind,
@@ -34,6 +35,7 @@ export interface AgentApprovalRequest {
   target: string;
   details: AgentApprovalDetail[];
   suggestedSessionRule?: string;
+  alwaysAllowRule?: string;
 }
 
 export interface AgentPermissionPolicy {
@@ -66,6 +68,8 @@ interface AgentPermissionDecisionBase {
   preapproved: boolean;
   sessionApproved: boolean;
   ruleId?: string;
+  permissionSource?: 'configured_ask' | 'default';
+  descriptor?: ToolActionDescriptor;
 }
 
 export interface AgentPermissionAllowDecision extends AgentPermissionDecisionBase {
@@ -96,6 +100,11 @@ export interface AgentPermissionEvaluationInput {
   toolName: string;
   args: unknown;
   policy: AgentPermissionPolicyInput;
+}
+
+export interface AgentPermissionClassifierProjection {
+  tool: string;
+  input: Record<string, unknown>;
 }
 
 interface DerivedToolActionDescriptor extends ToolActionDescriptor {
@@ -301,7 +310,13 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
   }
 
   if (globalResolution?.decision === 'ask') {
-    return askForDescriptor(globalResolution.descriptor as DerivedToolActionDescriptor, access, preapproved, sessionApproved);
+    return askForDescriptor(
+      globalResolution.descriptor as DerivedToolActionDescriptor,
+      access,
+      preapproved,
+      sessionApproved,
+      globalResolution.source === 'configured_ask' ? 'configured_ask' : 'default',
+    );
   }
 
   return allow(access, preapproved, sessionApproved, sessionApproved ? 'Allowed by a session permission rule.' : undefined, sessionApproved ? 'important' : undefined);
@@ -961,6 +976,7 @@ function askForDescriptor(
   access: AgentPermissionAccess,
   preapproved: boolean,
   sessionApproved: boolean,
+  permissionSource: 'configured_ask' | 'default',
 ): AgentPermissionAskDecision {
   const reason = descriptor.consequence;
   const target = descriptor.requestTarget ?? descriptor.command ?? descriptor.summary;
@@ -973,6 +989,7 @@ function askForDescriptor(
     {
       title: descriptor.requestTitle ?? `Approve ${descriptor.title}?`,
       target,
+      alwaysAllowRule: alwaysAllowRuleForDescriptor(descriptor),
       details: descriptor.requestDetails ?? [
         { label: 'Action', value: descriptor.title },
         { label: 'Target', value: target },
@@ -980,7 +997,65 @@ function askForDescriptor(
         { label: 'Permission kind', value: descriptor.actionKind },
       ],
     },
+    {
+      descriptor,
+      permissionSource,
+    },
   );
+}
+
+export function toPermissionClassifierInput(toolNameInput: string, args: unknown): AgentPermissionClassifierProjection | null {
+  const toolName = normalizeToolName(toolNameInput);
+  const input = args && typeof args === 'object' && !Array.isArray(args) ? args as Record<string, unknown> : {};
+  switch (toolName) {
+    case 'bash':
+      return projectClassifierInput(toolName, input, ['command', 'description', 'run_in_background']);
+    case 'file_read':
+    case 'file_edit':
+    case 'file_write':
+      return projectClassifierInput(toolName, input, ['file_path', 'old_string', 'new_string', 'replace_all']);
+    case 'file_glob':
+      return projectClassifierInput(toolName, input, ['pattern', 'path']);
+    case 'file_grep':
+      return projectClassifierInput(toolName, input, ['pattern', 'path', 'glob', 'output_mode']);
+    case 'web_search':
+      return projectClassifierInput(toolName, input, ['query', 'site', 'recency_days']);
+    case 'web_fetch':
+      return projectClassifierInput(toolName, input, ['url', 'format', 'query']);
+    case 'node_read':
+    case 'node_search':
+    case 'node_create':
+    case 'node_edit':
+    case 'node_delete':
+    case 'operation_history':
+    case 'past_chats':
+    case 'task_stop':
+    case 'agent_status':
+    case 'agent_send':
+    case 'agent_stop':
+    case 'skill':
+    case 'agent':
+      return projectClassifierInput(toolName, input, Object.keys(input).slice(0, 12));
+    default:
+      return null;
+  }
+}
+
+function projectClassifierInput(
+  toolName: string,
+  input: Record<string, unknown>,
+  keys: readonly string[],
+): AgentPermissionClassifierProjection {
+  const projected: Record<string, unknown> = {};
+  for (const key of keys) {
+    const value = input[key];
+    if (typeof value === 'string') projected[key] = value.slice(0, 2000);
+    else if (typeof value === 'number' || typeof value === 'boolean' || value === null) projected[key] = value;
+    else if (Array.isArray(value)) projected[key] = value.slice(0, 20).map((item) => (
+      typeof item === 'string' ? item.slice(0, 500) : item
+    ));
+  }
+  return { tool: toolName, input: projected };
 }
 
 function descriptor(
@@ -1354,8 +1429,9 @@ function ask(
   preapproved: boolean,
   sessionApproved: boolean,
   request: AgentApprovalRequest,
+  options: Pick<AgentPermissionAskDecision, 'descriptor' | 'permissionSource'>,
 ): AgentPermissionAskDecision {
-  return { behavior: 'ask', code, reason, access, preapproved, sessionApproved, request };
+  return { behavior: 'ask', code, reason, access, preapproved, sessionApproved, request, ...options };
 }
 
 function deny(
