@@ -814,6 +814,14 @@ describe('agent runtime skill integration', () => {
     const contextText = followUpContexts.join('\n');
     expect(contextText).toContain('User denied permission. The requested tool call was not executed.');
     expect(contextText).not.toContain('Permission denied: This changes external state on a git remote.');
+
+    const events = await new AgentEventStore(dataRoot).readEvents(created.sessionId);
+    expect(events.some((event) => event.type === 'tool.permission.checked' && event.outcome === 'ask')).toBe(true);
+    expect(events.some((event) => (
+      event.type === 'tool.permission.resolved'
+      && event.status === 'denied'
+      && event.resolvedBy === 'user_once'
+    ))).toBe(true);
   });
 
   test('persists always-allow approval rules globally', async () => {
@@ -877,6 +885,14 @@ describe('agent runtime skill integration', () => {
       permissions?: { allow?: string[] };
     };
     expect(settings.permissions?.allow).toContain('Action(file.delete.allowed_file_area)');
+
+    const events = await new AgentEventStore(dataRoot).readEvents(created.sessionId);
+    expect(events.some((event) => (
+      event.type === 'tool.permission.resolved'
+      && event.status === 'approved'
+      && event.resolvedBy === 'allow_rule_update'
+      && event.updatedRule === 'Action(file.delete.allowed_file_area)'
+    ))).toBe(true);
   });
 
   test('records runtime-denied approval resolutions when closing a session', async () => {

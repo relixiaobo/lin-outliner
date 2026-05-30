@@ -18,6 +18,7 @@ export type AgentPermissionAskResolverOutcome =
 export interface AgentPermissionClassifierInput {
   decision: AgentPermissionAskDecision;
   projection: AgentPermissionClassifierProjection;
+  contextRecords?: readonly unknown[];
 }
 
 export type AgentPermissionClassifier = (
@@ -30,6 +31,7 @@ export async function resolveAgentPermissionAsk(
     decision: AgentPermissionAskDecision;
     classifier?: AgentPermissionClassifier;
     classifierProjection?: AgentPermissionClassifierProjection | null;
+    classifierContextRecords?: readonly unknown[];
     interactionAvailable: boolean;
     signal?: AbortSignal;
   },
@@ -59,7 +61,11 @@ export async function resolveAgentPermissionAsk(
   }
 
   try {
-    const result = await input.classifier({ decision, projection }, input.signal);
+    const result = await input.classifier({
+      decision,
+      projection,
+      contextRecords: input.classifierContextRecords,
+    }, input.signal);
     if (result.unavailable) return classifierUnavailable(input.interactionAvailable, result.reason);
     if (result.outcome === 'allow') return { outcome: 'allow', source: 'classifier' };
     return {
