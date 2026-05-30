@@ -128,8 +128,8 @@ The PR column maps each finding to its consolidated PR (see Work packages).
 | A5 | P1 | `cursor:pointer` on non-link controls (web tell) | `outliner.css:2115` (tag), `agent-composer.css:131,169` (approval) | PR-C |
 | A6 | P1 | Bullet hover `transform: scale(1.375)` — non-native pop, violates "hover never changes layout" | `outliner.css:1689-1690` vs `design-system.md:757-758` | PR-C |
 | D1 | P1 | Dark mode via `[data-theme]`+JS, `color-scheme: light` hard-coded → native UA controls stay light in dark | `tokens.css:46`, `theme.ts:9-16`, `theme-dark.css:7` vs `design-system.md:434-437` | PR-B |
-| D2 | P1 | Overlays/menus don't use the defined `--material-popover` glass tier | `--material-popover` defined (`tokens.css:164`) but popovers use opaque `--bg` (`popover-command.css:7`) | PR-C |
-| D3 | P2 | Overlay elevation not tiered: `--overlay-shadow-level-2` defined but unused; dialogs/palette use level-1 | `tokens.css:115` unused; `confirm-dialog.css:16`, `popover-command.css:8` use `--shadow`(=level-1) | PR-C |
+| D2 | P1 | Overlays/menus aren't glass: zero popovers use `backdrop-filter` (only the two rails do); the `--material-popover` tier goes unused on them | `--material-popover` defined (`tokens.css:79`), popovers use flat `--bg`+`--shadow` (`popover-command.css:7-8`, `outliner.css:1506`, `shell.css:161`, `agent-composer.css:481,602,735`, `agent-dock.css:267`); real glass only at `agent-dock.css:66`, `sidebar.css:246` | PR-C |
+| D3 | P2 | Overlay elevation not tiered: dialogs/palette use level-1; level-2 used only off-overlay | `--overlay-shadow-level-2` (`tokens.css:115`) used only at `code.css:101`,`panel.css:167`; `confirm-dialog.css:16`,`popover-command.css:8` use `--shadow`(=level-1) | PR-C |
 | D4 | P2 | rail-toggle hover uses rounded-square + fill (spec forbids) | `shell.css:108,115-118` vs `design-system.md:751-756,799-801` | PR-C |
 | D5 | P2 | `--status-info` blue tints inline file mentions (second semantic colour) | `agent-message.css:47`, `agent-composer.css:375` vs colour-restraint rule | PR-C |
 | A7 | P2 | `not-allowed` cursor on disabled items (native greys, doesn't change cursor) | `popover-command.css:41` et al. | PR-C |
@@ -182,7 +182,7 @@ PR-D  native shell  ───┘ (joinable after PR-A; serializes on main.ts)
 - **Accept:** both specs green (was 11 failed / 7 passed); guard would catch a
   raw font/hex/self-alias/outline-stroke violation in any split file; typecheck +
   renderer tests pass; no new e2e regressions vs baseline.
-- **Full spec:** drafted at `tmp/pkg7-pr-spec.md`.
+- **Full spec:** drafted at `tmp/pr-a-guard-tests-spec.md`.
 
 ### PR-B — Theming & a11y CSS foundation (D1-min, A3)
 - **Branch:** `cc/theme-and-a11y-foundation` · CSS architecture · higher churn,
@@ -203,6 +203,7 @@ PR-D  native shell  ───┘ (joinable after PR-A; serializes on main.ts)
 - **Accept:** dark follows OS with no JS-frame delay; native scrollbars/controls go
   dark; high-contrast + reduced-motion verified via DevTools emulation; PR-A
   guards stay green; typecheck + tests pass. Keep isolated; rebase others after.
+- **Full spec:** drafted at `tmp/pr-b-theme-a11y-spec.md`.
 
 ### PR-C — Native-feel component pass (A1, A5, A6, A7, A8, D2, D3, D4, D5)
 - **Branch:** `cc/native-feel-component-pass` · CSS · the big visual unit
@@ -229,12 +230,14 @@ PR-D  native shell  ───┘ (joinable after PR-A; serializes on main.ts)
   contract (it currently asserts the old `pointer` behaviour).
 - **Note:** contains the P0 focus-ring fix. If you want that shipped *immediately*
   rather than waiting for the rest of PR-C, it can be fast-tracked as a tiny
-  standalone PR (`cc/focus-visible-restore`, spec drafted at `tmp/pkg1-pr-spec.md`)
-  — otherwise it rides here per the "fewer PRs" preference.
+  standalone PR (`cc/focus-visible-restore`, spec drafted at
+  `tmp/pr-c-focus-ring-fasttrack-spec.md`) — otherwise it rides here per the
+  "fewer PRs" preference.
 - **Accept:** Tab shows a neutral ring on every control, mouse-click shows none;
   no `cursor:pointer`/`not-allowed` on chrome; no hover reflow; menus read as glass
   under vibrancy and opaque under reduced-transparency; dialog/palette shadow
   clearly deeper than a menu; PR-A guards green; typecheck + tests pass.
+- **Full spec:** drafted at `tmp/pr-c-component-pass-spec.md`.
 
 ### PR-D — Native shell behaviors (A2a, A2b, A4, D6, D7)
 - **Branch:** `cc/native-shell-behaviors` · main process · serialize on `main.ts`
@@ -256,6 +259,7 @@ PR-D  native shell  ───┘ (joinable after PR-A; serializes on main.ts)
   Chromium's; node custom menus still work; blurring the window greys chrome and
   restores on focus; no startup colour seam on non-material windows; typecheck +
   tests pass.
+- **Full spec:** drafted at `tmp/pr-d-native-shell-spec.md`.
 
 ## Sequencing & coordination
 
