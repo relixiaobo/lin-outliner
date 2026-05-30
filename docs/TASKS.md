@@ -90,6 +90,25 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **agent-tool-permissions implementation** (codex) — built the full
+  `docs/plans/agent-tool-permissions.md`: action descriptors + global JSON
+  permission store (`permissions.allow`/`ask`/`deny`) with fail-closed
+  load/save validation; platform hard blocks evaluated before any allow rule
+  (exfiltration, credential/`.git/hooks`/persistence writes, payment,
+  permission self-modification, unknown shell); bash classifier with
+  most-restrictive-segment compound handling; classifier-backed `ask` resolver
+  gated by `classifierAutoAllowEligible` (default false, can never auto-allow
+  high-consequence/outward/sensitive); composer approval card, permission
+  center UI, structured `permission_denied` results, and
+  `tool.permission.checked`/`resolved` events. Deep multi-agent review found and
+  confirmed-fixed 1 critical + 4 high bash-classifier/validator fail-opens
+  before merge (`find -exec`/`-delete` & `sed -i` no longer auto-allow;
+  `ssh`/`npm`/`pnpm`/`yarn`/`bun`/`npx`/`bunx`/`tsx` allow rules rejected;
+  capability deny no longer over-advertised). typecheck clean, permission tests
+  30/0. Non-blocking follow-ups remain (sessionApproved ordering,
+  `parseGlobalToolPermissionSettings` pre-shaped early-return, interpreter-stdin
+  exfil sinks, dual `approval.*`/`tool.permission.*` event vocabulary,
+  denied-reason literal naming). (PR #60).
 - **agent-tool-permissions plan** (codex) — new authoritative agent permission
   plan (`docs/plans/agent-tool-permissions.md`): one global runtime-owned policy
   (allow/ask/deny by action kind), platform hard blocks, a classifier-backed
@@ -99,8 +118,7 @@ Ordered by priority; lower items may depend on higher ones.
   interactive/unattended fail-safe. Supersedes and shelves the two earlier P0
   drafts (`agent-permissions.md`, `agent-reversible-execution.md`). Refined on
   merge against the cited cc-2.1 source (precedence, borrowed validation rules,
-  classifier-callable vs auto-allow-eligible terminology). Implementation is the
-  next P0 agent-permissions task. (PR #59).
+  classifier-callable vs auto-allow-eligible terminology). Implemented in #60. (PR #59).
 - **macOS window corner radius** (cc) — standard macOS window gets a custom 24pt
   continuous corner (matching Raycast) while keeping native traffic lights, OS
   shadow, vibrancy, and live resize. A zero-dependency Node-API addon

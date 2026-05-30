@@ -12,6 +12,34 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent tool permissions (global runtime policy)** — implements
+  `docs/plans/agent-tool-permissions.md`: one global, runtime-owned permission
+  policy (allow/ask/deny by action kind) replacing the hidden one-off approval
+  matrix. Adds action descriptors and a global JSON permission store
+  (`permissions.allow`/`ask`/`deny`) with fail-closed load/save validation that
+  rejects forbidden-allow shapes (wildcards, the arbitrary-code shell-prefix
+  denylist — interpreters, `eval`/`exec`/`xargs`/`sudo`, package managers
+  `npm`/`pnpm`/`yarn`/`bun`/`npx`/`bunx`/`tsx`, `ssh`, PowerShell — and the
+  agent/sub-agent-spawn ban). Platform hard blocks are evaluated before any
+  allow rule: sensitive-read-plus-network-write exfiltration, credential /
+  shell-startup / `.git/hooks` / persistence writes, payment, permission
+  self-modification, and unknown/obfuscated shell. The bash classifier handles
+  known command families and evaluates compound commands by most-restrictive
+  segment (`find -exec`/`-delete` and `sed -i` are treated as
+  execution/edit/persistence, not read-only). A classifier-backed `ask` resolver
+  is bounded by a `classifierAutoAllowEligible` gate (default `false`) that can
+  never auto-allow high-consequence / outward / sensitive actions, and the
+  classifier sub-call receives only a classification output contract, never the
+  real tools. Ships the composer approval card (Approve once / Always allow this
+  kind / Deny once), a permission center UI, structured `permission_denied`
+  results, and `tool.permission.checked`/`tool.permission.resolved` event-log
+  entries. Reviewed via a deep multi-agent pass that found and confirmed-fixed 1
+  critical + 4 high fail-opens before merge; `typecheck` clean, permission tests
+  30/0. Non-blocking follow-ups remain (sessionApproved ordering vs
+  configured-ask, `parseGlobalToolPermissionSettings` pre-shaped early-return,
+  interpreter-stdin exfil sinks, dual `approval.*`/`tool.permission.*` event
+  vocabulary, denied-reason literal naming).
+  ([#60](https://github.com/relixiaobo/lin-outliner/pull/60))
 - **Agent tool permissions plan (authority)** — adds
   `docs/plans/agent-tool-permissions.md` as the single authoritative agent
   permission plan and shelves the two earlier P0 drafts
