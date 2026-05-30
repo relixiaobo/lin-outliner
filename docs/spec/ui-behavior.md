@@ -14,8 +14,10 @@ keyboard or pointer change should be checked against this matrix.
   title appears as the final breadcrumb segment.
 - Breadcrumb back navigates the current panel to its previous node page. It does
   not undo document operations.
-- Top bar Back/Forward controls navigate the active tab's outliner page
-  history. They do not undo or redo document operations.
+- Page-history back/forward navigate the active panel's outliner page history via
+  `Cmd+[` / `Cmd+]` (there are no top-bar back/forward buttons; see
+  [`design-system.md`](./design-system.md) → Shell). They do not undo or redo
+  document operations.
 - Rows use a compact bullet/chevron leading control, restrained hover/focus
   states, and no right inspector.
 - Page titles are editable rich text.

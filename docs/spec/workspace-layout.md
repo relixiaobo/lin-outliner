@@ -1,7 +1,7 @@
 # Workspace Layout
 
-This document describes the planned app layout model for tabs, the workspace
-canvas, outline panels, the sidebar, and the agent dock.
+This document describes the app layout model for tabs, the workspace canvas,
+outline panels, the sidebar, and the agent dock.
 
 For visual tokens, density, typography, and interaction states, see the
 single-file design-system contract:
@@ -14,15 +14,15 @@ workspace canvas.
 
 ```txt
 App Shell
-  -> Top chrome
-     -> navigation controls
-     -> tab strip
-     -> global actions
-  -> Sidebar dock
+  -> Window chrome (top strip)
+     -> left: traffic lights + sidebar toggle
+     -> center: per-pane breadcrumb headers
+     -> right: agent dock header + agent toggle
+  -> Sidebar rail (left)  -> navigation + tab switcher
   -> Active tab content
      -> Workspace canvas
         -> tiled outline panels
-  -> Agent dock
+  -> Agent rail (right)
   -> Overlay layer
 ```
 
@@ -35,58 +35,61 @@ The important boundary is:
 - Outline panels are tiled side by side. They do not overlap or cover each
   other.
 
-## Top Chrome
+## Window Chrome (Top Strip)
 
-The top chrome is part of the app shell. It is above the workspace canvas and
-is not owned by any workspace tab.
+The window chrome is a single thin strip at the window top, at traffic-light
+height. It is the window's title-bar drag region and is part of the app shell —
+not owned by any workspace tab. There is **no global tab strip and no top-bar
+back/forward**; tab switching lives in the sidebar (see Sidebar Boundary) and
+page-history navigation is keyboard-driven. The full visual contract is in
+[`design-system.md`](./design-system.md) → Shell; this section covers only the
+ownership model.
 
-It has three regions:
+The strip holds three regions on one shared centreline:
 
 ```txt
-Top chrome
-  -> left window and navigation controls
-  -> center tab strip
-  -> right global actions
+Window chrome (top strip)
+  -> left corner   -> traffic lights + sidebar toggle
+  -> center        -> per-pane breadcrumb headers
+  -> right corner  -> agent dock header + agent toggle
 ```
 
-Left window and navigation controls:
+Left corner — window controls:
 
-- Platform window affordances when applicable.
+- Platform window affordances (macOS traffic lights when applicable).
 - Sidebar toggle.
-- Back and forward navigation.
-- Future workspace navigation controls.
 
-These controls are shell-level controls. They should not be stored inside a
-workspace tab. Back and forward navigation may operate on the active tab's
-outliner page history, but the controls themselves remain in the app shell.
+These are fixed window-chrome controls anchored to the window's top-left. They
+are not stored inside a workspace tab and do not move when the sidebar collapses
+(only the rail slides away).
 
-Center tab strip:
+Center — per-pane breadcrumb headers:
 
-- Shows workspace tabs.
-- Indicates the active tab.
-- Supports creating a new tab.
-- May eventually support reordering, closing, and renaming tabs.
+- Each open outline panel contributes its own breadcrumb header
+  (`avatar / path / current`) with a `×` close at its right; the last remaining
+  panel shows no `×`.
+- The breadcrumb is the panel's header and its drag region. A per-panel back
+  control lives in the breadcrumb row; global page-history back/forward are on
+  `Cmd+[` / `Cmd+]` with no chrome buttons.
 
-The tab strip switches only the central workspace canvas. It does not switch
-the sidebar dock or the agent dock.
+Right corner — agent chrome:
 
-Right global actions:
+- The agent dock's header (`✦` brand mark + conversation title) when open.
+- The agent toggle, pinned to the top-right corner as a fixed window-chrome
+  control.
 
-- Agent entry or agent mode affordance.
-- User/account/profile affordance.
-- Future sync, notification, settings, or workspace-level actions.
-
-These actions are also shell-level controls. They sit visually above the agent
-dock, but they are not part of the agent transcript. If an action opens a menu,
-confirmation, or account popover, it should render through the shared overlay
-layer.
+The sidebar and agent toggles are symmetric: fixed, neutral, and signalling
+open/collapsed by glyph state in place, never by a selected background or a
+moving position. Menus, confirmations, and account/settings popovers opened from
+chrome render through the shared overlay layer, not inline in the strip.
 
 ## Terms
 
 App shell:
 
-The outer application frame. It contains the tab strip, sidebar dock, active
-workspace canvas, agent dock, and global overlays.
+The outer application frame. It contains the window chrome (top strip), the
+sidebar rail (which hosts the tab switcher), the active workspace canvas, the
+agent rail, and global overlays.
 
 Workspace tab:
 
@@ -156,8 +159,9 @@ panel `zIndex`, or freeform drag stacking for the initial layout.
 
 ## Tab Semantics
 
-Top tabs represent central workspace canvas layouts. They do not represent
-agent conversations and they do not include the sidebar state.
+Workspace tabs represent central workspace canvas layouts. They are switched
+from the sidebar (there is no top tab strip). They do not represent agent
+conversations and they do not include the sidebar state.
 
 ```ts
 interface WorkspaceTab {
@@ -393,10 +397,10 @@ User clicks Today in sidebar
 Switch tab:
 
 ```txt
-User clicks top tab
+User clicks a tab in the sidebar switcher
   -> activeTabId changes
   -> central canvas panels change
-  -> sidebar unchanged
+  -> sidebar stays mounted (only the active-tab indicator moves)
   -> agent unchanged
 ```
 
