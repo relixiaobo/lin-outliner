@@ -1,12 +1,25 @@
 ---
-status: draft
+status: shelved
 priority: P0
 owner: relixiaobo
 created: 2026-05-27
-updated: 2026-05-27
+updated: 2026-05-30
 ---
 
 # Agent Permissions
+
+This plan is shelved. The current authority for agent permission implementation
+is [`agent-tool-permissions.md`](agent-tool-permissions.md).
+
+The new plan keeps the useful parts of this document: `allow | ask | deny`,
+runtime-owned enforcement, sensitive-path redlines, strict rule precedence, and
+structured denied results. It replaces this plan's once/session/always rule
+lifetime model, composer-card-specific UX contract, delayed classifier work, and
+v1 shell-parser non-goal with a single global permission policy plus a
+classifier-backed `ask` resolver.
+
+The historical content below remains only as background and is not a current
+implementation contract.
 
 Runtime permission policy for Lin's agent tools. This plan is scoped to local
 runtime enforcement, approval UX, user rules, and tests. It evolves the current

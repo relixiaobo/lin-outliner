@@ -1,12 +1,24 @@
 ---
-status: draft
+status: shelved
 priority: P0
 owner: relixiaobo
 created: 2026-05-28
-updated: 2026-05-28
+updated: 2026-05-30
 ---
 
 # Agent Reversible Execution
+
+This plan is shelved. The current authority for agent permission implementation
+is [`agent-tool-permissions.md`](agent-tool-permissions.md).
+
+The new plan keeps reversibility as an action descriptor and an important input
+to default policy, confirmation copy, and future checkpoint/undo work. It no
+longer treats reversibility as the primary permission gate. Runtime action
+kinds, platform hard blocks, global rules, and a classifier-backed `ask`
+resolver are the implementation contract.
+
+The historical content below remains only as background and is not a current
+implementation contract.
 
 The cleanest permission model for Lin's agent is not a smarter approval prompt.
 It is making approval prompts rare enough to mean something. This plan provides
