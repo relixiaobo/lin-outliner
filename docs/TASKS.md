@@ -90,6 +90,17 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **agent-tool-permissions plan** (codex) — new authoritative agent permission
+  plan (`docs/plans/agent-tool-permissions.md`): one global runtime-owned policy
+  (allow/ask/deny by action kind), platform hard blocks, a classifier-backed
+  `ask` resolver bounded by a `classifierAutoAllowEligible` descriptor gate,
+  fail-closed rule validation (arbitrary-code shell-prefix denylist + agent-spawn
+  allow ban), sensitive-data exfiltration redlines, and a defined
+  interactive/unattended fail-safe. Supersedes and shelves the two earlier P0
+  drafts (`agent-permissions.md`, `agent-reversible-execution.md`). Refined on
+  merge against the cited cc-2.1 source (precedence, borrowed validation rules,
+  classifier-callable vs auto-allow-eligible terminology). Implementation is the
+  next P0 agent-permissions task. (PR #59).
 - **macOS window corner radius** (cc) — standard macOS window gets a custom 24pt
   continuous corner (matching Raycast) while keeping native traffic lights, OS
   shadow, vibrancy, and live resize. A zero-dependency Node-API addon
@@ -139,7 +150,9 @@ Ordered by priority; lower items may depend on higher ones.
   typing (`code`/bold/strike/highlight/link + code-boundary arrow nav) and a
   wording/styling cleanup (design-token code styling, simplified agent/tool
   copy keeping the `Lin Agent` identity). Plan: `docs/plans/agent-permissions.md`
-  (still `draft` — management UI and persistent `always` rules remain). (PR #51).
+  (now `shelved`; superseded by `docs/plans/agent-tool-permissions.md` in #59 —
+  the runtime `allow | ask | deny` machinery shipped here is what that plan
+  builds on). (PR #51).
 - **native-feel stage 1: security shell** (cc) — main process now owns the
   renderer's navigation + capability surface: `setWindowOpenHandler` denies
   child windows (http(s) → OS browser), `will-navigate`/`will-redirect` lock the

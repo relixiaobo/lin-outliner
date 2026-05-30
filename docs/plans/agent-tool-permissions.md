@@ -108,10 +108,10 @@ decisions into one product-owned permission system.
    like default / auto / bypass. There is one policy: deterministic rules first,
    classifier for eligible `ask` actions, and explicit confirmation only when
    needed. This plan describes the full target design, not a staged roadmap.
-9. **Classifier auto-allow has hard limits.** Classifier eligibility is not the
-   same as having a projection. High-consequence, irreversible, external,
-   sensitive-path, unknown-shell, payment, and permission-mutating actions are
-   not auto-allow-eligible.
+9. **Classifier auto-allow has hard limits.** Being classifier-callable (having
+   a projection) is not the same as being auto-allow-eligible. High-consequence,
+   irreversible, external, sensitive-path, unknown-shell, payment, and
+   permission-mutating actions are not auto-allow-eligible.
 
 ## Decision Trail
 
@@ -296,7 +296,7 @@ The ask resolver is:
 
 ```txt
 ask action
-  -> non-classifier-eligible safety check: needs_user
+  -> deliberately-interactive safety check: needs_user
   -> deterministic fast path or safe allowlist: allow
   -> not classifier-auto-allow-eligible: needs_user
   -> missing classifier projection: needs_user
@@ -421,11 +421,19 @@ flags. For example, `file.edit.allowed_file_area`,
 should be distinct rule keys. `accessScope` helps display and audit the
 descriptor, but broad rules must not silently cover narrower high-risk scopes.
 
+Two eligibility concepts are distinct and must not be conflated:
+
+- **classifier-callable** — the tool exposes a `toPermissionClassifierInput`
+  projection, so the action *may* be sent to the classifier at all.
+- **classifier-auto-allow-eligible** (`classifierAutoAllowEligible: true`) — the
+  classifier is *permitted to auto-allow* the action. This is strictly narrower
+  than classifier-callable: a tool can be classifier-callable (so the classifier
+  may `block` it) while never being auto-allow-eligible.
+
 `classifierAutoAllowEligible` must default to `false`. A descriptor can set it
 to `true` only when the action is low consequence, bounded by runtime-parsed
 inputs, not sensitive, not outward-facing, and has a compact classifier
-projection. This is a stricter property than "the tool implements
-`toPermissionClassifierInput`."
+projection.
 
 ### Shell Command Classification
 
@@ -554,21 +562,39 @@ The classifier is a separate runtime-owned model call. The working agent does
 not provide a safety decision and does not add permission metadata to tool
 arguments.
 
-The classifier is called only after deterministic permission checks:
+The classifier is called only after deterministic permission checks. The full
+deterministic precedence is:
 
 ```txt
-platform hard block > configured deny > configured allow > ask resolver
+platform hard block > configured deny > configured ask > configured allow
+  > descriptor default decision > classifier (ask resolver)
 ```
 
-It must not override hard blocks, configured deny rules, invalid schemas,
-sensitive-path rules, high-consequence descriptors, or unsupported tool
-surfaces.
+`deny` is absolute and evaluated first. A configured `ask` rule overrides a
+configured `allow`: an explicit "ask me about this kind" is never silently
+relaxed by a broad allow. A configured `allow` only overrides the descriptor's
+default decision; it never relaxes a hard block, a deny rule, or an ask rule.
+The classifier runs last and only for an action whose resolved decision is
+`ask`. (This mirrors cc-2.1's `hasPermissionsToUseToolInner` cascade, where deny
+and ask rules are resolved before allow rules — do not implement allow as
+beating ask.)
+
+It must not override hard blocks, configured deny rules, configured ask rules,
+invalid schemas, sensitive-path rules, high-consequence descriptors, or
+unsupported tool surfaces.
 
 The classifier is a second, constrained model with smaller input and a forced
 binary output contract. That is a different trust basis from a model-authored
 tool argument or a countdown timer, but it is still not strong enough to
 auto-allow every `ask`. Runtime descriptors decide whether classifier auto-allow
 is even available.
+
+This descriptor-level veto is a deliberate strengthening over cc-2.1, not a
+borrowed mechanism. cc keeps high-consequence tools out of its safe-tool fast
+path but still lets its classifier *model* auto-allow them (for example a `git
+push` issued through Bash), relying only on the classifier prompt's block
+categories. Lin additionally refuses auto-allow for the kinds below
+structurally, before the model is consulted.
 
 Not auto-allow-eligible:
 
@@ -628,10 +654,10 @@ Tool definitions have two separate roles:
   forced `classify_permission_result` tool or a strict structured-output/XML
   schema.
 
-Each classifier-eligible tool must implement `toPermissionClassifierInput`.
+Each classifier-callable tool must implement `toPermissionClassifierInput`.
 The default projection may be empty only for tools declared to have no security
 relevance. A security-relevant `ask` action with no projection is not
-classifier-eligible; it should fall back to `needs_user` in interactive contexts
+classifier-callable; it should fall back to `needs_user` in interactive contexts
 or a structured denied result in unattended contexts.
 
 Classifier output should use the `ToolPermissionClassifierResult` shape defined
@@ -645,14 +671,14 @@ The outcomes mean:
 The classifier should not produce "ask the user" as an output. That keeps it
 aligned with cc-2.1's classifier contract: the classifier decides whether the
 runtime may auto-allow the action. Prompt fallback is runtime behavior for
-non-classifier-eligible actions, unavailable classifiers, or deliberately
-interactive safety checks.
+actions that are not classifier-callable, classifiers that are unavailable, or
+deliberately interactive safety checks.
 
 The classifier should have deterministic fast paths before the model call:
 
 - if the action would already be allowed by the local-edit fast path, allow it;
 - if the tool is on a narrow safe allowlist, allow it;
-- if a safety check is explicitly non-classifier-eligible, skip the classifier.
+- if a safety check is explicitly deliberately-interactive, skip the classifier.
 
 When the classifier is unavailable, malformed, or unparseable, it must not
 silently allow. Interactive contexts may fall back to the confirmation surface;
@@ -746,7 +772,26 @@ Forbidden `allow` shapes:
 - `allow` for platform hard-blocked actions, including sensitive exfiltration,
   credential/startup writes, payment, host destruction, or unsupported tool
   surfaces;
-- shell allow rules the parser cannot statically validate.
+- shell allow rules the parser cannot statically validate;
+- `allow` for any shell prefix that can execute arbitrary code or otherwise
+  escape the parser's intent. A narrow-looking rule such as `Bash(python:*)`,
+  `Bash(node:*)`, `Bash(eval:*)`, `Bash(xargs:*)`, or `Bash(ssh:*)` still yields
+  arbitrary code and must be rejected. The validator must carry an explicit
+  arbitrary-code prefix list — interpreters and shells (`python`, `python3`,
+  `node`, `deno`, `tsx`, `bun run`, `npm run`, `npx`, `bunx`, `ruby`, `perl`,
+  `php`, `sh`, `bash`, `zsh`, `ssh`), code-exec/indirection builtins (`eval`,
+  `exec`, `env`, `xargs`, `sudo`), and PowerShell equivalents
+  (`iex`/`Invoke-Expression`, `Start-Process`, `Add-Type`, `New-Object`). The
+  abstract "unknown shell" category does not catch these on its own.
+  (cc-2.1's `DANGEROUS_BASH_PATTERNS` is the battle-tested seed for this list.)
+- `allow` for the agent / sub-agent spawn action kind. Any such rule would
+  auto-approve a sub-agent spawn before the classifier can read the sub-agent's
+  prompt, defeating delegation-attack prevention. Sub-agents inherit the parent
+  policy and are gated per action, never by a blanket spawn allow. (cc-2.1:
+  `isDangerousTaskPermission`.)
+
+These rejections are permanent, not scoped to a transient mode, so there is no
+mode-exit restore step to manage.
 
 Broad `ask` and `deny` rules are allowed only when they are syntactically valid
 and cannot widen access. Deny may be broad because it only removes capability.
@@ -979,7 +1024,9 @@ auto-allow them by default.
 3. Add a load-time and save-time parser/validator for action-kind rules such as
    `Action(file.edit.allowed_file_area)` and advanced durable deny rules such as
    `Capability(external_messaging)`. Invalid or unverifiable rules fail closed
-   and never become `allow`.
+   and never become `allow`. Carry an explicit arbitrary-code shell-prefix
+   denylist (interpreters, `eval`/`exec`/`xargs`/`sudo`, PowerShell `iex`, etc.)
+   and reject any `allow` for the agent / sub-agent spawn action kind.
 4. Add a permission center UI for common allow/ask management. Do not require a
    dedicated disabled-capabilities manager.
 5. Build descriptor resolvers for existing agent tools.
@@ -989,10 +1036,10 @@ auto-allow them by default.
 7. For `bash`, classify known command families first, evaluate compound
    commands by the most restrictive segment, and hard block unknown shell unless
    a narrow ask-only unknown-shell action kind is explicitly defined.
-8. Add `toPermissionClassifierInput` projections for classifier-eligible tools.
+8. Add `toPermissionClassifierInput` projections for classifier-callable tools.
 9. Add the ask resolver with local-edit fast path, safe allowlist, classifier,
    classifier unavailable handling, interaction-availability handling, and
-   non-classifier-eligible safety checks.
+   deliberately-interactive safety checks.
    The classifier call must provide only a classification output contract, not
    the real agent tool definitions.
 10. Add the `classifierAutoAllowEligible` gate and default it to `false`.
@@ -1016,6 +1063,10 @@ auto-allow them by default.
     `platform_hard_block`, encoded secret exfiltration is
     `platform_hard_block`, `.git/hooks` writes are `platform_hard_block`, and
     saved allow rules do not override these redlines.
+19. Add rule-validation fixtures: `allow` rules for `Bash(python:*)`,
+    `Bash(eval:*)`, `Bash(*)`, and any agent / sub-agent spawn kind are rejected
+    and fall back to the built-in default; a rejected `allow` never silently
+    widens access.
 
 ## Open Questions
 

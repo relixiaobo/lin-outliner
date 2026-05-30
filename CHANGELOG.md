@@ -12,6 +12,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent tool permissions plan (authority)** — adds
+  `docs/plans/agent-tool-permissions.md` as the single authoritative agent
+  permission plan and shelves the two earlier P0 drafts
+  (`agent-permissions.md`, `agent-reversible-execution.md`) with pointers to it.
+  The plan defines one global runtime-owned policy (allow/ask/deny by action
+  kind), platform hard blocks, a classifier-backed `ask` resolver bounded by a
+  `classifierAutoAllowEligible` descriptor gate (a deliberate strengthening over
+  cc-2.1, which lets its classifier model auto-allow high-consequence actions),
+  fail-closed rule validation with an explicit arbitrary-code shell-prefix
+  denylist and an agent/sub-agent-spawn allow ban, sensitive-data exfiltration
+  redlines, and a defined interactive/unattended fail-safe. Plan refined on merge
+  per a cc-2.1 source comparison (precedence wording, the two borrowed validation
+  rules, and classifier-callable vs auto-allow-eligible terminology).
+  ([#59](https://github.com/relixiaobo/lin-outliner/pull/59))
 - **macOS window corner radius (native)** — gives the standard macOS window a
   custom `24pt` continuous corner (matching Raycast) while keeping native traffic
   lights, the OS drop shadow, vibrancy, and live resize. A tiny zero-dependency
