@@ -4,13 +4,14 @@ import {
   evaluateAgentToolPermission,
   matchesAgentToolRule,
 } from '../../src/main/agentPermissions';
+import { parseGlobalToolPermissionSettings } from '../../src/main/agentToolPermissionRules';
 import { executeAgentSkillShellCommand } from '../../src/main/agentSkillShell';
 
 describe('agent permissions', () => {
-  test('trusted mode allows bash by default', () => {
+  test('trusted mode allows read/search bash by default', () => {
     const decision = evaluateAgentToolPermission({
       toolName: 'bash',
-      args: { command: 'bun test tests/core' },
+      args: { command: 'rg TODO src' },
       policy: {
         workspaceRoot: '/tmp/workspace',
       },
@@ -19,7 +20,7 @@ describe('agent permissions', () => {
     expect(decision).toMatchObject({ behavior: 'allow', access: 'execute', preapproved: false });
   });
 
-  test('trusted mode allows scoped cleanup commands', () => {
+  test('trusted mode asks for scoped cleanup commands', () => {
     const decision = evaluateAgentToolPermission({
       toolName: 'bash',
       args: { command: 'rm -rf ./dist' },
@@ -28,7 +29,7 @@ describe('agent permissions', () => {
       },
     });
 
-    expect(decision.behavior).toBe('allow');
+    expect(decision).toMatchObject({ behavior: 'ask', code: 'local_file_delete' });
   });
 
   test('asks for recursive cleanup outside the workspace', () => {
@@ -73,8 +74,8 @@ describe('agent permissions', () => {
     expect(decision.code).toBe('path_outside_workspace');
   });
 
-  test('can explicitly allow outside workspace reads', () => {
-    const decision = evaluateAgentToolPermission({
+  test('outside workspace reads ask unless a global rule allows them', () => {
+    const asked = evaluateAgentToolPermission({
       toolName: 'file_read',
       args: { file_path: '/tmp/outside.txt' },
       policy: {
@@ -82,8 +83,22 @@ describe('agent permissions', () => {
         allowOutsideWorkspaceRead: true,
       },
     });
+    const allowed = evaluateAgentToolPermission({
+      toolName: 'file_read',
+      args: { file_path: '/tmp/outside.txt' },
+      policy: {
+        workspaceRoot: '/tmp/workspace',
+        allowOutsideWorkspaceRead: true,
+        globalPermissions: {
+          permissions: {
+            allow: ['Action(file.read.outside_allowed_file_area)'],
+          },
+        },
+      },
+    });
 
-    expect(decision.behavior).toBe('allow');
+    expect(asked).toMatchObject({ behavior: 'ask', code: 'outside_workspace_read' });
+    expect(allowed.behavior).toBe('allow');
   });
 
   test('matches allowed-tools rules for restricted mode preapproval', () => {
@@ -203,6 +218,105 @@ describe('agent permissions', () => {
     expect(background).toMatchObject({ behavior: 'ask', code: 'background_process', sessionApproved: true });
     expect(sandboxOverride.behavior === 'ask' ? sandboxOverride.request.suggestedSessionRule : undefined).toBeUndefined();
     expect(background.behavior === 'ask' ? background.request.suggestedSessionRule : undefined).toBeUndefined();
+  });
+
+  test('global rules use deny over ask over allow precedence', () => {
+    const allowed = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'bun test' },
+      policy: {
+        workspaceRoot: '/tmp/workspace',
+        globalPermissions: {
+          permissions: {
+            allow: ['Action(shell.project_script)'],
+          },
+        },
+      },
+    });
+    const asked = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'bun test' },
+      policy: {
+        workspaceRoot: '/tmp/workspace',
+        globalPermissions: {
+          permissions: {
+            allow: ['Action(shell.project_script)'],
+            ask: ['Action(shell.project_script)'],
+          },
+        },
+      },
+    });
+    const denied = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'bun test' },
+      policy: {
+        workspaceRoot: '/tmp/workspace',
+        globalPermissions: {
+          permissions: {
+            allow: ['Action(shell.project_script)'],
+            deny: ['Action(shell.project_script)'],
+          },
+        },
+      },
+    });
+
+    expect(allowed).toMatchObject({ behavior: 'allow' });
+    expect(asked).toMatchObject({ behavior: 'ask', code: 'project_script' });
+    expect(denied).toMatchObject({ behavior: 'deny', code: 'configured_deny' });
+  });
+
+  test('unknown shell and sensitive persistence writes fail closed', () => {
+    const unknown = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'custom-deploy-helper --prod' },
+      policy: { workspaceRoot: '/tmp/workspace' },
+    });
+    const hookWrite = evaluateAgentToolPermission({
+      toolName: 'file_write',
+      args: { file_path: '/tmp/workspace/.git/hooks/pre-commit', content: 'echo nope' },
+      policy: { workspaceRoot: '/tmp/workspace' },
+    });
+    const shellHookWrite = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'echo nope > .git/hooks/pre-commit' },
+      policy: { workspaceRoot: '/tmp/workspace' },
+    });
+
+    expect(unknown).toMatchObject({ behavior: 'deny', code: 'unknown_shell', redline: true });
+    expect(hookWrite).toMatchObject({ behavior: 'deny', code: 'sensitive_persistence_write', redline: true });
+    expect(shellHookWrite).toMatchObject({ behavior: 'deny', code: 'sensitive_persistence_write', redline: true });
+  });
+
+  test('invalid allow rules fail closed instead of widening access', () => {
+    const config = parseGlobalToolPermissionSettings({
+      permissions: {
+        allow: [
+          'Bash(*)',
+          'Bash(python:*)',
+          'Action(shell.unknown)',
+          'Action(agent.subagent.spawn)',
+          'Capability(external_messaging)',
+        ],
+      },
+    });
+    const decision = evaluateAgentToolPermission({
+      toolName: 'bash',
+      args: { command: 'python scripts/release.py' },
+      policy: {
+        workspaceRoot: '/tmp/workspace',
+        globalPermissions: config,
+      },
+    });
+
+    expect(config.rules).toHaveLength(0);
+    expect(config.diagnostics.map((item) => item.code)).toEqual([
+      'forbidden_allow_rule',
+      'forbidden_allow_rule',
+      'forbidden_allow_rule',
+      'forbidden_allow_rule',
+      'forbidden_capability_rule',
+    ]);
+    expect(decision).toMatchObject({ behavior: 'ask', code: 'local_code_execution' });
   });
 
   test('skill shell expansion uses the same restricted preapproval rules', async () => {

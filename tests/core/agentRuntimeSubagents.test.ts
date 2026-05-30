@@ -106,6 +106,34 @@ async function waitFor(condition: () => boolean, timeoutMs = 1000) {
   }
 }
 
+async function sendMessageApprovingAgent(
+  runtime: { sendMessage: (sessionId: string, message: string) => Promise<unknown>; resolveApproval: (sessionId: string, requestId: string, approved: boolean) => Promise<unknown> },
+  sessionId: string,
+  message: string,
+  sink: ReturnType<typeof createWindowSink>,
+) {
+  const sendPromise = runtime.sendMessage(sessionId, message);
+  const resolved = new Set<string>();
+  let settled = false;
+  sendPromise.finally(() => {
+    settled = true;
+  }).catch(() => undefined);
+
+  while (!settled) {
+    const approval = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
+      event.type === 'approval_request' && !resolved.has(event.requestId)
+    ));
+    if (approval) {
+      resolved.add(approval.requestId);
+      await runtime.resolveApproval(sessionId, approval.requestId, true);
+      continue;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  await sendPromise;
+}
+
 function scriptedStream(
   responses: Array<AssistantMessage | ((context: Context, options: SimpleStreamOptions | undefined, model: Model<Api>) => AssistantMessage | Promise<AssistantMessage>)>,
   onCall: (model: Model<Api>, context: Context) => void,
@@ -237,7 +265,7 @@ describe('agent runtime subagents', () => {
     );
 
     const session = await runtime.createSession();
-    await runtime.sendMessage(session.sessionId, 'Use a subagent for this.');
+    await sendMessageApprovingAgent(runtime, session.sessionId, 'Use a subagent for this.', sink);
 
     expect(script.pendingCount()).toBe(0);
     expect(contexts.some((text) => text.includes('RESEARCHER_AGENT_BODY'))).toBe(true);
@@ -288,7 +316,7 @@ describe('agent runtime subagents', () => {
     );
 
     const session = await runtime.createSession();
-    await runtime.sendMessage(session.sessionId, 'Parent context marker.');
+    await sendMessageApprovingAgent(runtime, session.sessionId, 'Parent context marker.', sink);
 
     const forkContext = contexts.join('\n');
     expect(forkContext).toContain('Parent context marker.');
@@ -350,7 +378,7 @@ describe('agent runtime subagents', () => {
     );
 
     const session = await runtime.createSession();
-    await runtime.sendMessage(session.sessionId, 'Use a subagent for large output.');
+    await sendMessageApprovingAgent(runtime, session.sessionId, 'Use a subagent for large output.', sink);
 
     const slimmedContext = childContexts.find((context) => context.includes('<persisted-output>')) ?? '';
     expect(script.pendingCount()).toBe(0);
@@ -437,7 +465,7 @@ describe('agent runtime subagents', () => {
     );
 
     const session = await runtime.createSession();
-    await runtime.sendMessage(session.sessionId, 'Use a subagent that will compact.');
+    await sendMessageApprovingAgent(runtime, session.sessionId, 'Use a subagent that will compact.', sink);
 
     const compactedChildContext = childContexts.join('\n');
     expect(script.pendingCount()).toBe(0);
@@ -507,7 +535,7 @@ describe('agent runtime subagents', () => {
     );
 
     const session = await runtime.createSession();
-    await runtime.sendMessage(session.sessionId, 'Use a subagent that will hit a context error.');
+    await sendMessageApprovingAgent(runtime, session.sessionId, 'Use a subagent that will hit a context error.', sink);
 
     const retriedContext = childContexts.join('\n');
     expect(script.pendingCount()).toBe(0);
@@ -568,7 +596,7 @@ describe('agent runtime subagents', () => {
     );
 
     const session = await runtime.createSession();
-    await runtime.sendMessage(session.sessionId, 'Start and inspect a background subagent.');
+    await sendMessageApprovingAgent(runtime, session.sessionId, 'Start and inspect a background subagent.', sink);
 
     expect(script.pendingCount()).toBe(0);
     expect(contexts.join('\n')).toContain('Background result.');
@@ -622,7 +650,7 @@ describe('agent runtime subagents', () => {
     );
 
     const session = await runtime.createSession();
-    await runtime.sendMessage(session.sessionId, 'Start a self-reporting background subagent.');
+    await sendMessageApprovingAgent(runtime, session.sessionId, 'Start a self-reporting background subagent.', sink);
 
     expect(script.pendingCount()).toBe(0);
     const notificationText = notificationContexts.join('\n');
@@ -680,7 +708,7 @@ describe('agent runtime subagents', () => {
     );
 
     const session = await runtime.createSession();
-    await runtime.sendMessage(session.sessionId, 'Start a commandable background subagent.');
+    await sendMessageApprovingAgent(runtime, session.sessionId, 'Start a commandable background subagent.', sink);
     const restored = await runtime.restoreSession(session.sessionId);
     const subagentId = restored.renderProjection.subagentRunIds[0]!;
 
@@ -756,7 +784,7 @@ describe('agent runtime subagents', () => {
     );
 
     const session = await runtime.createSession();
-    await runtime.sendMessage(session.sessionId, 'Start a stoppable background subagent.');
+    await sendMessageApprovingAgent(runtime, session.sessionId, 'Start a stoppable background subagent.', sink);
     const subagentId = latestProjection(sink.events)?.subagentRunIds[0]!;
 
     const stopped = await runtime.subagentStop(session.sessionId, subagentId);
@@ -834,7 +862,7 @@ describe('agent runtime subagents', () => {
     );
 
     const session = await firstRuntime.createSession();
-    await firstRuntime.sendMessage(session.sessionId, 'Start a restorable background subagent.');
+    await sendMessageApprovingAgent(firstRuntime, session.sessionId, 'Start a restorable background subagent.', firstSink);
     firstRuntime.closeSession(session.sessionId);
     const rawEvents = await readFile(path.join(dataRoot, 'sessions', session.sessionId, 'events.jsonl'), 'utf8');
     const transcriptPayloadEvents = rawEvents

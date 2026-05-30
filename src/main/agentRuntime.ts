@@ -87,6 +87,7 @@ import {
   providerStreamOptionsFromRuntimeSettings,
   type AgentProviderRuntimeConfig,
 } from './agentSettings';
+import { readAgentToolPermissionConfig } from './agentToolPermissionStore';
 import type { OutlinerToolHost } from './agentNodeTools';
 import { AgentUserViewContextReminderTracker, buildUserViewContextReminder } from './agentUserViewContextReminder';
 import {
@@ -876,6 +877,7 @@ export class AgentRuntime {
       sessionId,
       executeSkillShell: async ({ command, skill }) => {
         const activeSettings = await this.getRuntimeSettings();
+        const globalPermissions = await readAgentToolPermissionConfig();
         const current = sessionRef.current;
         return executeAgentSkillShellCommand({
           approvalHandler: current
@@ -886,6 +888,7 @@ export class AgentRuntime {
           permissionMode: this.options.permissionMode ?? activeSettings.permissionMode,
           allowedTools: skill.allowedTools,
           sessionAllowRules: current?.permissionSessionAllowRules ?? [],
+          globalPermissions,
           toolCallId: `skill-shell-${randomUUID()}`,
         });
       },
@@ -3196,12 +3199,14 @@ function createConfiguredAgent(
     },
     beforeToolCall: async ({ toolCall, args }, signal) => {
       const runtimeSettings = await options.runtimeSettingsLoader?.();
+      const globalPermissions = await readAgentToolPermissionConfig();
       const decision = evaluateAgentToolPermission({
         toolName: toolCall.name,
         args,
         policy: {
           mode: options.permissionMode ?? runtimeSettings?.permissionMode,
           workspaceRoot: localFileRoot,
+          globalPermissions,
           preapprovedToolRules: [
             ...(skillRuntime?.getActivePermissionRules() ?? []),
             ...(options.preapprovedToolRules ?? []),

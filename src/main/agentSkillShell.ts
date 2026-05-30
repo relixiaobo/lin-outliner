@@ -1,7 +1,7 @@
 import type { ToolCall } from '@earendil-works/pi-ai';
 import type { AgentPermissionMode } from '../core/types';
 import type { AgentApprovalResolutionScope } from '../core/agentTypes';
-import { evaluateAgentToolPermission, type AgentPermissionAskDecision } from './agentPermissions';
+import { evaluateAgentToolPermission, type AgentPermissionAskDecision, type GlobalToolPermissionConfig } from './agentPermissions';
 import { runLocalBashCommand, type LocalBashRunResult } from './agentLocalTools';
 
 export interface AgentSkillShellApprovalInput {
@@ -24,6 +24,7 @@ export interface AgentSkillShellCommandInput {
   permissionMode?: AgentPermissionMode;
   allowedTools?: readonly string[];
   sessionAllowRules?: readonly string[];
+  globalPermissions?: GlobalToolPermissionConfig;
   signal?: AbortSignal;
   toolCallId?: string;
 }
@@ -47,6 +48,7 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
       workspaceRoot: input.localRoot,
       preapprovedToolRules: input.allowedTools ?? [],
       sessionAllowRules: input.sessionAllowRules ?? [],
+      globalPermissions: input.globalPermissions,
     },
   });
   if (decision.behavior === 'ask' && input.approvalHandler) {
