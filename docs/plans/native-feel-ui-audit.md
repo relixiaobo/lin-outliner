@@ -169,6 +169,7 @@ PR-D  native shell  ───┘ (joinable after PR-A; serializes on main.ts)
 ```
 
 ### PR-A — Re-arm design-system guard tests (T1, T2, T4)
+- **Status: SHIPPED** — merged via #62 (branch `cc-2/guard-tests-refresh`). T1/T2/T4 done; the two residual workspace-layout failures (`.panel-resize-slot` cursor, sidebar `primaryIconLeft` alignment) are confirmed pre-existing on clean main and tracked for PR-C/PR-D.
 - **Branch:** `cc/guard-tests-refresh` · test infra (+1 doc-line typo)
 - **Why first:** until the token guard reads the split `styles/*.css` again, none
   of the later CSS PRs are actually policed. Also realigns the workspace-layout

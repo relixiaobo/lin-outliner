@@ -439,6 +439,7 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- Re-armed the design-system guard e2e specs after the CSS split and floating-rails shell redesign: the typography-tokens guard now globs `src/renderer/styles/*.css` and the workspace-layout spec asserts the shipped DOM; page-title sizing corrected to 24px/32px (PR-A, #62).
 - **Modularize `styles.css` into per-surface modules** — the 6851-line monolith
   is split into 30 cascade-ordered modules under `src/renderer/styles/` behind a
   `styles/index.css` barrel; concatenating the modules in barrel order reproduces
