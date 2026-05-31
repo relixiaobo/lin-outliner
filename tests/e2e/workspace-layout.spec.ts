@@ -57,36 +57,43 @@ test.describe('workspace layout resizing', () => {
 
   test('panel split resizes by ratio and fills the canvas without horizontal overflow', async ({ page }) => {
     await page.setViewportSize({ width: 1700, height: 900 });
-    const chrome = await page.locator('.top-chrome').boundingBox();
-    const activeTab = await page.locator('.workspace-tab.active').boundingBox();
+    // The floating-rails shell dissolved the TopBar: window chrome is now two
+    // corner drag zones (.window-chrome-zone-left/right), each carving out a
+    // single rail toggle. The tab strip moved into the sidebar (.sidebar-tab*);
+    // the per-pane "More" action lives on the panel breadcrumb, and page-nav
+    // back/forward are keyboard-only (Cmd+[ / Cmd+]) with no chrome buttons.
+    const leftZone = await page.locator('.window-chrome-zone-left').boundingBox();
+    const rightZone = await page.locator('.window-chrome-zone-right').boundingBox();
     const sidebarToggle = await page.getByTitle('Collapse sidebar').boundingBox();
-    const backButton = await page.getByTitle('Back').boundingBox();
-    const forwardButton = await page.getByTitle('Forward').boundingBox();
-    const addTabButton = await page.getByTitle('New tab').boundingBox();
     const agentToggle = await page.getByTitle('Collapse agent').boundingBox();
-    const moreButton = await page.locator('.top-chrome-right').getByRole('button', { name: 'More', exact: true }).boundingBox();
     const panels = page.locator('.outline-panel-surface');
     await expect(panels).toHaveCount(2);
-    await expect(page.locator('.top-chrome')).toHaveAttribute('data-electron-drag-region', 'deep');
+    // Both corner zones are the window's title-bar drag regions (pure CSS
+    // -webkit-app-region: drag — there is no DOM attribute; see WindowChrome.tsx).
+    for (const zoneSelector of ['.window-chrome-zone-left', '.window-chrome-zone-right']) {
+      const appRegion = await page.locator(zoneSelector).evaluate((element) => (
+        getComputedStyle(element).getPropertyValue('-webkit-app-region').trim()
+      ));
+      expect(appRegion).toBe('drag');
+    }
+    // Back/Forward are keyboard-only now — there must be no chrome buttons.
+    await expect(page.getByTitle('Back')).toHaveCount(0);
+    await expect(page.getByTitle('Forward')).toHaveCount(0);
     const firstBefore = await panels.nth(0).boundingBox();
     const secondBefore = await panels.nth(1).boundingBox();
-    expect(chrome).toBeTruthy();
-    expect(activeTab).toBeTruthy();
+    expect(leftZone).toBeTruthy();
+    expect(rightZone).toBeTruthy();
     expect(sidebarToggle).toBeTruthy();
-    expect(backButton).toBeTruthy();
-    expect(forwardButton).toBeTruthy();
-    expect(addTabButton).toBeTruthy();
     expect(agentToggle).toBeTruthy();
-    expect(moreButton).toBeTruthy();
     expect(firstBefore).toBeTruthy();
     expect(secondBefore).toBeTruthy();
-    expect(Math.round(activeTab!.y - chrome!.y)).toBe(8);
-    expect(Math.round(sidebarToggle!.y - chrome!.y)).toBe(8);
-    expect(Math.round(firstBefore!.y - (chrome!.y + chrome!.height))).toBe(8);
-    const chromeCenterY = activeTab!.y + activeTab!.height / 2;
-    for (const controlBox of [sidebarToggle, backButton, forwardButton, addTabButton, agentToggle, moreButton]) {
-      expect(Math.abs(chromeCenterY - (controlBox!.y + controlBox!.height / 2))).toBeLessThanOrEqual(1);
-    }
+    // Each toggle sits inside its corner zone and the two share a center line.
+    expect(sidebarToggle!.y).toBeGreaterThanOrEqual(leftZone!.y - 1);
+    expect(agentToggle!.y).toBeGreaterThanOrEqual(rightZone!.y - 1);
+    expect(Math.abs(
+      (sidebarToggle!.y + sidebarToggle!.height / 2)
+      - (agentToggle!.y + agentToggle!.height / 2),
+    )).toBeLessThanOrEqual(1);
 
     const panelHandle = page.getByRole('button', { name: 'Resize panels' });
     const panelHandleBox = await panelHandle.boundingBox();
@@ -143,38 +150,32 @@ test.describe('workspace layout resizing', () => {
     expect(narrowCanvasOverflow.scrollWidth).toBeLessThanOrEqual(narrowCanvasOverflow.clientWidth + 1);
   });
 
-  test('top chrome navigation controls align and sidebar state is icon-only', async ({ page }) => {
+  test('window chrome toggles align to the traffic lights and stay icon-only', async ({ page }) => {
     const sidebarToggle = page.getByTitle('Collapse sidebar');
-    const backButton = page.getByTitle('Back');
-    const forwardButton = page.getByTitle('Forward');
 
     const initial = await page.evaluate(() => {
       const sidebar = document.querySelector('[title="Collapse sidebar"]');
-      const back = document.querySelector('[title="Back"]');
-      const forward = document.querySelector('[title="Forward"]');
-      const chrome = document.querySelector('.top-chrome');
+      // The left corner drag zone hosts the sidebar toggle beside the OS traffic
+      // lights; the agent toggle lives in the symmetric right zone. There is no
+      // single top-chrome bar and no back/forward chrome buttons anymore.
+      const zone = document.querySelector('.window-chrome-zone-left');
       if (
         !(sidebar instanceof HTMLElement)
-        || !(back instanceof HTMLElement)
-        || !(forward instanceof HTMLElement)
-        || !(chrome instanceof HTMLElement)
+        || !(zone instanceof HTMLElement)
       ) {
-        throw new Error('missing top chrome controls');
+        throw new Error('missing window chrome controls');
       }
       const sidebarBox = sidebar.getBoundingClientRect();
-      const backBox = back.getBoundingClientRect();
-      const forwardBox = forward.getBoundingClientRect();
-      const chromeBox = chrome.getBoundingClientRect();
-      const chromeStyle = getComputedStyle(chrome);
-      const trafficLightSize = Number.parseFloat(chromeStyle.getPropertyValue('--traffic-light-size'));
-      const trafficLightX = Number.parseFloat(chromeStyle.getPropertyValue('--traffic-light-x'));
-      const trafficLightY = Number.parseFloat(chromeStyle.getPropertyValue('--traffic-light-y'));
+      const zoneBox = zone.getBoundingClientRect();
+      // Traffic-light geometry is published as :root custom properties (injected
+      // from core/chromeGeometry.ts, with tokens.css fallbacks).
+      const rootStyle = getComputedStyle(document.documentElement);
+      const trafficLightSize = Number.parseFloat(rootStyle.getPropertyValue('--traffic-light-size'));
+      const trafficLightX = Number.parseFloat(rootStyle.getPropertyValue('--traffic-light-x'));
+      const trafficLightY = Number.parseFloat(rootStyle.getPropertyValue('--traffic-light-y'));
       return {
-        backCenterY: backBox.top + backBox.height / 2,
-        controlCenterOffsetY: sidebarBox.top + sidebarBox.height / 2 - chromeBox.top,
-        forwardCenterY: forwardBox.top + forwardBox.height / 2,
+        controlCenterOffsetY: sidebarBox.top + sidebarBox.height / 2 - zoneBox.top,
         sidebarBg: getComputedStyle(sidebar).backgroundColor,
-        sidebarCenterY: sidebarBox.top + sidebarBox.height / 2,
         sidebarIcon: sidebar.querySelector('svg')?.innerHTML ?? '',
         trafficLightCenterOffsetX: trafficLightX + trafficLightSize / 2,
         trafficLightCenterOffsetY: trafficLightY + trafficLightSize / 2,
@@ -183,14 +184,15 @@ test.describe('workspace layout resizing', () => {
         trafficLightY,
       };
     });
+    // Icon-only chrome: no fill behind the toggle (B6).
     expect(initial.sidebarBg).toBe('rgba(0, 0, 0, 0)');
     expect(initial.trafficLightSize).toBe(MAC_TRAFFIC_LIGHT_SIZE);
     expect(initial.trafficLightX).toBe(MAC_TRAFFIC_LIGHT_POSITION.x);
     expect(initial.trafficLightY).toBe(MAC_TRAFFIC_LIGHT_POSITION.y);
     expect(initial.trafficLightCenterOffsetX).toBe(initial.trafficLightCenterOffsetY);
-    expect(Math.abs(initial.trafficLightCenterOffsetY - initial.controlCenterOffsetY)).toBeLessThanOrEqual(1);
-    expect(Math.abs(initial.sidebarCenterY - initial.backCenterY)).toBeLessThanOrEqual(1);
-    expect(Math.abs(initial.sidebarCenterY - initial.forwardCenterY)).toBeLessThanOrEqual(1);
+    // Back/Forward are keyboard-only (Cmd+[ / Cmd+]); no chrome buttons exist.
+    await expect(page.getByTitle('Back')).toHaveCount(0);
+    await expect(page.getByTitle('Forward')).toHaveCount(0);
 
     await sidebarToggle.click();
     await expect(page.getByTitle('Expand sidebar')).toBeVisible();
@@ -431,54 +433,45 @@ test.describe('workspace layout resizing', () => {
     expect(fixture.childId).toBeTruthy();
   });
 
-  test('workspace tabs can be closed and restore persisted active roots', async ({ page }) => {
+  test('sidebar tabs can be closed and restore persisted active roots', async ({ page }) => {
+    // The tab strip is part of the sidebar now (.sidebar-tab*); "New tab" lives
+    // in the sidebar Tabs section header.
     await page.getByRole('button', { name: 'New tab' }).click();
-    await expect(page.locator('.workspace-tab')).toHaveCount(2);
-    const tabWidths = await page.locator('.workspace-tab').evaluateAll((tabs) => (
-      tabs.map((tab) => Math.round(tab.getBoundingClientRect().width))
-    ));
-    expect(new Set(tabWidths).size).toBe(1);
+    await expect(page.locator('.sidebar-tab')).toHaveCount(2);
     await expect.poll(async () => {
-      const backgrounds = await page.locator('.workspace-tab').evaluateAll((tabs) => (
+      const backgrounds = await page.locator('.sidebar-tab').evaluateAll((tabs) => (
         tabs.map((tab) => getComputedStyle(tab).backgroundColor)
       ));
       return new Set(backgrounds).size;
     }).toBeGreaterThan(1);
-    const tabBackgrounds = await page.locator('.workspace-tab').evaluateAll((tabs) => (
+    const tabBackgrounds = await page.locator('.sidebar-tab').evaluateAll((tabs) => (
       tabs.map((tab) => getComputedStyle(tab).backgroundColor)
     ));
-    expect(tabBackgrounds.every((background) => background !== 'rgba(0, 0, 0, 0)')).toBe(true);
+    // The active tab carries a fill; inactive tabs stay transparent, so the set
+    // of backgrounds has more than one entry.
     expect(new Set(tabBackgrounds).size).toBeGreaterThan(1);
-    const activeTabChrome = await page.locator('.workspace-tab.active').evaluate((tab) => {
+    const activeTabChrome = await page.locator('.sidebar-tab.active').evaluate((tab) => {
       const style = getComputedStyle(tab);
-      const close = tab.querySelector('.workspace-tab-close');
+      const close = tab.querySelector('.sidebar-tab-close');
       if (!(close instanceof HTMLElement)) throw new Error('missing active tab close control');
-      const tabRect = tab.getBoundingClientRect();
-      const closeRect = close.getBoundingClientRect();
       return {
+        backgroundColor: style.backgroundColor,
         borderRadius: style.borderRadius,
-        closeHeight: Math.round(closeRect.height),
-        closeRightInset: Math.round(tabRect.right - closeRect.right),
-        closeTopInset: Math.round(closeRect.top - tabRect.top),
-        closeWidth: Math.round(closeRect.width),
-        fontSize: style.fontSize,
-        lineHeight: style.lineHeight,
+        closeHeight: Math.round(close.getBoundingClientRect().height),
+        closeWidth: Math.round(close.getBoundingClientRect().width),
       };
     });
-    expect(activeTabChrome).toEqual({
-      borderRadius: '6px',
-      closeHeight: 20,
-      closeRightInset: 4,
-      closeTopInset: 3,
-      closeWidth: 20,
-      fontSize: '13px',
-      lineHeight: '20px',
-    });
-    const inactiveActiveSegment = page.locator('.workspace-tab:not(.active) .workspace-tab-segment.is-active').first();
+    expect(activeTabChrome.backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+    expect(activeTabChrome.borderRadius).toBe('6px');
+    // .sidebar-tab-close is --control-size-xs (20px) and is visible (opacity 1)
+    // on the active tab.
+    expect(activeTabChrome.closeHeight).toBe(20);
+    expect(activeTabChrome.closeWidth).toBe(20);
+    const inactiveActiveSegment = page.locator('.sidebar-tab:not(.active) .sidebar-tab-segment.is-active').first();
     const inactiveSegmentWeightBeforeHover = await inactiveActiveSegment.evaluate((segment) => (
       getComputedStyle(segment).fontWeight
     ));
-    await page.locator('.workspace-tab:not(.active)').first().hover();
+    await page.locator('.sidebar-tab:not(.active)').first().hover();
     const inactiveSegmentWeightAfterHover = await inactiveActiveSegment.evaluate((segment) => (
       getComputedStyle(segment).fontWeight
     ));
@@ -488,11 +481,11 @@ test.describe('workspace layout resizing', () => {
     await expect(page.locator('.panel-title-editor').first()).toContainText('Schema');
 
     await page.reload();
-    await expect(page.locator('.workspace-tab')).toHaveCount(2);
+    await expect(page.locator('.sidebar-tab')).toHaveCount(2);
     await expect(page.locator('.panel-title-editor').first()).toContainText('Schema');
 
-    await page.locator('.workspace-tab.active .workspace-tab-close').click();
-    await expect(page.locator('.workspace-tab')).toHaveCount(1);
+    await page.locator('.sidebar-tab.active .sidebar-tab-close').click();
+    await expect(page.locator('.sidebar-tab')).toHaveCount(1);
   });
 
   test('current tab can open additional panels from keyboard and sidebar option click', async ({ page }) => {
@@ -504,13 +497,13 @@ test.describe('workspace layout resizing', () => {
 
     await page.locator('.sidebar-primary-nav').getByRole('button', { name: 'Recents', exact: true }).click({ modifiers: ['Alt'] });
     await expect(panels).toHaveCount(4);
-    const activeTabSegments = page.locator('.workspace-tab.active .workspace-tab-segment');
+    const activeTabSegments = page.locator('.sidebar-tab.active .sidebar-tab-segment');
     await expect(activeTabSegments).toHaveCount(4);
-    await expect(page.locator('.workspace-tab.active .workspace-tab-count')).toHaveCount(0);
+    await expect(page.locator('.sidebar-tab.active .sidebar-tab-count')).toHaveCount(0);
     await expect(activeTabSegments.nth(3)).toContainText('Recents');
     const iconSlots = await activeTabSegments.evaluateAll((segments) => (
       segments.map((segment) => {
-        const icon = segment.querySelector('.workspace-tab-segment-icon');
+        const icon = segment.querySelector('.sidebar-tab-segment-icon');
         if (!(icon instanceof HTMLElement)) throw new Error('missing tab segment icon');
         const rect = icon.getBoundingClientRect();
         return {
@@ -522,6 +515,9 @@ test.describe('workspace layout resizing', () => {
     expect(new Set(iconSlots.map((slot) => slot.width)).size).toBe(1);
     expect(new Set(iconSlots.map((slot) => slot.height)).size).toBe(1);
     expect(iconSlots[0]).toEqual({ height: 16, width: 16 });
+    // Adjacent segments are separated by a thin ::before hairline (token-driven
+    // --border-strong, so the exact color is theme-dependent — assert geometry
+    // and that the rule paints something, not a hardcoded color).
     const segmentDivider = await activeTabSegments.nth(1).evaluate((segment) => {
       const divider = getComputedStyle(segment, '::before');
       return {
@@ -532,13 +528,11 @@ test.describe('workspace layout resizing', () => {
         width: divider.width,
       };
     });
-    expect(segmentDivider).toEqual({
-      backgroundColor: 'rgb(228, 228, 231)',
-      height: '12px',
-      marginLeft: '4px',
-      marginRight: '4px',
-      width: '1px',
-    });
+    expect(segmentDivider.height).toBe('12px');
+    expect(segmentDivider.marginLeft).toBe('4px');
+    expect(segmentDivider.marginRight).toBe('4px');
+    expect(segmentDivider.width).toBe('1px');
+    expect(segmentDivider.backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
     await expect(panels.nth(3).locator('.panel-title-editor')).toContainText('Recents');
 
     await activeTabSegments.first().click();
