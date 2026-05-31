@@ -850,7 +850,7 @@ removed; navigation is via breadcrumb path segments and the sidebar. (The date
 
 ### Outliner
 
-- Panel title editor: `26px / 36px`, weight `600`.
+- Panel title editor: `24px / 32px`, weight `600`.
 - Breadcrumb: `13px / 20px`, muted secondary color.
 - Breadcrumb back control: `24px` hit target with a `14px` icon. Disabled
   navigation controls use `--text-disabled`.

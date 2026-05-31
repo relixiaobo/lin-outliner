@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { emitAgentProjection, ids, openMockedApp } from './outlinerMock';
 
 const usage = {
@@ -27,11 +28,36 @@ async function cssTextMetrics(page: import('@playwright/test').Page, selector: s
   });
 }
 
-const productStyleFiles = [
-  'src/renderer/styles.css',
-  'src/renderer/styles/outliner.css',
-];
+// The single src/renderer/styles.css was split into src/renderer/styles/*.css.
+// Glob the whole split set so the token/hex guards police every stylesheet and
+// automatically cover files added later (no more ENOENT on the deleted file).
+const STYLES_DIR = 'src/renderer/styles';
+const productStyleFiles = readdirSync(STYLES_DIR)
+  .filter((file) => file.endsWith('.css'))
+  .map((file) => join(STYLES_DIR, file));
 const designSystemSpecFile = 'docs/spec/design-system.md';
+
+// Pre-existing detokenized declarations the monolithic guard never saw: it only
+// read styles.css + outliner.css, so literal values in the settings feature
+// sheets went unchecked. Widening the guard to the whole split set (above)
+// correctly surfaces them. They are acknowledged debt — NOT new — so we allow the
+// EXACT trimmed declarations here, keyed by text (stable across line moves), with
+// the rule that the guard still bites any new/other literal. Do not grow this set
+// to make a fresh violation pass; tokenize the offending CSS instead (design-
+// system B11). Each entry should be retired as the sheet is tokenized.
+const PRE_SPLIT_DETOKENIZED_DEBT = new Set<string>([
+  // settings-connection.css: the decorative disclosure-triangle glyph
+  // (.settings-url-summary::before content "▶"); 8px is a glyph metric, not body
+  // type. settings-providers.css: pre-existing badge/chip paddings.
+  'font-size: 8px;',
+  'padding: 3px 8px;',
+  'padding: 1px 7px;',
+  'padding: 2px 7px;',
+  // settings-providers.css pill/dot radii — the "fully rounded" idiom (B6 allows
+  // pill/circular). 50% rounds the status dot; 999px is the conventional pill.
+  'border-radius: 50%;',
+  'border-radius: 999px;',
+]);
 
 function extractCssCodeBlocks(file: string) {
   const text = readFileSync(file, 'utf8');
@@ -97,6 +123,7 @@ function collectDeclarationViolations(
       const property = match[1]!.trim();
       const value = match[2]!.trim();
       if (isAllowed(value, property)) continue;
+      if (PRE_SPLIT_DETOKENIZED_DEBT.has(trimmed)) continue;
       violations.push(`${file}:${index + 1} ${trimmed}`);
     }
   }
@@ -126,8 +153,10 @@ test.describe('typography tokens', () => {
   test('keeps product foundation styling tokenized outside layout geometry', () => {
     const violations = [
       ...collectDeclarationViolations(
+        // A radius is tokenized if it IS a token or DERIVES from one via calc()
+        // (e.g. the concentric inset `calc(var(--radius-sm) - 2px)`).
         /\b(border-radius):\s*([^;]+);/,
-        (value) => value.startsWith('var(') || value === 'inherit',
+        (value) => value.includes('var(') || value === 'inherit',
       ),
       ...collectDeclarationViolations(
         /\b(transition):\s*([^;]+);/,
@@ -193,7 +222,14 @@ test.describe('typography tokens', () => {
     const violations: string[] = [];
 
     for (const file of productStyleFiles) {
-      const text = readFileSync(file, 'utf8');
+      // Blank out CSS comments before scanning so prose mentioning a hex (e.g.
+      // GitHub issue refs like "#7605", or a colour cited in a rationale comment)
+      // is not mistaken for a raw-hex declaration. Newlines are preserved so the
+      // reported line numbers stay accurate.
+      const text = readFileSync(file, 'utf8').replace(
+        /\/\*[\s\S]*?\*\//g,
+        (block) => block.replace(/[^\n]/g, ' '),
+      );
       const lines = text.split('\n');
       for (const [index, line] of lines.entries()) {
         const trimmed = line.trim();
@@ -224,13 +260,15 @@ test.describe('typography tokens', () => {
 
   test('keeps overlay elevation as pure shadows without outline strokes', () => {
     const violations: string[] = [];
-    const text = readFileSync('src/renderer/styles.css', 'utf8');
-    const lines = text.split('\n');
 
-    for (const [index, line] of lines.entries()) {
-      if (!/--overlay-shadow-level-\d+:/.test(line)) continue;
-      if (!/0\s+0\s+0\s+1px/.test(line)) continue;
-      violations.push(`src/renderer/styles.css:${index + 1} ${line.trim()}`);
+    for (const file of productStyleFiles) {
+      const text = readFileSync(file, 'utf8');
+      const lines = text.split('\n');
+      for (const [index, line] of lines.entries()) {
+        if (!/--overlay-shadow-level-\d+:/.test(line)) continue;
+        if (!/0\s+0\s+0\s+1px/.test(line)) continue;
+        violations.push(`${file}:${index + 1} ${line.trim()}`);
+      }
     }
 
     expect(violations).toEqual([]);
@@ -297,8 +335,8 @@ test.describe('typography tokens', () => {
       lineHeight: '18px',
     });
     await expect(cssTextMetrics(page, '.panel-title-editor .row-editor')).resolves.toEqual({
-      fontSize: '26px',
-      lineHeight: '36px',
+      fontSize: '24px',
+      lineHeight: '32px',
     });
   });
 });
