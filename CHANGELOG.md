@@ -236,6 +236,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Provider model dropdowns rank by recency, not a static preferred list** —
+  replaces the hand-maintained `PREFERRED_MODEL_IDS` allowlist (which sorted any
+  unlisted model to the bottom via `MAX_SAFE_INTEGER`, silently burying Claude Opus
+  4.8 / Sonnet 4.6 and keeping them out of the `models[0]` default) with a
+  recency-first comparator in a new pure module `src/main/modelRanking.ts`. Ordering:
+  product line (version-independent, only so a side line like `gemma-4` can't outrank
+  the `gemini-3.x` flagship line) → numeric version desc (the recency signal —
+  `gemini-3.5-flash` over `gemini-2.5-pro`, and `4-10` > `4-9`) → `reasoning` → clean
+  alias before its dated snapshot → id. Price is deliberately unused (newer Anthropic
+  models are cheaper + regional skew, so cost is anti-correlated with recency). The
+  default now tracks the current flagship automatically and new model versions need
+  zero code changes; the only human-maintained input is `MODEL_LINES`, whose staleness
+  is caught by `findUnknownLineModels` + live-catalog guard tests
+  (`tests/core/modelRanking.test.ts`).
+  ([#67](https://github.com/relixiaobo/lin-outliner/pull/67))
 - **Native-feel component pass (CSS-only, PR-C)** — tightens the chrome to the
   strict-native cursor/affordance policy across components. Field-value
   affordances and rail toggles now signal hover/active by deepening color

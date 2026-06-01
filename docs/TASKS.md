@@ -89,6 +89,14 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **model registry recency ranking** (main) — replaced the stale `PREFERRED_MODEL_IDS`
+  allowlist (unlisted models sank to the bottom, burying Opus 4.8 / Sonnet 4.6 and the
+  `models[0]` default) with a recency-first comparator in a new pure module
+  `src/main/modelRanking.ts`: product line → numeric version desc → reasoning →
+  clean-alias-before-snapshot → id. Newest model leads regardless of tier/price
+  (`gemini-3.5-flash` over `gemini-2.5-pro`); new versions need zero code changes; the
+  only declarative input `MODEL_LINES` is drift-guarded by `findUnknownLineModels` +
+  live pi-ai catalog tests (`tests/core/modelRanking.test.ts`, 14/14). (PR #67).
 - **native-feel component pass (PR-C)** (cc-2) — CSS-only pass tightening chrome to
   the strict-native cursor/affordance policy: field-value affordances + rail toggles
   signal hover/active by deepening color, not a `--fill-*` box (B6); the row bullet
