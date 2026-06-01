@@ -1,5 +1,5 @@
 ---
-status: draft
+status: in-progress
 priority: P2
 owner: relixiaobo
 created: 2026-06-01
@@ -28,15 +28,38 @@ not the chrome. Provider settings is the first and motivating section.
   this redesign consumes (A7: foundation before consumers). With PR-D on `main`, this
   plan is now ready to start when prioritized; build the settings content against the
   settled window-open path.
-- **Hand-off & bundling.** When PR-D is merged, coordinate with that line's dev agent
-  to implement this redesign, and fold a **performance pass** into the same work (see
-  *Performance* below). Open as its own `*/native-settings-redesign` branch + PR;
-  serialize on `AgentSettingsView.tsx` with any in-flight settings work.
+- **Hand-off & bundling (active 2026-06-01).** Assigned to **cc-2**
+  (`cc-2/native-settings-redesign` branch + Draft PR), with a **performance pass**
+  folded into the same work (see *Performance* below). Serialize on
+  `AgentSettingsView.tsx` with any in-flight settings work. The three IA / form /
+  scope questions are now **locked** (see *Decisions (locked)* below) so cc-2 builds
+  against fixed contracts, not open options.
 - **Cross-cutting plan.** `agent-oauth-providers.md` (draft) adds OAuth sign-in +
   managed credentials to the *same* provider-config surface. The credential sheet
   below MUST be designed so an API-key field is one of several credential modes
   (OAuth, AWS/Vertex managed), not the only one. Coordinate the two so the sheet is
   built once.
+
+## Decisions (locked — 2026-06-01)
+
+The three open questions are resolved; build against these, do not re-open them.
+
+- **D-IA — Hybrid (option A).** The sidebar stays settings *categories*
+  (Providers / Permissions / Skills / Agent Profiles). The **Providers** detail
+  becomes the inset grouped list with on-row status; selecting a provider opens its
+  config in the detail pane. Providers are **not** promoted to top-level sidebar rows
+  (option B rejected — it mixes providers into the Permissions/Skills nav level, an
+  awkward IA). Credential add/replace lives in a focused **sheet**.
+- **D-FORM — Two tiers (sheet + inline).** A focused **sheet** hosts the atomic
+  *add / replace credential → validate* moment (and is the single host the
+  `agent-oauth-providers.md` credential modes plug into). **Inline detail** hosts
+  ongoing config (model / reasoning / advanced base URL). Not all-inline (loses the
+  focus of secret entry); not all-modal (wrong for multi-field ongoing settings).
+- **D-SCOPE — Providers-first, primitive built reusable.** This PR builds the
+  reusable **inset grouped-list primitive + master-detail shell tokens** (A7
+  foundation), then restyles **Providers** on top of them. Permissions / Skills
+  adoption is an explicit **follow-up** (Phasing step 3), *not* in this PR — keeps the
+  PR reviewable and proves the primitive on the motivating section first.
 
 ## What to borrow from macOS System Settings (interaction only)
 
@@ -155,8 +178,11 @@ forbids the latter (**B10**; see the `native-feel-cross-platform-desktop` guidan
 
 ## Open questions (decide before implementation)
 
-1. **IA** — providers as a detail list (A, recommended) or top-level sidebar entries (B)?
-2. **Config form** — sheet for credential + inline for model (recommended), all-inline,
-   or all-modal?
-3. **Scope** — Providers only, or restyle the whole Settings (Permissions / Skills) for
-   one consistent system?
+All three are now **RESOLVED** — see *Decisions (locked — 2026-06-01)* above.
+
+1. **IA** — RESOLVED → hybrid (A): categories in the sidebar, Providers as an inset
+   grouped detail list (`D-IA`).
+2. **Config form** — RESOLVED → two tiers: sheet for credential + inline for ongoing
+   config (`D-FORM`).
+3. **Scope** — RESOLVED → Providers-first; build the reusable primitive, defer
+   Permissions / Skills adoption to a follow-up (`D-SCOPE`).

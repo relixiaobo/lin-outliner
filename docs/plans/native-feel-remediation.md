@@ -3,7 +3,7 @@ status: in-progress
 priority: P1
 owner: relixiaobo
 created: 2026-05-27
-updated: 2026-05-28
+updated: 2026-06-01
 ---
 
 # Native-Feel Remediation (Electron)
@@ -54,27 +54,37 @@ visible polish builds on a stable window.
   prod CSP injected on the `file://` main-frame document. **Shipped in PR #43**
   (merged 2026-05-27); prod CSP verified end-to-end against the built bundle
   (handler fires for `file://`, renderer loads, zero violations).
-- [ ] **2 — Startup + window semantics.** `show: false` + `ready-to-show`
+- [x] **2 — Startup + window semantics.** `show: false` + `ready-to-show`
   first-frame (no white flash); persist + restore window bounds (size/position,
   per-display); single-instance lock + focus-existing on second launch
   (Windows); per-OS title bar (`titleBarOverlay` on Windows alongside macOS
-  `hiddenInset`).
-- [ ] **3 — Material + font + cursor.** macOS `vibrancy` / Windows
+  `hiddenInset`). **Shipped in PR #45.**
+- [x] **3 — Material + font + cursor.** macOS `vibrancy` / Windows
   `backgroundMaterial: 'mica'`; system font first (drop the `Inter` lead);
   strict-native cursor pass (remove `cursor: pointer` from chrome, keep hover
   backgrounds, restore visible focus rings); **rewrite
-  `cursor-affordances.spec.ts`** to the new contract in the same PR.
-- [ ] **4 — Native interactions.** Native right-click `Menu` (replace the DOM
+  `cursor-affordances.spec.ts`** to the new contract in the same PR. **Material +
+  font shipped in PR #46/#47; the cursor/focus-ring pass + the
+  `cursor-affordances.spec.ts` rewrite shipped in PR-C #65** (audit findings
+  A1/A5/A6/A7/D4 — the sub-items the index previously over-claimed).
+- [x] **4 — Native interactions.** Native right-click `Menu` (replace the DOM
   context menu for the actual right-click); replace `window.prompt`
   (`NodeContextMenu` icon/banner) and `window.confirm` (`AgentChatPanel`
   delete) with real in-app UI or native dialogs; move settings into its own
-  window.
-- [ ] **5 — IPC envelope + perf (T6).** IPC envelope
+  window. **Dialogs + settings-window shipped in PR #48/#49; the native
+  application menu (`Cmd+,` → settings), native right-click menu, and
+  inactive-window state shipped in PR-D #68** (audit A2a/A2b/A4).
+  `window.prompt`/`window.confirm` are gone from the renderer (grep-clean).
+- [x] **5 — IPC envelope + perf (T6).** IPC envelope
   (`requestId`/`schemaVersion`/`kind`/`payload`); payload-size + duration
   tracing in dev; move from full-projection-per-command to delta projection;
   drop the needless `flushSync` on every projection apply in `shared.ts`. (The
   real T6 cost is the full projection + `flushSync` per command, not
-  per-keystroke IPC, which is already batched.)
+  per-keystroke IPC, which is already batched.) **IPC tracing + incremental core
+  shipped in PR #50/#52; renderer perf in PR #54.** (Per audit X1/X2: the
+  versioned envelope and `flushSync` removal were deliberately deferred — pure-TS
+  host wants shared types over an envelope, and `flushSync` is an intentional
+  latency trade to measure before removing.)
 - [ ] **6 — Packaging + smoke tests.** electron-builder manifests for Windows
   (and Linux if targeted); protocol / file-association decisions; Electron /
   packaged smoke tests (first frame, native menu + accelerators, CSP
@@ -101,8 +111,8 @@ main-agent-owned.
   when the renderer did *not* `preventDefault` (verified on Electron 42), so the
   native menu fires only for the bare right-clicks the DOM menus leave alone
   (editable fields → text menu, a selection → Copy, inert chrome → nothing). No
-  per-region suppression flag is needed. (The rest of Stage 4 — replacing
-  `window.prompt` / `window.confirm`; settings-in-its-own-window is already done
-  — remains open.)
+  per-region suppression flag is needed. **Stage 4 is now fully shipped:**
+  `window.prompt` / `window.confirm` are replaced (grep-clean), settings has its
+  own window, and the native menus / right-click landed in PR-D #68.
 - Stage 6: do we ship Linux at all, or is the README's three-OS claim trimmed
   to macOS + Windows?
