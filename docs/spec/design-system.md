@@ -451,6 +451,18 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
   vibrancy + `backdrop-filter`). The content panel is the opaque layer
   (`--bg-content`) and stays fully legible. Never put a material on the content
   layer; never stack material on material.
+- **Inactive-window chrome.** When the window loses OS focus, only the chrome
+  material layer desaturates — the two floating rails — and **never** the content
+  layer, the neutral functional-state ladder (selection / hover / focus), or the
+  rose accent. Rationale: functional state is neutral by design and must stay
+  legible regardless of focus (B3), and the single rose accent is too sparse for a
+  global desaturate to read as anything but inconsistent (B4). macOS already greys
+  the native traffic lights for free (`hiddenInset`), so the CSS only reinforces
+  inactivity on the chrome glass; because the palette is near-monochrome the rail
+  rule pairs a `saturate()` drop with a slight `brightness` dip (the part that
+  actually reads as dimmed). Renderer wiring: a `window-inactive` root class fed
+  by the main process's focus/blur (`core/windowActivity.ts` → App.tsx →
+  shell.css).
 - **Functional state is neutral.** Selection, hover, active rows, and primary
   buttons use the neutral `--fill-*` ladder and neutral `--focus-ring` — not the
   brand colour and not the macOS system accent. (Raycast and Finder both keep
