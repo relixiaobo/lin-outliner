@@ -212,21 +212,5 @@
   .agent-settings-grid {
     grid-template-columns: 1fr;
   }
-
-  .settings-providers {
-    flex-direction: column;
-  }
-
-  .settings-provider-aside {
-    width: auto;
-    padding-right: 0;
-    padding-bottom: var(--space-3);
-    border-right: none;
-    border-bottom: 1px solid var(--border-subtle);
-  }
-
-  .settings-provider-groups {
-    max-height: 180px;
-  }
 }
 

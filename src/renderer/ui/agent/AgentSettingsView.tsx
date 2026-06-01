@@ -11,17 +11,17 @@ import type {
   SkillDefinition,
 } from '../../api/types';
 import { api } from '../../api/client';
-import { AddIcon, CloseIcon, HideIcon, ICON_SIZE, OpenIcon, PasswordIcon, SearchIcon, ShowIcon, TrashIcon, WarningIcon } from '../icons';
+import { AddIcon, CheckIcon, ICON_SIZE, SearchIcon, WarningIcon } from '../icons';
 import { providerIconUrl } from './providerIcon';
 import { ButtonControl } from '../primitives/ButtonControl';
-import { FormField } from '../primitives/FormField';
 import { SelectControl } from '../primitives/SelectControl';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
 import { TextInputControl } from '../primitives/TextInputControl';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
-import { SettingsCredentialSheet } from './SettingsCredentialSheet';
+import { SettingsProviderSheet, type ProviderSheetDraft } from './SettingsProviderSheet';
 import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
+import { coerceReasoningLevel, defaultReasoningLevel } from './settingsReasoning';
 
 interface AgentSettingsViewProps {
   onClose: () => void;
@@ -55,38 +55,33 @@ interface ProviderChoice {
 }
 
 interface ProviderRowHandlers {
-  onSelect: (id: string) => void;
+  onConfigure: (id: string) => void;
   onActivate: (id: string) => void;
   onRemove: (id: string) => void;
-  onAddKey: (id: string) => void;
   onMenuOpenChange: (id: string, open: boolean) => void;
 }
 
-// A single provider row in the inset grouped list. Memoized so a detail-pane edit
-// (model / reasoning / base URL) — which leaves the choice objects, selection, and
-// open-menu id untouched — does not re-render the nav rows. Selection genuinely
-// rebuilds the choice list, so the affected rows re-render then (as intended).
+// A single provider row in the inset grouped list — the macOS System Settings
+// Wi-Fi idiom: a leading check marks the ACTIVE provider, the brand avatar is the
+// identity, and a trailing circular `⋯` opens the row's actions. Connected vs.
+// available state is carried by the group ("Connected" / "Available"), not a
+// badge. Clicking the row opens the provider's config sheet. Memoized + fed stable
+// handlers, so editing one provider's sheet never re-renders the list.
 const SettingsProviderRow = memo(function SettingsProviderRow({
   provider,
-  selected,
   menuOpen,
   handlers,
 }: {
   provider: ProviderChoice;
-  selected: boolean;
   menuOpen: boolean;
   handlers: ProviderRowHandlers;
 }) {
   const name = formatProviderName(provider.providerId);
-  const dotState = provider.active ? 'is-on' : provider.hasCredential ? 'is-configured' : '';
   const actions: RowMenuAction[] = [];
   if (provider.hasCredential && !provider.active) {
     actions.push({ label: 'Set as Active', onSelect: () => handlers.onActivate(provider.providerId) });
   }
-  actions.push({
-    label: provider.hasCredential ? 'Replace API key' : 'Add API key',
-    onSelect: () => handlers.onAddKey(provider.providerId),
-  });
+  actions.push({ label: 'Configure…', onSelect: () => handlers.onConfigure(provider.providerId) });
   if (provider.configured) {
     actions.push({ label: 'Remove provider', danger: true, onSelect: () => handlers.onRemove(provider.providerId) });
   }
@@ -94,20 +89,22 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
     <InsetRow
       ariaLabel={`${name}, ${providerStatusLabel(provider)}`}
       label={name}
-      leading={<ProviderAvatar providerId={provider.providerId} />}
-      onSelect={() => handlers.onSelect(provider.providerId)}
-      selected={selected}
-      sublabel={provider.active ? 'Active' : provider.hasCredential ? 'Connected' : undefined}
-      trailing={(
+      leading={(
         <>
-          {dotState ? <span className={`settings-provider-dot ${dotState}`} aria-hidden="true" /> : null}
-          <SettingsRowMenu
-            actions={actions}
-            ariaLabel={`${name} actions`}
-            onOpenChange={(open) => handlers.onMenuOpenChange(provider.providerId, open)}
-            open={menuOpen}
-          />
+          <span className="settings-provider-check" aria-hidden="true">
+            {provider.active ? <CheckIcon size={ICON_SIZE.menu} /> : null}
+          </span>
+          <ProviderAvatar providerId={provider.providerId} />
         </>
+      )}
+      onSelect={() => handlers.onConfigure(provider.providerId)}
+      trailing={(
+        <SettingsRowMenu
+          actions={actions}
+          ariaLabel={`${name} actions`}
+          onOpenChange={(open) => handlers.onMenuOpenChange(provider.providerId, open)}
+          open={menuOpen}
+        />
       )}
     />
   );
@@ -204,14 +201,6 @@ const COMMON_PERMISSION_RULES: Array<{
 ];
 
 const PREFERRED_PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'openrouter'];
-const REASONING_LABELS: Record<AgentReasoningLevel, string> = {
-  off: 'Off',
-  minimal: 'Minimal',
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-  xhigh: 'XHigh',
-};
 
 export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettingsViewProps) {
   const [settings, setSettings] = useState<AgentProviderSettingsView | null>(null);
@@ -219,10 +208,7 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
   const [permissionDraft, setPermissionDraft] = useState<AgentToolPermissionSettingsView | null>(null);
   const [draft, setDraft] = useState<DraftConfig>(EMPTY_DRAFT);
   const [apiKey, setApiKey] = useState('');
-  const [revealKey, setRevealKey] = useState(false);
   const [providerQuery, setProviderQuery] = useState('');
-  const [modelQuery, setModelQuery] = useState('');
-  const [modelSearchOpen, setModelSearchOpen] = useState(false);
   const [category, setCategory] = useState<SettingsCategory>('providers');
   const [creatingCustom, setCreatingCustom] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -237,11 +223,9 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
   const [allAgents, setAllAgents] = useState<AgentDefinition[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(false);
   const [selectedAgentName, setSelectedAgentName] = useState<string>('general');
-  const [testingConnection, setTestingConnection] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string; statusCode?: number } | null>(null);
-  // The credential SHEET (add/replace key for the selected catalog provider) and
+  // The per-provider config SHEET (opened by clicking a row or "Configure…") and
   // the per-row ⋯ actions menu (only one open at a time, keyed by providerId).
-  const [credentialSheetOpen, setCredentialSheetOpen] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [openRowMenu, setOpenRowMenu] = useState<string | null>(null);
 
   useEffect(() => {
@@ -269,9 +253,7 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     setCategory('providers');
     setCreatingCustom(false);
     setProviderQuery('');
-    setModelQuery('');
-    setModelSearchOpen(false);
-    setTestResult(null);
+    setSheetOpen(false);
 
     void Promise.all([
       api.agentGetProviderSettings(),
@@ -344,22 +326,14 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
   const selectedCatalog = providerCatalog.get(draft.providerId);
   const isCustomProvider = Boolean(draft.providerId) && !providerCatalog.has(draft.providerId);
   const showConnectionFields = creatingCustom || isCustomProvider;
-  const hasPendingApiKey = apiKey.trim().length > 0;
   const hasSavedCredential = providerHasCredential(configuredProvider, selectedCatalog);
-  const canChooseModels = (hasSavedCredential || hasPendingApiKey) && Boolean(draft.providerId);
   const catalogModels = selectedCatalog?.models ?? [];
-  // The catalog models arrive recency-ranked (modelRanking #67), so models[0] is
-  // the provider's current flagship — surfaced in the detail.
-  const flagshipModel = catalogModels[0];
-  const selectedModels = canChooseModels ? catalogModels : [];
-  const selectedModel = selectedModels.find((model) => model.id === draft.modelId);
+  // The active provider's draft model determines which reasoning levels the global
+  // save() may coerce to (the provider sheet manages its own selection internally).
+  const selectedModel = catalogModels.find((model) => model.id === draft.modelId);
   const selectedReasoningLevels: AgentReasoningLevel[] = selectedModel?.supportedThinkingLevels.length
     ? selectedModel.supportedThinkingLevels
     : ['off'];
-  const hasAnyKey = hasSavedCredential || hasPendingApiKey;
-  const keyStatus = configuredProvider?.hasApiKey
-    ? 'Saved key'
-    : configuredProvider?.hasEnvApiKey || selectedCatalog?.hasEnvApiKey ? 'Environment key' : hasPendingApiKey ? 'Unsaved key' : 'No key yet';
 
   const providerChoices = useMemo(
     () => settings ? buildProviderChoices(settings, draft.providerId, providerCatalog) : [],
@@ -384,7 +358,6 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     [visibleProviderChoices],
   );
   const selectedChoice = providerChoices.find((choice) => choice.providerId === activeRowProviderId);
-  const showDetail = creatingCustom || Boolean(draft.providerId);
   const detailName = creatingCustom
     ? 'Custom provider'
     : draft.providerId ? formatProviderName(draft.providerId) : '';
@@ -393,16 +366,7 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     : providerDescription(selectedCatalog);
   const authInfo = showConnectionFields ? undefined : PROVIDER_AUTH[draft.providerId];
   const docsUrl = showConnectionFields ? undefined : PROVIDER_DOCS_URL[draft.providerId];
-  
   const baseUrlPlaceholder = selectedCatalog?.defaultBaseUrl ?? 'https://api.example.com/v1';
-  const showModelList = !creatingCustom && catalogModels.length > 0;
-  const showModelSearch = catalogModels.length > 1;
-  const visibleModels = useMemo(() => {
-    const query = modelQuery.trim().toLowerCase();
-    if (!query) return catalogModels;
-    return catalogModels.filter((model) =>
-      model.name.toLowerCase().includes(query) || model.id.toLowerCase().includes(query));
-  }, [catalogModels, modelQuery]);
 
   const selectedAgent = allAgents.find((a) => a.name === selectedAgentName) || allAgents[0];
   const permissionDiagnostics = permissionDraft?.diagnostics ?? permissionSettings?.diagnostics ?? [];
@@ -448,12 +412,8 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
       enabled: existing?.enabled ?? true,
     }));
     setApiKey('');
-    setRevealKey(false);
-    setModelQuery('');
-    setModelSearchOpen(false);
     setNotice(null);
     setError(null);
-    setTestResult(null);
   }
 
   function startCustomProvider() {
@@ -467,64 +427,9 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
       enabled: true,
     }));
     setApiKey('');
-    setRevealKey(false);
-    setModelQuery('');
-    setModelSearchOpen(false);
     setNotice(null);
     setError(null);
-    setTestResult(null);
-  }
-
-  async function testConnection() {
-    const providerId = draft.providerId.trim();
-    if (!providerId) return;
-    setTestingConnection(true);
-    setTestResult(null);
-    try {
-      const res = await api.agentTestProviderConnection({
-        providerId,
-        modelId: draft.modelId || selectedCatalog?.models[0]?.id || getFallbackModelId(providerId),
-        baseUrl: draft.baseUrl.trim() || undefined,
-        apiKey: apiKey.trim() || undefined,
-      });
-      setTestResult(res);
-    } catch (caught) {
-      setTestResult({
-        success: false,
-        message: caught instanceof Error ? caught.message : String(caught),
-      });
-    } finally {
-      setTestingConnection(false);
-    }
-  }
-
-  async function makeActive() {
-    const providerId = draft.providerId.trim();
-    if (!providerId) return;
-    setSaving(true);
-    setError(null);
-    setNotice(null);
-    try {
-      if (apiKey.trim()) {
-        await api.agentSetProviderApiKey(providerId, apiKey.trim());
-        setApiKey('');
-      }
-      let next = await api.agentUpsertProviderConfig({
-        providerId,
-        modelId: draft.modelId || selectedCatalog?.models[0]?.id || '',
-        baseUrl: draft.baseUrl.trim() || null,
-        enabled: true,
-      });
-      next = await api.agentSetActiveProvider(providerId);
-      setSettings(next);
-      setDraft(resolveDraftForProvider(next, providerId));
-      setNotice('Provider set as active');
-      await onApplied();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setSaving(false);
-    }
+    setSheetOpen(true);
   }
 
   async function save() {
@@ -594,53 +499,6 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     }
   }
 
-  async function removeApiKey() {
-    const providerId = draft.providerId.trim();
-    if (!providerId) return;
-    const requestId = beginRequest();
-    setSaving(true);
-    setError(null);
-    setNotice(null);
-    try {
-      await api.agentDeleteProviderApiKey(providerId);
-      const next = await api.agentGetProviderSettings();
-      if (isCurrentRequest(requestId)) {
-        setSettings(next);
-        setDraft(resolveDraftForProvider(next, providerId));
-        setNotice('Key removed');
-      }
-      await onApplied();
-    } catch (caught) {
-      if (isCurrentRequest(requestId)) setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      if (isCurrentRequest(requestId)) setSaving(false);
-    }
-  }
-
-  async function removeProvider() {
-    const providerId = draft.providerId.trim();
-    if (!providerId || !configuredProvider) return;
-    const requestId = beginRequest();
-    setSaving(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const next = await api.agentDeleteProviderConfig(providerId);
-      if (isCurrentRequest(requestId)) {
-        setSettings(next);
-        setDraft(resolveInitialDraft(next));
-        setCreatingCustom(false);
-        setApiKey('');
-        setNotice('Provider removed');
-      }
-      await onApplied();
-    } catch (caught) {
-      if (isCurrentRequest(requestId)) setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      if (isCurrentRequest(requestId)) setSaving(false);
-    }
-  }
-
   // Per-row ⋯ actions operate on an explicit providerId (independent of the draft
   // selection); they share one refetch/notice/error envelope.
   async function runProviderMutation(
@@ -676,31 +534,43 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     void runProviderMutation(() => api.agentDeleteProviderConfig(providerId), 'Provider removed', true);
   }
 
-  // The credential sheet's async, cancellable validate (the sheet owns the
-  // pending/cancel UI; this just runs the test call) and its save.
-  async function validateCredential(apiKey: string): Promise<{ success: boolean; message: string }> {
-    const providerId = draft.providerId.trim();
+  // The provider sheet owns its own pending/cancel UI; these just run the IPC.
+  // Validate tests the (unsaved) draft connection without persisting anything.
+  async function validateProviderDraft(sheet: ProviderSheetDraft): Promise<{ success: boolean; message: string }> {
+    const providerId = sheet.providerId.trim();
     const result = await api.agentTestProviderConnection({
       providerId,
-      modelId: draft.modelId || selectedCatalog?.models[0]?.id || getFallbackModelId(providerId),
-      baseUrl: draft.baseUrl.trim() || undefined,
-      apiKey: apiKey.trim() || undefined,
+      modelId: sheet.modelId.trim() || selectedCatalog?.models[0]?.id || getFallbackModelId(providerId),
+      baseUrl: sheet.baseUrl.trim() || undefined,
+      apiKey: sheet.apiKey.trim() || undefined,
     });
     return { success: result.success, message: result.message };
   }
 
-  async function saveCredential(apiKey: string): Promise<void> {
-    const providerId = draft.providerId.trim();
+  // Save commits the whole provider config (model / reasoning / base URL) and,
+  // if a new key was entered, the credential — then refetches and closes.
+  async function commitProviderConfig(sheet: ProviderSheetDraft): Promise<void> {
+    const providerId = sheet.providerId.trim();
     if (!providerId) return;
     const requestId = beginRequest();
     setError(null);
     setNotice(null);
-    await api.agentSetProviderApiKey(providerId, apiKey.trim());
+    await api.agentUpsertProviderConfig({
+      providerId,
+      modelId: sheet.modelId.trim() || selectedCatalog?.models[0]?.id || '',
+      reasoningLevel: sheet.reasoningLevel,
+      baseUrl: sheet.baseUrl.trim() || null,
+      enabled: true,
+    });
+    if (sheet.apiKey.trim()) {
+      await api.agentSetProviderApiKey(providerId, sheet.apiKey.trim());
+    }
     const next = await api.agentGetProviderSettings();
     if (isCurrentRequest(requestId)) {
       setSettings(next);
       setDraft(resolveDraftForProvider(next, providerId));
-      setNotice('Key saved');
+      setCreatingCustom(false);
+      setNotice('Saved');
     }
     await onApplied();
   }
@@ -725,33 +595,22 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     });
   };
 
-  const baseUrlField = (
-    <FormField className="agent-settings-field agent-settings-field-wide" label="Base URL">
-      <TextInputControl
-        label="Base URL"
-        onChange={(event) => setDraft((current) => ({ ...current, baseUrl: event.target.value }))}
-        placeholder={baseUrlPlaceholder}
-        value={draft.baseUrl}
-      />
-      <span className="agent-settings-field-meta">Optional. Leave empty to use the default endpoint.</span>
-    </FormField>
-  );
+  // Open the config sheet for a provider (clicking a row or "Configure…").
+  function openProviderSheet(providerId: string) {
+    selectProvider(providerId);
+    setSheetOpen(true);
+  }
 
-  // Stable per-row handlers via a latest-ref so the memoized provider rows don't
-  // re-render when only detail-pane state changes (model / reasoning / base URL).
-  // The ref always points at the freshest closures, so there are no stale reads,
-  // while the exposed wrappers keep a constant identity across renders.
-  const rowHandlersImpl = { selectProvider, activateProvider, deleteProviderFor, setCredentialSheetOpen, setOpenRowMenu };
+  // Stable per-row handlers via a latest-ref so the memoized provider rows keep a
+  // constant identity and never re-render while a sheet is open or another row's
+  // menu toggles. The ref always points at the freshest closures (no stale reads).
+  const rowHandlersImpl = { openProviderSheet, activateProvider, deleteProviderFor, setOpenRowMenu };
   const rowHandlersRef = useRef(rowHandlersImpl);
   rowHandlersRef.current = rowHandlersImpl;
   const rowHandlers = useMemo<ProviderRowHandlers>(() => ({
-    onSelect: (id) => rowHandlersRef.current.selectProvider(id),
+    onConfigure: (id) => rowHandlersRef.current.openProviderSheet(id),
     onActivate: (id) => rowHandlersRef.current.activateProvider(id),
     onRemove: (id) => rowHandlersRef.current.deleteProviderFor(id),
-    onAddKey: (id) => {
-      rowHandlersRef.current.selectProvider(id);
-      rowHandlersRef.current.setCredentialSheetOpen(true);
-    },
     onMenuOpenChange: (id, open) => rowHandlersRef.current.setOpenRowMenu(open ? id : null),
   }), []);
 
@@ -761,7 +620,6 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
       key={provider.providerId}
       menuOpen={openRowMenu === provider.providerId}
       provider={provider}
-      selected={provider.providerId === activeRowProviderId}
     />
   );
 
@@ -796,281 +654,78 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
           <div className="settings-content">
             {category === 'providers' ? (
               <section className="agent-settings-section settings-providers-section" aria-label="Providers">
-                <div className="settings-providers">
-                  <div className="settings-provider-aside">
-                    <div className="settings-provider-search-row">
-                      <div className="settings-provider-search">
-                        <SearchIcon size={ICON_SIZE.menu} />
-                        <TextInputControl
-                          label="Search providers"
-                          onChange={(event) => setProviderQuery(event.target.value)}
-                          placeholder="Search providers…"
-                          value={providerQuery}
-                        />
-                      </div>
-                      <button
-                        aria-current={creatingCustom ? 'true' : undefined}
-                        aria-label="Custom provider"
-                        className={`settings-provider-add ${creatingCustom ? 'is-active' : ''}`}
-                        onClick={startCustomProvider}
-                        title="Add a custom OpenAI-compatible provider"
-                        type="button"
-                      >
-                        <AddIcon size={ICON_SIZE.menu} />
-                      </button>
+                <div className="settings-providers-head">
+                  <h3 className="settings-providers-title">Providers</h3>
+                  <div className="settings-provider-search-row">
+                    <div className="settings-provider-search">
+                      <SearchIcon size={ICON_SIZE.menu} />
+                      <TextInputControl
+                        label="Search providers"
+                        onChange={(event) => setProviderQuery(event.target.value)}
+                        placeholder="Search providers…"
+                        value={providerQuery}
+                      />
                     </div>
-                    <div className="settings-provider-groups">
-                      {visibleProviderChoices.length === 0 ? (
-                        <p className="settings-provider-list-empty">No providers match “{providerQuery.trim()}”.</p>
-                      ) : (
-                        <>
-                          {connectedChoices.length > 0 ? (
-                            <InsetGroup ariaLabel="Connected providers" label="Connected">
-                              {connectedChoices.map(renderProviderRow)}
-                            </InsetGroup>
-                          ) : null}
-                          {availableChoices.length > 0 ? (
-                            <InsetGroup ariaLabel="Available providers" label="Available">
-                              {availableChoices.map(renderProviderRow)}
-                            </InsetGroup>
-                          ) : null}
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="settings-provider-detail">
-                    {showDetail ? (
-                      <>
-                        <div className="settings-provider-detail-header">
-                          <div className="settings-provider-detail-id">
-                            {creatingCustom ? (
-                              <span className="settings-provider-avatar is-large" aria-hidden="true">+</span>
-                            ) : (
-                              <ProviderAvatar providerId={draft.providerId} large />
-                            )}
-                            <div className="settings-provider-detail-text">
-                              <div className="settings-provider-detail-name">
-                                {detailName}
-                                {selectedChoice?.active ? (
-                                  <span className="settings-provider-badge is-active">Active</span>
-                                ) : hasSavedCredential ? (
-                                  <span className="settings-provider-badge">Configured</span>
-                                ) : null}
-                              </div>
-                              <span className="settings-provider-detail-desc">{detailDescription}</span>
-                            </div>
-                          </div>
-                          {!selectedChoice?.active && hasAnyKey ? (
-                            <ButtonControl
-                              className="agent-settings-primary"
-                              disabled={saving}
-                              onClick={makeActive}
-                            >
-                              Set as Active
-                            </ButtonControl>
-                          ) : null}
-                        </div>
-
-                        {authInfo ? (
-                          <div className="settings-provider-note">
-                            <p>{authInfo.note}</p>
-                            {authInfo.docsUrl ? (
-                              <button
-                                className="agent-settings-doc-link"
-                                onClick={() => void api.openExternalUrl(authInfo.docsUrl as string)}
-                                type="button"
-                              >
-                                <span>{authInfo.docsLabel ?? 'Learn more'}</span>
-                                <OpenIcon size={ICON_SIZE.tiny} />
-                              </button>
-                            ) : null}
-                          </div>
-                        ) : (
-                          <>
-                            {showConnectionFields ? (
-                              // Custom provider creation is a multi-field form (ID +
-                              // key + base URL + model), so its key stays inline.
-                              // Catalog providers route credential entry through the
-                              // sheet below (D-FORM).
-                              <div className="agent-settings-grid">
-                                <FormField className="agent-settings-field agent-settings-field-wide" label="Provider ID">
-                                  <TextInputControl
-                                    label="Provider ID"
-                                    onChange={(event) => setDraft((current) => ({ ...current, providerId: event.target.value.trim() }))}
-                                    placeholder="my-provider"
-                                    value={draft.providerId}
-                                  />
-                                </FormField>
-
-                                <FormField as="div" className="agent-settings-field agent-settings-field-wide" label="API key">
-                                  <div className="agent-settings-key-row">
-                                    <PasswordIcon size={ICON_SIZE.menu} />
-                                    <TextInputControl
-                                      label="API key"
-                                      onChange={(event) => setApiKey(event.target.value)}
-                                      placeholder={hasAnyKey ? 'Configured (Encrypted)' : 'Paste API key'}
-                                      type={revealKey ? 'text' : 'password'}
-                                      value={apiKey}
-                                    />
-                                    <div className="agent-settings-key-actions">
-                                      <button
-                                        aria-label={revealKey ? 'Hide key' : 'Show key'}
-                                        aria-pressed={revealKey}
-                                        className="agent-settings-key-reveal"
-                                        onClick={() => setRevealKey((current) => !current)}
-                                        type="button"
-                                      >
-                                        {revealKey ? <HideIcon size={ICON_SIZE.menu} /> : <ShowIcon size={ICON_SIZE.menu} />}
-                                      </button>
-                                    </div>
-                                  </div>
-                                </FormField>
-                              </div>
-                            ) : (
-                              // Catalog provider: the credential is a status summary
-                              // with a button that opens the focused credential sheet
-                              // (add/replace → validate). Ongoing config stays inline.
-                              <div className="settings-credential-summary">
-                                <div className="settings-credential-summary-info">
-                                  <PasswordIcon size={ICON_SIZE.menu} />
-                                  <div className="settings-credential-summary-text">
-                                    <span className="settings-credential-summary-status">{keyStatus}</span>
-                                    {!hasSavedCredential && docsUrl ? (
-                                      <button
-                                        className="agent-settings-doc-link"
-                                        onClick={() => void api.openExternalUrl(docsUrl)}
-                                        type="button"
-                                      >
-                                        <span>Get API key</span>
-                                        <OpenIcon size={ICON_SIZE.tiny} />
-                                      </button>
-                                    ) : null}
-                                  </div>
-                                </div>
-                                <div className="settings-credential-summary-actions">
-                                  {hasSavedCredential ? (
-                                    <ButtonControl className="agent-settings-secondary" disabled={saving} onClick={removeApiKey}>
-                                      Remove key
-                                    </ButtonControl>
-                                  ) : null}
-                                  <ButtonControl className="agent-settings-secondary" onClick={() => setCredentialSheetOpen(true)}>
-                                    {hasSavedCredential ? 'Replace key' : 'Add API key'}
-                                  </ButtonControl>
-                                </div>
-                              </div>
-                            )}
-
-                            <details className="settings-url-details">
-                              <summary className="settings-url-summary">Advanced Settings</summary>
-                              <div className="settings-url-content">
-                                {baseUrlField}
-                              </div>
-                            </details>
-                          </>
-                        )}
-
-                        {canChooseModels ? (
-                          <div className="settings-provider-model-section">
-                            <div className="settings-detail-subheading-row">
-                              <h4 className="settings-detail-subheading">Model & Reasoning</h4>
-                              {flagshipModel ? (
-                                <span className="settings-detail-flagship">Latest: {flagshipModel.name}</span>
-                              ) : null}
-                            </div>
-                            <div className="agent-settings-grid">
-                              <FormField className="agent-settings-field" label="Model">
-                                {selectedModels.length > 0 ? (
-                                  <SelectControl
-                                    label="Model"
-                                    onChange={(event) => {
-                                      const modelId = event.target.value;
-                                      const model = selectedModels.find((candidate) => candidate.id === modelId);
-                                      const supportedLevels = (model?.supportedThinkingLevels.length
-                                        ? model.supportedThinkingLevels
-                                        : ['off']) as AgentReasoningLevel[];
-                                      setDraft((current) => ({
-                                        ...current,
-                                        modelId,
-                                        reasoningLevel: coerceReasoningLevel(current.reasoningLevel, supportedLevels),
-                                      }));
-                                    }}
-                                    value={selectedModel ? draft.modelId : ''}
-                                  >
-                                    {selectedModel ? null : <option value="">Select a model…</option>}
-                                    {selectedModels.map((model) => (
-                                      <option key={model.id} value={model.id}>{model.name}</option>
-                                    ))}
-                                  </SelectControl>
-                                ) : (
-                                  <TextInputControl
-                                    label="Model"
-                                    onChange={(event) => setDraft((current) => ({ ...current, modelId: event.target.value }))}
-                                    placeholder="Model ID"
-                                    value={draft.modelId}
-                                  />
-                                )}
-                              </FormField>
-
-                              <FormField className="agent-settings-field" label="Reasoning">
-                                <SelectControl
-                                  label="Reasoning"
-                                  onChange={(event) => {
-                                    setDraft((current) => ({
-                                      ...current,
-                                      reasoningLevel: event.target.value as AgentReasoningLevel,
-                                    }));
-                                  }}
-                                  value={coerceReasoningLevel(draft.reasoningLevel, selectedReasoningLevels)}
-                                >
-                                  {selectedReasoningLevels.map((reasoningLevel) => (
-                                    <option key={reasoningLevel} value={reasoningLevel}>
-                                      {REASONING_LABELS[reasoningLevel]}
-                                    </option>
-                                  ))}
-                                </SelectControl>
-                              </FormField>
-                            </div>
-                          </div>
-                        ) : null}
-
-                        <div className="connection-test-section">
-                          <div className="connection-test-row">
-                            <ButtonControl
-                              className="agent-settings-secondary"
-                              disabled={testingConnection || !draft.providerId}
-                              onClick={testConnection}
-                            >
-                              {testingConnection ? 'Testing...' : 'Test Connection'}
-                            </ButtonControl>
-                          </div>
-                          {testResult && (
-                            <div className={`connection-test-feedback ${testResult.success ? 'is-success' : 'is-error'}`}>
-                              {testResult.success ? (
-                                <span className="feedback-text">✓ Connection Successful</span>
-                              ) : (
-                                <div className="feedback-error-container">
-                                  <span className="feedback-text">✗ Connection Failed</span>
-                                  <p className="feedback-diagnostic">{testResult.message}</p>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </>
-                    ) : (
-                      <div className="settings-provider-empty">Select a provider to connect.</div>
-                    )}
+                    <button
+                      aria-label="Custom provider"
+                      className="settings-provider-add"
+                      onClick={startCustomProvider}
+                      title="Add a custom OpenAI-compatible provider"
+                      type="button"
+                    >
+                      <AddIcon size={ICON_SIZE.menu} />
+                    </button>
                   </div>
                 </div>
-                {credentialSheetOpen && !showConnectionFields && draft.providerId ? (
-                  <SettingsCredentialSheet
+                <div className="settings-provider-groups">
+                  {visibleProviderChoices.length === 0 ? (
+                    <p className="settings-provider-list-empty">No providers match “{providerQuery.trim()}”.</p>
+                  ) : (
+                    <>
+                      {connectedChoices.length > 0 ? (
+                        <InsetGroup ariaLabel="Connected providers" label="Connected">
+                          {connectedChoices.map(renderProviderRow)}
+                        </InsetGroup>
+                      ) : null}
+                      {availableChoices.length > 0 ? (
+                        <InsetGroup ariaLabel="Available providers" label="Available">
+                          {availableChoices.map(renderProviderRow)}
+                        </InsetGroup>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+
+                {sheetOpen ? (
+                  <SettingsProviderSheet
+                    authNote={authInfo}
+                    avatar={creatingCustom
+                      ? <span className="settings-provider-avatar is-large" aria-hidden="true">+</span>
+                      : <ProviderAvatar large providerId={draft.providerId} />}
+                    baseUrlPlaceholder={baseUrlPlaceholder}
+                    defaultBaseUrl={selectedCatalog?.defaultBaseUrl}
+                    description={detailDescription}
                     docsUrl={docsUrl}
                     hasSavedKey={hasSavedCredential}
-                    onClose={() => setCredentialSheetOpen(false)}
-                    onOpenDocs={docsUrl ? () => void api.openExternalUrl(docsUrl) : undefined}
-                    onSave={saveCredential}
-                    onValidate={validateCredential}
+                    initial={{
+                      providerId: draft.providerId,
+                      modelId: draft.modelId,
+                      reasoningLevel: draft.reasoningLevel,
+                      baseUrl: draft.baseUrl,
+                    }}
+                    isActive={Boolean(selectedChoice?.active)}
+                    mode={showConnectionFields ? 'custom' : 'configure'}
+                    models={catalogModels}
+                    onClose={() => setSheetOpen(false)}
+                    onOpenExternal={(url) => void api.openExternalUrl(url)}
+                    onRemoveProvider={!creatingCustom && configuredProvider
+                      ? () => { deleteProviderFor(draft.providerId); setSheetOpen(false); }
+                      : undefined}
+                    onSetActive={!creatingCustom && hasSavedCredential && !selectedChoice?.active
+                      ? () => { activateProvider(draft.providerId); setSheetOpen(false); }
+                      : undefined}
+                    onSubmit={commitProviderConfig}
+                    onValidate={validateProviderDraft}
                     providerName={detailName}
                   />
                 ) : null}
@@ -1337,27 +992,22 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
             ) : null}
             {notice ? <div className="agent-settings-notice">{notice}</div> : null}
 
-            <footer className="agent-settings-footer">
-              {category === 'providers' ? (
-                <ButtonControl
-                  className="agent-settings-danger"
-                  disabled={saving || !configuredProvider}
-                  onClick={removeProvider}
-                  title="Remove provider"
-                >
-                  <TrashIcon size={ICON_SIZE.menu} />
-                  <span>Remove provider</span>
-                </ButtonControl>
-              ) : <span />}
-              <div className="agent-settings-footer-actions">
-                <ButtonControl className="agent-settings-secondary" onClick={onClose}>
-                  Cancel
-                </ButtonControl>
-                <ButtonControl className="agent-settings-primary" disabled={saving} onClick={save}>
-                  {saving ? 'Saving...' : 'Save'}
-                </ButtonControl>
-              </div>
-            </footer>
+            {/* Providers commit per-provider through their own sheet (Cancel/Save),
+                like native Settings — so the global footer is only for the
+                runtime/permission categories. */}
+            {category !== 'providers' ? (
+              <footer className="agent-settings-footer">
+                <span />
+                <div className="agent-settings-footer-actions">
+                  <ButtonControl className="agent-settings-secondary" onClick={onClose}>
+                    Cancel
+                  </ButtonControl>
+                  <ButtonControl className="agent-settings-primary" disabled={saving} onClick={save}>
+                    {saving ? 'Saving...' : 'Save'}
+                  </ButtonControl>
+                </div>
+              </footer>
+            ) : null}
           </div>
         </div>
       )}
@@ -1518,27 +1168,6 @@ function removeRule(rules: readonly string[], ruleValue: string): string[] {
 
 function uniqueStrings(values: readonly string[]): string[] {
   return [...new Set(values)];
-}
-
-function defaultReasoningLevel(model: AgentModelOption | undefined): AgentReasoningLevel {
-  const supportedLevels = model?.supportedThinkingLevels ?? ['off'];
-  if (supportedLevels.includes('off')) return 'off';
-  return supportedLevels[0] ?? 'off';
-}
-
-function coerceReasoningLevel(
-  reasoningLevel: AgentReasoningLevel,
-  supportedLevels: AgentReasoningLevel[],
-): AgentReasoningLevel {
-  if (supportedLevels.includes(reasoningLevel)) return reasoningLevel;
-  if (supportedLevels.includes('off')) return 'off';
-  return supportedLevels[0] ?? 'off';
-}
-
-function formatTokens(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `${Math.round(value / 1_000)}K`;
-  return String(value);
 }
 
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {

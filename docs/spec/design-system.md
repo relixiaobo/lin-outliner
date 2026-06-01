@@ -81,7 +81,7 @@ paper palettes, or feature concepts Lin does not own.
 | Agent dock | `AgentDock.tsx`, `AgentChatPanel.tsx`, `AgentDebugPanel.tsx` | Persistent dock, chat scroll, debug surface, settings entry. |
 | Agent messages | `AgentMessageRow.tsx`, `AgentMessageFrame.tsx`, `AgentBranchNavigator.tsx`, `AgentProcessBlock.tsx`, `AgentProcessTimeline.tsx`, `AgentThinkingBlock.tsx`, `AgentToolCallBlock.tsx`, `AgentToolCallDisclosure.tsx` | Messages, process disclosure, thinking, tool calls, status slots. |
 | Agent composer | `AgentComposer.tsx`, `AgentComposerControls.tsx`, `AgentComposerModelMenu.tsx` | Textarea, attachments, model menu, reasoning switch, send/stop slot. |
-| Agent settings | `AgentSettingsView.tsx`, `SettingsInsetList.tsx`, `SettingsRowMenu.tsx`, `SettingsCredentialSheet.tsx`, `styles/settings-*.css` | Standalone settings window: category nav + master-detail provider pane, inset grouped list, per-row `⋯` menu, and the focused credential sheet. See "Settings interaction model" below. |
+| Agent settings | `AgentSettingsView.tsx`, `SettingsInsetList.tsx`, `SettingsRowMenu.tsx`, `SettingsProviderSheet.tsx`, `styles/settings-*.css` | Standalone settings window: category sidebar + full-width inset grouped provider list, per-row `⋯` menu, and the per-provider config sheet. See "Settings window" below. |
 | Primitives | `ButtonControl.tsx`, `CheckboxControl.tsx`, `CheckboxMark.tsx`, `IconButton.tsx`, `SwitchControl.tsx`, `SwitchMark.tsx`, `SelectControl.tsx`, `TextInputControl.tsx`, `NumberInputControl.tsx` | Thin semantic or visual primitives. Behavior remains caller-owned unless the primitive explicitly owns native control semantics. |
 
 ## Foundations
@@ -1009,40 +1009,46 @@ removed; navigation is via breadcrumb path segments and the sidebar. (The date
 
 ### Settings window
 
-The settings surface follows the macOS System Settings *interaction* idiom,
-rendered in Lin foundations (tokens + B-rules), not Apple chrome.
+The settings surface follows the macOS System Settings *interaction* idiom
+(the Wi-Fi pane is the reference), rendered in Lin foundations (tokens + B-rules),
+not Apple chrome. We borrow the interaction, not the chrome.
 
-- **Category nav + master-detail.** A left nav lists settings categories
-  (Providers / Permissions / Skills / Agent Profiles). Providers is a
-  master-detail pane: an inset grouped provider list on the left, the selected
-  provider's config on the right. Categories — not individual providers — are the
-  top-level nav rows.
+- **Category sidebar + full-width list.** A left sidebar lists settings categories
+  (Providers / Permissions / Skills / Agent Profiles). The content pane shows the
+  selected category full-width — for Providers, a grouped provider list. There is
+  NO permanent side detail pane: per-provider config opens in a sheet (below).
+  Categories — not individual providers — are the top-level sidebar rows.
 - **Inset grouped list (the reusable primitive).** `SettingsInsetList.tsx`
-  (`InsetGroup` + a memoized `InsetRow`) renders a section caption above a rounded
-  inset card whose rows are split by hairlines; geometry derives from the radius /
-  hairline ladders (B9). Selection, hover, and focus stay NEUTRAL — `--fill-*` +
-  the neutral focus ring, never the system accent (B3/B4). The in-card
-  focus ring is the inset `--outline-focus` so it is not clipped by the card's
-  `overflow: hidden`. This is the A7 foundation: Permissions / Skills can adopt it
-  later for consistency. Rows are memoized and fed stable handlers, so a
-  detail-pane edit (model / reasoning / base URL) does not re-render the nav.
-- **On-row status.** Providers group into "Connected" (has a credential — key,
-  env, or managed) and "Available". Each row carries the provider avatar as
-  identity, a neutral status dot, and a `⋯` actions menu (`SettingsRowMenu.tsx`).
-  The `⋯` trigger is an icon-only chrome control: hover/active deepen the glyph
-  colour, no box (B6); the floating menu reuses the shared popover glass with the
-  `prefers-reduced-transparency` opaque fallback (B5/D2) and the level-1 menu
-  elevation tier (B10).
-- **Credential sheet vs. inline config (D-FORM).** The atomic add/replace-key →
-  validate moment is a focused SHEET (`SettingsCredentialSheet.tsx`) built on
-  `Dialog` at the dialog elevation tier (level-2, B10). Validation is async and
-  non-blocking: the sheet stays interactive, shows a pending row, and can be
-  cancelled (a request-id guard drops a stale/cancelled result). The sheet owns
-  its own state, so typing and validating never re-render the settings tree. The
-  sheet is the single host that managed credential modes (OAuth, AWS/Vertex) plug
-  into later — an API key is one `mode`, not the only one. Ongoing config
-  (model / reasoning / advanced base URL) stays INLINE in the detail pane; the
-  flagship (recency-ranked `models[0]`) is surfaced as a hint.
+  (`InsetGroup` + a memoized `InsetRow`) renders a sentence-case section header
+  above a rounded inset card whose rows are split by hairlines; geometry derives
+  from the radius / hairline ladders (B9). Selection, hover, and focus stay
+  NEUTRAL — `--fill-*` + the neutral focus ring, never the system accent (B3/B4).
+  The in-card focus ring is the inset `--outline-focus` so it is not clipped by the
+  card's `overflow: hidden`. This is the A7 foundation: Permissions / Skills can
+  adopt it later for consistency.
+- **Provider rows + on-row status.** Providers group into "Connected" (has a
+  credential — key, env, or managed) and "Available". Each row is the Wi-Fi
+  idiom: a leading check marks the ACTIVE provider (neutral, B3 — active never
+  takes an accent), the brand avatar is the identity, and a trailing circular `⋯`
+  opens the row's actions (`SettingsRowMenu.tsx`). The `⋯` is a circular icon-only
+  control (B6: pill/circular, never a rounded square) whose ring + glyph deepen on
+  hover; its floating menu reuses the shared popover glass with the
+  `prefers-reduced-transparency` opaque fallback (B5/D2) at the level-1 menu tier
+  (B10). Rows are memoized + fed stable handlers, so opening one provider's sheet
+  never re-renders the list.
+- **Per-provider config sheet.** Clicking a row (or "Configure…") opens
+  `SettingsProviderSheet.tsx` — the whole provider config in a focused sheet, the
+  native model where a list row pushes its detail into an overlay rather than a
+  side pane. It is built on `Dialog` at the dialog elevation tier (level-2, B10),
+  with a brand-avatar + title/subtitle head and hairline-separated field rows in
+  inset cards (credential, model & reasoning, an Advanced base-URL disclosure). It
+  owns its own draft + its own Cancel / Save — Providers commit per-sheet, so the
+  surface has NO global save bar (apply-per-provider, like native). Validation is
+  async and non-blocking: the sheet stays interactive, shows a pending row, and
+  can be cancelled (a request-id guard drops a stale/cancelled result). The sheet
+  is multi-mode so managed credential modes (OAuth, AWS/Vertex) plug in later — an
+  API key is one `mode`. Managed-credential providers (e.g. AWS Bedrock) show an
+  auth note instead of a key field.
 - **Status colour for status only (B4).** Validation success/failure uses
   `--status-success` / `--status-danger`; the primary sheet action is a NEUTRAL
   strong fill (`--fill-3`), never a system-blue accent.

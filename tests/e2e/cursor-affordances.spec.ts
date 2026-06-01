@@ -94,9 +94,9 @@ test.describe('cursor affordances', () => {
     expect(cursors.tagLabel).not.toBe('pointer');
   });
 
-  test('settings inset rows, row menu and credential sheet keep the arrow cursor', async ({ page }) => {
+  test('settings inset rows, row menu and provider sheet keep the arrow cursor', async ({ page }) => {
     // The redesigned settings surface adds new chrome — inset grouped-list rows,
-    // a per-row `⋯` actions trigger, and the credential sheet's buttons. None is a
+    // a per-row `⋯` actions trigger, and the provider sheet's buttons. None is a
     // content hyperlink, so every one must keep the native arrow cursor (B10).
     await installElectronMock(page);
     await page.goto('/?surface=settings');
@@ -117,9 +117,8 @@ test.describe('cursor affordances', () => {
     expect(listCursors.insetRow).toBe('default');
     expect(listCursors.rowMenuTrigger).toBe('default');
 
-    // Open the credential sheet (add/replace key) and probe its action buttons.
+    // Clicking a provider row opens its config sheet; probe its action buttons.
     await settings.getByRole('button', { name: 'Anthropic, Add key' }).click();
-    await settings.getByRole('button', { name: 'Add API key' }).click();
     const sheet = page.getByRole('dialog');
     await expect(sheet).toBeVisible();
     const sheetCursors = await page.evaluate(() => {

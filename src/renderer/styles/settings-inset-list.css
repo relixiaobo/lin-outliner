@@ -17,14 +17,14 @@
   margin-top: var(--space-5);
 }
 
+/* Native System Settings section header: sentence-case, prominent, NOT the old
+   uppercase micro-caption (matches "Known Networks" / "Other Networks"). */
 .inset-group-header {
-  padding: 0 var(--space-2);
-  color: var(--text-secondary);
-  font-size: var(--font-ui-2xs);
+  padding: 0 var(--space-1) var(--space-1);
+  color: var(--text-strong);
+  font-size: var(--font-ui-sm);
   font-weight: 600;
-  letter-spacing: 0.04em;
-  line-height: var(--line-ui-2xs);
-  text-transform: uppercase;
+  line-height: var(--line-ui-sm);
 }
 
 /* The card clips its rows so the first/last row's neutral selection fill follows
