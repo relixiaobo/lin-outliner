@@ -59,6 +59,7 @@ export const DOCUMENT_COMMANDS = [
   'create_field_def',
   'create_inline_field_after_node',
   'create_inline_field',
+  'reuse_field_definition',
   'register_collected_option',
   'create_collected_field_option',
   'select_field_option',

@@ -74,7 +74,7 @@ import { TrailingOptionsPopover } from './TrailingOptionsPopover';
 import { DateValuePicker } from './DateValuePicker';
 import type { FieldValueContext } from '../fields/fieldValueEditors';
 import { fieldValueOpenHref, validateFieldValue } from '../fields/fieldValueValidation';
-import { CalendarIcon, OpenIcon } from '../icons';
+import { CalendarIcon, ICON_SIZE, OpenIcon, WarningIcon } from '../icons';
 import {
   createPlaceholderInlineField,
   createPlaceholderInlineFieldAfterNode,
@@ -1112,37 +1112,37 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     // the field). Tab is inert in the field-value context.
     if (props.fieldValue) return;
     if (props.draft && !realNode) {
-      // Structural keys on the trailing draft materialize it (empty) first — the
-      // explicit intent creates the node, matching Enter — then Tab indents it
-      // under the previous sibling and Shift+Tab outdents it to the parent level.
-      // The draft sits after the parent's last child, so once materialized that
-      // child is the indent target; expand it so the row stays visible.
-      const siblings = props.index.byId.get(props.parentId)?.children ?? [];
-      const indentTarget = siblings[siblings.length - 1];
-      materializeDraft();
-      await pendingTextPatchRef.current;
-      // Move with the default applyFocus so the moved node (the move outcome
-      // focuses it) keeps focus; the command is a no-op at the tree's edge.
-      let result: unknown;
+      // Structural keys RELOCATE the empty trailing draft instead of materializing
+      // a node: it stays a draft and nothing is created until the user types
+      // (matching the "draft stays a draft" model and the Trailing Input Matrix).
+      // The draft sits after its parent's last child:
+      //   Tab       → move it under that last child (the previous sibling), expanding it;
+      //   Shift+Tab → move it up to the grandparent's trailing.
+      // Relocation is pure focus + expand — no create, no indent IPC, so there is
+      // no materialize→indent flicker and no stray empty node.
       if (!shiftKey) {
-        if (indentTarget) {
-          props.setUi((prev) => {
-            const expanded = new Set(prev.expanded);
-            expanded.add(indentTarget);
-            return { ...prev, expanded };
-          });
-        }
-        result = await props.run(() => api.indentNode(props.nodeId));
-      } else {
-        result = await props.run(() => api.outdentNode(props.nodeId));
+        const siblings = props.index.byId.get(props.parentId)?.children ?? [];
+        const indentTarget = siblings[siblings.length - 1];
+        if (!indentTarget) return; // no previous sibling to nest under
+        props.setUi((prev) => {
+          const expanded = new Set(prev.expanded);
+          expanded.add(indentTarget);
+          return requestFocusState(
+            { ...prev, expanded },
+            focusTarget(indentTarget, indentTarget, props.panelId, 'trailing'),
+            cursorEnd(),
+          );
+        });
+        return;
       }
-      if (result) {
-        props.setUi((prev) => requestFocusState(
-          prev,
-          rowFocusTarget(props.nodeId, null, props.panelId),
-          cursorAtOffset(cursorOffset),
-        ));
-      }
+      if (props.parentId === props.rootId) return; // already at the top level
+      const grandParentId = props.index.byId.get(props.parentId)?.parentId;
+      if (!grandParentId) return;
+      props.setUi((prev) => requestFocusState(
+        prev,
+        focusTarget(grandParentId, grandParentId, props.panelId, 'trailing'),
+        cursorEnd(),
+      ));
       return;
     }
     await commitDraft();
@@ -1611,7 +1611,16 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           )}
           {props.fieldValue && (showDateTrigger || fieldValueHint || fieldValueHref) && (
             <span className="field-value-affordances" data-preserve-selection>
-              {fieldValueHint && <span className="field-value-hint">{fieldValueHint}</span>}
+              {fieldValueHint && (
+                <span
+                  className="field-value-hint"
+                  role="img"
+                  title={fieldValueHint}
+                  aria-label={fieldValueHint}
+                >
+                  <WarningIcon size={ICON_SIZE.menu} />
+                </span>
+              )}
               {fieldValueHref && (
                 <button
                   type="button"

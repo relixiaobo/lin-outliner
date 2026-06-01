@@ -512,6 +512,89 @@ describe('Core', () => {
     expect(core.state().nodes[fieldEntryId].children).toEqual([]);
   });
 
+  test('reusing a field definition relinks the entry and drops the orphaned draft def', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const keepEntry = mustFocus(core.createInlineField(today, null, 'Status', 'plain'));
+    const keepDef = core.state().nodes[keepEntry].fieldDefId!;
+    // A second `>` mints its own throwaway draft def; the user then picks the
+    // existing "Status" field from the popover instead of naming a new one.
+    const draftEntry = mustFocus(core.createInlineField(today, null, '', 'plain'));
+    const draftDef = core.state().nodes[draftEntry].fieldDefId!;
+    expect(draftDef).not.toBe(keepDef);
+
+    core.reuseFieldDefinition(draftEntry, keepDef);
+
+    expect(core.state().nodes[draftEntry].fieldDefId).toBe(keepDef);
+    // The orphaned draft def (only this entry referenced it) is gone, along with
+    // its config subtree; the reused def survives under the schema.
+    expect(core.state().nodes[draftDef]).toBeUndefined();
+    expect(core.state().nodes[keepDef]?.parentId).toBe(SCHEMA_ID);
+  });
+
+  test('reusing a field definition keeps a source def that another entry still references', () => {
+    const core = Core.new();
+    const tagId = mustFocus(core.createTag('project'));
+    const templateEntry = mustFocus(core.createFieldDef(tagId, 'Status', 'plain'));
+    const sharedDef = core.state().nodes[templateEntry].fieldDefId!;
+    const node = mustFocus(core.createNode(core.projection().todayId, null, 'Launch'));
+    core.applyTag(node, tagId);
+    const taggedEntry = core.state().nodes[node].children.find((childId) => {
+      const child = core.state().nodes[childId];
+      return child.type === 'fieldEntry' && child.fieldDefId === sharedDef;
+    })!;
+    const otherEntry = mustFocus(core.createInlineField(core.projection().todayId, null, 'Owner', 'plain'));
+    const otherDef = core.state().nodes[otherEntry].fieldDefId!;
+
+    // Relink the tagged entry away from the shared def. The template entry still
+    // references sharedDef, so it must NOT be removed.
+    core.reuseFieldDefinition(taggedEntry, otherDef);
+
+    expect(core.state().nodes[taggedEntry].fieldDefId).toBe(otherDef);
+    expect(core.state().nodes[sharedDef]).toBeDefined();
+  });
+
+  test('reusing the same field definition is a no-op', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const entry = mustFocus(core.createInlineField(today, null, 'Status', 'plain'));
+    const def = core.state().nodes[entry].fieldDefId!;
+
+    core.reuseFieldDefinition(entry, def);
+
+    expect(core.state().nodes[entry].fieldDefId).toBe(def);
+    expect(core.state().nodes[def]).toBeDefined();
+  });
+
+  test('reusing rejects a non-field-definition target', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const entry = mustFocus(core.createInlineField(today, null, 'Status', 'plain'));
+    const plain = mustFocus(core.createNode(today, null, 'Not a field'));
+
+    expect(() => core.reuseFieldDefinition(entry, plain)).toThrow();
+  });
+
+  test('reusing a read-only system field drops the entry\'s stored value children', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const entry = mustFocus(core.createInlineField(today, null, 'Status', 'plain'));
+    const draftDef = core.state().nodes[entry].fieldDefId!;
+    // The draft field carries a typed value (a child value node).
+    const valueId = mustFocus(core.createNode(entry, null, 'In progress'));
+    expect(core.state().nodes[entry].children).toContain(valueId);
+
+    // Reuse the built-in read-only "Done" system field: its value is computed from
+    // the owner, so the stored value child is dropped and the entry repointed.
+    core.reuseFieldDefinition(entry, 'sys:done');
+
+    expect(core.state().nodes[entry].fieldDefId).toBe('sys:done');
+    expect(core.state().nodes[entry].children).not.toContain(valueId);
+    expect(core.state().nodes[valueId]).toBeUndefined();
+    // The throwaway draft def is cleaned up just like any other relink.
+    expect(core.state().nodes[draftDef]).toBeUndefined();
+  });
+
   test('auto-collected options keep the value local and collect a reference', () => {
     const core = Core.new();
     const today = core.projection().todayId;

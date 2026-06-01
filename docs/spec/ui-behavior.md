@@ -59,9 +59,9 @@ keyboard or pointer change should be checked against this matrix.
 | Printable text on empty trailing row | Create an eager child and keep editing that node. |
 | `Enter` with text | Create content, then create/focus a new empty row in the same parent. |
 | Empty `Enter` | Create/focus an empty child. |
-| `Tab` | Move trailing input under the last child and expand that child. |
-| `Shift+Tab` | Move trailing input one parent level up. |
-| Empty `Backspace` after depth shift | Reset the trailing input to its original parent. |
+| `Tab` | Relocate the trailing input under the last child and expand that child. The draft stays a draft — the cursor stays put and no node is created until text is typed. |
+| `Shift+Tab` | Relocate the trailing input one parent level up (no node created until text is typed). |
+| Empty `Backspace` after a `Tab` relocate | The draft now sits under the (empty) sibling it was relocated into, so the "parent has no children" rule below applies: collapse that sibling and focus it. |
 | Empty `Backspace` when parent has no children | Collapse the parent and focus it. |
 | Empty `Backspace` when parent has children | Focus the last visible child. |
 | `ArrowUp` | Focus the last visible child above the trailing row. |
@@ -72,12 +72,50 @@ keyboard or pointer change should be checked against this matrix.
 
 | Interaction | Expected behavior |
 | --- | --- |
-| `Enter` in field name | Commit name and create/focus a sibling row after the field entry. |
+| Type in field name | Show a reuse popover of matching existing fields ("Fields") and built-in system fields ("System fields"). Nothing is highlighted by default. Fields already present on the same owner node are excluded — a node may not carry the same field twice. |
+| `Space` on an empty field name | Summon the full reuse picker (every reusable field + system field, alphabetical) without typing a leading space. Once the name has text, `Space` types normally. |
+| `ArrowDown` + `Enter` (or click) in the reuse popover | Reuse that definition: relink the entry to it (`reuse_field_definition`) and drop the throwaway draft def. |
+| `Enter` in field name | With no popover candidate highlighted, commit the typed name as a new field and create/focus a sibling row after the field entry. |
 | `Enter` in field value | Commit field and create a sibling row after the field entry. |
 | `>` in field value content/trailing input | Create a nested field entry inside the field value scope. |
 | `Tab` / `Shift+Tab` | Same structural indentation rules as content rows. |
 | `ArrowUp` / `ArrowDown` | Move through visible outline rows. |
-| `Escape` | Leave edit mode and select the field row. |
+| `Escape` | Close the reuse popover if open, else leave edit mode and select the field row. |
+
+A reused **system field** (Created, Last edited, Done, Done time, Tags,
+References, Owner, Day) has no backing definition node: its name is a fixed
+read-only label, and its value is derived from the owning node rather than
+stored. Relinking an entry onto a system field drops any value children the draft
+carried (the value is computed, never stored). Each renders by its real type, not
+as bare text:
+
+- **Done** — a read-write checkbox; toggling it flips the owner's done state
+  (`toggle_done`). The only mutable system field. When the owner is **locked** (e.g.
+  a daily-note `date:` page, which `toggle_done` rejects), it renders read-only —
+  reflecting the state without an interactive toggle, so a Done field created at a
+  day page's root never crashes on click.
+- **Created / Last edited / Done time** — the formatted date plus a read-only
+  calendar glyph (matching the editable `date` value styling).
+- **Tags** — the owner's applied tags as read-only colored badges (the same
+  nodex-style badges shown inline after node text), each navigable to its tag.
+- **References** — the backlink source nodes (nodes that reference the owner) as
+  read-only navigable links, not a bare count.
+- **Owner** — the owner's parent node, as a navigable link.
+- **Day** — the date of the nearest `day`-tagged ancestor (the daily-note page
+  the node lives under), with a calendar glyph, navigable to that day.
+
+The renderer derives all of these through one structured `systemFieldDisplay`
+helper (the row component switches on its `kind`). Owner and Day are on-node
+fields only; they are not (yet) selectable in view sort/filter/group, so the
+protocol-surface `ViewSystemField` union is unchanged.
+
+A **field entry row is never expandable**: its children *are* its value(s),
+rendered in the value column, so there is no leaf-expand chevron and no separate
+child scope to open. (Individual value rows inside the value column are likewise
+not expandable.)
+
+A typed field value that fails its type's format check shows a trailing warning
+icon; the message is revealed on hover, never as always-on inline text.
 
 ## Selection Mode Matrix
 

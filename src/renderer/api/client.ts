@@ -183,6 +183,8 @@ export const api = {
     command<CommandOutcome>('create_inline_field_after_node', { afterNodeId, name, fieldType }),
   createInlineField: (parentId: string, index: number | null, name: string, fieldType: FieldType) =>
     command<CommandOutcome>('create_inline_field', { parentId, index, name, fieldType }),
+  reuseFieldDefinition: (entryId: string, targetDefId: string) =>
+    command<CommandOutcome>('reuse_field_definition', { entryId, targetDefId }),
   registerCollectedOption: (fieldDefId: string, name: string) =>
     command<CommandOutcome>('register_collected_option', { fieldDefId, name }),
   // `id` (optional) lets the renderer propose the trailing draft row's stable id

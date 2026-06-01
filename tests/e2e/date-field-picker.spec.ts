@@ -44,6 +44,25 @@ test.describe('date field picker', () => {
     await expect.poll(() => dateFieldValue(page)).toBe('2026-05-20T13:45/2026-05-24T13:45');
   });
 
+  test('a malformed typed value flags an icon whose message is hover-only, never inline text', async ({ page }) => {
+    const draft = trailingEditor(page, ids.dueEntry);
+    await draft.click();
+    // Commit a value the date field cannot parse. The validation hint only
+    // decorates a committed value node, so type then Enter to materialize it.
+    await page.keyboard.type('notadate');
+    await page.keyboard.press('Enter');
+
+    const dueRow = row(page, ids.dueEntry);
+    const hint = dueRow.locator('.field-value-hint');
+    await expect(hint).toBeVisible();
+    // The message rides in the accessible name / native tooltip (revealed on
+    // hover), not as always-on row text crowding the value.
+    await expect(hint).toHaveAttribute('title', 'Value should be a date');
+    await expect(hint).toHaveAttribute('aria-label', 'Value should be a date');
+    await expect(hint.locator('svg')).toBeVisible();
+    await expect(page.getByText('Value should be a date')).toHaveCount(0);
+  });
+
   test('Space only summons the picker on an empty draft, not while typing a value', async ({ page }) => {
     const draft = trailingEditor(page, ids.dueEntry);
     await draft.click();

@@ -398,6 +398,8 @@ export class DocumentService {
         return this.core.createInlineFieldAfterNode(String(args.afterNodeId), String(args.name), fieldType(args.fieldType));
       case 'create_inline_field':
         return this.core.createInlineField(String(args.parentId), nullableNumber(args.index), String(args.name), fieldType(args.fieldType));
+      case 'reuse_field_definition':
+        return this.core.reuseFieldDefinition(String(args.entryId), String(args.targetDefId));
       case 'register_collected_option':
         return this.core.registerCollectedOption(String(args.fieldDefId), String(args.name));
       case 'create_collected_field_option':

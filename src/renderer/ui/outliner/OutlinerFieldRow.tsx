@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type Dispatch,
@@ -37,8 +38,16 @@ import { outlinerChildren } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
 import { fieldTypeLabel } from './fieldTypePresentation';
 import { FieldEntryGrid } from './FieldEntryGrid';
-import { ICON_SIZE, WarningIcon } from '../icons';
-import { validateFieldValue } from '../fields/fieldValueValidation';
+import { FieldNameReusePopover } from './FieldNameReusePopover';
+import type { FieldReuseCandidate } from '../interactions/fieldReuseCandidates';
+import {
+  fieldChoiceLabel,
+  isSystemFieldId,
+  systemFieldDisplay,
+  type SystemFieldDisplay,
+} from '../../state/outlinerRows';
+import { SystemFieldValue } from './SystemFieldValue';
+import { useFieldNameReuse } from './useFieldNameReuse';
 import { FieldValueOutliner } from './FieldValueOutliner';
 import { NodeContextMenu } from './NodeContextMenu';
 import { NodeDescription } from './NodeDescription';
@@ -160,19 +169,46 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     });
   }, [fieldNameFocusTarget, props.setUi, props.ui.pendingInputChar]);
 
+  // A built-in system field (`sys:*`) has no backing def node: its name is a fixed
+  // label and its value is computed read-only from the owner (this entry's parent).
+  const systemFieldId = isSystemFieldId(entryFieldDefId) ? entryFieldDefId : undefined;
+
+  // The reuse popover's state + (memoized) candidate scan live in the hook; the row
+  // just wires the name input's focus/change/blur and Space to its handlers.
+  const reuse = useFieldNameReuse({
+    byId: props.index.byId,
+    entryId: props.entryId,
+    parentId: props.parentId,
+    draftDefId: field?.id,
+    nameDraft,
+    disabled: Boolean(systemFieldId),
+  });
+
+  // Each read-only system field renders by its real type, not as bare text — the
+  // structured display centralizes that decision (date glyph, tag badges, node
+  // links, the Done checkbox). Memoized so the row's focus/selection/popover
+  // re-renders don't repeat the owner scan (References is an O(N) backlink walk).
+  const systemDisplay = useMemo<SystemFieldDisplay | null>(() => {
+    if (!systemFieldId || !entry) return null;
+    const owner = props.index.byId.get(props.parentId) ?? entry;
+    return systemFieldDisplay(owner, systemFieldId, props.index.byId);
+  }, [systemFieldId, entry, props.index.byId, props.parentId]);
+
   if (!entry) return null;
 
   const fieldConfig = field ? projectFieldConfig(props.index.byId, field) : undefined;
   const fieldType = fieldConfig?.fieldType ?? 'plain';
   const drillDownId = field?.id ?? props.entryId;
-  // #16: non-blocking min/max (and not-a-number) warning on the first value.
-  const firstValueId = entry.children[0];
-  const firstValueText = firstValueId ? props.index.byId.get(firstValueId)?.content.text ?? '' : '';
-  const valueWarning = validateFieldValue(fieldType, firstValueText, {
-    min: fieldConfig?.minValue,
-    max: fieldConfig?.maxValue,
-  });
   const fieldOwnerColor = resolveFieldOwnerColor(entry, field, props.index.byId);
+
+  const systemFieldLabel = systemFieldId ? fieldChoiceLabel(systemFieldId, props.index.byId) : '';
+
+  // Both kinds resolve to a real target id (a def node, or a `sys:*` id core
+  // accepts as read-only), so reuse is a single relink either way.
+  const onReuseSelect = (candidate: FieldReuseCandidate) => {
+    reuse.dismiss();
+    void props.run(() => api.reuseFieldDefinition(props.entryId, candidate.id));
+  };
 
   const commitName = async (nextName = nameDraft) => {
     const normalized = nextName.trim();
@@ -273,6 +309,20 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   const onKeyDown = (event: KeyboardEvent<HTMLElement>, column: 'name' | 'value') => {
     if (isImeComposingEvent(event)) return;
     const mod = event.metaKey || event.ctrlKey;
+    // Space on an empty field name summons the reuse picker (showing every
+    // candidate) instead of inserting a leading space — mirrors the field-value
+    // pickers' "Space to open" affordance. Once the name has text, Space types.
+    if (
+      column === 'name'
+      && event.key === ' '
+      && !mod
+      && !systemFieldId
+      && nameDraft.trim() === ''
+    ) {
+      event.preventDefault();
+      reuse.summon();
+      return;
+    }
     if (
       event.ctrlKey
       && !event.metaKey
@@ -357,25 +407,56 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   const nameControl = (
     <TextInputControl
       ref={nameInputRef}
-      className={`field-name-input ${entry.completedAt ? 'done' : ''}`}
+      className={`field-name-input ${entry.completedAt ? 'done' : ''} ${systemFieldId ? 'system' : ''}`}
       data-focus-node-id={props.entryId}
       label="Field name"
-      value={nameDraft}
+      value={systemFieldId ? systemFieldLabel : nameDraft}
+      readOnly={Boolean(systemFieldId)}
       placeholder="Field name"
-      title={`${nameDraft || 'Field name'} (${fieldTypeLabel(fieldType)})`}
+      title={systemFieldId
+        ? `${systemFieldLabel} (System field)`
+        : `${nameDraft || 'Field name'} (${fieldTypeLabel(fieldType)})`}
       onFocus={() => {
+        reuse.onFocus();
         props.setUi((prev) => selectFocusState(prev, fieldNameFocusTarget));
       }}
-      onChange={(event) => setNameDraft(event.target.value)}
-      onBlur={() => void commitName()}
+      onChange={(event) => {
+        setNameDraft(event.target.value);
+        reuse.onChange();
+      }}
+      onBlur={() => {
+        reuse.onBlur();
+        void commitName();
+      }}
       onKeyDown={(event) => onKeyDown(event, 'name')}
+    />
+  );
+
+  const reusePopover = (
+    <FieldNameReusePopover
+      anchorRef={nameInputRef}
+      candidates={reuse.candidates}
+      open={reuse.open}
+      onOpenChange={(open) => { if (!open) reuse.dismiss(); }}
+      onSelect={onReuseSelect}
     />
   );
 
   const valuePlaceholder = fieldType === 'options' || fieldType === 'options_from_supertag'
     ? 'Select option'
     : 'Empty';
-  const valueControl = (
+
+  // The Done checkbox writes the owner's done state, but a locked owner (e.g. a
+  // daily-note date page) rejects `toggle_done` — render it read-only there.
+  const ownerEditable = !(props.index.byId.get(props.parentId)?.locked ?? false);
+  const valueControl = systemDisplay ? (
+    <SystemFieldValue
+      display={systemDisplay}
+      byId={props.index.byId}
+      onRoot={props.onRoot}
+      onToggleDone={ownerEditable ? () => void props.run(() => api.toggleDone(props.parentId)) : undefined}
+    />
+  ) : (
     <div className="field-value-cell">
       <FieldValueOutliner
         panelId={props.panelId}
@@ -393,11 +474,6 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
         optionField={field}
         placeholder={valuePlaceholder}
       />
-      {valueWarning && (
-        <span className="field-value-warning" title={valueWarning} aria-label={valueWarning}>
-          <WarningIcon size={ICON_SIZE.menu} />
-        </span>
-      )}
     </div>
   );
 
@@ -462,6 +538,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
           onDragEnd={row.dragHandleProps.onDragEnd}
         />
         <FieldEntryGrid name={nameControl} value={valueControl} description={description} />
+        {reusePopover}
         </>
       )}
     >

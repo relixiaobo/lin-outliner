@@ -895,6 +895,41 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       node.updatedAt = ++now;
       return nodeId;
     };
+    const reuseFieldDefinition = (entryId: string, targetDefId: string) => {
+      const entry = nodes.get(entryId);
+      const targetDef = nodes.get(targetDefId);
+      // A `sys:*` target is a read-only system field with no backing def node.
+      const isSystemField = targetDefId.startsWith('sys:');
+      if (entry?.type === 'fieldEntry' && (isSystemField || targetDef?.type === 'fieldDef')) {
+        const previousDefId = entry.fieldDefId;
+        if (previousDefId !== targetDefId) {
+          entry.fieldDefId = targetDefId;
+          entry.fieldType = isSystemField ? 'plain' : targetDef!.fieldType;
+          entry.updatedAt = ++now;
+          // A system field's value is computed from the owner, not stored — drop
+          // any value children the draft entry carried (mirrors core).
+          if (isSystemField) {
+            for (const childId of [...entry.children]) removeNode(childId);
+          }
+          if (previousDefId) {
+            const prevDef = nodes.get(previousDefId);
+            const stillReferenced = [...nodes.values()].some(
+              (other) => other.type === 'fieldEntry' && other.id !== entryId && other.fieldDefId === previousDefId,
+            );
+            if (prevDef?.type === 'fieldDef' && prevDef.parentId === ids.schema && !stillReferenced) {
+              removeNode(previousDefId);
+            }
+          }
+        }
+      }
+      return outcome({
+        nodeId: entryId,
+        parentId: entry?.parentId ?? null,
+        placement: { kind: 'all' },
+        selectAll: true,
+        surface: 'field-name',
+      });
+    };
     const setOptionalText = (node: MockNode, key: keyof MockNode, value: unknown) => {
       const normalized = typeof value === 'string' ? value.trim() : value == null ? '' : String(value);
       if (!normalized) {
@@ -997,7 +1032,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         fieldType: 'date',
       });
     }
-    makeNode(ids.today, '2026-05-13', { parentId: ids.daily, tags: [ids.dayTag] });
+    // Daily-note date pages are locked in core (`freshId('date')` + `locked: true`):
+    // you can add/edit children, but the page node itself is read-only. Mirror that
+    // so a system field owned by the date page (e.g. Done) behaves as in the app.
+    makeNode(ids.today, '2026-05-13', { parentId: ids.daily, tags: [ids.dayTag], locked: true });
     // Manual checkbox items (undone): `completedAt: 0` is the "box shown, not
     // done" sentinel, so the real `nodeShowsCheckbox` renders a checkbox the
     // done-cycling specs can toggle. `showCheckbox` is derived in `projection()`.
@@ -1505,6 +1543,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             selectAll: true,
             surface: 'field-name',
           }));
+        }
+        if (cmd === 'reuse_field_definition') {
+          return clone(reuseFieldDefinition(String(args.entryId), String(args.targetDefId)));
         }
         if (cmd === 'register_collected_option') {
           return clone(registerOption(String(args.fieldDefId), String(args.name)));
