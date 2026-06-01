@@ -409,6 +409,17 @@ Use these default desktop tokens before adding component-specific values:
   composer `8` (`--agent-composer-radius`). Use the same rule for any nested
   rounded control (a pill inside a row, a thumbnail inside a card); never pick a
   nested radius by eye.
+- **The 24pt window corner is packaged-only — QA it with `bun run app:build`,
+  not `dev:*` (D7).** The OS owns the window's outer corner; the native addon
+  (`applyMacWindowCorner`) rounds it to `--radius-window 24` only on the real
+  packaged window. A `bun run dev:*` run loads in a default-cornered Electron
+  shell, so the 24 → 16 → 8 concentric chain is *partly* unverifiable there: the
+  rail (16) and composer (8) corners render, but they are measured against a
+  window corner that is not actually 24 in dev. Any visual check of the window
+  corner itself — its radius, the OS shadow/clip, traffic-light inset, or whether
+  the rails nest correctly inside it — must use a packaged build (`bun run
+  app:build`, then install/launch the `.dmg`). Don't sign off the corner from a
+  dev screenshot.
 - Overlay shadow tokens are pure drop shadows. Floating menus, popovers,
   tooltips, and dialogs do not use a real outer border.
 - Focus uses neutral focus tokens, not brand color, unless the state is an
@@ -440,6 +451,18 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
   vibrancy + `backdrop-filter`). The content panel is the opaque layer
   (`--bg-content`) and stays fully legible. Never put a material on the content
   layer; never stack material on material.
+- **Inactive-window chrome.** When the window loses OS focus, only the chrome
+  material layer desaturates — the two floating rails — and **never** the content
+  layer, the neutral functional-state ladder (selection / hover / focus), or the
+  rose accent. Rationale: functional state is neutral by design and must stay
+  legible regardless of focus (B3), and the single rose accent is too sparse for a
+  global desaturate to read as anything but inconsistent (B4). macOS already greys
+  the native traffic lights for free (`hiddenInset`), so the CSS only reinforces
+  inactivity on the chrome glass; because the palette is near-monochrome the rail
+  rule pairs a `saturate()` drop with a slight `brightness` dip (the part that
+  actually reads as dimmed). Renderer wiring: a `window-inactive` root class fed
+  by the main process's focus/blur (`core/windowActivity.ts` → App.tsx →
+  shell.css).
 - **Functional state is neutral.** Selection, hover, active rows, and primary
   buttons use the neutral `--fill-*` ladder and neutral `--focus-ring` — not the
   brand colour and not the macOS system accent. (Raycast and Finder both keep

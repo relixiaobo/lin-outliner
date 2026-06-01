@@ -174,6 +174,14 @@ export function App() {
     setAgentSessionTitles((prev) => ({ ...prev, [event.sessionId]: title }));
   }) ?? undefined, []);
 
+  // Desaturate the chrome while the window is inactive (the macOS
+  // inactive-window convention). The main process forwards OS focus/blur; we
+  // mark the document root so shell.css can grey the rails. Default to active so
+  // the dev/browser preview (no main process) never starts greyed.
+  useEffect(() => window.lin?.onWindowActiveChange?.((active) => {
+    document.documentElement.classList.toggle('window-inactive', !active);
+  }) ?? undefined, []);
+
   const expandNodeInOutliner = useCallback((nodeId: NodeId) => {
     setUi((prev) => {
       const expanded = new Set(prev.expanded);

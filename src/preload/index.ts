@@ -3,6 +3,7 @@ import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../core/agentTy
 import { LIN_DOCUMENT_EVENT_CHANNEL, type DocumentProjectionChangedEvent } from '../core/types';
 import { windowMaterialKind } from '../core/windowMaterial';
 import { LIN_SETTINGS_CHANGED_CHANNEL } from '../core/settingsWindow';
+import { LIN_WINDOW_ACTIVE_CHANNEL } from '../core/windowActivity';
 
 export interface LinPickedLocalFile {
   entryKind?: 'file' | 'directory';
@@ -109,6 +110,15 @@ const api = {
     ipcRenderer.on(LIN_SETTINGS_CHANGED_CHANNEL, handler);
     return () => {
       ipcRenderer.removeListener(LIN_SETTINGS_CHANGED_CHANNEL, handler);
+    };
+  },
+  // The main process forwards the window's OS focus state so the chrome can
+  // desaturate while the window is inactive (the macOS inactive-window look).
+  onWindowActiveChange: (listener: (active: boolean) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, active: boolean) => listener(active);
+    ipcRenderer.on(LIN_WINDOW_ACTIVE_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(LIN_WINDOW_ACTIVE_CHANNEL, handler);
     };
   },
   getFilePath: (file: File) => webUtils.getPathForFile(file),
