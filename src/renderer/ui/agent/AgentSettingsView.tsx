@@ -11,7 +11,7 @@ import type {
   SkillDefinition,
 } from '../../api/types';
 import { api } from '../../api/client';
-import { AddIcon, ICON_SIZE, WarningIcon } from '../icons';
+import { AddIcon, ChevronLeftIcon, ChevronRightIcon, ICON_SIZE, WarningIcon } from '../icons';
 import { providerIconSvg } from './providerIcon';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { SelectControl } from '../primitives/SelectControl';
@@ -204,7 +204,17 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
   const [permissionDraft, setPermissionDraft] = useState<AgentToolPermissionSettingsView | null>(null);
   const [draft, setDraft] = useState<DraftConfig>(EMPTY_DRAFT);
   const [apiKey, setApiKey] = useState('');
-  const [category, setCategory] = useState<SettingsCategory>('providers');
+  // Category navigation history, so the window can offer macOS System Settings'
+  // back / forward (‹ ›) chrome: `stack` is the visited categories, `index` the
+  // current position. Switching to a new category truncates any forward entries
+  // and pushes; back / forward just move the index. `category` derives from it.
+  const [nav, setNav] = useState<{ stack: SettingsCategory[]; index: number }>({
+    stack: ['providers'],
+    index: 0,
+  });
+  const category = nav.stack[nav.index];
+  const canGoBack = nav.index > 0;
+  const canGoForward = nav.index < nav.stack.length - 1;
   const [creatingCustom, setCreatingCustom] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -240,12 +250,32 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     return mountedRef.current && requestId === requestRef.current;
   }
 
+  // Navigate to a category, recording history for back / forward. Re-selecting the
+  // current category is a no-op (no duplicate history entry).
+  function navigateCategory(next: SettingsCategory) {
+    setNav((current) => {
+      if (current.stack[current.index] === next) return current;
+      const stack = [...current.stack.slice(0, current.index + 1), next];
+      return { stack, index: stack.length - 1 };
+    });
+  }
+
+  function goBack() {
+    setNav((current) => (current.index > 0 ? { ...current, index: current.index - 1 } : current));
+  }
+
+  function goForward() {
+    setNav((current) =>
+      current.index < current.stack.length - 1 ? { ...current, index: current.index + 1 } : current,
+    );
+  }
+
   useEffect(() => {
     const requestId = beginRequest();
     setLoading(true);
     setError(null);
     setNotice(null);
-    setCategory('providers');
+    setNav({ stack: ['providers'], index: 0 });
     setCreatingCustom(false);
     setSheetOpen(false);
 
@@ -426,7 +456,7 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     // Only validate modelId if a providerId is actively selected/provided.
     if (providerId && !modelId) {
       setError('model is required');
-      setCategory('providers');
+      navigateCategory('providers');
       return;
     }
 
@@ -621,8 +651,32 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     <main className="settings-window" aria-labelledby="agent-settings-title">
       {/* Frameless window: this top strip is the drag region that stands in for the
           native title bar. The OS traffic lights overlay it; the rail title/nav and
-          content controls all sit below --chrome-height, so none overlaps it. */}
-      <div className="settings-drag-region" aria-hidden="true" />
+          content controls all sit below --chrome-height, so none overlaps it. The
+          back / forward arrows are no-drag DOM CHILDREN of the strip — the only
+          reliable carve-out from a drag region on macOS — anchored over the content
+          column, on the traffic-light centreline, like System Settings' toolbar. */}
+      <div className="settings-drag-region">
+        <div className="settings-history-nav">
+          <button
+            aria-label="Back"
+            className="settings-history-arrow"
+            disabled={!canGoBack}
+            onClick={goBack}
+            type="button"
+          >
+            <ChevronLeftIcon size={ICON_SIZE.toolbar} />
+          </button>
+          <button
+            aria-label="Forward"
+            className="settings-history-arrow"
+            disabled={!canGoForward}
+            onClick={goForward}
+            type="button"
+          >
+            <ChevronRightIcon size={ICON_SIZE.toolbar} />
+          </button>
+        </div>
+      </div>
       {loading ? (
         <div className="agent-settings-empty">Loading…</div>
       ) : (
@@ -635,7 +689,7 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                   aria-current={category === item.id ? 'page' : undefined}
                   className={`settings-nav-item ${category === item.id ? 'is-active' : ''}`}
                   key={item.id}
-                  onClick={() => setCategory(item.id)}
+                  onClick={() => navigateCategory(item.id)}
                   type="button"
                 >
                   <span className="settings-nav-label">{item.label}</span>

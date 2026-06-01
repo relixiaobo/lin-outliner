@@ -69,12 +69,17 @@
   text-align: left;
 }
 
-/* Hover / selection are NEUTRAL (B3/B4): the --fill-* ladder, never an accent. */
-button.inset-row-main:hover:not(:disabled) {
+/* Hover / selection are NEUTRAL (B3/B4): the --fill-* ladder, never an accent.
+   The WHOLE row carries the fill (not just the main button) so a trailing slot —
+   the ⋯ menu or a revealed "Configure" hint — never sits in an un-highlighted
+   strip beside the lit main area, which read as a seam / floating box. Hovering
+   anywhere on the row lights the whole row, the way native System Settings rows
+   do; the transparent main button lets the row fill show through. */
+.inset-row:not(.is-disabled):hover {
   background: var(--control-hover);
 }
 
-.inset-row.is-selected .inset-row-main {
+.inset-row.is-selected {
   background: var(--selection-bg);
 }
 

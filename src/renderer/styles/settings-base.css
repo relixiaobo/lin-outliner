@@ -19,9 +19,9 @@
 /* Frameless window top drag strip (no native title bar). Fixed to the window top
    so the OS traffic lights overlay it; the rail title/nav and content controls all
    start below --chrome-height, so none overlaps it. It is the topmost element in
-   the strip (z-popover, below the modal sheet) so the whole top edge drags — the
-   Electron carve-out for clickable controls only works within the same subtree, so
-   we simply keep every control out of the strip. */
+   the strip (z-popover, below the modal sheet) so the whole top edge drags. The
+   only controls allowed in the strip are the back/forward arrows below — and they
+   are no-drag DOM children, the one reliable drag-region carve-out on macOS. */
 .settings-drag-region {
   position: fixed;
   top: 0;
@@ -30,6 +30,41 @@
   z-index: var(--z-popover);
   height: var(--chrome-height);
   -webkit-app-region: drag;
+}
+
+/* Back / forward (‹ ›) toolbar arrows, like macOS System Settings. Anchored over
+   the content column (window pad + rail width + layout gap = the content's left
+   edge) and centred on the traffic-light line via --chrome-control-inset, so they
+   sit in the same band as the OS window controls. Icon-only, no box (B6): colour
+   deepens on hover, dims when there is no history to traverse. */
+.settings-history-nav {
+  position: absolute;
+  top: var(--chrome-control-inset);
+  left: calc(var(--layout-gap) + var(--sidebar-width) + var(--layout-gap));
+  display: flex;
+  gap: var(--space-1);
+  -webkit-app-region: no-drag;
+}
+
+.settings-history-arrow {
+  display: inline-flex;
+  width: var(--chrome-control-height);
+  height: var(--chrome-control-height);
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  -webkit-app-region: no-drag;
+}
+
+.settings-history-arrow:hover:not(:disabled) {
+  color: var(--text-strong);
+}
+
+.settings-history-arrow:disabled {
+  color: var(--text-disabled);
 }
 
 .agent-settings-body {

@@ -847,9 +847,11 @@ top-left padding to clear the lights + toggle. The lights never move with the
 sidebar; that fixed position is what makes the toggle feel like stable window
 chrome rather than part of the rail.
 
-**No back/forward in the chrome.** Page-history back/forward controls are
-removed; navigation is via breadcrumb path segments and the sidebar. (The date
-`‹ ›` stepper inside an outliner is calendar navigation, unrelated, and stays.)
+**No back/forward in the main-window chrome.** Page-history back/forward controls
+are removed here; navigation is via breadcrumb path segments and the sidebar. (The
+date `‹ ›` stepper inside an outliner is calendar navigation, unrelated, and stays.
+The Settings window is a different surface — it keeps System Settings' `‹ ›`
+category history; see "Settings window".)
 
 ### Workspace And Panels
 
@@ -1022,6 +1024,13 @@ not Apple chrome. We borrow the interaction, not the chrome.
   radii match the main shell exactly — `--layout-gap` float + gap, `--sidebar-width`
   rail, `--panel-radius` corners — so the rail nests concentrically inside the
   window corner (window 24 = gap 8 + rail 16, B9).
+- **Back / forward toolbar arrows.** The drag region carries macOS System Settings'
+  `‹ ›` arrows (`.settings-history-arrow`), anchored over the content column on the
+  traffic-light centreline (`--chrome-control-inset`) — they are no-drag DOM
+  children of the strip, the one reliable drag-region carve-out on macOS. They walk
+  a category visit-history stack: switching categories pushes (truncating any
+  forward entries), back / forward move the cursor; each dims (disabled) when there
+  is nothing to traverse that way. Icon-only, no box — colour deepens on hover (B6).
 - **Floating category rail + full-width list.** A left rail lists settings
   categories (Providers / Permissions / Skills / Agent Profiles). The rail is the
   app's own floating glass panel — elevated surface, soft elevation, rounded,
@@ -1048,9 +1057,13 @@ not Apple chrome. We borrow the interaction, not the chrome.
   above a rounded inset card whose rows are split by hairlines; geometry derives
   from the radius / hairline ladders (B9). Selection, hover, and focus stay
   NEUTRAL — `--fill-*` + the neutral focus ring, never the system accent (B3/B4).
-  The in-card focus ring is the inset `--outline-focus` so it is not clipped by the
-  card's `overflow: hidden`. This is the A7 foundation: Permissions / Skills can
-  adopt it later for consistency.
+  Hover / selection fill the WHOLE row (`.inset-row`), not just the main button, so
+  a trailing slot — the `⋯` menu or a revealed "Configure" hint — never sits in an
+  un-highlighted strip beside the lit main area (which read as a seam / floating
+  box); hovering anywhere lights the whole row, as native rows do. The in-card focus
+  ring is the inset `--outline-focus` so it is not clipped by the card's
+  `overflow: hidden`. This is the A7 foundation: Permissions / Skills can adopt it
+  later for consistency.
 - **Provider rows.** Providers group into "Connected" (has a credential — key,
   env, or managed) and "Available". Each row is the brand avatar as identity + the
   name; clicking it opens the config sheet. The avatar shows the vendored brand SVG

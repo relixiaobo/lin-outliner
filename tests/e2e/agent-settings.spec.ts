@@ -26,6 +26,32 @@ test.describe('agent settings window', () => {
     await expect(settings.getByRole('button', { name: 'Close' })).toHaveCount(0);
   });
 
+  test('navigates categories with the back / forward toolbar arrows', async ({ page }) => {
+    const settings = await openSettings(page);
+    const back = settings.getByRole('button', { name: 'Back' });
+    const forward = settings.getByRole('button', { name: 'Forward' });
+    // At rest (Providers, no history) both arrows are inert, like System Settings.
+    await expect(back).toBeDisabled();
+    await expect(forward).toBeDisabled();
+
+    // Visiting another category records history, so back becomes available.
+    await settings.getByRole('button', { name: /^Permissions/ }).click();
+    await expect(settings.getByRole('heading', { name: 'Tool Permissions' })).toBeVisible();
+    await expect(back).toBeEnabled();
+    await expect(forward).toBeDisabled();
+
+    // Back returns to Providers and arms forward.
+    await back.click();
+    await expect(settings.getByRole('list', { name: 'Available providers' })).toBeVisible();
+    await expect(back).toBeDisabled();
+    await expect(forward).toBeEnabled();
+
+    // Forward replays the visit.
+    await forward.click();
+    await expect(settings.getByRole('heading', { name: 'Tool Permissions' })).toBeVisible();
+    await expect(forward).toBeDisabled();
+  });
+
   test('groups providers by credential and reads status on each row', async ({ page }) => {
     const settings = await openSettings(page);
     await expect(settings.getByRole('list', { name: 'Connected providers' })).toBeVisible();
