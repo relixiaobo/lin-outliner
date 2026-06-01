@@ -14,6 +14,7 @@ import { api } from '../../api/client';
 import { AddIcon, ChevronLeftIcon, ChevronRightIcon, ICON_SIZE, WarningIcon } from '../icons';
 import { providerIconSvg } from './providerIcon';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { IconButton } from '../primitives/IconButton';
 import { SelectControl } from '../primitives/SelectControl';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
@@ -665,24 +666,29 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
           column, on the traffic-light centreline, like System Settings' toolbar. */}
       <div className="settings-drag-region">
         <div className="settings-history-nav">
-          <button
-            aria-label="Back"
-            className="settings-history-arrow"
+          {/* The same chrome control as the main window's rail toggles
+              (IconButton variant="chrome" + .rail-toggle): icon-only, colour
+              deepens on hover, no box (B6) — not a bespoke style. */}
+          <IconButton
+            className="rail-toggle"
             disabled={!canGoBack}
+            icon={ChevronLeftIcon}
+            iconSize={ICON_SIZE.toolbar}
+            label="Back"
             onClick={goBack}
-            type="button"
-          >
-            <ChevronLeftIcon size={ICON_SIZE.toolbar} />
-          </button>
-          <button
-            aria-label="Forward"
-            className="settings-history-arrow"
+            strokeWidth={1.7}
+            variant="chrome"
+          />
+          <IconButton
+            className="rail-toggle"
             disabled={!canGoForward}
+            icon={ChevronRightIcon}
+            iconSize={ICON_SIZE.toolbar}
+            label="Forward"
             onClick={goForward}
-            type="button"
-          >
-            <ChevronRightIcon size={ICON_SIZE.toolbar} />
-          </button>
+            strokeWidth={1.7}
+            variant="chrome"
+          />
         </div>
       </div>
       {loading ? (

@@ -32,39 +32,19 @@
   -webkit-app-region: drag;
 }
 
-/* Back / forward (‹ ›) toolbar arrows, like macOS System Settings. Anchored over
-   the content column (window pad + rail width + layout gap = the content's left
-   edge) and centred on the traffic-light line via --chrome-control-inset, so they
-   sit in the same band as the OS window controls. Icon-only, no box (B6): colour
-   deepens on hover, dims when there is no history to traverse. */
+/* Back / forward (‹ ›) toolbar arrows, like macOS System Settings. This is the
+   main window's chrome-control CLUSTER (mirrors .window-chrome-cluster): the
+   buttons themselves reuse the shared chrome control (.rail-toggle, below), so
+   only their position is settings-specific — anchored over the content column
+   (window pad + rail width + layout gap = the content's left edge) and centred on
+   the traffic-light line via --chrome-control-inset, in the OS window-control band. */
 .settings-history-nav {
   position: absolute;
   top: var(--chrome-control-inset);
   left: calc(var(--layout-gap) + var(--sidebar-width) + var(--layout-gap));
   display: flex;
-  gap: var(--space-1);
-  -webkit-app-region: no-drag;
-}
-
-.settings-history-arrow {
-  display: inline-flex;
-  width: var(--chrome-control-height);
-  height: var(--chrome-control-height);
   align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-tertiary);
-  -webkit-app-region: no-drag;
-}
-
-.settings-history-arrow:hover:not(:disabled) {
-  color: var(--text-strong);
-}
-
-.settings-history-arrow:disabled {
-  color: var(--text-disabled);
+  gap: var(--space-1);
 }
 
 .agent-settings-body {

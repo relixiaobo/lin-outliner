@@ -112,7 +112,7 @@ test.describe('cursor affordances', () => {
       return {
         insetRow: cursor('.inset-row-main'),
         rowMenuTrigger: cursor('.settings-row-menu-trigger'),
-        historyArrow: cursor('.settings-history-arrow'),
+        historyArrow: cursor('.settings-history-nav .rail-toggle'),
         configure: cursor('.settings-provider-configure'),
       };
     });

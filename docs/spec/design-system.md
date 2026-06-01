@@ -1025,12 +1025,17 @@ not Apple chrome. We borrow the interaction, not the chrome.
   rail, `--panel-radius` corners — so the rail nests concentrically inside the
   window corner (window 24 = gap 8 + rail 16, B9).
 - **Back / forward toolbar arrows.** The drag region carries macOS System Settings'
-  `‹ ›` arrows (`.settings-history-arrow`), anchored over the content column on the
-  traffic-light centreline (`--chrome-control-inset`) — they are no-drag DOM
-  children of the strip, the one reliable drag-region carve-out on macOS. They walk
+  `‹ ›` arrows. They reuse the SAME chrome control as the main window's rail toggles
+  — the shared `IconButton variant="chrome"` with `.rail-toggle` (icon-only, glyph
+  deepens `--text-secondary` → `--text-primary` on hover, dims to `--text-disabled`
+  when inert, no box; B6) — NOT a bespoke style. Only their placement is
+  settings-specific: the `.settings-history-nav` cluster (a sibling of
+  `.window-chrome-cluster`) anchors them over the content column on the
+  traffic-light centreline (`--chrome-control-inset`), and they are no-drag DOM
+  children of the strip — the one reliable drag-region carve-out on macOS. They walk
   a category visit-history stack: switching categories pushes (truncating any
-  forward entries), back / forward move the cursor; each dims (disabled) when there
-  is nothing to traverse that way. Icon-only, no box — colour deepens on hover (B6).
+  forward entries), back / forward move the cursor; each is disabled when there is
+  nothing to traverse that way.
 - **Floating category rail + full-width list.** A left rail lists settings
   categories (Providers / Permissions / Skills / Agent Profiles). The rail is the
   app's own floating glass panel — elevated surface, soft elevation, rounded,
