@@ -1,13 +1,24 @@
 ---
-status: in-progress
+status: done
 priority: P1
 owner: relixiaobo
 created: 2026-05-25
-updated: 2026-05-25
+updated: 2026-06-01
 ---
 
 # Node-line Editor Unification
 
+> **Done (2026-06-01, PR #64).** Phase 2b landed: `TrailingInput.tsx` (the second
+> `EditorView` and the literal drift source) is deleted, and the trailing line is
+> now the unified `OutlinerItem` draft row — one `RichTextEditor` core for both
+> real rows and the trailing slot. Its `#`/`@`/`/`/`>`/code/checkbox/image triggers
+> are re-implemented as atomic-create branches on the draft (it stays a local
+> buffer; no real node until commit). This shipped alongside the field-value
+> rework (field values are plain nodes; Enter appends the next value through the
+> same draft), so field-value editing is no longer a separate mode either. The
+> two deferred paste divergences below are resolved by construction (the trailing
+> line now runs the same paste path), with `outliner-paste-format` as the net.
+>
 > **Progress.** Phase 1 shipped (PR #11): a shared `classifyMediaPaste` helper
 > classifies the media/URL front-matter of a paste for both editors.
 >
@@ -91,7 +102,7 @@ rather than manual synchronization.
 |-------|---------|------|
 | **1. Shared paste classifier** ✅ | `classifyMediaPaste` for the image / media-URL / link-URL front-matter; both editors call it. Behavior-preserving. | low |
 | **2a. Shared view helpers** ✅ | `nodeLineView.ts`: `caretAnchor`, `selectionTextOffsets`, unified `selectionForPlacement` / `applyCursorPlacement`. Both editors delegate. Behavior-preserving (equivalence pinned by headless unit tests). | low |
-| **2b. Single `NodeLineEditor` + virtual draft slot** | One editing core (= `RichTextEditor`) rendered by both real rows and the trailing slot; the slot keeps a **local buffer** (no real node until commit) and adapts the editor's semantic callbacks to create-semantics. Eliminates the second `EditorView` — the actual drift source — without touching the document model, undo, persistence, projection, or the e2e contracts. Full contract: **`node-line-editor-step1-extraction.md`**. | high |
+| **2b. Single `NodeLineEditor` + virtual draft slot** ✅ | One editing core (= `RichTextEditor`) rendered by both real rows and the trailing slot; the slot keeps a **local buffer** (no real node until commit) and adapts the editor's semantic callbacks to create-semantics. Eliminates the second `EditorView` — the actual drift source — without touching the document model, undo, persistence, projection, or the e2e contracts. Landed in PR #64 (the trailing line is the `OutlinerItem` draft row; triggers re-implemented as `onDraftTrigger` atomic-create branches). Full contract: **`node-line-editor-step1-extraction.md`**. | high |
 
 ### Finding: trigger detection is not a safe standalone extraction
 
@@ -126,14 +137,18 @@ merge to `main` — to avoid a three-deep branch stack — and until the main ag
 can run e2e + visually verify, since the dev agent cannot. Resume by branching
 fresh from `main` for the core rewrite.
 
-## Known divergences to reconcile (deliberate, deferred)
+## Known divergences to reconcile (resolved in PR #64)
 
-- **Single-line link URL.** The inline editor linkifies a lone pasted URL; the
-  trailing input lets it flow in as text. Phase 1 preserves this (trailing
-  ignores the `linkUrl` intent). Unifying = act on `linkUrl` in both.
+Both divergences existed because the trailing line was a second editor with its
+own paste threshold. With `TrailingInput` gone and the trailing line running the
+same `RichTextEditor` paste path, they are resolved by construction; covered by
+`outliner-paste-format`.
+
+- **Single-line link URL.** The inline editor linkified a lone pasted URL; the
+  old trailing input let it flow in as text. Now both run the one paste path.
 - **Marked single-line paste.** `isPlainSingleParagraph` treats a single line
-  with marks as structured (inline intercepts) but the trailing input's
-  threshold ignores marks. Reconcile when the structured path is shared.
+  with marks as structured (inline intercepted) where the old trailing input's
+  threshold ignored marks. Now there is a single threshold.
 
 ## Constraints
 

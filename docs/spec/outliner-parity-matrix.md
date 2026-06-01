@@ -118,15 +118,22 @@ Reference sources:
 
 ## Trailing Input And Expansion
 
+Since PR #64 (node-line-editor-unification Phase 2b) the trailing line is no
+longer a separate `TrailingInput` component — it is the unified `OutlinerItem`
+draft row (`OutlinerView` appends it via `showDraft`). The behaviors below are
+preserved; they are now handled inline in the draft branches of `OutlinerItem`'s
+keymap, not the removed `resolveTrailingRow*` / `*EffectiveParent` /
+`shouldShowTrailingInput` helpers.
+
 | Event | nodex behavior | lin-outliner rule | Test coverage |
 | --- | --- | --- | --- |
-| Plain character in empty trailing input | Eager-create a real node and focus it. | `createEagerNode`. | `outliner-trailing-expand.spec.ts` |
-| Empty Enter in trailing input | Create an empty node in the current scope. | `create_empty`. | `outliner-trailing-expand.spec.ts` |
-| Tab in trailing input | Shift effective parent to the last visible child and expand it. | `indentEffectiveParent`. | `outliner-trailing-expand.spec.ts` |
-| Shift+Tab in trailing input | Return effective parent to the original scope. | `outdentEffectiveParent`. | `outliner-trailing-expand.spec.ts` |
-| Backspace in empty trailing input | Focus last visible row, or collapse empty expanded parent. | `resolveTrailingRowBackspaceIntent`. | `outliner-trailing-expand.spec.ts` |
-| Chevron on leaf node | Expand leaf to show child trailing input and focus it. | `toggleExpandOrSelect`. | `outliner-trailing-expand.spec.ts` |
-| Parent with content child | Do not render another child trailing input under that parent. | `shouldShowTrailingInput`. | `outliner-trailing-expand.spec.ts` |
+| Plain character in empty trailing draft | Eager-create a real node and focus it. | `OutlinerItem.applyTextPatch` (draft eager-materialize). | `outliner-trailing-expand.spec.ts` |
+| Empty Enter in trailing draft | Create an empty node in the current scope. | `OutlinerItem.handleEnter` draft branch (`materializeDraftAndAdvance`). | `outliner-trailing-expand.spec.ts` |
+| Tab in trailing draft | Shift effective parent to the last visible child and expand it. | `OutlinerItem.handleTab` draft branch. | `outliner-trailing-expand.spec.ts` |
+| Shift+Tab in trailing draft | Return effective parent to the original scope. | `OutlinerItem.handleTab` draft branch (shiftKey). | `outliner-trailing-expand.spec.ts` |
+| Backspace in empty trailing draft | Focus last visible row, or collapse empty expanded parent. | `OutlinerItem.handleBackspaceAtStart` draft branch. | `outliner-trailing-expand.spec.ts` |
+| Chevron on leaf node | Expand leaf to show child trailing draft and focus it. | `toggleExpandOrSelect`. | `outliner-trailing-expand.spec.ts` |
+| Parent with content child | Do not render another child trailing draft under that parent. | `OutlinerView.showDraft`. | `outliner-trailing-expand.spec.ts` |
 
 ## Implementation Rules
 

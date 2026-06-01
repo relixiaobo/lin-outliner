@@ -78,4 +78,7 @@ Not canonical:
 
 - Core parser and formatter: `src/core/dateFieldValue.ts`
 - Search date matching: `src/core/searchEngine.ts`
-- Date field UI: `src/renderer/ui/outliner/DateFieldControl.tsx`
+- Date field UI: `src/renderer/ui/outliner/DateValuePicker.tsx` — a date value is a
+  plain editable row whose picker is summoned additively (Space on an empty draft,
+  or a calendar affordance on a committed value), not a dedicated whole-field
+  control (PR #64).

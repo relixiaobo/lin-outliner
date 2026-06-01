@@ -1,12 +1,19 @@
 ---
-status: design
+status: superseded
 priority: P1
 owner: relixiaobo
 created: 2026-05-26
-updated: 2026-05-26
+updated: 2026-06-01
 ---
 
 # Node-line Editor Core — Implementation Design (Phase 2b)
+
+> **Superseded (2026-06-01).** This contract routed trigger application through a
+> single `resolveTargetId` (one command path). That approach was dropped: Phase 2b
+> shipped in PR #64 as "one *editor*, not one command path" — the trailing slot
+> stays a virtual local buffer and keeps its atomic create-and-apply trigger
+> commands, re-implemented as `onDraftTrigger` branches on the `OutlinerItem` draft.
+> Kept for historical context; see `node-line-editor-unification.md`.
 
 This is the **build contract** for Phase 2b of
 [`node-line-editor-unification.md`](node-line-editor-unification.md): the
