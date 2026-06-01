@@ -21,6 +21,7 @@ import type {
   AgentProviderSecretStatus,
   AgentProviderSettingsView,
 } from '../core/types';
+import { compareModels } from './modelRanking';
 
 const PROVIDERS_FILE = 'agent-providers.json';
 const SECRETS_FILE = 'agent-secrets.json';
@@ -48,26 +49,6 @@ const MODEL_ID_REPLACEMENTS: Record<string, Record<string, string>> = {
     'claude-3-5-haiku-20241022': 'claude-haiku-4-5',
     'claude-3-5-haiku-latest': 'claude-haiku-4-5',
   },
-};
-
-const PREFERRED_MODEL_IDS: Record<string, string[]> = {
-  anthropic: [
-    'claude-sonnet-4-5',
-    'claude-haiku-4-5',
-    'claude-sonnet-4-0',
-    'claude-3-7-sonnet-20250219',
-  ],
-  openai: [
-    'gpt-5.2',
-    'gpt-5.1',
-    'gpt-4.1',
-    'gpt-4o',
-  ],
-  google: [
-    'gemini-2.5-pro',
-    'gemini-2.5-flash',
-    'gemini-2.0-flash',
-  ],
 };
 
 const AGENT_REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
@@ -306,7 +287,7 @@ function getAvailableProviders(): AgentProviderOption[] {
         contextWindow: model.contextWindow,
         maxTokens: model.maxTokens,
       }))
-      .sort((left, right) => modelPreferenceRank(providerId, left.id) - modelPreferenceRank(providerId, right.id)),
+      .sort((left, right) => compareModels(providerId, left, right)),
   }));
 }
 
@@ -373,12 +354,6 @@ function isAgentPermissionMode(value: unknown): value is AgentRuntimeSettings['p
 
 function isAgentCacheRetention(value: unknown): value is AgentRuntimeSettings['providerCacheRetention'] {
   return typeof value === 'string' && (AGENT_CACHE_RETENTIONS as readonly string[]).includes(value);
-}
-
-function modelPreferenceRank(providerId: string, modelId: string) {
-  const preferred = PREFERRED_MODEL_IDS[providerId] ?? [];
-  const index = preferred.indexOf(modelId);
-  return index === -1 ? Number.MAX_SAFE_INTEGER : index;
 }
 
 async function readProviderFile(): Promise<ProviderConfigFile> {
