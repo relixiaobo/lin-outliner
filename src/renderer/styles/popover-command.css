@@ -24,6 +24,14 @@
   box-shadow: var(--overlay-shadow-level-2);
 }
 
+/* Groups the reuse popover into its "Fields" / "System fields" sections. */
+.popover-section-header {
+  padding: var(--space-3) var(--space-4) var(--space-1);
+  color: var(--text-tertiary);
+  font-size: var(--font-meta);
+  font-weight: 600;
+}
+
 .popover-item,
 .command-item {
   display: flex;

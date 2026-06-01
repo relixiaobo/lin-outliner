@@ -1310,6 +1310,60 @@ export class Core {
     });
   }
 
+  // Reuse an existing field definition for a field entry instead of keeping the
+  // throwaway draft def that `>` minted. The renderer calls this when the user
+  // picks a previously-created field (or a system field) from the name popover:
+  // the entry is repointed at `targetDefId`, and the orphaned draft def — a plain
+  // user fieldDef under SCHEMA_ID that nothing else references anymore — is
+  // removed so reuse never leaves a dangling empty definition behind.
+  reuseFieldDefinition(entryId: string, targetDefId: string): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      const entry = clone(requiredNode(state, entryId));
+      if (entry.type !== 'fieldEntry') {
+        throw CoreError.invalidOperation('only field entries can be relinked to a field definition');
+      }
+      // A built-in system field (`sys:*`) has no backing def node — its value is
+      // computed read-only from the owner. Any other target must resolve to a real
+      // field definition.
+      const isSystemField = isSystemFieldDefId(targetDefId);
+      if (!isSystemField) {
+        const targetDef = requiredNode(state, targetDefId);
+        if (targetDef.type !== 'fieldDef') {
+          throw CoreError.invalidOperation('relink target must be a field definition');
+        }
+      }
+      const previousDefId = entry.fieldDefId;
+      const focusOutcome = focus(entryId, { parentId: entry.parentId, surface: 'field-name', placement: { kind: 'all' } });
+      if (previousDefId === targetDefId) return focusOutcome;
+      entry.fieldDefId = targetDefId;
+      this.loro.writeNode(entry);
+      // A read-only system field's value is computed from the owner, never stored,
+      // so any value children the draft entry carried become dead nodes after the
+      // relink — drop them (mirrors clearFieldValue) so reuse leaves the entry
+      // value-clean and never resurrects a stale value as a hidden child.
+      if (isSystemField) {
+        for (const childId of [...entry.children]) this.removeSubtreeDirect(childId);
+      }
+      if (previousDefId) this.removeOrphanedFieldDefDirect(previousDefId, state, entryId);
+      return focusOutcome;
+    });
+  }
+
+  // Drop a field definition left dangling by a relink. Guards: only a plain user
+  // fieldDef directly under SCHEMA_ID (never a system node or a nested def), and
+  // only when no other field entry still references it. `stateBeforeRelink` is the
+  // pre-mutation snapshot, so the just-relinked entry is excluded by id.
+  private removeOrphanedFieldDefDirect(defId: string, stateBeforeRelink: DocumentState, relinkedEntryId: string) {
+    const def = stateBeforeRelink.nodes[defId];
+    if (!def || def.type !== 'fieldDef' || def.parentId !== SCHEMA_ID || isSystemId(defId)) return;
+    const stillReferenced = Object.values(stateBeforeRelink.nodes).some(
+      (node) => node.type === 'fieldEntry' && node.id !== relinkedEntryId && node.fieldDefId === defId,
+    );
+    if (stillReferenced) return;
+    this.removeSubtreeDirect(defId);
+  }
+
   registerCollectedOption(fieldDefId: string, name: string): CommandOutcome {
     const normalized = name.trim();
     if (!normalized) throw CoreError.invalidOperation('option name cannot be empty');
@@ -3227,6 +3281,14 @@ function isSystemId(nodeId: string) {
     TAG_WEEK_ID,
     TAG_YEAR_ID,
   ].includes(nodeId);
+}
+
+// Built-in system fields (Created / Done time / Tags / …) are addressed by a
+// `sys:` id and have no backing def node — their value is computed read-only from
+// the owner. `freshId` never mints this prefix, so it cannot collide with a real
+// field definition id.
+function isSystemFieldDefId(id: string): boolean {
+  return id.startsWith('sys:');
 }
 
 function touchNode(state: DocumentState, nodeId: string) {

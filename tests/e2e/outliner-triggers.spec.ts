@@ -1001,6 +1001,286 @@ test.describe('outliner trigger parity', () => {
     await expect(rowEditor(page, newNodeId)).toBeFocused();
   });
 
+  test('typing a field name offers an existing field to reuse and relinks on select', async ({ page }) => {
+    // Author one field named "Milestone" on `today` (a name the fixture does not
+    // seed), then commit it so its definition is a reuse candidate.
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+    const firstId = await lastTodayChildId(page);
+    if (!firstId) throw new Error('missing first field');
+    await page.keyboard.type('Milestone');
+    // The entry's def id is fixed at creation; committing only writes its text.
+    const sharedDefId = (await nodeById(page, firstId))?.fieldDefId;
+    expect(sharedDefId).toBeTruthy();
+    await page.keyboard.press('Escape');
+    await expect.poll(async () => (sharedDefId ? await nodeById(page, sharedDefId) : null)?.content.text).toBe('Milestone');
+
+    // Reuse it on a DIFFERENT node (gamma): a node may not carry the same field
+    // twice, so reuse is a cross-node gesture. Expand gamma to surface its child
+    // trailing input, then `>` mints a throwaway draft there.
+    await rowBody(page, ids.gamma).hover();
+    await row(page, ids.gamma).locator('.row-chevron-button').click();
+    await expect(trailingEditor(page, ids.gamma)).toBeFocused();
+    await page.keyboard.type('>');
+    const secondId = (await nodeById(page, ids.gamma))?.children.at(-1);
+    if (!secondId || secondId === firstId) throw new Error('missing second field');
+    const secondName = row(page, secondId).locator('.field-name-input');
+    await expect(secondName).toBeFocused();
+    const draftDefId = (await nodeById(page, secondId))?.fieldDefId;
+    expect(draftDefId).toBeTruthy();
+    expect(draftDefId).not.toBe(sharedDefId);
+
+    await page.keyboard.type('Mile');
+    const popover = page.locator('.field-name-reuse-popover');
+    await expect(popover).toBeVisible();
+    await expect(popover.getByText('Milestone', { exact: true })).toBeVisible();
+    await popover.getByText('Milestone', { exact: true }).click();
+
+    // The second entry now reuses the shared definition; its throwaway draft def
+    // is cleaned up and the popover closes.
+    await expect.poll(async () => (await nodeById(page, secondId))?.fieldDefId).toBe(sharedDefId);
+    await expect(secondName).toHaveValue('Milestone');
+    await expect.poll(async () => Boolean(await nodeById(page, draftDefId!))).toBe(false);
+    await expect(popover).toHaveCount(0);
+  });
+
+  test('Space on an empty field name summons the full reuse picker', async ({ page }) => {
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+    const fieldId = await lastTodayChildId(page);
+    if (!fieldId) throw new Error('missing field');
+    const fieldName = row(page, fieldId).locator('.field-name-input');
+    await expect(fieldName).toBeFocused();
+    await expect(fieldName).toHaveValue('');
+
+    // An empty name offers nothing on its own — the picker is opt-in.
+    await expect(page.locator('.field-name-reuse-popover')).toHaveCount(0);
+
+    // Space summons the full picker (existing fields + system fields) instead of
+    // typing a leading space into the name.
+    await page.keyboard.press('Space');
+    const popover = page.locator('.field-name-reuse-popover');
+    await expect(popover).toBeVisible();
+    await expect(popover.getByText('Status', { exact: true })).toBeVisible();
+    await expect(popover.getByText('System fields')).toBeVisible();
+    await expect(popover.getByText('Created', { exact: true })).toBeVisible();
+    // The space was swallowed by the summon, not inserted into the name.
+    await expect(fieldName).toHaveValue('');
+  });
+
+  test('a field already on the node is not offered again (no duplicate fields per node)', async ({ page }) => {
+    // Put the built-in "Created" system field on `today`.
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+    const firstId = await lastTodayChildId(page);
+    if (!firstId) throw new Error('missing first field');
+    await page.keyboard.type('Crea');
+    const popover = page.locator('.field-name-reuse-popover');
+    await expect(popover.getByText('Created', { exact: true })).toBeVisible();
+    await popover.getByText('Created', { exact: true }).click();
+    await expect.poll(async () => (await nodeById(page, firstId))?.fieldDefId).toBe('sys:createdAt');
+
+    // A second field on the SAME node must not offer "Created" again — it is
+    // already present, so the only "Crea" match is excluded and nothing opens.
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+    const secondId = await lastTodayChildId(page);
+    if (!secondId || secondId === firstId) throw new Error('missing second field');
+    await expect(row(page, secondId).locator('.field-name-input')).toBeFocused();
+    await page.keyboard.type('Crea');
+    await expect(page.locator('.field-name-reuse-popover')).toHaveCount(0);
+  });
+
+  test('a system field can be reused and renders a read-only computed value', async ({ page }) => {
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+    const fieldId = await lastTodayChildId(page);
+    if (!fieldId) throw new Error('missing field');
+    const fieldName = row(page, fieldId).locator('.field-name-input');
+    await expect(fieldName).toBeFocused();
+
+    // Typing surfaces the built-in "Created" system field under its own section.
+    await page.keyboard.type('Crea');
+    const popover = page.locator('.field-name-reuse-popover');
+    await expect(popover.getByText('System fields')).toBeVisible();
+    await expect(popover.getByText('Created', { exact: true })).toBeVisible();
+    await popover.getByText('Created', { exact: true }).click();
+
+    // The entry points at the sys field id; its name is fixed/read-only and its
+    // value is a read-only computed cell (not an editable value outliner).
+    await expect.poll(async () => (await nodeById(page, fieldId))?.fieldDefId).toBe('sys:createdAt');
+    await expect(fieldName).toHaveValue('Created');
+    await expect(fieldName).toHaveJSProperty('readOnly', true);
+    await expect(row(page, fieldId).locator('.field-value-system')).toBeVisible();
+  });
+
+  test('the Done system field toggles the owner node\'s done state on an editable node', async ({ page }) => {
+    // Reuse Done on a normal, editable node — `gamma`, a child of the (locked) day
+    // page. Expand it to surface its child trailing input, then `>` mints a draft.
+    await rowBody(page, ids.gamma).hover();
+    await row(page, ids.gamma).locator('.row-chevron-button').click();
+    await expect(trailingEditor(page, ids.gamma)).toBeFocused();
+    await page.keyboard.type('>');
+    const fieldId = (await nodeById(page, ids.gamma))?.children.at(-1);
+    if (!fieldId) throw new Error('missing field');
+    await page.keyboard.type('Done');
+    const popover = page.locator('.field-name-reuse-popover');
+    await expect(popover.getByText('Done', { exact: true })).toBeVisible();
+    await popover.getByText('Done', { exact: true }).click();
+    await expect.poll(async () => (await nodeById(page, fieldId))?.fieldDefId).toBe('sys:done');
+
+    // The value is a checkbox (not the read-only text cell), reflecting the owner
+    // node's done state — `gamma` starts undone (completedAt 0).
+    const checkbox = row(page, fieldId).locator('.field-value-cell [role="checkbox"]');
+    await expect(checkbox).toBeVisible();
+    await expect(checkbox).toHaveAttribute('aria-checked', 'false');
+    await expect(row(page, fieldId).locator('.field-value-system')).toHaveCount(0);
+
+    // Clicking it writes back: the owner node becomes done and the box checks.
+    await checkbox.click();
+    await expect(checkbox).toHaveAttribute('aria-checked', 'true');
+    await expect.poll(async () => Boolean((await nodeById(page, ids.gamma))?.completedAt)).toBe(true);
+
+    // Toggling again clears it.
+    await checkbox.click();
+    await expect(checkbox).toHaveAttribute('aria-checked', 'false');
+  });
+
+  test('the Done system field is read-only on a locked owner (daily-note date page)', async ({ page }) => {
+    // The day page (`today`) is locked, like a real `date:` page. A Done field whose
+    // owner is the page reflects state but must not toggle it: core rejects
+    // `toggle_done` on a locked node ("operation is not allowed on locked node"), so
+    // the checkbox renders read-only instead of crashing on click.
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+    const fieldId = await lastTodayChildId(page);
+    if (!fieldId) throw new Error('missing field');
+    await page.keyboard.type('Done');
+    const popover = page.locator('.field-name-reuse-popover');
+    await expect(popover.getByText('Done', { exact: true })).toBeVisible();
+    await popover.getByText('Done', { exact: true }).click();
+    await expect.poll(async () => (await nodeById(page, fieldId))?.fieldDefId).toBe('sys:done');
+
+    const checkbox = row(page, fieldId).locator('.field-value-cell [role="checkbox"]');
+    await expect(checkbox).toBeVisible();
+    await expect(checkbox).toHaveClass(/is-readonly/);
+    await expect(checkbox).toHaveAttribute('aria-readonly', 'true');
+    await expect(checkbox).toHaveAttribute('aria-checked', 'false');
+
+    // The control is inert (aria-disabled) — Playwright won't click an enabled
+    // element here, so force the click to prove it still changes nothing.
+    await checkbox.click({ force: true });
+    await expect(checkbox).toHaveAttribute('aria-checked', 'false');
+    await expect.poll(async () => Boolean((await nodeById(page, ids.today))?.completedAt)).toBe(false);
+  });
+
+  test('the Tags system field renders the owner\'s tags as colored badges', async ({ page }) => {
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+    const fieldId = await lastTodayChildId(page);
+    if (!fieldId) throw new Error('missing field');
+    await page.keyboard.type('Tags');
+    const popover = page.locator('.field-name-reuse-popover');
+    await expect(popover.getByText('Tags', { exact: true })).toBeVisible();
+    await popover.getByText('Tags', { exact: true }).click();
+    await expect.poll(async () => (await nodeById(page, fieldId))?.fieldDefId).toBe('sys:tags');
+
+    // `today` carries the "day" tag, so the value renders a colored tag badge —
+    // not comma-joined plain text.
+    const valueCell = row(page, fieldId).locator('.field-value-cell');
+    const badge = valueCell.locator('.tag-badge');
+    await expect(badge).toHaveCount(1);
+    await expect(badge).toContainText('day');
+    await expect(valueCell.locator('.field-value-system-empty')).toHaveCount(0);
+  });
+
+  test('date system fields (Created) render the value with a calendar glyph', async ({ page }) => {
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+    const fieldId = await lastTodayChildId(page);
+    if (!fieldId) throw new Error('missing field');
+    await page.keyboard.type('Crea');
+    const popover = page.locator('.field-name-reuse-popover');
+    await expect(popover.getByText('Created', { exact: true })).toBeVisible();
+    await popover.getByText('Created', { exact: true }).click();
+    await expect.poll(async () => (await nodeById(page, fieldId))?.fieldDefId).toBe('sys:createdAt');
+
+    // The date renders with its value text plus a (read-only) calendar glyph, so
+    // it reads like a date rather than bare text.
+    const dateCell = row(page, fieldId).locator('.field-value-system-date');
+    await expect(dateCell).toBeVisible();
+    await expect(dateCell).toContainText(/\d{4}-\d{2}-\d{2}/);
+    await expect(dateCell.locator('svg')).toHaveCount(1);
+  });
+
+  test('the Owner system field links to the node\'s parent', async ({ page }) => {
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+    const fieldId = await lastTodayChildId(page);
+    if (!fieldId) throw new Error('missing field');
+    await page.keyboard.type('Owner');
+    const popover = page.locator('.field-name-reuse-popover');
+    await expect(popover.getByText('Owner', { exact: true })).toBeVisible();
+    await popover.getByText('Owner', { exact: true }).click();
+    await expect.poll(async () => (await nodeById(page, fieldId))?.fieldDefId).toBe('sys:owner');
+
+    // The field is a child of `today`, whose parent is the "Daily Notes" page —
+    // Owner renders a navigable link to it, not bare text.
+    const link = row(page, fieldId).locator('.field-value-cell .field-value-link');
+    await expect(link).toHaveCount(1);
+    await expect(link).toContainText('Daily Notes');
+  });
+
+  test('the Day system field links to the containing day node\'s date', async ({ page }) => {
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+    const fieldId = await lastTodayChildId(page);
+    if (!fieldId) throw new Error('missing field');
+    await page.keyboard.type('Day');
+    const popover = page.locator('.field-name-reuse-popover');
+    await expect(popover.getByText('Day', { exact: true })).toBeVisible();
+    await popover.getByText('Day', { exact: true }).click();
+    await expect.poll(async () => (await nodeById(page, fieldId))?.fieldDefId).toBe('sys:day');
+
+    // `today` itself is the day node (tagged "day"); Day shows its date as a link
+    // with a calendar glyph.
+    const link = row(page, fieldId).locator('.field-value-cell .field-value-link');
+    await expect(link).toContainText('2026-05-13');
+    await expect(link.locator('svg')).toHaveCount(1);
+  });
+
+  test('field entry rows are not expandable (children are the value, shown in the value column)', async ({ page }) => {
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+    const fieldId = await lastTodayChildId(page);
+    if (!fieldId) throw new Error('missing field');
+
+    // The leaf-expand chevron is suppressed on field rows, so there is no
+    // affordance to open a separate child scope beyond the field's value.
+    const chevronDisplay = await row(page, fieldId)
+      .locator(':scope > .row > .row-leading > .row-chevron-button')
+      .evaluate((el) => getComputedStyle(el).display);
+    expect(chevronDisplay).toBe('none');
+  });
+
+  test('a fresh field name does not reuse: Enter keeps the user\'s own new field', async ({ page }) => {
+    const beforeChildren = await todayChildren(page);
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+    const fieldId = await lastTodayChildId(page);
+    if (!fieldId) throw new Error('missing created field');
+    const draftDefId = (await nodeById(page, fieldId))?.fieldDefId;
+
+    // A unique name has no reuse candidate, so Enter falls through to the name
+    // editor and commits the user's own field (creating a sibling row).
+    await page.keyboard.type('Milestone');
+    await expect(page.locator('.field-name-reuse-popover')).toHaveCount(0);
+    await page.keyboard.press('Enter');
+
+    await expect.poll(async () => (await nodeById(page, fieldId))?.fieldDefId).toBe(draftDefId);
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 2);
+  });
+
   test('field separators appear only on field hover or focus', async ({ page }) => {
     await trailingEditor(page).click();
     await page.keyboard.type('>');

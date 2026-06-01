@@ -1095,6 +1095,81 @@
   line-height: var(--line-content);
 }
 
+/* A read-only system field value (Created, Done time, …). Matches the editable
+   value's type metrics so it sits on the same baseline, but is not focusable. */
+.field-value-system {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 24px;
+  min-height: var(--field-value-control-height);
+  color: var(--text);
+  font-size: var(--font-content);
+  line-height: var(--line-content);
+}
+
+.field-value-system-empty {
+  color: var(--muted);
+}
+
+/* Read-only system fields render by their real type, not as bare text. Tags and
+   node-reference fields (Owner / References) wrap into chips/links; dates show the
+   value with a muted calendar glyph so they read like the editable `date` rows. */
+.field-value-system-wrap {
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.field-value-system-date {
+  gap: var(--space-1);
+}
+
+.field-value-system-date > svg,
+.field-value-link > svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+/* A navigable link surfaced by a read-only system field (Owner / References / Day).
+   It reads as the value text and reveals its link affordance on hover, without a
+   box — consistent with the native, restrained chrome. */
+.field-value-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field-value-link:hover {
+  color: var(--link);
+  text-decoration: underline;
+}
+
+/* The Tags system field renders clickable badges; reset the button chrome so they
+   match the inline `.tag-badge` chips exactly. */
+.tag-badge-button {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  font: inherit;
+  cursor: default;
+}
+
+/* A system field's name is fixed; render it slightly recessed so it reads as
+   non-editable next to authored field names. */
+.field-name-input.system {
+  color: var(--text-secondary);
+}
+
 .field-value-outliner > .row-wrap {
   width: 100%;
   transform: none;
@@ -1126,6 +1201,14 @@
   display: none;
 }
 
+/* A field entry is never expandable: its children ARE its value(s), rendered in
+   the value column — there is no separate child scope to reveal. Hide the
+   leaf-expand chevron entirely. The bullet keeps its explicit `grid-column: 3`,
+   so it stays aligned with sibling content rows. */
+.row.field-row-inline > .row-leading > .row-chevron-button {
+  display: none;
+}
+
 .field-value-outliner .row-bullet-button {
   grid-column: 3;
 }
@@ -1136,7 +1219,9 @@
   color: color-mix(in srgb, var(--text) 28%, transparent);
 }
 
-/* #16: non-blocking min/max value warning sits beside the value, never blocks it. */
+/* The field value column lets its outliner shrink within the entry grid; the
+   per-value validation warning rides inline on each value row (see
+   .field-value-hint), so the cell no longer reserves a trailing slot. */
 .field-value-cell {
   display: flex;
   align-items: flex-start;
@@ -1147,14 +1232,6 @@
 .field-value-cell > .field-value-outliner {
   flex: 1 1 auto;
   min-width: 0;
-}
-
-.field-value-warning {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  margin-top: 2px;
-  color: var(--status-warning);
 }
 
 /* Additive affordances at the trailing edge of an editable field value row: a
@@ -1170,11 +1247,13 @@
   user-select: none;
 }
 
+/* The validation hint collapses to a single warning glyph; the message itself is
+   revealed on hover (native title tooltip) instead of crowding the value row. */
 .field-value-hint {
+  display: inline-flex;
+  align-items: center;
   color: var(--status-warning);
-  font-size: var(--font-meta);
-  line-height: 1;
-  white-space: nowrap;
+  cursor: help;
 }
 
 /* Icon-only action button (open link / pick date): hover/active DEEPEN the glyph
@@ -1516,13 +1595,19 @@
   color: var(--text);
 }
 
-.typed-field-boolean:hover .checkbox-mark:not(.checked) {
+.typed-field-boolean:not(.is-readonly):hover .checkbox-mark:not(.checked) {
   border-color: color-mix(in srgb, var(--text) 42%, transparent);
   background: color-mix(in srgb, var(--text) 5%, transparent);
 }
 
-.typed-field-boolean:hover .switch-mark:not(.checked) {
+.typed-field-boolean:not(.is-readonly):hover .switch-mark:not(.checked) {
   background: color-mix(in srgb, var(--text) 18%, transparent);
+}
+
+/* A Done field on a locked owner (e.g. a daily-note date page) shows its state
+   read-only — no hover/press affordance, since toggling is rejected. */
+.typed-field-boolean.is-readonly {
+  cursor: default;
 }
 
 .typed-field-boolean:focus-visible .checkbox-mark,

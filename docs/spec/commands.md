@@ -46,8 +46,17 @@ The renderer calls them through `window.lin.invoke(...)` via
 ### Document — knowledge model (tags and fields)
 `create_tag`, `apply_tag`, `remove_tag`, `set_tag_config`, `set_field_config`,
 `create_field_def`, `create_inline_field`, `create_inline_field_after_node`,
-`register_collected_option`, `create_collected_field_option`,
-`select_field_option`, `clear_field_value`.
+`reuse_field_definition`, `register_collected_option`,
+`create_collected_field_option`, `select_field_option`, `clear_field_value`.
+
+`reuse_field_definition(entryId, targetDefId)` repoints a field entry at an
+existing definition instead of the throwaway draft `>` minted, dropping the now
+-orphaned draft def. `targetDefId` is either a real `fieldDef` node (reuse a
+user field) or a `sys:*` id (a built-in system field with no backing node — value
+derived from the owner). When `targetDefId` is a system field, the entry's stored
+value children are also dropped (the value is computed, not stored). Most system
+fields render read-only; `sys:done` is the exception — a read-write checkbox that
+toggles the owner node's done state.
 
 ### Document — references
 `add_reference`, `add_reference_conversion`, `set_reference_target`,

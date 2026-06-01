@@ -222,31 +222,30 @@ test.describe('outliner trailing input and expansion parity', () => {
     await expect(trailingEditor(page)).toBeVisible();
   });
 
-  test('Tab and Shift+Tab in empty trailing input choose the parent for the committed node', async ({ page }) => {
+  test('Tab and Shift+Tab in an empty trailing input relocate the draft without materializing', async ({ page }) => {
     await trailingEditor(page).click();
+    // Relocate (not materialize): Tab moves the empty trailing draft under the
+    // previous sibling (gamma) and expands gamma — the cursor stays in the draft,
+    // and nothing is created until text is typed.
     await page.keyboard.press('Tab');
-    // Eager: Tab materializes an empty node and indents it under the previous
-    // sibling (gamma). That is async (materialize + indent IPC), so wait for the
-    // indent to settle before typing into the now-real, focused row.
+    await expect(trailingEditor(page, ids.gamma)).toBeFocused();
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
       return projection.nodes.find((node) => node.id === ids.gamma)?.children.length;
-    }).toBe(1);
+    }).toBe(0);
+
+    // The first keystroke materializes the node under the relocated parent.
     await page.keyboard.type('Nested');
-
-    await expect.poll(async () => (await nodeByText(page, 'Nested'))?.parentId).toBe(ids.gamma);
-
-    await page.keyboard.press('Enter');
-
     await expect.poll(async () => (await nodeByText(page, 'Nested'))?.parentId).toBe(ids.gamma);
     await expect(page.getByText('Nested')).toBeVisible();
     await expect(row(page, ids.gamma).getByRole('button', { name: 'Collapse' })).toBeVisible();
 
+    // From today's trailing draft, Tab then Shift+Tab nets back to the today level,
+    // so the typed node lands under today.
     await trailingEditor(page).click();
     await page.keyboard.press('Tab');
     await page.keyboard.press('Shift+Tab');
     await page.keyboard.type('topagain');
-    await page.keyboard.press('Enter');
 
     await expect.poll(async () => (await nodeByText(page, 'topagain'))?.parentId).toBe(ids.today);
   });
