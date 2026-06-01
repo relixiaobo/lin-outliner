@@ -276,6 +276,11 @@ PR-D  native shell  ───┘ (joinable after PR-A; serializes on main.ts)
   `native-feel-remediation.md` Stage 3/4 status and the `plans/README.md:52` index
   row (Audit correction). When PR-A is green, update memory
   `stale-design-system-guard-specs`.
+- **Follow-on after PR-D:** `native-settings-redesign.md` (draft) — restyle the
+  Settings surface to the macOS System Settings interaction idiom in our tokens. It
+  consumes PR-D's `Cmd+,` → `openSettingsWindow` invocation, so it is sequenced after
+  PR-D and bundled with a perf pass; coordinate with `agent-oauth-providers.md` on the
+  shared provider credential sheet.
 - **Main-agent direct (no dev PR):** PR-0 spec reconciliation (T3) — done this
   session.
 
