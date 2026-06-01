@@ -14,6 +14,10 @@
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: var(--space-2);
   margin: 0 0 calc(var(--space-lg) + var(--space-2));
+  /* The pane breadcrumb is chrome (path + nav controls), not document text, so it
+     is not user-selectable (design-system B10 / A8). The page title editor below
+     is a separate element and stays editable/selectable. */
+  user-select: none;
   background: var(--bg-content);
   padding:
     var(--panel-content-top)

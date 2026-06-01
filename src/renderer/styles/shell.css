@@ -97,8 +97,11 @@
   right: calc(var(--layout-gap) + var(--rail-pad));
 }
 
-/* On hover a control gets a subtle centred fill tint (native toolbar-icon-button
-   affordance), concentric with its 26px box. */
+/* Icon-only chrome control: hover/active signal by DEEPENING the glyph colour,
+   with no --fill-* background (design-system B6 — icon chrome controls never wear
+   a rounded-square fill; if a fill were ever needed it must be pill/circular).
+   The base border-radius only shapes the keyboard focus ring (a box-shadow
+   outline, not a fill), which comes from the global button:focus-visible rule. */
 .rail-toggle {
   display: inline-flex;
   width: var(--chrome-control-height);
@@ -112,20 +115,9 @@
   -webkit-app-region: no-drag;
 }
 
-.rail-toggle:hover {
-  background: var(--control-hover);
-  color: var(--text-primary);
-}
-
-/* Pressed reads stronger than hover — neutral fill ladder's --fill-4, per
-   design-system.md's control state spec (rest → hover --fill-2 → pressed --fill-4). */
+.rail-toggle:hover,
 .rail-toggle:active {
-  background: var(--fill-4);
   color: var(--text-primary);
-}
-
-.rail-toggle:focus-visible {
-  box-shadow: var(--focus-ring-shadow);
 }
 
 /* When a rail is collapsed its zone sits over the pane (not the rail), so give it an
@@ -166,7 +158,11 @@
   gap: var(--space-1);
   overflow: hidden;
   border-radius: var(--radius-lg);
-  background: var(--bg);
+  /* Menu glass (design-system B5 / D2). --material-backdrop carries the PR-B
+     reduced-transparency / high-contrast opaque fallback for free. */
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
   box-shadow: var(--shadow);
   padding: var(--space-3);
   -webkit-app-region: no-drag;

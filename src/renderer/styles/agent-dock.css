@@ -157,6 +157,9 @@ button.panel-resize-handle {
   display: flex;
   height: 28px;
   flex: 0 0 28px;
+  /* Chrome header text (the dock title) is not user-selectable (design-system
+     B10 / A8); the transcript body below stays selectable. */
+  user-select: none;
   /* Sit on the SAME row as the agent toggle (a real title bar), centred on the chrome
      control line: rail top (--layout-gap) + --rail-pad + height/2 lands on the toggle's
      centre. Left inset = --rail-pad (the title aligns with the content column below).
@@ -262,7 +265,11 @@ button.panel-resize-handle {
   max-height: min(420px, calc(100vh - 128px));
   overflow: hidden;
   border-radius: var(--radius-overlay-sm);
-  background: color-mix(in srgb, var(--panel-bg) 96%, transparent);
+  /* Menu glass (design-system B5 / D2). --material-backdrop carries the PR-B
+     reduced-transparency / high-contrast opaque fallback. */
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
   box-shadow: var(--shadow);
 }
 

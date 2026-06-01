@@ -13,7 +13,9 @@
   width: min(380px, calc(100vw - 32px));
   border-radius: var(--radius-md);
   background: var(--surface);
-  box-shadow: var(--shadow);
+  /* Dialogs are level-2, deeper than menus/popovers (design-system D3). The
+     surface stays opaque (a modal dialog is not chrome glass). */
+  box-shadow: var(--overlay-shadow-level-2);
   padding: var(--space-6) var(--space-6) var(--space-6);
 }
 
@@ -70,8 +72,5 @@
   color: var(--text-on-accent);
 }
 
-.confirm-dialog-cancel:focus-visible,
-.confirm-dialog-confirm:focus-visible {
-  box-shadow: var(--focus-ring-shadow);
-}
+/* Focus ring comes from the global button:focus-visible rule (base.css). */
 

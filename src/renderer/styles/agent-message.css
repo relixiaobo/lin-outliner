@@ -44,7 +44,9 @@
   max-width: min(100%, 220px);
   align-items: center;
   gap: var(--space-1);
-  color: var(--semantic-info);
+  /* Neutral text — a file mention is a display chip, not a status or a link, so
+     it must not borrow the status-info blue (design-system B4). */
+  color: var(--text-secondary);
   line-height: inherit;
   vertical-align: baseline;
   white-space: nowrap;

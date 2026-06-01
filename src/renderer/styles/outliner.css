@@ -1177,6 +1177,11 @@
   white-space: nowrap;
 }
 
+/* Icon-only action button (open link / pick date): hover/active DEEPEN the glyph
+   colour with no --fill-* box — same family and treatment as the rail toggles
+   (design-system B6: an icon control never wears a rounded-square fill). The base
+   border-radius only shapes the keyboard focus ring, which now comes from the
+   global button:focus-visible rule (base.css). */
 .field-value-affordance {
   display: inline-flex;
   width: 22px;
@@ -1187,22 +1192,12 @@
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--muted);
-  transition: background var(--motion-fast), color var(--motion-fast);
+  transition: color var(--motion-fast);
 }
 
-.field-value-affordance:hover {
-  background: var(--control-hover);
-  color: var(--text);
-}
-
+.field-value-affordance:hover,
 .field-value-affordance:active {
-  background: var(--control-active);
-}
-
-/* base.css strips the native focus outline, so restore an explicit ring — these
-   buttons are Tab-reachable (open link / open calendar). */
-.field-value-affordance:focus-visible {
-  box-shadow: var(--focus-ring-shadow);
+  color: var(--text);
 }
 
 .field-value-node-preview.done {
@@ -1549,7 +1544,11 @@
   max-height: 240px;
   overflow-y: auto;
   border-radius: var(--radius-md);
-  background: var(--bg);
+  /* Menu glass (design-system B5 / D2). --material-backdrop carries the PR-B
+     reduced-transparency / high-contrast opaque fallback. */
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
   box-shadow: var(--shadow);
   padding: var(--space-3);
 }
@@ -1720,11 +1719,13 @@
   height: 5px;
   border-radius: var(--radius-pill);
   background: currentColor;
-  transition: transform var(--motion-fast);
+  transition: background var(--motion-fast);
 }
 
+/* Hover deepens the dot colour (resting --text-secondary -> --text-primary), no
+   transform/scale, so the row never reflows on hover (design-system B7). */
 .row-bullet-button:hover .row-bullet-dot {
-  transform: scale(1.375);
+  background: var(--text-primary);
 }
 
 .row-input {
@@ -2143,9 +2144,8 @@
   background: var(--tag-bg);
 }
 
-.tag-badge-label.clickable {
-  cursor: pointer;
-}
+/* No cursor: pointer on the tag label — the hand cursor is for content
+   hyperlinks only, not non-link controls (design-system B10 / A5). */
 
 .tag-badge-remove:hover .tag-badge-x,
 .tag-badge-remove:focus-visible .tag-badge-x {
