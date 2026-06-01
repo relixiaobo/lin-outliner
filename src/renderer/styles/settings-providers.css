@@ -109,8 +109,8 @@
 /* "Configure" button on the trailing edge of a single-action row — the macOS Wi-Fi
    "Connect" / "Details…" idiom: a quiet secondary button, hidden at rest and
    revealed on row hover / keyboard focus, that configures the provider (same as
-   clicking the row). Its rest fill is --fill-3 so it reads as a control ON TOP of
-   the row's --fill-2 hover tint; it deepens to --fill-4 on its own hover. */
+   clicking the row). Its reveal IS the row's hover locator (the row carries no fill
+   of its own): --fill-3 on the plain card, deepening to --fill-4 on its own hover. */
 .settings-provider-configure {
   border-radius: var(--radius-sm);
   background: var(--fill-3);
@@ -139,6 +139,13 @@
 .settings-provider-groups {
   display: flex;
   flex-direction: column;
+}
+
+/* Align the inset hairline with the row LABEL, leaving the 22px brand-avatar gutter
+   undivided (macOS grouped-list separators): row pad (--space-4) + avatar (22px) +
+   leading→text gap (--space-3). */
+.settings-provider-groups .inset-card {
+  --inset-separator-inset: calc(var(--space-4) + 22px + var(--space-3));
 }
 
 /* Brand avatar. The monogram fallback (no vendored logo) keeps a neutral fill so

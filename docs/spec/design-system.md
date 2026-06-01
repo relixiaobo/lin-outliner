@@ -1055,20 +1055,29 @@ not Apple chrome. We borrow the interaction, not the chrome.
   would be redundant. Rows show a trailing `⋯` menu ONLY when they have more than
   one action; a single-action row's lone "Configure" is what clicking the row
   already does, so instead it exposes a trailing **"Configure" button** — the macOS
-  Wi-Fi "Connect" / "Details" idiom: a quiet secondary control (`--fill-3` on the
-  row's `--fill-2` hover tint, deepening to `--fill-4`), hidden at rest and revealed
-  on row hover / keyboard focus, that configures the provider. Custom providers are
+  Wi-Fi "Connect" / "Details" idiom: a quiet secondary control (`--fill-3`,
+  deepening to `--fill-4` on its own hover), hidden at rest and revealed on row
+  hover / keyboard focus. Its reveal IS the row's hover locator — the row carries no
+  fill of its own — and it configures the provider. Custom providers are
   added from the last row of the Available list ("Add custom provider"), not a
   floating control.
 - **Inset grouped list (the reusable primitive).** `SettingsInsetList.tsx`
   (`InsetGroup` + a memoized `InsetRow`) renders a sentence-case section header
   above a rounded inset card whose rows are split by hairlines; geometry derives
-  from the radius / hairline ladders (B9). Selection, hover, and focus stay
-  NEUTRAL — `--fill-*` + the neutral focus ring, never the system accent (B3/B4).
-  Hover / selection fill the WHOLE row (`.inset-row`), not just the main button, so
-  a trailing slot — the `⋯` menu or a revealed "Configure" hint — never sits in an
-  un-highlighted strip beside the lit main area (which read as a seam / floating
-  box); hovering anywhere lights the whole row, as native rows do. The in-card focus
+  from the radius / hairline ladders (B9). The card is its own region by COLOUR —
+  `--bg-elevated` floating on the content base — per the surface ladder (`--bg-window`
+  < `--bg-content` < `--bg-elevated`), not by a heavy border. **Row hairlines are
+  content-aligned, not edge-to-edge** (the macOS grouped-list rule): the separator
+  is inset on the left to start at the row's content, leaving the leading
+  icon/avatar in an undivided gutter, and runs flush to the right edge. The inset is
+  one tunable token (`--inset-separator-inset`, default = the row's text padding);
+  a consumer with a leading column widens it to clear the icon (Providers →
+  pad + avatar + gap). Selection and focus stay NEUTRAL — `--fill-*` + the neutral
+  focus ring, never the system accent (B3/B4). Selection fills the WHOLE row
+  (`.inset-row`), not just the main button. Rows carry **no hover fill** — like
+  native System Settings list rows, hover reveals the row's action affordance (the
+  "Configure" button / `⋯` menu) as the locator, not a row-wide tint (which read as
+  a redundant box). The in-card focus
   ring is the inset `--outline-focus` so it is not clipped by the card's
   `overflow: hidden`. This is the A7 foundation: Permissions / Skills can adopt it
   later for consistency.

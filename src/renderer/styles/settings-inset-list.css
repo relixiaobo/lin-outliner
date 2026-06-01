@@ -48,13 +48,27 @@
 }
 
 .inset-row {
+  position: relative;
   display: flex;
   align-items: stretch;
   min-height: 40px;
 }
 
-.inset-row:not(:last-child) {
-  border-bottom: 1px solid var(--border-subtle);
+/* Content-aligned hairline (macOS): the separator is INSET on the left to start at
+   the row's content, NOT edge-to-edge — the leading icon/avatar sits in an
+   undivided gutter, the way native grouped lists divide rows. Drawn as a pseudo so
+   the inset is a single tunable token; `--inset-separator-inset` defaults to the
+   row's text padding and consumers with a leading column widen it to clear the
+   icon. Flush to the right edge; painted over the row's hover/selection fill. */
+.inset-row:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: var(--inset-separator-inset, var(--space-4));
+  height: 1px;
+  background: var(--border-subtle);
+  pointer-events: none;
 }
 
 .inset-row-main {
@@ -69,16 +83,11 @@
   text-align: left;
 }
 
-/* Hover / selection are NEUTRAL (B3/B4): the --fill-* ladder, never an accent.
-   The WHOLE row carries the fill (not just the main button) so a trailing slot —
-   the ⋯ menu or a revealed "Configure" hint — never sits in an un-highlighted
-   strip beside the lit main area, which read as a seam / floating box. Hovering
-   anywhere on the row lights the whole row, the way native System Settings rows
-   do; the transparent main button lets the row fill show through. */
-.inset-row:not(.is-disabled):hover {
-  background: var(--control-hover);
-}
-
+/* Selection is NEUTRAL (B3/B4): the --fill-* ladder, never an accent — and fills
+   the WHOLE row (`.inset-row`), not just the main button. Rows carry NO hover fill:
+   like native System Settings list rows, hover instead reveals the row's action
+   affordance (the "Configure" button / the ⋯ menu), which is itself the "this row"
+   locator — a row-wide tint on top of that just reads as a redundant box. */
 .inset-row.is-selected {
   background: var(--selection-bg);
 }
