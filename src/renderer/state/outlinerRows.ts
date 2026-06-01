@@ -1,15 +1,17 @@
 import { parseDateFieldValueRange, type FilterOperator, type NodeId, type NodeProjection, type SortDirection, type ViewMode } from '../api/types';
 import { projectFieldConfig, projectFieldTypeById } from '../../core/configProjection';
-
-export const NAME_FIELD = 'sys:name';
-export const CREATED_FIELD = 'sys:createdAt';
-export const UPDATED_FIELD = 'sys:updatedAt';
-export const DONE_FIELD = 'sys:done';
-export const DONE_AT_FIELD = 'sys:doneAt';
-export const TAGS_FIELD = 'sys:tags';
-export const REF_COUNT_FIELD = 'sys:refCount';
-export const OWNER_FIELD = 'sys:owner';
-export const DAY_FIELD = 'sys:day';
+import {
+  CREATED_FIELD,
+  DONE_AT_FIELD,
+  DONE_FIELD,
+  NAME_FIELD,
+  REF_COUNT_FIELD,
+  TAGS_FIELD,
+  UPDATED_FIELD,
+  isSystemFieldId,
+  systemFieldLabel,
+  systemFieldValues,
+} from '../../core/systemFields';
 
 const INTERNAL_NODE_TYPES = new Set<NodeProjection['type']>([
   'queryCondition',
@@ -161,29 +163,10 @@ function childText(node: NodeProjection | undefined, byId: Map<NodeId, NodeProje
 
 function fieldValuesFor(rowNode: NodeProjection, fieldId: string, byId: Map<NodeId, NodeProjection>): string[] {
   const displayed = displayNode(rowNode, byId);
+  // Name reads the node's own (possibly nested) text; every other system field is
+  // a computed projection resolved by the shared `systemFields` module.
   if (fieldId === NAME_FIELD) return [childText(displayed, byId)].filter(Boolean);
-  if (fieldId === CREATED_FIELD) return [String(displayed.createdAt)];
-  if (fieldId === UPDATED_FIELD) return [String(displayed.updatedAt)];
-  if (fieldId === DONE_FIELD) return [displayed.completedAt ? 'true' : 'false'];
-  if (fieldId === DONE_AT_FIELD) return displayed.completedAt ? [String(displayed.completedAt)] : [];
-  if (fieldId === TAGS_FIELD) {
-    return displayed.tags.map((tagId) => byId.get(tagId)?.content.text || tagId);
-  }
-  if (fieldId === REF_COUNT_FIELD) {
-    let count = 0;
-    for (const node of byId.values()) {
-      if (node.type === 'reference' && node.targetId === displayed.id) count += 1;
-    }
-    return [String(count)];
-  }
-  if (fieldId === OWNER_FIELD) {
-    const parent = displayed.parentId ? byId.get(displayed.parentId) : undefined;
-    return parent ? [nodeTitle(parent)].filter(Boolean) : [];
-  }
-  if (fieldId === DAY_FIELD) {
-    const day = nearestDayNode(displayed, byId);
-    return day ? [day.content.text.trim()].filter(Boolean) : [];
-  }
+  if (isSystemFieldId(fieldId)) return systemFieldValues(displayed, fieldId, byId);
 
   const fieldEntry = displayed.children
     .map((childId) => byId.get(childId))
@@ -490,127 +473,9 @@ export function buildOutlinerRows(
   return applyViewSettings(parent, buildChildRows(parent, byId, options), byId);
 }
 
+// A field's display label: a fixed system-field label, else the def node's title.
 export function fieldChoiceLabel(fieldId: string, byId: Map<NodeId, NodeProjection>): string {
-  if (fieldId === NAME_FIELD) return 'Name';
-  if (fieldId === CREATED_FIELD) return 'Created';
-  if (fieldId === UPDATED_FIELD) return 'Last edited';
-  if (fieldId === DONE_FIELD) return 'Done';
-  if (fieldId === DONE_AT_FIELD) return 'Done time';
-  if (fieldId === TAGS_FIELD) return 'Tags';
-  if (fieldId === REF_COUNT_FIELD) return 'References';
-  if (fieldId === OWNER_FIELD) return 'Owner';
-  if (fieldId === DAY_FIELD) return 'Day';
-  return nodeTitle(byId.get(fieldId)) || 'Field';
-}
-
-// The built-in system fields a node can carry as a read-only field (Name is
-// excluded — a node's name is its title, not a field). Their value is computed
-// from the owner; they have no backing def node.
-export const SYSTEM_FIELD_CHOICES: ReadonlyArray<{ id: string; label: string }> = [
-  { id: CREATED_FIELD, label: 'Created' },
-  { id: UPDATED_FIELD, label: 'Last edited' },
-  { id: DONE_FIELD, label: 'Done' },
-  { id: DONE_AT_FIELD, label: 'Done time' },
-  { id: TAGS_FIELD, label: 'Tags' },
-  { id: REF_COUNT_FIELD, label: 'References' },
-  { id: OWNER_FIELD, label: 'Owner' },
-  { id: DAY_FIELD, label: 'Day' },
-];
-
-export function isSystemFieldId(fieldId: string | undefined): fieldId is string {
-  return typeof fieldId === 'string' && fieldId.startsWith('sys:');
-}
-
-function formatSystemDate(raw: string | undefined): string {
-  const ms = raw ? Number(raw) : Number.NaN;
-  if (!Number.isFinite(ms) || ms <= 0) return '';
-  const date = new Date(ms);
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${date.getFullYear()}-${month}-${day}`;
-}
-
-/** A navigable node reference surfaced by a read-only system field. */
-export interface SystemFieldRef {
-  id: NodeId;
-  label: string;
-}
-
-/**
- * How a read-only system field renders on `owner` — by its real type, not as
- * bare text. Centralizes every system-field rendering decision so the row
- * component just switches on `kind`. All values are reference-resolved
- * (`displayNode`) and computed from the owner; nothing is stored.
- *
- * - `done`     — boolean checkbox (the one mutable system field).
- * - `date`     — Created / Last edited / Done time (formatted day + calendar glyph).
- * - `dayRef`   — Day: the date of the nearest `day`-tagged ancestor, navigable.
- * - `tags`     — the owner's applied tags as colored badges.
- * - `nodeRefs` — Owner (the parent node) and References (backlink sources): links.
- * - `text`     — fallback (never hit by the known system fields).
- */
-export type SystemFieldDisplay =
-  | { kind: 'done'; checked: boolean }
-  | { kind: 'date'; text: string }
-  | { kind: 'dayRef'; nodeId: NodeId | null; text: string }
-  | { kind: 'tags'; tagIds: NodeId[] }
-  | { kind: 'nodeRefs'; refs: SystemFieldRef[] }
-  | { kind: 'text'; text: string };
-
-export function systemFieldDisplay(
-  owner: NodeProjection,
-  fieldId: string,
-  byId: Map<NodeId, NodeProjection>,
-): SystemFieldDisplay {
-  const node = displayNode(owner, byId);
-  if (fieldId === DONE_FIELD) return { kind: 'done', checked: Boolean(node.completedAt) };
-  if (fieldId === CREATED_FIELD || fieldId === UPDATED_FIELD || fieldId === DONE_AT_FIELD) {
-    return { kind: 'date', text: formatSystemDate(fieldValuesFor(node, fieldId, byId)[0]) };
-  }
-  if (fieldId === TAGS_FIELD) return { kind: 'tags', tagIds: node.tags };
-  if (fieldId === OWNER_FIELD) {
-    const parent = node.parentId ? byId.get(node.parentId) : undefined;
-    return { kind: 'nodeRefs', refs: parent ? [{ id: parent.id, label: nodeTitle(parent) || 'Untitled' }] : [] };
-  }
-  if (fieldId === DAY_FIELD) {
-    const day = nearestDayNode(node, byId);
-    return { kind: 'dayRef', nodeId: day?.id ?? null, text: day ? day.content.text.trim() : '' };
-  }
-  if (fieldId === REF_COUNT_FIELD) {
-    return { kind: 'nodeRefs', refs: backlinkSources(node, byId) };
-  }
-  return { kind: 'text', text: fieldValuesFor(node, fieldId, byId).join(', ') };
-}
-
-// The nearest ancestor tagged "day" (a daily-note date node), including the node
-// itself. Mirrors the core `ancestor_day_node` auto-init resolution.
-function nearestDayNode(node: NodeProjection, byId: Map<NodeId, NodeProjection>): NodeProjection | undefined {
-  let current: NodeProjection | undefined = node;
-  const seen = new Set<NodeId>();
-  while (current && !seen.has(current.id)) {
-    seen.add(current.id);
-    if (current.tags.some((tagId) => byId.get(tagId)?.content.text.trim().toLowerCase() === 'day')) {
-      return current;
-    }
-    current = current.parentId ? byId.get(current.parentId) : undefined;
-  }
-  return undefined;
-}
-
-// Backlink sources: the (deduped) nodes that hold a reference whose target is
-// `node` — the same reference mirrors `sys:refCount` counts, surfaced as the
-// containing node so each is navigable.
-function backlinkSources(node: NodeProjection, byId: Map<NodeId, NodeProjection>): SystemFieldRef[] {
-  const refs: SystemFieldRef[] = [];
-  const seen = new Set<NodeId>();
-  for (const candidate of byId.values()) {
-    if (candidate.type !== 'reference' || candidate.targetId !== node.id) continue;
-    const source = candidate.parentId ? byId.get(candidate.parentId) : undefined;
-    if (!source || seen.has(source.id)) continue;
-    seen.add(source.id);
-    refs.push({ id: source.id, label: nodeTitle(source) || 'Untitled' });
-  }
-  return refs;
+  return systemFieldLabel(fieldId) ?? nodeTitle(byId.get(fieldId));
 }
 
 export function collectViewFieldChoices(

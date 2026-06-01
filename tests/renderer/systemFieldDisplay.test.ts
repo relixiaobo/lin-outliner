@@ -8,7 +8,8 @@ import {
   REF_COUNT_FIELD,
   TAGS_FIELD,
   systemFieldDisplay,
-} from '../../src/renderer/state/outlinerRows';
+  systemFieldValues,
+} from '../../src/core/systemFields';
 
 function node(partial: Partial<NodeProjection> & { id: string }): NodeProjection {
   return {
@@ -90,5 +91,26 @@ describe('systemFieldDisplay', () => {
   test('a node with no backlinks yields an empty References ref list', () => {
     const map = byId(node({ id: 'lonely' }));
     expect(systemFieldDisplay(map.get('lonely')!, REF_COUNT_FIELD, map)).toEqual({ kind: 'nodeRefs', refs: [] });
+  });
+});
+
+describe('systemFieldValues (sort/group/filter adapter)', () => {
+  test('dates stay raw epoch-ms strings; Done is a boolean string', () => {
+    const map = byId(node({ id: 'n', createdAt: 123, completedAt: 5 } as Partial<NodeProjection> & { id: string }));
+    expect(systemFieldValues(map.get('n')!, CREATED_FIELD, map)).toEqual(['123']);
+    expect(systemFieldValues(map.get('n')!, DONE_FIELD, map)).toEqual(['true']);
+  });
+
+  test('References reports its raw reference count, while the display dedupes sources', () => {
+    // One source node references the target twice: count is 2, deduped sources is 1.
+    const map = byId(
+      node({ id: 'target' }),
+      node({ id: 'source', content: { text: 'Src', inlineRefs: [] } as NodeProjection['content'] }),
+      node({ id: 'r1', type: 'reference', parentId: 'source', targetId: 'target' } as Partial<NodeProjection> & { id: string }),
+      node({ id: 'r2', type: 'reference', parentId: 'source', targetId: 'target' } as Partial<NodeProjection> & { id: string }),
+    );
+    expect(systemFieldValues(map.get('target')!, REF_COUNT_FIELD, map)).toEqual(['2']);
+    const display = systemFieldDisplay(map.get('target')!, REF_COUNT_FIELD, map);
+    expect(display.kind === 'nodeRefs' && display.refs).toEqual([{ id: 'source', label: 'Src' }]);
   });
 });

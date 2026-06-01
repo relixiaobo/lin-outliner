@@ -4,7 +4,7 @@ import type { NavigateRootOptions } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
 import { CalendarIcon } from '../icons';
 import { CheckboxMark } from '../primitives/CheckboxMark';
-import type { SystemFieldDisplay } from '../../state/outlinerRows';
+import type { SystemFieldDisplay } from '../../../core/systemFields';
 
 interface SystemFieldValueProps {
   display: SystemFieldDisplay;

@@ -40,12 +40,12 @@ import { fieldTypeLabel } from './fieldTypePresentation';
 import { FieldEntryGrid } from './FieldEntryGrid';
 import { FieldNameReusePopover } from './FieldNameReusePopover';
 import type { FieldReuseCandidate } from '../interactions/fieldReuseCandidates';
+import { fieldChoiceLabel } from '../../state/outlinerRows';
 import {
-  fieldChoiceLabel,
   isSystemFieldId,
   systemFieldDisplay,
   type SystemFieldDisplay,
-} from '../../state/outlinerRows';
+} from '../../../core/systemFields';
 import { SystemFieldValue } from './SystemFieldValue';
 import { useFieldNameReuse } from './useFieldNameReuse';
 import { FieldValueOutliner } from './FieldValueOutliner';

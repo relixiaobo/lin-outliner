@@ -35,12 +35,8 @@ import {
   previousVisibleRowId,
 } from '../../src/renderer/ui/interactions/outlinerStructure';
 import { resolveOutlinerDropMove } from '../../src/renderer/ui/interactions/dragDrop';
-import {
-  buildOutlinerRows,
-  DONE_FIELD,
-  hiddenFieldKey,
-  NAME_FIELD,
-} from '../../src/renderer/ui/outliner/row-model';
+import { buildOutlinerRows, hiddenFieldKey } from '../../src/renderer/ui/outliner/row-model';
+import { DONE_FIELD, NAME_FIELD } from '../../src/core/systemFields';
 import { searchQueryOutlineText, searchQuerySummaryModel } from '../../src/renderer/ui/search/SearchQuerySummaryBar';
 import { concatRichText } from '../../src/renderer/ui/editor/richTextCodec';
 

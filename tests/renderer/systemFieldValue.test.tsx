@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import { SystemFieldValue } from '../../src/renderer/ui/outliner/SystemFieldValue';
 import type { NodeId, NodeProjection } from '../../src/renderer/api/types';
-import type { SystemFieldDisplay } from '../../src/renderer/state/outlinerRows';
+import type { SystemFieldDisplay } from '../../src/core/systemFields';
 
 interface Rendered {
   cleanup: () => void;
