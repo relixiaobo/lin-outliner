@@ -25,8 +25,8 @@
     "probe:web-tools": "bun build scripts/probe-web-tools.ts --outfile scripts/.out/probe-web-tools.cjs --target node --format cjs --external electron && electron scripts/.out/probe-web-tools.cjs"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "0.75.4",
-    "@earendil-works/pi-ai": "0.75.4",
+    "@earendil-works/pi-agent-core": "0.78.0",
+    "@earendil-works/pi-ai": "0.78.0",
     "defuddle": "0.18.1",
     "linkedom": "0.18.12",
     "loro-crdt": "^1.10.6",
