@@ -240,26 +240,14 @@
   color: var(--text-strong);
 }
 
-/* Material: the rail goes translucent only when the OS provides vibrancy. */
+/* Material: the rail goes translucent only when the OS provides vibrancy. The
+   opaque fallback (prefers-reduced-transparency / prefers-contrast) and the
+   reduced-motion reset live centrally in a11y.css via a --material-* token swap +
+   one global rule, so this rail carries no per-file @media blocks. */
 :root[data-window-material] .sidebar-dock {
   background: var(--material-sidebar);
-  -webkit-backdrop-filter: blur(var(--material-blur)) saturate(var(--material-saturate));
-  backdrop-filter: blur(var(--material-blur)) saturate(var(--material-saturate));
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .sidebar-dock {
-    transition: none;
-  }
-}
-
-/* Reduced transparency → opaque seed, no blur. */
-@media (prefers-reduced-transparency: reduce) {
-  :root[data-window-material] .sidebar-dock {
-    background: var(--bg-window);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
 }
 
 .sidebar-primary-nav,

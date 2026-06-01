@@ -60,25 +60,14 @@
   transition: opacity var(--motion-fast);
 }
 
-/* Material: translucent only under OS vibrancy. */
+/* Material: translucent only under OS vibrancy. The opaque fallback for
+   prefers-reduced-transparency / prefers-contrast and the reduced-motion reset
+   both live in a11y.css (one --material-* token swap + one global rule), so this
+   rail no longer carries its own per-file @media blocks. */
 :root[data-window-material] .agent-dock.agent-dock-open {
   background: var(--material-sidebar);
-  -webkit-backdrop-filter: blur(var(--material-blur)) saturate(var(--material-saturate));
-  backdrop-filter: blur(var(--material-blur)) saturate(var(--material-saturate));
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .agent-dock {
-    transition: none;
-  }
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  :root[data-window-material] .agent-dock.agent-dock-open {
-    background: var(--bg-window);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
 }
 
 button.dock-resize-handle,

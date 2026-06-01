@@ -1,0 +1,71 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   User-preference media layer (design-system B8). One coherent place for the
+   three accessibility media queries, instead of per-file scatter:
+
+     · prefers-contrast: more         → stronger borders / text + opaque materials
+     · prefers-reduced-transparency   → opaque material fallback
+     · prefers-reduced-motion         → global animation/transition reset
+
+   How it works: everything here is a TOKEN redefinition on :root, so the whole
+   alpha-on-ink system (text, separators, outlines, focus) inverts correctly in
+   both light and dark for free — no component rules, no per-theme literals. The
+   material fallback is a single --material-* swap, so any surface that opts into
+   `var(--material-*)` + `var(--material-backdrop)` (the rails today, popovers in
+   PR-C) gets the opaque fallback with no @media block of its own.
+
+   IMPORT ORDER: this file MUST be @imported AFTER theme-dark.css. Its overrides
+   share :root specificity with the dark block, so when both match (e.g. dark +
+   high-contrast) source order decides — this layer has to come last to win.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* Shared opaque-material path. Both high-contrast and reduced-transparency drop
+   the translucency by swapping the material tokens to opaque surfaces and killing
+   the backdrop filter — defined once via the comma (OR) media query. */
+@media (prefers-contrast: more), (prefers-reduced-transparency: reduce) {
+  :root {
+    --material-sidebar: var(--bg-window);
+    --material-popover: var(--bg-elevated);
+    --material-backdrop: none;
+  }
+}
+
+/* High contrast: deepen separators/borders, lift secondary/tertiary text, and
+   strengthen the neutral focus ring. Alpha-on-ink, so this is correct in both
+   themes. (Opaque materials are handled by the shared block above.) */
+@media (prefers-contrast: more) {
+  :root {
+    /* text levels — push the quieter labels toward full contrast */
+    --text-secondary: rgb(var(--ink) / 0.72);
+    --text-tertiary: rgb(var(--ink) / 0.52);
+    --text-quaternary: rgb(var(--ink) / 0.38);
+
+    /* separators / borders gain real presence */
+    --separator: rgb(var(--ink) / 0.32);
+    --border-emphasis: rgb(var(--ink) / 0.42);
+    --border-strong: rgb(var(--ink) / 0.55);
+
+    /* inset stroke ladder bumped in step with the fills it pairs with */
+    --outline-faint: inset 0 0 0 1px rgb(var(--ink) / 0.16);
+    --outline-subtle: inset 0 0 0 1px rgb(var(--ink) / 0.24);
+    --outline-muted: inset 0 0 0 1px rgb(var(--ink) / 0.34);
+    --outline-emphasis: inset 0 0 0 1px rgb(var(--ink) / 0.45);
+
+    /* a stronger neutral focus ring (--outline-focus derives from --focus-ring) */
+    --focus-ring: rgb(var(--ink) / 0.75);
+    --focus-ring-shadow: 0 0 0 2px rgb(var(--ink) / 0.42);
+  }
+}
+
+/* Reduced motion: a single global reset replaces the previous per-file overrides.
+   0.01ms (not 0) keeps transitionend/animationend events firing; the iteration
+   cap collapses infinite loops (e.g. the reference-conversion pulse) to one. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

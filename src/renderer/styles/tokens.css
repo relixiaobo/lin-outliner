@@ -38,12 +38,15 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  /* Light is the base palette. Dark lives in theme-dark.css, activated by
-     [data-theme='dark'] on <html>. The component + shell layer is now fully
-     alpha-on-ink token-based, so dark is safe: renderer/theme.ts mirrors the OS
-     colour scheme onto data-theme (Track B / #45 extends it with a persisted
-     light/dark/system preference via nativeTheme.themeSource). */
-  color-scheme: light;
+  /* Light is the base palette; the dark @media block in theme-dark.css flips
+     --ink + a few opaque/material literals. Dark follows the OS automatically via
+     @media (prefers-color-scheme: dark) — no JS theme bridge, no first-frame
+     flash. `light dark` (not just `light`) lets the native UA controls
+     (scrollbars, form controls, native menus, date pickers) also render dark
+     under a dark OS. Track B / #45 adds an in-app light/dark/system override by
+     setting nativeTheme.themeSource in the main process; that drives
+     prefers-color-scheme for every renderer, so it needs no renderer theme code. */
+  color-scheme: light dark;
   /* ════════════════════════════════════════════════════════════════════════
      SEMANTIC FOUNDATION (design-system.md). Two themes over one ink base: every
      text/fill/separator/outline value is an alpha over --ink (black in light,
@@ -79,6 +82,13 @@
   --material-popover: rgba(250, 250, 250, 0.80);
   --material-blur: 30px;
   --material-saturate: 112%;
+  /* The shared backdrop-filter for every translucent material surface. Surfaces
+     opt in with `background: var(--material-*)` + `backdrop-filter:
+     var(--material-backdrop)`; the a11y layer (a11y.css) then swaps both tokens
+     to an opaque fallback under prefers-reduced-transparency / prefers-contrast in
+     ONE place, so each surface gets the fallback for free (no per-surface
+     @media block to reinvent). */
+  --material-backdrop: blur(var(--material-blur)) saturate(var(--material-saturate));
   --rail-edge: rgb(var(--ink) / 0.10);
 
   /* selection & focus = NEUTRAL (never brand, never system accent) */
