@@ -91,10 +91,17 @@ button:disabled {
   cursor: default;
 }
 
-button:focus,
-button:focus-visible {
+/* Suppress the ring for pointer / programmatic focus, but keep a visible neutral
+   focus ring for keyboard focus (design-system B8). This is the global default;
+   controls with their own :focus-visible treatment (higher specificity) override
+   it, so no double ring. */
+button:focus:not(:focus-visible) {
   outline: none;
   box-shadow: none;
-  -webkit-focus-ring-color: transparent;
+}
+
+button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-shadow);
 }
 

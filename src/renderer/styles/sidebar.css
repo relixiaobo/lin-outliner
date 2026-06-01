@@ -10,6 +10,9 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* The sidebar rail is navigation chrome: its labels (nav, tab names, tree row
+     titles) are not user-selectable (design-system B10 / A8). */
+  user-select: none;
   --sidebar-row-height: var(--control-size-xl);
   --sidebar-tree-chevron-width: var(--icon-size-md);
   /* The workspace tree holds the ROOT's children, so it is nested one level under the

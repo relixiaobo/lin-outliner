@@ -67,6 +67,33 @@ test.describe('cursor affordances', () => {
     expect(definitionSwitchCursor).toBe('default');
   });
 
+  test('de-pointered non-link controls never use the hand cursor (A5)', async ({ page }) => {
+    await openMockedApp(page);
+
+    // These three controls used to carry cursor: pointer even though none is a
+    // content hyperlink (an approval toggle, an approval action button, a tag
+    // label). PR-C removed the pointer; guard that it never comes back. These are
+    // class-only probes (no ancestor context), so they catch a pointer re-added to
+    // the class rule itself — not one inherited via a different selector/ancestor.
+    const cursors = await page.evaluate(() => {
+      const probe = (tag: string, className: string) => {
+        const element = document.createElement(tag);
+        element.className = className;
+        document.body.appendChild(element);
+        return getComputedStyle(element).cursor;
+      };
+      return {
+        approvalToggle: probe('button', 'agent-approval-details-toggle'),
+        approvalButton: probe('button', 'agent-approval-button'),
+        tagLabel: probe('span', 'tag-badge-label clickable'),
+      };
+    });
+
+    expect(cursors.approvalToggle).not.toBe('pointer');
+    expect(cursors.approvalButton).not.toBe('pointer');
+    expect(cursors.tagLabel).not.toBe('pointer');
+  });
+
   test('content references show the pointer cursor on hover', async ({ page }) => {
     await openMockedApp(page);
 

@@ -4,14 +4,24 @@
   z-index: var(--z-popover);
   min-width: 220px;
   border-radius: var(--radius-md);
-  background: var(--bg);
-  box-shadow: var(--shadow);
+  /* Overlay glass (design-system B5 / D2). --material-backdrop carries the PR-B
+     reduced-transparency / high-contrast opaque fallback for free. */
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
   padding: var(--space-3);
 }
 
+/* Elevation tiers (design-system D3): menus / popovers sit at level-1; the
+   command palette is a focused surface at level-2. */
 .trigger-popover {
+  box-shadow: var(--shadow);
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+.command-palette {
+  box-shadow: var(--overlay-shadow-level-2);
 }
 
 .popover-item,
@@ -38,7 +48,6 @@
 }
 
 .popover-item.disabled {
-  cursor: not-allowed;
   opacity: 0.55;
 }
 
