@@ -236,6 +236,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Native-feel component pass (CSS-only, PR-C)** — tightens the chrome to the
+  strict-native cursor/affordance policy across components. Field-value
+  affordances and rail toggles now signal hover/active by deepening color
+  (`background: transparent`, `transition: color`) instead of a `--fill-*` box
+  (B6); the row bullet deepens its dot color on hover instead of `transform:
+  scale` (B7, no layout shift); non-link controls (approval toggle/button, tag
+  label) drop `cursor: pointer` so the pointing-hand cursor is reserved for
+  content hyperlinks (A5/B10), pinned by a new `cursor-affordances` e2e guard;
+  overlays move onto the tiered elevation tokens (menus level-1, dialogs/palette
+  level-2, D3); agent chrome text is `user-select: none` (A8); and agent surfaces
+  use the semantic `--text-secondary` token (D5). No DOM/behavior changes.
+  ([#65](https://github.com/relixiaobo/lin-outliner/pull/65))
 - **Upgraded the agent core (`@earendil-works/pi-ai` + `@earendil-works/pi-agent-core`) 0.75.4 → 0.78.0.** Brings Claude Opus 4.8 model metadata + Opus adaptive-thinking (0.77.0), a provider retry/timeout overhaul (0.76.0: `maxRetries` reliably honored, SDK retries default to 0, billing-429s no longer retried), `isContextOverflow` detection fixes, Anthropic-compatible replay fixes, and session-disposal abort of in-flight agent/compaction/retry/bash work (0.77.0). Underlying provider SDKs unchanged; only new transitive dep is `@smithy/node-http-handler@4.7.3`. Type-compatible (typecheck clean); no Lin call-site changes needed (we pass `SimpleStreamOptions.maxRetries` explicitly only when configured). ([#66](https://github.com/relixiaobo/lin-outliner/pull/66))
 - **Field values no longer have a cardinality** — the single/list `FieldType`
   cardinality concept is removed end to end (`FieldCardinality`,

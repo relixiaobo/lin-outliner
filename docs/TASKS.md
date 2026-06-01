@@ -89,6 +89,17 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **native-feel component pass (PR-C)** (cc-2) — CSS-only pass tightening chrome to
+  the strict-native cursor/affordance policy: field-value affordances + rail toggles
+  signal hover/active by deepening color, not a `--fill-*` box (B6); the row bullet
+  deepens its dot color instead of `transform: scale` on hover (B7); non-link
+  controls (approval toggle/button, tag label) drop `cursor: pointer` so the
+  pointing-hand is reserved for content hyperlinks (A5/B10), pinned by a new
+  `cursor-affordances` e2e guard; overlays moved onto tiered elevation tokens (D3);
+  agent chrome text `user-select: none` (A8); agent surfaces use `--text-secondary`
+  (D5). No DOM/behavior changes. Re-review confirmed all follow-ups landed and the
+  two `workspace-layout` e2e failures are pre-existing (verified identical on the
+  merge-base), zero regression (PR #65).
 - **field-value Enter + node-line trailing unification** (cc) — field values are
   plain nodes: Enter appends the next value through the unified `OutlinerItem`
   trailing draft, completing node-line-editor-unification Phase 2b for the trailing
