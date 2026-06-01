@@ -23,12 +23,11 @@ not the chrome. Provider settings is the first and motivating section.
 
 ## Sequencing & dependency
 
-- **Blocked on PR-D** (`native-feel-ui-audit.md` → "PR-D — Native shell behaviors",
-  branch `cc/native-shell-behaviors`). PR-D wires the *invocation* mechanism — the
-  native app menu, `Cmd+,` → `openSettingsWindow`, native context menus. This
-  redesign is a **consumer** of that mechanism, so it settles **after** PR-D lands
-  (A7: foundation before consumers). Starting earlier means building the settings
-  content against a window-open path that PR-D is about to replace.
+- **Unblocked: PR-D merged (#68, 2026-06-01).** PR-D wired the *invocation* mechanism
+  — the native app menu, `Cmd+,` → `openSettingsWindow`, native context menus — which
+  this redesign consumes (A7: foundation before consumers). With PR-D on `main`, this
+  plan is now ready to start when prioritized; build the settings content against the
+  settled window-open path.
 - **Hand-off & bundling.** When PR-D is merged, coordinate with that line's dev agent
   to implement this redesign, and fold a **performance pass** into the same work (see
   *Performance* below). Open as its own `*/native-settings-redesign` branch + PR;

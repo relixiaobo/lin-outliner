@@ -89,6 +89,15 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **native shell behaviors (PR-D)** (cc-2) — completes the native-feel-ui-audit PR-D:
+  standard macOS app menu with Preferences on `Cmd+,` → settings window; native
+  right-click menu (editing/spelling on editable fields, Copy on selections) that
+  defers to the renderer's custom menus via the `preventDefault` split; inactive-window
+  rails-only desaturation over a `window-active` IPC channel; D6 prePaint colour →
+  `--bg-window` (#ececec); D7 packaged-only window-corner spec note. Menu + settings
+  window runtime-verified on the branch build (the initial "Cmd+, broken" report was a
+  wrong-build QA artifact — `dev:main` on `main` lacks PR-D; see memory
+  `parallel-clone-pr-qa-gotcha`). Unblocks `native-settings-redesign.md`. (PR #68).
 - **model registry recency ranking** (main) — replaced the stale `PREFERRED_MODEL_IDS`
   allowlist (unlisted models sank to the bottom, burying Opus 4.8 / Sonnet 4.6 and the
   `models[0]` default) with a recency-first comparator in a new pure module

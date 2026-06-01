@@ -12,6 +12,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Native shell behaviors (PR-D)** — a standard macOS application menu
+  (App / Edit / View / Window / Help) with **Preferences on `Cmd+,`** opening the
+  settings window, plus a native right-click context menu (editing roles + spelling
+  suggestions on editable fields, Copy on a selection) that fires only for the bare
+  right-clicks the renderer's own command menus leave un-`preventDefault`'d, so it
+  never double-pops over a custom menu. Dev-only View items (reload / devtools) are
+  gated to source runs. Also adds the macOS inactive-window convention: when the
+  window loses OS focus the two floating rails desaturate (rails-only, via a
+  `window-active` IPC channel — never content, selection, or the rose accent). D6:
+  the pre-paint backing colour is aligned to `--bg-window` (`#ececec`); D7: a spec
+  note that the 24pt window corner is packaged-build-only.
+  ([#68](https://github.com/relixiaobo/lin-outliner/pull/68))
+
 - **Field values create on Enter (node-based field-value editors)** — a field
   value is now a plain outliner node: Enter in a field value materializes the
   trailing draft and appends the next value through the same draft, so "everything
