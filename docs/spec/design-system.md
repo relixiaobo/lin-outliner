@@ -1049,9 +1049,12 @@ not Apple chrome. We borrow the interaction, not the chrome.
   "Connected" vs "Available" already carries connection state, so a per-row marker
   would be redundant. Rows show a trailing `⋯` menu ONLY when they have more than
   one action; a single-action row's lone "Configure" is what clicking the row
-  already does, so instead it reveals a quiet "Configure" hint on hover (the row's
-  affordance) rather than a persistent control. Custom providers are added from the
-  last row of the Available list ("Add custom provider"), not a floating control.
+  already does, so instead it exposes a trailing **"Configure" button** — the macOS
+  Wi-Fi "Connect" / "Details" idiom: a quiet secondary control (`--fill-3` on the
+  row's `--fill-2` hover tint, deepening to `--fill-4`), hidden at rest and revealed
+  on row hover / keyboard focus, that configures the provider. Custom providers are
+  added from the last row of the Available list ("Add custom provider"), not a
+  floating control.
 - **Inset grouped list (the reusable primitive).** `SettingsInsetList.tsx`
   (`InsetGroup` + a memoized `InsetRow`) renders a sentence-case section header
   above a rounded inset card whose rows are split by hairlines; geometry derives

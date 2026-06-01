@@ -113,11 +113,13 @@ test.describe('cursor affordances', () => {
         insetRow: cursor('.inset-row-main'),
         rowMenuTrigger: cursor('.settings-row-menu-trigger'),
         historyArrow: cursor('.settings-history-arrow'),
+        configure: cursor('.settings-provider-configure'),
       };
     });
     expect(listCursors.insetRow).toBe('default');
     expect(listCursors.rowMenuTrigger).toBe('default');
     expect(listCursors.historyArrow).toBe('default');
+    expect(listCursors.configure).toBe('default');
 
     // Clicking a provider row opens its config sheet; probe its action buttons.
     await settings.getByRole('button', { name: 'Anthropic, Add key' }).click();

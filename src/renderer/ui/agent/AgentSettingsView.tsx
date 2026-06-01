@@ -65,9 +65,10 @@ interface ProviderRowHandlers {
 // sheet. There is no leading status column — "Connected" vs "Available" already
 // carries that, so a per-row marker would be redundant. A trailing `⋯` appears
 // ONLY when the row has more than one action; a single-action row (just
-// "Configure", which is what clicking does) instead reveals a quiet "Configure"
-// hint on hover so the row reads as actionable. Memoized + fed stable handlers, so
-// editing one provider's sheet never re-renders the list.
+// "Configure", which is what clicking the row does) instead exposes a "Configure"
+// button on the trailing edge — the macOS Wi-Fi "Connect" / "Details…" idiom —
+// revealed on hover / focus. Memoized + fed stable handlers, so editing one
+// provider's sheet never re-renders the list.
 const SettingsProviderRow = memo(function SettingsProviderRow({
   provider,
   menuOpen,
@@ -100,7 +101,14 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
           open={menuOpen}
         />
       ) : (
-        <span className="settings-provider-hint" aria-hidden="true">Configure</span>
+        <button
+          aria-label={`Configure ${name}`}
+          className="settings-provider-configure"
+          onClick={() => handlers.onConfigure(provider.providerId)}
+          type="button"
+        >
+          Configure
+        </button>
       )}
     />
   );

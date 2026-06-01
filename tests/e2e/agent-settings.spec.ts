@@ -86,6 +86,17 @@ test.describe('agent settings window', () => {
     await expect(settings.getByRole('button', { name: 'Anthropic actions' })).toHaveCount(0);
   });
 
+  test('a single-action row exposes a Configure button that opens its sheet', async ({ page }) => {
+    const settings = await openSettings(page);
+    // The lone "Configure" action is a real trailing button (the macOS Wi-Fi
+    // "Connect" idiom), revealed on row hover — not just decorative hint text.
+    await settings.getByRole('button', { name: 'Anthropic, Add key' }).hover();
+    const configure = settings.getByRole('button', { name: 'Configure Anthropic' });
+    await expect(configure).toBeVisible();
+    await configure.click();
+    await expect(page.getByRole('dialog').getByRole('heading', { name: /Anthropic/ })).toBeVisible();
+  });
+
   test('has no provider search and keeps the custom-provider add reachable', async ({ page }) => {
     const settings = await openSettings(page);
     // Native System Settings (Wi-Fi) has no list search; custom providers are added
