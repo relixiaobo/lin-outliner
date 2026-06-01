@@ -15,7 +15,7 @@ workflow.
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | idle |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | native-settings-redesign (assigned) |
 | Codex | `lin-outliner-codex/` | — | idle |
 
 ## In progress
@@ -23,6 +23,12 @@ workflow.
 - **agent-past-chats** (P1, Codex) — `past_chats` recall tool (recent + search
   + read) backed by the event store. Recall tool and tool-UI polish landed
   (PRs #1, #4); see `docs/plans/agent-past-chats.md` for remaining scope.
+- **native-settings-redesign** (P2, cc-2) — restyle the agent Settings surface to
+  the macOS System Settings *interaction* idiom (inset grouped lists, master-detail,
+  credential sheet, on-row status) in our own tokens/B-rules, bundling a perf pass.
+  Unblocked by PR-D (#68); the IA / config-form / scope questions are now locked
+  (D-IA hybrid, D-FORM sheet+inline, D-SCOPE Providers-first). Assigned to cc-2,
+  awaiting its branch/PR. See `docs/plans/native-settings-redesign.md`.
 
 ## Backlog
 
@@ -89,6 +95,18 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **field-row UX: name reuse + read-only system fields + Tab relocate** (cc) — typing
+  a field name (or `Space` on empty) offers existing user + system fields to relink to
+  instead of always minting a fresh def (new protocol command `reuse_field_definition`;
+  `types.ts` untouched; renderer-enforced dedupe). Read-only system fields render by
+  real type (date/Tags-badges/References-Owner-Day links/Done checkbox), with Done
+  going read-only on a locked owner — fixes the locked-node toggle crash on daily-note
+  date pages. `Tab`/`Shift+Tab` on an empty trailing draft relocate it (pure focus +
+  expand, no create/indent IPC) instead of materialize→indent, killing the flicker.
+  Reviewed: typecheck clean, renderer 257/0, core.test.ts 70/0, e2e trailing-expand
+  15/15 + date-field-picker 3/3 (the 2 agentLocalTools rg failures are pre-existing).
+  Trivial both-additive `popover-command.css` conflict with PR-C #65 resolved on merge.
+  See `docs/plans/field-name-reuse.md`. (PR #70).
 - **native shell behaviors (PR-D)** (cc-2) — completes the native-feel-ui-audit PR-D:
   standard macOS app menu with Preferences on `Cmd+,` → settings window; native
   right-click menu (editing/spelling on editable fields, Copy on selections) that

@@ -12,6 +12,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Field-row UX: name reuse + read-only system fields + Tab relocate (PR #70)** —
+  typing a field name (or `Space` on an empty one) now offers a popover of existing
+  user fields + built-in system fields to relink to, instead of always minting a
+  fresh definition. Adds the protocol command `reuse_field_definition` (`commands.ts`;
+  `types.ts` untouched) that repoints the entry's `fieldDefId`, drops the orphaned
+  draft def, and clears stored value children when relinking onto a read-only system
+  field; a node can't carry the same field twice (renderer-enforced dedupe). Read-only
+  system fields now render by their real type — Created / Last-edited / Done-time as a
+  date with a calendar glyph, Tags as navigable badges, References / Owner / Day as
+  links, and Done as a checkbox that goes **read-only when the owner is locked**
+  (fixing the "operation is not allowed on locked node" crash on daily-note date
+  pages). And `Tab` / `Shift+Tab` on an empty trailing draft now **relocate** it (pure
+  focus + expand — no create, no indent IPC) instead of materializing then indenting,
+  removing the flicker and the stray empty node.
+  ([#70](https://github.com/relixiaobo/lin-outliner/pull/70))
+
 - **Native shell behaviors (PR-D)** — a standard macOS application menu
   (App / Edit / View / Window / Help) with **Preferences on `Cmd+,`** opening the
   settings window, plus a native right-click context menu (editing roles + spelling
