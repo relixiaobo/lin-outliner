@@ -23,6 +23,8 @@ export const ids = {
   priorityLow: 'option-priority-low',
   dueField: 'field-due',
   dueEntry: 'field-entry-due',
+  referencesField: 'field-references',
+  referencesEntry: 'field-entry-references',
   alpha: 'node-alpha',
   beta: 'node-beta',
   gamma: 'node-gamma',
@@ -31,6 +33,7 @@ export const ids = {
 interface MockFixtureOptions {
   dateField?: boolean;
   optionsField?: boolean;
+  referenceField?: boolean;
 }
 
 type E2EWindow = Window & {
@@ -745,6 +748,26 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       appendChild(fieldEntryId, valueId);
       return outcome({ nodeId: fieldEntryId, selectAll: false });
     };
+    // Append a reference to an arbitrary document node (the reference field picker).
+    // Unlike selectOption the target is any node, not a pool option, but the append
+    // is identical: a deduped `reference` value child. Mirrors core.addFieldReference.
+    const addFieldReference = (fieldEntryId: string, targetNodeId: string, id?: string) => {
+      const fieldEntry = nodes.get(fieldEntryId);
+      const target = nodes.get(targetNodeId);
+      if (!fieldEntry || !target) return outcome();
+      const targetId = optionTargetId(target);
+      if (fieldEntry.children.some((childId) => childId === targetId || nodes.get(childId)?.targetId === targetId)) {
+        return outcome({ nodeId: fieldEntryId, selectAll: false });
+      }
+      const valueId = id ?? `reference-value-${++sequence}`;
+      makeNode(valueId, nodes.get(targetId)?.content.text ?? target.content.text, {
+        type: 'reference',
+        parentId: fieldEntryId,
+        targetId,
+      });
+      appendChild(fieldEntryId, valueId);
+      return outcome({ nodeId: fieldEntryId, selectAll: false });
+    };
     const createCollectedOption = (fieldEntryId: string, name: string, id?: string) => {
       const fieldEntry = nodes.get(fieldEntryId);
       const normalized = name.trim();
@@ -1032,6 +1055,20 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         fieldType: 'date',
       });
     }
+    if (options.referenceField) {
+      makeNode(ids.referencesField, 'Related', {
+        type: 'fieldDef',
+        parentId: ids.schema,
+        fieldType: 'reference',
+        nullable: true,
+      });
+      makeNode(ids.referencesEntry, 'Related', {
+        type: 'fieldEntry',
+        parentId: ids.today,
+        fieldDefId: ids.referencesField,
+        fieldType: 'reference',
+      });
+    }
     // Daily-note date pages are locked in core (`freshId('date')` + `locked: true`):
     // you can add/edit children, but the page node itself is read-only. Mirror that
     // so a system field owned by the date page (e.g. Done) behaves as in the app.
@@ -1058,9 +1095,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       appendChild(ids.priorityField, ids.priorityLow);
     }
     if (options.dateField) appendChild(ids.schema, ids.dueField);
+    if (options.referenceField) appendChild(ids.schema, ids.referencesField);
     appendChild(ids.daily, ids.today);
     if (options.optionsField) appendChild(ids.today, ids.priorityEntry);
     if (options.dateField) appendChild(ids.today, ids.dueEntry);
+    if (options.referenceField) appendChild(ids.today, ids.referencesEntry);
     for (const childId of [ids.alpha, ids.beta, ids.gamma]) appendChild(ids.today, childId);
 
     Object.defineProperty(navigator, 'clipboard', {
@@ -1561,6 +1600,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone(selectOption(
             String(args.fieldEntryId),
             String(args.optionNodeId),
+            typeof args.id === 'string' ? args.id : undefined,
+          ));
+        }
+        if (cmd === 'add_field_reference') {
+          return clone(addFieldReference(
+            String(args.fieldEntryId),
+            String(args.targetNodeId),
             typeof args.id === 'string' ? args.id : undefined,
           ));
         }

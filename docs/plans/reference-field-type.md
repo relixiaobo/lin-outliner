@@ -1,9 +1,9 @@
 ---
-status: in-progress
+status: complete
 priority: P2
 owner: relixiaobo
 created: 2026-06-01
-updated: 2026-06-01
+updated: 2026-06-02
 ---
 
 # Reference field values: one reference-node model, two container modes
@@ -118,6 +118,17 @@ container suppresses the trailing draft row and per-row delete/structure ops.
   prefix needed, since the whole field is references). Selecting creates the
   reference value node.
 
+  *Implemented as `TrailingReferencePopover`* — the reference peer of
+  `TrailingOptionsPopover`: it opens on focus/typing, owns Arrow/Enter/Escape via
+  a window capture listener, and filters `buildReferenceCandidates` (the same
+  in-memory search that powers `@`) over the whole document. Picking a node calls
+  `add_field_reference` and advances to the next trailing draft. Scope is
+  **reference-an-existing-node only**: no "create" affordance and no date
+  shortcuts (a reference points at something that already exists; date values go
+  through the `date` field type). The draft's typed text is purely the search
+  query — `materializeDraft` is a no-op for a reference draft, so Enter/blur never
+  persist free text as a value.
+
 ## Open questions / to resolve in implementation
 
 - **Synthetic-node plumbing.** (Location resolved: render-time, see Decision A.)
@@ -135,21 +146,32 @@ container suppresses the trailing draft row and per-row delete/structure ops.
 
 ## Implementation checklist
 
-1. **Core projection synthesis** — synthesize read-only reference children for
-   `References` / `Owner` / `Day` from `resolveSystemField`; mark read-only.
-   Equivalence test: synthesized set == `resolveSystemField` result.
-2. **Renderer read-only reference rows** — render those via the reference-row
-   path; lock container (no trailing draft, no delete); delete `.field-value-link`;
-   keep dates/checkbox/Tags as-is.
-3. **`reference` field type — core** — `FieldType += 'reference'`; set/append/remove
-   reference-value command(s); config projection (no pool/autocollect).
-4. **`reference` field type — renderer** — registry interaction + descriptor; the
-   `@` node picker in the value row; editable container wiring.
-5. **Tests** — core (synthesis equivalence; set/append/remove reference value);
-   renderer (descriptor, picker, read-only vs editable container); e2e (References
-   renders expandable read-only reference rows that can't be added/deleted; a
-   `reference` field lets you `@`-pick and remove a node).
-6. **Docs** — fold into `spec/` (field types + `ui-behavior.md`), flip status.
+1. **[done] Read-only reference rows (render-time synthesis)** — `SystemReferenceValues`
+   synthesizes read-only `reference` child projections for `References` / `Owner` /
+   `Day` from `systemFieldDisplay` into an augmented index, rendered via the
+   reference-row path; container locked (`trailingDraft="none"`, synthetic
+   `sysref:` ids carry `locked`, so no add/delete). `OutlinerFieldRow` routes
+   node-reference system fields here; `SystemFieldValue` keeps only the scalar
+   kinds (date / tags / text / done).
+2. **[done] Delete `.field-value-link`** — node-reference values render like
+   references everywhere else; the dead `nodeRefs`/`dayRef` branches in
+   `SystemFieldValue` and the `.field-value-link` CSS are removed.
+3. **[done] `reference` field type — core** — `FieldType += 'reference'`;
+   `add_field_reference` command (append-any-node, deduped; rejects a
+   non-reference field) + `ensureReferenceFieldDef`; `EXPOSED_FIELD_TYPES +=
+   'reference'`; documentService + client wiring.
+4. **[done] `reference` field type — renderer** — registry `reference →
+   referencePicker` interaction + descriptor; `FieldValueContext.onAddReference`;
+   `TrailingReferencePopover` node-search picker in the value draft;
+   `referencePickerDraft` wiring in `OutlinerItem` (open on focus/typing,
+   suppress text triggers, `materializeDraft` no-op, `addReferenceAndAdvance`).
+5. **[done] Tests** — core (`add_field_reference` dedup + rejects non-reference);
+   renderer (`TrailingReferencePopover` filter / click / Enter / empty no-op);
+   e2e (Owner/Day render as read-only reference rows with no trailing draft; a
+   `reference` field picks an existing node by type+Enter and by click, and a
+   non-matching query never materializes a free-text value).
+6. **[done] Docs** — folded into `spec/` (field types + `ui-behavior.md`), status
+   flipped.
 
 ## Coordination
 
