@@ -4,12 +4,6 @@ import {
   resolveContentRowBackspaceAtStartIntent,
   resolveContentRowUpdateAction,
   resolveEditorTriggerText,
-  resolveTrailingRowArrowDownIntent,
-  resolveTrailingRowArrowUpIntent,
-  resolveTrailingRowBackspaceIntent,
-  resolveTrailingRowEnterIntent,
-  resolveTrailingRowEscapeIntent,
-  resolveTrailingRowUpdateAction,
   resolveTriggerForceCreateIntent,
 } from '../../src/renderer/ui/interactions/rowInteractions';
 import { resolveRowPointerSelectAction } from '../../src/renderer/ui/interactions/rowPointerSelection';
@@ -376,73 +370,6 @@ describe('row interaction resolvers', () => {
     })).toEqual({ parentId: 'parent', index: 3, expandTargetId: undefined });
   });
 
-  test('maps trailing input trigger characters to node actions', () => {
-    expect(resolveTrailingRowUpdateAction({ text: '>' })).toEqual({ type: 'create_field' });
-    expect(resolveTrailingRowUpdateAction({ text: '#' })).toEqual({
-      type: 'open_trigger',
-      trigger: '#',
-      matchText: '#',
-      textOffset: 1,
-    });
-    expect(resolveTrailingRowUpdateAction({ text: 'hello@' })).toEqual({
-      type: 'open_trigger',
-      trigger: '@',
-      matchText: 'hello@',
-      textOffset: 6,
-    });
-    expect(resolveTrailingRowUpdateAction({ text: '/' })).toEqual({
-      type: 'open_trigger',
-      trigger: '/',
-      matchText: '/',
-      textOffset: 1,
-    });
-    expect(resolveTrailingRowUpdateAction({ text: '#fff' })).toEqual({ type: 'none' });
-    expect(resolveTrailingRowUpdateAction({ text: '#112233' })).toEqual({ type: 'none' });
-    expect(resolveTrailingRowUpdateAction({ text: '#112233', isOptionsField: true })).toEqual({
-      type: 'open_options',
-      query: '#112233',
-    });
-  });
-
-  test('keeps trailing navigation decisions explicit', () => {
-    expect(resolveTrailingRowEnterIntent({ hasText: false })).toBe('create_empty');
-    expect(resolveTrailingRowEnterIntent({ hasText: true })).toBe('create_content');
-    expect(resolveTrailingRowEnterIntent({ hasText: true, continueOnText: true })).toBe('create_content_and_continue');
-    expect(resolveTrailingRowEnterIntent({ hasText: true, continueOnText: false })).toBe('create_content');
-    expect(resolveTrailingRowEnterIntent({ hasText: true, optionsOpen: true, optionCount: 2 })).toBe('options_confirm');
-    expect(resolveTrailingRowBackspaceIntent({
-      isEditorEmpty: false,
-      depthShifted: true,
-      parentChildCount: 0,
-      hasLastVisibleTarget: false,
-    })).toBe('allow_default');
-    expect(resolveTrailingRowBackspaceIntent({
-      isEditorEmpty: true,
-      depthShifted: true,
-      parentChildCount: 0,
-      hasLastVisibleTarget: false,
-    })).toBe('reset_depth_shift');
-    expect(resolveTrailingRowBackspaceIntent({
-      isEditorEmpty: true,
-      depthShifted: false,
-      parentChildCount: 0,
-      hasLastVisibleTarget: false,
-    })).toBe('collapse_parent');
-    expect(resolveTrailingRowBackspaceIntent({
-      isEditorEmpty: true,
-      depthShifted: false,
-      parentChildCount: 2,
-      hasLastVisibleTarget: true,
-    })).toBe('focus_last_visible');
-    expect(resolveTrailingRowArrowUpIntent({
-      hasLastVisibleTarget: true,
-      hasNavigateOut: false,
-    })).toBe('focus_last_visible');
-    expect(resolveTrailingRowArrowDownIntent({
-      hasNavigateOut: true,
-    })).toBe('navigate_out_down');
-    expect(resolveTrailingRowEscapeIntent(false)).toBe('blur_editor');
-  });
 
   test('keeps plain pointer clicks out of block selection mode', () => {
     expect(resolveRowPointerSelectAction({

@@ -624,6 +624,97 @@ describe('Core', () => {
     expect(values).toEqual([first, second]);
   });
 
+  test('removeFieldValue promotes an externally-referenced auto-collected value into the pool', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const tagId = mustFocus(core.createTag('Task'));
+    const templateEntryId = mustFocus(core.createFieldDef(tagId, 'Status', 'options'));
+    const fieldDefId = core.state().nodes[templateEntryId].fieldDefId!;
+    const firstNodeId = mustFocus(core.createNode(today, null, 'First'));
+    const secondNodeId = mustFocus(core.createNode(today, null, 'Second'));
+    core.applyTag(firstNodeId, tagId);
+    core.applyTag(secondNodeId, tagId);
+    const fieldEntryFor = (nodeId: string) => core.state().nodes[nodeId].children.find((childId) => {
+      const child = core.state().nodes[childId];
+      return child.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
+    })!;
+    const firstEntryId = fieldEntryFor(firstNodeId);
+    const secondEntryId = fieldEntryFor(secondNodeId);
+
+    core.createCollectedFieldOption(firstEntryId, 'Urgent');
+    const sourceValueId = core.state().nodes[firstEntryId].children[0];
+    const collectedRefId = optionChildIds(core, fieldDefId)[0];
+    core.selectFieldOption(secondEntryId, collectedRefId);
+    const secondValueId = core.state().nodes[secondEntryId].children[0];
+
+    // The source value is still referenced from the second node, so removing it from
+    // its own entry must promote it into the option pool rather than orphan the ref.
+    core.removeFieldValue(sourceValueId);
+
+    const state = core.state();
+    expect(state.nodes[firstEntryId].children).toEqual([]);
+    expect(state.nodes[sourceValueId].parentId).toBe(fieldDefId);
+    expect(state.nodes[sourceValueId].autoCollected).toBe(true);
+    expect(state.nodes[secondValueId].targetId).toBe(sourceValueId);
+    expect(optionChildIds(core, fieldDefId)).toEqual([sourceValueId]);
+  });
+
+  test('removeFieldValue drops an unreferenced auto-collected value and its pool reference', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const fieldEntryId = mustFocus(core.createInlineField(today, null, 'Tags', 'options'));
+    const fieldDefId = core.state().nodes[fieldEntryId].fieldDefId!;
+    core.createCollectedFieldOption(fieldEntryId, 'Solo');
+    const valueId = core.state().nodes[fieldEntryId].children[0];
+    expect(optionChildIds(core, fieldDefId).length).toBe(1);
+
+    core.removeFieldValue(valueId);
+
+    const state = core.state();
+    expect(state.nodes[fieldEntryId].children).toEqual([]);
+    expect(state.nodes[valueId]).toBeUndefined();
+    expect(optionChildIds(core, fieldDefId)).toEqual([]);
+  });
+
+  test('reverse done-state mapping drops the opposite mapped option instead of stacking it', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const tagId = mustFocus(core.createTag('Task'));
+    const templateEntryId = mustFocus(core.createFieldDef(tagId, 'Status', 'options'));
+    const fieldDefId = core.state().nodes[templateEntryId].fieldDefId!;
+    const doneOption = mustFocus(core.registerCollectedOption(fieldDefId, 'Done'));
+    const todoOption = mustFocus(core.registerCollectedOption(fieldDefId, 'Todo'));
+    core.setTagConfig(tagId, {
+      showCheckbox: true,
+      doneStateEnabled: true,
+      doneMapChecked: [doneOption],
+      doneMapUnchecked: [todoOption],
+    });
+    const nodeId = mustFocus(core.createNode(today, null, 'Task node'));
+    core.applyTag(nodeId, tagId);
+    const entryId = core.state().nodes[nodeId].children.find((childId) => {
+      const child = core.state().nodes[childId];
+      return child.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
+    })!;
+    const selectedTargets = () => core.state().nodes[entryId].children
+      .map((childId) => core.state().nodes[childId].targetId);
+    const isDone = () => (core.state().nodes[nodeId].completedAt ?? 0) > 0;
+
+    // Select the unchecked option, then the checked one: the field must end holding
+    // only the checked option (not both), and the node flips to done.
+    core.selectFieldOption(entryId, todoOption);
+    expect(selectedTargets()).toEqual([todoOption]);
+
+    core.selectFieldOption(entryId, doneOption);
+    expect(selectedTargets()).toEqual([doneOption]);
+    expect(isDone()).toBe(true);
+
+    // And back: selecting the unchecked option drops the checked one and clears done.
+    core.selectFieldOption(entryId, todoOption);
+    expect(selectedTargets()).toEqual([todoOption]);
+    expect(isDone()).toBe(false);
+  });
+
   test('options from supertag selects tagged nodes instead of field children', () => {
     const core = Core.new();
     const today = core.projection().todayId;

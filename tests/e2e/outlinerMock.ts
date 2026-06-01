@@ -93,7 +93,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       doneStateEnabled: boolean;
       fieldDefId?: string;
       fieldType?: string;
-      cardinality?: string;
       nullable?: boolean;
       hideField?: string;
       autoInitialize?: string;
@@ -593,7 +592,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         addScalar('doneStateEnabled', def.doneStateEnabled);
       } else if (def.type === 'fieldDef') {
         addEnum('fieldType', def.fieldType);
-        addEnum('cardinality', def.cardinality);
         addRef('sourceSupertag', def.sourceSupertag);
         addScalar('autocollectOptions', def.autocollectOptions);
         addEnumList(
@@ -732,18 +730,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       const fieldEntry = nodes.get(fieldEntryId);
       const option = nodes.get(optionNodeId);
       if (!fieldEntry || !option) return outcome();
-      const fieldDef = fieldEntry.fieldDefId ? nodes.get(fieldEntry.fieldDefId) : undefined;
-      const isList = fieldDef?.cardinality === 'list';
       const targetId = optionTargetId(option);
+      // Everything is a node: selecting an option appends a value (deduped against an
+      // already-present selection). Core no longer replaces on cardinality.
       if (fieldEntry.children.some((childId) => childId === targetId || nodes.get(childId)?.targetId === targetId)) {
         return outcome({ nodeId: fieldEntryId, selectAll: false });
-      }
-      if (!isList) {
-        if (fieldEntry.fieldDefId) removeCollectedOptionRefs(fieldEntry.fieldDefId, fieldEntry.children);
-        for (const childId of [...fieldEntry.children]) {
-          removeFromParent(childId);
-          nodes.delete(childId);
-        }
       }
       const valueId = id ?? `option-value-${++sequence}`;
       makeNode(valueId, nodes.get(targetId)?.content.text ?? option.content.text, {
@@ -764,14 +755,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         .map((childId) => nodes.get(childId))
         .find((node) => optionLabel(node).toLowerCase() === normalized.toLowerCase());
       if (existing) return selectOption(fieldEntryId, existing.id, id);
-      const isList = fieldDef.cardinality === 'list';
-      if (!isList) {
-        removeCollectedOptionRefs(fieldDef.id, fieldEntry.children);
-        for (const childId of [...fieldEntry.children]) {
-          removeFromParent(childId);
-          nodes.delete(childId);
-        }
-      }
+      // Everything is a node: each created value appends. Core no longer
+      // special-cases cardinality (the single-vs-list distinction was removed).
       const valueId = id ?? `option-value-${++sequence}`;
       makeNode(valueId, normalized, {
         parentId: fieldEntryId,
@@ -853,7 +838,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         targetId: node.targetId,
         fieldDefId: node.fieldDefId,
         fieldType: node.fieldType,
-        cardinality: node.cardinality,
         color: node.color,
         childSupertag: node.childSupertag,
         extends: node.extends,
@@ -887,7 +871,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     };
     const inlineField = (parentId: string, index: number | null, name: string, fieldType: string) => {
       const fieldDefId = `field-def-${++sequence}`;
-      makeNode(fieldDefId, name, { type: 'fieldDef', fieldType, parentId: ids.schema, cardinality: 'single', nullable: true });
+      makeNode(fieldDefId, name, { type: 'fieldDef', fieldType, parentId: ids.schema, nullable: true });
       appendChild(ids.schema, fieldDefId);
       const fieldEntryId = `field-entry-${++sequence}`;
       makeNode(fieldEntryId, '', { type: 'fieldEntry', parentId, fieldDefId, fieldType });
@@ -898,7 +882,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       const node = nodes.get(nodeId);
       if (!node?.parentId) return nodeId;
       const fieldDefId = `field-def-${++sequence}`;
-      makeNode(fieldDefId, name, { type: 'fieldDef', fieldType, parentId: ids.schema, cardinality: 'single', nullable: true });
+      makeNode(fieldDefId, name, { type: 'fieldDef', fieldType, parentId: ids.schema, nullable: true });
       appendChild(ids.schema, fieldDefId);
       node.type = 'fieldEntry';
       node.fieldDefId = fieldDefId;
@@ -980,7 +964,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       type: 'fieldDef',
       parentId: ids.schema,
       fieldType: 'plain',
-      cardinality: 'single',
       nullable: true,
     });
     if (options.optionsField) {
@@ -988,7 +971,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         type: 'fieldDef',
         parentId: ids.schema,
         fieldType: 'options',
-        cardinality: 'single',
         nullable: true,
         autocollectOptions: true,
       });
@@ -1006,7 +988,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         type: 'fieldDef',
         parentId: ids.schema,
         fieldType: 'date',
-        cardinality: 'single',
         nullable: true,
       });
       makeNode(ids.dueEntry, 'Due', {
@@ -1491,7 +1472,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               }
             }
             if ('sourceSupertag' in patch) setOptionalText(node, 'sourceSupertag', patch.sourceSupertag);
-            if ('cardinality' in patch) setOptionalText(node, 'cardinality', patch.cardinality);
             if ('nullable' in patch) {
               if (patch.nullable == null) delete node.nullable;
               else node.nullable = Boolean(patch.nullable);
@@ -2116,7 +2096,6 @@ export async function e2eProjection(page: Page): Promise<{ nodes: Array<{
   showCheckbox?: boolean;
   doneStateEnabled?: boolean;
   fieldType?: string;
-  cardinality?: string;
   nullable?: boolean;
   hideField?: string;
   autocollectOptions?: boolean;
@@ -2141,7 +2120,6 @@ export async function e2eProjection(page: Page): Promise<{ nodes: Array<{
       showCheckbox?: boolean;
       doneStateEnabled?: boolean;
       fieldType?: string;
-      cardinality?: string;
       nullable?: boolean;
       hideField?: string;
       autocollectOptions?: boolean;

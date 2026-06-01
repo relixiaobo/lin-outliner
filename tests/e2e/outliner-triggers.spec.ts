@@ -1270,6 +1270,26 @@ test.describe('outliner options field inline value', () => {
     await expect(valuePreview).toHaveText(/Low/);
   });
 
+  test('options field appends multiple selected values instead of replacing', async ({ page }) => {
+    // Everything is a node: selecting a second option appends it (no cardinality gate),
+    // so the field ends holding both values in selection order.
+    await invokeMockCommand(page, 'select_field_option', {
+      fieldEntryId: ids.priorityEntry,
+      optionNodeId: ids.priorityLow,
+    });
+    await invokeMockCommand(page, 'select_field_option', {
+      fieldEntryId: ids.priorityEntry,
+      optionNodeId: ids.priorityHigh,
+    });
+
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const entry = projection.nodes.find((node) => node.id === ids.priorityEntry);
+      return (entry?.children ?? []).map((childId) =>
+        projection.nodes.find((node) => node.id === childId)?.content.text);
+    }).toEqual(['Low', 'High']);
+  });
+
   test('selected option reference values can be changed with Arrow and Enter', async ({ page }) => {
     const valuePreview = row(page, ids.priorityEntry).locator('.field-value-node-preview');
     await invokeMockCommand(page, 'select_field_option', {

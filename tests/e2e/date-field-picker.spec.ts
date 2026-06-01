@@ -43,6 +43,19 @@ test.describe('date field picker', () => {
     await page.getByRole('button', { name: 'Select 2026-05-24' }).click();
     await expect.poll(() => dateFieldValue(page)).toBe('2026-05-20T13:45/2026-05-24T13:45');
   });
+
+  test('Space only summons the picker on an empty draft, not while typing a value', async ({ page }) => {
+    const draft = trailingEditor(page, ids.dueEntry);
+    await draft.click();
+    // A non-empty draft keeps Space literal (e.g. typing "next monday") instead of
+    // summoning the picker, so natural-language values can contain spaces.
+    await page.keyboard.type('next');
+    await page.keyboard.press('Space');
+    await page.keyboard.type('monday');
+
+    await expect(page.getByRole('dialog', { name: 'Date picker' })).toHaveCount(0);
+    await expect(draft).toHaveText('next monday');
+  });
 });
 
 async function openEmptyDatePicker(page: import('@playwright/test').Page) {

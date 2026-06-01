@@ -1009,11 +1009,47 @@ export class Core {
     if (!owner) return;
     const newDone = resolveReverseDoneMapping(state, owner, fieldDefId, optionNodeId);
     if (newDone === null) return;
-    const node = clone(owner);
-    if (nodeIsDone(node) === newDone) return;
-    applyNodeDoneState(node, newDone, nodeTagDrivenCheckbox(state, node));
+    // Done-state mapping is a binary state-sync: a mapped field must not hold both a
+    // checked-mapped and an unchecked-mapped option at once. Selecting one drops the
+    // previously-selected opposite-mapped option(s) — mirroring the forward path's
+    // clear-then-select — while any non-mapped values stay (the append model).
+    this.removeOppositeDoneMappedOptionsDirect(owner, fieldDefId, optionNodeId, newDone);
+    const refreshed = this.snapshot().nodes[ownerId];
+    if (!refreshed || nodeIsDone(refreshed) === newDone) return;
+    const node = clone(refreshed);
+    applyNodeDoneState(node, newDone, nodeTagDrivenCheckbox(this.snapshot(), node));
     node.updatedAt = nowMs();
     this.loro.writeNode(node);
+  }
+
+  /**
+   * Drop a done-mapped field's previously-selected options that map to the OPPOSITE
+   * done state from the one just selected, so the field never holds contradictory
+   * checked/unchecked options. Non-mapped values are left untouched (append model).
+   */
+  private removeOppositeDoneMappedOptionsDirect(owner: Node, fieldDefId: string, selectedOptionId: string, newDone: boolean) {
+    const state = this.snapshot();
+    const oppositeTargets = new Set<string>();
+    for (const mapping of getDoneStateMappings(state, owner)) {
+      if (mapping.fieldDefId !== fieldDefId) continue;
+      const oppositeOptionIds = newDone ? mapping.uncheckedOptionIds : mapping.checkedOptionIds;
+      for (const optionId of oppositeOptionIds) {
+        if (optionId === selectedOptionId) continue;
+        oppositeTargets.add(optionValueTargetId(state, optionId));
+      }
+    }
+    if (oppositeTargets.size === 0) return;
+    const fieldEntryId = owner.children.find((childId) => {
+      const child = state.nodes[childId];
+      return child?.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
+    });
+    if (!fieldEntryId) return;
+    for (const childId of [...state.nodes[fieldEntryId]?.children ?? []]) {
+      const child = state.nodes[childId];
+      if (child?.type === 'reference' && child.targetId && oppositeTargets.has(child.targetId)) {
+        this.removeSubtreeDirect(childId);
+      }
+    }
   }
 
   batchDuplicateNodes(nodeIds: string[]): CommandOutcome {

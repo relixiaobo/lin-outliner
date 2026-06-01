@@ -1195,6 +1195,16 @@
   color: var(--text);
 }
 
+.field-value-affordance:active {
+  background: var(--control-active);
+}
+
+/* base.css strips the native focus outline, so restore an explicit ring — these
+   buttons are Tab-reachable (open link / open calendar). */
+.field-value-affordance:focus-visible {
+  box-shadow: var(--focus-ring-shadow);
+}
+
 .field-value-node-preview.done {
   color: var(--muted);
   text-decoration: line-through;
