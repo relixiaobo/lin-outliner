@@ -3,7 +3,9 @@ import { commandCalls, installElectronMock } from './outlinerMock';
 
 // Settings render in their own window (the ?surface=settings route), not an
 // in-app modal. These tests drive that standalone surface directly and assert
-// the current provider-centric settings layout.
+// the current provider-centric settings layout: an inset grouped provider list
+// (Connected / Available) on the left, a master-detail config pane on the right,
+// and a focused credential SHEET for add/replace-key → validate.
 test.describe('agent settings window', () => {
   test('renders as a standalone window and closes through the host', async ({ page }) => {
     const settings = await openSettings(page);
@@ -24,13 +26,24 @@ test.describe('agent settings window', () => {
     expect(await page.evaluate(() => (window as unknown as { __closeCalls: number }).__closeCalls)).toBe(1);
   });
 
-  test('shows the active provider detail with model, reasoning and a configured key', async ({ page }) => {
+  test('groups providers by credential and reads status on each row', async ({ page }) => {
+    const settings = await openSettings(page);
+    // The configured provider sits under "Connected"; the rest under "Available".
+    await expect(settings.getByRole('list', { name: 'Connected providers' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Available providers' })).toBeVisible();
+    // On-row status rides the row's accessible name (avatar + name + status).
+    await expect(settings.getByRole('button', { name: 'OpenAI, Active' })).toBeVisible();
+    await expect(settings.getByRole('button', { name: 'Anthropic, Add key' })).toBeVisible();
+  });
+
+  test('shows the active provider detail with model, reasoning and a saved-key summary', async ({ page }) => {
     const settings = await openSettings(page);
     await expect(settings.getByRole('button', { name: 'OpenAI, Active' })).toBeVisible();
-    await expect(settings.getByRole('button', { name: /Anthropic/ })).toBeVisible();
-    // The configured provider's key is masked, and model/reasoning live inline.
-    await expect(settings.getByLabel('API key')).toHaveAttribute('placeholder', 'Configured (Encrypted)');
+    // The configured provider's credential is a status summary (no inline key
+    // field) with a Remove/Replace pair; model & reasoning live inline.
+    await expect(settings.getByText('Saved key')).toBeVisible();
     await expect(settings.getByRole('button', { name: 'Remove key' })).toBeEnabled();
+    await expect(settings.getByRole('button', { name: 'Replace key' })).toBeVisible();
     await expect(settings.getByRole('heading', { name: 'Model & Reasoning' })).toBeVisible();
     await expect(settings.getByLabel('Reasoning')).toBeVisible();
   });
@@ -38,54 +51,95 @@ test.describe('agent settings window', () => {
   test('filters the provider list by search and keeps Custom reachable', async ({ page }) => {
     const settings = await openSettings(page);
     await settings.getByLabel('Search providers').fill('anth');
-    await expect(settings.getByRole('button', { name: /Anthropic/ })).toBeVisible();
+    await expect(settings.getByRole('button', { name: /^Anthropic,/ })).toBeVisible();
     await expect(settings.getByRole('button', { name: 'OpenAI, Active' })).toHaveCount(0);
     // The custom-provider add button lives beside the search, outside the list.
     await expect(settings.getByRole('button', { name: 'Custom provider' })).toBeVisible();
   });
 
-  test('gates model selection behind a key and hides the provider id for known providers', async ({ page }) => {
+  test('gates model selection behind a credential entered through the sheet', async ({ page }) => {
     const settings = await openSettings(page);
 
-    // A known provider exposes no editable Provider ID and prompts for a key.
-    await settings.locator('.settings-provider-row', { hasText: 'Anthropic' }).click();
+    // A known provider with no key exposes no editable Provider ID, no inline key
+    // field, and gates model selection until a credential is saved.
+    await settings.getByRole('button', { name: 'Anthropic, Add key' }).click();
     await expect(settings.getByLabel('Provider ID')).toHaveCount(0);
-    await expect(settings.getByLabel('API key')).toHaveAttribute('placeholder', 'Paste API key');
-    await expect(settings.getByLabel('Base URL')).toHaveAttribute('placeholder', 'https://api.anthropic.com');
+    await expect(settings.getByText('No key yet')).toBeVisible();
     await expect(settings.getByLabel('Reasoning')).toHaveCount(0);
 
-    await settings.getByLabel('API key').fill('sk-ant-test');
+    // Credential entry is a focused sheet (add → validate → save).
+    await settings.getByRole('button', { name: 'Add API key' }).click();
+    const sheet = page.getByRole('dialog');
+    await expect(sheet.getByRole('heading', { name: 'Add API key' })).toBeVisible();
+    await expect(sheet.getByLabel('API key')).toHaveAttribute('placeholder', 'Paste API key');
+
+    await sheet.getByLabel('API key').fill('sk-ant-test');
+    await sheet.getByRole('button', { name: 'Save key' }).click();
+
+    // Saving persists the credential and unlocks inline model & reasoning.
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_set_provider_api_key')?.args;
+    }).toMatchObject({ providerId: 'anthropic', apiKey: 'sk-ant-test' });
     await expect(settings.getByLabel('Reasoning')).toBeVisible();
+  });
+
+  test('validates a key asynchronously in the sheet and can be cancelled', async ({ page }) => {
+    const settings = await openSettings(page);
+    await settings.getByRole('button', { name: 'Anthropic, Add key' }).click();
+    await settings.getByRole('button', { name: 'Add API key' }).click();
+    const sheet = page.getByRole('dialog');
+
+    // A good key validates to a success result; a "bad" key reports failure —
+    // without saving either (validate is a separate, non-blocking step).
+    await sheet.getByLabel('API key').fill('sk-good');
+    await sheet.getByRole('button', { name: 'Validate' }).click();
+    await expect(sheet.getByText(/Connection successful/)).toBeVisible();
+
+    await sheet.getByLabel('API key').fill('sk-bad');
+    await sheet.getByRole('button', { name: 'Validate' }).click();
+    await expect(sheet.getByText(/Invalid API key/)).toBeVisible();
+
+    // Cancel closes the sheet without persisting anything.
+    await sheet.getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    const calls = await commandCalls(page);
+    expect(calls.some((call) => call.cmd === 'agent_set_provider_api_key')).toBe(false);
   });
 
   test('shows a credential note instead of a key field for non-key providers', async ({ page }) => {
     const settings = await openSettings(page);
-    await settings.locator('.settings-provider-row', { hasText: 'Amazon Bedrock' }).click();
+    await settings.getByRole('button', { name: /^Amazon Bedrock,/ }).click();
     // No misleading key/base-url fields for an AWS-credential provider.
     await expect(settings.getByLabel('API key')).toHaveCount(0);
-    await expect(settings.getByLabel('Base URL')).toHaveCount(0);
+    await expect(settings.getByRole('button', { name: 'Add API key' })).toHaveCount(0);
     await expect(settings.getByText(/uses your AWS credentials/i)).toBeVisible();
     await expect(settings.getByRole('button', { name: /AWS credential setup/ })).toBeVisible();
   });
 
   test('lists the provider models in the model selector', async ({ page }) => {
     const settings = await openSettings(page);
-    // OpenAI exposes several models through the Model selector.
+    // OpenAI exposes several models through the Model selector, and surfaces the
+    // recency-ranked flagship as a hint.
     const model = settings.getByRole('combobox', { name: 'Model' });
     await expect(model).toBeVisible();
     await expect(model).toContainText('GPT-5.4');
     await expect(model).toContainText('GPT-5.4 Mini');
+    await expect(settings.getByText('Latest: GPT-5.4')).toBeVisible();
   });
 
-  test('toggles API key visibility', async ({ page }) => {
+  test('toggles API key visibility in the sheet', async ({ page }) => {
     const settings = await openSettings(page);
-    const key = settings.getByLabel('API key');
+    await settings.getByRole('button', { name: 'Anthropic, Add key' }).click();
+    await settings.getByRole('button', { name: 'Add API key' }).click();
+    const sheet = page.getByRole('dialog');
+    const key = sheet.getByLabel('API key');
     await expect(key).toHaveAttribute('type', 'password');
 
-    await settings.getByRole('button', { name: 'Show key' }).click();
+    await sheet.getByRole('button', { name: 'Show key' }).click();
     await expect(key).toHaveAttribute('type', 'text');
 
-    await settings.getByRole('button', { name: 'Hide key' }).click();
+    await sheet.getByRole('button', { name: 'Hide key' }).click();
     await expect(key).toHaveAttribute('type', 'password');
   });
 
@@ -137,6 +191,6 @@ async function openSettings(page: Page): Promise<Locator> {
   await expect(settings).toBeVisible();
   // The window shows a "Loading..." state until the async provider fetch
   // resolves; wait for the loaded content so assertions don't race it.
-  await expect(settings.locator('.settings-provider-row').first()).toBeVisible();
+  await expect(settings.locator('.inset-row').first()).toBeVisible();
   return settings;
 }

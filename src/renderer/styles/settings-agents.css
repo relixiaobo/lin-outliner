@@ -225,7 +225,7 @@
     border-bottom: 1px solid var(--border-subtle);
   }
 
-  .settings-provider-list {
+  .settings-provider-groups {
     max-height: 180px;
   }
 }

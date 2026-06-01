@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AgentModelOption,
   AgentPermissionMode,
@@ -19,6 +19,9 @@ import { SelectControl } from '../primitives/SelectControl';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
 import { TextInputControl } from '../primitives/TextInputControl';
+import { InsetGroup, InsetRow } from './SettingsInsetList';
+import { SettingsCredentialSheet } from './SettingsCredentialSheet';
+import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
 
 interface AgentSettingsViewProps {
   onClose: () => void;
@@ -50,6 +53,65 @@ interface ProviderChoice {
   enabled: boolean;
   hasCredential: boolean;
 }
+
+interface ProviderRowHandlers {
+  onSelect: (id: string) => void;
+  onActivate: (id: string) => void;
+  onRemove: (id: string) => void;
+  onAddKey: (id: string) => void;
+  onMenuOpenChange: (id: string, open: boolean) => void;
+}
+
+// A single provider row in the inset grouped list. Memoized so a detail-pane edit
+// (model / reasoning / base URL) — which leaves the choice objects, selection, and
+// open-menu id untouched — does not re-render the nav rows. Selection genuinely
+// rebuilds the choice list, so the affected rows re-render then (as intended).
+const SettingsProviderRow = memo(function SettingsProviderRow({
+  provider,
+  selected,
+  menuOpen,
+  handlers,
+}: {
+  provider: ProviderChoice;
+  selected: boolean;
+  menuOpen: boolean;
+  handlers: ProviderRowHandlers;
+}) {
+  const name = formatProviderName(provider.providerId);
+  const dotState = provider.active ? 'is-on' : provider.hasCredential ? 'is-configured' : '';
+  const actions: RowMenuAction[] = [];
+  if (provider.hasCredential && !provider.active) {
+    actions.push({ label: 'Set as Active', onSelect: () => handlers.onActivate(provider.providerId) });
+  }
+  actions.push({
+    label: provider.hasCredential ? 'Replace API key' : 'Add API key',
+    onSelect: () => handlers.onAddKey(provider.providerId),
+  });
+  if (provider.configured) {
+    actions.push({ label: 'Remove provider', danger: true, onSelect: () => handlers.onRemove(provider.providerId) });
+  }
+  return (
+    <InsetRow
+      ariaLabel={`${name}, ${providerStatusLabel(provider)}`}
+      label={name}
+      leading={<ProviderAvatar providerId={provider.providerId} />}
+      onSelect={() => handlers.onSelect(provider.providerId)}
+      selected={selected}
+      sublabel={provider.active ? 'Active' : provider.hasCredential ? 'Connected' : undefined}
+      trailing={(
+        <>
+          {dotState ? <span className={`settings-provider-dot ${dotState}`} aria-hidden="true" /> : null}
+          <SettingsRowMenu
+            actions={actions}
+            ariaLabel={`${name} actions`}
+            onOpenChange={(open) => handlers.onMenuOpenChange(provider.providerId, open)}
+            open={menuOpen}
+          />
+        </>
+      )}
+    />
+  );
+});
 
 const EMPTY_DRAFT: DraftConfig = {
   providerId: '',
@@ -177,6 +239,10 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
   const [selectedAgentName, setSelectedAgentName] = useState<string>('general');
   const [testingConnection, setTestingConnection] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string; statusCode?: number } | null>(null);
+  // The credential SHEET (add/replace key for the selected catalog provider) and
+  // the per-row ⋯ actions menu (only one open at a time, keyed by providerId).
+  const [credentialSheetOpen, setCredentialSheetOpen] = useState(false);
+  const [openRowMenu, setOpenRowMenu] = useState<string | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -282,6 +348,9 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
   const hasSavedCredential = providerHasCredential(configuredProvider, selectedCatalog);
   const canChooseModels = (hasSavedCredential || hasPendingApiKey) && Boolean(draft.providerId);
   const catalogModels = selectedCatalog?.models ?? [];
+  // The catalog models arrive recency-ranked (modelRanking #67), so models[0] is
+  // the provider's current flagship — surfaced in the detail.
+  const flagshipModel = catalogModels[0];
   const selectedModels = canChooseModels ? catalogModels : [];
   const selectedModel = selectedModels.find((model) => model.id === draft.modelId);
   const selectedReasoningLevels: AgentReasoningLevel[] = selectedModel?.supportedThinkingLevels.length
@@ -304,6 +373,16 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
       formatProviderName(choice.providerId).toLowerCase().includes(query)
       || choice.providerId.toLowerCase().includes(query));
   }, [providerChoices, providerQuery]);
+  // Grouped inset list: "Connected" = has a credential (key or env/managed),
+  // "Available" = the rest. macOS System Settings groups this way.
+  const connectedChoices = useMemo(
+    () => visibleProviderChoices.filter((choice) => choice.hasCredential),
+    [visibleProviderChoices],
+  );
+  const availableChoices = useMemo(
+    () => visibleProviderChoices.filter((choice) => !choice.hasCredential),
+    [visibleProviderChoices],
+  );
   const selectedChoice = providerChoices.find((choice) => choice.providerId === activeRowProviderId);
   const showDetail = creatingCustom || Boolean(draft.providerId);
   const detailName = creatingCustom
@@ -562,6 +641,70 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     }
   }
 
+  // Per-row ⋯ actions operate on an explicit providerId (independent of the draft
+  // selection); they share one refetch/notice/error envelope.
+  async function runProviderMutation(
+    action: () => Promise<AgentProviderSettingsView>,
+    successNotice: string,
+    resetToInitial = false,
+  ) {
+    const requestId = beginRequest();
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const next = await action();
+      if (isCurrentRequest(requestId)) {
+        setSettings(next);
+        setDraft(resetToInitial ? resolveInitialDraft(next) : resolveDraftForProvider(next, draft.providerId));
+        if (resetToInitial) setCreatingCustom(false);
+        setNotice(successNotice);
+      }
+      await onApplied();
+    } catch (caught) {
+      if (isCurrentRequest(requestId)) setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      if (isCurrentRequest(requestId)) setSaving(false);
+    }
+  }
+
+  function activateProvider(providerId: string) {
+    void runProviderMutation(() => api.agentSetActiveProvider(providerId), 'Provider set as active');
+  }
+
+  function deleteProviderFor(providerId: string) {
+    void runProviderMutation(() => api.agentDeleteProviderConfig(providerId), 'Provider removed', true);
+  }
+
+  // The credential sheet's async, cancellable validate (the sheet owns the
+  // pending/cancel UI; this just runs the test call) and its save.
+  async function validateCredential(apiKey: string): Promise<{ success: boolean; message: string }> {
+    const providerId = draft.providerId.trim();
+    const result = await api.agentTestProviderConnection({
+      providerId,
+      modelId: draft.modelId || selectedCatalog?.models[0]?.id || getFallbackModelId(providerId),
+      baseUrl: draft.baseUrl.trim() || undefined,
+      apiKey: apiKey.trim() || undefined,
+    });
+    return { success: result.success, message: result.message };
+  }
+
+  async function saveCredential(apiKey: string): Promise<void> {
+    const providerId = draft.providerId.trim();
+    if (!providerId) return;
+    const requestId = beginRequest();
+    setError(null);
+    setNotice(null);
+    await api.agentSetProviderApiKey(providerId, apiKey.trim());
+    const next = await api.agentGetProviderSettings();
+    if (isCurrentRequest(requestId)) {
+      setSettings(next);
+      setDraft(resolveDraftForProvider(next, providerId));
+      setNotice('Key saved');
+    }
+    await onApplied();
+  }
+
   const isSkillDisabled = (skillName: string) => draft.disabledSkills.includes(skillName);
   const toggleSkill = (skillName: string) => {
     setDraft((current) => {
@@ -592,6 +735,34 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
       />
       <span className="agent-settings-field-meta">Optional. Leave empty to use the default endpoint.</span>
     </FormField>
+  );
+
+  // Stable per-row handlers via a latest-ref so the memoized provider rows don't
+  // re-render when only detail-pane state changes (model / reasoning / base URL).
+  // The ref always points at the freshest closures, so there are no stale reads,
+  // while the exposed wrappers keep a constant identity across renders.
+  const rowHandlersImpl = { selectProvider, activateProvider, deleteProviderFor, setCredentialSheetOpen, setOpenRowMenu };
+  const rowHandlersRef = useRef(rowHandlersImpl);
+  rowHandlersRef.current = rowHandlersImpl;
+  const rowHandlers = useMemo<ProviderRowHandlers>(() => ({
+    onSelect: (id) => rowHandlersRef.current.selectProvider(id),
+    onActivate: (id) => rowHandlersRef.current.activateProvider(id),
+    onRemove: (id) => rowHandlersRef.current.deleteProviderFor(id),
+    onAddKey: (id) => {
+      rowHandlersRef.current.selectProvider(id);
+      rowHandlersRef.current.setCredentialSheetOpen(true);
+    },
+    onMenuOpenChange: (id, open) => rowHandlersRef.current.setOpenRowMenu(open ? id : null),
+  }), []);
+
+  const renderProviderRow = (provider: ProviderChoice) => (
+    <SettingsProviderRow
+      handlers={rowHandlers}
+      key={provider.providerId}
+      menuOpen={openRowMenu === provider.providerId}
+      provider={provider}
+      selected={provider.providerId === activeRowProviderId}
+    />
   );
 
   return (
@@ -648,31 +819,23 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                         <AddIcon size={ICON_SIZE.menu} />
                       </button>
                     </div>
-                    <div className="settings-provider-list" role="list" aria-label="Available providers">
+                    <div className="settings-provider-groups">
                       {visibleProviderChoices.length === 0 ? (
                         <p className="settings-provider-list-empty">No providers match “{providerQuery.trim()}”.</p>
-                      ) : null}
-                      {visibleProviderChoices.map((provider) => {
-                        const selected = provider.providerId === activeRowProviderId;
-                        const enabledOn = provider.hasCredential;
-                        const dotState = provider.active ? 'is-on' : enabledOn ? 'is-configured' : '';
-                        return (
-                          <button
-                            aria-current={selected ? 'true' : undefined}
-                            aria-label={`${formatProviderName(provider.providerId)}, ${providerStatusLabel(provider)}`}
-                            className={`settings-provider-row ${selected ? 'is-selected' : ''}`}
-                            key={provider.providerId}
-                            onClick={() => selectProvider(provider.providerId)}
-                            type="button"
-                          >
-                            <ProviderAvatar providerId={provider.providerId} />
-                            <span className="settings-provider-name">{formatProviderName(provider.providerId)}</span>
-                            {dotState ? (
-                              <span className={`settings-provider-dot ${dotState}`} aria-hidden="true" />
-                            ) : null}
-                          </button>
-                        );
-                      })}
+                      ) : (
+                        <>
+                          {connectedChoices.length > 0 ? (
+                            <InsetGroup ariaLabel="Connected providers" label="Connected">
+                              {connectedChoices.map(renderProviderRow)}
+                            </InsetGroup>
+                          ) : null}
+                          {availableChoices.length > 0 ? (
+                            <InsetGroup ariaLabel="Available providers" label="Available">
+                              {availableChoices.map(renderProviderRow)}
+                            </InsetGroup>
+                          ) : null}
+                        </>
+                      )}
                     </div>
                   </div>
 
@@ -725,8 +888,12 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                           </div>
                         ) : (
                           <>
-                            <div className="agent-settings-grid">
-                              {showConnectionFields ? (
+                            {showConnectionFields ? (
+                              // Custom provider creation is a multi-field form (ID +
+                              // key + base URL + model), so its key stays inline.
+                              // Catalog providers route credential entry through the
+                              // sheet below (D-FORM).
+                              <div className="agent-settings-grid">
                                 <FormField className="agent-settings-field agent-settings-field-wide" label="Provider ID">
                                   <TextInputControl
                                     label="Provider ID"
@@ -735,57 +902,64 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                                     value={draft.providerId}
                                   />
                                 </FormField>
-                              ) : null}
 
-                              <FormField as="div" className="agent-settings-field agent-settings-field-wide" label="API key">
-                                <div className="agent-settings-key-row">
-                                  <PasswordIcon size={ICON_SIZE.menu} />
-                                  <TextInputControl
-                                    label="API key"
-                                    onChange={(event) => setApiKey(event.target.value)}
-                                    placeholder={hasAnyKey ? 'Configured (Encrypted)' : 'Paste API key'}
-                                    type={revealKey ? 'text' : 'password'}
-                                    value={apiKey}
-                                  />
-                                  <div className="agent-settings-key-actions">
-                                    <button
-                                      aria-label={revealKey ? 'Hide key' : 'Show key'}
-                                      aria-pressed={revealKey}
-                                      className="agent-settings-key-reveal"
-                                      onClick={() => setRevealKey((current) => !current)}
-                                      type="button"
-                                    >
-                                      {revealKey ? <HideIcon size={ICON_SIZE.menu} /> : <ShowIcon size={ICON_SIZE.menu} />}
-                                    </button>
-                                    {hasSavedCredential && (
+                                <FormField as="div" className="agent-settings-field agent-settings-field-wide" label="API key">
+                                  <div className="agent-settings-key-row">
+                                    <PasswordIcon size={ICON_SIZE.menu} />
+                                    <TextInputControl
+                                      label="API key"
+                                      onChange={(event) => setApiKey(event.target.value)}
+                                      placeholder={hasAnyKey ? 'Configured (Encrypted)' : 'Paste API key'}
+                                      type={revealKey ? 'text' : 'password'}
+                                      value={apiKey}
+                                    />
+                                    <div className="agent-settings-key-actions">
                                       <button
-                                        aria-label="Remove key"
-                                        className="agent-settings-key-remove"
-                                        disabled={saving}
-                                        onClick={removeApiKey}
+                                        aria-label={revealKey ? 'Hide key' : 'Show key'}
+                                        aria-pressed={revealKey}
+                                        className="agent-settings-key-reveal"
+                                        onClick={() => setRevealKey((current) => !current)}
                                         type="button"
-                                        title="Remove key"
                                       >
-                                        <TrashIcon size={ICON_SIZE.menu} />
+                                        {revealKey ? <HideIcon size={ICON_SIZE.menu} /> : <ShowIcon size={ICON_SIZE.menu} />}
                                       </button>
-                                    )}
+                                    </div>
+                                  </div>
+                                </FormField>
+                              </div>
+                            ) : (
+                              // Catalog provider: the credential is a status summary
+                              // with a button that opens the focused credential sheet
+                              // (add/replace → validate). Ongoing config stays inline.
+                              <div className="settings-credential-summary">
+                                <div className="settings-credential-summary-info">
+                                  <PasswordIcon size={ICON_SIZE.menu} />
+                                  <div className="settings-credential-summary-text">
+                                    <span className="settings-credential-summary-status">{keyStatus}</span>
+                                    {!hasSavedCredential && docsUrl ? (
+                                      <button
+                                        className="agent-settings-doc-link"
+                                        onClick={() => void api.openExternalUrl(docsUrl)}
+                                        type="button"
+                                      >
+                                        <span>Get API key</span>
+                                        <OpenIcon size={ICON_SIZE.tiny} />
+                                      </button>
+                                    ) : null}
                                   </div>
                                 </div>
-                                <div className="agent-settings-key-meta">
-                                  <span className="agent-settings-field-meta">{keyStatus}</span>
-                                  {!hasSavedCredential && docsUrl ? (
-                                    <button
-                                      className="agent-settings-doc-link"
-                                      onClick={() => void api.openExternalUrl(docsUrl)}
-                                      type="button"
-                                    >
-                                      <span>Get API key</span>
-                                      <OpenIcon size={ICON_SIZE.tiny} />
-                                    </button>
+                                <div className="settings-credential-summary-actions">
+                                  {hasSavedCredential ? (
+                                    <ButtonControl className="agent-settings-secondary" disabled={saving} onClick={removeApiKey}>
+                                      Remove key
+                                    </ButtonControl>
                                   ) : null}
+                                  <ButtonControl className="agent-settings-secondary" onClick={() => setCredentialSheetOpen(true)}>
+                                    {hasSavedCredential ? 'Replace key' : 'Add API key'}
+                                  </ButtonControl>
                                 </div>
-                              </FormField>
-                            </div>
+                              </div>
+                            )}
 
                             <details className="settings-url-details">
                               <summary className="settings-url-summary">Advanced Settings</summary>
@@ -798,7 +972,12 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
 
                         {canChooseModels ? (
                           <div className="settings-provider-model-section">
-                            <h4 className="settings-detail-subheading">Model & Reasoning</h4>
+                            <div className="settings-detail-subheading-row">
+                              <h4 className="settings-detail-subheading">Model & Reasoning</h4>
+                              {flagshipModel ? (
+                                <span className="settings-detail-flagship">Latest: {flagshipModel.name}</span>
+                              ) : null}
+                            </div>
                             <div className="agent-settings-grid">
                               <FormField className="agent-settings-field" label="Model">
                                 {selectedModels.length > 0 ? (
@@ -884,6 +1063,17 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                     )}
                   </div>
                 </div>
+                {credentialSheetOpen && !showConnectionFields && draft.providerId ? (
+                  <SettingsCredentialSheet
+                    docsUrl={docsUrl}
+                    hasSavedKey={hasSavedCredential}
+                    onClose={() => setCredentialSheetOpen(false)}
+                    onOpenDocs={docsUrl ? () => void api.openExternalUrl(docsUrl) : undefined}
+                    onSave={saveCredential}
+                    onValidate={validateCredential}
+                    providerName={detailName}
+                  />
+                ) : null}
               </section>
             ) : category === 'permissions' ? (
               <section className="agent-settings-section settings-permissions-section" aria-labelledby="settings-permissions-heading">

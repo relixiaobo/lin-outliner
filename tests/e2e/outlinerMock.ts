@@ -221,6 +221,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         ],
       }],
     };
+    const agentToolPermissions = {
+      permissions: { allow: [] as string[], ask: [] as string[], deny: [] as string[] },
+      diagnostics: [] as Array<{ ruleValue: string; decision: 'allow' | 'ask' | 'deny'; code: string; message: string }>,
+    };
     const debugUsage = {
       input: 12000,
       output: 420,
@@ -1169,6 +1173,61 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_set_active_provider') {
           agentSettings.activeProviderId = String(args.providerId);
+          return clone(agentSettings) as T;
+        }
+        if (cmd === 'agent_get_tool_permission_settings') {
+          return clone(agentToolPermissions) as T;
+        }
+        if (cmd === 'agent_update_tool_permission_settings') {
+          const next = args.settings as { permissions?: { allow?: string[]; ask?: string[]; deny?: string[] } };
+          agentToolPermissions.permissions = {
+            allow: next.permissions?.allow ?? [],
+            ask: next.permissions?.ask ?? [],
+            deny: next.permissions?.deny ?? [],
+          };
+          return clone(agentToolPermissions) as T;
+        }
+        if (cmd === 'agent_test_provider_connection') {
+          // The credential sheet drives this for its async validate step. Echo a
+          // deterministic result keyed off the supplied key so a test can exercise
+          // both the success and failure paths.
+          const apiKey = typeof args.apiKey === 'string' ? args.apiKey : '';
+          const success = !apiKey || !apiKey.includes('bad');
+          return clone({
+            success,
+            message: success ? 'Connection successful' : 'Invalid API key',
+          }) as T;
+        }
+        if (cmd === 'agent_set_provider_api_key') {
+          const providerId = String(args.providerId);
+          const existing = agentSettings.providers.find((item) => item.providerId === providerId);
+          if (existing) {
+            existing.hasApiKey = true;
+          } else {
+            const catalog = agentSettings.availableProviders.find((item) => item.providerId === providerId);
+            agentSettings.providers.push({
+              providerId,
+              modelId: catalog?.models[0]?.id ?? '',
+              reasoningLevel: 'medium',
+              baseUrl: '',
+              enabled: true,
+              hasApiKey: true,
+              hasEnvApiKey: false,
+            });
+          }
+          return clone({ providerId, hasApiKey: true }) as T;
+        }
+        if (cmd === 'agent_delete_provider_api_key') {
+          const providerId = String(args.providerId);
+          const existing = agentSettings.providers.find((item) => item.providerId === providerId);
+          if (existing) existing.hasApiKey = false;
+          return clone({ providerId, hasApiKey: false }) as T;
+        }
+        if (cmd === 'agent_delete_provider_config') {
+          const providerId = String(args.providerId);
+          const index = agentSettings.providers.findIndex((item) => item.providerId === providerId);
+          if (index >= 0) agentSettings.providers.splice(index, 1);
+          if (agentSettings.activeProviderId === providerId) agentSettings.activeProviderId = '';
           return clone(agentSettings) as T;
         }
         if (cmd === 'agent_debug_snapshot') {
