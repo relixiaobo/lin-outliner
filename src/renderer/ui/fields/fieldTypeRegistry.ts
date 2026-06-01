@@ -3,6 +3,7 @@ import type { FieldType } from '../../api/types';
 export type FieldValueInteraction =
   | 'outliner'
   | 'optionPicker'
+  | 'referencePicker'
   | 'datePicker'
   | 'numberInput'
   | 'urlLink'
@@ -63,6 +64,12 @@ export const FIELD_TYPE_REGISTRY = {
     id: 'checkbox',
     label: 'checkbox',
     interaction: 'checkbox',
+    exposedInConfig: true,
+  },
+  reference: {
+    id: 'reference',
+    label: 'reference',
+    interaction: 'referencePicker',
     exposedInConfig: true,
   },
 } satisfies Record<FieldType, FieldTypeMetadata>;

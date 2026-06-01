@@ -317,6 +317,36 @@ describe('Core', () => {
     expect(showsCheckbox(core, nodeId)).toBe(true);
   });
 
+  test('a reference field appends deduped reference values pointing at any node', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'Target Page'));
+    const entry = mustFocus(core.createInlineField(today, null, 'Related', 'reference'));
+
+    core.addFieldReference(entry, target);
+    const refId = core.state().nodes[entry].children[0];
+    const ref = core.state().nodes[refId];
+    expect(ref?.type).toBe('reference');
+    expect(ref?.targetId).toBe(target);
+
+    // Picking the same node again is a no-op (dedup).
+    core.addFieldReference(entry, target);
+    expect(core.state().nodes[entry].children).toHaveLength(1);
+
+    // A second distinct node appends (everything is a node; no cardinality gate).
+    const other = mustFocus(core.createNode(today, null, 'Other Page'));
+    core.addFieldReference(entry, other);
+    expect(core.state().nodes[entry].children).toHaveLength(2);
+  });
+
+  test('addFieldReference rejects a non-reference field', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'T'));
+    const plain = mustFocus(core.createInlineField(today, null, 'Note', 'plain'));
+    expect(() => core.addFieldReference(plain, target)).toThrow();
+  });
+
   test('batch toggle done marks each target done with a visible checkbox', () => {
     const core = Core.new();
     const today = core.projection().todayId;
