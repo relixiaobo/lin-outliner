@@ -1,5 +1,8 @@
 @import './tokens.css';
 @import './theme-dark.css';
+/* a11y.css MUST follow theme-dark.css: its user-preference token overrides share
+   :root specificity with the dark block, so source order decides when both match. */
+@import './a11y.css';
 @import './base.css';
 @import './inline-ref.css';
 @import './controls.css';

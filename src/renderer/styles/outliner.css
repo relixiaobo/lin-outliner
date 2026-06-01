@@ -1905,13 +1905,8 @@
   animation: reference-conversion-pulse 2.5s ease-in-out infinite;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .row.ref-converting .row-editor .inline-ref,
-  .row.ref-typeahead .row-editor,
-  .row.ref-typeahead .row-content-line::after {
-    animation: none;
-  }
-}
+/* The global reduced-motion reset in a11y.css collapses this infinite pulse (and
+   the typeahead animations) to a single 0.01ms iteration — no per-file override. */
 
 .row-editor .ProseMirror p:has(.inline-ref) > img.ProseMirror-separator {
   display: inline-block;
