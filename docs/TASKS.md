@@ -66,16 +66,6 @@ Ordered by priority; lower items may depend on higher ones.
 - **view-toolbar-name-filter** (P3) — quick incremental name filter as the
   view toolbar's first control (Tana-style); needs backend/data-model support.
   Optional follow-ons: `is_not` for options filters; relative-date operands.
-- **node-line-editor-unification Phase 2b** (P1) — route trigger application
-  through `resolveTargetId` so `#`/`@`/`/` behave identically across the inline
-  editor and the trailing line, unify the trigger popover on `NodePanel`, and
-  delete the trailing input's bespoke `onApply*Trigger` props. High-risk
-  reconciliation of the hot node-creation path; verify with the app running
-  against the `outliner-*` Playwright e2e specs. Build contract:
-  `docs/plans/node-line-editor-core-design.md` (PR #13). Phase 1 (#11),
-  Phase 2a view helpers (#12), and the eager-materialized trailing draft +
-  step-1 trigger/keymap extraction (#16) shipped; the `resolveTargetId`
-  trigger-application unification remains.
 - **checkbox-row-long-text-wrap** (P3) — a done-checkbox row wraps its text onto
   the next line when the text is long (checkbox sits alone on line 1). Root cause:
   in `.row-content-line` (display: block) the `.done-checkbox` and `.row-editor`
@@ -99,6 +89,23 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **field-value Enter + node-line trailing unification** (cc) — field values are
+  plain nodes: Enter appends the next value through the unified `OutlinerItem`
+  trailing draft, completing node-line-editor-unification Phase 2b for the trailing
+  line. Deleted the ~1.3k-line `TrailingInput` (+ `TrailingInputLeading`,
+  `TypedFieldValueControl`, `DateFieldControl`); its `#`/`@`/`/`/`>`/code/checkbox/
+  image triggers are re-implemented as atomic-create branches on the draft row, and
+  field-value editing layers additively on top (`CheckboxFieldControl`,
+  `DateValuePicker` summoned by Space/calendar, `TrailingOptionsPopover`). Removed
+  the `FieldType` cardinality concept end to end (values always append; option-select
+  appends a deduped reference). Added id-aware field-value commands +
+  `remove_field_value` (promotes an externally-referenced auto-collected value into
+  the pool on removal). Deep review found and got fixed pre-merge: a11y focus rings on
+  field-value affordances, e2e-mock↔core append fidelity, `removeFieldValue` +
+  reverse-done-mapping core tests, reverse done-state mapping dropping the
+  opposite-mapped option, and dead `resolveTrailingRow*` removal. Merge resolved the
+  two design-system guard specs to main's re-armed versions. See
+  `docs/plans/node-line-editor-unification.md` (PR #64).
 - **agent-tool-permissions implementation** (codex) — built the full
   `docs/plans/agent-tool-permissions.md`: action descriptors + global JSON
   permission store (`permissions.allow`/`ask`/`deny`) with fail-closed

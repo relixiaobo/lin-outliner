@@ -12,6 +12,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Field values create on Enter (node-based field-value editors)** — a field
+  value is now a plain outliner node: Enter in a field value materializes the
+  trailing draft and appends the next value through the same draft, so "everything
+  is a node" holds for field values too. The legacy `TrailingInput` /
+  `TypedFieldValueControl` / `DateFieldControl` / `TrailingInputLeading` fork is
+  removed; field-value editing flows through the unified `OutlinerItem` draft row
+  with additive layers — `CheckboxFieldControl` (the one whole-field control),
+  `DateValuePicker` (summoned by Space on an empty draft or a calendar
+  affordance), and `TrailingOptionsPopover` (type-to-filter + `Create "x"`).
+  Adds id-aware field-value commands (the renderer proposes the draft row's stable
+  id so React identity / IME survive materialization, validated in core against
+  shape + collisions) and a new `remove_field_value` command whose backspace-an-
+  empty-value cleanup promotes an externally-referenced auto-collected value into
+  the option pool instead of orphaning the reference. Touches the protocol surface
+  (`src/core/commands.ts`, `src/core/types.ts`) per the coordination policy.
+  ([#64](https://github.com/relixiaobo/lin-outliner/pull/64))
 - A central accessibility layer (`styles/a11y.css`) honoring `prefers-contrast`, `prefers-reduced-motion`, and `prefers-reduced-transparency`, with a reusable `--material-backdrop` opaque-fallback token (PR-B, #63).
 - **Agent tool permissions (global runtime policy)** — implements
   `docs/plans/agent-tool-permissions.md`: one global, runtime-owned permission
@@ -220,6 +236,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Field values no longer have a cardinality** — the single/list `FieldType`
+  cardinality concept is removed end to end (`FieldCardinality`,
+  `SCHEMA_CARDINALITIES_ID`, the `cardinality` config key/schema/projection, and
+  the definition-config Cardinality control). Every value is a node and always
+  appends; selecting an option appends a (deduped) reference rather than replacing.
+  The done-state checkbox mechanism keeps its binary replace semantics explicitly:
+  the forward mapping clears-then-selects, and the reverse mapping now drops the
+  opposite-mapped option so a mapped field never holds both checked and unchecked
+  at once (#64).
 - Dark mode now follows the OS via `@media (prefers-color-scheme)` with `color-scheme: light dark` (native scrollbars/controls theme correctly; the `[data-theme]`+JS bridge and `theme.ts` were removed) (PR-B, #63).
 - **Design system — floating-rails shell, neutral token migration,
   dark-follows-OS** — dissolves `TopBar` into a persistent `WindowChrome` (a top
@@ -441,6 +466,7 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- Removed the ~1.3k-line legacy `TrailingInput` editor (plus `TrailingInputLeading`) — its trigger paths (`#`/`@`/`/`/`>`/code/checkbox/image) are re-implemented as atomic-create branches on the `OutlinerItem` trailing draft, collapsing the two-ProseMirror-editor fork to one. Removed the now-dead `resolveTrailingRow*` interaction resolvers. Fixed a focus-propagation bug where a command-outcome focus request (`panelId: null` wildcard) failed the row memo's `targetsRow` predicate and dropped focus to `<body>`; added `focusAncestorToken` so a memoized ancestor re-renders to pass a focus/pending-input request down to a nested target (#64).
 - Re-armed the design-system guard e2e specs after the CSS split and floating-rails shell redesign: the typography-tokens guard now globs `src/renderer/styles/*.css` and the workspace-layout spec asserts the shipped DOM; page-title sizing corrected to 24px/32px (PR-A, #62).
 - **Modularize `styles.css` into per-surface modules** — the 6851-line monolith
   is split into 30 cascade-ordered modules under `src/renderer/styles/` behind a
