@@ -1036,11 +1036,13 @@ not Apple chrome. We borrow the interaction, not the chrome.
 - **No redundant chrome.** The window is closed through native window chrome
   (the traffic lights), like System Settings — there is no in-content Close
   button. The content pane carries no "Providers" title (the selected rail
-  category already names it), no search field, and rows show a `⋯` menu ONLY when
-  they have more than one action — an unconfigured provider's single action
-  ("Configure") is exactly what clicking the row does, so a menu there is just a
-  redundant step. The only head control is the custom-provider add (`+`), an
-  icon-only B6 control (circular hover fill, no boxed square).
+  category already names it), no search field, and no leading status column —
+  "Connected" vs "Available" already carries connection state, so a per-row marker
+  would be redundant. Rows show a trailing `⋯` menu ONLY when they have more than
+  one action; a single-action row's lone "Configure" is what clicking the row
+  already does, so instead it reveals a quiet "Configure" hint on hover (the row's
+  affordance) rather than a persistent control. Custom providers are added from the
+  last row of the Available list ("Add custom provider"), not a floating control.
 - **Inset grouped list (the reusable primitive).** `SettingsInsetList.tsx`
   (`InsetGroup` + a memoized `InsetRow`) renders a sentence-case section header
   above a rounded inset card whose rows are split by hairlines; geometry derives
@@ -1049,16 +1051,18 @@ not Apple chrome. We borrow the interaction, not the chrome.
   The in-card focus ring is the inset `--outline-focus` so it is not clipped by the
   card's `overflow: hidden`. This is the A7 foundation: Permissions / Skills can
   adopt it later for consistency.
-- **Provider rows + on-row status.** Providers group into "Connected" (has a
-  credential — key, env, or managed) and "Available". Each row is the Wi-Fi
-  idiom: a leading check marks the ACTIVE provider (neutral, B3 — active never
-  takes an accent), the brand avatar is the identity, and (when present) a trailing
-  circular `⋯` opens the row's actions (`SettingsRowMenu.tsx`). The `⋯` is a
-  circular icon-only control (B6: pill/circular, never a rounded square) whose ring
-  + glyph deepen on hover; its floating menu reuses the shared popover glass with
-  the `prefers-reduced-transparency` opaque fallback (B5/D2) at the level-1 menu
-  tier (B10). Rows are memoized + fed stable handlers, so opening one provider's
-  sheet never re-renders the list.
+- **Provider rows.** Providers group into "Connected" (has a credential — key,
+  env, or managed) and "Available". Each row is the brand avatar as identity + the
+  name; clicking it opens the config sheet. The avatar shows the vendored brand SVG
+  bare (no box/border); it is INLINED (not an `<img>`) so monochrome marks using
+  `fill="currentColor"` (OpenAI, OpenRouter, Groq, …) follow the light/dark theme
+  via the avatar's `color`, while multicolour logos keep their own fills. The
+  trailing `⋯` (when present) is icon-only — just the glyph, no border or box (B6:
+  signal by colour, not a frame); it deepens on hover and takes a quiet circular
+  fill only while open. Its floating menu reuses the shared popover glass with the
+  `prefers-reduced-transparency` opaque fallback (B5/D2) at the level-1 menu tier
+  (B10). Rows are memoized + fed stable handlers, so opening one provider's sheet
+  never re-renders the list.
 - **Per-provider config sheet — connection only.** Clicking a row (or "Configure…")
   opens `SettingsProviderSheet.tsx` — a focused sheet, the native model where a
   list row pushes its detail into an overlay rather than a side pane. It is built

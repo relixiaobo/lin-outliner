@@ -11,8 +11,8 @@ import type {
   SkillDefinition,
 } from '../../api/types';
 import { api } from '../../api/client';
-import { AddIcon, CheckIcon, ICON_SIZE, WarningIcon } from '../icons';
-import { providerIconUrl } from './providerIcon';
+import { AddIcon, ICON_SIZE, WarningIcon } from '../icons';
+import { providerIconSvg } from './providerIcon';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { SelectControl } from '../primitives/SelectControl';
 import { SwitchControl } from '../primitives/SwitchControl';
@@ -61,12 +61,13 @@ interface ProviderRowHandlers {
 }
 
 // A single provider row in the inset grouped list — the macOS System Settings
-// Wi-Fi idiom: a leading check marks the ACTIVE provider, the brand avatar is the
-// identity. Clicking the row opens the provider's config sheet. A trailing circular
-// `⋯` appears ONLY when the row has more than one action — an unconfigured provider
-// has a single action ("Configure"), which is exactly what clicking the row does,
-// so a menu there would just add a redundant step. Memoized + fed stable handlers,
-// so editing one provider's sheet never re-renders the list.
+// Wi-Fi idiom: the brand avatar is the identity, clicking the row opens the config
+// sheet. There is no leading status column — "Connected" vs "Available" already
+// carries that, so a per-row marker would be redundant. A trailing `⋯` appears
+// ONLY when the row has more than one action; a single-action row (just
+// "Configure", which is what clicking does) instead reveals a quiet "Configure"
+// hint on hover so the row reads as actionable. Memoized + fed stable handlers, so
+// editing one provider's sheet never re-renders the list.
 const SettingsProviderRow = memo(function SettingsProviderRow({
   provider,
   menuOpen,
@@ -89,14 +90,7 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
     <InsetRow
       ariaLabel={`${name}, ${providerStatusLabel(provider)}`}
       label={name}
-      leading={(
-        <>
-          <span className="settings-provider-check" aria-hidden="true">
-            {provider.active ? <CheckIcon size={ICON_SIZE.menu} /> : null}
-          </span>
-          <ProviderAvatar providerId={provider.providerId} />
-        </>
-      )}
+      leading={<ProviderAvatar providerId={provider.providerId} />}
       onSelect={() => handlers.onConfigure(provider.providerId)}
       trailing={actions.length > 1 ? (
         <SettingsRowMenu
@@ -105,7 +99,9 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
           onOpenChange={(open) => handlers.onMenuOpenChange(provider.providerId, open)}
           open={menuOpen}
         />
-      ) : undefined}
+      ) : (
+        <span className="settings-provider-hint" aria-hidden="true">Configure</span>
+      )}
     />
   );
 });
@@ -653,29 +649,27 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
             {category === 'providers' ? (
               <section className="agent-settings-section settings-providers-section" aria-label="Providers">
                 {/* No "Providers" title — the selected rail category already names
-                    the pane. The head is just the custom-provider add control. */}
-                <div className="settings-providers-head">
-                  <button
-                    aria-label="Custom provider"
-                    className="settings-provider-add"
-                    onClick={startCustomProvider}
-                    title="Add a custom OpenAI-compatible provider"
-                    type="button"
-                  >
-                    <AddIcon size={ICON_SIZE.menu} />
-                  </button>
-                </div>
+                    the pane. Custom providers are added from the last row of the
+                    Available list (no separate floating add control). */}
                 <div className="settings-provider-groups">
                   {connectedChoices.length > 0 ? (
                     <InsetGroup ariaLabel="Connected providers" label="Connected">
                       {connectedChoices.map(renderProviderRow)}
                     </InsetGroup>
                   ) : null}
-                  {availableChoices.length > 0 ? (
-                    <InsetGroup ariaLabel="Available providers" label="Available">
-                      {availableChoices.map(renderProviderRow)}
-                    </InsetGroup>
-                  ) : null}
+                  <InsetGroup ariaLabel="Available providers" label="Available">
+                    {availableChoices.map(renderProviderRow)}
+                    <InsetRow
+                      ariaLabel="Add custom provider"
+                      label="Add custom provider"
+                      leading={(
+                        <span className="settings-provider-add-leading" aria-hidden="true">
+                          <AddIcon size={ICON_SIZE.menu} />
+                        </span>
+                      )}
+                      onSelect={startCustomProvider}
+                    />
+                  </InsetGroup>
                 </div>
 
                 {sheetOpen ? (
@@ -1250,11 +1244,15 @@ function providerInitial(providerId: string): string {
 }
 
 function ProviderAvatar({ providerId, large }: { providerId: string; large?: boolean }) {
-  const url = providerIconUrl(providerId);
-  const className = `settings-provider-avatar${large ? ' is-large' : ''}${url ? ' has-logo' : ''}`;
+  const svg = providerIconSvg(providerId);
+  const className = `settings-provider-avatar${large ? ' is-large' : ''}${svg ? ' has-logo' : ''}`;
   return (
     <span className={className} aria-hidden="true">
-      {url ? <img className="settings-provider-logo" src={url} alt="" /> : providerInitial(providerId)}
+      {svg ? (
+        // Trusted, build-time vendored brand SVGs (no remote/user input) — inlined
+        // so `currentColor` marks follow the theme.
+        <span className="settings-provider-logo" dangerouslySetInnerHTML={{ __html: svg }} />
+      ) : providerInitial(providerId)}
     </span>
   );
 }

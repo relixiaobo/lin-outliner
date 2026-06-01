@@ -62,10 +62,10 @@ test.describe('agent settings window', () => {
 
   test('has no provider search and keeps the custom-provider add reachable', async ({ page }) => {
     const settings = await openSettings(page);
-    // Native System Settings (Wi-Fi) has no list search; the head's only control is
-    // the custom-provider add button beside the title.
+    // Native System Settings (Wi-Fi) has no list search; custom providers are added
+    // from the last row of the Available list, not a floating control.
     await expect(settings.getByLabel('Search providers')).toHaveCount(0);
-    await expect(settings.getByRole('button', { name: 'Custom provider' })).toBeVisible();
+    await expect(settings.getByRole('button', { name: 'Add custom provider' })).toBeVisible();
     // The full list is always shown — both Anthropic and the active OpenAI.
     await expect(settings.getByRole('button', { name: /^Anthropic,/ })).toBeVisible();
     await expect(settings.getByRole('button', { name: 'OpenAI, Active' })).toBeVisible();
@@ -152,7 +152,7 @@ test.describe('agent settings window', () => {
 
   test('creates a custom provider through the sheet', async ({ page }) => {
     const settings = await openSettings(page);
-    await settings.getByRole('button', { name: 'Custom provider' }).click();
+    await settings.getByRole('button', { name: 'Add custom provider' }).click();
 
     const sheet = page.getByRole('dialog');
     await sheet.getByLabel('Provider ID').fill('my-proxy');

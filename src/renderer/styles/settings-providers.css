@@ -94,32 +94,30 @@
   padding: 0;
 }
 
-/* No title row — just the custom-provider add, right-aligned as a thin toolbar. */
-.settings-providers-head {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: flex-end;
-}
-
-/* Custom-provider add: icon-only chrome control — color-deepen with an optional
-   circular hover fill, never a boxed rounded square (B6). */
-.settings-provider-add {
+/* Leading slot for the "Add custom provider" row — a quiet `+` aligned to the
+   brand-avatar column (icon only, no box). */
+.settings-provider-add-leading {
   display: inline-flex;
   flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
   color: var(--text-tertiary);
 }
 
-.settings-provider-add:hover {
-  background: var(--control-hover);
-  color: var(--text-strong);
+/* "Configure" hint on the trailing edge of a single-action row — quiet at rest,
+   revealed on row hover so the row reads as actionable (no persistent decoration). */
+.settings-provider-hint {
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+}
+
+.inset-row:hover .settings-provider-hint {
+  opacity: 1;
 }
 
 /* Holds the Connected / Available InsetGroups (SettingsInsetList). The rows are
@@ -130,18 +128,9 @@
   flex-direction: column;
 }
 
-/* Leading slot: a fixed-width check that marks the ACTIVE provider (neutral, B3 —
-   active state never takes an accent), then the brand avatar. */
-.settings-provider-check {
-  display: inline-flex;
-  flex: 0 0 auto;
-  width: 16px;
-  align-items: center;
-  justify-content: center;
-  margin-right: var(--space-1);
-  color: var(--text-strong);
-}
-
+/* Brand avatar. The monogram fallback (no vendored logo) keeps a neutral fill so
+   the letter reads; a vendored logo shows bare — no box or border (the brand mark
+   is the identity, not a chip). */
 .settings-provider-avatar {
   display: flex;
   flex: 0 0 auto;
@@ -164,14 +153,24 @@
 }
 
 .settings-provider-avatar.has-logo {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
+  background: transparent;
+  border: 0;
 }
 
+/* Inline brand SVG. `color` drives monochrome `currentColor` marks (OpenAI,
+   OpenRouter, Groq, …) so they follow light/dark; multicolour logos carry their
+   own fills and ignore it. */
 .settings-provider-logo {
-  width: 15px;
-  height: 15px;
-  object-fit: contain;
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  color: var(--text-strong);
+}
+
+.settings-provider-logo svg {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 .settings-provider-avatar.is-large .settings-provider-logo {
@@ -213,8 +212,9 @@
 }
 
 /* ── Per-row ⋯ actions menu (SettingsRowMenu) ────────────────────────────────── */
-/* Circular icon-only control (B6: pill/circular when a shape is needed, never a
-   rounded square). Hover/active deepen the glyph + ring colour — no fill. */
+/* Icon-only control: just the glyph, no border or box (B6 — icon chrome controls
+   signal by colour, not a frame). Hover/open deepen the glyph; an open menu also
+   gets a quiet circular fill for feedback. */
 .settings-row-menu-trigger {
   display: inline-flex;
   flex: 0 0 auto;
@@ -222,7 +222,7 @@
   justify-content: center;
   width: 26px;
   height: 26px;
-  border: 1px solid var(--border-subtle);
+  border: 0;
   border-radius: 50%;
   background: transparent;
   color: var(--text-tertiary);
@@ -230,8 +230,11 @@
 
 .settings-row-menu-trigger:hover,
 .settings-row-menu-trigger[aria-expanded="true"] {
-  border-color: var(--border);
   color: var(--text-strong);
+}
+
+.settings-row-menu-trigger[aria-expanded="true"] {
+  background: var(--control-hover);
 }
 
 /* Menu glass (B5/D2): --material-popover + --material-backdrop carry the
