@@ -4,7 +4,6 @@
 
 import {
   SCHEMA_AUTO_INIT_ID,
-  SCHEMA_CARDINALITIES_ID,
   SCHEMA_FIELD_TYPES_ID,
   SCHEMA_HIDE_MODES_ID,
   systemOptionNodeId,
@@ -129,7 +128,6 @@ export const ENUM_DOMAINS = {
     subtreeId: SCHEMA_HIDE_MODES_ID,
     values: ['never', 'empty', 'not_empty', 'value_is_default', 'always'],
   },
-  cardinality: { subtreeId: SCHEMA_CARDINALITIES_ID, values: ['single', 'list'] },
   autoInitialize: { subtreeId: SCHEMA_AUTO_INIT_ID, values: AUTO_INIT_STRATEGIES },
 } satisfies Record<string, EnumDomain>;
 
@@ -173,7 +171,6 @@ export const CONFIG_SCHEMA: Record<DefConfigKey, ConfigSchemaDef> = {
 
   // ── field ──
   fieldType: { key: 'fieldType', kind: 'field', domain: 'enum', cardinality: 'single', appliesTo: '*', enumDomain: 'fieldType', label: 'Field type' },
-  cardinality: { key: 'cardinality', kind: 'field', domain: 'enum', cardinality: 'single', appliesTo: '*', enumDomain: 'cardinality', label: 'Cardinality' },
   sourceSupertag: { key: 'sourceSupertag', kind: 'field', domain: 'ref', cardinality: 'single', appliesTo: ['options_from_supertag'], label: 'Supertag', visibleWhen: (c) => c.fieldType === 'options_from_supertag' },
   autocollectOptions: { key: 'autocollectOptions', kind: 'field', domain: 'bool', cardinality: 'single', appliesTo: ['options'], label: 'Auto-collect values', visibleWhen: (c) => c.fieldType === 'options' },
   autoInitialize: { key: 'autoInitialize', kind: 'field', domain: 'enumList', cardinality: 'list', appliesTo: '*', enumDomain: 'autoInitialize', label: 'Auto-initialize' },
@@ -202,7 +199,6 @@ export interface ProjectedTagConfig {
 
 export interface ProjectedFieldConfig {
   fieldType: FieldType;
-  cardinality: 'single' | 'list';
   sourceSupertag?: NodeId;
   nullable: boolean;
   hideField: string;
@@ -224,7 +220,7 @@ export interface ConfigIndex {
  * per the key's domain (scalar value node / `config` ref / `enum` option ref(s)).
  *   scalar   → number/bool/color (free text, codec-validated)
  *   ref      → a tagDef target (extends / childSupertag / sourceSupertag)
- *   enum     → a single option value (fieldType / cardinality / hideField)
+ *   enum     → a single option value (fieldType / hideField)
  *   enumList → a set of option values (autoInitialize)
  * A null/empty payload clears the value.
  */

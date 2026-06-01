@@ -32,7 +32,9 @@ test.describe('outliner node description parity', () => {
       };
     });
     expect(emptyEditorStyle.boxShadow).toBe('none');
-    expect(emptyEditorStyle.placeholderColor).toContain('/ 0.22)');
+    // Placeholder = 22% of the neutral text token (--text ≈ 0.88 ink), so its
+    // effective alpha lands at ~0.194 regardless of color() vs rgba() serialization.
+    expect(placeholderAlpha(emptyEditorStyle.placeholderColor)).toBeCloseTo(0.194, 2);
     expect(Math.abs(emptyEditorStyle.height - emptyEditorStyle.lineHeight)).toBeLessThanOrEqual(1);
 
     await page.keyboard.type('Alpha description');
@@ -71,7 +73,7 @@ test.describe('outliner node description parity', () => {
       };
     });
     expect(emptyEditorStyle.color).not.toBe(emptyEditorStyle.placeholderColor);
-    expect(emptyEditorStyle.placeholderColor).toContain('/ 0.22)');
+    expect(placeholderAlpha(emptyEditorStyle.placeholderColor)).toBeCloseTo(0.194, 2);
     expect(Math.abs(emptyEditorStyle.height - emptyEditorStyle.lineHeight)).toBeLessThanOrEqual(1);
 
     await page.keyboard.type('Blur description');
@@ -147,3 +149,12 @@ test.describe('outliner node description parity', () => {
     expect(projection.nodes.some((node) => node.content.text === 'Trailing source')).toBe(true);
   });
 });
+
+// The placeholder color comes from a color-mix, which chromium serializes as
+// `color(srgb r g b / a)`; tolerate the legacy `rgba(r, g, b, a)` form too.
+function placeholderAlpha(color: string): number {
+  const slashForm = color.match(/\/\s*([\d.]+)\s*\)/);
+  if (slashForm) return Number.parseFloat(slashForm[1]);
+  const rgbaForm = color.match(/rgba?\([^)]*,\s*([\d.]+)\s*\)/);
+  return rgbaForm ? Number.parseFloat(rgbaForm[1]) : 1;
+}

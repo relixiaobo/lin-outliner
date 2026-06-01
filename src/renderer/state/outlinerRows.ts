@@ -480,17 +480,6 @@ export function buildOutlinerRows(
   return applyViewSettings(parent, buildChildRows(parent, byId, options), byId);
 }
 
-export function shouldShowTrailingInput(
-  rows: OutlinerRowItem[],
-  options: { mode?: 'body' | 'fieldValue' } = {},
-): boolean {
-  if (options.mode !== 'fieldValue') return true;
-
-  const lastNodeRow = rows.filter((row) => row.type === 'field' || row.type === 'content').at(-1);
-  if (!lastNodeRow) return true;
-  return lastNodeRow.type === 'field';
-}
-
 export function fieldChoiceLabel(fieldId: string, byId: Map<NodeId, NodeProjection>): string {
   if (fieldId === NAME_FIELD) return 'Name';
   if (fieldId === CREATED_FIELD) return 'Created';

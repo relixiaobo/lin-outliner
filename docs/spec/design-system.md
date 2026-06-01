@@ -287,7 +287,7 @@ Use these default desktop tokens before adding component-specific values:
   --icon-size-lg: 18px;
   --checkbox-mark-size: var(--icon-size-md);
   --checkbox-mark-radius: var(--radius-xs);
-  --switch-mark-width: var(--control-size-xl);
+  --switch-mark-width: 30px; /* documented 30x18 track, wider than the 28px control box */
   --switch-mark-height: var(--icon-size-lg);
   --switch-mark-thumb-size: var(--icon-size-sm);
   --switch-mark-inset: var(--space-1);

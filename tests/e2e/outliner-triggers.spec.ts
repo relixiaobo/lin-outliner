@@ -192,7 +192,10 @@ test.describe('outliner trigger parity', () => {
     await expect(trailingEditor(page)).toBeVisible();
     await expect(trailingEditor(page)).not.toBeFocused();
     await page.keyboard.type('Task');
-    await expect(rowEditor(page, createdRowId!)).toHaveText('Task');
+    // The applied tag renders as an inline chip widget inside the row editor (the
+    // design-system inline tag slot), so the editor's text content is "Task#project".
+    // Assert the node's own body text instead — the chip is not part of it.
+    await expect.poll(async () => (await nodeById(page, createdRowId!))?.content.text).toBe('Task');
     await expect(page.locator(`[data-trailing-parent-id="${ids.today}"]`)).toBeVisible();
     expect(await todayChildren(page)).toEqual([...beforeChildren, createdRowId]);
     const calls = (await commandCalls(page)).slice(beforeCalls);
@@ -480,19 +483,25 @@ test.describe('outliner trigger parity', () => {
 
   test('@ inline trigger in trailing text commits one rich text row with the inline reference', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
-    const beforeCalls = (await commandCalls(page)).length;
 
     await trailingEditor(page).click();
     await page.keyboard.type('See @Alpha');
     await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
-    expect(await todayChildren(page)).toEqual(beforeChildren);
+    // Eager body materialization: leading text ("See ") turns the trailing draft into
+    // a real node as it is typed, so exactly one new child already exists while the @
+    // suggestion popover is open. (A leading #/@ trigger, with no text before it, still
+    // buffers and resolves atomically — see the other trigger cases.)
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+    const createdRowId = await lastTodayChildId(page);
+    expect(createdRowId).toBeTruthy();
 
     await page.keyboard.press('Enter');
 
     await expect(page.locator('.trigger-popover')).toHaveCount(0);
+    // Selecting the suggestion resolves the query into an inline reference on that same
+    // node — it does not spawn a second row.
     await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
-    const createdRowId = await lastTodayChildId(page);
-    expect(createdRowId).toBeTruthy();
+    expect(await lastTodayChildId(page)).toBe(createdRowId);
     await expect(row(page, createdRowId!)).toContainText('See');
     await expect(row(page, createdRowId!)).toContainText('Alpha');
     await expect.poll(async () => nodeById(page, createdRowId!)).toMatchObject({
@@ -503,9 +512,6 @@ test.describe('outliner trigger parity', () => {
     });
     await expect(rowEditor(page, createdRowId!)).toBeFocused();
     await expect(trailingEditor(page)).toBeVisible();
-    const calls = (await commandCalls(page)).slice(beforeCalls);
-    expect(calls.map((call) => call.cmd)).toContain('create_rich_text_node');
-    expect(calls.map((call) => call.cmd)).not.toContain('create_node');
   });
 
   test('@ in an empty row creates an inline reference conversion row', async ({ page }) => {
@@ -1262,6 +1268,26 @@ test.describe('outliner options field inline value', () => {
 
     await listbox.getByRole('option', { name: 'Low' }).click();
     await expect(valuePreview).toHaveText(/Low/);
+  });
+
+  test('options field appends multiple selected values instead of replacing', async ({ page }) => {
+    // Everything is a node: selecting a second option appends it (no cardinality gate),
+    // so the field ends holding both values in selection order.
+    await invokeMockCommand(page, 'select_field_option', {
+      fieldEntryId: ids.priorityEntry,
+      optionNodeId: ids.priorityLow,
+    });
+    await invokeMockCommand(page, 'select_field_option', {
+      fieldEntryId: ids.priorityEntry,
+      optionNodeId: ids.priorityHigh,
+    });
+
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const entry = projection.nodes.find((node) => node.id === ids.priorityEntry);
+      return (entry?.children ?? []).map((childId) =>
+        projection.nodes.find((node) => node.id === childId)?.content.text);
+    }).toEqual(['Low', 'High']);
   });
 
   test('selected option reference values can be changed with Arrow and Enter', async ({ page }) => {

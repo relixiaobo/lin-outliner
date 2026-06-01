@@ -56,7 +56,7 @@ interface RichTextEditorProps {
   content: RichText;
   contentRevision?: number;
   placeholder?: string;
-  /** Extra class appended to the editor element (e.g. `trailing-editor`). */
+  /** Extra class appended to the editor element (e.g. a field-value or block class). */
   className?: string;
   readOnly?: boolean;
   completed?: boolean;
@@ -76,6 +76,13 @@ interface RichTextEditorProps {
   onDescriptionToggle?: (payload: EditorDescriptionTogglePayload) => void;
   onModEnter: (content: RichText) => void;
   onEscape: () => void;
+  /**
+   * Fired on a Space keypress with no modifiers. Returning `true` consumes the
+   * key (the space is not inserted). A date value row uses this to summon its
+   * picker when the value is empty, while still allowing a literal space when
+   * the row already has text.
+   */
+  onSpace?: () => boolean;
   onTriggerChange: (trigger: EditorTrigger | null) => void;
   onFieldTriggerFire?: () => void;
   /** Fired when a bare ``` / ~~~ owns the row, to convert it into a code block. */
@@ -608,6 +615,17 @@ export function RichTextEditor(props: RichTextEditorProps) {
           }
         }
 
+        if (
+          event.key === ' '
+          && !mod
+          && !event.altKey
+          && !event.shiftKey
+          && propsRef.current.onSpace?.()
+        ) {
+          event.preventDefault();
+          return true;
+        }
+
         if (matchesShortcutEvent(event, 'editor.redo')) {
           event.preventDefault();
           propsRef.current.onRedo?.();
@@ -774,6 +792,13 @@ export function RichTextEditor(props: RichTextEditorProps) {
     view.updateState(nextState);
     setIsEmpty(isEmptyDoc(nextState.doc));
     lastExternalContentRef.current = props.content;
+    // A programmatic content replace (e.g. clearing the trailing draft after an
+    // atomic `>`/``` resolution) bypasses handleContentUpdateAction, so it would
+    // otherwise leave the one-shot `>`/``` fire guards latched on this reused
+    // editor — suppressing the next typed trigger. Reset them on every external
+    // sync so a freshly typed trigger fires again.
+    fieldTriggerFiredRef.current = false;
+    codeFenceFiredRef.current = false;
     if (!composingRef.current && !view.composing) updateTrigger(view);
   }, [props.content, props.contentRevision, props.resolveInlineReferenceColor]);
 

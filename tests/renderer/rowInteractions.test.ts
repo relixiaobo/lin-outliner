@@ -4,12 +4,6 @@ import {
   resolveContentRowBackspaceAtStartIntent,
   resolveContentRowUpdateAction,
   resolveEditorTriggerText,
-  resolveTrailingRowArrowDownIntent,
-  resolveTrailingRowArrowUpIntent,
-  resolveTrailingRowBackspaceIntent,
-  resolveTrailingRowEnterIntent,
-  resolveTrailingRowEscapeIntent,
-  resolveTrailingRowUpdateAction,
   resolveTriggerForceCreateIntent,
 } from '../../src/renderer/ui/interactions/rowInteractions';
 import { resolveRowPointerSelectAction } from '../../src/renderer/ui/interactions/rowPointerSelection';
@@ -46,7 +40,6 @@ import {
   DONE_FIELD,
   hiddenFieldKey,
   NAME_FIELD,
-  shouldShowTrailingInput,
 } from '../../src/renderer/ui/outliner/row-model';
 import { searchQueryOutlineText, searchQuerySummaryModel } from '../../src/renderer/ui/search/SearchQuerySummaryBar';
 import { concatRichText } from '../../src/renderer/ui/editor/richTextCodec';
@@ -64,13 +57,12 @@ describe('row interaction resolvers', () => {
 	    ...overrides,
 	  });
 
-  // config-as-nodes: a fieldDef resolves enum config (fieldType, cardinality,
-  // hideField, …) from a defConfig subtree, not a flat field. These entries
-  // provide that subtree for a mock fieldDef; add `${defId}::cfg:${configKey}`
-  // to the fieldDef's children so the projector finds it.
+  // config-as-nodes: a fieldDef resolves enum config (fieldType, hideField, …)
+  // from a defConfig subtree, not a flat field. These entries provide that
+  // subtree for a mock fieldDef; add `${defId}::cfg:${configKey}` to the
+  // fieldDef's children so the projector finds it.
   const ENUM_CONFIG_SUBTREE: Record<string, string> = {
     fieldType: 'schema:field-types',
-    cardinality: 'schema:cardinalities',
     hideField: 'schema:hide-modes',
     autoInitialize: 'schema:auto-init',
   };
@@ -326,25 +318,6 @@ describe('row interaction resolvers', () => {
 	    ]);
 	  });
 
-  test('trailing input ignores non-node rows when deciding placement', () => {
-    expect(shouldShowTrailingInput([
-      { id: 'group:a', type: 'group', label: 'A' },
-      { id: 'hidden:p:f', type: 'hiddenField', fieldId: 'f', label: 'Field' },
-    ])).toBe(true);
-    expect(shouldShowTrailingInput([
-      { id: 'field', type: 'field' },
-      { id: 'group:a', type: 'group', label: 'A' },
-    ])).toBe(true);
-    expect(shouldShowTrailingInput([
-      { id: 'content', type: 'content' },
-      { id: 'hidden:p:f', type: 'hiddenField', fieldId: 'f', label: 'Field' },
-    ])).toBe(true);
-    expect(shouldShowTrailingInput([
-      { id: 'content', type: 'content' },
-      { id: 'hidden:p:f', type: 'hiddenField', fieldId: 'f', label: 'Field' },
-    ], { mode: 'fieldValue' })).toBe(false);
-  });
-
   test('resolves row drag-drop moves across parents and expanded targets', () => {
     expect(resolveOutlinerDropMove({
       dragNodeId: 'drag',
@@ -397,73 +370,6 @@ describe('row interaction resolvers', () => {
     })).toEqual({ parentId: 'parent', index: 3, expandTargetId: undefined });
   });
 
-  test('maps trailing input trigger characters to node actions', () => {
-    expect(resolveTrailingRowUpdateAction({ text: '>' })).toEqual({ type: 'create_field' });
-    expect(resolveTrailingRowUpdateAction({ text: '#' })).toEqual({
-      type: 'open_trigger',
-      trigger: '#',
-      matchText: '#',
-      textOffset: 1,
-    });
-    expect(resolveTrailingRowUpdateAction({ text: 'hello@' })).toEqual({
-      type: 'open_trigger',
-      trigger: '@',
-      matchText: 'hello@',
-      textOffset: 6,
-    });
-    expect(resolveTrailingRowUpdateAction({ text: '/' })).toEqual({
-      type: 'open_trigger',
-      trigger: '/',
-      matchText: '/',
-      textOffset: 1,
-    });
-    expect(resolveTrailingRowUpdateAction({ text: '#fff' })).toEqual({ type: 'none' });
-    expect(resolveTrailingRowUpdateAction({ text: '#112233' })).toEqual({ type: 'none' });
-    expect(resolveTrailingRowUpdateAction({ text: '#112233', isOptionsField: true })).toEqual({
-      type: 'open_options',
-      query: '#112233',
-    });
-  });
-
-  test('keeps trailing navigation decisions explicit', () => {
-    expect(resolveTrailingRowEnterIntent({ hasText: false })).toBe('create_empty');
-    expect(resolveTrailingRowEnterIntent({ hasText: true })).toBe('create_content');
-    expect(resolveTrailingRowEnterIntent({ hasText: true, continueOnText: true })).toBe('create_content_and_continue');
-    expect(resolveTrailingRowEnterIntent({ hasText: true, continueOnText: false })).toBe('create_content');
-    expect(resolveTrailingRowEnterIntent({ hasText: true, optionsOpen: true, optionCount: 2 })).toBe('options_confirm');
-    expect(resolveTrailingRowBackspaceIntent({
-      isEditorEmpty: false,
-      depthShifted: true,
-      parentChildCount: 0,
-      hasLastVisibleTarget: false,
-    })).toBe('allow_default');
-    expect(resolveTrailingRowBackspaceIntent({
-      isEditorEmpty: true,
-      depthShifted: true,
-      parentChildCount: 0,
-      hasLastVisibleTarget: false,
-    })).toBe('reset_depth_shift');
-    expect(resolveTrailingRowBackspaceIntent({
-      isEditorEmpty: true,
-      depthShifted: false,
-      parentChildCount: 0,
-      hasLastVisibleTarget: false,
-    })).toBe('collapse_parent');
-    expect(resolveTrailingRowBackspaceIntent({
-      isEditorEmpty: true,
-      depthShifted: false,
-      parentChildCount: 2,
-      hasLastVisibleTarget: true,
-    })).toBe('focus_last_visible');
-    expect(resolveTrailingRowArrowUpIntent({
-      hasLastVisibleTarget: true,
-      hasNavigateOut: false,
-    })).toBe('focus_last_visible');
-    expect(resolveTrailingRowArrowDownIntent({
-      hasNavigateOut: true,
-    })).toBe('navigate_out_down');
-    expect(resolveTrailingRowEscapeIntent(false)).toBe('blur_editor');
-  });
 
   test('keeps plain pointer clicks out of block selection mode', () => {
     expect(resolveRowPointerSelectAction({

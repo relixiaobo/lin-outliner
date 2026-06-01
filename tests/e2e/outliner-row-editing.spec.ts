@@ -192,7 +192,7 @@ test.describe('outliner row editing parity', () => {
       const createdBullet = document
         .querySelector(`[data-node-id="${createdIdArg}"] .row-bullet-shape.content`);
       const trailingBullet = document
-        .querySelector('.trailing-row .row-bullet-shape.content');
+        .querySelector('.row.node-draft .row-bullet-shape.content');
       const alphaBullet = document
         .querySelector(`[data-node-id="${alphaId}"] .row-bullet-shape.content`);
       if (!createdBullet || !trailingBullet || !alphaBullet) throw new Error('missing bullet');

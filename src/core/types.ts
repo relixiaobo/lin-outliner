@@ -22,7 +22,6 @@ export const TAG_YEAR_ID = 'tag:year';
 // an invalid enum value is unrepresentable. See docs/plans/config-as-nodes.md.
 export const SCHEMA_FIELD_TYPES_ID = 'schema:field-types';
 export const SCHEMA_HIDE_MODES_ID = 'schema:hide-modes';
-export const SCHEMA_CARDINALITIES_ID = 'schema:cardinalities';
 export const SCHEMA_AUTO_INIT_ID = 'schema:auto-init';
 
 /** Deterministic id for a system option node, e.g. `schema:field-types/number`. */
@@ -66,8 +65,6 @@ export type FieldType =
   | 'email'
   | 'checkbox';
 
-export type FieldCardinality = 'single' | 'list';
-
 export type AutoInitStrategy =
   | 'current_date'
   | 'ancestor_day_node'
@@ -101,7 +98,6 @@ export type TagConfigKey =
 
 export type FieldConfigKey =
   | 'fieldType'
-  | 'cardinality'
   | 'sourceSupertag'
   | 'nullable'
   | 'hideField'
@@ -152,7 +148,6 @@ export interface TagConfigPatch {
 
 export interface FieldConfigPatch {
   fieldType?: FieldType;
-  cardinality?: FieldCardinality | null;
   sourceSupertag?: NodeId | null;
   nullable?: boolean | null;
   hideField?: HideFieldMode | null;
