@@ -94,9 +94,12 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 
-.settings-sheet-row.is-footnote {
-  min-height: 0;
-  padding-top: 0;
+/* "Get API key" link sits just under the connection card, pulled close to it
+   (tighter than the body's inter-block rhythm). */
+.settings-sheet-getkey {
+  align-self: flex-start;
+  margin-top: calc(0px - var(--space-2));
+  padding: 0 var(--space-2);
 }
 
 .settings-sheet-row-label {
@@ -164,25 +167,6 @@
   color: var(--text-soft);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
-}
-
-.settings-sheet-advanced {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.settings-sheet-advanced-summary {
-  color: var(--text-soft);
-  font-size: var(--font-meta);
-  font-weight: 600;
-  line-height: var(--line-meta);
-  list-style: none;
-  user-select: none;
-}
-
-.settings-sheet-advanced-summary::-webkit-details-marker {
-  display: none;
 }
 
 .settings-sheet-result {

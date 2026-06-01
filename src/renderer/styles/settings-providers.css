@@ -1,9 +1,40 @@
-.settings-nav {
+/* Floating settings rail — the macOS System Settings sidebar, rendered as the
+   app's own floating glass panel (mirrors the main window's .sidebar-dock):
+   elevated surface, soft elevation, rounded, hairline edge. So the categories read
+   as a rail that floats off the window base, the same way the main sidebar does —
+   not a flat column blended into the background. */
+.settings-rail {
   display: flex;
   flex: 0 0 auto;
-  width: 156px;
+  /* Same width / radius / float as the main window sidebar so the two read
+     identically (--sidebar-width, --panel-radius, --rail-pad inset). */
+  width: var(--sidebar-width);
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-5);
+  border-radius: var(--panel-radius);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-rail), inset 0 0 0 0.5px var(--rail-edge);
+  /* Top padding clears the inset traffic lights (frameless window): the lights
+     overlay the rail's top, the "Settings" title sits below them. */
+  padding: var(--chrome-height) var(--rail-pad) var(--rail-pad);
+  /* Chrome labels are navigation, not content — not user-selectable (B10). */
+  user-select: none;
+}
+
+.settings-rail-title {
+  margin: 0;
+  padding: 0 var(--space-3);
+  color: var(--text-strong);
+  font-size: var(--font-content);
+  font-weight: 600;
+  line-height: var(--line-ui-md);
+}
+
+.settings-nav {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-1);
 }
 
 .settings-nav-item {
@@ -37,109 +68,66 @@
   line-height: var(--line-ui-2xs);
 }
 
+/* The content pane is the single scroll container (the rail stays put). It is the
+   flat window base — no card wrapper — so the grouped cards float on it the same
+   way the rail does (shared --bg-elevated). */
 .settings-content {
   display: flex;
   min-width: 0;
+  min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
   gap: var(--space-6);
+  /* Clear the frameless window's top drag strip so the content's first controls
+     are not under it; this also vertically aligns the content with the rail title. */
+  padding-top: var(--chrome-height);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
-/* ── Providers: a full-width grouped list in the content pane (native System
+/* ── Providers: a full-width grouped list on the flat content base (native System
    Settings Wi-Fi model). The per-provider config opens in a sheet, so there is
-   no permanent side detail pane. ─────────────────────────────────────────────── */
+   no permanent side detail pane, and no surrounding panel competes with the rail. */
+.settings-providers-section {
+  gap: var(--space-5);
+  background: transparent;
+  padding: 0;
+}
+
+/* No title row — just the custom-provider add, right-aligned as a thin toolbar. */
 .settings-providers-head {
   display: flex;
   flex: 0 0 auto;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.settings-providers-title {
-  margin: 0;
-  color: var(--text-strong);
-  font-size: var(--font-ui-lg);
-  font-weight: 700;
-  line-height: var(--line-ui-md);
-}
-
-.settings-provider-search-row {
-  display: flex;
-  flex: 0 0 auto;
   align-items: center;
-  gap: var(--space-3);
+  justify-content: flex-end;
 }
 
+/* Custom-provider add: icon-only chrome control — color-deepen with an optional
+   circular hover fill, never a boxed rounded square (B6). */
 .settings-provider-add {
-  display: flex;
+  display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--fill-2);
-  color: var(--text-soft);
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-tertiary);
 }
 
 .settings-provider-add:hover {
-  border-color: var(--focus-border);
-  background: var(--fill-3);
+  background: var(--control-hover);
   color: var(--text-strong);
-}
-
-.settings-provider-search {
-  display: flex;
-  flex: 1 1 auto;
-  min-width: 0;
-  align-items: center;
-  gap: var(--space-3);
-  height: 32px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--fill-2);
-  color: var(--muted-2);
-  padding: 0 var(--space-4);
-}
-
-.settings-provider-search:focus-within {
-  border-color: var(--focus-border);
-  background: var(--fill-3);
-}
-
-.settings-provider-search > svg {
-  flex: 0 0 auto;
-}
-
-.settings-provider-search input {
-  width: 100%;
-  height: 100%;
-  border: 0;
-  outline: none;
-  background: transparent;
-  color: var(--text-strong);
-  font-size: var(--font-ui-sm);
 }
 
 /* Holds the Connected / Available InsetGroups (SettingsInsetList). The rows are
-   the .inset-* primitive — no bespoke row styling here. The list fills the pane
-   and scrolls; a tall catalog (Bedrock 100+ models lives in the row sheet, not
-   here) stays manageable. */
+   the .inset-* primitive — no bespoke row styling here; inter-group spacing comes
+   from the primitive (.inset-group + .inset-group). The content pane scrolls. */
 .settings-provider-groups {
   display: flex;
-  flex: 1 1 auto;
   flex-direction: column;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.settings-provider-list-empty {
-  margin: 0;
-  padding: var(--space-3);
-  color: var(--muted-2);
-  font-size: var(--font-ui-2xs);
-  line-height: var(--line-ui-2xs);
 }
 
 /* Leading slot: a fixed-width check that marks the ACTIVE provider (neutral, B3 —

@@ -11,13 +11,12 @@ import type {
   SkillDefinition,
 } from '../../api/types';
 import { api } from '../../api/client';
-import { AddIcon, CheckIcon, ICON_SIZE, SearchIcon, WarningIcon } from '../icons';
+import { AddIcon, CheckIcon, ICON_SIZE, WarningIcon } from '../icons';
 import { providerIconUrl } from './providerIcon';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { SelectControl } from '../primitives/SelectControl';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
-import { TextInputControl } from '../primitives/TextInputControl';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 import { SettingsProviderSheet, type ProviderSheetDraft } from './SettingsProviderSheet';
 import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
@@ -63,10 +62,11 @@ interface ProviderRowHandlers {
 
 // A single provider row in the inset grouped list — the macOS System Settings
 // Wi-Fi idiom: a leading check marks the ACTIVE provider, the brand avatar is the
-// identity, and a trailing circular `⋯` opens the row's actions. Connected vs.
-// available state is carried by the group ("Connected" / "Available"), not a
-// badge. Clicking the row opens the provider's config sheet. Memoized + fed stable
-// handlers, so editing one provider's sheet never re-renders the list.
+// identity. Clicking the row opens the provider's config sheet. A trailing circular
+// `⋯` appears ONLY when the row has more than one action — an unconfigured provider
+// has a single action ("Configure"), which is exactly what clicking the row does,
+// so a menu there would just add a redundant step. Memoized + fed stable handlers,
+// so editing one provider's sheet never re-renders the list.
 const SettingsProviderRow = memo(function SettingsProviderRow({
   provider,
   menuOpen,
@@ -98,14 +98,14 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
         </>
       )}
       onSelect={() => handlers.onConfigure(provider.providerId)}
-      trailing={(
+      trailing={actions.length > 1 ? (
         <SettingsRowMenu
           actions={actions}
           ariaLabel={`${name} actions`}
           onOpenChange={(open) => handlers.onMenuOpenChange(provider.providerId, open)}
           open={menuOpen}
         />
-      )}
+      ) : undefined}
     />
   );
 });
@@ -208,7 +208,6 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
   const [permissionDraft, setPermissionDraft] = useState<AgentToolPermissionSettingsView | null>(null);
   const [draft, setDraft] = useState<DraftConfig>(EMPTY_DRAFT);
   const [apiKey, setApiKey] = useState('');
-  const [providerQuery, setProviderQuery] = useState('');
   const [category, setCategory] = useState<SettingsCategory>('providers');
   const [creatingCustom, setCreatingCustom] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -252,7 +251,6 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     setNotice(null);
     setCategory('providers');
     setCreatingCustom(false);
-    setProviderQuery('');
     setSheetOpen(false);
 
     void Promise.all([
@@ -340,22 +338,15 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     [draft.providerId, providerCatalog, settings],
   );
   const activeRowProviderId = creatingCustom ? '' : draft.providerId;
-  const visibleProviderChoices = useMemo(() => {
-    const query = providerQuery.trim().toLowerCase();
-    if (!query) return providerChoices;
-    return providerChoices.filter((choice) =>
-      formatProviderName(choice.providerId).toLowerCase().includes(query)
-      || choice.providerId.toLowerCase().includes(query));
-  }, [providerChoices, providerQuery]);
   // Grouped inset list: "Connected" = has a credential (key or env/managed),
   // "Available" = the rest. macOS System Settings groups this way.
   const connectedChoices = useMemo(
-    () => visibleProviderChoices.filter((choice) => choice.hasCredential),
-    [visibleProviderChoices],
+    () => providerChoices.filter((choice) => choice.hasCredential),
+    [providerChoices],
   );
   const availableChoices = useMemo(
-    () => visibleProviderChoices.filter((choice) => !choice.hasCredential),
-    [visibleProviderChoices],
+    () => providerChoices.filter((choice) => !choice.hasCredential),
+    [providerChoices],
   );
   const selectedChoice = providerChoices.find((choice) => choice.providerId === activeRowProviderId);
   const detailName = creatingCustom
@@ -538,27 +529,34 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
   // Validate tests the (unsaved) draft connection without persisting anything.
   async function validateProviderDraft(sheet: ProviderSheetDraft): Promise<{ success: boolean; message: string }> {
     const providerId = sheet.providerId.trim();
+    const existing = settings?.providers.find((provider) => provider.providerId === providerId);
+    const catalog = providerCatalog.get(providerId);
     const result = await api.agentTestProviderConnection({
       providerId,
-      modelId: sheet.modelId.trim() || selectedCatalog?.models[0]?.id || getFallbackModelId(providerId),
+      modelId: sheet.modelId.trim() || existing?.modelId || catalog?.models[0]?.id || getFallbackModelId(providerId),
       baseUrl: sheet.baseUrl.trim() || undefined,
       apiKey: sheet.apiKey.trim() || undefined,
     });
     return { success: result.success, message: result.message };
   }
 
-  // Save commits the whole provider config (model / reasoning / base URL) and,
-  // if a new key was entered, the credential — then refetches and closes.
+  // Save commits the connection (base URL + credential) and refetches. Model &
+  // reasoning are not edited in the sheet (the composer owns them), so preserve the
+  // existing values, defaulting a new provider to the catalog flagship.
   async function commitProviderConfig(sheet: ProviderSheetDraft): Promise<void> {
     const providerId = sheet.providerId.trim();
     if (!providerId) return;
     const requestId = beginRequest();
     setError(null);
     setNotice(null);
+    const existing = settings?.providers.find((provider) => provider.providerId === providerId);
+    const catalog = providerCatalog.get(providerId);
+    const modelId = sheet.modelId.trim() || existing?.modelId || catalog?.models[0]?.id || '';
+    const reasoningLevel = existing?.reasoningLevel ?? defaultReasoningLevel(catalog?.models[0]);
     await api.agentUpsertProviderConfig({
       providerId,
-      modelId: sheet.modelId.trim() || selectedCatalog?.models[0]?.id || '',
-      reasoningLevel: sheet.reasoningLevel,
+      modelId,
+      reasoningLevel,
       baseUrl: sheet.baseUrl.trim() || null,
       enabled: true,
     });
@@ -625,75 +623,59 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
 
   return (
     <main className="settings-window" aria-labelledby="agent-settings-title">
-      <header className="agent-settings-header">
-        <h2 id="agent-settings-title">Settings</h2>
-        <ButtonControl className="agent-settings-close" onClick={onClose}>
-          Close
-        </ButtonControl>
-      </header>
-
+      {/* Frameless window: this top strip is the drag region that stands in for the
+          native title bar. The OS traffic lights overlay it; the rail title/nav and
+          content controls all sit below --chrome-height, so none overlaps it. */}
+      <div className="settings-drag-region" aria-hidden="true" />
       {loading ? (
-        <div className="agent-settings-empty">Loading...</div>
+        <div className="agent-settings-empty">Loading…</div>
       ) : (
         <div className="settings-layout">
-          <nav className="settings-nav" aria-label="Settings categories">
-            {SETTINGS_CATEGORIES.map((item) => (
-              <button
-                aria-current={category === item.id ? 'page' : undefined}
-                className={`settings-nav-item ${category === item.id ? 'is-active' : ''}`}
-                key={item.id}
-                onClick={() => setCategory(item.id)}
-                type="button"
-              >
-                <span className="settings-nav-label">{item.label}</span>
-                <span className="settings-nav-hint">{item.hint}</span>
-              </button>
-            ))}
-          </nav>
+          <aside className="settings-rail">
+            <h2 className="settings-rail-title" id="agent-settings-title">Settings</h2>
+            <nav className="settings-nav" aria-label="Settings categories">
+              {SETTINGS_CATEGORIES.map((item) => (
+                <button
+                  aria-current={category === item.id ? 'page' : undefined}
+                  className={`settings-nav-item ${category === item.id ? 'is-active' : ''}`}
+                  key={item.id}
+                  onClick={() => setCategory(item.id)}
+                  type="button"
+                >
+                  <span className="settings-nav-label">{item.label}</span>
+                  <span className="settings-nav-hint">{item.hint}</span>
+                </button>
+              ))}
+            </nav>
+          </aside>
 
           <div className="settings-content">
             {category === 'providers' ? (
               <section className="agent-settings-section settings-providers-section" aria-label="Providers">
+                {/* No "Providers" title — the selected rail category already names
+                    the pane. The head is just the custom-provider add control. */}
                 <div className="settings-providers-head">
-                  <h3 className="settings-providers-title">Providers</h3>
-                  <div className="settings-provider-search-row">
-                    <div className="settings-provider-search">
-                      <SearchIcon size={ICON_SIZE.menu} />
-                      <TextInputControl
-                        label="Search providers"
-                        onChange={(event) => setProviderQuery(event.target.value)}
-                        placeholder="Search providers…"
-                        value={providerQuery}
-                      />
-                    </div>
-                    <button
-                      aria-label="Custom provider"
-                      className="settings-provider-add"
-                      onClick={startCustomProvider}
-                      title="Add a custom OpenAI-compatible provider"
-                      type="button"
-                    >
-                      <AddIcon size={ICON_SIZE.menu} />
-                    </button>
-                  </div>
+                  <button
+                    aria-label="Custom provider"
+                    className="settings-provider-add"
+                    onClick={startCustomProvider}
+                    title="Add a custom OpenAI-compatible provider"
+                    type="button"
+                  >
+                    <AddIcon size={ICON_SIZE.menu} />
+                  </button>
                 </div>
                 <div className="settings-provider-groups">
-                  {visibleProviderChoices.length === 0 ? (
-                    <p className="settings-provider-list-empty">No providers match “{providerQuery.trim()}”.</p>
-                  ) : (
-                    <>
-                      {connectedChoices.length > 0 ? (
-                        <InsetGroup ariaLabel="Connected providers" label="Connected">
-                          {connectedChoices.map(renderProviderRow)}
-                        </InsetGroup>
-                      ) : null}
-                      {availableChoices.length > 0 ? (
-                        <InsetGroup ariaLabel="Available providers" label="Available">
-                          {availableChoices.map(renderProviderRow)}
-                        </InsetGroup>
-                      ) : null}
-                    </>
-                  )}
+                  {connectedChoices.length > 0 ? (
+                    <InsetGroup ariaLabel="Connected providers" label="Connected">
+                      {connectedChoices.map(renderProviderRow)}
+                    </InsetGroup>
+                  ) : null}
+                  {availableChoices.length > 0 ? (
+                    <InsetGroup ariaLabel="Available providers" label="Available">
+                      {availableChoices.map(renderProviderRow)}
+                    </InsetGroup>
+                  ) : null}
                 </div>
 
                 {sheetOpen ? (
@@ -710,12 +692,10 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                     initial={{
                       providerId: draft.providerId,
                       modelId: draft.modelId,
-                      reasoningLevel: draft.reasoningLevel,
                       baseUrl: draft.baseUrl,
                     }}
                     isActive={Boolean(selectedChoice?.active)}
                     mode={showConnectionFields ? 'custom' : 'configure'}
-                    models={catalogModels}
                     onClose={() => setSheetOpen(false)}
                     onOpenExternal={(url) => void api.openExternalUrl(url)}
                     onRemoveProvider={!creatingCustom && configuredProvider

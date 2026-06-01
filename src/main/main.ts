@@ -399,9 +399,10 @@ function focusMainWindow() {
 }
 
 // Settings open in their own window — the native "Preferences" convention —
-// reusing the single renderer bundle via a ?surface=settings query. Unlike the
-// main window it keeps a native title bar (the settings surface draws no custom
-// chrome) and isn't persisted across launches.
+// reusing the single renderer bundle via a ?surface=settings query. Like the main
+// window it is frameless with inset traffic lights (the lights sit over the
+// settings rail, no separate title-bar strip); the renderer draws its own top drag
+// region. It isn't persisted across launches.
 function openSettingsWindow() {
   if (settingsWindow) {
     if (settingsWindow.isMinimized()) settingsWindow.restore();
@@ -409,8 +410,11 @@ function openSettingsWindow() {
     settingsWindow.focus();
     return;
   }
-  // A utilitarian Preferences window: opaque content, native title bar, no OS
-  // material (unlike the main window) — matching how system settings panes read.
+  // A utilitarian Preferences window: opaque content, no OS material (unlike the
+  // main window). Frameless with inset traffic lights (titleBarStyle: hiddenInset)
+  // so the lights sit over the settings rail and there is no native title-bar
+  // strip — the renderer provides the top drag region. Security defaults (A3) are
+  // unchanged.
   settingsWindow = new BrowserWindow({
     title: 'Settings',
     width: 760,
@@ -419,6 +423,8 @@ function openSettingsWindow() {
     minHeight: 480,
     show: false,
     backgroundColor: prePaintBackgroundColor(),
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: MAC_TRAFFIC_LIGHT_POSITION,
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
@@ -430,7 +436,17 @@ function openSettingsWindow() {
   const target = settingsWindow;
   hardenWebContents(target.webContents);
   attachNativeContextMenu(target.webContents);
-  target.once('ready-to-show', () => target.show());
+  // Match the main window's custom native corner (MAC_WINDOW_CORNER_RADIUS) so the
+  // frameless settings window has the SAME rounded corners — not the smaller macOS
+  // default (16pt on Tahoe). Apply before show (no default-corner flash) and again
+  // on ready-to-show; reset to 0 in fullscreen where a rounded corner clips content.
+  applyMacWindowCorner(target, MAC_WINDOW_CORNER_RADIUS);
+  target.once('ready-to-show', () => {
+    applyMacWindowCorner(target, MAC_WINDOW_CORNER_RADIUS);
+    target.show();
+  });
+  target.on('enter-full-screen', () => applyMacWindowCorner(target, 0));
+  target.on('leave-full-screen', () => applyMacWindowCorner(target, MAC_WINDOW_CORNER_RADIUS));
 
   if (RENDERER_DEV_URL) {
     void target.loadURL(`${RENDERER_DEV_URL}?${WINDOW_SURFACE_QUERY_PARAM}=settings`);

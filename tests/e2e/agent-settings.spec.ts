@@ -3,29 +3,27 @@ import { commandCalls, installElectronMock } from './outlinerMock';
 
 // Settings render in their own window (the ?surface=settings route), not an
 // in-app modal. The Providers surface follows the macOS System Settings idiom: a
-// category sidebar + a full-width inset grouped list (Connected / Available) with
-// on-row status, and a per-provider config SHEET (opened by clicking a row) that
-// hosts the credential, model & reasoning, async validate, and its own Cancel /
-// Save. There is no permanent side detail pane and no global Save bar.
+// floating category rail + a full-width inset grouped list (Connected / Available)
+// with on-row status, and a per-provider config SHEET (opened by clicking a row)
+// that hosts the credential, model & reasoning, base URL, async validate, and its
+// own Cancel / Save. There is no permanent side detail pane, no global Save bar,
+// no provider search, and no in-content Close button — the window is closed
+// through native window chrome (traffic lights), like System Settings.
 test.describe('agent settings window', () => {
-  test('renders as a standalone window and closes through the host', async ({ page }) => {
+  test('renders as a standalone window with a floating rail and native close', async ({ page }) => {
     const settings = await openSettings(page);
     await expect(settings.getByRole('heading', { name: 'Settings' })).toBeVisible();
+    // The category rail floats off the content base (its own elevated panel).
+    await expect(settings.locator('.settings-rail')).toBeVisible();
+    // Frameless window: a top drag strip stands in for the native title bar (the
+    // OS traffic lights overlay it), so there is no separate title-bar row.
+    await expect(settings.locator('.settings-drag-region')).toHaveCount(1);
     // No sheet is open at rest, and it owns the whole window — not a modal layered
     // over the app.
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.locator('.app-shell')).toHaveCount(0);
-
-    // Close asks the host (main process) to close the window.
-    await page.evaluate(() => {
-      const probe = window as unknown as { __closeCalls: number; lin: Record<string, unknown> };
-      probe.__closeCalls = 0;
-      probe.lin.closeSettings = () => {
-        probe.__closeCalls += 1;
-      };
-    });
-    await settings.getByRole('button', { name: 'Close', exact: true }).click();
-    expect(await page.evaluate(() => (window as unknown as { __closeCalls: number }).__closeCalls)).toBe(1);
+    // Closing is delegated to native window chrome — there is no in-content button.
+    await expect(settings.getByRole('button', { name: 'Close' })).toHaveCount(0);
   });
 
   test('groups providers by credential and reads status on each row', async ({ page }) => {
@@ -37,27 +35,40 @@ test.describe('agent settings window', () => {
     await expect(settings.getByRole('button', { name: 'Anthropic, Add key' })).toBeVisible();
   });
 
-  test('opens the active provider config in a sheet with model, reasoning and a saved key', async ({ page }) => {
+  test('opens the active provider config in a sheet with a saved key and base URL', async ({ page }) => {
     const settings = await openSettings(page);
     await settings.getByRole('button', { name: 'OpenAI, Active' }).click();
 
     const sheet = page.getByRole('dialog');
     await expect(sheet.getByRole('heading', { name: /OpenAI/ })).toBeVisible();
-    // The saved credential is masked; model & reasoning are configured inline.
+    // The saved credential is masked; the sheet configures only the connection
+    // (key + base URL). Model & reasoning are chosen in the composer, not here.
     await expect(sheet.getByLabel('API key')).toHaveAttribute('placeholder', /Saved \(encrypted\)/);
-    await expect(sheet.getByRole('combobox', { name: 'Model' })).toBeVisible();
-    await expect(sheet.getByLabel('Reasoning')).toBeVisible();
+    await expect(sheet.getByLabel('Base URL')).toBeVisible();
+    await expect(sheet.getByRole('combobox', { name: 'Model' })).toHaveCount(0);
+    await expect(sheet.getByLabel('Reasoning')).toHaveCount(0);
     // A configured provider can be removed from its sheet.
     await expect(sheet.getByRole('button', { name: 'Remove provider' })).toBeVisible();
   });
 
-  test('filters the provider list by search and keeps Custom reachable', async ({ page }) => {
+  test('shows the row actions menu only when there is more than one action', async ({ page }) => {
     const settings = await openSettings(page);
-    await settings.getByLabel('Search providers').fill('anth');
-    await expect(settings.getByRole('button', { name: /^Anthropic,/ })).toBeVisible();
-    await expect(settings.getByRole('button', { name: 'OpenAI, Active' })).toHaveCount(0);
-    // The custom-provider add button lives beside the search, outside the list.
+    // The active, configured OpenAI has multiple actions → a ⋯ menu.
+    await expect(settings.getByRole('button', { name: 'OpenAI actions' })).toBeVisible();
+    // Unconfigured Anthropic's only action is "Configure", which is exactly what
+    // clicking the row does — so no redundant ⋯ menu.
+    await expect(settings.getByRole('button', { name: 'Anthropic actions' })).toHaveCount(0);
+  });
+
+  test('has no provider search and keeps the custom-provider add reachable', async ({ page }) => {
+    const settings = await openSettings(page);
+    // Native System Settings (Wi-Fi) has no list search; the head's only control is
+    // the custom-provider add button beside the title.
+    await expect(settings.getByLabel('Search providers')).toHaveCount(0);
     await expect(settings.getByRole('button', { name: 'Custom provider' })).toBeVisible();
+    // The full list is always shown — both Anthropic and the active OpenAI.
+    await expect(settings.getByRole('button', { name: /^Anthropic,/ })).toBeVisible();
+    await expect(settings.getByRole('button', { name: 'OpenAI, Active' })).toBeVisible();
   });
 
   test('enters a credential through the provider sheet and saves the config', async ({ page }) => {
@@ -115,13 +126,14 @@ test.describe('agent settings window', () => {
     await expect(sheet.getByRole('button', { name: /AWS credential setup/ })).toBeVisible();
   });
 
-  test('lists the provider models in the sheet model selector', async ({ page }) => {
+  test('exposes the base URL inline, not behind an Advanced disclosure', async ({ page }) => {
     const settings = await openSettings(page);
     await settings.getByRole('button', { name: 'OpenAI, Active' }).click();
-    const model = page.getByRole('dialog').getByRole('combobox', { name: 'Model' });
-    await expect(model).toBeVisible();
-    await expect(model).toContainText('GPT-5.4');
-    await expect(model).toContainText('GPT-5.4 Mini');
+    const sheet = page.getByRole('dialog');
+    // Base URL is a plain row (the lone advanced setting), so there is no
+    // "Advanced" disclosure to expand.
+    await expect(sheet.getByLabel('Base URL')).toBeVisible();
+    await expect(sheet.getByText('Advanced')).toHaveCount(0);
   });
 
   test('toggles API key visibility in the sheet', async ({ page }) => {
@@ -160,11 +172,13 @@ test.describe('agent settings window', () => {
     });
   });
 
-  test('saves a changed model and reasoning from the provider sheet', async ({ page }) => {
+  test('saves the connection and preserves the configured model', async ({ page }) => {
     const settings = await openSettings(page);
     await settings.getByRole('button', { name: 'OpenAI, Active' }).click();
     const sheet = page.getByRole('dialog');
-    await sheet.getByLabel('Reasoning').selectOption('high');
+    // The sheet only edits the connection; saving must keep the existing model
+    // (the composer owns model choice) rather than clearing it.
+    await sheet.getByLabel('Base URL').fill('https://proxy.example.com/v1');
     await sheet.getByRole('button', { name: 'Save', exact: true }).click();
 
     await expect.poll(async () => {
@@ -174,8 +188,7 @@ test.describe('agent settings window', () => {
       provider: {
         providerId: 'openai',
         modelId: 'gpt-5.4',
-        reasoningLevel: 'high',
-        baseUrl: null,
+        baseUrl: 'https://proxy.example.com/v1',
         enabled: true,
       },
     });

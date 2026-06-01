@@ -1013,11 +1013,34 @@ The settings surface follows the macOS System Settings *interaction* idiom
 (the Wi-Fi pane is the reference), rendered in Lin foundations (tokens + B-rules),
 not Apple chrome. We borrow the interaction, not the chrome.
 
-- **Category sidebar + full-width list.** A left sidebar lists settings categories
-  (Providers / Permissions / Skills / Agent Profiles). The content pane shows the
-  selected category full-width — for Providers, a grouped provider list. There is
-  NO permanent side detail pane: per-provider config opens in a sheet (below).
-  Categories — not individual providers — are the top-level sidebar rows.
+- **Frameless window, identical to the main shell's geometry.** The settings
+  window is frameless with inset traffic lights (`titleBarStyle: hiddenInset` +
+  the shared `MAC_TRAFFIC_LIGHT_POSITION`) and the same custom 24px native corner
+  (`MAC_WINDOW_CORNER_RADIUS`) as the main window — not the smaller macOS default.
+  There is no native title-bar strip: the renderer draws a top drag region
+  (`.settings-drag-region`) and the lights sit over the rail's top. Insets and
+  radii match the main shell exactly — `--layout-gap` float + gap, `--sidebar-width`
+  rail, `--panel-radius` corners — so the rail nests concentrically inside the
+  window corner (window 24 = gap 8 + rail 16, B9).
+- **Floating category rail + full-width list.** A left rail lists settings
+  categories (Providers / Permissions / Skills / Agent Profiles). The rail is the
+  app's own floating glass panel — elevated surface, soft elevation, rounded,
+  hairline edge — mirroring the main window's `.sidebar-dock`, so it reads as a
+  rail that floats off the content base rather than a flat column. The content
+  pane is the flat window base (no surrounding card) and is the single scroll
+  container, so the rail stays put; the grouped cards float on it on the same
+  `--bg-elevated` surface as the rail. The content pane shows the selected
+  category full-width — for Providers, a grouped provider list. There is NO
+  permanent side detail pane: per-provider config opens in a sheet (below).
+  Categories — not individual providers — are the top-level rail rows.
+- **No redundant chrome.** The window is closed through native window chrome
+  (the traffic lights), like System Settings — there is no in-content Close
+  button. The content pane carries no "Providers" title (the selected rail
+  category already names it), no search field, and rows show a `⋯` menu ONLY when
+  they have more than one action — an unconfigured provider's single action
+  ("Configure") is exactly what clicking the row does, so a menu there is just a
+  redundant step. The only head control is the custom-provider add (`+`), an
+  icon-only B6 control (circular hover fill, no boxed square).
 - **Inset grouped list (the reusable primitive).** `SettingsInsetList.tsx`
   (`InsetGroup` + a memoized `InsetRow`) renders a sentence-case section header
   above a rounded inset card whose rows are split by hairlines; geometry derives
@@ -1029,32 +1052,35 @@ not Apple chrome. We borrow the interaction, not the chrome.
 - **Provider rows + on-row status.** Providers group into "Connected" (has a
   credential — key, env, or managed) and "Available". Each row is the Wi-Fi
   idiom: a leading check marks the ACTIVE provider (neutral, B3 — active never
-  takes an accent), the brand avatar is the identity, and a trailing circular `⋯`
-  opens the row's actions (`SettingsRowMenu.tsx`). The `⋯` is a circular icon-only
-  control (B6: pill/circular, never a rounded square) whose ring + glyph deepen on
-  hover; its floating menu reuses the shared popover glass with the
-  `prefers-reduced-transparency` opaque fallback (B5/D2) at the level-1 menu tier
-  (B10). Rows are memoized + fed stable handlers, so opening one provider's sheet
-  never re-renders the list.
-- **Per-provider config sheet.** Clicking a row (or "Configure…") opens
-  `SettingsProviderSheet.tsx` — the whole provider config in a focused sheet, the
-  native model where a list row pushes its detail into an overlay rather than a
-  side pane. It is built on `Dialog` at the dialog elevation tier (level-2, B10),
-  with a brand-avatar + title/subtitle head and hairline-separated field rows in
-  inset cards (credential, model & reasoning, an Advanced base-URL disclosure). It
-  owns its own draft + its own Cancel / Save — Providers commit per-sheet, so the
-  surface has NO global save bar (apply-per-provider, like native). Validation is
-  async and non-blocking: the sheet stays interactive, shows a pending row, and
-  can be cancelled (a request-id guard drops a stale/cancelled result). The sheet
-  is multi-mode so managed credential modes (OAuth, AWS/Vertex) plug in later — an
-  API key is one `mode`. Managed-credential providers (e.g. AWS Bedrock) show an
-  auth note instead of a key field.
+  takes an accent), the brand avatar is the identity, and (when present) a trailing
+  circular `⋯` opens the row's actions (`SettingsRowMenu.tsx`). The `⋯` is a
+  circular icon-only control (B6: pill/circular, never a rounded square) whose ring
+  + glyph deepen on hover; its floating menu reuses the shared popover glass with
+  the `prefers-reduced-transparency` opaque fallback (B5/D2) at the level-1 menu
+  tier (B10). Rows are memoized + fed stable handlers, so opening one provider's
+  sheet never re-renders the list.
+- **Per-provider config sheet — connection only.** Clicking a row (or "Configure…")
+  opens `SettingsProviderSheet.tsx` — a focused sheet, the native model where a
+  list row pushes its detail into an overlay rather than a side pane. It is built
+  on `Dialog` at the dialog elevation tier (level-2, B10), with a brand-avatar +
+  title/subtitle head and a SINGLE inset card holding only the connection: a
+  label-less credential row (a key glyph + the field, native password-dialog style)
+  and the base URL inline (the lone advanced setting — no disclosure). Model and
+  reasoning are NOT set here — they are chosen per-message in the composer, so the
+  sheet stays minimal; on save the existing model/reasoning are preserved (a new
+  provider defaults to the catalog flagship). Custom (OpenAI-compatible) providers
+  additionally enter a provider id and a model id in the same card, since there is
+  no catalog to default from. It owns its own draft + its own Cancel / Save —
+  Providers commit per-sheet, so the surface has NO global save bar
+  (apply-per-provider, like native). Validation is async and non-blocking: the
+  sheet stays interactive, shows a pending row, and can be cancelled (a request-id
+  guard drops a stale/cancelled result). The sheet is multi-mode so managed
+  credential modes (OAuth, AWS/Vertex) plug in later — an API key is one `mode`.
+  Managed-credential providers (e.g. AWS Bedrock) show an auth note instead of a
+  key field.
 - **Status colour for status only (B4).** Validation success/failure uses
   `--status-success` / `--status-danger`; the primary sheet action is a NEUTRAL
   strong fill (`--fill-3`), never a system-blue accent.
-- **Long model lists are native.** The model picker is a native `<select>`, so
-  100+ entries (e.g. Bedrock) are handled by the OS dropdown — no custom
-  virtualization, consistent with native-feel (B10).
 
 ## Patterns
 

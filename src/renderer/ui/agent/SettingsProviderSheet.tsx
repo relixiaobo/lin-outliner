@@ -1,18 +1,16 @@
-import { useId, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { AgentModelOption, AgentReasoningLevel } from '../../api/types';
+import { useId, useRef, useState, type ReactNode } from 'react';
 import { HideIcon, ICON_SIZE, LoaderIcon, OpenIcon, PasswordIcon, ShowIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { Dialog } from '../primitives/Dialog';
-import { SelectControl } from '../primitives/SelectControl';
 import { TextInputControl } from '../primitives/TextInputControl';
-import { REASONING_LABELS, coerceReasoningLevel } from './settingsReasoning';
 
 // The draft committed by the sheet's Save. `apiKey` empty means "leave the saved
-// key unchanged"; a non-empty value replaces it.
+// key unchanged"; a non-empty value replaces it. `modelId` is only entered for
+// custom providers (a catalog provider's model is chosen in the composer, not
+// here); for catalog providers the parent supplies a sensible default on commit.
 export interface ProviderSheetDraft {
   providerId: string;
   modelId: string;
-  reasoningLevel: AgentReasoningLevel;
   baseUrl: string;
   apiKey: string;
 }
@@ -33,10 +31,9 @@ interface SettingsProviderSheetProps {
   providerName: string;
   description: string;
   avatar: ReactNode;
-  models: AgentModelOption[];
   defaultBaseUrl?: string;
   baseUrlPlaceholder: string;
-  initial: { providerId: string; modelId: string; reasoningLevel: AgentReasoningLevel; baseUrl: string };
+  initial: { providerId: string; modelId: string; baseUrl: string };
   hasSavedKey: boolean;
   isActive: boolean;
   /** Managed-credential providers (e.g. AWS Bedrock) show a note instead of a key field. */
@@ -56,18 +53,18 @@ type SheetStatus = 'idle' | 'validating' | 'success' | 'error' | 'saving';
 // The per-provider configuration SHEET. Clicking a provider in the inset list (or
 // "Configure" in its row menu) opens this focused sheet — the macOS System
 // Settings idiom where a list row pushes its detail into an overlay rather than a
-// permanent side pane. It hosts the whole provider config: credential (API key /
-// managed note / base URL), model & reasoning, an async + cancellable validate,
-// and its own Cancel / Save. Built on the shared Dialog at the dialog elevation
-// tier (level-2, B10). Selection / focus stay neutral (B3/B4); the Save action is
-// a single neutral-strong primary, never a system-blue accent (B4); validation
-// status uses status colour for status only (B4).
+// permanent side pane. It hosts only the CONNECTION: the credential (API key /
+// managed note) and the base URL, in a single inset card — model & reasoning are
+// chosen in the composer, not here, so the sheet stays minimal. Custom providers
+// additionally need a provider id and model id (there is no catalog to default
+// from). Built on the shared Dialog at the dialog elevation tier (level-2, B10).
+// Selection / focus stay neutral (B3/B4); Save is a single neutral-strong primary,
+// never a system-blue accent (B4); validation status uses status colour only (B4).
 export function SettingsProviderSheet({
   mode,
   providerName,
   description,
   avatar,
-  models,
   defaultBaseUrl,
   baseUrlPlaceholder,
   initial,
@@ -90,11 +87,9 @@ export function SettingsProviderSheet({
 
   const [providerId, setProviderId] = useState(initial.providerId);
   const [modelId, setModelId] = useState(initial.modelId);
-  const [reasoningLevel, setReasoningLevel] = useState<AgentReasoningLevel>(initial.reasoningLevel);
   const [baseUrl, setBaseUrl] = useState(initial.baseUrl);
   const [apiKey, setApiKey] = useState('');
   const [reveal, setReveal] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [status, setStatus] = useState<SheetStatus>('idle');
   const [message, setMessage] = useState('');
 
@@ -102,23 +97,19 @@ export function SettingsProviderSheet({
   const saving = status === 'saving';
   const busy = validating || saving;
 
-  const selectedModel = useMemo(() => models.find((model) => model.id === modelId), [models, modelId]);
-  const reasoningLevels: AgentReasoningLevel[] = selectedModel?.supportedThinkingLevels.length
-    ? selectedModel.supportedThinkingLevels
-    : ['off'];
-
   const trimmedProviderId = providerId.trim();
   // Managed-credential providers carry no key; custom and catalog key providers do.
   const showKeyField = !authNote;
   const draft: ProviderSheetDraft = {
     providerId: isCustom ? trimmedProviderId : initial.providerId,
     modelId: modelId.trim(),
-    reasoningLevel: coerceReasoningLevel(reasoningLevel, reasoningLevels),
     baseUrl: baseUrl.trim(),
     apiKey: apiKey.trim(),
   };
-  const canSave = Boolean(draft.providerId) && Boolean(draft.modelId) && !busy;
-  const canValidate = Boolean(draft.providerId) && !busy && (showKeyField ? true : true);
+  // A custom provider needs its own model id (no catalog default); a catalog
+  // provider does not (the composer picks the model).
+  const canSave = Boolean(draft.providerId) && (isCustom ? Boolean(draft.modelId) : true) && !busy;
+  const canValidate = Boolean(draft.providerId) && !busy;
 
   function clearResult() {
     validationToken.current += 1;
@@ -187,22 +178,6 @@ export function SettingsProviderSheet({
       </header>
 
       <div className="settings-sheet-body">
-        {isCustom ? (
-          <div className="inset-card" role="group">
-            <label className="settings-sheet-row">
-              <span className="settings-sheet-row-label">Provider ID</span>
-              <TextInputControl
-                className="settings-sheet-row-input"
-                label="Provider ID"
-                onChange={(event) => { setProviderId(event.target.value.trim()); clearResult(); }}
-                placeholder="my-provider"
-                ref={firstFieldRef}
-                value={providerId}
-              />
-            </label>
-          </div>
-        ) : null}
-
         {authNote ? (
           <div className="settings-sheet-note">
             <p>{authNote.note}</p>
@@ -217,100 +192,59 @@ export function SettingsProviderSheet({
               </button>
             ) : null}
           </div>
-        ) : showKeyField ? (
-          <div className="inset-card" role="group">
-            <div className="settings-sheet-row">
-              <span className="settings-sheet-row-label">API key</span>
-              <div className="settings-sheet-key">
-                <PasswordIcon size={ICON_SIZE.menu} />
-                <TextInputControl
-                  className="settings-sheet-row-input"
-                  label="API key"
-                  onChange={(event) => { setApiKey(event.target.value); clearResult(); }}
-                  placeholder={hasSavedKey ? 'Saved (encrypted) — paste to replace' : 'Paste API key'}
-                  ref={isCustom ? undefined : firstFieldRef}
-                  type={reveal ? 'text' : 'password'}
-                  value={apiKey}
-                />
-                <button
-                  aria-label={reveal ? 'Hide key' : 'Show key'}
-                  aria-pressed={reveal}
-                  className="settings-sheet-reveal"
-                  onClick={() => setReveal((current) => !current)}
-                  type="button"
-                >
-                  {reveal ? <HideIcon size={ICON_SIZE.menu} /> : <ShowIcon size={ICON_SIZE.menu} />}
-                </button>
-              </div>
-            </div>
-            {!hasSavedKey && docsUrl ? (
-              <div className="settings-sheet-row is-footnote">
-                <button className="agent-settings-doc-link" onClick={() => onOpenExternal(docsUrl)} type="button">
-                  <span>Get API key</span>
-                  <OpenIcon size={ICON_SIZE.tiny} />
-                </button>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-
-        {models.length > 0 || isCustom ? (
-          <div className="inset-card" role="group">
-            <label className="settings-sheet-row">
-              <span className="settings-sheet-row-label">Model</span>
-              {models.length > 0 ? (
-                <SelectControl
-                  className="settings-sheet-row-input"
-                  label="Model"
-                  onChange={(event) => {
-                    const nextId = event.target.value;
-                    const model = models.find((candidate) => candidate.id === nextId);
-                    const levels = (model?.supportedThinkingLevels.length ? model.supportedThinkingLevels : ['off']) as AgentReasoningLevel[];
-                    setModelId(nextId);
-                    setReasoningLevel((current) => coerceReasoningLevel(current, levels));
-                    clearResult();
-                  }}
-                  value={selectedModel ? modelId : ''}
-                >
-                  {selectedModel ? null : <option value="">Select a model…</option>}
-                  {models.map((model) => (
-                    <option key={model.id} value={model.id}>{model.name}</option>
-                  ))}
-                </SelectControl>
-              ) : (
-                <TextInputControl
-                  className="settings-sheet-row-input"
-                  label="Model"
-                  onChange={(event) => { setModelId(event.target.value); clearResult(); }}
-                  placeholder="Model ID"
-                  value={modelId}
-                />
-              )}
-            </label>
-            <label className="settings-sheet-row">
-              <span className="settings-sheet-row-label">Reasoning</span>
-              <SelectControl
-                className="settings-sheet-row-input"
-                label="Reasoning"
-                onChange={(event) => setReasoningLevel(event.target.value as AgentReasoningLevel)}
-                value={coerceReasoningLevel(reasoningLevel, reasoningLevels)}
-              >
-                {reasoningLevels.map((level) => (
-                  <option key={level} value={level}>{REASONING_LABELS[level]}</option>
-                ))}
-              </SelectControl>
-            </label>
-          </div>
-        ) : null}
-
-        {showKeyField ? (
-          <details
-            className="settings-sheet-advanced"
-            onToggle={(event) => setAdvancedOpen((event.target as HTMLDetailsElement).open)}
-            open={advancedOpen}
-          >
-            <summary className="settings-sheet-advanced-summary">Advanced</summary>
+        ) : (
+          // One inset card holds the whole connection — there is very little to
+          // enter, so a single block reads cleaner than several.
+          <>
             <div className="inset-card" role="group">
+              {isCustom ? (
+                <label className="settings-sheet-row">
+                  <span className="settings-sheet-row-label">Provider ID</span>
+                  <TextInputControl
+                    className="settings-sheet-row-input"
+                    label="Provider ID"
+                    onChange={(event) => { setProviderId(event.target.value.trim()); clearResult(); }}
+                    placeholder="my-provider"
+                    ref={firstFieldRef}
+                    value={providerId}
+                  />
+                </label>
+              ) : null}
+              <div className="settings-sheet-row">
+                <div className="settings-sheet-key">
+                  <PasswordIcon size={ICON_SIZE.menu} />
+                  <TextInputControl
+                    className="settings-sheet-row-input"
+                    label="API key"
+                    onChange={(event) => { setApiKey(event.target.value); clearResult(); }}
+                    placeholder={hasSavedKey ? 'Saved (encrypted) — paste to replace' : 'Paste API key'}
+                    ref={isCustom ? undefined : firstFieldRef}
+                    type={reveal ? 'text' : 'password'}
+                    value={apiKey}
+                  />
+                  <button
+                    aria-label={reveal ? 'Hide key' : 'Show key'}
+                    aria-pressed={reveal}
+                    className="settings-sheet-reveal"
+                    onClick={() => setReveal((current) => !current)}
+                    type="button"
+                  >
+                    {reveal ? <HideIcon size={ICON_SIZE.menu} /> : <ShowIcon size={ICON_SIZE.menu} />}
+                  </button>
+                </div>
+              </div>
+              {isCustom ? (
+                <label className="settings-sheet-row">
+                  <span className="settings-sheet-row-label">Model</span>
+                  <TextInputControl
+                    className="settings-sheet-row-input"
+                    label="Model"
+                    onChange={(event) => { setModelId(event.target.value); clearResult(); }}
+                    placeholder="Model ID"
+                    value={modelId}
+                  />
+                </label>
+              ) : null}
               <label className="settings-sheet-row">
                 <span className="settings-sheet-row-label">Base URL</span>
                 <TextInputControl
@@ -322,8 +256,14 @@ export function SettingsProviderSheet({
                 />
               </label>
             </div>
-          </details>
-        ) : null}
+            {!hasSavedKey && docsUrl ? (
+              <button className="agent-settings-doc-link settings-sheet-getkey" onClick={() => onOpenExternal(docsUrl)} type="button">
+                <span>Get API key</span>
+                <OpenIcon size={ICON_SIZE.tiny} />
+              </button>
+            ) : null}
+          </>
+        )}
 
         {status !== 'idle' && status !== 'saving' ? (
           <div className={`settings-sheet-result is-${status}`} role="status">
