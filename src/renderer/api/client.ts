@@ -184,14 +184,19 @@ export const api = {
     command<CommandOutcome>('create_inline_field', { parentId, index, name, fieldType }),
   registerCollectedOption: (fieldDefId: string, name: string) =>
     command<CommandOutcome>('register_collected_option', { fieldDefId, name }),
-  createCollectedFieldOption: (fieldEntryId: string, name: string) =>
-    command<CommandOutcome>('create_collected_field_option', { fieldEntryId, name }),
-  selectFieldOption: (fieldEntryId: string, optionNodeId: string) =>
-    command<CommandOutcome>('select_field_option', { fieldEntryId, optionNodeId }),
-  setFieldFreeTextValue: (fieldEntryId: string, text: string) =>
-    command<CommandOutcome>('set_field_free_text_value', { fieldEntryId, text }),
+  // `id` (optional) lets the renderer propose the trailing draft row's stable id
+  // so the row's React identity (and any in-flight IME composition) survives the
+  // draft->value materialization — the same contract as materializeDraftNode.
+  createCollectedFieldOption: (fieldEntryId: string, name: string, id?: string) =>
+    command<CommandOutcome>('create_collected_field_option', { fieldEntryId, name, id }),
+  selectFieldOption: (fieldEntryId: string, optionNodeId: string, id?: string) =>
+    command<CommandOutcome>('select_field_option', { fieldEntryId, optionNodeId, id }),
+  setFieldFreeTextValue: (fieldEntryId: string, text: string, id?: string) =>
+    command<CommandOutcome>('set_field_free_text_value', { fieldEntryId, text, id }),
   clearFieldValue: (fieldEntryId: string) =>
     command<CommandOutcome>('clear_field_value', { fieldEntryId }),
+  removeFieldValue: (valueId: string) =>
+    command<CommandOutcome>('remove_field_value', { valueId }),
   addReference: (parentId: string, targetId: string, index: number | null = null) =>
     command<CommandOutcome>('add_reference', { parentId, targetId, index }),
   addReferenceConversion: (parentId: string, targetId: string, index: number | null = null) =>

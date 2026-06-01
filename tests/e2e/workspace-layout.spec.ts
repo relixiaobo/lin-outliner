@@ -57,60 +57,30 @@ test.describe('workspace layout resizing', () => {
 
   test('panel split resizes by ratio and fills the canvas without horizontal overflow', async ({ page }) => {
     await page.setViewportSize({ width: 1700, height: 900 });
-    const chrome = await page.locator('.top-chrome').boundingBox();
-    const activeTab = await page.locator('.workspace-tab.active').boundingBox();
-    const sidebarToggle = await page.getByTitle('Collapse sidebar').boundingBox();
-    const backButton = await page.getByTitle('Back').boundingBox();
-    const forwardButton = await page.getByTitle('Forward').boundingBox();
-    const addTabButton = await page.getByTitle('New tab').boundingBox();
-    const agentToggle = await page.getByTitle('Collapse agent').boundingBox();
-    const moreButton = await page.locator('.top-chrome-right').getByRole('button', { name: 'More', exact: true }).boundingBox();
     const panels = page.locator('.outline-panel-surface');
     await expect(panels).toHaveCount(2);
-    await expect(page.locator('.top-chrome')).toHaveAttribute('data-electron-drag-region', 'deep');
     const firstBefore = await panels.nth(0).boundingBox();
     const secondBefore = await panels.nth(1).boundingBox();
-    expect(chrome).toBeTruthy();
-    expect(activeTab).toBeTruthy();
-    expect(sidebarToggle).toBeTruthy();
-    expect(backButton).toBeTruthy();
-    expect(forwardButton).toBeTruthy();
-    expect(addTabButton).toBeTruthy();
-    expect(agentToggle).toBeTruthy();
-    expect(moreButton).toBeTruthy();
     expect(firstBefore).toBeTruthy();
     expect(secondBefore).toBeTruthy();
-    expect(Math.round(activeTab!.y - chrome!.y)).toBe(8);
-    expect(Math.round(sidebarToggle!.y - chrome!.y)).toBe(8);
-    expect(Math.round(firstBefore!.y - (chrome!.y + chrome!.height))).toBe(8);
-    const chromeCenterY = activeTab!.y + activeTab!.height / 2;
-    for (const controlBox of [sidebarToggle, backButton, forwardButton, addTabButton, agentToggle, moreButton]) {
-      expect(Math.abs(chromeCenterY - (controlBox!.y + controlBox!.height / 2))).toBeLessThanOrEqual(1);
-    }
 
     const panelHandle = page.getByRole('button', { name: 'Resize panels' });
     const panelHandleBox = await panelHandle.boundingBox();
     const panelSlotBox = await page.locator('.panel-resize-slot').first().boundingBox();
     expect(panelHandleBox).toBeTruthy();
     expect(panelSlotBox).toBeTruthy();
+    // Floating-rails shell (#57): the divider is a 1px hairline slot, and the resize
+    // handle is an invisible hit strip straddling it (no grab pill). The ew-resize
+    // cursor lives on the handle; the slot just draws the line.
     await expect.poll(async () => panelHandle.evaluate((element) => (
       getComputedStyle(element).cursor
     ))).toBe('ew-resize');
-    await expect.poll(async () => page.locator('.panel-resize-slot').first().evaluate((element) => (
-      getComputedStyle(element).cursor
-    ))).toBe('ew-resize');
-    expect(panelSlotBox!.width).toBe(8);
+    expect(panelSlotBox!.width).toBe(1);
     const gapCenterBefore = (firstBefore!.x + firstBefore!.width + secondBefore!.x) / 2;
     const handleCenterBefore = panelHandleBox!.x + panelHandleBox!.width / 2;
     const slotCenterBefore = panelSlotBox!.x + panelSlotBox!.width / 2;
     expect(Math.abs(handleCenterBefore - gapCenterBefore)).toBeLessThanOrEqual(1);
     expect(Math.abs(slotCenterBefore - gapCenterBefore)).toBeLessThanOrEqual(1);
-    await expect.poll(async () => panelHandle.evaluate((element) => (
-      getComputedStyle(element, '::after').width
-    ))).toBe('4px');
-    await expect.poll(async () => panelHandle.evaluate((element) => (
-      getComputedStyle(element, '::after').height
-    ))).toBe('32px');
 
     await page.mouse.move(panelHandleBox!.x + panelHandleBox!.width / 2, panelHandleBox!.y + 240);
     await page.mouse.down();
@@ -143,41 +113,29 @@ test.describe('workspace layout resizing', () => {
     expect(narrowCanvasOverflow.scrollWidth).toBeLessThanOrEqual(narrowCanvasOverflow.clientWidth + 1);
   });
 
-  test('top chrome navigation controls align and sidebar state is icon-only', async ({ page }) => {
+  test('window chrome aligns the sidebar toggle to the traffic lights and stays icon-only', async ({ page }) => {
+    // The floating-rails shell (#57) dissolved the top chrome: page-nav back/forward
+    // moved to Cmd+[ / Cmd+] + the per-pane breadcrumb, and the only window-anchored
+    // controls left are the rail toggles. They sit in corner drag zones, centred on
+    // the traffic-light centreline; the traffic-light geometry now lives on :root.
     const sidebarToggle = page.getByTitle('Collapse sidebar');
-    const backButton = page.getByTitle('Back');
-    const forwardButton = page.getByTitle('Forward');
+    await page.mouse.move(0, 0);
 
     const initial = await page.evaluate(() => {
       const sidebar = document.querySelector('[title="Collapse sidebar"]');
-      const back = document.querySelector('[title="Back"]');
-      const forward = document.querySelector('[title="Forward"]');
-      const chrome = document.querySelector('.top-chrome');
-      if (
-        !(sidebar instanceof HTMLElement)
-        || !(back instanceof HTMLElement)
-        || !(forward instanceof HTMLElement)
-        || !(chrome instanceof HTMLElement)
-      ) {
-        throw new Error('missing top chrome controls');
+      if (!(sidebar instanceof HTMLElement)) {
+        throw new Error('missing sidebar toggle');
       }
       const sidebarBox = sidebar.getBoundingClientRect();
-      const backBox = back.getBoundingClientRect();
-      const forwardBox = forward.getBoundingClientRect();
-      const chromeBox = chrome.getBoundingClientRect();
-      const chromeStyle = getComputedStyle(chrome);
-      const trafficLightSize = Number.parseFloat(chromeStyle.getPropertyValue('--traffic-light-size'));
-      const trafficLightX = Number.parseFloat(chromeStyle.getPropertyValue('--traffic-light-x'));
-      const trafficLightY = Number.parseFloat(chromeStyle.getPropertyValue('--traffic-light-y'));
+      const rootStyle = getComputedStyle(document.documentElement);
+      const trafficLightSize = Number.parseFloat(rootStyle.getPropertyValue('--traffic-light-size'));
+      const trafficLightX = Number.parseFloat(rootStyle.getPropertyValue('--traffic-light-x'));
+      const trafficLightY = Number.parseFloat(rootStyle.getPropertyValue('--traffic-light-y'));
       return {
-        backCenterY: backBox.top + backBox.height / 2,
-        controlCenterOffsetY: sidebarBox.top + sidebarBox.height / 2 - chromeBox.top,
-        forwardCenterY: forwardBox.top + forwardBox.height / 2,
         sidebarBg: getComputedStyle(sidebar).backgroundColor,
         sidebarCenterY: sidebarBox.top + sidebarBox.height / 2,
         sidebarIcon: sidebar.querySelector('svg')?.innerHTML ?? '',
-        trafficLightCenterOffsetX: trafficLightX + trafficLightSize / 2,
-        trafficLightCenterOffsetY: trafficLightY + trafficLightSize / 2,
+        trafficLightCenterY: trafficLightY + trafficLightSize / 2,
         trafficLightSize,
         trafficLightX,
         trafficLightY,
@@ -187,10 +145,10 @@ test.describe('workspace layout resizing', () => {
     expect(initial.trafficLightSize).toBe(MAC_TRAFFIC_LIGHT_SIZE);
     expect(initial.trafficLightX).toBe(MAC_TRAFFIC_LIGHT_POSITION.x);
     expect(initial.trafficLightY).toBe(MAC_TRAFFIC_LIGHT_POSITION.y);
-    expect(initial.trafficLightCenterOffsetX).toBe(initial.trafficLightCenterOffsetY);
-    expect(Math.abs(initial.trafficLightCenterOffsetY - initial.controlCenterOffsetY)).toBeLessThanOrEqual(1);
-    expect(Math.abs(initial.sidebarCenterY - initial.backCenterY)).toBeLessThanOrEqual(1);
-    expect(Math.abs(initial.sidebarCenterY - initial.forwardCenterY)).toBeLessThanOrEqual(1);
+    // The corner is symmetric (traffic-light-x == traffic-light-y), and the toggle's
+    // vertical centre sits on the traffic-light centreline.
+    expect(initial.trafficLightX).toBe(initial.trafficLightY);
+    expect(Math.abs(initial.sidebarCenterY - initial.trafficLightCenterY)).toBeLessThanOrEqual(1);
 
     await sidebarToggle.click();
     await expect(page.getByTitle('Expand sidebar')).toBeVisible();
@@ -330,17 +288,23 @@ test.describe('workspace layout resizing', () => {
         rowRadius: rowStyle.borderRadius,
         sidebarLeft: sidebarDockBox.left,
         sidebarRight: sidebarDockBox.right,
+        railPad: Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--rail-pad')),
       };
     });
-    const expectedLeft = sidebarMetrics.contentLeft;
-    expect(Math.abs(sidebarMetrics.primaryIconLeft - expectedLeft)).toBeLessThanOrEqual(1);
-    expect(Math.abs(sidebarMetrics.pinnedTitleLeft - expectedLeft)).toBeLessThanOrEqual(1);
-    expect(Math.abs(sidebarMetrics.pinnedEmptyIconLeft - expectedLeft)).toBeLessThanOrEqual(1);
-    expect(Math.abs(sidebarMetrics.rootAvatarLeft - expectedLeft)).toBeLessThanOrEqual(1);
-    expect(Math.abs((sidebarMetrics.contentLeft - sidebarMetrics.sidebarLeft) - 20)).toBeLessThanOrEqual(1);
-    expect(Math.abs(sidebarMetrics.sidebarRight - sidebarMetrics.rowRight)).toBeLessThanOrEqual(1);
+    // New sidebar model (#57): the nav icons, root avatar, pinned section title, and
+    // the workspace-tree chevron all share one content-start line; the tree LABEL
+    // sits one indent further right, off the chevron (--sidebar-tree-label-gap), so
+    // the tree reads as indented children rather than a sibling of the nav group.
+    const contentStart = sidebarMetrics.primaryIconLeft;
+    expect(Math.abs(sidebarMetrics.pinnedTitleLeft - contentStart)).toBeLessThanOrEqual(1);
+    expect(Math.abs(sidebarMetrics.pinnedEmptyIconLeft - contentStart)).toBeLessThanOrEqual(1);
+    expect(Math.abs(sidebarMetrics.rootAvatarLeft - contentStart)).toBeLessThanOrEqual(1);
+    expect(Math.abs(sidebarMetrics.chevronLeft - contentStart)).toBeLessThanOrEqual(1);
+    expect(sidebarMetrics.contentLeft).toBeGreaterThan(sidebarMetrics.chevronRight);
+    // The row hover-block is inset from the dock's right edge by the rail pad (the
+    // rail content is concentric with its rounded corner), not full-bleed.
+    expect(Math.abs((sidebarMetrics.sidebarRight - sidebarMetrics.rowRight) - sidebarMetrics.railPad)).toBeLessThanOrEqual(1);
     expect(Math.abs((sidebarMetrics.panelLeft - sidebarMetrics.sidebarRight) - 8)).toBeLessThanOrEqual(1);
-    expect(Math.abs((sidebarMetrics.chevronLeft - sidebarMetrics.sidebarLeft) - 4)).toBeLessThanOrEqual(1);
     expect(Math.round(sidebarMetrics.chevronWidth)).toBe(16);
     expect(sidebarMetrics.chevronRight).toBeLessThanOrEqual(sidebarMetrics.contentLeft);
     expect(sidebarMetrics.chevronColor).not.toBe(sidebarMetrics.contentColor);
@@ -362,10 +326,10 @@ test.describe('workspace layout resizing', () => {
       };
     });
     await firstWorkspaceRow.hover();
+    // Tree rows take the same neutral hover fill as the other sidebar rows (#57);
+    // the row text stays at full strength, so the affordance is the background.
     await expect.poll(async () => firstWorkspaceRow.evaluate((row) => getComputedStyle(row).backgroundColor))
-      .toBe(treeRowBefore.background);
-    await expect.poll(async () => firstWorkspaceRow.evaluate((row) => getComputedStyle(row).color))
-      .not.toBe(treeRowBefore.color);
+      .not.toBe(treeRowBefore.background);
 
     await workspaceTree.getByRole('button', { name: 'Expand Daily Notes' }).click();
     await expect(workspaceTree).toContainText('2026-05-13');
@@ -433,25 +397,30 @@ test.describe('workspace layout resizing', () => {
 
   test('workspace tabs can be closed and restore persisted active roots', async ({ page }) => {
     await page.getByRole('button', { name: 'New tab' }).click();
-    await expect(page.locator('.workspace-tab')).toHaveCount(2);
-    const tabWidths = await page.locator('.workspace-tab').evaluateAll((tabs) => (
+    await expect(page.locator('.sidebar-tab')).toHaveCount(2);
+    const tabWidths = await page.locator('.sidebar-tab').evaluateAll((tabs) => (
       tabs.map((tab) => Math.round(tab.getBoundingClientRect().width))
     ));
     expect(new Set(tabWidths).size).toBe(1);
     await expect.poll(async () => {
-      const backgrounds = await page.locator('.workspace-tab').evaluateAll((tabs) => (
+      const backgrounds = await page.locator('.sidebar-tab').evaluateAll((tabs) => (
         tabs.map((tab) => getComputedStyle(tab).backgroundColor)
       ));
       return new Set(backgrounds).size;
     }).toBeGreaterThan(1);
-    const tabBackgrounds = await page.locator('.workspace-tab').evaluateAll((tabs) => (
+    const tabBackgrounds = await page.locator('.sidebar-tab').evaluateAll((tabs) => (
       tabs.map((tab) => getComputedStyle(tab).backgroundColor)
     ));
-    expect(tabBackgrounds.every((background) => background !== 'rgba(0, 0, 0, 0)')).toBe(true);
+    // New sidebar model (#57): only the active tab carries a fill (--control-active);
+    // inactive tabs stay transparent until hover, so the active vs inactive states
+    // read as distinct rather than every tab carrying its own background.
+    const activeTabBackground = await page.locator('.sidebar-tab.active')
+      .evaluate((tab) => getComputedStyle(tab).backgroundColor);
+    expect(activeTabBackground).not.toBe('rgba(0, 0, 0, 0)');
     expect(new Set(tabBackgrounds).size).toBeGreaterThan(1);
-    const activeTabChrome = await page.locator('.workspace-tab.active').evaluate((tab) => {
+    const activeTabChrome = await page.locator('.sidebar-tab.active').evaluate((tab) => {
       const style = getComputedStyle(tab);
-      const close = tab.querySelector('.workspace-tab-close');
+      const close = tab.querySelector('.sidebar-tab-close');
       if (!(close instanceof HTMLElement)) throw new Error('missing active tab close control');
       const tabRect = tab.getBoundingClientRect();
       const closeRect = close.getBoundingClientRect();
@@ -465,20 +434,23 @@ test.describe('workspace layout resizing', () => {
         lineHeight: style.lineHeight,
       };
     });
+    // The tab is now a layout container (#57): the text style lives on its segments,
+    // so the tab element itself inherits the root font (16px / normal). The close
+    // control keeps its 20px box, inset 4px into the top-right corner.
     expect(activeTabChrome).toEqual({
       borderRadius: '6px',
       closeHeight: 20,
       closeRightInset: 4,
-      closeTopInset: 3,
+      closeTopInset: 4,
       closeWidth: 20,
-      fontSize: '13px',
-      lineHeight: '20px',
+      fontSize: '16px',
+      lineHeight: 'normal',
     });
-    const inactiveActiveSegment = page.locator('.workspace-tab:not(.active) .workspace-tab-segment.is-active').first();
+    const inactiveActiveSegment = page.locator('.sidebar-tab:not(.active) .sidebar-tab-segment.is-active').first();
     const inactiveSegmentWeightBeforeHover = await inactiveActiveSegment.evaluate((segment) => (
       getComputedStyle(segment).fontWeight
     ));
-    await page.locator('.workspace-tab:not(.active)').first().hover();
+    await page.locator('.sidebar-tab:not(.active)').first().hover();
     const inactiveSegmentWeightAfterHover = await inactiveActiveSegment.evaluate((segment) => (
       getComputedStyle(segment).fontWeight
     ));
@@ -488,11 +460,11 @@ test.describe('workspace layout resizing', () => {
     await expect(page.locator('.panel-title-editor').first()).toContainText('Schema');
 
     await page.reload();
-    await expect(page.locator('.workspace-tab')).toHaveCount(2);
+    await expect(page.locator('.sidebar-tab')).toHaveCount(2);
     await expect(page.locator('.panel-title-editor').first()).toContainText('Schema');
 
-    await page.locator('.workspace-tab.active .workspace-tab-close').click();
-    await expect(page.locator('.workspace-tab')).toHaveCount(1);
+    await page.locator('.sidebar-tab.active .sidebar-tab-close').click();
+    await expect(page.locator('.sidebar-tab')).toHaveCount(1);
   });
 
   test('current tab can open additional panels from keyboard and sidebar option click', async ({ page }) => {
@@ -504,13 +476,13 @@ test.describe('workspace layout resizing', () => {
 
     await page.locator('.sidebar-primary-nav').getByRole('button', { name: 'Recents', exact: true }).click({ modifiers: ['Alt'] });
     await expect(panels).toHaveCount(4);
-    const activeTabSegments = page.locator('.workspace-tab.active .workspace-tab-segment');
+    const activeTabSegments = page.locator('.sidebar-tab.active .sidebar-tab-segment');
     await expect(activeTabSegments).toHaveCount(4);
-    await expect(page.locator('.workspace-tab.active .workspace-tab-count')).toHaveCount(0);
+    await expect(page.locator('.sidebar-tab.active .sidebar-tab-count')).toHaveCount(0);
     await expect(activeTabSegments.nth(3)).toContainText('Recents');
     const iconSlots = await activeTabSegments.evaluateAll((segments) => (
       segments.map((segment) => {
-        const icon = segment.querySelector('.workspace-tab-segment-icon');
+        const icon = segment.querySelector('.sidebar-tab-segment-icon');
         if (!(icon instanceof HTMLElement)) throw new Error('missing tab segment icon');
         const rect = icon.getBoundingClientRect();
         return {
@@ -533,7 +505,8 @@ test.describe('workspace layout resizing', () => {
       };
     });
     expect(segmentDivider).toEqual({
-      backgroundColor: 'rgb(228, 228, 231)',
+      // The segment divider now uses the neutral --separator token (#57): ink at 10%.
+      backgroundColor: 'rgba(0, 0, 0, 0.1)',
       height: '12px',
       marginLeft: '4px',
       marginRight: '4px',

@@ -607,10 +607,21 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       }
       return configIds;
     };
+    const tagDrivenCheckbox = (node: MockNode): boolean => node.tags.some((tagId) => {
+      const tag = nodes.get(tagId);
+      return tag?.type === 'tagDef' && Boolean(tag.showCheckbox);
+    });
     const projection = () => {
       const sink = new Map<string, MockNode>();
       const emitted = [...nodes.values()].map((node) => {
-        if (node.type !== 'tagDef' && node.type !== 'fieldDef') return node;
+        if (node.type !== 'tagDef' && node.type !== 'fieldDef') {
+          // Mirror the real `nodeShowsCheckbox`: a content node shows a checkbox
+          // when its `completedAt` sentinel is set (manual) or an applied tag
+          // drives it. The renderer recomputes this itself; we project it so e2e
+          // assertions can read `node.showCheckbox` directly. (Def nodes keep
+          // their stored `showCheckbox`, which is the tag's *config* flag.)
+          return { ...node, showCheckbox: node.completedAt !== undefined || tagDrivenCheckbox(node) };
+        }
         const configIds = expandConfigForDef(node, sink);
         return configIds.length ? { ...node, children: [...configIds, ...node.children] } : node;
       });
@@ -638,8 +649,18 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       projection: projection(),
       ...(focus ? { focus } : {}),
     });
-    const createNode = (parentId: string, index: number | null, text: string, overrides: Partial<MockNode> = {}) => {
-      const nodeId = `node-${++sequence}`;
+    const createNode = (
+      parentId: string,
+      index: number | null,
+      text: string,
+      overrides: Partial<MockNode> = {},
+      id?: string,
+    ) => {
+      // Honor a client-proposed id (the eager-materialize / field-value draft
+      // contract): the renderer mints the trailing draft row's stable id and
+      // expects the created node to adopt it, so the row reconciles into a single
+      // real node instead of leaving an orphan beside the still-buffering draft.
+      const nodeId = id ?? `node-${++sequence}`;
       makeNode(nodeId, text, { parentId, showCheckbox: true, ...overrides });
       appendChild(parentId, nodeId, index);
       return nodeId;
@@ -707,7 +728,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
       }
     };
-    const selectOption = (fieldEntryId: string, optionNodeId: string) => {
+    const selectOption = (fieldEntryId: string, optionNodeId: string, id?: string) => {
       const fieldEntry = nodes.get(fieldEntryId);
       const option = nodes.get(optionNodeId);
       if (!fieldEntry || !option) return outcome();
@@ -724,7 +745,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           nodes.delete(childId);
         }
       }
-      const valueId = `option-value-${++sequence}`;
+      const valueId = id ?? `option-value-${++sequence}`;
       makeNode(valueId, nodes.get(targetId)?.content.text ?? option.content.text, {
         type: 'reference',
         parentId: fieldEntryId,
@@ -733,7 +754,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       appendChild(fieldEntryId, valueId);
       return outcome({ nodeId: fieldEntryId, selectAll: false });
     };
-    const createCollectedOption = (fieldEntryId: string, name: string) => {
+    const createCollectedOption = (fieldEntryId: string, name: string, id?: string) => {
       const fieldEntry = nodes.get(fieldEntryId);
       const normalized = name.trim();
       if (!fieldEntry?.fieldDefId || !normalized) return outcome();
@@ -742,7 +763,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       const existing = fieldDef.children
         .map((childId) => nodes.get(childId))
         .find((node) => optionLabel(node).toLowerCase() === normalized.toLowerCase());
-      if (existing) return selectOption(fieldEntryId, existing.id);
+      if (existing) return selectOption(fieldEntryId, existing.id, id);
       const isList = fieldDef.cardinality === 'list';
       if (!isList) {
         removeCollectedOptionRefs(fieldDef.id, fieldEntry.children);
@@ -751,7 +772,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           nodes.delete(childId);
         }
       }
-      const valueId = `option-value-${++sequence}`;
+      const valueId = id ?? `option-value-${++sequence}`;
       makeNode(valueId, normalized, {
         parentId: fieldEntryId,
       });
@@ -776,6 +797,28 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	      }
 	      return outcome({ nodeId: fieldEntryId, selectAll: false });
 	    };
+    // Everything is a node: a free-text value appends as a plain content child of
+    // the entry under the renderer-proposed id (the draft->value contract). Empty
+    // text is a no-op, mirroring core.setFieldFreeTextValue.
+    const setFieldFreeTextValue = (fieldEntryId: string, text: string, id?: string) => {
+      const fieldEntry = nodes.get(fieldEntryId);
+      const normalized = text.trim();
+      if (!fieldEntry || !normalized) return outcome({ nodeId: fieldEntryId, selectAll: false });
+      createNode(fieldEntryId, null, normalized, {}, id);
+      return outcome({ nodeId: fieldEntryId, selectAll: false });
+    };
+    // Remove a single field value (the backspace-an-empty-value gesture), dropping
+    // any auto-collected pool references that target it so the option pool never
+    // keeps an orphan reference. Mirrors core.removeFieldValue.
+    const removeFieldValue = (valueId: string) => {
+      const value = nodes.get(valueId);
+      const fieldEntryId = value?.parentId;
+      const fieldEntry = fieldEntryId ? nodes.get(fieldEntryId) : undefined;
+      if (fieldEntry?.fieldDefId) removeCollectedOptionRefs(fieldEntry.fieldDefId, [valueId]);
+      removeFromParent(valueId);
+      nodes.delete(valueId);
+      return outcome({ nodeId: fieldEntryId ?? valueId, selectAll: false });
+    };
 	    const setSearchQueryOutline = (nodeId: string, queryOutline: string) => {
 	      const search = nodes.get(nodeId);
 	      if (!search || search.type !== 'search') return;
@@ -974,9 +1017,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       });
     }
     makeNode(ids.today, '2026-05-13', { parentId: ids.daily, tags: [ids.dayTag] });
-    makeNode(ids.alpha, 'Alpha', { parentId: ids.today, showCheckbox: true });
-    makeNode(ids.beta, 'Beta', { parentId: ids.today, showCheckbox: true });
-    makeNode(ids.gamma, 'Gamma', { parentId: ids.today, showCheckbox: true });
+    // Manual checkbox items (undone): `completedAt: 0` is the "box shown, not
+    // done" sentinel, so the real `nodeShowsCheckbox` renders a checkbox the
+    // done-cycling specs can toggle. `showCheckbox` is derived in `projection()`.
+    makeNode(ids.alpha, 'Alpha', { parentId: ids.today, completedAt: 0 });
+    makeNode(ids.beta, 'Beta', { parentId: ids.today, completedAt: 0 });
+    makeNode(ids.gamma, 'Gamma', { parentId: ids.today, completedAt: 0 });
     appendChild(ids.workspace, ids.root);
     for (const childId of [ids.daily, ids.library, ids.schema, ids.searches, ids.trash, ids.settings]) appendChild(ids.root, childId);
 	    appendChild(ids.searches, ids.recents);
@@ -1226,7 +1272,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd.startsWith('agent_')) return clone(undefined) as T;
         if (cmd === 'init_workspace' || cmd === 'get_projection') return clone(projection());
         if (cmd === 'create_node') {
-          const nodeId = createNode(String(args.parentId), args.index as number | null, String(args.text ?? ''));
+          const nodeId = createNode(
+            String(args.parentId),
+            args.index as number | null,
+            String(args.text ?? ''),
+            {},
+            typeof args.id === 'string' ? args.id : undefined,
+          );
           return clone(outcome({ nodeId, parentId: String(args.parentId), placement: { kind: 'end' }, selectAll: false }));
         }
         if (cmd === 'create_rich_text_node') {
@@ -1478,13 +1530,31 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone(registerOption(String(args.fieldDefId), String(args.name)));
         }
         if (cmd === 'create_collected_field_option') {
-          return clone(createCollectedOption(String(args.fieldEntryId), String(args.name)));
+          return clone(createCollectedOption(
+            String(args.fieldEntryId),
+            String(args.name),
+            typeof args.id === 'string' ? args.id : undefined,
+          ));
         }
         if (cmd === 'select_field_option') {
-          return clone(selectOption(String(args.fieldEntryId), String(args.optionNodeId)));
+          return clone(selectOption(
+            String(args.fieldEntryId),
+            String(args.optionNodeId),
+            typeof args.id === 'string' ? args.id : undefined,
+          ));
+        }
+        if (cmd === 'set_field_free_text_value') {
+          return clone(setFieldFreeTextValue(
+            String(args.fieldEntryId),
+            String(args.text ?? ''),
+            typeof args.id === 'string' ? args.id : undefined,
+          ));
         }
         if (cmd === 'clear_field_value') {
           return clone(clearFieldValue(String(args.fieldEntryId)));
+        }
+        if (cmd === 'remove_field_value') {
+          return clone(removeFieldValue(String(args.valueId)));
         }
         if (cmd === 'add_reference') {
           const targetId = resolveReferenceTargetId(String(args.targetId)) ?? String(args.targetId);

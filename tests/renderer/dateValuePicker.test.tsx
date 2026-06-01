@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
-import { DateFieldControl } from '../../src/renderer/ui/outliner/DateFieldControl';
+import { DateValuePicker } from '../../src/renderer/ui/outliner/DateValuePicker';
 
 interface RenderedDateField {
   cleanup: () => void;
@@ -18,20 +18,22 @@ afterEach(() => {
   while (mounted.length) mounted.pop()?.cleanup();
 });
 
-describe('DateFieldControl', () => {
+// DateValuePicker is the controlled date overlay summoned by a date value row
+// (Space / a calendar affordance). It carries the same calendar logic the old
+// whole-field control had, so the popover is rendered open from the start and
+// the trigger step is dropped.
+describe('DateValuePicker', () => {
   test('commits a single selected date', async () => {
-    const rendered = renderDateField('2026-05-20');
+    const rendered = renderDatePicker('2026-05-20');
 
-    await click(rendered, button(rendered, 'Due'));
     await click(rendered, button(rendered, 'Select 2026-05-21'));
 
     expect(lastCommit(rendered)).toBe('2026-05-21');
   });
 
   test('commits date ranges and swaps reversed endpoints', async () => {
-    const rendered = renderDateField('2026-05-20');
+    const rendered = renderDatePicker('2026-05-20');
 
-    await click(rendered, button(rendered, 'Due'));
     await click(rendered, button(rendered, 'End date'));
     expect(lastCommit(rendered)).toBe('2026-05-20/2026-05-20');
 
@@ -44,18 +46,16 @@ describe('DateFieldControl', () => {
   });
 
   test('edits range dates from the summary inputs', async () => {
-    const rendered = renderDateField('2026-05-20/2026-05-24');
+    const rendered = renderDatePicker('2026-05-20/2026-05-24');
 
-    await click(rendered, button(rendered, 'Due'));
     await changeInput(rendered, input(rendered, 'Start date'), '2026/05/22');
 
     expect(lastCommit(rendered)).toBe('2026-05-22/2026-05-24');
   });
 
   test('adds and edits time for single date values', async () => {
-    const rendered = renderDateField('2026-05-20');
+    const rendered = renderDatePicker('2026-05-20');
 
-    await click(rendered, button(rendered, 'Due'));
     await click(rendered, button(rendered, 'Include time'));
     expect(lastCommit(rendered)).toBe('2026-05-20T09:00');
 
@@ -67,9 +67,7 @@ describe('DateFieldControl', () => {
   });
 
   test('initializes and edits datetime ranges', async () => {
-    const rendered = renderDateField('2026-05-20T09:30/2026-05-24T17:00');
-
-    await click(rendered, button(rendered, 'Due'));
+    const rendered = renderDatePicker('2026-05-20T09:30/2026-05-24T17:00');
 
     expect(button(rendered, 'End date').getAttribute('aria-checked')).toBe('true');
     expect(input(rendered, 'Start time').value).toBe('09:30');
@@ -80,16 +78,15 @@ describe('DateFieldControl', () => {
   });
 
   test('clears the value', async () => {
-    const rendered = renderDateField('2026-05-20T09:30');
+    const rendered = renderDatePicker('2026-05-20T09:30');
 
-    await click(rendered, button(rendered, 'Due'));
     await click(rendered, textButton(rendered, 'Clear'));
 
     expect(lastCommit(rendered)).toBe('');
   });
 });
 
-function renderDateField(value: string): RenderedDateField {
+function renderDatePicker(value: string): RenderedDateField {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
 
@@ -99,10 +96,12 @@ function renderDateField(value: string): RenderedDateField {
   const root = createRoot(container);
   act(() => {
     root.render(
-      <DateFieldControl
+      <DateValuePicker
+        anchorRef={{ current: container }}
         value={value}
-        placeholder="Due"
-        commit={(nextValue) => commits.push(nextValue)}
+        open
+        onOpenChange={() => {}}
+        onCommit={(nextValue) => commits.push(nextValue)}
       />,
     );
   });

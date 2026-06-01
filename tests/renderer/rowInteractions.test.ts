@@ -46,7 +46,6 @@ import {
   DONE_FIELD,
   hiddenFieldKey,
   NAME_FIELD,
-  shouldShowTrailingInput,
 } from '../../src/renderer/ui/outliner/row-model';
 import { searchQueryOutlineText, searchQuerySummaryModel } from '../../src/renderer/ui/search/SearchQuerySummaryBar';
 import { concatRichText } from '../../src/renderer/ui/editor/richTextCodec';
@@ -64,13 +63,12 @@ describe('row interaction resolvers', () => {
 	    ...overrides,
 	  });
 
-  // config-as-nodes: a fieldDef resolves enum config (fieldType, cardinality,
-  // hideField, …) from a defConfig subtree, not a flat field. These entries
-  // provide that subtree for a mock fieldDef; add `${defId}::cfg:${configKey}`
-  // to the fieldDef's children so the projector finds it.
+  // config-as-nodes: a fieldDef resolves enum config (fieldType, hideField, …)
+  // from a defConfig subtree, not a flat field. These entries provide that
+  // subtree for a mock fieldDef; add `${defId}::cfg:${configKey}` to the
+  // fieldDef's children so the projector finds it.
   const ENUM_CONFIG_SUBTREE: Record<string, string> = {
     fieldType: 'schema:field-types',
-    cardinality: 'schema:cardinalities',
     hideField: 'schema:hide-modes',
     autoInitialize: 'schema:auto-init',
   };
@@ -325,25 +323,6 @@ describe('row interaction resolvers', () => {
 	      { id: 'open1', type: 'content' },
 	    ]);
 	  });
-
-  test('trailing input ignores non-node rows when deciding placement', () => {
-    expect(shouldShowTrailingInput([
-      { id: 'group:a', type: 'group', label: 'A' },
-      { id: 'hidden:p:f', type: 'hiddenField', fieldId: 'f', label: 'Field' },
-    ])).toBe(true);
-    expect(shouldShowTrailingInput([
-      { id: 'field', type: 'field' },
-      { id: 'group:a', type: 'group', label: 'A' },
-    ])).toBe(true);
-    expect(shouldShowTrailingInput([
-      { id: 'content', type: 'content' },
-      { id: 'hidden:p:f', type: 'hiddenField', fieldId: 'f', label: 'Field' },
-    ])).toBe(true);
-    expect(shouldShowTrailingInput([
-      { id: 'content', type: 'content' },
-      { id: 'hidden:p:f', type: 'hiddenField', fieldId: 'f', label: 'Field' },
-    ], { mode: 'fieldValue' })).toBe(false);
-  });
 
   test('resolves row drag-drop moves across parents and expanded targets', () => {
     expect(resolveOutlinerDropMove({

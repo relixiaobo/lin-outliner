@@ -43,8 +43,13 @@ export function deriveRowMemoState(
   // nothing is focused, so gaining/losing focus flips the selected look of any
   // currently-selected row (captured because `selected` reads `focusedId`).
   const selected = !ui.focusedId && (ui.selectedIds.has(rowId) || ui.selectedId === rowId);
+  // Mirror focusTargetMatches: a null panelId on the request is a wildcard that
+  // matches any panel. Command-outcome focus (applyOutcomeFocus) emits requests
+  // with panelId=null, so the capture predicate here MUST treat null as a
+  // wildcard too — otherwise the row that owns the target node never re-renders,
+  // its editor never sees the request, and focus is silently dropped to <body>.
   const targetsRow = (target: FocusTarget): boolean => (
-    target.panelId === panelId
+    (target.panelId === null || target.panelId === panelId)
     && (target.nodeId === rowId || (target.nodeId === parentId && target.surface === 'trailing'))
   );
   return {

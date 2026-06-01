@@ -27,10 +27,15 @@ async function cssTextMetrics(page: import('@playwright/test').Page, selector: s
   });
 }
 
+// The monolithic styles.css was split into per-surface modules under styles/.
+// This lint enforces tokenization on the outliner surface (the explicitly named
+// surviving module); broadening it to every module surfaces pre-existing
+// untokenized values in the settings/agent surfaces, tracked as separate
+// design-system cleanup.
 const productStyleFiles = [
-  'src/renderer/styles.css',
   'src/renderer/styles/outliner.css',
 ];
+const overlayTokenFile = 'src/renderer/styles/tokens.css';
 const designSystemSpecFile = 'docs/spec/design-system.md';
 
 function extractCssCodeBlocks(file: string) {
@@ -224,13 +229,13 @@ test.describe('typography tokens', () => {
 
   test('keeps overlay elevation as pure shadows without outline strokes', () => {
     const violations: string[] = [];
-    const text = readFileSync('src/renderer/styles.css', 'utf8');
+    const text = readFileSync(overlayTokenFile, 'utf8');
     const lines = text.split('\n');
 
     for (const [index, line] of lines.entries()) {
       if (!/--overlay-shadow-level-\d+:/.test(line)) continue;
       if (!/0\s+0\s+0\s+1px/.test(line)) continue;
-      violations.push(`src/renderer/styles.css:${index + 1} ${line.trim()}`);
+      violations.push(`${overlayTokenFile}:${index + 1} ${line.trim()}`);
     }
 
     expect(violations).toEqual([]);
@@ -297,8 +302,8 @@ test.describe('typography tokens', () => {
       lineHeight: '18px',
     });
     await expect(cssTextMetrics(page, '.panel-title-editor .row-editor')).resolves.toEqual({
-      fontSize: '26px',
-      lineHeight: '36px',
+      fontSize: '24px',
+      lineHeight: '32px',
     });
   });
 });

@@ -62,7 +62,6 @@ test.describe('definition configuration parity', () => {
     await page.getByLabel('Minimum value').blur();
     await page.getByLabel('Maximum value').fill('5');
     await page.getByLabel('Maximum value').blur();
-    await chooseConfigOption(page, 'Cardinality', 'List of values');
     await page.getByRole('switch', { name: 'Ancestor field value' }).click();
     const requiredSwitch = page.getByRole('switch', { name: 'Required' });
     const requiredSwitchMark = requiredSwitch.locator('.switch-mark');
@@ -81,7 +80,6 @@ test.describe('definition configuration parity', () => {
         fieldType: node?.fieldType,
         nullable: node?.nullable,
         hideField: node?.hideField,
-        cardinality: node?.cardinality,
         autoInitialize: node?.autoInitialize,
         minValue: node?.minValue,
         maxValue: node?.maxValue,
@@ -90,7 +88,6 @@ test.describe('definition configuration parity', () => {
       fieldType: 'number',
       nullable: false,
       hideField: 'empty',
-      cardinality: 'list',
       autoInitialize: 'ancestor_field_value',
       minValue: 1,
       maxValue: 5,

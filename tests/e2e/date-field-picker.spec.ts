@@ -4,18 +4,27 @@ import {
   ids,
   openMockedApp,
   row,
+  trailingEditor,
 } from './outlinerMock';
 
 test.describe('date field picker', () => {
   test.beforeEach(async ({ page }) => {
+    // Pin the wall clock to the fixture's month: an empty date value opens its
+    // calendar on the real "today", so without this the seeded May 2026 dates would
+    // fall off the grid whenever the suite runs in another month. setFixedTime keeps
+    // timers running (unlike install()), so the app behaves normally otherwise.
+    await page.clock.setFixedTime(new Date('2026-05-13T09:00:00'));
     await openMockedApp(page, { dateField: true });
   });
 
   test('selects dates, datetime values, and datetime ranges', async ({ page }) => {
     const dueRow = row(page, ids.dueEntry);
-    await dueRow.locator('.typed-field-date-trigger').click();
-    await expect(page.getByRole('dialog', { name: 'Empty calendar' })).toBeVisible();
-    await expect(dueRow.getByRole('dialog', { name: 'Empty calendar' })).toHaveCount(0);
+    // The date value reads as a plain row: an empty value summons its picker with
+    // Space on the trailing draft, a committed value reopens it through the
+    // calendar affordance (see ensurePickerOpen). No dedicated whole-field trigger.
+    await openEmptyDatePicker(page);
+    await expect(page.getByRole('dialog', { name: 'Date picker' })).toBeVisible();
+    await expect(dueRow.getByRole('dialog', { name: 'Date picker' })).toHaveCount(0);
     await expectCalendarDayRhythm(page);
 
     await page.getByRole('button', { name: 'Select 2026-05-20' }).click();
@@ -36,13 +45,19 @@ test.describe('date field picker', () => {
   });
 });
 
+async function openEmptyDatePicker(page: import('@playwright/test').Page) {
+  const draft = trailingEditor(page, ids.dueEntry);
+  await draft.click();
+  await page.keyboard.press('Space');
+}
+
 async function ensurePickerOpen(
   page: import('@playwright/test').Page,
   dueRow: ReturnType<typeof row>,
 ) {
-  if (await page.getByRole('dialog', { name: /calendar/ }).isVisible()) return;
-  await dueRow.locator('.typed-field-date-trigger').click();
-  await expect(page.getByRole('dialog', { name: /calendar/ })).toBeVisible();
+  if (await page.getByRole('dialog', { name: 'Date picker' }).isVisible()) return;
+  await dueRow.locator('.field-value-date-trigger').click();
+  await expect(page.getByRole('dialog', { name: 'Date picker' })).toBeVisible();
 }
 
 async function expectCalendarDayRhythm(page: import('@playwright/test').Page) {

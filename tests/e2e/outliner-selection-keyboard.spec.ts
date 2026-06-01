@@ -166,15 +166,18 @@ test.describe('outliner selection keyboard parity', () => {
   });
 
   test('Shift+Tab outdents selected rows back to the parent scope', async ({ page }) => {
+    // Select beta, indent it under alpha (Tab carries the caret into the row editor),
+    // then Shift+Tab outdents it straight back to the parent scope without losing the
+    // row. Mirrors the sibling "Tab indents selected rows" case.
     await multiSelect(page, [ids.beta]);
     await page.keyboard.press('Tab');
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.alpha);
+    await expect(rowEditor(page, ids.beta)).toBeFocused();
 
-    await page.keyboard.press('Escape');
-    await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
     await page.keyboard.press('Shift+Tab');
 
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.today);
+    await expect(rowEditor(page, ids.beta)).toBeFocused();
   });
 
   test('Cmd+Enter cycles checkbox state for all selected target rows', async ({ page }) => {
@@ -379,14 +382,14 @@ test.describe('outliner selection keyboard parity', () => {
 
     const inlineRef = row(page, referenceId).locator('.inline-ref').first();
     await expect(inlineRef).toHaveText('Beta');
-    const tabCount = await page.locator('.workspace-tab').count();
+    const tabCount = await page.locator('.sidebar-tab').count();
     const panelCount = await page.locator('.outline-panel-surface').count();
 
     await inlineRef.click({ modifiers: ['Meta'] });
-    await expect(page.locator('.workspace-tab')).toHaveCount(tabCount + 1);
-    await expect(page.locator('.workspace-tab.active')).toContainText('Beta');
+    await expect(page.locator('.sidebar-tab')).toHaveCount(tabCount + 1);
+    await expect(page.locator('.sidebar-tab.active')).toContainText('Beta');
 
-    await page.locator('.workspace-tab').first().click();
+    await page.locator('.sidebar-tab').first().click();
     await expect(page.locator('.outline-panel-surface')).toHaveCount(panelCount);
 
     const originalTabInlineRef = row(page, referenceId).locator('.inline-ref').first();
@@ -394,7 +397,7 @@ test.describe('outliner selection keyboard parity', () => {
     const titleEditor = page.locator('.panel-title-editor .ProseMirror').first();
     await originalTabInlineRef.click();
 
-    await expect(page.locator('.workspace-tab')).toHaveCount(tabCount + 1);
+    await expect(page.locator('.sidebar-tab')).toHaveCount(tabCount + 1);
     await expect(titleEditor).toHaveText('Beta');
     await expect(titleEditor).not.toBeFocused();
   });

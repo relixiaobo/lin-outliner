@@ -12,8 +12,7 @@
   --field-value-field-row-padding-block: calc(var(--space-1) + var(--space-hairline));
 }
 
-.outliner > .row-wrap,
-.outliner > .trailing-row {
+.outliner > .row-wrap {
   width: calc(100% + var(--outliner-leading-bleed) - var(--row-inline-indent, 0px));
   transform: translateX(calc(-1 * var(--outliner-leading-bleed)));
 }
@@ -35,8 +34,7 @@
   will-change: transform;
 }
 
-.outliner-flat-row > .row-wrap,
-.outliner-flat-row > .trailing-row {
+.outliner-flat-row > .row-wrap {
   width: calc(100% + var(--outliner-leading-bleed) - var(--row-inline-indent, 0px));
   transform: translateX(calc(-1 * var(--outliner-leading-bleed)));
 }
@@ -1097,14 +1095,12 @@
   line-height: var(--line-content);
 }
 
-.field-value-outliner > .row-wrap,
-.field-value-outliner > .trailing-row {
+.field-value-outliner > .row-wrap {
   width: 100%;
   transform: none;
 }
 
-.field-value-outliner > .row-wrap > .row,
-.field-value-outliner > .trailing-row {
+.field-value-outliner > .row-wrap > .row {
   min-height: var(--field-value-row-min-height);
   grid-template-columns: 24px minmax(0, 1fr) auto;
   padding: var(--space-hairline) 0;
@@ -1134,14 +1130,7 @@
   grid-column: 3;
 }
 
-.field-value-outliner .trailing-editor.is-empty::before {
-  opacity: 1;
-  animation: none;
-}
 
-.field-value-outliner .trailing-editor.is-empty:focus-within::before {
-  opacity: 0;
-}
 
 .field-value-node-preview.empty {
   color: color-mix(in srgb, var(--text) 28%, transparent);
@@ -1166,6 +1155,44 @@
   align-items: center;
   margin-top: 2px;
   color: var(--status-warning);
+}
+
+/* Additive affordances at the trailing edge of an editable field value row: a
+   non-blocking validation hint, an open-link button (url / email), and a
+   calendar trigger (date). They decorate the row without taking it out of
+   plain-text editing. */
+.field-value-affordances {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: var(--space-2);
+  user-select: none;
+}
+
+.field-value-hint {
+  color: var(--status-warning);
+  font-size: var(--font-meta);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.field-value-affordance {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  transition: background var(--motion-fast), color var(--motion-fast);
+}
+
+.field-value-affordance:hover {
+  background: var(--control-hover);
+  color: var(--text);
 }
 
 .field-value-node-preview.done {
@@ -1845,19 +1872,19 @@
   white-space: nowrap;
 }
 
-.row-editor:not(.trailing-editor):focus-within::before,
+.row-editor:focus-within::before,
 .row-editor.is-focus-pending::before {
   opacity: 0;
 }
 
+/* A trailing draft never repeats placeholder hint text: its hint stays hidden
+   whether or not it is focused (the next-line affordance is the bullet, not a
+   ghosted label). */
 .trailing-editor.is-empty::before {
   opacity: 0;
-  animation: none;
 }
 
-.trailing-editor.is-empty:focus-within::before {
-  animation: none;
-}
+
 
 .row-editor .inline-ref {
   display: inline;

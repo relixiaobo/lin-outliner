@@ -21,7 +21,6 @@ export type {
   DocumentProjection,
   DocumentProjectionChangedEvent,
   AutoInitStrategy,
-  FieldCardinality,
   FieldConfigPatch,
   FieldType,
   FilterOperator,

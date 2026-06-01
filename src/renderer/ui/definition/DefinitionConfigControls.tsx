@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AutoInitStrategy, FieldCardinality, FieldType, HideFieldMode, NodeId, NodeProjection } from '../../api/types';
+import type { AutoInitStrategy, FieldType, HideFieldMode, NodeId, NodeProjection } from '../../api/types';
 import { projectTagConfig } from '../../../core/configProjection';
 import { resolveFieldOptions } from '../interactions/fieldOptions';
 import { fieldTypeLabel } from '../outliner/fieldTypePresentation';
@@ -10,7 +10,6 @@ import { SwitchMark } from '../primitives/SwitchMark';
 import { TAG_COLOR_PRESETS } from '../tags/tagColors';
 import {
   FIELD_TYPE_CONFIG_OPTIONS,
-  FIELD_CARDINALITY_OPTIONS,
   HIDE_FIELD_OPTIONS,
 } from './definitionConfig';
 
@@ -88,21 +87,6 @@ export function DefinitionHideFieldSelect(props: {
       label={props.label}
       value={props.value}
       options={HIDE_FIELD_OPTIONS}
-      onChange={props.onChange}
-    />
-  );
-}
-
-export function DefinitionCardinalitySelect(props: {
-  label: string;
-  value: FieldCardinality;
-  onChange: (cardinality: FieldCardinality) => void;
-}) {
-  return (
-    <DefinitionChoicePicker
-      label={props.label}
-      value={props.value}
-      options={FIELD_CARDINALITY_OPTIONS}
       onChange={props.onChange}
     />
   );

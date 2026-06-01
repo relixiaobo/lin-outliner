@@ -10,6 +10,7 @@ import { buildOutlinerRows, hiddenFieldKey, readViewConfig, type OutlinerRowItem
 import { useTrailingDraftId } from './draftRow';
 import { ViewToolbar } from './ViewToolbar';
 import { HiddenFieldReveal, ViewGroupHeading } from './OutlinerViewChrome';
+import type { FieldValueContext } from '../fields/fieldValueEditors';
 
 interface OutlinerViewProps {
   panelId: string;
@@ -29,6 +30,10 @@ interface OutlinerViewProps {
   rows?: OutlinerRowItem[];
   referencePath?: readonly NodeId[];
   showViewToolbar?: boolean;
+  // When this view renders a field's values (not body content), the field-value
+  // context threads field-awareness to every content row + the trailing draft so
+  // creates/selects route to the field command set and the options popover shows.
+  fieldValue?: FieldValueContext;
   // Eager-materialization trailing draft row:
   //  - 'always': always append (the panel body — there is always a place to add)
   //  - 'auto':   append when the list is empty or nav focuses the trailing line
@@ -51,9 +56,17 @@ export function OutlinerView(props: OutlinerViewProps) {
   const trailingFocused = props.ui.focusedId === props.parentId
     && props.ui.focusSurface === 'trailing'
     && props.ui.focusedPanelId === props.panelId;
+  // Once the trailing draft's editor takes focus, onFocus settles the focus
+  // signal from (parent, 'trailing') to the draft row's own id (see OutlinerItem
+  // trailingDraftFocused). Keep the draft mounted in that settled state too —
+  // otherwise an 'auto' view that already has rows unmounts the draft the instant
+  // it focuses, dropping the caret. The body uses 'always' so it never hits this;
+  // field values use 'auto', which is why the bug surfaced only there.
+  const draftFocused = props.ui.focusedId === draftId
+    && props.ui.focusedPanelId === props.panelId;
   const showDraft = Boolean(parent) && (
     trailingMode === 'always'
-    || (trailingMode === 'auto' && (builtRows.length === 0 || trailingFocused))
+    || (trailingMode === 'auto' && (builtRows.length === 0 || trailingFocused || draftFocused))
   );
   const rows: OutlinerRowItem[] = showDraft
     ? [...builtRows, { id: draftId, type: 'content', draft: true }]
@@ -141,6 +154,12 @@ export function OutlinerView(props: OutlinerViewProps) {
             setDragId={props.setDragId}
             referencePath={props.referencePath ?? [props.rootId]}
             draft={row.draft}
+            fieldValue={props.fieldValue}
+            // An already-selected (not focused) reference value row reuses the
+            // legacy read-only option picker; keep feeding it optionField +
+            // onSelectOption derived from the field-value context.
+            optionField={props.fieldValue?.optionField}
+            onSelectOption={props.fieldValue?.onSelectOption}
           />
         )}
       />

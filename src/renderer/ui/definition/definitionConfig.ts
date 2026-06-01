@@ -1,4 +1,4 @@
-import type { FieldCardinality, FieldType, HideFieldMode, NodeProjection } from '../../api/types';
+import type { FieldType, HideFieldMode, NodeProjection } from '../../api/types';
 import { FIELD_TYPE_CONFIG_OPTIONS } from '../fields/fieldTypeRegistry';
 
 /** The projected config fields the panel's visibility predicates depend on. */
@@ -21,7 +21,6 @@ export type TagConfigKey =
 
 export type FieldConfigKey =
   | 'fieldType'
-  | 'cardinality'
   | 'sourceSupertag'
   | 'autocollectOptions'
   | 'autoInitialize'
@@ -36,7 +35,6 @@ export type DefinitionConfigControl =
   | 'tag'
   | 'switch'
   | 'fieldType'
-  | 'cardinality'
   | 'hideField'
   | 'autoInitialize'
   | 'doneMapping'
@@ -59,11 +57,6 @@ export const HIDE_FIELD_OPTIONS: Array<{ value: HideFieldMode; label: string }> 
 ];
 
 export { FIELD_TYPE_CONFIG_OPTIONS };
-
-export const FIELD_CARDINALITY_OPTIONS: Array<{ value: FieldCardinality; label: string }> = [
-  { value: 'single', label: 'Single value' },
-  { value: 'list', label: 'List of values' },
-];
 
 export const TAG_CONFIG_ITEMS: DefinitionConfigItem[] = [
   { key: 'color', label: 'Color', kind: 'tag', control: 'color' },
@@ -95,7 +88,6 @@ export const TAG_CONFIG_ITEMS: DefinitionConfigItem[] = [
 
 export const FIELD_CONFIG_ITEMS: DefinitionConfigItem[] = [
   { key: 'fieldType', label: 'Field type', kind: 'field', control: 'fieldType' },
-  { key: 'cardinality', label: 'Cardinality', kind: 'field', control: 'cardinality' },
   {
     key: 'sourceSupertag',
     label: 'Supertag',

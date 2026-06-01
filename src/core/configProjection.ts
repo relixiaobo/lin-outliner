@@ -20,7 +20,6 @@ import type {
   AutoInitStrategy,
   DefConfigKey,
   DocumentState,
-  FieldCardinality,
   FieldType,
   Node,
   NodeId,
@@ -113,7 +112,6 @@ export function projectFieldConfig(byId: ConfigNodeMap, fieldDef: ConfigNodeLike
   const maxText = scalarText(byId, rows.get('maxValue'));
   return {
     fieldType: (enumValue(byId, rows.get('fieldType')) as FieldType | undefined) ?? 'plain',
-    cardinality: (enumValue(byId, rows.get('cardinality')) as FieldCardinality | undefined) ?? 'single',
     sourceSupertag: refTarget(byId, rows.get('sourceSupertag')),
     // Fields are optional by default; absent nullable config means nullable.
     nullable: boolCodec.decode(scalarText(byId, rows.get('nullable')) ?? '') ?? true,

@@ -50,6 +50,10 @@ interface UseOutlinerRowInteractionOptions {
   locked?: boolean;
   dragId: NodeId | null;
   setDragId: (nodeId: NodeId | null) => void;
+  // A not-yet-materialized trailing draft tags its wrap with the parent it will
+  // create under, so e2e (and any sibling lookup) can find the trailing editor by
+  // `[data-trailing-parent-id]` the way the legacy TrailingInput row did.
+  draft?: boolean;
 }
 
 export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOptions) {
@@ -69,6 +73,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     locked,
     dragId,
     setDragId,
+    draft,
   } = options;
   const byId = index.byId;
   const [dropPosition, setDropPosition] = useState<DropHoverPosition | null>(null);
@@ -397,6 +402,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     wrapProps: {
       'data-node-id': rowId,
       'data-parent-id': parentId,
+      ...(draft ? { 'data-trailing-parent-id': parentId } : {}),
       style: wrapStyle,
       onDragOver,
       onDragLeave: () => setDropPosition(null),

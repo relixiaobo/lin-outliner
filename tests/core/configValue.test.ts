@@ -73,12 +73,10 @@ describe('config-as-nodes value mechanism (Stage 4)', () => {
     core.setConfigValue(fieldDefId, { kind: 'enum', configKey: 'fieldType', value: 'number' });
     core.setConfigValue(fieldDefId, { kind: 'scalar', configKey: 'minValue', text: '1' });
     core.setConfigValue(fieldDefId, { kind: 'scalar', configKey: 'maxValue', text: '10' });
-    core.setConfigValue(fieldDefId, { kind: 'enum', configKey: 'cardinality', value: 'list' });
     core.setConfigValue(fieldDefId, { kind: 'enumList', configKey: 'autoInitialize', values: ['current_date', 'ancestor_day_node'] });
 
     const field = buildConfigIndex(core.state()).field(fieldDefId);
     expect(field?.fieldType).toBe('number');
-    expect(field?.cardinality).toBe('list');
     expect(field?.minValue).toBe(1);
     expect(field?.maxValue).toBe(10);
     expect(field?.autoInitialize).toEqual(['current_date', 'ancestor_day_node']);

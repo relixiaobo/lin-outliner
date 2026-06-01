@@ -272,7 +272,10 @@
   --control-size-xs: 20px;
   --control-size-md: 24px;
   --control-size-xl: 28px;
-  --switch-mark-width: var(--control-size-xl);
+  /* The switch track is wider than the 28px control box — a documented 30x18
+     track (see design-system spec) — so it carries its own width rather than
+     aliasing --control-size-xl. */
+  --switch-mark-width: 30px;
   --icon-size-xs: 12px;
   --icon-size-sm: 14px;
   --icon-size-md: 16px;

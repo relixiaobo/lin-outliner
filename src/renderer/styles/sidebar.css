@@ -416,8 +416,11 @@
   );
 }
 
+/* Tree rows pick up the same neutral hover fill as the nav items and tabs (the
+   text is already at full strength, so a colour-only hover is invisible under the
+   neutral token scale). The chevron still brightens below. */
 .workspace-tree-row:hover {
-  color: var(--text-strong);
+  background: var(--control-hover);
 }
 
 .workspace-tree-chevron-button {

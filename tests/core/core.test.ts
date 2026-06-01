@@ -539,7 +539,7 @@ describe('Core', () => {
     expect(optionChildIds(core, fieldDefId)).toEqual([]);
   });
 
-  test('free-text value on an options field stays local without collecting an option', () => {
+  test('free-text value on an options field stays local and appends', () => {
     const core = Core.new();
     const today = core.projection().todayId;
     const fieldEntryId = mustFocus(core.createInlineField(today, null, 'Status', 'options'));
@@ -555,13 +555,17 @@ describe('Core', () => {
     expect(value.content.text).toBe('One-off');
     expect(optionChildIds(core, fieldDefId)).toEqual([]);
 
-    // Single-cardinality replaces the prior value; whitespace-only text clears it.
-    core.setFieldFreeTextValue(fieldEntryId, 'Revised');
+    // Everything is a node: a second value appends instead of replacing.
+    core.setFieldFreeTextValue(fieldEntryId, 'Another');
     const children = core.state().nodes[fieldEntryId].children;
-    expect(children.length).toBe(1);
-    expect(core.state().nodes[children[0]].content.text).toBe('Revised');
+    expect(children.length).toBe(2);
+    expect(core.state().nodes[children[1]].content.text).toBe('Another');
 
+    // Whitespace-only text is a no-op (clearing goes through clearFieldValue).
     core.setFieldFreeTextValue(fieldEntryId, '   ');
+    expect(core.state().nodes[fieldEntryId].children.length).toBe(2);
+
+    core.clearFieldValue(fieldEntryId);
     expect(core.state().nodes[fieldEntryId].children).toEqual([]);
     expect(optionChildIds(core, fieldDefId)).toEqual([]);
   });
@@ -604,12 +608,11 @@ describe('Core', () => {
     expect(optionChildIds(core, fieldDefId)).toEqual([sourceValueId]);
   });
 
-  test('list options append unique values instead of replacing', () => {
+  test('options append unique values instead of replacing', () => {
     const core = Core.new();
     const today = core.projection().todayId;
     const fieldEntryId = mustFocus(core.createInlineField(today, null, 'Tags', 'options'));
     const fieldDefId = core.state().nodes[fieldEntryId].fieldDefId!;
-    core.setFieldConfig(fieldDefId, { cardinality: 'list' });
     const first = mustFocus(core.registerCollectedOption(fieldDefId, 'Alpha'));
     const second = mustFocus(core.registerCollectedOption(fieldDefId, 'Beta'));
 
@@ -650,7 +653,6 @@ describe('Core', () => {
 
     core.setFieldConfig(fieldId, {
       fieldType: 'number',
-      cardinality: 'list',
       nullable: false,
       hideField: 'empty',
       autoInitialize: 'ancestor_field_value',
@@ -658,7 +660,6 @@ describe('Core', () => {
       maxValue: 5,
     });
     expect(buildConfigIndex(core.state()).field(fieldId)?.fieldType).toBe('number');
-    expect(buildConfigIndex(core.state()).field(fieldId)?.cardinality).toBe('list');
     expect(buildConfigIndex(core.state()).field(fieldId)?.nullable).toBe(false);
     expect(buildConfigIndex(core.state()).field(fieldId)?.hideField).toBe('empty');
     expect(buildConfigIndex(core.state()).field(fieldId)?.autoInitialize).toEqual(['ancestor_field_value']);

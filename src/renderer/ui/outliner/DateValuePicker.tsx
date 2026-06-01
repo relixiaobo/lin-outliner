@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import {
   dateFieldEndpointDate,
   dateFieldEndpointHasTime,
@@ -11,27 +11,37 @@ import {
   parseDateFieldValue,
   parseIsoLocalDate,
 } from '../../api/types';
-import { CalendarIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { CalendarMonthGrid, shiftedCalendarMonth, type CalendarMonthDay } from '../primitives/CalendarMonthGrid';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 
-interface DateFieldControlProps {
+interface DateValuePickerProps {
+  // The row content line the popover anchors to (so the calendar opens under the
+  // value, not under a dedicated whole-field control).
+  anchorRef: RefObject<HTMLElement | null>;
+  // The current normalized date value ('' for an empty / draft value).
   value: string;
-  placeholder: string;
-  commit: (nextValue: string) => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  // Commit a normalized date value ('' clears it). The caller routes this to the
+  // node command set (materialize a draft, or replace a committed value's text).
+  onCommit: (nextValue: string) => void;
 }
 
 type DateFieldEdge = 'start' | 'end';
 
 const DEFAULT_TIME = '09:00';
 
-export function DateFieldControl({ value, placeholder, commit }: DateFieldControlProps) {
+// The date picker overlay for a date field value. It is a controlled,
+// anchor-positioned popover with no trigger of its own — the value row summons
+// it (Space / a calendar affordance) and owns where the picked value lands. The
+// calendar logic mirrors the reference date interaction: optional end date for a
+// range, optional time, today / clear.
+export function DateValuePicker({ anchorRef, value, open, onOpenChange, onCommit }: DateValuePickerProps) {
   const initial = dateDraftFromValue(value);
   const today = useMemo(() => isoLocalDate(new Date()), []);
-  const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [includeEnd, setIncludeEnd] = useState(initial.includeEnd);
   const [startDraft, setStartDraft] = useState(initial.start);
@@ -39,14 +49,13 @@ export function DateFieldControl({ value, placeholder, commit }: DateFieldContro
   const [includeTime, setIncludeTime] = useState(initial.includeTime);
   const [startTimeDraft, setStartTimeDraft] = useState(initial.startTime || DEFAULT_TIME);
   const [endTimeDraft, setEndTimeDraft] = useState(initial.endTime || DEFAULT_TIME);
-  const [open, setOpen] = useState(false);
   const [editingEdge, setEditingEdge] = useState<DateFieldEdge>('start');
   const [hoveredDate, setHoveredDate] = useState('');
   const initialViewDate = parseIsoLocalDate(dateFieldEndpointDate(initial.start || today)) ?? new Date();
   const [viewYear, setViewYear] = useState(initialViewDate.getFullYear());
   const [viewMonth, setViewMonth] = useState(initialViewDate.getMonth());
   const popoverStyle = useAnchoredOverlay(popoverRef, {
-    anchorRef: triggerRef,
+    anchorRef,
     disabled: !open,
     maxHeight: 520,
     placement: 'bottom-start',
@@ -63,16 +72,29 @@ export function DateFieldControl({ value, placeholder, commit }: DateFieldContro
     setEndTimeDraft(next.endTime || DEFAULT_TIME);
   }, [value]);
 
+  // Re-centre the calendar on the value's month each time the popover opens.
+  useEffect(() => {
+    if (!open) return;
+    const date = parseIsoLocalDate(dateFieldEndpointDate(startDraft || today));
+    if (!date) return;
+    setViewYear(date.getFullYear());
+    setViewMonth(date.getMonth());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
-      if (target instanceof Node && triggerRef.current?.contains(target)) return;
+      if (target instanceof Node && anchorRef.current?.contains(target)) return;
       if (target instanceof Node && popoverRef.current?.contains(target)) return;
-      setOpen(false);
+      onOpenChange(false);
     };
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        onOpenChange(false);
+      }
     };
     document.addEventListener('pointerdown', handlePointerDown, true);
     document.addEventListener('keydown', handleKeyDown, true);
@@ -80,11 +102,11 @@ export function DateFieldControl({ value, placeholder, commit }: DateFieldContro
       document.removeEventListener('pointerdown', handlePointerDown, true);
       document.removeEventListener('keydown', handleKeyDown, true);
     };
-  }, [open]);
+  }, [open, anchorRef, onOpenChange]);
 
   const commitDate = (nextIncludeEnd = includeEnd, nextStart = startDraft, nextEnd = endDraft) => {
     if (!nextStart && (!nextIncludeEnd || !nextEnd)) {
-      commit('');
+      onCommit('');
       return;
     }
     if (nextIncludeEnd && (!nextStart || !nextEnd)) return;
@@ -92,7 +114,7 @@ export function DateFieldControl({ value, placeholder, commit }: DateFieldContro
       ? formatDateFieldInput(nextStart, nextEnd)
       : formatDateFieldInput(nextStart, '');
     if (!nextValue) return;
-    commit(nextValue);
+    onCommit(nextValue);
   };
 
   const setViewToDate = (isoDate: string) => {
@@ -185,8 +207,8 @@ export function DateFieldControl({ value, placeholder, commit }: DateFieldContro
     setEndDraft('');
     setHoveredDate('');
     setEditingEdge('start');
-    commit('');
-    setOpen(false);
+    onCommit('');
+    onOpenChange(false);
   };
 
   const pickToday = () => {
@@ -218,7 +240,6 @@ export function DateFieldControl({ value, placeholder, commit }: DateFieldContro
     commitDate(includeEnd, startDraft, nextEnd);
   };
 
-  const displayedValue = dateDisplayValue(startDraft, includeEnd ? endDraft : '', includeEnd);
   const rangePreviewEnd = includeEnd && editingEdge === 'end' && hoveredDate
     ? hoveredDate
     : dateFieldEndpointDate(endDraft);
@@ -229,78 +250,61 @@ export function DateFieldControl({ value, placeholder, commit }: DateFieldContro
     includeEnd && isIsoDateBetween(day.isoDate, dateFieldEndpointDate(startDraft), rangePreviewEnd) ? 'is-in-range' : ''
   );
 
-  return (
-    <span className="typed-field-control typed-field-control-date">
-      <ButtonControl
-        ref={triggerRef}
-        className={`typed-field-date-trigger ${displayedValue ? '' : 'empty'}`}
-        aria-expanded={open}
-        aria-label={placeholder}
-        onClick={() => {
-          setOpen((nextOpen) => {
-            if (!nextOpen) setViewToDate(startDraft || today);
-            return !nextOpen;
-          });
-        }}
-      >
-        <CalendarIcon size={13} strokeWidth={1.8} />
-        <span>{displayedValue || placeholder}</span>
-      </ButtonControl>
-      {open ? createPortal(
-        <div
-          ref={popoverRef}
-          className="typed-field-date-popover"
-          role="dialog"
-          aria-label={`${placeholder} calendar`}
-          style={popoverStyle}
-        >
-          <div className="typed-field-date-summary">
-            <DateSummaryRow
-              active={editingEdge === 'start'}
-              includeTime={includeTime}
-              label="Start"
-              time={startTimeDraft}
-              value={startDraft}
-              onSelect={() => setEditingEdge('start')}
-              onDateChange={(isoDate) => updateDate('start', isoDate)}
-              onTimeChange={(nextTime) => updateTime('start', nextTime)}
-            />
-            {includeEnd && (
-              <DateSummaryRow
-                active={editingEdge === 'end'}
-                includeTime={includeTime}
-                label="End"
-                time={endTimeDraft}
-                value={endDraft}
-                onSelect={() => setEditingEdge('end')}
-                onDateChange={(isoDate) => updateDate('end', isoDate)}
-                onTimeChange={(nextTime) => updateTime('end', nextTime)}
-              />
-            )}
-          </div>
-          <CalendarMonthGrid
-            getDayClassName={calendarDayClassName}
-            month={viewMonth}
-            onDayMouseEnter={(day) => setHoveredDate(day.isoDate)}
-            onDayMouseLeave={() => setHoveredDate('')}
-            onMoveMonth={moveMonth}
-            onSelectDate={selectDate}
-            selectedIsoDates={selectedDates}
-            todayIsoDate={today}
-            year={viewYear}
+  if (!open) return null;
+
+  return createPortal(
+    <div
+      ref={popoverRef}
+      className="typed-field-date-popover"
+      role="dialog"
+      aria-label="Date picker"
+      style={popoverStyle}
+    >
+      <div className="typed-field-date-summary">
+        <DateSummaryRow
+          active={editingEdge === 'start'}
+          includeTime={includeTime}
+          label="Start"
+          time={startTimeDraft}
+          value={startDraft}
+          onSelect={() => setEditingEdge('start')}
+          onDateChange={(isoDate) => updateDate('start', isoDate)}
+          onTimeChange={(nextTime) => updateTime('start', nextTime)}
+        />
+        {includeEnd && (
+          <DateSummaryRow
+            active={editingEdge === 'end'}
+            includeTime={includeTime}
+            label="End"
+            time={endTimeDraft}
+            value={endDraft}
+            onSelect={() => setEditingEdge('end')}
+            onDateChange={(isoDate) => updateDate('end', isoDate)}
+            onTimeChange={(nextTime) => updateTime('end', nextTime)}
           />
-          <div className="typed-field-date-settings">
-            <DateSettingRow label="End date" checked={includeEnd} onToggle={toggleIncludeEnd} />
-            <DateSettingRow label="Include time" checked={includeTime} onToggle={toggleIncludeTime} />
-          </div>
-          <div className="typed-field-date-actions">
-            <ButtonControl onClick={pickToday}>Today</ButtonControl>
-            <ButtonControl onClick={clearDate}>Clear</ButtonControl>
-          </div>
-        </div>,
-        document.body,
-      ) : null}
-    </span>
+        )}
+      </div>
+      <CalendarMonthGrid
+        getDayClassName={calendarDayClassName}
+        month={viewMonth}
+        onDayMouseEnter={(day) => setHoveredDate(day.isoDate)}
+        onDayMouseLeave={() => setHoveredDate('')}
+        onMoveMonth={moveMonth}
+        onSelectDate={selectDate}
+        selectedIsoDates={selectedDates}
+        todayIsoDate={today}
+        year={viewYear}
+      />
+      <div className="typed-field-date-settings">
+        <DateSettingRow label="End date" checked={includeEnd} onToggle={toggleIncludeEnd} />
+        <DateSettingRow label="Include time" checked={includeTime} onToggle={toggleIncludeTime} />
+      </div>
+      <div className="typed-field-date-actions">
+        <ButtonControl onClick={pickToday}>Today</ButtonControl>
+        <ButtonControl onClick={clearDate}>Clear</ButtonControl>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -433,24 +437,6 @@ function dateDraftFromValue(value: string): {
     };
   }
   return { includeEnd: false, start: '', end: '', includeTime: false, startTime: '', endTime: '' };
-}
-
-function dateDisplayValue(start: string, end: string, includeEnd: boolean): string {
-  if (!start) return '';
-  if (!includeEnd || !end) return compactDateDisplay(start);
-  return `${compactDateDisplay(start)} to ${compactDateDisplay(end)}`;
-}
-
-function compactDateDisplay(isoDate: string): string {
-  const date = parseIsoLocalDate(dateFieldEndpointDate(isoDate));
-  if (!date) return isoDate;
-  const currentYear = new Date().getFullYear();
-  const options: Intl.DateTimeFormatOptions = date.getFullYear() === currentYear
-    ? { weekday: 'short', month: 'short', day: 'numeric' }
-    : { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' };
-  const dateLabel = new Intl.DateTimeFormat(undefined, options).format(date);
-  const time = dateFieldEndpointTime(isoDate);
-  return time ? `${dateLabel} ${time}` : dateLabel;
 }
 
 function isIsoDateBetween(date: string, start: string, end: string): boolean {

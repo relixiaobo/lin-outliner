@@ -37,31 +37,30 @@ test.describe('outliner navigation and page title parity', () => {
     ))).toBe(0);
   });
 
-  test('top chrome back and forward navigate the active panel page history', async ({ page }) => {
-    const back = page.getByTitle('Back');
-    const forward = page.getByTitle('Forward');
+  test('panel back button tracks history depth while keyboard navigates pages', async ({ page }) => {
+    // The dissolved TopBar removed the global Back/Forward chrome buttons; page
+    // history now lives on the per-pane "Previous page" button (back, with a
+    // disabled state) plus the keyboard (Alt+Arrow / Cmd+[ / Cmd+]) for forward.
+    const back = page.getByRole('button', { name: 'Previous page' }).first();
     await expect(back).toBeDisabled();
-    await expect(forward).toBeDisabled();
 
     await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
     await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
     await expect(back).toBeEnabled();
-    await expect(forward).toBeDisabled();
+
+    await page.getByRole('button', { name: 'Collapse sidebar' }).focus();
+    await page.keyboard.press('Alt+ArrowLeft');
+    await expect(page.locator('.panel-title-editor').first()).toContainText('2026-05-13');
+    await expect(back).toBeDisabled();
+
+    await page.keyboard.press('Alt+ArrowRight');
+    await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
+    await expect(back).toBeEnabled();
 
     await back.click();
     await expect(page.locator('.panel-title-editor').first()).toContainText('2026-05-13');
-    await expect(back).toBeDisabled();
-    await expect(forward).toBeEnabled();
-
-    await forward.click();
-    await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
-    await expect(back).toBeEnabled();
-    await expect(forward).toBeDisabled();
-
-    await back.click();
     await row(page, ids.beta).getByRole('button', { name: 'Open' }).click();
     await expect(page.locator('.panel-title-editor').first()).toContainText('Beta');
-    await expect(forward).toBeDisabled();
 
     await expect.poll(async () => page.evaluate(() => (
       (window as typeof window & {
@@ -104,12 +103,12 @@ test.describe('outliner navigation and page title parity', () => {
     expect((await commandCalls(page)).map((call) => call.cmd)).toContain('ensure_date_node');
   });
 
-  test('top chrome navigation keeps the tab outliner context when a debug panel is active', async ({ page }) => {
+  test('page-history navigation keeps the tab outliner context when a debug panel shares the tab', async ({ page }) => {
     await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
     await page.getByRole('button', { name: 'Open agent debug' }).click();
-    await expect(page.locator('.workspace-tab.active')).toContainText('Agent System');
-    await expect(page.locator('.workspace-tab.active .workspace-tab-segment.is-active svg')).toHaveCount(1);
-    const debugIconSlot = await page.locator('.workspace-tab.active .workspace-tab-segment.is-active .workspace-tab-segment-icon').evaluate((icon) => {
+    await expect(page.locator('.sidebar-tab.active')).toContainText('Agent System');
+    await expect(page.locator('.sidebar-tab.active .sidebar-tab-segment.is-active svg')).toHaveCount(1);
+    const debugIconSlot = await page.locator('.sidebar-tab.active .sidebar-tab-segment.is-active .sidebar-tab-segment-icon').evaluate((icon) => {
       const rect = icon.getBoundingClientRect();
       return {
         height: Math.round(rect.height),
@@ -118,11 +117,21 @@ test.describe('outliner navigation and page title parity', () => {
     });
     expect(debugIconSlot).toEqual({ height: 16, width: 16 });
 
-    await page.getByTitle('Back').click();
+    // The dissolved TopBar (#57) removed the global Back/Forward chrome. The
+    // outliner pane keeps its "Previous page" back button even when an agent
+    // debug panel shares the tab; clicking it re-activates the outliner context.
+    const back = page.getByRole('button', { name: 'Previous page' }).first();
+    await expect(back).toBeEnabled();
+    await back.click();
 
     await expect(page.locator('.panel-title-editor').first()).toContainText('2026-05-13');
-    await expect(page.locator('.workspace-tab.active')).toContainText('2026-05-13');
-    await expect(page.getByTitle('Forward')).toBeEnabled();
+    await expect(page.locator('.sidebar-tab.active')).toContainText('2026-05-13');
+
+    // Forward history survives the round trip; keyboard forward returns to the
+    // drilled page (the new shell exposes forward through the keyboard only).
+    await page.getByRole('button', { name: 'Collapse sidebar' }).focus();
+    await page.keyboard.press('Alt+ArrowRight');
+    await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
   });
 
   test('sticky breadcrumb absorbs the current page title while the panel scrolls', async ({ page }) => {
@@ -185,11 +194,12 @@ test.describe('outliner navigation and page title parity', () => {
         throw new Error('missing breadcrumb or outliner alignment target');
       }
       return {
-        backCenter: backControl.left + backControl.width / 2,
         backLeft: backControl.left,
-        originCenter: origin.left + origin.width / 2,
-        rowBulletCenter: rowBullet.left + rowBullet.width / 2,
-        rowChevronCenter: rowChevron.left + rowChevron.width / 2,
+        originLeft: origin.left,
+        originRight: origin.right,
+        rowBulletLeft: rowBullet.left,
+        rowBulletRight: rowBullet.right,
+        rowChevronLeft: rowChevron.left,
         titleLeft: title.left,
         panelLeft: panelBox.left,
       };
@@ -201,28 +211,32 @@ test.describe('outliner navigation and page title parity', () => {
 
     await page.setViewportSize({ width: 900, height: 700 });
     const narrow = await measure();
-    expect(Math.abs(narrow.backCenter - narrow.rowChevronCenter)).toBeLessThanOrEqual(1);
-    expect(Math.abs(narrow.originCenter - narrow.rowBulletCenter)).toBeLessThanOrEqual(1);
+    // When content fills the panel (no centring inset) the outliner rows sit flush at
+    // the panel's leading edge, and the breadcrumb leading is engineered to start at
+    // that same edge (breadcrumb.css pulls it left by the chevron column). The 24px
+    // back IconButton and the 15px row chevron therefore share a left edge — not a
+    // centre, since their control sizes differ — so assert leading-edge alignment, the
+    // contract the CSS actually maintains. The origin sits over the bullet column.
+    expect(Math.abs(narrow.backLeft - narrow.rowChevronLeft)).toBeLessThanOrEqual(1);
+    expect(narrow.originLeft).toBeLessThan(narrow.rowBulletRight);
+    expect(narrow.originRight).toBeGreaterThan(narrow.rowBulletLeft);
   });
 
   test('disabled navigation and breadcrumb controls use design-system affordances', async ({ page }) => {
     const metrics = await page.evaluate(() => {
-      const topBack = document.querySelector('[title="Back"]');
-      const topForward = document.querySelector('[title="Forward"]');
+      // The TopBar dissolved (#57) so there are no global Back/Forward chrome
+      // buttons; the per-pane "Previous page" back button carries the disabled
+      // affordance at the root page, alongside the breadcrumb controls.
       const panelBack = document.querySelector('.panel-page-back-button');
       const breadcrumb = document.querySelector('.panel-breadcrumb');
       const origin = document.querySelector('.panel-breadcrumb-origin');
       const divider = document.querySelector('.panel-breadcrumb-divider');
-      if (!(topBack instanceof HTMLElement)
-        || !(topForward instanceof HTMLElement)
-        || !(panelBack instanceof HTMLElement)
+      if (!(panelBack instanceof HTMLElement)
         || !(breadcrumb instanceof HTMLElement)
         || !(origin instanceof HTMLElement)
         || !(divider instanceof HTMLElement)) {
         throw new Error('missing navigation or breadcrumb controls');
       }
-      const topBackStyle = getComputedStyle(topBack);
-      const topForwardStyle = getComputedStyle(topForward);
       const panelBackStyle = getComputedStyle(panelBack);
       const breadcrumbStyle = getComputedStyle(breadcrumb);
       const originBox = origin.getBoundingClientRect();
@@ -242,13 +256,9 @@ test.describe('outliner navigation and page title parity', () => {
         panelBackColor: panelBackStyle.color,
         panelBackHeight: panelBackBox.height,
         panelBackWidth: panelBackBox.width,
-        topBackColor: topBackStyle.color,
-        topForwardColor: topForwardStyle.color,
       };
     });
 
-    expect(metrics.topBackColor).toBe(metrics.disabledColor);
-    expect(metrics.topForwardColor).toBe(metrics.disabledColor);
     expect(metrics.panelBackColor).toBe(metrics.disabledColor);
     expect(metrics.panelBackWidth).toBe(24);
     expect(metrics.panelBackHeight).toBe(24);

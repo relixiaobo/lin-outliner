@@ -53,17 +53,19 @@ test.describe('outliner trailing input and expansion parity', () => {
     await openMockedApp(page);
   });
 
-  test('typing in the panel trailing input stays local until Enter commits real nodes', async ({ page }) => {
+  test('typing in the panel trailing input eagerly commits a real node', async ({ page }) => {
     const editor = trailingEditor(page);
     await editor.click();
     await page.keyboard.type('Delta');
 
-    await expect(editor).toHaveText('Delta');
-    expect(await nodeByText(page, 'Delta')).toBeUndefined();
+    // Eager materialization: a body trailing draft turns into a real node on the
+    // first keystroke (carrying the typed text), and a fresh empty trailing draft
+    // replaces it. (Field values stay lazy — they buffer until Enter.)
+    await expect.poll(async () => (await nodeByText(page, 'Delta'))?.parentId).toBe(ids.today);
+    await expect(trailingEditor(page)).toHaveText('');
 
     await page.keyboard.press('Enter');
 
-    await expect.poll(async () => (await nodeByText(page, 'Delta'))?.parentId).toBe(ids.today);
     const projection = await e2eProjection(page);
     const today = projection.nodes.find((node) => node.id === ids.today)!;
     expect(today.children).toHaveLength(5);
@@ -135,7 +137,7 @@ test.describe('outliner trailing input and expansion parity', () => {
     await trailingEditor(page).click();
     await page.keyboard.type('>');
 
-    const valueEditor = page.locator('[data-field-value] .trailing-editor .ProseMirror').first();
+    const valueEditor = page.locator('[data-field-value] [data-trailing-parent-id] .ProseMirror').first();
     await expect(valueEditor).toBeVisible();
     await valueEditor.click();
     await page.keyboard.insertText(text);
@@ -152,8 +154,40 @@ test.describe('outliner trailing input and expansion parity', () => {
     expect(fieldEntry.children).toEqual([valueNode.id]);
   });
 
+  test('BUG1 field value Enter leaves no duplicate value row in the DOM', async ({ page }) => {
+    const text = 'zzdupcheck';
+
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+
+    const valueEditor = page.locator('[data-field-value] [data-trailing-parent-id] .ProseMirror').first();
+    await expect(valueEditor).toBeVisible();
+    await valueEditor.click();
+    await page.keyboard.type(text);
+    await page.keyboard.press('Enter');
+
+    // The value node materialized exactly once in the projection.
+    await expect.poll(async () => (await nodesWithText(page, text)).length).toBe(1);
+
+    // ...and the DOM must not show a second editor still carrying the text
+    // (the reported "duplicate sibling that vanishes on focus change"). Count
+    // BEFORE moving focus away, since that is when the user sees the duplicate.
+    const domCount = await page.evaluate((needle) => {
+      const editors = Array.from(document.querySelectorAll('[data-field-value] .ProseMirror'));
+      return editors.filter((el) => (el.textContent ?? '').trim() === needle).length;
+    }, text);
+    expect(domCount).toBe(1);
+
+    // The freshly minted trailing draft is empty, not echoing the typed text.
+    const trailingText = await page.evaluate(() => {
+      const drafts = Array.from(document.querySelectorAll('[data-field-value] [data-trailing-parent-id] .ProseMirror'));
+      return drafts.map((el) => (el.textContent ?? '').trim());
+    });
+    expect(trailingText.every((value) => value === '')).toBe(true);
+  });
+
   test('empty trailing input does not show default placeholder text', async ({ page }) => {
-    const editor = page.locator(`[data-trailing-parent-id="${ids.today}"] .trailing-editor`).first();
+    const editor = page.locator(`[data-trailing-parent-id="${ids.today}"] .row-editor`).first();
     await expect(editor).toHaveClass(/is-empty/);
 
     await expect.poll(async () => editor.evaluate((element) =>
@@ -180,17 +214,27 @@ test.describe('outliner trailing input and expansion parity', () => {
     const createdId = today.children.at(-1)!;
     const created = projection.nodes.find((node) => node.id === createdId)!;
     expect(created.content.text).toBe('');
-    await expect(rowEditor(page, createdId)).toBeFocused();
+    // Enter on the trailing draft materializes it (the empty node above) and drops
+    // to a fresh trailing line below — focus moves there, not back onto the just
+    // committed node. Pressing Enter again keeps committing empty nodes and
+    // advancing, matching the "every Enter creates a node and moves down" model.
+    await expect(trailingEditor(page)).toBeFocused();
     await expect(trailingEditor(page)).toBeVisible();
   });
 
   test('Tab and Shift+Tab in empty trailing input choose the parent for the committed node', async ({ page }) => {
     await trailingEditor(page).click();
     await page.keyboard.press('Tab');
+    // Eager: Tab materializes an empty node and indents it under the previous
+    // sibling (gamma). That is async (materialize + indent IPC), so wait for the
+    // indent to settle before typing into the now-real, focused row.
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      return projection.nodes.find((node) => node.id === ids.gamma)?.children.length;
+    }).toBe(1);
     await page.keyboard.type('Nested');
 
-    await expect(trailingEditor(page, ids.gamma)).toHaveText('Nested');
-    expect(await nodeByText(page, 'Nested')).toBeUndefined();
+    await expect.poll(async () => (await nodeByText(page, 'Nested'))?.parentId).toBe(ids.gamma);
 
     await page.keyboard.press('Enter');
 
@@ -264,19 +308,20 @@ test.describe('outliner trailing input and expansion parity', () => {
     await expect(childTrailing).toBeFocused();
     await page.keyboard.type('Leaf child');
 
-    await expect(childTrailing).toHaveText('Leaf child');
-    expect(await nodeByText(page, 'Leaf child')).toBeUndefined();
+    // Eager: the child trailing draft commits to a real child of gamma on the
+    // first keystroke; a fresh empty child trailing draft replaces it.
+    await expect.poll(async () => (await nodeByText(page, 'Leaf child'))?.parentId).toBe(ids.gamma);
 
     await page.keyboard.press('Enter');
 
-    await expect.poll(async () => (await nodeByText(page, 'Leaf child'))?.parentId).toBe(ids.gamma);
     const projection = await e2eProjection(page);
     const gamma = projection.nodes.find((node) => node.id === ids.gamma)!;
     expect(gamma.children).toHaveLength(2);
+    const leaf = projection.nodes.find((node) => node.content.text === 'Leaf child')!;
     const continuation = projection.nodes.find((node) => node.id === gamma.children.at(-1))!;
     expect(continuation.content.text).toBe('');
+    expect(continuation.id).not.toBe(leaf.id);
     await expect(rowEditor(page, continuation.id)).toBeFocused();
-    await expect(trailingEditor(page, ids.gamma)).toHaveCount(0);
   });
 
   test('switching between trailing inputs commits each editor once without replaying partial text', async ({ page }) => {

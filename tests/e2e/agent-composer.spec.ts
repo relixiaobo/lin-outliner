@@ -843,17 +843,17 @@ test.describe('agent composer controls', () => {
     await expect(page.locator('.agent-markdown [data-inline-ref="node-alpha"]')).toHaveText(['Alpha', 'Alpha']);
     await expect(page.locator('.agent-markdown [data-inline-ref="node-missing"]')).toHaveText('Referenced node');
     await expect(page.locator('.agent-markdown [data-inline-ref="node-missing"]')).not.toContainText('node-missing');
-    const tabCount = await page.locator('.workspace-tab').count();
+    const tabCount = await page.locator('.sidebar-tab').count();
     const panelCount = await page.locator('.outline-panel-surface').count();
 
     await page.locator('.agent-markdown [data-inline-ref="node-alpha"]').first().click();
-    await expect(page.locator('.workspace-tab')).toHaveCount(tabCount);
+    await expect(page.locator('.sidebar-tab')).toHaveCount(tabCount);
     await expect(page.locator('.outline-panel-surface')).toHaveCount(panelCount);
-    await expect(page.locator('.workspace-tab.active')).toContainText('Alpha');
+    await expect(page.locator('.sidebar-tab.active')).toContainText('Alpha');
 
     await page.locator('.agent-markdown [data-inline-ref="node-alpha"]').nth(1).click({ modifiers: ['Meta'] });
-    await expect(page.locator('.workspace-tab')).toHaveCount(tabCount + 1);
-    await expect(page.locator('.workspace-tab.active')).toContainText('Alpha');
+    await expect(page.locator('.sidebar-tab')).toHaveCount(tabCount + 1);
+    await expect(page.locator('.sidebar-tab.active')).toContainText('Alpha');
 
     await page.getByRole('button', { name: /Read node/ }).click();
     await expect(page.locator('.agent-tool-call-section [data-inline-ref="node-alpha"]')).toHaveText('Alpha');
@@ -1080,13 +1080,15 @@ test.describe('agent composer controls', () => {
     }).toBe(true);
   });
 
-  test('keeps settings in the top chrome more menu', async ({ page }) => {
+  test('keeps settings in the sidebar, never duplicated in the agent surface', async ({ page }) => {
     await expect(page.getByRole('button', { name: 'Agent settings' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Open settings' })).toHaveCount(0);
 
-    await page.locator('.top-chrome-right').getByRole('button', { name: 'More', exact: true }).click();
-    await expect(page.getByRole('menuitem', { name: 'Settings', exact: true })).toBeVisible();
-    await page.keyboard.press('Escape');
+    // The floating-rails shell (#57) dissolved the top chrome: Settings now lives at
+    // the sidebar bottom, not in a top-chrome More menu.
+    await expect(
+      page.locator('.sidebar-bottom').getByRole('button', { name: 'Settings' }),
+    ).toBeVisible();
 
     await page.getByRole('button', { name: 'Select model' }).click();
     await expect(page.getByRole('menuitem', { name: 'API Settings' })).toHaveCount(0);
@@ -1138,7 +1140,6 @@ test.describe('agent composer controls', () => {
       }
 
       const dockBox = dock.getBoundingClientRect();
-      const outlinePanelBox = outlinePanel.getBoundingClientRect();
       const panelBox = panel.getBoundingClientRect();
       const composerBox = composer.getBoundingClientRect();
       const surfaceBox = surface.getBoundingClientRect();
@@ -1157,8 +1158,16 @@ test.describe('agent composer controls', () => {
       const actionBox = actionButton instanceof HTMLElement ? actionButton.getBoundingClientRect() : null;
       const attachmentBox = attachmentButton instanceof HTMLElement ? attachmentButton.getBoundingClientRect() : null;
       const rootStyle = getComputedStyle(document.documentElement);
+      // Resolve the composer radius token to px: it is a calc() custom property, which
+      // getPropertyValue returns unevaluated, so read it back off a real property.
+      const radiusProbe = document.createElement('div');
+      radiusProbe.style.width = 'var(--agent-composer-radius)';
+      document.body.appendChild(radiusProbe);
+      const expectedSurfaceRadius = Number.parseFloat(getComputedStyle(radiusProbe).width);
+      radiusProbe.remove();
 
       return {
+        expectedSurfaceRadius,
         actionBottomInset: actionBox ? surfaceBox.bottom - actionBox.bottom : null,
         actionRadius: actionStyle ? Number.parseFloat(actionStyle.borderTopLeftRadius) : null,
         actionRightInset: actionBox ? surfaceBox.right - actionBox.right : null,
@@ -1167,7 +1176,7 @@ test.describe('agent composer controls', () => {
         attachmentLeftInset: attachmentBox ? attachmentBox.left - surfaceBox.left : null,
         attachmentRadius: attachmentStyle ? Number.parseFloat(attachmentStyle.borderTopLeftRadius) : null,
         attachmentSize: attachmentBox ? attachmentBox.width : null,
-        expectedSurfaceRadius: Number.parseFloat(rootStyle.getPropertyValue('--agent-composer-radius')),
+        dockInset: Number.parseFloat(rootStyle.getPropertyValue('--rail-pad')),
         modelRadius: modelStyle ? Number.parseFloat(modelStyle.borderTopLeftRadius) : null,
         composerBottomDelta: Math.abs(panelBox.bottom - composerBox.bottom),
         composerPaddingBottom: Number.parseFloat(composerStyle.paddingBottom),
@@ -1179,7 +1188,9 @@ test.describe('agent composer controls', () => {
         sidebarPaddingRight: Number.parseFloat(sidebarStyle.paddingRight),
         scrollPaddingLeft: Number.parseFloat(scrollStyle.paddingLeft),
         scrollPaddingRight: Number.parseFloat(scrollStyle.paddingRight),
-        surfaceBottomToPanelBottom: Math.abs(outlinePanelBox.bottom - surfaceBox.bottom),
+        // Floating rails (#57) don't bottom-align across docks, so the composer
+        // surface bottoms out flush within its OWN chat panel, not the outline panel.
+        surfaceBottomToPanelBottom: Math.abs(panelBox.bottom - surfaceBox.bottom),
         surfaceLeftInset: surfaceBox.left - dockBox.left,
         surfacePaddingBottom: Number.parseFloat(surfaceStyle.paddingBottom),
         surfacePaddingLeft: Number.parseFloat(surfaceStyle.paddingLeft),
@@ -1194,15 +1205,22 @@ test.describe('agent composer controls', () => {
     expect(metrics!.composerPaddingBottom).toBe(0);
     expect(metrics!.composerPaddingLeft).toBe(0);
     expect(metrics!.composerPaddingRight).toBe(0);
-    expect(metrics!.headerPaddingLeft).toBe(metrics!.sidebarPaddingRight);
-    expect(metrics!.headerPaddingRight).toBe(metrics!.sidebarPaddingRight);
-    expect(metrics!.scrollPaddingLeft).toBe(metrics!.sidebarPaddingRight);
-    expect(metrics!.scrollPaddingRight).toBe(metrics!.sidebarPaddingRight);
-    expect(metrics!.surfaceBottomToPanelBottom).toBeLessThanOrEqual(1);
+    // The floating rails (#57) each own their inset, so the dock no longer borrows the
+    // sidebar's padding. The agent content shares one horizontal inset instead: the
+    // header and transcript scroll left-align and the scroll is symmetric. (The header's
+    // right inset is larger to clear the agent collapse toggle.)
+    expect(metrics!.headerPaddingLeft).toBe(metrics!.scrollPaddingLeft);
+    expect(metrics!.scrollPaddingLeft).toBe(metrics!.scrollPaddingRight);
+    expect(metrics!.headerPaddingRight).toBeGreaterThanOrEqual(metrics!.scrollPaddingRight);
+    // The rounded composer surface floats above the dock floor by the shared rail
+    // inset (#57) — full-bleed left/right, but bottom-inset by --rail-pad.
+    expect(Math.abs(metrics!.surfaceBottomToPanelBottom - metrics!.dockInset)).toBeLessThanOrEqual(1);
     expect(metrics!.surfacePaddingLeft).toBe(metrics!.surfacePaddingRight);
     expect(metrics!.surfacePaddingBottom).toBe(metrics!.surfacePaddingRight);
+    // The rounded composer surface uses the --agent-composer-radius token (resolved
+    // above via a probe element, since it is a calc()). The outline panels are square
+    // in the floating shell, so the surface radius no longer derives from a panel.
     expect(metrics!.surfaceRadius).toBe(metrics!.expectedSurfaceRadius);
-    expect(metrics!.surfaceRadius).toBe(metrics!.panelRadius);
     expect(metrics!.actionRadius).toBe(metrics!.surfaceRadius - metrics!.surfacePaddingRight);
     expect(metrics!.attachmentRadius).toBe(metrics!.surfaceRadius - metrics!.surfacePaddingLeft);
     expect(metrics!.modelRadius).toBe(metrics!.actionRadius);
@@ -1213,8 +1231,10 @@ test.describe('agent composer controls', () => {
     expect(Math.abs(metrics!.actionBottomInset! - metrics!.surfacePaddingBottom)).toBeLessThanOrEqual(1);
     expect(Math.abs(metrics!.attachmentLeftInset! - metrics!.attachmentBottomInset!)).toBeLessThanOrEqual(1);
     expect(Math.abs(metrics!.actionRightInset! - metrics!.actionBottomInset!)).toBeLessThanOrEqual(1);
-    expect(metrics!.surfaceLeftInset).toBeLessThanOrEqual(1);
-    expect(metrics!.surfaceRightInset).toBeLessThanOrEqual(1);
+    // The composer surface is a rounded card inset from the dock edges by the shared
+    // rail pad on all sides (#57), not full-bleed.
+    expect(Math.abs(metrics!.surfaceLeftInset - metrics!.dockInset)).toBeLessThanOrEqual(1);
+    expect(Math.abs(metrics!.surfaceRightInset - metrics!.dockInset)).toBeLessThanOrEqual(1);
   });
 
   test('conversation menu stays anchored inside narrow agent surfaces', async ({ page }) => {

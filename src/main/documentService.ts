@@ -401,13 +401,27 @@ export class DocumentService {
       case 'register_collected_option':
         return this.core.registerCollectedOption(String(args.fieldDefId), String(args.name));
       case 'create_collected_field_option':
-        return this.core.createCollectedFieldOption(String(args.fieldEntryId), String(args.name));
+        return this.core.createCollectedFieldOption(
+          String(args.fieldEntryId),
+          String(args.name),
+          typeof args.id === 'string' ? args.id : undefined,
+        );
       case 'select_field_option':
-        return this.core.selectFieldOption(String(args.fieldEntryId), String(args.optionNodeId));
+        return this.core.selectFieldOption(
+          String(args.fieldEntryId),
+          String(args.optionNodeId),
+          typeof args.id === 'string' ? args.id : undefined,
+        );
       case 'set_field_free_text_value':
-        return this.core.setFieldFreeTextValue(String(args.fieldEntryId), String(args.text));
+        return this.core.setFieldFreeTextValue(
+          String(args.fieldEntryId),
+          String(args.text),
+          typeof args.id === 'string' ? args.id : undefined,
+        );
       case 'clear_field_value':
         return this.core.clearFieldValue(String(args.fieldEntryId));
+      case 'remove_field_value':
+        return this.core.removeFieldValue(String(args.valueId));
       case 'add_reference':
         return this.core.addReference(String(args.parentId), String(args.targetId), nullableNumber(args.index));
       case 'add_reference_conversion':

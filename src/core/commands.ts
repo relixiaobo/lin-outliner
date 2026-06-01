@@ -64,6 +64,7 @@ export const DOCUMENT_COMMANDS = [
   'select_field_option',
   'set_field_free_text_value',
   'clear_field_value',
+  'remove_field_value',
   'add_reference',
   'add_reference_conversion',
   'set_reference_target',

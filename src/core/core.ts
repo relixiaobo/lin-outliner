@@ -55,7 +55,6 @@ import {
   type DocumentState,
   type NodeProjection,
   type AutoInitStrategy,
-  type FieldCardinality,
   type FieldConfigPatch,
   type FieldType,
   type DisplayPlacement,
@@ -994,6 +993,10 @@ export class Core {
       const optionId = isDone ? mapping.checkedOptionIds[0] : mapping.uncheckedOptionIds[0];
       if (!optionId) continue;
       const entryId = this.ensureFieldEntryWithTemplateDirect(nodeId, mapping.fieldDefId, undefined, false);
+      // Done-state mapping is a controlled binary state-sync (part of the checkbox
+      // mechanism): replace the prior state option rather than appending. Free
+      // field-value editing always appends — this is the checkbox exception.
+      this.clearFieldEntryValuesDirect(entryId, mapping.fieldDefId);
       this.selectFieldOptionDirect(entryId, mapping.fieldDefId, optionId);
     }
   }
@@ -1153,9 +1156,6 @@ export class Core {
       if (patch.autocollectOptions === true && nextFieldType !== 'options') {
         throw CoreError.invalidOperation('auto-collect options is only valid for options fields');
       }
-      if (patch.cardinality && !isFieldCardinality(patch.cardinality)) {
-        throw CoreError.invalidOperation('invalid field cardinality');
-      }
       if (patch.hideField) ensureValidHideFieldMode(patch.hideField.trim());
       if (patch.autoInitialize) ensureValidAutoInitialize(patch.autoInitialize);
       if (nextMin !== undefined && nextMax !== undefined && nextMin > nextMax) {
@@ -1166,9 +1166,6 @@ export class Core {
       // config-as-nodes: fieldType lives in the defConfig subtree.
       if (patch.fieldType !== undefined) {
         this.setConfigValueDirect(fieldId, { kind: 'enum', configKey: 'fieldType', value: patch.fieldType });
-      }
-      if ('cardinality' in patch) {
-        this.setConfigValueDirect(fieldId, { kind: 'enum', configKey: 'cardinality', value: patch.cardinality ?? null });
       }
       if ('nullable' in patch) {
         this.setConfigValueDirect(fieldId, { kind: 'scalar', configKey: 'nullable', text: patch.nullable == null ? null : (patch.nullable ? 'true' : 'false') });
@@ -1287,7 +1284,21 @@ export class Core {
     });
   }
 
-  createCollectedFieldOption(fieldEntryId: string, name: string): CommandOutcome {
+  // Validate a renderer-proposed client id for a field value node, mirroring the
+  // createNode contract: the renderer may propose the trailing draft row's stable
+  // id so the row's React identity (and any in-flight IME composition) survives
+  // materialization. Core validates the shape and rejects collisions; an absent
+  // id falls back to a freshly minted one.
+  private resolveFieldValueId(state: DocumentState, id: string | undefined, prefix: string): string {
+    if (id === undefined) return freshId(prefix);
+    if (!isClientNodeId(id)) {
+      throw CoreError.invalidOperation(`invalid client-supplied id "${id}" (expected node:<uuid>)`);
+    }
+    if (state.nodes[id]) throw CoreError.invalidOperation(`id "${id}" already exists`);
+    return id;
+  }
+
+  createCollectedFieldOption(fieldEntryId: string, name: string, id?: string): CommandOutcome {
     const normalized = name.trim();
     if (!normalized) throw CoreError.invalidOperation('option name cannot be empty');
     return this.mutate(() => {
@@ -1296,18 +1307,19 @@ export class Core {
       if (fieldEntry.type !== 'fieldEntry') throw CoreError.invalidOperation('options can only be created on field entries');
       const fieldDefId = fieldEntry.fieldDefId;
       if (!fieldDefId) throw CoreError.invalidOperation('field entry has no field definition');
-      const fieldDef = ensureCollectableOptionsFieldDef(state, fieldDefId);
+      ensureCollectableOptionsFieldDef(state, fieldDefId);
       const existingOptionId = findOptionByName(state, fieldDefId, normalized);
       if (existingOptionId) {
-        this.selectFieldOptionDirect(fieldEntryId, fieldDefId, existingOptionId);
+        // Typed text matches an existing pool option: reference it (deduped)
+        // rather than minting a duplicate. The reference carries the renderer id
+        // so the draft row stays the same React node through materialization.
+        this.selectFieldOptionDirect(fieldEntryId, fieldDefId, existingOptionId, id);
         return focus(fieldEntryId);
       }
 
-      if (fieldCardinalityOf(state, fieldDefId) !== 'list') {
-        this.clearFieldEntryValuesDirect(fieldEntryId, fieldDefId);
-      }
-
-      const valueId = freshId('option_value');
+      // Everything is a node: each created value appends. Core no longer
+      // special-cases cardinality (the single-vs-list distinction was removed).
+      const valueId = this.resolveFieldValueId(state, id, 'option_value');
       this.loro.createNodeWithId(valueId, fieldEntryId, undefined, undefined, (node) => {
         node.content = plainText(normalized);
       });
@@ -1319,7 +1331,7 @@ export class Core {
     });
   }
 
-  selectFieldOption(fieldEntryId: string, optionNodeId: string): CommandOutcome {
+  selectFieldOption(fieldEntryId: string, optionNodeId: string, id?: string): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
       const fieldEntry = requiredNode(state, fieldEntryId);
@@ -1328,7 +1340,7 @@ export class Core {
       if (!fieldDefId) throw CoreError.invalidOperation('field entry has no field definition');
       ensureOptionsFieldDef(state, fieldDefId);
       ensureOptionBelongsToField(state, fieldDefId, optionNodeId);
-      this.selectFieldOptionDirect(fieldEntryId, fieldDefId, optionNodeId);
+      this.selectFieldOptionDirect(fieldEntryId, fieldDefId, optionNodeId, id);
       this.applyReverseDoneMappingDirect(fieldEntry.parentId, fieldDefId, optionNodeId);
       return focus(fieldEntryId);
     });
@@ -1336,23 +1348,18 @@ export class Core {
 
   /**
    * Set a free-text value on an options field without collecting it as a
-   * reusable option (decoupled from autocollect). Single-cardinality fields
-   * replace their current value; an empty text clears it. The value is stored
-   * as a plain content child, never a reference into the option pool.
+   * reusable option (decoupled from autocollect). Everything is a node: the
+   * value appends as a plain content child (never a reference into the option
+   * pool); whitespace-only text is a no-op. Clearing goes through clearFieldValue.
    */
-  setFieldFreeTextValue(fieldEntryId: string, text: string): CommandOutcome {
+  setFieldFreeTextValue(fieldEntryId: string, text: string, id?: string): CommandOutcome {
     const normalized = text.trim();
     return this.mutate(() => {
       const state = this.snapshot();
       const fieldEntry = requiredNode(state, fieldEntryId);
       if (fieldEntry.type !== 'fieldEntry') throw CoreError.invalidOperation('field values can only be set on field entries');
-      const fieldDefId = fieldEntry.fieldDefId;
-      if (!fieldDefId || fieldCardinalityOf(state, fieldDefId) !== 'list') {
-        if (fieldDefId) this.clearFieldEntryValuesDirect(fieldEntryId, fieldDefId);
-        else for (const childId of [...fieldEntry.children]) this.removeSubtreeDirect(childId);
-      }
       if (!normalized) return focus(fieldEntryId);
-      const valueId = freshId('value');
+      const valueId = this.resolveFieldValueId(state, id, 'value');
       this.loro.createNodeWithId(valueId, fieldEntryId, undefined, undefined, (node) => {
         node.content = plainText(normalized);
       });
@@ -1369,6 +1376,34 @@ export class Core {
         this.clearFieldEntryValuesDirect(fieldEntryId, fieldEntry.fieldDefId);
       } else {
         for (const childId of [...fieldEntry.children]) this.removeSubtreeDirect(childId);
+      }
+      return focus(fieldEntryId);
+    });
+  }
+
+  /**
+   * Remove a single field value (the gesture behind backspacing an empty value
+   * row). Mirrors clearFieldValue's per-value cleanup so an auto-collected value
+   * never leaves an orphan reference behind in the option pool: a value still
+   * referenced elsewhere is promoted into the pool, otherwise its auto-collected
+   * pool references are removed alongside it. A plain value (free text, or a
+   * selected-option reference) is simply removed.
+   */
+  removeFieldValue(valueId: string): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      const value = requiredNode(state, valueId);
+      const fieldEntryId = value.parentId;
+      if (!fieldEntryId) throw CoreError.noParent();
+      const fieldEntry = state.nodes[fieldEntryId];
+      const fieldDefId = fieldEntry?.type === 'fieldEntry' ? fieldEntry.fieldDefId : undefined;
+      if (fieldDefId) {
+        if (!this.promoteCollectedValueIfReferencedDirect(fieldEntryId, fieldDefId, valueId)) {
+          this.removeCollectedReferencesForFieldValuesDirect(fieldDefId, [valueId]);
+          this.removeSubtreeDirect(valueId);
+        }
+      } else {
+        this.removeSubtreeDirect(valueId);
       }
       return focus(fieldEntryId);
     });
@@ -2596,12 +2631,13 @@ export class Core {
     return optionId;
   }
 
-  private selectFieldOptionDirect(fieldEntryId: string, fieldDefId: string, optionNodeId: string) {
+  private selectFieldOptionDirect(fieldEntryId: string, fieldDefId: string, optionNodeId: string, id?: string) {
     const state = this.snapshot();
     const fieldEntry = requiredNode(state, fieldEntryId);
     requiredNode(state, fieldDefId);
     const optionTargetId = optionValueTargetId(state, optionNodeId);
-    const isList = fieldCardinalityOf(state, fieldDefId) === 'list';
+    // Everything is a node: selecting an option appends a reference value (deduped
+    // against an already-present selection). Core no longer replaces on cardinality.
     const alreadySelected = fieldEntry.children.some((childId) => {
       const child = state.nodes[childId];
       return childId === optionTargetId || (child?.type === 'reference' && child.targetId === optionTargetId);
@@ -2609,10 +2645,10 @@ export class Core {
     if (alreadySelected) {
       return;
     }
-    if (!isList) {
-      this.clearFieldEntryValuesDirect(fieldEntryId, fieldDefId);
-    }
-    this.loro.createNodeWithId<ReferenceNode>(freshId('option_value'), fieldEntryId, undefined, 'reference', (node) => {
+    // An optional renderer-proposed id keeps the trailing draft row's React
+    // identity through the draft->reference transition (see resolveFieldValueId).
+    const referenceId = this.resolveFieldValueId(state, id, 'option_value');
+    this.loro.createNodeWithId<ReferenceNode>(referenceId, fieldEntryId, undefined, 'reference', (node) => {
       node.targetId = optionTargetId;
     });
   }
@@ -3189,13 +3225,6 @@ function fieldTypeOf(state: DocumentState, fieldDefId: string): FieldType {
   return (value as FieldType | undefined) ?? 'plain';
 }
 
-/** The field's cardinality, read from its `defConfig(cardinality)` enum subtree. Defaults to 'single'. */
-function fieldCardinalityOf(state: DocumentState, fieldDefId: string): FieldCardinality {
-  const optionId = configRefTarget(state, fieldDefId, 'cardinality');
-  const value = optionId ? state.nodes[optionId]?.content.text : undefined;
-  return (value as FieldCardinality | undefined) ?? 'single';
-}
-
 /** A scalar (number/bool/color) config value's stored text, read from the def's subtree. */
 function configScalarText(state: DocumentState, defId: string, configKey: DefConfigKey): string | undefined {
   const def = state.nodes[defId];
@@ -3476,10 +3505,6 @@ function optionLabel(state: DocumentState, optionNodeId: string) {
     return state.nodes[optionNode.targetId]?.content.text ?? optionNode.content.text;
   }
   return optionNode.content.text;
-}
-
-function isFieldCardinality(value: string): value is FieldCardinality {
-  return value === 'single' || value === 'list';
 }
 
 function ensureValidAutoInitialize(value: string) {

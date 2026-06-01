@@ -55,7 +55,7 @@ describe('definition config registry', () => {
     const optionsFromTag = definitionConfigItems(fieldNode, { fieldType: 'options_from_supertag' }).map((item) => item.key);
     const number = definitionConfigItems(fieldNode, { fieldType: 'number' }).map((item) => item.key);
 
-    expect(plain).toContain('cardinality');
+    expect(plain).toContain('fieldType');
     expect(plain).toContain('autoInitialize');
     expect(plain).not.toContain('autocollectOptions');
     expect(options).toContain('autocollectOptions');

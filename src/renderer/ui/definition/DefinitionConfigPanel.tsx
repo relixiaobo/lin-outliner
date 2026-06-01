@@ -32,7 +32,6 @@ import {
 import {
   DefinitionColorControl,
   DefinitionAutoInitializeControl,
-  DefinitionCardinalitySelect,
   DefinitionDoneMappingControl,
   DefinitionFieldTypeSelect,
   DefinitionHideFieldSelect,
@@ -134,7 +133,7 @@ function ConfigIcon({ item, fieldType }: { item: DefinitionConfigItem; fieldType
   if (item.key === 'autocollectOptions') return <OptionsIcon size={ICON_SIZE.rowGlyph} />;
   if (item.key === 'autoInitialize') return <SettingsIcon size={ICON_SIZE.rowGlyph} />;
   if (item.key === 'hideField') return <HideIcon size={ICON_SIZE.rowGlyph} />;
-  if (item.key === 'cardinality' || item.key === 'minValue' || item.key === 'maxValue') {
+  if (item.key === 'minValue' || item.key === 'maxValue') {
     return <HashIcon size={ICON_SIZE.rowGlyph} />;
   }
   return <SettingsIcon size={ICON_SIZE.rowGlyph} />;
@@ -214,14 +213,6 @@ function ConfigControl(props: {
           label={item.label}
           value={fieldConfig?.fieldType ?? 'plain'}
           onChange={(fieldType) => updateField({ fieldType })}
-        />
-      );
-    case 'cardinality':
-      return (
-        <DefinitionCardinalitySelect
-          label={item.label}
-          value={fieldConfig?.cardinality ?? 'single'}
-          onChange={(cardinality) => updateField({ cardinality })}
         />
       );
     case 'sourceSupertag':

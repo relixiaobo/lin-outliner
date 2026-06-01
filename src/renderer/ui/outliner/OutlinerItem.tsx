@@ -38,6 +38,7 @@ import { resolveFieldOptions, resolveSelectedOptionId, type FieldOption } from '
 import { resolveSelectedReferenceShortcut } from '../interactions/selectedReferenceShortcuts';
 import {
   resolveContentRowBackspaceAtStartIntent,
+  resolveContentRowUpdateAction,
   resolveReferenceSelectionAction,
 } from '../interactions/rowInteractions';
 import type { SlashCommandId } from '../interactions/slashCommands';
@@ -50,6 +51,7 @@ import {
   cursorEnd,
   cursorOffset as cursorAtOffset,
   focusTarget,
+  focusTargetMatches,
   requestFocusState,
   rowFocusTarget,
   selectFocusState,
@@ -68,7 +70,13 @@ import { OutlinerView } from './OutlinerView';
 import { IndentGuide } from './IndentGuide';
 import { RowLeading } from './RowLeading';
 import { makeDraftNode } from './draftRow';
+import { TrailingOptionsPopover } from './TrailingOptionsPopover';
+import { DateValuePicker } from './DateValuePicker';
+import type { FieldValueContext } from '../fields/fieldValueEditors';
+import { fieldValueOpenHref, validateFieldValue } from '../fields/fieldValueValidation';
+import { CalendarIcon, OpenIcon } from '../icons';
 import {
+  createPlaceholderInlineField,
   createPlaceholderInlineFieldAfterNode,
   triggerOwnsWholeText,
 } from './trailingTriggers';
@@ -101,6 +109,10 @@ interface OutlinerItemProps {
   referencePath: readonly NodeId[];
   optionField?: NodeProjection;
   onSelectOption?: (optionId: NodeId) => Promise<unknown> | unknown;
+  // Field-value editing context: present only when this row renders a field's
+  // value (not body content). It makes the row create/select through the field
+  // command set and, for optionPicker fields, mounts the options popover.
+  fieldValue?: FieldValueContext;
   // Eager materialization: when true, this row's node is not in the projection
   // yet — it is the trailing draft. The first committed text materializes it
   // under `nodeId` (kept stable so the editor is never remounted), after which
@@ -121,11 +133,25 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const [draftContent, setDraftContent] = useState<RichText>(node?.content ?? EMPTY_RICH_TEXT);
   const [draftContentRevision, setDraftContentRevision] = useState(0);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  // optionPicker field-value draft: the editor is the free-text filter for the
+  // options popover. Open on focus; the typed text drives the query.
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  // Date value rows summon their picker overlay additively (Space / calendar
+  // affordance); it is never a separate editing mode.
+  const [dateOverlayOpen, setDateOverlayOpen] = useState(false);
   const draftContentRef = useRef<RichText>(node?.content ?? EMPTY_RICH_TEXT);
   const localDraftSyncRef = useRef<{ nodeId: NodeId; content: RichText } | null>(null);
   const pendingTextPatchRef = useRef<Promise<unknown>>(Promise.resolve());
-  // Guards eager materialization so the create fires exactly once per draft.
+  // Guards materialization so the create fires exactly once per draft. This alone
+  // prevents a double-commit: Enter materializes, then the resulting blur re-enters
+  // commitDraft, but the guard makes the second materializeDraft a no-op.
   const materializeStartedRef = useRef(false);
+  // Synchronous mirror of the active trigger, set by onTriggerChange *before* the
+  // patch callback runs in the same editor transaction (props.trigger is React
+  // state and lags one render). applyTextPatch reads it to decide whether a body
+  // draft eager-materializes (normal typing) or stays buffered (a #/@/`/`/`>` query
+  // resolving atomically).
+  const draftTriggerActiveRef = useRef(false);
   const restoredReferenceConversionNodeRef = useRef<NodeId | null>(null);
   const descriptionReturnPlacementRef = useRef<CursorPlacement>(cursorEnd());
   const optionAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -155,6 +181,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     locked: node?.locked ?? true,
     dragId: props.dragId,
     setDragId: props.setDragId,
+    // Tag a not-yet-materialized draft wrap with data-trailing-parent-id so the
+    // trailing editor is findable the way the legacy TrailingInput row was.
+    draft: props.draft === true && !realNode,
   });
   // A not-yet-materialized draft is also "focused" when keyboard navigation
   // targets the parent's trailing surface (the existing trailing-focus signal);
@@ -197,6 +226,21 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
 
   const targetEditId = referenceTargetId ?? node.id;
   const drillDownId = referenceTargetId ?? node.id;
+  // Field-value editing flags. A field value's trailing draft is NOT a separate
+  // editing mode: it materializes through the same materializeDraft path as a body
+  // node, differing only in WHICH create command runs (injected via
+  // props.fieldValue.materializeValue). The draft buffers text until commit
+  // (Enter/blur) so the create sees the full text — this lets core dedup a typed
+  // value against an existing pool option in one shot, instead of per keystroke.
+  const fieldValueDraft = Boolean(props.fieldValue) && props.draft === true && !realNode;
+  const fieldDescriptor = props.fieldValue?.descriptor;
+  // An options field's draft shows the additive options overlay and treats free
+  // text as the filter query, so #/@// and the code fence are plain text there.
+  const optionPickerDraft = fieldValueDraft && fieldDescriptor?.interaction === 'optionPicker';
+  const suppressTextTriggers = optionPickerDraft;
+  // A date field value (draft or committed) is an editable row that additively
+  // offers a calendar overlay; Space on an empty value summons it.
+  const dateFieldValue = Boolean(props.fieldValue) && fieldDescriptor?.interaction === 'datePicker';
   const editorFocusTarget = rowFocusTarget(props.nodeId, props.parentId, props.panelId);
   // A not-yet-materialized draft consumes the parent's trailing focus request
   // (keyboard nav into the trailing line targets `(parentId, 'trailing')`); once
@@ -271,6 +315,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const triggerOwnsWholeDraft = activeTrigger?.kind === '@'
     && draftContent.inlineRefs.length === 0
     && triggerOwnsWholeText(draftContent.text, activeTrigger);
+  // A trigger resolving on the not-yet-materialized trailing draft creates its
+  // node atomically (under props.parentId), instead of materializing a plain node
+  // first and then mutating it. `materializeStartedRef` guards the window after a
+  // blur/Enter materialize is already in flight but the real node has not landed.
+  const onDraftTrigger = props.draft === true && !realNode && !materializeStartedRef.current;
 
   const restorePendingReferenceConversion = async (
     content: RichText,
@@ -347,8 +396,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
 
   const commitDraft = async (content = draftContent) => {
     if (props.draft && !realNode) {
-      // Blur/commit on the trailing draft: materialize only if something was
-      // typed (so a click-away on an empty line never persists an empty node).
+      // Blur/commit on the trailing draft (body OR field value): materialize only
+      // if something was typed (so a click-away on an empty line never persists an
+      // empty node). materializeDraft routes to the right create command.
       const buffered = draftContentRef.current;
       if (buffered.text.trim().length > 0 || buffered.inlineRefs.length > 0) {
         materializeDraft();
@@ -360,22 +410,32 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     return result.nodeId;
   };
 
-  // Eager materialization: turn the draft into a real node under its stable id
-  // on the first committed content. Runs once; the create and the text patches
-  // that follow share one undo group (see DocumentService). Keystrokes that land
-  // during the IPC round-trip stay in the buffer and are reconciled when the
-  // node arrives, then focus moves from the parent's trailing surface to this
-  // row's own id (without re-focusing, so the caret is undisturbed) — that frees
-  // the trailing signal for the freshly minted next draft.
+  // Materialization: turn the draft into a real node under its stable id on
+  // commit. Runs once; the create and the text patches that follow share one undo
+  // group (see DocumentService). Keystrokes that land during the IPC round-trip
+  // stay in the buffer and are reconciled when the node arrives, then focus moves
+  // from the parent's trailing surface to this row's own id (without re-focusing,
+  // so the caret is undisturbed) — that frees the trailing signal for the freshly
+  // minted next draft.
+  //
+  // A field value materializes through the injected fieldValue.materializeValue
+  // (carrying this row's id, so the create routes to the field command set while
+  // the row keeps its React identity); a body node uses api.materializeDraftNode.
+  // Both honour the same id contract, so the surrounding reconcile/focus logic is
+  // shared — the field value path is no longer a separate editing mode.
   const materializeDraft = () => {
     if (realNode || materializeStartedRef.current) return;
     materializeStartedRef.current = true;
     const seed = draftContentRef.current;
-    pendingTextPatchRef.current = pendingTextPatchRef.current
-      .then(() => props.run(async () => {
+    const fieldValue = props.fieldValue;
+    const runCreate = fieldValue
+      ? () => fieldValue.materializeValue(props.nodeId, seed.text)
+      : () => props.run(async () => {
         const outcome = await api.materializeDraftNode(props.parentId, null, seed.text, props.nodeId);
         return outcome.projection;
-      }, { applyFocus: false }))
+      }, { applyFocus: false });
+    pendingTextPatchRef.current = pendingTextPatchRef.current
+      .then(runCreate)
       .then(() => {
         const latest = draftContentRef.current;
         const needsReconcile = latest.text !== seed.text
@@ -399,10 +459,36 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
 
   const applyTextPatch = (patch: RichTextPatch) => {
     if (props.draft && !realNode) {
-      // First committed content on a draft: materialize rather than patch a node
-      // that does not exist yet. Further in-flight patches are dropped; the
-      // buffer is the source of truth until the node arrives and reconciles.
-      materializeDraft();
+      // A body trailing draft eagerly materializes on the first typed character:
+      // the draft becomes a real node carrying the text, and a fresh empty trailing
+      // line takes its place below — the smooth "there is always a line to type
+      // next" flow.
+      //
+      // Three cases stay buffered instead:
+      //  • A field value — its create dedups the typed text against the option pool
+      //    on commit (Enter/blur), so it needs the full text in one shot.
+      //  • While a #/@/ popover trigger query is open — buffering lets the trigger
+      //    resolve atomically into a tagged/reference/typed node (create_tagged_node,
+      //    add_reference_conversion, …) rather than flashing a junk plain node first.
+      //    draftTriggerActiveRef was just set, in this same transaction, by
+      //    onTriggerChange (which runs before this callback).
+      //  • A `>` field / ``` code-fence fire-trigger — these resolve in
+      //    handleContentUpdateAction, which runs *after* this callback, so they are
+      //    detected here directly from the buffered content and create their node
+      //    atomically (createPlaceholderInlineField / convertRowToCodeBlock).
+      const fireAction = resolveContentRowUpdateAction({
+        text: draftContentRef.current.text,
+        inlineRefCount: draftContentRef.current.inlineRefs.length,
+        enableFieldTrigger: !suppressTextTriggers,
+        enableCodeFence: !suppressTextTriggers
+          && node.type === undefined
+          && !pendingReferenceConversion
+          && !displayed.locked,
+      });
+      const willFireTrigger = fireAction.type !== 'none';
+      if (!props.fieldValue && !draftTriggerActiveRef.current && !willFireTrigger) {
+        materializeDraft();
+      }
       return;
     }
     pendingTextPatchRef.current = pendingTextPatchRef.current.then(() =>
@@ -416,9 +502,12 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     const trigger = props.trigger?.nodeId === props.nodeId ? props.trigger : null;
     await pendingTextPatchRef.current;
     const nextContent = trigger
-      ? deleteRichTextRange(draftContent, trigger.from, trigger.to)
-        : plainText(draftContent.text.replace(/(?:^|\s)([#@/>])([^\s#@/>]*)$/, '').trimEnd());
+      ? deleteRichTextRange(draftContentRef.current, trigger.from, trigger.to)
+        : plainText(draftContentRef.current.text.replace(/(?:^|\s)([#@/>])([^\s#@/>]*)$/, '').trimEnd());
     replaceLocalDraftContent(nextContent);
+    // A draft has no node to patch yet — the de-triggered text stays buffered until
+    // it materializes on Enter/blur.
+    if (onDraftTrigger) return;
     await props.run(() => api.replaceNodeText(targetEditId, nextContent));
   };
 
@@ -426,6 +515,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     localDraftSyncRef.current = { nodeId: targetEditId, content };
     draftContentRef.current = content;
     setDraftContent(content);
+    // optionPicker free text drives the options filter; keep the popover open.
+    if (optionPickerDraft && !optionsOpen) setOptionsOpen(true);
   };
 
   const handlePasteOutliner = (payload: {
@@ -546,6 +637,34 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     }
   };
 
+  // Atomic tag application on the trailing draft: a `#tag` query resolves straight
+  // into a tagged node (create_tagged_node / create_tag_and_tagged_node) carrying
+  // the draft's non-trigger text, instead of materializing a plain node and then
+  // applying the tag. Wired only when onDraftTrigger; a real node falls back to the
+  // TagSelector's own apply_tag path.
+  const applyDraftTag = async (tag: NodeProjection) => {
+    const trigger = props.trigger?.nodeId === props.nodeId ? props.trigger : null;
+    if (!trigger) return null;
+    await pendingTextPatchRef.current;
+    const content = deleteRichTextRange(draftContentRef.current, trigger.from, trigger.to);
+    const outcome = await api.createTaggedNode(props.parentId, content, tag.id);
+    // Clear the buffered query only after the tagged node lands, so the draft keeps
+    // showing "#query" through a slow create (and never re-materializes the query as
+    // a stray plain node on the blur that follows).
+    replaceLocalDraftContent(EMPTY_RICH_TEXT);
+    return outcome;
+  };
+
+  const createAndApplyDraftTag = async (name: string) => {
+    const trigger = props.trigger?.nodeId === props.nodeId ? props.trigger : null;
+    if (!trigger) return null;
+    await pendingTextPatchRef.current;
+    const content = deleteRichTextRange(draftContentRef.current, trigger.from, trigger.to);
+    const outcome = await api.createTagAndTaggedNode(props.parentId, content, name);
+    replaceLocalDraftContent(EMPTY_RICH_TEXT);
+    return outcome;
+  };
+
   const applyReference = async (target: NodeProjection) => {
     const trigger = props.trigger?.nodeId === props.nodeId ? props.trigger : null;
     if (!trigger) {
@@ -571,7 +690,13 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     });
     if (action === 'blocked') return api.getProjection();
     if (action === 'tree_reference') {
-      const outcome = await api.replaceNodeWithReferenceConversion(props.nodeId, target.id);
+      // Whole-text @ref. A draft has no node yet, so it creates a fresh
+      // inline-conversion row (add_reference_conversion); a real (empty) row
+      // converts itself in place (replace_node_with_reference_conversion).
+      const outcome = onDraftTrigger
+        ? await api.addReferenceConversion(props.parentId, target.id)
+        : await api.replaceNodeWithReferenceConversion(props.nodeId, target.id);
+      if (onDraftTrigger) replaceLocalDraftContent(EMPTY_RICH_TEXT);
       const inlineNodeId = outcome.focus?.nodeId;
       if (!inlineNodeId) {
         return outcome;
@@ -598,6 +723,14 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         displayName: textOf(target),
       },
     );
+    if (onDraftTrigger) {
+      // Inline @ref inside buffered draft text (e.g. "See @Alpha"): commit one
+      // rich-text row atomically (create_rich_text_node) rather than materializing
+      // a plain node first and patching it.
+      const outcome = await api.createRichTextNode(props.parentId, null, nextContent);
+      replaceLocalDraftContent(EMPTY_RICH_TEXT);
+      return outcome;
+    }
     replaceLocalDraftContent(nextContent);
     requestRowFocus(
       props.nodeId,
@@ -613,13 +746,29 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
 
     if (commandId === 'field') {
       await pendingTextPatchRef.current;
-      return createPlaceholderInlineFieldAfterNode(props.nodeId, 'plain');
+      // Draft: create the inline field as a child of the parent (create_inline_field);
+      // a real node anchors it right after itself (create_inline_field_after_node).
+      if (!onDraftTrigger) return createPlaceholderInlineFieldAfterNode(props.nodeId, 'plain');
+      const outcome = await createPlaceholderInlineField(props.parentId, null, 'plain');
+      // Drop the buffered "/" query so it does not re-materialize as a stray node
+      // when the field name input steals focus from the draft.
+      replaceLocalDraftContent(EMPTY_RICH_TEXT);
+      return outcome;
     }
 
     if (commandId === 'reference') {
       await pendingTextPatchRef.current;
-      const nextContent = replaceRichTextRangeWithText(draftContent, trigger.from, trigger.to, '@');
+      const nextContent = replaceRichTextRangeWithText(draftContentRef.current, trigger.from, trigger.to, '@');
       replaceLocalDraftContent(nextContent);
+      if (onDraftTrigger) {
+        // No node to patch yet — the '@' stays buffered. Re-focus the draft with the
+        // caret right after the '@' (cursorEnd) so the editor itself re-detects an
+        // empty @ trigger and continued typing extends its query. (A bare rAF
+        // setTrigger would arm the popover but leave the caret before the '@', so
+        // typing would land in front of it.)
+        focusTrailingDraft();
+        return api.getProjection();
+      }
       const result = await api.replaceNodeText(targetEditId, nextContent);
       window.requestAnimationFrame(() => {
         props.setTrigger({
@@ -636,20 +785,41 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
 
     if (commandId === 'heading') {
       await pendingTextPatchRef.current;
-      const withoutTrigger = deleteRichTextRange(draftContent, trigger.from, trigger.to);
+      const withoutTrigger = deleteRichTextRange(draftContentRef.current, trigger.from, trigger.to);
       const nextContent = markWholeTextAsHeading(withoutTrigger);
+      if (onDraftTrigger) {
+        const outcome = await api.createRichTextNode(props.parentId, null, nextContent);
+        replaceLocalDraftContent(EMPTY_RICH_TEXT);
+        return outcome;
+      }
       replaceLocalDraftContent(nextContent);
       return api.replaceNodeText(targetEditId, nextContent);
     }
 
     if (commandId === 'checkbox') {
+      if (onDraftTrigger) {
+        await pendingTextPatchRef.current;
+        const withoutTrigger = deleteRichTextRange(draftContentRef.current, trigger.from, trigger.to);
+        const created = await api.createRichTextNode(props.parentId, null, withoutTrigger);
+        replaceLocalDraftContent(EMPTY_RICH_TEXT);
+        const nodeId = created.focus?.nodeId;
+        if (!nodeId) return created;
+        return api.toggleDone(nodeId);
+      }
       await applyTextWithoutTrigger();
       return api.toggleDone(targetEditId);
     }
 
     if (commandId === 'code') {
       await pendingTextPatchRef.current;
-      const withoutTrigger = deleteRichTextRange(draftContent, trigger.from, trigger.to);
+      const withoutTrigger = deleteRichTextRange(draftContentRef.current, trigger.from, trigger.to);
+      if (onDraftTrigger) {
+        const created = await api.createRichTextNode(props.parentId, null, withoutTrigger);
+        replaceLocalDraftContent(EMPTY_RICH_TEXT);
+        const nodeId = created.focus?.nodeId;
+        if (!nodeId) return created;
+        return api.setCodeBlock(nodeId);
+      }
       replaceLocalDraftContent(withoutTrigger);
       await api.replaceNodeText(targetEditId, withoutTrigger);
       return api.setCodeBlock(targetEditId);
@@ -657,16 +827,28 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
 
     if (commandId === 'image') {
       await pendingTextPatchRef.current;
-      const withoutTrigger = deleteRichTextRange(draftContent, trigger.from, trigger.to);
+      const withoutTrigger = deleteRichTextRange(draftContentRef.current, trigger.from, trigger.to);
       replaceLocalDraftContent(withoutTrigger);
-      await api.replaceNodeText(targetEditId, withoutTrigger);
+      if (onDraftTrigger) {
+        // Picking files needs a real row to land them on; materialize the
+        // de-triggered draft first, then drop the images onto it.
+        materializeDraft();
+        await pendingTextPatchRef.current;
+      } else {
+        await api.replaceNodeText(targetEditId, withoutTrigger);
+      }
       const assets = await api.pickImageFiles();
       await landImagesOnCurrentRow(assets);
       return api.getProjection();
     }
 
     if (commandId === 'command_palette') {
-      await applyTextWithoutTrigger();
+      await pendingTextPatchRef.current;
+      if (onDraftTrigger) {
+        replaceLocalDraftContent(deleteRichTextRange(draftContentRef.current, trigger.from, trigger.to));
+      } else {
+        await applyTextWithoutTrigger();
+      }
       props.setUi((prev) => ({ ...prev, commandOpen: true }));
       return api.getProjection();
     }
@@ -708,18 +890,91 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     requestRowFocus(props.parentId, placement, props.index.byId.get(props.parentId)?.parentId ?? null);
   };
 
+  // Where focus goes after a discrete field-value commit (option pick / typed
+  // value). The list vs single-value behaviour is documented inline below.
+  // Focus the entry's trailing draft — the single entry point for the next value.
+  // Used after a committed field value row's Enter and after the options overlay
+  // picks/creates, so every "add another value" gesture funnels through the same
+  // draft (everything is a node; values append via that draft).
+  const focusTrailingDraft = () => {
+    props.setUi((prev) => requestFocusState(
+      prev,
+      focusTarget(props.parentId, props.parentId, props.panelId, 'trailing'),
+      cursorEnd(),
+    ));
+  };
+
+  // Append an existing pool option as a reference (the additive options overlay),
+  // then return to the trailing draft for the next value. The typed query is
+  // discarded — the user picked an option rather than creating from the text.
+  const selectOptionAndAdvance = async (optionId: NodeId) => {
+    setOptionsOpen(false);
+    replaceLocalDraftContent(EMPTY_RICH_TEXT);
+    await props.fieldValue?.onSelectOption(optionId);
+    focusTrailingDraft();
+  };
+
+  // Materialize the current draft (body or field value) then advance to the next
+  // trailing draft. Shared by Enter and the options overlay's create affordance —
+  // both create a value from the typed text via the same path.
+  const materializeDraftAndAdvance = async () => {
+    materializeDraft();
+    await pendingTextPatchRef.current;
+    focusTrailingDraft();
+  };
+
+  // Commit a date the picker produced. A draft materializes with the picked text
+  // (seed = date); a committed value replaces its text. The replace is queued on
+  // the same patch chain as the materialize, so a quick second pick (e.g. adding
+  // an end date before the create resolves) still lands on the real node.
+  const commitDateValue = (nextValue: string) => {
+    const text = plainText(nextValue);
+    if (props.draft && !realNode && !materializeStartedRef.current) {
+      if (!nextValue.trim()) {
+        setDateOverlayOpen(false);
+        return;
+      }
+      replaceLocalDraftContent(text);
+      materializeDraft();
+      return;
+    }
+    replaceLocalDraftContent(text);
+    pendingTextPatchRef.current = pendingTextPatchRef.current.then(() =>
+      props.run(() => api.replaceNodeText(targetEditId, text), { applyFocus: false }));
+    void pendingTextPatchRef.current;
+  };
+
   const handleEnter = async (payload: EditorSplitPayload) => {
     if (props.trigger?.nodeId === props.nodeId) return;
     if (props.draft && !realNode) {
-      // Enter on the trailing draft: materialize it (carrying any typed content),
-      // then drop to a fresh trailing line below.
-      materializeDraft();
-      await pendingTextPatchRef.current;
-      props.setUi((prev) => requestFocusState(
-        prev,
-        focusTarget(props.parentId, props.parentId, props.panelId, 'trailing'),
-        cursorEnd(),
-      ));
+      const buffered = draftContentRef.current;
+      const bodyDraftHasContent = !props.fieldValue
+        && (buffered.text.trim().length > 0 || buffered.inlineRefs.length > 0);
+      if (bodyDraftHasContent) {
+        // A body draft with typed text: materialize it into a real node, then open a
+        // real empty continuation sibling below and focus it — Enter both commits the
+        // text and lands on a fresh line, exactly like Enter at the end of a normal
+        // row. (An empty body draft, or any field-value draft, instead advances to the
+        // renderer trailing draft via materializeDraftAndAdvance, so Enter there never
+        // leaks a stray empty sibling.)
+        if (!payload.atEnd) replaceLocalDraftContent(payload.before);
+        materializeDraft();
+        await pendingTextPatchRef.current;
+        await props.run(() => api.createNode(
+          props.parentId,
+          null,
+          payload.atEnd ? '' : payload.after.text,
+        ));
+        return;
+      }
+      await materializeDraftAndAdvance();
+      return;
+    }
+    if (props.fieldValue) {
+      // A committed field value row. Every field value (option reference or plain
+      // text) appends the next value through the trailing draft, so Enter points
+      // focus there rather than splitting/creating a sibling node directly.
+      focusTrailingDraft();
       return;
     }
     const siblings = props.index.byId.get(props.parentId)?.children ?? [];
@@ -786,7 +1041,20 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
 
   const handleBackspaceAtStart = async (isEmpty: boolean) => {
     if (props.draft && !realNode) {
-      // The trailing draft has no real node: never trash/merge; step up instead.
+      // The trailing draft has no real node: never trash/merge. When it is the
+      // lone affordance under an empty expanded body node, Backspace collapses
+      // that node back to a leaf (mirrors the former trailing-input behaviour);
+      // otherwise it just steps up to the previous visible row.
+      const parentIsEmptyLeaf = !props.fieldValue
+        && props.parentId !== props.rootId
+        && outlinerChildren(props.index.byId.get(props.parentId), props.index.byId).length === 0;
+      if (parentIsEmptyLeaf) {
+        props.setUi((prev) => {
+          const expanded = new Set(prev.expanded);
+          expanded.delete(props.parentId);
+          return { ...prev, expanded };
+        });
+      }
       focusPreviousFromDraft();
       return;
     }
@@ -799,7 +1067,14 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     }
     if (intent === 'delete_empty') {
       row.moveFocus(-1);
-      await props.run(() => api.trashNode(props.nodeId));
+      // A field value routes through removeFieldValue so an auto-collected value
+      // also drops its mirror reference in the option pool (no orphan options);
+      // a body node just goes to Trash. The renderer owns focus via moveFocus.
+      if (props.fieldValue) {
+        await props.run(() => api.removeFieldValue(props.nodeId), { applyFocus: false });
+      } else {
+        await props.run(() => api.trashNode(props.nodeId));
+      }
       return;
     }
 
@@ -832,6 +1107,10 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   };
 
   const handleTab = async (shiftKey: boolean, cursorOffset: number) => {
+    // Field values are a flat list: a field's children ARE its values, so a value
+    // can never be indented under another value (that would make a grandchild of
+    // the field). Tab is inert in the field-value context.
+    if (props.fieldValue) return;
     if (props.draft && !realNode) {
       // Structural keys on the trailing draft materialize it (empty) first — the
       // explicit intent creates the node, matching Enter — then Tab indents it
@@ -1094,6 +1373,21 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     && props.ui.selectedIds.has(props.nodeId),
   );
 
+  // Additive layers on a committed field value: a non-blocking validation hint
+  // and (for a well-formed url / email) an open-link affordance. The hint takes
+  // precedence — a malformed value shows the hint, not a broken link.
+  const fieldValueText = realNode ? displayed.content.text : '';
+  const fieldValueHint = props.fieldValue && fieldDescriptor?.validates && realNode
+    ? validateFieldValue(props.fieldValue.fieldType, fieldValueText, props.fieldValue.constraints)
+    : null;
+  const fieldValueHref = props.fieldValue && fieldDescriptor?.isLink && realNode && !fieldValueHint
+    ? fieldValueOpenHref(props.fieldValue.fieldType, fieldValueText)
+    : null;
+  // The calendar affordance reopens the picker on a committed date value. The
+  // empty draft is guided by its "Press Space…" placeholder instead, so it shows
+  // no button (avoids a redundant icon beside the placeholder).
+  const showDateTrigger = dateFieldValue && Boolean(realNode);
+
   return (
     <OutlinerRowShell
       hasChildren={row.hasChildren}
@@ -1198,7 +1492,18 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             inlineSlotEl={inlineTagSlot}
             readOnly={displayed.locked}
             completed={Boolean(displayed.completedAt)}
-            onFocus={row.updateSelection}
+            placeholder={fieldValueDraft ? props.fieldValue?.placeholder : undefined}
+            onFocus={() => {
+              row.updateSelection();
+              // optionPicker: open the options overlay on a genuine user focus
+              // (click) so you can type-to-filter. Suppress it when focus arrived
+              // programmatically via a focus request — advancing to the next value
+              // draft after committing one (Enter / pick) should land closed, not
+              // immediately reopen the picker. Typing still reopens it (handleEditorChange).
+              const programmaticFocus = Boolean(props.ui.focusRequest)
+                && focusTargetMatches(props.ui.focusRequest!.target, editorRequestTarget);
+              if (optionPickerDraft && !programmaticFocus) setOptionsOpen(true);
+            }}
             onChange={handleEditorChange}
             onPatch={applyTextPatch}
             onCommit={(content) => void commitDraft(content)}
@@ -1221,19 +1526,38 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             }}
             onModEnter={(content) => void handleModEnter(content)}
             onEscape={() => void exitToSelection()}
+            onSpace={dateFieldValue ? () => {
+              // Space summons the date picker only on an empty value, so a typed
+              // value (e.g. "next monday") can still contain literal spaces.
+              if (draftContentRef.current.text.trim().length > 0) return false;
+              setDateOverlayOpen(true);
+              return true;
+            } : undefined}
             resolveInlineReferenceColor={(targetId) => inlineReferenceTextColor(targetId, props.index)}
-            onFieldTriggerFire={() => {
+            onFieldTriggerFire={suppressTextTriggers ? undefined : () => {
               props.setTrigger(null);
-              void pendingTextPatchRef.current.then(() => props.run(() => (
-                createPlaceholderInlineFieldAfterNode(props.nodeId, 'plain')
-              )));
+              // A draft has no real node to anchor "after"; create the field as a
+              // child of the parent (create_inline_field). A real row anchors it
+              // right after itself (create_inline_field_after_node).
+              const createField = onDraftTrigger
+                ? () => createPlaceholderInlineField(props.parentId, null, 'plain')
+                : () => createPlaceholderInlineFieldAfterNode(props.nodeId, 'plain');
+              if (onDraftTrigger) replaceLocalDraftContent(EMPTY_RICH_TEXT);
+              void pendingTextPatchRef.current.then(() => props.run(createField));
             }}
             onCodeFenceFire={
-              node.type === undefined && !pendingReferenceConversion && !displayed.locked
+              !suppressTextTriggers
+                && node.type === undefined && !pendingReferenceConversion && !displayed.locked
                 ? convertRowToCodeBlock
                 : undefined
             }
             onTriggerChange={(nextTrigger) => {
+              // optionPicker free text feeds the options filter, not triggers.
+              if (suppressTextTriggers) return;
+              // Record trigger state synchronously so the patch callback that fires
+              // later in this same transaction can suppress eager materialization
+              // while a trigger query is open.
+              draftTriggerActiveRef.current = Boolean(nextTrigger);
               if (nextTrigger) {
                 props.setTrigger({ nodeId: props.nodeId, ...nextTrigger });
               } else if (props.trigger?.nodeId === props.nodeId) {
@@ -1285,6 +1609,41 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
               />
             )
           )}
+          {props.fieldValue && (showDateTrigger || fieldValueHint || fieldValueHref) && (
+            <span className="field-value-affordances" data-preserve-selection>
+              {fieldValueHint && <span className="field-value-hint">{fieldValueHint}</span>}
+              {fieldValueHref && (
+                <button
+                  type="button"
+                  className="field-value-affordance field-value-open"
+                  aria-label="Open link"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => void api.openExternalUrl(fieldValueHref)}
+                ><OpenIcon size={12} strokeWidth={1.8} /></button>
+              )}
+              {showDateTrigger && (
+                <button
+                  type="button"
+                  className="field-value-affordance field-value-date-trigger"
+                  aria-label="Pick a date"
+                  aria-expanded={dateOverlayOpen}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => setDateOverlayOpen((open) => !open)}
+                >
+                  <CalendarIcon size={13} strokeWidth={1.8} />
+                </button>
+              )}
+            </span>
+          )}
+          {dateFieldValue && props.fieldValue && (
+            <DateValuePicker
+              anchorRef={optionAnchorRef}
+              value={realNode ? displayed.content.text : ''}
+              open={dateOverlayOpen}
+              onOpenChange={setDateOverlayOpen}
+              onCommit={commitDateValue}
+            />
+          )}
           <NodeDescription
             node={displayed}
             targetId={targetEditId}
@@ -1325,6 +1684,29 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
               onSelectOption={props.onSelectOption}
             />
           )}
+          {/* The additive options overlay for an optionPicker field-value draft.
+              It does NOT own the create: picking an existing option references it
+              (selectOptionAndAdvance), while a novel value materializes through the
+              same draft path as Enter (materializeDraftAndAdvance) — core dedups a
+              typed-existing name into a reference. Mutually exclusive with
+              SelectedReferenceOptionPicker above, which targets a committed
+              reference row, not a draft. */}
+          {optionPickerDraft && props.fieldValue && (
+            <TrailingOptionsPopover
+              anchorRef={optionAnchorRef}
+              optionField={props.fieldValue.optionField}
+              byId={props.index.byId}
+              autocollect={props.fieldValue.autocollect}
+              open={optionsOpen}
+              query={draftContent.text}
+              onOpenChange={setOptionsOpen}
+              onSelect={(optionId) => void selectOptionAndAdvance(optionId)}
+              onCreate={() => {
+                setOptionsOpen(false);
+                void materializeDraftAndAdvance();
+              }}
+            />
+          )}
         </div>
         </>
       )}
@@ -1343,6 +1725,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           close={() => props.setTrigger(null)}
           clearTriggerText={applyTextWithoutTrigger}
           applyReference={applyReference}
+          applyTag={onDraftTrigger ? applyDraftTag : undefined}
+          createTagAndApply={onDraftTrigger ? createAndApplyDraftTag : undefined}
           executeSlashCommand={executeSlashCommand}
           enabledSlashCommandIds={['field', 'reference', 'heading', 'checkbox', 'code', 'image', 'command_palette']}
           treeReferenceParentId={triggerOwnsWholeDraft ? props.parentId : null}
@@ -1357,7 +1741,12 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           node={node}
           targetId={targetEditId}
           openId={drillDownId}
-          selectedIds={props.ui.selectedIds}
+          // The live selection from uiRef, not the memoized props.ui: a selected
+          // row skips re-render when *another* row joins/leaves the block
+          // selection (its own selected-ness is unchanged), so props.ui.selectedIds
+          // can be stale here. The context menu's batch actions ("N nodes: …")
+          // need the current full set. uiRef is refreshed every NodePanel render.
+          selectedIds={props.uiRef.current.selectedIds}
           index={props.index}
           run={props.run}
           onRoot={props.onRoot}
@@ -1379,7 +1768,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         />
       )}
 
-      {!props.flat && row.expanded && (
+      {!props.flat && row.expanded && !props.fieldValue && (
         <div className="children">
           <OutlinerView
             panelId={props.panelId}
@@ -1523,6 +1912,27 @@ function referencePathEqual(a: readonly NodeId[], b: readonly NodeId[]): boolean
   return true;
 }
 
+// A focus/pending-input request targeting a descendant must reach that row, but
+// rows render through their ancestors' nested OutlinerView — so an ancestor that
+// skips re-render freezes the whole subtree and the request never propagates to
+// the target editor (focus silently falls to <body>; see the eager Tab/indent and
+// nested-continuation paths). Return the request when this row sits on the path to
+// its target so the comparator re-renders the ancestor whenever that changes.
+// Walks only while a request is live (null on the typing hot path → O(1)).
+function focusAncestorToken(
+  props: OutlinerItemProps,
+  request: { target: { nodeId: NodeId } } | null,
+): unknown {
+  if (!request) return null;
+  const byId = props.index.byId;
+  let cur = byId.get(request.target.nodeId)?.parentId ?? null;
+  while (cur) {
+    if (cur === props.nodeId) return request;
+    cur = byId.get(cur)?.parentId ?? null;
+  }
+  return null;
+}
+
 // Skip re-rendering a row when neither its tracked data revision nor the global
 // UI generation changed and its structural position is unchanged. Function props
 // (run/onRoot/setUi/...) are intentionally not compared: they are either stable
@@ -1547,6 +1957,9 @@ function outlinerItemPropsEqual(prev: OutlinerItemProps, next: OutlinerItemProps
   const nextRev = next.index.renderRev?.get(next.nodeId);
   if (prevRev === undefined || nextRev === undefined || prevRev !== nextRev) return false;
   if (!referencePathEqual(prev.referencePath, next.referencePath)) return false;
+  // Propagate a focus/pending-input request down to a nested target (see above).
+  if (focusAncestorToken(prev, prev.ui.focusRequest) !== focusAncestorToken(next, next.ui.focusRequest)) return false;
+  if (focusAncestorToken(prev, prev.ui.pendingInputChar) !== focusAncestorToken(next, next.ui.pendingInputChar)) return false;
   // Re-render only when *this row's* UI state moved (focus/selection/expand/…),
   // not on every global UI change. Behavioural ui reads go through a live ref
   // (useOutlinerRowInteraction), so a row that skips re-render stays correct.
