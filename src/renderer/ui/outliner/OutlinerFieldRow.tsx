@@ -47,6 +47,7 @@ import {
   type SystemFieldDisplay,
 } from '../../../core/systemFields';
 import { SystemFieldValue } from './SystemFieldValue';
+import { SystemReferenceValues, isNodeReferenceSystemField } from './SystemReferenceValues';
 import { useFieldNameReuse } from './useFieldNameReuse';
 import { FieldValueOutliner } from './FieldValueOutliner';
 import { NodeContextMenu } from './NodeContextMenu';
@@ -450,12 +451,35 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   // daily-note date page) rejects `toggle_done` — render it read-only there.
   const ownerEditable = !(props.index.byId.get(props.parentId)?.locked ?? false);
   const valueControl = systemDisplay ? (
-    <SystemFieldValue
-      display={systemDisplay}
-      byId={props.index.byId}
-      onRoot={props.onRoot}
-      onToggleDone={ownerEditable ? () => void props.run(() => api.toggleDone(props.parentId)) : undefined}
-    />
+    systemFieldId && isNodeReferenceSystemField(systemFieldId) ? (
+      // References / Owner / Day are read-only node references: render them as the
+      // same reference rows used everywhere (double-click edits the target,
+      // expandable), with the value set computed and immutable. See
+      // docs/plans/reference-field-type.md.
+      <SystemReferenceValues
+        panelId={props.panelId}
+        entryId={props.entryId}
+        ownerId={props.parentId}
+        systemFieldId={systemFieldId}
+        onRoot={props.onRoot}
+        index={props.index}
+        ui={props.ui}
+        uiRef={props.uiRef}
+        setUi={props.setUi}
+        run={props.run}
+        trigger={props.trigger}
+        setTrigger={props.setTrigger}
+        dragId={props.dragId}
+        setDragId={props.setDragId}
+      />
+    ) : (
+      <SystemFieldValue
+        display={systemDisplay}
+        byId={props.index.byId}
+        onRoot={props.onRoot}
+        onToggleDone={ownerEditable ? () => void props.run(() => api.toggleDone(props.parentId)) : undefined}
+      />
+    )
   ) : (
     <div className="field-value-cell">
       <FieldValueOutliner

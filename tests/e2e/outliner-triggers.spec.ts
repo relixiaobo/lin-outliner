@@ -1225,10 +1225,13 @@ test.describe('outliner trigger parity', () => {
     await expect.poll(async () => (await nodeById(page, fieldId))?.fieldDefId).toBe('sys:owner');
 
     // The field is a child of `today`, whose parent is the "Daily Notes" page —
-    // Owner renders a navigable link to it, not bare text.
-    const link = row(page, fieldId).locator('.field-value-cell .field-value-link');
-    await expect(link).toHaveCount(1);
-    await expect(link).toContainText('Daily Notes');
+    // Owner renders it as a read-only reference row (the shared reference
+    // presentation), not bare text or a bespoke link.
+    const valueCell = row(page, fieldId).locator('.field-value-cell');
+    await expect(valueCell.locator('.row.reference-row')).toHaveCount(1);
+    await expect(valueCell).toContainText('Daily Notes');
+    // Read-only value set: no trailing draft to add another value.
+    await expect(valueCell.locator('[data-trailing-parent-id]')).toHaveCount(0);
   });
 
   test('the Day system field links to the containing day node\'s date', async ({ page }) => {
@@ -1242,11 +1245,11 @@ test.describe('outliner trigger parity', () => {
     await popover.getByText('Day', { exact: true }).click();
     await expect.poll(async () => (await nodeById(page, fieldId))?.fieldDefId).toBe('sys:day');
 
-    // `today` itself is the day node (tagged "day"); Day shows its date as a link
-    // with a calendar glyph.
-    const link = row(page, fieldId).locator('.field-value-cell .field-value-link');
-    await expect(link).toContainText('2026-05-13');
-    await expect(link.locator('svg')).toHaveCount(1);
+    // `today` itself is the day node (tagged "day"); Day renders it as a read-only
+    // reference row to that day node.
+    const valueCell = row(page, fieldId).locator('.field-value-cell');
+    await expect(valueCell.locator('.row.reference-row')).toHaveCount(1);
+    await expect(valueCell).toContainText('2026-05-13');
   });
 
   test('field entry rows are not expandable (children are the value, shown in the value column)', async ({ page }) => {
