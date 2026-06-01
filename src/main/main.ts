@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, session, shell } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
@@ -11,6 +11,7 @@ import { MAC_TRAFFIC_LIGHT_POSITION, MAC_WINDOW_CORNER_RADIUS } from '../core/ch
 import { windowMaterialKind } from '../core/windowMaterial';
 import { applyMacWindowCorner } from './nativeWindowCorner';
 import { LIN_SETTINGS_CHANGED_CHANNEL, WINDOW_SURFACE_QUERY_PARAM } from '../core/settingsWindow';
+import { LIN_WINDOW_ACTIVE_CHANNEL } from '../core/windowActivity';
 import { ASSET_URL_SCHEME } from '../core/assets';
 import { LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput } from '../core/types';
 import {
@@ -176,12 +177,147 @@ function configureSessionSecurity() {
 }
 
 // Opaque pre-paint frame colour for non-material windows. Mirrors the renderer
-// deck colour per OS scheme (light `--bg-window` ≈ #f7f6f1, dark #2a2a2c) so a
-// dark-OS launch never flashes a light backing behind the first paint. The
-// renderer sets [data-theme] before React mounts, so this only backs the window
-// before that; keeping it scheme-matched closes the residual gap.
+// deck colour per OS scheme (light `--bg-window` = #ececec, dark #2a2a2c) so a
+// launch never flashes a mismatched backing behind the first paint. Dark/light
+// follows the OS via @media (prefers-color-scheme) in the renderer (no
+// [data-theme] bridge), so this only backs the window before React mounts;
+// keeping it scheme-matched to --bg-window closes the residual seam.
 function prePaintBackgroundColor(): string {
-  return nativeTheme.shouldUseDarkColors ? '#2a2a2c' : '#f7f6f1';
+  return nativeTheme.shouldUseDarkColors ? '#2a2a2c' : '#ececec';
+}
+
+// Native right-click menu (design-system B10 — native OS menus, not a web-style
+// context menu). The renderer's command menus (NodeContextMenu, tag menus, the
+// page-title menu) already call event.preventDefault() on the DOM contextmenu
+// event in the regions they own, and Electron only emits this main-process
+// 'context-menu' event when the renderer did NOT preventDefault (verified on
+// Electron 42). So this never double-pops over a custom React menu — it fires
+// only for the bare right-clicks those menus leave alone: an editable field
+// (e.g. the agent composer) gets the text-editing menu (with spelling
+// suggestions when the word is flagged), a text selection gets Copy, and inert
+// chrome gets nothing at all.
+function attachNativeContextMenu(contents: Electron.WebContents): void {
+  contents.on('context-menu', (_event, params) => {
+    const template: Electron.MenuItemConstructorOptions[] = [];
+
+    if (params.isEditable) {
+      if (params.misspelledWord && params.dictionarySuggestions.length > 0) {
+        for (const suggestion of params.dictionarySuggestions) {
+          template.push({ label: suggestion, click: () => contents.replaceMisspelling(suggestion) });
+        }
+        template.push({
+          label: 'Add to Dictionary',
+          click: () => contents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+        });
+        template.push({ type: 'separator' });
+      }
+      template.push(
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'pasteAndMatchStyle' },
+        { role: 'delete' },
+        { type: 'separator' },
+        { role: 'selectAll' },
+      );
+    } else if (params.selectionText.trim().length > 0) {
+      template.push({ role: 'copy' });
+    }
+
+    if (template.length === 0) return;
+    const window = BrowserWindow.fromWebContents(contents);
+    Menu.buildFromTemplate(template).popup(window ? { window } : {});
+  });
+}
+
+// Forward the window's OS focus state to its renderer so the chrome can
+// desaturate while the window is inactive — the macOS convention where an
+// unfocused window's toolbars / sidebars lose their tint. This is UI state, not
+// a document mutation, so it rides its own channel (see core/windowActivity.ts).
+function forwardWindowActivity(window: BrowserWindow): void {
+  const send = (active: boolean) => {
+    if (window.isDestroyed()) return;
+    window.webContents.send(LIN_WINDOW_ACTIVE_CHANNEL, active);
+  };
+  window.on('focus', () => send(true));
+  window.on('blur', () => send(false));
+  // Seed the initial state once the renderer is listening, so a window that
+  // launches unfocused starts correct without waiting for the first toggle.
+  window.webContents.on('did-finish-load', () => send(window.isFocused()));
+}
+
+// Standard application menu (A2b). macOS gets the conventional App / Edit / View
+// / Window / Help bar with Preferences on Cmd+,; other platforms drop the App
+// menu and surface Settings under File (no app menu exists there). Dev-only View
+// items (reload, devtools) are gated on a source run; everything else is
+// role-based so the OS owns the labels, accelerators, and enable state.
+function buildApplicationMenu(): Electron.Menu {
+  const isMac = process.platform === 'darwin';
+  const isDev = !app.isPackaged;
+
+  const viewSubmenu: Electron.MenuItemConstructorOptions[] = [
+    ...(isDev
+      ? ([
+          { role: 'reload' },
+          { role: 'forceReload' },
+          { role: 'toggleDevTools' },
+          { type: 'separator' },
+        ] satisfies Electron.MenuItemConstructorOptions[])
+      : []),
+    { role: 'resetZoom' },
+    { role: 'zoomIn' },
+    { role: 'zoomOut' },
+    { type: 'separator' },
+    { role: 'togglefullscreen' },
+  ];
+
+  const template: Electron.MenuItemConstructorOptions[] = [];
+
+  if (isMac) {
+    template.push({
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { label: 'Preferences…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    });
+  } else {
+    template.push({
+      label: 'File',
+      submenu: [
+        { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    });
+  }
+
+  template.push({ role: 'editMenu' });
+  template.push({ label: 'View', submenu: viewSubmenu });
+  template.push({ role: 'windowMenu' });
+  template.push({
+    role: 'help',
+    submenu: [
+      {
+        label: 'Learn More',
+        click: () => void shell.openExternal('https://github.com/relixiaobo/lin-outliner'),
+      },
+    ],
+  });
+
+  return Menu.buildFromTemplate(template);
 }
 
 function createWindow() {
@@ -221,6 +357,8 @@ function createWindow() {
 
   if (windowState.maximized) mainWindow.maximize();
   hardenWebContents(mainWindow.webContents);
+  attachNativeContextMenu(mainWindow.webContents);
+  forwardWindowActivity(mainWindow);
   trackWindowState(mainWindow);
 
   // Custom window corner via the native window_corner addon (no-op off macOS /
@@ -291,6 +429,7 @@ function openSettingsWindow() {
 
   const target = settingsWindow;
   hardenWebContents(target.webContents);
+  attachNativeContextMenu(target.webContents);
   target.once('ready-to-show', () => target.show());
 
   if (RENDERER_DEV_URL) {
@@ -1114,6 +1253,7 @@ if (!app.requestSingleInstanceLock()) {
     configureSessionSecurity();
     registerIpc();
     createWindow();
+    Menu.setApplicationMenu(buildApplicationMenu());
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });

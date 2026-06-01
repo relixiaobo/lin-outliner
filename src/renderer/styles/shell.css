@@ -149,6 +149,29 @@
   background: var(--bg-content);
 }
 
+/* ── Inactive-window chrome (A4) ───────────────────────────────────────────────
+   macOS desaturates an unfocused window's chrome. The native traffic lights grey
+   out for free (hiddenInset keeps the OS-drawn buttons), so this only reinforces
+   that on the two floating rails — the chrome glass — and NOT on content,
+   selection, or the rose accent. Decision: RAILS-ONLY. The functional-state
+   ladder (selection / hover / focus) is neutral by design (B3) and must stay
+   legible regardless of focus, and the single rose accent (B4) is too sparse for
+   a global desaturate to read as anything but inconsistent — so we scope the
+   effect to the rails, where any in-rail accent (e.g. an active nav item) is
+   carried along with the rest of the rail.
+
+   Because the palette is near-monochrome, a pure `saturate()` would be almost
+   invisible, so we pair it with a slight brightness dip — the part that actually
+   reads as "dimmed/inactive" in both light and dark. The toggle is instant (no
+   transition): it never clobbers the rails' own transition lists (declared in
+   sidebar.css / agent-dock.css, imported after this file) and is reduced-motion
+   safe by construction. The class is set on the document root from the main
+   process's focus/blur (App.tsx → core/windowActivity.ts). */
+.window-inactive .sidebar-dock,
+.window-inactive .agent-dock {
+  filter: saturate(0.45) brightness(0.985);
+}
+
 /* ── Top-left more menu (kept for the agent/session menus that reuse it) ─────── */
 .top-chrome-more-menu {
   z-index: var(--z-popover);

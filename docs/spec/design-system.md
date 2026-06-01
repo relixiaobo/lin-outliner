@@ -409,6 +409,17 @@ Use these default desktop tokens before adding component-specific values:
   composer `8` (`--agent-composer-radius`). Use the same rule for any nested
   rounded control (a pill inside a row, a thumbnail inside a card); never pick a
   nested radius by eye.
+- **The 24pt window corner is packaged-only — QA it with `bun run app:build`,
+  not `dev:*` (D7).** The OS owns the window's outer corner; the native addon
+  (`applyMacWindowCorner`) rounds it to `--radius-window 24` only on the real
+  packaged window. A `bun run dev:*` run loads in a default-cornered Electron
+  shell, so the 24 → 16 → 8 concentric chain is *partly* unverifiable there: the
+  rail (16) and composer (8) corners render, but they are measured against a
+  window corner that is not actually 24 in dev. Any visual check of the window
+  corner itself — its radius, the OS shadow/clip, traffic-light inset, or whether
+  the rails nest correctly inside it — must use a packaged build (`bun run
+  app:build`, then install/launch the `.dmg`). Don't sign off the corner from a
+  dev screenshot.
 - Overlay shadow tokens are pure drop shadows. Floating menus, popovers,
   tooltips, and dialogs do not use a real outer border.
 - Focus uses neutral focus tokens, not brand color, unless the state is an

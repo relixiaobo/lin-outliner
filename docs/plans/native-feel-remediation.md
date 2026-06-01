@@ -93,8 +93,16 @@ main-agent-owned.
 ## Open questions
 
 - Stage 4: native context menu vs keeping the richer DOM menu (the DOM menu has
-  submenus/icons the native `Menu` can't easily match). Likely: native for the
-  bare right-click, DOM for the command-driven menus — confirm during the
-  stage.
+  submenus/icons the native `Menu` can't easily match). **Resolved (native-feel-
+  ui-audit PR-D, A2a):** native for the bare right-click, DOM for the
+  command-driven menus. The split is automatic — the renderer's command menus
+  already `preventDefault()` the DOM `contextmenu` event in the regions they own,
+  and Electron only emits the main-process `webContents 'context-menu'` event
+  when the renderer did *not* `preventDefault` (verified on Electron 42), so the
+  native menu fires only for the bare right-clicks the DOM menus leave alone
+  (editable fields → text menu, a selection → Copy, inert chrome → nothing). No
+  per-region suppression flag is needed. (The rest of Stage 4 — replacing
+  `window.prompt` / `window.confirm`; settings-in-its-own-window is already done
+  — remains open.)
 - Stage 6: do we ship Linux at all, or is the README's three-OS claim trimmed
   to macOS + Windows?
