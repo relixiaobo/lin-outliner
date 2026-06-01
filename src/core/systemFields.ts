@@ -226,8 +226,16 @@ export function systemFieldDisplay(owner: SysFieldNode, fieldId: string, byId: S
   }
 }
 
-/** True when the node carries a built-in Done field (a `sys:done` field entry child). */
-export function nodeHasDoneField(node: Pick<SysFieldNode, 'children'>, byId: SysFieldNodeMap): boolean {
+/**
+ * True when the node carries a built-in Done field (a `sys:done` field entry
+ * child). Typed structurally on the minimum it reads — a node's child ids and,
+ * per child, its `type`/`fieldDefId` — so both core's `ConfigNodeMap` and the
+ * renderer's projection map satisfy it without converting to `SysFieldNode`.
+ */
+export function nodeHasDoneField(
+  node: { children: readonly NodeId[] },
+  byId: ReadonlyMap<NodeId, { type?: NodeType; fieldDefId?: NodeId }>,
+): boolean {
   return node.children.some((childId) => {
     const child = byId.get(childId);
     return child?.type === 'fieldEntry' && child.fieldDefId === DONE_FIELD;

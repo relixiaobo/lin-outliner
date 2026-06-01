@@ -90,10 +90,15 @@ carried (the value is computed, never stored). Each renders by its real type, no
 as bare text:
 
 - **Done** — a read-write checkbox; toggling it flips the owner's done state
-  (`toggle_done`). The only mutable system field. When the owner is **locked** (e.g.
-  a daily-note `date:` page, which `toggle_done` rejects), it renders read-only —
-  reflecting the state without an interactive toggle, so a Done field created at a
-  day page's root never crashes on click.
+  (`toggle_done`). The only mutable system field. Attaching a Done field also makes
+  the **owner's own row** show a checkbox (even before the first toggle): both the
+  row checkbox and the field value read the owner's `completedAt`, so they stay in
+  sync with no extra wiring (`nodeShowsCheckbox` treats a `sys:done` field entry as
+  a third checkbox trigger, alongside the `completedAt` sentinel and tag-driven
+  `showCheckbox`). When the owner is **locked** (e.g. a daily-note `date:` page,
+  which `toggle_done` rejects), both the field value and the row checkbox render
+  read-only — reflecting the state without an interactive toggle, so a Done field
+  carried by a locked day page never crashes on click.
 - **Created / Last edited / Done time** — the formatted date plus a read-only
   calendar glyph (matching the editable `date` value styling).
 - **Tags** — the owner's applied tags as read-only colored badges (the same

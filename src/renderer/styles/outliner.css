@@ -1915,9 +1915,14 @@
   background: transparent;
 }
 
-.done-checkbox:hover .checkbox-mark:not(.checked) {
+.done-checkbox:not(.done-checkbox--readonly):hover .checkbox-mark:not(.checked) {
   border-color: color-mix(in srgb, var(--text) 42%, transparent);
   background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+/* Read-only on a locked owner: inert, no hover affordance, no pointer. */
+.done-checkbox--readonly {
+  cursor: default;
 }
 
 .panel-title-editor > .done-checkbox {

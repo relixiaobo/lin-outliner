@@ -1429,6 +1429,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           {showDoneCheckbox && (
             <DoneCheckbox
               checked={Boolean(displayed.completedAt)}
+              readOnly={displayed.locked}
               onToggle={() => void props.run(() => api.toggleDone(targetEditId))}
             />
           )}

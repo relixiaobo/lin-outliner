@@ -1655,4 +1655,50 @@ test.describe('outliner options field inline value', () => {
     expect(box!.x).toBeGreaterThanOrEqual(8);
     expect(box!.x + box!.width).toBeLessThanOrEqual(972);
   });
+
+  test('a node carrying a Done field shows a synced checkbox on its own row', async ({ page }) => {
+    // A freshly created plain node has no checkbox.
+    await invokeMockCommand(page, 'create_node', {
+      parentId: ids.today,
+      index: null,
+      text: 'Wash dishes',
+      id: 'fu2-task',
+    });
+    await expect(row(page, 'fu2-task')).toContainText('Wash dishes');
+    await expect(rowBody(page, 'fu2-task').locator('.done-checkbox')).toHaveCount(0);
+
+    // Attaching the built-in Done system field (a sys:done field entry) makes the
+    // node's own row show a checkbox — derived from the same completedAt the field
+    // reads, so the two stay in sync without extra wiring.
+    await page.evaluate(async (parentId) => {
+      const win = window as unknown as {
+        lin?: {
+          invoke: (cmd: string, args?: Record<string, unknown>) =>
+            Promise<{ focus?: { nodeId: string }; projection?: unknown }>;
+        };
+        __LIN_E2E__?: { emitDocumentEvent: (event: unknown) => void };
+      };
+      const created = await win.lin!.invoke('create_inline_field', {
+        parentId,
+        index: null,
+        name: 'Done',
+        fieldType: 'plain',
+      });
+      const entryId = created.focus!.nodeId;
+      const reused = await win.lin!.invoke('reuse_field_definition', { entryId, targetDefId: 'sys:done' });
+      const projection = reused.projection ?? created.projection;
+      if (projection) {
+        win.__LIN_E2E__?.emitDocumentEvent({
+          type: 'projection_changed',
+          origin: 'user',
+          projection,
+          timestamp: Date.now(),
+        });
+      }
+    }, 'fu2-task');
+
+    // The owner is editable, so it is an interactive checkbox button (not the
+    // read-only span used for locked owners).
+    await expect(rowBody(page, 'fu2-task').locator('button.done-checkbox')).toHaveCount(1);
+  });
 });

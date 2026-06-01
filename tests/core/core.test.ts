@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { Core } from '../../src/core/core';
 import { LoroOutlinerDocument } from '../../src/core/loroDocument';
 import { buildConfigIndex, nodeShowsCheckbox } from '../../src/core/configProjection';
+import { DONE_FIELD } from '../../src/core/systemFields';
 import { isInternalConfigNode } from '../../src/core/configSchema';
 import { runSearchNode } from '../../src/core/searchEngine';
 import {
@@ -293,6 +294,26 @@ describe('Core', () => {
     // Undone manual node keeps its checkbox via the sentinel completedAt = 0.
     core.toggleDone(nodeId);
     expect(core.state().nodes[nodeId].completedAt).toBe(0);
+    expect(showsCheckbox(core, nodeId)).toBe(true);
+  });
+
+  test('a node carrying a Done (sys:done) field shows a checkbox before any toggle', () => {
+    const core = Core.new();
+    const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Task'));
+    expect(showsCheckbox(core, nodeId)).toBe(false);
+
+    // Attach the built-in Done system field by relinking a fresh entry to sys:done.
+    const entryId = mustFocus(core.createInlineField(nodeId, null, '', 'plain'));
+    core.reuseFieldDefinition(entryId, DONE_FIELD);
+
+    // The row checkbox shows even though completedAt is still undefined, and it
+    // mirrors the field's value because both read the owner's completedAt.
+    expect(core.state().nodes[nodeId].completedAt).toBeUndefined();
+    expect(showsCheckbox(core, nodeId)).toBe(true);
+
+    // Toggling done flows into completedAt; the box stays visible throughout.
+    core.toggleDone(nodeId);
+    expect(core.state().nodes[nodeId].completedAt).toBeGreaterThan(0);
     expect(showsCheckbox(core, nodeId)).toBe(true);
   });
 

@@ -159,9 +159,9 @@ current row's *parent*, so a Done field created at a daily-note page's root is o
 by the locked `date:` page; `toggle_done` rejects locked nodes. Fix: the Done
 checkbox is interactive only when the owner is editable (`!owner.locked`); on a
 locked owner it renders read-only (`SystemFieldValue` drops the `<button>` for an
-inert `aria-disabled` span), reflecting state without attempting the toggle. On a
-normal node, toggling still writes `completedAt`, which makes the owner's own row
-show a synced checkbox — the two-way sync the user expected.
+inert `aria-disabled` span), reflecting state without attempting the toggle. The
+owner's own row also shows a synced checkbox whenever a Done field is attached (see
+the follow-up below) — the two-way sync the user expected.
 
 The e2e mock's `today` date node was **unfaithful** (not locked), which is why the
 prior Done-toggle e2e passed while the app crashed. The mock now locks `today` to
@@ -169,13 +169,25 @@ mirror core's `freshId('date')` + `locked: true`; the Done-toggle e2e moved to a
 editable child (`gamma`), and a new e2e covers the locked-owner read-only case
 (plus a `SystemFieldValue` unit test for the interactive-vs-read-only branch).
 
-### Deferred follow-up (separate PR, touches core)
+### Follow-ups (landed on `cc/system-field-followups`, separate PR — touches core)
 
-`nearestDayNode` and `backlinkSources` (in `outlinerRows.ts`) re-derive in the
-renderer what core already computes — the `ancestor_day_node` resolution and the
-`refCount` reverse scan. The clean home for both is core/projection (one
-`resolveSystemField` source feeding sort/group *and* rendering), but that touches
-core and is best landed on its own branch. Tracked here; not done on this branch.
+Two items deferred out of #70 onto a core-touching branch, both now done:
+
+1. **System-field derivation consolidated into core.** `nearestDayNode` and
+   `backlinkSources` (formerly in `outlinerRows.ts`) re-derived in the renderer what
+   core already computes. They now live in `src/core/systemFields.ts` as one
+   `resolveSystemField` source that feeds sort/group (`systemFieldValues` → scalar
+   strings) *and* rendering (`systemFieldDisplay` → the typed display union). The
+   renderer constants/labels/`isSystemFieldId` are re-exported from there too, so
+   there is a single home for the `sys:*` contract.
+2. **A node carrying a Done field auto-shows a synced row checkbox.**
+   `nodeShowsCheckbox` (in `configProjection.ts`) gained a third trigger:
+   `nodeHasDoneField` — true when the node has a `sys:done` field entry child. The
+   row checkbox and the Done field value both read the owner's `completedAt`, so they
+   stay in sync with no extra wiring, and the box shows even before the first toggle.
+   `DoneCheckbox` gained a `readOnly` mode (mirroring `SystemFieldValue`) for the
+   locked-owner case (a Done field can reach a locked day page via a tag template),
+   so the new row checkbox never re-introduces the locked-node `toggle_done` crash.
 
 ## Status
 
