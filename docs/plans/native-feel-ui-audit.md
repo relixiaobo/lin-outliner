@@ -186,6 +186,7 @@ PR-D  native shell  ───┘ (joinable after PR-A; serializes on main.ts)
 - **Full spec:** drafted at `tmp/pr-a-guard-tests-spec.md`.
 
 ### PR-B — Theming & a11y CSS foundation (D1-min, A3)
+- **Status: SHIPPED** — merged via #63 (branch `cc-2/theme-and-a11y-foundation`). D1-min + A3 done; `theme.ts` deleted, `styles/a11y.css` added with a reusable `--material-backdrop` fallback for PR-C. Follow-up nit for PR-D: the stale `[data-theme]` comment at `main.ts:181-182` should be corrected when PR-D touches `main.ts`.
 - **Branch:** `cc/theme-and-a11y-foundation` · CSS architecture · higher churn,
   isolated
 - **Why second / why grouped:** this is the mechanism layer every later visual

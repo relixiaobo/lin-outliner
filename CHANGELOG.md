@@ -12,6 +12,7 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- A central accessibility layer (`styles/a11y.css`) honoring `prefers-contrast`, `prefers-reduced-motion`, and `prefers-reduced-transparency`, with a reusable `--material-backdrop` opaque-fallback token (PR-B, #63).
 - **Agent tool permissions (global runtime policy)** — implements
   `docs/plans/agent-tool-permissions.md`: one global, runtime-owned permission
   policy (allow/ask/deny by action kind) replacing the hidden one-off approval
@@ -219,6 +220,7 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- Dark mode now follows the OS via `@media (prefers-color-scheme)` with `color-scheme: light dark` (native scrollbars/controls theme correctly; the `[data-theme]`+JS bridge and `theme.ts` were removed) (PR-B, #63).
 - **Design system — floating-rails shell, neutral token migration,
   dark-follows-OS** — dissolves `TopBar` into a persistent `WindowChrome` (a top
   drag strip that reserves the traffic-light inset plus two centreline rail
