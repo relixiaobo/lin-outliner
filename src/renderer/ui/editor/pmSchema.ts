@@ -39,14 +39,20 @@ export const pmSchema = new Schema({
         },
       }],
       toDOM(node) {
+        const targetKind = String(node.attrs.targetKind ?? 'node');
+        const displayName = String(node.attrs.displayName ?? '');
+        const targetPath = String(node.attrs.targetPath ?? '');
+        const fallbackName = targetKind === 'local-file'
+          ? basenameForPath(targetPath) || 'Referenced file'
+          : 'Referenced node';
         const attrs: Record<string, string> = {
           class: 'inline-ref',
-          'data-inline-ref-kind': String(node.attrs.targetKind ?? 'node'),
+          'data-inline-ref-kind': targetKind,
           contenteditable: 'false',
         };
-        if (node.attrs.targetKind === 'node') attrs['data-inline-ref'] = String(node.attrs.targetNodeId ?? '');
-        if (node.attrs.targetKind === 'local-file') {
-          attrs['data-inline-ref-path'] = String(node.attrs.targetPath ?? '');
+        if (targetKind === 'node') attrs['data-inline-ref'] = String(node.attrs.targetNodeId ?? '');
+        if (targetKind === 'local-file') {
+          attrs['data-inline-ref-path'] = targetPath;
           attrs['data-inline-ref-entry-kind'] = String(node.attrs.entryKind ?? 'file');
         }
         if (node.attrs.color) {
@@ -55,7 +61,7 @@ export const pmSchema = new Schema({
         return [
           'span',
           attrs,
-          node.attrs.displayName || 'Referenced node',
+          displayName || fallbackName,
         ];
       },
     },
@@ -113,3 +119,8 @@ export const pmSchema = new Schema({
     },
   },
 });
+
+function basenameForPath(path: string): string {
+  const normalized = path.replace(/[/\\]+$/gu, '');
+  return normalized.split(/[/\\]/u).pop() ?? '';
+}

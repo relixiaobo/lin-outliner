@@ -1513,7 +1513,16 @@ describe('Core', () => {
         { start: 0, end: 5, type: 'bold' as const },
         { start: 5, end: 10, type: 'link' as const, attrs: { href: 'https://example.com' } },
       ],
-      inlineRefs: [{ offset: 5, target: { kind: 'node', nodeId: target }, displayName: 'Target' }],
+      inlineRefs: [
+        { offset: 5, target: { kind: 'node', nodeId: target }, displayName: 'Target' },
+        {
+          offset: 10,
+          target: { kind: 'local-file', path: '/Users/me/Documents/report.pdf', entryKind: 'file' },
+          displayName: 'report.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 2048,
+        },
+      ],
     };
 
     core.applyNodeTextPatch(nodeId, replaceAllRichTextPatch(content));

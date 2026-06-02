@@ -66,6 +66,22 @@ describe('editor text patch', () => {
     expect(textOffsetToDocPos(leadingRefDoc, 0, { inlineRefBias: 'after' })).toBe(3);
   });
 
+  test('round-trips local-file inline references through the editor doc', () => {
+    const content = {
+      text: 'See ',
+      marks: [],
+      inlineRefs: [{
+        offset: 4,
+        target: { kind: 'local-file' as const, path: '/Users/me/Documents/report.pdf', entryKind: 'file' as const },
+        displayName: 'report.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 2048,
+      }],
+    };
+
+    expect(docToRichText(richTextToDoc(content))).toEqual(content);
+  });
+
   test('adds a text gap after inserted inline references', () => {
     const content = replaceRichTextRangeWithInlineRef(
       plainText('See @Alnext'),
