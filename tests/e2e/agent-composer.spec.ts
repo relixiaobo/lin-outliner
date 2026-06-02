@@ -1080,6 +1080,33 @@ test.describe('agent composer controls', () => {
     }).toBe(true);
   });
 
+  test('keeps the model menu thinking row a stable height across the toggle', async ({ page }) => {
+    await page.getByRole('button', { name: 'Select model' }).click();
+    const menu = page.getByRole('menu', { name: 'Model and reasoning settings' });
+    await expect(menu).toBeVisible();
+
+    const rowHeight = () => page.locator('.agent-composer-thinking-row').evaluate((row) => (
+      Math.round(row.getBoundingClientRect().height * 100) / 100
+    ));
+    const menuHeight = () => page.locator('.agent-composer-model-menu').evaluate((el) => (
+      Math.round(el.getBoundingClientRect().height * 100) / 100
+    ));
+
+    // Thinking starts enabled (the level button is present). Toggling it OFF unmounts
+    // the reasoning-level button, but the row reserves --control-size-xl so neither the
+    // row nor the menu changes height — otherwise the menu jumps on every toggle.
+    const onRow = await rowHeight();
+    const onMenu = await menuHeight();
+    await menu.getByRole('switch', { name: 'Thinking' }).click();
+    await expect(page.locator('.agent-composer-thinking-level')).toHaveCount(0);
+    expect(await rowHeight()).toBe(onRow);
+    expect(await menuHeight()).toBe(onMenu);
+    await menu.getByRole('switch', { name: 'Thinking' }).click();
+    await expect(page.locator('.agent-composer-thinking-level')).toHaveCount(1);
+    expect(await rowHeight()).toBe(onRow);
+    expect(await menuHeight()).toBe(onMenu);
+  });
+
   test('keeps settings in the sidebar, never duplicated in the agent surface', async ({ page }) => {
     await expect(page.getByRole('button', { name: 'Agent settings' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Open settings' })).toHaveCount(0);
@@ -1106,14 +1133,20 @@ test.describe('agent composer controls', () => {
         return null;
       }
 
+      const style = getComputedStyle(surface);
       return {
         focusWithin: surface.matches(':focus-within'),
-        shadow: getComputedStyle(surface).boxShadow,
+        background: style.backgroundColor,
+        shadow: style.boxShadow,
       };
     });
 
     expect(focusState).not.toBeNull();
     expect(focusState!.focusWithin).toBe(true);
+    // Focus is indicated by a neutral --fill background step (B3): never the rose
+    // accent, and never a brand-coloured ring. (We assert neutrality rather than a
+    // before/after delta to stay robust against the background's fade transition.)
+    expect(focusState!.background).not.toContain('244, 63, 94');
     expect(focusState!.shadow).not.toContain('244, 63, 94');
   });
 
@@ -1149,6 +1182,10 @@ test.describe('agent composer controls', () => {
       const scrollStyle = getComputedStyle(scroll);
       const headerStyle = getComputedStyle(header);
       const surfaceStyle = getComputedStyle(surface);
+      const editor = surface.querySelector('.agent-composer-editor');
+      const editorText = surface.querySelector('.agent-composer-editor .ProseMirror');
+      const editorBox = editor instanceof HTMLElement ? editor.getBoundingClientRect() : null;
+      const editorTextBox = editorText instanceof HTMLElement ? editorText.getBoundingClientRect() : null;
       const actionButton = surface.querySelector('.agent-composer-action-button');
       const attachmentButton = surface.querySelector('.agent-composer-tool-button');
       const modelButton = surface.querySelector('.agent-composer-model-button');
@@ -1158,10 +1195,11 @@ test.describe('agent composer controls', () => {
       const actionBox = actionButton instanceof HTMLElement ? actionButton.getBoundingClientRect() : null;
       const attachmentBox = attachmentButton instanceof HTMLElement ? attachmentButton.getBoundingClientRect() : null;
       const rootStyle = getComputedStyle(document.documentElement);
-      // Resolve the composer radius token to px: it is a calc() custom property, which
-      // getPropertyValue returns unevaluated, so read it back off a real property.
+      // The flush composer's rounded top corners match the dock's own radius
+      // (--panel-radius), so its bottom corners — clipped by the dock — share the same
+      // curvature. Resolve the token to px via a probe (it is a calc()).
       const radiusProbe = document.createElement('div');
-      radiusProbe.style.width = 'var(--agent-composer-radius)';
+      radiusProbe.style.width = 'var(--panel-radius)';
       document.body.appendChild(radiusProbe);
       const expectedSurfaceRadius = Number.parseFloat(getComputedStyle(radiusProbe).width);
       radiusProbe.remove();
@@ -1198,6 +1236,13 @@ test.describe('agent composer controls', () => {
         surfacePaddingRight: Number.parseFloat(surfaceStyle.paddingRight),
         surfaceRadius: Number.parseFloat(surfaceStyle.borderTopLeftRadius),
         surfaceRightInset: dockBox.right - surfaceBox.right,
+        // The editor scroll viewport is full-bleed to the surface edges so its native
+        // overflow scrollbar hugs the panel edge (like .agent-chat-scroll), not floating
+        // a surface-pad inside it; the text column is re-inset by the editor's own padding.
+        editorLeftToSurface: editorBox ? editorBox.left - surfaceBox.left : null,
+        editorRightToSurface: editorBox ? surfaceBox.right - editorBox.right : null,
+        editorTextLeftInset: editorTextBox ? editorTextBox.left - surfaceBox.left : null,
+        editorTextRightInset: editorTextBox ? surfaceBox.right - editorTextBox.right : null,
       };
     });
 
@@ -1213,14 +1258,14 @@ test.describe('agent composer controls', () => {
     expect(metrics!.headerPaddingLeft).toBe(metrics!.scrollPaddingLeft);
     expect(metrics!.scrollPaddingLeft).toBe(metrics!.scrollPaddingRight);
     expect(metrics!.headerPaddingRight).toBeGreaterThanOrEqual(metrics!.scrollPaddingRight);
-    // The rounded composer surface floats above the dock floor by the shared rail
-    // inset (#57) — full-bleed left/right, but bottom-inset by --rail-pad.
-    expect(Math.abs(metrics!.surfaceBottomToPanelBottom - metrics!.dockInset)).toBeLessThanOrEqual(1);
+    // The composer is flush to the dock floor (its input REGION, not a floating card):
+    // its surface bottom meets the dock's inner bottom, no rail-pad gap.
+    expect(metrics!.surfaceBottomToPanelBottom).toBeLessThanOrEqual(1);
     expect(metrics!.surfacePaddingLeft).toBe(metrics!.surfacePaddingRight);
     expect(metrics!.surfacePaddingBottom).toBe(metrics!.surfacePaddingRight);
-    // The rounded composer surface uses the --agent-composer-radius token (resolved
-    // above via a probe element, since it is a calc()). The outline panels are square
-    // in the floating shell, so the surface radius no longer derives from a panel.
+    // The flush composer's rounded TOP corners use the dock's own --panel-radius so
+    // they match the dock's bottom corners (which clip the composer's flush bottom) —
+    // one consistent curvature edge-to-edge.
     expect(metrics!.surfaceRadius).toBe(metrics!.expectedSurfaceRadius);
     // The footer controls are fully-rounded capsules (B6), NOT on the concentric
     // container chain that gives the surface its radius: --radius-pill makes each
@@ -1238,10 +1283,18 @@ test.describe('agent composer controls', () => {
     expect(Math.abs(metrics!.actionBottomInset! - metrics!.surfacePaddingBottom)).toBeLessThanOrEqual(1);
     expect(Math.abs(metrics!.attachmentLeftInset! - metrics!.attachmentBottomInset!)).toBeLessThanOrEqual(1);
     expect(Math.abs(metrics!.actionRightInset! - metrics!.actionBottomInset!)).toBeLessThanOrEqual(1);
-    // The composer surface is a rounded card inset from the dock edges by the shared
-    // rail pad on all sides (#57), not full-bleed.
-    expect(Math.abs(metrics!.surfaceLeftInset - metrics!.dockInset)).toBeLessThanOrEqual(1);
-    expect(Math.abs(metrics!.surfaceRightInset - metrics!.dockInset)).toBeLessThanOrEqual(1);
+    // The composer surface is full-bleed to the dock's side edges (a flush input
+    // region, not an inset card); the dock's --panel-radius + overflow:hidden round
+    // its bottom corners.
+    expect(metrics!.surfaceLeftInset).toBeLessThanOrEqual(1);
+    expect(metrics!.surfaceRightInset).toBeLessThanOrEqual(1);
+    // The editor's scroll viewport reaches both surface edges, so its native overflow
+    // scrollbar sits at the panel edge (B10) like the transcript scroll — not floating a
+    // surface-pad inside it — while its own padding keeps the text on the shared column.
+    expect(metrics!.editorLeftToSurface!).toBeLessThanOrEqual(1);
+    expect(metrics!.editorRightToSurface!).toBeLessThanOrEqual(1);
+    expect(metrics!.editorTextLeftInset!).toBe(metrics!.editorTextRightInset!);
+    expect(metrics!.editorTextLeftInset!).toBeGreaterThanOrEqual(metrics!.surfacePaddingLeft);
   });
 
   test('conversation menu stays anchored inside narrow agent surfaces', async ({ page }) => {

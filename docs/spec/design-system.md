@@ -404,11 +404,12 @@ Use these default desktop tokens before adding component-specific values:
   to it.
 - **Concentric corners.** When one rounded surface nests inside another, the
   inner radius is `parent radius − inset`, so both corners share a single centre
-  and the curves stay parallel. The canonical chain is window → rail → composer:
-  `--radius-window 24` − gap 8 = rail `16` (`--panel-radius`); rail 16 − gap 8 =
-  composer `8` (`--agent-composer-radius`). Use the same rule for a rounded
-  surface nested inside another (a thumbnail inside a card); never pick a nested
-  radius by eye.
+  and the curves stay parallel. The canonical chain is window → rail:
+  `--radius-window 24` − gap 8 = rail `16` (`--panel-radius`). A card nested
+  inside the rail derives from 16 the same way (rail 16 − inset); never pick a
+  nested radius by eye. The agent composer is the deliberate exception: it is
+  *flush*, not a nested card, so it reuses the rail's own `--panel-radius` on its
+  top corners (see Components → Agent) rather than a concentric inset.
 - **Interactive controls are capsules, not links in the concentric chain (B6).**
   Icon buttons and the composer's send / attach / model controls are *fully
   rounded* via `--radius-pill`: a square control renders as a circle, a wide one
@@ -725,16 +726,18 @@ scale font size with viewport width.
 - **Easing:** standard `ease`; motion is functional feedback, never decoration.
 - **What animates:** state and layout transitions. Content does not animate in;
   the first frame is the working surface (startup rule), not an entrance.
-- **Rail unfurl (agent open/close).** The agent rail does not slide in as a
-  separate panel — it **grows from its top-right toggle seed**. The collapsed
-  state is the toggle's footprint carrying the rail's own material, `--shadow-rail`,
-  edge, and `--panel-radius` (clamped to a chip at that size); opening animates
-  width/height/inset/corner outward to the full rail over `--motion-layout` while
-  the inner content fades in just behind the geometry, so the *same* glass edge
-  unfurls into the panel. Closing reverses it. The toggle glyph stays anchored on
-  top throughout (it is both the seed and the collapse control).
+- **Rail slide (agent open/close).** The agent rail opens and closes by sliding,
+  mirroring the sidebar: collapsing animates `transform: translateX` off the
+  right window edge plus `opacity`, over `--motion-layout`. Only transform and
+  opacity animate, so the rail moves as one GPU-composited layer and its
+  transcript + composer ride along rigidly — they never re-wrap mid-animation.
+  (Animating width/inset to "grow from the toggle" would reflow the panel body
+  every frame; a content-bearing rail can't afford that, which is why it slides
+  like the sidebar rather than unfurling.) The rail keeps its open width/position
+  while collapsed; the fixed top-right toggle (window chrome) is the collapse
+  control in both states.
 - **Reduced motion:** honor `prefers-reduced-motion` — collapse transitions to
-  near-instant (the rail snaps open/closed, no unfurl). Never gate comprehension
+  near-instant (the rail snaps open/closed, no slide). Never gate comprehension
   on an animation completing.
 
 ## Components
@@ -993,12 +996,11 @@ category history; see "Settings window".)
 - The agent dock is a glass rail on the right (see Shell), subordinate to the
   outliner workspace. It is toggled by the fixed top-right control; open makes it
   the rightmost column and squeezes the layout, closed hides it.
-- **Collapsed = a seed at the top-right toggle.** Closed, the rail is gone and the
-  toggle is a *bare* icon (no material, shadow, or fill — restraint). On hover the
-  glass chip materialises (rail material + `--shadow-rail` + edge, `--panel-radius`
-  clamped to a chip) to signal it expands; clicking unfurls that same chip into the
-  full rail (see Motion → Rail unfurl). The toggle is both the seed and, when open,
-  the collapse control in the rail's top-right corner.
+- **Collapsed = slid off-screen; the toggle stays.** Closed, the rail is slid
+  fully off the right window edge and faded out (see Motion → Rail slide). The
+  fixed top-right toggle is a *bare* icon (no material, shadow, or fill —
+  restraint); its hover feedback is a centred fill tint on the icon itself, not a
+  glass chip behind it. The toggle is the collapse control in both states.
 - Its header lives in the top strip: the `✦` brand mark (one of the sparse
   rose-accent roles) plus the plain conversation title, no other prefix. The
   title trigger has no hover background; it darkens text and reveals its chevron
@@ -1012,13 +1014,20 @@ category history; see "Settings window".)
   `--font-meta / --line-meta`.
 - Process and tool-call disclosures use one measured disclosure/status slot so
   labels do not jump across hover, focus, loading, or expansion.
-- Composer is inset from the agent rail's sides and bottom by `--layout-gap`, so
-  its bottom corners are concentric with the rail's bottom corners (rail 16 −
-  gap 8 = composer 8). Its radius is `--agent-composer-radius`.
+- Composer is flush — a full-bleed input REGION at the rail's bottom, not an
+  inset card: zero side/bottom margin, a neutral `--fill-1` background (focus and
+  drag deepen one step to `--fill-2`, never a brand ring — B3), and rounded TOP
+  corners at the rail's own `--panel-radius`, so the dock's `overflow:hidden`
+  rounds the flush bottom to match. The editor's scroll viewport reaches the
+  surface edges so its native overflow scrollbar hugs the panel edge like the
+  transcript (B10); its own padding re-insets the text to the shared
+  `--agent-content-x` column.
 - Composer toolbar remains visually unified with the textarea; no internal
-  divider.
-- Model picker and reasoning picker are MenuSurface overlays. Thinking switch
-  uses `SwitchMark`.
+  divider. Its footer controls (attach / model / send) are capsules (B6).
+- Model picker and reasoning picker are MenuSurface overlays at the canonical
+  menu radius (`--radius-overlay-sm`), like every other menu. The reasoning row
+  reserves the level-button height so toggling Thinking never changes the menu's
+  height. Thinking switch uses `SwitchMark`.
 - Settings opens as a standalone window (the `?surface=settings` route), not an
   in-app modal. See "Settings window" below.
 - Runtime approval/tool preview types exist, but no renderer approval overlay is

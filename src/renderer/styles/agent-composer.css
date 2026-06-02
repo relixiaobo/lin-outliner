@@ -37,37 +37,30 @@
 
 .agent-composer-surface {
   position: relative;
-  /* Same toggle-derived inset as the header + transcript (--agent-dock-inset-x) so the
-     composer's edges align with them and with the toggle, instead of its own --layout-gap
-     (the previous odd-one-out). Top is the gap to the transcript above. */
-  margin: var(--space-3) var(--agent-dock-inset-x) var(--agent-dock-inset-x);
-  border-radius: var(--agent-composer-radius);
-  background: var(--material-sidebar);
-  box-shadow: var(--outline-faint);
-  padding: var(--space-4) var(--agent-composer-corner-inset) var(--agent-composer-corner-inset);
-  transition: background var(--motion-fast), box-shadow var(--motion-fast);
+  /* Flush to the dock (full-bleed background, rounded TOP corners at the dock's own
+     --panel-radius so the curvature matches the dock's clipped bottom corners). The
+     internal layout follows ONE content column = --agent-content-x, shared with the
+     transcript + title: the input text AND the leading/trailing icon GLYPHS all sit on
+     it. A 28px icon button centres its 16px glyph (a --space-3 = 6px inset), so the
+     toolbar buttons sit at (column − --space-3) here while the editor breaks OUT of
+     this horizontal padding (negative inline margin, below) and re-establishes the same
+     --agent-content-x column via its OWN padding — so its overflow scrollbar can hug the
+     panel edge, yet glyphs and text still line up, and both line up with the transcript. The padding is UNIFORM on all four sides, so the
+     bottom-corner controls (attach, send) sit an equal gap from the side and the floor
+     and read as symmetric. Focus is a quiet neutral --fill step (B3). */
+  margin: 0;
+  border-radius: var(--panel-radius) var(--panel-radius) 0 0;
+  background: var(--fill-1);
+  padding: calc(var(--agent-content-x) - var(--space-3));
+  transition: background var(--motion-fast);
 }
 
 .agent-composer-surface:focus-within {
-  background: var(--material-popover);
-  box-shadow: var(--outline-focus);
-}
-
-.agent-composer-surface:hover {
-  background: var(--material-popover);
-}
-
-.agent-composer-surface.is-streaming {
-  box-shadow: var(--outline-muted);
+  background: var(--fill-2);
 }
 
 .agent-composer-surface.is-dragging {
-  background: var(--material-popover);
-  box-shadow: var(--outline-focus);
-}
-
-.agent-composer-surface.is-streaming:focus-within {
-  box-shadow: var(--outline-focus);
+  background: var(--fill-2);
 }
 
 .agent-composer-drop-overlay {
@@ -332,7 +325,7 @@
 .agent-composer-editor {
   position: relative;
   display: block;
-  width: 100%;
+  width: auto;
   min-height: 32px;
   max-height: 160px;
   overflow-y: auto;
@@ -340,7 +333,15 @@
   cursor: text;
   font-size: var(--font-content);
   line-height: var(--line-content);
-  padding: var(--space-hairline) var(--space-2) calc(var(--space-2) + var(--space-hairline));
+  /* Break the scroll viewport OUT of the surface's horizontal padding so the overflow
+     scrollbar hugs the surface (panel) edge — exactly like the transcript scroll
+     (.agent-chat-scroll), which fills the dock width and pads its text by
+     --agent-content-x. The negative inline margins cancel the surface's L/R padding;
+     the editor then re-establishes the shared --agent-content-x text column via its own
+     horizontal padding. Net: text still lands on the 18px column on BOTH sides, but the
+     native scrollbar sits at the edge (B10) instead of floating a surface-pad inside it. */
+  margin-inline: calc(-1 * (var(--agent-content-x) - var(--space-3)));
+  padding: var(--space-hairline) var(--agent-content-x) calc(var(--space-2) + var(--space-hairline));
 }
 
 .agent-composer-editor .ProseMirror {
@@ -357,7 +358,8 @@
 .agent-composer-editor.is-empty::before {
   position: absolute;
   top: var(--space-hairline);
-  left: var(--space-2);
+  /* Match the editor's text padding-left so the placeholder sits on the same column. */
+  left: var(--agent-content-x);
   color: var(--text-faint);
   content: attr(data-placeholder);
   pointer-events: none;
@@ -605,7 +607,10 @@
 .agent-composer-model-menu {
   z-index: var(--z-agent-menu);
   overflow-y: auto;
-  border-radius: var(--radius-lg);
+  /* Canonical menu/popover radius (--radius-overlay-sm = 10), shared with the session
+     menu, outliner context menu, and settings menus — not --radius-lg (12), which left
+     this popover the odd one out. B9 / native consistency. */
+  border-radius: var(--radius-overlay-sm);
   /* Menu glass (design-system B5 / D2). --material-backdrop carries the PR-B
      reduced-transparency / high-contrast opaque fallback. */
   background: var(--material-popover);
@@ -708,6 +713,12 @@
   font-size: var(--font-ui-md);
   line-height: var(--line-ui-sm);
   padding: 7px var(--space-4);
+  /* Reserve the reasoning-level button's height (--control-size-xl) even when Thinking
+     is OFF and that button is unmounted. Otherwise toggling Thinking collapses this row
+     by the button's height and the whole menu jumps. The level button is the row's
+     tallest control; align-items:center keeps the switch centred in the reserved height.
+     (border-box: min-height spans content + the 7px vertical padding.) */
+  min-height: calc(var(--control-size-xl) + 7px * 2);
 }
 
 .agent-composer-thinking-row span:nth-child(2) {
@@ -745,7 +756,9 @@
   bottom: calc(100% + 6px);
   z-index: var(--z-agent-menu);
   min-width: 112px;
-  border-radius: var(--radius-md);
+  /* Same canonical menu radius as the parent model menu (--radius-overlay-sm) so the
+     nested thinking-level popover matches every other menu instead of using --radius-md. */
+  border-radius: var(--radius-overlay-sm);
   /* Menu glass (design-system B5 / D2). --material-backdrop carries the PR-B
      reduced-transparency / high-contrast opaque fallback. */
   background: var(--material-popover);

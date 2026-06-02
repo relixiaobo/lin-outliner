@@ -299,6 +299,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Agent composer is a flush input region, not a floating card (main)** — the
+  composer surface drops its `--layout-gap` inset and `--agent-composer-radius`
+  card: it is now full-bleed to the rail's side and bottom edges with a neutral
+  `--fill-1` background, rounded TOP corners at the rail's own `--panel-radius`
+  (the dock's `overflow:hidden` rounds the flush bottom to match), and uniform
+  padding. Focus and drag deepen one neutral step to `--fill-2` — no border, no
+  brand ring (B3). `design-system.md` (concentric chain + Agent component) and the
+  composer geometry guard test updated to match. (main)
+
 - **Provider model dropdowns rank by recency, not a static preferred list** —
   replaces the hand-maintained `PREFERRED_MODEL_IDS` allowlist (which sorted any
   unlisted model to the bottom via `MAX_SAFE_INTEGER`, silently burying Claude Opus
@@ -526,6 +535,32 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   [#11](https://github.com/relixiaobo/lin-outliner/pull/11))
 
 ### Fixed
+
+- **Agent dock collapse no longer janks (main)** — the rail collapsed by
+  animating `width`/`top`/`right`/`bottom` (layout properties), so the transcript
+  and composer re-wrapped every frame. It now slides off the right window edge via
+  `transform: translateX` + `opacity` like the sidebar — a rigid GPU-composited
+  layer move with no panel reflow. Glass material is applied unconditionally so it
+  persists through the collapse fade instead of popping. (main)
+
+- **Toggling Thinking no longer flickers the dock or jumps the model menu (main)**
+  — two issues: (1) every model/reasoning change called `reloadSession`, which set
+  the projection to empty and published it before re-fetching, flashing the whole
+  transcript blank for a frame; a same-session reload now keeps the current
+  projection on screen and swaps it atomically. (2) The model menu's reasoning row
+  unmounted the 28px level button when Thinking was off, collapsing the row and
+  jumping the menu height; the row now reserves the level-button height. (main)
+
+- **Composer overflow scrollbar hugs the panel edge (main)** — the editor's scroll
+  viewport was nested inside the surface's padding, so its native scrollbar floated
+  ~12px inside the panel with empty padding to its right. The editor now breaks out
+  of the horizontal padding (re-insetting its text to `--agent-content-x`) so the
+  scrollbar sits at the panel edge like the transcript scroll (B10). (main)
+
+- **Agent model menu uses the canonical menu radius (main)** — the model popover
+  and its thinking-level submenu used `--radius-lg` (12) / `--radius-md` (8); they
+  now use `--radius-overlay-sm` (10) like every other menu (session, context,
+  settings). (main)
 
 - **Agent composer footer controls are capsules, not rounded squares (B6)** — the
   send, attach, and model-selector controls were carrying the composer's 2px

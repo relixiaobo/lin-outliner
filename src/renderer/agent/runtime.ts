@@ -646,14 +646,20 @@ export class AgentRuntimeStore {
   reloadSession = async () => {
     const currentSessionId = this.sessionId;
     const requestVersion = this.beginSessionRequest();
-    this.projection = EMPTY_PROJECTION;
     this.error = null;
     this.clearPendingApprovalState();
+    // Keep the CURRENT projection on screen while a same-session reload re-fetches
+    // (e.g. after a model/reasoning config change, which doesn't alter the transcript).
+    // Blanking to EMPTY_PROJECTION + publish here flashed the whole transcript empty for
+    // one frame before re-hydrating — the dock flicker seen on every reasoning toggle.
+    // hydrateSession swaps in the fresh projection atomically below. Only the cold path
+    // (no session yet) legitimately shows empty while a session is established.
+    if (!currentSessionId) {
+      this.projection = EMPTY_PROJECTION;
+    }
     this.publish();
     try {
       if (currentSessionId) {
-        this.sessionId = currentSessionId;
-        this.publish();
         const session = await this.client.restoreSession(currentSessionId);
         if (this.isCurrentRequest(requestVersion)) this.hydrateSession(session);
         return;

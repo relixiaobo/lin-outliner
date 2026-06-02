@@ -1,8 +1,12 @@
 /* Floating glass rail on the right, with two states:
      open      — full rail, inset by --layout-gap, rounded --panel-radius
-     collapsed — a bare 26x26 icon seed at the top-right toggle footprint (no
-                 material/shadow/edge — restraint). Hover feedback is on the toggle
-                 itself (shell.css), not a glass chip behind it.
+     collapsed — slid fully off the right window edge and faded out (mirrors the
+                 sidebar). Hover feedback is on the window-chrome toggle itself
+                 (shell.css), not a glass chip behind it.
+   Collapse animates ONLY transform + opacity, so the rail moves as one GPU-composited
+   layer: its transcript + composer ride along rigidly and never re-wrap mid-animation.
+   (The earlier collapse shrank width/position over --motion-layout, which reflowed the
+   panel body every frame — the jank hitch the sidebar's transform slide doesn't have.)
    The panel body is never unmounted (chat scroll + composer draft survive). */
 .agent-dock {
   position: absolute;
@@ -20,51 +24,31 @@
   box-shadow: var(--shadow-rail), inset 0 0 0 0.5px var(--rail-edge);
   padding: 0;
   transition:
-    top var(--motion-layout),
-    right var(--motion-layout),
-    bottom var(--motion-layout),
-    width var(--motion-layout),
-    border-radius var(--motion-layout),
-    background var(--motion-fast),
-    box-shadow var(--motion-fast);
+    transform var(--motion-layout),
+    opacity var(--motion-layout);
 }
 
-/* Collapsed seed: shrink into the agent toggle's 26x26 footprint at the top-right
-   corner, with no material/shadow/edge. The toggle itself (window chrome) sits on
-   top of this footprint, so the seed shares the toggle's exact corner inset on
-   BOTH axes (--chrome-control-inset) — they must coincide. */
+/* Collapsed: the rail slides out past the RIGHT window edge and fades; the content
+   base then extends to that edge. The toggle stays (window chrome). The +4px (matching
+   the sidebar) clears the rail's outer edge ring + shadow so nothing peeks past the
+   window edge. The rail keeps its open width/position — only the transform + opacity
+   change — so the slide is a rigid GPU layer move with no panel reflow. */
 .agent-dock.agent-dock-collapsed {
-  top: var(--chrome-control-inset);
-  right: var(--chrome-control-inset);
-  bottom: auto;
-  width: var(--chrome-control-height);
-  height: var(--chrome-control-height);
-  background: transparent;
-  box-shadow: none;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-  pointer-events: none;
-}
-
-/* No hover "chip": the seed stays invisible when collapsed. Hover feedback lives
-   on the toggle itself (.rail-toggle:hover in shell.css) as a centred fill tint —
-   the rail-sized --shadow-rail on a 26px chip read as a box offset from the icon. */
-
-/* The panel body fades out (but stays mounted) when not open. */
-.agent-dock.agent-dock-collapsed .agent-chat-panel {
+  transform: translateX(calc(100% + var(--layout-gap) + 4px));
   opacity: 0;
   pointer-events: none;
 }
 
-.agent-dock .agent-chat-panel {
-  transition: opacity var(--motion-fast);
-}
+/* No hover "chip": the rail slides off-screen when collapsed. Hover feedback lives
+   on the toggle itself (.rail-toggle:hover in shell.css) as a centred fill tint —
+   the rail-sized --shadow-rail on a 26px chip read as a box offset from the icon. */
 
-/* Material: translucent only under OS vibrancy. The opaque fallback for
-   prefers-reduced-transparency / prefers-contrast and the reduced-motion reset
-   both live in a11y.css (one --material-* token swap + one global rule), so this
-   rail no longer carries its own per-file @media blocks. */
-:root[data-window-material] .agent-dock.agent-dock-open {
+/* Material: translucent only under OS vibrancy. Applied UNCONDITIONALLY (like the
+   sidebar) so the glass persists through the collapse fade instead of popping off the
+   instant the state class flips. The opaque fallback for prefers-reduced-transparency /
+   prefers-contrast and the reduced-motion reset both live in a11y.css (one --material-*
+   token swap + one global rule), so this rail carries no per-file @media blocks. */
+:root[data-window-material] .agent-dock {
   background: var(--material-sidebar);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
