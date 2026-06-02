@@ -626,6 +626,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **AGENTS.md reorganized to best-practice structure + on-the-loop model (PR #77)** —
+  restructured per Anthropic CLAUDE.md guidance (a Commands section up front,
+  load-bearing first, `Stack Constraints` folded into A1, userData / packaging /
+  `tmp` compressed into one Dev environment section) and folded in the
+  collaboration refinements: the PM ratifies a dev-drafted one-pager (on-the-loop,
+  not in-the-loop), a what-NOT-to-escalate rule, collision self-check as the dev
+  agent's job, explicit cross-agent autonomy boundaries, and mechanical
+  review-gate / `significant` triggers. `docs/TASKS.md` drops the hand-maintained
+  plan index — the active-plan catalog is derived from `docs/plans/*.md`
+  frontmatter. ([#77](https://github.com/relixiaobo/lin-outliner/pull/77))
 - **Collaboration-method model folded into `AGENTS.md`; docs restructured (PR #76)** —
   the agreed PM-led parallel-planning model lands in `AGENTS.md`: the main agent
   is the end-stage gate (no up-front framing), with a review-gate table, a WIP
