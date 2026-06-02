@@ -9,9 +9,10 @@ updated: 2026-05-30
 # Agent Tool Permissions — Hardening Follow-ups
 
 Follow-up work after the agent-tool-permissions implementation landed in
-[#60](https://github.com/relixiaobo/lin-outliner/pull/60). The core policy
-(`docs/plans/archive/agent-tool-permissions.md`, now `done`) shipped with its
-critical/high bash-classifier and rule-validator fail-opens fixed pre-merge.
+[#60](https://github.com/relixiaobo/lin-outliner/pull/60). The core policy (design in
+`docs/plans/archive/agent-tool-permissions.md`; current behavior in
+`docs/spec/agent-tool-permissions.md`) shipped with its critical/high
+bash-classifier and rule-validator fail-opens fixed pre-merge.
 This plan tracks the **non-blocking** medium/low items surfaced by the deep
 review that were deliberately deferred out of the fix commit. None is a live
 fail-open today; each is correctness-of-contract, defense-in-depth, or

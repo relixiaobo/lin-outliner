@@ -626,6 +626,14 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Agent permission authority folded into spec (PR #78)** — new
+  `docs/spec/agent-tool-permissions.md` is the authority for the shipped
+  allow/ask/deny policy (evaluation precedence, platform hard blocks, bash
+  classifier, ask resolution, sensitive-data redlines, fail-closed store, events,
+  UI), with a *Known divergences* section recording shipped-vs-plan gaps verified
+  against the implementation. `agent-tool-design.md` Approval Policy slimmed to a
+  pointer; the spec README index and the hardening plan re-pointed at the new
+  spec. ([#78](https://github.com/relixiaobo/lin-outliner/pull/78))
 - **AGENTS.md reorganized to best-practice structure + on-the-loop model (PR #77)** —
   restructured per Anthropic CLAUDE.md guidance (a Commands section up front,
   load-bearing first, `Stack Constraints` folded into A1, userData / packaging /

@@ -2045,8 +2045,12 @@ agents than only `merge_node_into_previous`.
 
 ## Approval Policy
 
-Read-only tools should run immediately when their permission scope is already
-allowed:
+The permission **policy** — the allow/ask/deny model, platform hard blocks, the
+bash classifier, ask resolution, sensitive-data redlines, the global store, and
+events — is specified in `agent-tool-permissions.md`. This section only
+classifies each tool as read-only vs mutating (the input that policy acts on).
+
+Read-only tools run immediately when their permission scope is already allowed:
 
 - `node_search`
 - `node_read`
@@ -2072,8 +2076,9 @@ Mutating tools may require approval depending on risk:
 - `bash`
 - `task_stop`
 
-Broad node edits, broad file edits, user-origin undo/redo, and risky shell
-commands should require approval even in permissive modes.
+How risk maps to allow / ask / deny (broad node/file edits, user-origin
+undo/redo, risky shell, exfiltration redlines, permissive-mode behavior) is owned
+by `agent-tool-permissions.md`.
 
 ## Implementation Notes
 
