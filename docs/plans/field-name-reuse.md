@@ -1,10 +1,13 @@
 ---
-status: in-progress
+status: done
 priority: P2
 owner: relixiaobo
 created: 2026-06-01
-updated: 2026-06-01
+updated: 2026-06-02
 ---
+
+> **Shipped in PR #70 (2026-06-02).** Field-name reuse + read-only system fields +
+> trailing-draft Tab relocate. Kept as historical context.
 
 # Field-name reuse + read-only system fields
 

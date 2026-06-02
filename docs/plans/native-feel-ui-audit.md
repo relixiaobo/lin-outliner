@@ -1,10 +1,16 @@
 ---
-status: draft
+status: done
 priority: P1
 owner: relixiaobo
 created: 2026-05-30
-updated: 2026-05-30
+updated: 2026-06-02
 ---
+
+> **Done (2026-06-02).** All four consolidated work packages shipped — PR-A (#62),
+> PR-B (#63), PR-C (#65), PR-D (#68). This audit shipped no code itself; it was the
+> evidence + packaging contract for those PRs. Kept as historical context. The
+> remaining native work (packaging + smoke, Stage 6) lives in
+> [`native-feel-remediation.md`](native-feel-remediation.md).
 
 # Native-Feel & UI Audit (verified snapshot)
 
