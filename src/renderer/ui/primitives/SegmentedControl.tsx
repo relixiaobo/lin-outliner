@@ -28,10 +28,16 @@ export function SegmentedControl<T extends string>({
 }: SegmentedControlProps<T>) {
   const refs = useRef<Array<HTMLButtonElement | null>>([]);
 
+  // Only notify on an actual change — re-selecting the active segment is a no-op,
+  // matching the native radio convention (and avoiding a redundant persist).
+  function select(next: T) {
+    if (next !== value) onChange(next);
+  }
+
   function focusAndSelect(index: number) {
     const next = options[index];
     if (!next) return;
-    onChange(next.value);
+    select(next.value);
     refs.current[index]?.focus();
   }
 
@@ -58,7 +64,7 @@ export function SegmentedControl<T extends string>({
             aria-checked={selected}
             className={`segmented-control-option${selected ? ' is-selected' : ''}`}
             key={option.value}
-            onClick={() => onChange(option.value)}
+            onClick={() => select(option.value)}
             onKeyDown={(event) => onKeyDown(event, index)}
             ref={(el) => { refs.current[index] = el; }}
             role="radio"

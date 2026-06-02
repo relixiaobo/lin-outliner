@@ -8,8 +8,6 @@
 // tiny module rather than the protocol surface in core/types.ts.
 export type ThemeMode = 'system' | 'light' | 'dark';
 
-export const THEME_MODES: readonly ThemeMode[] = ['system', 'light', 'dark'];
-
 export function isThemeMode(value: unknown): value is ThemeMode {
   return value === 'system' || value === 'light' || value === 'dark';
 }
