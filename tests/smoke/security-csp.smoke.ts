@@ -53,6 +53,10 @@ test.describe('security shell', () => {
     // (code 1) — not POSITION_UNAVAILABLE (2) — confirms a *permission* refusal,
     // i.e. the request was rejected before any provider was consulted, rather
     // than the request being granted and then failing for lack of a fix.
+    // (Accepted brittleness: if a future Electron/Chromium surfaces a denied
+    // request as code 2, this flips red — a useful canary, not a false pass. A
+    // code-agnostic assertion would go green even if the handler started
+    // granting, so we keep the strict === 1.)
     const outcome = await smoke.window.evaluate(
       () =>
         new Promise<{ ok: boolean; code: number | null }>((resolve) => {

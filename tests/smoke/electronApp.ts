@@ -14,7 +14,7 @@ import { dirname, join } from 'node:path';
 // never read or clobber a real clone's documents — and so the userData
 // isolation contract itself becomes testable (see userdata-isolation.smoke.ts).
 
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+export const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const MAIN_ENTRY = join(REPO_ROOT, 'out', 'main', 'main.js');
 
 export interface SmokeApp {

@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
-import { readdirSync, realpathSync, rmSync } from 'node:fs';
-import { closeSmokeApp, launchSmokeApp, type SmokeApp } from './electronApp';
+import { existsSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { closeSmokeApp, launchSmokeApp } from './electronApp';
 
 // Per-clone userData isolation (CLAUDE.md A5 / stage 6): the host resolves
 // userData from ELECTRON_USER_DATA_DIR before any service reads it, so each
@@ -20,15 +21,33 @@ test.describe('userData isolation', () => {
     }
   });
 
-  test('persists into the isolated dir, not a shared location', async () => {
+  test('persists a real document mutation into the isolated dir', async () => {
     const smoke = await launchSmokeApp();
     await smoke.window.locator('#root').waitFor();
     const userData = smoke.userDataDir;
-    // before-quit flushes pending document changes; closing exercises that path.
+    // The document store writes workspace.loro.json only on a real mutation;
+    // init/load only reads. So its absence after launch and presence after a
+    // mutation is a non-vacuous signal that persistence ran into THIS dir (a
+    // bare readdir would be satisfied by Chromium's own cache scaffolding).
+    const workspaceFile = join(userData, 'workspace.loro.json');
+    expect(existsSync(workspaceFile)).toBe(false);
+
+    // Apply a real mutation through the same IPC command surface the renderer
+    // uses (window.lin → 'lin:invoke' → documentService). create_node persists
+    // synchronously (saveCore) under the workspace root.
+    await smoke.window.evaluate(async () => {
+      const lin = (window as unknown as { lin: { invoke: (c: string, a?: unknown) => Promise<unknown> } }).lin;
+      const projection = (await lin.invoke('get_projection')) as { rootId: string };
+      await lin.invoke('create_node', { parentId: projection.rootId, text: 'smoke-persist' });
+    });
+    await expect.poll(() => existsSync(workspaceFile)).toBe(true);
+    const sizeAfterMutation = statSync(workspaceFile).size;
+
+    // before-quit flushes pending changes; the persisted state survives close.
     await closeSmokeApp(smoke, { keepUserData: true });
     try {
-      // The host wrote its document/event state into the isolated dir.
-      expect(readdirSync(userData).length).toBeGreaterThan(0);
+      expect(existsSync(workspaceFile)).toBe(true);
+      expect(statSync(workspaceFile).size).toBeGreaterThanOrEqual(sizeAfterMutation);
     } finally {
       rmSync(userData, { recursive: true, force: true });
     }

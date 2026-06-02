@@ -54,11 +54,14 @@ test.describe('external-link routing', () => {
 
   test('a non-http(s) window.open target is denied and NOT routed', async () => {
     await smoke.window.evaluate(() => {
-      window.open('file:///etc/passwd', '_blank');
+      window.open('file:///etc/passwd', '_blank'); // must be dropped
+      window.open('https://example.com/fence', '_blank'); // routed; ordering fence
     });
-    // openExternalUrl only forwards http(s); a file:// scheme must never reach
-    // shell.openExternal.
-    await smoke.window.waitForTimeout(300);
+    // Both opens hit the same handler in order, so once the later https fence is
+    // recorded the earlier file: open has been fully processed — a deterministic
+    // completion signal instead of a fixed wait. openExternalUrl forwards only
+    // http(s), so the file: scheme must never reach shell.openExternal.
+    await expect.poll(async () => (await opened()).includes('https://example.com/fence')).toBe(true);
     expect((await opened()).some((url) => url.startsWith('file:'))).toBe(false);
   });
 
