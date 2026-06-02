@@ -527,6 +527,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Agent composer footer controls are capsules, not rounded squares (B6)** — the
+  send, attach, and model-selector controls were carrying the composer's 2px
+  concentric-inset radius, so the filled send button read as a tiny rounded square
+  and the model button's hover fill clashed with it. They now use `--radius-pill`:
+  the 28px square icon buttons render as circles, the wide model button as a
+  stadium, so every footer control shows the same corner arc (= half its height)
+  and they line up. Codifies the systematic rule that interactive icon/pill
+  controls are fully-rounded capsules, off the concentric *surface* radius chain
+  (design-system.md + the composer layout guard test updated to match). (main)
 - **Code-block language picker redesign** — replaced the native `<select>` (which
   opened an OS-styled, uncoordinated dropdown) with the shared menu primitives: a
   compact trigger whose chevron sits next to the label, opening a portaled

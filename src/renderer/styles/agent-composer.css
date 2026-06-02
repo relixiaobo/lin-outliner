@@ -566,7 +566,10 @@
   height: 28px;
   align-items: center;
   gap: var(--space-2);
-  border-radius: var(--agent-composer-corner-radius);
+  /* Capsule control (B6): a wide footer control, so --radius-pill renders it as a
+     stadium pill whose hover fill echoes the glyph — matching the circular icon
+     buttons' corner arc (= half the shared 28px height) instead of a rounded box. */
+  border-radius: var(--radius-pill);
   color: var(--text-soft);
   font-size: var(--font-ui-sm);
   line-height: var(--line-meta);
@@ -793,7 +796,13 @@
   flex: 0 0 28px;
   align-items: center;
   justify-content: center;
-  border-radius: var(--agent-composer-corner-radius);
+  /* Capsule control (B6): the composer's interactive footer controls are
+     fully-rounded, never a rounded square. --radius-pill makes a square button a
+     circle and a wide button a stadium, so every 28px-tall footer control shows
+     the same corner arc (= half its height) and they line up. These controls
+     are deliberately OFF the concentric container radius chain (that governs the
+     composer *surface*); the chain is for nested surfaces, not floating controls. */
+  border-radius: var(--radius-pill);
 }
 
 .agent-composer-tool-button {

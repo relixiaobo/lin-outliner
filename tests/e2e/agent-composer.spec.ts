@@ -1178,6 +1178,7 @@ test.describe('agent composer controls', () => {
         attachmentSize: attachmentBox ? attachmentBox.width : null,
         dockInset: Number.parseFloat(rootStyle.getPropertyValue('--rail-pad')),
         modelRadius: modelStyle ? Number.parseFloat(modelStyle.borderTopLeftRadius) : null,
+        modelHeight: modelStyle ? Number.parseFloat(modelStyle.height) : null,
         composerBottomDelta: Math.abs(panelBox.bottom - composerBox.bottom),
         composerPaddingBottom: Number.parseFloat(composerStyle.paddingBottom),
         composerPaddingLeft: Number.parseFloat(composerStyle.paddingLeft),
@@ -1221,9 +1222,15 @@ test.describe('agent composer controls', () => {
     // above via a probe element, since it is a calc()). The outline panels are square
     // in the floating shell, so the surface radius no longer derives from a panel.
     expect(metrics!.surfaceRadius).toBe(metrics!.expectedSurfaceRadius);
-    expect(metrics!.actionRadius).toBe(metrics!.surfaceRadius - metrics!.surfacePaddingRight);
-    expect(metrics!.attachmentRadius).toBe(metrics!.surfaceRadius - metrics!.surfacePaddingLeft);
-    expect(metrics!.modelRadius).toBe(metrics!.actionRadius);
+    // The footer controls are fully-rounded capsules (B6), NOT on the concentric
+    // container chain that gives the surface its radius: --radius-pill makes each
+    // square icon button a circle and the wide model button a stadium, so every
+    // 28px-tall control shows the same corner arc (>= half its own height) and they
+    // line up. (Asserting >= half-height is robust to the browser returning either
+    // the specified --radius-pill length or its box-clamped used value.)
+    expect(metrics!.actionRadius!).toBeGreaterThanOrEqual(metrics!.actionSize! / 2);
+    expect(metrics!.attachmentRadius!).toBeGreaterThanOrEqual(metrics!.attachmentSize! / 2);
+    expect(metrics!.modelRadius!).toBeGreaterThanOrEqual(metrics!.modelHeight! / 2);
     expect(metrics!.actionSize).toBe(metrics!.attachmentSize);
     expect(Math.abs(metrics!.attachmentLeftInset! - metrics!.surfacePaddingLeft)).toBeLessThanOrEqual(1);
     expect(Math.abs(metrics!.attachmentBottomInset! - metrics!.surfacePaddingBottom)).toBeLessThanOrEqual(1);

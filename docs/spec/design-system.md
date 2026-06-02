@@ -406,20 +406,31 @@ Use these default desktop tokens before adding component-specific values:
   inner radius is `parent radius − inset`, so both corners share a single centre
   and the curves stay parallel. The canonical chain is window → rail → composer:
   `--radius-window 24` − gap 8 = rail `16` (`--panel-radius`); rail 16 − gap 8 =
-  composer `8` (`--agent-composer-radius`). Use the same rule for any nested
-  rounded control (a pill inside a row, a thumbnail inside a card); never pick a
-  nested radius by eye.
-- **The 24pt window corner is packaged-only — QA it with `bun run app:build`,
-  not `dev:*` (D7).** The OS owns the window's outer corner; the native addon
-  (`applyMacWindowCorner`) rounds it to `--radius-window 24` only on the real
-  packaged window. A `bun run dev:*` run loads in a default-cornered Electron
-  shell, so the 24 → 16 → 8 concentric chain is *partly* unverifiable there: the
-  rail (16) and composer (8) corners render, but they are measured against a
-  window corner that is not actually 24 in dev. Any visual check of the window
-  corner itself — its radius, the OS shadow/clip, traffic-light inset, or whether
-  the rails nest correctly inside it — must use a packaged build (`bun run
-  app:build`, then install/launch the `.dmg`). Don't sign off the corner from a
-  dev screenshot.
+  composer `8` (`--agent-composer-radius`). Use the same rule for a rounded
+  surface nested inside another (a thumbnail inside a card); never pick a nested
+  radius by eye.
+- **Interactive controls are capsules, not links in the concentric chain (B6).**
+  Icon buttons and the composer's send / attach / model controls are *fully
+  rounded* via `--radius-pill`: a square control renders as a circle, a wide one
+  as a stadium, so every control of the same height shows the same corner arc
+  (= half its height) and they line up regardless of which surface they float in.
+  The concentric chain governs nested *surfaces*; a control floating inside a
+  surface (with padding all around it) does not share that surface's corner, so it
+  does NOT derive `parent − inset`. Never give such a control a small
+  rounded-square radius — the failure mode is a 2px box sitting next to a circle
+  (the composer send/model controls had exactly this bug).
+- **The 24pt window corner needs the native addon compiled (`bun run
+  build:native`); once built it renders in `dev:*`, not only in a packaged
+  build.** The OS owns the window's outer corner; the native addon
+  (`applyMacWindowCorner`) rounds it to `--radius-window 24`. That addon
+  (`native/window-corner/build/Release/window_corner.node`) is gitignored build
+  output, so each clone must run `bun run build:native` once; until it does the
+  call silently no-ops and the window keeps the OS-default 16pt corner — which
+  reads as a *broken* radius, not a missing feature. With the addon built the
+  24 → 16 → 8 concentric chain is verifiable in `dev:*`. A packaged build (`bun
+  run app:build`, then install/launch the `.dmg`) is still required only for the
+  provider-config modal-child window's native presentation — sheet-attach and
+  parent-dim — which dev does not reproduce (D7).
 - Overlay shadow tokens are pure drop shadows. Floating menus, popovers,
   tooltips, and dialogs do not use a real outer border.
 - Focus uses neutral focus tokens, not brand color, unless the state is an
