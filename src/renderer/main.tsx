@@ -8,6 +8,7 @@ import {
 import { windowSurfaceFromSearch } from '../core/settingsWindow';
 import { App } from './ui/App';
 import { SettingsWindow } from './ui/SettingsWindow';
+import { ProviderConfigWindow } from './ui/agent/ProviderConfigWindow';
 import './styles/index.css';
 import './styles/outliner.css';
 
@@ -44,6 +45,12 @@ if (surface === 'main') {
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    {surface === 'settings' ? <SettingsWindow /> : <App />}
+    {surface === 'settings' ? (
+      <SettingsWindow />
+    ) : surface === 'provider-config' ? (
+      <ProviderConfigWindow />
+    ) : (
+      <App />
+    )}
   </React.StrictMode>,
 );

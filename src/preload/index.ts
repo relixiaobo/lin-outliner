@@ -104,6 +104,9 @@ const api = {
   },
   openSettings: () => ipcRenderer.invoke('lin:open-settings') as Promise<void>,
   closeSettings: () => ipcRenderer.invoke('lin:close-settings') as Promise<void>,
+  openProviderConfig: (params: { providerId: string; mode: 'configure' | 'custom' }) =>
+    ipcRenderer.invoke('lin:open-provider-config', params) as Promise<void>,
+  closeProviderConfig: () => ipcRenderer.invoke('lin:close-provider-config') as Promise<void>,
   notifySettingsChanged: () => ipcRenderer.invoke('lin:settings-changed') as Promise<void>,
   onSettingsChanged: (listener: () => void) => {
     const handler = () => listener();

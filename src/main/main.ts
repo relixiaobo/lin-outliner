@@ -10,7 +10,13 @@ import { AgentRuntime } from './agentRuntime';
 import { MAC_TRAFFIC_LIGHT_POSITION, MAC_WINDOW_CORNER_RADIUS } from '../core/chromeGeometry';
 import { windowMaterialKind } from '../core/windowMaterial';
 import { applyMacWindowCorner } from './nativeWindowCorner';
-import { LIN_SETTINGS_CHANGED_CHANNEL, WINDOW_SURFACE_QUERY_PARAM } from '../core/settingsWindow';
+import {
+  LIN_SETTINGS_CHANGED_CHANNEL,
+  PROVIDER_CONFIG_MODE_PARAM,
+  PROVIDER_CONFIG_PROVIDER_PARAM,
+  WINDOW_SURFACE_QUERY_PARAM,
+  type ProviderConfigMode,
+} from '../core/settingsWindow';
 import { LIN_WINDOW_ACTIVE_CHANNEL } from '../core/windowActivity';
 import { ASSET_URL_SCHEME } from '../core/assets';
 import { LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput } from '../core/types';
@@ -60,6 +66,7 @@ const documentService = new DocumentService();
 const assetService = new AssetService(() => join(app.getPath('userData'), 'assets'));
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
+let providerConfigWindow: BrowserWindow | null = null;
 let quitAfterFlush = false;
 let lastAttachmentPickerDirectory: string | null = null;
 const DEFAULT_ATTACHMENT_PICKER_LIMIT = 6;
@@ -461,6 +468,80 @@ function openSettingsWindow() {
   });
 }
 
+// The per-provider API-key form opens as its OWN native window — a modal child of
+// the settings window (the macOS System Settings idiom: a list row pushes its
+// detail into a real attached dialog, not an in-renderer overlay). It reuses the
+// single renderer bundle via ?surface=provider-config and is told which provider /
+// mode through the query. Frameless (no traffic lights — it is a dialog, closed by
+// its own Cancel / Save), opaque, fixed-size, centred over the parent. Security
+// defaults (A3) match every other window.
+function openProviderConfigWindow(providerId: string, mode: ProviderConfigMode) {
+  const parent = settingsWindow ?? undefined;
+  // Replace any open config window (clicking another provider re-targets it).
+  if (providerConfigWindow) {
+    providerConfigWindow.close();
+    providerConfigWindow = null;
+  }
+
+  const bounds = parent?.getBounds();
+  const width = 460;
+  const height = 384;
+  const position = bounds
+    ? {
+        x: Math.round(bounds.x + (bounds.width - width) / 2),
+        y: Math.round(bounds.y + Math.max(48, (bounds.height - height) / 2)),
+      }
+    : {};
+
+  providerConfigWindow = new BrowserWindow({
+    title: 'Configure provider',
+    width,
+    height,
+    ...position,
+    parent,
+    modal: Boolean(parent),
+    show: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    backgroundColor: prePaintBackgroundColor(),
+    frame: false,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  const target = providerConfigWindow;
+  hardenWebContents(target.webContents);
+  attachNativeContextMenu(target.webContents);
+  applyMacWindowCorner(target, MAC_WINDOW_CORNER_RADIUS);
+  target.once('ready-to-show', () => {
+    applyMacWindowCorner(target, MAC_WINDOW_CORNER_RADIUS);
+    target.show();
+  });
+
+  const query = {
+    [WINDOW_SURFACE_QUERY_PARAM]: 'provider-config',
+    [PROVIDER_CONFIG_PROVIDER_PARAM]: providerId,
+    [PROVIDER_CONFIG_MODE_PARAM]: mode,
+  };
+  if (RENDERER_DEV_URL) {
+    const url = new URL(RENDERER_DEV_URL);
+    for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
+    void target.loadURL(url.toString());
+  } else {
+    void target.loadFile(join(__dirname, '../renderer/index.html'), { query });
+  }
+
+  target.on('closed', () => {
+    providerConfigWindow = null;
+  });
+}
+
 function registerIpc() {
   ipcMain.handle('lin:invoke', async (_event, command: string, args?: Record<string, unknown>) => {
     const dispatch = () => {
@@ -489,10 +570,19 @@ function registerIpc() {
 
   ipcMain.handle('lin:open-settings', () => openSettingsWindow());
   ipcMain.handle('lin:close-settings', () => settingsWindow?.close());
-  // The settings window mutated provider/agent settings; tell the main window so
-  // it re-fetches instead of rendering stale provider state.
+  // Open the per-provider config as its own native (modal child) window.
+  ipcMain.handle('lin:open-provider-config', (_event, args?: { providerId?: unknown; mode?: unknown }) => {
+    const providerId = typeof args?.providerId === 'string' ? args.providerId : '';
+    const mode: ProviderConfigMode = args?.mode === 'custom' ? 'custom' : 'configure';
+    openProviderConfigWindow(providerId, mode);
+  });
+  ipcMain.handle('lin:close-provider-config', () => providerConfigWindow?.close());
+  // A provider/agent setting changed (from the settings window OR its config child).
+  // Tell BOTH the main window (stale provider state) and the settings window (its
+  // list reflects the new connection) to re-fetch.
   ipcMain.handle('lin:settings-changed', () => {
     mainWindow?.webContents.send(LIN_SETTINGS_CHANGED_CHANNEL);
+    settingsWindow?.webContents.send(LIN_SETTINGS_CHANGED_CHANNEL);
   });
 
   ipcMain.handle('lin:pick-local-files', async (event, rawOptions?: {

@@ -12,14 +12,18 @@ import type {
 } from '../../api/types';
 import { api } from '../../api/client';
 import { AddIcon, ChevronLeftIcon, ChevronRightIcon, ICON_SIZE, WarningIcon } from '../icons';
-import { providerIconSvg } from './providerIcon';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
 import { SelectControl } from '../primitives/SelectControl';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
-import { SettingsProviderSheet, type ProviderSheetDraft } from './SettingsProviderSheet';
+import {
+  ProviderAvatar,
+  formatProviderName,
+  providerHasCredential,
+  resolveUsableActiveProvider,
+} from './providerCatalog';
 import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
 import { coerceReasoningLevel, defaultReasoningLevel } from './settingsReasoning';
 
@@ -237,9 +241,8 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
   const [allAgents, setAllAgents] = useState<AgentDefinition[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(false);
   const [selectedAgentName, setSelectedAgentName] = useState<string>('general');
-  // The per-provider config SHEET (opened by clicking a row or "Configure…") and
-  // the per-row ⋯ actions menu (only one open at a time, keyed by providerId).
-  const [sheetOpen, setSheetOpen] = useState(false);
+  // The per-row ⋯ actions menu (only one open at a time, keyed by providerId). The
+  // per-provider config opens in its own native window, not an in-renderer sheet.
   const [openRowMenu, setOpenRowMenu] = useState<string | null>(null);
 
   useEffect(() => {
@@ -286,7 +289,6 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     setNotice(null);
     setNav({ stack: ['providers'], index: 0 });
     setCreatingCustom(false);
-    setSheetOpen(false);
 
     void Promise.all([
       api.agentGetProviderSettings(),
@@ -306,6 +308,23 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
       .finally(() => {
         if (isCurrentRequest(requestId)) setLoading(false);
       });
+  }, []);
+
+  // The per-provider config window commits in its own process surface and asks the
+  // main process to broadcast a settings-changed; refetch so the list reflects the
+  // new connection (active provider, "Connected" grouping) without a manual reopen.
+  useEffect(() => {
+    const off = window.lin?.onSettingsChanged?.(() => {
+      const requestId = beginRequest();
+      void api.agentGetProviderSettings()
+        .then((next) => {
+          if (!isCurrentRequest(requestId)) return;
+          setSettings(next);
+          setDraft(resolveInitialDraft(next));
+        })
+        .catch(() => { /* a refetch failure leaves the prior list in place */ });
+    });
+    return off;
   }, []);
 
   useEffect(() => {
@@ -355,14 +374,10 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     return catalog;
   }, [settings]);
 
-  const configuredProvider = settings?.providers.find((provider) => provider.providerId === draft.providerId);
-  const selectedCatalog = providerCatalog.get(draft.providerId);
-  const isCustomProvider = Boolean(draft.providerId) && !providerCatalog.has(draft.providerId);
-  const showConnectionFields = creatingCustom || isCustomProvider;
-  const hasSavedCredential = providerHasCredential(configuredProvider, selectedCatalog);
-  const catalogModels = selectedCatalog?.models ?? [];
   // The active provider's draft model determines which reasoning levels the global
-  // save() may coerce to (the provider sheet manages its own selection internally).
+  // save() may coerce to (the per-provider connection is edited in its own window).
+  const selectedCatalog = providerCatalog.get(draft.providerId);
+  const catalogModels = selectedCatalog?.models ?? [];
   const selectedModel = catalogModels.find((model) => model.id === draft.modelId);
   const selectedReasoningLevels: AgentReasoningLevel[] = selectedModel?.supportedThinkingLevels.length
     ? selectedModel.supportedThinkingLevels
@@ -372,7 +387,6 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     () => settings ? buildProviderChoices(settings, draft.providerId, providerCatalog) : [],
     [draft.providerId, providerCatalog, settings],
   );
-  const activeRowProviderId = creatingCustom ? '' : draft.providerId;
   // Grouped inset list: "Connected" = has a credential (key or env/managed),
   // "Available" = the rest. macOS System Settings groups this way.
   const connectedChoices = useMemo(
@@ -383,16 +397,6 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     () => providerChoices.filter((choice) => !choice.hasCredential),
     [providerChoices],
   );
-  const selectedChoice = providerChoices.find((choice) => choice.providerId === activeRowProviderId);
-  const detailName = creatingCustom
-    ? 'Custom provider'
-    : draft.providerId ? formatProviderName(draft.providerId) : '';
-  const detailDescription = showConnectionFields
-    ? 'Connect any OpenAI-compatible endpoint.'
-    : providerDescription(selectedCatalog);
-  const authInfo = showConnectionFields ? undefined : PROVIDER_AUTH[draft.providerId];
-  const docsUrl = showConnectionFields ? undefined : PROVIDER_DOCS_URL[draft.providerId];
-  const baseUrlPlaceholder = selectedCatalog?.defaultBaseUrl ?? 'https://api.example.com/v1';
 
   const selectedAgent = allAgents.find((a) => a.name === selectedAgentName) || allAgents[0];
   const permissionDiagnostics = permissionDraft?.diagnostics ?? permissionSettings?.diagnostics ?? [];
@@ -425,37 +429,10 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     setError(null);
   }
 
-  function selectProvider(providerId: string) {
-    setCreatingCustom(false);
-    const existing = settings?.providers.find((provider) => provider.providerId === providerId);
-    const catalog = providerCatalog.get(providerId);
-    setDraft((current) => ({
-      ...current,
-      providerId,
-      modelId: existing?.modelId ?? catalog?.models[0]?.id ?? '',
-      reasoningLevel: existing?.reasoningLevel ?? defaultReasoningLevel(catalog?.models[0]),
-      baseUrl: existing?.baseUrl ?? '',
-      enabled: existing?.enabled ?? true,
-    }));
-    setApiKey('');
-    setNotice(null);
-    setError(null);
-  }
-
+  // Custom (OpenAI-compatible) providers are configured in the same native window,
+  // in 'custom' mode (the window enters the provider id + model itself).
   function startCustomProvider() {
-    setCreatingCustom(true);
-    setDraft((current) => ({
-      ...current,
-      providerId: '',
-      modelId: '',
-      reasoningLevel: 'off',
-      baseUrl: '',
-      enabled: true,
-    }));
-    setApiKey('');
-    setNotice(null);
-    setError(null);
-    setSheetOpen(true);
+    void window.lin?.openProviderConfig?.({ providerId: '', mode: 'custom' });
   }
 
   async function save() {
@@ -560,54 +537,6 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     void runProviderMutation(() => api.agentDeleteProviderConfig(providerId), 'Provider removed', true);
   }
 
-  // The provider sheet owns its own pending/cancel UI; these just run the IPC.
-  // Validate tests the (unsaved) draft connection without persisting anything.
-  async function validateProviderDraft(sheet: ProviderSheetDraft): Promise<{ success: boolean; message: string }> {
-    const providerId = sheet.providerId.trim();
-    const existing = settings?.providers.find((provider) => provider.providerId === providerId);
-    const catalog = providerCatalog.get(providerId);
-    const result = await api.agentTestProviderConnection({
-      providerId,
-      modelId: sheet.modelId.trim() || existing?.modelId || catalog?.models[0]?.id || getFallbackModelId(providerId),
-      baseUrl: sheet.baseUrl.trim() || undefined,
-      apiKey: sheet.apiKey.trim() || undefined,
-    });
-    return { success: result.success, message: result.message };
-  }
-
-  // Save commits the connection (base URL + credential) and refetches. Model &
-  // reasoning are not edited in the sheet (the composer owns them), so preserve the
-  // existing values, defaulting a new provider to the catalog flagship.
-  async function commitProviderConfig(sheet: ProviderSheetDraft): Promise<void> {
-    const providerId = sheet.providerId.trim();
-    if (!providerId) return;
-    const requestId = beginRequest();
-    setError(null);
-    setNotice(null);
-    const existing = settings?.providers.find((provider) => provider.providerId === providerId);
-    const catalog = providerCatalog.get(providerId);
-    const modelId = sheet.modelId.trim() || existing?.modelId || catalog?.models[0]?.id || '';
-    const reasoningLevel = existing?.reasoningLevel ?? defaultReasoningLevel(catalog?.models[0]);
-    await api.agentUpsertProviderConfig({
-      providerId,
-      modelId,
-      reasoningLevel,
-      baseUrl: sheet.baseUrl.trim() || null,
-      enabled: true,
-    });
-    if (sheet.apiKey.trim()) {
-      await api.agentSetProviderApiKey(providerId, sheet.apiKey.trim());
-    }
-    const next = await api.agentGetProviderSettings();
-    if (isCurrentRequest(requestId)) {
-      setSettings(next);
-      setDraft(resolveDraftForProvider(next, providerId));
-      setCreatingCustom(false);
-      setNotice('Saved');
-    }
-    await onApplied();
-  }
-
   const isSkillDisabled = (skillName: string) => draft.disabledSkills.includes(skillName);
   const toggleSkill = (skillName: string) => {
     setDraft((current) => {
@@ -628,20 +557,22 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     });
   };
 
-  // Open the config sheet for a provider (clicking a row or "Configure…").
-  function openProviderSheet(providerId: string) {
-    selectProvider(providerId);
-    setSheetOpen(true);
+  // Open the per-provider config in its OWN native window (a modal child of
+  // settings — the macOS idiom), not an in-renderer overlay. Clicking a row or
+  // "Configure…" asks the main process to open it; the window commits via IPC and
+  // broadcasts a settings-changed, which refetches the list (see the effect below).
+  function openProviderConfig(providerId: string) {
+    void window.lin?.openProviderConfig?.({ providerId, mode: 'configure' });
   }
 
   // Stable per-row handlers via a latest-ref so the memoized provider rows keep a
-  // constant identity and never re-render while a sheet is open or another row's
-  // menu toggles. The ref always points at the freshest closures (no stale reads).
-  const rowHandlersImpl = { openProviderSheet, activateProvider, deleteProviderFor, setOpenRowMenu };
+  // constant identity and never re-render while another row's menu toggles. The ref
+  // always points at the freshest closures (no stale reads).
+  const rowHandlersImpl = { openProviderConfig, activateProvider, deleteProviderFor, setOpenRowMenu };
   const rowHandlersRef = useRef(rowHandlersImpl);
   rowHandlersRef.current = rowHandlersImpl;
   const rowHandlers = useMemo<ProviderRowHandlers>(() => ({
-    onConfigure: (id) => rowHandlersRef.current.openProviderSheet(id),
+    onConfigure: (id) => rowHandlersRef.current.openProviderConfig(id),
     onActivate: (id) => rowHandlersRef.current.activateProvider(id),
     onRemove: (id) => rowHandlersRef.current.deleteProviderFor(id),
     onMenuOpenChange: (id, open) => rowHandlersRef.current.setOpenRowMenu(open ? id : null),
@@ -739,38 +670,6 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                     />
                   </InsetGroup>
                 </div>
-
-                {sheetOpen ? (
-                  <SettingsProviderSheet
-                    authNote={authInfo}
-                    avatar={creatingCustom
-                      ? <span className="settings-provider-avatar is-large" aria-hidden="true">+</span>
-                      : <ProviderAvatar large providerId={draft.providerId} />}
-                    baseUrlPlaceholder={baseUrlPlaceholder}
-                    defaultBaseUrl={selectedCatalog?.defaultBaseUrl}
-                    description={detailDescription}
-                    docsUrl={docsUrl}
-                    hasSavedKey={hasSavedCredential}
-                    initial={{
-                      providerId: draft.providerId,
-                      modelId: draft.modelId,
-                      baseUrl: draft.baseUrl,
-                    }}
-                    isActive={Boolean(selectedChoice?.active)}
-                    mode={showConnectionFields ? 'custom' : 'configure'}
-                    onClose={() => setSheetOpen(false)}
-                    onOpenExternal={(url) => void api.openExternalUrl(url)}
-                    onRemoveProvider={!creatingCustom && configuredProvider
-                      ? () => { deleteProviderFor(draft.providerId); setSheetOpen(false); }
-                      : undefined}
-                    onSetActive={!creatingCustom && hasSavedCredential && !selectedChoice?.active
-                      ? () => { activateProvider(draft.providerId); setSheetOpen(false); }
-                      : undefined}
-                    onSubmit={commitProviderConfig}
-                    onValidate={validateProviderDraft}
-                    providerName={detailName}
-                  />
-                ) : null}
               </section>
             ) : category === 'permissions' ? (
               <section className="agent-settings-section settings-permissions-section" aria-labelledby="settings-permissions-heading">
@@ -1140,24 +1039,6 @@ function compareProviderChoices(left: ProviderChoice, right: ProviderChoice): nu
   });
 }
 
-function providerHasCredential(
-  provider: AgentProviderConfigView | undefined,
-  catalog: AgentProviderOption | undefined,
-): boolean {
-  return Boolean(provider?.hasApiKey || provider?.hasEnvApiKey || catalog?.hasEnvApiKey);
-}
-
-function resolveUsableActiveProvider(settings: AgentProviderSettingsView): AgentProviderConfigView | undefined {
-  const isUsable = (provider: AgentProviderConfigView) => {
-    const catalog = settings.availableProviders.find((candidate) => candidate.providerId === provider.providerId);
-    return provider.enabled && providerHasCredential(provider, catalog);
-  };
-  return settings.activeProviderId
-    ? settings.providers.find((provider) => provider.providerId === settings.activeProviderId && isUsable(provider))
-      ?? settings.providers.find(isUsable)
-    : settings.providers.find(isUsable);
-}
-
 function providerStatusLabel(provider: ProviderChoice): string {
   if (!provider.configured) return provider.hasCredential ? 'Ready' : 'Add key';
   if (!provider.enabled) return 'Disabled';
@@ -1212,133 +1093,3 @@ function uniqueStrings(values: readonly string[]): string[] {
   return [...new Set(values)];
 }
 
-const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
-  anthropic: 'Anthropic',
-  openai: 'OpenAI',
-  'openai-codex': 'OpenAI Codex',
-  'azure-openai-responses': 'Azure OpenAI',
-  google: 'Google Gemini',
-  'google-vertex': 'Google Vertex AI',
-  openrouter: 'OpenRouter',
-  deepseek: 'DeepSeek',
-  xai: 'xAI',
-  groq: 'Groq',
-  mistral: 'Mistral',
-  moonshotai: 'Moonshot AI',
-  'moonshotai-cn': 'Moonshot AI (CN)',
-  zai: 'Z.AI',
-  together: 'Together AI',
-  fireworks: 'Fireworks AI',
-  cerebras: 'Cerebras',
-  minimax: 'MiniMax',
-  huggingface: 'Hugging Face',
-  'kimi-coding': 'Kimi Coding',
-  'github-copilot': 'GitHub Copilot',
-};
-
-// Tokens that should keep a specific casing when a provider id falls through to
-// the generic title-case path (e.g. `cloudflare-ai-gateway` -> Cloudflare AI Gateway).
-const NAME_TOKEN_OVERRIDES: Record<string, string> = {
-  ai: 'AI',
-  openai: 'OpenAI',
-  api: 'API',
-  cn: 'CN',
-  ams: 'AMS',
-  sgp: 'SGP',
-  gpt: 'GPT',
-  github: 'GitHub',
-};
-
-// Where to mint an API key, for the providers we can link directly. Omitted
-// providers simply drop the helper link.
-const PROVIDER_DOCS_URL: Record<string, string> = {
-  anthropic: 'https://console.anthropic.com/settings/keys',
-  openai: 'https://platform.openai.com/api-keys',
-  google: 'https://aistudio.google.com/app/apikey',
-  openrouter: 'https://openrouter.ai/keys',
-  deepseek: 'https://platform.deepseek.com/api_keys',
-  xai: 'https://console.x.ai',
-  groq: 'https://console.groq.com/keys',
-  mistral: 'https://console.mistral.ai/api-keys',
-};
-
-// Providers pi-ai authenticates with something other than a pasteable API key.
-// Until the OAuth sign-in flow lands (docs/plans/agent-oauth-providers.md), we
-// at least stop showing a misleading "Paste key" field for them.
-interface ProviderAuthInfo {
-  kind: 'oauth' | 'managed';
-  note: string;
-  docsUrl?: string;
-  docsLabel?: string;
-}
-
-const PROVIDER_AUTH: Record<string, ProviderAuthInfo> = {
-  'github-copilot': {
-    kind: 'oauth',
-    note: 'GitHub Copilot signs in with your GitHub account — there is no API key to paste. Sign-in support is coming soon.',
-    docsUrl: 'https://github.com/features/copilot',
-    docsLabel: 'About GitHub Copilot',
-  },
-  'openai-codex': {
-    kind: 'oauth',
-    note: 'Codex uses your ChatGPT sign-in rather than an API key. Sign-in support is coming soon.',
-  },
-  'amazon-bedrock': {
-    kind: 'managed',
-    note: 'Bedrock uses your AWS credentials (a named profile, IAM role, or AWS_* environment variables) — there is no API key to paste here.',
-    docsUrl: 'https://docs.aws.amazon.com/bedrock/latest/userguide/getting-started.html',
-    docsLabel: 'AWS credential setup',
-  },
-  'google-vertex': {
-    kind: 'managed',
-    note: 'Vertex AI uses Google Cloud Application Default Credentials (run `gcloud auth application-default login`) — there is no API key to paste here.',
-    docsUrl: 'https://cloud.google.com/docs/authentication/provide-credentials-adc',
-    docsLabel: 'Set up ADC',
-  },
-};
-
-function formatProviderName(providerId: string): string {
-  const known = PROVIDER_DISPLAY_NAMES[providerId];
-  if (known) return known;
-  return providerId
-    .split(/[-_]/g)
-    .filter(Boolean)
-    .map((part) => NAME_TOKEN_OVERRIDES[part] ?? part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ') || providerId;
-}
-
-function providerInitial(providerId: string): string {
-  return (formatProviderName(providerId).trim()[0] ?? '?').toUpperCase();
-}
-
-function ProviderAvatar({ providerId, large }: { providerId: string; large?: boolean }) {
-  const svg = providerIconSvg(providerId);
-  const className = `settings-provider-avatar${large ? ' is-large' : ''}${svg ? ' has-logo' : ''}`;
-  return (
-    <span className={className} aria-hidden="true">
-      {svg ? (
-        // Trusted, build-time vendored brand SVGs (no remote/user input) — inlined
-        // so `currentColor` marks follow the theme.
-        <span className="settings-provider-logo" dangerouslySetInnerHTML={{ __html: svg }} />
-      ) : providerInitial(providerId)}
-    </span>
-  );
-}
-
-function providerDescription(catalog: AgentProviderOption | undefined): string {
-  if (!catalog || catalog.models.length === 0) return 'Connect any OpenAI-compatible endpoint.';
-  const names = catalog.models.slice(0, 3).map((model) => model.name.replace(/\s*\(latest\)/i, ''));
-  const suffix = catalog.models.length > names.length ? ', and more' : '';
-  return `Includes ${names.join(', ')}${suffix}.`;
-}
-
-function getFallbackModelId(providerId: string): string {
-  const lower = providerId.toLowerCase();
-  if (lower.includes('anthropic') || lower.includes('claude')) {
-    return 'claude-3-5-sonnet-latest';
-  }
-  if (lower.includes('google') || lower.includes('gemini')) {
-    return 'gemini-2.5-flash';
-  }
-  return 'gpt-4o';
-}

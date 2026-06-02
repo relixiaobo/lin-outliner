@@ -81,7 +81,7 @@ paper palettes, or feature concepts Lin does not own.
 | Agent dock | `AgentDock.tsx`, `AgentChatPanel.tsx`, `AgentDebugPanel.tsx` | Persistent dock, chat scroll, debug surface, settings entry. |
 | Agent messages | `AgentMessageRow.tsx`, `AgentMessageFrame.tsx`, `AgentBranchNavigator.tsx`, `AgentProcessBlock.tsx`, `AgentProcessTimeline.tsx`, `AgentThinkingBlock.tsx`, `AgentToolCallBlock.tsx`, `AgentToolCallDisclosure.tsx` | Messages, process disclosure, thinking, tool calls, status slots. |
 | Agent composer | `AgentComposer.tsx`, `AgentComposerControls.tsx`, `AgentComposerModelMenu.tsx` | Textarea, attachments, model menu, reasoning switch, send/stop slot. |
-| Agent settings | `AgentSettingsView.tsx`, `SettingsInsetList.tsx`, `SettingsRowMenu.tsx`, `SettingsProviderSheet.tsx`, `styles/settings-*.css` | Standalone settings window: category sidebar + full-width inset grouped provider list, per-row `⋯` menu, and the per-provider config sheet. See "Settings window" below. |
+| Agent settings | `AgentSettingsView.tsx`, `SettingsInsetList.tsx`, `SettingsRowMenu.tsx`, `ProviderConfigWindow.tsx` / `ProviderConfigForm.tsx`, `providerCatalog.tsx`, `styles/settings-*.css` | Standalone settings window: category sidebar + full-width inset grouped provider list, per-row `⋯` menu, and the per-provider config as its own native (modal child) window. See "Settings window" below. |
 | Primitives | `ButtonControl.tsx`, `CheckboxControl.tsx`, `CheckboxMark.tsx`, `IconButton.tsx`, `SwitchControl.tsx`, `SwitchMark.tsx`, `SelectControl.tsx`, `TextInputControl.tsx`, `NumberInputControl.tsx` | Thin semantic or visual primitives. Behavior remains caller-owned unless the primitive explicitly owns native control semantics. |
 
 ## Foundations
@@ -467,7 +467,13 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
   buttons use the neutral `--fill-*` ladder and neutral `--focus-ring` — not the
   brand colour and not the macOS system accent. (Raycast and Finder both keep
   selection and primary buttons neutral; native feel comes from materials,
-  layout, and behaviour, not from a coloured selection.)
+  layout, and behaviour, not from a coloured selection.) A toggle / checkbox
+  **on**-state is functional state too: the checked fill is a strong neutral
+  graphite (`--control-on`, alpha-on-ink so it inverts with the theme), never the
+  status-success green — a green switch would smuggle a status colour onto an
+  interactive control (B4). The off track and unchecked outline stay the faint
+  neutral ink alpha; on-state reads from the stronger fill plus the thumb / check
+  glyph, not from hue.
 - **Text selection is neutral too.** The editor text-selection highlight
   (`::selection`, `--text-selection-bg`) is a neutral ink alpha — the one place
   the OS would normally paint its system accent, kept neutral for consistency
@@ -729,7 +735,7 @@ and non-goals; product behavior stays with the owning surface.
 
 | Component | Sources | Contract |
 | --- | --- | --- |
-| `CheckboxMark` | `CheckboxMark.tsx` | Decorative `16px` checkbox mark with `3px` radius. Unchecked is outlined; checked is success-filled. Does not own row behavior or persistence. |
+| `CheckboxMark` | `CheckboxMark.tsx` | Decorative `16px` checkbox mark with `3px` radius. Unchecked is outlined; checked is a neutral strong fill (`--control-on`) — never status green (B3/B4). Does not own row behavior or persistence. |
 | `CheckboxControl` | `CheckboxControl.tsx`, `AgentSettingsDialog.tsx` | Labeled native checkbox wrapper for settings/forms. Keeps native checkbox semantics and `CheckboxMark` visual together. |
 | `SwitchControl` / `SwitchMark` | `SwitchControl.tsx`, `SwitchMark.tsx`, `DefinitionConfigControls.tsx`, `AgentComposerModelMenu.tsx`, `TypedFieldValueControl.tsx` | Semantic switch wrapper plus shared `30px x 18px` track and `14px` thumb. Does not own labels or persistence. |
 | `IconButton` | `IconButton.tsx` | Icon-first button with explicit accessible label and tokenized icon size. Visual variant stays caller-owned. |
@@ -1045,7 +1051,7 @@ not Apple chrome. We borrow the interaction, not the chrome.
   container, so the rail stays put; the grouped cards float on it on the same
   `--bg-elevated` surface as the rail. The content pane shows the selected
   category full-width — for Providers, a grouped provider list. There is NO
-  permanent side detail pane: per-provider config opens in a sheet (below).
+  permanent side detail pane: per-provider config opens in its own native window (below).
   Categories — not individual providers — are the top-level rail rows.
 - **No redundant chrome.** The window is closed through native window chrome
   (the traffic lights), like System Settings — there is no in-content Close
@@ -1093,27 +1099,34 @@ not Apple chrome. We borrow the interaction, not the chrome.
   `prefers-reduced-transparency` opaque fallback (B5/D2) at the level-1 menu tier
   (B10). Rows are memoized + fed stable handlers, so opening one provider's sheet
   never re-renders the list.
-- **Per-provider config sheet — connection only.** Clicking a row (or "Configure…")
-  opens `SettingsProviderSheet.tsx` — a focused sheet, the native model where a
-  list row pushes its detail into an overlay rather than a side pane. It is built
-  on `Dialog` at the dialog elevation tier (level-2, B10), with a brand-avatar +
-  title/subtitle head and a SINGLE inset card holding only the connection: a
-  label-less credential row (a key glyph + the field, native password-dialog style)
-  and the base URL inline (the lone advanced setting — no disclosure). Model and
-  reasoning are NOT set here — they are chosen per-message in the composer, so the
-  sheet stays minimal; on save the existing model/reasoning are preserved (a new
-  provider defaults to the catalog flagship). Custom (OpenAI-compatible) providers
-  additionally enter a provider id and a model id in the same card, since there is
-  no catalog to default from. It owns its own draft + its own Cancel / Save —
-  Providers commit per-sheet, so the surface has NO global save bar
-  (apply-per-provider, like native). Validation is async and non-blocking: the
-  sheet stays interactive, shows a pending row, and can be cancelled (a request-id
-  guard drops a stale/cancelled result). The sheet is multi-mode so managed
-  credential modes (OAuth, AWS/Vertex) plug in later — an API key is one `mode`.
-  Managed-credential providers (e.g. AWS Bedrock) show an auth note instead of a
-  key field.
+- **Per-provider config — its OWN native window, connection only.** Clicking a row
+  (or "Configure…") opens the config as a real native window, NOT an in-renderer
+  overlay: a frameless **modal child of the settings window** (`?surface=provider-config`,
+  opened by the main process via `lin:open-provider-config`) — the macOS System
+  Settings idiom where a list row opens a real attached dialog (cf. the Wi-Fi
+  password sheet). The window IS the dialog surface (`.provider-config-window`,
+  `ProviderConfigWindow.tsx` → `ProviderConfigForm.tsx`): opaque, filling the frame,
+  no traffic lights (closed by its own Cancel / Save or Escape), no backdrop (the OS
+  dims the parent). It has a brand-avatar + title/subtitle head and a SINGLE inset
+  card holding only the connection: a label-less credential row (a key glyph + the
+  field, native password-dialog style) and the base URL inline (the lone advanced
+  setting — no disclosure). Model and reasoning are NOT set here — they are chosen
+  per-message in the composer, so it stays minimal; on save the existing
+  model/reasoning are preserved (a new provider defaults to the catalog flagship).
+  Custom (OpenAI-compatible) providers additionally enter a provider id and a model
+  id in the same card, since there is no catalog to default from. It fetches its own
+  provider settings and commits via the existing agent IPC, then calls
+  `notifySettingsChanged` so the main process broadcasts a settings-changed to BOTH
+  the settings list (which refetches — `onSettingsChanged`) and the main window. It
+  owns its own Cancel / Save — providers commit per-window, so the list surface has
+  NO global save bar (apply-per-provider, like native). Validation is async and
+  non-blocking: the form stays interactive, shows a pending row, and can be
+  cancelled (a request-id guard drops a stale/cancelled result). The form is
+  multi-mode so managed credential modes (OAuth, AWS/Vertex) plug in later — an API
+  key is one `mode`. Managed-credential providers (e.g. AWS Bedrock) show an auth
+  note instead of a key field.
 - **Status colour for status only (B4).** Validation success/failure uses
-  `--status-success` / `--status-danger`; the primary sheet action is a NEUTRAL
+  `--status-success` / `--status-danger`; the primary config action is a NEUTRAL
   strong fill (`--fill-3`), never a system-blue accent.
 
 ## Patterns

@@ -1,23 +1,27 @@
 /* ════════════════════════════════════════════════════════════════════════════
-   PROVIDER CONFIG SHEET (settings → SettingsProviderSheet.tsx).
-   Clicking a provider row opens this focused sheet — the macOS System Settings
-   idiom where a list row pushes its detail into an overlay rather than a side
-   pane. It hosts the whole provider config (credential, base URL, model &
-   reasoning) plus an async validate, on the shared Dialog at the dialog elevation
-   tier (level-2, B10). Fields are hairline-separated rows in inset cards (the
-   native grouped-list look). The primary action is a NEUTRAL strong fill (B4: no
-   system blue); validation status uses status colour for status only (B4).
+   PROVIDER CONFIG (settings → ProviderConfigForm.tsx / ProviderConfigWindow.tsx).
+   Clicking a provider row opens this focused connection form. It is NOT an
+   in-renderer overlay: it opens as its OWN native window — a modal child of the
+   settings window (the macOS System Settings idiom, where a list row opens a real
+   attached dialog). So the WINDOW is the dialog surface; the form fills it. It
+   hosts the connection (credential + base URL) plus an async validate. Fields are
+   hairline-separated rows in inset cards (the native grouped-list look). The
+   primary action is a NEUTRAL strong fill (B4: no system blue); validation status
+   uses status colour for status only (B4).
    ════════════════════════════════════════════════════════════════════════════ */
 
-.settings-sheet-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-modal);
+/* The native provider-config window's content surface: opaque, filling the frame
+   (no backdrop — the OS dims the parent; no traffic lights — closed via its own
+   Cancel / Save). Reuses the sheet head / body / actions layout below. */
+.provider-config-window {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--overlay-backdrop);
-  padding: var(--space-8);
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--surface);
+  padding: var(--space-6);
 }
 
 .settings-provider-sheet {
