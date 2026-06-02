@@ -224,14 +224,22 @@ button.panel-resize-handle {
   height: 24px;
   align-items: center;
   justify-content: center;
+  /* border-radius only shapes the :focus-visible ring (a box-shadow outline), never a
+     fill — icon chrome controls wear no box (B6). */
   border-radius: var(--radius-sm);
-  color: var(--text-faint);
-  transition: background var(--motion-fast), color var(--motion-fast);
+  /* Match the window-chrome rail toggles' ink (--text-secondary, 0.55), NOT the fainter
+     --text-faint (0.30): at 0.30 the thin SVG strokes are too low-contrast on the dark rail
+     to resolve as crisp edges and read as "blurry", while the 0.55 title text beside them
+     looks sharp. 0.55 rest → 0.88 (--text-strong) hover unifies all icon chrome (B6). */
+  color: var(--text-secondary);
+  transition: color var(--motion-fast);
 }
 
+/* Icon chrome: hover/focus DEEPEN the glyph colour with NO --fill box (B6), matching the
+   window-chrome rail toggles. The focus ring still comes from the global
+   button:focus-visible rule, shaped by the border-radius above. */
 .agent-menu-button:hover:not(:disabled),
 .agent-menu-button:focus-visible:not(:disabled) {
-  background: var(--control-hover);
   color: var(--text-strong);
 }
 

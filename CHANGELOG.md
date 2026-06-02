@@ -299,6 +299,13 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Sidebar / agent rail toggles use static `PanelLeft` / `PanelRight` icons (main)** —
+  the two window-chrome rail toggles drop the open/close chevron-swap glyphs
+  (`PanelLeftClose/Open`, `PanelRightClose/Open`) for one clean static icon per side;
+  open/collapsed state reads from the deepened glyph colour alone (B6), not a glyph swap.
+  The workspace-layout guard updated to assert the static glyph + colour-carried state.
+  (main)
+
 - **Agent composer is a flush input region, not a floating card (main)** — the
   composer surface drops its `--layout-gap` inset and `--agent-composer-radius`
   card: it is now full-bleed to the rail's side and bottom edges with a neutral
@@ -535,6 +542,24 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   [#11](https://github.com/relixiaobo/lin-outliner/pull/11))
 
 ### Fixed
+
+- **Agent dock header icons (＋ / bug) no longer read as blurry (main)** — they used
+  `--text-faint` (ink/0.30), too low-contrast for their thin SVG strokes to resolve as
+  crisp edges on the dark rail, while the 0.55 title text beside them looked sharp. They
+  now share the window-chrome rail toggles' ink (`--text-secondary`, 0.55) at rest →
+  `--text-strong` on hover. Not a glass/vibrancy rendering bug — a contrast one; no
+  material change. The composer header guard updated to match. (main)
+
+- **Agent dock header action icons drop the hover fill box + sit on a uniform pitch
+  (main)** — ＋/bug hover/focus now only deepen the glyph colour (no `--control-hover`
+  rounded-square fill), matching the rail toggles' colour-only chrome idiom (B6; focus
+  ring unchanged). The right chrome zone's trailing gap is now `--space-2` (was
+  `--space-4`), sliding the buttons one step toward the corner-anchored agent toggle so
+  ＋→bug and bug→toggle land on the same 30px icon pitch. (main)
+
+- **Agent composer attachment errors auto-dismiss (main)** — the inline attachment error
+  is now a transient hint (`role="status"`, cleared after 5s) instead of a persistent
+  banner, so the composer never carries a stale error. (main)
 
 - **Agent dock collapse no longer janks (main)** — the rail collapsed by
   animating `width`/`top`/`right`/`bottom` (layout properties), so the transcript

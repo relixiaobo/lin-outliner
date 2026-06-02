@@ -82,6 +82,9 @@ const VENDOR_PREFIXES = [
 
 const MAX_ATTACHMENTS = 6;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+// Attachment errors are a transient hint, not a persistent banner — they fade
+// after this delay so the composer never carries a stale error (see the effect).
+const ATTACHMENT_ERROR_TIMEOUT_MS = 5000;
 const MAX_TEXT_ATTACHMENT_CHARS = 80_000;
 const MAX_INLINE_IMAGE_BASE64_CHARS = Math.floor(4.5 * 1024 * 1024);
 const INLINE_IMAGE_MAX_DIMENSION = 2000;
@@ -187,6 +190,16 @@ export function AgentComposer({
   const sendingRef = useRef(false);
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const hasDraft = !draft.empty;
+
+  // Auto-dismiss the attachment error: it announces the problem, then fades so the
+  // composer doesn't keep a stale banner. Each new message restarts the timer (the
+  // dependency changes); a success path that clears it to null cancels the timer via
+  // cleanup before it fires.
+  useEffect(() => {
+    if (!attachmentError) return;
+    const timer = window.setTimeout(() => setAttachmentError(null), ATTACHMENT_ERROR_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [attachmentError]);
   const hasAttachments = attachments.length > 0;
   const canSubmit = pendingApproval ? false : isStreaming
     ? hasDraft && !hasAttachments
@@ -613,7 +626,11 @@ export function AgentComposer({
         onDrop={handleDrop}
       >
         {dragActive ? <div className="agent-composer-drop-overlay">Drop files to attach</div> : null}
-        {attachmentError ? <div className="agent-composer-error">{attachmentError}</div> : null}
+        {attachmentError ? (
+          <div className="agent-composer-error" role="status">
+            {attachmentError}
+          </div>
+        ) : null}
         {pendingApproval ? (
           <AgentApprovalCard
             approval={pendingApproval}

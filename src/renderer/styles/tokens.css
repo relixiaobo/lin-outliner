@@ -243,8 +243,15 @@
   --chrome-left-zone-width: calc(
     var(--chrome-sidebar-toggle-left) + var(--chrome-control-height) + var(--space-4)
   );
+  /* Trailing gap is --space-2 (not --space-4 like the left zone): the agent dock header's
+     action icons (+ / bug) stop at this zone's inner edge, and the agent toggle is a 26px
+     chrome control anchored 1px deeper in the corner (--chrome-control-inset) than the 24px
+     menu buttons' column. A --space-2 trailing compensates for that 26-vs-24 + 17-vs-16
+     offset so the +→bug and bug→toggle gaps land on the SAME 30px icon pitch (the toggle
+     stays corner-anchored, mirroring the traffic lights). The collapsed-agent breadcrumb,
+     which also insets by this width, still clears the toggle (~5px). */
   --chrome-right-zone-width: calc(
-    var(--chrome-control-inset) + var(--chrome-control-height) + var(--space-4)
+    var(--chrome-control-inset) + var(--chrome-control-height) + var(--space-2)
   );
   --sidebar-width: 196px;
   --sidebar-min-width: 152px;

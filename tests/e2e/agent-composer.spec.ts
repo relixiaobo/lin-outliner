@@ -1352,6 +1352,7 @@ test.describe('agent composer controls', () => {
         chevronOpacity: getComputedStyle(chevron).opacity,
         gapToActions: actionsBox.left - titleButtonBox.right,
         textFaint: computedTokenColor(rootStyle.getPropertyValue('--text-faint').trim()),
+        textSecondary: computedTokenColor(rootStyle.getPropertyValue('--text-secondary').trim()),
         textSoft: computedTokenColor(rootStyle.getPropertyValue('--text-soft').trim()),
         textStrong: computedTokenColor(rootStyle.getPropertyValue('--text-strong').trim()),
         titleColor: getComputedStyle(title).color,
@@ -1365,7 +1366,10 @@ test.describe('agent composer controls', () => {
     expect(metrics!.titleText.startsWith('#')).toBe(false);
     expect(metrics!.buttonBackground).toBe('rgba(0, 0, 0, 0)');
     expect(metrics!.titleColor).toBe(metrics!.textSoft);
-    expect(metrics!.actionColor).toBe(metrics!.textFaint);
+    // Header action icons (+ / bug) share the window-chrome rail toggles' ink
+    // (--text-secondary, 0.55), NOT the fainter --text-faint (0.30): at 0.30 the thin SVG
+    // strokes read as blurry low-contrast edges on the dark rail; 0.55 resolves them crisp.
+    expect(metrics!.actionColor).toBe(metrics!.textSecondary);
     expect(metrics!.chevronOpacity).toBe('0');
     expect(metrics!.buttonPaddingLeft).toBe(4);
     expect(metrics!.buttonExtraWidth).toBeLessThanOrEqual(24);

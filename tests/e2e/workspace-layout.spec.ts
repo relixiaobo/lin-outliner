@@ -177,6 +177,7 @@ test.describe('workspace layout resizing', () => {
         controlCenterOffsetY: sidebarBox.top + sidebarBox.height / 2 - zoneBox.top,
         sidebarBg: getComputedStyle(sidebar).backgroundColor,
         sidebarIcon: sidebar.querySelector('svg')?.innerHTML ?? '',
+        sidebarColor: getComputedStyle(sidebar).color,
         trafficLightCenterOffsetX: trafficLightX + trafficLightSize / 2,
         trafficLightCenterOffsetY: trafficLightY + trafficLightSize / 2,
         trafficLightSize,
@@ -206,10 +207,15 @@ test.describe('workspace layout resizing', () => {
       return {
         sidebarBg: getComputedStyle(sidebar).backgroundColor,
         sidebarIcon: sidebar.querySelector('svg')?.innerHTML ?? '',
+        sidebarColor: getComputedStyle(sidebar).color,
       };
     });
     expect(collapsed.sidebarBg).toBe('rgba(0, 0, 0, 0)');
-    expect(collapsed.sidebarIcon).not.toBe(initial.sidebarIcon);
+    // The toggle glyph is STATIC (PanelLeft) — per B6 the open/collapsed state is
+    // signalled by deepening the glyph COLOUR, not by swapping the icon or adding a
+    // fill. So the SVG is unchanged across the toggle and only the colour differs.
+    expect(collapsed.sidebarIcon).toBe(initial.sidebarIcon);
+    expect(collapsed.sidebarColor).not.toBe(initial.sidebarColor);
   });
 
   test('single panel centers bounded content and fills when narrow', async ({ page }) => {
