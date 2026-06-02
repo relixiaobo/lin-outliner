@@ -414,6 +414,12 @@ export class DocumentService {
           String(args.optionNodeId),
           typeof args.id === 'string' ? args.id : undefined,
         );
+      case 'add_field_reference':
+        return this.core.addFieldReference(
+          String(args.fieldEntryId),
+          String(args.targetNodeId),
+          typeof args.id === 'string' ? args.id : undefined,
+        );
       case 'set_field_free_text_value':
         return this.core.setFieldFreeTextValue(
           String(args.fieldEntryId),

@@ -63,6 +63,7 @@ export const DOCUMENT_COMMANDS = [
   'register_collected_option',
   'create_collected_field_option',
   'select_field_option',
+  'add_field_reference',
   'set_field_free_text_value',
   'clear_field_value',
   'remove_field_value',

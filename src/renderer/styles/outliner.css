@@ -1124,34 +1124,9 @@
   gap: var(--space-1);
 }
 
-.field-value-system-date > svg,
-.field-value-link > svg {
+.field-value-system-date > svg {
   flex: 0 0 auto;
   color: var(--muted);
-}
-
-/* A navigable link surfaced by a read-only system field (Owner / References / Day).
-   It reads as the value text and reveals its link affordance on hover, without a
-   box — consistent with the native, restrained chrome. */
-.field-value-link {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  max-width: 100%;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  color: var(--text);
-  font: inherit;
-  text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.field-value-link:hover {
-  color: var(--link);
-  text-decoration: underline;
 }
 
 /* The Tags system field renders clickable badges; reset the button chrome so they
@@ -1915,9 +1890,14 @@
   background: transparent;
 }
 
-.done-checkbox:hover .checkbox-mark:not(.checked) {
+.done-checkbox:not(.done-checkbox--readonly):hover .checkbox-mark:not(.checked) {
   border-color: color-mix(in srgb, var(--text) 42%, transparent);
   background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+/* Read-only on a locked owner: inert, no hover affordance, no pointer. */
+.done-checkbox--readonly {
+  cursor: default;
 }
 
 .panel-title-editor > .done-checkbox {

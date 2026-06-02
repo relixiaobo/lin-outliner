@@ -90,24 +90,39 @@ carried (the value is computed, never stored). Each renders by its real type, no
 as bare text:
 
 - **Done** — a read-write checkbox; toggling it flips the owner's done state
-  (`toggle_done`). The only mutable system field. When the owner is **locked** (e.g.
-  a daily-note `date:` page, which `toggle_done` rejects), it renders read-only —
-  reflecting the state without an interactive toggle, so a Done field created at a
-  day page's root never crashes on click.
+  (`toggle_done`). The only mutable system field. Attaching a Done field also makes
+  the **owner's own row** show a checkbox (even before the first toggle): both the
+  row checkbox and the field value read the owner's `completedAt`, so they stay in
+  sync with no extra wiring (`nodeShowsCheckbox` treats a `sys:done` field entry as
+  a third checkbox trigger, alongside the `completedAt` sentinel and tag-driven
+  `showCheckbox`). When the owner is **locked** (e.g. a daily-note `date:` page,
+  which `toggle_done` rejects), both the field value and the row checkbox render
+  read-only — reflecting the state without an interactive toggle, so a Done field
+  carried by a locked day page never crashes on click.
 - **Created / Last edited / Done time** — the formatted date plus a read-only
   calendar glyph (matching the editable `date` value styling).
 - **Tags** — the owner's applied tags as read-only colored badges (the same
   nodex-style badges shown inline after node text), each navigable to its tag.
 - **References** — the backlink source nodes (nodes that reference the owner) as
-  read-only navigable links, not a bare count.
-- **Owner** — the owner's parent node, as a navigable link.
+  read-only **reference rows**, not a bare count.
+- **Owner** — the owner's parent node, as a read-only reference row.
 - **Day** — the date of the nearest `day`-tagged ancestor (the daily-note page
-  the node lives under), with a calendar glyph, navigable to that day.
+  the node lives under), as a read-only reference row to that day node.
 
 The renderer derives all of these through one structured `systemFieldDisplay`
-helper (the row component switches on its `kind`). Owner and Day are on-node
-fields only; they are not (yet) selectable in view sort/filter/group, so the
-protocol-surface `ViewSystemField` union is unchanged.
+helper (the row component switches on its `kind`). The three **node-reference**
+kinds (References / Owner / Day) render as real reference rows — the same
+presentation used for every other node reference — via `SystemReferenceValues`,
+which synthesizes read-only `reference` node projections (a `sysref:` id, `locked`)
+into an augmented index for the field-value subtree. So each value double-clicks
+to edit its target (the change flows to the original node) and expands to view it,
+exactly like an editable reference. The value **set**, however, is read-only: it
+is computed from the document, so there is no trailing draft (no add) and the
+synthetic ids carry no stored node (no delete — Backspace on a reference row only
+steps up). `SystemFieldValue` keeps only the scalar kinds (date / tags / text /
+done). Owner and Day are on-node fields only; they are not (yet) selectable in
+view sort/filter/group, so the protocol-surface `ViewSystemField` union is
+unchanged.
 
 A **field entry row is never expandable**: its children *are* its value(s),
 rendered in the value column, so there is no leaf-expand chevron and no separate
@@ -116,6 +131,19 @@ not expandable.)
 
 A typed field value that fails its type's format check shows a trailing warning
 icon; the message is revealed on hover, never as always-on inline text.
+
+A **`reference` field type** holds references to other nodes (vs an `options`
+field, whose values come from a per-field option pool). Its value draft is a
+node-search box: focusing it opens `TrailingReferencePopover` over the whole
+document (the same in-memory search that powers an `@` reference), typing filters,
+and picking a node appends a `reference` value via `add_field_reference`, then
+advances to the next trailing draft. Each value renders as a reference row
+(double-click edits the target; expandable). Picks reference **existing** nodes
+only — there is no create-from-query affordance, and the typed text is never
+persisted as a free-text value (it is purely the search query). This is the
+editable peer of the read-only References / Owner / Day system fields above: same
+reference-row presentation, but the value set is user-managed rather than
+computed.
 
 ## Selection Mode Matrix
 
@@ -178,6 +206,7 @@ in that sibling uniqueness rule.
 | Double-click a reference row or press ArrowRight on a selected reference row | Convert the reference row to an inline-reference conversion row. If unchanged and valid on blur, restore to a reference row. If text is added, keep it as inline text. | `outliner-selection-keyboard.spec.ts` |
 | Backspace/Delete a selected reference row | Delete/trash the reference link itself. The target node remains. Mixed normal-node/reference selections use normal batch block deletion. | `outliner-selection-keyboard.spec.ts` |
 | Selected option-reference field value | ArrowUp/Down moves through field options, Enter selects, and Escape closes the options list before clearing the selected reference row. | `outliner-triggers.spec.ts` |
+| Type in a `reference` field value draft | Open the node-search popover over the whole document; ArrowUp/Down/Enter pick a candidate, Escape closes. Picking appends a `reference` value (`add_field_reference`) and advances to the next draft. A non-matching query never materializes a free-text value. | `trailingReferencePopover.test.tsx`, `outliner-triggers.spec.ts` |
 | Toggle checkbox/done on a reference row | Apply the done state to the target node, because the reference displays the target. | `outliner-parity.test.ts`, `outliner-selection-keyboard.spec.ts` |
 | Permanently delete a target node | Remove tree references and inline references to that target. Undo restores both. | `core.test.ts` |
 | Trash a target node | Keep references restorable; the reference still points at the trashed target until restore or permanent delete. | `core.test.ts` |

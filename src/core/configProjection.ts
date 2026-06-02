@@ -26,6 +26,7 @@ import type {
   NodeType,
   RichText,
 } from './types';
+import { nodeHasDoneField } from './systemFields';
 
 /**
  * The node fields the config projection reads, structurally. Both `Node` and
@@ -40,6 +41,7 @@ export type ConfigNodeLike = {
   children: NodeId[];
   content: RichText;
   targetId?: NodeId;
+  fieldDefId?: NodeId;
 };
 export type ConfigNodeMap = ReadonlyMap<NodeId, ConfigNodeLike>;
 
@@ -158,9 +160,22 @@ export function tagDrivenShowCheckbox(byId: ConfigNodeMap, node: Pick<Node, 'tag
   return node.tags.some((tagId) => tagShowsCheckbox(byId, tagId, visited));
 }
 
-/** Whether the node should render a checkbox at all (tag-driven or manual). */
-export function nodeShowsCheckbox(byId: ConfigNodeMap, node: Pick<Node, 'tags' | 'completedAt'>): boolean {
-  return node.completedAt !== undefined || tagDrivenShowCheckbox(byId, node);
+/**
+ * Whether the node should render a checkbox at all. Three independent triggers:
+ * a manual `completedAt` sentinel, a tag whose config enables `showCheckbox`, or
+ * a built-in Done (`sys:done`) field attached to the node — the last keeps the
+ * row checkbox and the field's value reading the same `completedAt`, so they
+ * stay in sync without any extra wiring.
+ */
+export function nodeShowsCheckbox(
+  byId: ConfigNodeMap,
+  node: Pick<Node, 'tags' | 'completedAt' | 'children'>,
+): boolean {
+  return (
+    node.completedAt !== undefined ||
+    tagDrivenShowCheckbox(byId, node) ||
+    nodeHasDoneField(node, byId)
+  );
 }
 
 // ─── The index (built once per state/projection; reads are O(1) memoized) ───

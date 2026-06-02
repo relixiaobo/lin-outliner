@@ -4,7 +4,7 @@ import type { NavigateRootOptions } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
 import { CalendarIcon } from '../icons';
 import { CheckboxMark } from '../primitives/CheckboxMark';
-import type { SystemFieldDisplay } from '../../state/outlinerRows';
+import type { SystemFieldDisplay } from '../../../core/systemFields';
 
 interface SystemFieldValueProps {
   display: SystemFieldDisplay;
@@ -63,9 +63,12 @@ export function SystemFieldValue({ display, byId, onRoot, onToggleDone }: System
     );
   }
 
-  const modifier = display.kind === 'tags' || display.kind === 'nodeRefs'
+  // Node-reference kinds (nodeRefs / dayRef → References / Owner / Day) render as
+  // real reference rows via SystemReferenceValues, not here; this component now
+  // only paints the scalar read-only kinds (date / tags / text).
+  const modifier = display.kind === 'tags'
     ? 'field-value-system-wrap'
-    : display.kind === 'date' || display.kind === 'dayRef'
+    : display.kind === 'date'
       ? 'field-value-system-date'
       : '';
 
@@ -88,20 +91,6 @@ function renderValue(
       return display.text
         ? (<><span>{display.text}</span><CalendarIcon size={13} strokeWidth={1.8} /></>)
         : systemEmpty;
-    case 'dayRef':
-      return display.text
-        ? (
-          <button
-            type="button"
-            className="field-value-link"
-            title={`Open ${display.text}`}
-            onClick={() => display.nodeId && onRoot(display.nodeId)}
-          >
-            <span>{display.text}</span>
-            <CalendarIcon size={13} strokeWidth={1.8} />
-          </button>
-        )
-        : systemEmpty;
     case 'tags':
       return display.tagIds.length === 0
         ? systemEmpty
@@ -123,20 +112,6 @@ function renderValue(
             </button>
           );
         });
-    case 'nodeRefs':
-      return display.refs.length === 0
-        ? systemEmpty
-        : display.refs.map((ref) => (
-          <button
-            key={ref.id}
-            type="button"
-            className="field-value-link"
-            title={`Open ${ref.label}`}
-            onClick={() => onRoot(ref.id)}
-          >
-            {ref.label}
-          </button>
-        ));
     case 'text':
       return display.text || systemEmpty;
     default:

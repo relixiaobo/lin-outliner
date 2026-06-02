@@ -71,6 +71,7 @@ import { IndentGuide } from './IndentGuide';
 import { RowLeading } from './RowLeading';
 import { makeDraftNode } from './draftRow';
 import { TrailingOptionsPopover } from './TrailingOptionsPopover';
+import { TrailingReferencePopover } from './TrailingReferencePopover';
 import { DateValuePicker } from './DateValuePicker';
 import type { FieldValueContext } from '../fields/fieldValueEditors';
 import { fieldValueOpenHref, validateFieldValue } from '../fields/fieldValueValidation';
@@ -133,8 +134,10 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const [draftContent, setDraftContent] = useState<RichText>(node?.content ?? EMPTY_RICH_TEXT);
   const [draftContentRevision, setDraftContentRevision] = useState(0);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
-  // optionPicker field-value draft: the editor is the free-text filter for the
-  // options popover. Open on focus; the typed text drives the query.
+  // optionPicker / referencePicker field-value draft: the editor is the free-text
+  // filter for the additive picker popover (options pool / node search). Open on
+  // focus; the typed text drives the query. The two interactions are mutually
+  // exclusive on a draft, so they share this one open-state.
   const [optionsOpen, setOptionsOpen] = useState(false);
   // Date value rows summon their picker overlay additively (Space / calendar
   // affordance); it is never a separate editing mode.
@@ -237,7 +240,12 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // An options field's draft shows the additive options overlay and treats free
   // text as the filter query, so #/@// and the code fence are plain text there.
   const optionPickerDraft = fieldValueDraft && fieldDescriptor?.interaction === 'optionPicker';
-  const suppressTextTriggers = optionPickerDraft;
+  // A reference field's draft is a node-search box: free text is the search query
+  // (so #/@// and the code fence are plain text there) and the additive picker
+  // appends a reference to the chosen node instead of materializing free text.
+  const referencePickerDraft = fieldValueDraft && fieldDescriptor?.interaction === 'referencePicker';
+  // Both pickers treat the typed text as their filter query, never as a trigger.
+  const suppressTextTriggers = optionPickerDraft || referencePickerDraft;
   // A date field value (draft or committed) is an editable row that additively
   // offers a calendar overlay; Space on an empty value summons it.
   const dateFieldValue = Boolean(props.fieldValue) && fieldDescriptor?.interaction === 'datePicker';
@@ -425,6 +433,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // shared — the field value path is no longer a separate editing mode.
   const materializeDraft = () => {
     if (realNode || materializeStartedRef.current) return;
+    // A reference field value is only ever a reference to an existing node (picked
+    // from the node-search overlay), never the typed query — so a reference draft
+    // has nothing to materialize from its text. Enter/blur on it is a no-op; the
+    // value is appended by addReferenceAndAdvance when a node is chosen.
+    if (referencePickerDraft) return;
     materializeStartedRef.current = true;
     const seed = draftContentRef.current;
     const fieldValue = props.fieldValue;
@@ -515,8 +528,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     localDraftSyncRef.current = { nodeId: targetEditId, content };
     draftContentRef.current = content;
     setDraftContent(content);
-    // optionPicker free text drives the options filter; keep the popover open.
-    if (optionPickerDraft && !optionsOpen) setOptionsOpen(true);
+    // optionPicker / referencePicker free text drives the picker filter; keep the
+    // popover open.
+    if ((optionPickerDraft || referencePickerDraft) && !optionsOpen) setOptionsOpen(true);
   };
 
   const handlePasteOutliner = (payload: {
@@ -911,6 +925,16 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     setOptionsOpen(false);
     replaceLocalDraftContent(EMPTY_RICH_TEXT);
     await props.fieldValue?.onSelectOption(optionId);
+    focusTrailingDraft();
+  };
+
+  // Append a reference to the picked node (the reference-field picker), then
+  // return to the trailing draft for the next value. Mirrors selectOptionAndAdvance:
+  // the typed query is the search term, discarded once a node is chosen.
+  const addReferenceAndAdvance = async (targetId: NodeId) => {
+    setOptionsOpen(false);
+    replaceLocalDraftContent(EMPTY_RICH_TEXT);
+    await props.fieldValue?.onAddReference(targetId);
     focusTrailingDraft();
   };
 
@@ -1429,6 +1453,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           {showDoneCheckbox && (
             <DoneCheckbox
               checked={Boolean(displayed.completedAt)}
+              readOnly={displayed.locked}
               onToggle={() => void props.run(() => api.toggleDone(targetEditId))}
             />
           )}
@@ -1495,14 +1520,15 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             placeholder={fieldValueDraft ? props.fieldValue?.placeholder : undefined}
             onFocus={() => {
               row.updateSelection();
-              // optionPicker: open the options overlay on a genuine user focus
-              // (click) so you can type-to-filter. Suppress it when focus arrived
-              // programmatically via a focus request — advancing to the next value
-              // draft after committing one (Enter / pick) should land closed, not
-              // immediately reopen the picker. Typing still reopens it (handleEditorChange).
+              // optionPicker / referencePicker: open the picker overlay on a
+              // genuine user focus (click) so you can type-to-filter. Suppress it
+              // when focus arrived programmatically via a focus request — advancing
+              // to the next value draft after committing one (Enter / pick) should
+              // land closed, not immediately reopen the picker. Typing still reopens
+              // it (handleEditorChange).
               const programmaticFocus = Boolean(props.ui.focusRequest)
                 && focusTargetMatches(props.ui.focusRequest!.target, editorRequestTarget);
-              if (optionPickerDraft && !programmaticFocus) setOptionsOpen(true);
+              if ((optionPickerDraft || referencePickerDraft) && !programmaticFocus) setOptionsOpen(true);
             }}
             onChange={handleEditorChange}
             onPatch={applyTextPatch}
@@ -1714,6 +1740,20 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
                 setOptionsOpen(false);
                 void materializeDraftAndAdvance();
               }}
+            />
+          )}
+          {/* The node-search overlay for a reference field-value draft. Picking a
+              node appends a reference to it (add_field_reference) and advances to
+              the next trailing draft — the reference peer of the options overlay. */}
+          {referencePickerDraft && props.fieldValue && (
+            <TrailingReferencePopover
+              anchorRef={optionAnchorRef}
+              index={props.index}
+              entryId={props.fieldValue.entryId}
+              open={optionsOpen}
+              query={draftContent.text}
+              onOpenChange={setOptionsOpen}
+              onPick={(targetId) => void addReferenceAndAdvance(targetId)}
             />
           )}
         </div>

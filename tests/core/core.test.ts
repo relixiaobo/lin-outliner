@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { Core } from '../../src/core/core';
 import { LoroOutlinerDocument } from '../../src/core/loroDocument';
 import { buildConfigIndex, nodeShowsCheckbox } from '../../src/core/configProjection';
+import { DONE_FIELD } from '../../src/core/systemFields';
 import { isInternalConfigNode } from '../../src/core/configSchema';
 import { runSearchNode } from '../../src/core/searchEngine';
 import {
@@ -294,6 +295,56 @@ describe('Core', () => {
     core.toggleDone(nodeId);
     expect(core.state().nodes[nodeId].completedAt).toBe(0);
     expect(showsCheckbox(core, nodeId)).toBe(true);
+  });
+
+  test('a node carrying a Done (sys:done) field shows a checkbox before any toggle', () => {
+    const core = Core.new();
+    const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Task'));
+    expect(showsCheckbox(core, nodeId)).toBe(false);
+
+    // Attach the built-in Done system field by relinking a fresh entry to sys:done.
+    const entryId = mustFocus(core.createInlineField(nodeId, null, '', 'plain'));
+    core.reuseFieldDefinition(entryId, DONE_FIELD);
+
+    // The row checkbox shows even though completedAt is still undefined, and it
+    // mirrors the field's value because both read the owner's completedAt.
+    expect(core.state().nodes[nodeId].completedAt).toBeUndefined();
+    expect(showsCheckbox(core, nodeId)).toBe(true);
+
+    // Toggling done flows into completedAt; the box stays visible throughout.
+    core.toggleDone(nodeId);
+    expect(core.state().nodes[nodeId].completedAt).toBeGreaterThan(0);
+    expect(showsCheckbox(core, nodeId)).toBe(true);
+  });
+
+  test('a reference field appends deduped reference values pointing at any node', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'Target Page'));
+    const entry = mustFocus(core.createInlineField(today, null, 'Related', 'reference'));
+
+    core.addFieldReference(entry, target);
+    const refId = core.state().nodes[entry].children[0];
+    const ref = core.state().nodes[refId];
+    expect(ref?.type).toBe('reference');
+    expect(ref?.targetId).toBe(target);
+
+    // Picking the same node again is a no-op (dedup).
+    core.addFieldReference(entry, target);
+    expect(core.state().nodes[entry].children).toHaveLength(1);
+
+    // A second distinct node appends (everything is a node; no cardinality gate).
+    const other = mustFocus(core.createNode(today, null, 'Other Page'));
+    core.addFieldReference(entry, other);
+    expect(core.state().nodes[entry].children).toHaveLength(2);
+  });
+
+  test('addFieldReference rejects a non-reference field', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'T'));
+    const plain = mustFocus(core.createInlineField(today, null, 'Note', 'plain'));
+    expect(() => core.addFieldReference(plain, target)).toThrow();
   });
 
   test('batch toggle done marks each target done with a visible checkbox', () => {

@@ -39,8 +39,8 @@ import { SelectControl } from '../primitives/SelectControl';
 import { TextInputControl } from '../primitives/TextInputControl';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import type { CommandRunner } from '../shared';
+import { collectViewFieldChoices, type ViewConfig } from './row-model';
 import {
-  collectViewFieldChoices,
   CREATED_FIELD,
   DONE_AT_FIELD,
   DONE_FIELD,
@@ -48,8 +48,7 @@ import {
   REF_COUNT_FIELD,
   TAGS_FIELD,
   UPDATED_FIELD,
-  type ViewConfig,
-} from './row-model';
+} from '../../../core/systemFields';
 
 type FilterKind = 'boolean' | 'date' | 'number' | 'options' | 'text';
 

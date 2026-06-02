@@ -1225,10 +1225,18 @@ test.describe('outliner trigger parity', () => {
     await expect.poll(async () => (await nodeById(page, fieldId))?.fieldDefId).toBe('sys:owner');
 
     // The field is a child of `today`, whose parent is the "Daily Notes" page —
-    // Owner renders a navigable link to it, not bare text.
-    const link = row(page, fieldId).locator('.field-value-cell .field-value-link');
-    await expect(link).toHaveCount(1);
-    await expect(link).toContainText('Daily Notes');
+    // Owner renders it as a read-only reference row (the shared reference
+    // presentation), not bare text or a bespoke link.
+    const valueCell = row(page, fieldId).locator('.field-value-cell');
+    await expect(valueCell.locator('.row.reference-row')).toHaveCount(1);
+    await expect(valueCell).toContainText('Daily Notes');
+    // Layout regression guard: the value rows sit inside the shared value-column
+    // outliner container (one full-width flex child of the cell), so they stack
+    // top-to-bottom like every outline — NOT as bare rows dropped straight into the
+    // flex `.field-value-cell`, which squished them side-by-side (vertical CJK).
+    await expect(valueCell.locator(':scope > .field-value-outliner .row.reference-row')).toHaveCount(1);
+    // Read-only value set: no trailing draft to add another value.
+    await expect(valueCell.locator('[data-trailing-parent-id]')).toHaveCount(0);
   });
 
   test('the Day system field links to the containing day node\'s date', async ({ page }) => {
@@ -1242,11 +1250,11 @@ test.describe('outliner trigger parity', () => {
     await popover.getByText('Day', { exact: true }).click();
     await expect.poll(async () => (await nodeById(page, fieldId))?.fieldDefId).toBe('sys:day');
 
-    // `today` itself is the day node (tagged "day"); Day shows its date as a link
-    // with a calendar glyph.
-    const link = row(page, fieldId).locator('.field-value-cell .field-value-link');
-    await expect(link).toContainText('2026-05-13');
-    await expect(link.locator('svg')).toHaveCount(1);
+    // `today` itself is the day node (tagged "day"); Day renders it as a read-only
+    // reference row to that day node.
+    const valueCell = row(page, fieldId).locator('.field-value-cell');
+    await expect(valueCell.locator('.row.reference-row')).toHaveCount(1);
+    await expect(valueCell).toContainText('2026-05-13');
   });
 
   test('field entry rows are not expandable (children are the value, shown in the value column)', async ({ page }) => {
@@ -1654,5 +1662,125 @@ test.describe('outliner options field inline value', () => {
     expect(box).toBeTruthy();
     expect(box!.x).toBeGreaterThanOrEqual(8);
     expect(box!.x + box!.width).toBeLessThanOrEqual(972);
+  });
+
+  test('a node carrying a Done field shows a synced checkbox on its own row', async ({ page }) => {
+    // A freshly created plain node has no checkbox.
+    await invokeMockCommand(page, 'create_node', {
+      parentId: ids.today,
+      index: null,
+      text: 'Wash dishes',
+      id: 'fu2-task',
+    });
+    await expect(row(page, 'fu2-task')).toContainText('Wash dishes');
+    await expect(rowBody(page, 'fu2-task').locator('.done-checkbox')).toHaveCount(0);
+
+    // Attaching the built-in Done system field (a sys:done field entry) makes the
+    // node's own row show a checkbox — derived from the same completedAt the field
+    // reads, so the two stay in sync without extra wiring.
+    await page.evaluate(async (parentId) => {
+      const win = window as unknown as {
+        lin?: {
+          invoke: (cmd: string, args?: Record<string, unknown>) =>
+            Promise<{ focus?: { nodeId: string }; projection?: unknown }>;
+        };
+        __LIN_E2E__?: { emitDocumentEvent: (event: unknown) => void };
+      };
+      const created = await win.lin!.invoke('create_inline_field', {
+        parentId,
+        index: null,
+        name: 'Done',
+        fieldType: 'plain',
+      });
+      const entryId = created.focus!.nodeId;
+      const reused = await win.lin!.invoke('reuse_field_definition', { entryId, targetDefId: 'sys:done' });
+      const projection = reused.projection ?? created.projection;
+      if (projection) {
+        win.__LIN_E2E__?.emitDocumentEvent({
+          type: 'projection_changed',
+          origin: 'user',
+          projection,
+          timestamp: Date.now(),
+        });
+      }
+    }, 'fu2-task');
+
+    // The owner is editable, so it is an interactive checkbox button (not the
+    // read-only span used for locked owners).
+    await expect(rowBody(page, 'fu2-task').locator('button.done-checkbox')).toHaveCount(1);
+  });
+});
+
+test.describe('outliner reference field inline value', () => {
+  test.beforeEach(async ({ page }) => {
+    await openMockedApp(page, { referenceField: true });
+  });
+
+  test('reference field value references an existing node picked from the inline node search', async ({ page }) => {
+    // The reference field's trailing draft is a node-search box: focusing it opens
+    // the picker over the whole document, typing filters it.
+    await trailingEditor(page, ids.referencesEntry).click();
+    const listbox = page.getByRole('listbox', { name: 'Reference suggestions' });
+    await expect(listbox).toBeVisible();
+
+    await page.keyboard.type('Alpha');
+    await expect(listbox.getByRole('option', { name: 'Alpha' })).toBeVisible();
+    await page.keyboard.press('Enter');
+
+    await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toHaveCount(0);
+
+    // The picked node renders as a reference row in the value cell (the shared
+    // reference presentation), and the value is a real reference targeting it.
+    const valueCell = row(page, ids.referencesEntry).locator('.field-value-cell');
+    await expect(valueCell.locator('.row.reference-row')).toHaveCount(1);
+    await expect(valueCell).toContainText('Alpha');
+
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const entry = projection.nodes.find((node) => node.id === ids.referencesEntry);
+      const valueNode = projection.nodes.find((node) => node.parentId === ids.referencesEntry);
+      return {
+        children: entry?.children.length,
+        type: valueNode?.type ?? 'content',
+        targetId: valueNode?.targetId,
+      };
+    }).toEqual({ children: 1, type: 'reference', targetId: ids.alpha });
+
+    const calls = await commandCalls(page);
+    expect(calls.some((call) => (
+      call.cmd === 'add_field_reference'
+      && call.args.fieldEntryId === ids.referencesEntry
+      && call.args.targetNodeId === ids.alpha
+    ))).toBe(true);
+  });
+
+  test('reference field value references a node clicked in the listbox', async ({ page }) => {
+    await trailingEditor(page, ids.referencesEntry).click();
+    const listbox = page.getByRole('listbox', { name: 'Reference suggestions' });
+    await expect(listbox).toBeVisible();
+
+    await page.keyboard.type('Beta');
+    await listbox.getByRole('option', { name: 'Beta' }).click();
+
+    const valueCell = row(page, ids.referencesEntry).locator('.field-value-cell');
+    await expect(valueCell.locator('.row.reference-row')).toHaveCount(1);
+    await expect(valueCell).toContainText('Beta');
+  });
+
+  test('a query with no node match never materializes a free-text value', async ({ page }) => {
+    await trailingEditor(page, ids.referencesEntry).click();
+    const listbox = page.getByRole('listbox', { name: 'Reference suggestions' });
+    await expect(listbox).toBeVisible();
+
+    await page.keyboard.type('zzz-no-such-node');
+    await expect(listbox.getByRole('option')).toHaveCount(0);
+    // The open picker owns Enter and swallows it; a reference value only comes from
+    // a picked node, so the typed query must not become a value.
+    await page.keyboard.press('Enter');
+
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      return projection.nodes.find((node) => node.id === ids.referencesEntry)?.children.length;
+    }).toBe(0);
   });
 });
