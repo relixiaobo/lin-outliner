@@ -4,6 +4,7 @@ import { LIN_DOCUMENT_EVENT_CHANNEL, type DocumentProjectionChangedEvent } from 
 import { windowMaterialKind } from '../core/windowMaterial';
 import { LIN_SETTINGS_CHANGED_CHANNEL } from '../core/settingsWindow';
 import { LIN_WINDOW_ACTIVE_CHANNEL } from '../core/windowActivity';
+import type { ThemeMode } from '../core/theme';
 
 export interface LinPickedLocalFile {
   entryKind?: 'file' | 'directory';
@@ -104,6 +105,11 @@ const api = {
   },
   openSettings: () => ipcRenderer.invoke('lin:open-settings') as Promise<void>,
   closeSettings: () => ipcRenderer.invoke('lin:close-settings') as Promise<void>,
+  // Appearance preference. setTheme applies immediately across all windows (via
+  // nativeTheme.themeSource → prefers-color-scheme) and persists; getTheme returns
+  // the stored mode so the settings control can reflect the current pick.
+  getTheme: () => ipcRenderer.invoke('lin:get-theme') as Promise<ThemeMode>,
+  setTheme: (mode: ThemeMode) => ipcRenderer.invoke('lin:set-theme', mode) as Promise<void>,
   openProviderConfig: (params: { providerId: string; mode: 'configure' | 'custom' }) =>
     ipcRenderer.invoke('lin:open-provider-config', params) as Promise<void>,
   closeProviderConfig: () => ipcRenderer.invoke('lin:close-provider-config') as Promise<void>,
