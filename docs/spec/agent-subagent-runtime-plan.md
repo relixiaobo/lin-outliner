@@ -16,8 +16,11 @@ Lin worktree used for this planning pass:
 Reference implementation reviewed for behavior and edge cases:
 
 ```text
-/Users/lixiaobo/Documents/Coding/cc-2.1
+/Users/lixiaobo/Coding/.research-repos/cc-2.1
 ```
+
+This local cc-2.1 directory is a source snapshot, not a git repository. Refresh
+it before future source-alignment passes if a newer cc-2.1 snapshot is available.
 
 The cc-2.1 references are source references only. Lin should not copy cc-2.1's
 product terminology, legacy paths, or historical compatibility layers. Lin's
@@ -66,15 +69,16 @@ cc-2.1 contains two layers:
 | `src/tools/AgentTool/loadAgentsDir.ts` | Loads agent definitions from markdown and JSON, including tools, model, effort, permission mode, max turns, skills, background, hooks, MCP, memory, isolation. | Implement `.agents/agents` definitions. Support the core fields now; defer hooks, MCP, memory, and isolation. |
 | `src/tasks/LocalAgentTask/LocalAgentTask.tsx` | Registers background agent tasks, tracks status/progress, supports completion/failure/killed notifications and queued messages. | Reuse lifecycle states, but persist through Lin event store and subagent runtime state. |
 | `src/tools/AgentTool/resumeAgent.ts` | Reconstructs sidechain transcript, appends a new user prompt, rebuilds replacement state, resumes in background. | Implement `AgentSend` for same-session subagent continuation. |
-| `src/tools/TaskOutputTool/TaskOutputTool.tsx` | Reads background task output and can block until completion; deprecated in favor of reading output file path. | Prefer `AgentStatus` over raw output-file reading. |
+| `src/tools/TaskOutputTool/TaskOutputTool.tsx` | Reads background task output and can block until completion; deprecated in favor of reading output file path. | Do not add a TaskOutput clone. Prefer completion notifications plus output references readable with `file_read`; keep `AgentStatus` only for explicit status/wait checks. |
 | `src/tools/TaskStopTool/TaskStopTool.ts` | Stops a running background task by id. | Implement `AgentStop` for subagent ids/names. |
 | `src/tools/TeamCreateTool/*` | Creates team config, team task list, leader state, teammate workflow. | Do not copy for initial subagents. |
 | `src/tools/SendMessageTool/*` | Mixes teammate mailbox, background-agent resume, broadcast, shutdown/plan protocol, and cross-session routes. | Do not copy as one tool. Use `AgentSend` only for same-session subagent continuation. Future global messaging gets separate tools. |
 
 ### Source-Level Design Anchors
 
-The decisions in this document are based on the current cc-2.1 source at
-`/Users/lixiaobo/Documents/Coding/cc-2.1`, not on prior memory of the design.
+The decisions in this document are based on the current cc-2.1 source snapshot
+at `/Users/lixiaobo/Coding/.research-repos/cc-2.1`, not on prior memory of the
+design.
 Key anchors:
 
 - `src/tools/AgentTool/AgentTool.tsx:81-88`: the core `Agent` input schema is
@@ -500,13 +504,15 @@ Background launch:
 
 When a background run reaches `completed`, `failed`, or `stopped`, Lin appends a
 hidden `<subagent-notification>` message to the parent conversation and starts a
-parent continuation when the parent agent is idle. This mirrors cc-2.1's
-`<task-notification>` path without requiring the parent agent to poll
-`AgentStatus`.
+parent continuation when the parent agent is idle. The notification should carry
+a durable output reference that can be read with `file_read`, matching
+cc-2.1's preferred path for background task output. The parent agent should not
+poll `AgentStatus` for ordinary result retrieval.
 
 ### `AgentStatus`
 
-Reads or waits for same-session subagent state.
+Reads or waits for same-session subagent state. It is a status/wait tool, not the
+normal result retrieval path.
 
 Input:
 
@@ -521,8 +527,10 @@ Input:
 
 Behavior:
 
-- Requires `agent_id` or `name` and returns that subagent.
+- Requires `agent_id` or `name` and returns status metadata for that subagent.
 - `wait: true` waits until the selected subagent leaves `running` or timeout.
+- Completed output should be read from the notification/output reference with
+  `file_read` unless a concise result is already included in the status metadata.
 
 ### `AgentSend`
 
@@ -742,7 +750,7 @@ The main agent can see:
 
 - normal Lin tools;
 - `Agent`;
-- `AgentStatus`;
+- `AgentStatus` for explicit status/wait checks;
 - `AgentSend`;
 - `AgentStop`.
 
@@ -775,7 +783,8 @@ The `Agent` prompt should teach:
   notifications will arrive.
 - Do not fabricate background results before notifications arrive.
 - Use `AgentSend` only to continue an existing same-session subagent.
-- Use `AgentStatus` for status or waiting.
+- Use `AgentStatus` only for status or waiting; read completion output from the
+  notification/output reference with `file_read`.
 - Use `AgentStop` to stop a running subagent.
 
 ## Explicit Non-Goals For The First Version
@@ -884,6 +893,30 @@ Deferred UI polish:
 - richer progress summaries for long background runs;
 - metrics and diagnostics beyond sidechain transcript replay.
 
+## Reference Review Follow-Ups
+
+Review against cc-2.1 and OpenClaw leaves these follow-ups:
+
+- Add `SubagentStart` and `SubagentStop` hook events only after Lin has a
+  first-class hook registry. They should be lifecycle events, not special cases
+  inside the `Agent` tool.
+- Keep foreground fresh, fork, and background as the only first-version
+  lifecycles. Do not copy team/swarm/coordinator concepts into `Agent`,
+  `AgentSend`, or `AgentStatus`.
+- On app restart, stale running subagents should be marked interrupted or
+  recoverable from persisted sidechain transcripts. They should not silently
+  remain "running" without a live process.
+- Background subagents should always provide a durable output reference and a
+  completion/failure/stopped notification. The parent model should not need to
+  poll repeatedly to discover completion.
+- Background subagents should fail closed when they need interactive permission
+  and no approval channel is available. If a permission prompt can be surfaced,
+  the parent should receive a clear blocked/waiting notification.
+- Forked subagents should continue to preserve cache-stable parent context and
+  reject recursive fork attempts, including after compaction.
+- Agent-specific MCP servers and remote/worktree isolation remain deferred until
+  Lin has diagnostics and recovery for the smaller same-session model.
+
 ## Test Matrix
 
 Core tests:
@@ -901,6 +934,10 @@ Core tests:
 - parent compact preserves subagent handles and summaries;
 - subagent compact preserves its own continuity;
 - app restart can inspect/resume completed sidechain transcripts;
+- app restart marks stale running subagents as interrupted or recoverable;
+- background subagent completion creates a durable output reference and model
+  notification;
+- background subagent needing unavailable approval fails closed;
 - skill `context: fork` uses subagent runtime.
 
 Reference-alignment tests:

@@ -41,6 +41,7 @@ items above.
 | --- | --- | --- | --- |
 | [`asset-subsystem.md`](asset-subsystem.md) | draft | P0 | Local content-addressed asset store + `asset://` protocol. Blocks image/attachment/embed work. |
 | [`agent-past-chats.md`](agent-past-chats.md) | in-progress | P1 | Single `past_chats` tool (recent + search + read modes) backed by the event store, user-message/search indexes, and visible transcript filtering. Foundational agent infrastructure. |
+| [`agent-self-modification.md`](agent-self-modification.md) | draft | P1 | Controlled self-maintenance requirements for runtime status, cc-2.1-style config reads/writes, hooks, skill creation, curation, recovery, audit, and rollback. |
 | [`native-feel-remediation.md`](native-feel-remediation.md) | in-progress | P1 | Make the Electron app feel native (macOS + Windows) without leaving Electron. 6 stages: security shell (#43), startup/window (#45), material + font (#46, #47) + cursor/focus-ring pass (#65), native interactions — dialogs + settings window (#48, #49) + native app/right-click menus + inactive-window (#68), IPC tracing + incremental core (#50, #52) and renderer perf (#54) all shipped; only packaging/smoke (stage 6) remains. |
 | [`image-rendering.md`](image-rendering.md) | draft | P1 | Render `image` nodes inline using the asset subsystem. Paste/drag/clipboard ingestion. |
 | [`file-attachments.md`](file-attachments.md) | draft | P1 | New `attachment` node type for arbitrary local files (PDF, audio, video, generic). Goes beyond nodex parity. |
