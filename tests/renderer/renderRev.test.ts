@@ -106,7 +106,7 @@ describe('propagateDirty', () => {
       node('root', { children: ['x', 'target'] }),
       node('x', {
         parentId: 'root',
-        content: { text: 'see ', marks: [], inlineRefs: [{ offset: 4, targetNodeId: 'target' }] },
+        content: { text: 'see ', marks: [], inlineRefs: [{ offset: 4, target: { kind: 'node', nodeId: 'target' } }] },
       }),
       node('target', { parentId: 'root' }),
     ]);

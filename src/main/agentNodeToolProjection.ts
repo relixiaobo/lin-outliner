@@ -8,10 +8,11 @@ import {
   TAG_YEAR_ID,
   TRASH_ID,
   WORKSPACE_ID,
+  inlineRefNodeId,
   type DocumentProjection,
   type NodeProjection,
 } from '../core/types';
-import { formatNodeReferenceMarker } from '../core/nodeReferenceMarkup';
+import { formatNodeReferenceMarker } from '../core/referenceMarkup';
 import { projectFieldConfig, nodeIsDone, nodeShowsCheckbox } from '../core/configProjection';
 import { isInternalConfigNode, refRoleCountsAsBacklink } from '../core/configSchema';
 import type {
@@ -82,7 +83,7 @@ export function backlinks(index: ProjectionIndex, targetId: string, includeDelet
       });
     }
     for (const inlineRef of node.content.inlineRefs) {
-      if (inlineRef.targetNodeId === targetId) {
+      if (inlineRefNodeId(inlineRef) === targetId) {
         result.push({
           sourceNodeId: node.id,
           sourceTitle: nodeTitle(index, node),

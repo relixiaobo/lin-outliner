@@ -1,5 +1,5 @@
 import { isCssHexColorToken } from '../core/textSyntax';
-import { parseNodeReferenceMarkers } from '../core/nodeReferenceMarkup';
+import { parseNodeReferenceMarkers } from '../core/referenceMarkup';
 
 export interface OutlineDocument {
   roots: OutlineNode[];

@@ -64,7 +64,7 @@ truth.
 - [x] Local file mentions in the agent composer:
   - `@` suggestions include recent nodes, local files, and folders
   - selected files/folders/images render as inline tokens
-  - model-facing text preserves position with `[[file:<ref>]]`
+  - model-facing text preserves position with `[[file:<label>^<path>]]`
   - hidden attachment context maps each `ref` to path, kind, MIME type, and size
 - [x] Lin-specific stable system prompt module for agent identity, tool
   boundaries, dynamic reminder handling, and safety posture.

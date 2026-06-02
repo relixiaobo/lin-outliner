@@ -60,9 +60,9 @@ import {
   type AgentPayloadRef,
   type AgentPersistedContent,
 } from '../core/agentEventLog';
-import { sanitizeFileReferenceRef } from '../core/agentFileReferenceMarkup';
+import { sanitizeFileReferenceRef } from '../core/referenceMarkup';
 import { serializeAgentAttachmentMarker, serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
-import { nodeReferenceMarkersToText } from '../core/nodeReferenceMarkup';
+import { nodeReferenceMarkersToText } from '../core/referenceMarkup';
 import { toolEnvelopeAfterToolCall } from './agentToolEnvelope';
 import { createAgentTools, type AgentToolsOptions } from './agentTools';
 import { LIN_AGENT_SYSTEM_PROMPT } from './agentSystemPrompt';

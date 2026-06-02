@@ -4,7 +4,7 @@ import type {
   AgentUserViewOutlineNodeContext,
   AgentUserViewPanelContext,
 } from '../../../core/agentTypes';
-import { formatNodeReferenceMarker } from '../../../core/nodeReferenceMarkup';
+import { formatNodeReferenceMarker } from '../../../core/referenceMarkup';
 import { nodeIsDone, nodeShowsCheckbox } from '../../../core/configProjection';
 import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';

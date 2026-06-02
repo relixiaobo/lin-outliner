@@ -10,7 +10,7 @@ import type {
   AgentApprovalResolutionScope,
   AgentMessageAttachmentInput,
 } from '../../../core/agentTypes';
-import { sanitizeFileReferenceRef } from '../../../core/agentFileReferenceMarkup';
+import { sanitizeFileReferenceRef } from '../../../core/referenceMarkup';
 import type {
   AgentModelOption,
   AgentProviderConfigView,
@@ -921,6 +921,7 @@ function attachmentToFileReference(attachment: ComposerAttachment): AgentCompose
     entryKind: attachment.mimeType === 'inode/directory' ? 'directory' : 'file',
     iconDataUrl: attachment.iconDataUrl,
     name: attachment.name,
+    ...(attachment.kind === 'file' ? { path: attachment.path } : {}),
     ref: attachment.ref ?? sanitizeFileReferenceRef(attachment.name),
     mimeType: attachment.mimeType,
     sizeBytes: attachment.sizeBytes,

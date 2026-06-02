@@ -11,6 +11,7 @@ import {
   TAG_YEAR_ID,
   TRASH_ID,
   WORKSPACE_ID,
+  inlineRefNodeId,
   type DocumentProjection,
   type DocumentState,
   type FieldType,
@@ -390,8 +391,9 @@ function queryOperandsFromConditionNode(index: SearchIndex, conditionNode: Query
       return [{ targetId: child.targetId, text: target?.content.text.trim() || child.content.text.trim() || undefined }];
     }
     const inlineRef = child.content.inlineRefs[0];
-    if (inlineRef) {
-      return [{ targetId: inlineRef.targetNodeId, text: inlineRef.displayName || child.content.text.trim() || undefined }];
+    const inlineNodeId = inlineRef ? inlineRefNodeId(inlineRef) : null;
+    if (inlineNodeId) {
+      return [{ targetId: inlineNodeId, text: inlineRef?.displayName || child.content.text.trim() || undefined }];
     }
     const text = child.content.text.trim();
     return text ? [{ text }] : [];
@@ -796,7 +798,7 @@ function scoreTerm(index: SearchIndex, node: SearchNode, term: string): number {
 
 function nodeLinksTo(index: SearchIndex, node: SearchNode, targetId: NodeId): boolean {
   if (node.type === 'reference' && node.targetId === targetId) return true;
-  if (node.content.inlineRefs.some((ref) => ref.targetNodeId === targetId)) return true;
+  if (node.content.inlineRefs.some((ref) => inlineRefNodeId(ref) === targetId)) return true;
   return node.children.some((childId) => {
     const child = index.nodes.get(childId);
     return child?.type === 'reference' && child.targetId === targetId && !isInTrash(index, child.id);
@@ -928,7 +930,8 @@ function operandsFromNode(
     operands.push(...nodeOperand(index, node.queryTargetId));
   }
   for (const inlineRef of node.content.inlineRefs) {
-    operands.push(...nodeOperand(index, inlineRef.targetNodeId));
+    const nodeId = inlineRefNodeId(inlineRef);
+    if (nodeId) operands.push(...nodeOperand(index, nodeId));
   }
 
   const text = node.content.text.trim();
@@ -1079,12 +1082,18 @@ function nodeMatchesDateRange(index: SearchIndex, node: SearchNode, range: DateR
   if (textMatchesDateRange(node.content.text, range)) return true;
   if (node.description && textMatchesDateRange(node.description, range)) return true;
   if (node.type === 'reference' && node.targetId && nodeIdMatchesDateRange(index, node.targetId, range)) return true;
-  if (node.content.inlineRefs.some((ref) => nodeIdMatchesDateRange(index, ref.targetNodeId, range))) return true;
+  if (node.content.inlineRefs.some((ref) => {
+    const nodeId = inlineRefNodeId(ref);
+    return Boolean(nodeId && nodeIdMatchesDateRange(index, nodeId, range));
+  })) return true;
 
   for (const fieldValue of fieldValueNodes(index, node)) {
     if (textMatchesDateRange(fieldValue.content.text, range)) return true;
     if (fieldValue.type === 'reference' && fieldValue.targetId && nodeIdMatchesDateRange(index, fieldValue.targetId, range)) return true;
-    if (fieldValue.content.inlineRefs.some((ref) => nodeIdMatchesDateRange(index, ref.targetNodeId, range))) return true;
+    if (fieldValue.content.inlineRefs.some((ref) => {
+      const nodeId = inlineRefNodeId(ref);
+      return Boolean(nodeId && nodeIdMatchesDateRange(index, nodeId, range));
+    })) return true;
   }
 
   return node.children.some((childId) => {
@@ -1109,7 +1118,8 @@ function dateRangesFromValueNode(index: SearchIndex, value: SearchNode): DateRan
     if (range) ranges.push(range);
   }
   for (const inlineRef of value.content.inlineRefs) {
-    const range = nodeDateRange(index, inlineRef.targetNodeId);
+    const nodeId = inlineRefNodeId(inlineRef);
+    const range = nodeId ? nodeDateRange(index, nodeId) : null;
     if (range) ranges.push(range);
   }
   return uniqueDateRanges(ranges);

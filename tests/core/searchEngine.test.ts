@@ -514,7 +514,7 @@ describe('core search engine', () => {
     const conditionId = mustFocus(core.createNode(searchId, null, '2026-05-14'));
     const state = core.state();
 
-    state.nodes[inlineRefMatch]!.content.inlineRefs = [{ offset: 0, targetNodeId: dayId }];
+    state.nodes[inlineRefMatch]!.content.inlineRefs = [{ offset: 0, target: { kind: 'node', nodeId: dayId  }}];
     state.nodes[searchId]!.type = 'search';
     state.nodes[conditionId]!.type = 'queryCondition';
     state.nodes[conditionId]!.queryOp = 'FOR_DATE';

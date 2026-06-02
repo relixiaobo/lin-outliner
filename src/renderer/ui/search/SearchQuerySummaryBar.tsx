@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
-import { formatNodeReferenceMarker } from '../../../core/nodeReferenceMarkup';
+import { formatNodeReferenceMarker } from '../../../core/referenceMarkup';
 import { api } from '../../api/client';
-import type { NodeId, NodeProjection, QueryLogic, QueryOp } from '../../api/types';
+import { inlineRefNodeId, type NodeId, type NodeProjection, type QueryLogic, type QueryOp } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import {
   CloseIcon,
@@ -308,7 +308,8 @@ function operandOutlineTexts(index: DocumentIndex, condition: QueryBearingProjec
 function operandOutlineText(index: DocumentIndex, node: NodeProjection): string {
   if (node.type === 'reference' && node.targetId) return nodeReference(index, node.targetId, node.content.text.trim() || undefined);
   const inlineRef = node.content.inlineRefs[0];
-  if (inlineRef) return nodeReference(index, inlineRef.targetNodeId, inlineRef.displayName);
+  const inlineNodeId = inlineRef ? inlineRefNodeId(inlineRef) : null;
+  if (inlineNodeId) return nodeReference(index, inlineNodeId, inlineRef?.displayName);
   return node.content.text.trim();
 }
 
@@ -463,7 +464,8 @@ function valueLabels(index: DocumentIndex, condition: QueryBearingProjection): s
 function operandLabel(index: DocumentIndex, node: NodeProjection): string {
   if (node.type === 'reference' && node.targetId) return nodeTitle(index, node.targetId);
   const inlineRef = node.content.inlineRefs[0];
-  if (inlineRef) return inlineRef.displayName || nodeTitle(index, inlineRef.targetNodeId);
+  const inlineNodeId = inlineRef ? inlineRefNodeId(inlineRef) : null;
+  if (inlineNodeId) return inlineRef?.displayName || nodeTitle(index, inlineNodeId);
   return node.content.text.trim();
 }
 

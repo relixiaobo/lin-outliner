@@ -4,8 +4,8 @@ import { parseLinOutline } from '../../src/main/agentOutlineParser';
 describe('agent outline parser', () => {
   test('parses full-line node references with and without display names', () => {
     const parsed = parseLinOutline([
-      '- [[Alpha^node-alpha]]',
-      '- [[^node-beta]]',
+      '- [[node:Alpha^node-alpha]]',
+      '- [[node:^node-beta]]',
     ].join('\n'));
 
     expect(parsed.ok).toBe(true);

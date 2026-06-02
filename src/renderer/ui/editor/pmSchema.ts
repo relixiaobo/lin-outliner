@@ -16,16 +16,24 @@ export const pmSchema = new Schema({
       inline: true,
       atom: true,
       attrs: {
+        targetKind: { default: 'node' },
         targetNodeId: { default: '' },
+        targetPath: { default: '' },
+        entryKind: { default: 'file' },
         displayName: { default: '' },
+        mimeType: { default: '' },
+        sizeBytes: { default: null },
         color: { default: '' },
       },
       parseDOM: [{
-        tag: 'span[data-inline-ref]',
+        tag: 'span[data-inline-ref-kind]',
         getAttrs(dom) {
           const element = dom as HTMLElement;
           return {
+            targetKind: element.dataset.inlineRefKind ?? 'node',
             targetNodeId: element.dataset.inlineRef ?? '',
+            targetPath: element.dataset.inlineRefPath ?? '',
+            entryKind: element.dataset.inlineRefEntryKind ?? 'file',
             displayName: element.textContent?.replace(/^@/, '').trim() ?? '',
           };
         },
@@ -33,9 +41,14 @@ export const pmSchema = new Schema({
       toDOM(node) {
         const attrs: Record<string, string> = {
           class: 'inline-ref',
-          'data-inline-ref': node.attrs.targetNodeId,
+          'data-inline-ref-kind': String(node.attrs.targetKind ?? 'node'),
           contenteditable: 'false',
         };
+        if (node.attrs.targetKind === 'node') attrs['data-inline-ref'] = String(node.attrs.targetNodeId ?? '');
+        if (node.attrs.targetKind === 'local-file') {
+          attrs['data-inline-ref-path'] = String(node.attrs.targetPath ?? '');
+          attrs['data-inline-ref-entry-kind'] = String(node.attrs.entryKind ?? 'file');
+        }
         if (node.attrs.color) {
           attrs.style = `color: ${node.attrs.color}; --inline-ref-accent: ${node.attrs.color}`;
         }

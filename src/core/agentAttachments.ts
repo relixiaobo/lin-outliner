@@ -1,4 +1,5 @@
 import type { AgentFileAttachmentInput, AgentImageAttachmentInput, AgentTextAttachmentInput } from './agentTypes';
+import type { ReferenceTarget } from './types';
 
 const ATTACHMENT_START = '[lin attached file: ';
 const ATTACHMENT_END = '[/lin attached file]';
@@ -17,7 +18,7 @@ export interface ParsedAgentTextAttachment {
   path?: string;
 }
 
-export type AgentAttachmentMarkerItem =
+export type AgentResourceItem =
   | {
       kind: 'image';
       ref: string;
@@ -33,6 +34,8 @@ export type AgentAttachmentMarkerItem =
       mimeType: string;
       sizeBytes: number;
       path: string;
+      readPath: string;
+      target: Extract<ReferenceTarget, { kind: 'local-file' }>;
     }
   | {
       kind: 'inline_text';
@@ -43,10 +46,39 @@ export type AgentAttachmentMarkerItem =
       truncated: boolean;
     };
 
+export type AgentAttachmentMarkerItem = AgentResourceItem;
+
 export interface AgentAttachmentMarker {
   version: 1;
   instructions: string;
-  attachments: AgentAttachmentMarkerItem[];
+  attachments: AgentResourceItem[];
+}
+
+export interface ReferenceTargetResourceMeta {
+  ref?: string;
+  name?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  readPath?: string;
+}
+
+export function referenceTargetToResourceItem(
+  target: ReferenceTarget,
+  meta: ReferenceTargetResourceMeta = {},
+): AgentResourceItem | null {
+  if (target.kind === 'node') return null;
+  const name = meta.name?.trim() || basenameForPath(target.path) || target.path;
+  const readPath = meta.readPath?.trim() || target.path;
+  return {
+    kind: 'file',
+    ref: meta.ref?.trim() || name,
+    name,
+    mimeType: meta.mimeType?.trim() || (target.entryKind === 'directory' ? 'inode/directory' : 'application/octet-stream'),
+    sizeBytes: typeof meta.sizeBytes === 'number' && Number.isFinite(meta.sizeBytes) ? meta.sizeBytes : 0,
+    path: target.path,
+    readPath,
+    target,
+  };
 }
 
 export function serializeAgentTextAttachment(attachment: AgentTextAttachmentInput): string {
@@ -100,14 +132,18 @@ export function serializeAgentAttachmentMarker(attachments: Array<AgentImageAtta
       };
     }
     if (attachment.kind === 'file') {
-      return {
-        kind: 'file',
+      const entryKind = attachment.mimeType === 'inode/directory' ? 'directory' : 'file';
+      return referenceTargetToResourceItem({
+        kind: 'local-file',
+        path: attachment.path,
+        entryKind,
+      }, {
         ref: attachment.ref ?? attachment.name,
         name: attachment.name,
         mimeType: attachment.mimeType,
         sizeBytes: attachment.sizeBytes,
-        path: attachment.path,
-      };
+        readPath: attachment.path,
+      })!;
     }
     return {
       kind: 'inline_text',
@@ -121,7 +157,7 @@ export function serializeAgentAttachmentMarker(attachments: Array<AgentImageAtta
   if (items.length === 0) return null;
   const marker: AgentAttachmentMarker = {
     version: 1,
-    instructions: 'When user text includes [[file:<ref>]], match <ref> against these attachments. Images are visible as image content blocks. Files and folders are available at local paths; use file_read for files and file_glob for folders instead of assuming they are already visible. Inline text attachments are included in this user message.',
+    instructions: 'When user text includes [[file:<label>^<path>]], use the percent-decoded path and match the label/ref against these attachments when present. Images are visible as image content blocks. Files and folders are available at local paths; use file_read for files and file_glob for folders instead of assuming they are already visible. Inline text attachments are included in this user message.',
     attachments: items,
   };
   return `${USER_ATTACHMENTS_START}\n${JSON.stringify(marker, null, 2)}\n${USER_ATTACHMENTS_END}`;
@@ -147,6 +183,11 @@ export function parseAgentAttachmentMarkerBlock(text: string): AgentAttachmentMa
           inline: true,
         });
       } else if (item.kind === 'file' && typeof item.name === 'string' && typeof item.mimeType === 'string' && typeof item.path === 'string') {
+        const target = normalizeLocalFileTarget(item.target) ?? {
+          kind: 'local-file' as const,
+          path: item.path,
+          entryKind: item.mimeType === 'inode/directory' ? 'directory' as const : 'file' as const,
+        };
         attachments.push({
           kind: 'file',
           ref: typeof item.ref === 'string' && item.ref.trim() ? item.ref : item.name,
@@ -154,6 +195,8 @@ export function parseAgentAttachmentMarkerBlock(text: string): AgentAttachmentMa
           mimeType: item.mimeType,
           sizeBytes: typeof item.sizeBytes === 'number' ? item.sizeBytes : 0,
           path: item.path,
+          readPath: typeof item.readPath === 'string' && item.readPath.trim() ? item.readPath : item.path,
+          target,
         });
       } else if (item.kind === 'inline_text' && typeof item.name === 'string' && typeof item.mimeType === 'string') {
         attachments.push({
@@ -196,4 +239,23 @@ function extractAgentAttachmentMarker(text: string): string | null {
   const end = text.indexOf(USER_ATTACHMENTS_END, contentStart);
   if (end < 0) return null;
   return text.slice(contentStart, end).trim();
+}
+
+function normalizeLocalFileTarget(value: unknown): Extract<ReferenceTarget, { kind: 'local-file' }> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    record.kind === 'local-file'
+    && typeof record.path === 'string'
+    && record.path
+    && (record.entryKind === 'file' || record.entryKind === 'directory')
+  ) {
+    return { kind: 'local-file', path: record.path, entryKind: record.entryKind };
+  }
+  return null;
+}
+
+function basenameForPath(path: string): string {
+  const normalized = path.replace(/[/\\]+$/gu, '');
+  return normalized.split(/[/\\]/u).pop() ?? '';
 }

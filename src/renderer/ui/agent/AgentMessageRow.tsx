@@ -8,7 +8,7 @@ import type {
   UserMessage,
 } from '../../../core/agentTypes';
 import type { AgentRenderSubagentEntity } from '../../../core/agentRenderProjection';
-import { splitFileReferenceMarkers } from '../../../core/agentFileReferenceMarkup';
+import { splitFileReferenceMarkers } from '../../../core/referenceMarkup';
 import {
   isHiddenAgentContextBlock,
   parseAgentAttachmentMarkerBlock,

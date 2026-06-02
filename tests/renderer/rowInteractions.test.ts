@@ -194,9 +194,9 @@ describe('row interaction resolvers', () => {
 	    expect(searchQueryOutlineText({ byId, projection: {} } as any, 'search')).toBe([
 	      '- AND',
 	      '  - HAS_TAG',
-	      '    - tag:: [[#card^tag-card]]',
+	      '    - tag:: [[node:#card^tag-card]]',
 	      '  - FIELD_IS',
-	      '    - field:: [[Status^field-status]]',
+	      '    - field:: [[node:Status^field-status]]',
 	      '    - value:: Backlog',
 	    ].join('\n'));
 	  });
@@ -841,7 +841,7 @@ describe('row interaction resolvers', () => {
       {
         text: 'world',
         marks: [{ start: 0, end: 5, type: 'code' }],
-        inlineRefs: [{ offset: 0, targetNodeId: 'target', displayName: 'World' }],
+        inlineRefs: [{ offset: 0, target: { kind: 'node', nodeId: 'target' }, displayName: 'World' }],
       },
     )).toEqual({
       text: 'Hello world',
@@ -849,7 +849,7 @@ describe('row interaction resolvers', () => {
         { start: 0, end: 5, type: 'bold' },
         { start: 6, end: 11, type: 'code' },
       ],
-      inlineRefs: [{ offset: 6, targetNodeId: 'target', displayName: 'World' }],
+      inlineRefs: [{ offset: 6, target: { kind: 'node', nodeId: 'target' }, displayName: 'World' }],
     });
   });
 

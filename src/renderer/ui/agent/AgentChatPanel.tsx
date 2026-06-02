@@ -15,7 +15,7 @@ import type {
   AgentUserViewContext,
   AssistantMessage,
 } from '../../../core/agentTypes';
-import { nodeReferenceMarkersToText } from '../../../core/nodeReferenceMarkup';
+import { nodeReferenceMarkersToText } from '../../../core/referenceMarkup';
 import type {
   AgentProviderConfigView,
   AgentProviderSettingsView,

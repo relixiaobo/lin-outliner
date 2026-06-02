@@ -69,9 +69,36 @@ type E2EWindow = Window & {
   };
 };
 
+export type E2EReferenceTarget =
+  | { kind: 'node'; nodeId: string }
+  | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' };
+
+export interface E2EInlineRef {
+  offset: number;
+  target: E2EReferenceTarget;
+  displayName?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+}
+
+export function e2eInlineRefNodeId(ref: E2EInlineRef): string | null {
+  return ref.target.kind === 'node' ? ref.target.nodeId : null;
+}
+
+export function e2eNodeInlineRef(offset: number, nodeId: string, displayName?: string): E2EInlineRef {
+  return {
+    offset,
+    target: { kind: 'node', nodeId },
+    ...(displayName ? { displayName } : {}),
+  };
+}
+
 export async function installElectronMock(page: Page, options: MockFixtureOptions = {}) {
   await page.addInitScript(({ ids, options }) => {
-    type RichText = { text: string; marks: unknown[]; inlineRefs: Array<{ offset: number; targetNodeId: string; displayName?: string }> };
+    type ReferenceTarget =
+      | { kind: 'node'; nodeId: string }
+      | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' };
+    type RichText = { text: string; marks: unknown[]; inlineRefs: Array<{ offset: number; target: ReferenceTarget; displayName?: string; mimeType?: string; sizeBytes?: number }> };
     type RichTextPatch = {
       ops: Array<
         | { type: 'replace_all'; content: RichText }
@@ -80,6 +107,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         | { type: 'remove_mark'; from: number; to: number; markType: string }
       >;
     };
+    const inlineRefNodeId = (ref: RichText['inlineRefs'][number]) => (
+      ref.target.kind === 'node' ? ref.target.nodeId : null
+    );
+    const nodeInlineRef = (offset: number, nodeId: string, displayName?: string): RichText['inlineRefs'][number] => ({
+      offset,
+      target: { kind: 'node', nodeId },
+      ...(displayName ? { displayName } : {}),
+    });
     type MockNode = {
       id: string;
       type?: string;
@@ -415,7 +450,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const removedRefs = op.deletedInlineRefs ?? [];
           const removesRef = (ref: RichText['inlineRefs'][number]) => removedRefs.some((candidate) =>
             candidate.offset === ref.offset
-            && candidate.targetNodeId === ref.targetNodeId
+            && inlineRefNodeId(candidate) === inlineRefNodeId(ref)
             && (candidate.displayName === undefined || candidate.displayName === ref.displayName));
           const insertedLength = op.content.text.length;
           const delta = insertedLength - (to - from);
@@ -1713,7 +1748,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             inlineNode.content = {
               text: '',
               marks: [],
-              inlineRefs: [{ offset: 0, targetNodeId: target.id, displayName: target.content.text || undefined }],
+              inlineRefs: [nodeInlineRef(0, target.id, target.content.text || undefined)],
             };
           }
           return clone(outcome({
@@ -1759,7 +1794,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             inlineNode.content = {
               text: '',
               marks: [],
-              inlineRefs: [{ offset: 0, targetNodeId: target.id, displayName: target.content.text || undefined }],
+              inlineRefs: [nodeInlineRef(0, target.id, target.content.text || undefined)],
             };
           }
           removeNode(node.id);
@@ -1784,7 +1819,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             inlineNode.content = {
               text: '',
               marks: [],
-              inlineRefs: [{ offset: 0, targetNodeId: target.id, displayName: target.content.text || undefined }],
+              inlineRefs: [nodeInlineRef(0, target.id, target.content.text || undefined)],
             };
           }
           removeNode(node.id);
@@ -1811,7 +1846,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             inlineNode.content = {
               text: '',
               marks: [],
-              inlineRefs: [{ offset: 0, targetNodeId: target.id, displayName: target.content.text || undefined }],
+              inlineRefs: [nodeInlineRef(0, target.id, target.content.text || undefined)],
             };
           }
           removeNode(reference.id);
@@ -2242,7 +2277,7 @@ export async function e2eProjection(page: Page): Promise<{ nodes: Array<{
   id: string;
   parentId?: string;
   children: string[];
-  content: { text: string; inlineRefs: Array<{ targetNodeId: string }> };
+  content: { text: string; inlineRefs: E2EInlineRef[] };
   completedAt?: number;
   tags: string[];
   type?: string;
@@ -2266,7 +2301,7 @@ export async function e2eProjection(page: Page): Promise<{ nodes: Array<{
       id: string;
       parentId?: string;
       children: string[];
-      content: { text: string; inlineRefs: Array<{ targetNodeId: string }> };
+      content: { text: string; inlineRefs: E2EInlineRef[] };
       completedAt?: number;
       tags: string[];
       type?: string;

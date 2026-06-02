@@ -51,6 +51,8 @@ describe('agent attachments', () => {
       mimeType: 'application/pdf',
       sizeBytes: 2048,
       path: '/tmp/lin/report.pdf',
+      readPath: '/tmp/lin/report.pdf',
+      target: { kind: 'local-file', path: '/tmp/lin/report.pdf', entryKind: 'file' },
     }]);
   });
 });

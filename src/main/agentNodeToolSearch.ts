@@ -8,7 +8,7 @@ import {
   type SearchQueryOperand,
   type SearchQueryRule,
 } from '../core/types';
-import { formatNodeReferenceMarker } from '../core/nodeReferenceMarkup';
+import { formatNodeReferenceMarker } from '../core/referenceMarkup';
 import {
   SEARCH_EXECUTABLE_QUERY_OPS,
   runSearchExpr,
@@ -269,7 +269,7 @@ export function validateReferenceTargetIds(index: ProjectionIndex, targetIds: st
     return {
       code: 'node_not_found',
       error: `Reference target not found: ${missing}`,
-      instructions: 'Use node_search to locate the target id, then retry with a reference marker like [[Display^node:...]].',
+      instructions: 'Use node_search to locate the target id, then retry with a reference marker like [[node:Display^node%3A...]].',
     };
   }
   const trashed = targetIds.find((targetId) => isInTrash(index, targetId));
@@ -418,10 +418,10 @@ function isNodeToolIssue(value: unknown): value is NodeToolIssue {
 
 function validateRule(rule: SearchQueryRule): NodeToolIssue | null {
   if (FIELD_OPERAND_OPS.has(rule.op) && !rule.fieldDefId && rule.op !== 'HAS_FIELD' && rule.op !== 'OVERDUE') {
-    return missingRuleOperand(rule.op, 'field:: [[Field^node:...]]');
+    return missingRuleOperand(rule.op, 'field:: [[node:Field^node%3A...]]');
   }
-  if (rule.op === 'HAS_TAG' && !rule.tagDefId) return missingRuleOperand(rule.op, 'tag:: [[#tag^node:...]]');
-  if (TARGET_OPERAND_OPS.has(rule.op) && !rule.targetId) return missingRuleOperand(rule.op, 'target:: [[Target^node:...]]');
+  if (rule.op === 'HAS_TAG' && !rule.tagDefId) return missingRuleOperand(rule.op, 'tag:: [[node:#tag^node%3A...]]');
+  if (TARGET_OPERAND_OPS.has(rule.op) && !rule.targetId) return missingRuleOperand(rule.op, 'target:: [[node:Target^node%3A...]]');
   if (VALUE_OPERAND_OPS.has(rule.op) && !rule.text && (!rule.operands || rule.operands.length === 0)) {
     return missingRuleOperand(rule.op, 'value:: ...');
   }
@@ -502,7 +502,7 @@ function unsupportedRuleInstructions(token: string): string {
 function operandInstructionForOp(op: QueryOp): string {
   if (op === 'DONE_LAST_DAYS') return 'Use value:: N, for example value:: 7. DONE_LAST_DAYS uses the system completed timestamp, not a field.';
   if (op === 'CREATED_LAST_DAYS' || op === 'EDITED_LAST_DAYS') return 'Use value:: N, for example value:: 7.';
-  if (op === 'DATE_OVERLAPS') return 'Use field:: [[Date field^node:...]] and value:: YYYY-MM-DD/YYYY-MM-DD. DATE_OVERLAPS searches date field values only.';
+  if (op === 'DATE_OVERLAPS') return 'Use field:: [[node:Date field^node%3A...]] and value:: YYYY-MM-DD/YYYY-MM-DD. DATE_OVERLAPS searches date field values only.';
   if (
     op === 'FIELD_IS'
     || op === 'FIELD_IS_NOT'
@@ -517,24 +517,24 @@ function operandInstructionForOp(op: QueryOp): string {
     || op === 'FIELD_IS_DEFINED'
     || op === 'FIELD_IS_NOT_DEFINED'
   ) {
-    return 'Use field:: [[Field^node:...]] plus value:: ... for user-defined fields. For checkbox completion state, use DONE, NOT_DONE, TODO, or DONE_LAST_DAYS instead.';
+    return 'Use field:: [[node:Field^node%3A...]] plus value:: ... for user-defined fields. For checkbox completion state, use DONE, NOT_DONE, TODO, or DONE_LAST_DAYS instead.';
   }
-  if (op === 'HAS_TAG') return 'Use tag:: [[#tag^node:...]].';
+  if (op === 'HAS_TAG') return 'Use tag:: [[node:#tag^node%3A...]].';
   if (op === 'LINKS_TO' || op === 'CHILD_OF' || op === 'DESCENDANT_OF' || op === 'DESCENDANT_OF_WITH_REFS' || op === 'OWNED_BY') {
-    return 'Use target:: [[Node^node:...]].';
+    return 'Use target:: [[node:Node^node%3A...]].';
   }
   return SEARCH_QUERY_SHAPE_GUIDANCE;
 }
 
 function referenceOperandInstruction(name: 'field' | 'tag' | 'target', op?: QueryOp): string {
   if (name === 'field') {
-    const base = 'Use field:: [[Field^node:...]] or an exact field definition node id. Plain field names such as "date", "done", or "Status" are not enough.';
+    const base = 'Use field:: [[node:Field^node%3A...]] or an exact field definition node id. Plain field names such as "date", "done", or "Status" are not enough.';
     if (op === 'DATE_OVERLAPS') return `${base} DATE_OVERLAPS searches date field values; for nodes completed recently use DONE_LAST_DAYS value:: N.`;
     if (op === 'OVERDUE') return `${base} OVERDUE may omit field:: to check all date fields, or include field:: to limit the date field.`;
     return `${base} For checkbox completion state, use DONE, NOT_DONE, TODO, or DONE_LAST_DAYS instead of FIELD_IS.`;
   }
-  if (name === 'tag') return 'Use tag:: [[#tag^node:...]] or an exact tag definition node id. Plain tag names are not enough.';
-  return `Use target:: [[Node^node:...]] or an exact target node id. ${NODE_REFERENCE_GUIDANCE}`;
+  if (name === 'tag') return 'Use tag:: [[node:#tag^node%3A...]] or an exact tag definition node id. Plain tag names are not enough.';
+  return `Use target:: [[node:Node^node%3A...]] or an exact target node id. ${NODE_REFERENCE_GUIDANCE}`;
 }
 
 function valueOperandsFromRule(index: ProjectionIndex, node: OutlineNode): SearchQueryOperand[] | NodeToolIssue {

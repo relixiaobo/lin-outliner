@@ -4,6 +4,7 @@ import { TRASH_ID } from '../../src/core/types';
 import { createNodeTools, visibleOperationHistory, type OutlinerToolHost } from '../../src/main/agentNodeTools';
 import type { OperationHistoryData } from '../../src/main/agentNodeToolTypes';
 import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
+import { formatNodeReferenceMarker } from '../../src/core/referenceMarkup';
 
 function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T) {
   expect(outcome.focus).toBeDefined();
@@ -67,7 +68,7 @@ function arrayArg(value: unknown): string[] {
 }
 
 function nodeRef(core: Core, nodeId: string, label?: string): string {
-  return `[[${label ?? core.state().nodes[nodeId]?.content.text ?? nodeId}^${nodeId}]]`;
+  return formatNodeReferenceMarker(label ?? core.state().nodes[nodeId]?.content.text ?? nodeId, nodeId);
 }
 
 async function executeTool<TData>(core: Core, name: string, params: unknown): Promise<ToolEnvelope<TData>> {
@@ -304,7 +305,7 @@ describe('agent node tools', () => {
 
     const outline = await executeTool(core, 'node_create', {
       parent_id: today,
-      outline: `- [[Archived target^${targetId}]]`,
+      outline: `- ${formatNodeReferenceMarker('Archived target', targetId)}`,
     });
     expect(outline.ok).toBe(false);
     expect(outline.error?.code).toBe('node_in_trash');
@@ -1018,14 +1019,14 @@ describe('agent node tools', () => {
     expect((visible.data! as any).refs).toBeUndefined();
     expect(visible.data!.references).toEqual([
       {
-        display_ref: `[[Root^${root}]]`,
+        display_ref: nodeRef(core, root, 'Root'),
         edit_handle: `%%node:${root}%%`,
         node_id: root,
         title: 'Root',
         type: 'node',
       },
       {
-        display_ref: `[[Child^${child}]]`,
+        display_ref: nodeRef(core, child, 'Child'),
         edit_handle: `%%node:${child}%%`,
         node_id: child,
         title: 'Child',
@@ -1155,8 +1156,8 @@ describe('agent node tools', () => {
     }>(result.contentText);
 
     expect(visible).toMatchObject({ ok: true, tool: 'node_search' });
-    expect(visible.instructions).toContain('[[Display^node:...]]');
-    expect(visible.instructions).toContain('[[^node:...]]');
+    expect(visible.instructions).toContain('[[node:Display^node%3A...]]');
+    expect(visible.instructions).toContain('[[node:^node%3A...]]');
     expect(visible.instructions).toContain('never show %%node:id%%');
     expect(visible.instructions).toContain('data.references[].display_ref');
     expect(visible.data!.kind).toBe('search');
@@ -1164,7 +1165,7 @@ describe('agent node tools', () => {
     expect((visible.data! as any).matches).toBeUndefined();
     expect((visible.data! as any).refs).toBeUndefined();
     expect(visible.data!.references).toEqual([{
-      display_ref: `[[Chengdu weather^${chengdu}]]`,
+      display_ref: nodeRef(core, chengdu, 'Chengdu weather'),
       edit_handle: `%%node:${chengdu}%%`,
       node_id: chengdu,
       title: 'Chengdu weather',

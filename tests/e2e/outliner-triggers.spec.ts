@@ -1,6 +1,8 @@
 import { expect, test, type Locator } from '@playwright/test';
 import {
   commandCalls,
+  e2eInlineRefNodeId,
+  e2eNodeInlineRef,
   e2eProjection,
   ids,
   nodeById,
@@ -291,7 +293,7 @@ test.describe('outliner trigger parity', () => {
         zetaId
         && !created?.type
         && created?.content.text === ''
-        && created.content.inlineRefs.some((ref) => ref.targetNodeId === zetaId),
+        && created.content.inlineRefs.some((ref) => e2eInlineRefNodeId(ref) === zetaId),
       );
     }).toBe(true);
     await expect(rowEditor(page, createdRowId!)).toBeFocused();
@@ -322,7 +324,7 @@ test.describe('outliner trigger parity', () => {
     await expect.poll(async () => nodeById(page, createdRowId!)).toMatchObject({
       content: {
         text: '!',
-        inlineRefs: [{ offset: 0, targetNodeId: zetaId, displayName: 'Zeta' }],
+        inlineRefs: [e2eNodeInlineRef(0, zetaId, 'Zeta')],
       },
     });
     await expect(rowEditor(page, createdRowId!)).toBeFocused();
@@ -376,7 +378,7 @@ test.describe('outliner trigger parity', () => {
       inlineRowId = projection.nodes.find((node) => (
         !node.type
         && node.content.text === ''
-        && node.content.inlineRefs.some((ref) => ref.targetNodeId === zetaId)
+        && node.content.inlineRefs.some((ref) => e2eInlineRefNodeId(ref) === zetaId)
       ))?.id ?? '';
       return Boolean(zetaId && inlineRowId);
     }).toBe(true);
@@ -435,7 +437,7 @@ test.describe('outliner trigger parity', () => {
       const created = projection.nodes.find((node) => node.id === createdRowId);
       return {
         inlineTargetText: projection.nodes.find((node) => (
-          node.id === created?.content.inlineRefs[0]?.targetNodeId
+          node.id === (created?.content.inlineRefs[0] ? e2eInlineRefNodeId(created.content.inlineRefs[0]) : null)
         ))?.content.text ?? '',
         text: created?.content.text ?? null,
         type: created?.type ?? null,
@@ -474,7 +476,7 @@ test.describe('outliner trigger parity', () => {
     await expect.poll(async () => nodeById(page, createdRowId!)).toMatchObject({
       content: {
         text: 'test',
-        inlineRefs: [{ offset: 0, targetNodeId: targetId, displayName: 'RemoteTarget' }],
+        inlineRefs: [e2eNodeInlineRef(0, targetId!, 'RemoteTarget')],
       },
     });
     await expect.poll(async () => (await nodeById(page, createdRowId!))?.type ?? null).toBe(null);
@@ -507,7 +509,7 @@ test.describe('outliner trigger parity', () => {
     await expect.poll(async () => nodeById(page, createdRowId!)).toMatchObject({
       content: {
         text: 'See  ',
-        inlineRefs: [{ offset: 4, targetNodeId: ids.alpha, displayName: 'Alpha' }],
+        inlineRefs: [e2eNodeInlineRef(4, ids.alpha, 'Alpha')],
       },
     });
     await expect(rowEditor(page, createdRowId!)).toBeFocused();
@@ -543,7 +545,7 @@ test.describe('outliner trigger parity', () => {
         node.id !== emptyRowId
         && !node.type
         && node.content.text === ''
-        && node.content.inlineRefs.some((ref) => ref.targetNodeId === zetaId)
+        && node.content.inlineRefs.some((ref) => e2eInlineRefNodeId(ref) === zetaId)
       ))?.id ?? '';
       return Boolean(zetaId && inlineRowId);
     }).toBe(true);
@@ -568,7 +570,7 @@ test.describe('outliner trigger parity', () => {
       return node?.content;
     }).toMatchObject({
       text: '!',
-      inlineRefs: [{ offset: 0, targetNodeId: zetaId, displayName: 'Zeta' }],
+      inlineRefs: [e2eNodeInlineRef(0, zetaId, 'Zeta')],
     });
 
     calls = await commandCalls(page);
@@ -601,7 +603,7 @@ test.describe('outliner trigger parity', () => {
       inlineRowId = projection.nodes.find((node) => (
         !node.type
         && node.content.text === '!'
-        && node.content.inlineRefs.some((ref) => ref.targetNodeId === targetId)
+        && node.content.inlineRefs.some((ref) => e2eInlineRefNodeId(ref) === targetId)
       ))?.id ?? '';
       return inlineRowId;
     }).not.toBe('');
@@ -611,7 +613,7 @@ test.describe('outliner trigger parity', () => {
     await expect.poll(async () => nodeById(page, inlineRowId)).toMatchObject({
       content: {
         text: '',
-        inlineRefs: [{ offset: 0, targetNodeId: targetId, displayName: 'RemoteTarget' }],
+        inlineRefs: [e2eNodeInlineRef(0, targetId!, 'RemoteTarget')],
       },
     });
     await expect(rowEditor(page, inlineRowId)).toBeFocused();
@@ -674,14 +676,14 @@ test.describe('outliner trigger parity', () => {
       inlineRowId = projection.nodes.find((node) => (
         node.id !== emptyRowId
         && !node.type
-        && node.content.inlineRefs.some((ref) => ref.targetNodeId === targetId)
+        && node.content.inlineRefs.some((ref) => e2eInlineRefNodeId(ref) === targetId)
       ))?.id ?? '';
       return inlineRowId;
     }).not.toBe('');
     await expect.poll(async () => nodeById(page, inlineRowId)).toMatchObject({
       content: {
         text: 'test',
-        inlineRefs: [{ offset: 0, targetNodeId: targetId, displayName: 'RemoteTarget' }],
+        inlineRefs: [e2eNodeInlineRef(0, targetId!, 'RemoteTarget')],
       },
     });
     await expect(rowEditor(page, inlineRowId)).toBeFocused();
@@ -708,7 +710,7 @@ test.describe('outliner trigger parity', () => {
       const projection = await e2eProjection(page);
       inlineRowId = projection.nodes.find((node) => (
         !node.type
-        && node.content.inlineRefs.some((ref) => ref.targetNodeId === targetId)
+        && node.content.inlineRefs.some((ref) => e2eInlineRefNodeId(ref) === targetId)
       ))?.id ?? '';
       return inlineRowId;
     }).not.toBe('');
@@ -726,7 +728,7 @@ test.describe('outliner trigger parity', () => {
     await expect.poll(async () => nodeById(page, inlineRowId)).toMatchObject({
       content: {
         text: '嗯么',
-        inlineRefs: [{ offset: 0, targetNodeId: targetId, displayName: 'RemoteTarget' }],
+        inlineRefs: [e2eNodeInlineRef(0, targetId!, 'RemoteTarget')],
       },
     });
     await expect(rowEditor(page, inlineRowId)).toBeFocused();
@@ -753,7 +755,7 @@ test.describe('outliner trigger parity', () => {
     await expect.poll(async () => nodeById(page, emptyRowId!)).toMatchObject({
       content: {
         text: ' test',
-        inlineRefs: [{ offset: 0, targetNodeId: ids.alpha, displayName: 'Alpha' }],
+        inlineRefs: [e2eNodeInlineRef(0, ids.alpha, 'Alpha')],
       },
     });
     await expect(rowEditor(page, emptyRowId!)).toBeFocused();
@@ -794,7 +796,7 @@ test.describe('outliner trigger parity', () => {
     await expect.poll(async () => nodeById(page, emptyRowId!)).toMatchObject({
       content: {
         text: ' 你好',
-        inlineRefs: [{ offset: 0, targetNodeId: ids.alpha, displayName: 'Alpha' }],
+        inlineRefs: [e2eNodeInlineRef(0, ids.alpha, 'Alpha')],
       },
     });
     await expect(row(page, emptyRowId!).locator('.inline-ref')).toHaveText('Alpha');
@@ -821,7 +823,7 @@ test.describe('outliner trigger parity', () => {
       return node?.content;
     }).toMatchObject({
       text: 'See  !',
-      inlineRefs: [{ offset: 4, targetNodeId: ids.alpha, displayName: 'Alpha' }],
+      inlineRefs: [e2eNodeInlineRef(4, ids.alpha, 'Alpha')],
     });
   });
 
@@ -873,7 +875,7 @@ test.describe('outliner trigger parity', () => {
         !created?.type
         && created?.content.inlineRefs.some((ref) => (
           projection.nodes.some((node) => (
-          node.id === ref.targetNodeId
+          node.id === e2eInlineRefNodeId(ref)
           && node.parentId === ids.library
           && node.type !== 'reference'
           && node.content.text === 'Zeta'

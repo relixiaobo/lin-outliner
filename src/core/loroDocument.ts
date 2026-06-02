@@ -3,6 +3,8 @@ import { CoreError } from './errors';
 import {
   WORKSPACE_ID,
   createNodeRecord,
+  referenceTargetSortKey,
+  referenceTargetsEqual,
   type DocumentState,
   type Node,
   type NodeFieldKey,
@@ -645,8 +647,10 @@ function writeRichText(data: LoroMap, key: string, value: RichText) {
       start: inlineRef.internalOffset,
       end: inlineRef.internalOffset + INLINE_REF_PLACEHOLDER.length,
     }, INLINE_REF_MARK, {
-      targetNodeId: inlineRef.targetNodeId,
+      target: clone(inlineRef.target) as Value,
       ...(inlineRef.displayName ? { displayName: inlineRef.displayName } : {}),
+      ...(inlineRef.mimeType ? { mimeType: inlineRef.mimeType } : {}),
+      ...(typeof inlineRef.sizeBytes === 'number' ? { sizeBytes: inlineRef.sizeBytes } : {}),
     });
   }
 }
@@ -709,7 +713,7 @@ function deleteInlineRef(text: LoroText, ref: RichText['inlineRefs'][number]) {
   const encoded = encodeRichText(richTextFromDelta(text.toDelta()));
   const match = encoded.inlineRefs.find((candidate) =>
     candidate.offset === ref.offset
-    && candidate.targetNodeId === ref.targetNodeId
+    && referenceTargetsEqual(candidate.target, ref.target)
     && (ref.displayName === undefined || candidate.displayName === ref.displayName));
   if (match) text.splice(match.internalOffset, INLINE_REF_PLACEHOLDER.length, '');
 }
@@ -734,8 +738,10 @@ function markInsertedRichText(
       start: baseOffset + inlineRef.internalOffset,
       end: baseOffset + inlineRef.internalOffset + INLINE_REF_PLACEHOLDER.length,
     }, INLINE_REF_MARK, {
-      targetNodeId: inlineRef.targetNodeId,
+      target: clone(inlineRef.target) as Value,
       ...(inlineRef.displayName ? { displayName: inlineRef.displayName } : {}),
+      ...(inlineRef.mimeType ? { mimeType: inlineRef.mimeType } : {}),
+      ...(typeof inlineRef.sizeBytes === 'number' ? { sizeBytes: inlineRef.sizeBytes } : {}),
     });
   }
 }
@@ -783,7 +789,7 @@ function richTextFromDelta(delta: unknown[]): RichText {
 function encodeRichText(content: RichText) {
   const inlineRefs = [...content.inlineRefs]
     .map((ref) => ({ ...ref, offset: clampTextOffset(ref.offset, content.text.length) }))
-    .sort((left, right) => left.offset - right.offset || left.targetNodeId.localeCompare(right.targetNodeId));
+    .sort((left, right) => left.offset - right.offset || referenceTargetSortKey(left.target).localeCompare(referenceTargetSortKey(right.target)));
   let text = '';
   let cursor = 0;
   const encodedRefs: Array<RichText['inlineRefs'][number] & { internalOffset: number }> = [];
@@ -822,11 +828,31 @@ function normalizeAttributes(value: unknown): Record<string, unknown> {
 function normalizeInlineRef(value: unknown): Omit<RichText['inlineRefs'][number], 'offset'> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
-  if (typeof record.targetNodeId !== 'string' || !record.targetNodeId) return undefined;
+  const target = normalizeReferenceTarget(record.target);
+  if (!target) return undefined;
   return {
-    targetNodeId: record.targetNodeId,
+    target,
     ...(typeof record.displayName === 'string' && record.displayName ? { displayName: record.displayName } : {}),
+    ...(typeof record.mimeType === 'string' && record.mimeType ? { mimeType: record.mimeType } : {}),
+    ...(typeof record.sizeBytes === 'number' && Number.isFinite(record.sizeBytes) ? { sizeBytes: record.sizeBytes } : {}),
   };
+}
+
+function normalizeReferenceTarget(value: unknown): RichText['inlineRefs'][number]['target'] | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if (record.kind === 'node' && typeof record.nodeId === 'string' && record.nodeId) {
+    return { kind: 'node', nodeId: record.nodeId };
+  }
+  if (
+    record.kind === 'local-file'
+    && typeof record.path === 'string'
+    && record.path
+    && (record.entryKind === 'file' || record.entryKind === 'directory')
+  ) {
+    return { kind: 'local-file', path: record.path, entryKind: record.entryKind };
+  }
+  return undefined;
 }
 
 function stringifyRecord(value: object): Record<string, string> {

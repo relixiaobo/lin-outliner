@@ -192,10 +192,16 @@ export interface TextMark {
   attrs?: Record<string, string>;
 }
 
+export type ReferenceTarget =
+  | { kind: 'node'; nodeId: NodeId }
+  | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' };
+
 export interface InlineRef {
   offset: number;
-  targetNodeId: NodeId;
+  target: ReferenceTarget;
   displayName?: string;
+  mimeType?: string;
+  sizeBytes?: number;
 }
 
 export type InlineRefCursorBias = 'before' | 'after';
@@ -730,6 +736,27 @@ export const EMPTY_RICH_TEXT: RichText = {
 
 export function plainText(text: string): RichText {
   return { text, marks: [], inlineRefs: [] };
+}
+
+export function nodeReferenceTarget(nodeId: NodeId): ReferenceTarget {
+  return { kind: 'node', nodeId };
+}
+
+export function inlineRefNodeId(ref: InlineRef): NodeId | null {
+  return ref.target.kind === 'node' ? ref.target.nodeId : null;
+}
+
+export function referenceTargetsEqual(left: ReferenceTarget, right: ReferenceTarget): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === 'node') return left.nodeId === (right as Extract<ReferenceTarget, { kind: 'node' }>).nodeId;
+  const localRight = right as Extract<ReferenceTarget, { kind: 'local-file' }>;
+  return left.path === localRight.path && left.entryKind === localRight.entryKind;
+}
+
+export function referenceTargetSortKey(target: ReferenceTarget): string {
+  return target.kind === 'node'
+    ? `node:${target.nodeId}`
+    : `file:${target.entryKind}:${target.path}`;
 }
 
 export function replaceAllRichTextPatch(content: RichText): RichTextPatch {

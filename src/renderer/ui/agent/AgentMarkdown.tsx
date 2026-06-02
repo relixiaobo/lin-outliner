@@ -12,7 +12,7 @@ import { Lexer } from 'marked';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remend from 'remend';
-import { splitNodeReferenceMarkers } from '../../../core/nodeReferenceMarkup';
+import { splitNodeReferenceMarkers } from '../../../core/referenceMarkup';
 import type { NodeId } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { CheckIcon, CopyIcon, ICON_SIZE } from '../icons';

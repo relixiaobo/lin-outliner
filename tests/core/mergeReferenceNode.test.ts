@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { Core } from '../../src/core/core';
+import { inlineRefNodeId } from '../../src/core/types';
 
 function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T) {
   if (!outcome.focus) throw new Error('expected focus');
@@ -26,7 +27,7 @@ describe('merging a row into a reference node', () => {
     // ...whose content is the original reference (now inline) followed by the
     // merged text.
     expect(merged?.content.text).toBe('tail');
-    expect(merged?.content.inlineRefs.map((ref) => ref.targetNodeId)).toEqual([alpha]);
+    expect(merged?.content.inlineRefs.map((ref) => inlineRefNodeId(ref))).toEqual([alpha]);
     expect(merged?.content.inlineRefs[0]?.offset).toBe(0);
     // The merged source row is gone.
     expect(core.projection().nodes.find((node) => node.id === textId)).toBeUndefined();

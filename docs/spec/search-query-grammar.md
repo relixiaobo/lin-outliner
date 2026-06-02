@@ -22,12 +22,12 @@ The model-facing outline is a serialization of this tree:
 - %%search%% Open work
   - AND
     - HAS_TAG
-      - tag:: [[#task^node_task_tag]]
+      - tag:: [[node:#task^node_task_tag]]
     - FIELD_IS
-      - field:: [[Status^node_status_field]]
+      - field:: [[node:Status^node_status_field]]
       - value:: Open
     - LT
-      - field:: [[Due^node_due_field]]
+      - field:: [[node:Due^node_due_field]]
       - value:: 2026-05-20
 ```
 
@@ -44,4 +44,3 @@ Rules:
   `YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, or `start/end` with `/`.
 - JSON object DSL is allowed as an internal/debug shape only. It is not the
   canonical search outline syntax.
-

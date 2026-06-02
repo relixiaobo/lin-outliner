@@ -24,8 +24,8 @@ describe('agent system prompt', () => {
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('node_read');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('node_edit');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('Never show %%node:id%% markers');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('[[Display^node:id]]');
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('[[^node:id]]');
+    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('[[node:Display^node%3Aid]]');
+    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('[[node:^node%3Aid]]');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('YYYY-MM-DDTHH:mm');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('Do not use ".." for date ranges');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('file_read');

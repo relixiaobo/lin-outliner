@@ -1,5 +1,5 @@
 import type { AgentToolResult } from '@earendil-works/pi-agent-core';
-import { formatNodeReferenceMarker } from '../core/nodeReferenceMarkup';
+import { formatNodeReferenceMarker } from '../core/referenceMarkup';
 import type { ToolEnvelope } from './agentToolEnvelope';
 import { FINAL_ANSWER_NODE_REFERENCE_GUIDANCE } from './agentNodeToolGuidance';
 import { nodeKind, nodeTitle, normalChildIds, requiredNode } from './agentNodeToolProjection';

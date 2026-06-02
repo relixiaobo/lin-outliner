@@ -9,7 +9,7 @@ import {
   richTextToDoc,
   textOffsetToDocPos,
 } from '../../src/renderer/ui/editor/richTextCodec';
-import { plainText } from '../../src/renderer/api/types';
+import { nodeReferenceTarget, plainText } from '../../src/renderer/api/types';
 
 describe('editor text patch', () => {
   test('converts text insert transactions into rich text patches', () => {
@@ -50,7 +50,7 @@ describe('editor text patch', () => {
     const trailingRefDoc = richTextToDoc({
       text: 'Hi',
       marks: [],
-      inlineRefs: [{ offset: 2, targetNodeId: 'target', displayName: 'Target' }],
+      inlineRefs: [{ offset: 2, target: nodeReferenceTarget('target'), displayName: 'Target' }],
     });
 
     expect(textOffsetToDocPos(trailingRefDoc, 2, { inlineRefBias: 'before' })).toBe(3);
@@ -59,7 +59,7 @@ describe('editor text patch', () => {
     const leadingRefDoc = richTextToDoc({
       text: 'Hi',
       marks: [],
-      inlineRefs: [{ offset: 0, targetNodeId: 'target', displayName: 'Target' }],
+      inlineRefs: [{ offset: 0, target: nodeReferenceTarget('target'), displayName: 'Target' }],
     });
 
     expect(textOffsetToDocPos(leadingRefDoc, 0, { inlineRefBias: 'before' })).toBe(2);
@@ -71,13 +71,13 @@ describe('editor text patch', () => {
       plainText('See @Alnext'),
       4,
       7,
-      { targetNodeId: 'target', displayName: 'Alpha' },
+      { target: nodeReferenceTarget('target'), displayName: 'Alpha' },
     );
 
     expect(content).toEqual({
       text: 'See  next',
       marks: [],
-      inlineRefs: [{ offset: 4, targetNodeId: 'target', displayName: 'Alpha' }],
+      inlineRefs: [{ offset: 4, target: nodeReferenceTarget('target'), displayName: 'Alpha' }],
     });
   });
 
@@ -86,13 +86,13 @@ describe('editor text patch', () => {
       plainText('See @Al next'),
       4,
       7,
-      { targetNodeId: 'target', displayName: 'Alpha' },
+      { target: nodeReferenceTarget('target'), displayName: 'Alpha' },
     );
 
     expect(content).toEqual({
       text: 'See  next',
       marks: [],
-      inlineRefs: [{ offset: 4, targetNodeId: 'target', displayName: 'Alpha' }],
+      inlineRefs: [{ offset: 4, target: nodeReferenceTarget('target'), displayName: 'Alpha' }],
     });
   });
 
@@ -100,7 +100,7 @@ describe('editor text patch', () => {
     const content = {
       text: 'See ',
       marks: [],
-      inlineRefs: [{ offset: 4, targetNodeId: 'target', displayName: 'Target' }],
+      inlineRefs: [{ offset: 4, target: nodeReferenceTarget('target'), displayName: 'Target' }],
     };
     const doc = richTextToDoc(content);
     const state = EditorState.create({ schema: pmSchema, doc });
@@ -113,7 +113,7 @@ describe('editor text patch', () => {
         content: {
           text: 'See !',
           marks: [],
-          inlineRefs: [{ offset: 4, targetNodeId: 'target', displayName: 'Target' }],
+          inlineRefs: [{ offset: 4, target: nodeReferenceTarget('target'), displayName: 'Target' }],
         },
       }],
     });
@@ -123,7 +123,7 @@ describe('editor text patch', () => {
     const content = {
       text: '',
       marks: [],
-      inlineRefs: [{ offset: 0, targetNodeId: 'target', displayName: 'Target' }],
+      inlineRefs: [{ offset: 0, target: nodeReferenceTarget('target'), displayName: 'Target' }],
     };
     const doc = richTextToDoc(content);
     const state = EditorState.create({ schema: pmSchema, doc });

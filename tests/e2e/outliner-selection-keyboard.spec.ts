@@ -2,6 +2,8 @@ import { expect, test } from '@playwright/test';
 import {
   clipboardText,
   commandCalls,
+  e2eInlineRefNodeId,
+  e2eNodeInlineRef,
   e2eProjection,
   emitDocumentEvent,
   ids,
@@ -253,7 +255,7 @@ test.describe('outliner selection keyboard parity', () => {
       inlineId = projection.nodes.find((node) => (
         node.id !== referenceId
         && !node.type
-        && node.content.inlineRefs.some((ref) => ref.targetNodeId === targetId)
+        && node.content.inlineRefs.some((ref) => e2eInlineRefNodeId(ref) === targetId)
       ))?.id ?? '';
       return inlineId;
     }).not.toBe('');
@@ -372,7 +374,7 @@ test.describe('outliner selection keyboard parity', () => {
             content: {
               text: 'See ',
               marks: [],
-              inlineRefs: [{ offset: 4, targetNodeId: ids.beta, displayName: 'Beta' }],
+              inlineRefs: [e2eNodeInlineRef(4, ids.beta, 'Beta')],
             },
           }],
         },
@@ -427,7 +429,7 @@ test.describe('outliner selection keyboard parity', () => {
       const projection = await e2eProjection(page);
       inlineRowId = projection.nodes.find((node) => (
         !node.type
-        && node.content.inlineRefs.some((ref) => ref.targetNodeId === targetId)
+        && node.content.inlineRefs.some((ref) => e2eInlineRefNodeId(ref) === targetId)
       ))?.id ?? '';
       return inlineRowId;
     }).not.toBe('');
@@ -436,7 +438,7 @@ test.describe('outliner selection keyboard parity', () => {
     await expect.poll(async () => nodeById(page, inlineRowId)).toMatchObject({
       content: {
         text: '你好',
-        inlineRefs: [{ offset: 0, targetNodeId: targetId, displayName: 'Reference Alpha' }],
+        inlineRefs: [e2eNodeInlineRef(0, targetId, 'Reference Alpha')],
       },
     });
     await expect(rowEditor(page, inlineRowId)).toBeFocused();

@@ -1,6 +1,6 @@
 import { useMemo, type CSSProperties } from 'react';
-import { splitFileReferenceMarkers } from '../../../core/agentFileReferenceMarkup';
-import { splitNodeReferenceMarkers } from '../../../core/nodeReferenceMarkup';
+import { splitFileReferenceMarkers } from '../../../core/referenceMarkup';
+import { splitNodeReferenceMarkers } from '../../../core/referenceMarkup';
 import type { NodeId } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import {
