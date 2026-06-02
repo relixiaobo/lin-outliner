@@ -1981,6 +1981,9 @@
 .row-editor .pm-highlight {
   border-radius: var(--radius-2xs);
   background: var(--highlight-mark);
+  /* <mark> carries a UA `color` (black) that survives our background override and
+     turns the marked text near-black in dark mode; keep the editor text colour. */
+  color: inherit;
 }
 
 .floating-editor-toolbar {

@@ -467,13 +467,11 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
   buttons use the neutral `--fill-*` ladder and neutral `--focus-ring` — not the
   brand colour and not the macOS system accent. (Raycast and Finder both keep
   selection and primary buttons neutral; native feel comes from materials,
-  layout, and behaviour, not from a coloured selection.) A toggle / checkbox
-  **on**-state is functional state too: the checked fill is a strong neutral
-  graphite (`--control-on`, alpha-on-ink so it inverts with the theme), never the
-  status-success green — a green switch would smuggle a status colour onto an
-  interactive control (B4). The off track and unchecked outline stay the faint
-  neutral ink alpha; on-state reads from the stronger fill plus the thumb / check
-  glyph, not from hue.
+  layout, and behaviour, not from a coloured selection.) The toggle / checkbox
+  **on**-state is the one sanctioned exception: it carries `--semantic-success`
+  (the macOS on-switch idiom) with a fixed-white knob / check glyph
+  (`--text-on-accent`) in BOTH themes — `--panel-bg` is wrong for the knob/glyph
+  because it flips dark in dark mode (a black puck on the green track).
 - **Text selection is neutral too.** The editor text-selection highlight
   (`::selection`, `--text-selection-bg`) is a neutral ink alpha — the one place
   the OS would normally paint its system accent, kept neutral for consistency
@@ -735,7 +733,7 @@ and non-goals; product behavior stays with the owning surface.
 
 | Component | Sources | Contract |
 | --- | --- | --- |
-| `CheckboxMark` | `CheckboxMark.tsx` | Decorative `16px` checkbox mark with `3px` radius. Unchecked is outlined; checked is a neutral strong fill (`--control-on`) — never status green (B3/B4). Does not own row behavior or persistence. |
+| `CheckboxMark` | `CheckboxMark.tsx` | Decorative `16px` checkbox mark with `3px` radius. Unchecked is outlined; checked is success-filled with a fixed-white check glyph (`--text-on-accent`, theme-independent). Does not own row behavior or persistence. |
 | `CheckboxControl` | `CheckboxControl.tsx`, `AgentSettingsDialog.tsx` | Labeled native checkbox wrapper for settings/forms. Keeps native checkbox semantics and `CheckboxMark` visual together. |
 | `SwitchControl` / `SwitchMark` | `SwitchControl.tsx`, `SwitchMark.tsx`, `DefinitionConfigControls.tsx`, `AgentComposerModelMenu.tsx`, `TypedFieldValueControl.tsx` | Semantic switch wrapper plus shared `30px x 18px` track and `14px` thumb. Does not own labels or persistence. |
 | `IconButton` | `IconButton.tsx` | Icon-first button with explicit accessible label and tokenized icon size. Visual variant stays caller-owned. |

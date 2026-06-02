@@ -26,7 +26,9 @@
 .checkbox-mark.checked {
   border-color: var(--semantic-success);
   background: var(--semantic-success);
-  color: var(--panel-bg);
+  /* The check glyph is white on the fill in BOTH themes (--panel-bg flips dark in
+     dark mode, which would render a near-black tick on the green box). */
+  color: var(--text-on-accent);
 }
 
 .checkbox-mark-check {
@@ -58,7 +60,10 @@
   inline-size: var(--switch-mark-thumb-size);
   block-size: var(--switch-mark-thumb-size);
   border-radius: var(--radius-pill);
-  background: var(--panel-bg);
+  /* The knob is white in BOTH themes — a native switch thumb is a fixed white
+     puck, not the panel colour (--panel-bg flips dark in dark mode, which put a
+     black knob on the green track). */
+  background: var(--text-on-accent);
   box-shadow: var(--shadow-thumb);
   transition: transform var(--motion-fast);
 }
