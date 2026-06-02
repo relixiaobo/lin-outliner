@@ -12,6 +12,23 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Reference field type: read-only system reference rows + editable node picker
+  (PR #71)** — node-reference field values now follow one model: the reference node
+  is always full-featured (double-click edits the target, expandable) and only the
+  value *container* differs. Read-only **References / Owner / Day** project synthetic
+  read-only `reference` rows (computed render-time over the global reverse index, not
+  core's incremental projection) whose set is read-only — no add, no delete — but
+  whose rows still edit/expand their target. A new editable **`reference` field type**
+  (`FieldType += 'reference'`; protocol command `add_field_reference`, append-any-node
+  + deduped, rejects a non-reference field) makes a value draft a node-search box
+  (`TrailingReferencePopover`); the typed query is never persisted as free text — a
+  value only ever comes from a picked existing node. Also: system-field derivation is
+  consolidated into `core/systemFields.ts`, and a node carrying a **Done** field
+  auto-shows a synced row checkbox that is read-only on a locked owner (fixing the
+  locked-node toggle crash). Removes the now-dead `.field-value-link`. Touches the
+  protocol surface (`types.ts`, `commands.ts`) per the plan.
+  ([#71](https://github.com/relixiaobo/lin-outliner/pull/71))
+
 - **Field-row UX: name reuse + read-only system fields + Tab relocate (PR #70)** —
   typing a field name (or `Space` on an empty one) now offers a popover of existing
   user fields + built-in system fields to relink to, instead of always minting a

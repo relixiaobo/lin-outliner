@@ -95,6 +95,19 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **reference field type: read-only system reference rows + editable node picker** (cc)
+  — one reference-node model for node-reference field values. Read-only References /
+  Owner / Day project synthetic read-only `reference` rows (render-time over the global
+  reverse index; `sysref:` locked ids) — edit/expand the target, but no add/delete; the
+  rows sit in the shared value-column container (vertical-stack layout guarded in e2e).
+  New editable `reference` field type (`FieldType += 'reference'`; protocol command
+  `add_field_reference`, append-any-node + deduped, rejects non-reference fields) with a
+  node-search draft (`TrailingReferencePopover`) whose `materializeDraft` is a no-op, so
+  a value only ever comes from a picked node. FU1: system-field derivation consolidated
+  into `core/systemFields.ts`; FU2: a Done field auto-shows a synced row checkbox,
+  read-only on a locked owner. Reviewed: typecheck clean, renderer 266/0, core 440/2
+  (2 = pre-existing agentLocalTools rg), e2e outliner-triggers 54/54. No conflict.
+  See `docs/plans/reference-field-type.md` (done). (PR #71).
 - **field-row UX: name reuse + read-only system fields + Tab relocate** (cc) — typing
   a field name (or `Space` on empty) offers existing user + system fields to relink to
   instead of always minting a fresh def (new protocol command `reuse_field_definition`;
