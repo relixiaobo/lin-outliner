@@ -2,6 +2,7 @@ import type { ToolCall } from '@earendil-works/pi-ai';
 import type { AgentPermissionMode } from '../core/types';
 import type { AgentApprovalResolutionScope } from '../core/agentTypes';
 import { evaluateAgentToolPermission, type AgentPermissionAskDecision, type GlobalToolPermissionConfig } from './agentPermissions';
+import { resolveAgentPermissionAsk } from './agentPermissionAskResolver';
 import { runLocalBashCommand, type LocalBashRunResult } from './agentLocalTools';
 
 export interface AgentSkillShellApprovalInput {
@@ -51,20 +52,40 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
       globalPermissions: input.globalPermissions,
     },
   });
-  if (decision.behavior === 'ask' && input.approvalHandler) {
-    const approval = await input.approvalHandler({
-      toolCall: {
-        type: 'toolCall',
-        id: input.toolCallId ?? 'skill-shell-bash',
-        name: 'bash',
-        arguments: { command: input.command },
-      },
-      args: { command: input.command },
+  if (decision.behavior === 'ask') {
+    // Route through the same ask resolver as the main runtime so the
+    // safe-allowlist, classifier-eligibility veto, and — critically — the
+    // unattended fail-safe (no approval channel ⇒ deny) apply consistently here.
+    const resolution = await resolveAgentPermissionAsk({
       decision,
-    }, input.signal);
-    if (!approval.approved) {
-      throw new AgentSkillShellError('permission_denied', skillShellApprovalDeniedMessage(approval));
+      interactionAvailable: Boolean(input.approvalHandler),
+      signal: input.signal,
+    });
+    if (resolution.outcome === 'block') {
+      throw new AgentSkillShellError('permission_denied', `Shell command was not run: ${resolution.message}`);
     }
+    if (resolution.outcome === 'needs_user') {
+      if (!input.approvalHandler) {
+        throw new AgentSkillShellError(
+          'permission_denied',
+          'Shell command was not run because no approval channel is available.',
+        );
+      }
+      const approval = await input.approvalHandler({
+        toolCall: {
+          type: 'toolCall',
+          id: input.toolCallId ?? 'skill-shell-bash',
+          name: 'bash',
+          arguments: { command: input.command },
+        },
+        args: { command: input.command },
+        decision,
+      }, input.signal);
+      if (!approval.approved) {
+        throw new AgentSkillShellError('permission_denied', skillShellApprovalDeniedMessage(approval));
+      }
+    }
+    // resolution.outcome === 'allow' ⇒ safe-allowlist/classifier cleared it; run.
   } else if (decision.behavior !== 'allow') {
     throw new AgentSkillShellError(
       'permission_denied',

