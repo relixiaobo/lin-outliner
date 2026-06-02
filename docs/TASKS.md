@@ -33,17 +33,10 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 
 Ordered by priority; lower items may depend on higher ones.
 
-- **outliner-local-file-references** (P0) — `@file` / `@本机文件` as a first-class
-  local file/folder reference: the shared `LocalFileRef` / `FileReferenceValue`
-  model, one `[[file:<ref>]]` parser, editor chips, and the agent context
-  resource builder. **Foundation — do first:** it gates **lazy-like-global-launcher**
-  (P0; "Launcher capture depends on this plan") and shares its file-reference
-  model with **agent-composer-attachment-path-model** (P1). Raised P2→P0 so the
-  foundation no longer sits below its consumers. See
-  `docs/plans/outliner-local-file-references.md`.
 - **lazy-like-global-launcher** (P0) — global quick-capture launcher entry point;
-  its local-file capture consumes **outliner-local-file-references** above, so
-  settle that plan's core types/parser before building capture here. See
+  its local-file capture consumes **outliner-local-file-references** (foundation
+  **landed, PR #80**), so the core types/parser/serializer are settled — build
+  capture on top of `ReferenceTarget`. See
   `docs/plans/lazy-like-global-launcher.md`.
 - **design-system-rollout** (P1) — staged migration to `docs/spec/design-system.md`.
   Phase 1 (token foundation + gated dark theme) landed (PR #55). Phases 2–4 landed
@@ -106,6 +99,18 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **unified inline reference foundation: `ReferenceTarget` (node | local-file)** (codex)
+  — implements `outliner-local-file-references.md`. `InlineRef` reshaped to
+  `{ offset, target, displayName?, mimeType?, sizeBytes? }`; one `referenceMarkup.ts`
+  with the `[[node:label^id]]` / `[[file:label^path]]` grammar (value percent-encoded);
+  pure `referenceTargetToResourceItem` serializer; Loro/richTextCodec/pmSchema/
+  searchEngine/agent-tools routed through the union; backlinks + search stay node-only.
+  Local-file refs are inline-only, path-as-identity (no id/registry/bookmark). Pre-release
+  format break — no migration/back-compat, dev userData reset. Reviewed (xhigh code-review
+  + main gate): all findings fixed; typecheck clean, core 448/2 (pre-existing rg),
+  renderer 268/0; zero regression. Design folded into `agent-tool-design.md` +
+  `agent-progress.md`; plan archived. Foundation for **lazy-like-global-launcher** +
+  **agent-composer-attachment-path-model**. (PR #80).
 - **native master-detail Providers settings + own provider-config window** (cc-2) —
   implements `native-settings-redesign.md` (Providers-first). Reusable inset
   grouped-list primitive (`SettingsInsetList`), Providers grouped Connected/Available

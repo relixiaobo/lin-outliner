@@ -12,6 +12,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Unified inline reference foundation: `ReferenceTarget` (node | local-file) (PR #80)** —
+  the inline-reference model is unified under one `ReferenceTarget` union so node
+  references and local-file/folder references share a single grammar and codec.
+  `InlineRef` carries `{ offset, target, displayName?, mimeType?, sizeBytes? }`; the
+  marker grammar is `[[node:label^id]]` / `[[file:label^path]]` (value percent-encoded)
+  parsed by one `referenceMarkup.ts`; a pure `referenceTargetToResourceItem` serializer
+  builds the agent context resource. Local-file references are inline-only with
+  path-as-identity (no id/registry/bookmark); backlinks and search stay node-only via
+  `inlineRefNodeId`. Foundation for `lazy-like-global-launcher` and
+  `agent-composer-attachment-path-model`. Pre-release format break — no migration or
+  bare-marker back-compat; dev userData reset.
+  ([#80](https://github.com/relixiaobo/lin-outliner/pull/80))
+
 - **Native master-detail Providers settings + own provider-config window (PR #69)** —
   the agent **Settings → Providers** surface reworked to the macOS System Settings
   *interaction* idiom in our own tokens/B-rules. A reusable inset grouped-list primitive
