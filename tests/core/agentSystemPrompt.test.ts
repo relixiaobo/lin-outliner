@@ -17,8 +17,8 @@ describe('agent system prompt', () => {
     expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('Lin Outliner');
   });
 
-  test('defines Lin-specific behavior and tool boundaries', () => {
-    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('Lin Agent');
+  test('defines Tenon-specific behavior and tool boundaries', () => {
+    expect(LIN_AGENT_SYSTEM_PROMPT).toContain('Tenon Agent');
     expect(LIN_AGENT_SYSTEM_PROMPT).not.toContain('local-first outliner');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('<system-reminder>');
     expect(LIN_AGENT_SYSTEM_PROMPT).toContain('node_read');

@@ -1,5 +1,5 @@
 export const FETCH_TIMEOUT_MS = 45_000;
-export const WEB_FETCH_USER_AGENT = 'Lin-Outliner-WebFetch/0.1 (user-initiated fetch)';
+export const WEB_FETCH_USER_AGENT = 'Tenon-WebFetch/0.1 (user-initiated fetch)';
 export const WEB_FETCH_BROWSER_TIMEOUT_MS = 15_000;
 export const WEB_FETCH_RENDER_SETTLE_MS = 5_000;
 export const WEB_FETCH_MAX_REDIRECTS = 10;

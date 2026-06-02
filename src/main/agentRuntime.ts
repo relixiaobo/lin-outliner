@@ -175,7 +175,7 @@ const EMPTY_USAGE = {
 
 const CONFIGURATION_ERROR_MODEL = {
   id: 'lin-provider-not-configured',
-  name: 'Lin Provider Not Configured',
+  name: 'Tenon Provider Not Configured',
   api: 'openai-completions',
   provider: 'lin',
   baseUrl: '',

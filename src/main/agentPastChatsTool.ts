@@ -12,7 +12,7 @@ import {
   type ToolEnvelope,
 } from './agentToolEnvelope';
 
-const PAST_CHATS_DESCRIPTION = `Recall content from past Lin agent conversations. Call this BEFORE saying you don't remember something.
+const PAST_CHATS_DESCRIPTION = `Recall content from past Tenon agent conversations. Call this BEFORE saying you don't remember something.
 
 When to call:
 - User says "last time", "before", "previously", "you said", "remember", "we discussed", "I told you" - and the reference is NOT to something earlier in this same conversation.

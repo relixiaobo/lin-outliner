@@ -2151,7 +2151,7 @@ export class Core {
 
   private ensureSystemNodesDirect() {
     const now = nowMs();
-    this.ensureSystemNodeDirect(WORKSPACE_ID, undefined, undefined, 'Lin Outliner', true, now);
+    this.ensureSystemNodeDirect(WORKSPACE_ID, undefined, undefined, 'Tenon', true, now, ['Lin Outliner']);
     this.ensureSystemNodeDirect(DAILY_NOTES_ID, undefined, WORKSPACE_ID, 'Daily notes', true, now);
     this.ensureSystemNodeDirect(LIBRARY_ID, undefined, WORKSPACE_ID, 'Library', true, now);
     this.ensureSystemNodeDirect(SCHEMA_ID, undefined, WORKSPACE_ID, 'Schema', true, now);
@@ -2258,6 +2258,7 @@ export class Core {
     name: string,
     locked: boolean,
     now: number,
+    legacyNames: readonly string[] = [],
   ) {
     const existingTreeNode = this.loro.hasNode(id);
     if (!existingTreeNode) {
@@ -2272,7 +2273,7 @@ export class Core {
     const state = this.snapshot();
     const node = clone(requiredNode(state, id));
     node.type = type;
-    if (!node.content.text) node.content = plainText(name);
+    if (!node.content.text || legacyNames.includes(node.content.text)) node.content = plainText(name);
     node.locked = locked;
     node.updatedAt = node.updatedAt || now;
     this.loro.writeNode(node);

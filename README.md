@@ -1,8 +1,9 @@
-# Lin Outliner
+# Tenon
 
-Local-first desktop outliner with an Electron shell, a TypeScript core, and a
-React renderer. Loro CRDT under the hood. Inspired by the nodex outliner;
-rewritten as a Mac/Windows/Linux desktop app with a built-in local agent.
+Local-first structured thinking and agent workbench with an Electron shell, a
+TypeScript core, and a React renderer. Loro CRDT under the hood. It uses an
+outliner-shaped interface, but the product is aimed at structuring context,
+directing local agents, and keeping work inspectable.
 
 > Status: pre-release, single-developer project. Public so others can read the
 > code and follow along.

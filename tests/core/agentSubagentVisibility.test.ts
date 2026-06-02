@@ -81,17 +81,17 @@ describe('subagent model-visible projection', () => {
       started_at: 1000,
       updated_at: 1000,
       transcript_message_count: 0,
-      instructions: 'The agent is running in the background. Lin will notify you when it finishes.',
+      instructions: 'The agent is running in the background. Tenon will notify you when it finishes.',
     };
 
     const result = subagentToolResult('Agent', data);
     const visible = visibleEnvelope(result);
 
-    expect(visible.instructions).toBe('The agent is running in the background. Lin will notify you when it finishes.');
+    expect(visible.instructions).toBe('The agent is running in the background. Tenon will notify you when it finishes.');
     expect((visible.data as Record<string, unknown>).instructions).toBeUndefined();
     expect(visible.data).toEqual({ status: 'async_launched', agent_id: 'agent_3' });
     // The full record still carries instructions on the envelope details.
-    expect(result.details.instructions).toBe('The agent is running in the background. Lin will notify you when it finishes.');
+    expect(result.details.instructions).toBe('The agent is running in the background. Tenon will notify you when it finishes.');
   });
 
   test('subagentToolResult omits the instructions field when the run has none', () => {

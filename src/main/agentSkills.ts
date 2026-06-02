@@ -877,7 +877,7 @@ async function executeShellCommandsInSkillContent(
 
   const shell = (skill.shell ?? 'bash').trim().toLowerCase();
   if (shell !== 'bash') {
-    throw new Error(`Skill ${skill.name} requests unsupported shell "${skill.shell}". Lin currently supports bash skill shell expansion only.`);
+    throw new Error(`Skill ${skill.name} requests unsupported shell "${skill.shell}". Tenon currently supports bash skill shell expansion only.`);
   }
   if (!executeSkillShell) {
     throw new Error(`Skill ${skill.name} contains embedded shell commands, but skill shell execution is not available.`);

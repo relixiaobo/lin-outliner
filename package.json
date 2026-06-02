@@ -2,7 +2,7 @@
   "name": "lin-outliner",
   "version": "0.1.0",
   "private": true,
-  "description": "Local-first desktop outliner with an Electron shell and TypeScript core",
+  "description": "Local-first structured thinking and agent workbench",
   "main": "out/main/main.js",
   "type": "module",
   "scripts": {
@@ -58,8 +58,8 @@
     "vite": "^7.2.0"
   },
   "build": {
-    "appId": "com.linoutliner.desktop",
-    "productName": "Lin Outliner",
+    "appId": "dev.linlab.tenon",
+    "productName": "Tenon",
     "afterPack": "build/afterPack.cjs",
     "directories": {
       "output": "release"
@@ -72,11 +72,19 @@
       {
         "from": "native/window-corner/build/Release/window_corner.node",
         "to": "native/window_corner.node"
+      },
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
       }
     ],
     "mac": {
+      "icon": "build/icon.icns",
       "target": "dmg",
       "identity": null
+    },
+    "linux": {
+      "icon": "build/icon.png"
     }
   },
   "trustedDependencies": [

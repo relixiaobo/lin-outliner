@@ -76,7 +76,7 @@ const AGENT_TOOL_PARAMETERS = {
     subagent_type: {
       type: 'string',
       minLength: 1,
-      description: 'Optional specialized agent type. If omitted, Lin starts a fork subagent with the current conversation context.',
+      description: 'Optional specialized agent type. If omitted, Tenon starts a fork subagent with the current conversation context.',
     },
     model: {
       type: 'string',
@@ -616,7 +616,7 @@ export class AgentSubagentRuntime {
       return {
         ...runToToolData(run),
         status: 'async_launched',
-        instructions: `The agent is running in the background. Lin will notify you automatically when it finishes. Use ${AGENT_STATUS_TOOL_NAME} with agent_id "${run.id}" only when you need an explicit progress check, ${AGENT_SEND_TOOL_NAME} to continue it, or ${AGENT_STOP_TOOL_NAME} to stop it.`,
+        instructions: `The agent is running in the background. Tenon will notify you automatically when it finishes. Use ${AGENT_STATUS_TOOL_NAME} with agent_id "${run.id}" only when you need an explicit progress check, ${AGENT_SEND_TOOL_NAME} to continue it, or ${AGENT_STOP_TOOL_NAME} to stop it.`,
       };
     }
 
@@ -1344,7 +1344,7 @@ function parseFrontmatter(text: string): Record<string, unknown> {
 
 function buildFreshAgentSystemPrompt(definition: AgentDefinition): string {
   return [
-    'You are a Lin subagent.',
+    'You are a Tenon subagent.',
     '',
     `Agent type: ${definition.name}`,
     `Agent description: ${definition.description}`,
@@ -1364,7 +1364,7 @@ function buildForkDirective(directive: string): string {
     `<${FORK_BOILERPLATE_TAG}>`,
     'STOP. READ THIS FIRST.',
     '',
-    'You are a forked Lin worker. You inherited the parent conversation context, but your execution is isolated from the parent context.',
+    'You are a forked Tenon worker. You inherited the parent conversation context, but your execution is isolated from the parent context.',
     '',
     'Rules:',
     '1. Do not fork again.',
