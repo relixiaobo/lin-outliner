@@ -72,9 +72,34 @@ Slash skills use the same loader and apply the same `allowed-tools`, `model`, an
 
 Path-conditional skills remain hidden until a touched file matches `paths`. Directory patterns such as `src` match files under that directory, glob patterns such as `src/**/*.ts` use glob semantics, and dynamically discovered nested `.agents/skills` directories are skipped when they are ignored by the workspace gitignore rules.
 
+## Reference Alignment
+
+Lin tracks the stable local-skill path from the cc-2.1 reference. cc-2.1 is the
+primary reference for invocation semantics and skillify UX; OpenClaw and Hermes
+are supplemental references for safety, recovery, provenance, and curation.
+
+- directory skills as `<skill-name>/SKILL.md`;
+- one model-facing skill invocation tool;
+- user slash invocation for user-invocable skills;
+- `allowed-tools` as run-scoped permission metadata;
+- `model` and `effort` as one-turn overrides;
+- `context: fork` through a sidechain agent;
+- path-conditional activation and dynamic nested skill discovery;
+- post-compact restoration of invoked skill content.
+
+Lin intentionally uses `.agents/skills` and the lowercase `skill` tool name
+instead of cc-2.1's `.claude/skills` and `Skill` tool name. This is a product
+namespace choice, not a behavioral difference.
+
+Future agent-managed skill edits should follow cc-2.1's smaller tool surface:
+`skillify`-style workflows plus ordinary file write/edit tools after review and
+confirmation. Lin should add skill-path permission classification and audit, not
+a separate model-facing skill CRUD tool family.
+
 ## Compatibility Decisions
 
-Lin follows the stable automatic-skill path from the reference implementation where it maps cleanly onto `pi-agent-core`:
+Lin follows the stable local skill invocation path from the reference
+implementation where it maps cleanly onto `pi-agent-core`:
 
 | Capability | Lin decision |
 | --- | --- |
@@ -88,7 +113,13 @@ Lin follows the stable automatic-skill path from the reference implementation wh
 | `paths` | Supported for path-conditional activation and dynamic nested skill discovery. |
 | `context: fork` and `agent` | Supported through the same-session `Agent`/subagent runtime. Forked skill bodies run in a sidechain subagent and return only the final result to the parent. |
 | `hooks` | Not supported. Lin currently has no skill hook registration layer, so hook frontmatter is ignored. |
+| Agent-managed skill writes | Planned for the first self-modification release through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Writes under `.agents/skills/**` should be classified as skill-content writes for permission, audit, snapshot, and rollback. The current invocation runtime remains read/load only. |
 | Legacy command directories | Not supported. Lin uses the agent skills standard path under `.agents/skills`. |
+| MCP/plugin/remote skills | Not supported. The current registry is local filesystem skills plus configured additional directories. |
+| Managed/policy skills | Not supported. Lin has user/project/additional skill sources, but no admin-managed skill layer. |
+| `skillify` | Planned for the first self-modification release. It should use the same local `SKILL.md` shape and existing file write/edit tools after review and confirmation. |
+| Automatic skill improvement | Supported only as user-directed or accepted-review skill maintenance in the first self-modification release. Background session review that silently rewrites skills is not supported. |
+| Per-skill invocation permission suggestions | Not supported as a dedicated UI. The `skill` tool still goes through the global runtime permission policy, and the skill's own `allowed-tools` narrow downstream tool calls. |
 
 ## Compaction
 
@@ -141,7 +172,7 @@ Intentional omissions:
 - Session-memory compact: omitted because Lin does not use this memory model.
 - Pre/post/session-start compact hooks: omitted until Lin has a first-class hook system.
 - Plan-mode and plan-file attachments: omitted because Lin does not have that separate plan-mode runtime.
-- Task-output-file and task-status compatibility tools: omitted because Lin uses `AgentStatus`, `AgentSend`, `AgentStop`, and persisted `subagent_run` events for same-session subagents.
+- Task-output-file compatibility tools: omitted because Lin follows cc-2.1's preferred path of surfacing durable output references that can be read with `file_read`. `AgentStatus` remains only for explicit same-session status/wait checks.
 - Deferred-tool/MCP delta re-announcement: omitted for now because Lin's tool registry is stable in `pi-agent-core`; future plugin/app tools should add their own compact restore state.
 - Provider-specific cache-edit microcompact: omitted because it depends on cache editing support that is not available through the generic pi provider path. Lin uses stable event-log replacements instead.
 - Prompt-cache telemetry and survey plumbing: omitted because it is observability, not model-visible behavior.

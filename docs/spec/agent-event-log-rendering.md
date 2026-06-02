@@ -54,6 +54,8 @@ Lin owns:
 - debug and performance records
 - render projection
 - persistence and restore policy
+- self-maintenance audit events for runtime config, hooks, doctor, recovery,
+  skill write previews, skill writes, and skill rollback
 
 ```txt
 command
@@ -869,6 +871,10 @@ The current renderer contract is `AgentRenderProjection`, carried by
   detail views.
 - Persisted approval/follow-up/compaction event emission for the schema-reserved
   event types that are not yet active runtime events.
+- Self-maintenance event families for `runtime_status` diagnostics,
+  `doctor` diagnostics, config write approvals, config writes, config rollback,
+  hook execution/failure, skill write previews, skill creates, skill patches,
+  skill rollbacks, skill curation reports, and config recovery.
 - Optional checkpoint retention preferences if real sessions show storage
   pressure.
 
@@ -885,6 +891,8 @@ The current renderer contract is `AgentRenderProjection`, carried by
 - Branching, retry, edit, and tool lifecycle are represented as events; approval
   and compaction are already reserved in the schema and should be emitted when
   those runtime features become active.
+- Self-maintenance mutations are reconstructable from events and never require
+  reading raw settings files in the renderer.
 
 ## Non-Goals
 

@@ -1691,6 +1691,9 @@ Result behavior:
   and return `assistantAutoBackgrounded: true` with a task output file path.
 - Output must be bounded. Large output should be persisted and referenced by
   `persistedOutputPath`, which the agent can read with `file_read`.
+- Completion of a background command should be surfaced through the agent
+  runtime event stream with the same output path. Do not add a polling-first
+  `TaskOutput` equivalent unless real usage proves `file_read` is insufficient.
 - Risky commands require approval.
 - Non-zero command exit is represented through `stdout`, `stderr`, `exitCode`,
   and optional `returnCodeInterpretation`.
@@ -1987,6 +1990,31 @@ The plan supersedes any earlier sketch of this tool. One tool, three modes
 existing event store, user-message/search indexes, and visible transcript
 filtering. Move the final stable contract into this spec once the
 implementation PR lands.
+
+## Self-Maintenance Controls
+
+Canonical contracts for `runtime_status`, the cc-2.1-style `config` tool,
+doctor workflow, and controlled skill-maintenance workflows live in
+[`../plans/agent-self-modification.md`](../plans/agent-self-modification.md).
+
+Runtime control tools are not file tools:
+
+- `runtime_status` and doctor diagnostics are read-only and must redact secrets.
+- `config` reads when `value` is omitted and writes when `value` is present,
+  matching cc-2.1's small `ConfigTool` shape.
+- `config` writes are ask-gated, whitelisted, versioned changes through
+  runtime-owned write paths. Review/approval cards are UI around the permission
+  request, not a separate model-facing tool.
+- The agent must not use `file_edit`, `file_write`, or `bash` to mutate provider
+  settings, permission config, hook config, skill registry metadata, or
+  last-known-good recovery state.
+- Skill maintenance should not add a separate model-facing CRUD tool family in
+  v1. It should follow cc-2.1's approach: `/skillify` or natural-language skill
+  edit workflows produce/review content, then use existing `file_write` or
+  `file_edit`.
+- The file-tool gateway must classify writes under `.agents/skills/**` as
+  skill-content writes instead of generic document edits, attaching permission,
+  validation, provenance, snapshot, rollback, and event-log behavior.
 
 ## Mapping to Current Lin Commands
 

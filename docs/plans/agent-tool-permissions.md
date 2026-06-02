@@ -522,6 +522,18 @@ new model must preserve those safety properties:
 - sensitive local paths such as credentials, `.env` files, keychains, SSH keys,
   and package registry tokens must be separate high-risk action kinds or hard
   blocks;
+- runtime-control paths such as provider settings, secret stores, permission
+  config, hook config, self-maintenance recovery state, and skill registry
+  metadata must not be mutable through generic `file_edit`, `file_write`, or
+  `bash` rules;
+- a cc-2.1-style `config` tool may write runtime-owned config only when its
+  optional `value` field is present, and only after whitelist validation,
+  permission resolution, audit logging, and runtime refresh;
+- `file_write` and `file_edit` may write `.agents/skills` content, but those
+  calls must be reclassified as skill-content writes instead of generic local
+  document edits. They require skill-path validation, frontmatter validation,
+  permission resolution, provenance capture, audit logging, and rollback
+  snapshot creation;
 - existing restricted-mode denies must remain in force during migration until
   equivalent global action-kind rules exist;
 - preapproved tool rules may narrow what a skill or runtime setup can do, but
