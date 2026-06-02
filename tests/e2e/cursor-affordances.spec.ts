@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { ids, openMockedApp, row } from './outlinerMock';
+import { ids, installElectronMock, openMockedApp, row } from './outlinerMock';
 
 // Strict-native cursor policy: chrome (buttons, toggles, rows, bullets) keeps the
 // default arrow cursor the way a native macOS/Windows app does. The pointing-hand
@@ -92,6 +92,53 @@ test.describe('cursor affordances', () => {
     expect(cursors.approvalToggle).not.toBe('pointer');
     expect(cursors.approvalButton).not.toBe('pointer');
     expect(cursors.tagLabel).not.toBe('pointer');
+  });
+
+  test('settings inset rows, row menu and provider sheet keep the arrow cursor', async ({ page }) => {
+    // The redesigned settings surface adds new chrome — inset grouped-list rows,
+    // a per-row `⋯` actions trigger, and the provider sheet's buttons. None is a
+    // content hyperlink, so every one must keep the native arrow cursor (B10).
+    await installElectronMock(page);
+    await page.goto('/?surface=settings');
+    const settings = page.locator('.settings-window');
+    await expect(settings.locator('.inset-row-main').first()).toBeVisible();
+
+    const listCursors = await page.evaluate(() => {
+      const cursor = (selector: string) => {
+        const element = document.querySelector(selector);
+        if (!(element instanceof HTMLElement)) throw new Error(`missing ${selector}`);
+        return getComputedStyle(element).cursor;
+      };
+      return {
+        insetRow: cursor('.inset-row-main'),
+        rowMenuTrigger: cursor('.settings-row-menu-trigger'),
+        historyArrow: cursor('.settings-history-nav .rail-toggle'),
+        configure: cursor('.settings-provider-configure'),
+      };
+    });
+    expect(listCursors.insetRow).toBe('default');
+    expect(listCursors.rowMenuTrigger).toBe('default');
+    expect(listCursors.historyArrow).toBe('default');
+    expect(listCursors.configure).toBe('default');
+
+    // The per-provider config is its own native window (?surface=provider-config);
+    // probe its action buttons there (clicking a row opens that window, not a modal).
+    await page.goto('/?surface=provider-config&provider=anthropic&mode=configure');
+    const sheet = page.locator('.provider-config-window');
+    await expect(sheet.getByRole('button', { name: 'Save', exact: true })).toBeVisible();
+    const sheetCursors = await page.evaluate(() => {
+      const cursor = (selector: string) => {
+        const element = document.querySelector(selector);
+        if (!(element instanceof HTMLElement)) throw new Error(`missing ${selector}`);
+        return getComputedStyle(element).cursor;
+      };
+      return {
+        primary: cursor('.settings-sheet-primary'),
+        reveal: cursor('.settings-sheet-reveal'),
+      };
+    });
+    expect(sheetCursors.primary).toBe('default');
+    expect(sheetCursors.reveal).toBe('default');
   });
 
   test('content references show the pointer cursor on hover', async ({ page }) => {

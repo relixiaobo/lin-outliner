@@ -6,12 +6,34 @@
 // surface and listens for change broadcasts).
 
 export const WINDOW_SURFACE_QUERY_PARAM = 'surface';
-export type WindowSurface = 'main' | 'settings';
+export type WindowSurface = 'main' | 'settings' | 'provider-config';
 
 export function windowSurfaceFromSearch(search: string): WindowSurface {
-  return new URLSearchParams(search).get(WINDOW_SURFACE_QUERY_PARAM) === 'settings'
-    ? 'settings'
-    : 'main';
+  const surface = new URLSearchParams(search).get(WINDOW_SURFACE_QUERY_PARAM);
+  if (surface === 'settings') return 'settings';
+  if (surface === 'provider-config') return 'provider-config';
+  return 'main';
+}
+
+// The per-provider config opens as its OWN native window (a modal child of the
+// settings window, the System Settings idiom — not an in-renderer overlay). Which
+// provider / mode it edits rides the URL query, like the surface itself, so no
+// extra IPC channel is needed to hand it its context.
+export const PROVIDER_CONFIG_PROVIDER_PARAM = 'provider';
+export const PROVIDER_CONFIG_MODE_PARAM = 'mode';
+export type ProviderConfigMode = 'configure' | 'custom';
+
+export interface ProviderConfigParams {
+  providerId: string;
+  mode: ProviderConfigMode;
+}
+
+export function providerConfigParamsFromSearch(search: string): ProviderConfigParams {
+  const params = new URLSearchParams(search);
+  return {
+    providerId: params.get(PROVIDER_CONFIG_PROVIDER_PARAM) ?? '',
+    mode: params.get(PROVIDER_CONFIG_MODE_PARAM) === 'custom' ? 'custom' : 'configure',
+  };
 }
 
 // Broadcast from the main process to the main window after the settings window

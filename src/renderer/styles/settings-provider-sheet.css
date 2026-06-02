@@ -1,0 +1,284 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   PROVIDER CONFIG (settings → ProviderConfigForm.tsx / ProviderConfigWindow.tsx).
+   Clicking a provider row opens this focused connection form. It is NOT an
+   in-renderer overlay: it opens as its OWN native window — a modal child of the
+   settings window (the macOS System Settings idiom, where a list row opens a real
+   attached dialog). So the WINDOW is the dialog surface; the form fills it. It
+   hosts the connection (credential + base URL) plus an async validate. Fields are
+   hairline-separated rows in inset cards (the native grouped-list look). The
+   primary action is a NEUTRAL strong fill (B4: no system blue); validation status
+   uses status colour for status only (B4).
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* The native provider-config window's content surface: opaque, filling the frame
+   (no backdrop — the OS dims the parent; no traffic lights — closed via its own
+   Cancel / Save). Reuses the sheet head / body / actions layout below. */
+.provider-config-window {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--surface);
+  padding: var(--space-6);
+}
+
+.settings-provider-sheet {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--overlay-shadow-level-2);
+  padding: var(--space-6);
+}
+
+/* Head: large brand avatar + title / subtitle (native alert layout). */
+.settings-sheet-head {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.settings-sheet-avatar {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.settings-sheet-head-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-hairline);
+}
+
+.settings-sheet-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0;
+  color: var(--text-strong);
+  font-size: var(--font-content);
+  font-weight: 600;
+  line-height: var(--line-ui-md);
+}
+
+.settings-sheet-subtitle {
+  margin: 0;
+  color: var(--muted-2);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.settings-sheet-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-height: 0;
+  overflow-y: auto;
+  margin-top: var(--space-5);
+}
+
+/* Hairline-separated field rows inside an .inset-card (reused from the list
+   primitive): label on the left, control filling the right. */
+.settings-sheet-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 38px;
+  padding: var(--space-2) var(--space-4);
+}
+
+.inset-card .settings-sheet-row:not(:last-child) {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* "Get API key" link sits just under the connection card, pulled close to it
+   (tighter than the body's inter-block rhythm). */
+.settings-sheet-getkey {
+  align-self: flex-start;
+  margin-top: calc(0px - var(--space-2));
+  padding: 0 var(--space-2);
+}
+
+.settings-sheet-row-label {
+  flex: 0 0 auto;
+  width: 92px;
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  font-weight: 600;
+  line-height: var(--line-meta);
+}
+
+/* Borderless control that fills the row (input or select). */
+.settings-sheet-row-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text-strong);
+  font-size: var(--font-ui-sm);
+}
+
+.settings-sheet-key {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--muted-2);
+}
+
+.settings-sheet-key > svg {
+  flex: 0 0 auto;
+}
+
+.settings-sheet-reveal {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  padding: var(--space-1);
+}
+
+.settings-sheet-reveal:hover {
+  color: var(--text-strong);
+}
+
+/* Managed-credential providers (e.g. AWS Bedrock) show a note instead of a key. */
+.settings-sheet-note {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--fill-1);
+  padding: var(--space-4) var(--space-5);
+}
+
+.settings-sheet-note p {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.settings-sheet-result {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--fill-1);
+  color: var(--text-soft);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.settings-sheet-result-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Status colour for status only (B4). */
+.settings-sheet-result.is-success {
+  color: var(--status-success);
+}
+
+.settings-sheet-result.is-error {
+  color: var(--status-danger);
+}
+
+.settings-sheet-spinner {
+  flex: 0 0 auto;
+  animation: settings-sheet-spin 0.8s linear infinite;
+}
+
+@keyframes settings-sheet-spin {
+  to { transform: rotate(360deg); }
+}
+
+.settings-sheet-cancel-test {
+  flex: 0 0 auto;
+  border-radius: var(--radius-sm);
+  color: var(--link);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+  padding: var(--space-1) var(--space-2);
+}
+
+.settings-sheet-cancel-test:hover {
+  text-decoration: underline;
+}
+
+.settings-sheet-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+}
+
+.settings-sheet-actions-left,
+.settings-sheet-actions-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.settings-sheet-secondary,
+.settings-sheet-primary,
+.settings-sheet-danger {
+  height: 30px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  padding: 0 var(--space-6);
+}
+
+.settings-sheet-secondary {
+  background: var(--surface);
+  color: var(--text-strong);
+}
+
+.settings-sheet-secondary:hover:not(:disabled) {
+  background: var(--control-hover);
+}
+
+/* Primary = neutral strong fill, never a system-blue accent (B4). */
+.settings-sheet-primary {
+  background: var(--fill-3);
+  border-color: transparent;
+  color: var(--text-primary);
+}
+
+.settings-sheet-primary:hover:not(:disabled) {
+  background: var(--fill-4);
+}
+
+.settings-sheet-danger {
+  background: var(--surface);
+  color: var(--status-danger);
+}
+
+.settings-sheet-danger:hover:not(:disabled) {
+  background: var(--control-hover);
+}
+
+.settings-sheet-secondary:disabled,
+.settings-sheet-primary:disabled,
+.settings-sheet-danger:disabled {
+  opacity: 0.5;
+}

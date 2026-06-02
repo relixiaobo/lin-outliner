@@ -1,41 +1,50 @@
 /* The settings window is a full-bleed opaque Preferences surface (it has its own
-   native title bar), not a centered modal card. */
+   native title bar), not a centered modal card. The floating rail + content fill
+   the window; the content pane is the single scroll container so the rail stays
+   put (native System Settings). The window itself is closed through native window
+   chrome (traffic lights) — there is no in-content Close button. */
 .settings-window {
-  display: block;
+  display: flex;
   box-sizing: border-box;
   width: 100vw;
   height: 100vh;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-  background: var(--bg);
-  padding: var(--space-8);
-}
-
-.agent-settings-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-8);
-  padding-bottom: var(--space-6);
-}
-
-.agent-settings-header h2 {
-  margin: 0;
-  color: var(--text-strong);
-  font-size: var(--font-content);
-  font-weight: 600;
-  line-height: var(--line-ui-md);
-}
-
-.agent-settings-header p {
-  margin: var(--space-1) 0 0;
-  max-width: 300px;
   overflow: hidden;
-  color: var(--muted-2);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  background: var(--bg);
+  /* Same float inset as the main shell (--layout-gap) so the rail nests
+     concentrically inside the 24px native window corner — window 24 = gap 8 + rail
+     16 (B9). */
+  padding: var(--layout-gap);
+}
+
+/* Frameless window top drag strip (no native title bar). Fixed to the window top
+   so the OS traffic lights overlay it; the rail title/nav and content controls all
+   start below --chrome-height, so none overlaps it. It is the topmost element in
+   the strip (z-popover, below the modal sheet) so the whole top edge drags. The
+   only controls allowed in the strip are the back/forward arrows below — and they
+   are no-drag DOM children, the one reliable drag-region carve-out on macOS. */
+.settings-drag-region {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: var(--z-popover);
+  height: var(--chrome-height);
+  -webkit-app-region: drag;
+}
+
+/* Back / forward (‹ ›) toolbar arrows, like macOS System Settings. This is the
+   main window's chrome-control CLUSTER (mirrors .window-chrome-cluster): the
+   buttons themselves reuse the shared chrome control (.rail-toggle, below), so
+   only their position is settings-specific — anchored over the content column
+   (window pad + rail width + layout gap = the content's left edge) and centred on
+   the traffic-light line via --chrome-control-inset, in the OS window-control band. */
+.settings-history-nav {
+  position: absolute;
+  top: var(--chrome-control-inset);
+  left: calc(var(--layout-gap) + var(--sidebar-width) + var(--layout-gap));
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .agent-settings-body {
@@ -79,7 +88,6 @@
   white-space: nowrap;
 }
 
-.agent-settings-close,
 .agent-settings-secondary,
 .agent-settings-primary,
 .agent-settings-danger {
@@ -104,13 +112,11 @@
   white-space: nowrap;
 }
 
-.agent-settings-close,
 .agent-settings-secondary {
   background: var(--fill-2);
   color: var(--text-soft);
 }
 
-.agent-settings-close:hover,
 .agent-settings-secondary:hover:not(:disabled) {
   background: var(--control-hover);
   color: var(--text-strong);
@@ -118,7 +124,11 @@
 
 .settings-layout {
   display: flex;
-  align-items: flex-start;
-  gap: var(--space-6);
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  align-items: stretch;
+  /* Same rail↔content gap as the main shell (--shell-gap). */
+  gap: var(--layout-gap);
 }
 

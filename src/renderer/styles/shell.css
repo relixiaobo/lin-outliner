@@ -120,6 +120,13 @@
   color: var(--text-primary);
 }
 
+/* Inert chrome control (the settings window's back/forward when there is no
+   history to traverse; the main window's toggles never disable). Still no box —
+   the glyph just dims, consistent with the colour-only chrome idiom (B6). */
+.rail-toggle:disabled {
+  color: var(--text-disabled);
+}
+
 /* When a rail is collapsed its zone sits over the pane (not the rail), so give it an
    opaque content backing: it caps the top band so content scrolling up cannot peek
    behind the toggle / traffic lights, and pairs with the collapsed breadcrumb's

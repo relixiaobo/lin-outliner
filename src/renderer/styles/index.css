@@ -21,6 +21,8 @@
 @import './agent-composer.css';
 @import './confirm-dialog.css';
 @import './settings-base.css';
+@import './settings-inset-list.css';
+@import './settings-provider-sheet.css';
 @import './settings-providers.css';
 @import './settings-fields.css';
 @import './settings-connection.css';

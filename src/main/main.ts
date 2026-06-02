@@ -10,7 +10,13 @@ import { AgentRuntime } from './agentRuntime';
 import { MAC_TRAFFIC_LIGHT_POSITION, MAC_WINDOW_CORNER_RADIUS } from '../core/chromeGeometry';
 import { windowMaterialKind } from '../core/windowMaterial';
 import { applyMacWindowCorner } from './nativeWindowCorner';
-import { LIN_SETTINGS_CHANGED_CHANNEL, WINDOW_SURFACE_QUERY_PARAM } from '../core/settingsWindow';
+import {
+  LIN_SETTINGS_CHANGED_CHANNEL,
+  PROVIDER_CONFIG_MODE_PARAM,
+  PROVIDER_CONFIG_PROVIDER_PARAM,
+  WINDOW_SURFACE_QUERY_PARAM,
+  type ProviderConfigMode,
+} from '../core/settingsWindow';
 import { LIN_WINDOW_ACTIVE_CHANNEL } from '../core/windowActivity';
 import { ASSET_URL_SCHEME } from '../core/assets';
 import { LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput } from '../core/types';
@@ -60,6 +66,7 @@ const documentService = new DocumentService();
 const assetService = new AssetService(() => join(app.getPath('userData'), 'assets'));
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
+let providerConfigWindow: BrowserWindow | null = null;
 let quitAfterFlush = false;
 let lastAttachmentPickerDirectory: string | null = null;
 const DEFAULT_ATTACHMENT_PICKER_LIMIT = 6;
@@ -399,9 +406,10 @@ function focusMainWindow() {
 }
 
 // Settings open in their own window — the native "Preferences" convention —
-// reusing the single renderer bundle via a ?surface=settings query. Unlike the
-// main window it keeps a native title bar (the settings surface draws no custom
-// chrome) and isn't persisted across launches.
+// reusing the single renderer bundle via a ?surface=settings query. Like the main
+// window it is frameless with inset traffic lights (the lights sit over the
+// settings rail, no separate title-bar strip); the renderer draws its own top drag
+// region. It isn't persisted across launches.
 function openSettingsWindow() {
   if (settingsWindow) {
     if (settingsWindow.isMinimized()) settingsWindow.restore();
@@ -409,8 +417,11 @@ function openSettingsWindow() {
     settingsWindow.focus();
     return;
   }
-  // A utilitarian Preferences window: opaque content, native title bar, no OS
-  // material (unlike the main window) — matching how system settings panes read.
+  // A utilitarian Preferences window: opaque content, no OS material (unlike the
+  // main window). Frameless with inset traffic lights (titleBarStyle: hiddenInset)
+  // so the lights sit over the settings rail and there is no native title-bar
+  // strip — the renderer provides the top drag region. Security defaults (A3) are
+  // unchanged.
   settingsWindow = new BrowserWindow({
     title: 'Settings',
     width: 760,
@@ -419,6 +430,8 @@ function openSettingsWindow() {
     minHeight: 480,
     show: false,
     backgroundColor: prePaintBackgroundColor(),
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: MAC_TRAFFIC_LIGHT_POSITION,
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
@@ -430,7 +443,17 @@ function openSettingsWindow() {
   const target = settingsWindow;
   hardenWebContents(target.webContents);
   attachNativeContextMenu(target.webContents);
-  target.once('ready-to-show', () => target.show());
+  // Match the main window's custom native corner (MAC_WINDOW_CORNER_RADIUS) so the
+  // frameless settings window has the SAME rounded corners — not the smaller macOS
+  // default (16pt on Tahoe). Apply before show (no default-corner flash) and again
+  // on ready-to-show; reset to 0 in fullscreen where a rounded corner clips content.
+  applyMacWindowCorner(target, MAC_WINDOW_CORNER_RADIUS);
+  target.once('ready-to-show', () => {
+    applyMacWindowCorner(target, MAC_WINDOW_CORNER_RADIUS);
+    target.show();
+  });
+  target.on('enter-full-screen', () => applyMacWindowCorner(target, 0));
+  target.on('leave-full-screen', () => applyMacWindowCorner(target, MAC_WINDOW_CORNER_RADIUS));
 
   if (RENDERER_DEV_URL) {
     void target.loadURL(`${RENDERER_DEV_URL}?${WINDOW_SURFACE_QUERY_PARAM}=settings`);
@@ -442,6 +465,80 @@ function openSettingsWindow() {
 
   target.on('closed', () => {
     settingsWindow = null;
+  });
+}
+
+// The per-provider API-key form opens as its OWN native window — a modal child of
+// the settings window (the macOS System Settings idiom: a list row pushes its
+// detail into a real attached dialog, not an in-renderer overlay). It reuses the
+// single renderer bundle via ?surface=provider-config and is told which provider /
+// mode through the query. Frameless (no traffic lights — it is a dialog, closed by
+// its own Cancel / Save), opaque, fixed-size, centred over the parent. Security
+// defaults (A3) match every other window.
+function openProviderConfigWindow(providerId: string, mode: ProviderConfigMode) {
+  const parent = settingsWindow ?? undefined;
+  // Replace any open config window (clicking another provider re-targets it).
+  if (providerConfigWindow) {
+    providerConfigWindow.close();
+    providerConfigWindow = null;
+  }
+
+  const bounds = parent?.getBounds();
+  const width = 460;
+  const height = 384;
+  const position = bounds
+    ? {
+        x: Math.round(bounds.x + (bounds.width - width) / 2),
+        y: Math.round(bounds.y + Math.max(48, (bounds.height - height) / 2)),
+      }
+    : {};
+
+  providerConfigWindow = new BrowserWindow({
+    title: 'Configure provider',
+    width,
+    height,
+    ...position,
+    parent,
+    modal: Boolean(parent),
+    show: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    backgroundColor: prePaintBackgroundColor(),
+    frame: false,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  const target = providerConfigWindow;
+  hardenWebContents(target.webContents);
+  attachNativeContextMenu(target.webContents);
+  applyMacWindowCorner(target, MAC_WINDOW_CORNER_RADIUS);
+  target.once('ready-to-show', () => {
+    applyMacWindowCorner(target, MAC_WINDOW_CORNER_RADIUS);
+    target.show();
+  });
+
+  const query = {
+    [WINDOW_SURFACE_QUERY_PARAM]: 'provider-config',
+    [PROVIDER_CONFIG_PROVIDER_PARAM]: providerId,
+    [PROVIDER_CONFIG_MODE_PARAM]: mode,
+  };
+  if (RENDERER_DEV_URL) {
+    const url = new URL(RENDERER_DEV_URL);
+    for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
+    void target.loadURL(url.toString());
+  } else {
+    void target.loadFile(join(__dirname, '../renderer/index.html'), { query });
+  }
+
+  target.on('closed', () => {
+    providerConfigWindow = null;
   });
 }
 
@@ -473,10 +570,19 @@ function registerIpc() {
 
   ipcMain.handle('lin:open-settings', () => openSettingsWindow());
   ipcMain.handle('lin:close-settings', () => settingsWindow?.close());
-  // The settings window mutated provider/agent settings; tell the main window so
-  // it re-fetches instead of rendering stale provider state.
+  // Open the per-provider config as its own native (modal child) window.
+  ipcMain.handle('lin:open-provider-config', (_event, args?: { providerId?: unknown; mode?: unknown }) => {
+    const providerId = typeof args?.providerId === 'string' ? args.providerId : '';
+    const mode: ProviderConfigMode = args?.mode === 'custom' ? 'custom' : 'configure';
+    openProviderConfigWindow(providerId, mode);
+  });
+  ipcMain.handle('lin:close-provider-config', () => providerConfigWindow?.close());
+  // A provider/agent setting changed (from the settings window OR its config child).
+  // Tell BOTH the main window (stale provider state) and the settings window (its
+  // list reflects the new connection) to re-fetch.
   ipcMain.handle('lin:settings-changed', () => {
     mainWindow?.webContents.send(LIN_SETTINGS_CHANGED_CHANNEL);
+    settingsWindow?.webContents.send(LIN_SETTINGS_CHANGED_CHANNEL);
   });
 
   ipcMain.handle('lin:pick-local-files', async (event, rawOptions?: {

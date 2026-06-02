@@ -81,7 +81,7 @@ paper palettes, or feature concepts Lin does not own.
 | Agent dock | `AgentDock.tsx`, `AgentChatPanel.tsx`, `AgentDebugPanel.tsx` | Persistent dock, chat scroll, debug surface, settings entry. |
 | Agent messages | `AgentMessageRow.tsx`, `AgentMessageFrame.tsx`, `AgentBranchNavigator.tsx`, `AgentProcessBlock.tsx`, `AgentProcessTimeline.tsx`, `AgentThinkingBlock.tsx`, `AgentToolCallBlock.tsx`, `AgentToolCallDisclosure.tsx` | Messages, process disclosure, thinking, tool calls, status slots. |
 | Agent composer | `AgentComposer.tsx`, `AgentComposerControls.tsx`, `AgentComposerModelMenu.tsx` | Textarea, attachments, model menu, reasoning switch, send/stop slot. |
-| Agent settings | `AgentSettingsDialog.tsx` | Provider configuration, key actions, model controls, shared form primitives. |
+| Agent settings | `AgentSettingsView.tsx`, `SettingsInsetList.tsx`, `SettingsRowMenu.tsx`, `ProviderConfigWindow.tsx` / `ProviderConfigForm.tsx`, `providerCatalog.tsx`, `styles/settings-*.css` | Standalone settings window: category sidebar + full-width inset grouped provider list, per-row `⋯` menu, and the per-provider config as its own native (modal child) window. See "Settings window" below. |
 | Primitives | `ButtonControl.tsx`, `CheckboxControl.tsx`, `CheckboxMark.tsx`, `IconButton.tsx`, `SwitchControl.tsx`, `SwitchMark.tsx`, `SelectControl.tsx`, `TextInputControl.tsx`, `NumberInputControl.tsx` | Thin semantic or visual primitives. Behavior remains caller-owned unless the primitive explicitly owns native control semantics. |
 
 ## Foundations
@@ -467,7 +467,11 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
   buttons use the neutral `--fill-*` ladder and neutral `--focus-ring` — not the
   brand colour and not the macOS system accent. (Raycast and Finder both keep
   selection and primary buttons neutral; native feel comes from materials,
-  layout, and behaviour, not from a coloured selection.)
+  layout, and behaviour, not from a coloured selection.) The toggle / checkbox
+  **on**-state is the one sanctioned exception: it carries `--semantic-success`
+  (the macOS on-switch idiom) with a fixed-white knob / check glyph
+  (`--text-on-accent`) in BOTH themes — `--panel-bg` is wrong for the knob/glyph
+  because it flips dark in dark mode (a black puck on the green track).
 - **Text selection is neutral too.** The editor text-selection highlight
   (`::selection`, `--text-selection-bg`) is a neutral ink alpha — the one place
   the OS would normally paint its system accent, kept neutral for consistency
@@ -729,7 +733,7 @@ and non-goals; product behavior stays with the owning surface.
 
 | Component | Sources | Contract |
 | --- | --- | --- |
-| `CheckboxMark` | `CheckboxMark.tsx` | Decorative `16px` checkbox mark with `3px` radius. Unchecked is outlined; checked is success-filled. Does not own row behavior or persistence. |
+| `CheckboxMark` | `CheckboxMark.tsx` | Decorative `16px` checkbox mark with `3px` radius. Unchecked is outlined; checked is success-filled with a fixed-white check glyph (`--text-on-accent`, theme-independent). Does not own row behavior or persistence. |
 | `CheckboxControl` | `CheckboxControl.tsx`, `AgentSettingsDialog.tsx` | Labeled native checkbox wrapper for settings/forms. Keeps native checkbox semantics and `CheckboxMark` visual together. |
 | `SwitchControl` / `SwitchMark` | `SwitchControl.tsx`, `SwitchMark.tsx`, `DefinitionConfigControls.tsx`, `AgentComposerModelMenu.tsx`, `TypedFieldValueControl.tsx` | Semantic switch wrapper plus shared `30px x 18px` track and `14px` thumb. Does not own labels or persistence. |
 | `IconButton` | `IconButton.tsx` | Icon-first button with explicit accessible label and tokenized icon size. Visual variant stays caller-owned. |
@@ -847,9 +851,11 @@ top-left padding to clear the lights + toggle. The lights never move with the
 sidebar; that fixed position is what makes the toggle feel like stable window
 chrome rather than part of the rail.
 
-**No back/forward in the chrome.** Page-history back/forward controls are
-removed; navigation is via breadcrumb path segments and the sidebar. (The date
-`‹ ›` stepper inside an outliner is calendar navigation, unrelated, and stays.)
+**No back/forward in the main-window chrome.** Page-history back/forward controls
+are removed here; navigation is via breadcrumb path segments and the sidebar. (The
+date `‹ ›` stepper inside an outliner is calendar navigation, unrelated, and stays.
+The Settings window is a different surface — it keeps System Settings' `‹ ›`
+category history; see "Settings window".)
 
 ### Workspace And Panels
 
@@ -1002,9 +1008,124 @@ removed; navigation is via breadcrumb path segments and the sidebar. (The date
   divider.
 - Model picker and reasoning picker are MenuSurface overlays. Thinking switch
   uses `SwitchMark`.
-- Settings uses `Dialog`, form controls, `CheckboxControl`, and `CheckboxMark`.
+- Settings opens as a standalone window (the `?surface=settings` route), not an
+  in-app modal. See "Settings window" below.
 - Runtime approval/tool preview types exist, but no renderer approval overlay is
   shipped. Do not render fake approval controls before product behavior exists.
+
+### Settings window
+
+The settings surface follows the macOS System Settings *interaction* idiom
+(the Wi-Fi pane is the reference), rendered in Lin foundations (tokens + B-rules),
+not Apple chrome. We borrow the interaction, not the chrome.
+
+- **Frameless window, identical to the main shell's geometry.** The settings
+  window is frameless with inset traffic lights (`titleBarStyle: hiddenInset` +
+  the shared `MAC_TRAFFIC_LIGHT_POSITION`) and the same custom 24px native corner
+  (`MAC_WINDOW_CORNER_RADIUS`) as the main window — not the smaller macOS default.
+  There is no native title-bar strip: the renderer draws a top drag region
+  (`.settings-drag-region`) and the lights sit over the rail's top. Insets and
+  radii match the main shell exactly — `--layout-gap` float + gap, `--sidebar-width`
+  rail, `--panel-radius` corners — so the rail nests concentrically inside the
+  window corner (window 24 = gap 8 + rail 16, B9).
+- **Back / forward toolbar arrows.** The drag region carries macOS System Settings'
+  `‹ ›` arrows. They reuse the SAME chrome control as the main window's rail toggles
+  — the shared `IconButton variant="chrome"` with `.rail-toggle` (icon-only, glyph
+  deepens `--text-secondary` → `--text-primary` on hover, dims to `--text-disabled`
+  when inert, no box; B6) — NOT a bespoke style. Only their placement is
+  settings-specific: the `.settings-history-nav` cluster (a sibling of
+  `.window-chrome-cluster`) anchors them over the content column on the
+  traffic-light centreline (`--chrome-control-inset`), and they are no-drag DOM
+  children of the strip — the one reliable drag-region carve-out on macOS. They walk
+  a category visit-history stack: switching categories pushes (truncating any
+  forward entries), back / forward move the cursor; each is disabled when there is
+  nothing to traverse that way.
+- **Floating category rail + full-width list.** A left rail lists settings
+  categories (Providers / Permissions / Skills / Agent Profiles). The rail is the
+  app's own floating glass panel — elevated surface, soft elevation, rounded,
+  hairline edge — mirroring the main window's `.sidebar-dock`, so it reads as a
+  rail that floats off the content base rather than a flat column. The content
+  pane is the flat window base (no surrounding card) and is the single scroll
+  container, so the rail stays put; the grouped cards float on it on the same
+  `--bg-elevated` surface as the rail. The content pane shows the selected
+  category full-width — for Providers, a grouped provider list. There is NO
+  permanent side detail pane: per-provider config opens in its own native window (below).
+  Categories — not individual providers — are the top-level rail rows.
+- **No redundant chrome.** The window is closed through native window chrome
+  (the traffic lights), like System Settings — there is no in-content Close
+  button. The content pane carries no "Providers" title (the selected rail
+  category already names it), no search field, and no leading status column —
+  "Connected" vs "Available" already carries connection state, so a per-row marker
+  would be redundant. Rows show a trailing `⋯` menu ONLY when they have more than
+  one action; a single-action row's lone "Configure" is what clicking the row
+  already does, so instead it exposes a trailing **"Configure" button** — the macOS
+  Wi-Fi "Connect" / "Details" idiom: a quiet secondary control (`--fill-3`,
+  deepening to `--fill-4` on its own hover), hidden at rest and revealed on row
+  hover / keyboard focus. Its reveal IS the row's hover locator — the row carries no
+  fill of its own — and it configures the provider. Custom providers are
+  added from the last row of the Available list ("Add custom provider"), not a
+  floating control.
+- **Inset grouped list (the reusable primitive).** `SettingsInsetList.tsx`
+  (`InsetGroup` + a memoized `InsetRow`) renders a sentence-case section header
+  above a rounded inset card whose rows are split by hairlines; geometry derives
+  from the radius / hairline ladders (B9). The card is its own region by COLOUR —
+  `--bg-elevated` floating on the content base — per the surface ladder (`--bg-window`
+  < `--bg-content` < `--bg-elevated`), not by a heavy border. **Row hairlines are
+  content-aligned, not edge-to-edge** (the macOS grouped-list rule): the separator
+  is inset on the left to start at the row's content, leaving the leading
+  icon/avatar in an undivided gutter, and runs flush to the right edge. The inset is
+  one tunable token (`--inset-separator-inset`, default = the row's text padding);
+  a consumer with a leading column widens it to clear the icon (Providers →
+  pad + avatar + gap). Selection and focus stay NEUTRAL — `--fill-*` + the neutral
+  focus ring, never the system accent (B3/B4). Selection fills the WHOLE row
+  (`.inset-row`), not just the main button. Rows carry **no hover fill** — like
+  native System Settings list rows, hover reveals the row's action affordance (the
+  "Configure" button / `⋯` menu) as the locator, not a row-wide tint (which read as
+  a redundant box). The in-card focus
+  ring is the inset `--outline-focus` so it is not clipped by the card's
+  `overflow: hidden`. This is the A7 foundation: Permissions / Skills can adopt it
+  later for consistency.
+- **Provider rows.** Providers group into "Connected" (has a credential — key,
+  env, or managed) and "Available". Each row is the brand avatar as identity + the
+  name; clicking it opens the config sheet. The avatar shows the vendored brand SVG
+  bare (no box/border); it is INLINED (not an `<img>`) so monochrome marks using
+  `fill="currentColor"` (OpenAI, OpenRouter, Groq, …) follow the light/dark theme
+  via the avatar's `color`, while multicolour logos keep their own fills. The
+  trailing `⋯` (when present) is icon-only — just the glyph, no border or box (B6:
+  signal by colour, not a frame); it deepens on hover and takes a quiet circular
+  fill only while open. Its floating menu reuses the shared popover glass with the
+  `prefers-reduced-transparency` opaque fallback (B5/D2) at the level-1 menu tier
+  (B10). Rows are memoized + fed stable handlers, so opening one provider's sheet
+  never re-renders the list.
+- **Per-provider config — its OWN native window, connection only.** Clicking a row
+  (or "Configure…") opens the config as a real native window, NOT an in-renderer
+  overlay: a frameless **modal child of the settings window** (`?surface=provider-config`,
+  opened by the main process via `lin:open-provider-config`) — the macOS System
+  Settings idiom where a list row opens a real attached dialog (cf. the Wi-Fi
+  password sheet). The window IS the dialog surface (`.provider-config-window`,
+  `ProviderConfigWindow.tsx` → `ProviderConfigForm.tsx`): opaque, filling the frame,
+  no traffic lights (closed by its own Cancel / Save or Escape), no backdrop (the OS
+  dims the parent). It has a brand-avatar + title/subtitle head and a SINGLE inset
+  card holding only the connection: a label-less credential row (a key glyph + the
+  field, native password-dialog style) and the base URL inline (the lone advanced
+  setting — no disclosure). Model and reasoning are NOT set here — they are chosen
+  per-message in the composer, so it stays minimal; on save the existing
+  model/reasoning are preserved (a new provider defaults to the catalog flagship).
+  Custom (OpenAI-compatible) providers additionally enter a provider id and a model
+  id in the same card, since there is no catalog to default from. It fetches its own
+  provider settings and commits via the existing agent IPC, then calls
+  `notifySettingsChanged` so the main process broadcasts a settings-changed to BOTH
+  the settings list (which refetches — `onSettingsChanged`) and the main window. It
+  owns its own Cancel / Save — providers commit per-window, so the list surface has
+  NO global save bar (apply-per-provider, like native). Validation is async and
+  non-blocking: the form stays interactive, shows a pending row, and can be
+  cancelled (a request-id guard drops a stale/cancelled result). The form is
+  multi-mode so managed credential modes (OAuth, AWS/Vertex) plug in later — an API
+  key is one `mode`. Managed-credential providers (e.g. AWS Bedrock) show an auth
+  note instead of a key field.
+- **Status colour for status only (B4).** Validation success/failure uses
+  `--status-success` / `--status-danger`; the primary config action is a NEUTRAL
+  strong fill (`--fill-3`), never a system-blue accent.
 
 ## Patterns
 

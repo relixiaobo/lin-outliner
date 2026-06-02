@@ -1,119 +1,208 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { commandCalls, installElectronMock } from './outlinerMock';
 
-// Settings render in their own window (the ?surface=settings route), not an
-// in-app modal. These tests drive that standalone surface directly and assert
-// the current provider-centric settings layout.
+// Settings render in their own window (the ?surface=settings route). The Providers
+// surface follows the macOS System Settings idiom: a floating category rail + a
+// full-width inset grouped list (Connected / Available). Clicking a provider opens
+// its connection config in its OWN native window — a modal child of settings
+// (?surface=provider-config), NOT an in-renderer modal — the way System Settings
+// opens a real attached dialog. The list window has no provider search and no
+// in-content Close button (closed through native window chrome).
 test.describe('agent settings window', () => {
-  test('renders as a standalone window and closes through the host', async ({ page }) => {
+  test('renders as a standalone window with a floating rail and native close', async ({ page }) => {
     const settings = await openSettings(page);
     await expect(settings.getByRole('heading', { name: 'Settings' })).toBeVisible();
-    // It owns the whole window — not a modal layered over the app.
+    // The category rail floats off the content base (its own elevated panel).
+    await expect(settings.locator('.settings-rail')).toBeVisible();
+    // Frameless window: a top drag strip stands in for the native title bar (the
+    // OS traffic lights overlay it), so there is no separate title-bar row.
+    await expect(settings.locator('.settings-drag-region')).toHaveCount(1);
+    // The config is a separate native window, so the list never layers a modal.
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.locator('.app-shell')).toHaveCount(0);
-
-    // Close asks the host (main process) to close the window.
-    await page.evaluate(() => {
-      const probe = window as unknown as { __closeCalls: number; lin: Record<string, unknown> };
-      probe.__closeCalls = 0;
-      probe.lin.closeSettings = () => {
-        probe.__closeCalls += 1;
-      };
-    });
-    await settings.getByRole('button', { name: 'Close', exact: true }).click();
-    expect(await page.evaluate(() => (window as unknown as { __closeCalls: number }).__closeCalls)).toBe(1);
+    // Closing is delegated to native window chrome — there is no in-content button.
+    await expect(settings.getByRole('button', { name: 'Close' })).toHaveCount(0);
   });
 
-  test('shows the active provider detail with model, reasoning and a configured key', async ({ page }) => {
+  test('navigates categories with the back / forward toolbar arrows', async ({ page }) => {
     const settings = await openSettings(page);
+    const back = settings.getByRole('button', { name: 'Back' });
+    const forward = settings.getByRole('button', { name: 'Forward' });
+    // At rest (Providers, no history) both arrows are inert, like System Settings.
+    await expect(back).toBeDisabled();
+    await expect(forward).toBeDisabled();
+
+    // Visiting another category records history, so back becomes available.
+    await settings.getByRole('button', { name: /^Permissions/ }).click();
+    await expect(settings.getByRole('heading', { name: 'Tool Permissions' })).toBeVisible();
+    await expect(back).toBeEnabled();
+    await expect(forward).toBeDisabled();
+
+    // Back returns to Providers and arms forward.
+    await back.click();
+    await expect(settings.getByRole('list', { name: 'Available providers' })).toBeVisible();
+    await expect(back).toBeDisabled();
+    await expect(forward).toBeEnabled();
+
+    // Forward replays the visit.
+    await forward.click();
+    await expect(settings.getByRole('heading', { name: 'Tool Permissions' })).toBeVisible();
+    await expect(forward).toBeDisabled();
+  });
+
+  test('groups providers by credential and reads status on each row', async ({ page }) => {
+    const settings = await openSettings(page);
+    await expect(settings.getByRole('list', { name: 'Connected providers' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Available providers' })).toBeVisible();
+    // On-row status rides the row's accessible name (avatar + name + status).
     await expect(settings.getByRole('button', { name: 'OpenAI, Active' })).toBeVisible();
-    await expect(settings.getByRole('button', { name: /Anthropic/ })).toBeVisible();
-    // The configured provider's key is masked, and model/reasoning live inline.
-    await expect(settings.getByLabel('API key')).toHaveAttribute('placeholder', 'Configured (Encrypted)');
-    await expect(settings.getByRole('button', { name: 'Remove key' })).toBeEnabled();
-    await expect(settings.getByRole('heading', { name: 'Model & Reasoning' })).toBeVisible();
-    await expect(settings.getByLabel('Reasoning')).toBeVisible();
+    await expect(settings.getByRole('button', { name: 'Anthropic, Add key' })).toBeVisible();
   });
 
-  test('filters the provider list by search and keeps Custom reachable', async ({ page }) => {
+  test('shows the row actions menu only when there is more than one action', async ({ page }) => {
     const settings = await openSettings(page);
-    await settings.getByLabel('Search providers').fill('anth');
-    await expect(settings.getByRole('button', { name: /Anthropic/ })).toBeVisible();
-    await expect(settings.getByRole('button', { name: 'OpenAI, Active' })).toHaveCount(0);
-    // The custom-provider add button lives beside the search, outside the list.
-    await expect(settings.getByRole('button', { name: 'Custom provider' })).toBeVisible();
+    // The active, configured OpenAI has multiple actions → a ⋯ menu.
+    await expect(settings.getByRole('button', { name: 'OpenAI actions' })).toBeVisible();
+    // Unconfigured Anthropic's only action is "Configure", which is exactly what
+    // clicking the row does — so no redundant ⋯ menu.
+    await expect(settings.getByRole('button', { name: 'Anthropic actions' })).toHaveCount(0);
   });
 
-  test('gates model selection behind a key and hides the provider id for known providers', async ({ page }) => {
+  test('opens a provider config window when its row is clicked (not an in-app modal)', async ({ page }) => {
     const settings = await openSettings(page);
+    await settings.getByRole('button', { name: 'OpenAI, Active' }).click();
+    // Clicking a row asks the main process to open the native config window — it
+    // does NOT layer a dialog inside the settings window.
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'open_provider_config')?.args;
+    }).toMatchObject({ providerId: 'openai', mode: 'configure' });
+  });
 
-    // A known provider exposes no editable Provider ID and prompts for a key.
-    await settings.locator('.settings-provider-row', { hasText: 'Anthropic' }).click();
-    await expect(settings.getByLabel('Provider ID')).toHaveCount(0);
-    await expect(settings.getByLabel('API key')).toHaveAttribute('placeholder', 'Paste API key');
-    await expect(settings.getByLabel('Base URL')).toHaveAttribute('placeholder', 'https://api.anthropic.com');
-    await expect(settings.getByLabel('Reasoning')).toHaveCount(0);
+  test('a single-action row exposes a Configure button that opens the config window', async ({ page }) => {
+    const settings = await openSettings(page);
+    // The lone "Configure" action is a real trailing button (the macOS Wi-Fi
+    // "Connect" idiom), revealed on row hover — not just decorative hint text.
+    await settings.getByRole('button', { name: 'Anthropic, Add key' }).hover();
+    const configure = settings.getByRole('button', { name: 'Configure Anthropic' });
+    await expect(configure).toBeVisible();
+    await configure.click();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'open_provider_config')?.args;
+    }).toMatchObject({ providerId: 'anthropic', mode: 'configure' });
+  });
 
-    await settings.getByLabel('API key').fill('sk-ant-test');
-    await expect(settings.getByLabel('Reasoning')).toBeVisible();
+  test('has no provider search and opens the custom-provider window from the last row', async ({ page }) => {
+    const settings = await openSettings(page);
+    // Native System Settings (Wi-Fi) has no list search; custom providers are added
+    // from the last row of the Available list, which opens the config window in
+    // custom mode.
+    await expect(settings.getByLabel('Search providers')).toHaveCount(0);
+    await expect(settings.getByRole('button', { name: /^Anthropic,/ })).toBeVisible();
+    await settings.getByRole('button', { name: 'Add custom provider' }).click();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'open_provider_config')?.args;
+    }).toMatchObject({ providerId: '', mode: 'custom' });
+  });
+});
+
+// The per-provider config window (?surface=provider-config) — a standalone surface
+// (in the app, a modal child window). It hosts only the CONNECTION: the credential
+// (key / managed note) and base URL, plus an async validate. Model & reasoning are
+// chosen in the composer, not here.
+test.describe('provider config window', () => {
+  test('renders the saved connection (masked key + base URL), without model or reasoning', async ({ page }) => {
+    const config = await openProviderConfig(page, 'openai');
+    await expect(config.getByRole('heading', { name: /OpenAI/ })).toBeVisible();
+    await expect(config.getByLabel('API key')).toHaveAttribute('placeholder', /Saved \(encrypted\)/);
+    await expect(config.getByLabel('Base URL')).toBeVisible();
+    await expect(config.getByRole('combobox', { name: 'Model' })).toHaveCount(0);
+    await expect(config.getByLabel('Reasoning')).toHaveCount(0);
+    // A configured provider can be removed from its window.
+    await expect(config.getByRole('button', { name: 'Remove provider' })).toBeVisible();
+  });
+
+  test('enters a credential and saves the config', async ({ page }) => {
+    const config = await openProviderConfig(page, 'anthropic');
+    await expect(config.getByRole('heading', { name: /Anthropic/ })).toBeVisible();
+    await expect(config.getByLabel('API key')).toHaveAttribute('placeholder', 'Paste API key');
+
+    await config.getByLabel('API key').fill('sk-ant-test');
+    await config.getByRole('button', { name: 'Save', exact: true }).click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_set_provider_api_key')?.args;
+    }).toMatchObject({ providerId: 'anthropic', apiKey: 'sk-ant-test' });
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_upsert_provider_config')?.args;
+    }).toMatchObject({ provider: { providerId: 'anthropic', enabled: true } });
+  });
+
+  test('validates a key asynchronously and never saves on validate', async ({ page }) => {
+    const config = await openProviderConfig(page, 'anthropic');
+    await config.getByLabel('API key').fill('sk-good');
+    await config.getByRole('button', { name: 'Validate' }).click();
+    await expect(config.getByText(/Connection successful/)).toBeVisible();
+
+    await config.getByLabel('API key').fill('sk-bad');
+    await config.getByRole('button', { name: 'Validate' }).click();
+    await expect(config.getByText(/Invalid API key/)).toBeVisible();
+
+    const calls = await commandCalls(page);
+    expect(calls.some((call) => call.cmd === 'agent_set_provider_api_key')).toBe(false);
   });
 
   test('shows a credential note instead of a key field for non-key providers', async ({ page }) => {
-    const settings = await openSettings(page);
-    await settings.locator('.settings-provider-row', { hasText: 'Amazon Bedrock' }).click();
-    // No misleading key/base-url fields for an AWS-credential provider.
-    await expect(settings.getByLabel('API key')).toHaveCount(0);
-    await expect(settings.getByLabel('Base URL')).toHaveCount(0);
-    await expect(settings.getByText(/uses your AWS credentials/i)).toBeVisible();
-    await expect(settings.getByRole('button', { name: /AWS credential setup/ })).toBeVisible();
+    const config = await openProviderConfig(page, 'amazon-bedrock');
+    await expect(config.getByLabel('API key')).toHaveCount(0);
+    await expect(config.getByText(/uses your AWS credentials/i)).toBeVisible();
+    await expect(config.getByRole('button', { name: /AWS credential setup/ })).toBeVisible();
   });
 
-  test('lists the provider models in the model selector', async ({ page }) => {
-    const settings = await openSettings(page);
-    // OpenAI exposes several models through the Model selector.
-    const model = settings.getByRole('combobox', { name: 'Model' });
-    await expect(model).toBeVisible();
-    await expect(model).toContainText('GPT-5.4');
-    await expect(model).toContainText('GPT-5.4 Mini');
+  test('exposes the base URL inline, not behind an Advanced disclosure', async ({ page }) => {
+    const config = await openProviderConfig(page, 'openai');
+    await expect(config.getByLabel('Base URL')).toBeVisible();
+    await expect(config.getByText('Advanced')).toHaveCount(0);
   });
 
   test('toggles API key visibility', async ({ page }) => {
-    const settings = await openSettings(page);
-    const key = settings.getByLabel('API key');
+    const config = await openProviderConfig(page, 'anthropic');
+    const key = config.getByLabel('API key');
     await expect(key).toHaveAttribute('type', 'password');
 
-    await settings.getByRole('button', { name: 'Show key' }).click();
+    await config.getByRole('button', { name: 'Show key' }).click();
     await expect(key).toHaveAttribute('type', 'text');
 
-    await settings.getByRole('button', { name: 'Hide key' }).click();
+    await config.getByRole('button', { name: 'Hide key' }).click();
     await expect(key).toHaveAttribute('type', 'password');
   });
 
-  test('reveals connection fields only for a custom provider', async ({ page }) => {
-    const settings = await openSettings(page);
-    await settings.getByRole('button', { name: 'Custom provider' }).click();
-
-    await settings.getByLabel('Provider ID').fill('my-proxy');
-    await settings.getByLabel('API key').fill('sk-test');
-    await settings.getByRole('textbox', { name: 'Model' }).fill('custom-model');
-    await settings.getByRole('button', { name: 'Save', exact: true }).click();
+  test('creates a custom provider', async ({ page }) => {
+    const config = await openProviderConfig(page, '', 'custom');
+    await config.getByLabel('Provider ID').fill('my-proxy');
+    await config.getByLabel('API key').fill('sk-test');
+    await config.getByRole('textbox', { name: 'Model' }).fill('custom-model');
+    await config.getByRole('button', { name: 'Save', exact: true }).click();
 
     await expect.poll(async () => {
       const calls = await commandCalls(page);
       return calls.findLast((call) => call.cmd === 'agent_upsert_provider_config')?.args;
     }).toMatchObject({
-      provider: {
-        providerId: 'my-proxy',
-        modelId: 'custom-model',
-        enabled: true,
-      },
+      provider: { providerId: 'my-proxy', modelId: 'custom-model', enabled: true },
     });
   });
 
-  test('saves the active provider model and reasoning', async ({ page }) => {
-    const settings = await openSettings(page);
-    await settings.getByLabel('Reasoning').selectOption('high');
-    await settings.getByRole('button', { name: 'Save', exact: true }).click();
+  test('saves the connection and preserves the configured model', async ({ page }) => {
+    const config = await openProviderConfig(page, 'openai');
+    // The window only edits the connection; saving must keep the existing model
+    // (the composer owns model choice) rather than clearing it.
+    await config.getByLabel('Base URL').fill('https://proxy.example.com/v1');
+    await config.getByRole('button', { name: 'Save', exact: true }).click();
 
     await expect.poll(async () => {
       const calls = await commandCalls(page);
@@ -122,8 +211,7 @@ test.describe('agent settings window', () => {
       provider: {
         providerId: 'openai',
         modelId: 'gpt-5.4',
-        reasoningLevel: 'high',
-        baseUrl: null,
+        baseUrl: 'https://proxy.example.com/v1',
         enabled: true,
       },
     });
@@ -137,6 +225,16 @@ async function openSettings(page: Page): Promise<Locator> {
   await expect(settings).toBeVisible();
   // The window shows a "Loading..." state until the async provider fetch
   // resolves; wait for the loaded content so assertions don't race it.
-  await expect(settings.locator('.settings-provider-row').first()).toBeVisible();
+  await expect(settings.locator('.inset-row').first()).toBeVisible();
   return settings;
+}
+
+async function openProviderConfig(page: Page, provider: string, mode = 'configure'): Promise<Locator> {
+  await installElectronMock(page);
+  await page.goto(`/?surface=provider-config&provider=${provider}&mode=${mode}`);
+  const config = page.locator('.provider-config-window');
+  await expect(config).toBeVisible();
+  // Wait for the form (after the provider-settings fetch resolves) before asserting.
+  await expect(config.getByRole('button', { name: 'Save', exact: true })).toBeVisible();
+  return config;
 }

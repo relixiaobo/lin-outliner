@@ -1,0 +1,145 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   INSET GROUPED-LIST PRIMITIVE (settings → SettingsInsetList.tsx).
+   The macOS System Settings interaction idiom in our own tokens: a section
+   header above a rounded inset card whose rows are split by hairlines. Selection
+   / hover / focus are NEUTRAL (B3/B4) — never the system accent. Radius + hairline
+   come from the ladders (B9); arrow cursor everywhere (B10, inherited).
+   Reusable: Providers is the first consumer; Permissions / Skills can adopt it.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.inset-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.inset-group + .inset-group {
+  margin-top: var(--space-5);
+}
+
+/* Native System Settings section header: sentence-case, prominent, NOT the old
+   uppercase micro-caption (matches "Known Networks" / "Other Networks"). */
+.inset-group-header {
+  padding: 0 var(--space-1) var(--space-1);
+  color: var(--text-strong);
+  font-size: var(--font-ui-sm);
+  font-weight: 600;
+  line-height: var(--line-ui-sm);
+}
+
+/* The card clips its rows so the first/last row's neutral selection fill follows
+   the rounded corners (concentric, B9). overflow:hidden would clip an OUTER focus
+   ring, so rows use the INSET focus token below. */
+.inset-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+}
+
+.inset-group-footnote {
+  margin: 0;
+  padding: 0 var(--space-2);
+  color: var(--muted-2);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+}
+
+.inset-row {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  min-height: 40px;
+}
+
+/* Content-aligned hairline (macOS): the separator is INSET on the left to start at
+   the row's content, NOT edge-to-edge — the leading icon/avatar sits in an
+   undivided gutter, the way native grouped lists divide rows. Drawn as a pseudo so
+   the inset is a single tunable token; `--inset-separator-inset` defaults to the
+   row's text padding and consumers with a leading column widen it to clear the
+   icon. Flush to the right edge; painted over the row's hover/selection fill. */
+.inset-row:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: var(--inset-separator-inset, var(--space-4));
+  height: 1px;
+  background: var(--border-subtle);
+  pointer-events: none;
+}
+
+.inset-row-main {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+  background: transparent;
+  color: var(--text-strong);
+  padding: var(--space-2) var(--space-4);
+  text-align: left;
+}
+
+/* Selection is NEUTRAL (B3/B4): the --fill-* ladder, never an accent — and fills
+   the WHOLE row (`.inset-row`), not just the main button. Rows carry NO hover fill:
+   like native System Settings list rows, hover instead reveals the row's action
+   affordance (the "Configure" button / the ⋯ menu), which is itself the "this row"
+   locator — a row-wide tint on top of that just reads as a redundant box. */
+.inset-row.is-selected {
+  background: var(--selection-bg);
+}
+
+/* Keyboard focus uses the NEUTRAL inset ring (B8) — inset so the rounded card's
+   overflow:hidden never clips it; the global outer button:focus-visible ring is
+   suppressed here for the same reason. */
+.inset-row-main:focus-visible {
+  box-shadow: var(--outline-focus);
+}
+
+.inset-row.is-disabled {
+  opacity: 0.5;
+}
+
+.inset-row-leading {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+}
+
+.inset-row-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-hairline);
+}
+
+.inset-row-label {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: var(--font-meta);
+  font-weight: 600;
+  line-height: var(--line-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inset-row-sublabel {
+  overflow: hidden;
+  color: var(--muted-2);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inset-row-trailing {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding-right: var(--space-3);
+}

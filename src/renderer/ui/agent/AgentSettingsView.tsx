@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AgentModelOption,
   AgentPermissionMode,
@@ -11,14 +11,21 @@ import type {
   SkillDefinition,
 } from '../../api/types';
 import { api } from '../../api/client';
-import { AddIcon, CloseIcon, HideIcon, ICON_SIZE, OpenIcon, PasswordIcon, SearchIcon, ShowIcon, TrashIcon, WarningIcon } from '../icons';
-import { providerIconUrl } from './providerIcon';
+import { AddIcon, ChevronLeftIcon, ChevronRightIcon, ICON_SIZE, WarningIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
-import { FormField } from '../primitives/FormField';
+import { IconButton } from '../primitives/IconButton';
 import { SelectControl } from '../primitives/SelectControl';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
-import { TextInputControl } from '../primitives/TextInputControl';
+import { InsetGroup, InsetRow } from './SettingsInsetList';
+import {
+  ProviderAvatar,
+  formatProviderName,
+  providerHasCredential,
+  resolveUsableActiveProvider,
+} from './providerCatalog';
+import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
+import { coerceReasoningLevel, defaultReasoningLevel } from './settingsReasoning';
 
 interface AgentSettingsViewProps {
   onClose: () => void;
@@ -50,6 +57,67 @@ interface ProviderChoice {
   enabled: boolean;
   hasCredential: boolean;
 }
+
+interface ProviderRowHandlers {
+  onConfigure: (id: string) => void;
+  onActivate: (id: string) => void;
+  onRemove: (id: string) => void;
+  onMenuOpenChange: (id: string, open: boolean) => void;
+}
+
+// A single provider row in the inset grouped list — the macOS System Settings
+// Wi-Fi idiom: the brand avatar is the identity, clicking the row opens the config
+// sheet. There is no leading status column — "Connected" vs "Available" already
+// carries that, so a per-row marker would be redundant. A trailing `⋯` appears
+// ONLY when the row has more than one action; a single-action row (just
+// "Configure", which is what clicking the row does) instead exposes a "Configure"
+// button on the trailing edge — the macOS Wi-Fi "Connect" / "Details…" idiom —
+// revealed on hover / focus. Memoized + fed stable handlers, so editing one
+// provider's sheet never re-renders the list.
+const SettingsProviderRow = memo(function SettingsProviderRow({
+  provider,
+  menuOpen,
+  handlers,
+}: {
+  provider: ProviderChoice;
+  menuOpen: boolean;
+  handlers: ProviderRowHandlers;
+}) {
+  const name = formatProviderName(provider.providerId);
+  const actions: RowMenuAction[] = [];
+  if (provider.hasCredential && !provider.active) {
+    actions.push({ label: 'Set as Active', onSelect: () => handlers.onActivate(provider.providerId) });
+  }
+  actions.push({ label: 'Configure…', onSelect: () => handlers.onConfigure(provider.providerId) });
+  if (provider.configured) {
+    actions.push({ label: 'Remove provider', danger: true, onSelect: () => handlers.onRemove(provider.providerId) });
+  }
+  return (
+    <InsetRow
+      ariaLabel={`${name}, ${providerStatusLabel(provider)}`}
+      label={name}
+      leading={<ProviderAvatar providerId={provider.providerId} />}
+      onSelect={() => handlers.onConfigure(provider.providerId)}
+      trailing={actions.length > 1 ? (
+        <SettingsRowMenu
+          actions={actions}
+          ariaLabel={`${name} actions`}
+          onOpenChange={(open) => handlers.onMenuOpenChange(provider.providerId, open)}
+          open={menuOpen}
+        />
+      ) : (
+        <button
+          aria-label={`Configure ${name}`}
+          className="settings-provider-configure"
+          onClick={() => handlers.onConfigure(provider.providerId)}
+          type="button"
+        >
+          Configure
+        </button>
+      )}
+    />
+  );
+});
 
 const EMPTY_DRAFT: DraftConfig = {
   providerId: '',
@@ -142,14 +210,6 @@ const COMMON_PERMISSION_RULES: Array<{
 ];
 
 const PREFERRED_PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'openrouter'];
-const REASONING_LABELS: Record<AgentReasoningLevel, string> = {
-  off: 'Off',
-  minimal: 'Minimal',
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-  xhigh: 'XHigh',
-};
 
 export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettingsViewProps) {
   const [settings, setSettings] = useState<AgentProviderSettingsView | null>(null);
@@ -157,11 +217,17 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
   const [permissionDraft, setPermissionDraft] = useState<AgentToolPermissionSettingsView | null>(null);
   const [draft, setDraft] = useState<DraftConfig>(EMPTY_DRAFT);
   const [apiKey, setApiKey] = useState('');
-  const [revealKey, setRevealKey] = useState(false);
-  const [providerQuery, setProviderQuery] = useState('');
-  const [modelQuery, setModelQuery] = useState('');
-  const [modelSearchOpen, setModelSearchOpen] = useState(false);
-  const [category, setCategory] = useState<SettingsCategory>('providers');
+  // Category navigation history, so the window can offer macOS System Settings'
+  // back / forward (‹ ›) chrome: `stack` is the visited categories, `index` the
+  // current position. Switching to a new category truncates any forward entries
+  // and pushes; back / forward just move the index. `category` derives from it.
+  const [nav, setNav] = useState<{ stack: SettingsCategory[]; index: number }>({
+    stack: ['providers'],
+    index: 0,
+  });
+  const category = nav.stack[nav.index];
+  const canGoBack = nav.index > 0;
+  const canGoForward = nav.index < nav.stack.length - 1;
   const [creatingCustom, setCreatingCustom] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -175,8 +241,9 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
   const [allAgents, setAllAgents] = useState<AgentDefinition[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(false);
   const [selectedAgentName, setSelectedAgentName] = useState<string>('general');
-  const [testingConnection, setTestingConnection] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string; statusCode?: number } | null>(null);
+  // The per-row ⋯ actions menu (only one open at a time, keyed by providerId). The
+  // per-provider config opens in its own native window, not an in-renderer sheet.
+  const [openRowMenu, setOpenRowMenu] = useState<string | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -195,17 +262,33 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     return mountedRef.current && requestId === requestRef.current;
   }
 
+  // Navigate to a category, recording history for back / forward. Re-selecting the
+  // current category is a no-op (no duplicate history entry).
+  function navigateCategory(next: SettingsCategory) {
+    setNav((current) => {
+      if (current.stack[current.index] === next) return current;
+      const stack = [...current.stack.slice(0, current.index + 1), next];
+      return { stack, index: stack.length - 1 };
+    });
+  }
+
+  function goBack() {
+    setNav((current) => (current.index > 0 ? { ...current, index: current.index - 1 } : current));
+  }
+
+  function goForward() {
+    setNav((current) =>
+      current.index < current.stack.length - 1 ? { ...current, index: current.index + 1 } : current,
+    );
+  }
+
   useEffect(() => {
     const requestId = beginRequest();
     setLoading(true);
     setError(null);
     setNotice(null);
-    setCategory('providers');
+    setNav({ stack: ['providers'], index: 0 });
     setCreatingCustom(false);
-    setProviderQuery('');
-    setModelQuery('');
-    setModelSearchOpen(false);
-    setTestResult(null);
 
     void Promise.all([
       api.agentGetProviderSettings(),
@@ -225,6 +308,23 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
       .finally(() => {
         if (isCurrentRequest(requestId)) setLoading(false);
       });
+  }, []);
+
+  // The per-provider config window commits in its own process surface and asks the
+  // main process to broadcast a settings-changed; refetch so the list reflects the
+  // new connection (active provider, "Connected" grouping) without a manual reopen.
+  useEffect(() => {
+    const off = window.lin?.onSettingsChanged?.(() => {
+      const requestId = beginRequest();
+      void api.agentGetProviderSettings()
+        .then((next) => {
+          if (!isCurrentRequest(requestId)) return;
+          setSettings(next);
+          setDraft(resolveInitialDraft(next));
+        })
+        .catch(() => { /* a refetch failure leaves the prior list in place */ });
+    });
+    return off;
   }, []);
 
   useEffect(() => {
@@ -274,56 +374,29 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     return catalog;
   }, [settings]);
 
-  const configuredProvider = settings?.providers.find((provider) => provider.providerId === draft.providerId);
+  // The active provider's draft model determines which reasoning levels the global
+  // save() may coerce to (the per-provider connection is edited in its own window).
   const selectedCatalog = providerCatalog.get(draft.providerId);
-  const isCustomProvider = Boolean(draft.providerId) && !providerCatalog.has(draft.providerId);
-  const showConnectionFields = creatingCustom || isCustomProvider;
-  const hasPendingApiKey = apiKey.trim().length > 0;
-  const hasSavedCredential = providerHasCredential(configuredProvider, selectedCatalog);
-  const canChooseModels = (hasSavedCredential || hasPendingApiKey) && Boolean(draft.providerId);
   const catalogModels = selectedCatalog?.models ?? [];
-  const selectedModels = canChooseModels ? catalogModels : [];
-  const selectedModel = selectedModels.find((model) => model.id === draft.modelId);
+  const selectedModel = catalogModels.find((model) => model.id === draft.modelId);
   const selectedReasoningLevels: AgentReasoningLevel[] = selectedModel?.supportedThinkingLevels.length
     ? selectedModel.supportedThinkingLevels
     : ['off'];
-  const hasAnyKey = hasSavedCredential || hasPendingApiKey;
-  const keyStatus = configuredProvider?.hasApiKey
-    ? 'Saved key'
-    : configuredProvider?.hasEnvApiKey || selectedCatalog?.hasEnvApiKey ? 'Environment key' : hasPendingApiKey ? 'Unsaved key' : 'No key yet';
 
   const providerChoices = useMemo(
     () => settings ? buildProviderChoices(settings, draft.providerId, providerCatalog) : [],
     [draft.providerId, providerCatalog, settings],
   );
-  const activeRowProviderId = creatingCustom ? '' : draft.providerId;
-  const visibleProviderChoices = useMemo(() => {
-    const query = providerQuery.trim().toLowerCase();
-    if (!query) return providerChoices;
-    return providerChoices.filter((choice) =>
-      formatProviderName(choice.providerId).toLowerCase().includes(query)
-      || choice.providerId.toLowerCase().includes(query));
-  }, [providerChoices, providerQuery]);
-  const selectedChoice = providerChoices.find((choice) => choice.providerId === activeRowProviderId);
-  const showDetail = creatingCustom || Boolean(draft.providerId);
-  const detailName = creatingCustom
-    ? 'Custom provider'
-    : draft.providerId ? formatProviderName(draft.providerId) : '';
-  const detailDescription = showConnectionFields
-    ? 'Connect any OpenAI-compatible endpoint.'
-    : providerDescription(selectedCatalog);
-  const authInfo = showConnectionFields ? undefined : PROVIDER_AUTH[draft.providerId];
-  const docsUrl = showConnectionFields ? undefined : PROVIDER_DOCS_URL[draft.providerId];
-  
-  const baseUrlPlaceholder = selectedCatalog?.defaultBaseUrl ?? 'https://api.example.com/v1';
-  const showModelList = !creatingCustom && catalogModels.length > 0;
-  const showModelSearch = catalogModels.length > 1;
-  const visibleModels = useMemo(() => {
-    const query = modelQuery.trim().toLowerCase();
-    if (!query) return catalogModels;
-    return catalogModels.filter((model) =>
-      model.name.toLowerCase().includes(query) || model.id.toLowerCase().includes(query));
-  }, [catalogModels, modelQuery]);
+  // Grouped inset list: "Connected" = has a credential (key or env/managed),
+  // "Available" = the rest. macOS System Settings groups this way.
+  const connectedChoices = useMemo(
+    () => providerChoices.filter((choice) => choice.hasCredential),
+    [providerChoices],
+  );
+  const availableChoices = useMemo(
+    () => providerChoices.filter((choice) => !choice.hasCredential),
+    [providerChoices],
+  );
 
   const selectedAgent = allAgents.find((a) => a.name === selectedAgentName) || allAgents[0];
   const permissionDiagnostics = permissionDraft?.diagnostics ?? permissionSettings?.diagnostics ?? [];
@@ -356,96 +429,10 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     setError(null);
   }
 
-  function selectProvider(providerId: string) {
-    setCreatingCustom(false);
-    const existing = settings?.providers.find((provider) => provider.providerId === providerId);
-    const catalog = providerCatalog.get(providerId);
-    setDraft((current) => ({
-      ...current,
-      providerId,
-      modelId: existing?.modelId ?? catalog?.models[0]?.id ?? '',
-      reasoningLevel: existing?.reasoningLevel ?? defaultReasoningLevel(catalog?.models[0]),
-      baseUrl: existing?.baseUrl ?? '',
-      enabled: existing?.enabled ?? true,
-    }));
-    setApiKey('');
-    setRevealKey(false);
-    setModelQuery('');
-    setModelSearchOpen(false);
-    setNotice(null);
-    setError(null);
-    setTestResult(null);
-  }
-
+  // Custom (OpenAI-compatible) providers are configured in the same native window,
+  // in 'custom' mode (the window enters the provider id + model itself).
   function startCustomProvider() {
-    setCreatingCustom(true);
-    setDraft((current) => ({
-      ...current,
-      providerId: '',
-      modelId: '',
-      reasoningLevel: 'off',
-      baseUrl: '',
-      enabled: true,
-    }));
-    setApiKey('');
-    setRevealKey(false);
-    setModelQuery('');
-    setModelSearchOpen(false);
-    setNotice(null);
-    setError(null);
-    setTestResult(null);
-  }
-
-  async function testConnection() {
-    const providerId = draft.providerId.trim();
-    if (!providerId) return;
-    setTestingConnection(true);
-    setTestResult(null);
-    try {
-      const res = await api.agentTestProviderConnection({
-        providerId,
-        modelId: draft.modelId || selectedCatalog?.models[0]?.id || getFallbackModelId(providerId),
-        baseUrl: draft.baseUrl.trim() || undefined,
-        apiKey: apiKey.trim() || undefined,
-      });
-      setTestResult(res);
-    } catch (caught) {
-      setTestResult({
-        success: false,
-        message: caught instanceof Error ? caught.message : String(caught),
-      });
-    } finally {
-      setTestingConnection(false);
-    }
-  }
-
-  async function makeActive() {
-    const providerId = draft.providerId.trim();
-    if (!providerId) return;
-    setSaving(true);
-    setError(null);
-    setNotice(null);
-    try {
-      if (apiKey.trim()) {
-        await api.agentSetProviderApiKey(providerId, apiKey.trim());
-        setApiKey('');
-      }
-      let next = await api.agentUpsertProviderConfig({
-        providerId,
-        modelId: draft.modelId || selectedCatalog?.models[0]?.id || '',
-        baseUrl: draft.baseUrl.trim() || null,
-        enabled: true,
-      });
-      next = await api.agentSetActiveProvider(providerId);
-      setSettings(next);
-      setDraft(resolveDraftForProvider(next, providerId));
-      setNotice('Provider set as active');
-      await onApplied();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setSaving(false);
-    }
+    void window.lin?.openProviderConfig?.({ providerId: '', mode: 'custom' });
   }
 
   async function save() {
@@ -455,7 +442,7 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     // Only validate modelId if a providerId is actively selected/provided.
     if (providerId && !modelId) {
       setError('model is required');
-      setCategory('providers');
+      navigateCategory('providers');
       return;
     }
 
@@ -515,20 +502,24 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     }
   }
 
-  async function removeApiKey() {
-    const providerId = draft.providerId.trim();
-    if (!providerId) return;
+  // Per-row ⋯ actions operate on an explicit providerId (independent of the draft
+  // selection); they share one refetch/notice/error envelope.
+  async function runProviderMutation(
+    action: () => Promise<AgentProviderSettingsView>,
+    successNotice: string,
+    resetToInitial = false,
+  ) {
     const requestId = beginRequest();
     setSaving(true);
     setError(null);
     setNotice(null);
     try {
-      await api.agentDeleteProviderApiKey(providerId);
-      const next = await api.agentGetProviderSettings();
+      const next = await action();
       if (isCurrentRequest(requestId)) {
         setSettings(next);
-        setDraft(resolveDraftForProvider(next, providerId));
-        setNotice('Key removed');
+        setDraft(resetToInitial ? resolveInitialDraft(next) : resolveDraftForProvider(next, draft.providerId));
+        if (resetToInitial) setCreatingCustom(false);
+        setNotice(successNotice);
       }
       await onApplied();
     } catch (caught) {
@@ -538,28 +529,12 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     }
   }
 
-  async function removeProvider() {
-    const providerId = draft.providerId.trim();
-    if (!providerId || !configuredProvider) return;
-    const requestId = beginRequest();
-    setSaving(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const next = await api.agentDeleteProviderConfig(providerId);
-      if (isCurrentRequest(requestId)) {
-        setSettings(next);
-        setDraft(resolveInitialDraft(next));
-        setCreatingCustom(false);
-        setApiKey('');
-        setNotice('Provider removed');
-      }
-      await onApplied();
-    } catch (caught) {
-      if (isCurrentRequest(requestId)) setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      if (isCurrentRequest(requestId)) setSaving(false);
-    }
+  function activateProvider(providerId: string) {
+    void runProviderMutation(() => api.agentSetActiveProvider(providerId), 'Provider set as active');
+  }
+
+  function deleteProviderFor(providerId: string) {
+    void runProviderMutation(() => api.agentDeleteProviderConfig(providerId), 'Provider removed', true);
   }
 
   const isSkillDisabled = (skillName: string) => draft.disabledSkills.includes(skillName);
@@ -582,307 +557,118 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     });
   };
 
-  const baseUrlField = (
-    <FormField className="agent-settings-field agent-settings-field-wide" label="Base URL">
-      <TextInputControl
-        label="Base URL"
-        onChange={(event) => setDraft((current) => ({ ...current, baseUrl: event.target.value }))}
-        placeholder={baseUrlPlaceholder}
-        value={draft.baseUrl}
-      />
-      <span className="agent-settings-field-meta">Optional. Leave empty to use the default endpoint.</span>
-    </FormField>
+  // Open the per-provider config in its OWN native window (a modal child of
+  // settings — the macOS idiom), not an in-renderer overlay. Clicking a row or
+  // "Configure…" asks the main process to open it; the window commits via IPC and
+  // broadcasts a settings-changed, which refetches the list (see the effect below).
+  function openProviderConfig(providerId: string) {
+    void window.lin?.openProviderConfig?.({ providerId, mode: 'configure' });
+  }
+
+  // Stable per-row handlers via a latest-ref so the memoized provider rows keep a
+  // constant identity and never re-render while another row's menu toggles. The ref
+  // always points at the freshest closures (no stale reads).
+  const rowHandlersImpl = { openProviderConfig, activateProvider, deleteProviderFor, setOpenRowMenu };
+  const rowHandlersRef = useRef(rowHandlersImpl);
+  rowHandlersRef.current = rowHandlersImpl;
+  const rowHandlers = useMemo<ProviderRowHandlers>(() => ({
+    onConfigure: (id) => rowHandlersRef.current.openProviderConfig(id),
+    onActivate: (id) => rowHandlersRef.current.activateProvider(id),
+    onRemove: (id) => rowHandlersRef.current.deleteProviderFor(id),
+    onMenuOpenChange: (id, open) => rowHandlersRef.current.setOpenRowMenu(open ? id : null),
+  }), []);
+
+  const renderProviderRow = (provider: ProviderChoice) => (
+    <SettingsProviderRow
+      handlers={rowHandlers}
+      key={provider.providerId}
+      menuOpen={openRowMenu === provider.providerId}
+      provider={provider}
+    />
   );
 
   return (
     <main className="settings-window" aria-labelledby="agent-settings-title">
-      <header className="agent-settings-header">
-        <h2 id="agent-settings-title">Settings</h2>
-        <ButtonControl className="agent-settings-close" onClick={onClose}>
-          Close
-        </ButtonControl>
-      </header>
-
+      {/* Frameless window: this top strip is the drag region that stands in for the
+          native title bar. The OS traffic lights overlay it; the rail title/nav and
+          content controls all sit below --chrome-height, so none overlaps it. The
+          back / forward arrows are no-drag DOM CHILDREN of the strip — the only
+          reliable carve-out from a drag region on macOS — anchored over the content
+          column, on the traffic-light centreline, like System Settings' toolbar. */}
+      <div className="settings-drag-region">
+        <div className="settings-history-nav">
+          {/* The same chrome control as the main window's rail toggles
+              (IconButton variant="chrome" + .rail-toggle): icon-only, colour
+              deepens on hover, no box (B6) — not a bespoke style. */}
+          <IconButton
+            className="rail-toggle"
+            disabled={!canGoBack}
+            icon={ChevronLeftIcon}
+            iconSize={ICON_SIZE.toolbar}
+            label="Back"
+            onClick={goBack}
+            strokeWidth={1.7}
+            variant="chrome"
+          />
+          <IconButton
+            className="rail-toggle"
+            disabled={!canGoForward}
+            icon={ChevronRightIcon}
+            iconSize={ICON_SIZE.toolbar}
+            label="Forward"
+            onClick={goForward}
+            strokeWidth={1.7}
+            variant="chrome"
+          />
+        </div>
+      </div>
       {loading ? (
-        <div className="agent-settings-empty">Loading...</div>
+        <div className="agent-settings-empty">Loading…</div>
       ) : (
         <div className="settings-layout">
-          <nav className="settings-nav" aria-label="Settings categories">
-            {SETTINGS_CATEGORIES.map((item) => (
-              <button
-                aria-current={category === item.id ? 'page' : undefined}
-                className={`settings-nav-item ${category === item.id ? 'is-active' : ''}`}
-                key={item.id}
-                onClick={() => setCategory(item.id)}
-                type="button"
-              >
-                <span className="settings-nav-label">{item.label}</span>
-                <span className="settings-nav-hint">{item.hint}</span>
-              </button>
-            ))}
-          </nav>
+          <aside className="settings-rail">
+            <h2 className="settings-rail-title" id="agent-settings-title">Settings</h2>
+            <nav className="settings-nav" aria-label="Settings categories">
+              {SETTINGS_CATEGORIES.map((item) => (
+                <button
+                  aria-current={category === item.id ? 'page' : undefined}
+                  className={`settings-nav-item ${category === item.id ? 'is-active' : ''}`}
+                  key={item.id}
+                  onClick={() => navigateCategory(item.id)}
+                  type="button"
+                >
+                  <span className="settings-nav-label">{item.label}</span>
+                  <span className="settings-nav-hint">{item.hint}</span>
+                </button>
+              ))}
+            </nav>
+          </aside>
 
           <div className="settings-content">
             {category === 'providers' ? (
               <section className="agent-settings-section settings-providers-section" aria-label="Providers">
-                <div className="settings-providers">
-                  <div className="settings-provider-aside">
-                    <div className="settings-provider-search-row">
-                      <div className="settings-provider-search">
-                        <SearchIcon size={ICON_SIZE.menu} />
-                        <TextInputControl
-                          label="Search providers"
-                          onChange={(event) => setProviderQuery(event.target.value)}
-                          placeholder="Search providers…"
-                          value={providerQuery}
-                        />
-                      </div>
-                      <button
-                        aria-current={creatingCustom ? 'true' : undefined}
-                        aria-label="Custom provider"
-                        className={`settings-provider-add ${creatingCustom ? 'is-active' : ''}`}
-                        onClick={startCustomProvider}
-                        title="Add a custom OpenAI-compatible provider"
-                        type="button"
-                      >
-                        <AddIcon size={ICON_SIZE.menu} />
-                      </button>
-                    </div>
-                    <div className="settings-provider-list" role="list" aria-label="Available providers">
-                      {visibleProviderChoices.length === 0 ? (
-                        <p className="settings-provider-list-empty">No providers match “{providerQuery.trim()}”.</p>
-                      ) : null}
-                      {visibleProviderChoices.map((provider) => {
-                        const selected = provider.providerId === activeRowProviderId;
-                        const enabledOn = provider.hasCredential;
-                        const dotState = provider.active ? 'is-on' : enabledOn ? 'is-configured' : '';
-                        return (
-                          <button
-                            aria-current={selected ? 'true' : undefined}
-                            aria-label={`${formatProviderName(provider.providerId)}, ${providerStatusLabel(provider)}`}
-                            className={`settings-provider-row ${selected ? 'is-selected' : ''}`}
-                            key={provider.providerId}
-                            onClick={() => selectProvider(provider.providerId)}
-                            type="button"
-                          >
-                            <ProviderAvatar providerId={provider.providerId} />
-                            <span className="settings-provider-name">{formatProviderName(provider.providerId)}</span>
-                            {dotState ? (
-                              <span className={`settings-provider-dot ${dotState}`} aria-hidden="true" />
-                            ) : null}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <div className="settings-provider-detail">
-                    {showDetail ? (
-                      <>
-                        <div className="settings-provider-detail-header">
-                          <div className="settings-provider-detail-id">
-                            {creatingCustom ? (
-                              <span className="settings-provider-avatar is-large" aria-hidden="true">+</span>
-                            ) : (
-                              <ProviderAvatar providerId={draft.providerId} large />
-                            )}
-                            <div className="settings-provider-detail-text">
-                              <div className="settings-provider-detail-name">
-                                {detailName}
-                                {selectedChoice?.active ? (
-                                  <span className="settings-provider-badge is-active">Active</span>
-                                ) : hasSavedCredential ? (
-                                  <span className="settings-provider-badge">Configured</span>
-                                ) : null}
-                              </div>
-                              <span className="settings-provider-detail-desc">{detailDescription}</span>
-                            </div>
-                          </div>
-                          {!selectedChoice?.active && hasAnyKey ? (
-                            <ButtonControl
-                              className="agent-settings-primary"
-                              disabled={saving}
-                              onClick={makeActive}
-                            >
-                              Set as Active
-                            </ButtonControl>
-                          ) : null}
-                        </div>
-
-                        {authInfo ? (
-                          <div className="settings-provider-note">
-                            <p>{authInfo.note}</p>
-                            {authInfo.docsUrl ? (
-                              <button
-                                className="agent-settings-doc-link"
-                                onClick={() => void api.openExternalUrl(authInfo.docsUrl as string)}
-                                type="button"
-                              >
-                                <span>{authInfo.docsLabel ?? 'Learn more'}</span>
-                                <OpenIcon size={ICON_SIZE.tiny} />
-                              </button>
-                            ) : null}
-                          </div>
-                        ) : (
-                          <>
-                            <div className="agent-settings-grid">
-                              {showConnectionFields ? (
-                                <FormField className="agent-settings-field agent-settings-field-wide" label="Provider ID">
-                                  <TextInputControl
-                                    label="Provider ID"
-                                    onChange={(event) => setDraft((current) => ({ ...current, providerId: event.target.value.trim() }))}
-                                    placeholder="my-provider"
-                                    value={draft.providerId}
-                                  />
-                                </FormField>
-                              ) : null}
-
-                              <FormField as="div" className="agent-settings-field agent-settings-field-wide" label="API key">
-                                <div className="agent-settings-key-row">
-                                  <PasswordIcon size={ICON_SIZE.menu} />
-                                  <TextInputControl
-                                    label="API key"
-                                    onChange={(event) => setApiKey(event.target.value)}
-                                    placeholder={hasAnyKey ? 'Configured (Encrypted)' : 'Paste API key'}
-                                    type={revealKey ? 'text' : 'password'}
-                                    value={apiKey}
-                                  />
-                                  <div className="agent-settings-key-actions">
-                                    <button
-                                      aria-label={revealKey ? 'Hide key' : 'Show key'}
-                                      aria-pressed={revealKey}
-                                      className="agent-settings-key-reveal"
-                                      onClick={() => setRevealKey((current) => !current)}
-                                      type="button"
-                                    >
-                                      {revealKey ? <HideIcon size={ICON_SIZE.menu} /> : <ShowIcon size={ICON_SIZE.menu} />}
-                                    </button>
-                                    {hasSavedCredential && (
-                                      <button
-                                        aria-label="Remove key"
-                                        className="agent-settings-key-remove"
-                                        disabled={saving}
-                                        onClick={removeApiKey}
-                                        type="button"
-                                        title="Remove key"
-                                      >
-                                        <TrashIcon size={ICON_SIZE.menu} />
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                                <div className="agent-settings-key-meta">
-                                  <span className="agent-settings-field-meta">{keyStatus}</span>
-                                  {!hasSavedCredential && docsUrl ? (
-                                    <button
-                                      className="agent-settings-doc-link"
-                                      onClick={() => void api.openExternalUrl(docsUrl)}
-                                      type="button"
-                                    >
-                                      <span>Get API key</span>
-                                      <OpenIcon size={ICON_SIZE.tiny} />
-                                    </button>
-                                  ) : null}
-                                </div>
-                              </FormField>
-                            </div>
-
-                            <details className="settings-url-details">
-                              <summary className="settings-url-summary">Advanced Settings</summary>
-                              <div className="settings-url-content">
-                                {baseUrlField}
-                              </div>
-                            </details>
-                          </>
-                        )}
-
-                        {canChooseModels ? (
-                          <div className="settings-provider-model-section">
-                            <h4 className="settings-detail-subheading">Model & Reasoning</h4>
-                            <div className="agent-settings-grid">
-                              <FormField className="agent-settings-field" label="Model">
-                                {selectedModels.length > 0 ? (
-                                  <SelectControl
-                                    label="Model"
-                                    onChange={(event) => {
-                                      const modelId = event.target.value;
-                                      const model = selectedModels.find((candidate) => candidate.id === modelId);
-                                      const supportedLevels = (model?.supportedThinkingLevels.length
-                                        ? model.supportedThinkingLevels
-                                        : ['off']) as AgentReasoningLevel[];
-                                      setDraft((current) => ({
-                                        ...current,
-                                        modelId,
-                                        reasoningLevel: coerceReasoningLevel(current.reasoningLevel, supportedLevels),
-                                      }));
-                                    }}
-                                    value={selectedModel ? draft.modelId : ''}
-                                  >
-                                    {selectedModel ? null : <option value="">Select a model…</option>}
-                                    {selectedModels.map((model) => (
-                                      <option key={model.id} value={model.id}>{model.name}</option>
-                                    ))}
-                                  </SelectControl>
-                                ) : (
-                                  <TextInputControl
-                                    label="Model"
-                                    onChange={(event) => setDraft((current) => ({ ...current, modelId: event.target.value }))}
-                                    placeholder="Model ID"
-                                    value={draft.modelId}
-                                  />
-                                )}
-                              </FormField>
-
-                              <FormField className="agent-settings-field" label="Reasoning">
-                                <SelectControl
-                                  label="Reasoning"
-                                  onChange={(event) => {
-                                    setDraft((current) => ({
-                                      ...current,
-                                      reasoningLevel: event.target.value as AgentReasoningLevel,
-                                    }));
-                                  }}
-                                  value={coerceReasoningLevel(draft.reasoningLevel, selectedReasoningLevels)}
-                                >
-                                  {selectedReasoningLevels.map((reasoningLevel) => (
-                                    <option key={reasoningLevel} value={reasoningLevel}>
-                                      {REASONING_LABELS[reasoningLevel]}
-                                    </option>
-                                  ))}
-                                </SelectControl>
-                              </FormField>
-                            </div>
-                          </div>
-                        ) : null}
-
-                        <div className="connection-test-section">
-                          <div className="connection-test-row">
-                            <ButtonControl
-                              className="agent-settings-secondary"
-                              disabled={testingConnection || !draft.providerId}
-                              onClick={testConnection}
-                            >
-                              {testingConnection ? 'Testing...' : 'Test Connection'}
-                            </ButtonControl>
-                          </div>
-                          {testResult && (
-                            <div className={`connection-test-feedback ${testResult.success ? 'is-success' : 'is-error'}`}>
-                              {testResult.success ? (
-                                <span className="feedback-text">✓ Connection Successful</span>
-                              ) : (
-                                <div className="feedback-error-container">
-                                  <span className="feedback-text">✗ Connection Failed</span>
-                                  <p className="feedback-diagnostic">{testResult.message}</p>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </>
-                    ) : (
-                      <div className="settings-provider-empty">Select a provider to connect.</div>
-                    )}
-                  </div>
+                {/* No "Providers" title — the selected rail category already names
+                    the pane. Custom providers are added from the last row of the
+                    Available list (no separate floating add control). */}
+                <div className="settings-provider-groups">
+                  {connectedChoices.length > 0 ? (
+                    <InsetGroup ariaLabel="Connected providers" label="Connected">
+                      {connectedChoices.map(renderProviderRow)}
+                    </InsetGroup>
+                  ) : null}
+                  <InsetGroup ariaLabel="Available providers" label="Available">
+                    {availableChoices.map(renderProviderRow)}
+                    <InsetRow
+                      ariaLabel="Add custom provider"
+                      label="Add custom provider"
+                      leading={(
+                        <span className="settings-provider-add-leading" aria-hidden="true">
+                          <AddIcon size={ICON_SIZE.menu} />
+                        </span>
+                      )}
+                      onSelect={startCustomProvider}
+                    />
+                  </InsetGroup>
                 </div>
               </section>
             ) : category === 'permissions' ? (
@@ -1147,27 +933,22 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
             ) : null}
             {notice ? <div className="agent-settings-notice">{notice}</div> : null}
 
-            <footer className="agent-settings-footer">
-              {category === 'providers' ? (
-                <ButtonControl
-                  className="agent-settings-danger"
-                  disabled={saving || !configuredProvider}
-                  onClick={removeProvider}
-                  title="Remove provider"
-                >
-                  <TrashIcon size={ICON_SIZE.menu} />
-                  <span>Remove provider</span>
-                </ButtonControl>
-              ) : <span />}
-              <div className="agent-settings-footer-actions">
-                <ButtonControl className="agent-settings-secondary" onClick={onClose}>
-                  Cancel
-                </ButtonControl>
-                <ButtonControl className="agent-settings-primary" disabled={saving} onClick={save}>
-                  {saving ? 'Saving...' : 'Save'}
-                </ButtonControl>
-              </div>
-            </footer>
+            {/* Providers commit per-provider through their own sheet (Cancel/Save),
+                like native Settings — so the global footer is only for the
+                runtime/permission categories. */}
+            {category !== 'providers' ? (
+              <footer className="agent-settings-footer">
+                <span />
+                <div className="agent-settings-footer-actions">
+                  <ButtonControl className="agent-settings-secondary" onClick={onClose}>
+                    Cancel
+                  </ButtonControl>
+                  <ButtonControl className="agent-settings-primary" disabled={saving} onClick={save}>
+                    {saving ? 'Saving...' : 'Save'}
+                  </ButtonControl>
+                </div>
+              </footer>
+            ) : null}
           </div>
         </div>
       )}
@@ -1258,24 +1039,6 @@ function compareProviderChoices(left: ProviderChoice, right: ProviderChoice): nu
   });
 }
 
-function providerHasCredential(
-  provider: AgentProviderConfigView | undefined,
-  catalog: AgentProviderOption | undefined,
-): boolean {
-  return Boolean(provider?.hasApiKey || provider?.hasEnvApiKey || catalog?.hasEnvApiKey);
-}
-
-function resolveUsableActiveProvider(settings: AgentProviderSettingsView): AgentProviderConfigView | undefined {
-  const isUsable = (provider: AgentProviderConfigView) => {
-    const catalog = settings.availableProviders.find((candidate) => candidate.providerId === provider.providerId);
-    return provider.enabled && providerHasCredential(provider, catalog);
-  };
-  return settings.activeProviderId
-    ? settings.providers.find((provider) => provider.providerId === settings.activeProviderId && isUsable(provider))
-      ?? settings.providers.find(isUsable)
-    : settings.providers.find(isUsable);
-}
-
 function providerStatusLabel(provider: ProviderChoice): string {
   if (!provider.configured) return provider.hasCredential ? 'Ready' : 'Add key';
   if (!provider.enabled) return 'Disabled';
@@ -1330,150 +1093,3 @@ function uniqueStrings(values: readonly string[]): string[] {
   return [...new Set(values)];
 }
 
-function defaultReasoningLevel(model: AgentModelOption | undefined): AgentReasoningLevel {
-  const supportedLevels = model?.supportedThinkingLevels ?? ['off'];
-  if (supportedLevels.includes('off')) return 'off';
-  return supportedLevels[0] ?? 'off';
-}
-
-function coerceReasoningLevel(
-  reasoningLevel: AgentReasoningLevel,
-  supportedLevels: AgentReasoningLevel[],
-): AgentReasoningLevel {
-  if (supportedLevels.includes(reasoningLevel)) return reasoningLevel;
-  if (supportedLevels.includes('off')) return 'off';
-  return supportedLevels[0] ?? 'off';
-}
-
-function formatTokens(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `${Math.round(value / 1_000)}K`;
-  return String(value);
-}
-
-const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
-  anthropic: 'Anthropic',
-  openai: 'OpenAI',
-  'openai-codex': 'OpenAI Codex',
-  'azure-openai-responses': 'Azure OpenAI',
-  google: 'Google Gemini',
-  'google-vertex': 'Google Vertex AI',
-  openrouter: 'OpenRouter',
-  deepseek: 'DeepSeek',
-  xai: 'xAI',
-  groq: 'Groq',
-  mistral: 'Mistral',
-  moonshotai: 'Moonshot AI',
-  'moonshotai-cn': 'Moonshot AI (CN)',
-  zai: 'Z.AI',
-  together: 'Together AI',
-  fireworks: 'Fireworks AI',
-  cerebras: 'Cerebras',
-  minimax: 'MiniMax',
-  huggingface: 'Hugging Face',
-  'kimi-coding': 'Kimi Coding',
-  'github-copilot': 'GitHub Copilot',
-};
-
-// Tokens that should keep a specific casing when a provider id falls through to
-// the generic title-case path (e.g. `cloudflare-ai-gateway` -> Cloudflare AI Gateway).
-const NAME_TOKEN_OVERRIDES: Record<string, string> = {
-  ai: 'AI',
-  openai: 'OpenAI',
-  api: 'API',
-  cn: 'CN',
-  ams: 'AMS',
-  sgp: 'SGP',
-  gpt: 'GPT',
-  github: 'GitHub',
-};
-
-// Where to mint an API key, for the providers we can link directly. Omitted
-// providers simply drop the helper link.
-const PROVIDER_DOCS_URL: Record<string, string> = {
-  anthropic: 'https://console.anthropic.com/settings/keys',
-  openai: 'https://platform.openai.com/api-keys',
-  google: 'https://aistudio.google.com/app/apikey',
-  openrouter: 'https://openrouter.ai/keys',
-  deepseek: 'https://platform.deepseek.com/api_keys',
-  xai: 'https://console.x.ai',
-  groq: 'https://console.groq.com/keys',
-  mistral: 'https://console.mistral.ai/api-keys',
-};
-
-// Providers pi-ai authenticates with something other than a pasteable API key.
-// Until the OAuth sign-in flow lands (docs/plans/agent-oauth-providers.md), we
-// at least stop showing a misleading "Paste key" field for them.
-interface ProviderAuthInfo {
-  kind: 'oauth' | 'managed';
-  note: string;
-  docsUrl?: string;
-  docsLabel?: string;
-}
-
-const PROVIDER_AUTH: Record<string, ProviderAuthInfo> = {
-  'github-copilot': {
-    kind: 'oauth',
-    note: 'GitHub Copilot signs in with your GitHub account — there is no API key to paste. Sign-in support is coming soon.',
-    docsUrl: 'https://github.com/features/copilot',
-    docsLabel: 'About GitHub Copilot',
-  },
-  'openai-codex': {
-    kind: 'oauth',
-    note: 'Codex uses your ChatGPT sign-in rather than an API key. Sign-in support is coming soon.',
-  },
-  'amazon-bedrock': {
-    kind: 'managed',
-    note: 'Bedrock uses your AWS credentials (a named profile, IAM role, or AWS_* environment variables) — there is no API key to paste here.',
-    docsUrl: 'https://docs.aws.amazon.com/bedrock/latest/userguide/getting-started.html',
-    docsLabel: 'AWS credential setup',
-  },
-  'google-vertex': {
-    kind: 'managed',
-    note: 'Vertex AI uses Google Cloud Application Default Credentials (run `gcloud auth application-default login`) — there is no API key to paste here.',
-    docsUrl: 'https://cloud.google.com/docs/authentication/provide-credentials-adc',
-    docsLabel: 'Set up ADC',
-  },
-};
-
-function formatProviderName(providerId: string): string {
-  const known = PROVIDER_DISPLAY_NAMES[providerId];
-  if (known) return known;
-  return providerId
-    .split(/[-_]/g)
-    .filter(Boolean)
-    .map((part) => NAME_TOKEN_OVERRIDES[part] ?? part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ') || providerId;
-}
-
-function providerInitial(providerId: string): string {
-  return (formatProviderName(providerId).trim()[0] ?? '?').toUpperCase();
-}
-
-function ProviderAvatar({ providerId, large }: { providerId: string; large?: boolean }) {
-  const url = providerIconUrl(providerId);
-  const className = `settings-provider-avatar${large ? ' is-large' : ''}${url ? ' has-logo' : ''}`;
-  return (
-    <span className={className} aria-hidden="true">
-      {url ? <img className="settings-provider-logo" src={url} alt="" /> : providerInitial(providerId)}
-    </span>
-  );
-}
-
-function providerDescription(catalog: AgentProviderOption | undefined): string {
-  if (!catalog || catalog.models.length === 0) return 'Connect any OpenAI-compatible endpoint.';
-  const names = catalog.models.slice(0, 3).map((model) => model.name.replace(/\s*\(latest\)/i, ''));
-  const suffix = catalog.models.length > names.length ? ', and more' : '';
-  return `Includes ${names.join(', ')}${suffix}.`;
-}
-
-function getFallbackModelId(providerId: string): string {
-  const lower = providerId.toLowerCase();
-  if (lower.includes('anthropic') || lower.includes('claude')) {
-    return 'claude-3-5-sonnet-latest';
-  }
-  if (lower.includes('google') || lower.includes('gemini')) {
-    return 'gemini-2.5-flash';
-  }
-  return 'gpt-4o';
-}
