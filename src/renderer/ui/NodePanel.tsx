@@ -11,7 +11,7 @@ import {
 } from 'react';
 import { api } from '../api/client';
 import type { NodeId, RichText, RichTextPatch } from '../api/types';
-import { EMPTY_RICH_TEXT, plainText } from '../api/types';
+import { EMPTY_RICH_TEXT, nodeReferenceTarget, plainText } from '../api/types';
 import { TAG_DAY_ID } from '../../core/types';
 import { flattenVisibleRows, type DocumentIndex, type UiState } from '../state/document';
 import { RichTextEditor, type EditorSplitPayload } from './editor/RichTextEditor';
@@ -449,7 +449,7 @@ export function NodePanel(props: NodePanelProps) {
       titleTrigger.from,
       titleTrigger.to,
       {
-        targetNodeId: target.id,
+        target: nodeReferenceTarget(target.id),
         displayName: target.content.text,
       },
     );

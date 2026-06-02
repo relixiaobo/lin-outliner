@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   parseAgentAttachmentMarkerBlock,
   parseAgentTextAttachmentBlock,
+  referenceTargetToResourceItem,
   serializeAgentAttachmentMarker,
   serializeAgentTextAttachment,
   systemReminder,
@@ -51,6 +52,24 @@ describe('agent attachments', () => {
       mimeType: 'application/pdf',
       sizeBytes: 2048,
       path: '/tmp/lin/report.pdf',
+      readPath: '/tmp/lin/report.pdf',
     }]);
+  });
+
+  test('serializes local-file reference targets as resource items only', () => {
+    expect(referenceTargetToResourceItem({ kind: 'node', nodeId: 'node-alpha' })).toBeNull();
+    expect(referenceTargetToResourceItem({
+      kind: 'local-file',
+      path: '/Users/me/Projects',
+      entryKind: 'directory',
+    })).toEqual({
+      kind: 'file',
+      ref: 'Projects',
+      name: 'Projects',
+      mimeType: 'inode/directory',
+      sizeBytes: 0,
+      path: '/Users/me/Projects',
+      readPath: '/Users/me/Projects',
+    });
   });
 });

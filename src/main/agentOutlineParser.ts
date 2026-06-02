@@ -1,5 +1,5 @@
 import { isCssHexColorToken } from '../core/textSyntax';
-import { parseNodeReferenceMarkers } from '../core/nodeReferenceMarkup';
+import { parseNodeReferenceMarkers, parseReferenceMarkers } from '../core/referenceMarkup';
 
 export interface OutlineDocument {
   roots: OutlineNode[];
@@ -152,8 +152,8 @@ function parseOutlineNode(input: string, nodeId?: string): OutlineNode {
     text = text.replace(/^\[[ xX]\]\s*/, '').trim();
   }
 
-  const tags = extractTags(text);
-  text = removeTags(text).trim();
+  const tags = extractTags(maskReferenceMarkers(text));
+  text = removeTagsOutsideReferenceMarkers(text).trim();
 
   const reference = parseReference(text);
   if (reference && reference.full) {
@@ -249,4 +249,39 @@ function removeTags(text: string): string {
       bareTag && isCssHexColorToken(bareTag) ? match : '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function maskReferenceMarkers(text: string): string {
+  const markers = parseReferenceMarkers(text);
+  if (markers.length === 0) return text;
+  let masked = '';
+  let cursor = 0;
+  for (const marker of markers) {
+    masked += text.slice(cursor, marker.start);
+    masked += ' '.repeat(marker.raw.length);
+    cursor = marker.end;
+  }
+  masked += text.slice(cursor);
+  return masked;
+}
+
+function removeTagsOutsideReferenceMarkers(text: string): string {
+  const markers = parseReferenceMarkers(text);
+  if (markers.length === 0) return removeTags(text);
+  const placeholders = new Map<string, string>();
+  let protectedText = '';
+  let cursor = 0;
+  for (const [index, marker] of markers.entries()) {
+    const placeholder = `__LIN_REFERENCE_MARKER_${index}__`;
+    placeholders.set(placeholder, marker.raw);
+    protectedText += text.slice(cursor, marker.start);
+    protectedText += placeholder;
+    cursor = marker.end;
+  }
+  protectedText += text.slice(cursor);
+  let next = removeTags(protectedText);
+  for (const [placeholder, marker] of placeholders) {
+    next = next.replace(placeholder, marker);
+  }
+  return next;
 }

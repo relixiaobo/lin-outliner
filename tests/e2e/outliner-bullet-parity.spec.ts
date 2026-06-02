@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import {
   e2eProjection,
+  e2eNodeInlineRef,
   emitDocumentEvent,
   ids,
   openMockedApp,
@@ -354,7 +355,7 @@ test.describe('outliner inline atom and drag visuals', () => {
             content: {
               text: 'See ',
               marks: [],
-              inlineRefs: [{ offset: 4, targetNodeId: targetId, displayName: 'Alpha' }],
+              inlineRefs: [e2eNodeInlineRef(4, targetId, 'Alpha')],
             },
           }],
         },
@@ -425,7 +426,7 @@ test.describe('outliner inline atom and drag visuals', () => {
             content: {
               text: 'See ',
               marks: [],
-              inlineRefs: [{ offset: 4, targetNodeId: targetId, displayName: 'Alpha' }],
+              inlineRefs: [e2eNodeInlineRef(4, targetId, 'Alpha')],
             },
           }],
         },
@@ -470,7 +471,7 @@ test.describe('outliner inline atom and drag visuals', () => {
             content: {
               text: 'See ',
               marks: [],
-              inlineRefs: [{ offset: 4, targetNodeId: targetId }],
+              inlineRefs: [e2eNodeInlineRef(4, targetId)],
             },
           }],
         },

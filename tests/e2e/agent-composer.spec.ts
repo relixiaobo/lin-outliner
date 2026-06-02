@@ -69,7 +69,7 @@ test.describe('agent composer controls', () => {
       ))?.args;
     }).toMatchObject({
       attachments: [{ name: 'notes.txt' }],
-      message: '[[file:notes.txt]]',
+      message: '@notes.txt',
     });
   });
 
@@ -116,7 +116,7 @@ test.describe('agent composer controls', () => {
       ))?.args;
     }).toMatchObject({
       attachments: [{ kind: 'file', path: '/Users/test/Documents/local-notes.md' }],
-      message: '[[file:local-notes.md]]',
+      message: '[[file:local-notes.md^%2FUsers%2Ftest%2FDocuments%2Flocal-notes.md]]',
     });
   });
 
@@ -167,7 +167,7 @@ test.describe('agent composer controls', () => {
             },
             {
               type: 'text',
-              text: '[[file:.DS_Store]] 总结一下，然后跟 [[file:Coding]] 对比一下，然后添加到 [[Alpha^node-alpha]]，参考 [[file:Screenshot 2026-05-26 at 14.50.16.png]]',
+              text: '[[file:.DS_Store^%2FUsers%2Ftest%2FDesktop%2F.DS_Store]] 总结一下，然后跟 [[file:Coding^%2FUsers%2Ftest%2FDocuments%2FCoding]] 对比一下，然后添加到 [[node:Alpha^node-alpha]]，参考 @Screenshot 2026-05-26 at 14.50.16.png',
             },
             { type: 'text', text: 'Image attachment' },
           ],
@@ -278,7 +278,7 @@ test.describe('agent composer controls', () => {
       ))?.args;
     }).toMatchObject({
       attachments: [{ kind: 'file', path: '/Users/test/Documents/Project Report.md' }],
-      message: '[[file:Project Report.md]]',
+      message: '[[file:Project Report.md^%2FUsers%2Ftest%2FDocuments%2FProject%20Report.md]]',
     });
   });
 
@@ -366,7 +366,7 @@ test.describe('agent composer controls', () => {
       ))?.args;
     }).toMatchObject({
       attachments: [{ kind: 'file', path: '/Users/test/Documents/design-system' }],
-      message: '[[file:design-system]]',
+      message: '[[file:design-system^%2FUsers%2Ftest%2FDocuments%2Fdesign-system]]',
     });
   });
 
@@ -757,7 +757,7 @@ test.describe('agent composer controls', () => {
         && 'referencedNodes' in call.args.userViewContext
       ))?.args;
     }).toMatchObject({
-      message: '[[Alpha^node-alpha]] details',
+      message: '[[node:Alpha^node-alpha]] details',
       userViewContext: {
         referencedNodes: [{ nodeId: 'node-alpha', title: 'Alpha' }],
       },
@@ -771,7 +771,7 @@ test.describe('agent composer controls', () => {
         message: {
           role: 'user',
           timestamp: 1_800_000_000_500,
-          content: [{ type: 'text', text: '[[Alpha^node-alpha]] details' }],
+          content: [{ type: 'text', text: '[[node:Alpha^node-alpha]] details' }],
         },
         branches: null,
       }],
@@ -779,7 +779,7 @@ test.describe('agent composer controls', () => {
 
     const userBubble = page.locator('.agent-user-bubble', { hasText: 'details' });
     await expect(userBubble.locator('[data-inline-ref="node-alpha"]')).toHaveText('Alpha');
-    await expect(userBubble).not.toContainText('[[Alpha^node-alpha]]');
+    await expect(userBubble).not.toContainText('[[node:Alpha^node-alpha]]');
   });
 
   test('excludes trashed nodes from node mention suggestions', async ({ page }) => {
@@ -824,7 +824,7 @@ test.describe('agent composer controls', () => {
           model: 'gpt-5.4',
           stopReason: 'toolUse',
           content: [
-            { type: 'text', text: 'Review [[Alpha^node-alpha]] and [[^node-alpha]] before [[^node-missing]].' },
+            { type: 'text', text: 'Review [[node:Alpha^node-alpha]] and [[node:^node-alpha]] before [[node:^node-missing]].' },
             { type: 'toolCall', id: 'tool-ref-output', name: 'node_read', arguments: { nodeId: 'node-alpha' } },
           ],
         },
@@ -835,7 +835,7 @@ test.describe('agent composer controls', () => {
         toolCallId: 'tool-ref-output',
         toolName: 'node_read',
         timestamp: 1_800_000_000_800,
-        content: [{ type: 'text', text: 'Tool output references [[^node-alpha]].' }],
+        content: [{ type: 'text', text: 'Tool output references [[node:^node-alpha]].' }],
         isError: false,
       }],
     });
@@ -1402,7 +1402,7 @@ test.describe('agent composer controls', () => {
 
   test('renders node reference session titles without node ids', async ({ page }) => {
     await emitAgentProjection(page, 'mock-agent-session', {
-      sessionTitle: '[[你好^node:abcd7362-b2e4-498d-a1b2]] 你好',
+      sessionTitle: '[[node:你好^abcd7362-b2e4-498d-a1b2]] 你好',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [],
     });

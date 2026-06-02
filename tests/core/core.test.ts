@@ -215,7 +215,7 @@ describe('Core', () => {
     const content: RichText = {
       text: 'See Target',
       marks: [{ start: 0, end: 3, type: 'bold' }],
-      inlineRefs: [{ offset: 4, targetNodeId: target, displayName: 'Target' }],
+      inlineRefs: [{ offset: 4, target: { kind: 'node', nodeId: target }, displayName: 'Target' }],
     };
     const outcome = core.createRichTextContentNode(today, null, content);
     const nodeId = mustFocus(outcome);
@@ -458,12 +458,12 @@ describe('Core', () => {
     core.applyNodeTextPatch(first, replaceAllRichTextPatch({
       text: '😀',
       marks: [{ start: 0, end: 2, type: 'bold' }],
-      inlineRefs: [{ offset: 2, targetNodeId: target, displayName: 'Target' }],
+      inlineRefs: [{ offset: 2, target: { kind: 'node', nodeId: target }, displayName: 'Target' }],
     }));
     core.applyNodeTextPatch(second, replaceAllRichTextPatch({
       text: 'Hi',
       marks: [{ start: 0, end: 2, type: 'code' }],
-      inlineRefs: [{ offset: 1, targetNodeId: target, displayName: 'Target' }],
+      inlineRefs: [{ offset: 1, target: { kind: 'node', nodeId: target }, displayName: 'Target' }],
     }));
 
     core.mergeNodeInto(second, first);
@@ -1185,7 +1185,7 @@ describe('Core', () => {
     core.applyNodeTextPatch(inlineSource, replaceAllRichTextPatch({
       text: 'Inline ref',
       marks: [],
-      inlineRefs: [{ offset: 6, targetNodeId: target, displayName: 'Target' }],
+      inlineRefs: [{ offset: 6, target: { kind: 'node', nodeId: target }, displayName: 'Target' }],
     }));
     const referenceId = mustFocus(core.replaceNodeWithReference(trigger, target));
 
@@ -1252,7 +1252,7 @@ describe('Core', () => {
     core.applyNodeTextPatch(inlineSource, replaceAllRichTextPatch({
       text: 'See target',
       marks: [{ start: 0, end: 3, type: 'bold' }],
-      inlineRefs: [{ offset: 4, targetNodeId: target, displayName: 'Target' }],
+      inlineRefs: [{ offset: 4, target: { kind: 'node', nodeId: target }, displayName: 'Target' }],
     }));
 
     core.deleteNode(target);
@@ -1275,7 +1275,7 @@ describe('Core', () => {
     expect(core.state().nodes[referenceId].targetId).toBe(target);
     expect(core.state().nodes[referenceToReferenceId].targetId).toBe(target);
     expect(core.state().nodes[inlineSource].content.inlineRefs).toEqual([
-      { offset: 4, targetNodeId: target, displayName: 'Target' },
+      { offset: 4, target: { kind: 'node', nodeId: target }, displayName: 'Target' },
     ]);
   });
 
@@ -1297,7 +1297,7 @@ describe('Core', () => {
     expect(state.nodes[inlineNode].content).toEqual({
       text: '',
       marks: [],
-      inlineRefs: [{ offset: 0, targetNodeId: target, displayName: 'Target' }],
+      inlineRefs: [{ offset: 0, target: { kind: 'node', nodeId: target }, displayName: 'Target' }],
     });
 
     const restoredReference = mustFocus(core.restoreInlineReferenceNodeToReference(inlineNode, target));
@@ -1334,7 +1334,7 @@ describe('Core', () => {
     expect(state.nodes[added].content).toEqual({
       text: '',
       marks: [],
-      inlineRefs: [{ offset: 0, targetNodeId: target, displayName: 'Target' }],
+      inlineRefs: [{ offset: 0, target: { kind: 'node', nodeId: target }, displayName: 'Target' }],
     });
 
     const draft = mustFocus(core.createNode(conversionParent, null, '@Target'));
@@ -1346,7 +1346,7 @@ describe('Core', () => {
     expect(state.nodes[replaced].content).toEqual({
       text: '',
       marks: [],
-      inlineRefs: [{ offset: 0, targetNodeId: target, displayName: 'Target' }],
+      inlineRefs: [{ offset: 0, target: { kind: 'node', nodeId: target }, displayName: 'Target' }],
     });
     expect(state.nodes[conversionParent].children).toEqual([added, replaced]);
   });
@@ -1380,7 +1380,7 @@ describe('Core', () => {
     expect(state.nodes[inlineNode].content).toEqual({
       text: '',
       marks: [],
-      inlineRefs: [{ offset: 0, targetNodeId: target, displayName: 'Target' }],
+      inlineRefs: [{ offset: 0, target: { kind: 'node', nodeId: target }, displayName: 'Target' }],
     });
     expect(state.nodes[target].content.text).toBe('Target');
   });
@@ -1395,7 +1395,7 @@ describe('Core', () => {
     expect(() => core.restoreInlineReferenceNodeToReference(inlineNode, target))
       .toThrow('node already exists in this list');
     expect(core.state().nodes[inlineNode].content.inlineRefs).toEqual([
-      { offset: 0, targetNodeId: target, displayName: 'Target' },
+      { offset: 0, target: { kind: 'node', nodeId: target }, displayName: 'Target' },
     ]);
   });
 
@@ -1513,7 +1513,16 @@ describe('Core', () => {
         { start: 0, end: 5, type: 'bold' as const },
         { start: 5, end: 10, type: 'link' as const, attrs: { href: 'https://example.com' } },
       ],
-      inlineRefs: [{ offset: 5, targetNodeId: target, displayName: 'Target' }],
+      inlineRefs: [
+        { offset: 5, target: { kind: 'node', nodeId: target }, displayName: 'Target' },
+        {
+          offset: 10,
+          target: { kind: 'local-file', path: '/Users/me/Documents/report.pdf', entryKind: 'file' },
+          displayName: 'report.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 2048,
+        },
+      ],
     };
 
     core.applyNodeTextPatch(nodeId, replaceAllRichTextPatch(content));
@@ -1582,7 +1591,7 @@ describe('Core', () => {
         content: {
           text: ' world',
           marks: [{ start: 1, end: 6, type: 'bold' }],
-          inlineRefs: [{ offset: 6, targetNodeId: target, displayName: 'Target' }],
+          inlineRefs: [{ offset: 6, target: { kind: 'node', nodeId: target }, displayName: 'Target' }],
         },
       }],
     });
@@ -1600,18 +1609,18 @@ describe('Core', () => {
         { start: 0, end: 5, type: 'italic' },
         { start: 6, end: 11, type: 'bold' },
       ],
-      inlineRefs: [{ offset: 11, targetNodeId: target, displayName: 'Target' }],
+      inlineRefs: [{ offset: 11, target: { kind: 'node', nodeId: target }, displayName: 'Target' }],
     });
 
     core.applyNodeTextPatch(nodeId, {
-      ops: [{ type: 'replace', from: 11, to: 11, content: { text: '', marks: [], inlineRefs: [] }, deletedInlineRefs: [{ offset: 11, targetNodeId: target, displayName: 'Target' }] }],
+      ops: [{ type: 'replace', from: 11, to: 11, content: { text: '', marks: [], inlineRefs: [] }, deletedInlineRefs: [{ offset: 11, target: { kind: 'node', nodeId: target }, displayName: 'Target' }] }],
     });
     expect(core.state().nodes[nodeId]!.content.inlineRefs).toEqual([]);
 
     core.applyNodeTextPatch(nodeId, replaceAllRichTextPatch({
       text: '!',
       marks: [],
-      inlineRefs: [{ offset: 0, targetNodeId: target, displayName: 'Target' }],
+      inlineRefs: [{ offset: 0, target: { kind: 'node', nodeId: target }, displayName: 'Target' }],
     }));
     core.applyNodeTextPatch(nodeId, {
       ops: [{ type: 'replace', from: 0, to: 1, content: plainText('') }],
@@ -1619,7 +1628,7 @@ describe('Core', () => {
     expect(core.state().nodes[nodeId]!.content).toEqual({
       text: '',
       marks: [],
-      inlineRefs: [{ offset: 0, targetNodeId: target, displayName: 'Target' }],
+      inlineRefs: [{ offset: 0, target: { kind: 'node', nodeId: target }, displayName: 'Target' }],
     });
   });
 

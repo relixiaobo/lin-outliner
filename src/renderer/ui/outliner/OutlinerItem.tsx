@@ -12,7 +12,7 @@ import {
 import { createPortal, flushSync } from 'react-dom';
 import { api } from '../../api/client';
 import type { AssetMetadata, CreateNodeTree, NodeId, NodeProjection, RichText, RichTextPatch } from '../../api/types';
-import { EMPTY_RICH_TEXT, plainText, replaceAllRichTextPatch } from '../../api/types';
+import { EMPTY_RICH_TEXT, inlineRefNodeId, nodeReferenceTarget, plainText, replaceAllRichTextPatch } from '../../api/types';
 import { projectFieldTypeById, nodeShowsCheckbox } from '../../../core/configProjection';
 import type { CursorPlacement } from '../../state/document';
 import {
@@ -733,7 +733,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       trigger.from,
       trigger.to,
       {
-        targetNodeId: target.id,
+        target: nodeReferenceTarget(target.id),
         displayName: textOf(target),
       },
     );
@@ -2027,7 +2027,7 @@ function isOnlyInlineReference(content: RichText, targetId: NodeId) {
     && content.marks.length === 0
     && content.inlineRefs.length === 1
     && content.inlineRefs[0].offset === 0
-    && content.inlineRefs[0].targetNodeId === targetId;
+    && inlineRefNodeId(content.inlineRefs[0]) === targetId;
 }
 
 function cursorOffsetAfterInlineReference(content: RichText, offset: number): number {

@@ -1,6 +1,7 @@
 import type { Mark, Node as PMNode, Schema } from 'prosemirror-model';
 import type { InlineRef, RichText, TextMark, TextMarkKind } from '../../api/types';
-import { EMPTY_RICH_TEXT } from '../../api/types';
+import { EMPTY_RICH_TEXT, inlineRefNodeId, referenceTargetsEqual } from '../../api/types';
+import { fallbackTextForInlineReferenceAttrs, inlineRefTargetAttrs, targetFromInlineReferenceAttrs } from './inlineReferenceAttrs';
 import { pmSchema } from './pmSchema';
 
 export const TRANSIENT_TEXT_SENTINEL = '\u200B';
@@ -87,10 +88,13 @@ export function richTextToDoc(
       paragraphChildren.push(schema.text(INLINE_REF_TEXT_SENTINEL));
     }
     for (const ref of refs) {
+      const nodeId = inlineRefNodeId(ref);
       paragraphChildren.push(schema.nodes.inlineReference.create({
-        targetNodeId: ref.targetNodeId,
+        ...inlineRefTargetAttrs(ref.target),
         displayName: ref.displayName ?? '',
-        color: resolveInlineReferenceColor?.(ref.targetNodeId) ?? '',
+        mimeType: ref.mimeType ?? '',
+        sizeBytes: ref.sizeBytes ?? null,
+        color: nodeId ? resolveInlineReferenceColor?.(nodeId) ?? '' : '',
       }));
     }
     if (offset === text.length) {
@@ -142,10 +146,23 @@ export function docToRichText(doc: PMNode): RichText {
       return;
     }
     if (child.type.name === 'inlineReference') {
+      const target = targetFromInlineReferenceAttrs(child.attrs);
+      if (!target) {
+        const fallbackText = fallbackTextForInlineReferenceAttrs(child.attrs);
+        if (fallbackText) {
+          textParts.push(fallbackText);
+          offset += fallbackText.length;
+        }
+        return;
+      }
       inlineRefs.push({
         offset,
-        targetNodeId: String(child.attrs.targetNodeId ?? ''),
+        target,
         displayName: String(child.attrs.displayName ?? '') || undefined,
+        mimeType: String(child.attrs.mimeType ?? '') || undefined,
+        sizeBytes: typeof child.attrs.sizeBytes === 'number' && Number.isFinite(child.attrs.sizeBytes)
+          ? child.attrs.sizeBytes
+          : undefined,
       });
     }
   });
@@ -279,7 +296,7 @@ export function replaceRichTextRangeWithInlineRef(
       .filter((mark) => mark.end > mark.start),
     inlineRefs: [
       ...next.inlineRefs
-        .filter((inlineRef) => inlineRef.offset !== offset || inlineRef.targetNodeId !== ref.targetNodeId)
+        .filter((inlineRef) => inlineRef.offset !== offset || !referenceTargetsEqual(inlineRef.target, ref.target))
         .map((inlineRef) => ({
           ...inlineRef,
           offset: inlineRef.offset >= offset ? inlineRef.offset + shiftAfterRef : inlineRef.offset,

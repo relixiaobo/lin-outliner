@@ -323,16 +323,16 @@ Agent-facing syntax:
 ```text
 - Project Alpha - Q2 customer rollout #project
   - Status:: Active
-  - Owner:: [[Alice^node_alice]]
+  - Owner:: [[node:Alice^node_alice]]
   - [ ] Follow up
   - Notes
     - Prepare agenda
   - %%search%% Open tasks %%view:table%%
     - AND
       - HAS_TAG
-        - tag:: [[#task^node_task_tag]]
+        - tag:: [[node:#task^node_task_tag]]
       - FIELD_IS
-        - field:: [[Status^node_status_field]]
+        - field:: [[node:Status^node_status_field]]
         - value:: Open
 ```
 
@@ -356,11 +356,11 @@ Rules:
   `docs/spec/date-field-values.md`: `YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, or
   `start/end` with `/`, for example `2026-05-20/2026-05-24`. Tool prompts and
   search query operands must not teach `..` or other date range syntax.
-- Whole-line `[[Display^node:...]]` creates a reference node or reference field
+- Whole-line `[[node:Display^...]]` creates a reference node or reference field
   value.
-- Inline `[[Display^node:...]]` creates an inline reference inside node text or a
+- Inline `[[node:Display^...]]` creates an inline reference inside node text or a
   field value.
-- Date nodes are referenced by id with `[[Display^node:...]]`; date shortcut
+- Date nodes are referenced by id with `[[node:Display^...]]`; date shortcut
   syntax is not part of the model-facing outline contract yet.
 - `%%search%%` turns the node into a search node. In `node_create` this creates a
   saved search node; in `node_search` it is a temporary search node that is only
@@ -422,10 +422,16 @@ interface TagRef {
   targetId?: string;
 }
 
+type ReferenceTarget =
+  | { kind: "node"; nodeId: string }
+  | { kind: "local-file"; path: string; entryKind: "file" | "directory" };
+
 interface InlineRef {
   display: string;
-  targetId: string;
+  target: ReferenceTarget;
   offset?: number;
+  mimeType?: string;
+  sizeBytes?: number;
 }
 
 interface OutlineDirective {
@@ -501,7 +507,7 @@ Field type inference:
 
 References:
 
-- `[[Display^node:...]]` requires the target id to exist and the target must not be in
+- `[[node:Display^...]]` requires the target id to exist and the target must not be in
   Trash.
 - Date references use normal node references to existing date node ids.
 - Search query operands use explicit node references or exact ids for `field::`,
@@ -599,7 +605,7 @@ Examples:
 
 ```json
 {
-  "outline": "- %%search%% 今日开放任务 %%view:table%%\n  - AND\n    - HAS_TAG\n      - tag:: [[#task^node_task_tag]]\n    - FIELD_IS\n      - field:: [[Status^node_status_field]]\n      - value:: Open",
+  "outline": "- %%search%% 今日开放任务 %%view:table%%\n  - AND\n    - HAS_TAG\n      - tag:: [[node:#task^node_task_tag]]\n    - FIELD_IS\n      - field:: [[node:Status^node_status_field]]\n      - value:: Open",
   "limit": 20
 }
 ```

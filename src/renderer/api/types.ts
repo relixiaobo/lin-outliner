@@ -37,6 +37,7 @@ export type {
   NodeType,
   QueryLogic,
   QueryOp,
+  ReferenceTarget,
   RichText,
   RichTextPatch,
   RichTextPatchOp,
@@ -70,6 +71,11 @@ export interface AgentToolPermissionSettingsView {
 }
 
 export { EMPTY_RICH_TEXT, plainText, replaceAllRichTextPatch } from '../../core/types';
+export {
+  inlineRefNodeId,
+  nodeReferenceTarget,
+  referenceTargetsEqual,
+} from '../../core/types';
 export {
   dateFieldEndpointDate,
   dateFieldEndpointHasTime,

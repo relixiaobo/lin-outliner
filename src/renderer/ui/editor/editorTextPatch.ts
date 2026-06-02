@@ -3,6 +3,7 @@ import type { Transaction } from 'prosemirror-state';
 import { AddMarkStep, RemoveMarkStep, ReplaceStep } from 'prosemirror-transform';
 import type { InlineRef, RichText, RichTextPatch, RichTextPatchOp, TextMarkKind } from '../../api/types';
 import { docPosToTextOffset, docToRichText, TRANSIENT_TEXT_SENTINEL, richTextEquals } from './richTextCodec';
+import { fallbackTextForInlineReferenceAttrs, targetFromInlineReferenceAttrs } from './inlineReferenceAttrs';
 
 const MARK_KINDS = new Set<TextMarkKind>(['bold', 'italic', 'strike', 'code', 'highlight', 'headingMark', 'link']);
 
@@ -132,10 +133,20 @@ function collectNode(node: PMNode, content: RichText) {
   }
 
   if (node.type.name === 'inlineReference') {
+    const target = targetFromInlineReferenceAttrs(node.attrs);
+    if (!target) {
+      const fallbackText = fallbackTextForInlineReferenceAttrs(node.attrs);
+      if (fallbackText) content.text += fallbackText;
+      return;
+    }
     content.inlineRefs.push({
       offset: content.text.length,
-      targetNodeId: String(node.attrs.targetNodeId ?? ''),
+      target,
       displayName: String(node.attrs.displayName ?? '') || undefined,
+      mimeType: String(node.attrs.mimeType ?? '') || undefined,
+      sizeBytes: typeof node.attrs.sizeBytes === 'number' && Number.isFinite(node.attrs.sizeBytes)
+        ? node.attrs.sizeBytes
+        : undefined,
     });
     return;
   }

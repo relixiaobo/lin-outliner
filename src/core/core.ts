@@ -44,6 +44,8 @@ import {
   TRASH_ID,
   WORKSPACE_ID,
   defConfigNodeId,
+  inlineRefNodeId,
+  nodeReferenceTarget,
   plainText,
   systemOptionNodeId,
   type Backlink,
@@ -1775,7 +1777,7 @@ export class Core {
         result.push({ sourceId: node.parentId, referenceId: node.id, kind: 'tree' });
       }
       for (const inlineRef of node.content.inlineRefs) {
-        if (inlineRef.targetNodeId === targetId) {
+        if (inlineRefNodeId(inlineRef) === targetId) {
           result.push({ sourceId: node.id, referenceId: node.id, kind: 'inline' });
         }
       }
@@ -2459,7 +2461,7 @@ export class Core {
       marks: [],
       inlineRefs: [{
         offset: 0,
-        targetNodeId: targetId,
+        target: nodeReferenceTarget(targetId),
         displayName: target.content.text || undefined,
       }],
     });
@@ -2535,7 +2537,10 @@ export class Core {
       if ((next.type === 'search' || next.type === 'queryCondition') && next.queryTargetId && removedIds.has(next.queryTargetId)) {
         delete next.queryTargetId;
       }
-      next.content.inlineRefs = next.content.inlineRefs.filter((ref) => !removedIds.has(ref.targetNodeId));
+      next.content.inlineRefs = next.content.inlineRefs.filter((ref) => {
+        const nodeId = inlineRefNodeId(ref);
+        return !nodeId || !removedIds.has(nodeId);
+      });
       if (JSON.stringify(next) !== before && this.loro.hasNode(next.id)) this.loro.writeNode(next);
     }
     this.loro.rebuildMappings();
@@ -2866,7 +2871,7 @@ export class Core {
         marks: [],
         inlineRefs: [{
           offset: 0,
-          targetNodeId: resolvedTargetId,
+          target: nodeReferenceTarget(resolvedTargetId),
           displayName: state.nodes[resolvedTargetId]?.content.text || undefined,
         }],
       };
@@ -2968,7 +2973,7 @@ function hasExternalReferencesToTarget(
   for (const node of Object.values(state.nodes)) {
     if (ignoredIds.has(node.id)) continue;
     if (node.type === 'reference' && node.targetId === targetId) return true;
-    if (node.content.inlineRefs.some((ref) => ref.targetNodeId === targetId)) return true;
+    if (node.content.inlineRefs.some((ref) => inlineRefNodeId(ref) === targetId)) return true;
   }
   return false;
 }
@@ -3799,7 +3804,7 @@ function isOnlyInlineReference(content: RichText, targetId: string) {
   if (content.marks.length > 0) return false;
   return content.inlineRefs.length === 1
     && content.inlineRefs[0].offset === 0
-    && content.inlineRefs[0].targetNodeId === targetId;
+    && inlineRefNodeId(content.inlineRefs[0]) === targetId;
 }
 
 function isSearchCandidate(state: DocumentState, nodeId: string) {

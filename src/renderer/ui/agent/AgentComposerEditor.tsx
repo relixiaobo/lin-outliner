@@ -12,8 +12,8 @@ import { createPortal } from 'react-dom';
 import { Schema, type Node as PMNode } from 'prosemirror-model';
 import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
-import { formatFileReferenceMarker, sanitizeFileReferenceRef } from '../../../core/agentFileReferenceMarkup';
-import { formatNodeReferenceMarker } from '../../../core/nodeReferenceMarkup';
+import { formatFileReferenceMarker, sanitizeFileReferenceRef } from '../../../core/referenceMarkup';
+import { formatNodeReferenceMarker } from '../../../core/referenceMarkup';
 import type { AgentSlashCommandView, NodeId } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { nextMenuIndex, clampMenuIndex } from '../interactions/menuNavigation';
@@ -54,6 +54,7 @@ export interface AgentComposerFileReference {
   entryKind?: 'file' | 'directory';
   iconDataUrl?: string;
   name: string;
+  path?: string;
   ref: string;
   mimeType: string;
   sizeBytes: number;
@@ -221,6 +222,7 @@ const agentComposerSchema = new Schema({
         entryKind: { default: 'file' },
         iconDataUrl: { default: '' },
         name: { default: '' },
+        path: { default: '' },
         ref: { default: '' },
         mimeType: { default: '' },
         sizeBytes: { default: 0 },
@@ -799,6 +801,7 @@ function docToDraft(doc: PMNode): AgentComposerDraft {
     if (child.type.name === 'fileReference') {
       const attachmentId = String(child.attrs.attachmentId ?? '');
       const name = String(child.attrs.name ?? '') || 'file';
+      const path = String(child.attrs.path ?? '');
       const ref = sanitizeFileReferenceRef(String(child.attrs.ref ?? '') || name);
       const mimeType = String(child.attrs.mimeType ?? '');
       const iconDataUrl = String(child.attrs.iconDataUrl ?? '');
@@ -807,13 +810,16 @@ function docToDraft(doc: PMNode): AgentComposerDraft {
       const entryKind = String(child.attrs.entryKind ?? '') === 'directory' || mimeType === 'inode/directory'
         ? 'directory'
         : 'file';
-      text += formatFileReferenceMarker(ref);
+      text += path
+        ? formatFileReferenceMarker(ref, path, entryKind)
+        : formatPathlessFileMention(name || ref);
       if (attachmentId) {
         fileRefs.push({
           attachmentId,
           entryKind,
           ...(iconDataUrl ? { iconDataUrl } : {}),
           name,
+          ...(path ? { path } : {}),
           ref,
           mimeType,
           sizeBytes,
@@ -829,6 +835,10 @@ function docToDraft(doc: PMNode): AgentComposerDraft {
     nodeRefs: dedupeNodeRefs(nodeRefs),
     text,
   };
+}
+
+function formatPathlessFileMention(name: string): string {
+  return `@${name.replace(/\s+/gu, ' ').trim() || 'file'}`;
 }
 
 function dedupeNodeRefs(refs: AgentComposerNodeReference[]): AgentComposerNodeReference[] {
@@ -885,6 +895,7 @@ function insertFileReferenceNodes(
       entryKind: ref.entryKind ?? (ref.mimeType === 'inode/directory' ? 'directory' : 'file'),
       iconDataUrl: ref.iconDataUrl ?? '',
       name: ref.name,
+      path: ref.path ?? '',
       ref: ref.ref,
       mimeType: ref.mimeType,
       sizeBytes: ref.sizeBytes,

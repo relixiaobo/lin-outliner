@@ -1,4 +1,5 @@
 import { Schema } from 'prosemirror-model';
+import { basenameForPath } from '../../../core/referenceMarkup';
 
 export const pmSchema = new Schema({
   nodes: {
@@ -16,33 +17,58 @@ export const pmSchema = new Schema({
       inline: true,
       atom: true,
       attrs: {
+        targetKind: { default: 'node' },
         targetNodeId: { default: '' },
+        targetPath: { default: '' },
+        entryKind: { default: 'file' },
         displayName: { default: '' },
+        mimeType: { default: '' },
+        sizeBytes: { default: null },
         color: { default: '' },
       },
       parseDOM: [{
-        tag: 'span[data-inline-ref]',
+        tag: 'span[data-inline-ref-kind]',
         getAttrs(dom) {
           const element = dom as HTMLElement;
           return {
+            targetKind: element.dataset.inlineRefKind ?? 'node',
             targetNodeId: element.dataset.inlineRef ?? '',
+            targetPath: element.dataset.inlineRefPath ?? '',
+            entryKind: element.dataset.inlineRefEntryKind ?? 'file',
             displayName: element.textContent?.replace(/^@/, '').trim() ?? '',
+            mimeType: element.dataset.inlineRefMimeType ?? '',
+            sizeBytes: Number(element.dataset.inlineRefSizeBytes ?? Number.NaN),
           };
         },
       }],
       toDOM(node) {
+        const targetKind = String(node.attrs.targetKind ?? 'node');
+        const displayName = String(node.attrs.displayName ?? '');
+        const targetPath = String(node.attrs.targetPath ?? '');
+        const fallbackName = targetKind === 'local-file'
+          ? basenameForPath(targetPath) || 'Referenced file'
+          : 'Referenced node';
         const attrs: Record<string, string> = {
           class: 'inline-ref',
-          'data-inline-ref': node.attrs.targetNodeId,
+          'data-inline-ref-kind': targetKind,
           contenteditable: 'false',
         };
+        if (targetKind === 'node') attrs['data-inline-ref'] = String(node.attrs.targetNodeId ?? '');
+        if (targetKind === 'local-file') {
+          attrs['data-inline-ref-path'] = targetPath;
+          attrs['data-inline-ref-entry-kind'] = String(node.attrs.entryKind ?? 'file');
+          if (node.attrs.mimeType) attrs['data-inline-ref-mime-type'] = String(node.attrs.mimeType);
+          if (typeof node.attrs.sizeBytes === 'number' && Number.isFinite(node.attrs.sizeBytes)) {
+            attrs['data-inline-ref-size-bytes'] = String(node.attrs.sizeBytes);
+          }
+        }
         if (node.attrs.color) {
           attrs.style = `color: ${node.attrs.color}; --inline-ref-accent: ${node.attrs.color}`;
         }
         return [
           'span',
           attrs,
-          node.attrs.displayName || 'Referenced node',
+          displayName || fallbackName,
         ];
       },
     },

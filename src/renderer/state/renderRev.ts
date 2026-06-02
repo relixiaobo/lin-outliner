@@ -1,4 +1,4 @@
-import type { NodeId, NodeProjection } from '../api/types';
+import { inlineRefNodeId, type NodeId, type NodeProjection } from '../api/types';
 
 // Per-node "data revision" support for memoizing the outliner.
 //
@@ -59,7 +59,10 @@ function buildReverseEdges(byId: ReadonlyMap<NodeId, NodeProjection>): ReverseEd
   for (const [id, node] of byId) {
     if (node.type === 'reference' && node.targetId) add(references, node.targetId, id);
     for (const tagId of node.tags) add(taggers, tagId, id);
-    for (const inlineRef of node.content.inlineRefs) add(inlineReferrers, inlineRef.targetNodeId, id);
+    for (const inlineRef of node.content.inlineRefs) {
+      const nodeId = inlineRefNodeId(inlineRef);
+      if (nodeId) add(inlineReferrers, nodeId, id);
+    }
   }
   return { references, taggers, inlineReferrers };
 }

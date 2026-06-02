@@ -4,7 +4,7 @@ import type { EditorView } from 'prosemirror-view';
 import { pmSchema } from '../../src/renderer/ui/editor/pmSchema';
 import { richTextToDoc, docPosToTextOffset } from '../../src/renderer/ui/editor/richTextCodec';
 import { selectionForPlacement, selectionTextOffsets } from '../../src/renderer/ui/editor/nodeLineView';
-import type { RichText } from '../../src/renderer/api/types';
+import { nodeReferenceTarget, type RichText } from '../../src/renderer/api/types';
 import type { CursorPlacement } from '../../src/renderer/state/document';
 
 function doc(text: string, inlineRefs: RichText['inlineRefs'] = []) {
@@ -63,7 +63,7 @@ describe('selectionForPlacement (empty line)', () => {
 
 describe('selectionForPlacement (inline references — bias is honored)', () => {
   test('text-offset at a reference offset places before vs. after the ref atom by bias', () => {
-    const withRef = doc('ab', [{ offset: 1, targetNodeId: 'n1' }]);
+    const withRef = doc('ab', [{ offset: 1, target: nodeReferenceTarget('n1') }]);
     const before = selectionForPlacement(withRef, { kind: 'text-offset', offset: 1, inlineRefBias: 'before' })!;
     const after = selectionForPlacement(withRef, { kind: 'text-offset', offset: 1, inlineRefBias: 'after' })!;
     expect(before.from).toBeLessThan(after.from);
