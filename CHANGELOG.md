@@ -543,6 +543,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Security: agent exfiltration redline + skill-shell ask path hardened (PR #79)** —
+  the sensitive-data exfiltration hard block now recognizes opaque sinks (inline
+  interpreter execution `python -c` / `node -e` / `perl -e` / `ruby -e` / `php -r`
+  / `osascript -e`, and `ssh host '<cmd>'`) in addition to network-write verbs, so
+  `cat ~/.ssh/id_rsa | python3 -c '...'` is a `platform_hard_block` instead of a
+  downgrade to `ask`; `id_dsa`/`id_ecdsa` added to the sensitive-command patterns.
+  Separately, the skill-shell permission path now routes `ask` decisions through
+  the shared `resolveAgentPermissionAsk` (safe-allowlist + classifier-eligibility
+  veto + unattended fail-safe) instead of jumping straight to the approval handler.
+  Both changes only tighten policy. Resolves hardening item #3.
+  ([#79](https://github.com/relixiaobo/lin-outliner/pull/79))
+
 - **Agent dock header icons (＋ / bug) no longer read as blurry (main)** — they used
   `--text-faint` (ink/0.30), too low-contrast for their thin SVG strokes to resolve as
   crisp edges on the dark rail, while the 0.55 title text beside them looked sharp. They

@@ -229,7 +229,18 @@ const SENSITIVE_PATH_PATTERNS: readonly RegExp[] = [
 
 const SENSITIVE_COMMAND_PATTERNS: readonly RegExp[] = [
   /(?:~|\$HOME|\$\{HOME\})\/(?:\.ssh|\.gnupg|\.aws|\.azure|\.docker|Library\/Keychains)(?:\/|\b)/i,
-  /(?:^|[\s=@:])(?:\.env(?:$|[\s./-])|\.npmrc\b|\.pypirc\b|\.netrc\b|id_rsa\b|id_ed25519\b|[^/\s]+\.pem\b|[^/\s]+\.key\b)/i,
+  /(?:^|[\s=@:])(?:\.env(?:$|[\s./-])|\.npmrc\b|\.pypirc\b|\.netrc\b|id_rsa\b|id_dsa\b|id_ecdsa\b|id_ed25519\b|[^/\s]+\.pem\b|[^/\s]+\.key\b)/i,
+];
+
+// Opaque sinks that can ship bytes off the machine without an obvious network
+// verb: inline interpreter execution (python -c / node -e / perl -e / ruby -e /
+// php -r / osascript -e) and ssh remote-command execution. Used only to widen the
+// exfiltration redline, which ALSO requires a sensitive-path mention — so a false
+// positive can only force an approval on an already-sensitive command, never relax
+// one.
+const EXFIL_OPAQUE_SINK_PATTERNS: readonly RegExp[] = [
+  /\b(?:python[0-9.]*|node|deno|bun|perl|ruby|php|osascript)\b[^\n|;&]*\s(?:-(?:c|e|r|E)\b|--(?:eval|exec|command|run)\b)/i,
+  /\bssh\b\s+(?:-\S+\s+)*[^\s-]\S*\s+\S/i,
 ];
 
 export function createAgentPermissionPolicy(input: AgentPermissionPolicyInput = {}): AgentPermissionPolicy {
@@ -712,7 +723,7 @@ function deriveBashActionDescriptors(
   }
 
   const mentionsSensitivePath = commandMentionsSensitivePath(command, workspaceRoot);
-  if (mentionsSensitivePath && looksLikeNetworkWrite(command)) {
+  if (mentionsSensitivePath && looksLikeExfiltrationSink(command)) {
     return [descriptor('bash', 'shell.network_write', {
       accessScope: 'sensitive_local_path',
       title: 'blocked sensitive data exfiltration',
@@ -1469,6 +1480,13 @@ function commandMentionsSensitivePath(command: string, workspaceRoot: string): b
 
 function looksLikeNetworkWrite(command: string): boolean {
   return /\b(?:curl|wget)\b[\s\S]*(?:--data(?:-binary|-raw|-urlencode)?|-d\b|--form|-F\b|--upload-file|-T\b|-X\s*(?:POST|PUT|PATCH|DELETE)|--request\s+(?:POST|PUT|PATCH|DELETE))\b|\b(?:scp|sftp|rsync|rclone\s+(?:copy|sync)|aws\s+s3\s+cp|gsutil\s+cp|nc|netcat)\b/i.test(command);
+}
+
+// Broader sink check used only by the exfiltration redline (gated behind a
+// sensitive-path mention): an explicit network write OR an opaque sink (inline
+// interpreter / ssh remote exec) that could carry the data out unseen.
+function looksLikeExfiltrationSink(command: string): boolean {
+  return looksLikeNetworkWrite(command) || EXFIL_OPAQUE_SINK_PATTERNS.some((pattern) => pattern.test(command));
 }
 
 function isSensitivePath(filePath: string): boolean {

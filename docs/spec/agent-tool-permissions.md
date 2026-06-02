@@ -114,9 +114,12 @@ Evaluated first; sourced from descriptors and the bash hard-deny rules
 - `SENSITIVE_PATH_PATTERNS` — `id_rsa`/`id_dsa`/`id_ecdsa`/`id_ed25519`,
   `.pem`/`.key`/`.p12`/`.pfx`, `.ssh`/`.gnupg`/`.aws`/`.azure`/`gh` config,
   Keychains, `.npmrc`/`.pypirc`/`.netrc`/`.env`.
-- `looksLikeNetworkWrite` — `curl`/`wget` with data, `scp`/`sftp`/`rsync`/
-  `rclone`, `aws s3 cp`, `gsutil cp`, `nc`/`netcat`.
-- A command that mentions a sensitive path **and** writes to the network is a
+- `looksLikeExfiltrationSink` — an explicit network write (`curl`/`wget` with
+  data, `scp`/`sftp`/`rsync`/`rclone`, `aws s3 cp`, `gsutil cp`, `nc`/`netcat`)
+  **or** an opaque sink that could carry data out unseen: inline interpreter
+  execution (`python -c`, `node -e`, `perl -e`, `ruby -e`, `php -r`,
+  `osascript -e`) or `ssh host '<cmd>'`.
+- A command that mentions a sensitive path **and** matches a sink is a
   `sensitive_data_exfiltration` hard block.
 
 ## Global permission store
@@ -164,12 +167,12 @@ recoverable, details: { reason } } }`.
   `restricted` mode and `preapprovedToolRules` are *inputs* to
   `evaluateAgentToolPermission`; their authoring/lifecycle is the skills domain —
   cross-reference, do not restate here.
-- **Skill-shell second path** — `executeAgentSkillShellCommand`
-  (`src/main/agentSkillShell.ts`) is a live, divergent permission path: it calls
-  `evaluateAgentToolPermission` but on `ask` goes **straight to the approval
-  handler**, bypassing `resolveAgentPermissionAsk` (no safe-allowlist, no
-  classifier, no unattended fail-safe), and it honors session allow rules. Treat
-  it as a second resolver until unified.
+- **Skill-shell path** — `executeAgentSkillShellCommand`
+  (`src/main/agentSkillShell.ts`) is a live second entry point. It calls
+  `evaluateAgentToolPermission` and routes an `ask` decision through the shared
+  `resolveAgentPermissionAsk`, so the safe-allowlist, classifier-eligibility
+  veto, and unattended fail-safe apply the same as the main runtime. (It still
+  honors session allow rules via the shared evaluator.)
 
 ## Known divergences from the plan (shipped-state honesty)
 
@@ -183,16 +186,13 @@ ways (tracked in `agent-tool-permissions-hardening.md`):
 2. **`sessionApproved` short-circuit still live** — a session-approved tool
    returns `allow` *before* configured-ask/global-ask resolution, silently
    relaxing a configured `ask`.
-3. **Exfil redline gaps** — `looksLikeNetworkWrite` misses interpreter sinks
-   (`python -c`, `node -e`, perl/ruby) and `ssh host 'cat >> loot'`, so some
-   sensitive-path exfiltration downgrades from hard-block to `ask`.
-4. **Dual event vocabulary unreconciled** — the two families above use different
+3. **Dual event vocabulary unreconciled** — the two families above use different
    request-id spaces and cannot be joined into one decision record.
-5. **Denied-reason literals diverge from the plan** — code uses `hard_block` /
+4. **Denied-reason literals diverge from the plan** — code uses `hard_block` /
    `user` / `runtime` (plan: `platform_hard_block` / `user_denied`), and
    `recoverable` is computed as `reason !== 'hard_block'`, so a durable
    `configured_deny` is marked recoverable.
-6. **No symlink/realpath resolution** — `resolvePermissionPath` is lexical only.
-7. **`external.message.send` / `payment.purchase` / `agent.permission.modify`**
+5. **No symlink/realpath resolution** — `resolvePermissionPath` is lexical only.
+6. **`external.message.send` / `payment.purchase` / `agent.permission.modify`**
    exist as action kinds + forbidden-rule guardrails but have no descriptor
    resolver (no tool surface produces them yet).
