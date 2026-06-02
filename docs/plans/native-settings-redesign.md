@@ -1,10 +1,20 @@
 ---
-status: in-progress
+status: done
 priority: P2
 owner: relixiaobo
 created: 2026-06-01
-updated: 2026-06-01
+updated: 2026-06-02
 ---
+
+> **Shipped in PR #69 (2026-06-02).** Providers-first (D-SCOPE) landed: inset
+> grouped-list primitive, native master-detail Providers, and the per-provider
+> config. **D-FORM evolved from an in-renderer sheet to its own native modal-child
+> window** (the System Settings attached-dialog idiom) — accepted by the owner as a
+> more-native realization of the same "focused credential moment". The design now
+> lives in `docs/spec/design-system.md` → "Settings window" (A6). Follow-ups:
+> packaged-build visual QA of the config window's native presentation (24pt corner
+> per D7, sheet-attach / parent-dim); Permissions / Skills adopting the inset
+> primitive (D-SCOPE phase 3).
 
 # Native-Feel Settings Redesign
 
@@ -50,11 +60,17 @@ The three open questions are resolved; build against these, do not re-open them.
   config in the detail pane. Providers are **not** promoted to top-level sidebar rows
   (option B rejected — it mixes providers into the Permissions/Skills nav level, an
   awkward IA). Credential add/replace lives in a focused **sheet**.
-- **D-FORM — Two tiers (sheet + inline).** A focused **sheet** hosts the atomic
-  *add / replace credential → validate* moment (and is the single host the
-  `agent-oauth-providers.md` credential modes plug into). **Inline detail** hosts
-  ongoing config (model / reasoning / advanced base URL). Not all-inline (loses the
-  focus of secret entry); not all-modal (wrong for multi-field ongoing settings).
+- **D-FORM — Focused credential surface (shipped as a native window).** Originally
+  locked as an in-renderer **sheet** + inline detail. **As shipped (PR #69) it evolved
+  into the credential editor opening as its OWN native window** — a frameless modal
+  child of the settings window (`lin:open-provider-config`, `?surface=provider-config`),
+  the System Settings attached-dialog idiom rather than a web overlay. Owner-accepted as
+  a more-native realization of the same focused-credential intent. It hosts the
+  connection only (credential + base URL inline, async non-blocking validate with
+  cancel); model / reasoning stay in the composer. It is multi-mode so
+  `agent-oauth-providers.md` (OAuth, AWS/Vertex managed) plugs in as additional modes —
+  built once. (The earlier "sheet" wording is kept here for history; the authoritative
+  contract is `design-system.md` → "Settings window".)
 - **D-SCOPE — Providers-first, primitive built reusable.** This PR builds the
   reusable **inset grouped-list primitive + master-detail shell tokens** (A7
   foundation), then restyles **Providers** on top of them. Permissions / Skills

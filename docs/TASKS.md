@@ -15,7 +15,7 @@ workflow.
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | native-settings-redesign (assigned) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle |
 | Codex | `lin-outliner-codex/` | — | idle |
 
 ## In progress
@@ -23,12 +23,6 @@ workflow.
 - **agent-past-chats** (P1, Codex) — `past_chats` recall tool (recent + search
   + read) backed by the event store. Recall tool and tool-UI polish landed
   (PRs #1, #4); see `docs/plans/agent-past-chats.md` for remaining scope.
-- **native-settings-redesign** (P2, cc-2) — restyle the agent Settings surface to
-  the macOS System Settings *interaction* idiom (inset grouped lists, master-detail,
-  credential sheet, on-row status) in our own tokens/B-rules, bundling a perf pass.
-  Unblocked by PR-D (#68); the IA / config-form / scope questions are now locked
-  (D-IA hybrid, D-FORM sheet+inline, D-SCOPE Providers-first). Assigned to cc-2,
-  awaiting its branch/PR. See `docs/plans/native-settings-redesign.md`.
 
 ## Backlog
 
@@ -95,6 +89,18 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **native master-detail Providers settings + own provider-config window** (cc-2) —
+  implements `native-settings-redesign.md` (Providers-first). Reusable inset
+  grouped-list primitive (`SettingsInsetList`), Providers grouped Connected/Available
+  with avatar identity + status dot + per-row `⋯`/Configure, back/forward category
+  history. **D-FORM evolved: per-provider config opens as its OWN native modal-child
+  window** (`lin:open-provider-config`, the System Settings attached-dialog idiom) — not
+  an in-renderer sheet — owner-accepted; connection only, async validate w/ cancel,
+  multi-mode for oauth-providers. Settings window itself now frameless w/ main-shell
+  geometry. Dark-mode switch/check/highlight near-black fix. Reviewed: typecheck clean,
+  renderer 266/0, core 440/2 (pre-existing rg), e2e agent-settings+cursor+typography
+  28/0; A3 preserved; real-app QA confirmed the settings window renders (config-window
+  packaged presentation = D7 follow-up). Spec folded into `design-system.md`. (PR #69).
 - **reference field type: read-only system reference rows + editable node picker** (cc)
   — one reference-node model for node-reference field values. Read-only References /
   Owner / Day project synthetic read-only `reference` rows (render-time over the global

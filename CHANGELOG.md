@@ -12,6 +12,23 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Native master-detail Providers settings + own provider-config window (PR #69)** —
+  the agent **Settings → Providers** surface reworked to the macOS System Settings
+  *interaction* idiom in our own tokens/B-rules. A reusable inset grouped-list primitive
+  (`SettingsInsetList`) with content-aligned hairlines, region-by-colour, neutral
+  selection/focus, and no row hover fill; Providers grouped **Connected / Available**
+  with a brand-avatar identity, neutral status dot, a per-row `⋯` menu (only when a row
+  has >1 action) and a trailing **Configure** button otherwise; back/forward category
+  history reusing the shared chrome control. The per-provider config opens as its **own
+  native window** — a frameless modal child of the settings window
+  (`lin:open-provider-config`, `?surface=provider-config`), the System Settings
+  attached-dialog idiom — hosting the connection only (credential + base URL inline,
+  async non-blocking validate with cancel); it is multi-mode so OAuth / managed
+  credentials plug in later. The settings window itself becomes frameless with the main
+  shell's geometry (inset traffic lights, 24pt corner). Also fixes dark-mode switch
+  thumb / checkbox check / `==highlight==` text rendering near-black. Security defaults
+  (A3) match every other window. ([#69](https://github.com/relixiaobo/lin-outliner/pull/69))
+
 - **Reference field type: read-only system reference rows + editable node picker
   (PR #71)** — node-reference field values now follow one model: the reference node
   is always full-featured (double-click edits the target, expandable) and only the
