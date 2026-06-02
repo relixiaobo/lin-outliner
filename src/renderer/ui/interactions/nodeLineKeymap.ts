@@ -9,7 +9,7 @@
  * mark toggles, checkbox, move — then calls this for the shared structural
  * tail, and builds the rich payloads (split slices, empty check) itself.
  *
- * See `docs/plans/node-line-editor-core-design.md` §3–4. This is the shared
+ * See `docs/plans/archive/node-line-editor-core-design.md` §3–4. This is the shared
  * vocabulary both node-line editors map onto.
  */
 

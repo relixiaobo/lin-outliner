@@ -194,5 +194,5 @@ Structural reframe (Phase 4 — changes the outliner's *frame*, not its tree):
 - Touches `App.tsx`, `TopBar.tsx`, `styles.css`, `main.ts`. Does **not** touch
   `src/core/types.ts` or `commands.ts` (no protocol change).
 - Phase 4 is a large restructure — keep it isolated from token/material PRs.
-- This file is added to `docs/plans/README.md` (a coordination-owned index);
-  flag that addition for the main agent.
+- This file's index row lives on `docs/TASKS.md` (the coordination-owned
+  board); flag any status change for the main agent.

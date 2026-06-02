@@ -10,7 +10,7 @@ updated: 2026-05-30
 
 Follow-up work after the agent-tool-permissions implementation landed in
 [#60](https://github.com/relixiaobo/lin-outliner/pull/60). The core policy
-(`docs/plans/agent-tool-permissions.md`, now `implemented`) shipped with its
+(`docs/plans/archive/agent-tool-permissions.md`, now `done`) shipped with its
 critical/high bash-classifier and rule-validator fail-opens fixed pre-merge.
 This plan tracks the **non-blocking** medium/low items surfaced by the deep
 review that were deliberately deferred out of the fix commit. None is a live

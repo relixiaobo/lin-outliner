@@ -1,7 +1,7 @@
 // Config-as-nodes (Stage 4): the read side. Turns a definition's `defConfig`
 // subtree into a typed, projected config. The rest of the app reads config
 // through `buildConfigIndex(state).tag(id)` / `.field(id)` — never by scanning
-// children or reading the flat fields. See docs/plans/config-as-nodes.md.
+// children or reading the flat fields. See docs/plans/archive/config-as-nodes.md.
 
 import {
   boolCodec,

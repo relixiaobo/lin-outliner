@@ -1,9 +1,9 @@
 ---
-status: implemented
+status: done
 priority: P0
 owner: relixiaobo
 created: 2026-05-29
-updated: 2026-05-30
+updated: 2026-06-02
 ---
 
 # Agent Tool Permissions

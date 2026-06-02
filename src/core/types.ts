@@ -19,7 +19,7 @@ export const TAG_YEAR_ID = 'tag:year';
 
 // System option subtrees under SCHEMA_ID. Each holds the enum domain for a
 // config knob; selecting an enum value = referencing one of these nodes, so
-// an invalid enum value is unrepresentable. See docs/plans/config-as-nodes.md.
+// an invalid enum value is unrepresentable. See docs/plans/archive/config-as-nodes.md.
 export const SCHEMA_FIELD_TYPES_ID = 'schema:field-types';
 export const SCHEMA_HIDE_MODES_ID = 'schema:hide-modes';
 export const SCHEMA_AUTO_INIT_ID = 'schema:auto-init';
@@ -79,7 +79,7 @@ export type HideFieldMode =
   | 'value_is_default'
   | 'always';
 
-// ─── Config-as-nodes (see docs/plans/config-as-nodes.md) ───
+// ─── Config-as-nodes (see docs/plans/archive/config-as-nodes.md) ───
 // A definition's configuration is stored as `defConfig` child nodes whose
 // `configKey` identifies the knob; the value is held as the defConfig node's
 // own child node(s) — the same mechanism field values use (U1). Reads go
@@ -121,13 +121,13 @@ export type DefConfigKey = TagConfigKey | FieldConfigKey;
 // the value is stored as a child node: ref/enum → a child reference (with a
 // config refRole so it stays out of the backlink graph); number/color/bool →
 // a child value node (same mechanism field values already use). See
-// docs/plans/config-as-nodes.md.
+// docs/plans/archive/config-as-nodes.md.
 export type ConfigValueDomain = 'ref' | 'refList' | 'enum' | 'enumList' | 'number' | 'bool' | 'color';
 
 // The role a `reference` node plays. Reads/backlinks/search use this to decide
 // whether a reference is a real edge (link/fieldValue) or an internal pointer
 // (config/enum/system/searchResult) that must stay out of the backlink graph.
-// See docs/plans/config-as-nodes.md (transitional rule 4) — explicit role, not
+// See docs/plans/archive/config-as-nodes.md (transitional rule 4) — explicit role, not
 // parent inference. Absent role is treated as 'link' (legacy user reference).
 export type RefRole =
   | 'link'

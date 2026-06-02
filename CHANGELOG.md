@@ -626,6 +626,25 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Collaboration-method model folded into `AGENTS.md`; docs restructured (PR #76)** —
+  the agreed PM-led parallel-planning model lands in `AGENTS.md`: the main agent
+  is the end-stage gate (no up-front framing), with a review-gate table, a WIP
+  cap (2 significant changes), a Draft-PR-as-claim collision radar, a
+  document-system table, and the plan status legend. `docs/TASKS.md` becomes the
+  single live board (folds the deleted `docs/plans/README.md` active-plan index;
+  adds the `anti` clone). The 15 terminal plans move to `docs/plans/archive/`;
+  the shipped status word is unified to `done`; test fixtures move under
+  `tests/fixtures/`; stale references in the READMEs, active plans, and src
+  comments are repointed. ([#76](https://github.com/relixiaobo/lin-outliner/pull/76))
+- **Agent + launcher planning docs (PRs #72–#75)** — added the
+  `agent-self-modification` controlled-self-maintenance plan plus cc-2.1-aligned
+  spec guidance (#72), an OAuth agent self-configuration boundary in
+  `agent-oauth-providers` (#73), the `lazy-like-global-launcher` plan (#74), and
+  the `outliner-local-file-references` plan (#75). Docs-only.
+  ([#72](https://github.com/relixiaobo/lin-outliner/pull/72),
+  [#73](https://github.com/relixiaobo/lin-outliner/pull/73),
+  [#74](https://github.com/relixiaobo/lin-outliner/pull/74),
+  [#75](https://github.com/relixiaobo/lin-outliner/pull/75))
 - Removed the ~1.3k-line legacy `TrailingInput` editor (plus `TrailingInputLeading`) — its trigger paths (`#`/`@`/`/`/`>`/code/checkbox/image) are re-implemented as atomic-create branches on the `OutlinerItem` trailing draft, collapsing the two-ProseMirror-editor fork to one. Removed the now-dead `resolveTrailingRow*` interaction resolvers. Fixed a focus-propagation bug where a command-outcome focus request (`panelId: null` wildcard) failed the row memo's `targetsRow` predicate and dropped focus to `<body>`; added `focusAncestorToken` so a memoized ancestor re-renders to pass a focus/pending-input request down to a nested target (#64).
 - Re-armed the design-system guard e2e specs after the CSS split and floating-rails shell redesign: the typography-tokens guard now globs `src/renderer/styles/*.css` and the workspace-layout spec asserts the shipped DOM; page-title sizing corrected to 24px/32px (PR-A, #62).
 - **Modularize `styles.css` into per-surface modules** — the 6851-line monolith

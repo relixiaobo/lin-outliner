@@ -7,7 +7,7 @@ import { OutlinerView } from './OutlinerView';
 
 // The read-only system fields that resolve to other nodes: References (backlink
 // sources), Owner (the parent), Day (the nearest day-tagged ancestor). They are
-// computed, not stored — see docs/plans/reference-field-type.md (decision A).
+// computed, not stored — see docs/plans/archive/reference-field-type.md (decision A).
 const NODE_REFERENCE_SYSTEM_FIELDS: ReadonlySet<string> = new Set([
   REF_COUNT_FIELD,
   OWNER_FIELD,

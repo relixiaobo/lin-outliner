@@ -1,6 +1,6 @@
 // Config-as-nodes: the closed schema (Stage 0 — definitions only, no behavior
 // change; nothing imports this yet). It is the authoritative description that
-// keeps the open node tree from drifting. See docs/plans/config-as-nodes.md.
+// keeps the open node tree from drifting. See docs/plans/archive/config-as-nodes.md.
 
 import {
   SCHEMA_AUTO_INIT_ID,

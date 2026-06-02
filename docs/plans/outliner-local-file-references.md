@@ -1,3 +1,11 @@
+---
+status: draft
+priority: P2
+owner: relixiaobo
+created: 2026-06-02
+updated: 2026-06-02
+---
+
 # Outliner Local File References
 
 ## Purpose

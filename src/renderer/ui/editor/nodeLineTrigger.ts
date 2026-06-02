@@ -7,7 +7,7 @@ import { caretAnchor } from './nodeLineView';
 /**
  * Cursor-aware trigger detection for a node line. Returns the active `#`/`@`/`/`
  * trigger at the caret, or `null`. This is the single source of truth the
- * node-line editor core uses (see `docs/plans/node-line-editor-core-design.md`
+ * node-line editor core uses (see `docs/plans/archive/node-line-editor-core-design.md`
  * §5): the inline editor uses it today; the trailing input adopts it in 2b,
  * replacing its whole-text `lastIndexOf` detection.
  *
