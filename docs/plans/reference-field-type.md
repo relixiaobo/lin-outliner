@@ -1,5 +1,5 @@
 ---
-status: complete
+status: done
 priority: P2
 owner: relixiaobo
 created: 2026-06-01
