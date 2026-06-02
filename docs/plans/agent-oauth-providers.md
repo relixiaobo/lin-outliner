@@ -31,6 +31,9 @@ method correctly:
   (`@earendil-works/pi-ai` `utils/oauth`); we orchestrate them.
 - A generic "add a custom OAuth provider" UI. Built-ins only at v1.
 - Per-model enable/disable or model fetch (separate concern).
+- Agent-driven raw credential reads or writes. The agent can diagnose auth state
+  and propose provider/model switches, but sign-in, sign-out, token storage, and
+  raw key entry stay in runtime-owned UI/IPC paths.
 
 ## Background — pi-ai's three auth classes
 
@@ -99,6 +102,11 @@ oauth?: { connected: boolean; expiresAt?: number };
 Source `authKind` in main from `getOAuthProviders()` (oauth) + a small managed
 set (bedrock, vertex), defaulting to `api-key`.
 
+Agent-visible provider summaries may include `authKind`, `enabled`,
+`configured`, `hasCredential`, `connected`, `expiresAt`, and health diagnostics.
+They must never include API keys, OAuth access tokens, refresh tokens, AWS
+credentials, ADC material, or raw env values.
+
 ### UI states (provider detail)
 
 - **api-key**: today's key field + Advanced(Base URL). Unchanged.
@@ -111,6 +119,23 @@ set (bedrock, vertex), defaulting to `api-key`.
 
 `canChooseModels` in the Agent category must treat oauth-connected and managed
 providers as credentialed (not just "has a key").
+
+### Agent self-configuration boundary
+
+The self-modification tools may propose:
+
+- switching to a provider that is already configured;
+- switching to a model exposed by the active provider;
+- disabling a provider that is not active;
+- running a read-only provider health check.
+
+They must not:
+
+- initiate OAuth login without a visible user action;
+- persist pasted keys or OAuth credentials from model-generated text;
+- expose raw secrets in tool results or event logs;
+- write `agent-secrets.json` directly;
+- treat provider health diagnostics as permission to downgrade safety settings.
 
 ## Open questions
 
