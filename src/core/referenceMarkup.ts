@@ -47,7 +47,7 @@ export type FileReferenceTextSegment =
   | { type: 'text'; text: string }
   | FileReferenceSegment;
 
-const REFERENCE_PATTERN = /\[\[([^\]\r\n]*?)\]\]/gu;
+const REFERENCE_PATTERN = /\[\[([^\[\]\r\n]*?)\]\]/gu;
 
 export function formatNodeReferenceMarker(label: string, nodeId: string): string {
   const safeNodeId = nodeId.trim();
@@ -60,7 +60,7 @@ export function formatNodeReferenceIdMarker(nodeId: string): string {
 }
 
 export function formatFileReferenceMarker(label: string, path = label, entryKind: 'file' | 'directory' = 'file'): string {
-  const safePath = path.trim() || 'attachment';
+  const safePath = path || 'attachment';
   return formatReferenceMarker(sanitizeReferenceLabel(label) || basenameForPath(safePath) || safePath, {
     kind: 'local-file',
     path: safePath,
@@ -78,7 +78,7 @@ export function formatReferenceMarker(label: string, target: ReferenceTarget): s
     const nodeId = target.nodeId.trim();
     return `[[node:${safeLabel}^${encodeReferenceValue(nodeId)}]]`;
   }
-  const path = target.path.trim();
+  const path = target.path;
   return `[[file:${safeLabel}^${encodeReferenceValue(path)}]]`;
 }
 
@@ -170,7 +170,7 @@ export function nodeReferenceMarkersToText(text: string): string {
   return splitReferenceMarkers(text)
     .map((segment) => {
       if (segment.type === 'text') return segment.text;
-      return segment.target.kind === 'node' ? segment.label : segment.raw;
+      return segment.label;
     })
     .join('');
 }
@@ -201,18 +201,18 @@ function sanitizeReferenceLabel(label: string): string {
 }
 
 function encodeReferenceValue(value: string): string {
-  return encodeURIComponent(value.trim());
+  return encodeURIComponent(value);
 }
 
-function decodeReferenceValue(value: string): string | null {
+function decodeReferenceValue(value: string): string {
   try {
-    return decodeURIComponent(value).trim() || null;
+    return decodeURIComponent(value);
   } catch {
-    return null;
+    return value;
   }
 }
 
-function basenameForPath(path: string): string {
+export function basenameForPath(path: string): string {
   const normalized = path.replace(/[/\\]+$/gu, '');
   return normalized.split(/[/\\]/u).pop() ?? '';
 }

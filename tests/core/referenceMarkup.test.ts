@@ -47,7 +47,8 @@ describe('reference markup', () => {
   test('converts node reference markers to display text without node ids', () => {
     expect(nodeReferenceMarkersToText('Ask [[node:Alpha^node-alpha]] now')).toBe('Ask Alpha now');
     expect(nodeReferenceMarkersToText('Ask [[node:^node-alpha]] now')).toBe('Ask  now');
-    expect(nodeReferenceMarkersToText('[[node:你好^node%3Aabcd-1234]] 你好')).toBe('你好 你好');
+    expect(nodeReferenceMarkersToText('[[node:你好^abcd-1234]] 你好')).toBe('你好 你好');
+    expect(nodeReferenceMarkersToText('Open [[file:report.pdf^%2FUsers%2Fme%2Freport.pdf]]')).toBe('Open report.pdf');
   });
 
   test('formats and splits local file references with encoded paths', () => {
@@ -70,6 +71,36 @@ describe('reference markup', () => {
 
   test('leaves unknown prefixes and legacy bare markers as text', () => {
     const text = 'Keep [[asset:Logo^asset-1]] and [[Alpha^node-alpha]] plain';
+    expect(parseReferenceMarkers(text)).toEqual([]);
+    expect(splitNodeReferenceMarkers(text)).toEqual([{ type: 'text', text }]);
+  });
+
+  test('keeps raw values when percent decoding fails', () => {
+    expect(parseReferenceMarkers('Open [[file:bad percent^/Users/me/100% done.txt]]')).toEqual([{
+      end: 49,
+      label: 'bad percent',
+      raw: '[[file:bad percent^/Users/me/100% done.txt]]',
+      start: 5,
+      target: { kind: 'local-file', path: '/Users/me/100% done.txt', entryKind: 'file' },
+    }]);
+  });
+
+  test('preserves whitespace inside encoded paths', () => {
+    const path = '/Users/me/ report .txt ';
+    const marker = formatFileReferenceMarker('report', path);
+    expect(marker).toBe('[[file:report^%2FUsers%2Fme%2F%20report%20.txt%20]]');
+    expect(splitFileReferenceMarkers(marker)).toEqual([{
+      type: 'file',
+      raw: marker,
+      ref: 'report',
+      label: 'report',
+      path,
+      entryKind: 'file',
+    }]);
+  });
+
+  test('does not parse labels containing raw square brackets', () => {
+    const text = 'Keep [[node:[Alpha^node-alpha]] plain';
     expect(parseReferenceMarkers(text)).toEqual([]);
     expect(splitNodeReferenceMarkers(text)).toEqual([{ type: 'text', text }]);
   });

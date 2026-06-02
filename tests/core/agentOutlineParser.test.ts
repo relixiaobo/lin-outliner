@@ -21,4 +21,23 @@ describe('agent outline parser', () => {
       }),
     ]);
   });
+
+  test('does not extract tags from reference marker labels', () => {
+    const parsed = parseLinOutline([
+      '- [[node:#task^tag-node]]',
+      '- Work [[node:#project^project-node]] #todo',
+    ].join('\n'));
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.document.roots[0]).toMatchObject({
+      referenceTargetId: 'tag-node',
+      title: '#task',
+      tags: [],
+    });
+    expect(parsed.document.roots[1]).toMatchObject({
+      title: 'Work [[node:#project^project-node]]',
+      tags: ['todo'],
+    });
+  });
 });

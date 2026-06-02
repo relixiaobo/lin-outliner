@@ -1,4 +1,5 @@
 import type { AgentFileAttachmentInput, AgentImageAttachmentInput, AgentTextAttachmentInput } from './agentTypes';
+import { basenameForPath } from './referenceMarkup';
 import type { ReferenceTarget } from './types';
 
 const ATTACHMENT_START = '[lin attached file: ';
@@ -15,7 +16,6 @@ export interface ParsedAgentTextAttachment {
   sizeBytes: number;
   truncated: boolean;
   text: string;
-  path?: string;
 }
 
 export type AgentResourceItem =
@@ -35,7 +35,6 @@ export type AgentResourceItem =
       sizeBytes: number;
       path: string;
       readPath: string;
-      target: Extract<ReferenceTarget, { kind: 'local-file' }>;
     }
   | {
       kind: 'inline_text';
@@ -45,8 +44,6 @@ export type AgentResourceItem =
       sizeBytes: number;
       truncated: boolean;
     };
-
-export type AgentAttachmentMarkerItem = AgentResourceItem;
 
 export interface AgentAttachmentMarker {
   version: 1;
@@ -68,7 +65,7 @@ export function referenceTargetToResourceItem(
 ): AgentResourceItem | null {
   if (target.kind === 'node') return null;
   const name = meta.name?.trim() || basenameForPath(target.path) || target.path;
-  const readPath = meta.readPath?.trim() || target.path;
+  const readPath = meta.readPath || target.path;
   return {
     kind: 'file',
     ref: meta.ref?.trim() || name,
@@ -77,7 +74,6 @@ export function referenceTargetToResourceItem(
     sizeBytes: typeof meta.sizeBytes === 'number' && Number.isFinite(meta.sizeBytes) ? meta.sizeBytes : 0,
     path: target.path,
     readPath,
-    target,
   };
 }
 
@@ -120,7 +116,7 @@ export function parseAgentTextAttachmentBlock(text: string): ParsedAgentTextAtta
 }
 
 export function serializeAgentAttachmentMarker(attachments: Array<AgentImageAttachmentInput | AgentFileAttachmentInput | AgentTextAttachmentInput>): string | null {
-  const items = attachments.map((attachment): AgentAttachmentMarkerItem => {
+  const items = attachments.map((attachment): AgentResourceItem => {
     if (attachment.kind === 'image') {
       return {
         kind: 'image',
@@ -169,10 +165,10 @@ export function parseAgentAttachmentMarkerBlock(text: string): AgentAttachmentMa
   try {
     const parsed = JSON.parse(markerText) as Partial<AgentAttachmentMarker>;
     if (parsed.version !== 1 || !Array.isArray(parsed.attachments)) return null;
-    const attachments: AgentAttachmentMarkerItem[] = [];
+    const attachments: AgentResourceItem[] = [];
     for (const rawItem of parsed.attachments) {
       if (!rawItem || typeof rawItem !== 'object') continue;
-      const item = rawItem as Partial<AgentAttachmentMarkerItem>;
+      const item = rawItem as Partial<AgentResourceItem>;
       if (item.kind === 'image' && typeof item.name === 'string' && typeof item.mimeType === 'string') {
         attachments.push({
           kind: 'image',
@@ -183,11 +179,6 @@ export function parseAgentAttachmentMarkerBlock(text: string): AgentAttachmentMa
           inline: true,
         });
       } else if (item.kind === 'file' && typeof item.name === 'string' && typeof item.mimeType === 'string' && typeof item.path === 'string') {
-        const target = normalizeLocalFileTarget(item.target) ?? {
-          kind: 'local-file' as const,
-          path: item.path,
-          entryKind: item.mimeType === 'inode/directory' ? 'directory' as const : 'file' as const,
-        };
         attachments.push({
           kind: 'file',
           ref: typeof item.ref === 'string' && item.ref.trim() ? item.ref : item.name,
@@ -195,8 +186,7 @@ export function parseAgentAttachmentMarkerBlock(text: string): AgentAttachmentMa
           mimeType: item.mimeType,
           sizeBytes: typeof item.sizeBytes === 'number' ? item.sizeBytes : 0,
           path: item.path,
-          readPath: typeof item.readPath === 'string' && item.readPath.trim() ? item.readPath : item.path,
-          target,
+          readPath: typeof item.readPath === 'string' && item.readPath ? item.readPath : item.path,
         });
       } else if (item.kind === 'inline_text' && typeof item.name === 'string' && typeof item.mimeType === 'string') {
         attachments.push({
@@ -239,23 +229,4 @@ function extractAgentAttachmentMarker(text: string): string | null {
   const end = text.indexOf(USER_ATTACHMENTS_END, contentStart);
   if (end < 0) return null;
   return text.slice(contentStart, end).trim();
-}
-
-function normalizeLocalFileTarget(value: unknown): Extract<ReferenceTarget, { kind: 'local-file' }> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  if (
-    record.kind === 'local-file'
-    && typeof record.path === 'string'
-    && record.path
-    && (record.entryKind === 'file' || record.entryKind === 'directory')
-  ) {
-    return { kind: 'local-file', path: record.path, entryKind: record.entryKind };
-  }
-  return null;
-}
-
-function basenameForPath(path: string): string {
-  const normalized = path.replace(/[/\\]+$/gu, '');
-  return normalized.split(/[/\\]/u).pop() ?? '';
 }

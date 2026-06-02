@@ -695,9 +695,7 @@ function replaceAllRichText(text: LoroText, content: RichText) {
 }
 
 function replaceRichTextRange(text: LoroText, op: Extract<RichTextPatchOp, { type: 'replace' }>) {
-  for (const ref of [...(op.deletedInlineRefs ?? [])].sort((left, right) => right.offset - left.offset)) {
-    deleteInlineRef(text, ref);
-  }
+  deleteInlineRefs(text, op.deletedInlineRefs ?? []);
 
   const current = richTextFromDelta(text.toDelta());
   const from = clampTextOffset(op.from, current.text.length);
@@ -709,13 +707,24 @@ function replaceRichTextRange(text: LoroText, op: Extract<RichTextPatchOp, { typ
   markInsertedRichText(text, start, op.content, encoded.inlineRefs);
 }
 
-function deleteInlineRef(text: LoroText, ref: RichText['inlineRefs'][number]) {
+function deleteInlineRefs(text: LoroText, refs: readonly RichText['inlineRefs'][number][]) {
+  if (refs.length === 0) return;
   const encoded = encodeRichText(richTextFromDelta(text.toDelta()));
-  const match = encoded.inlineRefs.find((candidate) =>
-    candidate.offset === ref.offset
-    && referenceTargetsEqual(candidate.target, ref.target)
-    && (ref.displayName === undefined || candidate.displayName === ref.displayName));
-  if (match) text.splice(match.internalOffset, INLINE_REF_PLACEHOLDER.length, '');
+  const usedInternalOffsets = new Set<number>();
+  const internalOffsets: number[] = [];
+  for (const ref of refs) {
+    const match = encoded.inlineRefs.find((candidate) =>
+      !usedInternalOffsets.has(candidate.internalOffset)
+      && candidate.offset === ref.offset
+      && referenceTargetsEqual(candidate.target, ref.target)
+      && (ref.displayName === undefined || candidate.displayName === ref.displayName));
+    if (!match) continue;
+    usedInternalOffsets.add(match.internalOffset);
+    internalOffsets.push(match.internalOffset);
+  }
+  for (const internalOffset of internalOffsets.sort((left, right) => right - left)) {
+    text.splice(internalOffset, INLINE_REF_PLACEHOLDER.length, '');
+  }
 }
 
 function markInsertedRichText(

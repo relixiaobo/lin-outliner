@@ -200,8 +200,11 @@ the same Lin-owned DTO boundary.
 
 The composer may insert local files, folders, and images as inline mention
 atoms. The user-facing editor and transcript render these as natural `@name`
-tokens, but the model-facing user text uses structured positional markers:
-`[[file:<label>^<path>]]`. The `path` value is percent-encoded in the marker.
+tokens. Path-backed local files and folders use structured model-facing
+positional markers: `[[file:<label>^<path>]]`. The `path` value is
+percent-encoded in the marker. Attachments without a stable local path, such as
+inline images or inline text uploads, remain plain `@name` text and are resolved
+through the hidden attachment table.
 
 `label` is a stable, human-readable reference for one user turn. It is derived
 from the selected file name, sanitized to one line, and de-duplicated within the

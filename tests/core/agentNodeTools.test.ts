@@ -1156,8 +1156,8 @@ describe('agent node tools', () => {
     }>(result.contentText);
 
     expect(visible).toMatchObject({ ok: true, tool: 'node_search' });
-    expect(visible.instructions).toContain('[[node:Display^node%3A...]]');
-    expect(visible.instructions).toContain('[[node:^node%3A...]]');
+    expect(visible.instructions).toContain('[[node:Display^...]]');
+    expect(visible.instructions).toContain('[[node:^...]]');
     expect(visible.instructions).toContain('never show %%node:id%%');
     expect(visible.instructions).toContain('data.references[].display_ref');
     expect(visible.data!.kind).toBe('search');

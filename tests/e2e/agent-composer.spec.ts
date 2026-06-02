@@ -69,7 +69,7 @@ test.describe('agent composer controls', () => {
       ))?.args;
     }).toMatchObject({
       attachments: [{ name: 'notes.txt' }],
-      message: '[[file:notes.txt^notes.txt]]',
+      message: '@notes.txt',
     });
   });
 
@@ -167,7 +167,7 @@ test.describe('agent composer controls', () => {
             },
             {
               type: 'text',
-              text: '[[file:.DS_Store^%2FUsers%2Ftest%2FDesktop%2F.DS_Store]] 总结一下，然后跟 [[file:Coding^%2FUsers%2Ftest%2FDocuments%2FCoding]] 对比一下，然后添加到 [[node:Alpha^node-alpha]]，参考 [[file:Screenshot 2026-05-26 at 14.50.16.png^Screenshot%202026-05-26%20at%2014.50.16.png]]',
+              text: '[[file:.DS_Store^%2FUsers%2Ftest%2FDesktop%2F.DS_Store]] 总结一下，然后跟 [[file:Coding^%2FUsers%2Ftest%2FDocuments%2FCoding]] 对比一下，然后添加到 [[node:Alpha^node-alpha]]，参考 @Screenshot 2026-05-26 at 14.50.16.png',
             },
             { type: 'text', text: 'Image attachment' },
           ],
@@ -1402,7 +1402,7 @@ test.describe('agent composer controls', () => {
 
   test('renders node reference session titles without node ids', async ({ page }) => {
     await emitAgentProjection(page, 'mock-agent-session', {
-      sessionTitle: '[[node:你好^node%3Aabcd7362-b2e4-498d-a1b2]] 你好',
+      sessionTitle: '[[node:你好^abcd7362-b2e4-498d-a1b2]] 你好',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [],
     });

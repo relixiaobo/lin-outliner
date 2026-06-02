@@ -1,4 +1,5 @@
 import { Schema } from 'prosemirror-model';
+import { basenameForPath } from '../../../core/referenceMarkup';
 
 export const pmSchema = new Schema({
   nodes: {
@@ -35,6 +36,8 @@ export const pmSchema = new Schema({
             targetPath: element.dataset.inlineRefPath ?? '',
             entryKind: element.dataset.inlineRefEntryKind ?? 'file',
             displayName: element.textContent?.replace(/^@/, '').trim() ?? '',
+            mimeType: element.dataset.inlineRefMimeType ?? '',
+            sizeBytes: Number(element.dataset.inlineRefSizeBytes ?? Number.NaN),
           };
         },
       }],
@@ -54,6 +57,10 @@ export const pmSchema = new Schema({
         if (targetKind === 'local-file') {
           attrs['data-inline-ref-path'] = targetPath;
           attrs['data-inline-ref-entry-kind'] = String(node.attrs.entryKind ?? 'file');
+          if (node.attrs.mimeType) attrs['data-inline-ref-mime-type'] = String(node.attrs.mimeType);
+          if (typeof node.attrs.sizeBytes === 'number' && Number.isFinite(node.attrs.sizeBytes)) {
+            attrs['data-inline-ref-size-bytes'] = String(node.attrs.sizeBytes);
+          }
         }
         if (node.attrs.color) {
           attrs.style = `color: ${node.attrs.color}; --inline-ref-accent: ${node.attrs.color}`;
@@ -119,8 +126,3 @@ export const pmSchema = new Schema({
     },
   },
 });
-
-function basenameForPath(path: string): string {
-  const normalized = path.replace(/[/\\]+$/gu, '');
-  return normalized.split(/[/\\]/u).pop() ?? '';
-}

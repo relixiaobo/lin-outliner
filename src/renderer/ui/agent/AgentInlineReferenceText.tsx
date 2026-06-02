@@ -1,6 +1,5 @@
 import { useMemo, type CSSProperties } from 'react';
-import { splitFileReferenceMarkers } from '../../../core/referenceMarkup';
-import { splitNodeReferenceMarkers } from '../../../core/referenceMarkup';
+import { splitFileReferenceMarkers, splitNodeReferenceMarkers } from '../../../core/referenceMarkup';
 import type { NodeId } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import {
@@ -128,7 +127,7 @@ function splitFileReferenceMentions(
       if (segment.type === 'text') return segment;
       return {
         type: 'file',
-        file: attachmentsByRef.get(segment.ref) ?? fallbackInlineFile(segment.ref),
+        file: attachmentsByRef.get(segment.ref) ?? fallbackInlineFile(segment.ref, segment.entryKind),
       };
     }));
   }
@@ -187,12 +186,12 @@ function attachmentMapByRef(
   return byRef;
 }
 
-function fallbackInlineFile(ref: string): AgentInlineFileReference {
+function fallbackInlineFile(ref: string, entryKind: 'file' | 'directory'): AgentInlineFileReference {
   return {
     kind: 'file',
     name: ref || 'file',
     ref: ref || 'file',
-    mimeType: 'application/octet-stream',
+    mimeType: entryKind === 'directory' ? 'inode/directory' : 'application/octet-stream',
   };
 }
 

@@ -931,7 +931,7 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
         !search.hasExecutableRules
       ) {
         return nodeErrorResult(errorEnvelope('node_search', 'empty_search', 'Search has no executable terms.', {
-          instructions: 'Add at least one executable rule such as STRING_MATCH value:: text, HAS_TAG tag:: [[node:#tag^node%3A...]], DONE, or DONE_LAST_DAYS value:: 7.',
+          instructions: 'Add at least one executable rule such as STRING_MATCH value:: text, HAS_TAG tag:: [[node:#tag^...]], DONE, or DONE_LAST_DAYS value:: 7.',
           metrics: { durationMs: elapsed(started) },
         }));
       }

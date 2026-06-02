@@ -2,10 +2,10 @@ export const DATE_FIELD_VALUE_GUIDANCE =
   'Date field values use YYYY-MM-DD, YYYY-MM-DDTHH:mm, or start/end with "/" such as 2026-05-20/2026-05-24. Do not use ".." for date ranges.';
 
 export const NODE_REFERENCE_GUIDANCE =
-  'Node references use [[node:Display^node%3A...]] markers, or [[node:^node%3A...]] when only the id is known. Exact node ids are also accepted in tool parameters.';
+  'Node references use [[node:Display^...]] markers, or [[node:^...]] when only the id is known. Exact node ids are also accepted in tool parameters.';
 
 export const FINAL_ANSWER_NODE_REFERENCE_GUIDANCE =
-  'For final answers, never show %%node:id%% edit handles. Mention concrete nodes with [[node:Display^node%3A...]], or [[node:^node%3A...]] when only the id is known.';
+  'For final answers, never show %%node:id%% edit handles. Mention concrete nodes with [[node:Display^...]], or [[node:^...]] when only the id is known.';
 
 export const LIN_OUTLINE_CREATE_GUIDANCE = [
   'Outline format uses "- Title" lines with exactly 2 spaces per child level.',
@@ -33,13 +33,13 @@ export const SEARCH_QUERY_SHAPE_GUIDANCE = [
 export const SEARCH_OPERATOR_REFERENCE = [
   'Operator guide:',
   '- Text: STRING_MATCH value:: text; REGEXP_MATCH value:: regex.',
-  '- Tags: HAS_TAG tag:: [[node:#tag^node%3A...]].',
+  '- Tags: HAS_TAG tag:: [[node:#tag^...]].',
   '- Checkbox/completion state: TODO, DONE, NOT_DONE, DONE_LAST_DAYS value:: 7. Do not express done state as FIELD_IS field:: done value:: true.',
   '- Timestamps: CREATED_LAST_DAYS value:: 7, EDITED_LAST_DAYS value:: 7, DONE_LAST_DAYS value:: 7.',
-  '- User fields: FIELD_IS, FIELD_IS_NOT, FIELD_CONTAINS, LT, GT, IS_EMPTY, IS_NOT_EMPTY, HAS_FIELD, FIELD_IS_SET, FIELD_IS_NOT_SET, FIELD_IS_DEFINED, FIELD_IS_NOT_DEFINED. These use field:: [[node:Field^node%3A...]] except HAS_FIELD may omit field:: to match any field.',
-  '- Date fields: DATE_OVERLAPS uses field:: [[node:Date field^node%3A...]] plus value:: YYYY-MM-DD or start/end. OVERDUE checks unfinished nodes with overdue date field values and may include field:: to limit which date field.',
+  '- User fields: FIELD_IS, FIELD_IS_NOT, FIELD_CONTAINS, LT, GT, IS_EMPTY, IS_NOT_EMPTY, HAS_FIELD, FIELD_IS_SET, FIELD_IS_NOT_SET, FIELD_IS_DEFINED, FIELD_IS_NOT_DEFINED. These use field:: [[node:Field^...]] except HAS_FIELD may omit field:: to match any field.',
+  '- Date fields: DATE_OVERLAPS uses field:: [[node:Date field^...]] plus value:: YYYY-MM-DD or start/end. OVERDUE checks unfinished nodes with overdue date field values and may include field:: to limit which date field.',
   '- Date/calendar nodes: FOR_DATE and FOR_RELATIVE_DATE use value:: date to match date-related nodes; ON_DAY_NODE matches nodes under day nodes.',
-  '- Links and structure: LINKS_TO, CHILD_OF, DESCENDANT_OF, DESCENDANT_OF_WITH_REFS, and OWNED_BY use target:: [[node:Node^node%3A...]]. PARENTS_DESCENDANTS, GRANDPARENTS_DESCENDANTS, PARENTS_DESCENDANTS_WITH_REFS, and GRANDPARENTS_DESCENDANTS_WITH_REFS are scoped to the saved search node position. SIBLING_NAMED uses value:: sibling title. IN_LIBRARY needs no operand.',
+  '- Links and structure: LINKS_TO, CHILD_OF, DESCENDANT_OF, DESCENDANT_OF_WITH_REFS, and OWNED_BY use target:: [[node:Node^...]]. PARENTS_DESCENDANTS, GRANDPARENTS_DESCENDANTS, PARENTS_DESCENDANTS_WITH_REFS, and GRANDPARENTS_DESCENDANTS_WITH_REFS are scoped to the saved search node position. SIBLING_NAMED uses value:: sibling title. IN_LIBRARY needs no operand.',
   '- Type/media: IS_TYPE value:: node|tag|field|search|day|week|year|image|embed|code; HAS_MEDIA, HAS_AUDIO, HAS_VIDEO, and HAS_IMAGE need no operand.',
   '- EDITED_BY exists in the data model but is not executable yet. Do not use it.',
 ].join('\n');
@@ -47,8 +47,8 @@ export const SEARCH_OPERATOR_REFERENCE = [
 export const SEARCH_QUERY_EXAMPLES = [
   'Examples:',
   '- Completed recently: "- %%search%% Recently completed\\n  - DONE_LAST_DAYS\\n    - value:: 7"',
-  '- Due in a date range: "- %%search%% Due soon\\n  - DATE_OVERLAPS\\n    - field:: [[node:Due^node%3A...]]\\n    - value:: 2026-05-20/2026-05-24"',
-  '- Open tagged work: "- %%search%% Open tasks\\n  - AND\\n    - HAS_TAG\\n      - tag:: [[node:#task^node%3A...]]\\n    - FIELD_IS\\n      - field:: [[node:Status^node%3A...]]\\n      - value:: Open"',
+  '- Due in a date range: "- %%search%% Due soon\\n  - DATE_OVERLAPS\\n    - field:: [[node:Due^...]]\\n    - value:: 2026-05-20/2026-05-24"',
+  '- Open tagged work: "- %%search%% Open tasks\\n  - AND\\n    - HAS_TAG\\n      - tag:: [[node:#task^...]]\\n    - FIELD_IS\\n      - field:: [[node:Status^...]]\\n      - value:: Open"',
 ].join('\n');
 
 export const NODE_SEARCH_DESCRIPTION = [

@@ -82,6 +82,22 @@ describe('editor text patch', () => {
     expect(docToRichText(richTextToDoc(content))).toEqual(content);
   });
 
+  test('preserves visible text for inline reference atoms without a target', () => {
+    const doc = pmSchema.nodes.doc.create(null, pmSchema.nodes.paragraph.create(null, [
+      pmSchema.nodes.inlineReference.create({
+        targetKind: 'node',
+        targetNodeId: '',
+        displayName: 'Visible fallback',
+      }),
+    ]));
+
+    expect(docToRichText(doc)).toEqual({
+      text: 'Visible fallback',
+      marks: [],
+      inlineRefs: [],
+    });
+  });
+
   test('adds a text gap after inserted inline references', () => {
     const content = replaceRichTextRangeWithInlineRef(
       plainText('See @Alnext'),

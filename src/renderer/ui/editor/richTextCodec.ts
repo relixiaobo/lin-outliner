@@ -1,6 +1,7 @@
 import type { Mark, Node as PMNode, Schema } from 'prosemirror-model';
-import type { InlineRef, ReferenceTarget, RichText, TextMark, TextMarkKind } from '../../api/types';
+import type { InlineRef, RichText, TextMark, TextMarkKind } from '../../api/types';
 import { EMPTY_RICH_TEXT, inlineRefNodeId, referenceTargetsEqual } from '../../api/types';
+import { fallbackTextForInlineReferenceAttrs, inlineRefTargetAttrs, targetFromInlineReferenceAttrs } from './inlineReferenceAttrs';
 import { pmSchema } from './pmSchema';
 
 export const TRANSIENT_TEXT_SENTINEL = '\u200B';
@@ -146,7 +147,14 @@ export function docToRichText(doc: PMNode): RichText {
     }
     if (child.type.name === 'inlineReference') {
       const target = targetFromInlineReferenceAttrs(child.attrs);
-      if (!target) return;
+      if (!target) {
+        const fallbackText = fallbackTextForInlineReferenceAttrs(child.attrs);
+        if (fallbackText) {
+          textParts.push(fallbackText);
+          offset += fallbackText.length;
+        }
+        return;
+      }
       inlineRefs.push({
         offset,
         target,
@@ -301,34 +309,6 @@ export function replaceRichTextRangeWithInlineRef(
 function shouldAddInlineRefTrailingSpace(text: string, offset: number): boolean {
   const next = text[offset];
   return next === undefined || !/\s/u.test(next);
-}
-
-function inlineRefTargetAttrs(target: ReferenceTarget): Record<string, unknown> {
-  if (target.kind === 'node') {
-    return {
-      targetKind: 'node',
-      targetNodeId: target.nodeId,
-    };
-  }
-  return {
-    targetKind: 'local-file',
-    targetPath: target.path,
-    entryKind: target.entryKind,
-  };
-}
-
-function targetFromInlineReferenceAttrs(attrs: Record<string, unknown>): ReferenceTarget | null {
-  const targetKind = String(attrs.targetKind ?? 'node');
-  if (targetKind === 'node') {
-    const nodeId = String(attrs.targetNodeId ?? '');
-    return nodeId ? { kind: 'node', nodeId } : null;
-  }
-  if (targetKind === 'local-file') {
-    const path = String(attrs.targetPath ?? '');
-    const entryKind = attrs.entryKind === 'directory' ? 'directory' : 'file';
-    return path ? { kind: 'local-file', path, entryKind } : null;
-  }
-  return null;
 }
 
 export function replaceRichTextRangeWithText(

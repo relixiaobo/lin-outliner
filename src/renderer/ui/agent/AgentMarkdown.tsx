@@ -12,7 +12,7 @@ import { Lexer } from 'marked';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remend from 'remend';
-import { splitNodeReferenceMarkers } from '../../../core/referenceMarkup';
+import { basenameForPath, splitReferenceMarkers } from '../../../core/referenceMarkup';
 import type { NodeId } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { CheckIcon, CopyIcon, ICON_SIZE } from '../icons';
@@ -120,7 +120,7 @@ function transformNodeReferenceText(node: MarkdownAstNode): void {
   const nextChildren: MarkdownAstNode[] = [];
   for (const child of node.children) {
     if (child.type === 'text' && typeof child.value === 'string' && node.type !== 'link') {
-      nextChildren.push(...nodeReferenceMarkdownNodes(child.value));
+      nextChildren.push(...referenceMarkdownNodes(child.value));
       continue;
     }
     transformNodeReferenceText(child);
@@ -129,14 +129,20 @@ function transformNodeReferenceText(node: MarkdownAstNode): void {
   node.children = nextChildren;
 }
 
-function nodeReferenceMarkdownNodes(text: string): MarkdownAstNode[] {
-  return splitNodeReferenceMarkers(text).map((segment) => {
+function referenceMarkdownNodes(text: string): MarkdownAstNode[] {
+  return splitReferenceMarkers(text).map((segment) => {
     if (segment.type === 'text') return { type: 'text', value: segment.text };
+    if (segment.target.kind === 'local-file') {
+      return {
+        type: 'text',
+        value: segment.label || basenameForPath(segment.target.path) || segment.target.path,
+      };
+    }
     return {
       children: [{ type: 'text', value: segment.label }],
       title: null,
       type: 'link',
-      url: `#${NODE_REFERENCE_LINK_PREFIX}${encodeURIComponent(segment.nodeId)}`,
+      url: `#${NODE_REFERENCE_LINK_PREFIX}${encodeURIComponent(segment.target.nodeId)}`,
     };
   });
 }

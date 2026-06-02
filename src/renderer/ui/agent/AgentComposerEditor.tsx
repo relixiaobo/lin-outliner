@@ -810,7 +810,9 @@ function docToDraft(doc: PMNode): AgentComposerDraft {
       const entryKind = String(child.attrs.entryKind ?? '') === 'directory' || mimeType === 'inode/directory'
         ? 'directory'
         : 'file';
-      text += formatFileReferenceMarker(ref, path || ref, entryKind);
+      text += path
+        ? formatFileReferenceMarker(ref, path, entryKind)
+        : formatPathlessFileMention(name || ref);
       if (attachmentId) {
         fileRefs.push({
           attachmentId,
@@ -833,6 +835,10 @@ function docToDraft(doc: PMNode): AgentComposerDraft {
     nodeRefs: dedupeNodeRefs(nodeRefs),
     text,
   };
+}
+
+function formatPathlessFileMention(name: string): string {
+  return `@${name.replace(/\s+/gu, ' ').trim() || 'file'}`;
 }
 
 function dedupeNodeRefs(refs: AgentComposerNodeReference[]): AgentComposerNodeReference[] {

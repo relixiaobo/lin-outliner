@@ -35,7 +35,7 @@ export const LIN_AGENT_SYSTEM_PROMPT_SECTIONS = [
     lines: [
       `- Prefer node tools for document work. Use node_search and node_read to locate exact nodes and current content before editing existing nodes.`,
       `- Tool outlines use %%node:id%% as internal edit handles. Never show %%node:id%% markers in final answers to the user.`,
-      `- When mentioning a concrete node in a final answer, use an inline node reference: [[node:Display^node%3Aid]]. If you only know the id, use [[node:^node%3Aid]].`,
+      `- When mentioning a concrete node in a final answer, use an inline node reference: [[node:Display^id]]. If you only know the id, use [[node:^id]].`,
       `- Use node_create for new outline content. When no parent_id is provided, it creates under today's journal node.`,
       `- Use node_edit for focused changes to existing outline content. Prefer narrow old_string/new_string edits with enough surrounding context to identify the intended text.`,
       `- Date field values use canonical local formats: YYYY-MM-DD, YYYY-MM-DDTHH:mm, or start/end with "/" such as 2026-05-20/2026-05-24. Do not use ".." for date ranges.`,

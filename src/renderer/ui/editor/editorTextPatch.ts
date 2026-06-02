@@ -1,8 +1,9 @@
 import type { Mark, Node as PMNode, Slice } from 'prosemirror-model';
 import type { Transaction } from 'prosemirror-state';
 import { AddMarkStep, RemoveMarkStep, ReplaceStep } from 'prosemirror-transform';
-import type { InlineRef, ReferenceTarget, RichText, RichTextPatch, RichTextPatchOp, TextMarkKind } from '../../api/types';
+import type { InlineRef, RichText, RichTextPatch, RichTextPatchOp, TextMarkKind } from '../../api/types';
 import { docPosToTextOffset, docToRichText, TRANSIENT_TEXT_SENTINEL, richTextEquals } from './richTextCodec';
+import { fallbackTextForInlineReferenceAttrs, targetFromInlineReferenceAttrs } from './inlineReferenceAttrs';
 
 const MARK_KINDS = new Set<TextMarkKind>(['bold', 'italic', 'strike', 'code', 'highlight', 'headingMark', 'link']);
 
@@ -133,7 +134,11 @@ function collectNode(node: PMNode, content: RichText) {
 
   if (node.type.name === 'inlineReference') {
     const target = targetFromInlineReferenceAttrs(node.attrs);
-    if (!target) return;
+    if (!target) {
+      const fallbackText = fallbackTextForInlineReferenceAttrs(node.attrs);
+      if (fallbackText) content.text += fallbackText;
+      return;
+    }
     content.inlineRefs.push({
       offset: content.text.length,
       target,
@@ -151,20 +156,6 @@ function collectNode(node: PMNode, content: RichText) {
 
 function markKind(mark: Mark): TextMarkKind | undefined {
   return MARK_KINDS.has(mark.type.name as TextMarkKind) ? mark.type.name as TextMarkKind : undefined;
-}
-
-function targetFromInlineReferenceAttrs(attrs: Record<string, unknown>): ReferenceTarget | null {
-  const targetKind = String(attrs.targetKind ?? 'node');
-  if (targetKind === 'node') {
-    const nodeId = String(attrs.targetNodeId ?? '');
-    return nodeId ? { kind: 'node', nodeId } : null;
-  }
-  if (targetKind === 'local-file') {
-    const path = String(attrs.targetPath ?? '');
-    const entryKind = attrs.entryKind === 'directory' ? 'directory' : 'file';
-    return path ? { kind: 'local-file', path, entryKind } : null;
-  }
-  return null;
 }
 
 function markAttrs(mark: Mark): Record<string, string> | undefined {

@@ -356,11 +356,11 @@ Rules:
   `docs/spec/date-field-values.md`: `YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, or
   `start/end` with `/`, for example `2026-05-20/2026-05-24`. Tool prompts and
   search query operands must not teach `..` or other date range syntax.
-- Whole-line `[[node:Display^node%3A...]]` creates a reference node or reference field
+- Whole-line `[[node:Display^...]]` creates a reference node or reference field
   value.
-- Inline `[[node:Display^node%3A...]]` creates an inline reference inside node text or a
+- Inline `[[node:Display^...]]` creates an inline reference inside node text or a
   field value.
-- Date nodes are referenced by id with `[[node:Display^node%3A...]]`; date shortcut
+- Date nodes are referenced by id with `[[node:Display^...]]`; date shortcut
   syntax is not part of the model-facing outline contract yet.
 - `%%search%%` turns the node into a search node. In `node_create` this creates a
   saved search node; in `node_search` it is a temporary search node that is only
@@ -507,7 +507,7 @@ Field type inference:
 
 References:
 
-- `[[node:Display^node%3A...]]` requires the target id to exist and the target must not be in
+- `[[node:Display^...]]` requires the target id to exist and the target must not be in
   Trash.
 - Date references use normal node references to existing date node ids.
 - Search query operands use explicit node references or exact ids for `field::`,

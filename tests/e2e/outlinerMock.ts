@@ -107,9 +107,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         | { type: 'remove_mark'; from: number; to: number; markType: string }
       >;
     };
-    const inlineRefNodeId = (ref: RichText['inlineRefs'][number]) => (
-      ref.target.kind === 'node' ? ref.target.nodeId : null
-    );
+    const referenceTargetsEqual = (left: ReferenceTarget, right: ReferenceTarget) => {
+      if (left.kind !== right.kind) return false;
+      if (left.kind === 'node') return left.nodeId === (right as Extract<ReferenceTarget, { kind: 'node' }>).nodeId;
+      const localRight = right as Extract<ReferenceTarget, { kind: 'local-file' }>;
+      return left.path === localRight.path && left.entryKind === localRight.entryKind;
+    };
     const nodeInlineRef = (offset: number, nodeId: string, displayName?: string): RichText['inlineRefs'][number] => ({
       offset,
       target: { kind: 'node', nodeId },
@@ -450,7 +453,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const removedRefs = op.deletedInlineRefs ?? [];
           const removesRef = (ref: RichText['inlineRefs'][number]) => removedRefs.some((candidate) =>
             candidate.offset === ref.offset
-            && inlineRefNodeId(candidate) === inlineRefNodeId(ref)
+            && referenceTargetsEqual(candidate.target, ref.target)
             && (candidate.displayName === undefined || candidate.displayName === ref.displayName));
           const insertedLength = op.content.text.length;
           const delta = insertedLength - (to - from);

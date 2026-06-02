@@ -53,7 +53,6 @@ describe('agent attachments', () => {
       sizeBytes: 2048,
       path: '/tmp/lin/report.pdf',
       readPath: '/tmp/lin/report.pdf',
-      target: { kind: 'local-file', path: '/tmp/lin/report.pdf', entryKind: 'file' },
     }]);
   });
 
@@ -71,7 +70,6 @@ describe('agent attachments', () => {
       sizeBytes: 0,
       path: '/Users/me/Projects',
       readPath: '/Users/me/Projects',
-      target: { kind: 'local-file', path: '/Users/me/Projects', entryKind: 'directory' },
     });
   });
 });
