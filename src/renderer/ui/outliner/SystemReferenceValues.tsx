@@ -100,27 +100,37 @@ export function SystemReferenceValues(props: SystemReferenceValuesProps) {
     );
   }
 
+  // Reuse the exact value-column container the editable field values use
+  // (`field-value-outliner` + `field-value-node-preview`): `.field-value-cell` is
+  // a flex row, so the OutlinerView MUST sit inside this single full-width block
+  // child (`.field-value-cell > .field-value-outliner { flex: 1 1 auto }`) for its
+  // rows to stack top-to-bottom like every other outline. Dropping the rows
+  // straight into the flex cell makes each one a horizontal flex item (squished
+  // side-by-side). The rows themselves are the standard reference rows — same
+  // style as everywhere else, just read-only.
   return (
     <div className="field-value-cell">
-      <OutlinerView
-        panelId={props.panelId}
-        parentId={props.entryId}
-        rootId={props.entryId}
-        onRoot={props.onRoot}
-        depth={0}
-        index={index}
-        ui={props.ui}
-        uiRef={props.uiRef}
-        setUi={props.setUi}
-        run={props.run}
-        trigger={props.trigger}
-        setTrigger={props.setTrigger}
-        dragId={props.dragId}
-        setDragId={props.setDragId}
-        referencePath={[props.entryId]}
-        trailingDraft="none"
-        showViewToolbar={false}
-      />
+      <div className="field-value-outliner field-value-node-preview" data-field-value aria-readonly="true">
+        <OutlinerView
+          panelId={props.panelId}
+          parentId={props.entryId}
+          rootId={props.entryId}
+          onRoot={props.onRoot}
+          depth={0}
+          index={index}
+          ui={props.ui}
+          uiRef={props.uiRef}
+          setUi={props.setUi}
+          run={props.run}
+          trigger={props.trigger}
+          setTrigger={props.setTrigger}
+          dragId={props.dragId}
+          setDragId={props.setDragId}
+          referencePath={[props.entryId]}
+          trailingDraft="none"
+          showViewToolbar={false}
+        />
+      </div>
     </div>
   );
 }

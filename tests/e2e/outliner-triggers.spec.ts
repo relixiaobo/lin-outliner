@@ -1230,6 +1230,11 @@ test.describe('outliner trigger parity', () => {
     const valueCell = row(page, fieldId).locator('.field-value-cell');
     await expect(valueCell.locator('.row.reference-row')).toHaveCount(1);
     await expect(valueCell).toContainText('Daily Notes');
+    // Layout regression guard: the value rows sit inside the shared value-column
+    // outliner container (one full-width flex child of the cell), so they stack
+    // top-to-bottom like every outline — NOT as bare rows dropped straight into the
+    // flex `.field-value-cell`, which squished them side-by-side (vertical CJK).
+    await expect(valueCell.locator(':scope > .field-value-outliner .row.reference-row')).toHaveCount(1);
     // Read-only value set: no trailing draft to add another value.
     await expect(valueCell.locator('[data-trailing-parent-id]')).toHaveCount(0);
   });
