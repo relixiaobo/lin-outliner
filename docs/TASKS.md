@@ -33,6 +33,18 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 
 Ordered by priority; lower items may depend on higher ones.
 
+- **outliner-local-file-references** (P0) — `@file` / `@本机文件` as a first-class
+  local file/folder reference: the shared `LocalFileRef` / `FileReferenceValue`
+  model, one `[[file:<ref>]]` parser, editor chips, and the agent context
+  resource builder. **Foundation — do first:** it gates **lazy-like-global-launcher**
+  (P0; "Launcher capture depends on this plan") and shares its file-reference
+  model with **agent-composer-attachment-path-model** (P1). Raised P2→P0 so the
+  foundation no longer sits below its consumers. See
+  `docs/plans/outliner-local-file-references.md`.
+- **lazy-like-global-launcher** (P0) — global quick-capture launcher entry point;
+  its local-file capture consumes **outliner-local-file-references** above, so
+  settle that plan's core types/parser before building capture here. See
+  `docs/plans/lazy-like-global-launcher.md`.
 - **design-system-rollout** (P1) — staged migration to `docs/spec/design-system.md`.
   Phase 1 (token foundation + gated dark theme) landed (PR #55). Phases 2–4 landed
   in PR #57: CSS modularized into per-surface modules; components migrated to the

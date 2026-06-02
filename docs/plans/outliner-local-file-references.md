@@ -1,6 +1,6 @@
 ---
 status: draft
-priority: P2
+priority: P0
 owner: relixiaobo
 created: 2026-06-02
 updated: 2026-06-02
@@ -21,6 +21,12 @@ local file or folder. This is the shared foundation for:
 This plan owns the file reference model, parser, editor behavior, preview/open
 commands, and agent context resource contract. The launcher plan consumes this
 capability instead of defining its own local file format.
+
+Priority is **P0** because it is a foundation, not a leaf: it gates
+`lazy-like-global-launcher` (P0 — "Launcher capture depends on this plan") and
+shares its file-reference model with `agent-composer-attachment-path-model` (P1).
+A foundation must not sit below its highest-priority consumer, so this plan leads
+that group and should ship (or at least settle its core types and parser) first.
 
 ## Current Baseline
 
@@ -46,6 +52,12 @@ Existing code already proves most of the interaction model:
 
 ## Product Decisions
 
+- **A file reference is an inline reference, never a node.** It lives inside rich
+  text (the existing `inlineRefs` channel), like an inline node reference. It is
+  NOT a `reference` node (the structural reference-field mechanism) and NOT a
+  block node on `BlockNodeRow` (the way `image` nodes are). This keeps it
+  lightweight and is why it unifies with the inline-reference system below, not
+  with the node/structural-reference system.
 - Selecting a local file creates a durable reference, not an import.
 - File contents are not copied into Lin storage by default.
 - File contents do not enter normal node text, ordinary search, or default agent
@@ -63,66 +75,93 @@ Existing code already proves most of the interaction model:
 
 ## Data Model
 
-Use one canonical `LocalFileRef` per referenced local resource.
+This plan introduces ONE reference value used across the project:
+`ReferenceTarget` — the pure identity of "what is referenced". It is reused by
+inline refs, the agent resource table, and (later) the image/media node source.
+A file reference is just `ReferenceTarget` of kind `local-file`; it is inline,
+never a node, never a parallel array.
 
 ```ts
-export interface LocalFileRef {
-  id: string;
-  path: string;
-  name: string;
-  entryKind: 'file' | 'directory';
-  mimeType?: string;
-  sizeBytes?: number;
-  modifiedAt?: string;
-  contentHash?: string;
-  createdAt: string;
-  lastVerifiedAt?: string;
-}
+export type ReferenceTarget =
+  | { kind: 'node';       nodeId: NodeId }     // backlink-counted; resolved by node tools
+  | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' }; // canonical path = identity
+// Only the kinds with a real consumer are defined. The union + prefix grammar
+// both extend WITHOUT breaking existing refs, so new kinds are added with their
+// consumer (no speculative reserved surface).
 ```
 
-Use one `FileReferenceValue` anywhere that resource is referenced.
+An inline reference is a `ReferenceTarget` at a text offset plus display
+decoration. `InlineRef` replaces the old node-only shape (`targetNodeId` →
+`target`), so every kind shares ONE array, one Loro mark/codec path, one
+offset/cursor model, one reverse scan. There is **no** parallel `fileRefs` array.
 
 ```ts
-export interface FileReferenceValue {
-  kind: 'local-file';
-  fileRefId: string;
-  displayName?: string;
-  pathSnapshot?: string;
-  nameSnapshot?: string;
-  mimeType?: string;
-  sizeBytes?: number;
-  modifiedAt?: string;
-  contentHash?: string;
-}
-```
-
-Inline rich text references add an offset container around that same value:
-
-```ts
-export interface InlineFileRef {
+export interface InlineRef {
   offset: number;
-  value: FileReferenceValue;
+  target: ReferenceTarget;
+  displayName?: string;        // chip label (basename / node title by default)
+  // Optional display snapshots (e.g. local-file broken-state rendering without a
+  // stat); never identity.
+  mimeType?: string;
+  sizeBytes?: number;
 }
 
 export interface RichText {
   text: string;
   marks: TextMark[];
-  inlineRefs: InlineRef[];
-  fileRefs?: InlineFileRef[];
+  inlineRefs: InlineRef[];   // any ReferenceTarget kind — one channel
 }
 ```
 
-Containers differ, but the value is the same:
+Per-kind handling:
 
-- Outliner `@file`: `RichText.fileRefs[]`.
-- Ordinary field: field value rich text containing `[[file:<ref>]]`.
-- User-opened system field: system projection containing `[[file:<ref>]]`.
-- Capture sidecar: `node.capture.source.original.file` or
-  `node.capture.payloadRefs[].file`.
+- `node` — backlink-counted (`nodeLinksTo` keys off `target.kind === 'node'`),
+  resolved by node tools, rendered as a node chip. NOT a resource (never in the
+  agent resource table).
+- `local-file` — resource-bearing: serializable to the agent resource table,
+  rendered as a file chip.
+
+Identity & dedup:
+
+- `local-file`: the **canonical path** (realpath-normalized) — dedup is a path
+  comparison; no id, no registry, no macOS bookmark.
+- `node`: the `nodeId`.
+
+Future kinds, added WITH their consumer (one-line union + parser extension, no
+ref migration):
+
+- `asset` — when **Copy into Lin** (durable import) lands, or when the
+  image/media node source converges onto `ReferenceTarget` (asset-subsystem).
+- `remote-url` — if inline link/bookmark chips land (embed-strategy). A plain
+  text hyperlink is already a `TextMark`, so this is NOT needed for hyperlinks.
+
+Metadata cache (optional, non-authoritative): a rebuildable path-keyed cache may
+hold icon / thumbnail / mime / size for `local-file` rendering, like the existing
+`localFileSearchCache`. Perf only — the `target` on the ref is the source of
+truth; dropping the cache costs only a re-stat.
+
+Not folded in: a text hyperlink stays a `TextMark { type: 'link', attrs.href }`
+(a range style, not a `ReferenceTarget`). The image/media node source
+(`ImageNode.assetId` / `mediaUrl`) is left as-is this round; `ReferenceTarget` is
+designed so it CAN converge there later (asset-subsystem / media-url territory).
+
+Migration: a legacy `InlineRef` with no `target` decodes as
+`{ target: { kind: 'node', nodeId: <old targetNodeId> } }`, so existing
+documents read unchanged.
+
+Where a file reference appears — always the same inline mechanism:
+
+- Outliner `@file`: a `local-file` `InlineRef` in the row's `RichText.inlineRefs`.
+- Ordinary field: the field value is a node; its `RichText.inlineRefs` carries the
+  `local-file` ref. Files do NOT use the structural `reference` field type /
+  `ReferenceNode` — that mechanism stays node-only.
+- User-opened system field: the projected rich text carries the same inline ref.
+- Launcher capture: capture's source/payload rich-text fields carry the same
+  inline ref (same `target`). (Detail owned by the launcher plan.)
 
 ## Parser Contract
 
-There must be one parser for `[[file:<ref>]]`, shared by:
+There must be one parser for every reference marker, shared by:
 
 - Agent composer messages.
 - Outliner rich text.
@@ -130,15 +169,35 @@ There must be one parser for `[[file:<ref>]]`, shared by:
 - User-visible system-field projections.
 - Launcher capture outline import/export.
 
-Evolve `src/core/agentFileReferenceMarkup.ts` into a shared
-`src/core/fileReferenceMarkup.ts` module. Do not add an outliner-only parser.
+Merge `agentFileReferenceMarkup.ts` and `nodeReferenceMarkup.ts` into ONE
+`src/core/referenceMarkup.ts`: a single `[[…]]` scan that branches by the kind
+prefix, so the grammars cannot fight over overlapping matches. Do not add an
+outliner-only parser, and do not keep two `[[…]]` scanners over the same text.
+
+**Full-prefix grammar** — every kind is `[[kind:label^value]]`:
+
+```text
+[[node:label^nodeId]]   [[file:label^path]]
+```
+
+- `label` is human-readable decoration; `value` is the `ReferenceTarget`
+  identity. `label` defaults to basename / node title.
+- The `value` segment is percent-encoded so paths survive the `[[…]]`
+  delimiters (a path may legally contain `]`, `^`, `|`, newlines); the parser
+  decodes it back.
+- Only `node:` and `file:` are recognized; any other prefix is left as plain
+  text — this keeps a future `[[asset:…]]` / `[[url:…]]` forward-safe to add
+  without reserving dead syntax now.
+- **Migration:** node markers move from the old bare `[[label^nodeId]]` to
+  `[[node:label^nodeId]]`. The parser keeps accepting the bare form as `node`
+  (back-compat for old agent transcripts / exported text) but only emits the
+  prefixed form.
 
 Rules:
 
-- `[[file:<ref>]]` maps to a `FileReferenceValue` when parser/import context can
-  resolve `<ref>` to a `LocalFileRef`.
-- If `<ref>` cannot be resolved, preserve the marker as plain text. Do not invent
-  a path.
+- A marker maps to an `InlineRef` whose `target` is the decoded
+  `ReferenceTarget`. `file` values are self-contained (no lookup); `node`
+  resolves its id against the document.
 - Parser behavior must be identical in node content, field values, and system
   field projections.
 - Normal outline export may omit hidden system fields, but when the user chooses
@@ -148,38 +207,49 @@ Example:
 
 ```text
 - Review design notes #file
-  - Source:: [[file:design-notes.pdf]]
-  - sys:captureOriginal:: [[file:design-notes.pdf]]
+  - Source:: [[file:design-notes.pdf^/Users/me/Documents/design-notes.pdf]]
+  - Related:: [[node:Q2 Roadmap^node-9f3a]]
 ```
 
-Both field values resolve to the same `FileReferenceValue`.
+Both resolve to `InlineRef`s carrying the matching `ReferenceTarget`.
 
 ## Agent Context Contract
 
 Agent context should not contain two competing file formats. Everything
 normalizes to:
 
-1. Visible text marker: `[[file:<ref>]]`
+1. Visible text marker: `[[file:label^path]]`. The `^path` segment is optional —
+   in a transient agent turn the label-only `[[file:label]]` form is resolved
+   against the resource table below (the file is read via a turn-local path
+   anyway), so the marker stays short for the model. One parser handles both
+   (caret optional).
 2. Hidden resource table: `<user-attachments>...</user-attachments>`
 
-The current `serializeAgentAttachmentMarker` contract in
-`src/core/agentAttachments.ts` should become a shared resource-context builder
-that accepts:
+**Ownership (decided — Option A).** This plan (the foundation) owns the **pure
+serializer** over the unified value:
 
-- Composer attachments.
-- Outliner `LocalFileRef`s.
-- Capture original file refs.
-- Capture payload file refs.
-- Durable assets or imported copies.
+```ts
+// resource-bearing targets → one <user-attachments> item; `node` → null
+referenceTargetToResourceItem(target: ReferenceTarget, meta): AgentResourceItem | null
+```
 
-Before context construction, sources can differ:
+It maps a `local-file` target to one resource-table item; a `node` target
+returns `null` (nodes go through node tools, not the resource table). Future
+resource kinds (`asset`, …) map the same way. It is a pure function — no disk
+staging, no IPC, no base64.
 
-- Composer attachment: transient attachment id and selected/uploaded file.
-- Outliner/capture: durable `LocalFileRef` and `FileReferenceValue`.
-- Asset/imported copy: durable asset id.
+`agent-composer-attachment-path-model` owns the **production** side: turning a
+dropped / pasted / picked file into a resource-bearing target (disk staging via
+`lin:stage-attachment`, image inline-base64, size limits), then consuming this
+serializer. Shared-interface-first: this plan lands `ReferenceTarget` + the
+serializer; the composer plan rebases onto it.
 
-After context construction, they must normalize to the same resource table item
-shape. The agent sees one marker format and one resource table format.
+Sources differ before construction but normalize to one resource item:
+
+- Composer attachment → `local-file` target (staged path) [+ inline image bytes].
+- Outliner / capture → the `local-file` target already on the inline ref.
+
+The agent always sees one marker grammar and one resource table.
 
 Example agent-visible message:
 
@@ -195,17 +265,21 @@ Example hidden resource table:
   "version": 1,
   "attachments": [
     {
-      "kind": "file",
       "ref": "design-notes.pdf",
+      "target": { "kind": "local-file", "path": "/Users/me/Documents/design-notes.pdf" },
       "name": "design-notes.pdf",
       "mimeType": "application/pdf",
       "sizeBytes": 123456,
-      "path": "/turn-local/path/design-notes.pdf"
+      "readPath": "/turn-local/path/design-notes.pdf"
     }
   ]
 }
 </user-attachments>
 ```
+
+`target` is the `ReferenceTarget` identity; `readPath` is the turn-local staged
+path the agent's tools actually read (supplied by the composer/runtime
+production side, not this plan).
 
 Reading semantics:
 
@@ -223,10 +297,9 @@ Editor insertion:
   candidates.
 - Candidates use recent files when the query is empty and search results when
   the query is non-empty.
-- Selecting a candidate registers or reuses a durable `LocalFileRef`, inserts an
-  inline file chip, and stores a `FileReferenceValue`.
-- Drag/drop and file picker insertion should go through the same registration
-  path.
+- Selecting a candidate inserts an inline file chip and stores a `local-file`
+  `InlineRef` (target carrying the canonical path) in the row's `inlineRefs`.
+- Drag/drop and file picker insertion should go through the same insertion path.
 
 Chip actions:
 
@@ -247,44 +320,67 @@ Rendering:
 
 ## Storage And Lifecycle
 
-- Store `LocalFileRef` in document-level structured metadata so references
-  survive app restarts and do not depend on `localFileSearchCache`.
-- Store path snapshots in `FileReferenceValue` for stale/moved-file detection,
-  but use `fileRefId` as identity.
-- Do not delete `LocalFileRef` when a single chip is removed. Track references
-  across node content, fields, and system fields; clean up only true orphans.
-- For local files, default mode is reference-only. Attachment/import mode is
-  explicit and should create an asset/import record while preserving the
-  original `LocalFileRef`.
+- The reference lives entirely on the `local-file` `InlineRef` (target path +
+  display snapshots), so it survives app restarts with the document — no separate
+  identity record and no dependency on `localFileSearchCache`.
+- Identity is the canonical path. There is no reference-count/GC to maintain:
+  removing a chip removes that one inline ref; nothing else points at the file.
+- Resolution / lifecycle (no bookmark):
+  - Open / preview / reveal resolve the path directly.
+  - A path that no longer resolves renders as a **broken** ref. The user can
+    Relink (pick a new file → rewrite this ref's path; each reference is
+    independent), Reveal, or Copy/Import.
+  - For true durability against move/delete, the user chooses **Copy into Lin**,
+    which copies the bytes into the asset store; the chip then points at that
+    asset instead of an external path.
+- Default mode is reference-only. Attachment/import mode is explicit and creates
+  an asset record (a future `asset` `InlineRef`); reference-only refs are never
+  silently copied.
 
 ## Implementation Sequence
 
-1. Rename/extract `src/core/agentFileReferenceMarkup.ts` into shared
-   `src/core/fileReferenceMarkup.ts`; update agent imports.
-2. Add `LocalFileRef`, `FileReferenceValue`, and `InlineFileRef` core types.
-3. Add document persistence for `LocalFileRef` and `RichText.fileRefs` in
-   `src/core/loroDocument.ts`, projections, search, patching, and rich text
-   codec code.
+1. Add `ReferenceTarget` to `src/core/types.ts`; change `InlineRef` from the
+   node-only shape to `{ offset; target: ReferenceTarget; displayName?; … }`.
+   Legacy `targetNodeId` decodes to `target: { kind: 'node', nodeId }`.
+2. Merge `src/core/agentFileReferenceMarkup.ts` + `nodeReferenceMarkup.ts` into
+   one `src/core/referenceMarkup.ts` (single `[[…]]` scan, prefix-branched):
+   full-prefix grammar `[[kind:label^value]]`, value percent-encoded; emit `node`
+   + `file` (any other prefix → plain text); still parse the bare legacy node
+   form. Update agent + outliner imports.
+3. Extend the EXISTING inline-ref Loro mark/codec in `src/core/loroDocument.ts`
+   (`encodeRichText` / `richTextFromDelta`) to carry the `target` on the same
+   mark — no second mark type, no parallel array. Thread `target` through
+   projection, search (`nodeLinksTo` keys off `target.kind === 'node'`), and
+   patching.
 4. Extract local file IPC wrappers into a shared typed renderer API.
 5. Add outliner `@file` candidates and chip insertion in row editor, title
    editor, trailing input, and field editor surfaces.
 6. Extend outline parser/import/export to use the shared file marker parser.
-7. Extract `serializeAgentAttachmentMarker` into a shared resource-context
-   builder that normalizes composer attachments, outliner refs, capture refs,
-   and assets.
+7. Add the pure `referenceTargetToResourceItem` serializer (foundation,
+   Option A); the `agent-composer-attachment-path-model` plan rebases its
+   production pipeline onto it.
 8. Add file chip commands: Preview, Open, Reveal, Relink, Ask AI with File,
-   Import Text, Copy into Lin.
-9. Add maintenance for missing/changed/orphaned file refs.
+   Import Text. (**Copy into Lin** is deferred — it introduces the `asset` kind,
+   so it lands with that follow-up.)
+9. Add broken/changed-ref handling (missing path → broken state + Relink); no
+   orphan GC is needed since there is no shared identity record.
 
 ## Tests
 
 - Parser round-trip:
-  - Node content with `[[file:<ref>]]`.
-  - Ordinary field with `[[file:<ref>]]`.
-  - User-opened system field with `[[file:<ref>]]`.
-  - Unresolved marker preserved as plain text.
+  - `[[file:label^path]]` in node content, ordinary field, and user-opened
+    system field.
+  - `[[node:label^nodeId]]` round-trips; the legacy bare `[[label^nodeId]]` form
+    still parses as a `node` target (back-compat).
+  - An unrecognized prefix (e.g. `[[asset:…]]`) is left as plain text.
+  - A path containing `]` / `^` / `|` / newline round-trips via
+    percent-encoding.
+  - A malformed marker is preserved as plain text; a well-formed marker to a
+    missing path parses fine and renders as a broken ref.
 - Rich text persistence:
   - Inline file refs survive save/reopen.
+  - A legacy `InlineRef` (flat `targetNodeId`) decodes to
+    `target = { kind: 'node', nodeId }`.
   - Text edits preserve offsets correctly.
   - Copy/paste/export/import round-trips.
 - Agent context:
@@ -302,7 +398,8 @@ Rendering:
 
 Launcher capture depends on this plan for all local-file behavior:
 
-- Local file capture creates or reuses `LocalFileRef`.
-- `node.capture.source.original.file` stores a `FileReferenceValue`.
-- Visible capture fields use `[[file:<ref>]]` when showing local source fields.
-- Agent commands launched from a capture use the same resource-context builder.
+- Local file capture stores the file path on a `local-file` `InlineRef` (not a
+  structural node, not a separate value type).
+- Visible capture fields use `[[file:label^path]]` when showing local source
+  fields.
+- Agent commands launched from a capture use the same serializer.
