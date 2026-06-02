@@ -201,14 +201,15 @@
 /* Used in the provider sheet header to mark the active provider. */
 .settings-provider-badge {
   flex: 0 0 auto;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--fill-3);
   color: var(--text-primary);
   font-size: var(--font-ui-2xs);
   font-weight: 600;
   letter-spacing: 0.02em;
   line-height: 1;
-  padding: 3px 8px;
+  /* 3px has no spacing-ladder token (the ladder is 2/4/6…); the 8px is --space-4. */
+  padding: 3px var(--space-4);
   text-transform: uppercase;
 }
 
