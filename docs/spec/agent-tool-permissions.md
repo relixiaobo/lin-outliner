@@ -1,0 +1,198 @@
+# Agent Tool Permissions
+
+The single, runtime-owned policy that decides whether an agent tool call is
+allowed, must ask the user, or is denied. The model lives in TypeScript (the
+prompt never owns permissions). This document is the **authority** for the policy
+model; `agent-tool-design.md` defines the tools it governs, and `agent-skills.md`
+defines the skill-level inputs (permission modes, pre-approved tools) that feed
+in here.
+
+Original design + rationale: `docs/plans/archive/agent-tool-permissions.md`
+(shipped in #60). Non-blocking follow-ups not yet implemented are tracked in
+`docs/plans/agent-tool-permissions-hardening.md`; the **Known divergences**
+section at the end records where current behavior differs from that end-state.
+
+## Decision model
+
+- Three decisions: **`allow`**, **`ask`** (suspend and request user approval),
+  **`deny`**. Types in `src/main/agentToolPermissionRules.ts`
+  (`GlobalToolPermissionDecision`).
+- Every governed operation maps to an **action kind** (`AgentToolActionKind`, ~34
+  kinds — e.g. `file.write.workspace`, `shell.network.write`,
+  `external.message.send`, `agent.permission.modify`, `payment.purchase`).
+- Each action kind resolves to a **`ToolActionDescriptor`** carrying its
+  `defaultDecision`, `reversible`, `externalEffect`, `highConsequence`,
+  `classifierAutoAllowEligible`, and optional `platformHardBlock` / `command` /
+  `capabilities`. Descriptors are the product-authored source of truth; the
+  global config can only narrow/loosen within what the descriptor and the
+  fail-closed rules permit.
+
+## Evaluation pipeline
+
+Entry point: `agentRuntime.ts` `beforeToolCall` is the only call site driving the
+pipeline. Core evaluation is `evaluateAgentToolPermission`
+(`src/main/agentPermissions.ts`), in strict precedence:
+
+1. **Platform hard blocks** (descriptors with `platformHardBlock: true`) are
+   caught **before** any global rule — they can never be allow-ruled away.
+2. **`deny` rules** (configured or descriptor-default).
+3. **`ask`** → routed to the ask resolver (below).
+4. **`allow`**.
+
+For a compound bash command, every segment is classified and the result is the
+**most restrictive** across segments (`deny` > `ask` > `allow`, then by risk,
+then by source).
+
+## Platform hard blocks
+
+Evaluated first; sourced from descriptors and the bash hard-deny rules
+(`BASH_HARD_DENY_RULES`):
+
+- **Host destruction** — recursive root/home/workspace `rm -rf`, `mkfs` /
+  `diskutil erase`, raw `dd of=/dev/disk`, `shutdown` / `reboot`, `chmod`/`chown
+  -R /`.
+- **Remote code execution / obfuscation** — `curl … | sh`, `base64 -d | sh`,
+  `eval "$…"`.
+- **Sensitive-data exfiltration** — a command that both mentions a sensitive path
+  and writes to the network (see Redlines).
+- **Persistence / credential / git-internal / permission-config writes** —
+  writes to `.bashrc`/`.zshrc`/`.profile`/crontab/LaunchAgents/systemd,
+  `.git/{hooks,config,refs,objects}`, or the agent's own
+  `agent-tool-permissions/agent-permissions/agent-providers/agent-secrets.json`.
+- **Unknown / ambiguous shell** — dynamic construction (backticks, `$( )`,
+  `eval`, base64 pipes), non-static `bash -c`, or an unrecognized command head →
+  `shell.unknown`.
+- **Path access outside the allowed area** when the run has not opted in →
+  `path_outside_workspace`; sensitive-path writes via file tools →
+  `file.write.sensitive_local_path`.
+- **`agent.permission.modify` and `payment.purchase`** are in the
+  never-allow-ruled set. (Guardrails only — no tool surface currently *produces*
+  these kinds; see Known divergences.)
+
+## Bash classifier
+
+`deriveBashActionDescriptors` (`agentPermissions.ts`):
+
+- Whole-command scans first (hard-deny rules, workspace delete, exfiltration,
+  persistence write), plus flags: `dangerouslyDisableSandbox` →
+  `shell.sandbox_override`; `run_in_background` → `shell.background_process`;
+  sensitive-path mention → `file.read.sensitive_local_path` (ask).
+- **Segmentation** (`parseShellSegments`): returns nothing (→ unknown-shell hard
+  block) on dynamic construction; expands static `bash -c "…"`; splits on `;`,
+  `|`, `||`, `&&` with quote-awareness; strips `env` / `VAR=` prefixes.
+- **Per-segment** (`classifyShellSegment`): maps each segment to an action kind —
+  destructive cleanup, `rm`, `find -exec`/`-delete`, `git push` / `gh` mutation,
+  dependency install, deploy/publish, network-write / outward-facing, db-migration
+  / project script, arbitrary-code prefix, `sed -i`, read/search; unrecognized
+  head → unknown-shell hard block.
+- Descriptors are aggregated **most-restrictive** (`resolveGlobalToolPermission­
+  Decision`).
+
+## Ask resolution
+
+`resolveAgentPermissionAsk` (`src/main/agentPermissionAskResolver.ts`), in order:
+
+1. Aborted run → `block`.
+2. No descriptor, or an **explicitly configured `ask`** → `needs_user` (a
+   configured ask is never relaxed by the classifier).
+3. **Safe-allowlist fast path** → `allow`, gated by `isSafeAutoAllowDescriptor`
+   (tool in `SAFE_AUTO_ALLOW_TOOL_NAMES`, `!externalEffect && !highConsequence`,
+   scope ∈ {allowed file area, none}).
+4. **`classifierAutoAllowEligible` gate**: `false` → `needs_user`. Structural
+   veto even when eligible: any `externalEffect`, `highConsequence`, sensitive
+   local path, or an `unknown` action kind → `needs_user`.
+5. Otherwise run the LLM classifier (`agentPermissionClassifier.ts`, temperature
+   0, forced `classify_permission_result` tool) → `allow` / `block` /
+   unavailable.
+6. **Interactive vs unattended fail-safe**: a run is *interactive* iff an
+   approval handler is attached. On `needs_user` or classifier-unavailable:
+   interactive → suspend and request approval (`requestToolApproval`); unattended
+   → structured `permission_denied` (no approval channel).
+
+## Sensitive-data redlines
+
+- `SENSITIVE_PATH_PATTERNS` — `id_rsa`/`id_dsa`/`id_ecdsa`/`id_ed25519`,
+  `.pem`/`.key`/`.p12`/`.pfx`, `.ssh`/`.gnupg`/`.aws`/`.azure`/`gh` config,
+  Keychains, `.npmrc`/`.pypirc`/`.netrc`/`.env`.
+- `looksLikeNetworkWrite` — `curl`/`wget` with data, `scp`/`sftp`/`rsync`/
+  `rclone`, `aws s3 cp`, `gsutil cp`, `nc`/`netcat`.
+- A command that mentions a sensitive path **and** writes to the network is a
+  `sensitive_data_exfiltration` hard block.
+
+## Global permission store
+
+`src/main/agentToolPermissionStore.ts` — `agent-tool-permissions.json` under
+`userData`, in the grouped form `{ permissions: { allow, ask, deny } }`.
+
+- **Fail-closed parse**: `parseGlobalToolPermissionSettings` /
+  `parseGlobalToolPermissionRule` validate every rule string
+  (`Kind(value)` syntax; `Capability(...)` is deny-only and limited to
+  `SUPPORTED_AGENT_TOOL_CAPABILITIES` = `agent_spawn` only; `Tool(...)` allow only
+  for safe tools; `Bash(...)` allow rejects arbitrary-code / agent-spawn
+  prefixes). An invalid rule becomes a **diagnostic, never a rule** — evaluation
+  falls back to the descriptor default.
+- **Atomic + locked-down writes**: parent `chmod 0700`, temp-write + `rename`,
+  file `chmod 0600`. Diagnostics are surfaced to the renderer.
+
+## Events
+
+Two event families are persisted today (the runtime emits both):
+
+- **Policy decision** — `tool.permission.checked` / `tool.permission.resolved`
+  (`src/core/agentEventLog.ts`), request-id space `permission-<uuid>`.
+- **UI surface** — `approval.requested` / `approval.resolved` plus transient
+  approval IPC, request-id space bare `<uuid>`.
+
+The denied tool result is `{ ok: false, error: { code: 'permission_denied',
+recoverable, details: { reason } } }`.
+
+## UI surfaces
+
+- **Composer approval card** (`AgentComposer.tsx` `AgentApprovalCard`) — *Approve
+  once* (`once`), *Always allow* (`always`, only when an always-allow rule is
+  offered), *Deny once*. No "always deny", no countdown. Detail panel shows
+  action / target / why / permission-kind + the always-allow rule string.
+- **Permission center** — the **Permissions** category in `AgentSettingsView.tsx`
+  renders the common action-kind rows with allow/ask toggles
+  (`agent.subagent.spawn` is shown non-allowable), reads/writes via
+  `agentGetToolPermissionSettings`, and surfaces store diagnostics. There is no
+  in-app raw-JSON editor (advanced users edit the file directly).
+
+## Inputs from other subsystems
+
+- **Skill permission modes + pre-approved tools** (`agent-skills.md`):
+  `restricted` mode and `preapprovedToolRules` are *inputs* to
+  `evaluateAgentToolPermission`; their authoring/lifecycle is the skills domain —
+  cross-reference, do not restate here.
+- **Skill-shell second path** — `executeAgentSkillShellCommand`
+  (`src/main/agentSkillShell.ts`) is a live, divergent permission path: it calls
+  `evaluateAgentToolPermission` but on `ask` goes **straight to the approval
+  handler**, bypassing `resolveAgentPermissionAsk` (no safe-allowlist, no
+  classifier, no unattended fail-safe), and it honors session allow rules. Treat
+  it as a second resolver until unified.
+
+## Known divergences from the plan (shipped-state honesty)
+
+Current behavior differs from the original plan / hardening end-state in these
+ways (tracked in `agent-tool-permissions-hardening.md`):
+
+1. **Classifier auto-allow is effectively dead in production.** Every shipped
+   descriptor sets `classifierAutoAllowEligible: false`, so the LLM classifier is
+   reachable only in tests; in the app the only live auto-allow is the
+   safe-allowlist, and every other `ask` becomes `needs_user`.
+2. **`sessionApproved` short-circuit still live** — a session-approved tool
+   returns `allow` *before* configured-ask/global-ask resolution, silently
+   relaxing a configured `ask`.
+3. **Exfil redline gaps** — `looksLikeNetworkWrite` misses interpreter sinks
+   (`python -c`, `node -e`, perl/ruby) and `ssh host 'cat >> loot'`, so some
+   sensitive-path exfiltration downgrades from hard-block to `ask`.
+4. **Dual event vocabulary unreconciled** — the two families above use different
+   request-id spaces and cannot be joined into one decision record.
+5. **Denied-reason literals diverge from the plan** — code uses `hard_block` /
+   `user` / `runtime` (plan: `platform_hard_block` / `user_denied`), and
+   `recoverable` is computed as `reason !== 'hard_block'`, so a durable
+   `configured_deny` is marked recoverable.
+6. **No symlink/realpath resolution** — `resolvePermissionPath` is lexical only.
+7. **`external.message.send` / `payment.purchase` / `agent.permission.modify`**
+   exist as action kinds + forbidden-rule guardrails but have no descriptor
+   resolver (no tool surface produces them yet).
