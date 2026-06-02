@@ -1,5 +1,5 @@
 ---
-status: planned
+status: draft
 priority: P0
 owner: relixiaobo
 created: 2026-06-02

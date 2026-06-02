@@ -67,7 +67,8 @@ bun run app:build
 
 Everything that's intentional about how this code is shaped lives under
 [`docs/spec/`](docs/spec/README.md). Start there. Plans for work that hasn't
-landed yet live under [`docs/plans/`](docs/plans/README.md).
+landed yet live under [`docs/plans/`](docs/plans/); the active-plan index is on
+[`docs/TASKS.md`](docs/TASKS.md).
 
 The most useful entry points:
 

@@ -5,7 +5,8 @@ Outliner. Use this file first, then jump to the smallest document that owns
 the question you are answering.
 
 `spec/` describes **current intended behavior** of code that exists. Forward-
-looking plans live in [`../plans/`](../plans/README.md).
+looking plans live in [`../plans/`](../plans/) (indexed on
+[`../TASKS.md`](../TASKS.md)).
 
 ## Reading Order
 
@@ -69,7 +70,7 @@ For agent work:
   nodex parity evidence; then update `outliner-parity-matrix.md` too.
 - Keep durable agent architecture in `agent-event-log-rendering.md`. Other
   agent files should link back to it instead of restating the model.
-- Forward-looking work goes to [`../plans/`](../plans/README.md), not here.
+- Forward-looking work goes to [`../plans/`](../plans/), not here.
 - Remove or merge stale docs when a document becomes only a duplicate summary.
 
 ## Validation

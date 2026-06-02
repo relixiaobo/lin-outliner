@@ -114,10 +114,17 @@ persistence are all implemented in TypeScript.
 
 ## Parallel Agent Development
 
-Three independent clones run side-by-side under `~/Coding/`, sharing one
+Five independent clones run side-by-side under `~/Coding/`, sharing one
 GitHub origin (`relixiaobo/lin-outliner`). Synchronization happens through
 PRs to `main`, never via local cross-clone operations — treat the clones as
 separate machines that share a remote.
+
+**Governing principle.** The binding constraint is the PM's review/decision
+bandwidth, not agent build capacity. Every rule below either makes the PM's
+decisions cheaper, avoids wasting that bandwidth, or removes mechanical
+friction — and **nothing may add a second serial chokepoint upstream of the
+PM**. Planning fans out (one dev agent per requirement, in parallel); the
+main agent appears only at the end gate, never to frame work up front.
 
 ```
 ~/Coding/
@@ -130,16 +137,28 @@ separate machines that share a remote.
 
 ### Roles (determined by working directory)
 
+- **PM (human)** — owns demand (what to build), judgment (approve plans,
+  GO/NO-GO), and flow (what's in flight, what merges next). Does not write or
+  line-review code.
+- **Dev agents** (`cc`, `cc-2`, `codex`, `anti` — all equal) — plan *what* and
+  *how* directly with the PM, then build. `codex` is a different model
+  (Codex/GPT); the rest are Claude Code. No agent has a special role beyond its
+  clone.
+- **Main agent** (`lin-outliner/`) — the **end-stage integration gatekeeper**:
+  runs the review gate, merges, sequences, keeps `main` clean. It does **not**
+  frame work up front (that would serialize the front); it reads the board to
+  keep integration awareness.
+
 An agent's role is fixed by the clone it runs in. Check your working
 directory at the start of a session and act accordingly.
 
 | Clone | Agent | Role |
 |-------|-------|------|
-| `lin-outliner/` | main agent (Claude Code) | Plan, draft task PRs, review, merge, push `main`, visual verification. Owns `docs/TASKS.md`. |
-| `lin-outliner-cc/` | Claude Code dev agent | Build features on `cc/<topic>` branches; open Draft PRs. |
-| `lin-outliner-cc-2/` | Claude Code dev agent | Build features on `cc-2/<topic>` branches; open Draft PRs. |
-| `lin-outliner-codex/` | Codex dev agent | Build features on `codex/<topic>` branches; open Draft PRs. |
-| `lin-outliner-anti/` | Claude Code dev agent | Build features on `anti/<topic>` branches; open Draft PRs. |
+| `lin-outliner/` | main agent (Claude Code) | End-stage gatekeeper: review gate, merge, sequence, push `main`, visual verification. Owns `docs/TASKS.md` + `CHANGELOG.md`. Does not frame work up front. |
+| `lin-outliner-cc/` | Claude Code dev agent | Plan with PM, then build on `cc/<topic>` branches; open Draft PRs. |
+| `lin-outliner-cc-2/` | Claude Code dev agent | Plan with PM, then build on `cc-2/<topic>` branches; open Draft PRs. |
+| `lin-outliner-codex/` | Codex dev agent | Plan with PM, then build on `codex/<topic>` branches; open Draft PRs. |
+| `lin-outliner-anti/` | Claude Code dev agent | Plan with PM, then build on `anti/<topic>` branches; open Draft PRs. |
 
 **Dev agents (cc / cc-2 / codex / anti) must NOT:**
 
@@ -152,26 +171,89 @@ Only the main agent in `lin-outliner/` merges to `main`. When a dev agent's
 change is ready, mark the PR ready and stop — the main agent takes it from
 there.
 
-### Workflow
+### Workflow (planning is parallel; main is at the end)
 
-1. **Plan (main agent).** Pick the next item from `docs/TASKS.md` / a plan in
-   `docs/plans/`. Either create a feature branch + Draft PR whose body is a
-   self-contained task spec for a dev agent, or hand the topic to a dev agent
-   to self-initiate.
-2. **Build (dev agent).** On `cc/<topic>`, `cc-2/<topic>`, `codex/<topic>`, or
-   `anti/<topic>`, implement the change, run `bun run typecheck` + relevant tests, commit,
-   push, and open a Draft PR (or mark an assigned one ready). The PR body is
-   the contract.
-3. **Review + merge (main agent).** Review the PR (typecheck, tests, build,
-   code + design-system review, visual check for UI), merge to `main`, update
-   `docs/TASKS.md`, and add a `CHANGELOG.md` entry under `[Unreleased]`
-   (Added / Changed / Fixed / Internal as appropriate, referencing the PR).
-4. **Resync.** After a merge, dev agents `git fetch && git rebase origin/main`
+Per requirement, run independently and in parallel — one dev agent per
+requirement, so the PM can drive several at once:
+
+1. **Plan — PM ↔ dev agent.** The PM discusses *what* and *how* directly with
+   the dev. The dev first reads `docs/TASKS.md` + `docs/spec/` to self-check for
+   collisions and fit, then proposes.
+2. **Approve — PM.** The dev presents its plan; the PM approves before any code
+   is written (the control point). On approval the dev opens a **Draft PR as its
+   claim** (title = topic, first body line = the file/area scope) so siblings
+   see it. If the change touches a shared/protocol file, decide *here* to land
+   an interface-only PR first, or order it behind another branch.
+3. **Build — dev agent.** On `cc/<topic>` / `cc-2/<topic>` / `codex/<topic>` /
+   `anti/<topic>`, implement the approved plan; run `bun run typecheck` +
+   relevant tests; commit, push, mark the PR ready. The PR body is the contract.
+   On any **directional / contract / product** question, **stop and ask the PM —
+   never guess and proceed**; only trivial local details (a name, a minor impl
+   choice) are decided in place and noted.
+4. **Gate — main agent.** Run the review gate (below), integration-check against
+   the real system, merge to `main`, update `docs/TASKS.md`, add a `CHANGELOG.md`
+   entry under `[Unreleased]` (Added / Changed / Fixed / Internal), and own merge
+   ordering.
+5. **Resync.** After a merge, dev agents `git fetch && git rebase origin/main`
    on their active branches.
 
-Branch naming: `cc/<topic>`, `cc-2/<topic>`, and `anti/<topic>` (Claude Code),
-`codex/<topic>` (Codex). Topic should map to a plan in `docs/plans/` whenever possible. One
-branch per plan; close it when merged. Avoid long-lived catch-all branches.
+Only step 4 is main's, and the review itself parallelizes (cloud review);
+**merge to `main` stays serial** (one branch). No serial step precedes work.
+
+### Two lanes
+
+- **Plan-track** (substantial / touches protocol / architectural): full flow;
+  the design is recorded in `docs/plans/<topic>.md` (the contract).
+- **Fast-track** (small / emergent / low blast radius): PM ↔ dev settles it
+  inline, no plan file; straight to build → merge → `CHANGELOG` (`Internal`
+  category for throwaway/experimental).
+
+Both lanes surface on `docs/TASKS.md` (the live board) and land in `CHANGELOG`.
+
+### Review gate (`/code-review`)
+
+Run by the main agent at the gate. Findings are ephemeral (PR comment or
+`tmp/`), never a committed doc; only the outcome (the merge) is recorded.
+
+| PR shape | Gate |
+|---|---|
+| Small PR | `/code-review` (medium) |
+| Large PR / touches protocol surface | `/code-review ultra` |
+| Touches agent permissions / security | add `/security-review` |
+| UI change | visual verification (light + dark) |
+
+`/code-review` works on a local branch/diff — no GitHub PR required. It is
+billed and user-triggered.
+
+### Concurrency & WIP discipline
+
+- **Cap the review queue, not the agent count.** At most **2 significant
+  changes** (plan-track) awaiting the PM's review at once; small/background work
+  is uncapped. ~4 dev agents is fine — the disease is unmerged pile-up, not
+  headcount.
+- **Small batches.** One agent owns one PR; single-purpose; merge within hours.
+- **Shared interface first.** Protocol/shared files (the infrastructure-
+  ownership list below) land as a human-led interface-only PR first; then agents
+  build on top.
+- **Claim before building.** Reading the board only works if intentions are
+  *written* to it: at plan approval the dev opens a Draft PR (scope in the body)
+  *before* coding. Siblings scan open PRs (`gh pr list`) + `TASKS.md` at plan
+  time — that is the collision radar. The claim carries scope (overlap is judged
+  by files), auto-releases on merge/close, and is a radar, not a lock (the PM's
+  approval + shared-interface-first stay the backstop).
+
+### Communication protocol
+
+- **PM ↔ dev:** parallel; plan + approve. Bias is **plan-first,
+  escalate-don't-guess** — never build on an unconfirmed directional assumption.
+- **Main:** appears only at the end gate.
+- **Agent ↔ agent:** through artifacts (the contract / PR / `TASKS.md`), never
+  through the PM relaying. The PM is not a message bus.
+
+Branch naming: `cc/<topic>`, `cc-2/<topic>`, `anti/<topic>` (Claude Code),
+`codex/<topic>` (Codex). Topic should map to a plan in `docs/plans/` whenever
+possible. One branch per plan; close it when merged. Avoid long-lived catch-all
+branches.
 
 ### userData isolation (required)
 
@@ -224,7 +306,7 @@ agent rebase before continuing:
 - `bun.lock`, `package.json` — dependencies
 - `tsconfig.json`, `electron.vite.config.ts`, `vite.config.ts` — build
 - `AGENTS.md` (and its `CLAUDE.md` / `AGENT.md` symlinks) — these notes
-- `docs/spec/README.md`, `docs/plans/README.md` — doc indexes
+- `docs/spec/README.md` — spec index
 - `src/core/commands.ts`, `src/core/types.ts` — protocol surface
 - `docs/TASKS.md` — main-agent-owned; dev agents never edit it
 - `CHANGELOG.md` — main-agent-owned; the main agent adds an `[Unreleased]`
@@ -273,14 +355,43 @@ adding new root-level research folders.
   a branch already has substantial uncommitted changes.
 - Do not commit files under `tmp/`.
 
-## Plans and Specs
+## Document system
 
-- `docs/spec/` — describes current intended behavior. Read these to
-  understand the code. See `docs/spec/README.md` for the map.
-- `docs/plans/` — describes forward-looking work. Pick from
-  `docs/plans/README.md` when starting new work. Each plan has a YAML
-  frontmatter `status` field; update it as work progresses.
-- `docs/spec/agent-progress.md` is the living checklist for agent
-  integration. Update it when an agent milestone lands or a priority
-  changes. Keep it short and milestone-oriented; detailed contracts go
-  in `docs/spec/agent-tool-design.md`.
+Two purposes — collaboration and recording. One document answers one question;
+one question lives in one document; every document has a lifecycle.
+
+| Document | Answers | Lifecycle |
+|---|---|---|
+| `AGENTS.md` | How do we work together? | stable |
+| `docs/TASKS.md` | Who's doing what now? (+ the active-plan index) | updated continuously / on merge |
+| `docs/plans/<topic>.md` | How exactly is this change done? | ship → fold into `spec/` → `docs/plans/archive/` |
+| `docs/spec/*` | How does it work now? | rewritten, never deleted |
+| `CHANGELOG.md` | What changed, when? | append-only (`Internal` for throwaway) |
+| `README.md` | What is this project? | as needed |
+| module `README.md` | How does this one module work? | with the module |
+
+- `docs/spec/` — current intended behavior. Read these to understand the code;
+  `docs/spec/README.md` is the map. When behavior changes, update the spec in
+  the SAME change.
+- `docs/plans/` — forward-looking work; the active-plan index lives on
+  `docs/TASKS.md`. Each plan has a YAML `status`; update it as work progresses.
+  Terminal plans move to `docs/plans/archive/`; we never delete a plan.
+- `docs/spec/agent-progress.md` is the living checklist for agent integration.
+  Keep it short and milestone-oriented; detailed contracts go in
+  `docs/spec/agent-tool-design.md`.
+
+**Plan status vocabulary** (frontmatter `status`):
+
+- `draft` — written down, not started.
+- `in-progress` — work has begun; track open subtasks inline.
+- `done` — shipped; its substance lives in `spec/`, the plan stays as history.
+- `superseded` — replaced by a different approach that shipped; kept to record
+  the path not taken.
+- `shelved` — explicitly decided not to do for now; keep the rationale.
+- `meta` — a standing reference (e.g. a decision catalog), not a unit of work.
+
+**Plan authoring.** Keep each plan single-file. Lead with **Goal** /
+**Non-goals**, then **Design**, then **Open questions**; sub-checklists last.
+When a plan is implemented, move its **Design** into the relevant `spec/`
+document, flip status to `done`, and move it to `archive/`. A plan is not a
+place for daily progress notes — those go in commit messages.
