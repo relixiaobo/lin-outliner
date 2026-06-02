@@ -121,10 +121,11 @@ test.describe('cursor affordances', () => {
     expect(listCursors.historyArrow).toBe('default');
     expect(listCursors.configure).toBe('default');
 
-    // Clicking a provider row opens its config sheet; probe its action buttons.
-    await settings.getByRole('button', { name: 'Anthropic, Add key' }).click();
-    const sheet = page.getByRole('dialog');
-    await expect(sheet).toBeVisible();
+    // The per-provider config is its own native window (?surface=provider-config);
+    // probe its action buttons there (clicking a row opens that window, not a modal).
+    await page.goto('/?surface=provider-config&provider=anthropic&mode=configure');
+    const sheet = page.locator('.provider-config-window');
+    await expect(sheet.getByRole('button', { name: 'Save', exact: true })).toBeVisible();
     const sheetCursors = await page.evaluate(() => {
       const cursor = (selector: string) => {
         const element = document.querySelector(selector);

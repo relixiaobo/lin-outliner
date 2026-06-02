@@ -45,6 +45,9 @@ type E2EWindow = Window & {
     invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
     onAgentEvent: (listener: (event: unknown) => void) => () => void;
     onDocumentEvent: (listener: (event: unknown) => void) => () => void;
+    openProviderConfig?: (params: { providerId: string; mode: string }) => Promise<void>;
+    closeProviderConfig?: () => Promise<void>;
+    notifySettingsChanged?: () => Promise<void>;
     previewLocalFile?: (options: { id: string }) => Promise<{ thumbnailDataUrl: string | null }>;
     recentLocalFiles?: (options?: { limit?: number }) => Promise<{
       files: Array<{
@@ -1052,6 +1055,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 
     win.__LIN_E2E__ = { calls, projection, clipboardText: () => clipboardText, emitAgentEvent, emitDocumentEvent };
     win.lin = {
+      // The per-provider config opens as its own native window in the app; in tests
+      // it is reached by navigating to ?surface=provider-config directly, so this
+      // just records the open request (so the list can assert it) and no-ops close.
+      openProviderConfig: async (params: { providerId: string; mode: string }) => {
+        calls.push({ cmd: 'open_provider_config', args: clone(params) });
+      },
+      closeProviderConfig: async () => {},
+      notifySettingsChanged: async () => {},
       recentLocalFiles: async () => ({
         files: [{
           entryKind: 'file',

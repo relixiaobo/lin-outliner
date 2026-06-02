@@ -1,21 +1,20 @@
-import { useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { HideIcon, ICON_SIZE, LoaderIcon, OpenIcon, PasswordIcon, ShowIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
-import { Dialog } from '../primitives/Dialog';
 import { TextInputControl } from '../primitives/TextInputControl';
 
-// The draft committed by the sheet's Save. `apiKey` empty means "leave the saved
-// key unchanged"; a non-empty value replaces it. `modelId` is only entered for
-// custom providers (a catalog provider's model is chosen in the composer, not
-// here); for catalog providers the parent supplies a sensible default on commit.
-export interface ProviderSheetDraft {
+// The draft committed by Save. `apiKey` empty means "leave the saved key
+// unchanged"; a non-empty value replaces it. `modelId` is only entered for custom
+// providers (a catalog provider's model is chosen in the composer, not here); the
+// host supplies a sensible default on commit for catalog providers.
+export interface ProviderConfigDraft {
   providerId: string;
   modelId: string;
   baseUrl: string;
   apiKey: string;
 }
 
-export interface ProviderSheetValidation {
+export interface ProviderConfigValidation {
   success: boolean;
   message: string;
 }
@@ -26,7 +25,7 @@ interface AuthNote {
   docsLabel?: string;
 }
 
-interface SettingsProviderSheetProps {
+interface ProviderConfigFormProps {
   mode: 'configure' | 'custom';
   providerName: string;
   description: string;
@@ -39,28 +38,26 @@ interface SettingsProviderSheetProps {
   /** Managed-credential providers (e.g. AWS Bedrock) show a note instead of a key field. */
   authNote?: AuthNote;
   docsUrl?: string;
-  onValidate: (draft: ProviderSheetDraft) => Promise<ProviderSheetValidation>;
-  onSubmit: (draft: ProviderSheetDraft) => Promise<void>;
+  titleId: string;
+  onValidate: (draft: ProviderConfigDraft) => Promise<ProviderConfigValidation>;
+  onSubmit: (draft: ProviderConfigDraft) => Promise<void>;
   onSetActive?: () => void;
   onRemoveProvider?: () => void;
   onOpenExternal: (url: string) => void;
   onClose: () => void;
-  restoreFocus?: () => HTMLElement | null;
 }
 
-type SheetStatus = 'idle' | 'validating' | 'success' | 'error' | 'saving';
+type FormStatus = 'idle' | 'validating' | 'success' | 'error' | 'saving';
 
-// The per-provider configuration SHEET. Clicking a provider in the inset list (or
-// "Configure" in its row menu) opens this focused sheet — the macOS System
-// Settings idiom where a list row pushes its detail into an overlay rather than a
-// permanent side pane. It hosts only the CONNECTION: the credential (API key /
-// managed note) and the base URL, in a single inset card — model & reasoning are
-// chosen in the composer, not here, so the sheet stays minimal. Custom providers
-// additionally need a provider id and model id (there is no catalog to default
-// from). Built on the shared Dialog at the dialog elevation tier (level-2, B10).
-// Selection / focus stay neutral (B3/B4); Save is a single neutral-strong primary,
-// never a system-blue accent (B4); validation status uses status colour only (B4).
-export function SettingsProviderSheet({
+// The per-provider connection form. Rendered as the whole content of the native
+// provider-config window (a modal child of Settings — the macOS idiom where a list
+// row opens a real dialog, not an in-renderer overlay). It hosts only the
+// CONNECTION: the credential (API key / managed note) and the base URL, in a single
+// inset card — model & reasoning are chosen in the composer, so it stays minimal.
+// Custom providers also enter a provider id + model id (no catalog to default
+// from). Selection / focus stay neutral (B3/B4); Save is a single neutral-strong
+// primary, never a system-blue accent (B4); validation uses status colour only (B4).
+export function ProviderConfigForm({
   mode,
   providerName,
   description,
@@ -72,15 +69,14 @@ export function SettingsProviderSheet({
   isActive,
   authNote,
   docsUrl,
+  titleId,
   onValidate,
   onSubmit,
   onSetActive,
   onRemoveProvider,
   onOpenExternal,
   onClose,
-  restoreFocus,
-}: SettingsProviderSheetProps) {
-  const titleId = useId();
+}: ProviderConfigFormProps) {
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
   const validationToken = useRef(0);
   const isCustom = mode === 'custom';
@@ -90,24 +86,27 @@ export function SettingsProviderSheet({
   const [baseUrl, setBaseUrl] = useState(initial.baseUrl);
   const [apiKey, setApiKey] = useState('');
   const [reveal, setReveal] = useState(false);
-  const [status, setStatus] = useState<SheetStatus>('idle');
+  const [status, setStatus] = useState<FormStatus>('idle');
   const [message, setMessage] = useState('');
+
+  // The window owns focus, so autofocus the first field on mount (the Dialog used
+  // to do this for the old in-renderer sheet).
+  useEffect(() => {
+    firstFieldRef.current?.focus();
+  }, []);
 
   const validating = status === 'validating';
   const saving = status === 'saving';
   const busy = validating || saving;
 
   const trimmedProviderId = providerId.trim();
-  // Managed-credential providers carry no key; custom and catalog key providers do.
   const showKeyField = !authNote;
-  const draft: ProviderSheetDraft = {
+  const draft: ProviderConfigDraft = {
     providerId: isCustom ? trimmedProviderId : initial.providerId,
     modelId: modelId.trim(),
     baseUrl: baseUrl.trim(),
     apiKey: apiKey.trim(),
   };
-  // A custom provider needs its own model id (no catalog default); a catalog
-  // provider does not (the composer picks the model).
   const canSave = Boolean(draft.providerId) && (isCustom ? Boolean(draft.modelId) : true) && !busy;
   const canValidate = Boolean(draft.providerId) && !busy;
 
@@ -157,15 +156,7 @@ export function SettingsProviderSheet({
   }
 
   return (
-    <Dialog
-      backdropClassName="settings-sheet-backdrop"
-      initialFocus={() => firstFieldRef.current}
-      labelledBy={titleId}
-      onBackdropMouseDown={busy ? undefined : onClose}
-      onEscapeKeyDown={busy ? undefined : onClose}
-      restoreFocus={restoreFocus}
-      surfaceClassName="settings-provider-sheet"
-    >
+    <>
       <header className="settings-sheet-head">
         <span aria-hidden="true" className="settings-sheet-avatar">{avatar}</span>
         <div className="settings-sheet-head-text">
@@ -193,8 +184,6 @@ export function SettingsProviderSheet({
             ) : null}
           </div>
         ) : (
-          // One inset card holds the whole connection — there is very little to
-          // enter, so a single block reads cleaner than several.
           <>
             <div className="inset-card" role="group">
               {isCustom ? (
@@ -210,29 +199,31 @@ export function SettingsProviderSheet({
                   />
                 </label>
               ) : null}
-              <div className="settings-sheet-row">
-                <div className="settings-sheet-key">
-                  <PasswordIcon size={ICON_SIZE.menu} />
-                  <TextInputControl
-                    className="settings-sheet-row-input"
-                    label="API key"
-                    onChange={(event) => { setApiKey(event.target.value); clearResult(); }}
-                    placeholder={hasSavedKey ? 'Saved (encrypted) — paste to replace' : 'Paste API key'}
-                    ref={isCustom ? undefined : firstFieldRef}
-                    type={reveal ? 'text' : 'password'}
-                    value={apiKey}
-                  />
-                  <button
-                    aria-label={reveal ? 'Hide key' : 'Show key'}
-                    aria-pressed={reveal}
-                    className="settings-sheet-reveal"
-                    onClick={() => setReveal((current) => !current)}
-                    type="button"
-                  >
-                    {reveal ? <HideIcon size={ICON_SIZE.menu} /> : <ShowIcon size={ICON_SIZE.menu} />}
-                  </button>
+              {showKeyField ? (
+                <div className="settings-sheet-row">
+                  <div className="settings-sheet-key">
+                    <PasswordIcon size={ICON_SIZE.menu} />
+                    <TextInputControl
+                      className="settings-sheet-row-input"
+                      label="API key"
+                      onChange={(event) => { setApiKey(event.target.value); clearResult(); }}
+                      placeholder={hasSavedKey ? 'Saved (encrypted) — paste to replace' : 'Paste API key'}
+                      ref={isCustom ? undefined : firstFieldRef}
+                      type={reveal ? 'text' : 'password'}
+                      value={apiKey}
+                    />
+                    <button
+                      aria-label={reveal ? 'Hide key' : 'Show key'}
+                      aria-pressed={reveal}
+                      className="settings-sheet-reveal"
+                      onClick={() => setReveal((current) => !current)}
+                      type="button"
+                    >
+                      {reveal ? <HideIcon size={ICON_SIZE.menu} /> : <ShowIcon size={ICON_SIZE.menu} />}
+                    </button>
+                  </div>
                 </div>
-              </div>
+              ) : null}
               {isCustom ? (
                 <label className="settings-sheet-row">
                   <span className="settings-sheet-row-label">Model</span>
@@ -307,6 +298,6 @@ export function SettingsProviderSheet({
           </ButtonControl>
         </div>
       </div>
-    </Dialog>
+    </>
   );
 }
