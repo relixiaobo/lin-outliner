@@ -1,6 +1,6 @@
-# Lin Outliner Architecture
+# Tenon Architecture
 
-Lin Outliner is a clean rebuild of the nodex outliner experience.
+Tenon is a clean rebuild of the nodex outliner experience.
 
 The repository does not carry migrated nodex product code. nodex remains an
 external behavior reference only.

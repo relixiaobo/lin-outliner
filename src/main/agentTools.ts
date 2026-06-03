@@ -835,7 +835,7 @@ function createWebFetchWindow(): BrowserWindow {
     width: 1280,
     height: 900,
     show: false,
-    title: 'Lin Outliner Web Fetch',
+    title: 'Tenon Web Fetch',
     webPreferences: {
       session: electronSession.defaultSession,
       contextIsolation: true,
@@ -959,7 +959,7 @@ function createWebSearchWindow(): BrowserWindow {
     width: 1280,
     height: 900,
     show: false,
-    title: 'Lin Outliner Web Search',
+    title: 'Tenon Web Search',
     webPreferences: {
       session: electronSession.fromPartition(WEB_SEARCH_PARTITION),
       contextIsolation: true,

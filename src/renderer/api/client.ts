@@ -39,7 +39,7 @@ import type {
 
 function command<T>(name: string, args?: Record<string, unknown>): Promise<T> {
   if (window.lin) return window.lin.invoke<T>(name, args);
-  return Promise.reject(new Error('Lin desktop bridge is unavailable'));
+  return Promise.reject(new Error('Tenon desktop bridge is unavailable'));
 }
 
 export const api = {

@@ -56,7 +56,9 @@ every change MUST follow them. Full detail lives in `docs/spec/` (see
   cross-agent change, never a drive-by.
 - **A5 — userData isolation per clone.** Resolve `userData` via
   `ELECTRON_USER_DATA_DIR` / the clone-specific `dev:*` script (see Dev
-  environment); never point a dev run at the installed prod app's data.
+  environment); packaged Tenon uses appId `dev.linlab.tenon` and
+  `~/Library/Application Support/Tenon/`. Never point a dev run at the installed
+  prod app's data.
 - **A6 — Spec ⇄ code stay in sync.** `docs/spec/` describes *current intended*
   behavior. When behavior changes, update the spec in the SAME change; when a
   plan ships, fold its design into the spec. Guard tests track the real DOM/CSS,
@@ -281,8 +283,8 @@ and user-triggered.
 
 ### userData isolation (required)
 
-All clones share `appId` `com.linoutliner.desktop`, so without an override they
-would write to the same `~/Library/Application Support/Lin Outliner/` and clobber
+All clones share packaged `appId` `dev.linlab.tenon`, so without an override they
+would write to the same `~/Library/Application Support/Tenon/` and clobber
 each other. `src/main/main.ts` resolves `userData` early, before any service
 reads it:
 
@@ -294,6 +296,9 @@ reads it:
 Use the clone's `dev:*` script so each stays isolated: `dev:main` →
 `$HOME/.lin-outliner-main`, `dev:cc` → `…-cc`, `dev:cc-2`, `dev:codex`,
 `dev:anti`. Never point a dev run at the installed prod app's data.
+The dev-only `.lin-outliner-*` directory names intentionally stay as
+compatibility names for now; renaming them would touch every clone's `dev:*`
+script and is a separate change.
 
 ### Packaging
 

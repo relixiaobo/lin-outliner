@@ -61,7 +61,12 @@ const IMAGE_FILE_FILTERS = [
   { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'bmp', 'heic'] },
 ];
 
+const APP_NAME = 'Tenon';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const APP_ICON_PNG_PATH = app.isPackaged
+  ? join(process.resourcesPath, 'icon.png')
+  : join(__dirname, '../../build/icon.png');
+app.setName(APP_NAME);
 const documentService = new DocumentService();
 const assetService = new AssetService(() => join(app.getPath('userData'), 'assets'));
 let mainWindow: BrowserWindow | null = null;
@@ -330,8 +335,9 @@ function buildApplicationMenu(): Electron.Menu {
 function createWindow() {
   const windowState = loadWindowState();
   const material = windowMaterialKind(process.platform);
+  const icon = nativeImage.createFromPath(APP_ICON_PNG_PATH);
   mainWindow = new BrowserWindow({
-    title: 'Lin Outliner',
+    title: APP_NAME,
     width: windowState.bounds?.width ?? 1120,
     height: windowState.bounds?.height ?? 820,
     ...(windowState.bounds ? { x: windowState.bounds.x, y: windowState.bounds.y } : {}),
@@ -346,6 +352,7 @@ function createWindow() {
     backgroundColor: material ? '#00000000' : prePaintBackgroundColor(),
     ...(material === 'vibrancy' ? { vibrancy: 'under-window' as const } : {}),
     ...(material === 'mica' ? { backgroundMaterial: 'mica' as const } : {}),
+    ...(icon.isEmpty() ? {} : { icon }),
     // Standard window: hiddenInset keeps the native traffic lights (the OS draws
     // and manages close/minimize/zoom — focus graying, ⌥-zoom, real fullscreen —
     // exactly like Raycast, which repositions standardWindowButton rather than
@@ -423,13 +430,17 @@ function openSettingsWindow() {
   // strip — the renderer provides the top drag region. Security defaults (A3) are
   // unchanged.
   settingsWindow = new BrowserWindow({
-    title: 'Settings',
+    title: `${APP_NAME} Settings`,
     width: 760,
     height: 620,
     minWidth: 560,
     minHeight: 480,
     show: false,
     backgroundColor: prePaintBackgroundColor(),
+    ...(() => {
+      const icon = nativeImage.createFromPath(APP_ICON_PNG_PATH);
+      return icon.isEmpty() ? {} : { icon };
+    })(),
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: MAC_TRAFFIC_LIGHT_POSITION,
     webPreferences: {
@@ -1352,6 +1363,13 @@ if (!app.requestSingleInstanceLock()) {
   }
 
   app.whenReady().then(() => {
+    const icon = nativeImage.createFromPath(APP_ICON_PNG_PATH);
+    if (process.platform === 'darwin' && !icon.isEmpty()) app.dock?.setIcon(icon);
+    app.setAboutPanelOptions({
+      applicationName: APP_NAME,
+      applicationVersion: app.getVersion(),
+      ...(icon.isEmpty() ? {} : { iconPath: APP_ICON_PNG_PATH }),
+    });
     protocol.handle(ASSET_URL_SCHEME, (request) => {
       const id = new URL(request.url).hostname;
       return assetService.serve(id);

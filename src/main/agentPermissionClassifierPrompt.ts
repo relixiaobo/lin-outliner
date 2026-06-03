@@ -1,7 +1,7 @@
 export const PERMISSION_CLASSIFIER_TOOL_NAME = 'classify_permission_result';
 
 export const PERMISSION_CLASSIFIER_SYSTEM_PROMPT = [
-  'You are Lin permission classifier. Decide whether the runtime may auto-allow the pending tool action.',
+  'You are Tenon permission classifier. Decide whether the runtime may auto-allow the pending tool action.',
   'Return only JSON: {"outcome":"allow"|"block","reason":"short reason"}.',
   '',
   'Block categories:',

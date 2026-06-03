@@ -79,6 +79,7 @@ describe('Core', () => {
     const state = core.state();
     const root = state.nodes[core.projection().rootId]!;
 
+    expect(root.content.text).toBe('Tenon');
     expect(root.children).toEqual([
       DAILY_NOTES_ID,
       LIBRARY_ID,
@@ -129,6 +130,7 @@ describe('Core', () => {
     expect(state.nodes[WORKSPACE_ID]!.children).not.toContain(PROJECTS_ID);
     expect(state.nodes[WORKSPACE_ID]!.children).not.toContain(RESOURCES_ID);
     expect(state.nodes[LIBRARY_ID]!.children).toContain(RESOURCES_ID);
+    expect(state.nodes[WORKSPACE_ID]!.content.text).toBe('Tenon');
   });
 
   test('creates and moves nodes', () => {

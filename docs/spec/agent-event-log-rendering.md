@@ -1,11 +1,11 @@
 # Agent Event-Sourced Runtime
 
-This document is the canonical architecture for Lin Outliner's current agent
+This document is the canonical architecture for Tenon's current agent
 data, debug, persistence, and rendering model.
 
 ## Decision
 
-Lin uses an event-sourced agent runtime.
+Tenon uses an event-sourced agent runtime.
 
 The single durable product source of truth is the **Agent Session Event Store**:
 
@@ -41,9 +41,9 @@ Use pi-mono for:
 - abort
 - message replacement during live execution
 
-Do not reimplement pi-ai or pi-agent-core behavior in Lin.
+Do not reimplement pi-ai or pi-agent-core behavior in Tenon.
 
-Lin owns:
+Tenon owns:
 
 - product event log
 - local tool gateway
@@ -60,15 +60,15 @@ Lin owns:
 ```txt
 command
   -> Electron AgentRuntime
-  -> append Lin event(s)
+  -> append Tenon event(s)
   -> derive pi-mono messages
   -> run pi-agent-core Agent
-  -> normalize pi-mono events into Lin event(s)
-  -> append Lin event(s)
+  -> normalize pi-mono events into Tenon event(s)
+  -> append Tenon event(s)
   -> derive render/debug/checkpoint projections
 ```
 
-pi-mono runtime state participates in producing new events. It is not Lin's
+pi-mono runtime state participates in producing new events. It is not Tenon's
 persisted product state.
 
 ## Implementation Snapshot
@@ -76,7 +76,7 @@ persisted product state.
 The current main branch implements this architecture through these modules:
 
 - `src/main/agentRuntime.ts`: owns session lifecycle, pi-agent-core execution,
-  Lin event append, projection emission, attachment persistence, debug capture,
+  Tenon event append, projection emission, attachment persistence, debug capture,
   and checkpoint writes.
 - `src/main/agentEventStore.ts`: owns the filesystem event store, payload files,
   write queues, rebuildable indexes, checkpoint replay, and checkpoint retention.
@@ -95,7 +95,7 @@ The old mutable chat snapshot store is no longer part of the runtime.
 
 ### Previous lin-outliner snapshot store
 
-Before the event-sourced runtime, Lin stored agent sessions in one mutable
+Before the event-sourced runtime, Tenon stored agent sessions in one mutable
 snapshot file:
 
 ```txt
@@ -143,13 +143,13 @@ Keep from nodex:
 
 Do not copy:
 
-- IndexedDB as the primary storage for Lin's Electron runtime
+- IndexedDB as the primary storage for Tenon's Electron runtime
 - mutable tree as durable truth
 - separate debug store as a competing fact source
 
 ### lin-agent
 
-Lin-agent uses fs-first JSONL channel logs:
+lin-agent uses fs-first JSONL channel logs:
 
 ```txt
 <userData>/channels/<channelId>/meta.json
@@ -176,7 +176,7 @@ Keep from lin-agent:
 - explicit bridge between persisted data and pi-ai `Message[]`
 - compaction as log data, not hidden runtime mutation
 
-Adapt for Lin Outliner:
+Adapt for Tenon:
 
 - store runtime event lifecycle, not only conversation lines
 - keep branch selection and approval/tool lifecycle as first-class events
@@ -333,7 +333,7 @@ append-only rules.
 
 ## Message Model
 
-Persisted message identity is Lin-owned.
+Persisted message identity is Tenon-owned.
 
 ```ts
 interface UserMessageCreatedEvent extends AgentEventBase {
@@ -598,7 +598,7 @@ Output:
 Message[]
 ```
 
-This projection is the only place that should translate Lin events into pi-ai
+This projection is the only place that should translate Tenon events into pi-ai
 message shapes.
 
 ### Render projection
@@ -680,7 +680,7 @@ Streaming has two separate paths:
 ```txt
 provider chunks
   -> pi-agent-core
-  -> Lin stream accumulator
+  -> Tenon stream accumulator
   -> coalesced assistant_message.delta events
   -> render projection flush <= 1/frame
 ```
