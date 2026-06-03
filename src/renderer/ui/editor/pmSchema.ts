@@ -1,5 +1,6 @@
 import { Schema } from 'prosemirror-model';
 import { basenameForPath } from '../../../core/referenceMarkup';
+import { inlineFileIconDomSpec, inlineFileIconKind } from './inlineFileIcon';
 
 export const pmSchema = new Schema({
   nodes: {
@@ -65,11 +66,16 @@ export const pmSchema = new Schema({
         if (node.attrs.color) {
           attrs.style = `color: ${node.attrs.color}; --inline-ref-accent: ${node.attrs.color}`;
         }
-        return [
-          'span',
-          attrs,
-          displayName || fallbackName,
-        ];
+        const label = displayName || fallbackName;
+        if (targetKind === 'local-file') {
+          const iconKind = inlineFileIconKind({
+            entryKind: node.attrs.entryKind === 'directory' ? 'directory' : 'file',
+            mimeType: String(node.attrs.mimeType ?? ''),
+            name: displayName || basenameForPath(targetPath),
+          });
+          return ['span', attrs, inlineFileIconDomSpec(iconKind), label];
+        }
+        return ['span', attrs, label];
       },
     },
   },

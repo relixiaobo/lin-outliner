@@ -2,12 +2,7 @@ import { useMemo, type CSSProperties } from 'react';
 import { splitFileReferenceMarkers, splitNodeReferenceMarkers } from '../../../core/referenceMarkup';
 import type { NodeId } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
-import {
-  FileImageIcon,
-  FileTextIcon,
-  FolderIcon,
-  ICON_SIZE,
-} from '../icons';
+import { INLINE_FILE_ICON_CLASS, inlineFileIconKind } from '../editor/inlineFileIcon';
 import { wantsNewPaneFromClick } from '../shared';
 import { inlineReferenceTextColor } from '../tags/tagColors';
 
@@ -63,13 +58,21 @@ export function AgentInlineReferenceText({
               return (
                 <span
                   aria-label={fileSegment.file.name}
-                  className="agent-message-inline-file"
+                  className="inline-ref agent-message-inline-ref"
                   data-agent-message-file-ref={fileSegment.file.ref}
+                  data-inline-ref-kind="local-file"
                   key={`${segmentIndex}-${fileSegment.file.ref}-${fileSegmentIndex}`}
                   title={fileSegment.file.name}
                 >
-                  {iconForInlineFile(fileSegment.file)}
-                  <span>{fileSegment.file.name}</span>
+                  <span
+                    aria-hidden="true"
+                    className={INLINE_FILE_ICON_CLASS}
+                    data-file-icon-kind={inlineFileIconKind({
+                      mimeType: fileSegment.file.mimeType,
+                      name: fileSegment.file.name,
+                    })}
+                  />
+                  {fileSegment.file.name}
                 </span>
               );
             });
@@ -211,12 +214,6 @@ function mergeAdjacentTextSegments(segments: FileReferenceTextSegment[]): FileRe
     }
   }
   return out;
-}
-
-function iconForInlineFile(file: AgentInlineFileReference) {
-  if (file.mimeType === 'inode/directory') return <FolderIcon size={ICON_SIZE.menu} />;
-  if (file.kind === 'image' || file.mimeType.startsWith('image/')) return <FileImageIcon size={ICON_SIZE.menu} />;
-  return <FileTextIcon size={ICON_SIZE.menu} />;
 }
 
 export function nodeReferenceStyle(nodeId: NodeId, index: DocumentIndex | undefined): CSSProperties | undefined {

@@ -38,6 +38,11 @@ import {
   type AppIcon,
 } from '../icons';
 import { textOf } from '../shared';
+import {
+  inlineFileIconDomSpec,
+  inlineFileIconKind,
+  type InlineFileIconKind,
+} from '../editor/inlineFileIcon';
 import { inlineReferenceTextColor } from '../tags/tagColors';
 import {
   nodeReferenceOpenOptionsFromClick,
@@ -234,24 +239,27 @@ const agentComposerSchema = new Schema({
         const entryKind = String(node.attrs.entryKind ?? '') === 'directory' || mimeType === 'inode/directory'
           ? 'directory'
           : 'file';
-        const iconDataUrl = String(node.attrs.iconDataUrl ?? '');
         const sizeBytes = Number(node.attrs.sizeBytes ?? 0);
-        const thumbnailDataUrl = String(node.attrs.thumbnailDataUrl ?? '');
         const detail = [
           name,
           entryKind === 'directory' ? 'Folder' : mimeType || null,
           Number.isFinite(sizeBytes) && sizeBytes > 0 ? formatBytes(sizeBytes) : null,
         ].filter(Boolean).join(' - ');
+        const iconKind = inlineFileIconKind({ entryKind, mimeType, name });
+        // A file mention speaks the shared `.inline-ref` mention language (same as a
+        // node reference and the outliner); the leading icon is what marks it as a
+        // file. See `inlineFileIcon.ts`.
         return [
           'span',
           {
             'aria-label': detail,
-            class: `agent-composer-inline-file ${entryKind === 'directory' ? 'is-directory' : ''}`,
+            class: 'inline-ref agent-composer-inline-ref',
             contenteditable: 'false',
+            'data-inline-ref-kind': 'local-file',
             'data-agent-file-ref': String(node.attrs.attachmentId ?? ''),
           },
-          fileReferenceIconDom({ entryKind, iconDataUrl, mimeType, name, thumbnailDataUrl }),
-          ['span', { class: 'agent-composer-inline-file-name' }, name],
+          inlineFileIconDomSpec(iconKind),
+          name,
         ];
       },
     },
@@ -1105,7 +1113,7 @@ function MentionFileIcon({ file }: { file: AgentComposerLocalFileCandidate }) {
       />
     );
   }
-  const iconKind = localFileIconKind(file);
+  const iconKind = inlineFileIconKind(file);
   const Icon = iconForLocalFileKind(iconKind);
   return <Icon data-file-icon={iconKind} size={ICON_SIZE.menu} />;
 }
@@ -1179,36 +1187,6 @@ function isImagePreviewFile(file: Pick<AgentComposerLocalFileCandidate, 'entryKi
   return ['avif', 'bmp', 'gif', 'heic', 'jpeg', 'jpg', 'png', 'svg', 'tif', 'tiff', 'webp'].includes(extension);
 }
 
-function fileReferenceIconDom(file: {
-  entryKind: 'file' | 'directory';
-  iconDataUrl?: string;
-  mimeType: string;
-  name: string;
-  thumbnailDataUrl?: string;
-}) {
-  const thumbnailDataUrl = isImagePreviewFile(file) ? file.thumbnailDataUrl : undefined;
-  if (thumbnailDataUrl || file.iconDataUrl) {
-    const isThumbnail = Boolean(thumbnailDataUrl);
-    return [
-      'span',
-      {
-        class: `agent-composer-inline-file-icon ${isThumbnail ? 'is-thumbnail-icon' : 'is-native-icon'}`,
-        'data-file-icon': isThumbnail ? 'thumbnail' : 'native',
-      },
-      ['img', { alt: '', src: thumbnailDataUrl || file.iconDataUrl || '' }],
-    ];
-  }
-  const iconKind = localFileIconKind(file);
-  return [
-    'span',
-    {
-      class: 'agent-composer-inline-file-icon is-fallback-icon',
-      'data-extension': fileExtensionLabel(file.name, file.mimeType),
-      'data-file-icon': iconKind,
-    },
-  ];
-}
-
 function MiddleTruncatedFilename({ name }: { name: string }) {
   const parts = middleTruncateFilenameParts(name);
   return (
@@ -1233,58 +1211,7 @@ function middleTruncateFilenameParts(name: string): { start: string; end: string
   };
 }
 
-type LocalFileIconKind =
-  | 'archive'
-  | 'audio'
-  | 'code'
-  | 'database'
-  | 'folder'
-  | 'image'
-  | 'presentation'
-  | 'spreadsheet'
-  | 'text'
-  | 'video';
-
-function localFileIconKind(file: Pick<AgentComposerLocalFileCandidate, 'entryKind' | 'mimeType' | 'name'>): LocalFileIconKind {
-  if (file.entryKind === 'directory' || file.mimeType === 'inode/directory') return 'folder';
-  const mimeType = file.mimeType.toLowerCase();
-  const extension = file.name.match(/\.([a-z0-9]{1,8})$/iu)?.[1]?.toLowerCase() ?? '';
-  if (mimeType.startsWith('image/')) return 'image';
-  if (mimeType.startsWith('audio/')) return 'audio';
-  if (mimeType.startsWith('video/')) return 'video';
-  if (mimeType.includes('presentation') || mimeType.includes('powerpoint') || ['ppt', 'pptx', 'key', 'keynote', 'odp'].includes(extension)) {
-    return 'presentation';
-  }
-  if (mimeType.includes('spreadsheet') || ['xls', 'xlsx', 'csv', 'numbers', 'ods'].includes(extension)) return 'spreadsheet';
-  if (mimeType.includes('zip') || mimeType.includes('archive') || ['zip', 'tar', 'gz', 'tgz', 'rar', '7z'].includes(extension)) return 'archive';
-  if (mimeType.includes('sqlite') || ['db', 'sqlite', 'sqlite3'].includes(extension)) return 'database';
-  if ([
-    'c',
-    'cpp',
-    'css',
-    'go',
-    'h',
-    'html',
-    'java',
-    'js',
-    'jsx',
-    'json',
-    'kt',
-    'py',
-    'rs',
-    'sh',
-    'sql',
-    'swift',
-    'ts',
-    'tsx',
-    'xml',
-    'yaml',
-    'yml',
-  ].includes(extension)) return 'code';
-  return 'text';
-}
-
-function iconForLocalFileKind(kind: LocalFileIconKind): AppIcon {
+function iconForLocalFileKind(kind: InlineFileIconKind): AppIcon {
   if (kind === 'archive') return FileArchiveIcon;
   if (kind === 'audio') return FileAudioIcon;
   if (kind === 'code') return FileCodeIcon;
@@ -1380,17 +1307,4 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function fileExtensionLabel(name: string, mimeType: unknown): string {
-  if (mimeType === 'inode/directory') return 'DIR';
-  const extension = name.match(/\.([a-z0-9]{1,6})$/iu)?.[1];
-  if (extension) return extension.toUpperCase();
-  const type = typeof mimeType === 'string' ? mimeType.toLowerCase() : '';
-  if (type.includes('pdf')) return 'PDF';
-  if (type.includes('presentation') || type.includes('powerpoint')) return 'PPT';
-  if (type.includes('spreadsheet') || type.includes('excel')) return 'XLS';
-  if (type.includes('word')) return 'DOC';
-  if (type.startsWith('image/')) return 'IMG';
-  return 'FILE';
 }

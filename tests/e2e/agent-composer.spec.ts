@@ -56,7 +56,7 @@ test.describe('agent composer controls', () => {
       buffer: Buffer.from('hello from test'),
     });
     await expect(page.locator('[data-agent-file-ref]')).toContainText('notes.txt');
-    await expect(page.locator('[data-agent-file-ref] .agent-composer-inline-file-icon')).toHaveAttribute('data-extension', 'TXT');
+    await expect(page.locator('[data-agent-file-ref] .inline-ref-file-icon')).toHaveAttribute('data-file-icon-kind', 'text');
     await expect(page.locator('.agent-attachment-chip')).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Send message' }).click();
@@ -246,11 +246,12 @@ test.describe('agent composer controls', () => {
     const row = page.locator('.agent-message-row.user').filter({ hasText: '总结一下' });
     const bubble = row.locator('.agent-user-bubble');
     await expect(row.locator('.agent-user-file-chip')).toHaveCount(0);
-    await expect(bubble.locator('.agent-message-inline-file')).toHaveCount(3);
-    await expect(bubble.locator('.agent-message-inline-file').nth(0)).toContainText('.DS_Store');
-    await expect(bubble.locator('.agent-message-inline-file').nth(1)).toContainText('Coding');
-    await expect(bubble.locator('.agent-message-inline-file').nth(2)).toContainText('Screenshot 2026-05-26 at 14.50.16.png');
-    await expect(bubble.locator('.agent-message-inline-ref')).toHaveText('Alpha');
+    await expect(bubble.locator('[data-agent-message-file-ref]')).toHaveCount(3);
+    await expect(bubble.locator('[data-agent-message-file-ref]').nth(0)).toContainText('.DS_Store');
+    await expect(bubble.locator('[data-agent-message-file-ref]').nth(1)).toContainText('Coding');
+    await expect(bubble.locator('[data-agent-message-file-ref]').nth(2)).toContainText('Screenshot 2026-05-26 at 14.50.16.png');
+    await expect(bubble.locator('[data-agent-message-file-ref] .inline-ref-file-icon').nth(1)).toHaveAttribute('data-file-icon-kind', 'folder');
+    await expect(bubble.locator('[data-inline-ref]')).toHaveText('Alpha');
     await expect.poll(async () => bubble.evaluate((element) => (
       element.textContent?.replace(/\s+/gu, ' ').trim()
     ))).toBe('.DS_Store 总结一下，然后跟 Coding 对比一下，然后添加到 Alpha，参考 Screenshot 2026-05-26 at 14.50.16.png');
@@ -420,7 +421,7 @@ test.describe('agent composer controls', () => {
     await menu.getByRole('option', { name: /design-system/ }).click();
 
     await expect(page.locator('[data-agent-file-ref]')).toContainText('design-system');
-    await expect(page.locator('[data-agent-file-ref] .agent-composer-inline-file-icon')).toHaveAttribute('data-extension', 'DIR');
+    await expect(page.locator('[data-agent-file-ref] .inline-ref-file-icon')).toHaveAttribute('data-file-icon-kind', 'folder');
     await page.getByRole('button', { name: 'Send message' }).click();
     await expect.poll(async () => {
       const calls = await commandCalls(page);
@@ -622,7 +623,7 @@ test.describe('agent composer controls', () => {
     expect(Math.abs(((previewBox?.y ?? 0) + ((previewBox?.height ?? 0) / 2)) - ((optionBox?.y ?? 0) + ((optionBox?.height ?? 0) / 2)))).toBeLessThan(90);
     await imageOption.click();
     await expect(page.locator('[data-agent-file-ref]')).toContainText('gpt4.png');
-    await expect(page.locator('[data-agent-file-ref] [data-file-icon="thumbnail"]')).toBeVisible();
+    await expect(page.locator('[data-agent-file-ref] .inline-ref-file-icon')).toHaveAttribute('data-file-icon-kind', 'image');
     await expect(page.locator('[data-agent-file-ref]')).not.toHaveAttribute('title', /gpt4\.png/);
     await expect(page.locator('[data-agent-file-ref]')).toHaveAttribute('aria-label', /gpt4\.png/);
 
