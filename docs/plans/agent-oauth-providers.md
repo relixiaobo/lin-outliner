@@ -1,9 +1,9 @@
 ---
-status: draft
+status: in-progress
 priority: P2
-owner: relixiaobo
+owner: cc
 created: 2026-05-27
-updated: 2026-05-27
+updated: 2026-06-03
 ---
 
 # Agent OAuth & Managed-Credential Providers

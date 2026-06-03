@@ -18,7 +18,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Agent | Clone | Active branch | Current task |
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
-| Claude Code | `lin-outliner-cc/` | — | idle |
+| Claude Code | `lin-outliner-cc/` | (starting) | agent-oauth-providers (P2) |
 | Claude Code 2 | `lin-outliner-cc-2/` | (Phase 0 spike) | lazy-like-global-launcher (P0) |
 | Codex | `lin-outliner-codex/` | — | idle |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -38,6 +38,14 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 - **agent-past-chats** (P1, Codex) — `past_chats` recall tool (recent + search
   + read) backed by the event store. Recall tool and tool-UI polish landed
   (PRs #1, #4); see `docs/plans/agent-past-chats.md` for remaining scope.
+- **agent-oauth-providers** (P2, cc) — OAuth sign-in (Anthropic Pro/Max, GitHub
+  Copilot, OpenAI Codex) + managed-credential providers (Bedrock AWS, Vertex
+  ADC): real credential resolution via pi-ai's OAuth flows, Electron-main login
+  over IPC, credential storage, view-model `authKind`, sign-in / connected /
+  sign-out UI. The cosmetic auth-class fix already shipped (PR #37); this makes
+  those providers actually authenticate. Security-sensitive (credential storage)
+  — open: keychain vs `agent-secrets.json`, loopback port under packaged app. See
+  `docs/plans/agent-oauth-providers.md`.
 
 ## Backlog
 
@@ -102,11 +110,6 @@ Ordered by priority; lower items may depend on higher ones.
   with the plan contract (`platform_hard_block`/`user_denied`, `recoverable`
   set). None is a live fail-open. Self-contained spec in
   `docs/plans/agent-tool-permissions-hardening.md`.
-- **agent-oauth-providers** (P2) — OAuth sign-in (Anthropic Pro/Max, GitHub
-  Copilot, OpenAI Codex) + managed credentials (Bedrock AWS, Vertex ADC) for the
-  provider settings: credential storage, Electron-main login over IPC, view-model
-  `authKind`, sign-in / connected / sign-out UI. Lightweight UI fix shipped in
-  #37; see `docs/plans/agent-oauth-providers.md`.
 - **agent-scheduled-routines** (P2) — a "command node" whose content is a
   natural-language brief to the agent; setting its `date` field (one field
   carrying both *when to start* and *how to repeat*) makes it run on a schedule.
