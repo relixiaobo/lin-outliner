@@ -113,9 +113,8 @@ function useCountdown(expiresInSeconds: number | undefined): number | null {
   return remaining;
 }
 
-function ReplyStep({ pending, busy, onRespond }: {
+function ReplyStep({ pending, onRespond }: {
   pending: OAuthReplyEvent;
-  busy: boolean;
   onRespond: (value: string | undefined) => void;
 }) {
   const [value, setValue] = useState('');
@@ -123,6 +122,9 @@ function ReplyStep({ pending, busy, onRespond }: {
   // Reset the field whenever a new reply step arrives.
   useEffect(() => { setValue(''); }, [pending.requestId]);
 
+  // A reply step is answerable while the login is in flight — answering it IS the
+  // next step — so it is never gated on the form's `busy` flag. Responding clears
+  // `pending`, which unmounts this step, so there is no double-submit to guard.
   if (pending.kind === 'select') {
     return (
       <div className="settings-sheet-oauth-step" role="group">
@@ -131,7 +133,6 @@ function ReplyStep({ pending, busy, onRespond }: {
           {pending.options.map((option) => (
             <ButtonControl
               className="settings-sheet-secondary"
-              disabled={busy}
               key={option.id}
               onClick={() => onRespond(option.id)}
             >
@@ -161,7 +162,7 @@ function ReplyStep({ pending, busy, onRespond }: {
           placeholder={placeholder}
           value={value}
         />
-        <ButtonControl className="settings-sheet-primary" disabled={busy || !value.trim()} type="submit">
+        <ButtonControl className="settings-sheet-primary" disabled={!value.trim()} type="submit">
           Continue
         </ButtonControl>
       </div>
@@ -260,7 +261,6 @@ export function ProviderOAuthForm({
 
             {flow.pending ? (
               <ReplyStep
-                busy={busy}
                 onRespond={(value) => respond(flow.pending!.requestId, value)}
                 pending={flow.pending}
               />
