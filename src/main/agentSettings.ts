@@ -272,6 +272,16 @@ export async function persistOAuthCredential(providerIdInput: string, credential
   });
 }
 
+/** Remove any stored credential for a provider (oauth sign-out). */
+export async function deleteProviderCredential(providerIdInput: string): Promise<void> {
+  const providerId = normalizeProviderId(providerIdInput);
+  const secrets = await readSecretFile();
+  if (providerId in secrets.credentials) {
+    delete secrets.credentials[providerId];
+    await writeSecretFile(secrets);
+  }
+}
+
 function oauthCredentialsChanged(a: OAuthCredentials, b: OAuthCredentials): boolean {
   return a.access !== b.access || a.refresh !== b.refresh || a.expires !== b.expires;
 }

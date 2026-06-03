@@ -19,7 +19,7 @@ import {
 } from '../core/settingsWindow';
 import { LIN_WINDOW_ACTIVE_CHANNEL } from '../core/windowActivity';
 import { ASSET_URL_SCHEME } from '../core/assets';
-import { LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput } from '../core/types';
+import { LIN_AGENT_OAUTH_EVENT_CHANNEL, LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput } from '../core/types';
 import {
   deleteProviderApiKey,
   deleteProviderConfig,
@@ -36,6 +36,7 @@ import {
   writeAgentToolPermissionSettingsView,
 } from './agentToolPermissionStore';
 import { isAgentCommand, isAssetCommand, isDocumentCommand, type AgentCommand, type AssetCommand } from '../core/commands';
+import { oauthLoginManager } from './agentOAuth';
 import { IPC_TRACE_ENABLED, traceIpc } from './ipcTrace';
 import type { AgentProviderConfigInput, AgentRuntimeSettingsInput } from '../core/types';
 import { loadWindowState, trackWindowState } from './windowState';
@@ -1385,6 +1386,17 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
       return deleteProviderApiKey(String(args.providerId));
     case 'agent_get_provider_secret_status':
       return getProviderSecretStatus(String(args.providerId));
+    case 'agent_oauth_login':
+      return oauthLoginManager.startLogin(String(args.providerId), (envelope) =>
+        providerConfigWindow?.webContents.send(LIN_AGENT_OAUTH_EVENT_CHANNEL, envelope));
+    case 'agent_oauth_logout':
+      return oauthLoginManager.logout(String(args.providerId));
+    case 'agent_oauth_respond':
+      oauthLoginManager.respond(String(args.requestId), args.value === undefined ? undefined : String(args.value));
+      return undefined;
+    case 'agent_oauth_cancel':
+      oauthLoginManager.cancel(String(args.providerId));
+      return undefined;
     case 'agent_list_all_definitions':
       return agentRuntime.listAllAgentDefinitions(String(args.sessionId));
     case 'agent_test_provider_connection':

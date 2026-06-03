@@ -747,6 +747,9 @@ export interface OAuthLoginEventEnvelope {
   event: OAuthLoginEvent;
 }
 
+/** main→renderer push channel carrying OAuthLoginEventEnvelope during a sign-in. */
+export const LIN_AGENT_OAUTH_EVENT_CHANNEL = 'lin-agent-oauth-event';
+
 export interface AgentModelOption {
   id: string;
   name: string;
