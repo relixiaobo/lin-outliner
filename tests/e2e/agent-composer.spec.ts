@@ -843,17 +843,17 @@ test.describe('agent composer controls', () => {
     await expect(page.locator('.agent-markdown [data-inline-ref="node-alpha"]')).toHaveText(['Alpha', 'Alpha']);
     await expect(page.locator('.agent-markdown [data-inline-ref="node-missing"]')).toHaveText('Referenced node');
     await expect(page.locator('.agent-markdown [data-inline-ref="node-missing"]')).not.toContainText('node-missing');
-    const tabCount = await page.locator('.sidebar-tab').count();
     const panelCount = await page.locator('.outline-panel-surface').count();
 
+    // Plain click navigates the active pane in place (no new pane).
     await page.locator('.agent-markdown [data-inline-ref="node-alpha"]').first().click();
-    await expect(page.locator('.sidebar-tab')).toHaveCount(tabCount);
     await expect(page.locator('.outline-panel-surface')).toHaveCount(panelCount);
-    await expect(page.locator('.sidebar-tab.active')).toContainText('Alpha');
+    await expect(page.locator('.outline-panel-surface.active-panel .panel-title-editor')).toContainText('Alpha');
 
+    // Meta/Ctrl+click opens the reference in a new split pane.
     await page.locator('.agent-markdown [data-inline-ref="node-alpha"]').nth(1).click({ modifiers: ['Meta'] });
-    await expect(page.locator('.sidebar-tab')).toHaveCount(tabCount + 1);
-    await expect(page.locator('.sidebar-tab.active')).toContainText('Alpha');
+    await expect(page.locator('.outline-panel-surface')).toHaveCount(panelCount + 1);
+    await expect(page.locator('.outline-panel-surface.active-panel .panel-title-editor')).toContainText('Alpha');
 
     await page.getByRole('button', { name: /Read node/ }).click();
     await expect(page.locator('.agent-tool-call-section [data-inline-ref="node-alpha"]')).toHaveText('Alpha');

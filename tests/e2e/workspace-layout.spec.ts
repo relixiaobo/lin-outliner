@@ -59,15 +59,17 @@ test.describe('workspace layout resizing', () => {
     await page.setViewportSize({ width: 1700, height: 900 });
     // The floating-rails shell dissolved the TopBar: window chrome is now two
     // corner drag zones (.window-chrome-zone-left/right), each carving out a
-    // single rail toggle. The tab strip moved into the sidebar (.sidebar-tab*);
-    // the per-pane "More" action lives on the panel breadcrumb, and page-nav
-    // back/forward are keyboard-only (Cmd+[ / Cmd+]) with no chrome buttons.
+    // single rail toggle. There is no tab strip; page-nav back/forward are
+    // keyboard-only (Cmd+[ / Cmd+]) with no chrome buttons. The default layout is
+    // a single pane, so open a second pane (Cmd+M) to have a split to resize.
+    const panels = page.locator('.outline-panel-surface');
+    await expect(panels).toHaveCount(1);
+    await page.keyboard.press('Meta+M');
+    await expect(panels).toHaveCount(2);
     const leftZone = await page.locator('.window-chrome-zone-left').boundingBox();
     const rightZone = await page.locator('.window-chrome-zone-right').boundingBox();
     const sidebarToggle = await page.getByTitle('Collapse sidebar').boundingBox();
     const agentToggle = await page.getByTitle('Collapse agent').boundingBox();
-    const panels = page.locator('.outline-panel-surface');
-    await expect(panels).toHaveCount(2);
     // Both corner zones are the window's title-bar drag regions (pure CSS
     // -webkit-app-region: drag — there is no DOM attribute; see WindowChrome.tsx).
     for (const zoneSelector of ['.window-chrome-zone-left', '.window-chrome-zone-right']) {
@@ -220,8 +222,8 @@ test.describe('workspace layout resizing', () => {
 
   test('single panel centers bounded content and fills when narrow', async ({ page }) => {
     await page.setViewportSize({ width: 1900, height: 900 });
-    await page.getByTitle('New tab').click();
 
+    // The default layout is a single pane.
     const panels = page.locator('.outline-panel-surface');
     await expect(panels).toHaveCount(1);
 
@@ -286,8 +288,9 @@ test.describe('workspace layout resizing', () => {
     await expect(workspaceTree).toContainText('Library');
     await expect(workspaceTree).toContainText('Saved searches');
     await expect(workspaceTree).toContainText('Trash');
-    await expect(workspaceTree).not.toContainText('Schema');
-    await expect(workspaceTree).not.toContainText('Settings');
+    // T3: all root sections show in the tree now — including Schema and Settings.
+    await expect(workspaceTree).toContainText('Schema');
+    await expect(workspaceTree).toContainText('Settings');
     const sidebarMetrics = await workspaceTree.evaluate((tree) => {
       const primaryIcon = document.querySelector('.sidebar-primary-nav .sidebar-nav-icon');
       const pinnedTitle = document.querySelector('.sidebar-section-title');
@@ -439,109 +442,50 @@ test.describe('workspace layout resizing', () => {
     expect(fixture.childId).toBeTruthy();
   });
 
-  test('sidebar tabs can be closed and restore persisted active roots', async ({ page }) => {
-    // The tab strip is part of the sidebar now (.sidebar-tab*); "New tab" lives
-    // in the sidebar Tabs section header.
-    await page.getByRole('button', { name: 'New tab' }).click();
-    await expect(page.locator('.sidebar-tab')).toHaveCount(2);
-    await expect.poll(async () => {
-      const backgrounds = await page.locator('.sidebar-tab').evaluateAll((tabs) => (
-        tabs.map((tab) => getComputedStyle(tab).backgroundColor)
-      ));
-      return new Set(backgrounds).size;
-    }).toBeGreaterThan(1);
-    const tabBackgrounds = await page.locator('.sidebar-tab').evaluateAll((tabs) => (
-      tabs.map((tab) => getComputedStyle(tab).backgroundColor)
-    ));
-    // The active tab carries a fill; inactive tabs stay transparent, so the set
-    // of backgrounds has more than one entry.
-    expect(new Set(tabBackgrounds).size).toBeGreaterThan(1);
-    const activeTabChrome = await page.locator('.sidebar-tab.active').evaluate((tab) => {
-      const style = getComputedStyle(tab);
-      const close = tab.querySelector('.sidebar-tab-close');
-      if (!(close instanceof HTMLElement)) throw new Error('missing active tab close control');
-      return {
-        backgroundColor: style.backgroundColor,
-        borderRadius: style.borderRadius,
-        closeHeight: Math.round(close.getBoundingClientRect().height),
-        closeWidth: Math.round(close.getBoundingClientRect().width),
-      };
-    });
-    expect(activeTabChrome.backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
-    expect(activeTabChrome.borderRadius).toBe('6px');
-    // .sidebar-tab-close is --control-size-xs (20px) and is visible (opacity 1)
-    // on the active tab.
-    expect(activeTabChrome.closeHeight).toBe(20);
-    expect(activeTabChrome.closeWidth).toBe(20);
-    const inactiveActiveSegment = page.locator('.sidebar-tab:not(.active) .sidebar-tab-segment.is-active').first();
-    const inactiveSegmentWeightBeforeHover = await inactiveActiveSegment.evaluate((segment) => (
-      getComputedStyle(segment).fontWeight
-    ));
-    await page.locator('.sidebar-tab:not(.active)').first().hover();
-    const inactiveSegmentWeightAfterHover = await inactiveActiveSegment.evaluate((segment) => (
-      getComputedStyle(segment).fontWeight
-    ));
-    expect(inactiveSegmentWeightAfterHover).toBe(inactiveSegmentWeightBeforeHover);
+  test('panes persist across reload and can be closed', async ({ page }) => {
+    const panels = page.locator('.outline-panel-surface');
+    await expect(panels).toHaveCount(1);
 
-    await page.getByRole('button', { name: 'Schema' }).click();
-    await expect(page.locator('.panel-title-editor').first()).toContainText('Schema');
+    // Open a second pane, then point the active pane at Schema.
+    await page.keyboard.press('Meta+M');
+    await expect(panels).toHaveCount(2);
+    await page.locator('.sidebar-primary-nav').getByRole('button', { name: 'Schema', exact: true }).click();
+    await expect(page.locator('.outline-panel-surface.active-panel .panel-title-editor')).toContainText('Schema');
 
+    // The layout is persisted (localStorage workspace-layout:v2) and restored on
+    // reload.
     await page.reload();
-    await expect(page.locator('.sidebar-tab')).toHaveCount(2);
-    await expect(page.locator('.panel-title-editor').first()).toContainText('Schema');
+    await expect(panels).toHaveCount(2);
+    await expect(page.locator('.outline-panel-surface.active-panel .panel-title-editor')).toContainText('Schema');
 
-    await page.locator('.sidebar-tab.active .sidebar-tab-close').click();
-    await expect(page.locator('.sidebar-tab')).toHaveCount(1);
+    // Closing a pane via its breadcrumb × drops back to a single pane.
+    await page.locator('.outline-panel-surface.active-panel')
+      .getByRole('button', { name: 'Close panel' }).click();
+    await expect(panels).toHaveCount(1);
   });
 
-  test('current tab can open additional panels from keyboard and sidebar option click', async ({ page }) => {
+  test('panes open from keyboard and sidebar option-click up to the cap', async ({ page }) => {
     const panels = page.locator('.outline-panel-surface');
-    await expect(panels).toHaveCount(2);
+    await expect(panels).toHaveCount(1);
 
+    await page.keyboard.press('Meta+M');
+    await expect(panels).toHaveCount(2);
     await page.keyboard.press('Meta+M');
     await expect(panels).toHaveCount(3);
 
+    // Alt/Option-click a sidebar entry opens it in a new pane.
     await page.locator('.sidebar-primary-nav').getByRole('button', { name: 'Recents', exact: true }).click({ modifiers: ['Alt'] });
     await expect(panels).toHaveCount(4);
-    const activeTabSegments = page.locator('.sidebar-tab.active .sidebar-tab-segment');
-    await expect(activeTabSegments).toHaveCount(4);
-    await expect(page.locator('.sidebar-tab.active .sidebar-tab-count')).toHaveCount(0);
-    await expect(activeTabSegments.nth(3)).toContainText('Recents');
-    const iconSlots = await activeTabSegments.evaluateAll((segments) => (
-      segments.map((segment) => {
-        const icon = segment.querySelector('.sidebar-tab-segment-icon');
-        if (!(icon instanceof HTMLElement)) throw new Error('missing tab segment icon');
-        const rect = icon.getBoundingClientRect();
-        return {
-          height: Math.round(rect.height),
-          width: Math.round(rect.width),
-        };
-      })
-    ));
-    expect(new Set(iconSlots.map((slot) => slot.width)).size).toBe(1);
-    expect(new Set(iconSlots.map((slot) => slot.height)).size).toBe(1);
-    expect(iconSlots[0]).toEqual({ height: 16, width: 16 });
-    // Adjacent segments are separated by a thin ::before hairline (token-driven
-    // --border-strong, so the exact color is theme-dependent — assert geometry
-    // and that the rule paints something, not a hardcoded color).
-    const segmentDivider = await activeTabSegments.nth(1).evaluate((segment) => {
-      const divider = getComputedStyle(segment, '::before');
-      return {
-        backgroundColor: divider.backgroundColor,
-        height: divider.height,
-        marginLeft: divider.marginLeft,
-        marginRight: divider.marginRight,
-        width: divider.width,
-      };
-    });
-    expect(segmentDivider.height).toBe('12px');
-    expect(segmentDivider.marginLeft).toBe('4px');
-    expect(segmentDivider.marginRight).toBe('4px');
-    expect(segmentDivider.width).toBe('1px');
-    expect(segmentDivider.backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
     await expect(panels.nth(3).locator('.panel-title-editor')).toContainText('Recents');
 
-    await activeTabSegments.first().click();
+    // Capped at MAX_PERSISTED_PANELS (4): opening another pane replaces the
+    // rightmost pane's root instead of adding a fifth.
+    await page.locator('.sidebar-primary-nav').getByRole('button', { name: 'Library', exact: true }).click({ modifiers: ['Alt'] });
+    await expect(panels).toHaveCount(4);
+    await expect(panels.nth(3).locator('.panel-title-editor')).toContainText('Library');
+
+    // Clicking a pane activates it.
+    await panels.first().click();
     await expect(panels.first()).toHaveClass(/active/);
   });
 });

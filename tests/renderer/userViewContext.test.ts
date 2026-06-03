@@ -66,15 +66,11 @@ describe('agent user view context', () => {
     ]));
 
     const context = buildAgentUserViewContext({
-      activeTab: {
-        id: 'tab-1',
-        activePanelId: 'panel-1',
-        panelSizes: { 'panel-1': 1, 'panel-2': 1 },
-        panels: [
-          { id: 'panel-1', type: 'outliner', rootId: 'today' },
-          { id: 'panel-2', type: 'outliner', rootId: 'root' },
-        ],
-      },
+      activePanelId: 'panel-1',
+      panels: [
+        { id: 'panel-1', type: 'outliner', rootId: 'today', size: 1 },
+        { id: 'panel-2', type: 'outliner', rootId: 'root', size: 1 },
+      ],
       index,
       ui: ui({
         focusedId: 'child-1',
