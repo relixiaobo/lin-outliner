@@ -99,6 +99,15 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **rebrand Lin Outliner → Tenon** (codex) — full product-identity change (PM-ratified):
+  Tenon logo + generated Electron icons, favicon, sidebar brand mark, app/window/About
+  titles, agent-facing copy. electron-builder `appId` → `dev.linlab.tenon`, `productName`
+  → `Tenon`; packaged userData → `~/Library/Application Support/Tenon/`. System workspace
+  title migrates `Lin Outliner` → `Tenon` (display-only, idempotent). `AGENTS.md` (A5 +
+  Dev env) + `docs/spec/*` updated; dev `.lin-outliner-*` override dirs kept. Internal
+  `lin:*` protocol/storage + `provider: 'lin'` preserved (A4 intact); A3 unchanged.
+  Reviewed (main gate): typecheck clean, core 448/2 (pre-existing rg), token guard green.
+  (PR #83).
 - **unified inline reference foundation: `ReferenceTarget` (node | local-file)** (codex)
   — implements `outliner-local-file-references.md`. `InlineRef` reshaped to
   `{ offset, target, displayName?, mimeType?, sizeBytes? }`; one `referenceMarkup.ts`

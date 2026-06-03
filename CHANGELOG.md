@@ -12,6 +12,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Rebrand: Lin Outliner → Tenon (PR #83)** — full product-identity change. New Tenon
+  logo + generated Electron app icons, favicon, sidebar brand mark, and app/window/About
+  titles; agent-facing identity copy updated. electron-builder `appId`
+  `com.linoutliner.desktop` → `dev.linlab.tenon` and `productName` → `Tenon`, so the
+  packaged macOS userData dir is now `~/Library/Application Support/Tenon/`; the system
+  workspace title migrates `Lin Outliner` → `Tenon` (display-only, idempotent). All
+  internal `lin:*` IPC channels, command names, storage keys, and `provider: 'lin'` are
+  preserved — protocol surface unchanged. Dev `$HOME/.lin-outliner-*` override dirs are
+  intentionally kept. ([#83](https://github.com/relixiaobo/lin-outliner/pull/83))
+
 - **Unified inline reference foundation: `ReferenceTarget` (node | local-file) (PR #80)** —
   the inline-reference model is unified under one `ReferenceTarget` union so node
   references and local-file/folder references share a single grammar and codec.
