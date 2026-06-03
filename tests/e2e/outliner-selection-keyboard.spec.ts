@@ -390,22 +390,23 @@ test.describe('outliner selection keyboard parity', () => {
 
     const inlineRef = row(page, referenceId).locator('.inline-ref').first();
     await expect(inlineRef).toHaveText('Beta');
-    const tabCount = await page.locator('.sidebar-tab').count();
     const panelCount = await page.locator('.outline-panel-surface').count();
 
+    // Meta/Ctrl+click opens the referenced node in a new split pane.
     await inlineRef.click({ modifiers: ['Meta'] });
-    await expect(page.locator('.sidebar-tab')).toHaveCount(tabCount + 1);
-    await expect(page.locator('.sidebar-tab.active')).toContainText('Beta');
+    await expect(page.locator('.outline-panel-surface')).toHaveCount(panelCount + 1);
+    await expect(page.locator('.outline-panel-surface.active-panel .panel-title-editor')).toContainText('Beta');
 
-    await page.locator('.sidebar-tab').first().click();
-    await expect(page.locator('.outline-panel-surface')).toHaveCount(panelCount);
+    // The original (first) pane still shows the reference row; a plain click on
+    // its inline reference navigates that pane in place — no new pane, no stolen
+    // editor focus.
+    const firstPane = page.locator('.outline-panel-surface').first();
+    const originalPaneInlineRef = firstPane.locator('.inline-ref').first();
+    await expect(originalPaneInlineRef).toHaveText('Beta');
+    const titleEditor = firstPane.locator('.panel-title-editor .ProseMirror').first();
+    await originalPaneInlineRef.click();
 
-    const originalTabInlineRef = row(page, referenceId).locator('.inline-ref').first();
-    await expect(originalTabInlineRef).toHaveText('Beta');
-    const titleEditor = page.locator('.panel-title-editor .ProseMirror').first();
-    await originalTabInlineRef.click();
-
-    await expect(page.locator('.sidebar-tab')).toHaveCount(tabCount + 1);
+    await expect(page.locator('.outline-panel-surface')).toHaveCount(panelCount + 1);
     await expect(titleEditor).toHaveText('Beta');
     await expect(titleEditor).not.toBeFocused();
   });

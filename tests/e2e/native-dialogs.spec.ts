@@ -3,10 +3,15 @@ import { ids, installElectronMock, openMockedApp, row } from './outlinerMock';
 
 // The app must never fall back to window.prompt / window.confirm — blocking
 // browser dialogs that look foreign and freeze the renderer. A page-level dialog
-// listener proves none are triggered while exercising the flows that used to use
-// them; the interactions instead run through in-app UI.
+// listener proves none are triggered while exercising a text-entry flow; the
+// interaction runs through in-app UI instead.
+//
+// (The former "Set icon" coverage was removed with the node Appearance
+// icon/banner context-menu entry — see the workspace-tabs-to-single-pane plan,
+// T4 — so the guard now rides on the "Add tag" in-menu input, which is
+// icon-independent and the same class of would-be-prompt flow.)
 test.describe('in-app dialogs replace native browser prompts', () => {
-  test('Set icon edits through an in-menu input, not window.prompt', async ({ page }) => {
+  test('context-menu text entry uses an in-app field, not window.prompt', async ({ page }) => {
     const browserDialogs: string[] = [];
     page.on('dialog', (dialog) => {
       browserDialogs.push(dialog.type());
@@ -16,21 +21,16 @@ test.describe('in-app dialogs replace native browser prompts', () => {
     await openMockedApp(page);
 
     await row(page, ids.alpha).click({ button: 'right' });
-    await page.getByRole('menuitem', { name: 'Appearance' }).click();
-    // Inside the appearance sub-mode the surface is a dialog, so its items are
-    // plain buttons rather than menuitems.
-    await page.getByRole('button', { name: 'Set icon' }).click();
+    await page.getByRole('menuitem', { name: /Add tag/ }).click();
 
-    // An in-app text field appears, pre-seeded for editing, instead of a blocking
-    // window.prompt.
-    const input = page.getByRole('textbox', { name: 'Icon', exact: true });
+    // An in-app text field appears (a window.prompt would not be a DOM textbox).
+    const input = page.getByRole('textbox', { name: 'Tag name' });
     await expect(input).toBeVisible();
-    await input.fill('★');
+    await input.fill('focus');
     await input.press('Enter');
 
-    // Submitting closes the menu, and crucially no native browser dialog ever
-    // fired during the whole interaction.
-    await expect(page.getByRole('dialog', { name: 'Set icon' })).toHaveCount(0);
+    // The whole text-entry interaction ran through in-app UI — no native browser
+    // dialog ever fired.
     expect(browserDialogs).toEqual([]);
   });
 

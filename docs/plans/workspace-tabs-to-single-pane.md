@@ -252,6 +252,56 @@ sidebar for persistent quick access — a different, smaller capability than sav
 a multi-pane *layout*. If a real saved-layouts feature is ever wanted, it is
 separate and out of scope here.
 
+## Forward-compat: local-file preview seam (advisory)
+
+A later feature (not in this plan, not started) previews a `local-file`
+`ReferenceTarget` (`src/core/types.ts`) inside a pane: a plain click replaces the
+current pane's view with the file preview and "back" returns to the node view;
+Cmd/Ctrl+click opens the preview in a new split pane. It touches the same pane
+files this refactor reshapes, so the PM asked us to keep the seam open. Decisions
+(this refactor's contract with that future work):
+
+- **[adopted — the load-bearing, irreversible one] `WorkspacePanelState` stays an
+  extensible discriminated union.** The flatten keeps `OutlinePanelState |
+  AgentDebugPanelState` over a shared `WorkspacePanelBase { id; size }`,
+  discriminated by `type` (it was NOT collapsed to outliner-only). Adding preview
+  is then localized: a `FilePreviewPanelState extends WorkspacePanelBase { type:
+  'file-preview'; path: string; entryKind: 'file' | 'directory' }` member + one
+  `WorkspaceCanvas` render branch + one `sanitizePanel` branch. Cmd/Ctrl+click →
+  a new preview pane is fully accommodated by this shape today. This is the
+  expensive, hard-to-reverse dependency, and it is satisfied.
+
+- **[deferred, documented] per-pane history stays a root stack (`NodeId[]`), not a
+  generalized `PaneView[]` view-state stack.** Preview-*in-current-pane* (plain
+  click + back-to-node) is the only part that needs a non-node history entry. The
+  target shape is:
+
+  ```ts
+  type PaneView =
+    | { kind: 'outliner'; rootId: NodeId }
+    | { kind: 'file-preview'; path: string; entryKind: 'file' | 'directory' }; // later
+  ```
+
+  Doing it *properly* means promoting a navigable pane's **current view** (not
+  just its history) to `PaneView`, so the pane's content flips between outliner
+  and preview as you go back/forward — a real scope/risk increase across
+  `navigateOutlinerPanel`, `navigatePanelBack/Forward`, `sanitizePanel`,
+  `NodePanel` breadcrumb, and `useWorkspaceKeyboard`. The half-measure (typing the
+  arrays as a union without moving the current view) buys the feature nothing.
+  Per the PM's latitude, deferred to keep this refactor healthy and fully tested.
+  No persistence cost to deferring — pre-launch, the `:v2` shape can be cut over
+  again freely when preview lands.
+
+- **[deferred, nice-to-have] generic "open in current pane / open in split pane"
+  over view kind.** Today's entry points (`navigatePanelRoot`, `openPanel`) are
+  `NodeId`-typed; preview will add view-typed siblings on the same union. Noted,
+  not built — designing it blind (without the preview consumer) risks the wrong
+  shape.
+
+Net: the irreversible dependency (extensible pane union) is in place; the
+cheap-to-add-later parts (history generalization, generic open) are documented
+seams, not silent gaps.
+
 ## Spec sync (A6 — same change)
 
 `docs/spec/workspace-layout.md` is built on the tab model and **must be
@@ -310,35 +360,56 @@ pane-centric; nothing in `src/core`/`src/main` references tabs).
 
 ## Checklist
 
-- [ ] `workspaceLayoutTypes.ts`: D5 shape — `size` on `WorkspacePanelBase`,
+- [x] `workspaceLayoutTypes.ts`: D5 shape — `size` on `WorkspacePanelBase`,
       delete `WorkspaceTabState` + `panelSizes`.
-- [ ] Rename hook/file → `useWorkspaceLayout`; flatten state to `panels[]` +
+- [x] Rename hook/file → `useWorkspaceLayout`; flatten state to `panels[]` +
       `activePanelId`; v2 persist + drop v1; `sanitizeLayout` reads `panel.size`.
-- [ ] `defaultLayout` seeds a **single** pane on `today` (not today + library).
-- [ ] Remove tab-scoped exports + `updateActiveTab`; keep/repoint pane-scoped
+- [x] `defaultLayout` seeds a **single** pane on `today` (not today + library).
+- [x] Remove tab-scoped exports + `updateActiveTab`; keep/repoint pane-scoped
       ones; `resizePanelPair` drops `tabId`, writes `.size`.
-- [ ] D6 renames (separate commit): `wantsNewPaneFromClick`,
-      `NavigateRootOptions.newPane`, all passthrough sites; delete
-      `MAX_PERSISTED_TABS`.
-- [ ] `App.tsx`: remove tab destructuring; repoint `newPane` branch in
+- [x] D6 renames: `wantsNewPaneFromClick`, `NavigateRootOptions.newPane`, all
+      passthrough sites (`NodePanel`, `OutlinerItem`, `AgentInlineReferenceText`,
+      `RichTextEditor`); delete `MAX_PERSISTED_TABS`.
+- [x] `App.tsx`: remove tab destructuring; repoint `newPane` branch in
       `navigateRoot` AND `navigatePanelRoot` to `openPanel`; fix
       `agentUserViewContext`; pass `panels`/`activePanelId` to `WorkspaceCanvas`.
-- [ ] `WorkspaceCanvas.tsx` / `useResizableLayout.ts`: read `panel.size`.
-- [ ] `Sidebar.tsx`: delete Tabs section + types/props; remove
-      `hiddenRootNodeIds` (T3) and verify the Library blank-row at runtime.
-- [ ] `NodeContextMenu.tsx`: "Open" → "Open in split pane" (T2, wiring (a)/(b));
-      remove `Appearance` item + submenu + `mode` members (T4).
-- [ ] **Spec:** rewrite `docs/spec/workspace-layout.md` (A6).
-- [ ] **E2E (all four tab-coupled specs):**
-      - `workspace-layout.spec.ts` — "New tab" button + `.sidebar-tab` + the
-        "sidebar tabs can be closed" test. Rewrite as pane assertions or delete
-        the tab-switcher test. Also update the default-layout expectation
-        (single pane, not two).
-      - `outliner-navigation-title.spec.ts` — `.sidebar-tab.active`; "New tab".
-      - `agent-composer.spec.ts` — `.sidebar-tab` count.
-      - `outliner-selection-keyboard.spec.ts` — `.sidebar-tab` / tabCount+1.
-      Per file decide delete vs. rewrite-as-pane (the *intent* changes: open →
-      pane, not tab).
-- [ ] Verify split open / close / resize / per-pane back-forward still work.
-- [ ] `bun run typecheck` + `test:renderer` + the four e2e specs above.
-- [ ] Light + dark visual gate (UI change).
+- [x] `WorkspaceCanvas.tsx` / `useResizableLayout.ts`: read `panel.size`.
+- [x] `Sidebar.tsx`: delete Tabs section + types/props; remove `hiddenRootNodeIds`
+      (T3). Library blank-row: verified at runtime — it is the section's
+      trailing-draft editor, no real hidden node, no action needed. Dead
+      `.sidebar-tab*` CSS removed from `sidebar.css`.
+- [x] `NodeContextMenu.tsx`: "Open" → "Open in split pane" via the existing
+      `onRoot(id, { newPane: true })` plumbing — chose wiring (b)-style reuse
+      (no new prop drilled); remove `Appearance` item + submenu + `icon`/`banner`
+      `mode` members (T4).
+- [x] **Spec:** rewrite `docs/spec/workspace-layout.md` (A6).
+- [x] **E2E (all tab-coupled specs):**
+      - `workspace-layout.spec.ts` — split/single-pane tests reworked to open a
+        pane via Cmd+M; tab-switcher test rewritten as pane persistence + close;
+        default-layout expectation now single pane; T3 root-outline flipped to
+        expect Schema/Settings shown.
+      - `outliner-navigation-title.spec.ts` — debug-pane test rewritten in pane
+        terms; "New tab" removed.
+      - `agent-composer.spec.ts` / `outliner-selection-keyboard.spec.ts` —
+        inline-ref tests rewritten (plain click = same pane, Cmd+click = new pane).
+      - `native-dialogs.spec.ts` — removed the Set-icon test (feature deleted by
+        T4); `outliner-triggers.spec.ts` — narrow-viewport test no longer closes a
+        2nd pane (default is single now).
+- [x] Verify split open / close / resize / per-pane back-forward still work
+      (e2e + renderer).
+- [x] `bun run typecheck` (clean) + `test:renderer` (268/0).
+- [ ] Light + dark visual gate (UI change) — for the main-agent gate.
+
+## Status notes (for the gate)
+
+- **Pre-existing failures, NOT from this change** (verified identical on
+  `origin/main` by stashing): `test:core` has 2 failing `file_glob`/`file_grep`
+  agent-tool tests; the e2e suite has several pre-existing failures unrelated to
+  panes — day-title humanization (`2026-05-13` → `Wed, May 13`, date-environment
+  dependent), panel-resize cursor reading `auto` in headless, a sidebar
+  alignment metric, and a `e2eNodeInlineRef is not defined` fixture error in
+  `outliner-selection-keyboard`. This change adds **zero** new failures and
+  fixes one (the debug-pane page-history test).
+- **Net diff ≈ −990 lines** — a deletion refactor (one `WorkspaceLayout` replaces
+  `tabs[] + activeTabId + activeTab`; `updateActiveTab` and the parallel
+  `panelSizes` map are gone).

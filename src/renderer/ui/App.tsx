@@ -2,11 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import type { AgentUserViewContext } from '../../core/agentTypes';
 import { api } from '../api/client';
-import type { DocumentProjection, FocusHint, NodeId, NodeProjection } from '../api/types';
+import type { DocumentProjection, FocusHint, NodeId } from '../api/types';
 import { useRenderIndex, useUiState } from '../state/document';
 import { AgentDock, type AgentRailState } from './AgentDock';
 import { CommandPalette } from './CommandPalette';
-import { Sidebar, type SidebarTab } from './Sidebar';
+import { Sidebar } from './Sidebar';
 import { WindowChrome } from './WindowChrome';
 import { CloseIcon, ICON_SIZE } from './icons';
 import {
@@ -22,20 +22,13 @@ import { useDragSelection } from './interactions/dragSelection';
 import { BatchTagSelector } from './outliner/BatchTagSelector';
 import { ButtonControl } from './primitives/ButtonControl';
 import type { NavigateRootOptions, TriggerState } from './shared';
-import { textOf, useCommandRunner } from './shared';
+import { useCommandRunner } from './shared';
 import { buildAgentUserViewContext } from './agent/userViewContext';
 import { WorkspaceCanvas } from './WorkspaceCanvas';
 import { useResizableLayout } from './useResizableLayout';
 import { useSelectionDismissal } from './useSelectionDismissal';
 import { useWorkspaceKeyboard } from './useWorkspaceKeyboard';
-import { useWorkspaceTabs } from './useWorkspaceTabs';
-import type { WorkspacePanelState } from './workspaceLayoutTypes';
-
-function nodeIconOf(node: NodeProjection | undefined) {
-  if (!node) return null;
-  const icon = node.icon;
-  return typeof icon === 'string' && icon.trim() ? icon.trim() : null;
-}
+import { useWorkspaceLayout } from './useWorkspaceLayout';
 
 export function App() {
   const [projection, setProjection] = useState<DocumentProjection | null>(null);
@@ -48,7 +41,6 @@ export function App() {
   const agentRailState: AgentRailState = agentOpen ? 'open' : 'collapsed';
   const [sidebarExpandedIds, setSidebarExpandedIds] = useState<Set<NodeId>>(() => new Set());
   const [pendingFocus, setPendingFocus] = useState<FocusHint | null>(null);
-  const [agentSessionTitles, setAgentSessionTitles] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [trigger, setTrigger] = useState<TriggerState>(null);
   const [dragId, setDragId] = useState<NodeId | null>(null);
@@ -79,24 +71,23 @@ export function App() {
 
   const {
     activeOutlinerPanel,
-    activeTab,
-    activeTabId,
+    activePanelId,
     activatePanel,
     closePanel,
-    closeTab,
-    createTab,
-    initializeTabs,
+    initializeLayout,
     navigatePanelBack: goPanelBack,
     navigatePanelForward: goPanelForward,
     navigatePanelRoot: setPanelRoot,
     navigateRoot: setActivePanelRoot,
     openAgentDebugPanel,
     openPanel,
+    panels,
     resizePanelPair,
     rootId,
-    selectTab,
-    tabs,
-  } = useWorkspaceTabs({ focusNode });
+  } = useWorkspaceLayout({ focusNode });
+  // Global Back/Forward (Cmd+[ / Cmd+]) act on the active pane's page history.
+  // activeOutlinerPanel is strict (null when a debug pane is active), so the
+  // keyboard handlers below no-op instead of navigating an unrelated pane.
   const pageHistoryPanel = activeOutlinerPanel;
 
   const {
@@ -112,14 +103,14 @@ export function App() {
     resizePanelPairWithKeyboard,
     resizeSidebarWithKeyboard,
     sidebarWidth,
-  } = useResizableLayout({ activeTab, resizePanelPair });
+  } = useResizableLayout({ panels, resizePanelPair });
 
   useDragSelection({ rootId, index, ui, setUi });
 
   useEffect(() => {
     void run(async () => {
       const initial = await api.initWorkspace();
-      const initialFocusId = initializeTabs(initial);
+      const initialFocusId = initializeLayout(initial);
       setUi((prev) => {
         const next = requestFocusState(prev, rowFocusTarget(initialFocusId, null, null), cursorEnd());
         return {
@@ -129,7 +120,7 @@ export function App() {
       });
       return initial;
     });
-  }, [initializeTabs, run, setUi]);
+  }, [initializeLayout, run, setUi]);
 
   useEffect(() => {
     const unlisten = window.lin?.onDocumentEvent((event) => {
@@ -151,29 +142,6 @@ export function App() {
     };
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    void api.agentListSessions()
-      .then((sessions) => {
-        if (cancelled) return;
-        setAgentSessionTitles(Object.fromEntries(
-          sessions
-            .map((session) => [session.id, session.title?.trim() || 'Agent Debug'] as const),
-        ));
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => window.lin?.onAgentEvent((event) => {
-    if (event.type !== 'projection') return;
-    const title = event.renderProjection.sessionTitle?.trim();
-    if (!title) return;
-    setAgentSessionTitles((prev) => ({ ...prev, [event.sessionId]: title }));
-  }) ?? undefined, []);
-
   // Desaturate the chrome while the window is inactive (the macOS
   // inactive-window convention). The main process forwards OS focus/blur; we
   // mark the document root so shell.css can grey the rails. Default to active so
@@ -191,24 +159,24 @@ export function App() {
   }, [setUi]);
 
   const navigateRoot = useCallback((nodeId: NodeId, options?: NavigateRootOptions) => {
-    if (options?.newTab) {
-      createTab(nodeId);
+    if (options?.newPane) {
+      openPanel(nodeId);
       expandNodeInOutliner(nodeId);
       return;
     }
     setActivePanelRoot(nodeId, options);
     expandNodeInOutliner(nodeId);
-  }, [createTab, expandNodeInOutliner, setActivePanelRoot]);
+  }, [expandNodeInOutliner, openPanel, setActivePanelRoot]);
 
   const navigatePanelRoot = useCallback((panelId: string, nodeId: NodeId, options?: NavigateRootOptions) => {
-    if (options?.newTab) {
-      createTab(nodeId);
+    if (options?.newPane) {
+      openPanel(nodeId);
       expandNodeInOutliner(nodeId);
       return;
     }
     setPanelRoot(panelId, nodeId, options);
     expandNodeInOutliner(nodeId);
-  }, [createTab, expandNodeInOutliner, setPanelRoot]);
+  }, [expandNodeInOutliner, openPanel, setPanelRoot]);
 
   const navigatePanelBack = useCallback((panelId: string) => {
     const nodeId = goPanelBack(panelId);
@@ -236,13 +204,17 @@ export function App() {
   }, [expandNodeInOutliner, openPanel]);
 
   const openNodeReferenceFromAgent = useCallback((nodeId: NodeId, options?: NavigateRootOptions) => {
-    navigateRoot(nodeId, { focus: false, newTab: options?.newTab });
+    navigateRoot(nodeId, { focus: false, newPane: options?.newPane });
   }, [navigateRoot]);
 
   const openActiveRootInPanel = useCallback(() => {
-    if (!rootId) return;
-    openRootInPanel(rootId);
-  }, [openRootInPanel, rootId]);
+    // Cmd+M opens the *active* outliner pane's root in a new pane. When a debug
+    // pane is active there is no active outliner root, so this is a no-op rather
+    // than reaching across to the ambient (first) outliner.
+    const activeRootId = activeOutlinerPanel?.rootId;
+    if (!activeRootId) return;
+    openRootInPanel(activeRootId);
+  }, [activeOutlinerPanel, openRootInPanel]);
 
   const requestEditFocus = useCallback((nodeId: NodeId) => {
     setUi((prev) => requestFocusState(prev, rowFocusTarget(nodeId, null, null), cursorEnd()));
@@ -302,7 +274,7 @@ export function App() {
   const agentUserViewContext = useMemo<AgentUserViewContext>(() => {
     if (!index) {
       return {
-        activePanelId: activeTab?.activePanelId ?? null,
+        activePanelId,
         focusedPanelId: ui.focusedPanelId,
         focusSurface: ui.focusSurface,
         focusedNode: null,
@@ -310,11 +282,12 @@ export function App() {
       };
     }
     return buildAgentUserViewContext({
-      activeTab,
+      activePanelId,
+      panels,
       index,
       ui,
     });
-  }, [activeTab, index, ui]);
+  }, [activePanelId, index, panels, ui]);
 
   if (!projection || !index) {
     return (
@@ -326,29 +299,6 @@ export function App() {
     );
   }
 
-  const panelSegmentTitle = (panel: WorkspacePanelState) => {
-    if (panel.type === 'agent-debug') {
-      return panel.sessionId ? agentSessionTitles[panel.sessionId] ?? 'Agent Debug' : 'Agent Debug';
-    }
-    return textOf(index.byId.get(panel.rootId)) || 'Workspace';
-  };
-  const sidebarTabs: SidebarTab[] = tabs.map((tab) => {
-    const segments = tab.panels.map((panel) => {
-      const node = panel.type === 'outliner' ? index.byId.get(panel.rootId) : undefined;
-      return {
-        active: panel.id === tab.activePanelId,
-        icon: panel.type === 'outliner' ? nodeIconOf(node) : null,
-        id: panel.id,
-        kind: panel.type === 'agent-debug' ? 'agent-debug' as const : 'node' as const,
-        title: panelSegmentTitle(panel),
-      };
-    });
-    return {
-      id: tab.id,
-      segments,
-      title: segments.map((segment) => segment.title).join(', '),
-    };
-  });
   const appShellStyle = {
     '--sidebar-width': `${sidebarWidth}px`,
     '--agent-width': `${agentWidth}px`,
@@ -376,11 +326,8 @@ export function App() {
 
       <div className="app-shell">
         <Sidebar
-          activeTabId={activeTabId}
           expandedIds={sidebarExpandedIds}
           index={index}
-          onCloseTab={closeTab}
-          onCreateTab={() => createTab()}
           onNavigateRoot={navigateRoot}
           onOpenPanel={openRootInPanel}
           onOpenSettings={() => {
@@ -389,15 +336,14 @@ export function App() {
           onResizeKeyDown={resizeSidebarWithKeyboard}
           onResizeReset={resetSidebarWidth}
           onResizeStart={beginSidebarResize}
-          onSelectTab={selectTab}
           onToggleTreeNode={toggleSidebarTreeNode}
           projection={projection}
           rootId={rootId}
-          tabs={sidebarTabs}
         />
 
         <WorkspaceCanvas
-          activeTab={activeTab}
+          activePanelId={activePanelId}
+          panels={panels}
           canvasRef={canvasRef}
           dragId={dragId}
           index={index}

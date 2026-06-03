@@ -6,7 +6,7 @@ import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { replaceAllRichTextPatch, type CreateNodeTree, type RichText, type RichTextPatch } from '../../api/types';
 import type { FocusRequest, FocusTarget, PendingInputChar } from '../../state/document';
 import type { EditorTrigger, NavigateRootOptions } from '../shared';
-import { wantsNewTabFromClick } from '../shared';
+import { wantsNewPaneFromClick } from '../shared';
 import { resolveContentRowUpdateAction } from '../interactions/rowInteractions';
 import { resolveNodeLineKeyAction } from '../interactions/nodeLineKeymap';
 import { resolveSelectedReferenceShortcut } from '../interactions/selectedReferenceShortcuts';
@@ -430,7 +430,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
           event.preventDefault();
           event.stopPropagation();
           propsRef.current.onInlineReferenceClick(targetNodeId, {
-            newTab: wantsNewTabFromClick(event),
+            newPane: wantsNewPaneFromClick(event),
           });
           return true;
         },

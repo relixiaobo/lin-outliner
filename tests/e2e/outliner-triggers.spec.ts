@@ -1652,7 +1652,7 @@ test.describe('outliner options field inline value', () => {
 
   test('options field listbox stays inside a narrow viewport', async ({ page }) => {
     await page.setViewportSize({ width: 980, height: 620 });
-    await page.getByRole('button', { name: 'Close panel' }).nth(1).click();
+    // The default layout is a single pane.
     await expect(page.locator('.outline-panel-surface')).toHaveCount(1);
 
     await priorityValueEditor(page).click();

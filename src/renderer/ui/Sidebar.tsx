@@ -2,12 +2,9 @@ import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent a
 import type { DocumentProjection, NodeId, NodeProjection } from '../api/types';
 import { resolveReferenceTargetId, type DocumentIndex } from '../state/document';
 import {
-  AddIcon,
   CalendarIcon,
   ChevronDownIcon,
   ChevronRightIcon,
-  CloseIcon,
-  DebugIcon,
   ICON_SIZE,
   LibraryIcon,
   PinIcon,
@@ -16,23 +13,8 @@ import {
   SupertagIcon,
 } from './icons';
 import { ButtonControl } from './primitives/ButtonControl';
-import { IconButton } from './primitives/IconButton';
 import { ResizeHandle } from './primitives/ResizeHandle';
 import { textOf } from './shared';
-
-export interface SidebarTabSegment {
-  active: boolean;
-  icon?: string | null;
-  id: string;
-  kind: 'node' | 'agent-debug';
-  title: string;
-}
-
-export interface SidebarTab {
-  id: string;
-  segments: SidebarTabSegment[];
-  title: string;
-}
 
 const primaryNavItems = [
   { label: 'Today', key: 'today', icon: CalendarIcon },
@@ -42,22 +24,17 @@ const primaryNavItems = [
 ] as const;
 
 interface SidebarProps {
-  activeTabId: string | null;
   expandedIds: Set<NodeId>;
   index: DocumentIndex;
-  onCloseTab: (tabId: string) => void;
-  onCreateTab: () => void;
   onNavigateRoot: (nodeId: NodeId) => void;
   onOpenPanel: (nodeId: NodeId) => void;
   onOpenSettings: () => void;
   onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
   onResizeReset: () => void;
   onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
-  onSelectTab: (tabId: string, panelId?: string) => void;
   onToggleTreeNode: (nodeId: NodeId) => void;
   projection: DocumentProjection;
   rootId: NodeId | null;
-  tabs: SidebarTab[];
 }
 
 export function Sidebar(props: SidebarProps) {
@@ -68,11 +45,12 @@ export function Sidebar(props: SidebarProps) {
     schema: props.projection.schemaId,
   } satisfies Record<typeof primaryNavItems[number]['key'], NodeId | null>;
   const rootNode = props.index.byId.get(props.projection.rootId);
-  const hiddenRootNodeIds = new Set<NodeId>([props.projection.schemaId, props.projection.settingsId]);
+  // T3: show all root sections in the workspace tree (Schema/Settings no longer
+  // hidden) — the center root outline already shows all of them.
   const rootChildren = rootNode?.children
     .map((childId) => props.index.byId.get(childId))
     .filter((child): child is NodeProjection => (
-      Boolean(child && child.parentId === rootNode.id && !hiddenRootNodeIds.has(child.id))
+      Boolean(child && child.parentId === rootNode.id)
     )) ?? [];
   const pinnedNodeIds: NodeId[] = [];
   const rootLabel = rootNode ? textOf(rootNode) || 'Untitled' : '';
@@ -131,8 +109,6 @@ export function Sidebar(props: SidebarProps) {
     );
   };
 
-  const canCloseTab = props.tabs.length > 1;
-
   return (
     <aside className="sidebar-dock" aria-label="Primary navigation">
       {/* Top spacer keeps the rail's first row clear of the traffic lights +
@@ -164,85 +140,6 @@ export function Sidebar(props: SidebarProps) {
           );
         })}
       </nav>
-
-      {/* The sidebar is the tab switcher now that the global tab strip is gone:
-          select / create / close all live here. */}
-      <div className="sidebar-section sidebar-tabs-section">
-        <div className="sidebar-section-title sidebar-tabs-title">
-          <span>Tabs</span>
-          <IconButton
-            className="sidebar-tab-add"
-            icon={AddIcon}
-            iconSize={ICON_SIZE.menu}
-            label="New tab"
-            onClick={props.onCreateTab}
-            strokeWidth={2}
-            title="New tab"
-            variant="chrome"
-          />
-        </div>
-        <div className="sidebar-tab-list" aria-label="Open tabs">
-          {props.tabs.map((tab) => {
-            const active = tab.id === props.activeTabId;
-            return (
-              <div
-                className={`sidebar-tab ${active ? 'active' : ''}`}
-                key={tab.id}
-                title={tab.title}
-              >
-                <ButtonControl
-                  aria-current={active ? 'page' : undefined}
-                  className="sidebar-tab-trigger"
-                  onClick={(event) => {
-                    const target = event.target;
-                    const segment = target instanceof Element
-                      ? target.closest('[data-workspace-panel-id]')
-                      : null;
-                    const panelId = segment instanceof HTMLElement
-                      ? segment.dataset.workspacePanelId
-                      : undefined;
-                    props.onSelectTab(tab.id, panelId);
-                  }}
-                >
-                  {tab.segments.map((segment) => (
-                    <span
-                      className={`sidebar-tab-segment ${segment.active ? 'is-active' : ''}`}
-                      data-workspace-panel-id={segment.id}
-                      key={segment.id}
-                    >
-                      {segment.kind === 'agent-debug' ? (
-                        <DebugIcon aria-hidden="true" className="sidebar-tab-segment-icon" size={ICON_SIZE.rowGlyph} />
-                      ) : segment.icon?.trim() ? (
-                        <span className="sidebar-tab-segment-icon sidebar-tab-segment-emoji" aria-hidden="true">
-                          {segment.icon.trim()}
-                        </span>
-                      ) : (
-                        <span className="sidebar-tab-segment-icon sidebar-tab-segment-bullet" aria-hidden="true" />
-                      )}
-                      <span className="sidebar-tab-segment-title">{segment.title}</span>
-                    </span>
-                  ))}
-                </ButtonControl>
-                {canCloseTab && (
-                  <IconButton
-                    className="sidebar-tab-close"
-                    icon={CloseIcon}
-                    iconSize={ICON_SIZE.rowGlyph}
-                    label={`Close ${tab.title}`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      props.onCloseTab(tab.id);
-                    }}
-                    strokeWidth={2.2}
-                    title="Close tab"
-                    variant="chrome"
-                  />
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
 
       <div className="sidebar-section">
         <div className="sidebar-section-title">Pinned</div>

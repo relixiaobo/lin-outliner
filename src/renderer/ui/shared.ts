@@ -30,7 +30,7 @@ const EMPTY_COMMAND_RUNNER_LIFECYCLE: CommandRunnerLifecycle = {};
 
 export interface NavigateRootOptions {
   focus?: boolean;
-  newTab?: boolean;
+  newPane?: boolean;
 }
 
 interface ModifierClickEventLike {
@@ -38,7 +38,7 @@ interface ModifierClickEventLike {
   metaKey: boolean;
 }
 
-export function wantsNewTabFromClick(event: ModifierClickEventLike): boolean {
+export function wantsNewPaneFromClick(event: ModifierClickEventLike): boolean {
   return event.metaKey || event.ctrlKey;
 }
 

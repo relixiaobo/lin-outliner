@@ -632,7 +632,7 @@ export function NodePanel(props: NodePanelProps) {
                 resolveInlineReferenceColor={(targetId) => inlineReferenceTextColor(targetId, props.index)}
                 onInlineReferenceClick={(targetId, options) => props.onRoot(targetId, {
                   focus: false,
-                  newTab: options?.newTab,
+                  newPane: options?.newPane,
                 })}
                 onEscape={() => {
                   replaceLocalTitleContent(rootNode?.content ?? EMPTY_RICH_TEXT);

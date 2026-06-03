@@ -29,14 +29,13 @@ import {
   SortAscIcon,
   SupertagIcon,
   TrashIcon,
-  ColorIcon,
 } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 import { TextInputControl } from '../primitives/TextInputControl';
 import { overlayAnchorFromPoint, useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
-import type { CommandRunner } from '../shared';
+import type { CommandRunner, NavigateRootOptions } from '../shared';
 import { textOf } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
 import { readViewConfig } from './row-model';
@@ -50,7 +49,7 @@ interface NodeContextMenuProps {
   selectedIds: Set<NodeId>;
   index: DocumentIndex;
   run: CommandRunner;
-  onRoot: (nodeId: NodeId) => void;
+  onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   onEditDescription: () => void;
   onOpenViewSection: (nodeId: NodeId, section: ToolbarDropdownSection) => void;
   onClose: () => void;
@@ -73,7 +72,7 @@ async function writeClipboardText(text: string): Promise<void> {
 }
 
 export function NodeContextMenu(props: NodeContextMenuProps) {
-  const [mode, setMode] = useState<'main' | 'tag' | 'move' | 'appearance' | 'icon' | 'banner'>('main');
+  const [mode, setMode] = useState<'main' | 'tag' | 'move'>('main');
   const [query, setQuery] = useState('');
   const menuRef = useRef<HTMLDivElement | null>(null);
   const menuAnchor = useMemo(() => overlayAnchorFromPoint(props.x, props.y), [props.x, props.y]);
@@ -180,7 +179,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
 
   const renderMain = () => (
     <>
-      {item('Open', <OpenIcon size={ICON_SIZE.menu} />, () => props.onRoot(props.openId))}
+      {item('Open in split pane', <OpenIcon size={ICON_SIZE.menu} />, () => props.onRoot(props.openId, { newPane: true }))}
       {item(`${activeLabelPrefix}Duplicate`, <DuplicateIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.batchDuplicateNodes(activeNodeIds)))}
       {item(`${activeLabelPrefix}Move up`, <MoveUpIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.batchMoveNodesUp(activeNodeIds)))}
       {item(`${activeLabelPrefix}Move down`, <MoveDownIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.batchMoveNodesDown(activeNodeIds)))}
@@ -220,13 +219,6 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       {item('Sort by', <SortAscIcon size={ICON_SIZE.menu} />, () => openViewSection('sort'))}
       {item('Group by', <GroupIcon size={ICON_SIZE.menu} />, () => openViewSection('group'))}
       {item('Display', <FieldIcon size={ICON_SIZE.menu} />, () => openViewSection('display'))}
-      <MenuItem
-        className="node-context-item"
-        icon={<ColorIcon size={ICON_SIZE.menu} />}
-        label="Appearance"
-        onClick={() => setMode('appearance')}
-        role="menuitem"
-      />
       <div className="node-context-separator" role="separator" />
       {item(target.description ? 'Edit description' : 'Add description', <DescriptionIcon size={ICON_SIZE.menu} />, props.onEditDescription)}
       <div className="node-context-separator" role="separator" />
@@ -322,106 +314,9 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     </>
   );
 
-  const renderAppearanceMode = () => (
-    <>
-      <div className="node-context-subhead">
-        <ButtonControl onClick={() => setMode('main')}>Back</ButtonControl>
-        <span>Appearance</span>
-      </div>
-      <MenuItem
-        className="node-context-item"
-        icon={<ColorIcon size={ICON_SIZE.menu} />}
-        label="Set icon"
-        onClick={() => {
-          setQuery(target.icon ?? '');
-          setMode('icon');
-        }}
-      />
-      <MenuItem
-        className="node-context-item"
-        icon={<ColorIcon size={ICON_SIZE.menu} />}
-        label="Generate icon"
-        onClick={() => {
-          void props.run(() => api.setNodeIcon(props.targetId, '✨', 'generated'));
-          props.onClose();
-        }}
-      />
-      <div className="node-context-separator" role="separator" />
-      <MenuItem
-        className="node-context-item"
-        icon={<FieldIcon size={ICON_SIZE.menu} />}
-        label="Upload banner image"
-        onClick={() => {
-          setQuery(target.bannerAssetId ?? '');
-          setMode('banner');
-        }}
-      />
-      <MenuItem
-        className="node-context-item"
-        icon={<ColorIcon size={ICON_SIZE.menu} />}
-        label="Generate banner image"
-        onClick={() => {
-          void props.run(() => api.setNodeBanner(props.targetId, `generated:${props.targetId}`));
-          props.onClose();
-        }}
-      />
-    </>
-  );
-
-  // Inline text entry for the single-field appearance prompts (icon, banner),
-  // replacing window.prompt — a blocking browser dialog that telegraphs "web app"
-  // — with an in-menu input consistent with the tag/move search sub-modes.
-  const renderPromptMode = (config: {
-    title: string;
-    label: string;
-    placeholder: string;
-    apply: (value: string) => void;
-  }) => (
-    <>
-      <div className="node-context-subhead">
-        <ButtonControl onClick={() => setMode('appearance')}>Back</ButtonControl>
-        <span>{config.title}</span>
-      </div>
-      <TextInputControl
-        className="node-context-search"
-        label={config.label}
-        value={query}
-        placeholder={config.placeholder}
-        autoFocus
-        onChange={(event) => setQuery(event.currentTarget.value)}
-        onKeyDown={(event) => {
-          if (isImeComposingEvent(event)) return;
-          if (event.key !== 'Enter') return;
-          event.preventDefault();
-          config.apply(query);
-        }}
-      />
-      <MenuItem
-        className="node-context-item"
-        icon={<ColorIcon size={ICON_SIZE.menu} />}
-        label="Save"
-        onClick={() => config.apply(query)}
-      />
-    </>
-  );
-
-  const applyIcon = (value: string) => {
-    const trimmed = value.trim();
-    void props.run(() => api.setNodeIcon(props.targetId, trimmed || null, trimmed ? 'emoji' : null));
-    props.onClose();
-  };
-  const applyBanner = (value: string) => {
-    const trimmed = value.trim();
-    void props.run(() => api.setNodeBanner(props.targetId, trimmed || null));
-    props.onClose();
-  };
-
   const modeLabel = mode === 'main' ? 'Node actions'
     : mode === 'tag' ? 'Add tag'
-      : mode === 'appearance' ? 'Appearance'
-        : mode === 'icon' ? 'Set icon'
-          : mode === 'banner' ? 'Banner image'
-            : 'Move node';
+      : 'Move node';
 
   return createPortal(
     <MenuSurface
@@ -437,13 +332,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
         ? renderMain()
         : mode === 'tag'
           ? renderTagMode()
-          : mode === 'appearance'
-            ? renderAppearanceMode()
-            : mode === 'icon'
-              ? renderPromptMode({ title: 'Set icon', label: 'Icon', placeholder: 'emoji or short text', apply: applyIcon })
-              : mode === 'banner'
-                ? renderPromptMode({ title: 'Banner image', label: 'Banner asset', placeholder: 'asset id or path', apply: applyBanner })
-                : renderMoveMode()}
+          : renderMoveMode()}
     </MenuSurface>,
     document.body,
   );

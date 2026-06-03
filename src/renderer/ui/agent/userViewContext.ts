@@ -10,7 +10,7 @@ import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
 import { buildOutlinerRows, readViewConfig } from '../../state/outlinerRows';
 import { buildPanelBreadcrumb } from '../panelBreadcrumb';
-import type { WorkspaceTabState } from '../workspaceLayoutTypes';
+import type { WorkspacePanelState } from '../workspaceLayoutTypes';
 
 const MAX_BREADCRUMB_CONTEXT_NODES = 6;
 const MAX_CONTEXT_TITLE_LENGTH = 160;
@@ -18,14 +18,13 @@ const MAX_VISIBLE_OUTLINE_NODES = 80;
 const MAX_VISIBLE_OUTLINE_DEPTH = 5;
 
 export function buildAgentUserViewContext(input: {
-  activeTab: WorkspaceTabState | null;
+  activePanelId: string | null;
+  panels: WorkspacePanelState[];
   index: DocumentIndex;
   ui: UiState;
 }): AgentUserViewContext {
-  const activePanelId = input.activeTab?.activePanelId ?? null;
-
   return {
-    activePanelId,
+    activePanelId: input.activePanelId,
     focusedPanelId: input.ui.focusedPanelId,
     focusSurface: input.ui.focusSurface,
     focusedNode: input.ui.focusedId
@@ -34,17 +33,18 @@ export function buildAgentUserViewContext(input: {
           surface: input.ui.focusSurface,
         })
       : null,
-    nodePanels: buildPanelContexts(input.activeTab, input.index, input.ui),
+    nodePanels: buildPanelContexts(input.activePanelId, input.panels, input.index, input.ui),
   };
 }
 
 function buildPanelContexts(
-  activeTab: WorkspaceTabState | null,
+  activePanelId: string | null,
+  panels: WorkspacePanelState[],
   index: DocumentIndex,
   ui: UiState,
 ): AgentUserViewPanelContext[] {
-  if (!activeTab) return [];
-  return activeTab.panels.flatMap((panel, panelIndex) => {
+  if (panels.length === 0) return [];
+  return panels.flatMap((panel, panelIndex) => {
     if (panel.type !== 'outliner') return [];
     const rootNode = index.byId.get(panel.rootId);
     const visibleOutline = buildVisibleOutline(panel.rootId, index, ui);
@@ -53,7 +53,7 @@ function buildPanelContexts(
       rootNodeId: panel.rootId,
       rootTitle: titleForNode(rootNode),
       rootType: rootNode?.type ?? 'outline',
-      active: panel.id === activeTab.activePanelId,
+      active: panel.id === activePanelId,
       focused: panel.id === ui.focusedPanelId,
       order: panelIndex + 1,
       childCount: rootNode?.children.length ?? 0,

@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
-import type { WorkspaceTabState } from './workspaceLayoutTypes';
+import type { WorkspacePanelState } from './workspaceLayoutTypes';
 
 const DEFAULT_SIDEBAR_WIDTH = 196;
 const DEFAULT_AGENT_WIDTH = 344;
@@ -36,9 +36,8 @@ function resizeKeyDelta(event: ReactKeyboardEvent<HTMLButtonElement>) {
 }
 
 interface UseResizableLayoutOptions {
-  activeTab: WorkspaceTabState | null;
+  panels: WorkspacePanelState[];
   resizePanelPair: (
-    tabId: string,
     leftPanelId: string,
     rightPanelId: string,
     leftSize: number,
@@ -46,7 +45,7 @@ interface UseResizableLayoutOptions {
   ) => void;
 }
 
-export function useResizableLayout({ activeTab, resizePanelPair }: UseResizableLayoutOptions) {
+export function useResizableLayout({ panels, resizePanelPair }: UseResizableLayoutOptions) {
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [agentWidth, setAgentWidth] = useState(DEFAULT_AGENT_WIDTH);
   const canvasRef = useRef<HTMLElement | null>(null);
@@ -146,26 +145,25 @@ export function useResizableLayout({ activeTab, resizePanelPair }: UseResizableL
     rightPanelId: string,
     deltaPixels: number,
   ) => {
-    const tab = activeTab;
     const canvas = canvasRef.current;
-    if (!tab || !canvas) return;
+    if (panels.length === 0 || !canvas) return;
 
-    const startSizes = { ...tab.panelSizes };
-    const totalSize = tab.panels.reduce((sum, panel) => sum + (startSizes[panel.id] ?? 1), 0);
+    const sizeOf = (panelId: string) => panels.find((panel) => panel.id === panelId)?.size ?? 1;
+    const totalSize = panels.reduce((sum, panel) => sum + panel.size, 0);
     const usableWidth = Math.max(
       1,
-      canvas.getBoundingClientRect().width - Math.max(0, tab.panels.length - 1) * panelGapPx(canvas),
+      canvas.getBoundingClientRect().width - Math.max(0, panels.length - 1) * panelGapPx(canvas),
     );
     const sizePerPixel = totalSize / usableWidth;
-    const leftStart = startSizes[leftPanelId] ?? 1;
-    const rightStart = startSizes[rightPanelId] ?? 1;
+    const leftStart = sizeOf(leftPanelId);
+    const rightStart = sizeOf(rightPanelId);
     const pairTotal = leftStart + rightStart;
     const minPanelSize = Math.min(pairTotal / 2, panelMinWidthPx(canvas) * sizePerPixel);
     const deltaSize = deltaPixels * sizePerPixel;
     const nextLeft = clamp(leftStart + deltaSize, minPanelSize, pairTotal - minPanelSize);
     const nextRight = pairTotal - nextLeft;
-    resizePanelPair(tab.id, leftPanelId, rightPanelId, nextLeft, nextRight);
-  }, [activeTab, resizePanelPair]);
+    resizePanelPair(leftPanelId, rightPanelId, nextLeft, nextRight);
+  }, [panels, resizePanelPair]);
 
   const beginPanelResize = useCallback((
     leftPanelId: string,
@@ -175,9 +173,8 @@ export function useResizableLayout({ activeTab, resizePanelPair }: UseResizableL
     event.preventDefault();
     event.stopPropagation();
     const handle = event.currentTarget;
-    const tab = activeTab;
     const canvas = canvasRef.current;
-    if (!tab || !canvas) return;
+    if (panels.length === 0 || !canvas) return;
 
     const startX = event.clientX;
     handle.classList.add('is-resizing');
@@ -197,16 +194,14 @@ export function useResizableLayout({ activeTab, resizePanelPair }: UseResizableL
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', endResize);
     window.addEventListener('pointercancel', endResize);
-  }, [activeTab, resizePanelPairByPixels]);
+  }, [panels.length, resizePanelPairByPixels]);
 
   const resetPanelPair = useCallback((leftPanelId: string, rightPanelId: string) => {
-    const tab = activeTab;
-    if (!tab) return;
-    const leftStart = tab.panelSizes[leftPanelId] ?? 1;
-    const rightStart = tab.panelSizes[rightPanelId] ?? 1;
-    const half = (leftStart + rightStart) / 2;
-    resizePanelPair(tab.id, leftPanelId, rightPanelId, half, half);
-  }, [activeTab, resizePanelPair]);
+    if (panels.length === 0) return;
+    const sizeOf = (panelId: string) => panels.find((panel) => panel.id === panelId)?.size ?? 1;
+    const half = (sizeOf(leftPanelId) + sizeOf(rightPanelId)) / 2;
+    resizePanelPair(leftPanelId, rightPanelId, half, half);
+  }, [panels, resizePanelPair]);
 
   const resizePanelPairWithKeyboard = useCallback((
     leftPanelId: string,
