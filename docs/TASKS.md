@@ -47,6 +47,13 @@ Ordered by priority; lower items may depend on higher ones.
   light-mode + interaction (unfurl / drag / resize) visual pass (verified dark
   only at merge); real OS vibrancy tuning. (Persisted light/dark/system toggle #45
   shipped in PR #82.) See `docs/plans/design-system-rollout.md`.
+- **macos-native-branding-polish** (P1) — post-rebrand macOS-native polish. Three
+  visible bugs: app icon is a full-bleed square (needs a macOS squircle master +
+  regenerated `.icns`/`.png`), duplicate "Tenon" in the sidebar (brand header +
+  workspace-root row), and the dev app menu reads "Electron" (packaged is correct).
+  Plus polish: "Preferences…"→"Settings…", About/builder copyright, Help URL. Has
+  **open questions for PM ratify** (brand de-dup approach, icon design pass,
+  copyright string). See `docs/plans/macos-native-branding-polish.md`.
 - **agent-tool-permissions-hardening** (P2) — non-blocking follow-ups after the
   #60 permission implementation: move the `sessionApproved` short-circuit below
   configured-ask (don't silently relax a configured `ask`); re-validate
