@@ -53,38 +53,65 @@ The surfaces a native macOS app must get right, with **current state** from the
 
 ### P0 — visible bugs (the three flagged in the screenshots)
 
-**T1 — App icon is a full-bleed square; redraw as a macOS squircle.**
-`build/icon.png` / `build/icon.icns` / `assets/brand/tenon-logo.svg` /
-`src/renderer/assets/tenon-logo.svg` are a 1024×1024 image whose dark `#1E1E1E`
-background fills the whole canvas with opaque, square corners (verified: all four
-corner pixels `alpha=255`). macOS does not mask app icons, so this renders as a
-hard dark square in the Dock / Launchpad / ⌘-Tab — visibly non-native.
-*Fix:* produce a new 1024×1024 **master** where the artwork sits on Apple's
-app-icon grid — the continuous-rounded-rect ("squircle") occupying ≈824/1024 px
-(~100 px transparent margin per side), transparent outside the squircle. Keep the
-brand glyph centered on the squircle fill. Regenerate `build/icon.icns` (full size
-ladder) **and** `build/icon.png` (dev Dock via `main.ts` `app.dock.setIcon`,
-~`:1379`). The `.icns` size coverage is already complete — only the artwork shape
-changes. Note this needs a brief **visual check** in the Dock after regen.
+**T1 — App icon renders as a full-bleed square in the Dock; rebuild the master to Apple's macOS icon grid.**
+
+*Root cause (researched, PM-confirmed framing).* The **logo glyph itself is fine** —
+the problem is the icon **master was authored full-bleed** (the `#1E1E1E`
+background fills the entire 1024×1024 canvas; verified all four corner pixels
+`alpha=255`) instead of being built to Apple's macOS app-icon grid. Unlike iOS,
+**macOS does not auto-mask app icons** — whatever shape you ship is what appears
+in the Dock / Launchpad / ⌘-Tab. So a square master → a hard-edged square Dock
+icon, visibly non-native. This is the single most common way Electron apps get the
+macOS icon wrong; the fix is a known template, not a redesign.
+
+*How other developers solve it (the macOS icon grid).* On a **1024×1024**
+transparent canvas, the artwork sits inside a **rounded-rect ("squircle")** of
+**824×824 px**, **corner radius ≈185.4 px**, centered → **exactly 100 px
+transparent gutter on all four sides**; everything outside the squircle is
+transparent. (Apple uses a continuous-curvature superellipse; a plain rounded
+rect at r≈185 is the pragmatic approximation every template ships.) macOS adds its
+own subtle shadow, so the art stays clean.
+
+*Concrete recipe for the dev.* Keep the existing Tenon glyph; recompose it onto the
+824/100px-gutter squircle master (the brand fill becomes the squircle, not the
+whole canvas) — e.g. an SVG (squircle path + centered glyph) rendered to a 1024
+PNG, or Apple's macOS icon template. Then regenerate **both** `build/icon.icns`
+(full size ladder — coverage is already complete, only the shape changes; via
+`iconutil -c icns <iconset>` or an icon tool) **and** `build/icon.png` (the dev
+Dock icon loaded by `app.dock.setIcon`, `main.ts:~1379`). Also update the two
+`tenon-logo.svg` copies if the in-app brand mark should match. **Clear the build
+output and rebuild** — both Electron and the OS cache icons aggressively, so a
+stale square may linger otherwise. Finish with a **visual Dock check (light +
+dark)**.
+
+*Sources:* the macOS icon grid (824×824 / r185.4 / 100 px gutter on 1024) and the
+"macOS does not auto-round, add transparent padding" guidance are the standard
+documented practice — see [Apple HIG · App
+icons](https://developer.apple.com/design/human-interface-guidelines/app-icons)
+and the recurring Electron reports (e.g. electron-builder
+[#7845](https://github.com/electron-userland/electron-builder/issues/7845)).
 
 **T2 — Remove the duplicate "Tenon" in the sidebar.**
 `src/renderer/ui/Sidebar.tsx:146-149` renders a static brand header (logo mark +
 "Tenon" wordmark); separately the workspace-root row (`Sidebar.tsx:~79`,
 `~267-282`) shows the root node whose title is also "Tenon" (seeded at
 `src/core/core.ts:2154`). Two "Tenon"s in one rail.
-*Recommended fix (see Open question Q1):* **drop the static brand header**
-(`Sidebar.tsx:146-149` + its `sidebar-brand*` CSS in `sidebar.css:~71-96`) and let
-the navigable workspace-root row be the single identity (Notion/Tana-style single
-workspace row). Do **not** also rename the root unless Q1 says so.
+*Decision (PM-ratified, Q1 = option a):* **drop the static brand header** —
+remove `Sidebar.tsx:146-149` and its `sidebar-brand*` CSS in `sidebar.css:~71-96`,
+so the navigable workspace-root row is the single identity (Notion/Tana-style
+single workspace row). Do **not** rename the workspace root; leave `core.ts:2154`
+as "Tenon". Update `docs/spec/design-system.md` in the same change if it documents
+the sidebar brand block (A6).
 
 ### P1 — naming / metadata polish
 
 **T3 — App menu reads "Electron" in dev.** `main.ts:~296` first submenu label is
 `app.name`; the About/Hide/Quit items are role-based, so their labels come from the
-bundle's CFBundleName. Packaged = "Tenon" (correct). Dev = "Electron". *Fix
-(optional, see Q3):* hardcode the labels — `{ role: 'about', label: 'About Tenon' }`,
-`{ role: 'hide', label: 'Hide Tenon' }`, `{ role: 'quit', label: 'Quit Tenon' }` —
-so dev and packaged both read "Tenon".
+bundle's CFBundleName. Packaged = "Tenon" (correct). Dev = "Electron". *Decision
+(PM-ratified, Q3 = hardcode):* hardcode the labels — `{ role: 'about', label:
+'About Tenon' }`, `{ role: 'hide', label: 'Hide Tenon' }`, `{ role: 'quit', label:
+'Quit Tenon' }`, and set the first-submenu label literal to `'Tenon'` (not
+`app.name`) — so dev and packaged both read "Tenon".
 
 **T4 — "Preferences…" → "Settings…".** `main.ts:~299` — rename the label to match
 macOS 13+ (the in-app button already says "Settings", `Sidebar.tsx:~298`). Keep ⌘,.
@@ -112,29 +139,33 @@ the URL once the repo is renamed; optionally add "Report an Issue".
 placeholder, **not** the OS title); Edit/Window role menus; dark mode; single-
 instance + lifecycle; `.icns` size ladder; electron-builder icon wiring.
 
-## Open questions (PM to ratify before build)
+## Open questions
 
-1. **Brand de-dup approach (T2).** (a) **Drop the sidebar brand header**, root row
-   becomes the single "Tenon" *(recommended — lower risk, the root row is the real
-   navigable workspace entry)*; or (b) keep the brand header and rename the
-   workspace root to a neutral "Workspace" (`core.ts:2154`, add "Tenon" to the
-   alias array). Pick one — don't do both.
-2. **Icon (T1).** Confirm the squircle direction, and decide whether the existing
-   red/dark glyph simply gets re-placed on a margined squircle by the dev, or this
-   needs a real **design pass** (and who provides the master art). The geometry is
-   mechanical; the aesthetic is a design call.
-3. **Dev-only "Electron" labels (T3).** Worth hardcoding About/Hide/Quit labels to
-   match in dev, or accept it as a dev-only artifact since the packaged app is
-   already correct?
-4. **Copyright string (T5).** Exact holder + year ("© 2026 <name/org>").
+**Resolved (PM-ratified 2026-06-03):**
+
+1. ~~Brand de-dup approach (T2).~~ **→ (a) Drop the sidebar brand header**; keep
+   the workspace-root row as the single "Tenon". (T2 locked.)
+2. ~~Icon (T1).~~ **→ Not a design problem with the provided glyph** — the master
+   was authored full-bleed instead of to Apple's macOS icon grid. The dev
+   re-places the **existing** glyph on the 824/100px-gutter squircle template and
+   regenerates the assets; **no new design pass / new master art needed.** (T1
+   locked.)
+3. ~~Dev-only "Electron" labels (T3).~~ **→ Hardcode** About/Hide/Quit (and the
+   first-submenu label) to "Tenon" so dev matches packaged. (T3 locked.)
+
+**Still open (blocks T5 only — the rest can build):**
+
+4. **Copyright string (T5).** Exact holder + year for `© 2026 <name/org>` (About
+   panel + electron-builder `NSHumanReadableCopyright`). Everything else is
+   unblocked; the dev can ship T1–T4/T6 and fill T5's string when provided.
 
 ## Task checklist (for the dev agent)
 
-- [ ] T1 — new squircle icon master → regenerate `build/icon.icns` + `build/icon.png`; visual Dock check (light + dark)
-- [ ] T2 — de-dup sidebar brand per Q1 (drop brand header + `sidebar-brand*` CSS, or rename root)
-- [ ] T3 — (if Q3=yes) hardcode About/Hide/Quit labels to "…Tenon"
+- [ ] T1 — recompose existing glyph onto the 824/r185.4/100px-gutter squircle master → regenerate `build/icon.icns` + `build/icon.png` (clear caches/rebuild); visual Dock check (light + dark)
+- [ ] T2 — drop the sidebar brand header (`Sidebar.tsx:146-149` + `sidebar-brand*` CSS); keep the workspace-root row
+- [ ] T3 — hardcode About/Hide/Quit + first-submenu label to "Tenon"
 - [ ] T4 — "Preferences…" → "Settings…"
-- [ ] T5 — copyright in About panel + electron-builder
+- [ ] T5 — copyright in About panel + electron-builder (string from Q4)
 - [ ] T6 — Help menu label/URL
 - [ ] `bun run typecheck` + `bun run test:renderer` + `bun run test:e2e` (token guard); visual verification of the sidebar + icon (light + dark); update `docs/spec/design-system.md` if the sidebar brand block is removed (A6)
 
