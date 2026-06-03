@@ -654,6 +654,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Agent composer can @-mention the focused context node (PR #91)** — in the agent
+  composer, `@` returned "No mentions" even when a matching node existed, and node search
+  died entirely when nothing was focused. The composer reused the outliner's node-candidate
+  logic, which excludes `currentNodeId` (a node can't reference itself) and returns `[]` when
+  there is no current node — but the composer is not a node, and its `currentNodeId` resolves
+  to the *focused/context* node, so that very node was filtered out. `buildReferenceCandidates`/
+  `referenceItems`/`nodeCandidates` gain an `excludeCurrentNode?: boolean` (default `true`, so
+  the outliner is byte-for-byte unchanged) and `currentNodeId` is widened to `NodeId | null`
+  end-to-end; the composer passes `excludeCurrentNode: false` and drops its two `!currentNodeId`
+  early returns. Renderer-only; no protocol/core surface; new guard test in
+  `rowInteractions.test.ts`. ([#91](https://github.com/relixiaobo/lin-outliner/pull/91))
+
 - **OpenAI provider error handling: schema 400 + inline failed-message render (PR #90)** —
   two fixes for a user-reported OpenAI 400. (1) `node_search`/`node_create`/`node_delete`/
   `node_edit` declared a top-level `oneOf`, which OpenAI's function-schema validation rejects

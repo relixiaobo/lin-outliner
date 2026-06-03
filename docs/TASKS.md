@@ -144,6 +144,13 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **composer-node-mention** (cc, PR #91) — the agent composer can now `@`-mention the
+  focused/context node (and search nodes with no focus). Added `excludeCurrentNode` (default
+  `true`) to `buildReferenceCandidates`/`referenceItems`/`nodeCandidates` and widened
+  `currentNodeId` to `NodeId | null`; the composer opts out of self-exclusion. Outliner
+  contract byte-for-byte unchanged. Fast-track, renderer-only; typecheck clean, renderer 269/0
+  (new guard test).
+
 - **openai-provider-error-handling** (main, PR #90) — fixed a user-reported OpenAI 400.
   Removed the top-level `oneOf` from the four node tool schemas (OpenAI rejects
   `oneOf`/`anyOf`/`allOf`/`enum`/`not` at a function schema's root); the one-of constraint
