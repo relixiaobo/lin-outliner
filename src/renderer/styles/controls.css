@@ -72,3 +72,52 @@
   transform: translateX(calc(var(--switch-mark-width) - var(--switch-mark-thumb-size) - (var(--switch-mark-inset) * 2)));
 }
 
+/* Segmented control (macOS-style): a recessed grey track with a raised capsule on
+   the selected segment. Selection is neutral (B3) — a lifted --bg-elevated capsule,
+   never a brand fill — and flips with the theme for free (--ink-derived --fill-*
+   and the --bg-elevated literal both invert in dark). Concentric radii: track
+   --radius-md over segment --radius-sm (B9). No transparency, so no
+   reduced-transparency fallback is needed. */
+.segmented-control {
+  display: inline-flex;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border-radius: var(--radius-md);
+  background: var(--fill-1);
+  box-shadow: var(--segmented-track-shadow);
+}
+
+.segmented-control-option {
+  appearance: none;
+  margin: 0;
+  padding: var(--space-2) var(--space-8);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-weight: 500;
+  white-space: nowrap;
+  user-select: none;
+  transition: color var(--motion-fast), background var(--motion-fast), box-shadow var(--motion-fast);
+}
+
+.segmented-control-option:hover:not(.is-selected) {
+  color: var(--text-primary);
+}
+
+.segmented-control-option.is-selected {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-thumb);
+}
+
+.segmented-control-option:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.segmented-control-option.is-selected:focus-visible {
+  box-shadow: var(--shadow-thumb), var(--focus-ring-shadow);
+}
+

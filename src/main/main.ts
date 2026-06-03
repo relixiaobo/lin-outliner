@@ -39,6 +39,8 @@ import { isAgentCommand, isAssetCommand, isDocumentCommand, type AgentCommand, t
 import { IPC_TRACE_ENABLED, traceIpc } from './ipcTrace';
 import type { AgentProviderConfigInput, AgentRuntimeSettingsInput } from '../core/types';
 import { loadWindowState, trackWindowState } from './windowState';
+import { loadAppPreferences, saveThemePreference } from './appPreferences';
+import { isThemeMode, type ThemeMode } from '../core/theme';
 
 if (process.env.ELECTRON_USER_DATA_DIR) {
   app.setPath('userData', process.env.ELECTRON_USER_DATA_DIR);
@@ -581,6 +583,16 @@ function registerIpc() {
 
   ipcMain.handle('lin:open-settings', () => openSettingsWindow());
   ipcMain.handle('lin:close-settings', () => settingsWindow?.close());
+  // Appearance preference. Setting nativeTheme.themeSource rewrites
+  // prefers-color-scheme in every renderer, so the @media rules in theme-dark.css
+  // flip all windows at once — no per-window broadcast needed. We mirror the stored
+  // mode (not the resolved scheme) so the settings control reflects the user's pick.
+  ipcMain.handle('lin:get-theme', (): ThemeMode => nativeTheme.themeSource);
+  ipcMain.handle('lin:set-theme', (_event, mode: unknown): void => {
+    if (!isThemeMode(mode)) return;
+    nativeTheme.themeSource = mode;
+    saveThemePreference(mode);
+  });
   // Open the per-provider config as its own native (modal child) window.
   ipcMain.handle('lin:open-provider-config', (_event, args?: { providerId?: unknown; mode?: unknown }) => {
     const providerId = typeof args?.providerId === 'string' ? args.providerId : '';
@@ -1374,6 +1386,10 @@ if (!app.requestSingleInstanceLock()) {
       const id = new URL(request.url).hostname;
       return assetService.serve(id);
     });
+    // Apply the persisted appearance preference before any window is created, so
+    // the first paint (prePaintBackgroundColor → shouldUseDarkColors) already
+    // matches the chosen theme rather than the OS default.
+    nativeTheme.themeSource = loadAppPreferences().theme;
     configureSessionSecurity();
     registerIpc();
     createWindow();

@@ -455,9 +455,10 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
   bubbles — must define its **own** foreground/background pair, not reach for the
   neutral ink levels.
 - **Appearance.** `color-scheme: light dark` on `:root`; dark mode is one
-  `@media (prefers-color-scheme: dark)` block. The in-app light/dark/system
-  control drives it through `nativeTheme.themeSource` (which sets the renderer's
-  `prefers-color-scheme`), so the CSS needs no extra wiring.
+  `@media (prefers-color-scheme: dark)` block. The in-app light/dark/system control
+  (Settings › General › Theme) drives it through `nativeTheme.themeSource` (which
+  sets the renderer's `prefers-color-scheme`), so the CSS needs no extra wiring; the
+  choice persists in `app-preferences.json` and is reapplied before first paint.
 - **Two-layer model (Liquid Glass).** Chrome — sidebar, toolbar, menus, floating
   controls — is the translucent material layer (`--material-*`, over Electron
   vibrancy + `backdrop-filter`). The content panel is the opaque layer
@@ -1061,7 +1062,8 @@ not Apple chrome. We borrow the interaction, not the chrome.
   forward entries), back / forward move the cursor; each is disabled when there is
   nothing to traverse that way.
 - **Floating category rail + full-width list.** A left rail lists settings
-  categories (Providers / Permissions / Skills / Agent Profiles). The rail is the
+  categories (General / Providers / Permissions / Skills / Agent Profiles); the
+  window opens to Providers (the primary connection task). The rail is the
   app's own floating glass panel — elevated surface, soft elevation, rounded,
   hairline edge — mirroring the main window's `.sidebar-dock`, so it reads as a
   rail that floats off the content base rather than a flat column. The content
@@ -1071,6 +1073,19 @@ not Apple chrome. We borrow the interaction, not the chrome.
   category full-width — for Providers, a grouped provider list. There is NO
   permanent side detail pane: per-provider config opens in its own native window (below).
   Categories — not individual providers — are the top-level rail rows.
+- **General pane — appearance.** The **General** category holds app-wide
+  preferences; today a single **Theme** row. The control is a `SegmentedControl`
+  (System / Light / Dark): a recessed `--fill-1` track (`--segmented-track-shadow`
+  inset hairline) whose selected segment is a lifted `--bg-elevated` capsule
+  (`--shadow-thumb`) — a neutral functional state, never an accent (B3) — with
+  concentric `--radius-md` track / `--radius-sm` segment (B9), rendered as an ARIA
+  `radiogroup` with roving tabindex + arrow-key navigation and a neutral
+  `:focus-visible` ring (B8). Unlike the runtime / permission panes it has **no
+  Save footer**: a pick applies INSTANTLY across every window — it sets
+  `nativeTheme.themeSource` in the main process (`lin:set-theme`), which rewrites
+  each renderer's `prefers-color-scheme` so the one dark `@media` block (see
+  Appearance above) drives the flip — and persists to `app-preferences.json` in
+  `userData`, reapplied before first paint on the next launch.
 - **No redundant chrome.** The window is closed through native window chrome
   (the traffic lights), like System Settings — there is no in-content Close
   button. The content pane carries no "Providers" title (the selected rail

@@ -1,10 +1,11 @@
 /* Dark appearance — driven directly by the OS via @media
-   (prefers-color-scheme: dark), with no JS bridge (Track B / #45 will add an
-   in-app override by setting nativeTheme.themeSource in the main process, which
-   simply flips what this media query matches). Only the per-theme literals change
-   here — every alpha-on-ink token in tokens.css (text, fills, separators,
-   outlines, selection) inverts for free when --ink flips to white. Elevated
-   surfaces are LIGHTER than content so floating surfaces still read as elevated. */
+   (prefers-color-scheme: dark), with no JS bridge. The in-app override (Settings ›
+   General › Theme) sets nativeTheme.themeSource in the main process, which simply
+   flips what this media query matches — so light/dark/system all resolve here, no
+   [data-theme] attribute needed. Only the per-theme literals change here — every
+   alpha-on-ink token in tokens.css (text, fills, separators, outlines, selection)
+   inverts for free when --ink flips to white. Elevated surfaces are LIGHTER than
+   content so floating surfaces still read as elevated. */
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;

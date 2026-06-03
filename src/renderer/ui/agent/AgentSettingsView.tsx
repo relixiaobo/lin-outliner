@@ -12,8 +12,10 @@ import type {
 } from '../../api/types';
 import { api } from '../../api/client';
 import { AddIcon, ChevronLeftIcon, ChevronRightIcon, ICON_SIZE, WarningIcon } from '../icons';
+import type { ThemeMode } from '../../../core/theme';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
+import { SegmentedControl } from '../primitives/SegmentedControl';
 import { SelectControl } from '../primitives/SelectControl';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
@@ -33,7 +35,7 @@ interface AgentSettingsViewProps {
   sessionId?: string;
 }
 
-type SettingsCategory = 'providers' | 'permissions' | 'skills' | 'agents';
+type SettingsCategory = 'general' | 'providers' | 'permissions' | 'skills' | 'agents';
 
 interface DraftConfig {
   providerId: string;
@@ -134,7 +136,14 @@ const EMPTY_DRAFT: DraftConfig = {
   disabledAgents: [],
 };
 
+const THEME_OPTIONS: ReadonlyArray<{ value: ThemeMode; label: string }> = [
+  { value: 'system', label: 'System' },
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+];
+
 const SETTINGS_CATEGORIES: Array<{ id: SettingsCategory; label: string; hint: string }> = [
+  { id: 'general', label: 'General', hint: 'Appearance & Theme' },
   { id: 'providers', label: 'Providers', hint: 'Connections & API keys' },
   { id: 'permissions', label: 'Permissions', hint: 'Tool Allow / Ask Rules' },
   { id: 'skills', label: 'Skills', hint: 'Extension Capabilities' },
@@ -244,6 +253,10 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
   // The per-row ⋯ actions menu (only one open at a time, keyed by providerId). The
   // per-provider config opens in its own native window, not an in-renderer sheet.
   const [openRowMenu, setOpenRowMenu] = useState<string | null>(null);
+  // App-level appearance preference (General pane). Independent of the provider/
+  // permission save flow: it applies immediately across all windows via the main
+  // process (nativeTheme.themeSource) and persists, so there is no Save step.
+  const [themeMode, setThemeMode] = useState<ThemeMode>('system');
 
   useEffect(() => {
     mountedRef.current = true;
@@ -252,6 +265,25 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
       requestRef.current += 1;
     };
   }, []);
+
+  // Load the current appearance preference once so the General pane's segmented
+  // control reflects the active theme. Best-effort: if the bridge is unavailable
+  // (e.g. a non-Electron dev host) the control stays on its 'system' default.
+  useEffect(() => {
+    let active = true;
+    void window.lin?.getTheme?.()
+      .then((mode) => {
+        if (active) setThemeMode(mode);
+      })
+      .catch(() => { /* keep the default */ });
+    return () => { active = false; };
+  }, []);
+
+  // Apply a theme pick optimistically (instant, no Save) and persist it via main.
+  function changeTheme(mode: ThemeMode) {
+    setThemeMode(mode);
+    void window.lin?.setTheme?.(mode);
+  }
 
   function beginRequest() {
     requestRef.current += 1;
@@ -645,7 +677,32 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
           </aside>
 
           <div className="settings-content">
-            {category === 'providers' ? (
+            {category === 'general' ? (
+              <section className="agent-settings-section settings-general-section" aria-labelledby="settings-general-heading">
+                <div className="settings-section-title-row">
+                  <h3 id="settings-general-heading">General</h3>
+                  <span className="settings-section-desc">Appearance and app-wide preferences.</span>
+                </div>
+
+                <div className="settings-skills-list-section">
+                  <h4 className="settings-subheading">Appearance</h4>
+                  <div className="agent-settings-behavior-switches">
+                    <div className="behavior-switch-item">
+                      <div className="behavior-switch-info">
+                        <span className="behavior-switch-title">Theme</span>
+                        <p className="behavior-switch-desc">Match the system appearance, or always use light or dark.</p>
+                      </div>
+                      <SegmentedControl
+                        label="Theme"
+                        onChange={changeTheme}
+                        options={THEME_OPTIONS}
+                        value={themeMode}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </section>
+            ) : category === 'providers' ? (
               <section className="agent-settings-section settings-providers-section" aria-label="Providers">
                 {/* No "Providers" title — the selected rail category already names
                     the pane. Custom providers are added from the last row of the
@@ -933,10 +990,11 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
             ) : null}
             {notice ? <div className="agent-settings-notice">{notice}</div> : null}
 
-            {/* Providers commit per-provider through their own sheet (Cancel/Save),
-                like native Settings — so the global footer is only for the
-                runtime/permission categories. */}
-            {category !== 'providers' ? (
+            {/* Providers commit per-provider through their own sheet (Cancel/Save)
+                and the General pane applies instantly (no draft), like native
+                Settings — so the global footer is only for the runtime/permission
+                categories that batch a draft into one Save. */}
+            {category !== 'providers' && category !== 'general' ? (
               <footer className="agent-settings-footer">
                 <span />
                 <div className="agent-settings-footer-actions">
