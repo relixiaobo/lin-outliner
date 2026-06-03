@@ -3,7 +3,7 @@ status: draft
 priority: P0
 owner: relixiaobo
 created: 2026-06-02
-updated: 2026-06-02
+updated: 2026-06-03
 ---
 
 # Lazy-Like Global Launcher
@@ -21,15 +21,68 @@ no conversation history. It captures the product target, reverse-engineering
 findings, architecture, file-level implementation plan, data contracts, provider
 matrix, safety constraints, and acceptance criteria.
 
+## PM-Ratified Decisions (2026-06-03)
+
+Decided with the PM after a code-grounded review of this draft. These **override**
+any conflicting prose elsewhere in this document; where an older section still
+reflects the pre-review shape, treat this block as authoritative and fix that
+section in the same change.
+
+1. **Delivery: one PR, internally phased.** Ship the launcher in a single PR
+   organized into ordered phases (see "Implementation Phases" below), NOT as
+   separate interface-first PRs. Phase order still follows A7 (foundation before
+   consumers). Mechanical consequence the PM accepted: this single PR touches
+   infrastructure-ownership files (`src/core/types.ts`, `src/core/commands.ts`,
+   `electron.vite.config.ts`, the preload bridge), so siblings rebase once it
+   merges — coordinate the merge window.
+2. **IP / ToS: approved.** Reverse-engineering Lazy for behavior/architecture
+   reference (never code copy) and per-provider DOM extraction are GO. The
+   X/Twitter non-automation stance and the "no remote JS, allowlisted local
+   scripts only" rule still hold.
+3. **Phase 0 feasibility spike is required before the build phases.** The long
+   pole is browser in-page JS + native scripting under this project's *unsigned*
+   packaging (`mac.identity: null`). Validate it first and report GO/NO-GO to the
+   PM before building Phase 1+. Pass criteria in "Phase 0" below.
+4. **Security review: skipped.** All capture payloads are local on-device
+   storage; the PM judged the data-sensitivity concern out of scope for a
+   `/security-review` gate. The non-negotiable Electron security defaults (A3:
+   `contextIsolation`/`sandbox`/`nodeIntegration`, navigation + `openExternal`
+   allowlists, no remote scripts) still apply and must not regress.
+
+### Foundation references must be calibrated to landed code
+
+This draft repeatedly references a `FileReferenceValue` / `fileRefId` /
+`LocalFileRef` shape that **does not exist**. The landed foundation
+(`outliner-local-file-references`, archived) is:
+
+- `ReferenceTarget = { kind: 'node'; nodeId } | { kind: 'local-file'; path;
+  entryKind }` (`src/core/types.ts`). Local-file identity is the canonical path,
+  not an opaque id.
+- Inline marker is `[[file:<label>^<path>]]` / `[[node:<label>^<id>]]`
+  (`src/core/referenceMarkup.ts`), NOT `[[file:<ref>]]`.
+- `asset` and `remote-url` `ReferenceTarget` kinds are explicitly **deferred**
+  (added with their consumers).
+
+Consequence for `OriginalResourceRef`: three of its four kinds (`remote-url`,
+`asset`, and the old `local-file { file: FileReferenceValue }`) sit on
+non-existent or deferred foundation. In Phase 1/3 either (a) extend
+`ReferenceTarget` with the needed kinds as part of this PR's foundation phase, or
+(b) model the original pointer around the landed path/url shape. Do not write
+against the `FileReferenceValue` shape. The type definitions and prose further
+down have been calibrated to this; if any stray `FileReferenceValue` /
+`LocalFileRef` / `[[file:<ref>]]` mention survives, fix it to this shape.
+
 ## Current Project Baseline
 
-Repository root: `/Users/lixiaobo/Coding/lin-outliner-codex`.
+Repository root: the active clone under `~/Coding/` (e.g. `lin-outliner`,
+`lin-outliner-codex`); use that clone's own `bun run dev:<clone>` script. Earlier
+drafts hardcoded the `codex` clone — a merge artifact, not a constraint.
 
 Relevant current files:
 
 - `package.json`
   - Electron 42, electron-vite, React 19, TypeScript.
-  - Scripts: `bun run dev:codex`, `bun run typecheck`, `bun run test:renderer`,
+  - Scripts: `bun run dev:<clone>`, `bun run typecheck`, `bun run test:renderer`,
     `bun run test:e2e`.
 - `src/main/main.ts`
   - Owns the current main `BrowserWindow`.
@@ -136,8 +189,9 @@ architecture as reference only.
 ### Release standard
 
 The first release of this feature must be Lazy-like, not a lightweight MVP.
-Internal engineering can be split into workstreams, but the user-facing release
-is not considered complete until the full core set below works together:
+Internal engineering ships as one phased PR (see PM-Ratified Decisions and
+Implementation Phases), gated by the Phase 0 feasibility spike. The user-facing
+release is not considered complete until the full core set below works together:
 
 - Global launcher window.
 - Global hotkey.
@@ -625,20 +679,11 @@ export interface SourceDraft {
   metadata?: Record<string, unknown>;
 }
 
-// Defined by docs/plans/outliner-local-file-references.md; repeated here only
-// to show how local-file captures reference the shared value.
-export interface FileReferenceValue {
-  kind: 'local-file';
-  fileRefId: string;
-  displayName?: string;
-  pathSnapshot?: string;
-  nameSnapshot?: string;
-  mimeType?: string;
-  sizeBytes?: number;
-  modifiedAt?: string;
-  contentHash?: string;
-}
-
+// Calibrated to landed code (see "Foundation references" above). The shared
+// identity type is `ReferenceTarget` from src/core/types.ts:
+//   { kind: 'node'; nodeId } | { kind: 'local-file'; path; entryKind }
+// `asset` and `remote-url` ReferenceTarget kinds are deferred; until they land,
+// model those original pointers directly here. Do NOT reference FileReferenceValue.
 export type OriginalResourceRef =
   | {
     kind: 'remote-url';
@@ -648,7 +693,15 @@ export type OriginalResourceRef =
   }
   | {
     kind: 'local-file';
-    file: FileReferenceValue;
+    // canonical absolute path = identity, matching ReferenceTarget local-file
+    path: string;
+    entryKind: 'file' | 'directory';
+    // optional capture-time snapshots for broken-state rendering
+    displayName?: string;
+    mimeType?: string;
+    sizeBytes?: number;
+    modifiedAt?: string;
+    contentHash?: string;
     preview: 'text' | 'image' | 'pdf' | 'native-open' | 'unsupported';
   }
   | {
@@ -682,30 +735,10 @@ export interface CapturedContent {
   needsResolver?: ResolverKind[];
 }
 
-export interface CapturePayloadRef {
-  id: string;
-  kind:
-    | 'captured-text'
-    | 'cleaned-markdown'
-    | 'raw-html'
-    | 'email-body'
-    | 'chat-log'
-    | 'tweet-thread'
-    | 'video-transcript'
-    | 'pdf-text'
-    | 'local-file'
-    | 'asset-copy';
-  storage: 'sidecar' | 'asset' | 'original-resource';
-  format: 'plain-text' | 'markdown' | 'html' | 'json' | 'pdf' | 'binary';
-  sidecarPath?: string;
-  assetId?: string;
-  original?: OriginalResourceRef;
-  textHash?: string;
-  byteSize?: number;
-  charCount?: number;
-  excerpt?: string;
-  visibility: 'hidden' | 'excerpt-visible' | 'indexed';
-}
+// CapturePayloadRef is defined once, canonically, in the Save Model section
+// (src/core/launcher/sources.ts) using `role` + `searchPolicy`. It is NOT
+// redefined here. The earlier `storage`/`visibility` variant was a duplicate and
+// has been removed to avoid two authorities.
 
 export type ResolverKind =
   | 'article-body'
@@ -1373,8 +1406,8 @@ Default:
   Copy into Lin, or Keep offline.
 - Very large files must stay reference-only unless the user explicitly copies
   them into Lin storage.
-- Local file identity, `[[file:<ref>]]` parsing, file chips, and agent resource
-  context are owned by `docs/plans/outliner-local-file-references.md`.
+- Local file identity, `[[file:<label>^<path>]]` parsing, file chips, and agent
+  resource context are owned by `docs/plans/outliner-local-file-references.md`.
 
 ### Dependency: outliner local file references
 
@@ -1384,9 +1417,12 @@ shared capability instead of defining a second file format.
 
 Launcher-specific rules:
 
-- Local file capture creates or reuses a durable `LocalFileRef`.
-- `node.capture.source.original.file` stores the shared `FileReferenceValue`.
-- Visible local-file source fields use the shared `[[file:<ref>]]` marker.
+- Local file capture reuses the canonical-path identity of the landed
+  `ReferenceTarget` local-file kind (no separate durable id).
+- `node.capture.source.original` (kind `local-file`) stores `{ path; entryKind }`
+  plus optional capture-time snapshots — not a `FileReferenceValue`.
+- Visible local-file source fields use the shared `[[file:<label>^<path>]]`
+  marker.
 - Agent commands launched from captured local files use the shared
   `<user-attachments>` resource-context builder.
 - Persistent capture data remains reference-only unless the user explicitly
@@ -1485,6 +1521,11 @@ export interface CaptureContentRef {
   format: 'plain-text' | 'rich-text' | 'markdown' | 'html';
 }
 
+// CANONICAL definition of CapturePayloadRef (the only one). `searchPolicy` is
+// the authoritative knowledge-visibility axis; the `visibility`
+// (hidden/excerpt-visible/indexed) wording used in the "Hidden payload
+// references" prose maps onto it (hidden→metadata-only, excerpt-visible→
+// explicit-only, indexed→full-text) — use `searchPolicy` in code.
 export interface CapturePayloadRef {
   id: string;
   kind: 'artifact' | 'asset' | 'local-file' | 'inline-excerpt';
@@ -1501,7 +1542,9 @@ export interface CapturePayloadRef {
   format: 'plain-text' | 'markdown' | 'html' | 'json' | 'pdf';
   artifactPath?: string;
   assetId?: string;
-  file?: FileReferenceValue;
+  // local-file payload: landed ReferenceTarget local-file shape; FileReferenceValue
+  // does not exist. Identity is the canonical path.
+  localFile?: { path: string; entryKind: 'file' | 'directory' };
   previewText?: string;
   contentHash?: string;
   charCount?: number;
@@ -1605,9 +1648,9 @@ the launcher uses those shared rules for local file captures.
 - `Field:: value` under a node maps to a field entry.
 - `Field::` followed by indented values maps to a multi-value field.
 - `[ ]` and `[x]` map to checkbox state.
-- `[[Display^node:id]]` maps to an exact node reference.
-- `[[file:<ref>]]` maps to the common `FileReferenceValue` as defined by the
-  outliner local file reference plan.
+- `[[node:<label>^<id>]]` maps to an exact node reference.
+- `[[file:<label>^<path>]]` maps to the landed `ReferenceTarget` local-file kind
+  (path identity) as defined by the outliner local file reference plan.
 - Do not include `%%node:id%%` markers when creating new captures. Those are
   edit handles used by node read/edit protocol, not user-facing capture text.
 
@@ -1620,7 +1663,7 @@ Recommended generic shape:
 
 ```text
 - <capture title> - <optional user note> #<source-kind-or-capture>
-  - Source:: <original URL / [[file:<ref>]] / app resource>
+  - Source:: <original URL / [[file:<label>^<path>]] / app resource>
   - Author:: <author name or handle>
   - Published:: <published date, if known>
   - Payload:: hidden
@@ -1695,14 +1738,14 @@ Example: local text file capture
 
 ```text
 - README.md - local file preview #file
-  - Source:: [[file:README.md]]
+  - Source:: [[file:README.md^/Users/me/project/README.md]]
   - MIME type:: text/markdown
   - Modified:: 2026-06-02T09:55:00+08:00
   - Payload:: hidden
   - Snapshot
-    - Lin Outliner is a local-first desktop outliner.
-    - The original file path remains in LocalFileRef, so Open Original can call
-      shell.openPath. Full text is hidden by default.
+    - Tenon is a local-first desktop outliner.
+    - The canonical path is the ReferenceTarget local-file identity, so Open
+      Original can call shell.openPath. Full text is hidden by default.
 ```
 
 Example: email capture
@@ -1966,10 +2009,59 @@ Record development-only metrics:
 - `resolver.duration_ms`
 - `command.execute_ms`
 
+## Implementation Phases (single PR, ordered)
+
+Per the PM decision, the launcher ships in ONE PR organized into the ordered
+phases below. The Workstreams that follow are the detailed task/acceptance lists;
+the Phases here are the build order, the foundation-before-consumers story, and
+the merge story. Phase 0 is a separate spike that gates the PR.
+
+### Phase 0 — Feasibility spike (gates everything; throwaway branch, not in the PR)
+
+Validate the long pole before building: browser in-page JS + native scripting
+under this project's *unsigned* packaging (`mac.identity: null`). Until this is
+GO, do not start Phase 1.
+
+Pass criteria (report GO/NO-GO + measurements to the PM):
+
+- An unsigned packaged build with `NSAppleEventsUsageDescription` can, via
+  `osascript`:
+  - read frontmost app, and Chrome + Safari active tab URL/title within budget;
+  - run one allowlisted read-only JS snippet in the active Chrome tab and get
+    JSON back, after the user enables Chrome "View → Developer → Allow JavaScript
+    from Apple Events" (Safari: Develop → same toggle — a separate gate from the
+    Automation TCC grant);
+  - have the Automation TCC grant **persist across an app relaunch** (the
+    unsigned-identity risk — verify it does not reset on rebuild/relaunch).
+- Measured `osascript` spawn + AppleEvent round-trip latency, to sanity-check the
+  ≤400 ms site-JS budget (revise the budget if reality disagrees).
+- A defined per-browser fallback when the toggle is off (generic tab URL/title
+  only, with remediation UI).
+
+If Phase 0 is NO-GO for in-page JS, the site-JS provider matrix collapses to
+URL/title + native-scripting only; escalate scope to the PM before continuing.
+
+### Phases 1–8 (in the PR, build in this order)
+
+1. **Foundation (infra-touching).** `src/core/launcher/*` shared types;
+   `NodeBase.capture` + `'capture'` in `NODE_SCALAR_KEYS`; `create_capture`
+   document command; second renderer entry in `electron.vite.config.ts` + minimal
+   `LauncherApp`; preload `launcher` namespace. (Workstream 2/3 types.)
+2. **Launcher shell.** Prewarmed window + global hotkey + static command registry
+   + state machine; create-capture to Today. (Workstreams 1, 2.)
+3. **Source model + generic browser context.** Calibrated `OriginalResourceRef`
+   (see Foundation references), destinations, generic webpage provider +
+   context-aware commands. (Workstreams 3, 4.)
+4. **High-value site providers.** (Workstream 5.)
+5. **Native app providers.** (Workstream 6.)
+6. **Resolvers.** (Workstream 7.)
+7. **AI command runner.** (Workstream 8.)
+8. **Permissions UI + tests/QA + instrumentation.** (Workstreams 9, 10.)
+
 ## Implementation Workstreams
 
-These are internal workstreams, not separate user-facing versions. The first
-release is incomplete until all P0 workstreams are done.
+These are the detailed task/acceptance lists for the phases above. They ship
+together in one PR; build them in phase order (foundation first).
 
 ### Workstream 1: Launcher shell and hotkey
 
@@ -1995,7 +2087,7 @@ Tasks:
 
 Acceptance:
 
-- `bun run dev:codex` opens main app.
+- `bun run dev:<clone>` opens main app.
 - Global shortcut opens launcher while another app is focused.
 - Repeated show/hide does not recreate the window.
 - Input is focused immediately.
@@ -2041,7 +2133,8 @@ Tasks:
 - Define `SourceDraft`, capture content, pending resolver job types.
 - Decide final node metadata storage shape.
 - Integrate with `docs/plans/outliner-local-file-references.md` for local-file
-  capture identity, `FileReferenceValue`, parser behavior, and agent context.
+  capture identity (the landed `ReferenceTarget` local-file / path shape), parser
+  behavior, and agent context.
 - Add create-capture command or reuse existing node creation commands.
 - Implement Today/Inbox/current node/search node destinations.
 - Persist last destination.
