@@ -39,32 +39,6 @@
   text-decoration-line: none;
 }
 
-.agent-message-inline-file {
-  display: inline-flex;
-  max-width: min(100%, 220px);
-  align-items: center;
-  gap: var(--space-1);
-  /* Neutral text — a file mention is a display chip, not a status or a link, so
-     it must not borrow the status-info blue (design-system B4). */
-  color: var(--text-secondary);
-  line-height: inherit;
-  vertical-align: baseline;
-  white-space: nowrap;
-}
-
-.agent-message-inline-file svg {
-  width: 0.92em;
-  height: 0.92em;
-  flex: 0 0 auto;
-  transform: translateY(0.08em);
-}
-
-.agent-message-inline-file span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .agent-user-file-list,
 .agent-user-image-list {
   display: flex;

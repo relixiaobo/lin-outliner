@@ -63,7 +63,10 @@ truth.
   visible user-view state.
 - [x] Local file mentions in the agent composer:
   - `@` suggestions include recent nodes, local files, and folders
-  - selected files/folders/images render as inline tokens
+  - selected files/folders/images render as inline tokens in the shared
+    `.inline-ref` mention language (node = plain text, file = leading
+    monochrome icon + text) — the same rendering as the outliner; see the
+    inline-reference rendering note in `design-system.md`
   - model-facing text preserves files/folders/images with
     `[[file:<label>^<path>]]`; pathless attachments are staged under the agent
     local file root first

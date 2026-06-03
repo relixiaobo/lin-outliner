@@ -954,6 +954,21 @@ category history; see "Settings window".)
   They must NOT introduce a second link colour (e.g. `--status-info` blue) — the
   app has exactly one link colour. Reference nodes remain block rows with the
   neutral dashed reference marker.
+- **One inline-mention language across the app.** A reference is a `.inline-ref`
+  text link everywhere it renders — the outliner row editor (`pmSchema`), the
+  agent composer editor, and the agent message render. A **node** reference is
+  plain text with no icon; a **local file / directory / image** reference adds a
+  single leading **monochrome** icon (the only thing that distinguishes a file
+  from a node — not a different colour or a chip). The icon is one shared
+  mechanism — a CSS `mask-image` keyed on `data-file-icon-kind`
+  (`.inline-ref-file-icon`, see `inlineFileIcon.ts`) painted with `currentColor`,
+  so it themes automatically (B1/B8). The icon and its filename never split across
+  a line break: the mention is `white-space: nowrap` and the name re-opens
+  wrapping inside its own `.inline-ref-file-name` span, so the icon always travels
+  with the start of the (still-wrapping) name and is never orphaned at a line end.
+  Render sites never invent a second file-chip species (the retired
+  `.agent-composer-inline-file` / `.agent-message-inline-file` were exactly that —
+  a parallel `inline-flex` chip with a full-colour macOS icon).
 
 ### Fields And Definition Configuration
 
