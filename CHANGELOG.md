@@ -12,6 +12,24 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **macOS branding & chrome polish (PR #84)** — implements
+  `macos-native-branding-polish.md` (T1–T6). The **app icon** is rebuilt to Apple's macOS
+  icon grid: a squircle master (`assets/brand/tenon-icon-master.svg`, 824 / r≈185.4 / 100px
+  transparent gutter on 1024) regenerated to `.icns`/`.png` by `scripts/gen-icon.mjs`. The
+  Dock "white frame" (白边) is fixed by switching the rasterizer from `qlmanage` — which
+  mattes the transparent gutter to opaque white — to headless Chromium with
+  `omitBackground`; the gutter is `rgba(0,0,0,0)` (pixel-probed at 1024/512/32), replacing
+  the old full-bleed square. The duplicate sidebar brand header (and its `sidebar-brand*`
+  CSS) is removed so the **workspace-root row is the sole identity**. The **app menu** gains
+  About/Hide/Quit, renames "Preferences…" → "Settings…", sets copyright `© 2026 Lin Lab`
+  (About panel + electron-builder), and Help → "Tenon Help" + "Report an Issue…". (In a dev
+  run the bold app title still reads "Electron" and ⌘, still reads "Preferences…" because
+  those are OS-managed from the Electron dev bundle; a packaged `--dir` build was launched
+  and verified to show "Tenon" + "Settings…" with the correct Info.plist and a
+  sha256-identical bundled icon.) Design-system spec updated to the single workspace-root
+  avatar (A6); no `src/core` protocol surface touched. The true Liquid-Glass `.icon`
+  pipeline is deferred to `docs/plans/macos-liquid-glass-icon.md` (P2 draft).
+
 - **Editable workspace root title (rename your workspace)** — the workspace root
   (`WORKSPACE_ID`, "Tenon") is now seeded with `locked=false`, so its title is editable
   rich text in the panel header and the sidebar workspace-root row. Structural protection

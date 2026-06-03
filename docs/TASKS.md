@@ -47,13 +47,6 @@ Ordered by priority; lower items may depend on higher ones.
   light-mode + interaction (unfurl / drag / resize) visual pass (verified dark
   only at merge); real OS vibrancy tuning. (Persisted light/dark/system toggle #45
   shipped in PR #82.) See `docs/plans/design-system-rollout.md`.
-- **macos-native-branding-polish** (P1) — post-rebrand macOS-native polish. Three
-  visible bugs: app icon is a full-bleed square (needs a macOS squircle master +
-  regenerated `.icns`/`.png`), duplicate "Tenon" in the sidebar (brand header +
-  workspace-root row), and the dev app menu reads "Electron" (packaged is correct).
-  Plus polish: "Preferences…"→"Settings…", About/builder copyright, Help URL. Has
-  **open questions for PM ratify** (brand de-dup approach, icon design pass,
-  copyright string). See `docs/plans/macos-native-branding-polish.md`.
 - **agent-tool-permissions-hardening** (P2) — non-blocking follow-ups after the
   #60 permission implementation: move the `sessionApproved` short-circuit below
   configured-ask (don't silently relax a configured `ask`); re-validate
@@ -105,6 +98,22 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **macOS branding & chrome polish** (cc) — implements
+  `docs/plans/archive/macos-native-branding-polish.md` (T1–T6). Squircle app icon rebuilt
+  to Apple's macOS grid from a committed master (`assets/brand/tenon-icon-master.svg` +
+  `scripts/gen-icon.mjs`, headless-Chromium rasterizer); fixes the Dock "白边" by dropping
+  `qlmanage` (it mattes the transparent gutter opaque white) for `omitBackground` — gutter
+  pixel-probed `rgba(0,0,0,0)` at 1024/512/32. Dropped the duplicate sidebar brand header so
+  the workspace-root row is the sole identity. App menu: About/Hide/Quit + "Settings…" (was
+  "Preferences…"), copyright `© 2026 Lin Lab`, Help → "Tenon Help" + "Report an Issue…". Dev
+  still shows "Electron"/"Preferences…" (OS-managed from the Electron dev bundle); a packaged
+  `--dir` build was launched and verified ("Tenon" + "Settings…" + Info.plist
+  `CFBundleName`/`CFBundleIdentifier`/copyright; bundled icon sha256-identical) — PM accepted
+  dev-"Electron". No `src/core` protocol surface. Single-identity rule folded into
+  `design-system.md` (A6). True Liquid-Glass `.icon` deferred to
+  `docs/plans/macos-liquid-glass-icon.md` (P2 draft). typecheck clean, renderer 268/0,
+  token-guard e2e 8/0; pre-existing `file_glob`/`file_grep` + `workspace-layout` failures
+  reproduce on clean `main`. Direct-merge gate (PM chose to skip review). (PR #84).
 - **editable workspace root title** (main) — fast-track. Workspace root
   (`WORKSPACE_ID` / "Tenon") seeded `locked=false` so users can rename their workspace;
   structural locks intact via the independent `isSystemId` check in `ensureNodeMovable`
