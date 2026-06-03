@@ -1,5 +1,5 @@
 ---
-status: draft
+status: in-progress
 priority: P2
 owner: relixiaobo
 created: 2026-06-03
@@ -10,103 +10,347 @@ updated: 2026-06-03
 
 ## Goal
 
-Make **field value rows behave like normal outliner nodes for selection** (PM
-decision #2, reading (a)): you can shift/cmd-click to select multiple field value
-rows and then act on them (delete / move / duplicate) through the same selection
-+ batch-command path as ordinary nodes. Today field value rows render but do not
-participate in the global multi-selection model, so multi-select on them does
-nothing.
+Make field value rows participate in the same node selection model as ordinary
+outliner rows. A user can Shift/Cmd-click across body rows and field value rows,
+use keyboard selection commands, and run batch actions such as delete, move, and
+duplicate without the value column becoming a special field-only selection scope.
 
-This is **not** a change to the value data model: field values stay
-"everything-is-a-node, values always append" (the cardinality concept stays
-removed). We are only adding **selection** participation.
-
-**Framing (PM-ratified):** a field entry is just a node and each value is its
-**child node**, so selection must be *uniform across the whole tree* — value rows
-select exactly like any other node, with no special field-only scope. A single
-selection/range may span body rows and value rows freely.
+This follows PM decision #2 / reading (a): a field entry is a node and each stored
+value is its child node. The value data model remains append-only and
+node-backed. This plan changes selection and batch routing, not cardinality or
+value creation.
 
 ## Non-goals
 
-- Reintroducing single-value/cardinality replacement (that was reading (b), which
-  the PM did NOT choose).
-- Changing how values are *added* (option popover, references, free text all keep
-  appending).
-- Changing batch commands themselves (`batchTrashNodes`, `batchMoveNodesUp/Down`,
-  `batchDuplicateNodes`) — they already accept arbitrary `nodeIds`.
+- Reintroducing single-value/cardinality replacement.
+- Changing how values are added through option popovers, reference pickers, date
+  pickers, or free-text drafts.
+- Making computed system field values mutable. Synthetic `sysref:*` rows remain
+  read-only computed presentation.
+- Rewriting the whole outliner renderer or landing flat outliner as part of this
+  work.
+
+## Current Reality
+
+This is not a one-line `flattenVisibleRows` patch.
+
+- `flattenVisibleRows(rootId, ...)` is the canonical visible-row order used by
+  pointer selection, keyboard selection, drag selection, navigation, and
+  clipboard paths. It currently emits body `content` rows and `field` rows, then
+  descends only into expanded row children.
+- Editable field values render through a nested `OutlinerView` with
+  `parentId={entryId}` and `rootId={entryId}`. That makes field-value selection
+  work inside the field's local value scope, but it prevents one selection range
+  from spanning a body row and a value row.
+- Selection state already has `selectionRootId`, but row interactions currently
+  set it to the render view's `rootId`. Render root and selection root are
+  effectively the same concept today.
+- Existing e2e coverage encodes the old scoped behavior:
+  `Cmd+A selects visible field value rows in their own value scope`.
+- `buildVisualRows` is parity-pinned to `flattenVisibleRows`; changing the
+  canonical visible ordering must update both producers or deliberately split
+  selectable-row order from visual-row order.
+- Empty field-value deletion already routes through `removeFieldValue`, which
+  cleans up or promotes auto-collected option values. Selection delete currently
+  routes through `batchTrashNodes`, which does not do field-value cleanup.
+- Node-reference system fields synthesize locked `sysref:*` rows in an augmented
+  renderer index. They are presentation rows, not stored value nodes, and cannot
+  participate in destructive batch commands.
+
+Collision check, 2026-06-03:
+
+- Open PRs #92-#95 are scoped to agent OAuth/provider work. No overlap with this
+  selection/model/UI area.
+- This plan touches shared renderer interaction surfaces, so it is plan-track
+  significant and needs PM scope GO before implementation.
 
 ## Design
 
-> **Step 0 (required): reproduce and confirm the real blocker.** Code-only
-> analysis was inconclusive — within a single field the value `OutlinerView` uses
-> `rootId={entryId}`, so selection *might* partly work there, while the clear gap
-> is cross-container selection (a body row ↔ a field value row) because
-> `flattenVisibleRows(bodyRoot)` does not descend into field-entry children.
-> Before editing, reproduce in a dev run (`bun run dev:cc`): try shift/cmd-click
-> across multiple value rows of one field, and across a body row and a value row.
-> Record exactly which cases fail, then apply the fix below to those cases.
+### 1. Add A Panel-Level Selectable Row Model
 
-**Selection data-flow (normal rows):** UI selection lives in `UiState`
-(`src/renderer/state/document.ts`): `selectedIds: Set`, `selectedId`,
-`selectionAnchorId`, `selectionRootId`, `selectionSource`. `selectFromPointer`
-(`useOutlinerRowInteraction.ts`) resolves single/toggle/range from modifiers,
-builds the next set via `selectionActions.ts` against the row list from
-`flattenVisibleRows(rootId, …)`, scoped by `selectionRootId`.
+Introduce a pure selectable-row producer, for example
+`buildSelectableRows(panelRootId, byId, options)`, that answers one question:
+which real or presentational rows are selectable in this panel, in what order,
+and what actions are allowed for each row?
 
-**The gap:** `flattenVisibleRows` (`document.ts`) walks `field` + `content` rows
-and recurses into *expanded* children, but does **not** emit a field entry's
-value children. So when selection is scoped to a body/panel root, field value
-rows are absent from the row list → range/toggle can't include them.
+Each returned row should carry enough metadata for interaction code to avoid
+re-deriving special cases:
 
-**Leading fix (confirm against Step 0):** in `flattenVisibleRows`, when a row is
-a `fieldEntry` (`type === 'field'`), also emit its value children into the flat
-list (in order), so they become selectable alongside body rows. Keep
-reference-path cycle tracking intact. This makes both within-field and
-cross-container selection work through the existing machinery.
+```ts
+interface SelectableRow {
+  id: NodeId;
+  parentId: NodeId | null;
+  panelRootId: NodeId;
+  kind: 'content' | 'fieldEntry' | 'fieldValue' | 'syntheticSystemValue';
+  stored: boolean;
+  mutable: boolean;
+  actionPolicy: {
+    delete: 'node-trash' | 'field-value-remove' | 'disabled';
+    move: 'node-reorder' | 'disabled';
+    duplicate: 'node-clone' | 'disabled';
+    tag: 'target-node' | 'disabled';
+    checkbox: 'target-node' | 'disabled';
+  };
+}
+```
 
-**Batch actions:** already generic over `nodeIds` and have no node-type guards
-(`core.ts` `batchTrashNodes` etc. iterate any ids). Field values are real
-`content`/`reference` nodes whose parent is the field entry; trashing/moving them
-shrinks the entry's children without violating invariants. The context menu's
-`resolveActiveNodeSelection` / `selectedRootIds` dedupe (parents collapse to
-roots) should be checked to ensure it behaves sensibly when the selection mixes
-body rows and value rows.
+The exact shape can vary, but the model must be explicit about:
 
-**Risks to verify (Step 0 + review):**
-- Cross-root selection: `selectionRootId` scopes a selection; confirm value rows
-  inherit the body root so a body↔value range stays in one scope.
-- Reference values: a `reference`-type value node trashed/moved must not corrupt
-  the option pool or backlinks.
-- Field on a transcluded/reference node: selecting across the reference boundary
-  must respect the existing cycle guard.
+- Body rows and field entry rows.
+- Stored field value rows, including plain content values and reference values.
+- Reference-transcluded rows, with the same cycle guard as today's row flattening.
+- Hidden fields and grouped rows: group/header rows are not selectable; hidden
+  field reveal rows are not normal node selection rows.
+- Synthetic `sysref:*` rows: selectable only if useful for focus/reference
+  affordances, but destructive actions are disabled.
 
-## Decisions (PM-ratified 2026-06-03)
+The producer should live near the existing row-ordering code and be unit tested
+before interaction rewiring. `flattenVisibleRows` may become a thin projection of
+this model, or it may remain as a legacy helper while interaction code moves to
+the richer model. The key rule: one canonical panel-level selection order, not
+one order per nested `OutlinerView`.
 
-- **Full parity:** selected value rows support delete + move + duplicate — the
-  same actions as normal nodes.
-- **Cross-container selection allowed:** one selection/range may span body rows
-  and field value rows; treat the whole panel tree as a single selection scope (a
-  field entry is a node, its value is its child node — no special field scope).
+### 2. Split Render Root From Selection Root
 
-## Open questions
+Keep rendering field values in the value column with `parentId=entryId`; that is
+layout. Selection scope must instead inherit the outer panel root.
 
-- None blocking. Implementation must still verify the cross-container scope
-  doesn't break the reference-path cycle guard or option-pool/backlink invariants
-  (see Risks above).
+Thread a separate `selectionRootId` / `selectionScopeRootId` through:
 
-## Files (scope)
+- `OutlinerView`
+- `FieldValueOutliner`
+- `SystemReferenceValues`
+- `OutlinerItem`
+- `OutlinerFieldRow`
+- `useOutlinerRowInteraction`
 
-Primary: `src/renderer/state/document.ts` (`flattenVisibleRows`). Verify (likely
-no change): `useOutlinerRowInteraction.ts`, `FieldValueOutliner.tsx`,
-`OutlinerFieldRow.tsx`, `interactions/contextMenuSelection.ts`. No core/protocol
-change expected (batch commands already exist).
+For normal panel rows, `selectionRootId === rootId`. For field value rows,
+`rootId` may stay `entryId` for local rendering/focus mechanics, while
+`selectionRootId` is the panel root. All code that writes
+`ui.selectionRootId` should use the selection root, not the render root.
 
-## Checklist
+This is the minimum architectural seam. Without it, changing only
+`flattenVisibleRows(panelRootId)` still leaves value-row click and Escape paths
+anchored to the field-entry scope.
 
-- [ ] Step 0: reproduce; record which selection cases fail.
-- [ ] `flattenVisibleRows`: include field-entry value children.
-- [ ] Verify shift/cmd multi-select on value rows (within field + cross-container).
-- [ ] Verify delete/move/duplicate on a value-row selection; no invariant breaks
-      (references, dedupe, backlinks).
-- [ ] Unit test the new flatten behavior; e2e if a selection guard exists.
-- [ ] `bun run typecheck` + `test:renderer` + `test:core`.
+### 3. Rewire Selection Entrypoints To The Same Model
+
+Move these paths to the panel-level selectable-row model:
+
+- Pointer selection: click, Cmd/Ctrl-click, Shift-click.
+- Keyboard selection: Cmd/Ctrl+A, Shift+Arrow, Arrow navigation from selection,
+  Enter/type-to-edit, copy/cut/delete/duplicate/move/tag/checkbox.
+- Drag selection.
+- Context-menu batch resolution.
+- Clipboard serialization.
+
+The implementation should avoid component-specific row lists. Component handlers
+can pass the row id and selection root; shared interaction code resolves order
+and policy from the same selectable model.
+
+### 4. Make Batch Actions Field-Value-Aware
+
+Do not route every selected field value through generic node batch commands.
+
+Delete semantics:
+
+- Stored field value rows must use field-value removal semantics equivalent to
+  `removeFieldValue`, so auto-collected options are cleaned up or promoted.
+- Mixed selections may include body rows, field entries, and value rows. The
+  batch delete planner should partition the selected roots by action policy and
+  run the correct command(s) in one user gesture.
+- If the selection contains a field entry and one of its value children, selected
+  root de-duping should collapse to the field entry, preserving today's parent
+  suppression rule.
+
+Move semantics:
+
+- Moving selected field values should reorder siblings inside their owning field
+  entry.
+- Cross-parent moves for field values are not part of this plan unless explicitly
+  approved. The initial implementation should disable or no-op move for mixed
+  selections where a value row would need to leave its field entry.
+- Moving normal body rows remains the existing node reorder behavior.
+
+Duplicate semantics:
+
+- Plain field values can clone as sibling values.
+- Reference field values need a deliberate decision: either clone the reference
+  value as another reference row if the field permits duplicates, or keep today's
+  dedupe semantics and no-op when the target already exists in that field.
+- Auto-collected option values need a deliberate decision: cloning the local value
+  should not create orphaned or duplicate option-pool state. Prefer a
+  field-value-aware duplicate path over raw `cloneSubtreeDirect`.
+
+Synthetic/read-only system values:
+
+- Destructive batch actions are disabled.
+- Reference affordances may still navigate/edit the target where existing
+  read-only behavior allows it.
+
+### 5. Keep Visual Ordering Producers In Sync
+
+If `flattenVisibleRows` starts including field value children, update
+`buildVisualRows` and the parity tests together. If the richer selectable model
+supersedes `flattenVisibleRows`, rewrite the parity tests so they compare the
+intended projections rather than forcing an obsolete helper to match the flat
+renderer.
+
+The implementation must not leave recursive and flat renderer paths with
+different selection orders.
+
+### 6. Spec And Test Migration
+
+Update `docs/spec/ui-behavior.md` and `docs/spec/outliner-parity-matrix.md` in
+the same change as the behavior.
+
+Required tests:
+
+- Unit tests for selectable-row order:
+  - body row -> field entry -> field value rows -> following body row
+  - nested field value rows
+  - collapsed/expanded reference rows with cycle guard
+  - hidden field reveal rows excluded
+  - synthetic `sysref:*` rows policy
+- Unit tests for batch planning:
+  - parent + value child collapses to parent
+  - field value delete routes to field-value removal
+  - synthetic values are disabled
+  - mixed body/value selection partitions correctly
+- E2E:
+  - Shift-click body row to value row selects the full cross-container range
+  - Cmd/Ctrl-click toggles body and value rows in the same selection
+  - Cmd/Ctrl+A from a selected field value selects the panel visible scope, not
+    just the value scope
+  - Delete on selected auto-collected value preserves option-pool invariants
+  - Duplicate/move behavior matches the approved field-value policy
+- Update or replace the old value-scope e2e that currently asserts field-only
+  Cmd/Ctrl+A.
+
+Run `bun run typecheck`, `bun run test:renderer`, `bun run test:core`, and the
+relevant Playwright e2e selection tests before marking the implementation PR
+ready.
+
+## Implementation Phasing
+
+Do not land the whole design as one large behavior-changing PR. Split the work so
+the traversal refactor and the user-visible selection change are reviewed
+separately.
+
+### Phase 1: Selectable-Row Model, No Behavior Change
+
+Goal: introduce the shared row-ordering/policy mechanism without changing what
+users can select today.
+
+- Add the selectable-row model and unit tests.
+- Keep current public projections byte-for-byte compatible:
+  - `flattenVisibleRows(rootId, ...)` returns the same ids in the same order for
+    every existing root/scope.
+  - `visualRowNodeIds(buildVisualRows(...))` remains parity-equal to
+    `flattenVisibleRows(...)`.
+  - Field value rows remain selectable only through their current field-entry
+    value scope in this phase.
+- If the new model needs an option for future panel-level value rows, keep that
+  option off by default in Phase 1.
+- Do not update e2e expectations or specs except for internal implementation
+  notes if needed.
+- Verify with `bun run typecheck`, `bun run test:renderer`, and relevant focused
+  renderer parity tests.
+
+Phase 1 should be a pure foundation PR. Its success criterion is that the
+existing app behavior is unchanged while the next PR has one shared model to
+build on.
+
+### Phase 2: Panel-Level Field-Value Selection
+
+Goal: turn on the behavior change once the foundation is merged.
+
+- Thread `selectionRootId` separately from render `rootId`.
+- Include stored field value rows in the panel-level selectable order.
+- Rewire pointer, keyboard, drag, context-menu, and clipboard paths to consume
+  the selectable-row model.
+- Implement field-value-aware batch planning/commands.
+- Apply the approved `sysref:*` synthetic value policy.
+- Update specs and replace the old value-scope e2e expectation with
+  cross-container selection coverage.
+- Verify with `bun run typecheck`, `bun run test:renderer`,
+  `bun run test:core`, and the relevant Playwright selection tests.
+
+This keeps the broad traversal refactor out of the same review as the behavior
+change (`Cmd+A` scope, cross-container ranges, and field-value batch semantics).
+
+## Decisions Needed Before Build
+
+This plan needs PM scope GO before implementation because it changes core
+selection behavior across the app.
+
+1. **Scope:** approve full panel-level selection unification now, or defer this
+   feature and keep field values scoped locally.
+2. **Move:** should selected field values only reorder within their owning field
+   entry, or may they move out of the field into body content? Recommended:
+   reorder within the owning field only for this plan.
+3. **Duplicate:** should reference/option field values duplicate when the same
+   target/value already exists in the same field? Recommended: preserve field
+   dedupe and no-op duplicate for duplicate target references unless a later
+   value model explicitly permits duplicates.
+4. **Synthetic system values:** should synthetic `sysref:*` rows be selectable
+   for navigation affordances, or excluded from block selection entirely?
+   Recommended: selectable for reference affordance parity, destructive actions
+   disabled.
+
+## Files
+
+Expected primary implementation files:
+
+- `src/renderer/state/document.ts`
+- `src/renderer/state/visualRows.ts`
+- new or updated selectable-row model module under `src/renderer/state/`
+- `src/renderer/ui/outliner/useOutlinerRowInteraction.ts`
+- `src/renderer/ui/outliner/OutlinerView.tsx`
+- `src/renderer/ui/outliner/FieldValueOutliner.tsx`
+- `src/renderer/ui/outliner/SystemReferenceValues.tsx`
+- `src/renderer/ui/outliner/OutlinerItem.tsx`
+- `src/renderer/ui/outliner/OutlinerFieldRow.tsx`
+- `src/renderer/ui/useWorkspaceKeyboard.ts`
+- `src/renderer/ui/interactions/dragSelection.ts`
+- `src/renderer/ui/interactions/contextMenuSelection.ts`
+- `src/renderer/ui/interactions/selectionActions.ts`
+- `src/renderer/ui/interactions/selectionKeyboard.ts` if action policy changes
+- `src/renderer/api/client.ts` and `src/main/documentService.ts` only if a new
+  field-value-aware batch command is needed
+- `src/core/core.ts` only if renderer-side partitioning cannot preserve cleanup
+  semantics with existing commands
+
+Expected tests:
+
+- `tests/renderer/outlinerParity.test.ts`
+- `tests/renderer/visualRows.test.ts`
+- new renderer tests for selectable rows / batch planning
+- `tests/core/core.test.ts` if new core batch command or duplicate semantics are
+  added
+- `tests/e2e/outliner-selection-keyboard.spec.ts`
+- possibly `tests/e2e/outliner-selection.spec.ts`
+
+## Rollout Checklist
+
+- [ ] PM confirms the decisions above.
+- [ ] Phase 1 PR: build selectable-row model and unit-test row order/policy
+      without changing existing selection behavior.
+- [ ] Phase 1 PR: prove `flattenVisibleRows` and `buildVisualRows` projections
+      remain unchanged for current behavior.
+- [ ] Phase 1 PR: verify with `bun run typecheck`, `bun run test:renderer`, and
+      focused renderer parity tests.
+- [ ] Phase 2 PR: split render root from selection root in row components and
+      interaction hooks.
+- [ ] Phase 2 PR: include stored field value rows in the panel-level selectable
+      order.
+- [ ] Phase 2 PR: rewire pointer, keyboard, drag, context-menu, and clipboard
+      selection paths to the panel-level model.
+- [ ] Phase 2 PR: implement field-value-aware batch planning/commands.
+- [ ] Phase 2 PR: handle or exclude synthetic read-only system value rows.
+- [ ] Phase 2 PR: update recursive/flat row-order parity tests.
+- [ ] Phase 2 PR: update e2e coverage for cross-container selection and old
+      value-scope Cmd/Ctrl+A behavior.
+- [ ] Phase 2 PR: update specs in `docs/spec/`.
+- [ ] Phase 2 PR: verify with `bun run typecheck`, `bun run test:renderer`,
+      `bun run test:core`, and relevant Playwright selection tests.

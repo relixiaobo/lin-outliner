@@ -7,9 +7,13 @@ import type {
   NodeId,
   NodeProjection,
 } from '../api/types';
-import { buildOutlinerRows } from './outlinerRows';
 import { collectChangedNodes, nextRevisions, nodeSignatures, propagateDirty, type SignatureMap } from './renderRev';
 import { measureRenderIndex } from '../ui/outliner/renderProbe';
+import {
+  buildSelectableRows,
+  resolveSelectableReferenceTargetId,
+  selectableChildParentId,
+} from './selectableRows';
 
 export interface DocumentIndex {
   projection: DocumentProjection;
@@ -153,48 +157,20 @@ export function flattenVisibleRows(
   expanded: Set<NodeId>,
   expandedHiddenFields: Set<string> = new Set(),
 ): NodeId[] {
-  const result: NodeId[] = [];
-  const visit = (parentId: NodeId, referencePath: NodeId[]) => {
-    const parent = byId.get(parentId);
-    if (!parent) return;
-    const rows = buildOutlinerRows(parent, byId, { expandedHiddenFields });
-    for (const row of rows) {
-      if (row.type !== 'field' && row.type !== 'content') continue;
-      result.push(row.id);
-      if (expanded.has(row.id)) {
-        const childParentId = outlinerChildParentId(row.id, byId);
-        if (!childParentId || referencePath.includes(childParentId)) continue;
-        visit(childParentId, [...referencePath, childParentId]);
-      }
-    }
-  };
-  visit(rootId, [rootId]);
-  return result;
+  return buildSelectableRows(rootId, byId, { expanded, expandedHiddenFields })
+    .map((row) => row.id);
 }
 
 export function outlinerChildParentId(
   rowId: NodeId,
   byId: Map<NodeId, NodeProjection>,
 ): NodeId | null {
-  const node = byId.get(rowId);
-  if (!node) return null;
-  if (node.type !== 'reference' || !node.targetId) return rowId;
-  return resolveReferenceTargetId(node.targetId, byId);
+  return selectableChildParentId(rowId, byId);
 }
 
 export function resolveReferenceTargetId(
   targetId: NodeId,
   byId: Map<NodeId, NodeProjection>,
 ): NodeId | null {
-  let currentId: NodeId | undefined = targetId;
-  const visited = new Set<NodeId>();
-  while (currentId) {
-    if (visited.has(currentId)) return null;
-    visited.add(currentId);
-    const current = byId.get(currentId);
-    if (!current) return null;
-    if (current.type !== 'reference') return current.id;
-    currentId = current.targetId;
-  }
-  return null;
+  return resolveSelectableReferenceTargetId(targetId, byId);
 }
