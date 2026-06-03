@@ -634,6 +634,13 @@ Rules:
   not rendered as a normal user bubble.
 - Long output rows are collapsed by default.
 - Large details are refs, not row payloads.
+- A run/provider failure rides on the terminal assistant message: the run marks
+  it `assistant_message.failed` (error stop reason + `errorMessage`), so it
+  renders inline as a failed turn with a retry action — not as a separate
+  banner. The top-level `errorMessage` field is reserved for transient
+  operational errors delivered out-of-band via the runtime `error` event (e.g.
+  attachment/queueing failures), never run failures. Context-overflow failures
+  are left unmarked because reactive compaction recovers them automatically.
 
 ### Debug projection
 
@@ -807,6 +814,7 @@ user sends prompt
   -> stream pi-mono
   -> append assistant/tool events
   -> append approval events when approval runtime is enabled
+  -> on failure, append assistant_message.failed for the terminal assistant turn
   -> append run.completed or run.failed
   -> write checkpoint
   -> update render/debug/session index projections

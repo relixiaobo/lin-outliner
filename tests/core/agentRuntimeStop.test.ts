@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import {
   createAssistantMessageEventStream,
+  fauxAssistantMessage,
   type Api,
+  type AssistantMessage,
   type Context,
   type Model,
   type SimpleStreamOptions,
@@ -135,6 +137,64 @@ describe('agent runtime stop', () => {
     expect(message.role).toBe('assistant');
     expect(message.status).toBe('completed');
     expect(message.stopReason).toBe('aborted');
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+  });
+
+  test('records a provider run failure as an inline failed assistant message', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-fail-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-fail-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const errorText = "OpenAI API error (400): Invalid schema for function 'node_search'.";
+    const streamFn = ((model: Model<Api>) => {
+      const stream = createAssistantMessageEventStream();
+      const message: AssistantMessage = {
+        ...fauxAssistantMessage([], { stopReason: 'error', errorMessage: errorText }),
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+      };
+      queueMicrotask(() => {
+        stream.push({ type: 'error', reason: 'error', error: message });
+        stream.end(message);
+      });
+      return stream;
+    }) as StreamFn;
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn,
+      },
+    );
+
+    const created = await runtime.createSession();
+    await runtime.sendMessage(created.sessionId, 'Trigger a provider error.');
+
+    const projection = latestProjection(sink.events);
+    const lastRow = projection.rows.at(-1);
+    if (!lastRow) throw new Error('No message row emitted.');
+    const message = projection.entities.messages[lastRow.messageId];
+
+    expect(message.role).toBe('assistant');
+    expect(message.stopReason).toBe('error');
+    // The error rides on the assistant message so it renders inline as a failed
+    // turn (with retry), not as a separate top banner.
+    expect(message.errorMessage).toBe(errorText);
+    expect(projection.errorMessage).toBe(null);
+    // A normal provider run failure is not a transient operational error event.
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
   });
 });
