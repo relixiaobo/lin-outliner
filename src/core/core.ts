@@ -2151,7 +2151,11 @@ export class Core {
 
   private ensureSystemNodesDirect() {
     const now = nowMs();
-    this.ensureSystemNodeDirect(WORKSPACE_ID, undefined, undefined, 'Tenon', true, now, ['Lin Outliner']);
+    // The workspace root title is user-editable (so people can name their own
+    // workspace); it stays structurally fixed via isSystemId in ensureNodeMovable,
+    // so move/delete/reparent remain blocked even though locked is false. The
+    // functional sections below stay locked (read-only titles).
+    this.ensureSystemNodeDirect(WORKSPACE_ID, undefined, undefined, 'Tenon', false, now, ['Lin Outliner']);
     this.ensureSystemNodeDirect(DAILY_NOTES_ID, undefined, WORKSPACE_ID, 'Daily notes', true, now);
     this.ensureSystemNodeDirect(LIBRARY_ID, undefined, WORKSPACE_ID, 'Library', true, now);
     this.ensureSystemNodeDirect(SCHEMA_ID, undefined, WORKSPACE_ID, 'Schema', true, now);

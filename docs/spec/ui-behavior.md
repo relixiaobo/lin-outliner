@@ -20,7 +20,11 @@ keyboard or pointer change should be checked against this matrix.
   document operations.
 - Rows use a compact bullet/chevron leading control, restrained hover/focus
   states, and no right inspector.
-- Page titles are editable rich text.
+- Page titles are editable rich text. This includes the workspace root title
+  (so people can name their workspace), which stays structurally fixed — it can
+  be renamed but not moved, deleted, or reparented. The functional system
+  sections (Daily notes, Library, Schema, Saved searches, Trash, Settings) and
+  other locked pages (e.g. day pages) keep read-only titles.
 - The root scope always renders a trailing input so typing can continue at the
   end of the page.
 - Field entries are ordinary outline rows with field-specific value rendering.
