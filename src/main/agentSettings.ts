@@ -1,4 +1,4 @@
-import { app } from 'electron';
+import * as electron from 'electron';
 import {
   findEnvKeys,
   getEnvApiKey,
@@ -7,11 +7,13 @@ import {
   getSupportedThinkingLevels,
   completeSimple,
 } from '@earendil-works/pi-ai';
-import type { Api, KnownProvider, Model, SimpleStreamOptions } from '@earendil-works/pi-ai';
+import type { Api, KnownProvider, Model, OAuthCredentials, OAuthProviderId, SimpleStreamOptions } from '@earendil-works/pi-ai';
+import { getOAuthApiKey, getOAuthProvider } from '@earendil-works/pi-ai/oauth';
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type {
   AgentModelOption,
+  AgentProviderAuthKind,
   AgentRuntimeSettings,
   AgentRuntimeSettingsInput,
   AgentProviderConfigInput,
@@ -20,8 +22,17 @@ import type {
   AgentReasoningLevel,
   AgentProviderSecretStatus,
   AgentProviderSettingsView,
+  ProviderAuthView,
 } from '../core/types';
 import { compareModels } from './modelRanking';
+
+// safeStorage is accessed off the namespace (not a named import) so unit-test
+// electron mocks that only provide `app` still link. Returns null when the OS
+// keychain is unavailable → callers fall back to chmod-600 plaintext.
+function activeSafeStorage(): typeof electron.safeStorage | null {
+  const candidate = electron.safeStorage as typeof electron.safeStorage | undefined;
+  return candidate && typeof candidate.isEncryptionAvailable === 'function' ? candidate : null;
+}
 
 const PROVIDERS_FILE = 'agent-providers.json';
 const SECRETS_FILE = 'agent-secrets.json';
@@ -40,8 +51,35 @@ interface ProviderConfigFile {
   providers: AgentProviderConfig[];
 }
 
+// Stored credential shape — mirrors pi-mono's coding-agent `AuthCredential`
+// (discriminated on `type`, oauth flattened) so we reuse its shape rather than
+// invent one. A provider holds at most one stored credential: signing in writes
+// an `oauth` entry, pasting a key writes an `api_key` entry, switching replaces.
+// `managed` providers never appear here; env keys are read, never stored.
+type ApiKeyCredential = { type: 'api_key'; key: string };
+type OAuthStoredCredential = { type: 'oauth' } & OAuthCredentials;
+type AuthCredential = ApiKeyCredential | OAuthStoredCredential;
+
 interface SecretFile {
-  keys: Record<string, string>;
+  credentials: Record<string, AuthCredential>;
+}
+
+// On-disk envelope. When safeStorage (OS keychain) is available the whole
+// SecretFile is encrypted into `enc`; otherwise it is written in `credentials`
+// as plaintext (still chmod 600). See D1 in docs/plans/agent-oauth-providers.md.
+interface SecretEnvelope {
+  enc?: string;
+  credentials?: Record<string, AuthCredential>;
+}
+
+// pi-ai inlines `'amazon-bedrock'` / `'google-vertex'` in getEnvApiKey and
+// exports no classifier, so we mirror that one small set here.
+const MANAGED_PROVIDERS = new Set<string>(['amazon-bedrock', 'google-vertex']);
+
+function getProviderAuthKind(providerId: string): AgentProviderAuthKind {
+  if (getOAuthProvider(providerId as OAuthProviderId)) return 'oauth';
+  if (MANAGED_PROVIDERS.has(providerId)) return 'managed';
+  return 'api-key';
 }
 
 const MODEL_ID_REPLACEMENTS: Record<string, Record<string, string>> = {
@@ -89,11 +127,13 @@ export async function getActiveProviderRuntimeConfig(): Promise<AgentProviderRun
     ?? null;
   if (!active) return null;
   const modelId = normalizeModelId(active.providerId, active.modelId);
+  // Do not bake the key here — this path is sync and cannot await an OAuth
+  // refresh. Consumers resolve lazily via getProviderApiKey (the single async
+  // resolver) at request time; leaving apiKey undefined routes them there.
   return {
     ...active,
     modelId,
     reasoningLevel: normalizeReasoningLevel(active.providerId, modelId, active.reasoningLevel),
-    apiKey: secrets.keys[active.providerId] ?? getEnvApiKey(active.providerId),
   };
 }
 
@@ -150,8 +190,8 @@ export async function deleteProviderConfig(providerIdInput: string) {
   if (file.activeProviderId === providerId) file.activeProviderId = file.providers[0]?.providerId;
   await writeProviderFile(file);
   const secrets = await readSecretFile();
-  if (providerId in secrets.keys) {
-    delete secrets.keys[providerId];
+  if (providerId in secrets.credentials) {
+    delete secrets.credentials[providerId];
     await writeSecretFile(secrets);
   }
   return getProviderSettings();
@@ -172,8 +212,12 @@ export async function setProviderApiKey(providerIdInput: string, apiKeyInput: st
   const providerId = normalizeProviderId(providerIdInput);
   const apiKey = apiKeyInput.trim();
   const secrets = await readSecretFile();
-  if (apiKey) secrets.keys[providerId] = apiKey;
-  else delete secrets.keys[providerId];
+  if (apiKey) {
+    secrets.credentials[providerId] = { type: 'api_key', key: apiKey };
+  } else if (secrets.credentials[providerId]?.type === 'api_key') {
+    // Clearing the key field removes only a stored key — never an oauth login.
+    delete secrets.credentials[providerId];
+  }
   await writeSecretFile(secrets);
   return { providerId, hasApiKey: !!apiKey };
 }
@@ -181,7 +225,7 @@ export async function setProviderApiKey(providerIdInput: string, apiKeyInput: st
 export async function deleteProviderApiKey(providerIdInput: string): Promise<AgentProviderSecretStatus> {
   const providerId = normalizeProviderId(providerIdInput);
   const secrets = await readSecretFile();
-  delete secrets.keys[providerId];
+  if (secrets.credentials[providerId]?.type === 'api_key') delete secrets.credentials[providerId];
   await writeSecretFile(secrets);
   return { providerId, hasApiKey: false };
 }
@@ -189,13 +233,49 @@ export async function deleteProviderApiKey(providerIdInput: string): Promise<Age
 export async function getProviderSecretStatus(providerIdInput: string): Promise<AgentProviderSecretStatus> {
   const providerId = normalizeProviderId(providerIdInput);
   const secrets = await readSecretFile();
-  return { providerId, hasApiKey: providerId in secrets.keys };
+  return { providerId, hasApiKey: secrets.credentials[providerId]?.type === 'api_key' };
 }
 
+/**
+ * The single resolver for a provider's usable API key. Auth-kind-agnostic: it
+ * tries the stored credential, then env (which also yields the `"<authenticated>"`
+ * sentinel for managed Bedrock/Vertex). For an oauth credential it auto-refreshes
+ * via pi-ai's getOAuthApiKey and persists the rotated tokens. This is the body of
+ * pi-agent-core's per-call `getApiKey` hook, so refresh happens at request time.
+ * Per that hook's contract it never throws — it returns undefined when no key.
+ */
 export async function getProviderApiKey(providerIdInput: string): Promise<string | undefined> {
+  try {
+    const providerId = normalizeProviderId(providerIdInput);
+    const secrets = await readSecretFile();
+    const cred = secrets.credentials[providerId];
+    if (cred?.type === 'api_key') return cred.key;
+    if (cred?.type === 'oauth') {
+      const { type: _type, ...stored } = cred;
+      const result = await getOAuthApiKey(providerId as OAuthProviderId, { [providerId]: stored });
+      if (result) {
+        if (oauthCredentialsChanged(stored, result.newCredentials)) {
+          await persistOAuthCredential(providerId, result.newCredentials);
+        }
+        return result.apiKey;
+      }
+    }
+    return getEnvApiKey(providerId);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Persist an oauth login / a rotated token. The only writer of oauth credentials. */
+export async function persistOAuthCredential(providerIdInput: string, credentials: OAuthCredentials): Promise<void> {
   const providerId = normalizeProviderId(providerIdInput);
   const secrets = await readSecretFile();
-  return secrets.keys[providerId];
+  secrets.credentials[providerId] = { type: 'oauth', ...credentials };
+  await writeSecretFile(secrets);
+}
+
+function oauthCredentialsChanged(a: OAuthCredentials, b: OAuthCredentials): boolean {
+  return a.access !== b.access || a.refresh !== b.refresh || a.expires !== b.expires;
 }
 
 function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): AgentProviderSettingsView {
@@ -205,14 +285,30 @@ function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): AgentPro
     agent: normalizeAgentRuntimeSettings(file.agent),
     providers: file.providers.map((provider): AgentProviderConfigView => {
       const modelId = normalizeModelId(provider.providerId, provider.modelId);
+      const cred = secrets.credentials[provider.providerId];
+      const hasStoredKey = cred?.type === 'api_key';
+      const hasEnvApiKey = !!getEnvApiKey(provider.providerId);
+      const authKind = getProviderAuthKind(provider.providerId);
+      const oauthCred = cred?.type === 'oauth' ? cred : undefined;
+      const auth: ProviderAuthView = {
+        authKind,
+        // Authoritative "can use models": any stored credential, env key, or
+        // managed sentinel. Renderer reads this instead of re-deriving.
+        credentialed: Boolean(cred) || hasEnvApiKey,
+        hasStoredKey,
+        oauth: authKind === 'oauth'
+          ? { connected: Boolean(oauthCred), expiresAt: oauthCred?.expires }
+          : undefined,
+      };
       return {
         providerId: provider.providerId,
         modelId,
         reasoningLevel: normalizeReasoningLevel(provider.providerId, modelId, provider.reasoningLevel),
         baseUrl: provider.baseUrl,
         enabled: provider.enabled,
-        hasApiKey: provider.providerId in secrets.keys,
-        hasEnvApiKey: !!getEnvApiKey(provider.providerId),
+        hasApiKey: hasStoredKey,
+        hasEnvApiKey,
+        auth,
       };
     }),
     availableProviders,
@@ -301,7 +397,9 @@ function normalizeConfig(input: AgentProviderConfigInput): AgentProviderConfig {
 }
 
 function providerHasCredential(provider: AgentProviderConfig, secrets: SecretFile): boolean {
-  return provider.enabled && Boolean(secrets.keys[provider.providerId] || getEnvApiKey(provider.providerId));
+  // A stored credential (api_key or oauth login), an env key, or a managed
+  // ambient sentinel all count. Kind-agnostic, mirroring the resolver.
+  return provider.enabled && Boolean(secrets.credentials[provider.providerId] || getEnvApiKey(provider.providerId));
 }
 
 function normalizeProviderId(providerIdInput: string) {
@@ -365,11 +463,31 @@ async function writeProviderFile(file: ProviderConfigFile) {
 }
 
 async function readSecretFile(): Promise<SecretFile> {
-  return readJsonOrDefault(secretPath(), { keys: {} });
+  const envelope = await readJsonOrDefault<SecretEnvelope>(secretPath(), {});
+  if (typeof envelope.enc === 'string') {
+    const store = activeSafeStorage();
+    if (!store?.isEncryptionAvailable()) return { credentials: {} };
+    try {
+      const json = store.decryptString(Buffer.from(envelope.enc, 'base64'));
+      return normalizeSecretFile(JSON.parse(json));
+    } catch {
+      return { credentials: {} };
+    }
+  }
+  return normalizeSecretFile(envelope);
 }
 
 async function writeSecretFile(file: SecretFile) {
-  await writeJsonFile(secretPath(), file, true);
+  const store = activeSafeStorage();
+  const envelope: SecretEnvelope = store?.isEncryptionAvailable()
+    ? { enc: store.encryptString(JSON.stringify(file)).toString('base64') }
+    : { credentials: file.credentials };
+  await writeJsonFile(secretPath(), envelope, true);
+}
+
+function normalizeSecretFile(value: SecretEnvelope): SecretFile {
+  const credentials = value.credentials;
+  return { credentials: credentials && typeof credentials === 'object' ? credentials : {} };
 }
 
 async function readJsonOrDefault<T>(path: string, fallback: T): Promise<T> {
@@ -396,11 +514,11 @@ async function atomicWrite(path: string, data: string) {
 }
 
 function providerPath() {
-  return join(app.getPath('userData'), PROVIDERS_FILE);
+  return join(electron.app.getPath('userData'), PROVIDERS_FILE);
 }
 
 function secretPath() {
-  return join(app.getPath('userData'), SECRETS_FILE);
+  return join(electron.app.getPath('userData'), SECRETS_FILE);
 }
 
 export async function testProviderConnection(input: {
@@ -418,8 +536,8 @@ export async function testProviderConnection(input: {
 
     let apiKey = input.apiKey?.trim();
     if (!apiKey) {
-      const secrets = await readSecretFile();
-      apiKey = secrets.keys[providerId] ?? getEnvApiKey(providerId);
+      // The single resolver handles api-key, oauth refresh, env, and managed.
+      apiKey = await getProviderApiKey(providerId);
     }
 
     if (!apiKey) {
