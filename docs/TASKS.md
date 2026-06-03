@@ -35,9 +35,6 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
   `electron.vite.config.ts`, preload) — coordinate the merge window. Foundation
   `outliner-local-file-references` landed (PR #80). See
   `docs/plans/lazy-like-global-launcher.md`.
-- **agent-past-chats** (P1, Codex) — `past_chats` recall tool (recent + search
-  + read) backed by the event store. Recall tool and tool-UI polish landed
-  (PRs #1, #4); see `docs/plans/agent-past-chats.md` for remaining scope.
 - **agent-oauth-providers** (P2, cc) — OAuth sign-in (Anthropic Pro/Max, GitHub
   Copilot, OpenAI Codex) + managed-credential providers (Bedrock AWS, Vertex
   ADC): real credential resolution via pi-ai's OAuth flows, Electron-main login
@@ -51,15 +48,6 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 
 Ordered by priority; lower items may depend on higher ones.
 
-- **design-system-rollout** (P1) — staged migration to `docs/spec/design-system.md`.
-  Phase 1 (token foundation + gated dark theme) landed (PR #55). Phases 2–4 landed
-  in PR #57: CSS modularized into per-surface modules; components migrated to the
-  alpha-on-ink token layer; `--primary*` neutralized + deleted; inline-ref
-  blue→rose; dark follows the OS via `theme.ts`; floating-rails shell
-  (`WindowChrome` + per-pane breadcrumbs + sidebar-as-tab-switcher). Remaining:
-  light-mode + interaction (unfurl / drag / resize) visual pass (verified dark
-  only at merge); real OS vibrancy tuning. (Persisted light/dark/system toggle #45
-  shipped in PR #82.) See `docs/plans/design-system-rollout.md`.
 - **agent-empty-state-onboarding** (P1) — agent panel empty state: remove the three
   hardcoded suggestion chips (greeting / whitespace instead), and add a
   no-LLM-key onboarding (CTA → Settings › Providers, disable send when no usable
@@ -198,6 +186,22 @@ Ordered by priority; lower items may depend on higher ones.
   `src/core`. Design folded into `docs/spec/workspace-layout.md` (A6); plan archived. Gate:
   typecheck clean, renderer 268/0, e2e green (the 5 `outliner-navigation-title` failures are
   pre-existing renderer-mock limits, baseline-confirmed identical on the pre-fix head).
+- **design-system-rollout** (multi-PR) — staged migration to `docs/spec/design-system.md`
+  complete. Phase 1 token foundation (PR #55); Phases 2–4 in PR #57 (CSS modularized into
+  per-surface modules, components migrated to the alpha-on-ink token layer, `--primary*`
+  deleted, inline-ref blue→rose, floating-rails shell); dark→`@media (prefers-color-scheme)`
+  + central a11y layer (PR #63); native-feel component pass, light+dark (PR #65); native
+  shell behaviors (PR #68); persisted System/Light/Dark toggle #45 (PR #82); OS vibrancy
+  wired in `main.ts`. Spec ⇄ code converged; typography-tokens + workspace-layout guard
+  tests armed + passing. Plan archived.
+- **agent-past-chats** (codex; shipped ~2026-05-25, recorded at reconciliation) — `past_chats`
+  recall tool (recent / search / read) over the agent event store: service
+  (`agentPastChats.ts`) + tool wrapper (`agentPastChatsTool.ts`), registered in `agentTools.ts`
+  and wired with current-session injection in `agentRuntime.ts`; 9 core tests + 1 runtime E2E +
+  renderer tool-call UI (commits `11a5b68`, `042ba3a`). v1 complete; post-v1 niceties (regex,
+  hit ranking, clickable `[m_xxx]` citation jumps, embedding rerank, cross-branch read) are
+  deferred future work; `past-chats-output-polish` (P3) tracks the minor output cleanups. Plan
+  archived.
 - **fix: `isSystemId` covers Library + Recents** (main) — fast-track bug. `isSystemId()`
   (`src/core/core.ts`) omitted `LIBRARY_ID`/`RECENTS_ID`, so `removeSubtreeDirect` (guarded
   only by `isSystemId`) could hard-delete Library and `isSearchCandidate` surfaced

@@ -1,9 +1,9 @@
 ---
-status: in-progress
+status: done
 priority: P1
 owner: relixiaobo
 created: 2026-05-21
-updated: 2026-05-25
+updated: 2026-06-03
 supersedes: agent-tool-design.md § "past_chats" (lines 1984-2021 of the historical sketch)
 ---
 
