@@ -3,7 +3,7 @@ status: in-progress
 priority: P1
 owner: relixiaobo
 created: 2026-05-27
-updated: 2026-06-01
+updated: 2026-06-02
 ---
 
 # Native-Feel Remediation (Electron)
@@ -85,11 +85,33 @@ visible polish builds on a stable window.
   versioned envelope and `flushSync` removal were deliberately deferred — pure-TS
   host wants shared types over an envelope, and `flushSync` is an intentional
   latency trade to measure before removing.)
-- [ ] **6 — Packaging + smoke tests.** electron-builder manifests for Windows
-  (and Linux if targeted); protocol / file-association decisions; Electron /
-  packaged smoke tests (first frame, native menu + accelerators, CSP
-  enforcement, external-link routing, per-clone `userData` isolation). Promote
-  the stage-1 prod CSP to a formally smoke-tested enforcing policy here.
+- [x] **6 — Packaging + smoke tests (macOS scope).** Implemented in
+  `cc/native-feel-06-packaging` (PR pending). **Scope narrowed to macOS only**
+  (Win/Linux dropped — see Open questions). Delivered:
+  - **Real-Electron smoke suite** under `tests/smoke/` + `playwright.smoke.config.ts`
+    (`bun run test:smoke`): launches the *built* main process (`out/main/main.js`)
+    against a throwaway `ELECTRON_USER_DATA_DIR`, exercising the native host — not
+    the renderer-in-Chromium path the `tests/e2e/` suite uses. Covers all five
+    stage-6 cases: first frame (`show:false` → `ready-to-show`, non-white backing,
+    `#root` mounted from `file://`), native application menu + the `Cmd+,`
+    Preferences accelerator, **CSP enforcement** (an inline `<script>` is blocked
+    and fires a `script-src` `securitypolicyviolation` while the app's own `'self'`
+    bundle loaded — proving the policy is the tight one, not absent), external-link
+    routing (`window.open`/`will-navigate` denied + http(s) routed to
+    `shell.openExternal`, `file:` never routed), and per-clone `userData` isolation.
+    14 tests green.
+  - **Build manifest:** added `mac.category` (`public.app-category.productivity`)
+    to the electron-builder `mac` block. (`afterPack` ad-hoc signing + unsigned
+    `dmg` from stages prior remain.)
+  - **CSP promoted** to a formally smoke-tested enforcing policy (the inline-script
+    violation test above).
+  - **Limitation (noted):** the suite smokes the *built bundle's* prod renderer
+    path (`file://` + the enforced CSP, identical to the packaged app — these
+    behaviors are not gated on `app.isPackaged`), not the signed `.dmg` artifact.
+    Full packaged-artifact verification (signature, Gatekeeper, install) stays a
+    manual `bun run app:build` + install check.
+  - **README** still claims three OSes; trimming it to macOS-only is left to the
+    main agent (README is main-agent-owned).
 
 ## Coordination
 
@@ -115,4 +137,17 @@ main-agent-owned.
   `window.prompt` / `window.confirm` are replaced (grep-clean), settings has its
   own window, and the native menus / right-click landed in PR-D #68.
 - Stage 6: do we ship Linux at all, or is the README's three-OS claim trimmed
-  to macOS + Windows?
+  to macOS + Windows? **Resolved (2026-06-02):** target **macOS only** for now.
+  Windows and Linux are dropped from this round; the README's three-OS claim
+  should be trimmed to macOS by the main agent. Re-targeting Windows/Linux later
+  is additive (re-add the `win`/`linux` electron-builder targets + their smoke
+  guards) and not blocked by this work.
+- Stage 6: protocol / file-association registration. **Resolved (2026-06-02):
+  defer both, deliberately.** The document model is event-sourced inside
+  `userData`, not a user-facing file-per-document format, so there is no file type
+  for Finder to open, and no feature consumes a deep-link URL scheme. Registering
+  an unused `linoutliner://` handler or a placeholder file association would add
+  attack surface against A3's capability-minimalism for zero user benefit. The
+  internal `asset://` scheme stays (it backs `<img>`/`<video>` and is already
+  privileged-registered). Revisit if/when a deep-link or open-with feature is
+  actually planned — that is a feature plan, not packaging.
