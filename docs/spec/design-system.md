@@ -491,9 +491,10 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
   with the rest of functional state. It is slightly stronger than a selected row
   so glyphs stay legible; the glyph colour itself does not change under selection.
 - **Brand accent is sparse.** `--accent` (rose) appears only in: links
-  (`--link`), the text caret (`--caret`), brand marks (app / workspace avatar),
-  and small status badges. It never paints selection, focus, active rows, or
-  primary buttons.
+  (`--link`), the text caret (`--caret`), the workspace-root avatar (the single
+  in-rail brand mark — there is no separate static app brand header), and small
+  status badges. It never paints selection, focus, active rows, or primary
+  buttons.
 - **Surfaces.** `--bg-window` is the chrome base behind the material;
   `--bg-content` is the opaque content panel; `--bg-elevated` is menus / popovers
   / HUD — in dark mode it is *lighter* than content so floating surfaces read as

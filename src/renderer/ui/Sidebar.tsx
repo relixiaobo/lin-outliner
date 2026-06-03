@@ -19,7 +19,6 @@ import { ButtonControl } from './primitives/ButtonControl';
 import { IconButton } from './primitives/IconButton';
 import { ResizeHandle } from './primitives/ResizeHandle';
 import { textOf } from './shared';
-import tenonLogoUrl from '../assets/tenon-logo.svg';
 
 export interface SidebarTabSegment {
   active: boolean;
@@ -143,11 +142,6 @@ export function Sidebar(props: SidebarProps) {
           sidebar.css). Dragging is owned by the chrome zones + breadcrumb. */}
       <div className="rail-top" aria-hidden="true" />
       <div className="sidebar-scroll">
-        <div className="sidebar-brand" aria-label="Tenon">
-          <img className="sidebar-brand-mark" src={tenonLogoUrl} alt="" />
-          <span className="sidebar-brand-name">Tenon</span>
-        </div>
-
         <nav className="sidebar-primary-nav">
         {primaryNavItems.map((item) => {
           const target = navTargets[item.key];

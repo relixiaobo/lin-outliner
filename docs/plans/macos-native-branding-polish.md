@@ -1,5 +1,5 @@
 ---
-status: draft
+status: done
 priority: P1
 owner: relixiaobo
 created: 2026-06-03
@@ -7,6 +7,13 @@ updated: 2026-06-03
 ---
 
 # macOS Native Branding & Chrome Polish
+
+> **Shipped** on `cc/macos-native-branding-polish`. T1–T6 implemented and verified
+> (typecheck · renderer unit · token-guard e2e · light+dark visual on the icon and
+> sidebar). Q4 resolved by the PM → copyright `© 2026 Lin Lab`. The icon design now
+> lives in `assets/brand/tenon-icon-master.svg` (squircle master) +
+> `scripts/gen-icon.sh` (regenerator); the sidebar single-identity rule is folded
+> into `docs/spec/design-system.md`. Main agent: archive at the merge gate.
 
 ## Goal
 
@@ -153,21 +160,22 @@ instance + lifecycle; `.icns` size ladder; electron-builder icon wiring.
 3. ~~Dev-only "Electron" labels (T3).~~ **→ Hardcode** About/Hide/Quit (and the
    first-submenu label) to "Tenon" so dev matches packaged. (T3 locked.)
 
-**Still open (blocks T5 only — the rest can build):**
+**Resolved (PM-ratified 2026-06-03):**
 
-4. **Copyright string (T5).** Exact holder + year for `© 2026 <name/org>` (About
-   panel + electron-builder `NSHumanReadableCopyright`). Everything else is
-   unblocked; the dev can ship T1–T4/T6 and fill T5's string when provided.
+4. ~~Copyright string (T5).~~ **→ `© 2026 Lin Lab`** (matches the `dev.linlab.tenon`
+   appId namespace). Applied to the About panel (`main.ts` `setAboutPanelOptions`)
+   and electron-builder `NSHumanReadableCopyright` (`package.json` top-level
+   `copyright`). (T5 locked.)
 
 ## Task checklist (for the dev agent)
 
-- [ ] T1 — recompose existing glyph onto the 824/r185.4/100px-gutter squircle master → regenerate `build/icon.icns` + `build/icon.png` (clear caches/rebuild); visual Dock check (light + dark)
-- [ ] T2 — drop the sidebar brand header (`Sidebar.tsx:146-149` + `sidebar-brand*` CSS); keep the workspace-root row
-- [ ] T3 — hardcode About/Hide/Quit + first-submenu label to "Tenon"
-- [ ] T4 — "Preferences…" → "Settings…"
-- [ ] T5 — copyright in About panel + electron-builder (string from Q4)
-- [ ] T6 — Help menu label/URL
-- [ ] `bun run typecheck` + `bun run test:renderer` + `bun run test:e2e` (token guard); visual verification of the sidebar + icon (light + dark); update `docs/spec/design-system.md` if the sidebar brand block is removed (A6)
+- [x] T1 — recomposed the existing glyph onto the 824/r185.4/100px-gutter squircle master (`assets/brand/tenon-icon-master.svg`); regenerated `build/icon.icns` + `build/icon.png` via `scripts/gen-icon.sh` (qlmanage → sips ladder → iconutil); verified transparent corners + squircle at 1024 and 32px. Full packaged Dock check (light + dark) deferred to the main-agent visual gate.
+- [x] T2 — dropped the sidebar brand header (`Sidebar.tsx` brand block + unused logo import) and the `sidebar-brand*` CSS; kept the workspace-root row as the single identity. Verified light + dark sidebar renders.
+- [x] T3 — About/Hide/Quit + first-submenu label now read "Tenon" in both dev and packaged (templated off the `APP_NAME` constant rather than `app.name`, since `app.setName` doesn't fix CFBundleName-derived role labels).
+- [x] T4 — "Preferences…" → "Settings…" (kept ⌘,).
+- [x] T5 — `© 2026 Lin Lab` in the About panel + electron-builder `copyright`.
+- [x] T6 — Help menu: "Learn More" → "Tenon Help"; added "Report an Issue…".
+- [x] `bun run typecheck` (clean) + `bun run test:renderer` (268 pass) + token-guard e2e (`typography-tokens.spec.ts`, 8 pass); light+dark visual on icon + sidebar; `docs/spec/design-system.md` updated (A6 — sparse-accent brand-mark line now points at the single workspace-root avatar). Pre-existing failures in `test:core` (file_glob/file_grep) and `workspace-layout.spec.ts` reproduce on clean `origin/main` — not introduced here.
 
 ## Key files
 

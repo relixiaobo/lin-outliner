@@ -291,20 +291,24 @@ function buildApplicationMenu(): Electron.Menu {
   const template: Electron.MenuItemConstructorOptions[] = [];
 
   if (isMac) {
+    // app.setName() fixes app.name but NOT the bundle's CFBundleName, which is
+    // where role-based about/hide/quit draw their labels — so in a dev run (the
+    // Electron bundle) they would read "Electron". Hardcode the app-name labels
+    // off APP_NAME so dev and packaged both read "Tenon".
     template.push({
-      label: app.name,
+      label: APP_NAME,
       submenu: [
-        { role: 'about' },
+        { role: 'about', label: `About ${APP_NAME}` },
         { type: 'separator' },
-        { label: 'Preferences…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
+        { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
         { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },
-        { role: 'hide' },
+        { role: 'hide', label: `Hide ${APP_NAME}` },
         { role: 'hideOthers' },
         { role: 'unhide' },
         { type: 'separator' },
-        { role: 'quit' },
+        { role: 'quit', label: `Quit ${APP_NAME}` },
       ],
     });
   } else {
@@ -325,8 +329,12 @@ function buildApplicationMenu(): Electron.Menu {
     role: 'help',
     submenu: [
       {
-        label: 'Learn More',
+        label: `${APP_NAME} Help`,
         click: () => void shell.openExternal('https://github.com/relixiaobo/lin-outliner'),
+      },
+      {
+        label: 'Report an Issue…',
+        click: () => void shell.openExternal('https://github.com/relixiaobo/lin-outliner/issues'),
       },
     ],
   });
@@ -1380,6 +1388,7 @@ if (!app.requestSingleInstanceLock()) {
     app.setAboutPanelOptions({
       applicationName: APP_NAME,
       applicationVersion: app.getVersion(),
+      copyright: '© 2026 Lin Lab',
       ...(icon.isEmpty() ? {} : { iconPath: APP_ICON_PNG_PATH }),
     });
     protocol.handle(ASSET_URL_SCHEME, (request) => {
