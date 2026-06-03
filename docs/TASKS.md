@@ -105,6 +105,14 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **editable workspace root title** (main) — fast-track. Workspace root
+  (`WORKSPACE_ID` / "Tenon") seeded `locked=false` so users can rename their workspace;
+  structural locks intact via the independent `isSystemId` check in `ensureNodeMovable`
+  (no move/delete/reparent). Functional sections (Daily notes, Library, Schema, Saved
+  searches, Trash, Settings) stay read-only; the hardcoded sidebar brand wordmark is
+  unaffected. `ensureSystemNodeDirect` reconciles the flag on existing docs (no migration).
+  Spec updated (`ui-behavior.md`); typecheck clean, renderer 268/0, core 448/2 (the 2 are
+  pre-existing rg failures). Direct merge to `main`, no PR.
 - **appearance theme toggle (System/Light/Dark)** (cc-2) — closes `#45`, one of the
   remaining items of `design-system-rollout` (plan stays in-progress: light-mode visual
   pass + OS vibrancy tuning still open). New General settings pane with a `SegmentedControl`

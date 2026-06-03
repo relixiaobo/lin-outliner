@@ -12,6 +12,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Editable workspace root title (rename your workspace)** — the workspace root
+  (`WORKSPACE_ID`, "Tenon") is now seeded with `locked=false`, so its title is editable
+  rich text in the panel header and the sidebar workspace-root row. Structural protection
+  is unchanged: `ensureNodeMovable` still blocks move/delete/reparent via the independent
+  `isSystemId` check, so the root stays fixed in the tree while only its title becomes
+  editable. The functional sections (Daily notes, Library, Schema, Saved searches, Trash,
+  Settings) keep read-only titles. The sidebar brand wordmark (the logo + "Tenon" at
+  top-left) is a hardcoded brand string and is unaffected. `ensureSystemNodeDirect`
+  reconciles the flag on existing documents, so current data flips to editable on next
+  launch with no migration or data wipe; the title-reconcile guard only resets empty/legacy
+  titles, so a custom workspace name survives restarts. (Direct merge to `main`, no PR.)
+
 - **Appearance theme toggle: System / Light / Dark (PR #82)** — a new **Settings ›
   General** pane exposes a `SegmentedControl` (System / Light / Dark). Selecting calls
   `lin:set-theme` → the main process sets `nativeTheme.themeSource`, which rewrites every
