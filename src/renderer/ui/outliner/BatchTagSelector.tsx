@@ -12,6 +12,7 @@ import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { MenuItem } from '../primitives/MenuItem';
 import { TextInputControl } from '../primitives/TextInputControl';
 import { selectedRootIds } from '../interactions/selectionActions';
+import { idsEnabledForSelectionAction } from '../interactions/selectionBatchActions';
 import { clampTagSelectorIndex, tagSelectorItemLabel, tagSelectorItems } from '../interactions/tagSelector';
 import type { CommandRunner } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
@@ -34,9 +35,18 @@ export function BatchTagSelector(props: BatchTagSelectorProps) {
     () => selectedRootIds([...props.selectedIds], props.index.byId),
     [props.index.byId, props.selectedIds],
   );
-  const targetIds = useMemo(
-    () => targetIdsForRows(selectedRowIds, props.index.byId),
+  const taggableRowIds = useMemo(
+    () => idsEnabledForSelectionAction({
+      ids: selectedRowIds,
+      action: 'tag',
+      panelRootId: selectedRowIds[0] ?? '',
+      byId: props.index.byId,
+    }),
     [props.index.byId, selectedRowIds],
+  );
+  const targetIds = useMemo(
+    () => targetIdsForRows(taggableRowIds, props.index.byId),
+    [props.index.byId, taggableRowIds],
   );
   const existingTagIds = useMemo(
     () => commonTagIdsForTargets(targetIds, props.index.byId),

@@ -53,9 +53,9 @@ Reference sources:
 | Printable char | Edit first selected row and insert/append char. | `type_char`. | `outlinerParity.test.ts` |
 | ArrowUp / ArrowDown | Move editing focus before/after selected block. | `navigate_up/down`. | `outlinerParity.test.ts` |
 | Shift+ArrowUp / Shift+ArrowDown | Extend selection from anchor. | `extend_up/down`. | `outlinerParity.test.ts` |
-| Cmd/Ctrl+A | Select all visible rows in current root scope, even when no row is currently selected. | `select_all`. | `outlinerParity.test.ts`, `outliner-selection-keyboard.spec.ts` |
-| Backspace / Delete | Trash selected root rows. | `batch_delete`. | `outlinerParity.test.ts` |
-| Tab / Shift+Tab | Batch indent/outdent selected root rows. | `batch_indent/outdent`. | `outlinerParity.test.ts` |
+| Cmd/Ctrl+A | Select all selectable rows in the current selection root, even when no row is currently selected. Field value rows inherit the panel selection root rather than their nested render root. | `select_all`. | `outlinerParity.test.ts`, `outliner-selection-keyboard.spec.ts` |
+| Backspace / Delete | Delete selected root rows by selectable-row policy. Ordinary rows trash; stored field value rows use field-value removal; synthetic rows are disabled. | `batch_delete`. | `outlinerParity.test.ts` |
+| Tab / Shift+Tab | Batch indent/outdent selected root rows that are allowed to move structurally. Field value rows are excluded because they may not leave their owning field entry. | `batch_indent/outdent`. | `outlinerParity.test.ts` |
 | Cmd/Ctrl+Shift+D | Batch duplicate selected root rows. | `batch_duplicate`. | `outlinerParity.test.ts` |
 | Cmd/Ctrl+Enter | Cycle selected target nodes through no checkbox, undone checkbox, and done checkbox. | `batch_checkbox`. | `outlinerParity.test.ts`, `outliner-selection-keyboard.spec.ts` |
 | # | Open batch tag selector. | `batch_apply_tag`. | `outlinerParity.test.ts`, `outliner-selection.spec.ts` |
@@ -95,16 +95,16 @@ Reference sources:
 
 | Operation | nodex behavior | lin-outliner rule | Test coverage |
 | --- | --- | --- | --- |
-| Duplicate | Operate on top-level selected rows only. | `selectedRootIds`. | `outlinerParity.test.ts` |
-| Trash | Operate on top-level selected rows only. | `selectedRootIds`. | `outlinerParity.test.ts`, `outliner-selection.spec.ts` |
-| Move up/down | Operate on selected sibling block. | Core batch move commands. | core tests |
+| Duplicate | Operate on top-level selected rows only. Field value duplicates follow selectable-row policy; reference/option-style value duplicates no-op instead of creating duplicate targets. | `selectedRootIds`, `selectionBatchActions`. | `outlinerParity.test.ts` |
+| Trash | Operate on top-level selected rows only. Field value rows route to `remove_field_value`, not generic trash, so option-pool cleanup still runs. | `selectedRootIds`, `selectionBatchActions`. | `outlinerParity.test.ts`, `outliner-selection.spec.ts` |
+| Move up/down | Reorder selected rows inside their current sibling list. Field value rows may reorder only inside their owning field entry. | Core batch move commands via selectable-row policy. | core tests |
 | Done | For references, toggle the target node, not the display reference row. | `targetIdsForRows`. | `outlinerParity.test.ts`, `outliner-selection-keyboard.spec.ts` |
 | Add tag | Batch apply to selected target nodes; create tag then apply if needed. | `batch_apply_tag`. | core + renderer + E2E tests |
 | Nested selected rows | Parent selection suppresses child duplicate/trash/move. | `selectedRootIds`. | `outlinerParity.test.ts` |
 | Duplicate references to same target | Target operations are deduped. | `targetIdsForRows`. | `outlinerParity.test.ts` |
 | Batch duplicate | Duplicate all selected rows after sources. | `batch_duplicate_nodes`. | `outliner-selection-keyboard.spec.ts` |
-| Batch indent/outdent | Move selected rows and preserve focus/expanded target. | `batch_indent_nodes`, `batch_outdent_nodes`. | `outliner-selection-keyboard.spec.ts` |
-| Batch copy/cut | Clipboard text uses visible selected row order; cut trashes batch. | `serializeSelectedRows`, `batch_trash_nodes`. | `outliner-selection-keyboard.spec.ts` |
+| Batch indent/outdent | Move selected structural rows and preserve focus/expanded target. Field value rows are filtered out. | `batch_indent_nodes`, `batch_outdent_nodes`, `selectionBatchActions`. | `outliner-selection-keyboard.spec.ts` |
+| Batch copy/cut | Clipboard text uses visible selected row order; cut removes selected roots through selectable-row delete policy. | `serializeSelectedRows`, `selectionBatchActions`. | `outliner-selection-keyboard.spec.ts` |
 
 ## Trigger Inputs
 
@@ -141,6 +141,7 @@ keymap, not the removed `resolveTrailingRow*` / `*EffectiveParent` /
 2. Add or update a pure resolver test before changing UI behavior.
 3. Keep keyboard, context menu, and popup actions sharing the same selected row and target resolution.
 4. Reference rows must distinguish display row operations from target-node operations.
-5. Any popup used during multi-selection must carry `data-preserve-selection`.
-6. Any parity claim that depends on browser focus or pointer ordering should have E2E coverage, not only pure resolver coverage.
-7. IME/composition handling must use `isImeComposingEvent`; do not check only `event.isComposing` in individual components.
+5. Selectable-row action policy is the source of truth for synthetic/read-only rows and field value batch behavior.
+6. Any popup used during multi-selection must carry `data-preserve-selection`.
+7. Any parity claim that depends on browser focus or pointer ordering should have E2E coverage, not only pure resolver coverage.
+8. IME/composition handling must use `isImeComposingEvent`; do not check only `event.isComposing` in individual components.

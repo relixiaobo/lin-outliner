@@ -95,6 +95,7 @@ interface OutlinerItemProps {
   nodeId: NodeId;
   parentId: NodeId;
   rootId: NodeId;
+  selectionRootId: NodeId;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   depth: number;
   index: DocumentIndex;
@@ -174,6 +175,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     childParentId,
     panelId: props.panelId,
     rootId: props.rootId,
+    selectionRootId: props.selectionRootId,
     depth: props.depth,
     childIds: rowChildIds,
     index: props.index,
@@ -278,7 +280,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         selectedId: rowId,
         selectedIds: new Set([rowId]),
         selectionAnchorId: rowId,
-        selectionRootId: props.rootId,
+        selectionRootId: props.selectionRootId,
         selectionSource: 'ref-click',
       }));
     });
@@ -386,7 +388,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           parentId: referenceParentId,
           targetId: pendingConversion.targetId,
           panelId: props.panelId,
-          selectionRootId: props.rootId,
+          selectionRootId: props.selectionRootId,
           run: props.run,
           setUi: props.setUi,
         });
@@ -1230,7 +1232,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       selectedId: selectionId,
       selectedIds: new Set([selectionId]),
       selectionAnchorId: selectionId,
-      selectionRootId: props.rootId,
+      selectionRootId: props.selectionRootId,
       selectionSource: 'global',
     }));
   };
@@ -1247,7 +1249,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       selectedId: props.nodeId,
       selectedIds: prev.selectedIds.has(props.nodeId) ? new Set(prev.selectedIds) : new Set([props.nodeId]),
       selectionAnchorId: prev.selectedIds.has(props.nodeId) ? prev.selectionAnchorId ?? props.nodeId : props.nodeId,
-      selectionRootId: props.rootId,
+      selectionRootId: props.selectionRootId,
       selectionSource: 'global',
     }));
     setContextMenu({ x: event.clientX, y: event.clientY });
@@ -1823,6 +1825,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             panelId={props.panelId}
             parentId={childParentId}
             rootId={props.rootId}
+            selectionRootId={props.selectionRootId}
             onRoot={props.onRoot}
             depth={0}
             index={props.index}

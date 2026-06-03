@@ -1,0 +1,90 @@
+import { describe, expect, test } from 'bun:test';
+import type { NodeId, NodeProjection } from '../../src/core/types';
+import {
+  buildSelectableRows,
+  selectableRowForId,
+} from '../../src/renderer/state/selectableRows';
+import {
+  idsAllowedForMoveTo,
+  idsAllowedForStructuralBatch,
+  idsEnabledForSelectionAction,
+  selectableRowMap,
+} from '../../src/renderer/ui/interactions/selectionBatchActions';
+
+function node(id: string, patch: Partial<NodeProjection> = {}): NodeProjection {
+  return {
+    id,
+    children: [],
+    content: { text: id, marks: [], inlineRefs: [] },
+    tags: [],
+    createdAt: 1,
+    updatedAt: 1,
+    locked: false,
+    autoCollected: false,
+    toolbarVisible: false,
+    filterValues: [],
+    ...patch,
+  } as NodeProjection;
+}
+
+function byIdOf(nodes: NodeProjection[]): Map<NodeId, NodeProjection> {
+  return new Map(nodes.map((n) => [n.id, n]));
+}
+
+describe('selection batch action policy', () => {
+  test('keeps field value reorder enabled but blocks structural movement', () => {
+    const byId = byIdOf([
+      node('root', { children: ['body', 'entry'] }),
+      node('body', { parentId: 'root' }),
+      node('entry', { parentId: 'root', type: 'fieldEntry', children: ['value'] }),
+      node('value', { parentId: 'entry' }),
+    ]);
+    const rowsById = selectableRowMap(buildSelectableRows('root', byId, { expanded: new Set() }));
+    const ids = ['body', 'value'];
+
+    expect(idsEnabledForSelectionAction({
+      ids,
+      action: 'move',
+      panelRootId: 'root',
+      byId,
+      rowMap: rowsById,
+    })).toEqual(['body', 'value']);
+    expect(idsAllowedForStructuralBatch({
+      ids,
+      panelRootId: 'root',
+      byId,
+      rowMap: rowsById,
+    })).toEqual(['body']);
+    expect(idsAllowedForMoveTo({
+      ids,
+      panelRootId: 'root',
+      byId,
+      rowMap: rowsById,
+    })).toEqual(['body']);
+  });
+
+  test('filters synthetic system values out of every mutable action', () => {
+    const sysrefId = 'sysref:entry:target';
+    const byId = byIdOf([
+      node('entry', { type: 'fieldEntry', children: [sysrefId] }),
+      node('target'),
+      node(sysrefId, {
+        parentId: 'entry',
+        type: 'reference',
+        targetId: 'target',
+        locked: true,
+      }),
+    ]);
+    const row = selectableRowForId(sysrefId, 'root', byId);
+    expect(row?.kind).toBe('syntheticSystemValue');
+
+    for (const action of ['delete', 'move', 'duplicate', 'tag', 'checkbox'] as const) {
+      expect(idsEnabledForSelectionAction({
+        ids: [sysrefId],
+        action,
+        panelRootId: 'root',
+        byId,
+      })).toEqual([]);
+    }
+  });
+});

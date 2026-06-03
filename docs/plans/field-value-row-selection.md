@@ -231,39 +231,12 @@ Run `bun run typecheck`, `bun run test:renderer`, `bun run test:core`, and the
 relevant Playwright e2e selection tests before marking the implementation PR
 ready.
 
-## Implementation Phasing
+## Implementation Sequence
 
-Do not land the whole design as one large behavior-changing PR. Split the work so
-the traversal refactor and the user-visible selection change are reviewed
-separately.
+PM decision, 2026-06-03: complete the foundation and the Phase 2 behavior change
+in the same PR so the PR is a complete feature, not a partial foundation.
 
-### Phase 1: Selectable-Row Model, No Behavior Change
-
-Goal: introduce the shared row-ordering/policy mechanism without changing what
-users can select today.
-
-- Add the selectable-row model and unit tests.
-- Keep current public projections byte-for-byte compatible:
-  - `flattenVisibleRows(rootId, ...)` returns the same ids in the same order for
-    every existing root/scope.
-  - `visualRowNodeIds(buildVisualRows(...))` remains parity-equal to
-    `flattenVisibleRows(...)`.
-  - Field value rows remain selectable only through their current field-entry
-    value scope in this phase.
-- If the new model needs an option for future panel-level value rows, keep that
-  option off by default in Phase 1.
-- Do not update e2e expectations or specs except for internal implementation
-  notes if needed.
-- Verify with `bun run typecheck`, `bun run test:renderer`, and relevant focused
-  renderer parity tests.
-
-Phase 1 should be a pure foundation PR. Its success criterion is that the
-existing app behavior is unchanged while the next PR has one shared model to
-build on.
-
-### Phase 2: Panel-Level Field-Value Selection
-
-Goal: turn on the behavior change once the foundation is merged.
+The PR should still keep the build sequence disciplined:
 
 - Thread `selectionRootId` separately from render `rootId`.
 - Include stored field value rows in the panel-level selectable order.
@@ -276,27 +249,17 @@ Goal: turn on the behavior change once the foundation is merged.
 - Verify with `bun run typecheck`, `bun run test:renderer`,
   `bun run test:core`, and the relevant Playwright selection tests.
 
-This keeps the broad traversal refactor out of the same review as the behavior
-change (`Cmd+A` scope, cross-container ranges, and field-value batch semantics).
+## Decisions
 
-## Decisions Needed Before Build
-
-This plan needs PM scope GO before implementation because it changes core
-selection behavior across the app.
-
-1. **Scope:** approve full panel-level selection unification now, or defer this
-   feature and keep field values scoped locally.
-2. **Move:** should selected field values only reorder within their owning field
-   entry, or may they move out of the field into body content? Recommended:
-   reorder within the owning field only for this plan.
-3. **Duplicate:** should reference/option field values duplicate when the same
-   target/value already exists in the same field? Recommended: preserve field
-   dedupe and no-op duplicate for duplicate target references unless a later
-   value model explicitly permits duplicates.
-4. **Synthetic system values:** should synthetic `sysref:*` rows be selectable
-   for navigation affordances, or excluded from block selection entirely?
-   Recommended: selectable for reference affordance parity, destructive actions
-   disabled.
+1. **Scope:** full panel-level selection unification is approved for this PR.
+2. **Move:** selected field values may reorder only within their owning field
+   entry; cross-parent `Move to`, indent, and outdent filter them out.
+3. **Duplicate:** plain field values may clone as sibling values. Reference and
+   option-style field values preserve field dedupe and no-op when cloning would
+   create a duplicate target/value.
+4. **Synthetic system values:** synthetic `sysref:*` rows may participate in
+   reference/navigation affordances, but destructive and mutable batch actions
+   are disabled.
 
 ## Files
 
@@ -314,6 +277,7 @@ Expected primary implementation files:
 - `src/renderer/ui/useWorkspaceKeyboard.ts`
 - `src/renderer/ui/interactions/dragSelection.ts`
 - `src/renderer/ui/interactions/contextMenuSelection.ts`
+- `src/renderer/ui/interactions/selectionBatchActions.ts`
 - `src/renderer/ui/interactions/selectionActions.ts`
 - `src/renderer/ui/interactions/selectionKeyboard.ts` if action policy changes
 - `src/renderer/api/client.ts` and `src/main/documentService.ts` only if a new
@@ -333,24 +297,19 @@ Expected tests:
 
 ## Rollout Checklist
 
-- [ ] PM confirms the decisions above.
-- [ ] Phase 1 PR: build selectable-row model and unit-test row order/policy
-      without changing existing selection behavior.
-- [ ] Phase 1 PR: prove `flattenVisibleRows` and `buildVisualRows` projections
-      remain unchanged for current behavior.
-- [ ] Phase 1 PR: verify with `bun run typecheck`, `bun run test:renderer`, and
-      focused renderer parity tests.
-- [ ] Phase 2 PR: split render root from selection root in row components and
-      interaction hooks.
-- [ ] Phase 2 PR: include stored field value rows in the panel-level selectable
-      order.
-- [ ] Phase 2 PR: rewire pointer, keyboard, drag, context-menu, and clipboard
-      selection paths to the panel-level model.
-- [ ] Phase 2 PR: implement field-value-aware batch planning/commands.
-- [ ] Phase 2 PR: handle or exclude synthetic read-only system value rows.
-- [ ] Phase 2 PR: update recursive/flat row-order parity tests.
-- [ ] Phase 2 PR: update e2e coverage for cross-container selection and old
-      value-scope Cmd/Ctrl+A behavior.
-- [ ] Phase 2 PR: update specs in `docs/spec/`.
-- [ ] Phase 2 PR: verify with `bun run typecheck`, `bun run test:renderer`,
+- [x] PM confirms the decisions above.
+- [x] Build selectable-row model and unit-test row order/policy.
+- [x] Split render root from selection root in row components and interaction
+      hooks.
+- [x] Include stored field value rows in the panel-level selectable order.
+- [x] Rewire pointer, keyboard, drag, context-menu, and clipboard selection paths
+      to the panel-level model.
+- [x] Implement field-value-aware batch planning/commands.
+- [x] Handle or exclude synthetic read-only system value rows.
+- [x] Update recursive/flat row-order parity tests for the intentional visual vs
+      selectable projection split.
+- [x] Update e2e coverage for cross-container selection and old value-scope
+      Cmd/Ctrl+A behavior.
+- [x] Update specs in `docs/spec/`.
+- [x] Verify with `bun run typecheck`, `bun run test:renderer`,
       `bun run test:core`, and relevant Playwright selection tests.

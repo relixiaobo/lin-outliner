@@ -16,6 +16,7 @@ interface OutlinerViewProps {
   panelId: string;
   parentId: NodeId;
   rootId: NodeId;
+  selectionRootId?: NodeId;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   depth: number;
   index: DocumentIndex;
@@ -43,6 +44,7 @@ interface OutlinerViewProps {
 
 export function OutlinerView(props: OutlinerViewProps) {
   const parent = props.index.byId.get(props.parentId);
+  const selectionRootId = props.selectionRootId ?? props.rootId;
   const view = readViewConfig(parent, props.index.byId);
   const builtRows = props.rows ?? buildOutlinerRows(parent, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
@@ -120,6 +122,7 @@ export function OutlinerView(props: OutlinerViewProps) {
             entryId={row.id}
             parentId={props.parentId}
             rootId={props.rootId}
+            selectionRootId={selectionRootId}
             onRoot={props.onRoot}
             depth={props.depth}
             index={props.index}
@@ -141,6 +144,7 @@ export function OutlinerView(props: OutlinerViewProps) {
             nodeId={row.id}
             parentId={props.parentId}
             rootId={props.rootId}
+            selectionRootId={selectionRootId}
             onRoot={props.onRoot}
             depth={props.depth}
             index={props.index}

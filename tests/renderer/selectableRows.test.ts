@@ -32,7 +32,7 @@ function rowIds(rows: ReturnType<typeof buildSelectableRows>): NodeId[] {
 }
 
 describe('buildSelectableRows', () => {
-  test('is the behavior-preserving projection behind flattenVisibleRows', () => {
+  test('is the panel-level projection behind flattenVisibleRows', () => {
     const byId = byIdOf([
       node('root', { children: ['before', 'entry', 'after'] }),
       node('before', { parentId: 'root' }),
@@ -43,8 +43,20 @@ describe('buildSelectableRows', () => {
     ]);
     const expanded = new Set<NodeId>();
 
-    expect(rowIds(buildSelectableRows('root', byId, { expanded }))).toEqual(['before', 'entry', 'after']);
-    expect(flattenVisibleRows('root', byId, expanded)).toEqual(['before', 'entry', 'after']);
+    expect(rowIds(buildSelectableRows('root', byId, { expanded }))).toEqual([
+      'before',
+      'entry',
+      'value-a',
+      'value-b',
+      'after',
+    ]);
+    expect(flattenVisibleRows('root', byId, expanded)).toEqual([
+      'before',
+      'entry',
+      'value-a',
+      'value-b',
+      'after',
+    ]);
     expect(rowIds(buildSelectableRows('entry', byId, { expanded }))).toEqual(['value-a', 'value-b']);
   });
 
@@ -68,11 +80,10 @@ describe('buildSelectableRows', () => {
       },
     });
 
-    const valueRows = buildSelectableRows('entry', byId, { expanded: new Set() });
-    expect(valueRows[0]).toMatchObject({
+    expect(rootRows[1]).toMatchObject({
       id: 'value',
       parentId: 'entry',
-      panelRootId: 'entry',
+      panelRootId: 'root',
       kind: 'fieldValue',
       stored: true,
       mutable: true,
@@ -81,6 +92,14 @@ describe('buildSelectableRows', () => {
         move: 'node-reorder',
         duplicate: 'node-clone',
       },
+    });
+
+    const valueRows = buildSelectableRows('entry', byId, { expanded: new Set() });
+    expect(valueRows[0]).toMatchObject({
+      id: 'value',
+      parentId: 'entry',
+      panelRootId: 'entry',
+      kind: 'fieldValue',
     });
   });
 

@@ -6,10 +6,18 @@ import type { DocumentIndex, ToolbarDropdownSection } from '../../state/document
 import {
   commonTagIdsForTargets,
   resolveActiveNodeSelection,
+  targetIdsForRows,
 } from '../interactions/contextMenuSelection';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { isDescendantOf, isNodeInTrash } from '../interactions/nodeLocation';
 import { tagSelectorItemLabel, tagSelectorItems } from '../interactions/tagSelector';
+import {
+  idsAllowedForMoveTo,
+  idsEnabledForSelectionAction,
+  runSelectionDelete,
+  runSelectionDuplicate,
+  runSelectionMove,
+} from '../interactions/selectionBatchActions';
 import {
   CheckboxIcon,
   CopyIcon,
@@ -93,7 +101,45 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     byId: props.index.byId,
   }), [props.index.byId, props.node.id, props.selectedIds, props.targetId]);
   const activeNodeIds = activeSelection.nodeIds;
-  const activeTargetIds = activeSelection.targetIds;
+  const actionPanelRootId = activeNodeIds[0] ?? props.node.parentId ?? props.node.id;
+  const activeTargetRowIds = useMemo(
+    () => idsEnabledForSelectionAction({
+      ids: activeNodeIds,
+      action: 'tag',
+      panelRootId: actionPanelRootId,
+      byId: props.index.byId,
+    }),
+    [actionPanelRootId, activeNodeIds, props.index.byId],
+  );
+  const activeCheckboxRowIds = useMemo(
+    () => idsEnabledForSelectionAction({
+      ids: activeNodeIds,
+      action: 'checkbox',
+      panelRootId: actionPanelRootId,
+      byId: props.index.byId,
+    }),
+    [actionPanelRootId, activeNodeIds, props.index.byId],
+  );
+  const activeMoveToIds = useMemo(
+    () => idsAllowedForMoveTo({
+      ids: activeNodeIds,
+      panelRootId: actionPanelRootId,
+      byId: props.index.byId,
+    }),
+    [actionPanelRootId, activeNodeIds, props.index.byId],
+  );
+  const activeTargetIds = useMemo(
+    () => activeSelection.isBatch
+      ? targetIdsForRows(activeTargetRowIds, props.index.byId)
+      : activeTargetRowIds.length > 0 ? [props.targetId] : [],
+    [activeSelection.isBatch, activeTargetRowIds, props.index.byId, props.targetId],
+  );
+  const activeCheckboxTargetIds = useMemo(
+    () => activeSelection.isBatch
+      ? targetIdsForRows(activeCheckboxRowIds, props.index.byId)
+      : activeCheckboxRowIds.length > 0 ? [props.targetId] : [],
+    [activeCheckboxRowIds, activeSelection.isBatch, props.index.byId, props.targetId],
+  );
   const activeLabelPrefix = activeSelection.labelPrefix;
   const activeExistingTagIds = useMemo(
     () => commonTagIdsForTargets(activeTargetIds, props.index.byId),
@@ -107,15 +153,15 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   }), [activeExistingTagIds, props.index, query]);
   const moveTargets = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    const activeNodeIdSet = new Set(activeNodeIds);
+    const activeNodeIdSet = new Set(activeMoveToIds);
     return props.index.projection.nodes
       .filter((node) => !activeNodeIdSet.has(node.id))
       .filter((node) => node.type !== 'fieldEntry')
-      .filter((node) => activeNodeIds.every((nodeId) => !isDescendantOf(props.index.byId, node.id, nodeId)))
+      .filter((node) => activeMoveToIds.every((nodeId) => !isDescendantOf(props.index.byId, node.id, nodeId)))
       .filter((node) => node.id !== props.index.projection.trashId)
       .filter((node) => !normalized || textOf(node).toLowerCase().includes(normalized))
       .slice(0, 10);
-  }, [activeNodeIds, props.index, query]);
+  }, [activeMoveToIds, props.index, query]);
 
   useEffect(() => {
     const close = (event: globalThis.MouseEvent) => {
@@ -134,22 +180,24 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   }, [props.onClose]);
 
   const applyExistingTag = (tagId: NodeId) => {
+    if (activeTargetIds.length === 0) return;
     void props.run(() => (
       activeTargetIds.length > 1
         ? api.batchApplyTag(activeTargetIds, tagId)
-        : api.applyTag(props.targetId, tagId)
+        : api.applyTag(activeTargetIds[0]!, tagId)
     ));
     props.onClose();
   };
 
   const createAndApplyTag = (name: string) => {
+    if (activeTargetIds.length === 0) return;
     void props.run(async () => {
       const created = await api.createTag(name);
       const tagId = created.focus?.nodeId;
       if (!tagId) return created;
       return activeTargetIds.length > 1
         ? api.batchApplyTag(activeTargetIds, tagId)
-        : api.applyTag(props.targetId, tagId);
+        : api.applyTag(activeTargetIds[0]!, tagId);
     });
     props.onClose();
   };
@@ -164,12 +212,15 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     label: string,
     icon: ReactNode,
     onClick: () => void,
+    disabled = false,
   ) => (
     <MenuItem
       className="node-context-item"
+      disabled={disabled}
       icon={icon}
       label={label}
       onClick={() => {
+        if (disabled) return;
         onClick();
         props.onClose();
       }}
@@ -180,14 +231,30 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   const renderMain = () => (
     <>
       {item('Open in split pane', <OpenIcon size={ICON_SIZE.menu} />, () => props.onRoot(props.openId, { newPane: true }))}
-      {item(`${activeLabelPrefix}Duplicate`, <DuplicateIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.batchDuplicateNodes(activeNodeIds)))}
-      {item(`${activeLabelPrefix}Move up`, <MoveUpIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.batchMoveNodesUp(activeNodeIds)))}
-      {item(`${activeLabelPrefix}Move down`, <MoveDownIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.batchMoveNodesDown(activeNodeIds)))}
+      {item(`${activeLabelPrefix}Duplicate`, <DuplicateIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionDuplicate({
+        ids: activeNodeIds,
+        panelRootId: actionPanelRootId,
+        byId: props.index.byId,
+      })))}
+      {item(`${activeLabelPrefix}Move up`, <MoveUpIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionMove({
+        ids: activeNodeIds,
+        direction: 'up',
+        panelRootId: actionPanelRootId,
+        byId: props.index.byId,
+      })))}
+      {item(`${activeLabelPrefix}Move down`, <MoveDownIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionMove({
+        ids: activeNodeIds,
+        direction: 'down',
+        panelRootId: actionPanelRootId,
+        byId: props.index.byId,
+      })))}
       <MenuItem
         className="node-context-item"
+        disabled={activeMoveToIds.length === 0}
         icon={<MoveToIcon size={ICON_SIZE.menu} />}
         label="Move to"
         onClick={() => {
+          if (activeMoveToIds.length === 0) return;
           setMode('move');
           setQuery('');
         }}
@@ -197,13 +264,18 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       {item(
         `${activeLabelPrefix}${activeNodeIds.length > 1 ? 'Toggle done' : target.completedAt ? 'Mark not done' : 'Mark done'}`,
         <CheckboxIcon size={ICON_SIZE.menu} />,
-        () => void props.run(() => activeTargetIds.length > 1 ? api.batchToggleDone(activeTargetIds) : api.toggleDone(props.targetId)),
+        () => void props.run(() => activeCheckboxTargetIds.length > 1
+          ? api.batchToggleDone(activeCheckboxTargetIds)
+          : api.toggleDone(activeCheckboxTargetIds[0]!)),
+        activeCheckboxTargetIds.length === 0,
       )}
       <MenuItem
         className="node-context-item"
+        disabled={activeTargetIds.length === 0}
         icon={<SupertagIcon size={ICON_SIZE.menu} />}
         label={`${activeLabelPrefix}Add tag`}
         onClick={() => {
+          if (activeTargetIds.length === 0) return;
           setMode('tag');
           setQuery('');
         }}
@@ -227,7 +299,11 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       <div className="node-context-separator" role="separator" />
       {trashed
         ? item('Restore', <RestoreIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.restoreNode(props.node.id)))
-        : item(`${activeLabelPrefix}Trash`, <TrashIcon size={ICON_SIZE.menu} />, () => void props.run(() => activeNodeIds.length > 1 ? api.batchTrashNodes(activeNodeIds) : api.trashNode(props.node.id)))}
+        : item(`${activeLabelPrefix}Trash`, <TrashIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionDelete({
+          ids: activeNodeIds,
+          panelRootId: actionPanelRootId,
+          byId: props.index.byId,
+        })))}
     </>
   );
 
@@ -302,7 +378,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
           onClick={() => {
             void props.run(async () => {
               let lastResult: CommandOutcome | null = null;
-              for (const nodeId of activeNodeIds) {
+              for (const nodeId of activeMoveToIds) {
                 lastResult = await api.moveNode(nodeId, targetNode.id, null);
               }
               return lastResult ?? api.getProjection();

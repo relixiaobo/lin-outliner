@@ -36,7 +36,7 @@ function fixture(): Map<NodeId, NodeProjection> {
   ]);
 }
 
-describe('buildVisualRows parity with flattenVisibleRows', () => {
+describe('buildVisualRows body/reference parity with flattenVisibleRows', () => {
   test('content/field ordering matches across nesting and reference transclusion', () => {
     const byId = fixture();
     const expanded = new Set<NodeId>(['a', 'b', 'refA']);
@@ -54,6 +54,22 @@ describe('buildVisualRows parity with flattenVisibleRows', () => {
     const visual = visualRowNodeIds(buildVisualRows('lib', byId, { expanded }));
     expect(visual).toEqual(flat);
     expect(flat).toEqual(['a', 'b']);
+  });
+
+  test('field values stay in selectable order but render inside their field row', () => {
+    const byId = byIdOf([
+      node('root', { children: ['before', 'entry', 'after'] }),
+      node('before', { parentId: 'root' }),
+      node('entry', { parentId: 'root', type: 'fieldEntry', children: ['value-a', 'value-b'] }),
+      node('value-a', { parentId: 'entry' }),
+      node('value-b', { parentId: 'entry' }),
+      node('after', { parentId: 'root' }),
+    ]);
+    const flat = flattenVisibleRows('root', byId, new Set(), new Set());
+    const visual = visualRowNodeIds(buildVisualRows('root', byId, { expanded: new Set() }));
+
+    expect(flat).toEqual(['before', 'entry', 'value-a', 'value-b', 'after']);
+    expect(visual).toEqual(['before', 'entry', 'after']);
   });
 });
 

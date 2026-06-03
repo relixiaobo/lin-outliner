@@ -82,7 +82,8 @@ export function buildSelectableRows(
         panelRootId,
         byId,
       }));
-      if (options.expanded.has(row.id)) {
+      const shouldDescend = row.type === 'field' || options.expanded.has(row.id);
+      if (shouldDescend) {
         const childParentId = selectableChildParentId(row.id, byId);
         if (!childParentId || referencePath.includes(childParentId)) continue;
         visit(childParentId, [...referencePath, childParentId]);
@@ -92,6 +93,21 @@ export function buildSelectableRows(
 
   visit(panelRootId, [panelRootId]);
   return result;
+}
+
+export function selectableRowForId(
+  id: NodeId,
+  panelRootId: NodeId,
+  byId: Map<NodeId, NodeProjection>,
+): SelectableRow | null {
+  const node = byId.get(id);
+  if (!node && !isSyntheticSystemValueId(id)) return null;
+  return selectableRowFor({
+    id,
+    parentId: node?.parentId ?? null,
+    panelRootId,
+    byId,
+  });
 }
 
 export function selectableChildParentId(
@@ -123,12 +139,12 @@ export function resolveSelectableReferenceTargetId(
 
 function selectableRowFor(params: {
   id: NodeId;
-  parentId: NodeId;
+  parentId: NodeId | null;
   panelRootId: NodeId;
   byId: Map<NodeId, NodeProjection>;
 }): SelectableRow {
   const node = params.byId.get(params.id);
-  const parent = params.byId.get(params.parentId);
+  const parent = params.parentId ? params.byId.get(params.parentId) : undefined;
   const synthetic = isSyntheticSystemValueId(params.id);
   const kind = selectableRowKind(params.id, node, parent);
   const stored = Boolean(node) && !synthetic;

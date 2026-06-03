@@ -2,12 +2,21 @@ import { useEffect, useRef } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { api } from '../api/client';
 import { parseIsoLocalDate, todayIsoLocalDate, type NodeId } from '../api/types';
-import { flattenVisibleRows, resolveReferenceTargetId } from '../state/document';
+import { resolveReferenceTargetId } from '../state/document';
 import type { DocumentIndex, UiState } from '../state/document';
+import { buildSelectableRows } from '../state/selectableRows';
 import { targetIdsForRows } from './interactions/contextMenuSelection';
 import { isImeComposingEvent } from './interactions/imeKeyboard';
 import { expandIndentTargets } from './interactions/outlinerStructure';
 import { armReferenceTypeAhead } from './interactions/referenceTypeAhead';
+import {
+  idsAllowedForStructuralBatch,
+  idsEnabledForSelectionAction,
+  runSelectionDelete,
+  runSelectionDuplicate,
+  runSelectionMove,
+  selectableRowMap,
+} from './interactions/selectionBatchActions';
 import {
   extendSelection,
   navigationTarget,
@@ -142,7 +151,10 @@ export function useWorkspaceKeyboard({
           return;
         }
         const selectionRootId = resolveKeyboardSelectionRoot(currentUi, currentIndex, currentRootId);
-        const rows = flattenVisibleRows(selectionRootId, currentIndex.byId, currentUi.expanded, currentUi.expandedHiddenFields);
+        const rows = buildSelectableRows(selectionRootId, currentIndex.byId, {
+          expanded: currentUi.expanded,
+          expandedHiddenFields: currentUi.expandedHiddenFields,
+        }).map((row) => row.id);
         const orderedSelected = orderedSelectedRows(rows, currentUi.selectedIds);
         const anchor = resolveSelectionAnchor({
           rows,
@@ -252,7 +264,12 @@ export function useWorkspaceKeyboard({
       }
 
       const selectionRootId = resolveKeyboardSelectionRoot(currentUi, currentIndex, currentRootId);
-      const rows = flattenVisibleRows(selectionRootId, currentIndex.byId, currentUi.expanded, currentUi.expandedHiddenFields);
+      const selectableRows = buildSelectableRows(selectionRootId, currentIndex.byId, {
+        expanded: currentUi.expanded,
+        expandedHiddenFields: currentUi.expandedHiddenFields,
+      });
+      const rows = selectableRows.map((row) => row.id);
+      const rowsById = selectableRowMap(selectableRows);
       const orderedSelected = orderedSelectedRows(rows, currentUi.selectedIds);
       const anchor = resolveSelectionAnchor({
         rows,
@@ -375,7 +392,6 @@ export function useWorkspaceKeyboard({
 
       if (!anchor) return;
       const batchIds = selectedRootIds(orderedSelected.length > 0 ? orderedSelected : [anchor], currentIndex.byId);
-      const batchTargetIds = targetIdsForRows(batchIds, currentIndex.byId);
       if (action === 'batch_copy' || action === 'batch_cut') {
         const clipboardText = serializeSelectedRows(rows, currentUi.selectedIds, currentIndex.byId);
         void writeClipboardText(clipboardText).then((ok) => {
@@ -385,7 +401,12 @@ export function useWorkspaceKeyboard({
           }
           if (action === 'batch_copy') return;
           const previous = rows[Math.max(0, rows.indexOf(batchIds[0]) - 1)];
-          void run(() => api.batchTrashNodes(batchIds)).then(() => {
+          void run(() => runSelectionDelete({
+            ids: batchIds,
+            panelRootId: selectionRootId,
+            byId: currentIndex.byId,
+            rowMap: rowsById,
+          })).then(() => {
             if (previous && !batchIds.includes(previous)) requestEditFocus(previous);
             else setUi(clearKeyboardSelectionState);
           });
@@ -393,32 +414,38 @@ export function useWorkspaceKeyboard({
         return;
       }
       if (action === 'batch_delete') {
-        if (
-          currentUi.selectionSource === 'ref-click'
-          && singleSelectedId
-          && selectedReferenceTargetId
-          && batchIds.length === 1
-          && batchIds[0] === singleSelectedId
-        ) {
-          void run(() => api.deleteNode(singleSelectedId)).then(() => {
-            setUi(clearKeyboardSelectionState);
-          });
-          return;
-        }
         const previous = rows[Math.max(0, rows.indexOf(batchIds[0]) - 1)];
-        void run(() => api.batchTrashNodes(batchIds)).then(() => {
+        void run(() => runSelectionDelete({
+          ids: batchIds,
+          panelRootId: selectionRootId,
+          byId: currentIndex.byId,
+          rowMap: rowsById,
+          hardDeleteSingleReferenceId: currentUi.selectionSource === 'ref-click' && selectedReferenceTargetId
+            ? singleSelectedId ?? undefined
+            : undefined,
+        })).then(() => {
           if (previous && !batchIds.includes(previous)) requestEditFocus(previous);
           else setUi(clearKeyboardSelectionState);
         });
         return;
       }
       if (action === 'batch_duplicate') {
-        void run(() => api.batchDuplicateNodes(batchIds));
+        void run(() => runSelectionDuplicate({
+          ids: batchIds,
+          panelRootId: selectionRootId,
+          byId: currentIndex.byId,
+          rowMap: rowsById,
+        }));
         return;
       }
       if (action === 'batch_move_up' || action === 'batch_move_down') {
-        const move = action === 'batch_move_up' ? api.batchMoveNodesUp : api.batchMoveNodesDown;
-        void run(() => move(batchIds)).then(() => {
+        void run(() => runSelectionMove({
+          ids: batchIds,
+          direction: action === 'batch_move_up' ? 'up' : 'down',
+          panelRootId: selectionRootId,
+          byId: currentIndex.byId,
+          rowMap: rowsById,
+        })).then(() => {
           setUi((prev) => selectKeyboardRowsState(prev, {
             selectedId: anchor,
             selectedIds: new Set(batchIds),
@@ -429,6 +456,14 @@ export function useWorkspaceKeyboard({
         return;
       }
       if (action === 'batch_apply_tag') {
+        const taggableIds = idsEnabledForSelectionAction({
+          ids: batchIds,
+          action: 'tag',
+          panelRootId: selectionRootId,
+          byId: currentIndex.byId,
+          rowMap: rowsById,
+        });
+        if (taggableIds.length === 0) return;
         if (document.activeElement instanceof HTMLElement) {
           document.activeElement.blur();
         }
@@ -448,18 +483,35 @@ export function useWorkspaceKeyboard({
               ? api.batchCycleDoneState
               : null;
       if (batchOperation) {
-        const operationIds = action === 'batch_checkbox' ? batchTargetIds : batchIds;
+        const operationRowIds = action === 'batch_checkbox'
+          ? idsEnabledForSelectionAction({
+            ids: batchIds,
+            action: 'checkbox',
+            panelRootId: selectionRootId,
+            byId: currentIndex.byId,
+            rowMap: rowsById,
+          })
+          : idsAllowedForStructuralBatch({
+            ids: batchIds,
+            panelRootId: selectionRootId,
+            byId: currentIndex.byId,
+            rowMap: rowsById,
+          });
+        const operationIds = action === 'batch_checkbox'
+          ? targetIdsForRows(operationRowIds, currentIndex.byId)
+          : operationRowIds;
+        if (operationIds.length === 0) return;
         if (action === 'batch_indent') {
           setUi((prev) => ({
             ...prev,
-            expanded: expandIndentTargets(prev.expanded, batchIds, currentIndex.byId),
+            expanded: expandIndentTargets(prev.expanded, operationIds, currentIndex.byId),
           }));
         }
         void run(() => batchOperation(operationIds)).then((result) => {
           if (result && action === 'batch_indent') {
             setUi((prev) => ({
               ...prev,
-              expanded: expandIndentTargets(prev.expanded, batchIds, currentIndex.byId),
+              expanded: expandIndentTargets(prev.expanded, operationIds, currentIndex.byId),
             }));
           }
           if (action === 'batch_checkbox') {

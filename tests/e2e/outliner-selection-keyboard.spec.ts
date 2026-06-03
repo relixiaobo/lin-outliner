@@ -142,7 +142,7 @@ test.describe('outliner selection keyboard parity', () => {
     await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
   });
 
-  test('Cmd+A selects visible field value rows in their own value scope', async ({ page }) => {
+  test('Cmd+A selects field values in the panel selection scope', async ({ page }) => {
     const { entryId, firstValueId, secondValueId } = await createFieldValueFixture(page);
 
     await expect(row(page, entryId)).toBeVisible();
@@ -152,9 +152,25 @@ test.describe('outliner selection keyboard parity', () => {
 
     await page.keyboard.press('Meta+A');
 
+    await expect(rowBody(page, ids.alpha)).toHaveClass(/selected/);
+    await expect(rowBody(page, entryId)).toHaveClass(/selected/);
     await expect(rowBody(page, firstValueId)).toHaveClass(/selected/);
     await expect(rowBody(page, secondValueId)).toHaveClass(/selected/);
-    await expect(rowBody(page, ids.alpha)).not.toHaveClass(/selected/);
+    await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
+    await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
+  });
+
+  test('Shift click can span body rows and field value rows', async ({ page }) => {
+    const { entryId, firstValueId, secondValueId } = await createFieldValueFixture(page);
+
+    await row(page, ids.alpha).click({ modifiers: ['Meta'] });
+    await row(page, secondValueId).click({ modifiers: ['Shift'] });
+
+    await expect(rowBody(page, ids.alpha)).toHaveClass(/selected/);
+    await expect(rowBody(page, entryId)).toHaveClass(/selected/);
+    await expect(rowBody(page, firstValueId)).toHaveClass(/selected/);
+    await expect(rowBody(page, secondValueId)).toHaveClass(/selected/);
+    await expect(rowBody(page, ids.beta)).not.toHaveClass(/selected/);
   });
 
   test('Tab indents selected rows under the previous sibling and keeps the target expanded', async ({ page }) => {
@@ -362,7 +378,8 @@ test.describe('outliner selection keyboard parity', () => {
   });
 
   test('inline references inside reference rows navigate to the referenced node', async ({ page }) => {
-    const referenceId = await page.evaluate(async (ids) => {
+    const inlineRefPayload = e2eNodeInlineRef(4, ids.beta, 'Beta');
+    const referenceId = await page.evaluate(async ({ ids, inlineRefPayload }) => {
       const win = window as Window & {
         lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
       };
@@ -374,7 +391,7 @@ test.describe('outliner selection keyboard parity', () => {
             content: {
               text: 'See ',
               marks: [],
-              inlineRefs: [e2eNodeInlineRef(4, ids.beta, 'Beta')],
+              inlineRefs: [inlineRefPayload],
             },
           }],
         },
@@ -385,7 +402,7 @@ test.describe('outliner selection keyboard parity', () => {
         index: null,
       });
       return reference?.focus?.nodeId ?? '';
-    }, ids);
+    }, { ids, inlineRefPayload });
     await emitCurrentProjection(page);
 
     const inlineRef = row(page, referenceId).locator('.inline-ref').first();

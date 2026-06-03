@@ -153,9 +153,9 @@ export function buildVisualRows(
   return out;
 }
 
-// The content/field subsequence of the visual rows, in order. This is exactly
-// what flattenVisibleRows produces; pinned by a parity test so the flat producer
-// can never silently diverge from the canonical visible-row ordering.
+// The content/field subsequence of the visual rows, in order. Body/reference rows
+// stay parity-pinned to the legacy visible-row order; field value rows are rendered
+// inside their field row and live in the selectable-row model instead.
 export function visualRowNodeIds(rows: readonly VisualRow[]): NodeId[] {
   const ids: NodeId[] = [];
   for (const row of rows) {
