@@ -1,12 +1,17 @@
 ---
-status: in-progress
+status: done
 priority: P1
 owner: relixiaobo
 created: 2026-05-27
-updated: 2026-06-02
+updated: 2026-06-03
 ---
 
 # Native-Feel Remediation (Electron)
+
+> **Done (2026-06-03).** All six stages shipped. Stage 6 — macOS packaging +
+> real-Electron smoke suite, macOS-only scope (Win/Linux dropped per the resolved
+> Open questions) — landed in PR #81; stages 1–5 shipped earlier. Design lives in
+> `docs/spec/`.
 
 ## Goal
 
