@@ -19,12 +19,22 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | idle |
+| Claude Code 2 | `lin-outliner-cc-2/` | (Phase 0 spike) | lazy-like-global-launcher (P0) |
 | Codex | `lin-outliner-codex/` | — | idle |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 ## In progress
 
+- **lazy-like-global-launcher** (P0, cc-2) — Lazy-level global capture launcher
+  (global hotkey, prewarmed window, external app/browser context capture,
+  context-aware commands, clip/read-later, AI commands, destination picker,
+  permissions). PM-ratified: one internally-phased PR, gated on a **Phase 0
+  feasibility spike** (unsigned-packaging `osascript` + in-page JS + Automation
+  TCC-persistence-across-relaunch); GO/NO-GO to PM before Phase 1. The build PR
+  will touch infra-ownership files (`src/core/types.ts`, `src/core/commands.ts`,
+  `electron.vite.config.ts`, preload) — coordinate the merge window. Foundation
+  `outliner-local-file-references` landed (PR #80). See
+  `docs/plans/lazy-like-global-launcher.md`.
 - **agent-past-chats** (P1, Codex) — `past_chats` recall tool (recent + search
   + read) backed by the event store. Recall tool and tool-UI polish landed
   (PRs #1, #4); see `docs/plans/agent-past-chats.md` for remaining scope.
