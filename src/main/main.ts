@@ -291,20 +291,30 @@ function buildApplicationMenu(): Electron.Menu {
   const template: Electron.MenuItemConstructorOptions[] = [];
 
   if (isMac) {
+    // macOS draws some app-menu strings itself, from the running bundle, NOT from
+    // this template:
+    //   • the bold app-menu title and the ⌘, Settings item are OS-managed — in a
+    //     dev run (Electron.app, CFBundleName "Electron") they read "Electron" /
+    //     "Preferences…" no matter what label we pass; a packaged build supplies
+    //     CFBundleName from productName ("Tenon") and the macOS-13+ "Settings…".
+    //   • About / Hide / Quit are ordinary items, so an explicit label DOES win —
+    //     set them off APP_NAME so even a dev run reads "About Tenon" etc.
+    // We still pass label: APP_NAME on the first submenu as the packaged-correct
+    // value even though macOS overrides the dev rendering.
     template.push({
-      label: app.name,
+      label: APP_NAME,
       submenu: [
-        { role: 'about' },
+        { role: 'about', label: `About ${APP_NAME}` },
         { type: 'separator' },
-        { label: 'Preferences…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
+        { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
         { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },
-        { role: 'hide' },
+        { role: 'hide', label: `Hide ${APP_NAME}` },
         { role: 'hideOthers' },
         { role: 'unhide' },
         { type: 'separator' },
-        { role: 'quit' },
+        { role: 'quit', label: `Quit ${APP_NAME}` },
       ],
     });
   } else {
@@ -325,8 +335,12 @@ function buildApplicationMenu(): Electron.Menu {
     role: 'help',
     submenu: [
       {
-        label: 'Learn More',
+        label: `${APP_NAME} Help`,
         click: () => void shell.openExternal('https://github.com/relixiaobo/lin-outliner'),
+      },
+      {
+        label: 'Report an Issue…',
+        click: () => void shell.openExternal('https://github.com/relixiaobo/lin-outliner/issues'),
       },
     ],
   });
@@ -1380,6 +1394,7 @@ if (!app.requestSingleInstanceLock()) {
     app.setAboutPanelOptions({
       applicationName: APP_NAME,
       applicationVersion: app.getVersion(),
+      copyright: '© 2026 Lin Lab',
       ...(icon.isEmpty() ? {} : { iconPath: APP_ICON_PNG_PATH }),
     });
     protocol.handle(ASSET_URL_SCHEME, (request) => {
