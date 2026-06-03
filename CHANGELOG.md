@@ -391,6 +391,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Unified inline mention language (PR #89)** — implements `unify-mention-language.md`.
+  One inline-mention language across the outliner, agent composer, and agent message: a
+  **node reference is plain accent text with no icon**, and a **local-file / directory / image
+  reference is a leading monochrome icon + name** — same rule, same mechanism in all three
+  render sites. The icon is a shared `mask-image` glyph (`inline-ref.css`, keyed by
+  `data-file-icon-kind`) painted with `currentColor`, so it themes automatically in dark mode
+  (B1/B8) — replacing the composer's full-color macOS folder raster that clashed with the
+  monochrome/rose surroundings and didn't theme. The kind classifier and `toDOM` children move
+  into a shared `src/renderer/ui/editor/inlineFileIcon.ts` (one source of truth), the
+  `inline-flex`+`translateY` baseline hack is dropped, and the divergent
+  `.agent-composer-inline-file*` / `.agent-message-inline-file*` chip species are deleted.
+  Outliner file refs gain the same icon so it is truly one language, not two. Renderer-only;
+  no core/protocol surface; spec updated (`design-system.md`, `agent-progress.md`, A6).
+  ([#89](https://github.com/relixiaobo/lin-outliner/pull/89))
+
 - **Workspace shell: tabs removed, split panes kept (PR #85)** — implements
   `workspace-tabs-to-single-pane.md`. The multi-**tab** concept is gone; the multi-**pane**
   split view stays and panes become the single top-level canvas primitive. `tabs[] +

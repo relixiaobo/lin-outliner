@@ -144,6 +144,14 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **unify-mention-language** (cc, PR #89) — one inline-mention language across outliner,
+  composer, and agent message: node ref = plain accent text (no icon), file/dir/image ref =
+  leading monochrome `mask-image` icon + name, painted with `currentColor` so it themes in
+  dark (B1/B8). Shared `inlineFileIcon.ts` is the single source; the full-color folder raster,
+  the baseline hack, and the divergent `.agent-*-inline-file` chips are gone. Plan-track;
+  renderer-only; spec updated (A6); typecheck clean, renderer 272/0, visual-verified light+dark.
+  Plan archived. See `docs/plans/archive/unify-mention-language.md`.
+
 - **composer-node-mention** (cc, PR #91) — the agent composer can now `@`-mention the
   focused/context node (and search nodes with no focus). Added `excludeCurrentNode` (default
   `true`) to `buildReferenceCandidates`/`referenceItems`/`nodeCandidates` and widened
