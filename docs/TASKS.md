@@ -47,6 +47,38 @@ Ordered by priority; lower items may depend on higher ones.
   light-mode + interaction (unfurl / drag / resize) visual pass (verified dark
   only at merge); real OS vibrancy tuning. (Persisted light/dark/system toggle #45
   shipped in PR #82.) See `docs/plans/design-system-rollout.md`.
+- **workspace-tabs-to-single-pane** (P1) — remove the multi-tab concept (sidebar
+  "Tabs" list + multiple tabs) while KEEPING multi-pane split view; panes elevate
+  to a single top-level v2 layout. Bundles two same-file menu cleanups to avoid
+  collisions: right-click "Open" → "Open in split pane" (it duplicates
+  bullet-click), and removing the `Appearance` (icon/banner) context-menu item;
+  plus showing all root sections (incl. Schema/Settings) in the sidebar tree.
+  Touches `Sidebar` / `useWorkspaceTabs` / `App` / `WorkspaceCanvas` /
+  `useResizableLayout` / `NodeContextMenu` + persisted layout schema (v1→v2 drop,
+  pre-release). No `src/core`. See `docs/plans/workspace-tabs-to-single-pane.md`.
+- **agent-empty-state-onboarding** (P1) — agent panel empty state: remove the three
+  hardcoded suggestion chips (greeting / whitespace instead), and add a
+  no-LLM-key onboarding (CTA → Settings › Providers, disable send when no usable
+  provider — today send fires and only errors at runtime). Renderer empty-state +
+  send-guard only (`AgentChatPanel` + `AgentComposer`); no core surface. See
+  `docs/plans/agent-empty-state-onboarding.md`.
+- **field-value-row-selection** (P2) — make field VALUE rows join the global node
+  multi-selection model (shift/cmd-select multiple value rows, then batch
+  delete/move/duplicate); keeps the append-only value model (no cardinality
+  revert). Leading fix: have `flattenVisibleRows` emit field-entry value children
+  — but **reproduce the real blocker first** (code-only analysis was
+  inconclusive). Mostly `state/document.ts`; batch commands already generic. See
+  `docs/plans/field-value-row-selection.md`.
+- **sidebar-pinned-nodes** (P2, **depends on workspace-tabs-to-single-pane**) —
+  implement the stubbed Pinned section: pin from right-click on BOTH outliner and
+  sidebar node rows; persist across restart. Recommended storage = renderer layout
+  state (not the core document — flag to PM if pins should be a document concept).
+  Rebases on the v2 layout + post-refactor sidebar/menu. See
+  `docs/plans/sidebar-pinned-nodes.md`.
+- **isSystemId-missing-library-recents** (fast-track, bug) — `isSystemId()` in
+  `src/core/core.ts` omits `LIBRARY_ID` and `RECENTS_ID`, so Library has no
+  structural protection (it can be moved / deleted / reparented). Add both to the
+  list. Independent of the sidebar plans (different file); no plan doc.
 - **agent-tool-permissions-hardening** (P2) — non-blocking follow-ups after the
   #60 permission implementation: move the `sessionApproved` short-circuit below
   configured-ask (don't silently relax a configured `ask`); re-validate
