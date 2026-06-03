@@ -66,6 +66,12 @@ type E2EWindow = Window & {
         thumbnailDataUrl?: string;
       }>;
     }>;
+    stageAttachment?: (input: { name: string; mimeType: string; bytes: ArrayBuffer }) => Promise<{
+      path: string;
+      name: string;
+      mimeType: string;
+      sizeBytes: number;
+    }>;
   };
 };
 
@@ -1190,6 +1196,15 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           lastModified: now - 1_000,
         }],
       }),
+      stageAttachment: async (input) => {
+        const safeName = (input.name || 'attachment').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'attachment';
+        return {
+          path: `/mock/local-root/tmp/agent-attachments/${++sequence}-${safeName}`,
+          name: input.name || 'attachment',
+          mimeType: input.mimeType || 'application/octet-stream',
+          sizeBytes: input.bytes.byteLength,
+        };
+      },
       invoke: async <T,>(cmd: string, args: Record<string, unknown> = {}): Promise<T> => {
         calls.push({ cmd, args: clone(args) });
         if (cmd === 'agent_create_session' || cmd === 'agent_restore_latest_session' || cmd === 'agent_restore_session') {

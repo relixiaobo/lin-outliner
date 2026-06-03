@@ -8,6 +8,7 @@ import {
   nodeKind,
   nodeTitle,
   normalChildIds,
+  nodeContentText,
   parentRef,
   referenceText,
   requiredNode,
@@ -216,7 +217,7 @@ function outlineNodeText(index: ProjectionIndex, node: NodeProjection): string {
   if (viewMode) parts.push(`%%view:${viewMode}%%`);
   if (nodeIsDone(node)) parts.push('[x]');
   else if (nodeShowsCheckbox(index.nodes, node)) parts.push('[ ]');
-  parts.push((referenceText(index, node) ?? node.content.text) || '(untitled)');
+  parts.push((referenceText(index, node) ?? nodeContentText(node)) || '(untitled)');
   if (node.description) parts.push(`- ${node.description}`);
   parts.push(...tagLabels(index, node));
   return parts.join(' ').trim();

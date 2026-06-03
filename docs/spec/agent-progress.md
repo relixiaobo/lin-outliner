@@ -60,13 +60,15 @@ truth.
   - `web_search`
   - `web_fetch`
 - [x] Per-turn hidden context reminders for current outliner context and
-  uploaded file metadata.
+  visible user-view state.
 - [x] Local file mentions in the agent composer:
   - `@` suggestions include recent nodes, local files, and folders
   - selected files/folders/images render as inline tokens
-  - model-facing text preserves path-backed files/folders with
-    `[[file:<label>^<path>]]`; pathless images/text remain `@name`
-  - hidden attachment context maps each `ref` to path, kind, MIME type, and size
+  - model-facing text preserves files/folders/images with
+    `[[file:<label>^<path>]]`; pathless attachments are staged under the agent
+    local file root first
+  - image bytes remain available as inline image content blocks while the file
+    marker gives tools a readable path
 - [x] Lin-specific stable system prompt module for agent identity, tool
   boundaries, dynamic reminder handling, and safety posture.
 - [x] Event-sourced agent runtime foundation:

@@ -1,4 +1,4 @@
-import type { ReferenceTarget } from './types';
+import type { ReferenceTarget, RichText } from './types';
 
 export interface ParsedReferenceMarker {
   end: number;
@@ -79,7 +79,9 @@ export function formatReferenceMarker(label: string, target: ReferenceTarget): s
     return `[[node:${safeLabel}^${encodeReferenceValue(nodeId)}]]`;
   }
   const path = target.path;
-  return `[[file:${safeLabel}^${encodeReferenceValue(path)}]]`;
+  const encodedPath = encodeReferenceValue(path);
+  const kindSuffix = target.entryKind === 'directory' ? '^directory' : '';
+  return `[[file:${safeLabel}^${encodedPath}${kindSuffix}]]`;
 }
 
 export function parseReferenceMarkers(text: string): ParsedReferenceMarker[] {
@@ -166,6 +168,34 @@ export function splitFileReferenceMarkers(text: string): FileReferenceTextSegmen
   });
 }
 
+export function rewriteFileReferenceMarkerPaths(text: string, paths: ReadonlyMap<string, string>): string {
+  if (paths.size === 0) return text;
+  return splitFileReferenceMarkers(text)
+    .map((segment) => {
+      if (segment.type === 'text') return segment.text;
+      const nextPath = paths.get(segment.path);
+      if (!nextPath || nextPath === segment.path) return segment.raw;
+      return formatFileReferenceMarker(segment.label || segment.ref, nextPath, segment.entryKind);
+    })
+    .join('');
+}
+
+export function richTextToReferenceMarkup(content: Pick<RichText, 'text' | 'inlineRefs'>): string {
+  if (!content.inlineRefs.length) return content.text;
+  const text = content.text;
+  const refs = [...content.inlineRefs].sort((left, right) => left.offset - right.offset);
+  let cursor = 0;
+  let out = '';
+  for (const ref of refs) {
+    const offset = clampReferenceOffset(ref.offset, text.length);
+    if (offset < cursor) continue;
+    out += text.slice(cursor, offset);
+    out += inlineRefMarker(ref);
+    cursor = offset;
+  }
+  return out + text.slice(cursor);
+}
+
 export function nodeReferenceMarkersToText(text: string): string {
   return splitReferenceMarkers(text)
     .map((segment) => {
@@ -173,6 +203,20 @@ export function nodeReferenceMarkersToText(text: string): string {
       return segment.label;
     })
     .join('');
+}
+
+function inlineRefMarker(ref: RichText['inlineRefs'][number]): string {
+  const displayName = ref.displayName?.trim();
+  if (ref.target.kind === 'node') {
+    return formatNodeReferenceMarker(displayName || ref.target.nodeId, ref.target.nodeId);
+  }
+  const path = ref.target.path;
+  return formatFileReferenceMarker(displayName || basenameForPath(path) || path, path, ref.target.entryKind);
+}
+
+function clampReferenceOffset(offset: number, length: number): number {
+  if (!Number.isFinite(offset)) return length;
+  return Math.min(Math.max(0, Math.trunc(offset)), length);
 }
 
 function parseReferenceInner(inner: string): { label: string; target: ReferenceTarget } | null {
@@ -185,12 +229,23 @@ function parseReferenceInner(inner: string): { label: string; target: ReferenceT
   const caret = body.indexOf('^');
   if (caret < 0) return null;
   const label = sanitizeReferenceLabel(body.slice(0, caret));
-  const rawValue = body.slice(caret + 1);
+  let rawValue = body.slice(caret + 1);
+  let entryKind: 'file' | 'directory' = 'file';
+  if (prefix === 'file') {
+    const kindCaret = rawValue.lastIndexOf('^');
+    if (kindCaret >= 0) {
+      const rawEntryKind = rawValue.slice(kindCaret + 1);
+      if (rawEntryKind === 'file' || rawEntryKind === 'directory') {
+        entryKind = rawEntryKind;
+        rawValue = rawValue.slice(0, kindCaret);
+      }
+    }
+  }
   if (!rawValue) return null;
   const value = decodeReferenceValue(rawValue);
   if (!value) return null;
   if (prefix === 'node') return { label, target: { kind: 'node', nodeId: value } };
-  return { label, target: { kind: 'local-file', path: value, entryKind: 'file' } };
+  return { label, target: { kind: 'local-file', path: value, entryKind } };
 }
 
 function sanitizeReferenceLabel(label: string): string {

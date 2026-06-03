@@ -187,7 +187,7 @@ export interface AgentToolsOptions {
 
 export function createAgentTools(outliner?: OutlinerToolHost, options: AgentToolsOptions = {}): AgentTool<any>[] {
   const tools = [
-    ...(outliner ? createNodeTools(outliner) : []),
+    ...(outliner ? createNodeTools(outliner, { localFileRoot: options.localFileRoot }) : []),
     ...createLocalTools({ localRoot: options.localFileRoot, workspace: options.localWorkspace, skillRuntime: options.skillRuntime }),
     createWebSearchTool(),
     createWebFetchTool(options.localFileRoot),

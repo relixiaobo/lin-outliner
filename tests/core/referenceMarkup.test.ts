@@ -6,6 +6,8 @@ import {
   nodeReferenceMarkersToText,
   parseNodeReferenceMarkers,
   parseReferenceMarkers,
+  rewriteFileReferenceMarkerPaths,
+  richTextToReferenceMarkup,
   sanitizeFileReferenceRef,
   splitFileReferenceMarkers,
   splitNodeReferenceMarkers,
@@ -69,6 +71,25 @@ describe('reference markup', () => {
     ]);
   });
 
+  test('preserves local directory entry kind in file reference markers', () => {
+    const path = '/Users/me/Projects';
+    const marker = formatFileReferenceMarker('Projects', path, 'directory');
+    expect(marker).toBe('[[file:Projects^%2FUsers%2Fme%2FProjects^directory]]');
+    expect(splitFileReferenceMarkers(marker)).toEqual([{
+      type: 'file',
+      raw: marker,
+      ref: 'Projects',
+      label: 'Projects',
+      path,
+      entryKind: 'directory',
+    }]);
+    expect(splitFileReferenceMarkers('[[file:report.pdf^%2FUsers%2Fme%2Freport.pdf^file]]')[0]).toMatchObject({
+      type: 'file',
+      path: '/Users/me/report.pdf',
+      entryKind: 'file',
+    });
+  });
+
   test('leaves unknown prefixes and legacy bare markers as text', () => {
     const text = 'Keep [[asset:Logo^asset-1]] and [[Alpha^node-alpha]] plain';
     expect(parseReferenceMarkers(text)).toEqual([]);
@@ -108,5 +129,34 @@ describe('reference markup', () => {
   test('sanitizes labels so markers stay single-line', () => {
     expect(sanitizeFileReferenceRef(' bad\n[file]  name ')).toBe('bad file name');
     expect(formatFileReferenceMarker('', '')).toBe('[[file:attachment^attachment]]');
+  });
+
+  test('rewrites only local file reference marker paths', () => {
+    const original = '/Users/me/report.pdf';
+    const materialized = '/workspace/tmp/agent-attachments/report.pdf';
+    const text = `Read ${formatFileReferenceMarker('report.pdf', original)} for [[node:Alpha^node-alpha]].`;
+
+    expect(rewriteFileReferenceMarkerPaths(text, new Map([[original, materialized]]))).toBe(
+      `Read ${formatFileReferenceMarker('report.pdf', materialized)} for [[node:Alpha^node-alpha]].`,
+    );
+  });
+
+  test('serializes rich text inline refs as reference markers', () => {
+    expect(richTextToReferenceMarkup({
+      text: 'Review  then .',
+      inlineRefs: [{
+        offset: 7,
+        target: { kind: 'local-file', path: '/Users/me/report.pdf', entryKind: 'file' },
+        displayName: 'report.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 2048,
+      }, {
+        offset: 13,
+        target: { kind: 'node', nodeId: 'node-alpha' },
+        displayName: 'Alpha',
+      }],
+    })).toBe(
+      `Review ${formatFileReferenceMarker('report.pdf', '/Users/me/report.pdf')} then [[node:Alpha^node-alpha]].`,
+    );
   });
 });

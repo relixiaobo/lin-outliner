@@ -29,7 +29,6 @@ import type {
   ToolResultMessage,
 } from '@earendil-works/pi-ai';
 import { createHash, randomUUID } from 'node:crypto';
-import { copyFile, mkdir, stat, symlink } from 'node:fs/promises';
 import path from 'node:path';
 import {
   type AgentFileAttachmentInput,
@@ -60,9 +59,14 @@ import {
   type AgentPayloadRef,
   type AgentPersistedContent,
 } from '../core/agentEventLog';
-import { sanitizeFileReferenceRef } from '../core/referenceMarkup';
-import { serializeAgentAttachmentMarker, serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
-import { nodeReferenceMarkersToText } from '../core/referenceMarkup';
+import {
+  nodeReferenceMarkersToText,
+  rewriteFileReferenceMarkerPaths,
+  sanitizeFileReferenceRef,
+} from '../core/referenceMarkup';
+import { serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
+import { MAX_INLINE_IMAGE_BASE64_CHARS } from '../core/agentAttachmentLimits';
+import { materializePathBackedAttachment } from './agentAttachmentMaterialization';
 import { toolEnvelopeAfterToolCall } from './agentToolEnvelope';
 import { createAgentTools, type AgentToolsOptions } from './agentTools';
 import { LIN_AGENT_SYSTEM_PROMPT } from './agentSystemPrompt';
@@ -194,10 +198,9 @@ const CONFIGURATION_ERROR_MODEL = {
 const MAX_ATTACHMENTS = 8;
 const MAX_ATTACHMENT_NAME_LENGTH = 180;
 const MAX_TEXT_ATTACHMENT_CHARS = 120_000;
-const MAX_IMAGE_ATTACHMENT_BASE64_CHARS = Math.floor(4.5 * 1024 * 1024);
+const MAX_IMAGE_ATTACHMENT_BASE64_CHARS = MAX_INLINE_IMAGE_BASE64_CHARS;
 const MAX_INLINE_TOOL_OUTPUT_CHARS = DEFAULT_MAX_TOOL_RESULT_CHARS;
 const COMPACT_SUMMARY_MAX_OUTPUT_TOKENS = 20_000;
-const AGENT_ATTACHMENT_DIR = 'agent-attachments';
 const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
   'image/jpeg',
   'image/png',
@@ -607,18 +610,20 @@ export class AgentRuntime {
   ) {
     try {
       const session = await this.ensureSessionWithId(sessionId);
-      const attachments = await this.materializeFileAttachments(normalizeAttachmentInputs(attachmentInput));
-      if (!message.trim() && attachments.length === 0) return;
+      const materialized = await this.materializeFileAttachments(normalizeAttachmentInputs(attachmentInput));
+      const attachments = materialized.attachments;
+      const messageText = rewriteFileReferenceMarkerPaths(message, materialized.pathMap);
+      if (!messageText.trim() && attachments.length === 0) return;
       if (session.agent.state.isStreaming) {
         if (attachments.length > 0) {
           throw new Error('Attachments cannot be queued while the agent is running.');
         }
-        await this.steerSession(sessionId, message);
+        await this.steerSession(sessionId, messageText);
         return;
       }
       const runtimeSettings = await this.refreshRuntimeSettings(session);
       const compactCommand = attachments.length === 0 && runtimeSettings.compactEnabled
-        ? parseCompactSlashCommand(message)
+        ? parseCompactSlashCommand(messageText)
         : null;
       if (compactCommand) {
         await this.compactSession(sessionId, session, compactCommand.instructions);
@@ -630,15 +635,16 @@ export class AgentRuntime {
         sessionId,
         normalizeAgentUserViewContext(userViewContextInput),
       );
+      const userViewReminderText = userViewContextReminder.reminder;
       const now = new Date();
       const outlinerContext = buildOutlinerContextReminder(this.outlinerToolHost);
       const turnContextReminder = joinReminderParts([
         buildEnvironmentContextReminder(now),
         outlinerContext,
-        userViewContextReminder.reminder,
+        userViewReminderText,
       ]);
       const slashSkillPrompt = attachments.length === 0 && runtimeSettings.slashSkillsEnabled
-        ? await createSlashSkillPrompt(session.skillRuntime, message, turnContextReminder)
+        ? await createSlashSkillPrompt(session.skillRuntime, messageText, turnContextReminder)
         : null;
       const skillListingReminder = slashSkillPrompt
         ? null
@@ -646,9 +652,9 @@ export class AgentRuntime {
       const agentListingReminder = slashSkillPrompt
         ? null
         : await this.buildAgentListingReminder(session);
-      const prompt = slashSkillPrompt ?? buildUserPromptMessage(message, attachments, {
+      const prompt = slashSkillPrompt ?? buildUserPromptMessage(messageText, attachments, {
         outlinerContext,
-        userViewContextReminder: userViewContextReminder.reminder,
+        userViewContextReminder: userViewReminderText,
         skillListingReminder,
         agentListingReminder,
       }, now);
@@ -777,9 +783,10 @@ export class AgentRuntime {
     await this.refreshRuntimeSettings(session);
     const skillListingReservation = await this.reserveSkillListingReminder(session);
     session.queuedFollowUpSkillListingReservation = skillListingReservation;
+    const userViewContextReminder = buildUserViewContextReminder(normalizeAgentUserViewContext(userViewContextInput));
     session.agent.followUp(buildUserPromptMessage(text, [], {
       outlinerContext: buildOutlinerContextReminder(this.outlinerToolHost),
-      userViewContextReminder: buildUserViewContextReminder(normalizeAgentUserViewContext(userViewContextInput)),
+      userViewContextReminder,
       skillListingReminder: skillListingReservation?.text ?? null,
       agentListingReminder: await this.buildAgentListingReminder(session),
     }));
@@ -2599,17 +2606,30 @@ export class AgentRuntime {
     return path.resolve(this.options.localFileRoot ?? process.cwd());
   }
 
-  private async materializeFileAttachments(attachments: AgentMessageAttachmentInput[]) {
+  private async materializeFileAttachments(attachments: AgentMessageAttachmentInput[]): Promise<{
+    attachments: AgentMessageAttachmentInput[];
+    pathMap: Map<string, string>;
+  }> {
     const root = this.localFileRoot();
     const out: AgentMessageAttachmentInput[] = [];
+    const pathMap = new Map<string, string>();
     for (const attachment of attachments) {
-      if (attachment.kind !== 'file') {
+      if (!attachmentHasPath(attachment)) {
         out.push(attachment);
         continue;
       }
-      out.push(await materializeFileAttachment(root, attachment));
+      const originalPath = attachment.path;
+      const materialized = await materializePathBackedAttachment(root, attachment);
+      out.push(materialized);
+      if (materialized.path !== originalPath) {
+        pathMap.set(originalPath, materialized.path);
+      }
+      const resolvedOriginal = path.resolve(path.isAbsolute(originalPath) ? originalPath : path.join(root, originalPath));
+      if (materialized.path !== resolvedOriginal) {
+        pathMap.set(resolvedOriginal, materialized.path);
+      }
     }
-    return out;
+    return { attachments: out, pathMap };
   }
 }
 
@@ -2702,7 +2722,17 @@ function normalizeAttachmentInput(input: unknown): AgentMessageAttachmentInput |
       : '';
     if (!dataBase64) return null;
     if (dataBase64.length > MAX_IMAGE_ATTACHMENT_BASE64_CHARS) return null;
-    return { id, ref, kind: 'image', name, mimeType: normalizedMimeType, sizeBytes, dataBase64 };
+    const filePath = stringOrFallback(record.path, '');
+    return {
+      id,
+      ref,
+      kind: 'image',
+      name,
+      mimeType: normalizedMimeType,
+      sizeBytes,
+      dataBase64,
+      ...(filePath ? { path: filePath } : {}),
+    };
   }
 
   if (kind === 'text') {
@@ -2765,10 +2795,6 @@ function buildTurnReminderBlocks(
     blocks.push({ type: 'text', text: systemReminder(reminder) });
   }
 
-  const marker = serializeAgentAttachmentMarker(attachments);
-  if (marker) {
-    blocks.push({ type: 'text', text: systemReminder(marker) });
-  }
   return blocks;
 }
 
@@ -2916,30 +2942,12 @@ function formatUtcOffset(minutesEastOfUtc: number): string {
   return `UTC${sign}${hours}:${minutes}`;
 }
 
-async function materializeFileAttachment(localRoot: string, attachment: AgentFileAttachmentInput): Promise<AgentFileAttachmentInput> {
-  const sourcePath = path.resolve(attachment.path);
-  if (isPathInside(localRoot, sourcePath)) return { ...attachment, path: sourcePath };
+type AgentPathBackedAttachment = AgentFileAttachmentInput | (AgentImageAttachmentInput & { path: string });
 
-  const sourceStat = await stat(sourcePath);
-  const attachmentDir = path.join(localRoot, 'tmp', AGENT_ATTACHMENT_DIR);
-  await mkdir(attachmentDir, { recursive: true });
-  const targetPath = path.join(attachmentDir, `${randomUUID()}-${safeAttachmentFileName(attachment.name)}`);
-  if (sourceStat.isDirectory()) {
-    await symlink(sourcePath, targetPath, 'dir');
-    return { ...attachment, path: targetPath };
-  }
-  await copyFile(sourcePath, targetPath);
-  return { ...attachment, path: targetPath };
-}
-
-function isPathInside(root: string, candidate: string): boolean {
-  const relative = path.relative(path.resolve(root), path.resolve(candidate));
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-}
-
-function safeAttachmentFileName(name: string): string {
-  const base = path.basename(name).replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '');
-  return base || 'attachment';
+function attachmentHasPath(attachment: AgentMessageAttachmentInput): attachment is AgentPathBackedAttachment {
+  return (attachment.kind === 'file' || attachment.kind === 'image')
+    && typeof (attachment as { path?: unknown }).path === 'string'
+    && Boolean((attachment as { path?: string }).path);
 }
 
 function stringOrFallback(value: unknown, fallback: string): string {

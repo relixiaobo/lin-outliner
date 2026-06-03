@@ -12,7 +12,7 @@ import {
   type DocumentProjection,
   type NodeProjection,
 } from '../core/types';
-import { formatNodeReferenceMarker } from '../core/referenceMarkup';
+import { formatNodeReferenceMarker, richTextToReferenceMarkup } from '../core/referenceMarkup';
 import { projectFieldConfig, nodeIsDone, nodeShowsCheckbox } from '../core/configProjection';
 import { isInternalConfigNode, refRoleCountsAsBacklink } from '../core/configSchema';
 import type {
@@ -49,7 +49,7 @@ export function fieldReads(index: ProjectionIndex, node: NodeProjection, include
         .map((valueId) => index.nodes.get(valueId))
         .filter((value): value is NodeProjection => value !== undefined && (includeDeleted || !isInTrash(index, value.id)))
         .map((value) => ({
-          text: referenceText(index, value) ?? value.content.text,
+          text: referenceText(index, value) ?? nodeContentText(value),
           valueNodeId: value.id,
           targetId: value.type === 'reference' ? value.targetId : undefined,
         }));
@@ -123,7 +123,7 @@ export function nodeTitle(index: ProjectionIndex, node: NodeProjection): string 
     const target = index.nodes.get(node.targetId);
     if (target) return nodeTitle(index, target);
   }
-  return node.content.text || '(untitled)';
+  return nodeContentText(node) || '(untitled)';
 }
 
 export function nodeKind(node: NodeProjection): string {
@@ -170,7 +170,7 @@ export function fieldName(index: ProjectionIndex, fieldEntry: NodeProjection): s
 }
 
 export function snippetFor(node: NodeProjection, queryTerms: string[]): string {
-  const haystack = [node.content.text, node.description ?? ''].join(' ').trim();
+  const haystack = [nodeContentText(node), node.description ?? ''].join(' ').trim();
   if (!haystack) return '';
   const lower = haystack.toLowerCase();
   const term = queryTerms.map((value) => value.toLowerCase()).find((value) => value && lower.includes(value));
@@ -179,6 +179,10 @@ export function snippetFor(node: NodeProjection, queryTerms: string[]): string {
   const start = Math.max(0, index - 60);
   const end = Math.min(haystack.length, index + term.length + 80);
   return `${start > 0 ? '...' : ''}${haystack.slice(start, end)}${end < haystack.length ? '...' : ''}`;
+}
+
+export function nodeContentText(node: NodeProjection): string {
+  return richTextToReferenceMarkup(node.content);
 }
 
 export function scoreTerm(index: ProjectionIndex, node: NodeProjection, term: string): number {

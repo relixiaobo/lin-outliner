@@ -37,6 +37,7 @@ export interface AgentAttachmentInputBase {
 export interface AgentImageAttachmentInput extends AgentAttachmentInputBase {
   kind: 'image';
   dataBase64: string;
+  path?: string;
 }
 
 export interface AgentTextAttachmentInput extends AgentAttachmentInputBase {
