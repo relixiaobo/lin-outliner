@@ -1347,7 +1347,6 @@ function mentionMenuItems({
 }
 
 function recentNodeMenuItems(index: DocumentIndex, currentNodeId: NodeId | null, limit: number) {
-  if (!currentNodeId) return [];
   return referenceMenuItems(index, currentNodeId, '')
     .sort((left, right) => {
       const leftUpdatedAt = left.node?.updatedAt ?? 0;
@@ -1358,11 +1357,14 @@ function recentNodeMenuItems(index: DocumentIndex, currentNodeId: NodeId | null,
 }
 
 function referenceMenuItems(index: DocumentIndex, currentNodeId: NodeId | null, query: string) {
-  if (!currentNodeId) return [];
+  // The composer is not itself a node, so it has no "self" to exclude: the
+  // focused/context node must stay mentionable, and node search must work even
+  // with no current node. (The outliner keeps the default self-exclusion.)
   return referenceItems({
     currentNodeId,
     index,
     query,
+    excludeCurrentNode: false,
   }).flatMap((item) => {
     if (item.type !== 'node' || item.disabledReason) return [];
     const node = index.byId.get(item.id);
