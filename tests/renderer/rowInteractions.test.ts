@@ -1330,6 +1330,54 @@ describe('row interaction resolvers', () => {
     }));
   });
 
+  test('excludeCurrentNode controls whether the current node is mentionable', () => {
+    const nodes = [
+      makeNode('root', 'Root', { children: ['today'] }),
+      makeNode('today', 'Today', { parentId: 'root', children: ['current', 'sibling'] }),
+      makeNode('current', 'Context note', { parentId: 'today' }),
+      makeNode('sibling', 'Sibling note', { parentId: 'today' }),
+    ];
+    const projection = {
+      workspaceId: 'root',
+      rootId: 'root',
+      libraryId: 'root',
+      dailyNotesId: 'today',
+      schemaId: 'schema',
+      searchesId: 'searches',
+      recentsId: 'recents',
+      trashId: 'trash',
+      settingsId: 'settings',
+      todayId: 'today',
+      nodes,
+    };
+    const index = { projection, byId: new Map(nodes.map((node) => [node.id, node])) } as any;
+
+    // Outliner default: a node cannot reference itself.
+    const excluded = buildReferenceCandidates({ index, currentNodeId: 'current', query: 'Context' });
+    expect(excluded.some((candidate) => candidate.type === 'node' && candidate.id === 'current')).toBe(false);
+
+    // Agent composer: the focused/context node stays mentionable.
+    const included = buildReferenceCandidates({
+      index,
+      currentNodeId: 'current',
+      query: 'Context',
+      excludeCurrentNode: false,
+    });
+    expect(included).toContainEqual(expect.objectContaining({ id: 'current', type: 'node' }));
+
+    // Node search still works with no current node (composer with no focus context).
+    const noContext = buildReferenceCandidates({
+      index,
+      currentNodeId: null,
+      query: 'note',
+      excludeCurrentNode: false,
+    });
+    const noContextIds = noContext
+      .filter((candidate) => candidate.type === 'node')
+      .map((candidate) => (candidate as { id: string }).id);
+    expect(noContextIds).toContain('sibling');
+  });
+
   test('orders reference candidates by current context before untitled recent nodes', () => {
     const nodes = [
       makeNode('root', 'Root', { children: ['today', 'other'] }),

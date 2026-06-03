@@ -23,14 +23,16 @@ interface ReferenceSelectorProps {
 export function referenceItems(params: {
   query: string;
   index: DocumentIndex;
-  currentNodeId: NodeId;
+  currentNodeId: NodeId | null;
   treeReferenceParentId?: NodeId | null;
+  excludeCurrentNode?: boolean;
 }): ReferenceCandidate[] {
   return buildReferenceCandidates({
     index: params.index,
     currentNodeId: params.currentNodeId,
     query: params.query,
     treeReferenceParentId: params.treeReferenceParentId,
+    excludeCurrentNode: params.excludeCurrentNode,
   });
 }
 

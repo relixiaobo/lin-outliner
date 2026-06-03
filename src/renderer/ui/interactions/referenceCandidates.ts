@@ -104,15 +104,18 @@ function contextRank(
 
 function nodeCandidates(
   index: DocumentIndex,
-  currentNodeId: NodeId,
+  currentNodeId: NodeId | null,
   query: string,
   treeReferenceParentId: NodeId | null,
+  excludeCurrentNode: boolean,
 ): ReferenceCandidate[] {
   const normalized = query.trim().toLowerCase();
-  const currentNode = index.byId.get(currentNodeId);
+  const currentNode = currentNodeId ? index.byId.get(currentNodeId) : undefined;
   const currentAncestors = ancestorIds(currentNode, index.byId);
   const candidates = index.projection.nodes
-    .filter((node) => isContentNode(node) && node.id !== currentNodeId && !isNodeInTrash(index, node.id))
+    .filter((node) => isContentNode(node)
+      && !(excludeCurrentNode && node.id === currentNodeId)
+      && !isNodeInTrash(index, node.id))
     .map((node) => {
       const label = textOf(node);
       const rawText = node.content.text.trim();
@@ -164,16 +167,28 @@ function nodeCandidates(
 
 export function buildReferenceCandidates(params: {
   index: DocumentIndex;
-  currentNodeId: NodeId;
+  currentNodeId: NodeId | null;
   query: string;
   treeReferenceParentId?: NodeId | null;
   allowCreate?: boolean;
+  // The outliner mentions from inside a node, so it excludes that node from its
+  // own results (you can't reference yourself). The agent composer is not a node
+  // and has no "self" — it passes false so the focused/context node stays
+  // mentionable. Defaults to true to preserve the outliner contract.
+  excludeCurrentNode?: boolean;
 }): ReferenceCandidate[] {
-  const { index, currentNodeId, query, treeReferenceParentId = null, allowCreate = true } = params;
+  const {
+    index,
+    currentNodeId,
+    query,
+    treeReferenceParentId = null,
+    allowCreate = true,
+    excludeCurrentNode = true,
+  } = params;
   const normalized = query.trim();
   return [
     ...matchDateShortcuts(normalized),
-    ...nodeCandidates(index, currentNodeId, normalized, treeReferenceParentId),
+    ...nodeCandidates(index, currentNodeId, normalized, treeReferenceParentId, excludeCurrentNode),
     ...(normalized && allowCreate ? [{ type: 'create' as const, label: normalized }] : []),
   ];
 }
