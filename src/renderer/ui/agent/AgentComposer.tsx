@@ -1235,7 +1235,9 @@ function getModelChoices(
 
 function providerCanUseModels(settings: AgentProviderSettingsView, provider: AgentProviderConfigView): boolean {
   const catalog = settings.availableProviders.find((candidate) => candidate.providerId === provider.providerId);
-  return provider.enabled && Boolean(provider.hasApiKey || provider.hasEnvApiKey || catalog?.hasEnvApiKey);
+  // main's authoritative `auth.credentialed` (stored key, oauth login, env, or
+  // managed ambient); catalog env flag covers a provider with no view row yet.
+  return provider.enabled && (Boolean(provider.auth?.credentialed) || Boolean(catalog?.hasEnvApiKey));
 }
 
 function shortenModelName(name: string): string {

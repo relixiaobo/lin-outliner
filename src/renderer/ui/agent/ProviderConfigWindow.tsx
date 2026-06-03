@@ -6,6 +6,8 @@ import { defaultReasoningLevel } from './settingsReasoning';
 import {
   formatProviderName,
   getFallbackModelId,
+  OAUTH_API_KEY_FALLBACK,
+  OAUTH_SIGN_IN,
   PROVIDER_AUTH,
   PROVIDER_DOCS_URL,
   ProviderAvatar,
@@ -14,6 +16,7 @@ import {
   resolveUsableActiveProvider,
 } from './providerCatalog';
 import { ProviderConfigForm, type ProviderConfigDraft } from './ProviderConfigForm';
+import { ProviderOAuthForm } from './ProviderOAuthForm';
 
 // Root rendered in the dedicated per-provider config window (?surface=provider-config),
 // a modal child of the settings window. It fetches its own provider settings, derives
@@ -27,6 +30,9 @@ export function ProviderConfigWindow() {
   const titleId = useId();
   const [settings, setSettings] = useState<AgentProviderSettingsView | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Anthropic accepts both a sign-in and a console key; this escape hatch swaps the
+  // OAuth surface for the standard key form within the session.
+  const [useApiKey, setUseApiKey] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -69,6 +75,11 @@ export function ProviderConfigWindow() {
   const hasSavedKey = providerHasCredential(existing, catalog);
   const authNote = isCustom ? undefined : PROVIDER_AUTH[providerId];
   const docsUrl = isCustom ? undefined : PROVIDER_DOCS_URL[providerId];
+  // Auth class comes from main (`authKind`), falling back to the configured view's
+  // descriptor for a provider with no catalog row. Custom providers are always api-key.
+  const authKind = isCustom ? 'api-key' : (catalog?.authKind ?? existing?.auth?.authKind ?? 'api-key');
+  const showOAuth = authKind === 'oauth' && !useApiKey;
+  const oauthInfo = OAUTH_SIGN_IN[providerId];
 
   async function handleValidate(draft: ProviderConfigDraft) {
     const pid = draft.providerId.trim() || providerId;
@@ -110,6 +121,33 @@ export function ProviderConfigWindow() {
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     }
+  }
+
+  if (showOAuth) {
+    return (
+      <main className="provider-config-window" aria-labelledby={titleId}>
+        <ProviderOAuthForm
+          avatar={<ProviderAvatar large providerId={providerId} />}
+          connected={Boolean(existing?.auth?.oauth?.connected)}
+          description={providerDescription(catalog)}
+          docsLabel={oauthInfo?.docsLabel}
+          docsUrl={oauthInfo?.docsUrl}
+          expiresAt={existing?.auth?.oauth?.expiresAt}
+          isActive={isActive}
+          onClose={close}
+          onOpenExternal={(url) => void api.openExternalUrl(url)}
+          onSetActive={hasSavedKey && !isActive
+            ? () => void runMutation(() => api.agentSetActiveProvider(providerId))
+            : undefined}
+          onSettingsChanged={(next) => { setSettings(next); void window.lin?.notifySettingsChanged?.(); }}
+          onUseApiKey={OAUTH_API_KEY_FALLBACK.has(providerId) ? () => setUseApiKey(true) : undefined}
+          providerId={providerId}
+          providerName={formatProviderName(providerId)}
+          signInHint={oauthInfo?.hint}
+          titleId={titleId}
+        />
+      </main>
+    );
   }
 
   return (
