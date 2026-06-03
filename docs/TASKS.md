@@ -75,10 +75,6 @@ Ordered by priority; lower items may depend on higher ones.
   state (not the core document — flag to PM if pins should be a document concept).
   Rebases on the v2 layout + post-refactor sidebar/menu. See
   `docs/plans/sidebar-pinned-nodes.md`.
-- **isSystemId-missing-library-recents** (fast-track, bug) — `isSystemId()` in
-  `src/core/core.ts` omits `LIBRARY_ID` and `RECENTS_ID`, so Library has no
-  structural protection (it can be moved / deleted / reparented). Add both to the
-  list. Independent of the sidebar plans (different file); no plan doc.
 - **agent-tool-permissions-hardening** (P2) — non-blocking follow-ups after the
   #60 permission implementation: move the `sessionApproved` short-circuit below
   configured-ask (don't silently relax a configured `ask`); re-validate
@@ -130,6 +126,12 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **fix: `isSystemId` covers Library + Recents** (main) — fast-track bug. `isSystemId()`
+  (`src/core/core.ts`) omitted `LIBRARY_ID`/`RECENTS_ID`, so `removeSubtreeDirect` (guarded
+  only by `isSystemId`) could hard-delete Library and `isSearchCandidate` surfaced
+  Library/Recents as search results. Added both → same structural protection (no
+  move/delete/reparent) + search-exclusion as the other seeded sections. typecheck clean,
+  `test:core` 448/2 (the 2 = pre-existing agentLocalTools rg). Direct merge to `main`, no PR.
 - **macOS branding & chrome polish** (cc) — implements
   `docs/plans/archive/macos-native-branding-polish.md` (T1–T6). Squircle app icon rebuilt
   to Apple's macOS grid from a committed master (`assets/brand/tenon-icon-master.svg` +

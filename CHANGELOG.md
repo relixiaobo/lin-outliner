@@ -619,6 +619,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **System-node protection: `isSystemId` now covers Library and Recents** —
+  `isSystemId()` (`src/core/core.ts`) omitted `LIBRARY_ID` and `RECENTS_ID`, so
+  the Library section and the Recents saved-search were not treated as the
+  authoritative system nodes the other sections are. Library was protected only by
+  its `locked` flag, leaving `removeSubtreeDirect` (whose sole guard is
+  `isSystemId`) able to hard-delete it, and `isSearchCandidate` wrongly surfaced
+  Library/Recents as search results (unlike Daily notes / Schema / Trash /
+  Settings). Both ids are now in the list, so they get the same structural
+  protection (no move / delete / reparent) and search-exclusion as every other
+  seeded section. (Fast-track, direct merge to `main`, no PR.)
+
 - **Security: agent exfiltration redline + skill-shell ask path hardened (PR #79)** —
   the sensitive-data exfiltration hard block now recognizes opaque sinks (inline
   interpreter execution `python -c` / `node -e` / `perl -e` / `ruby -e` / `php -r`

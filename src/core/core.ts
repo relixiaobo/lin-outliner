@@ -3300,12 +3300,21 @@ function isDisposableLegacyParaNode(node: Node, title: string) {
     && !node.description;
 }
 
+// The authoritative set of seeded system nodes (workspace sections + built-in
+// tags). Membership confers structural protection (no move/delete/reparent via
+// `ensureNodeMovable` / `removeSubtreeDirect`) and excludes the node from search
+// candidates. Keep this in sync with the seeded sections — LIBRARY_ID and
+// RECENTS_ID belong here too (Library was previously protected only by its
+// `locked` flag, leaving `removeSubtreeDirect` / `isSearchCandidate` to treat it
+// as a normal node).
 function isSystemId(nodeId: string) {
   return [
     WORKSPACE_ID,
     DAILY_NOTES_ID,
+    LIBRARY_ID,
     SCHEMA_ID,
     SEARCHES_ID,
+    RECENTS_ID,
     TRASH_ID,
     SETTINGS_ID,
     TAG_DAY_ID,
