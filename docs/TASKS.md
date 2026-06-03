@@ -44,10 +44,9 @@ Ordered by priority; lower items may depend on higher ones.
   alpha-on-ink token layer; `--primary*` neutralized + deleted; inline-ref
   blue→rose; dark follows the OS via `theme.ts`; floating-rails shell
   (`WindowChrome` + per-pane breadcrumbs + sidebar-as-tab-switcher). Remaining:
-  persisted in-app light/dark/system toggle via `nativeTheme.themeSource` (#45);
   light-mode + interaction (unfurl / drag / resize) visual pass (verified dark
-  only at merge); real OS vibrancy tuning. See
-  `docs/plans/design-system-rollout.md`.
+  only at merge); real OS vibrancy tuning. (Persisted light/dark/system toggle #45
+  shipped in PR #82.) See `docs/plans/design-system-rollout.md`.
 - **agent-tool-permissions-hardening** (P2) — non-blocking follow-ups after the
   #60 permission implementation: move the `sessionApproved` short-circuit below
   configured-ask (don't silently relax a configured `ask`); re-validate
@@ -99,6 +98,16 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **appearance theme toggle (System/Light/Dark)** (cc-2) — closes `#45`, one of the
+  remaining items of `design-system-rollout` (plan stays in-progress: light-mode visual
+  pass + OS vibrancy tuning still open). New General settings pane with a `SegmentedControl`
+  → `lin:set-theme` → `nativeTheme.themeSource` rewrites `prefers-color-scheme` so the
+  shipped dark `@media` rules flip every window; choice persists in `app-preferences.json`,
+  reapplied before first paint. Narrow typed preload (`get/setTheme`), `isThemeMode`
+  validation before `themeSource` (A3); new pure `core/theme.ts`, `main/appPreferences.ts`,
+  `SegmentedControl` primitive (B3/B8/B9, ARIA radiogroup). Reviewed (main gate, rebased over
+  #80/#81/#83): main.ts merge correct (theme + branding coexist, before-paint ordering),
+  CSS tokenized (token guard green), typecheck clean, renderer 268/0. (PR #82).
 - **native-feel remediation stage 6: macOS packaging + real-Electron smoke suite** (cc)
   — final stage of `native-feel-remediation.md` (now **done**, archived). New `tests/smoke/`
   real-Electron Playwright suite (launches built `out/main/main.js` against a throwaway

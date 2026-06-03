@@ -12,6 +12,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Appearance theme toggle: System / Light / Dark (PR #82)** — a new **Settings ›
+  General** pane exposes a `SegmentedControl` (System / Light / Dark). Selecting calls
+  `lin:set-theme` → the main process sets `nativeTheme.themeSource`, which rewrites every
+  renderer's `prefers-color-scheme` so the already-shipped `@media (prefers-color-scheme:
+  dark)` rules flip all windows at once (no CSS dark rules changed, no `[data-theme]`
+  bridge). The choice persists in `userData/app-preferences.json` and is reapplied in
+  `app.whenReady()` before the first window paints (no flash); it applies instantly (no Save
+  button). Preload exposes a narrow typed `getTheme`/`setTheme`; the handler validates the
+  mode before touching `themeSource`. Closes the `#45` item of design-system-rollout.
+  ([#82](https://github.com/relixiaobo/lin-outliner/pull/82))
+
 - **macOS packaging + real-Electron smoke suite (native-feel stage 6) (PR #81)** — a
   real-Electron Playwright smoke suite (`tests/smoke/` + `playwright.smoke.config.ts`) that
   launches the built main process against a throwaway `ELECTRON_USER_DATA_DIR` (prod
