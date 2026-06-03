@@ -6,7 +6,7 @@
   macOS does NOT auto-mask app icons, so the shipped shape must already be the
   squircle. The brand glyph (white + rose) sits on the dark squircle fill.
   Source of truth for build/icon.icns + build/icon.png — regenerate via
-  scripts/gen-icon.sh after editing.
+  `node scripts/gen-icon.mjs` after editing.
 -->
 <g transform="translate(100,100) scale(0.657097)">
 <path d="M282.15 0 H971.85 A282.15 282.15 0 0 1 1254 282.15 V971.85 A282.15 282.15 0 0 1 971.85 1254 H282.15 A282.15 282.15 0 0 1 0 971.85 V282.15 A282.15 282.15 0 0 1 282.15 0 Z" fill="#1E1E1E"/>

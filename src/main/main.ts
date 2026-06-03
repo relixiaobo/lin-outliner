@@ -291,10 +291,16 @@ function buildApplicationMenu(): Electron.Menu {
   const template: Electron.MenuItemConstructorOptions[] = [];
 
   if (isMac) {
-    // app.setName() fixes app.name but NOT the bundle's CFBundleName, which is
-    // where role-based about/hide/quit draw their labels — so in a dev run (the
-    // Electron bundle) they would read "Electron". Hardcode the app-name labels
-    // off APP_NAME so dev and packaged both read "Tenon".
+    // macOS draws some app-menu strings itself, from the running bundle, NOT from
+    // this template:
+    //   • the bold app-menu title and the ⌘, Settings item are OS-managed — in a
+    //     dev run (Electron.app, CFBundleName "Electron") they read "Electron" /
+    //     "Preferences…" no matter what label we pass; a packaged build supplies
+    //     CFBundleName from productName ("Tenon") and the macOS-13+ "Settings…".
+    //   • About / Hide / Quit are ordinary items, so an explicit label DOES win —
+    //     set them off APP_NAME so even a dev run reads "About Tenon" etc.
+    // We still pass label: APP_NAME on the first submenu as the packaged-correct
+    // value even though macOS overrides the dev rendering.
     template.push({
       label: APP_NAME,
       submenu: [
