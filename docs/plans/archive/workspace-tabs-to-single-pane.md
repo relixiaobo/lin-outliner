@@ -1,9 +1,10 @@
 ---
-status: draft
+status: done
 priority: P1
 owner: relixiaobo
 created: 2026-06-03
 updated: 2026-06-03
+shipped: PR #85
 ---
 
 # Workspace Shell: Remove Tabs, Keep Split Panes
