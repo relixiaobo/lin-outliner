@@ -168,8 +168,8 @@ interface WorkspacePanelBase {
 interface OutlinePanelState extends WorkspacePanelBase {
   type: 'outliner';
   rootId: NodeId;
-  pageBackStack?: NodeId[];
-  pageForwardStack?: NodeId[];
+  pageBackStack: NodeId[]; // always seeded; never absent
+  pageForwardStack: NodeId[];
 }
 
 interface AgentDebugPanelState extends WorkspacePanelBase {
@@ -190,6 +190,11 @@ one array is the whole layout truth, so adding/closing a pane cannot desync a
 side table. The layout is persisted to `localStorage`
 (`lin-outliner:workspace-layout:v2`). It is UI state; document content remains in
 the TypeScript-backed document model.
+
+The canvas is always anchored by at least one outliner pane — it carries the
+ambient `rootId` and the focus target. A restored layout that sanitizes down to
+only agent-debug panes has nothing to anchor, so it is treated as corrupt and
+replaced by the default single pane rather than booting into a rootless canvas.
 
 The layout does **not** include:
 
@@ -243,6 +248,16 @@ panels[2] -> next pane
 The active pane is the pane that receives outline keyboard commands when focus is
 in the workspace canvas.
 
+Operations that act on "the active pane's outliner" — page-history Back/Forward
+(`Cmd+[` / `Cmd+]`) and "open the active root in a pane" (`Cmd+M`) — key off the
+active pane *only when it is an outliner*. When a debug pane is active they no-op
+rather than reaching across to another pane. Untargeted navigation
+(`navigateRoot` — sidebar plain click, command palette, "go to root") targets the
+active outliner pane if there is one, else an existing outliner pane, else opens
+one; it never replaces the whole canvas. Ambient UI that merely needs "the
+outliner the user is looking at" (sidebar root highlight, drag-selection scope)
+falls back to the first outliner pane when a debug pane holds the active slot.
+
 ## Tiled Layout
 
 The canvas uses a horizontal tiled layout.
@@ -259,10 +274,12 @@ Rules:
   just to avoid scrolling.
 - Pane resize handles sit between panes.
 - Opening a pane appends it next to the current pane or at the end, capped at
-  `MAX_PERSISTED_PANELS` (4). At the cap, opening replaces the rightmost pane's
-  root rather than adding a fifth pane.
+  `MAX_PERSISTED_PANELS` (4). At the cap, opening repurposes an existing outliner
+  pane (rightmost first) rather than adding a fifth pane — never a debug pane, so
+  an agent-debug session is not silently dropped.
 - Closing a pane removes it from the layout. If it was active, focus moves to the
-  nearest remaining pane.
+  nearest remaining pane, and clears when that pane is an agent-debug pane (which
+  carries no node to focus).
 
 Avoid making every pane independent `position:absolute` — the product does not do
 freeform window management.

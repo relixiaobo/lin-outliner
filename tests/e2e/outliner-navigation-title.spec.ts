@@ -118,11 +118,13 @@ test.describe('outliner navigation and page title parity', () => {
     await expect(back).toBeEnabled();
     await back.click();
 
-    // Back re-activates the outliner pane and navigates it off the Alpha page
-    // (the day-page title itself is humanized in a date-environment-dependent way,
-    // so assert the navigation, not the exact day label).
+    // Back re-activates the outliner pane and returns it to the day page. The day
+    // title humanizes the *fixed* mock date 2026-05-13 to "May 13" (only the
+    // optional Today/Yesterday prefix is date-environment-dependent, and the
+    // substring match ignores it), so asserting "May 13" both confirms the correct
+    // page and is strong enough to catch a back-nav that lands on the wrong pane.
     await expect(page.locator('.outline-panel-surface.active-panel')).toHaveClass(/is-outliner/);
-    await expect(page.locator('.outline-panel-surface.is-outliner .panel-title-editor').first()).not.toContainText('Alpha');
+    await expect(page.locator('.outline-panel-surface.is-outliner .panel-title-editor').first()).toContainText('May 13');
 
     // Forward history survives the round trip; keyboard forward returns to the
     // drilled page (the new shell exposes forward through the keyboard only).

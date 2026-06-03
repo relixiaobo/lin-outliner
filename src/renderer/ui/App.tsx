@@ -41,7 +41,6 @@ export function App() {
   const agentRailState: AgentRailState = agentOpen ? 'open' : 'collapsed';
   const [sidebarExpandedIds, setSidebarExpandedIds] = useState<Set<NodeId>>(() => new Set());
   const [pendingFocus, setPendingFocus] = useState<FocusHint | null>(null);
-  const [agentSessionTitles, setAgentSessionTitles] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [trigger, setTrigger] = useState<TriggerState>(null);
   const [dragId, setDragId] = useState<NodeId | null>(null);
@@ -86,6 +85,9 @@ export function App() {
     resizePanelPair,
     rootId,
   } = useWorkspaceLayout({ focusNode });
+  // Global Back/Forward (Cmd+[ / Cmd+]) act on the active pane's page history.
+  // activeOutlinerPanel is strict (null when a debug pane is active), so the
+  // keyboard handlers below no-op instead of navigating an unrelated pane.
   const pageHistoryPanel = activeOutlinerPanel;
 
   const {
@@ -139,29 +141,6 @@ export function App() {
       unlisten?.();
     };
   }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void api.agentListSessions()
-      .then((sessions) => {
-        if (cancelled) return;
-        setAgentSessionTitles(Object.fromEntries(
-          sessions
-            .map((session) => [session.id, session.title?.trim() || 'Agent Debug'] as const),
-        ));
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => window.lin?.onAgentEvent((event) => {
-    if (event.type !== 'projection') return;
-    const title = event.renderProjection.sessionTitle?.trim();
-    if (!title) return;
-    setAgentSessionTitles((prev) => ({ ...prev, [event.sessionId]: title }));
-  }) ?? undefined, []);
 
   // Desaturate the chrome while the window is inactive (the macOS
   // inactive-window convention). The main process forwards OS focus/blur; we
@@ -229,9 +208,13 @@ export function App() {
   }, [navigateRoot]);
 
   const openActiveRootInPanel = useCallback(() => {
-    if (!rootId) return;
-    openRootInPanel(rootId);
-  }, [openRootInPanel, rootId]);
+    // Cmd+M opens the *active* outliner pane's root in a new pane. When a debug
+    // pane is active there is no active outliner root, so this is a no-op rather
+    // than reaching across to the ambient (first) outliner.
+    const activeRootId = activeOutlinerPanel?.rootId;
+    if (!activeRootId) return;
+    openRootInPanel(activeRootId);
+  }, [activeOutlinerPanel, openRootInPanel]);
 
   const requestEditFocus = useCallback((nodeId: NodeId) => {
     setUi((prev) => requestFocusState(prev, rowFocusTarget(nodeId, null, null), cursorEnd()));

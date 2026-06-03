@@ -54,13 +54,13 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
             onClose={() => props.onClosePanel(panel.id)}
             panel={panel}
             showClose={activePanels.length > 1}
-            size={panel.size ?? 1}
+            size={panel.size}
           >
             {panel.type === 'outliner' ? (
               <NodePanel
                 panelId={panel.id}
                 rootId={panel.rootId}
-                canGoBack={Boolean(panel.pageBackStack?.length)}
+                canGoBack={Boolean(panel.pageBackStack.length)}
                 onBack={() => props.onNavigatePanelBack(panel.id)}
                 showClose={activePanels.length > 1}
                 onClose={() => props.onClosePanel(panel.id)}

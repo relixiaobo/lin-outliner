@@ -149,7 +149,7 @@ export function useResizableLayout({ panels, resizePanelPair }: UseResizableLayo
     if (panels.length === 0 || !canvas) return;
 
     const sizeOf = (panelId: string) => panels.find((panel) => panel.id === panelId)?.size ?? 1;
-    const totalSize = panels.reduce((sum, panel) => sum + (panel.size ?? 1), 0);
+    const totalSize = panels.reduce((sum, panel) => sum + panel.size, 0);
     const usableWidth = Math.max(
       1,
       canvas.getBoundingClientRect().width - Math.max(0, panels.length - 1) * panelGapPx(canvas),

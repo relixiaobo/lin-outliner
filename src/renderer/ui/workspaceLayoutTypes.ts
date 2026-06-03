@@ -10,8 +10,11 @@ export interface WorkspacePanelBase {
 export interface OutlinePanelState extends WorkspacePanelBase {
   type: 'outliner';
   rootId: NodeId;
-  pageBackStack?: NodeId[];
-  pageForwardStack?: NodeId[];
+  // Per-pane page-navigation history (a stack of roots). Always present — the
+  // panel factory and the persistence sanitizer both seed them — so consumers
+  // never need to guard for absence.
+  pageBackStack: NodeId[];
+  pageForwardStack: NodeId[];
 }
 
 export interface AgentDebugPanelState extends WorkspacePanelBase {

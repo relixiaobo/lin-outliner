@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DocumentProjection, NodeId } from '../api/types';
 import type { NavigateRootOptions } from './shared';
-import type { OutlinePanelState, WorkspaceLayout, WorkspacePanelState } from './workspaceLayoutTypes';
+import type {
+  AgentDebugPanelState,
+  OutlinePanelState,
+  WorkspaceLayout,
+  WorkspacePanelState,
+} from './workspaceLayoutTypes';
 
 let nextWorkspaceId = 0;
 const STORAGE_KEY = 'lin-outliner:workspace-layout:v2';
@@ -37,12 +42,16 @@ function outlinerPanel(id: string, rootId: NodeId, size = 1): OutlinePanelState 
   return { id, type: 'outliner', rootId, size, pageBackStack: [], pageForwardStack: [] };
 }
 
+function agentDebugPanel(id: string, sessionId: string | null, size = 1): AgentDebugPanelState {
+  return { id, type: 'agent-debug', sessionId, size };
+}
+
 function navigateOutlinerPanel(panel: OutlinePanelState, rootId: NodeId): OutlinePanelState {
   if (panel.rootId === rootId) return panel;
   return {
     ...panel,
     rootId,
-    pageBackStack: [...(panel.pageBackStack ?? []), panel.rootId].slice(-MAX_PANEL_PAGE_HISTORY),
+    pageBackStack: [...panel.pageBackStack, panel.rootId].slice(-MAX_PANEL_PAGE_HISTORY),
     pageForwardStack: [],
   };
 }
@@ -84,6 +93,11 @@ function sanitizeLayout(value: unknown, nodeIds: Set<NodeId>): WorkspaceLayout |
     .map((panel) => sanitizePanel(panel, nodeIds))
     .filter((panel): panel is WorkspacePanelState => Boolean(panel));
   if (panels.length === 0) return null;
+  // The canvas is anchored by an outliner pane (it carries `rootId` + focus). A
+  // restored layout of only agent-debug panes has nothing to anchor, so treat it
+  // as corrupt and fall back to the default single pane rather than booting into
+  // a rootless canvas.
+  if (!panels.some(isOutlinerPanel)) return null;
 
   const panelIds = new Set(panels.map((panel) => panel.id));
   const activePanelId = typeof value.activePanelId === 'string' && panelIds.has(value.activePanelId)
@@ -129,10 +143,17 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
 
   const activePanelIndex = Math.max(0, panels.findIndex((panel) => panel.id === activePanelId));
   const activePanel = panels[activePanelIndex] ?? null;
-  const activeOutlinerPanel = isOutlinerPanel(activePanel)
-    ? activePanel
-    : panels.find(isOutlinerPanel) ?? null;
-  const rootId = activeOutlinerPanel?.rootId ?? null;
+  // Strict: the active pane, but only when it is an outliner. Targeted operations
+  // that act on "the active pane's outliner" — page history (Cmd+[ / Cmd+]) and
+  // "open the active root in a pane" (Cmd+M) — key off this, so they no-op when a
+  // debug pane is active rather than silently reaching across to another pane.
+  const activeOutlinerPanel = isOutlinerPanel(activePanel) ? activePanel : null;
+  // Ambient: the active outliner if any, else the first outliner on the canvas.
+  // For non-targeted UI (sidebar root highlight, drag-selection scope) where "the
+  // outliner the user is looking at" is good enough even while a debug pane holds
+  // the active slot.
+  const ambientOutlinerPanel = activeOutlinerPanel ?? panels.find(isOutlinerPanel) ?? null;
+  const rootId = ambientOutlinerPanel?.rootId ?? null;
 
   const initializeLayout = useCallback((initial: DocumentProjection) => {
     const layout = loadPersistedLayout(initial) ?? defaultLayout(initial);
@@ -154,14 +175,25 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
   const navigateRoot = useCallback((nodeId: NodeId, options?: NavigateRootOptions) => {
     const current = panels.find((panel) => panel.id === activePanelId);
     const targetPanel = isOutlinerPanel(current) ? current : panels.find(isOutlinerPanel);
-    if (!targetPanel) {
-      const panelId = nextId('panel');
-      setActivePanelId(panelId);
-      setPanels([outlinerPanel(panelId, nodeId)]);
-    } else {
+    if (targetPanel) {
       setActivePanelId(targetPanel.id);
       setPanels((prev) => prev.map((panel) => (
         panel.id === targetPanel.id && isOutlinerPanel(panel) ? navigateOutlinerPanel(panel, nodeId) : panel
+      )));
+    } else if (panels.length < MAX_PERSISTED_PANELS) {
+      // No outliner pane (only debug panes) but room to add one: append rather
+      // than replace the whole canvas, so the debug panes survive.
+      const panelId = nextId('panel');
+      setActivePanelId(panelId);
+      setPanels((prev) => [...prev, outlinerPanel(panelId, nodeId)]);
+    } else {
+      // No outliner pane and no room: repurpose the active pane in place. Only the
+      // active pane is converted — every other (debug) pane is preserved.
+      const replaceId = current?.id ?? panels.at(-1)?.id;
+      if (!replaceId) return;
+      setActivePanelId(replaceId);
+      setPanels((prev) => prev.map((panel) => (
+        panel.id === replaceId ? outlinerPanel(panel.id, nodeId, panel.size) : panel
       )));
     }
     focusNode(options?.focus === false ? null : nodeId);
@@ -181,7 +213,7 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
 
   const navigatePanelBack = useCallback((panelId: string): NodeId | null => {
     const panel = panels.find((candidate) => candidate.id === panelId);
-    const previousRootId = isOutlinerPanel(panel) ? panel.pageBackStack?.at(-1) ?? null : null;
+    const previousRootId = isOutlinerPanel(panel) ? panel.pageBackStack.at(-1) ?? null : null;
     if (!previousRootId) return null;
 
     setActivePanelId(panelId);
@@ -190,8 +222,8 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
         ? {
           ...candidate,
           rootId: previousRootId,
-          pageBackStack: (candidate.pageBackStack ?? []).slice(0, -1),
-          pageForwardStack: [...(candidate.pageForwardStack ?? []), candidate.rootId]
+          pageBackStack: candidate.pageBackStack.slice(0, -1),
+          pageForwardStack: [...candidate.pageForwardStack, candidate.rootId]
             .slice(-MAX_PANEL_PAGE_HISTORY),
         }
         : candidate
@@ -202,7 +234,7 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
 
   const navigatePanelForward = useCallback((panelId: string): NodeId | null => {
     const panel = panels.find((candidate) => candidate.id === panelId);
-    const nextRootId = isOutlinerPanel(panel) ? panel.pageForwardStack?.at(-1) ?? null : null;
+    const nextRootId = isOutlinerPanel(panel) ? panel.pageForwardStack.at(-1) ?? null : null;
     if (!nextRootId) return null;
 
     setActivePanelId(panelId);
@@ -211,9 +243,9 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
         ? {
           ...candidate,
           rootId: nextRootId,
-          pageBackStack: [...(candidate.pageBackStack ?? []), candidate.rootId]
+          pageBackStack: [...candidate.pageBackStack, candidate.rootId]
             .slice(-MAX_PANEL_PAGE_HISTORY),
-          pageForwardStack: (candidate.pageForwardStack ?? []).slice(0, -1),
+          pageForwardStack: candidate.pageForwardStack.slice(0, -1),
         }
         : candidate
     )));
@@ -230,21 +262,26 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
     const nextActivePanel = nextPanels[nextActiveIndex];
     setPanels(nextPanels);
     if (activePanelId === panelId) {
-      setActivePanelId(nextActivePanel?.id ?? activePanelId);
-      if (isOutlinerPanel(nextActivePanel)) {
-        focusNode(nextActivePanel.rootId);
-      }
+      setActivePanelId(nextActivePanel.id);
+      // Move focus to the next pane's root, or clear it when that pane is a debug
+      // pane — leaving focus on a node from the just-closed outliner would surface
+      // a stale focused node to the agent view-context.
+      focusNode(isOutlinerPanel(nextActivePanel) ? nextActivePanel.rootId : null);
     }
   }, [activePanelId, focusNode, panels]);
 
   const openPanel = useCallback((nodeId: NodeId | null = rootId) => {
     if (!nodeId) return;
     if (panels.length >= MAX_PERSISTED_PANELS) {
-      const lastPanel = panels.at(-1);
-      if (!lastPanel) return;
-      setActivePanelId(lastPanel.id);
+      // At the cap, repurpose an existing outliner pane (rightmost first) so a
+      // debug session is never silently dropped — symmetric with how
+      // openAgentDebugPanel reverse-finds a debug pane. Falls back to the last
+      // pane only if somehow none is an outliner.
+      const replacePanel = [...panels].reverse().find(isOutlinerPanel) ?? panels.at(-1);
+      if (!replacePanel) return;
+      setActivePanelId(replacePanel.id);
       setPanels((prev) => prev.map((panel) => (
-        panel.id === lastPanel.id ? outlinerPanel(panel.id, nodeId, panel.size) : panel
+        panel.id === replacePanel.id ? outlinerPanel(panel.id, nodeId, panel.size) : panel
       )));
     } else {
       const panelId = nextId('panel');
@@ -269,9 +306,7 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
     if (emptyDebugPanel) {
       setActivePanelId(emptyDebugPanel.id);
       setPanels((prev) => prev.map((panel) => (
-        panel.id === emptyDebugPanel.id
-          ? { id: panel.id, type: 'agent-debug', size: panel.size, sessionId }
-          : panel
+        panel.id === emptyDebugPanel.id ? agentDebugPanel(panel.id, sessionId, panel.size) : panel
       )));
       return;
     }
@@ -281,16 +316,14 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
       if (!replacePanel) return;
       setActivePanelId(replacePanel.id);
       setPanels((prev) => prev.map((panel) => (
-        panel.id === replacePanel.id
-          ? { id: panel.id, type: 'agent-debug', size: panel.size, sessionId }
-          : panel
+        panel.id === replacePanel.id ? agentDebugPanel(panel.id, sessionId, panel.size) : panel
       )));
       return;
     }
 
     const panelId = nextId('panel');
     setActivePanelId(panelId);
-    setPanels((prev) => [...prev, { id: panelId, type: 'agent-debug', size: 1, sessionId }]);
+    setPanels((prev) => [...prev, agentDebugPanel(panelId, sessionId)]);
   }, [panels]);
 
   const resizePanelPair = useCallback((
