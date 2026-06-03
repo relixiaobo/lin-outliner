@@ -6,10 +6,11 @@ import { WorkspacePanelSurface } from './WorkspacePanelSurface';
 import { AgentDebugPanel } from './agent/AgentDebugPanel';
 import { ResizeHandle } from './primitives/ResizeHandle';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from './shared';
-import type { WorkspacePanelState, WorkspaceTabState } from './workspaceLayoutTypes';
+import type { WorkspacePanelState } from './workspaceLayoutTypes';
 
 interface WorkspaceCanvasProps {
-  activeTab: WorkspaceTabState | null;
+  activePanelId: string | null;
+  panels: WorkspacePanelState[];
   canvasRef: RefObject<HTMLElement | null>;
   dragId: NodeId | null;
   index: DocumentIndex;
@@ -37,7 +38,7 @@ interface WorkspaceCanvasProps {
 }
 
 export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
-  const activePanels = props.activeTab?.panels ?? [];
+  const activePanels = props.panels;
 
   return (
     <section
@@ -48,12 +49,12 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
       {activePanels.map((panel, panelIndex) => (
         <Fragment key={panel.id}>
           <WorkspacePanelSurface
-            active={props.activeTab?.activePanelId === panel.id}
+            active={props.activePanelId === panel.id}
             onActivate={() => props.onActivatePanel(panel)}
             onClose={() => props.onClosePanel(panel.id)}
             panel={panel}
             showClose={activePanels.length > 1}
-            size={props.activeTab?.panelSizes[panel.id] ?? 1}
+            size={panel.size ?? 1}
           >
             {panel.type === 'outliner' ? (
               <NodePanel

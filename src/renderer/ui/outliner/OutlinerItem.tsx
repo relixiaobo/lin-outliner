@@ -1597,7 +1597,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
               ? undefined
               : (targetId, options) => props.onRoot(targetId, {
                 focus: false,
-                newTab: options?.newTab,
+                newPane: options?.newPane,
               })}
             focusTarget={editorRequestTarget}
             focusRequest={props.ui.focusRequest}

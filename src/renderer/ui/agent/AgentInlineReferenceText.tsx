@@ -8,11 +8,11 @@ import {
   FolderIcon,
   ICON_SIZE,
 } from '../icons';
-import { wantsNewTabFromClick } from '../shared';
+import { wantsNewPaneFromClick } from '../shared';
 import { inlineReferenceTextColor } from '../tags/tagColors';
 
 export interface AgentNodeReferenceOpenOptions {
-  newTab?: boolean;
+  newPane?: boolean;
 }
 
 export type AgentNodeReferenceOpenHandler = (
@@ -28,7 +28,7 @@ interface NodeReferenceClickEventLike {
 export function nodeReferenceOpenOptionsFromClick(
   event: NodeReferenceClickEventLike,
 ): AgentNodeReferenceOpenOptions {
-  return { newTab: wantsNewTabFromClick(event) };
+  return { newPane: wantsNewPaneFromClick(event) };
 }
 
 interface AgentInlineReferenceTextProps {
