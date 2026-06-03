@@ -117,11 +117,14 @@ Shared UI surface → `/code-review` (medium) + light/dark visual verification.
 
 ## Subtasks
 
-- [ ] `inlineFileIcon.ts` shared module (kind resolver + icon emit) + CSS masks.
-- [ ] Wire `pmSchema.ts` (outliner).
-- [ ] Wire `AgentComposerEditor.tsx` (delete `fileReferenceIconDom` + divergent paths).
-- [ ] Wire `AgentInlineReferenceText.tsx` (delete `iconForInlineFile`).
-- [ ] Delete `.agent-composer-inline-file*` / `.agent-message-inline-file*` CSS.
-- [ ] Update guard/e2e/renderer tests for the new DOM shape.
-- [ ] Update `docs/spec/` inline-reference / composer docs.
-- [ ] typecheck + tests green; visual verify light + dark.
+- [x] `inlineFileIcon.ts` shared module (kind resolver + icon emit) + CSS masks
+      (Lucide shapes extracted programmatically into `inline-ref.css`).
+- [x] Wire `pmSchema.ts` (outliner).
+- [x] Wire `AgentComposerEditor.tsx` (delete `fileReferenceIconDom` +
+      `fileExtensionLabel`; converge the menu kind resolver onto the shared one).
+- [x] Wire `AgentInlineReferenceText.tsx` (delete `iconForInlineFile`).
+- [x] Delete `.agent-composer-inline-file*` / `.agent-message-inline-file*` CSS.
+- [x] Update guard/e2e/renderer tests for the new DOM shape (+ `inlineFileIcon`
+      renderer guard for the shared resolver and outliner schema rendering).
+- [x] Update `docs/spec/` (design-system References section + agent-progress).
+- [x] typecheck + tests green; visual verify light + dark (`tmp/mention-icons.png`).
