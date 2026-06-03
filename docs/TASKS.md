@@ -99,6 +99,16 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **native-feel remediation stage 6: macOS packaging + real-Electron smoke suite** (cc)
+  — final stage of `native-feel-remediation.md` (now **done**, archived). New `tests/smoke/`
+  real-Electron Playwright suite (launches built `out/main/main.js` against a throwaway
+  `ELECTRON_USER_DATA_DIR`, prod `file://` path): first-frame, native menu + ⌘,, CSP
+  enforcement (inline-script `securitypolicyviolation`), external-link routing, and
+  userData isolation (real `create_node` mutation persists + survives before-quit).
+  `package.json` `test:smoke` + `mac.category`; `globalSetup` fails fast on missing/stale
+  build. macOS-only scope (Win/Linux dropped). Reviewed (main gate, rebased over #80/#83):
+  all 4 prior findings fixed, MERGEABLE/CLEAN, package.json kept both #83 identity + smoke
+  bits. (PR #81).
 - **rebrand Lin Outliner → Tenon** (codex) — full product-identity change (PM-ratified):
   Tenon logo + generated Electron icons, favicon, sidebar brand mark, app/window/About
   titles, agent-facing copy. electron-builder `appId` → `dev.linlab.tenon`, `productName`

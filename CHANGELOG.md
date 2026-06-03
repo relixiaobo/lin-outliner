@@ -12,6 +12,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **macOS packaging + real-Electron smoke suite (native-feel stage 6) (PR #81)** — a
+  real-Electron Playwright smoke suite (`tests/smoke/` + `playwright.smoke.config.ts`) that
+  launches the built main process against a throwaway `ELECTRON_USER_DATA_DIR` (prod
+  `file://` renderer) and asserts native behaviors the Chromium e2e suite never covered:
+  first-frame (no launch flash), native menu shape + `Preferences ⌘,`, CSP enforcement
+  (inline-script `securitypolicyviolation`), external-link routing (`shell.openExternal`,
+  `file:` never routed), and userData isolation (a real `create_node` mutation persists into
+  the isolated dir and survives before-quit). Adds `test:smoke` + `mac.category`. macOS-only
+  scope; smokes the built bundle's prod path, not the signed `.dmg`. Completes
+  `native-feel-remediation` (all six stages shipped).
+  ([#81](https://github.com/relixiaobo/lin-outliner/pull/81))
+
 - **Rebrand: Lin Outliner → Tenon (PR #83)** — full product-identity change. New Tenon
   logo + generated Electron app icons, favicon, sidebar brand mark, and app/window/About
   titles; agent-facing identity copy updated. electron-builder `appId`
