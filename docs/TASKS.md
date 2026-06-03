@@ -117,6 +117,14 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **agent-composer-attachment-path-model** (codex, PR #86) — path-first agent composer
+  attachments with local-root staging and `[[file:label^path]]` markers; images keep inline
+  image blocks plus file markers; out-of-root markers in user messages materialize so
+  `file_read` can reach them. Review-gate security hardening folded in: the agent can no
+  longer read host files outside its sandbox — write-side marker validation
+  (`node_create`/`node_edit`), node tools no longer materialize on read, `realpath`-based
+  materialization + jail, size cap, and TTL pruning. Plan archived; agent specs updated (A6).
+
 - **workspace-tabs-to-single-pane** (cc, PR #85) — removed the multi-tab concept; panes are
   now the single top-level canvas primitive (`WorkspaceLayout { activePanelId, panels[] }`,
   per-panel `size`, v2 layout). Default = single Today pane; Cmd/Ctrl+click opens a split

@@ -12,6 +12,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent composer attachment path model (PR #86)** — implements
+  `agent-composer-attachment-path-model.md`. Composer attachments are now **path-first**:
+  pathless files are staged under the agent's local root and every attachment carries a
+  readable `[[file:label^path]]` marker; images keep their inline image block **and** gain a
+  normal file marker. Out-of-root file markers in user messages are materialized into the
+  local root so `file_read` can reach them, and the new-turn `<user-attachments>` resource
+  JSON is dropped (historical parsing/rendering preserved). Security hardening from the
+  review gate keeps the agent confined to its file sandbox: `node_create`/`node_edit` reject
+  `[[file:]]` markers resolving outside the local root, and `node_read`/`node_search` no
+  longer materialize markers (no read-side copy sink); materialization canonicalizes paths
+  with `realpath`, refuses out-of-root directories and non-regular files, caps size
+  (`MAX_MATERIALIZED_ATTACHMENT_BYTES`, 50 MB), and prunes staged copies on a 7-day TTL; the
+  `file_read`/`file_glob`/`file_grep` jail is `realpath`-based with nearest-existing-ancestor
+  resolution, closing symlink traversal. Agent spec docs updated (A6).
+  ([#86](https://github.com/relixiaobo/lin-outliner/pull/86))
+
 - **macOS branding & chrome polish (PR #84)** — implements
   `macos-native-branding-polish.md` (T1–T6). The **app icon** is rebuilt to Apple's macOS
   icon grid: a squircle master (`assets/brand/tenon-icon-master.svg`, 824 / r≈185.4 / 100px
