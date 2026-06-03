@@ -67,6 +67,15 @@ Ordered by priority; lower items may depend on higher ones.
   (plugs into `BlockNodeRow` via `renderBlockBody` + `isBlockNodeType`). Depends
   on `asset-subsystem` (done) + `image-rendering` (done). See
   `docs/plans/file-attachments.md`.
+- **agent-ask-user-question-tool** (P1, plan drafted, codex, PR #88) — full design
+  for a structured `ask_user_question` agent tool: a runtime pending-interaction
+  model kept separate from approval, snake-case tool + answer contracts, the
+  pending-question UI, composer-state cleanup, `@`-refs/attachments in answers, and
+  event-log + restart semantics. **Plan-track, touches agent protocol/runtime + new
+  UI — escalate directional GO + build phasing to the PM before building** (persist
+  unresolved questions across restart? edit-message scope? clarify contract?). Build
+  on the merged path-first attachment model (#86); see the plan's "Integration notes"
+  + "Directional decisions outstanding". `docs/plans/agent-ask-user-question-tool.md`.
 - **field-value-row-selection** (P2) — make field VALUE rows join the global node
   multi-selection model (shift/cmd-select multiple value rows, then batch
   delete/move/duplicate); keeps the append-only value model (no cardinality

@@ -449,3 +449,48 @@ reference model first, then build the user-question UI on top of it.
 - [ ] Update `docs/spec/` with the shipped behavior.
 - [ ] Run `bun run typecheck` and relevant renderer/runtime tests.
 - [ ] Run light/dark visual verification for the pending-question UI.
+
+## Integration notes (added at the merge gate, 2026-06-03)
+
+Added by the main agent when landing this as a backlog artifact, to reconcile the
+plan with `main` as it stands. These do not change the design above; fold them in
+when the build is scheduled.
+
+- **OpenAI function-schema constraint (lesson from PR #90).** The `questions[].type`
+  discriminator and the conditional rules (`options` required for choice types,
+  forbidden for `free_text`; `allowOther` only for choice) MUST NOT be encoded as a
+  top-level `oneOf`/`anyOf`/`allOf`/`enum`/`not` in the tool's JSON schema — OpenAI's
+  function-schema validation rejects those at the root (it 400s). Keep the schema
+  permissive at the top level (one object with a `questions` array) and enforce the
+  per-type shape at runtime in `normalize*`-style helpers, mirroring the node tools'
+  fix in `agentNodeToolSchemas.ts`. Nested `anyOf`/`enum` inside property subschemas
+  is fine.
+- **Collision section is now stale (resolved dependencies).**
+  `agent-composer-attachment-path-model.md` (PR #86) and
+  `outliner-local-file-references.md` are both **merged + archived (`done`)** — the
+  stated "land after the path-first attachment work" precondition is already
+  satisfied, so the answer-input refs/attachments can build directly on the shipped
+  path model. Also, "Files In Scope" lists `src/renderer/styles/agent-composer.css`,
+  but PR #89 moved inline-mention rendering out of it into `inline-ref.css` (the
+  `.agent-composer-inline-file*` chip classes were deleted); rebase the file scope
+  onto post-#86/#89 `main`.
+- **Security (A3).** File/image refs carried back in an answer payload must flow
+  through the same `realpath`-based local-root jail PR #86 added (out-of-root reject,
+  size cap, TTL pruning). State explicitly that the jail applies to answer
+  attachments — `ask_user_question` must not become a read sink that bypasses it.
+
+## Directional decisions outstanding (PM GO before build)
+
+Deferred at the PM's instruction; resolve at build kickoff, not now:
+
+- Do unresolved questions persist across app restart (event replay restores the
+  pending request + valid attachment refs), or are they cancelled on restart?
+- Does historical user-message editing stay text-only this phase (keeps
+  `AgentMessageRow.tsx` out of scope), or gain refs/attachments?
+- Is "clarify / discuss" a normal steering message that keeps the question open, or
+  a dedicated `feedback` action on the pending question?
+
+Recommended build sequencing (WIP discipline / shared-interface-first): (1) protocol
++ tool + event-log contract as an interface-first PR; (2) renderer pending-interaction
+state + base UI; (3) refs/attachments in answers; (4) composer-state cleanup +
+edit-message alignment.
