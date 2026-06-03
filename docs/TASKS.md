@@ -144,6 +144,15 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **openai-provider-error-handling** (main, PR #90) — fixed a user-reported OpenAI 400.
+  Removed the top-level `oneOf` from the four node tool schemas (OpenAI rejects
+  `oneOf`/`anyOf`/`allOf`/`enum`/`not` at a function schema's root); the one-of constraint
+  stays enforced at runtime + in descriptions, nested `anyOf`/`enum` untouched, Anthropic
+  unaffected. Run/provider failures now render inline as a failed assistant turn with retry
+  (terminal message marked `assistant_message.failed`) instead of a top banner; top-level
+  projection `errorMessage` reserved for transient operational errors. Fast-track; spec
+  updated (A6); typecheck clean, core 464/2 (2 pre-existing rg fails), renderer 268/0.
+
 - **agent-composer-attachment-path-model** (codex, PR #86) — path-first agent composer
   attachments with local-root staging and `[[file:label^path]]` markers; images keep inline
   image blocks plus file markers; out-of-root markers in user messages materialize so

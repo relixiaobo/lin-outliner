@@ -654,6 +654,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **OpenAI provider error handling: schema 400 + inline failed-message render (PR #90)** —
+  two fixes for a user-reported OpenAI 400. (1) `node_search`/`node_create`/`node_delete`/
+  `node_edit` declared a top-level `oneOf`, which OpenAI's function-schema validation rejects
+  (`schema must have type 'object' and not have 'oneOf'/'anyOf'/'allOf'/'enum'/'not' at the
+  top level`); the top-level `oneOf` is removed from the four node tool schemas
+  (`agentNodeToolSchemas.ts`). The mutually-exclusive argument groups are still enforced at
+  runtime (the `normalize*` helpers) and documented in the descriptions, and nested
+  `anyOf`/`enum` in property subschemas is untouched, so Anthropic is unaffected. (2) A
+  provider/run failure now renders **inline as a failed assistant turn with a retry action**
+  instead of a red banner pinned to the top of the conversation: the runtime marks the
+  terminal assistant message `assistant_message.failed` (error stop reason + `errorMessage`)
+  on non-aborted, non-context-overflow failures, and the top-level projection `errorMessage`
+  is reserved for transient operational errors (`agentRuntime.ts`). Spec updated (A6).
+  ([#90](https://github.com/relixiaobo/lin-outliner/pull/90))
+
 - **System-node protection: `isSystemId` now covers Library and Recents** —
   `isSystemId()` (`src/core/core.ts`) omitted `LIBRARY_ID` and `RECENTS_ID`, so
   the Library section and the Recents saved-search were not treated as the
