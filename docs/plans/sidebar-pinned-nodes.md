@@ -46,9 +46,8 @@ Rationale: pins are transient per-workspace UI state, exactly like tabs/pane
 layout and page history, which already live in renderer localStorage to stay out
 of the document. Putting a `pinned` flag in `core/types.ts` + a `toggle_pin`
 command would drag this into the protocol surface, event log, undo stack, and
-cross-window sync for no benefit. **Decision recorded; flag to PM if they want
-pins to be a document concept instead (that changes the plan materially — it
-would touch `src/core/commands.ts` + `types.ts`).**
+cross-window sync for no benefit. **PM-ratified: store pins in renderer layout
+state (not the core document).** No `src/core/*` change.
 
 ### State hook
 
@@ -84,15 +83,17 @@ discoverable but adds ambiguity (add vs reorder) and risks confusion with the
 outliner's move-drag. Recommend shipping **context-menu pin first**; add
 drag-to-pin only if wanted (see open questions).
 
+## Decisions (PM-ratified 2026-06-03)
+
+- **Storage:** renderer layout state (not the core document). No protocol-surface
+  change.
+
 ## Open questions
 
-1. **Storage location:** renderer UI state (recommended) vs core document
-   concept? Core would make pins undoable + cross-window-synced but touches the
-   protocol surface — PM call.
-2. **Sidebar context menu scope:** full node menu vs a reduced Pin/Open menu?
-3. **Drag-to-pin:** keep the drag affordance (and fix it), or drop it in favor of
+1. **Sidebar context menu scope:** full node menu vs a reduced Pin/Open menu?
+2. **Drag-to-pin:** keep the drag affordance (and fix it), or drop it in favor of
    context-menu-only pin + reworded empty state?
-4. **Pin ordering:** insertion order only, or user-reorderable later?
+3. **Pin ordering:** insertion order only, or user-reorderable later?
 
 ## Files (scope)
 

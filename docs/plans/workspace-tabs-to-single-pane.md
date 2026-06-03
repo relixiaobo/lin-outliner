@@ -76,10 +76,8 @@ panel-scoped — it moves with each panel, untouched.
 - Stop destructuring `activeTab`, `activeTabId`, `createTab`, `closeTab`,
   `selectTab`, `tabs`, `initializeTabs`.
 - `navigateRoot`/`navigatePanelRoot` wrappers: the `newTab` branch currently
-  calls `createTab(nodeId)`. **Decision needed (see open questions):** repoint to
-  `openPanel(nodeId)` (Cmd/Ctrl+click → split into a new pane) OR drop the
-  `newTab` branch (Cmd-click → in-place). Recommended: `openPanel` so Cmd-click
-  keeps a "open elsewhere" meaning, now as a pane.
+  calls `createTab(nodeId)`. **PM-ratified:** repoint to `openPanel(nodeId)` —
+  Cmd/Ctrl+click a reference opens the node in a **new split pane**.
 - `agentUserViewContext` / `buildAgentUserViewContext`: stop passing `activeTab`;
   pass `activePanelId` + `panels` directly.
 - Delete the `sidebarTabs` transform and the Sidebar tab props.
@@ -128,19 +126,19 @@ In `NodeContextMenu.tsx`, the `Appearance` item opens a submenu
 submenu branch. Note: this removes the only entry point for setting a node's
 icon/banner — accepted per decision #8 (no relocation).
 
+## Decisions (PM-ratified 2026-06-03)
+
+- **Cmd/Ctrl+click a reference → open in a new split pane** (`openPanel`).
+- **T3 duplication accepted for now:** showing Schema/Settings in the tree
+  duplicates the top-nav Schema + footer Settings button — fine for now
+  (decision #4 = "show all"); de-dup is a later call.
+
 ## Open questions
 
-1. **`newTab` semantics after tabs:** Cmd/Ctrl+click a reference → open in a new
-   split pane (`openPanel`), or open in-place (drop `newTab`)? (Recommend: new
-   pane.)
-2. **T3 duplication:** showing Schema in the tree duplicates the top-nav Schema;
-   showing Settings duplicates the footer Settings button. Accept the
-   duplication for now (decision #4 = "show all"), or de-dup nav/footer later?
-3. **Split-pane entry discoverability:** with the "+ new tab" button gone, is
-   there a "split pane" affordance in the canvas, or is split only reachable via
-   the context menu + Cmd-click? (Out of scope to add a button unless wanted.)
-4. **Pane cap:** persisted layout currently caps at `MAX_PERSISTED_PANELS` (4) —
-   keep as-is.
+1. **Split-pane entry discoverability:** with the "+ new tab" button gone, split
+   is reachable via the context menu "Open in split pane" + Cmd-click. Add an
+   explicit canvas "split" button? (Out of scope unless wanted.)
+2. **Pane cap:** keep `MAX_PERSISTED_PANELS` (4) as-is.
 
 ## Files (scope)
 

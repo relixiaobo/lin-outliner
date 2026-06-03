@@ -21,6 +21,11 @@ This is **not** a change to the value data model: field values stay
 "everything-is-a-node, values always append" (the cardinality concept stays
 removed). We are only adding **selection** participation.
 
+**Framing (PM-ratified):** a field entry is just a node and each value is its
+**child node**, so selection must be *uniform across the whole tree* — value rows
+select exactly like any other node, with no special field-only scope. A single
+selection/range may span body rows and value rows freely.
+
 ## Non-goals
 
 - Reintroducing single-value/cardinality replacement (that was reading (b), which
@@ -75,13 +80,19 @@ body rows and value rows.
 - Field on a transcluded/reference node: selecting across the reference boundary
   must respect the existing cycle guard.
 
+## Decisions (PM-ratified 2026-06-03)
+
+- **Full parity:** selected value rows support delete + move + duplicate — the
+  same actions as normal nodes.
+- **Cross-container selection allowed:** one selection/range may span body rows
+  and field value rows; treat the whole panel tree as a single selection scope (a
+  field entry is a node, its value is its child node — no special field scope).
+
 ## Open questions
 
-1. After multi-selecting value rows, which actions must work — delete + move +
-   duplicate (full parity), or just delete? (Assume full parity; confirm.)
-2. Should a body↔value mixed selection be allowed (one range spanning both), or
-   should value-row selection be scoped to its own field? (Leading design allows
-   mixed within the same panel root; confirm desired.)
+- None blocking. Implementation must still verify the cross-container scope
+  doesn't break the reference-path cycle guard or option-pool/backlink invariants
+  (see Risks above).
 
 ## Files (scope)
 
