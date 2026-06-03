@@ -23,6 +23,10 @@ export type InlineFileIconKind =
   | 'video';
 
 export const INLINE_FILE_ICON_CLASS = 'inline-ref-file-icon';
+// The filename lives in its own span so the mention can be `white-space: nowrap`
+// (gluing the icon to the name) while the name itself re-opens to wrapping. See
+// `inline-ref.css`.
+export const INLINE_FILE_NAME_CLASS = 'inline-ref-file-name';
 
 export interface InlineFileIconDescriptor {
   entryKind?: 'file' | 'directory';
@@ -69,12 +73,16 @@ export function inlineFileIconKind(file: InlineFileIconDescriptor): InlineFileIc
   return 'text';
 }
 
-// ProseMirror `toDOM` spec for the leading icon — used by `pmSchema` (outliner)
-// and the agent composer editor. React render sites construct the equivalent
-// `<span>` directly from `INLINE_FILE_ICON_CLASS` + `inlineFileIconKind`.
-export function inlineFileIconDomSpec(kind: InlineFileIconKind): [string, Record<string, string>] {
+// ProseMirror `toDOM` children for a file mention — the leading icon followed by
+// the name in its own span — used by `pmSchema` (outliner) and the agent composer
+// editor. React render sites construct the equivalent spans directly from
+// `INLINE_FILE_ICON_CLASS` / `INLINE_FILE_NAME_CLASS` + `inlineFileIconKind`.
+export function inlineFileMentionDomChildren(
+  kind: InlineFileIconKind,
+  name: string,
+): Array<[string, Record<string, string>] | [string, Record<string, string>, string]> {
   return [
-    'span',
-    { class: INLINE_FILE_ICON_CLASS, 'data-file-icon-kind': kind, 'aria-hidden': 'true' },
+    ['span', { class: INLINE_FILE_ICON_CLASS, 'data-file-icon-kind': kind, 'aria-hidden': 'true' }],
+    ['span', { class: INLINE_FILE_NAME_CLASS }, name],
   ];
 }

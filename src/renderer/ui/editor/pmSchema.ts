@@ -1,6 +1,6 @@
 import { Schema } from 'prosemirror-model';
 import { basenameForPath } from '../../../core/referenceMarkup';
-import { inlineFileIconDomSpec, inlineFileIconKind } from './inlineFileIcon';
+import { inlineFileIconKind, inlineFileMentionDomChildren } from './inlineFileIcon';
 
 export const pmSchema = new Schema({
   nodes: {
@@ -73,7 +73,7 @@ export const pmSchema = new Schema({
             mimeType: String(node.attrs.mimeType ?? ''),
             name: displayName || basenameForPath(targetPath),
           });
-          return ['span', attrs, inlineFileIconDomSpec(iconKind), label];
+          return ['span', attrs, ...inlineFileMentionDomChildren(iconKind, label)];
         }
         return ['span', attrs, label];
       },

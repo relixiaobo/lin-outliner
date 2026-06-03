@@ -2,7 +2,11 @@ import { useMemo, type CSSProperties } from 'react';
 import { splitFileReferenceMarkers, splitNodeReferenceMarkers } from '../../../core/referenceMarkup';
 import type { NodeId } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
-import { INLINE_FILE_ICON_CLASS, inlineFileIconKind } from '../editor/inlineFileIcon';
+import {
+  INLINE_FILE_ICON_CLASS,
+  INLINE_FILE_NAME_CLASS,
+  inlineFileIconKind,
+} from '../editor/inlineFileIcon';
 import { wantsNewPaneFromClick } from '../shared';
 import { inlineReferenceTextColor } from '../tags/tagColors';
 
@@ -72,7 +76,7 @@ export function AgentInlineReferenceText({
                       name: fileSegment.file.name,
                     })}
                   />
-                  {fileSegment.file.name}
+                  <span className={INLINE_FILE_NAME_CLASS}>{fileSegment.file.name}</span>
                 </span>
               );
             });

@@ -39,8 +39,8 @@ import {
 } from '../icons';
 import { textOf } from '../shared';
 import {
-  inlineFileIconDomSpec,
   inlineFileIconKind,
+  inlineFileMentionDomChildren,
   type InlineFileIconKind,
 } from '../editor/inlineFileIcon';
 import { inlineReferenceTextColor } from '../tags/tagColors';
@@ -258,8 +258,7 @@ const agentComposerSchema = new Schema({
             'data-inline-ref-kind': 'local-file',
             'data-agent-file-ref': String(node.attrs.attachmentId ?? ''),
           },
-          inlineFileIconDomSpec(iconKind),
-          name,
+          ...inlineFileMentionDomChildren(iconKind, name),
         ];
       },
     },

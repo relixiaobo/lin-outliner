@@ -24,6 +24,22 @@
   box-shadow: var(--inline-ref-selection-shadow);
 }
 
+/* The icon and its filename must never be split across a line break. The break
+   opportunity that orphans the icon is the one *after* the atomic inline-block
+   icon (before the name) — neither a word-joiner nor an absolute icon fixes it
+   robustly. So the mention itself is `white-space: nowrap` (no break between the
+   icon and the name), and the name is re-opened to wrapping via its own span
+   below. Net: the icon always travels with the start of the name; the name still
+   wraps at its spaces (and mid-word for a long no-space name via the editor's
+   `overflow-wrap`). */
+.inline-ref[data-inline-ref-kind="local-file"] {
+  white-space: nowrap;
+}
+
+.inline-ref-file-name {
+  white-space: normal;
+}
+
 /* The leading glyph that marks a `.inline-ref` as a file/dir/image reference
    (node references carry no icon). One monochrome icon for every render site —
    outliner, agent composer, agent message — driven by `data-file-icon-kind`
@@ -34,7 +50,6 @@
   display: inline-block;
   width: 0.95em;
   height: 0.95em;
-  flex: none;
   margin-right: 0.18em;
   vertical-align: -0.16em;
   background-color: currentColor;

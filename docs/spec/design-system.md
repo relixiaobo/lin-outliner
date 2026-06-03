@@ -962,9 +962,13 @@ category history; see "Settings window".)
   from a node — not a different colour or a chip). The icon is one shared
   mechanism — a CSS `mask-image` keyed on `data-file-icon-kind`
   (`.inline-ref-file-icon`, see `inlineFileIcon.ts`) painted with `currentColor`,
-  so it themes automatically (B1/B8). Render sites never invent a second file-chip
-  species (the retired `.agent-composer-inline-file` / `.agent-message-inline-file`
-  were exactly that — a parallel `inline-flex` chip with a full-colour macOS icon).
+  so it themes automatically (B1/B8). The icon and its filename never split across
+  a line break: the mention is `white-space: nowrap` and the name re-opens
+  wrapping inside its own `.inline-ref-file-name` span, so the icon always travels
+  with the start of the (still-wrapping) name and is never orphaned at a line end.
+  Render sites never invent a second file-chip species (the retired
+  `.agent-composer-inline-file` / `.agent-message-inline-file` were exactly that —
+  a parallel `inline-flex` chip with a full-colour macOS icon).
 
 ### Fields And Definition Configuration
 

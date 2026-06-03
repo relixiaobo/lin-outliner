@@ -22,18 +22,25 @@ describe('outliner inlineReference toDOM', () => {
     return spec;
   };
 
-  test('a local-file reference prepends the shared monochrome file icon', () => {
+  test('a local-file reference prepends the shared monochrome file icon, name in its own span', () => {
     const spec = render({
       targetKind: 'local-file',
       targetPath: '/Users/me/Projects',
       entryKind: 'directory',
       displayName: 'Projects',
     });
-    // ['span', attrs, iconSpec, label]
-    const [, , iconSpec, label] = spec as [string, Record<string, string>, [string, Record<string, string>], string];
+    // ['span', attrs, iconSpec, nameSpec] — the name lives in its own span so the
+    // mention can be white-space: nowrap without freezing the name's wrapping.
+    const [, , iconSpec, nameSpec] = spec as [
+      string,
+      Record<string, string>,
+      [string, Record<string, string>],
+      [string, Record<string, string>, string],
+    ];
     expect(iconSpec[1].class).toBe('inline-ref-file-icon');
     expect(iconSpec[1]['data-file-icon-kind']).toBe('folder');
-    expect(label).toBe('Projects');
+    expect(nameSpec[1].class).toBe('inline-ref-file-name');
+    expect(nameSpec[2]).toBe('Projects');
   });
 
   test('a node reference is plain text with no icon', () => {
