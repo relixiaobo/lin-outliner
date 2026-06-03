@@ -4,6 +4,15 @@ import {
   NODE_SEARCH_OUTLINE_PARAMETER_DESCRIPTION,
 } from './agentNodeToolGuidance';
 
+// These schemas are sent verbatim to every provider as function/tool parameters.
+// OpenAI rejects a function schema whose ROOT has oneOf/anyOf/allOf/enum/not
+// ("schema must have type 'object' and not have ... at the top level"), so we do
+// not express mutually-exclusive argument groups with a top-level oneOf. That
+// requirement is instead enforced at runtime (the normalize* helpers return an
+// invalid_args error) and stated in the tool/parameter descriptions. Nested
+// anyOf/enum inside individual property subschemas is fine — OpenAI only
+// restricts the root.
+
 export const NODE_READ_PARAMETERS = {
   type: 'object',
   additionalProperties: false,
@@ -51,10 +60,7 @@ export const NODE_READ_PARAMETERS = {
 export const NODE_SEARCH_PARAMETERS = {
   type: 'object',
   additionalProperties: false,
-  oneOf: [
-    { required: ['outline'] },
-    { required: ['search_node_id'] },
-  ],
+  // Exactly one of outline / search_node_id required (enforced in normalizeSearchParams).
   properties: {
     outline: {
       type: 'string',
@@ -88,11 +94,7 @@ export const NODE_SEARCH_PARAMETERS = {
 export const NODE_CREATE_PARAMETERS = {
   type: 'object',
   additionalProperties: false,
-  oneOf: [
-    { required: ['outline'] },
-    { required: ['target_id'] },
-    { required: ['duplicate_id'] },
-  ],
+  // Exactly one of outline / target_id / duplicate_id required (enforced in normalizeCreateParams).
   properties: {
     parent_id: {
       type: 'string',
@@ -129,10 +131,7 @@ export const NODE_CREATE_PARAMETERS = {
 export const NODE_DELETE_PARAMETERS = {
   type: 'object',
   additionalProperties: false,
-  oneOf: [
-    { required: ['node_id'] },
-    { required: ['node_ids'] },
-  ],
+  // Exactly one of node_id / node_ids required (enforced in normalizeDeleteParams).
   properties: {
     node_id: {
       type: 'string',
@@ -160,15 +159,10 @@ export const NODE_DELETE_PARAMETERS = {
 export const NODE_EDIT_PARAMETERS = {
   type: 'object',
   additionalProperties: false,
-  oneOf: [
-    { required: ['node_id', 'old_string', 'new_string'] },
-    {
-      required: ['move'],
-      anyOf: [{ required: ['node_id'] }, { required: ['node_ids'] }],
-    },
-    { required: ['node_id', 'merge_from_node_ids'] },
-    { required: ['node_id', 'replace_with_reference_to'] },
-  ],
+  // One edit mode per call — outline edit (node_id + old_string + new_string),
+  // move (move + node_id/node_ids), merge (node_id + merge_from_node_ids), or
+  // reference replacement (node_id + replace_with_reference_to). Enforced in
+  // normalizeEditParams and documented in the parameter descriptions.
   properties: {
     node_id: {
       type: 'string',
