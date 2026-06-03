@@ -1,8 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, session, shell } from 'electron';
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { readdir, readFile, stat } from 'node:fs/promises';
-import { basename, dirname, extname, join } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DocumentService } from './documentService';
 import { AssetService } from './assetService';
@@ -41,6 +41,8 @@ import type { AgentProviderConfigInput, AgentRuntimeSettingsInput } from '../cor
 import { loadWindowState, trackWindowState } from './windowState';
 import { loadAppPreferences, saveThemePreference } from './appPreferences';
 import { isThemeMode, type ThemeMode } from '../core/theme';
+import { MAX_RAW_INLINE_IMAGE_BYTES, MAX_STAGED_ATTACHMENT_BYTES } from '../core/agentAttachmentLimits';
+import { safeAttachmentFileName } from '../core/agentAttachmentPaths';
 
 if (process.env.ELECTRON_USER_DATA_DIR) {
   app.setPath('userData', process.env.ELECTRON_USER_DATA_DIR);
@@ -92,8 +94,9 @@ const localFileIconCache = new Map<string, string | null>();
 const localFileThumbnailCache = new Map<string, string | null>();
 const pendingLocalFileIconLoads = new Map<string, Promise<string | null>>();
 const pendingLocalFileThumbnailLoads = new Map<string, Promise<string | null>>();
+const agentLocalFileRoot = process.env.LIN_AGENT_LOCAL_ROOT ?? process.cwd();
 const agentRuntime = new AgentRuntime(() => mainWindow, documentService, {
-  localFileRoot: process.env.LIN_AGENT_LOCAL_ROOT ?? process.cwd(),
+  localFileRoot: agentLocalFileRoot,
 });
 
 documentService.onProjectionChanged((event) => {
@@ -703,6 +706,54 @@ function registerIpc() {
       return { thumbnailDataUrl: null };
     }
   });
+
+  ipcMain.handle('lin:stage-attachment', async (_event, rawOptions?: {
+    bytes?: unknown;
+    mimeType?: unknown;
+    name?: unknown;
+  }) => {
+    const bytes = stagedAttachmentBuffer(rawOptions?.bytes);
+    if (!bytes) throw new Error('Attachment bytes are required.');
+    if (bytes.byteLength > MAX_STAGED_ATTACHMENT_BYTES) {
+      throw new Error(`Attachment is larger than ${formatBytes(MAX_STAGED_ATTACHMENT_BYTES)} and cannot be staged.`);
+    }
+    const rawName = typeof rawOptions?.name === 'string' && rawOptions.name.trim()
+      ? rawOptions.name.trim()
+      : 'attachment';
+    const mimeType = typeof rawOptions?.mimeType === 'string' && rawOptions.mimeType.trim()
+      ? rawOptions.mimeType.trim()
+      : 'application/octet-stream';
+    const name = safeAttachmentFileName(rawName);
+    const attachmentDir = join(resolve(agentLocalFileRoot), 'tmp', 'agent-attachments');
+    await mkdir(attachmentDir, { recursive: true });
+    const filePath = join(attachmentDir, `${randomUUID()}-${name}`);
+    await writeFile(filePath, bytes);
+    return {
+      path: filePath,
+      name: rawName,
+      mimeType,
+      sizeBytes: bytes.byteLength,
+    };
+  });
+}
+
+function stagedAttachmentBuffer(value: unknown): Buffer | null {
+  if (value instanceof ArrayBuffer) return Buffer.from(value);
+  if (ArrayBuffer.isView(value)) return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+  return null;
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
 }
 
 async function handleAssetCommand(command: AssetCommand, args: Record<string, unknown>) {
@@ -1134,7 +1185,7 @@ async function localPickedFile(filePath: string) {
     if (!entryKind) return null;
     if (entryKind === 'file' && fileStat.size <= 0) return null;
     const mimeType = entryKind === 'directory' ? 'inode/directory' : inferMimeType(filePath);
-    const imageDataBase64 = entryKind === 'file' && isInlineImageMimeType(mimeType) && fileStat.size <= 10 * 1024 * 1024
+    const imageDataBase64 = entryKind === 'file' && isInlineImageMimeType(mimeType) && fileStat.size <= MAX_RAW_INLINE_IMAGE_BYTES
       ? (await readFile(filePath)).toString('base64')
       : undefined;
     const [visual] = await withLocalFileIcons([{

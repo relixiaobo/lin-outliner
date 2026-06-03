@@ -1,0 +1,3 @@
+export const MAX_RAW_INLINE_IMAGE_BYTES = 10 * 1024 * 1024;
+export const MAX_STAGED_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+export const MAX_INLINE_IMAGE_BASE64_CHARS = Math.floor(4.5 * 1024 * 1024);

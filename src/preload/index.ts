@@ -75,6 +75,19 @@ export interface LinPreviewLocalFileResult {
   thumbnailDataUrl: string | null;
 }
 
+export interface LinStageAttachmentInput {
+  name: string;
+  mimeType: string;
+  bytes: ArrayBuffer;
+}
+
+export interface LinStageAttachmentResult {
+  path: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
 const nativeAttachmentPickerDisabled = process.env.LIN_ATTACHMENT_PICKER_METHOD === 'web'
   || process.env.LIN_DISABLE_NATIVE_ATTACHMENT_PICKER === '1';
 
@@ -143,6 +156,8 @@ const api = {
     ipcRenderer.invoke('lin:recent-local-files', options) as Promise<LinRecentLocalFilesResult>,
   searchLocalFiles: (options: LinSearchLocalFilesOptions) =>
     ipcRenderer.invoke('lin:search-local-files', options) as Promise<LinSearchLocalFilesResult>,
+  stageAttachment: (input: LinStageAttachmentInput) =>
+    ipcRenderer.invoke('lin:stage-attachment', input) as Promise<LinStageAttachmentResult>,
 };
 
 contextBridge.exposeInMainWorld('lin', api);

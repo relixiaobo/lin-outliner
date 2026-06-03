@@ -68,8 +68,40 @@ test.describe('agent composer controls', () => {
         && call.args.attachments.some((attachment: { name?: string }) => attachment.name === 'notes.txt')
       ))?.args;
     }).toMatchObject({
-      attachments: [{ name: 'notes.txt' }],
-      message: '@notes.txt',
+      attachments: [{
+        kind: 'file',
+        name: 'notes.txt',
+        path: '/mock/local-root/tmp/agent-attachments/1-notes.txt',
+      }],
+      message: '[[file:notes.txt^%2Fmock%2Flocal-root%2Ftmp%2Fagent-attachments%2F1-notes.txt]]',
+    });
+  });
+
+  test('keeps distinct pathless files with the same name and size', async ({ page }) => {
+    await page.locator('.agent-composer-file-input').setInputFiles([{
+      name: 'same.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('aaaa'),
+    }, {
+      name: 'same.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('bbbb'),
+    }]);
+    await expect(page.locator('[data-agent-file-ref]')).toHaveCount(2);
+
+    await page.getByRole('button', { name: 'Send message' }).click();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.find((call) => (
+        call.cmd === 'agent_send_message'
+        && Array.isArray(call.args.attachments)
+        && call.args.attachments.filter((attachment: { name?: string }) => attachment.name === 'same.txt').length === 2
+      ))?.args;
+    }).toMatchObject({
+      attachments: [
+        { kind: 'file', name: 'same.txt', path: '/mock/local-root/tmp/agent-attachments/1-same.txt' },
+        { kind: 'file', name: 'same.txt', path: '/mock/local-root/tmp/agent-attachments/2-same.txt' },
+      ],
     });
   });
 
@@ -118,6 +150,41 @@ test.describe('agent composer controls', () => {
       attachments: [{ kind: 'file', path: '/Users/test/Documents/local-notes.md' }],
       message: '[[file:local-notes.md^%2FUsers%2Ftest%2FDocuments%2Flocal-notes.md]]',
     });
+  });
+
+  test('rejects oversized native picker images instead of silently downgrading to files', async ({ page }) => {
+    await page.evaluate(() => {
+      const win = window as typeof window & {
+        lin?: {
+          invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+          pickLocalFiles?: () => Promise<{
+            canceled: boolean;
+            files: Array<{
+              path: string;
+              name: string;
+              mimeType: string;
+              sizeBytes: number;
+              lastModified: number;
+            }>;
+          }>;
+        };
+      };
+      if (!win.lin) return;
+      win.lin.pickLocalFiles = async () => ({
+        canceled: false,
+        files: [{
+          path: '/Users/test/Pictures/huge.png',
+          name: 'huge.png',
+          mimeType: 'image/png',
+          sizeBytes: 11 * 1024 * 1024,
+          lastModified: 1_800_000_000_000,
+        }],
+      });
+    });
+
+    await page.getByRole('button', { name: 'Add attachment' }).click();
+    await expect(page.getByRole('status')).toContainText('huge.png is larger than 10 MB');
+    await expect(page.locator('[data-agent-file-ref]')).toHaveCount(0);
   });
 
   test('renders sent attachment mentions inline without raw image placeholders', async ({ page }) => {
@@ -472,6 +539,7 @@ test.describe('agent composer controls', () => {
   test('uses local file thumbnails for mention rows, hover previews, and inline references', async ({ page }) => {
     await page.evaluate(() => {
       const thumbnail = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lPvsZAAAAABJRU5ErkJggg==';
+      const imageDataBase64 = thumbnail.slice(thumbnail.indexOf(',') + 1);
       const win = window as typeof window & {
         lin?: {
           invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
@@ -483,6 +551,7 @@ test.describe('agent composer controls', () => {
               mimeType: string;
               sizeBytes: number;
               lastModified: number;
+              imageDataBase64?: string;
               thumbnailDataUrl?: string;
             } | null;
           }>;
@@ -528,6 +597,7 @@ test.describe('agent composer controls', () => {
               mimeType: 'image/png',
               sizeBytes: 4096,
               lastModified: 1_800_000_000_000,
+              imageDataBase64,
               thumbnailDataUrl: thumbnail,
             }
           : null,
@@ -555,6 +625,20 @@ test.describe('agent composer controls', () => {
     await expect(page.locator('[data-agent-file-ref] [data-file-icon="thumbnail"]')).toBeVisible();
     await expect(page.locator('[data-agent-file-ref]')).not.toHaveAttribute('title', /gpt4\.png/);
     await expect(page.locator('[data-agent-file-ref]')).toHaveAttribute('aria-label', /gpt4\.png/);
+
+    await page.getByRole('button', { name: 'Send message' }).click();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.find((call) => (
+        call.cmd === 'agent_send_message'
+        && Array.isArray(call.args.attachments)
+        && call.args.attachments.some((attachment: { kind?: string; path?: string }) =>
+          attachment.kind === 'image' && attachment.path === '/Users/test/Pictures/gpt4.png')
+      ))?.args;
+    }).toMatchObject({
+      attachments: [{ kind: 'image', path: '/Users/test/Pictures/gpt4.png' }],
+      message: '[[file:gpt4.png^%2FUsers%2Ftest%2FPictures%2Fgpt4.png]]',
+    });
   });
 
   test('loads an image preview after selecting a result that only returned an icon', async ({ page }) => {

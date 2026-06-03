@@ -4,7 +4,7 @@ import type {
   AgentUserViewOutlineNodeContext,
   AgentUserViewPanelContext,
 } from '../../../core/agentTypes';
-import { formatNodeReferenceMarker } from '../../../core/referenceMarkup';
+import { formatNodeReferenceMarker, richTextToReferenceMarkup } from '../../../core/referenceMarkup';
 import { nodeIsDone, nodeShowsCheckbox } from '../../../core/configProjection';
 import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
@@ -170,7 +170,7 @@ function titleForNode(node: NodeProjection | undefined): string {
   if (!node) return 'Untitled';
   const text = node.type === 'reference' && node.targetId
     ? `@${node.targetId}`
-    : node.content.text || 'Untitled';
+    : richTextToReferenceMarkup(node.content) || 'Untitled';
   return compactContextText(text, MAX_CONTEXT_TITLE_LENGTH);
 }
 

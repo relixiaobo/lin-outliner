@@ -26,6 +26,9 @@ export default defineConfig({
     root: '.',
     plugins: [react()],
     clearScreen: false,
+    resolve: {
+      dedupe: ['react', 'react-dom'],
+    },
     build: {
       rollupOptions: {
         input: 'index.html',

@@ -10,6 +10,11 @@ import type {
   AgentApprovalResolutionScope,
   AgentMessageAttachmentInput,
 } from '../../../core/agentTypes';
+import {
+  MAX_INLINE_IMAGE_BASE64_CHARS,
+  MAX_RAW_INLINE_IMAGE_BYTES,
+  MAX_STAGED_ATTACHMENT_BYTES,
+} from '../../../core/agentAttachmentLimits';
 import { sanitizeFileReferenceRef } from '../../../core/referenceMarkup';
 import type {
   AgentModelOption,
@@ -81,12 +86,9 @@ const VENDOR_PREFIXES = [
 ];
 
 const MAX_ATTACHMENTS = 6;
-const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 // Attachment errors are a transient hint, not a persistent banner — they fade
 // after this delay so the composer never carries a stale error (see the effect).
 const ATTACHMENT_ERROR_TIMEOUT_MS = 5000;
-const MAX_TEXT_ATTACHMENT_CHARS = 80_000;
-const MAX_INLINE_IMAGE_BASE64_CHARS = Math.floor(4.5 * 1024 * 1024);
 const INLINE_IMAGE_MAX_DIMENSION = 2000;
 const INLINE_IMAGE_JPEG_QUALITIES = [0.8, 0.7, 0.55, 0.4];
 const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
@@ -312,7 +314,7 @@ export function AgentComposer({
     }
 
     const existingFingerprints = new Set(attachmentsRef.current.map((attachment) => attachment.fingerprint));
-    const existingHashes = new Set(attachmentsRef.current.map((attachment) => attachment.sha256));
+    const existingHashes = new Set(attachmentsRef.current.map((attachment) => attachment.sha256).filter((hash): hash is string => Boolean(hash)));
     const failures: string[] = [];
     const nextAttachments: ComposerAttachment[] = [];
     let skippedDuplicates = 0;
@@ -324,24 +326,21 @@ export function AgentComposer({
         continue;
       }
       try {
-        if (file.size > MAX_ATTACHMENT_BYTES) {
-          failures.push(`${file.name || 'Attachment'} is larger than ${formatBytes(MAX_ATTACHMENT_BYTES)}.`);
-          continue;
-        }
-        const fingerprint = fileFingerprint(file);
-        if (existingFingerprints.has(fingerprint)) {
+        const nativePath = window.lin?.getFilePath?.(file) ?? '';
+        const fingerprint = fileFingerprint(file, nativePath);
+        if (nativePath && existingFingerprints.has(fingerprint)) {
           skippedDuplicates += 1;
           continue;
         }
-        const sha256 = await sha256File(file);
-        if (existingHashes.has(sha256)) {
+        const attachment = await fileToAttachment(file, nativePath);
+        if (!nativePath && attachment.sha256 && existingHashes.has(attachment.sha256)) {
+          revokeAttachmentPreview(attachment);
           skippedDuplicates += 1;
           continue;
         }
-        const attachment = await fileToAttachment(file);
-        nextAttachments.push({ ...attachment, fingerprint, sha256 });
+        nextAttachments.push({ ...attachment, fingerprint });
         existingFingerprints.add(fingerprint);
-        existingHashes.add(sha256);
+        if (attachment.sha256) existingHashes.add(attachment.sha256);
       } catch (error) {
         failures.push(error instanceof Error ? error.message : String(error));
       }
@@ -393,10 +392,6 @@ export function AgentComposer({
         continue;
       }
       try {
-        if (file.sizeBytes > MAX_ATTACHMENT_BYTES) {
-          failures.push(`${file.name || 'Attachment'} is larger than ${formatBytes(MAX_ATTACHMENT_BYTES)}.`);
-          continue;
-        }
         const fingerprint = pickedLocalFileFingerprint(file);
         if (existingFingerprints.has(fingerprint)) {
           skippedDuplicates += 1;
@@ -804,18 +799,19 @@ function AgentApprovalCard({
   );
 }
 
-async function fileToAttachment(file: File): Promise<ComposerAttachment> {
-  if (file.size > MAX_ATTACHMENT_BYTES) {
-    throw new Error(`${file.name || 'Attachment'} is larger than ${formatBytes(MAX_ATTACHMENT_BYTES)}.`);
-  }
-
+async function fileToAttachment(file: File, nativePath: string): Promise<ComposerAttachment> {
   const mimeType = file.type || inferMimeType(file.name);
   const inlineImageMimeType = normalizeInlineImageMimeType(mimeType);
   const id = createAttachmentId();
   const name = file.name || (mimeType.startsWith('image/') ? 'image' : 'attachment.txt');
-  const nativePath = window.lin?.getFilePath?.(file) ?? '';
 
   if (inlineImageMimeType) {
+    if (file.size > MAX_RAW_INLINE_IMAGE_BYTES) {
+      throw new Error(`${name} is larger than ${formatBytes(MAX_RAW_INLINE_IMAGE_BYTES)} and cannot be attached as inline image input.`);
+    }
+    const staged = nativePath
+      ? null
+      : await stageAttachmentFile(file, { mimeType, name });
     const inlineImage = await readInlineImageForModel(file, inlineImageMimeType);
     const previewUrl = URL.createObjectURL(file);
     return {
@@ -825,7 +821,9 @@ async function fileToAttachment(file: File): Promise<ComposerAttachment> {
       mimeType: inlineImage.mimeType,
       sizeBytes: file.size,
       dataBase64: inlineImage.dataBase64,
+      path: nativePath || staged?.path,
       previewUrl,
+      ...(staged?.sha256 ? { sha256: staged.sha256 } : {}),
       thumbnailDataUrl: previewUrl,
     };
   }
@@ -841,21 +839,16 @@ async function fileToAttachment(file: File): Promise<ComposerAttachment> {
     };
   }
 
-  if (isTextAttachment(file, mimeType)) {
-    const rawText = await file.text();
-    const truncated = rawText.length > MAX_TEXT_ATTACHMENT_CHARS;
-    return {
-      id,
-      kind: 'text',
-      name,
-      mimeType,
-      sizeBytes: file.size,
-      text: truncated ? rawText.slice(0, MAX_TEXT_ATTACHMENT_CHARS) : rawText,
-      truncated,
-    };
-  }
-
-  throw new Error(`${file.name || 'Attachment'} is not a supported image or text file.`);
+  const staged = await stageAttachmentFile(file, { mimeType, name });
+  return {
+    id,
+    kind: 'file',
+    name: staged.name || name,
+    mimeType: staged.mimeType || mimeType,
+    sizeBytes: staged.sizeBytes,
+    path: staged.path,
+    sha256: staged.sha256,
+  };
 }
 
 async function pickedLocalFileToAttachment(file: PickedLocalFileAttachment): Promise<ComposerAttachment> {
@@ -864,7 +857,13 @@ async function pickedLocalFileToAttachment(file: PickedLocalFileAttachment): Pro
   const id = createAttachmentId();
   const name = file.name || 'attachment';
 
-  if (inlineImageMimeType && file.imageDataBase64) {
+  if (inlineImageMimeType) {
+    if (file.sizeBytes > MAX_RAW_INLINE_IMAGE_BYTES) {
+      throw new Error(`${name} is larger than ${formatBytes(MAX_RAW_INLINE_IMAGE_BYTES)} and cannot be attached as inline image input.`);
+    }
+    if (!file.imageDataBase64) {
+      throw new Error(`${name} could not be loaded for inline image input.`);
+    }
     const imageFile = fileFromBase64(file.imageDataBase64, name, inlineImageMimeType, file.lastModified);
     const inlineImage = await readInlineImageForModel(imageFile, inlineImageMimeType);
     const previewUrl = URL.createObjectURL(imageFile);
@@ -875,6 +874,7 @@ async function pickedLocalFileToAttachment(file: PickedLocalFileAttachment): Pro
       mimeType: inlineImage.mimeType,
       sizeBytes: file.sizeBytes,
       dataBase64: inlineImage.dataBase64,
+      path: file.path,
       previewUrl,
       thumbnailDataUrl: file.thumbnailDataUrl ?? previewUrl,
     };
@@ -890,6 +890,38 @@ async function pickedLocalFileToAttachment(file: PickedLocalFileAttachment): Pro
     path: file.path,
     thumbnailDataUrl: file.thumbnailDataUrl,
   };
+}
+
+async function stageAttachmentFile(
+  file: File,
+  metadata: { mimeType: string; name: string },
+): Promise<{ path: string; name: string; mimeType: string; sizeBytes: number; sha256: string }> {
+  const name = metadata.name || file.name || 'attachment';
+  if (file.size > MAX_STAGED_ATTACHMENT_BYTES) {
+    throw new Error(`${name} is larger than ${formatBytes(MAX_STAGED_ATTACHMENT_BYTES)} and cannot be staged for agent access.`);
+  }
+  if (!window.lin?.stageAttachment) {
+    throw new Error('Attachment staging is not available in this window.');
+  }
+  const bytes = await file.arrayBuffer();
+  const sha256 = await sha256ArrayBuffer(bytes);
+  const staged = await window.lin.stageAttachment({
+    bytes,
+    mimeType: metadata.mimeType || file.type || 'application/octet-stream',
+    name,
+  });
+  return {
+    ...staged,
+    sha256,
+  };
+}
+
+async function sha256ArrayBuffer(bytes: ArrayBuffer): Promise<string> {
+  if (!globalThis.crypto?.subtle) return '';
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 function toAttachmentPayload(attachment: ComposerAttachment): AgentMessageAttachmentInput {
@@ -921,7 +953,7 @@ function attachmentToFileReference(attachment: ComposerAttachment): AgentCompose
     entryKind: attachment.mimeType === 'inode/directory' ? 'directory' : 'file',
     iconDataUrl: attachment.iconDataUrl,
     name: attachment.name,
-    ...(attachment.kind === 'file' ? { path: attachment.path } : {}),
+    ...('path' in attachment && attachment.path ? { path: attachment.path } : {}),
     ref: attachment.ref ?? sanitizeFileReferenceRef(attachment.name),
     mimeType: attachment.mimeType,
     sizeBytes: attachment.sizeBytes,
@@ -954,22 +986,6 @@ function uniqueAttachmentRef(base: string, usedRefs: Set<string>): string {
     const candidate = `${stem}-${index}${extension}`;
     if (!usedRefs.has(candidate)) return candidate;
   }
-}
-
-function isTextAttachment(file: File, mimeType: string): boolean {
-  if (mimeType.startsWith('text/')) return true;
-  if ([
-    'application/json',
-    'application/javascript',
-    'application/typescript',
-    'application/xml',
-    'application/yaml',
-    'application/x-yaml',
-  ].includes(mimeType)) {
-    return true;
-  }
-  const lowerName = file.name.toLowerCase();
-  return [...TEXT_ATTACHMENT_EXTENSIONS].some((extension) => lowerName.endsWith(extension));
 }
 
 function inferMimeType(name: string): string {
@@ -1093,16 +1109,10 @@ function dataUrlToInlineImage(dataUrl: string, fallbackMimeType: string): { data
   return { dataBase64, mimeType };
 }
 
-async function sha256File(file: File): Promise<string> {
-  if (!globalThis.crypto?.subtle) return fileFingerprint(file);
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', await file.arrayBuffer());
-  return [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-function fileFingerprint(file: File): string {
-  return `${file.name}:${file.size}:${file.lastModified}`;
+function fileFingerprint(file: File, nativePath: string): string {
+  return nativePath
+    ? `path:${nativePath}:${file.size}:${file.lastModified}`
+    : `blob:${file.name}:${file.size}:${file.lastModified}`;
 }
 
 function pickedLocalFileFingerprint(file: PickedLocalFileAttachment): string {

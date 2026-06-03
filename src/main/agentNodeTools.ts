@@ -100,14 +100,19 @@ import type {
   OutlinerToolHost,
   ProjectionIndex,
 } from './agentNodeToolTypes';
+import { materializeFileReferenceMarkersInValue } from './agentAttachmentMaterialization';
 
 export type { OutlinerToolHost } from './agentNodeToolTypes';
 
-export function createNodeTools(host: OutlinerToolHost): AgentTool<any>[] {
+export interface NodeToolsOptions {
+  localFileRoot?: string;
+}
+
+export function createNodeTools(host: OutlinerToolHost, options: NodeToolsOptions = {}): AgentTool<any>[] {
   const agentHost = asAgentToolHost(host);
   return [
-    createNodeSearchTool(agentHost),
-    createNodeReadTool(agentHost),
+    createNodeSearchTool(agentHost, options),
+    createNodeReadTool(agentHost, options),
     createNodeCreateTool(agentHost),
     createNodeEditTool(agentHost),
     createNodeDeleteTool(agentHost),
@@ -126,6 +131,11 @@ function asAgentToolHost(host: OutlinerToolHost): OutlinerToolHost {
       ? (query) => host.operationHistory!({ origin: 'agent', ...query })
       : undefined,
   };
+}
+
+async function materializeNodeToolValue<T>(options: NodeToolsOptions, value: T): Promise<T> {
+  if (!options.localFileRoot) return value;
+  return materializeFileReferenceMarkersInValue(options.localFileRoot, value, { onError: 'preserve' });
 }
 
 function withAgentToolTransaction(tool: AgentTool<any>, host: OutlinerToolHost): AgentTool<any> {
@@ -853,7 +863,7 @@ function createNodeCreateTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
   };
 }
 
-function createNodeReadTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope<NodeReadData>> {
+function createNodeReadTool(host: OutlinerToolHost, options: NodeToolsOptions): AgentTool<any, ToolEnvelope<NodeReadData>> {
   return {
     name: 'node_read',
     label: 'Node Read',
@@ -888,18 +898,24 @@ function createNodeReadTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope
       }
 
       const items = nodeIds.map((nodeId) => buildReadItem(index, nodeId, params));
-      return nodeToolResult(successEnvelope('node_read', { items }, {
+      const materialized = await materializeNodeToolValue(options, {
+        data: { items },
+        visible: visibleReadResult(index, nodeIds, params),
+      });
+      const data = materialized.data;
+      const visible = materialized.visible;
+      return nodeToolResult(successEnvelope('node_read', data, {
         metrics: {
           durationMs: elapsed(started),
-          truncated: items.some((item) => pageHasMore(item.children)),
-          outputBytes: jsonByteLength({ items }),
+          truncated: data.items.some((item) => pageHasMore(item.children)),
+          outputBytes: jsonByteLength(data),
         },
-      }), visibleReadResult(index, nodeIds, params));
+      }), visible);
     },
   };
 }
 
-function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope<NodeSearchData>> {
+function createNodeSearchTool(host: OutlinerToolHost, options: NodeToolsOptions): AgentTool<any, ToolEnvelope<NodeSearchData>> {
   return {
     name: 'node_search',
     label: 'Node Search',
@@ -957,16 +973,22 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
         limit,
         items,
       };
+      const materialized = await materializeNodeToolValue(options, {
+        data,
+        visible: visibleSearchResult(index, data),
+      });
+      const materializedData = materialized.data;
+      const visible = materialized.visible;
 
-      return nodeToolResult(successEnvelope('node_search', data, {
+      return nodeToolResult(successEnvelope('node_search', materializedData, {
         instructions: offset + limit < total ? `Call node_search with offset ${offset + limit} to continue.` : undefined,
         warnings: search.warnings.length ? search.warnings : undefined,
         metrics: {
           durationMs: elapsed(started),
           truncated: offset + limit < total,
-          outputBytes: jsonByteLength(data),
+          outputBytes: jsonByteLength(materializedData),
         },
-      }), visibleSearchResult(index, data));
+      }), visible);
     },
   };
 }

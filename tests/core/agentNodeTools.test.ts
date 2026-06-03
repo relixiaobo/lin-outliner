@@ -1,10 +1,13 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { TRASH_ID } from '../../src/core/types';
 import { createNodeTools, visibleOperationHistory, type OutlinerToolHost } from '../../src/main/agentNodeTools';
 import type { OperationHistoryData } from '../../src/main/agentNodeToolTypes';
 import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
-import { formatNodeReferenceMarker } from '../../src/core/referenceMarkup';
+import { formatFileReferenceMarker, formatNodeReferenceMarker, splitFileReferenceMarkers } from '../../src/core/referenceMarkup';
 
 function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T) {
   expect(outcome.focus).toBeDefined();
@@ -76,11 +79,16 @@ async function executeTool<TData>(core: Core, name: string, params: unknown): Pr
   return result.details;
 }
 
-async function executeRawTool<TData>(core: Core, name: string, params: unknown): Promise<{
+async function executeRawTool<TData>(
+  core: Core,
+  name: string,
+  params: unknown,
+  options?: Parameters<typeof createNodeTools>[1],
+): Promise<{
   contentText: string;
   details: ToolEnvelope<TData>;
 }> {
-  const tool = createNodeTools(hostFor(core)).find((candidate) => candidate.name === name);
+  const tool = createNodeTools(hostFor(core), options).find((candidate) => candidate.name === name);
   expect(tool).toBeDefined();
   const result = await (tool!.execute as any)('test-call', params);
   const contentText = result.content
@@ -990,6 +998,90 @@ describe('agent node tools', () => {
     expect(item.outline).toContain('- Launch - Q2 rollout #project');
     expect(item.outline).toContain('  - Status:: Active');
     expect(item.outline).toContain('  - Draft plan');
+  });
+
+  test('node_read serializes local-file inline refs as file markers', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const nodeId = mustFocus(core.createNode(today, null, 'Placeholder'));
+    const filePath = '/Users/me/report.pdf';
+    core.applyNodeTextPatch(nodeId, {
+      ops: [{
+        type: 'replace_all',
+        content: {
+          text: 'Review  soon',
+          marks: [],
+          inlineRefs: [{
+            offset: 7,
+            target: { kind: 'local-file', path: filePath, entryKind: 'file' },
+            displayName: 'report.pdf',
+            mimeType: 'application/pdf',
+            sizeBytes: 2048,
+          }],
+        },
+      }],
+    });
+
+    const result = await executeRawTool<{
+      items: Array<{ outline?: string; title: string }>;
+    }>(core, 'node_read', { node_id: nodeId, depth: 0 });
+    const visible = parseVisibleToolResult<{
+      ok: boolean;
+      data?: { outline?: string };
+    }>(result.contentText);
+
+    const marker = formatFileReferenceMarker('report.pdf', filePath);
+    expect(result.details.data!.items[0]!.title).toBe(`Review ${marker} soon`);
+    expect(visible.data!.outline).toBe(`- %%node:${nodeId}%% Review ${marker} soon`);
+  });
+
+  test('node_read materializes out-of-root local-file inline refs for agent file tools', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-node-root-'));
+    const sourceRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-node-source-'));
+    try {
+      const core = Core.new();
+      const today = core.projection().todayId;
+      const nodeId = mustFocus(core.createNode(today, null, 'Placeholder'));
+      const filePath = path.join(sourceRoot, 'report.pdf');
+      await writeFile(filePath, 'node report body');
+      core.applyNodeTextPatch(nodeId, {
+        ops: [{
+          type: 'replace_all',
+          content: {
+            text: 'Review  soon',
+            marks: [],
+            inlineRefs: [{
+              offset: 7,
+              target: { kind: 'local-file', path: filePath, entryKind: 'file' },
+              displayName: 'report.pdf',
+              mimeType: 'application/pdf',
+              sizeBytes: 2048,
+            }],
+          },
+        }],
+      });
+
+      const result = await executeRawTool<{
+        items: Array<{ outline?: string; title: string }>;
+      }>(core, 'node_read', { node_id: nodeId, depth: 0 }, { localFileRoot: localRoot });
+      const visible = parseVisibleToolResult<{
+        ok: boolean;
+        data?: { outline?: string };
+      }>(result.contentText);
+      const marker = splitFileReferenceMarkers(result.details.data!.items[0]!.title)
+        .find((segment) => segment.type === 'file');
+
+      expect(marker?.path).toStartWith(path.join(localRoot, 'tmp', 'agent-attachments'));
+      expect(marker?.path).not.toBe(filePath);
+      expect(await readFile(marker!.path, 'utf8')).toBe('node report body');
+      expect(result.details.data!.items[0]!.title).toBe(`Review ${formatFileReferenceMarker('report.pdf', marker!.path)} soon`);
+      expect(visible.data!.outline).toBe(`- %%node:${nodeId}%% Review ${formatFileReferenceMarker('report.pdf', marker!.path)} soon`);
+    } finally {
+      await Promise.all([
+        rm(localRoot, { recursive: true, force: true }),
+        rm(sourceRoot, { recursive: true, force: true }),
+      ]);
+    }
   });
 
   test('node_read default returns one annotated outline without duplicate refs', async () => {

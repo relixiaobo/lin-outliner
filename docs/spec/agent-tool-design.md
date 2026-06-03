@@ -1336,23 +1336,23 @@ stable system prompt. This follows the agent runtime pattern:
   show them under the request context.
 - Current outliner context is a reminder part. Today node id is included because
   `node_create` defaults to today.
-- Uploaded file metadata is a reminder part containing a `<user-attachments>`
-  JSON marker. The marker tells the agent which images are inline and which
-  files are available at local paths.
-- Uploaded files are copied under the local file root when their original path
-  is outside that root. The model should call `file_read` on the materialized
-  path to inspect contents.
-- Uploaded images remain inline image blocks, with attachment metadata in the
-  reminder marker so the model can refer to them by name/order. The inline part
-  uses pi-ai's native `ImageContent` contract:
+- Uploaded files, folders, and images are represented in model-facing user text
+  as `[[file:<label>^<path>]]` markers. The path is rewritten to the
+  materialized local-root path when the original path is outside the agent local
+  root.
+- Attachment payloads are runtime transport state, not the normal model-visible
+  resource index. Historical `<user-attachments>` markers may still be parsed
+  for replay, but new normal turns should rely on file markers.
+- Uploaded images remain inline image blocks in addition to their file marker.
+  The inline part uses pi-ai's native `ImageContent` contract:
   `{ type: "image", data: base64, mimeType }`.
 - Inline uploaded images are limited to provider-safe pi-mono/coding-agent
   formats (`image/jpeg`, `image/png`, `image/gif`, `image/webp`). Large static
   images should be resized before sending so the base64 payload stays under the
   same 4.5 MB inline-image budget used by pi-mono's coding-agent.
-- Text attachments without a native local path may still be inlined as text
-  fallback. Native Electron file uploads should prefer a file path plus
-  `file_read`.
+- Attachments without a native local path are staged under the agent local file
+  root and then sent as file markers. Runtime still accepts inline text
+  attachments for historical events.
 
 ### `file_read`
 
