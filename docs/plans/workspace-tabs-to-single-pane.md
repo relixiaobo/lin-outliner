@@ -252,6 +252,56 @@ sidebar for persistent quick access — a different, smaller capability than sav
 a multi-pane *layout*. If a real saved-layouts feature is ever wanted, it is
 separate and out of scope here.
 
+## Forward-compat: local-file preview seam (advisory)
+
+A later feature (not in this plan, not started) previews a `local-file`
+`ReferenceTarget` (`src/core/types.ts`) inside a pane: a plain click replaces the
+current pane's view with the file preview and "back" returns to the node view;
+Cmd/Ctrl+click opens the preview in a new split pane. It touches the same pane
+files this refactor reshapes, so the PM asked us to keep the seam open. Decisions
+(this refactor's contract with that future work):
+
+- **[adopted — the load-bearing, irreversible one] `WorkspacePanelState` stays an
+  extensible discriminated union.** The flatten keeps `OutlinePanelState |
+  AgentDebugPanelState` over a shared `WorkspacePanelBase { id; size }`,
+  discriminated by `type` (it was NOT collapsed to outliner-only). Adding preview
+  is then localized: a `FilePreviewPanelState extends WorkspacePanelBase { type:
+  'file-preview'; path: string; entryKind: 'file' | 'directory' }` member + one
+  `WorkspaceCanvas` render branch + one `sanitizePanel` branch. Cmd/Ctrl+click →
+  a new preview pane is fully accommodated by this shape today. This is the
+  expensive, hard-to-reverse dependency, and it is satisfied.
+
+- **[deferred, documented] per-pane history stays a root stack (`NodeId[]`), not a
+  generalized `PaneView[]` view-state stack.** Preview-*in-current-pane* (plain
+  click + back-to-node) is the only part that needs a non-node history entry. The
+  target shape is:
+
+  ```ts
+  type PaneView =
+    | { kind: 'outliner'; rootId: NodeId }
+    | { kind: 'file-preview'; path: string; entryKind: 'file' | 'directory' }; // later
+  ```
+
+  Doing it *properly* means promoting a navigable pane's **current view** (not
+  just its history) to `PaneView`, so the pane's content flips between outliner
+  and preview as you go back/forward — a real scope/risk increase across
+  `navigateOutlinerPanel`, `navigatePanelBack/Forward`, `sanitizePanel`,
+  `NodePanel` breadcrumb, and `useWorkspaceKeyboard`. The half-measure (typing the
+  arrays as a union without moving the current view) buys the feature nothing.
+  Per the PM's latitude, deferred to keep this refactor healthy and fully tested.
+  No persistence cost to deferring — pre-launch, the `:v2` shape can be cut over
+  again freely when preview lands.
+
+- **[deferred, nice-to-have] generic "open in current pane / open in split pane"
+  over view kind.** Today's entry points (`navigatePanelRoot`, `openPanel`) are
+  `NodeId`-typed; preview will add view-typed siblings on the same union. Noted,
+  not built — designing it blind (without the preview consumer) risks the wrong
+  shape.
+
+Net: the irreversible dependency (extensible pane union) is in place; the
+cheap-to-add-later parts (history generalization, generic open) are documented
+seams, not silent gaps.
+
 ## Spec sync (A6 — same change)
 
 `docs/spec/workspace-layout.md` is built on the tab model and **must be

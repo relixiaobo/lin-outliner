@@ -203,6 +203,30 @@ panes on demand (see Interaction Examples). There is no saved/named multi-pane
 layout feature — that capability went away with tabs and is not replaced by pins
 (pins park individual nodes for quick access, a different and smaller thing).
 
+### Extensibility seam (preview, etc.)
+
+`WorkspacePanelState` is an **extensible discriminated union** (`type`
+discriminant over a shared `WorkspacePanelBase`). New pane kinds are added as a
+union member + a `WorkspaceCanvas` render branch + a `sanitizePanel` branch,
+without reshaping existing panes. The planned consumer is a `file-preview` pane
+for `local-file` references (Cmd/Ctrl+click on such a reference → new preview
+pane).
+
+Per-pane history is currently **outliner-only** (`pageBackStack: NodeId[]` —
+a stack of roots). Previewing a file *in the current pane* (plain click, with
+"back" returning to the node view) needs a history entry that is not a node;
+when that feature lands, generalize the root stack into a **view-state stack** so
+a pane's current view and its history are both a `PaneView`:
+
+```ts
+type PaneView =
+  | { kind: 'outliner'; rootId: NodeId }
+  | { kind: 'file-preview'; path: string; entryKind: 'file' | 'directory' };
+```
+
+This is a deliberate, documented seam — not yet built: today history is
+`NodeId[]` and a pane's current view is its `type` + `rootId`.
+
 ## Panel Semantics
 
 An outline pane is a view into document data. Multiple panes can show different
