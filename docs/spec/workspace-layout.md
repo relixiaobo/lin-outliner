@@ -1,16 +1,20 @@
 # Workspace Layout
 
-This document describes the app layout model for tabs, the workspace canvas,
-outline panels, the sidebar, and the agent dock.
+This document describes the app layout model: the workspace layout, the
+workspace canvas, outline panels, the sidebar, and the agent dock.
 
 For visual tokens, density, typography, and interaction states, see the
 single-file design-system contract:
 [`design-system.md`](./design-system.md).
 
+There is **no tab concept.** Earlier iterations nested panels inside switchable
+workspace tabs; that layer was removed (it was never used in practice). The
+canvas now has exactly one container primitive — the **pane**.
+
 ## Core Model
 
-The app shell owns the persistent outer surfaces. Tabs own only the central
-workspace canvas.
+The app shell owns the persistent outer surfaces. A single workspace layout owns
+the central canvas.
 
 ```txt
 App Shell
@@ -18,30 +22,28 @@ App Shell
      -> left: traffic lights + sidebar toggle
      -> center: per-pane breadcrumb headers
      -> right: agent dock header + agent toggle
-  -> Sidebar rail (left)  -> navigation + tab switcher
-  -> Active tab content
+  -> Sidebar rail (left)  -> navigation
+  -> Workspace layout
      -> Workspace canvas
         -> tiled outline panels
   -> Agent rail (right)
   -> Overlay layer
 ```
 
-The important boundary is:
+The important boundaries:
 
-- Sidebar is cross-tab.
-- Agent dock is cross-tab.
-- Tab content is the central workspace canvas only.
-- A tab may contain one or more outline panels.
-- Outline panels are tiled side by side. They do not overlap or cover each
-  other.
+- Sidebar is independent of the canvas layout.
+- Agent dock is independent of the canvas layout.
+- The workspace layout is the central workspace canvas only.
+- The layout contains one or more panes.
+- Panes are tiled side by side. They do not overlap or cover each other.
 
 ## Window Chrome (Top Strip)
 
 The window chrome is a single thin strip at the window top, at traffic-light
-height. It is the window's title-bar drag region and is part of the app shell —
-not owned by any workspace tab. There is **no global tab strip and no top-bar
-back/forward**; tab switching lives in the sidebar (see Sidebar Boundary) and
-page-history navigation is keyboard-driven. The full visual contract is in
+height. It is the window's title-bar drag region and is part of the app shell.
+There is **no global tab strip and no top-bar back/forward**; page-history
+navigation is keyboard-driven. The full visual contract is in
 [`design-system.md`](./design-system.md) → Shell; this section covers only the
 ownership model.
 
@@ -60,15 +62,13 @@ Left corner — window controls:
 - Sidebar toggle.
 
 These are fixed window-chrome controls anchored to the window's top-left. They
-are not stored inside a workspace tab and do not move when the sidebar collapses
-(only the rail slides away).
+do not move when the sidebar collapses (only the rail slides away).
 
 Center — per-pane breadcrumb headers:
 
-- Each open outline panel contributes its own breadcrumb header
-  (`avatar / path / current`) with a `×` close at its right; the last remaining
-  panel shows no `×`.
-- The breadcrumb is the panel's header and its drag region. A per-panel back
+- Each open pane contributes its own breadcrumb header (`avatar / path /
+  current`) with a `×` close at its right; the last remaining pane shows no `×`.
+- The breadcrumb is the pane's header and its drag region. A per-pane back
   control lives in the breadcrumb row; global page-history back/forward are on
   `Cmd+[` / `Cmd+]` with no chrome buttons.
 
@@ -88,52 +88,50 @@ chrome render through the shared overlay layer, not inline in the strip.
 App shell:
 
 The outer application frame. It contains the window chrome (top strip), the
-sidebar rail (which hosts the tab switcher), the active workspace canvas, the
-agent rail, and global overlays.
+sidebar rail, the workspace canvas, the agent rail, and global overlays.
 
-Workspace tab:
+Workspace layout:
 
-A saved central workspace layout. A tab contains the state needed to reconstruct
-the canvas and its outline panels. It does not own the sidebar or agent dock.
+The persisted state of the central canvas: the set of panes, their order and
+sizes, and which pane is active. It does not own the sidebar or agent dock.
 
 Workspace canvas:
 
-The central area selected by the active tab. It lays out one or more outline
-panels on top of the app background.
+The central area. It lays out one or more panes on top of the app background.
 
-Outline panel:
+Pane (outline panel):
 
-A document or outline view inside a workspace canvas. Panels are tiled in a
-single row for the initial design. They may be resizable, but they do not
-overlap.
+A document or outline view inside the canvas — the single canvas primitive.
+Panes are tiled in a single row. They may be resizable, but they do not overlap.
+A pane is one of two variants: an outliner pane (a node root) or an agent-debug
+pane (a session inspector). Both tile identically.
 
 Agent dock:
 
-The cross-tab conversation surface on the right side. It can read and edit the
-outliner through tools, using the active tab as default context.
+The conversation surface on the right side. It can read and edit the outliner
+through tools, using the active pane as default context.
 
 Sidebar dock:
 
-The cross-tab navigation surface on the left side. It exposes global entry
-points such as Today, Library, Recents, and Schema, followed by pinned nodes
-and the current workspace root outline. Recents is a saved search node rather
-than bespoke sidebar logic; the root outline renders real user-facing root
-children such as Daily notes, Projects, Areas, Resources, Library, Saved
-searches, and Trash. The current workspace root itself is a clickable row with
-a compact avatar. Sidebar rows share one content axis for text and icons; tree
-chevrons sit in the auxiliary gutter before that axis, so they never push the
-main content inward. The content axis starts `20px` from the sidebar edge;
-rows extend to the sidebar edge so the only visual gap to the canvas is the
-standard shell gap. Chevrons use a compact `16px` hit area that starts `4px`
-from the sidebar edge. Sidebar rows use a slightly roomier navigation rhythm
-than dense controls, with a 28px row height and 16px icon slots. Chevrons stay
-low-contrast. Primary sidebar entries use the shared neutral control hover fill;
-the workspace root outline stays background-free on hover and only deepens the
-row text/icon color.
+The navigation surface on the left side. It exposes global entry points such as
+Today, Library, Recents, and Schema, followed by pinned nodes and the current
+workspace root outline. Recents is a saved search node rather than bespoke
+sidebar logic; the root outline renders all real root children (Daily notes,
+Library, Schema, Saved searches, Trash, Settings — none hidden). The current
+workspace root itself is a clickable row with a compact avatar. Sidebar rows
+share one content axis for text and icons; tree chevrons sit in the auxiliary
+gutter before that axis, so they never push the main content inward. The content
+axis starts `20px` from the sidebar edge; rows extend to the sidebar edge so the
+only visual gap to the canvas is the standard shell gap. Chevrons use a compact
+`16px` hit area that starts `4px` from the sidebar edge. Sidebar rows use a
+slightly roomier navigation rhythm than dense controls, with a 28px row height
+and 16px icon slots. Chevrons stay low-contrast. Primary sidebar entries use the
+shared neutral control hover fill; the workspace root outline stays
+background-free on hover and only deepens the row text/icon color.
 
 ## Visual Layering
 
-There is a visual z-axis between broad surfaces, but not between outline panels.
+There is a visual z-axis between broad surfaces, but not between outline panes.
 
 ```txt
 Background layer
@@ -143,7 +141,7 @@ Background layer
   -> workspace canvas background
 
 Raised content layer
-  -> outline panels as white surfaces on the canvas
+  -> outline panes as white surfaces on the canvas
 
 Overlay layer
   -> menus
@@ -153,152 +151,144 @@ Overlay layer
   -> transient previews
 ```
 
-Outline panels themselves are not free-floating windows. They are tiled
-siblings. The implementation should not introduce panel overlap, arbitrary
-panel `zIndex`, or freeform drag stacking for the initial layout.
+Panes are not free-floating windows. They are tiled siblings. The implementation
+does not introduce pane overlap, arbitrary pane `zIndex`, or freeform drag
+stacking.
 
-## Tab Semantics
+## Layout Semantics
 
-Workspace tabs represent central workspace canvas layouts. They are switched
-from the sidebar (there is no top tab strip). They do not represent agent
-conversations and they do not include the sidebar state.
+The workspace layout owns the canvas. Its persisted shape:
 
 ```ts
-interface WorkspaceTab {
+interface WorkspacePanelBase {
   id: string;
-  title: string;
-  activePanelId: string | null;
-  panels: OutlinePanelState[];
+  size: number; // tile flex ratio
+}
+
+interface OutlinePanelState extends WorkspacePanelBase {
+  type: 'outliner';
+  rootId: NodeId;
+  pageBackStack?: NodeId[];
+  pageForwardStack?: NodeId[];
+}
+
+interface AgentDebugPanelState extends WorkspacePanelBase {
+  type: 'agent-debug';
+  sessionId: string | null;
+}
+
+type WorkspacePanelState = OutlinePanelState | AgentDebugPanelState;
+
+interface WorkspaceLayout {
+  activePanelId: string;
+  panels: WorkspacePanelState[];
 }
 ```
 
-Switching tabs changes:
+The tile ratio (`size`) lives **on the panel**, not in a separate parallel map —
+one array is the whole layout truth, so adding/closing a pane cannot desync a
+side table. The layout is persisted to `localStorage`
+(`lin-outliner:workspace-layout:v2`). It is UI state; document content remains in
+the TypeScript-backed document model.
 
-- The set of outline panels in the central canvas.
-- The active outline panel.
-- Panel widths, panel order, scroll positions, and per-panel view state.
-- Current-panel page history for node-page navigation.
-
-Switching tabs should not reset:
+The layout does **not** include:
 
 - Sidebar visibility or navigation state.
-- Agent conversation state.
-- Agent panel scroll/input state, unless a future product decision explicitly
-  binds conversations to tabs.
-- Document operation undo/redo state. Panel page history is navigation history
+- Agent conversation state, scroll, or input.
+- Document operation undo/redo state. Per-pane page history is navigation history
   only and must not change document history.
+
+**Default layout:** a single outliner pane on Today. The user opens additional
+panes on demand (see Interaction Examples). There is no saved/named multi-pane
+layout feature — that capability went away with tabs and is not replaced by pins
+(pins park individual nodes for quick access, a different and smaller thing).
 
 ## Panel Semantics
 
-An outline panel is a view into document data. Multiple panels can show
-different roots, or they can show different views into the same underlying
-document graph.
+An outline pane is a view into document data. Multiple panes can show different
+roots, or different views into the same underlying document graph.
 
-```ts
-interface OutlinePanelState {
-  id: string;
-  rootNodeId: NodeId;
-  title?: string;
-  width?: number;
-  scrollTop?: number;
-  pageBackStack?: NodeId[];
-  pageForwardStack?: NodeId[];
-  focusedId?: NodeId | null;
-  selectedId?: NodeId | null;
-  selectedIds?: NodeId[];
-  expanded?: NodeId[];
-}
-```
-
-Panel order is array order. There is no `panelZOrder` in the initial model.
+Pane order is array order. There is no `panelZOrder`.
 
 ```txt
-panels[0] -> leftmost panel
-panels[1] -> next panel
-panels[2] -> next panel
+panels[0] -> leftmost pane
+panels[1] -> next pane
+panels[2] -> next pane
 ```
 
-The active panel is the panel that receives outline keyboard commands when the
-focus is in the workspace canvas.
+The active pane is the pane that receives outline keyboard commands when focus is
+in the workspace canvas.
 
 ## Tiled Layout
 
-The first implementation should use a horizontal tiled layout.
+The canvas uses a horizontal tiled layout.
 
 Rules:
 
-- Panels are laid out from left to right.
-- Panels have minimum and maximum widths.
-- Panels resize proportionally according to their persisted ratios while every
-  panel can satisfy the minimum width defined in
+- Panes are laid out from left to right.
+- Panes have minimum and maximum widths.
+- Panes resize proportionally according to their persisted `size` ratios while
+  every pane can satisfy the minimum width defined in
   [`design-system.md#foundations`](./design-system.md#foundations).
-- If panel minimum widths exceed the available canvas width, horizontal scrolling
-  is allowed inside the workspace canvas. Do not shrink panels below the minimum
+- If pane minimum widths exceed the available canvas width, horizontal scrolling
+  is allowed inside the workspace canvas. Do not shrink panes below the minimum
   just to avoid scrolling.
-- Panel resize handles may be added between panels.
-- Adding a panel appends it next to the current panel or at the end.
-- Closing a panel removes it from the tab. If it was active, focus moves to the
-  nearest remaining panel.
+- Pane resize handles sit between panes.
+- Opening a pane appends it next to the current pane or at the end, capped at
+  `MAX_PERSISTED_PANELS` (4). At the cap, opening replaces the rightmost pane's
+  root rather than adding a fifth pane.
+- Closing a pane removes it from the layout. If it was active, focus moves to the
+  nearest remaining pane.
 
-Possible sizing model:
-
-```ts
-interface PanelLayout {
-  panelId: string;
-  basisPx?: number;
-  flex?: number;
-  minWidthPx: number;
-}
-```
-
-Avoid making every panel independent `position:absolute` unless the product
-explicitly moves to freeform window management later.
+Avoid making every pane independent `position:absolute` — the product does not do
+freeform window management.
 
 ## Sidebar Boundary
 
-The sidebar is cross-tab. It should not be recreated when a tab changes.
+The sidebar is independent of the canvas layout. It is not recreated when the
+layout changes.
 
 Sidebar responsibilities:
 
 - Global navigation entries.
-- Workspace roots.
+- Workspace roots (all root sections shown; none hidden).
 - Search and library entry points.
 - Recents.
-- Future global metadata surfaces.
+- Future global metadata surfaces (e.g. pinned nodes).
 
-The sidebar may open a node into the active tab's canvas. For example, clicking
-Today can replace the active panel root or open Today in a new panel depending
-on the current command mode.
+The sidebar opens a node into the canvas. A plain click replaces the active
+pane's root; Alt/Option-click opens the node in a new pane.
 
 ## Agent Boundary
 
-The agent dock is cross-tab. It is independent from the active tab, but its
-default tools operate against the active tab context.
+The agent dock is independent of the canvas layout, but its default tools operate
+against the active-pane context.
 
 The agent can ask:
 
-- Which tab is active?
-- Which outline panels are open?
-- Which panel is active?
-- What is selected in the active panel?
-- What nodes are visible in the active panel?
+- Which pane is active?
+- Which panes are open?
+- What is selected in the active pane?
+- What nodes are visible in the active pane?
 
 The agent can request:
 
-- Open a node in the active panel.
-- Open a node in a new panel.
+- Open a node in the active pane.
+- Open a node in a new pane.
 - Apply a document edit through commands.
 - Show a diff or approval overlay.
 
 The agent should not:
 
-- Store its transcript in a workspace tab.
-- Directly mutate panel state without going through a tool or UI action.
-- Force a tab switch unless the user or a tool explicitly requests it.
+- Store its transcript in the workspace layout.
+- Directly mutate pane state without going through a tool or UI action.
+
+The agent's view context is pane-centric (`activePanelId`, `focusedPanelId`,
+`nodePanels`); it carries no tab concept.
 
 ## Focus Model
 
-The app should distinguish the focused surface from the active panel.
+The app distinguishes the focused surface from the active pane.
 
 ```ts
 type FocusedSurface =
@@ -309,33 +299,23 @@ type FocusedSurface =
 
 interface ShellFocusState {
   focusedSurface: FocusedSurface;
-  activeTabId: string;
-}
-```
-
-Workspace tabs then track their own active panel:
-
-```ts
-interface WorkspaceTab {
-  id: string;
   activePanelId: string | null;
-  panels: OutlinePanelState[];
 }
 ```
 
 Examples:
 
 - Clicking an outline row sets `focusedSurface = 'workspace'` and updates the
-  active panel.
+  active pane.
 - Typing in the agent input sets `focusedSurface = 'agent'` but does not clear
-  the active panel.
+  the active pane.
 - Opening the command palette sets `focusedSurface = 'overlay'` while retaining
   the previous surface for restore.
 
 ## Overlay Layer
 
-Overlays should be global to the app shell, not nested deeply inside panels.
-This avoids clipping and stacking conflicts.
+Overlays are global to the app shell, not nested deeply inside panes. This avoids
+clipping and stacking conflicts.
 
 Overlay examples:
 
@@ -346,8 +326,8 @@ Overlay examples:
 - Agent diff preview.
 - Global search.
 
-An overlay may be anchored to a panel row or to the agent panel, but it should
-render through a common overlay host.
+An overlay may be anchored to a pane row or to the agent panel, but it renders
+through a common overlay host.
 
 ```ts
 interface OverlayState {
@@ -360,8 +340,7 @@ interface OverlayState {
 
 ```ts
 interface AppShellState {
-  activeTabId: string;
-  tabs: WorkspaceTab[];
+  layout: WorkspaceLayout;
   sidebar: SidebarState;
   agent: AgentPanelState;
   focus: ShellFocusState;
@@ -380,7 +359,8 @@ interface AgentPanelState {
 }
 ```
 
-This is UI state. Document content remains in the TypeScript-backed document model.
+This is UI state. Document content remains in the TypeScript-backed document
+model.
 
 ## Interaction Examples
 
@@ -388,51 +368,48 @@ Open node from sidebar:
 
 ```txt
 User clicks Today in sidebar
-  -> active tab remains the same
-  -> active panel root changes to Today, or a new panel opens
+  -> active pane root changes to Today (plain click), or
+  -> a new pane opens on Today (Alt/Option-click)
   -> sidebar remains mounted
   -> agent remains mounted
 ```
 
-Switch tab:
+Open node in a split pane:
 
 ```txt
-User clicks a tab in the sidebar switcher
-  -> activeTabId changes
-  -> central canvas panels change
-  -> sidebar stays mounted (only the active-tab indicator moves)
-  -> agent unchanged
+User Cmd/Ctrl-clicks a reference, or picks "Open in split pane" from the
+node context menu
+  -> append an OutlinePanelState to layout.panels (or, at the 4-pane cap,
+     replace the rightmost pane's root)
+  -> set activePanelId to that pane
+  -> layout recalculates tiled widths from each pane's size
+```
+
+Close a pane:
+
+```txt
+User clicks the breadcrumb × on a pane (shown only when >1 pane)
+  -> remove the pane from layout.panels
+  -> if it was active, focus moves to the nearest remaining pane
 ```
 
 Agent edits current selection:
 
 ```txt
 User asks agent to rewrite selected node
-  -> agent reads activeTabId
-  -> agent reads active panel selection
+  -> agent reads activePanelId
+  -> agent reads active-pane selection
   -> agent proposes edit
   -> user approves if needed
   -> command applies document mutation
   -> projection updates
-  -> active tab and panel remain mounted
-```
-
-Open new outline panel:
-
-```txt
-User opens a node in split view
-  -> append OutlinePanelState to active tab.panels
-  -> set activePanelId to the new panel
-  -> layout recalculates tiled widths
 ```
 
 ## Implementation Notes
 
-- Start with a simple `display: grid` or flex row for panels.
-- Keep panel state normalized enough that adding and closing panels is cheap.
-- Do not introduce arbitrary panel z-order until there is a concrete product
-  need for overlapping windows.
-- Keep agent state outside tab state from the beginning.
-- Keep sidebar state outside tab state from the beginning.
-- Add a shared overlay host early, even if it initially renders only the
-  command palette and trigger popovers.
+- Panes lay out as a flex row; each pane's flex basis derives from its `size`.
+- Keep pane state normalized enough that adding and closing panes is cheap (the
+  `size`-on-panel shape means there is no parallel size map to maintain).
+- Do not introduce arbitrary pane z-order; there is no overlapping-windows need.
+- Keep agent state and sidebar state outside the layout.
+- Route all overlays through the shared overlay host.
