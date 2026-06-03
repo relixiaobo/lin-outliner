@@ -47,15 +47,6 @@ Ordered by priority; lower items may depend on higher ones.
   light-mode + interaction (unfurl / drag / resize) visual pass (verified dark
   only at merge); real OS vibrancy tuning. (Persisted light/dark/system toggle #45
   shipped in PR #82.) See `docs/plans/design-system-rollout.md`.
-- **workspace-tabs-to-single-pane** (P1) — remove the multi-tab concept (sidebar
-  "Tabs" list + multiple tabs) while KEEPING multi-pane split view; panes elevate
-  to a single top-level v2 layout. Bundles two same-file menu cleanups to avoid
-  collisions: right-click "Open" → "Open in split pane" (it duplicates
-  bullet-click), and removing the `Appearance` (icon/banner) context-menu item;
-  plus showing all root sections (incl. Schema/Settings) in the sidebar tree.
-  Touches `Sidebar` / `useWorkspaceTabs` / `App` / `WorkspaceCanvas` /
-  `useResizableLayout` / `NodeContextMenu` + persisted layout schema (v1→v2 drop,
-  pre-release). No `src/core`. See `docs/plans/workspace-tabs-to-single-pane.md`.
 - **agent-empty-state-onboarding** (P1) — agent panel empty state: remove the three
   hardcoded suggestion chips (greeting / whitespace instead), and add a
   no-LLM-key onboarding (CTA → Settings › Providers, disable send when no usable
@@ -69,11 +60,11 @@ Ordered by priority; lower items may depend on higher ones.
   — but **reproduce the real blocker first** (code-only analysis was
   inconclusive). Mostly `state/document.ts`; batch commands already generic. See
   `docs/plans/field-value-row-selection.md`.
-- **sidebar-pinned-nodes** (P2, **depends on workspace-tabs-to-single-pane**) —
+- **sidebar-pinned-nodes** (P2, **unblocked — workspace-tabs-to-single-pane landed in PR #85**) —
   implement the stubbed Pinned section: pin from right-click on BOTH outliner and
   sidebar node rows; persist across restart. Recommended storage = renderer layout
   state (not the core document — flag to PM if pins should be a document concept).
-  Rebases on the v2 layout + post-refactor sidebar/menu. See
+  Builds on the merged v2 layout + post-refactor sidebar/menu. See
   `docs/plans/sidebar-pinned-nodes.md`.
 - **agent-tool-permissions-hardening** (P2) — non-blocking follow-ups after the
   #60 permission implementation: move the `sessionApproved` short-circuit below
@@ -126,6 +117,16 @@ Ordered by priority; lower items may depend on higher ones.
 
 ## Recently completed
 
+- **workspace-tabs-to-single-pane** (cc, PR #85) — removed the multi-tab concept; panes are
+  now the single top-level canvas primitive (`WorkspaceLayout { activePanelId, panels[] }`,
+  per-panel `size`, v2 layout). Default = single Today pane; Cmd/Ctrl+click opens a split
+  pane (replaces the rightmost root at the 4-pane cap). Sidebar shows all root sections;
+  node Appearance (icon/banner) menu removed (T4). Review-gate hardening folded in: debug-only
+  canvas states no longer wipe the canvas / drop a debug session / boot rootless / mis-target
+  page-history + Cmd+M; `closePanel` clears focus into a debug pane. Net ~−990 lines, no
+  `src/core`. Design folded into `docs/spec/workspace-layout.md` (A6); plan archived. Gate:
+  typecheck clean, renderer 268/0, e2e green (the 5 `outliner-navigation-title` failures are
+  pre-existing renderer-mock limits, baseline-confirmed identical on the pre-fix head).
 - **fix: `isSystemId` covers Library + Recents** (main) — fast-track bug. `isSystemId()`
   (`src/core/core.ts`) omitted `LIBRARY_ID`/`RECENTS_ID`, so `removeSubtreeDirect` (guarded
   only by `isSystemId`) could hard-delete Library and `isSearchCandidate` surfaced

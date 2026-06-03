@@ -375,6 +375,25 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Workspace shell: tabs removed, split panes kept (PR #85)** — implements
+  `workspace-tabs-to-single-pane.md`. The multi-**tab** concept is gone; the multi-**pane**
+  split view stays and panes become the single top-level canvas primitive. `tabs[] +
+  activeTabId` flattens to one `WorkspaceLayout { activePanelId, panels[] }`; tile `size`
+  moves onto each panel (the parallel `panelSizes` map is deleted); localStorage bumps
+  `:v1`→`:v2` (v1 dropped on load, pre-release). Hooks/flags renamed to tell the truth
+  (`useWorkspaceTabs`→`useWorkspaceLayout`, `wantsNewTabFromClick`→`wantsNewPaneFromClick`,
+  `NavigateRootOptions.newTab`→`newPane`). Default layout is a **single Today pane**;
+  Cmd/Ctrl+click a reference opens a new split pane (replaces the rightmost root at the
+  4-pane cap). The sidebar tree shows all root sections (Schema/Settings no longer hidden);
+  right-click "Open" → "Open in split pane"; the node **Appearance** (icon/banner)
+  context-menu item + submenu are removed (T4 — no UI entry point to set/clear a node
+  icon/banner remains, by design). Review-gate hardening: debug-only canvas states no longer
+  wipe the canvas (`navigateRoot`), silently drop an agent-debug session (`openPanel` at the
+  cap now reverse-finds an outliner pane), boot into a rootless canvas (`sanitizeLayout`
+  rejects an all-debug persisted layout), or mis-target page-history / Cmd+M (`activeOutlinerPanel`
+  is strict; the ambient fallback drives only sidebar/drag). Net ~−990 lines; no `src/core`
+  protocol change. Spec rewritten for the no-tabs model (`docs/spec/workspace-layout.md`, A6).
+
 - **Sidebar / agent rail toggles use static `PanelLeft` / `PanelRight` icons (main)** —
   the two window-chrome rail toggles drop the open/close chevron-swap glyphs
   (`PanelLeftClose/Open`, `PanelRightClose/Open`) for one clean static icon per side;
