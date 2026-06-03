@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
@@ -266,6 +266,31 @@ describe('agent node tools', () => {
     expect(envelope.error?.code).toBe('invalid_annotation');
   });
 
+  test('node_create rejects out-of-root local-file markers from agent outlines', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-node-root-'));
+    const sourceRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-node-source-'));
+    try {
+      const core = Core.new();
+      const today = core.projection().todayId;
+      const outsidePath = path.join(sourceRoot, 'id_rsa');
+      const marker = formatFileReferenceMarker('id_rsa', outsidePath);
+
+      const result = await executeRawTool(core, 'node_create', {
+        parent_id: today,
+        outline: `- Read ${marker}`,
+      }, { localFileRoot: localRoot });
+
+      expect(result.details.ok).toBe(false);
+      expect(result.details.error?.code).toBe('invalid_file_reference');
+      expect(core.state().nodes[today]!.children).toHaveLength(0);
+    } finally {
+      await Promise.all([
+        rm(localRoot, { recursive: true, force: true }),
+        rm(sourceRoot, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
   test('node_create preserves unchecked checkbox markers', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -528,6 +553,33 @@ describe('agent node tools', () => {
     expect(core.state().nodes[oldChild]!.parentId).toBe(TRASH_ID);
     expect(core.state().nodes[oldChild]!.content.text).toBe('Old child');
     expect(core.state().nodes[root]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual(['', 'New child']);
+  });
+
+  test('node_edit rejects out-of-root local-file markers from agent outlines', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-node-root-'));
+    const sourceRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-node-source-'));
+    try {
+      const core = Core.new();
+      const today = core.projection().todayId;
+      const root = mustFocus(core.createNode(today, null, 'Task'));
+      const outsidePath = path.join(sourceRoot, 'id_rsa');
+      const marker = formatFileReferenceMarker('id_rsa', outsidePath);
+
+      const result = await executeRawTool(core, 'node_edit', {
+        node_id: root,
+        old_string: '*',
+        new_string: `- %%node:${root}%% Task ${marker}`,
+      }, { localFileRoot: localRoot });
+
+      expect(result.details.ok).toBe(false);
+      expect(result.details.error?.code).toBe('invalid_file_reference');
+      expect(core.state().nodes[root]!.content.text).toBe('Task');
+    } finally {
+      await Promise.all([
+        rm(localRoot, { recursive: true, force: true }),
+        rm(sourceRoot, { recursive: true, force: true }),
+      ]);
+    }
   });
 
   test('node_edit validates existing date field values against the canonical format', async () => {
@@ -1035,7 +1087,7 @@ describe('agent node tools', () => {
     expect(visible.data!.outline).toBe(`- %%node:${nodeId}%% Review ${marker} soon`);
   });
 
-  test('node_read materializes out-of-root local-file inline refs for agent file tools', async () => {
+  test('node_read preserves out-of-root local-file inline refs without materializing them', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-node-root-'));
     const sourceRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-node-source-'));
     try {
@@ -1043,7 +1095,6 @@ describe('agent node tools', () => {
       const today = core.projection().todayId;
       const nodeId = mustFocus(core.createNode(today, null, 'Placeholder'));
       const filePath = path.join(sourceRoot, 'report.pdf');
-      await writeFile(filePath, 'node report body');
       core.applyNodeTextPatch(nodeId, {
         ops: [{
           type: 'replace_all',
@@ -1071,11 +1122,9 @@ describe('agent node tools', () => {
       const marker = splitFileReferenceMarkers(result.details.data!.items[0]!.title)
         .find((segment) => segment.type === 'file');
 
-      expect(marker?.path).toStartWith(path.join(localRoot, 'tmp', 'agent-attachments'));
-      expect(marker?.path).not.toBe(filePath);
-      expect(await readFile(marker!.path, 'utf8')).toBe('node report body');
-      expect(result.details.data!.items[0]!.title).toBe(`Review ${formatFileReferenceMarker('report.pdf', marker!.path)} soon`);
-      expect(visible.data!.outline).toBe(`- %%node:${nodeId}%% Review ${formatFileReferenceMarker('report.pdf', marker!.path)} soon`);
+      expect(marker?.path).toBe(filePath);
+      expect(result.details.data!.items[0]!.title).toBe(`Review ${formatFileReferenceMarker('report.pdf', filePath)} soon`);
+      expect(visible.data!.outline).toBe(`- %%node:${nodeId}%% Review ${formatFileReferenceMarker('report.pdf', filePath)} soon`);
     } finally {
       await Promise.all([
         rm(localRoot, { recursive: true, force: true }),

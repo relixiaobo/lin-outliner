@@ -66,10 +66,7 @@ import {
 } from '../core/referenceMarkup';
 import { serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
 import { MAX_INLINE_IMAGE_BASE64_CHARS } from '../core/agentAttachmentLimits';
-import {
-  materializeFileReferenceMarkersInText,
-  materializePathBackedAttachment,
-} from './agentAttachmentMaterialization';
+import { materializePathBackedAttachment } from './agentAttachmentMaterialization';
 import { toolEnvelopeAfterToolCall } from './agentToolEnvelope';
 import { createAgentTools, type AgentToolsOptions } from './agentTools';
 import { LIN_AGENT_SYSTEM_PROMPT } from './agentSystemPrompt';
@@ -615,9 +612,7 @@ export class AgentRuntime {
       const session = await this.ensureSessionWithId(sessionId);
       const materialized = await this.materializeFileAttachments(normalizeAttachmentInputs(attachmentInput));
       const attachments = materialized.attachments;
-      const messageText = await this.materializeModelFileReferenceMarkers(
-        rewriteFileReferenceMarkerPaths(message, materialized.pathMap),
-      ) ?? '';
+      const messageText = rewriteFileReferenceMarkerPaths(message, materialized.pathMap);
       if (!messageText.trim() && attachments.length === 0) return;
       if (session.agent.state.isStreaming) {
         if (attachments.length > 0) {
@@ -640,9 +635,7 @@ export class AgentRuntime {
         sessionId,
         normalizeAgentUserViewContext(userViewContextInput),
       );
-      const userViewReminderText = await this.materializeModelFileReferenceMarkers(
-        userViewContextReminder.reminder,
-      );
+      const userViewReminderText = userViewContextReminder.reminder;
       const now = new Date();
       const outlinerContext = buildOutlinerContextReminder(this.outlinerToolHost);
       const turnContextReminder = joinReminderParts([
@@ -790,9 +783,7 @@ export class AgentRuntime {
     await this.refreshRuntimeSettings(session);
     const skillListingReservation = await this.reserveSkillListingReminder(session);
     session.queuedFollowUpSkillListingReservation = skillListingReservation;
-    const userViewContextReminder = await this.materializeModelFileReferenceMarkers(
-      buildUserViewContextReminder(normalizeAgentUserViewContext(userViewContextInput)),
-    );
+    const userViewContextReminder = buildUserViewContextReminder(normalizeAgentUserViewContext(userViewContextInput));
     session.agent.followUp(buildUserPromptMessage(text, [], {
       outlinerContext: buildOutlinerContextReminder(this.outlinerToolHost),
       userViewContextReminder,
@@ -2615,11 +2606,6 @@ export class AgentRuntime {
     return path.resolve(this.options.localFileRoot ?? process.cwd());
   }
 
-  private async materializeModelFileReferenceMarkers(text: string | null | undefined): Promise<string | null> {
-    if (!text) return text ?? null;
-    return materializeFileReferenceMarkersInText(this.localFileRoot(), text, { onError: 'preserve' });
-  }
-
   private async materializeFileAttachments(attachments: AgentMessageAttachmentInput[]): Promise<{
     attachments: AgentMessageAttachmentInput[];
     pathMap: Map<string, string>;
@@ -2638,7 +2624,7 @@ export class AgentRuntime {
       if (materialized.path !== originalPath) {
         pathMap.set(originalPath, materialized.path);
       }
-      const resolvedOriginal = path.resolve(originalPath);
+      const resolvedOriginal = path.resolve(path.isAbsolute(originalPath) ? originalPath : path.join(root, originalPath));
       if (materialized.path !== resolvedOriginal) {
         pathMap.set(resolvedOriginal, materialized.path);
       }

@@ -138,6 +138,11 @@ type ComposerAttachment = AgentMessageAttachmentInput & {
   thumbnailDataUrl?: string;
 };
 
+interface PreparedPathlessAttachmentBytes {
+  bytes: ArrayBuffer;
+  sha256: string;
+}
+
 interface PickedLocalFileAttachment {
   entryKind?: 'file' | 'directory';
   path: string;
@@ -332,12 +337,12 @@ export function AgentComposer({
           skippedDuplicates += 1;
           continue;
         }
-        const attachment = await fileToAttachment(file, nativePath);
-        if (!nativePath && attachment.sha256 && existingHashes.has(attachment.sha256)) {
-          revokeAttachmentPreview(attachment);
+        const prepared = nativePath ? null : await preparePathlessAttachmentBytes(file);
+        if (prepared?.sha256 && existingHashes.has(prepared.sha256)) {
           skippedDuplicates += 1;
           continue;
         }
+        const attachment = await fileToAttachment(file, nativePath, prepared);
         nextAttachments.push({ ...attachment, fingerprint });
         existingFingerprints.add(fingerprint);
         if (attachment.sha256) existingHashes.add(attachment.sha256);
@@ -799,7 +804,11 @@ function AgentApprovalCard({
   );
 }
 
-async function fileToAttachment(file: File, nativePath: string): Promise<ComposerAttachment> {
+async function fileToAttachment(
+  file: File,
+  nativePath: string,
+  prepared?: PreparedPathlessAttachmentBytes | null,
+): Promise<ComposerAttachment> {
   const mimeType = file.type || inferMimeType(file.name);
   const inlineImageMimeType = normalizeInlineImageMimeType(mimeType);
   const id = createAttachmentId();
@@ -811,7 +820,7 @@ async function fileToAttachment(file: File, nativePath: string): Promise<Compose
     }
     const staged = nativePath
       ? null
-      : await stageAttachmentFile(file, { mimeType, name });
+      : await stageAttachmentFile(file, { mimeType, name }, prepared ?? undefined);
     const inlineImage = await readInlineImageForModel(file, inlineImageMimeType);
     const previewUrl = URL.createObjectURL(file);
     return {
@@ -839,7 +848,7 @@ async function fileToAttachment(file: File, nativePath: string): Promise<Compose
     };
   }
 
-  const staged = await stageAttachmentFile(file, { mimeType, name });
+  const staged = await stageAttachmentFile(file, { mimeType, name }, prepared ?? undefined);
   return {
     id,
     kind: 'file',
@@ -895,6 +904,7 @@ async function pickedLocalFileToAttachment(file: PickedLocalFileAttachment): Pro
 async function stageAttachmentFile(
   file: File,
   metadata: { mimeType: string; name: string },
+  prepared?: PreparedPathlessAttachmentBytes,
 ): Promise<{ path: string; name: string; mimeType: string; sizeBytes: number; sha256: string }> {
   const name = metadata.name || file.name || 'attachment';
   if (file.size > MAX_STAGED_ATTACHMENT_BYTES) {
@@ -903,16 +913,31 @@ async function stageAttachmentFile(
   if (!window.lin?.stageAttachment) {
     throw new Error('Attachment staging is not available in this window.');
   }
-  const bytes = await file.arrayBuffer();
-  const sha256 = await sha256ArrayBuffer(bytes);
+  const bytes = prepared ?? await preparePathlessAttachmentBytes(file);
   const staged = await window.lin.stageAttachment({
-    bytes,
+    bytes: bytes.bytes,
     mimeType: metadata.mimeType || file.type || 'application/octet-stream',
     name,
   });
   return {
     ...staged,
-    sha256,
+    sha256: bytes.sha256,
+  };
+}
+
+async function preparePathlessAttachmentBytes(file: File): Promise<PreparedPathlessAttachmentBytes> {
+  const mimeType = file.type || inferMimeType(file.name);
+  const name = file.name || (mimeType.startsWith('image/') ? 'image' : 'attachment.txt');
+  if (normalizeInlineImageMimeType(mimeType) && file.size > MAX_RAW_INLINE_IMAGE_BYTES) {
+    throw new Error(`${name} is larger than ${formatBytes(MAX_RAW_INLINE_IMAGE_BYTES)} and cannot be attached as inline image input.`);
+  }
+  if (file.size > MAX_STAGED_ATTACHMENT_BYTES) {
+    throw new Error(`${name} is larger than ${formatBytes(MAX_STAGED_ATTACHMENT_BYTES)} and cannot be staged for agent access.`);
+  }
+  const bytes = await file.arrayBuffer();
+  return {
+    bytes,
+    sha256: await sha256ArrayBuffer(bytes),
   };
 }
 

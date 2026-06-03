@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { copyFile, mkdir, stat, symlink } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, readdir, realpath, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { formatFileReferenceMarker, splitFileReferenceMarkers } from '../core/referenceMarkup';
 import { safeAttachmentFileName } from '../core/agentAttachmentPaths';
+import { MAX_MATERIALIZED_ATTACHMENT_BYTES } from '../core/agentAttachmentLimits';
 
 export const AGENT_ATTACHMENT_DIR = 'agent-attachments';
+export const AGENT_ATTACHMENT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface PathBackedAttachment {
   name: string;
@@ -27,98 +28,78 @@ export async function materializeAgentLocalPath(
   label = 'attachment',
 ): Promise<string> {
   const root = path.resolve(localRoot);
-  const sourcePath = path.resolve(inputPath);
-  if (isPathInside(root, sourcePath)) return sourcePath;
+  const rootRealPath = await realpath(root);
+  const sourcePath = path.resolve(path.isAbsolute(inputPath) ? inputPath : path.join(root, inputPath));
+  const sourceRealPath = await realpath(sourcePath);
+  if (isPathInside(rootRealPath, sourceRealPath)) return sourceRealPath;
 
-  const sourceStat = await stat(sourcePath);
-  const attachmentDir = path.join(root, 'tmp', AGENT_ATTACHMENT_DIR);
-  await mkdir(attachmentDir, { recursive: true });
-  const targetPath = path.join(attachmentDir, `${randomUUID()}-${safeAttachmentFileName(label || path.basename(sourcePath))}`);
+  const sourceStat = await stat(sourceRealPath);
   if (sourceStat.isDirectory()) {
-    await symlink(sourcePath, targetPath, 'dir');
-    return targetPath;
+    throw new Error('Directory attachments outside the allowed file area cannot be materialized safely.');
   }
-  await copyFile(sourcePath, targetPath);
+  if (!sourceStat.isFile()) {
+    throw new Error('Only regular file attachments can be materialized for agent access.');
+  }
+  if (sourceStat.size > MAX_MATERIALIZED_ATTACHMENT_BYTES) {
+    throw new Error(`Attachment is larger than ${formatBytes(MAX_MATERIALIZED_ATTACHMENT_BYTES)} and cannot be materialized for agent access.`);
+  }
+
+  await pruneOldAgentAttachments(root);
+  const attachmentDir = agentAttachmentDir(root);
+  await mkdir(attachmentDir, { recursive: true });
+  const targetPath = path.join(attachmentDir, `${randomUUID()}-${safeAttachmentFileName(label || path.basename(sourceRealPath))}`);
+  await copyFile(sourceRealPath, targetPath);
   return targetPath;
 }
 
-export async function materializeFileReferenceMarkersInText(
-  localRoot: string,
-  text: string,
-  options: { onError?: 'preserve' | 'throw' } = {},
-): Promise<string> {
-  if (!text.includes('[[file:')) return text;
-  const cache = new Map<string, Promise<string>>();
-  return rewriteFileReferenceMarkersInText(localRoot, text, cache, options);
+export function agentAttachmentDir(localRoot: string): string {
+  return path.join(path.resolve(localRoot), 'tmp', AGENT_ATTACHMENT_DIR);
 }
 
-export async function materializeFileReferenceMarkersInValue<T>(
+export async function pruneOldAgentAttachments(
   localRoot: string,
-  value: T,
-  options: { onError?: 'preserve' | 'throw' } = {},
-): Promise<T> {
-  const cache = new Map<string, Promise<string>>();
-  return rewriteFileReferenceMarkersInValue(localRoot, value, cache, options) as Promise<T>;
-}
-
-async function rewriteFileReferenceMarkersInValue(
-  localRoot: string,
-  value: unknown,
-  cache: Map<string, Promise<string>>,
-  options: { onError?: 'preserve' | 'throw' },
-): Promise<unknown> {
-  if (typeof value === 'string') return rewriteFileReferenceMarkersInText(localRoot, value, cache, options);
-  if (Array.isArray(value)) {
-    return Promise.all(value.map((item) => rewriteFileReferenceMarkersInValue(localRoot, item, cache, options)));
-  }
-  if (!value || typeof value !== 'object') return value;
-  const out: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value)) {
-    out[key] = await rewriteFileReferenceMarkersInValue(localRoot, item, cache, options);
-  }
-  return out;
-}
-
-async function rewriteFileReferenceMarkersInText(
-  localRoot: string,
-  text: string,
-  cache: Map<string, Promise<string>>,
-  options: { onError?: 'preserve' | 'throw' },
-): Promise<string> {
-  if (!text.includes('[[file:')) return text;
-  const segments = splitFileReferenceMarkers(text);
-  if (!segments.some((segment) => segment.type === 'file')) return text;
-  const parts = await Promise.all(segments.map(async (segment) => {
-    if (segment.type === 'text') return segment.text;
-    const nextPath = await materializedMarkerPath(localRoot, segment.path, segment.label || segment.ref, cache, options);
-    if (!nextPath || nextPath === segment.path) return segment.raw;
-    return formatFileReferenceMarker(segment.label || segment.ref, nextPath, segment.entryKind);
-  }));
-  return parts.join('');
-}
-
-async function materializedMarkerPath(
-  localRoot: string,
-  filePath: string,
-  label: string,
-  cache: Map<string, Promise<string>>,
-  options: { onError?: 'preserve' | 'throw' },
-): Promise<string | null> {
-  const cacheKey = path.resolve(filePath);
-  let promise = cache.get(cacheKey);
-  if (!promise) {
-    promise = materializeAgentLocalPath(localRoot, filePath, label);
-    cache.set(cacheKey, promise);
-  }
+  now = Date.now(),
+  ttlMs = AGENT_ATTACHMENT_TTL_MS,
+): Promise<void> {
+  const attachmentDir = agentAttachmentDir(localRoot);
+  let entries: string[];
   try {
-    return await promise;
+    entries = await readdir(attachmentDir);
   } catch (error) {
-    if (options.onError === 'throw') throw error;
-    return null;
+    if (isNodeError(error) && error.code === 'ENOENT') return;
+    throw error;
   }
+
+  await Promise.all(entries.map(async (entry) => {
+    const entryPath = path.join(attachmentDir, entry);
+    try {
+      const entryStat = await lstat(entryPath);
+      if (now - entryStat.mtimeMs <= ttlMs) return;
+      await rm(entryPath, { recursive: true, force: true });
+    } catch {
+      // Best-effort cleanup should never block attachment handling.
+    }
+  }));
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
 export function isPathInside(root: string, candidate: string): boolean {
   const relative = path.relative(path.resolve(root), path.resolve(candidate));
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return !!error && typeof error === 'object' && 'code' in error;
 }

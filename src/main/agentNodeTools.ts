@@ -1,4 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
+import path from 'node:path';
 import { normalizeDateFieldValue } from '../core/dateFieldValue';
 import { projectFieldConfig, nodeIsDone, nodeShowsCheckbox } from '../core/configProjection';
 import {
@@ -100,7 +101,8 @@ import type {
   OutlinerToolHost,
   ProjectionIndex,
 } from './agentNodeToolTypes';
-import { materializeFileReferenceMarkersInValue } from './agentAttachmentMaterialization';
+import { splitFileReferenceMarkers } from '../core/referenceMarkup';
+import { isPathInside } from './agentAttachmentMaterialization';
 
 export type { OutlinerToolHost } from './agentNodeToolTypes';
 
@@ -111,10 +113,10 @@ export interface NodeToolsOptions {
 export function createNodeTools(host: OutlinerToolHost, options: NodeToolsOptions = {}): AgentTool<any>[] {
   const agentHost = asAgentToolHost(host);
   return [
-    createNodeSearchTool(agentHost, options),
-    createNodeReadTool(agentHost, options),
-    createNodeCreateTool(agentHost),
-    createNodeEditTool(agentHost),
+    createNodeSearchTool(agentHost),
+    createNodeReadTool(agentHost),
+    createNodeCreateTool(agentHost, options),
+    createNodeEditTool(agentHost, options),
     createNodeDeleteTool(agentHost),
     createOperationHistoryTool(agentHost),
   ].map((tool) => tool.name === 'operation_history' ? tool : withAgentToolTransaction(tool, agentHost));
@@ -131,11 +133,6 @@ function asAgentToolHost(host: OutlinerToolHost): OutlinerToolHost {
       ? (query) => host.operationHistory!({ origin: 'agent', ...query })
       : undefined,
   };
-}
-
-async function materializeNodeToolValue<T>(options: NodeToolsOptions, value: T): Promise<T> {
-  if (!options.localFileRoot) return value;
-  return materializeFileReferenceMarkersInValue(options.localFileRoot, value, { onError: 'preserve' });
 }
 
 function withAgentToolTransaction(tool: AgentTool<any>, host: OutlinerToolHost): AgentTool<any> {
@@ -209,7 +206,7 @@ function visibleHistoryItem(item: OperationHistoryItem) {
   };
 }
 
-function createNodeEditTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope<NodeEditData>> {
+function createNodeEditTool(host: OutlinerToolHost, options: NodeToolsOptions): AgentTool<any, ToolEnvelope<NodeEditData>> {
   return {
     name: 'node_edit',
     label: 'Node Edit',
@@ -228,7 +225,7 @@ function createNodeEditTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope
 
       switch (params.action) {
         case 'outline_edit':
-          return executeOutlineEdit(host, params, started);
+          return executeOutlineEdit(host, params, started, options);
         case 'move':
           return executeMoveEdit(host, params, started);
         case 'merge':
@@ -366,6 +363,7 @@ async function executeOutlineEdit(
   host: OutlinerToolHost,
   params: Extract<NormalizedEditParams, { action: 'outline_edit' }>,
   started: number,
+  options: NodeToolsOptions,
 ) {
   const index = indexProjection(host.getProjection());
   const validation = validateMutableNodeIds(index, [params.nodeId]);
@@ -433,6 +431,13 @@ async function executeOutlineEdit(
   if (referenceValidation) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', referenceValidation.code, referenceValidation.error, {
       instructions: referenceValidation.instructions,
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
+  const fileReferenceValidation = validateLocalFileReferenceMarkers(options, parsed.document);
+  if (fileReferenceValidation) {
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', fileReferenceValidation.code, fileReferenceValidation.error, {
+      instructions: fileReferenceValidation.instructions,
       metrics: { durationMs: elapsed(started) },
     }));
   }
@@ -711,7 +716,7 @@ async function executeReferenceReplaceEdit(
   }), visibleEditResult(data, false, indexProjection(host.getProjection())));
 }
 
-function createNodeCreateTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope<NodeCreateData>> {
+function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions): AgentTool<any, ToolEnvelope<NodeCreateData>> {
   return {
     name: 'node_create',
     label: 'Node Create',
@@ -805,6 +810,13 @@ function createNodeCreateTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
           metrics: { durationMs: elapsed(started) },
         }));
       }
+      const fileReferenceValidation = validateLocalFileReferenceMarkers(options, parsed.document);
+      if (fileReferenceValidation) {
+        return nodeErrorResult(errorEnvelope('node_create', fileReferenceValidation.code, fileReferenceValidation.error, {
+          instructions: fileReferenceValidation.instructions,
+          metrics: { durationMs: elapsed(started) },
+        }));
+      }
       const searchValidation = validateSearchNodes(initialIndex, parsed.document);
       if (searchValidation) {
         return nodeErrorResult(errorEnvelope('node_create', searchValidation.code, searchValidation.error, {
@@ -863,7 +875,7 @@ function createNodeCreateTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
   };
 }
 
-function createNodeReadTool(host: OutlinerToolHost, options: NodeToolsOptions): AgentTool<any, ToolEnvelope<NodeReadData>> {
+function createNodeReadTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope<NodeReadData>> {
   return {
     name: 'node_read',
     label: 'Node Read',
@@ -897,13 +909,8 @@ function createNodeReadTool(host: OutlinerToolHost, options: NodeToolsOptions): 
         }));
       }
 
-      const items = nodeIds.map((nodeId) => buildReadItem(index, nodeId, params));
-      const materialized = await materializeNodeToolValue(options, {
-        data: { items },
-        visible: visibleReadResult(index, nodeIds, params),
-      });
-      const data = materialized.data;
-      const visible = materialized.visible;
+      const data: NodeReadData = { items: nodeIds.map((nodeId) => buildReadItem(index, nodeId, params)) };
+      const visible = visibleReadResult(index, nodeIds, params);
       return nodeToolResult(successEnvelope('node_read', data, {
         metrics: {
           durationMs: elapsed(started),
@@ -915,7 +922,7 @@ function createNodeReadTool(host: OutlinerToolHost, options: NodeToolsOptions): 
   };
 }
 
-function createNodeSearchTool(host: OutlinerToolHost, options: NodeToolsOptions): AgentTool<any, ToolEnvelope<NodeSearchData>> {
+function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope<NodeSearchData>> {
   return {
     name: 'node_search',
     label: 'Node Search',
@@ -973,20 +980,15 @@ function createNodeSearchTool(host: OutlinerToolHost, options: NodeToolsOptions)
         limit,
         items,
       };
-      const materialized = await materializeNodeToolValue(options, {
-        data,
-        visible: visibleSearchResult(index, data),
-      });
-      const materializedData = materialized.data;
-      const visible = materialized.visible;
+      const visible = visibleSearchResult(index, data);
 
-      return nodeToolResult(successEnvelope('node_search', materializedData, {
+      return nodeToolResult(successEnvelope('node_search', data, {
         instructions: offset + limit < total ? `Call node_search with offset ${offset + limit} to continue.` : undefined,
         warnings: search.warnings.length ? search.warnings : undefined,
         metrics: {
           durationMs: elapsed(started),
           truncated: offset + limit < total,
-          outputBytes: jsonByteLength(materializedData),
+          outputBytes: jsonByteLength(data),
         },
       }), visible);
     },
@@ -2069,6 +2071,51 @@ function collectReferenceTargetIds(document: OutlineDocument): string[] {
   const ids: string[] = [];
   for (const root of document.roots) collectNodeReferenceTargetIds(root, ids);
   return unique(ids);
+}
+
+function validateLocalFileReferenceMarkers(
+  options: NodeToolsOptions,
+  document: OutlineDocument,
+): { code: string; error: string; instructions: string } | null {
+  if (!options.localFileRoot) return null;
+  const root = path.resolve(options.localFileRoot);
+  const outside = collectLocalFileReferencePaths(document)
+    .find((filePath) => !localFileReferencePathIsInside(root, filePath));
+  if (!outside) return null;
+  return {
+    code: 'invalid_file_reference',
+    error: `Local file reference is outside the allowed file area: ${outside}`,
+    instructions: 'Attach external files through the composer, or reference a file path under the allowed file area.',
+  };
+}
+
+function localFileReferencePathIsInside(root: string, filePath: string): boolean {
+  if (!filePath) return false;
+  const resolved = path.resolve(path.isAbsolute(filePath) ? filePath : path.join(root, filePath));
+  return isPathInside(root, resolved);
+}
+
+function collectLocalFileReferencePaths(document: OutlineDocument): string[] {
+  const paths: string[] = [];
+  for (const root of document.roots) collectNodeLocalFileReferencePaths(root, paths);
+  return paths;
+}
+
+function collectNodeLocalFileReferencePaths(node: OutlineNode, paths: string[]) {
+  collectTextLocalFileReferencePaths(node.title, paths);
+  collectTextLocalFileReferencePaths(node.description ?? '', paths);
+  for (const field of node.fields) {
+    collectTextLocalFileReferencePaths(field.name, paths);
+    for (const value of field.values) collectTextLocalFileReferencePaths(value.text, paths);
+  }
+  for (const child of node.children) collectNodeLocalFileReferencePaths(child, paths);
+}
+
+function collectTextLocalFileReferencePaths(text: string, paths: string[]) {
+  if (!text.includes('[[file:')) return;
+  for (const segment of splitFileReferenceMarkers(text)) {
+    if (segment.type === 'file') paths.push(segment.path);
+  }
 }
 
 function collectOutlineAnnotationIds(document: OutlineDocument): string[] {

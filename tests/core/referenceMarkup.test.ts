@@ -71,6 +71,25 @@ describe('reference markup', () => {
     ]);
   });
 
+  test('preserves local directory entry kind in file reference markers', () => {
+    const path = '/Users/me/Projects';
+    const marker = formatFileReferenceMarker('Projects', path, 'directory');
+    expect(marker).toBe('[[file:Projects^%2FUsers%2Fme%2FProjects^directory]]');
+    expect(splitFileReferenceMarkers(marker)).toEqual([{
+      type: 'file',
+      raw: marker,
+      ref: 'Projects',
+      label: 'Projects',
+      path,
+      entryKind: 'directory',
+    }]);
+    expect(splitFileReferenceMarkers('[[file:report.pdf^%2FUsers%2Fme%2Freport.pdf^file]]')[0]).toMatchObject({
+      type: 'file',
+      path: '/Users/me/report.pdf',
+      entryKind: 'file',
+    });
+  });
+
   test('leaves unknown prefixes and legacy bare markers as text', () => {
     const text = 'Keep [[asset:Logo^asset-1]] and [[Alpha^node-alpha]] plain';
     expect(parseReferenceMarkers(text)).toEqual([]);

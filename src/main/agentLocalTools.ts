@@ -1,6 +1,7 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { randomUUID } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { existsSync, realpathSync } from 'node:fs';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -2174,13 +2175,36 @@ function countOccurrences(content: string, needle: string): number {
 }
 
 function resolveWorkspacePath(workspace: WorkspaceContext, inputPath: string): string {
+  const root = path.resolve(workspace.root);
+  const rootRealPath = realpathSync.native(root);
   const expanded = expandHome(inputPath);
-  const resolved = path.resolve(path.isAbsolute(expanded) ? expanded : path.join(workspace.root, expanded));
-  const relative = path.relative(workspace.root, resolved);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    throw new LocalToolFailure('path_outside_local_root', `Path is outside the allowed file area: ${resolved}`, 'Use a path under the allowed file area.');
+  const requestedPath = path.resolve(path.isAbsolute(expanded) ? expanded : path.join(root, expanded));
+  const existingPath = nearestExistingPath(requestedPath);
+  const existingRealPath = realpathSync.native(existingPath);
+  if (!isResolvedPathInside(rootRealPath, existingRealPath)) {
+    throw new LocalToolFailure('path_outside_local_root', `Path is outside the allowed file area: ${requestedPath}`, 'Use a path under the allowed file area.');
   }
-  return resolved;
+  const suffix = path.relative(existingPath, requestedPath);
+  const resolvedPath = suffix ? path.resolve(existingRealPath, suffix) : existingRealPath;
+  if (!isResolvedPathInside(rootRealPath, resolvedPath)) {
+    throw new LocalToolFailure('path_outside_local_root', `Path is outside the allowed file area: ${requestedPath}`, 'Use a path under the allowed file area.');
+  }
+  return requestedPath;
+}
+
+function nearestExistingPath(inputPath: string): string {
+  let current = path.resolve(inputPath);
+  while (!existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) return current;
+    current = parent;
+  }
+  return current;
+}
+
+function isResolvedPathInside(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
 function localFsError(error: unknown, filePath: string): LocalToolFailure {

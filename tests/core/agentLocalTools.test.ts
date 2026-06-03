@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -127,6 +127,43 @@ describe('agent local tools', () => {
         startLine: 1,
         totalLines: 3,
       });
+    });
+  });
+
+  test('file_read rejects symlinks that resolve outside the local root', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-outside-'));
+      try {
+        const outsideFile = path.join(outsideRoot, 'secret.txt');
+        const linkPath = path.join(workspaceRoot, 'linked-secret.txt');
+        await writeFile(outsideFile, 'secret', 'utf8');
+        await symlink(outsideFile, linkPath);
+
+        const read = await executeTool(workspaceRoot, 'file_read', { file_path: linkPath });
+
+        expect(read.ok).toBe(false);
+        expect(read.error?.code).toBe('path_outside_local_root');
+      } finally {
+        await rm(outsideRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test('file_glob rejects symlinked directories that resolve outside the local root', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-outside-'));
+      try {
+        const linkPath = path.join(workspaceRoot, 'outside-dir');
+        await writeFile(path.join(outsideRoot, 'secret.txt'), 'secret', 'utf8');
+        await symlink(outsideRoot, linkPath, 'dir');
+
+        const glob = await executeTool(workspaceRoot, 'file_glob', { path: linkPath, pattern: '**/*' });
+
+        expect(glob.ok).toBe(false);
+        expect(glob.error?.code).toBe('path_outside_local_root');
+      } finally {
+        await rm(outsideRoot, { recursive: true, force: true });
+      }
     });
   });
 

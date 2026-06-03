@@ -43,6 +43,7 @@ import { loadAppPreferences, saveThemePreference } from './appPreferences';
 import { isThemeMode, type ThemeMode } from '../core/theme';
 import { MAX_RAW_INLINE_IMAGE_BYTES, MAX_STAGED_ATTACHMENT_BYTES } from '../core/agentAttachmentLimits';
 import { safeAttachmentFileName } from '../core/agentAttachmentPaths';
+import { agentAttachmentDir, pruneOldAgentAttachments } from './agentAttachmentMaterialization';
 
 if (process.env.ELECTRON_USER_DATA_DIR) {
   app.setPath('userData', process.env.ELECTRON_USER_DATA_DIR);
@@ -724,7 +725,8 @@ function registerIpc() {
       ? rawOptions.mimeType.trim()
       : 'application/octet-stream';
     const name = safeAttachmentFileName(rawName);
-    const attachmentDir = join(resolve(agentLocalFileRoot), 'tmp', 'agent-attachments');
+    await pruneOldAgentAttachments(agentLocalFileRoot);
+    const attachmentDir = agentAttachmentDir(agentLocalFileRoot);
     await mkdir(attachmentDir, { recursive: true });
     const filePath = join(attachmentDir, `${randomUUID()}-${name}`);
     await writeFile(filePath, bytes);

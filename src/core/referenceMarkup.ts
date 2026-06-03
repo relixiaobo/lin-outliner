@@ -79,7 +79,9 @@ export function formatReferenceMarker(label: string, target: ReferenceTarget): s
     return `[[node:${safeLabel}^${encodeReferenceValue(nodeId)}]]`;
   }
   const path = target.path;
-  return `[[file:${safeLabel}^${encodeReferenceValue(path)}]]`;
+  const encodedPath = encodeReferenceValue(path);
+  const kindSuffix = target.entryKind === 'directory' ? '^directory' : '';
+  return `[[file:${safeLabel}^${encodedPath}${kindSuffix}]]`;
 }
 
 export function parseReferenceMarkers(text: string): ParsedReferenceMarker[] {
@@ -227,12 +229,23 @@ function parseReferenceInner(inner: string): { label: string; target: ReferenceT
   const caret = body.indexOf('^');
   if (caret < 0) return null;
   const label = sanitizeReferenceLabel(body.slice(0, caret));
-  const rawValue = body.slice(caret + 1);
+  let rawValue = body.slice(caret + 1);
+  let entryKind: 'file' | 'directory' = 'file';
+  if (prefix === 'file') {
+    const kindCaret = rawValue.lastIndexOf('^');
+    if (kindCaret >= 0) {
+      const rawEntryKind = rawValue.slice(kindCaret + 1);
+      if (rawEntryKind === 'file' || rawEntryKind === 'directory') {
+        entryKind = rawEntryKind;
+        rawValue = rawValue.slice(0, kindCaret);
+      }
+    }
+  }
   if (!rawValue) return null;
   const value = decodeReferenceValue(rawValue);
   if (!value) return null;
   if (prefix === 'node') return { label, target: { kind: 'node', nodeId: value } };
-  return { label, target: { kind: 'local-file', path: value, entryKind: 'file' } };
+  return { label, target: { kind: 'local-file', path: value, entryKind } };
 }
 
 function sanitizeReferenceLabel(label: string): string {

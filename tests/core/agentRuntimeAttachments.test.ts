@@ -12,7 +12,7 @@ import {
   type Usage,
 } from '@earendil-works/pi-ai';
 import type { StreamFn } from '@earendil-works/pi-agent-core';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
@@ -195,6 +195,59 @@ describe('agent runtime attachments', () => {
     expect(contextText).not.toContain(encodeURIComponent(sourcePath));
     expect(marker?.path).toStartWith(path.join(localRoot, 'tmp', 'agent-attachments'));
     expect(await readFile(marker!.path, 'utf8')).toBe('runtime report body');
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+  });
+
+  test('does not materialize arbitrary file markers without a matching attachment payload', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-attachment-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-attachment-data-'));
+    const sourceRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-attachment-source-'));
+    roots.push(localRoot, dataRoot, sourceRoot);
+    const sourcePath = path.join(sourceRoot, 'secret.txt');
+    await writeFile(sourcePath, 'secret body');
+    const contexts: Context[] = [];
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: captureStream(contexts),
+      },
+    );
+
+    const created = await runtime.createSession();
+    await runtime.sendMessage(
+      created.sessionId,
+      `Read ${formatFileReferenceMarker('secret.txt', sourcePath)}.`,
+      [],
+    );
+
+    const contextText = textFromContext(contexts[0]!);
+    const marker = splitFileReferenceMarkers(contextText).find((segment) => segment.type === 'file');
+
+    expect(contexts).toHaveLength(1);
+    expect(contextText).toContain(encodeURIComponent(sourcePath));
+    expect(marker?.path).toBe(sourcePath);
+    await expect(readdir(path.join(localRoot, 'tmp', 'agent-attachments'))).rejects.toThrow();
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
   });
 });

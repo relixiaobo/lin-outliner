@@ -433,7 +433,7 @@ test.describe('agent composer controls', () => {
       ))?.args;
     }).toMatchObject({
       attachments: [{ kind: 'file', path: '/Users/test/Documents/design-system' }],
-      message: '[[file:design-system^%2FUsers%2Ftest%2FDocuments%2Fdesign-system]]',
+      message: '[[file:design-system^%2FUsers%2Ftest%2FDocuments%2Fdesign-system^directory]]',
     });
   });
 
