@@ -69,22 +69,75 @@ onboarding; if provider present, show greeting/whitespace.
   conversation is empty and a provider is configured (not blank whitespace).
 - **Onboarding CTA deep-links** to Settings › **Providers** category.
 
+## Review findings (codex pre-review, 2026-06-03 — verified against `main`, folded in)
+
+All five confirmed against current code; resolutions baked into the Design / Checklist.
+
+- **Gate onboarding on LOADED state, not just "no provider" (P2).** `providerSettings`
+  starts `null` and loads async (`AgentChatPanel.tsx:517`, effect ~597). A naive
+  `!getActiveProvider(providerSettings)` would flash the no-provider onboarding (and
+  disable send) for key-holding users during the load window. **Rule:** show onboarding /
+  apply the no-provider send-guard ONLY when settings are loaded (`providerSettings !==
+  null`) AND no usable provider exists; while loading, stay neutral (no onboarding card,
+  no provider-axis send-disable).
+- **Extract ONE usable-provider helper first (P2).** `getActiveProvider` +
+  `providerCanUseModels` are duplicated verbatim in `AgentChatPanel.tsx:80/88` and
+  `AgentComposer.tsx:1198/1236`, and `providerCatalog.tsx:155` already has
+  `resolveUsableActiveProvider`. Consolidate to a single renderer helper (reuse/extend
+  `resolveUsableActiveProvider`) and replace both copies BEFORE wiring empty-state +
+  send-guard, so empty state, composer, and Settings read one source. **Anticipate oauth
+  #93's `authKind`** (it adds OAuth / managed-credential to `core/types.ts`): the "usable"
+  predicate must generalize beyond `hasApiKey || hasEnvApiKey` to also count signed-in
+  OAuth / resolved managed credentials — so it isn't copy-pasted a fourth time.
+- **CTA deep-link needs no new scope (P2) — resolves the old open question.**
+  `window.lin.openSettings()` (`preload/index.ts:119` → main `lin:open-settings`,
+  `main.ts:602`) takes no category, BUT the Settings window defaults to the Providers
+  category, so the CTA already lands on Providers. No preload/main change required. (A
+  category param would be separate scope if ever wanted.)
+- **Disabled send needs an explicit reason prop (P3).** `AgentComposerPrimaryAction`
+  (`AgentComposerControls.tsx:145`) only takes `canSubmit` and hard-codes
+  `title="Send"`/`"Steer agent"`; `canSubmit=false` alone gives no no-provider reason. Add
+  a `disabledReason`/`disabledTitle` prop so the disabled tooltip reads "Add a provider in
+  Settings."
+- **Add e2e for the user-visible behavior (P3).** The default e2e mock always has a key
+  (`tests/e2e/outlinerMock.ts:216 hasApiKey: true`). Add a no-provider mock variant and
+  cover: onboarding renders + CTA invokes `openSettings` + click/Enter does NOT fire
+  `agent_send_message`; with-provider shows the greeting + sends normally.
+
+**Collision:** oauth PRs #92 (plan, draft) / #93 (interface-first — `core/types.ts` +
+`core/commands.ts`, adds `authKind`; ready). No direct file overlap, but the shared
+usable-provider helper above is the conceptual seam — extract it with the `authKind`
+dimension in mind and coordinate with the oauth work so the predicate has one home.
+
 ## Open questions
 
-- Confirm the existing settings-open API can deep-link to a category; if it only
-  opens the Settings root today, add a small "initial category" parameter.
+- Resolved: settings-open deep-link (see review findings — `openSettings()` lands on
+  Providers by default; no category param needed).
 
 ## Files (scope)
 
-`src/renderer/ui/agent/AgentChatPanel.tsx` (remove chips, add empty/onboarding
-state), `src/renderer/ui/agent/AgentComposer.tsx` (send-guard + tooltip),
-possibly a small CSS tweak for the onboarding card. No core/protocol surface.
+- `src/renderer/ui/agent/providerCatalog.tsx` — promote/extend `resolveUsableActiveProvider`
+  into the single usable-provider helper (anticipate `authKind`).
+- `src/renderer/ui/agent/AgentChatPanel.tsx` — drop duplicated `getActiveProvider`/
+  `providerCanUseModels`; remove chips; add loaded-gated empty/onboarding state.
+- `src/renderer/ui/agent/AgentComposer.tsx` — drop its duplicated helpers; thread
+  `hasUsableProvider` + loaded-state into the send-guard.
+- `src/renderer/ui/agent/AgentComposerControls.tsx` — add `disabledReason`/`disabledTitle`
+  to `AgentComposerPrimaryAction`.
+- `tests/e2e/outlinerMock.ts` + a no-provider e2e spec; possibly a small CSS tweak for the
+  onboarding card. No core/protocol surface (oauth #93 owns the `authKind` types).
 
 ## Checklist
 
+- [ ] Extract/reuse one usable-provider helper (`providerCatalog.tsx`); replace the two
+  duplicated copies in `AgentChatPanel` + `AgentComposer`. Generalize for `authKind`.
 - [ ] Delete `SUGGESTED_PROMPTS` + its render block.
 - [ ] Empty state w/ provider: minimal greeting / whitespace.
-- [ ] Empty state w/o provider: onboarding card + CTA → Settings › Providers.
-- [ ] `AgentComposer` send-guard when no usable provider; tooltip → Settings.
+- [ ] Empty state w/o provider (settings LOADED only): onboarding card + CTA → Settings ›
+  Providers (existing `openSettings()`).
+- [ ] `AgentComposer` send-guard when loaded && no usable provider; `disabledReason`
+  tooltip → Settings (do NOT disable during the load window).
 - [ ] `bun run typecheck` + `test:renderer`.
+- [ ] e2e: no-provider variant (onboarding + CTA + no `agent_send_message` on click/Enter)
+  and with-provider (greeting + sends).
 - [ ] Light + dark visual gate (UI change), both with and without a key.
