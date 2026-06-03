@@ -8,18 +8,23 @@ updated: 2026-06-03
 
 # macOS Native Branding & Chrome Polish
 
-> **Shipped** on `cc/macos-native-branding-polish`. T1, T2, T5, T6 fully done; T3/T4
-> have a dev-only macOS caveat (see checklist). Q4 → copyright `© 2026 Lin Lab`.
-> Icon source: `assets/brand/tenon-icon-master.svg` (squircle master) +
-> `scripts/gen-icon.mjs` (Chromium rasterizer — `qlmanage` was dropped because it
-> mattes the transparent gutter white, the "白边" bug). Sidebar single-identity rule
-> folded into `docs/spec/design-system.md`.
+> **Shipped** on `cc/macos-native-branding-polish`. T1–T6 done. Q4 → copyright
+> `© 2026 Lin Lab`. Icon source: `assets/brand/tenon-icon-master.svg` (squircle
+> master) + `scripts/gen-icon.mjs` (Chromium rasterizer — `qlmanage` was dropped
+> because it mattes the transparent gutter white, the "白边" bug). Sidebar
+> single-identity rule folded into `docs/spec/design-system.md`.
 >
-> **Open for PM:** the bold app-menu name + the ⌘, Settings item are macOS-managed
-> from the running bundle, so a **dev run still shows "Electron" / "Preferences…"**;
-> packaged builds use "Tenon" / "Settings…". Decide: accept dev-"Electron"
-> (recommended) vs. a hacky dev Info.plist rename; verify packaged with a build.
-> Main agent: archive at the merge gate.
+> **Menu name — resolved.** The bold app-menu name + the ⌘, Settings item are
+> macOS-managed from the running bundle, so a **dev run shows "Electron" /
+> "Preferences…"**. A packaged `--dir` build was produced and launched to verify:
+> Info.plist `CFBundleName=Tenon`, `CFBundleIdentifier=dev.linlab.tenon`,
+> `NSHumanReadableCopyright=© 2026 Lin Lab`, bundled `icon.icns` sha256-identical
+> to `build/icon.icns`; the running packaged app's menu reads **"Tenon"** (bold) +
+> **"Settings…"** + About/Hide/Quit Tenon. PM decision: **accept dev-"Electron"**
+> (packaged is correct; only developers see the dev shell). Main agent: archive at
+> the merge gate. (Aside: packaging needed `bun install` first — node_modules had
+> drifted to `@earendil-works/pi-*@0.75.4` vs lock `0.78.0`; an infra item, not
+> this PR.)
 
 ## Goal
 
@@ -175,10 +180,10 @@ instance + lifecycle; `.icns` size ladder; electron-builder icon wiring.
 
 ## Task checklist (for the dev agent)
 
-- [x] T1 — recomposed the existing glyph onto the 824/r185.4/100px-gutter squircle master (`assets/brand/tenon-icon-master.svg`); regenerated `build/icon.icns` + `build/icon.png` via `scripts/gen-icon.mjs`; verified transparent gutter + corners at 1024/512/32px. **Fix after first pass:** the original `qlmanage` rasterizer mattes the transparent gutter to opaque WHITE — the master's 100px gutter came out `rgba(255,255,255,255)`, which rendered as a white frame in the Dock (the user-reported "白边"). Switched the rasterizer to headless Chromium (Playwright, already a devDependency) with `omitBackground`, which keeps the gutter truly transparent (`rgba(0,0,0,0)` confirmed by pixel probe).
+- [x] T1 — recomposed the existing glyph onto the 824/r185.4/100px-gutter squircle master (`assets/brand/tenon-icon-master.svg`); regenerated `build/icon.icns` + `build/icon.png` via `scripts/gen-icon.mjs`; verified transparent gutter + corners at 1024/512/32px. **Fix after first pass:** the original `qlmanage` rasterizer mattes the transparent gutter to opaque WHITE — the master's 100px gutter came out `rgba(255,255,255,255)`, which rendered as a white frame in the Dock (the user-reported "白边"). Switched the rasterizer to headless Chromium (Playwright, already a devDependency) with `omitBackground`, which keeps the gutter truly transparent (`rgba(0,0,0,0)` confirmed by pixel probe at 1024/512/32). The packaged bundle's `icon.icns` is sha256-identical to `build/icon.icns` (clean icon ships).
 - [x] T2 — dropped the sidebar brand header (`Sidebar.tsx` brand block + unused logo import) and the `sidebar-brand*` CSS; kept the workspace-root row as the single identity. Verified light + dark sidebar renders.
-- [~] T3 — About/Hide/Quit read "Tenon" even in a dev run (explicit labels off `APP_NAME` — these are ordinary items, so the label wins). **Correction:** the bold app-menu title is OS-managed from the running bundle's CFBundleName and CANNOT be changed by the template label — a live dev run still shows **"Electron"** (verified). Packaged builds read "Tenon" (electron-builder writes productName → CFBundleName). Earlier "dev and packaged both read Tenon" was wrong; only About/Hide/Quit are fixed in dev. **Pending PM call:** accept dev-"Electron" (recommended, standard) vs. a dev-only Electron.app Info.plist rename (hacky); verify packaged with a build.
-- [x] T4 — label set to "Settings…" in code (verified in the built `out/main/main.js`); the in-app button matches. Note: a live dev run still rendered the ⌘, item as **"Preferences…"** — like the bold title, AppKit manages the standard Settings item title from the bundle/SDK in dev. Needs packaged verification.
+- [x] T3 — About/Hide/Quit read "Tenon" even in a dev run (explicit labels off `APP_NAME` — ordinary items, so the label wins). The bold app-menu title is OS-managed from the bundle's CFBundleName and can't be set by the template label, so a dev run shows **"Electron"**; a packaged build was launched and reads **"Tenon"** (CFBundleName=Tenon verified in Info.plist). PM decision: accept dev-"Electron". (Earlier "dev and packaged both read Tenon" was wrong — corrected.)
+- [x] T4 — label "Settings…" in code; verified the **packaged** app renders "Settings…" (the dev shell rendered the legacy "Preferences…", an Electron-dev-bundle artifact, not our code).
 - [x] T5 — `© 2026 Lin Lab` in the About panel + electron-builder `copyright`.
 - [x] T6 — Help menu: "Learn More" → "Tenon Help"; added "Report an Issue…".
 - [x] `bun run typecheck` (clean) + `bun run test:renderer` (268 pass) + token-guard e2e (`typography-tokens.spec.ts`, 8 pass); light+dark visual on icon + sidebar; `docs/spec/design-system.md` updated (A6 — sparse-accent brand-mark line now points at the single workspace-root avatar). Pre-existing failures in `test:core` (file_glob/file_grep) and `workspace-layout.spec.ts` reproduce on clean `origin/main` — not introduced here.
