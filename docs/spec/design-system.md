@@ -1,6 +1,6 @@
-# Lin Design System
+# Tenon Design System
 
-This file is the single source of truth for Lin Outliner's product UI system —
+This file is the single source of truth for Tenon's product UI system —
 the **design language** (principles, tokens, materials, rules). It describes the
 system as designed, holistically; it is not a mirror of what each release happens
 to ship. The **rollout** — current-vs-target gaps, staged PRs, migrations — lives
@@ -13,7 +13,7 @@ here when they help avoid ambiguity.
 
 ## Product Intent
 
-Lin should feel like a dense desktop knowledge workspace:
+Tenon should feel like a dense desktop knowledge workspace:
 
 - Quiet neutral chrome.
 - Persistent cross-tab sidebar.
@@ -29,7 +29,7 @@ must be backed by real product state.
 
 ## Brand & Design Principles
 
-Lin's brand is expressed through restraint, not decoration. It should feel like
+Tenon's brand is expressed through restraint, not decoration. It should feel like
 a calm, dense, native desktop tool whose personality lives in the content and a
 single sparing accent — never in re-skinned chrome. These principles are the
 "why" behind the tokens; cite them by number when a decision contradicts one.
@@ -53,7 +53,7 @@ single sparing accent — never in re-skinned chrome. These principles are the
 ## Reference Boundary
 
 Tana and nodex are references for density, spacing, surface hierarchy, and
-specific outliner interactions. Lin keeps its own navigation model, command
+specific outliner interactions. Tenon keeps its own navigation model, command
 model, document model, outliner behavior, and agent model.
 
 Use references for:
@@ -61,10 +61,10 @@ Use references for:
 - Overall density and text rhythm.
 - Opaque workspace surfaces over a translucent chrome deck (light and dark).
 - Muted controls and low elevation.
-- Node/reference/field interaction parity where Lin owns the same behavior.
+- Node/reference/field interaction parity where Tenon owns the same behavior.
 
 Do not copy reference-product scope, navigation entries, fake panels, warm
-paper palettes, or feature concepts Lin does not own.
+paper palettes, or feature concepts Tenon does not own.
 
 ## Source Map
 
@@ -1006,7 +1006,7 @@ category history; see "Settings window".)
   title trigger has no hover background; it darkens text and reveals its chevron
   only on hover, focus, or open state. The agent header carries no `✦` toggle of
   its own — collapsing happens through the fixed top-right control.
-- Agent UI uses Lin foundations: neutral text, translucent chrome, opaque content
+- Agent UI uses Tenon foundations: neutral text, translucent chrome, opaque content
   surfaces, sparse semantic color, low elevation, and compact controls.
 - Assistant prose, user bubbles, and composer input use
   `--font-content / --line-content`.
@@ -1036,7 +1036,7 @@ category history; see "Settings window".)
 ### Settings window
 
 The settings surface follows the macOS System Settings *interaction* idiom
-(the Wi-Fi pane is the reference), rendered in Lin foundations (tokens + B-rules),
+(the Wi-Fi pane is the reference), rendered in Tenon foundations (tokens + B-rules),
 not Apple chrome. We borrow the interaction, not the chrome.
 
 - **Frameless window, identical to the main shell's geometry.** The settings
@@ -1226,7 +1226,7 @@ nested cards.
 
 ## Cross-Platform Native Feel
 
-**Lin is an Electron app (TypeScript only — no Rust/Tauri/native shell).** There
+**Tenon is an Electron app (TypeScript only — no Rust/Tauri/native shell).** There
 is no native Swift/AppKit shell that owns the window. "Native feel" therefore
 comes from Electron's platform-integration surface plus CSS — not from drawing
 chrome in native code. macOS-first today; the same approach extends to Windows.
@@ -1244,7 +1244,7 @@ blur + saturation + tint; never fake the rest with heavy shadows or gradients.
   (`vibrancy` / `backgroundMaterial`).
 - **Neutral functional state on every platform** — a *deliberate trade-off*: we
   give up following the OS system accent (which a fully native app might adopt) in
-  exchange for one consistent cross-platform Lin brand. This is the resolution of
+  exchange for one consistent cross-platform Tenon brand. This is the resolution of
   the apparent tension between "Native over branded chrome" (principle 1) and "no
   system accent" (principle 3): we adopt the platform's *materials and
   conventions* while keeping our own restrained *color* identity. Precedent:

@@ -1,30 +1,30 @@
 # Agent Implementation With pi-mono
 
-This document describes Lin Outliner's current local agent runtime boundary with
+This document describes Tenon's current local agent runtime boundary with
 pi-mono as the agent core.
 
 The goal is to reuse pi-mono for model/provider abstraction, streaming, and the
-agent loop, while keeping Lin's local capabilities, document mutations, and
+agent loop, while keeping Tenon's local capabilities, document mutations, and
 security boundaries in TypeScript.
 
 ## Decision
 
-Lin uses these pi-mono packages:
+Tenon uses these pi-mono packages:
 
 - `pi-ai`: model/provider registry, message types, tool schema types, streaming,
   tool-call parsing, context overflow helpers.
 - `pi-agent-core`: stateful agent loop, tool execution orchestration, steering,
   follow-up work, abort, subscriptions, and message replacement.
 
-Lin does not directly use `pi-coding-agent` as the product agent runtime. Its
-built-in terminal tools are useful implementation references, but Lin's tools
+Tenon does not directly use `pi-coding-agent` as the product agent runtime. Its
+built-in terminal tools are useful implementation references, but Tenon's tools
 must execute through the Electron IPC command bridge so file access, bash execution,
-document mutation, undo, approval, and workspace boundaries stay under Lin's
+document mutation, undo, approval, and workspace boundaries stay under Tenon's
 control.
 
 The canonical persistence/rendering/debug model is defined in
 `docs/spec/agent-event-log-rendering.md`. pi-mono remains the execution core;
-Lin's durable state is the event log plus referenced payload files.
+Tenon's durable state is the event log plus referenced payload files.
 
 ```txt
 pi-ai
@@ -38,13 +38,13 @@ pi-agent-core
   -> Agent state and subscriptions
   -> steer / abort / replaceMessages
 
-Lin Electron main process
+Tenon Electron main process
   -> creates Agent
-  -> maps pi-mono events into Lin events and render projections
-  -> exposes Lin tools as AgentTool[]
+  -> maps pi-mono events into Tenon events and render projections
+  -> exposes Tenon tools as AgentTool[]
   -> calls TypeScript tool gateway for local operations
 
-Lin Electron main process
+Tenon Electron main process
   -> AgentRuntime session lifecycle
   -> API key / credential storage
   -> bash execution
@@ -53,7 +53,7 @@ Lin Electron main process
   -> permissions and approval policy
   -> persistence and undo grouping
 
-Lin renderer
+Tenon renderer
   -> Agent UI only
   -> sends prompt/stop/approve commands
   -> renders shared AgentRuntimeEvent projections
@@ -64,7 +64,7 @@ Lin renderer
 The agent dock remains a cross-tab shell feature. It owns conversation state and
 rendering. The outliner owns document state and panel state.
 
-Lin's product runtime is TypeScript/Electron only. Agent tools, outliner
+Tenon's product runtime is TypeScript/Electron only. Agent tools, outliner
 mutation planning, outline parsing, preview rendering data, validation, undo
 grouping, file access, bash execution, and web adapters are implemented through
 TypeScript modules under Electron main and `src/core`. Do not introduce a
@@ -99,13 +99,13 @@ Agent input
 ```
 
 The renderer may hold transient UI state, but it must not hold provider API keys
-or directly execute model/tool logic. This keeps a future Lin-owned agent core
+or directly execute model/tool logic. This keeps a future Tenon-owned agent core
 possible: it only needs to implement the AgentRuntime event/command contract.
 
 ## Package Usage
 
 pi-mono packages are pinned dependencies. Do not use floating major or minor
-versions until Lin has its own compatibility tests around the adapter.
+versions until Tenon has its own compatibility tests around the adapter.
 
 ```json
 {
@@ -116,7 +116,7 @@ versions until Lin has its own compatibility tests around the adapter.
 }
 ```
 
-If pi-mono changes package ownership or names, keep the imports behind Lin's
+If pi-mono changes package ownership or names, keep the imports behind Tenon's
 own adapter modules so product code does not depend on package names directly.
 
 Current module boundary:
@@ -144,13 +144,13 @@ src/renderer/agent/
 ```
 
 Only Electron main process agent modules should import pi-mono directly.
-Renderer and preload code should depend on shared Lin-owned DTOs from
+Renderer and preload code should depend on shared Tenon-owned DTOs from
 `src/core/agentTypes.ts`, not pi-mono package types and not renderer-owned
 types.
 
 ## Agent Runtime
 
-Lin wraps pi-agent-core inside Electron main process. Product UI talks to
+Tenon wraps pi-agent-core inside Electron main process. Product UI talks to
 Electron AgentRuntime through a renderer `useLinAgentRuntime` client, never to a raw
 pi-mono Agent.
 
@@ -161,7 +161,7 @@ Responsibilities:
 - Electron main process: start sessions, route prompts, stop runs, and manage runtime lifecycle.
 - Electron main process: resolve API keys at stream time.
 - Electron main process: execute or reject every local tool call.
-- Electron main process: subscribe to Agent events and append normalized Lin events.
+- Electron main process: subscribe to Agent events and append normalized Tenon events.
 - Electron main process: derive render/debug/pi-mono projections from the event store.
 - Renderer: render projections and send user intents.
 
@@ -185,16 +185,16 @@ interface AgentRuntimeClient {
 }
 ```
 
-The boundary exposes Lin-owned runtime events, render projections,
+The boundary exposes Tenon-owned runtime events, render projections,
 attachment DTOs, debug DTOs, and UI state. Conversation content types should
-reuse pi-ai block shapes where possible so Lin does not maintain a parallel,
+reuse pi-ai block shapes where possible so Tenon does not maintain a parallel,
 shape-compatible copy of `TextContent` or `ImageContent`. Persisted conversation
-identity, branching, tool lifecycle, approvals, and debug records are Lin-owned
+identity, branching, tool lifecycle, approvals, and debug records are Tenon-owned
 event-log concepts, not pi-mono runtime state.
 
 Session listing, rename/delete, debug history, debug payload reads, payload text
 reads, reset, and provider settings are separate Electron IPC commands that use
-the same Lin-owned DTO boundary.
+the same Tenon-owned DTO boundary.
 
 ## Local File Mentions
 
@@ -227,18 +227,18 @@ folders are available by path and should be inspected with `file_read` or
 `file_glob`; the model should not assume their contents are already present
 unless the item is an inline text attachment.
 
-Clipboard images and temporary files follow the same contract: Lin materializes
+Clipboard images and temporary files follow the same contract: Tenon materializes
 or inlines the data as needed, gives it a friendly `ref`, and records enough
 hidden context for the model to resolve that `ref`.
 
 ## Model Configuration
 
-Lin should use `pi-ai` for known provider and model metadata, but Lin should own
+Tenon should use `pi-ai` for known provider and model metadata, but Tenon should own
 the user's provider settings.
 
 Multimodal user turns should use pi-ai's native `ImageContent` shape:
 `{ type: "image", data: base64, mimeType }`. Provider adapters then translate
-the same Lin message to Anthropic base64 image blocks, OpenAI image URLs,
+the same Tenon message to Anthropic base64 image blocks, OpenAI image URLs,
 Gemini inline data, and other upstream formats.
 
 Model configuration should include:
@@ -253,11 +253,11 @@ Model configuration should include:
   additional skill/agent directories, provider timeout, provider retry count,
   provider retry-delay cap, and prompt cache retention.
 
-The API key should be read at stream time through Lin's TypeScript credential path. It
+The API key should be read at stream time through Tenon's TypeScript credential path. It
 should not be embedded into persisted agent messages, tool results, renderer
 state, or IPC command payloads.
 
-Lin currently stores provider settings and secrets in app-data files owned by
+Tenon currently stores provider settings and secrets in app-data files owned by
 TypeScript:
 
 ```txt
@@ -277,7 +277,7 @@ through Electron AgentRuntime or the TypeScript tool/provider gateway.
 
 ## System Prompt
 
-Lin follows the prompt layering principle used by stable agent runtimes:
+Tenon follows the prompt layering principle used by stable agent runtimes:
 
 - The stable system prompt defines identity, tool boundaries, communication
   rules, and safety posture.
@@ -291,9 +291,9 @@ paths, provider settings, or any state that changes per turn.
 
 It states:
 
-- Lin is a local-first outliner and local assistant.
+- Tenon is a local-first outliner and local assistant.
 - The agent should use the user's language unless asked otherwise.
-- The agent should treat `<system-reminder>` as hidden context from Lin, not as
+- The agent should treat `<system-reminder>` as hidden context from Tenon, not as
   user-authored text.
 - Dynamic state can change because the user may edit the outliner directly, so
   exact node ids, node content, and file contents must be read with tools when
@@ -319,7 +319,7 @@ TypeScript function names into the system prompt unless a tool needs them.
 
 ## Context Construction
 
-Each prompt should include a compact context block built by Lin, not by pi-mono.
+Each prompt should include a compact context block built by Tenon, not by pi-mono.
 
 Default context:
 
@@ -341,14 +341,14 @@ User prompt
   -> transformContext applies tool-output budget, microcompact, and auto compact
 ```
 
-Lin uses pi-mono's `transformContext` hook for request-time context shaping and
+Tenon uses pi-mono's `transformContext` hook for request-time context shaping and
 the runtime's `afterToolCall` hook for immediate large-result persistence. The
-compaction policy stays in Lin so it can preserve outliner-specific anchors,
+compaction policy stays in Tenon so it can preserve outliner-specific anchors,
 skills state, and event-log replay semantics.
 
 ## Tool Model
 
-All tools exposed to pi-agent-core should be Lin tools. A tool is a TypeScript
+All tools exposed to pi-agent-core should be Tenon tools. A tool is a TypeScript
 adapter around a Electron IPC command.
 
 ```txt
@@ -365,9 +365,9 @@ and versionable.
 
 ## Reference Tool Sets
 
-Lin should use nodex as the outliner reference and a proven local-tool runtime
-as the local tool reference. Lin should still keep its own lower snake case tool
-names because the runtime, permission model, and UI are Lin-owned.
+Tenon should use nodex as the outliner reference and a proven local-tool runtime
+as the local tool reference. Tenon should still keep its own lower snake case tool
+names because the runtime, permission model, and UI are Tenon-owned.
 
 nodex tools:
 
@@ -383,13 +383,13 @@ nodex tools:
 nodex is the closest outliner reference. Its important lesson is that document
 tools should be domain-specific, not generic file operations. The agent edits
 nodes through outliner verbs and each write is undoable as one AI operation.
-Lin should keep nodex's compact `node_*` surface, but use Lin's own final
+Tenon should keep nodex's compact `node_*` surface, but use Tenon's own final
 contracts from `agent-tool-design.md`: `node_create.outline`,
 `node_read(...)`, and
 `node_edit.old_string/new_string`. The parser is implemented in TypeScript rather than
 left as prompt-only behavior. Compatibility normalization belongs in the
 adapter/runtime layer and should not appear in the model-facing tool
-description. Lin code should use neutral parser names such as
+description. Tenon code should use neutral parser names such as
 `lin_outline_parser`.
 
 Reference local and agent tool roles:
@@ -406,14 +406,14 @@ Reference local and agent tool roles:
 - MCP resource listing and reading
 
 The reference runtime is useful for tool contracts, permission checks, and tool
-pool filtering. For local tools, Lin should copy the role boundaries,
+pool filtering. For local tools, Tenon should copy the role boundaries,
 descriptions, argument schemas, and model-visible action payloads where they fit.
-Runtime details can keep Lin's common `ToolResult` envelope, but
+Runtime details can keep Tenon's common `ToolResult` envelope, but
 `node_*` model-visible output should use the discriminated node protocol from
 `agent-tool-design.md` rather than exposing the envelope directly:
 
 The bridge to pi-agent-core must remain native: tool `execute` returns
-`AgentToolResult` content/details only, while Lin's shared `afterToolCall`
+`AgentToolResult` content/details only, while Tenon's shared `afterToolCall`
 adapter maps envelope errors (`details.ok === false`) to
 `ToolResultMessage.isError = true`.
 
@@ -425,13 +425,13 @@ adapter maps envelope errors (`details.ok === false`) to
 - `task_stop` only stops a background task; it is not a generic process manager.
 - Large command output should be persisted and then read through the file tool.
 
-Lin should not configure `AskUserQuestion` for v1. The assistant can ask the
+Tenon should not configure `AskUserQuestion` for v1. The assistant can ask the
 user in normal chat when clarification is needed. Web access should instead be
 covered by `web_search` and `web_fetch`.
 
-## Lin Tool Registry
+## Tenon Tool Registry
 
-Lin uses a compact, stable tool registry. Higher-risk tools should still be
+Tenon uses a compact, stable tool registry. Higher-risk tools should still be
 added only after approval, rendering, and undo behavior are solid.
 
 The detailed tool contract, parameter schema, and result envelope are defined in
@@ -444,12 +444,12 @@ These are the active core tool surface.
 
 | Tool | Reference | TypeScript-backed? | Approval intent | Purpose |
 |---|---|---:|---|---|
-| `node_search` | nodex `node_search`, Lin search-node outline | Yes | No | Execute a temporary or saved search node outline without mutating document state. |
+| `node_search` | nodex `node_search`, Tenon search-node outline | Yes | No | Execute a temporary or saved search node outline without mutating document state. |
 | `node_read` | nodex `node_read` | Yes | No | Read node raw type/data, fields, and bounded children. |
-| `node_create` | nodex `node_create`, Lin outline parser | Yes | Usually yes | Create outline trees, references, search/view nodes, schema nodes, or duplicates. |
-| `node_edit` | nodex `node_edit`, Lin outline parser | Yes | Usually yes | Edit a known node's annotated outline by exact replacement, or perform explicit move, merge, or reference replacement. |
+| `node_create` | nodex `node_create`, Tenon outline parser | Yes | Usually yes | Create outline trees, references, search/view nodes, schema nodes, or duplicates. |
+| `node_edit` | nodex `node_edit`, Tenon outline parser | Yes | Usually yes | Edit a known node's annotated outline by exact replacement, or perform explicit move, merge, or reference replacement. |
 | `node_delete` | nodex `node_delete` | Yes | Usually yes | Trash or restore nodes. |
-| `operation_history` | nodex `undo`, Lin history | Yes | Depends | List, undo, or redo user and agent operations. |
+| `operation_history` | nodex `undo`, Tenon history | Yes | Depends | List, undo, or redo user and agent operations. |
 | `file_read` | local file read role | Yes | Usually no | Read files with bounded output and freshness tracking. |
 | `file_glob` | local file glob role | Yes | No | Find files by path pattern. |
 | `file_grep` | local file grep role | Yes | No | Search file contents with bounded output. |
@@ -471,9 +471,9 @@ Add these after the active tool surface remains reliable in real workflows.
 
 | Tool | Reference | TypeScript-backed? | Approval | Purpose |
 |---|---|---:|---|---|
-| `past_chats` | nodex `past_chats` | Yes | No | Search and read older Lin agent conversations. |
+| `past_chats` | nodex `past_chats` | Yes | No | Search and read older Tenon agent conversations. |
 
-`task_stop` is active because Lin's `bash` tool supports background commands.
+`task_stop` is active because Tenon's `bash` tool supports background commands.
 
 ### P2 Tools
 
@@ -481,13 +481,13 @@ These should wait until the product needs them.
 
 | Tool | Reference | TypeScript-backed? | Approval | Purpose |
 |---|---|---:|---|---|
-| `browser` | nodex `browser` | Yes | Usually yes | Control an embedded browser tab if Lin adds one. |
+| `browser` | nodex `browser` | Yes | Usually yes | Control an embedded browser tab if Tenon adds one. |
 | `mcp_list_resources` | MCP resource discovery | Yes | No | Discover MCP resources. |
 | `mcp_read_resource` | MCP resource reading | Yes | No | Read MCP resources. |
 | `mcp_call_tool` | MCP tool calls | Yes | Depends | Call configured MCP server tools. |
 | `todo_write` | task planning | No | No | Maintain internal task plans if agent planning needs a tool. |
 | `skill` | skill invocation | Partly | Depends | Load and invoke local skill folders. |
-| `sub_agent` | child agent execution | Mixed | Depends | Spawn child agents. Not needed for Lin v1. |
+| `sub_agent` | child agent execution | Mixed | Depends | Spawn child agents. Not needed for Tenon v1. |
 
 Do not configure browser, MCP, or sub-agent tools in the first release unless
 there is a specific user-facing workflow. A larger tool pool increases prompt
@@ -495,7 +495,7 @@ cost and makes permission behavior harder to reason about.
 
 ## Tool Naming
 
-Lin should use lower snake case tool names for all Lin-owned tools:
+Tenon should use lower snake case tool names for all Tenon-owned tools:
 
 - `node_*` for document graph operations.
 - `file_*` for filesystem operations.
@@ -506,7 +506,7 @@ Lin should use lower snake case tool names for all Lin-owned tools:
 
 Do not use:
 
-- legacy `Read` / `Edit` / `Write` aliases: Lin should make the local
+- legacy `Read` / `Edit` / `Write` aliases: Tenon should make the local
   capability explicit with lower snake case names.
 - generic mutation tools such as `outliner_write`, `outliner_apply_patch`, or
   `node_batch`: they force the model to learn a second mini-protocol and make
@@ -603,7 +603,7 @@ enabled the approval UI/runtime pause flow yet.
 
 ## Event Mapping
 
-pi-mono events should be normalized into Lin events before they reach storage,
+pi-mono events should be normalized into Tenon events before they reach storage,
 debug, or renderer components. The canonical event-store architecture lives in
 `docs/spec/agent-event-log-rendering.md`.
 
@@ -643,7 +643,7 @@ Schema-reserved categories for the next runtime passes:
 - `metric.recorded`
 
 The raw pi-mono event can be kept as a payload ref for debugging, but UI
-components should render from Lin's normalized render projection.
+components should render from Tenon's normalized render projection.
 
 This keeps the transcript renderer independent from pi-mono and makes future
 migration to a TypeScript agent core or another library possible.
@@ -694,7 +694,7 @@ Abort behavior:
 - Keep completed messages and tool results immutable.
 
 Steering uses pi-agent-core's steering queue in the current runtime. If the user
-sends a new instruction while the agent is streaming, Lin queues it as steer
+sends a new instruction while the agent is streaming, Tenon queues it as steer
 input for the active run instead of starting an unrelated run in the same
 conversation.
 
@@ -710,7 +710,7 @@ pass; current queued follow-up and steer state are runtime state.
 
 ## Context Compaction
 
-Lin should treat compaction as a product policy, not as a library detail.
+Tenon should treat compaction as a product policy, not as a library detail.
 Compaction is active in the runtime and has three entry points:
 
 - manual `/compact [instructions]`
@@ -789,18 +789,18 @@ Baseline rules:
 
 Landed in main:
 
-- pi-mono dependencies are pinned and isolated behind Lin's Electron main
+- pi-mono dependencies are pinned and isolated behind Tenon's Electron main
   runtime boundary.
 - `AgentRuntime` owns session lifecycle, prompt routing, stop/reset/branch
   commands, pi-agent-core subscriptions, provider debug capture, event append,
   projection emission, and checkpoint writes.
-- `useLinAgentRuntime` consumes Lin-owned `AgentRuntimeEvent` /
+- `useLinAgentRuntime` consumes Tenon-owned `AgentRuntimeEvent` /
   `AgentRenderProjection` data instead of pi-mono objects.
 - Agent conversations persist through the event store, not through mutable
   pi-agent-core state.
 - Active-path pi-ai `Message[]` is derived from replay state when a session is
   restored or a new run starts.
-- Web, outliner, file, bash, and background-task tools execute through Lin's
+- Web, outliner, file, bash, and background-task tools execute through Tenon's
   TypeScript main-process gateway.
 - Large tool output and provider request/response debug data use event-store
   payload refs.
@@ -815,11 +815,11 @@ Remaining runtime work:
   transcript rendering.
 - Richer lazy media previews for non-text payloads in render/debug details.
 - More explicit cancellation events once pi-agent-core abort semantics are mapped
-  cleanly to Lin's `run.cancelled`.
+  cleanly to Tenon's `run.cancelled`.
 
 ## Testing
 
-Current coverage should stay focused on the Lin-owned boundary:
+Current coverage should stay focused on the Tenon-owned boundary:
 
 - Event schema, replay, active path, branch selection, pi-ai message derivation,
   render projection, event store append ordering, checkpoint replay, corrupt
@@ -843,18 +843,18 @@ Next coverage should land with the corresponding runtime features:
 
 ## Migration Risk
 
-Using pi-mono should not make Lin dependent on pi-mono forever.
+Using pi-mono should not make Tenon dependent on pi-mono forever.
 
 Keep these interfaces stable:
 
-- Lin-owned `AgentEvent`.
-- Lin-owned `AgentRuntimeEvent`.
-- Lin-owned `AgentRenderProjection`.
-- Lin-owned tool schemas and result envelopes.
-- Lin-owned Electron IPC command payloads.
-- Lin-owned persisted conversation schema.
+- Tenon-owned `AgentEvent`.
+- Tenon-owned `AgentRuntimeEvent`.
+- Tenon-owned `AgentRenderProjection`.
+- Tenon-owned tool schemas and result envelopes.
+- Tenon-owned Electron IPC command payloads.
+- Tenon-owned persisted conversation schema.
 
-If Lin later moves to a TypeScript agent core, the replacement should only need to
+If Tenon later moves to a TypeScript agent core, the replacement should only need to
 implement the runtime adapter contract. Document tools, Electron IPC commands,
 permissions, transcript rendering, and persistence should remain mostly intact.
 
@@ -863,8 +863,8 @@ permissions, transcript rendering, and persistence should remain mostly intact.
 pi-mono should provide the agent brain: model abstraction, streaming, agent
 loop, tool-call orchestration, and steering.
 
-Lin should provide the local body: outliner operations, file operations, bash,
+Tenon should provide the local body: outliner operations, file operations, bash,
 permissions, approvals, undo, persistence, and UI state.
 
-This split gives Lin a fast path to a capable local agent without giving up
+This split gives Tenon a fast path to a capable local agent without giving up
 control over the local-first TypeScript core.

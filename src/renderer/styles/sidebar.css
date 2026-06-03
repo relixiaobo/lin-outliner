@@ -81,7 +81,7 @@
   width: var(--sidebar-tree-icon-size);
   height: var(--sidebar-tree-icon-size);
   flex: 0 0 var(--sidebar-tree-icon-size);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .sidebar-brand-name {
