@@ -1620,7 +1620,10 @@ export class AgentRuntime {
       model: clone(session.agent.state.model) as unknown as Record<string, unknown>,
       thinkingLevel: session.agent.state.thinkingLevel,
       pendingToolCallIds: Array.from(session.agent.state.pendingToolCalls),
-      errorMessage: latestAssistantWasAborted(session) ? null : session.agent.state.errorMessage ?? null,
+      // Run/provider failures render inline as a failed assistant message (see
+      // appendAssistantCompleted). The top-level banner is reserved for transient
+      // operational errors delivered via the `error` event.
+      errorMessage: null,
     });
     return {
       ...projection,
@@ -2273,15 +2276,34 @@ export class AgentRuntime {
   private async appendAssistantCompleted(sessionId: string, session: AgentSessionState, message: AssistantMessage) {
     const messageId = session.activeAssistantMessageId;
     if (!messageId) return;
-    await this.appendSessionEvents(sessionId, session, [{
-      type: 'assistant_message.completed',
-      actor: agentActor(),
-      runId: session.activeRunId ?? undefined,
-      messageId,
-      stopReason: message.stopReason,
-      content: fromPiAssistantContent(message.content),
-      usage: message.usage,
-    }]);
+    // A provider/run failure surfaces as a terminal assistant message with an
+    // error stop reason (pi-agent-core synthesizes it). Carry that error onto the
+    // message record so the turn renders inline as a failed message (with retry),
+    // rather than a separate top banner. Context-overflow failures are recovered
+    // automatically by reactive compaction, so they are left unmarked.
+    const inlineFailure = message.stopReason !== 'aborted'
+      && message.errorMessage
+      && !isContextOverflow(message, session.agent.state.model.contextWindow)
+      ? message.errorMessage
+      : null;
+    await this.appendSessionEvents(sessionId, session, [
+      {
+        type: 'assistant_message.completed',
+        actor: agentActor(),
+        runId: session.activeRunId ?? undefined,
+        messageId,
+        stopReason: message.stopReason,
+        content: fromPiAssistantContent(message.content),
+        usage: message.usage,
+      },
+      ...(inlineFailure ? [{
+        type: 'assistant_message.failed' as const,
+        actor: agentActor(),
+        runId: session.activeRunId ?? undefined,
+        messageId,
+        errorMessage: inlineFailure,
+      }] : []),
+    ]);
     session.activeAssistantMessageId = null;
     session.activeAssistantText = '';
   }
@@ -3188,13 +3210,6 @@ function toolActor(toolName: string, toolCallId: string): AgentActor {
 
 function canContinueFromMessage(message: AgentMessage | undefined): boolean {
   return message?.role === 'user' || message?.role === 'toolResult';
-}
-
-function latestAssistantWasAborted(session: AgentSessionState): boolean {
-  const latest = getAgentEventActivePath(session.eventState)
-    .filter((message) => message.role === 'assistant')
-    .at(-1);
-  return latest?.stopReason === 'aborted';
 }
 
 function createProviderConfiguredStreamFn(
