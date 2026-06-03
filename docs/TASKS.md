@@ -43,11 +43,6 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 
 Ordered by priority; lower items may depend on higher ones.
 
-- **lazy-like-global-launcher** (P0) — global quick-capture launcher entry point;
-  its local-file capture consumes **outliner-local-file-references** (foundation
-  **landed, PR #80**), so the core types/parser/serializer are settled — build
-  capture on top of `ReferenceTarget`. See
-  `docs/plans/lazy-like-global-launcher.md`.
 - **design-system-rollout** (P1) — staged migration to `docs/spec/design-system.md`.
   Phase 1 (token foundation + gated dark theme) landed (PR #55). Phases 2–4 landed
   in PR #57: CSS modularized into per-surface modules; components migrated to the
@@ -63,6 +58,15 @@ Ordered by priority; lower items may depend on higher ones.
   provider — today send fires and only errors at runtime). Renderer empty-state +
   send-guard only (`AgentChatPanel` + `AgentComposer`); no core surface. See
   `docs/plans/agent-empty-state-onboarding.md`.
+- **agent-self-modification** (P1) — define a controlled product capability for
+  agent self-modification (skills/profiles/config) instead of letting the model
+  edit runtime files directly. Directional/security-sensitive — escalate the
+  capability boundary to the PM before building. See
+  `docs/plans/agent-self-modification.md`.
+- **file-attachments** (P1) — `attachment` node type for arbitrary local files
+  (plugs into `BlockNodeRow` via `renderBlockBody` + `isBlockNodeType`). Depends
+  on `asset-subsystem` (done) + `image-rendering` (done). See
+  `docs/plans/file-attachments.md`.
 - **field-value-row-selection** (P2) — make field VALUE rows join the global node
   multi-selection model (shift/cmd-select multiple value rows, then batch
   delete/move/duplicate); keeps the append-only value model (no cardinality
@@ -76,6 +80,10 @@ Ordered by priority; lower items may depend on higher ones.
   state (not the core document — flag to PM if pins should be a document concept).
   Builds on the merged v2 layout + post-refactor sidebar/menu. See
   `docs/plans/sidebar-pinned-nodes.md`.
+- **file-preview** (P2, depends on **workspace-tabs-to-single-pane** — landed
+  PR #85) — in-app file/URL preview as a new per-pane *view-state* (generalizes
+  per-pane history from a `NodeId[]` stack to a discriminated view-state stack so
+  a `file-preview` entry slots in). See `docs/plans/file-preview.md`.
 - **agent-tool-permissions-hardening** (P2) — non-blocking follow-ups after the
   #60 permission implementation: move the `sessionApproved` short-circuit below
   configured-ask (don't silently relax a configured `ask`); re-validate
@@ -90,8 +98,10 @@ Ordered by priority; lower items may depend on higher ones.
   provider settings: credential storage, Electron-main login over IPC, view-model
   `authKind`, sign-in / connected / sign-out UI. Lightweight UI fix shipped in
   #37; see `docs/plans/agent-oauth-providers.md`.
-- **file-attachments** (P1) — `attachment` node type for arbitrary local files
-  (plugs into `BlockNodeRow` via `renderBlockBody` + `isBlockNodeType`).
+- **agent-scheduled-routines** (P2) — a "command node" whose content is a
+  natural-language brief to the agent; setting its `date` field (one field
+  carrying both *when to start* and *how to repeat*) makes it run on a schedule.
+  See `docs/plans/agent-scheduled-routines.md`.
 - **media-types** (P2) — audio/video players + PDF thumbnail on the
   `BlockNodeRow` shell; `serve()` needs a streaming/range response for large
   media (current whole-file read is image-only).
@@ -99,6 +109,10 @@ Ordered by priority; lower items may depend on higher ones.
   orphaned assets; drag-from-Finder ingest; inline alt-text editing.
 - **agent-image-awareness** (P2) — surface `image` nodes in the agent
   projection so the agent can read/insert them.
+- **macos-liquid-glass-icon** (P2) — true Liquid Glass app icon for macOS 26
+  (Tahoe): the layered `.icon` (Icon Composer) format the OS renders with dynamic
+  glass material, specular edges + depth, with a legacy `.icns` fallback for
+  macOS < 26. Deferred from PR #84. See `docs/plans/macos-liquid-glass-icon.md`.
 - **floating-toolbar-polish** (P3) — heading-mark toggle + `#` selection
   extract in the floating editor toolbar.
 - **view-toolbar-name-filter** (P3) — quick incremental name filter as the
@@ -124,6 +138,9 @@ Ordered by priority; lower items may depend on higher ones.
   (2) avoid `isJsonText` re-parsing on every render in `AgentToolCallBlock`
   (compute once in the memoized `resultParts`); (3) give `visiblePastChatsResult`
   a named return type instead of `unknown`. None affect behavior.
+- **agent-generative-ui** (P3) — Claude-style custom visuals in agent chat: the
+  assistant generates interactive HTML/SVG widgets inline in the conversation
+  while the tool arguments stream. See `docs/plans/agent-generative-ui.md`.
 
 ## Recently completed
 

@@ -1,10 +1,21 @@
 ---
-status: in-progress
+status: done
 priority: P1
 owner: relixiaobo
 created: 2026-05-25
-updated: 2026-05-25
+updated: 2026-06-03
+shipped: PR #8, #10
 ---
+
+> **Status close-out (2026-06-03).** Shipped: inline `image` nodes on the shared
+> `BlockNodeRow` shell, clipboard/`/image` ingest, caption-as-description, and
+> the hover toolbar (PR #8); the dual local-`assetId` / remote-`mediaUrl` source
+> model + `asset://` rename (PR #10). Deferred items live in follow-on backlog
+> plans: drag-from-Finder + inline alt-text → `asset-gc`; remote-media
+> content-type autodetect → `media-types`. (The deferred CSP was since shipped
+> independently by native-feel stage 1, PR #43.) Kept in `docs/plans/` (not
+> archived) because active plans (`file-preview`, `file-attachments`) link it by
+> path and its design is not yet folded into `docs/spec/` (open A6 debt).
 
 # Image Rendering
 

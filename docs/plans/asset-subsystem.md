@@ -1,10 +1,20 @@
 ---
-status: in-progress
+status: done
 priority: P0
 owner: relixiaobo
 created: 2026-05-25
-updated: 2026-05-25
+updated: 2026-06-03
+shipped: PR #8
 ---
+
+> **Status close-out (2026-06-03).** Shipped in PR #8: `AssetService`, the
+> `asset://` privileged protocol, and the `ingest_asset` / `lookup_asset` /
+> `delete_asset` / `pick_image_files` IPC. The deferred items (`index.json`
+> rebuild, garbage collection, drag-from-Finder ingest) are tracked by the
+> `asset-gc` backlog item. Kept in `docs/plans/` (not archived) because active
+> plans (`file-attachments`, `embed-strategy`, `file-preview`) still link this by
+> path and its design is not yet folded into `docs/spec/` (an open A6 debt — a
+> dedicated asset/image spec should be written when the dependent plans land).
 
 # Asset Subsystem
 
