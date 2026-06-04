@@ -73,6 +73,15 @@ Ordered by priority; lower items may depend on higher ones.
   (protocol surface → interface-first + ratify). Soft-depends on `ask_user_question`
   (degrades to conversational turns until it exists). See
   `docs/plans/agent-import-skill.md`.
+- **text-search-relevance-layer** (P1, plan ratified, PR #99) — shared TS text
+  relevance kernel (`src/core/textSearchIndex.ts`): inverted postings, field-aware
+  BM25, exact/prefix/phrase boosts, CJK n-gram candidates + strict normalized
+  verification; integrates into `STRING_MATCH` with no protocol change.
+  **Incremental** index maintenance — consume Core's existing `affectedNodeIds`
+  deltas + tag/field dependency-map fan-out; full rebuild only on
+  load/undo/full-rewrite (measured spike: 10k cold ~225ms, edit→search ~0.3ms).
+  One-shot v1 (no split). Coordinate with `lazy-like-global-launcher` so launcher
+  search reuses this kernel. See `docs/plans/text-search-relevance-layer.md`.
 - **sidebar-pinned-nodes** (P2, **unblocked — workspace-tabs-to-single-pane landed in PR #85**) —
   implement the stubbed Pinned section: pin from right-click on BOTH outliner and
   sidebar node rows; persist across restart. Recommended storage = renderer layout
