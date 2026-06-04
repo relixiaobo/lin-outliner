@@ -57,26 +57,16 @@ Ordered by priority; lower items may depend on higher ones.
   ranker. Implementer must re-verify the merged #102 scoring paths before claiming
   the substring scorers are gone (A8). See `docs/plans/search-retrieval-stack.md`.
 - **unified-command-surface** (P2, **design ratified by PM — needs a dev-drafted
-  one-pager**) — collapse cmd+k and the launcher into **one** context-aware command
-  surface. Not "one absorbs the other": there is only one surface, summoned the same
-  way everywhere, with the same UI and logic. The **only** difference is the ambient
-  **context** auto-attached at summon time — context is a passive attachment, not a
-  mode. **Decided by PM:** (1) one global hotkey `Cmd+Shift+Space` everywhere (cmd+k
-  retires; plain cmd+k can't be a system-global key without hijacking it in every app);
-  (2) in-app context = the currently **focused node** or the **selected nodes**;
-  out-of-app context = the foreground app (e.g. browser tab, via the existing capture
-  path). Action model = **Target × Verb**: a small universal verb set — Go to · Capture
-  · Reference · Tag · **Ask AI** (current context auto-fed as the agent's source) · Run
-  command — where the attached context decides which verbs are available and the
-  default (Enter) action. **Open design work for the plan:** the full scenario→verb
-  enumeration + the v1 verb cut (Go to + Capture are the base; Ask AI is high-value and
-  the agent already exists; Reference/Tag/bulk can phase in), the per-context default
-  action (must be predictable), and the no-provider guard for Ask AI (ties to
-  `agent-empty-state-onboarding`). Reuses the existing context-provider shape
-  (`contextCapture.ts` + `providers/`) — in-app is just a new "Tenon self" provider;
-  same core `search_nodes` kernel underneath. **Sequence after `search-retrieval-stack`
-  Phase 2** (the shared node path). Supersedes the earlier "launcher absorbs cmd+k"
-  framing. A dev agent drafts `docs/plans/<topic>.md`; the PM ratifies before build.
+  build one-pager**) — collapse cmd+k and the launcher into **one** context-aware
+  command surface (one surface, one hotkey `Cmd+Shift+Space`, context as an ambient
+  attachment, `Target × Verb`). The full ratified design (D1–D8: Enter contract,
+  context-forward + habit-adaptive default-highlight, reversibility tier B, chip
+  rail, Ask AI → agent panel, phased out-of-app fidelity, slash boundary, one-engine
+  invariant) lives in `docs/plans/unified-command-surface.md`. **Sequence after
+  `search-retrieval-stack` Phase 2**; a dev agent then drafts the build one-pager
+  (phases/file-scope/tests) and the PM ratifies before code. Supersedes the earlier
+  "launcher absorbs cmd+k" framing; coordinates with the launcher follow-ups (cc-2)
+  and reuses #109's no-provider guard.
 - **agent-self-modification** (P1) — define a controlled product capability for
   agent self-modification (skills/profiles/config) instead of letting the model
   edit runtime files directly. Directional/security-sensitive — escalate the
