@@ -356,6 +356,32 @@ Usability (`canChooseModels`, active-provider resolution) treats oauth-connected
 and managed providers as credentialed via a single `auth.credentialed` signal,
 not "has a pasted key".
 
+### Provider rows are deliberate; state cannot contradict
+
+A row in `agent-providers.json` means the user deliberately added a provider — it
+is never a side effect of saving unrelated settings. Two rules keep `configured`
+(has a row) and `credentialed` (has a usable key / oauth / env key) from diverging
+into the "needs a key, yet offers *Remove provider*" contradiction:
+
+- **Row creation lives in one place.** Only the per-provider config window
+  (`upsertProviderConfig`, after the credential is stored) and the OAuth login
+  (`ensureProviderConfig`, after the credential is persisted) create or edit a
+  provider row. The main Settings pane's Save persists only runtime settings
+  (permissions / skills / agents); it never upserts a provider. An upsert has no
+  auto-activation side effect — a provider becomes active only on a deliberate
+  user action or the load reconcile below.
+
+- **Reconcile on load.** `getProviderSettings` repairs the file and persists only
+  when something changed: it prunes a *junk* row — one that can connect to nothing
+  (no stored credential, no env / managed key, and no `baseUrl` local endpoint) —
+  and repoints `activeProviderId` to the first enabled, credentialed provider (or
+  clears it) whenever the current pointer is unset, removed, or no longer usable.
+  A legit keyless row (a local `baseUrl` or an env-keyed provider) survives. This
+  makes the contradiction structurally impossible — an uncredentialed provider has
+  no row — rather than papering over it in the renderer. Per the pre-launch
+  no-migration policy this reconcile (plus a dev `userData` wipe) is the only
+  cleanup; there is no versioned migration.
+
 ## System Prompt
 
 Tenon follows the prompt layering principle used by stable agent runtimes:

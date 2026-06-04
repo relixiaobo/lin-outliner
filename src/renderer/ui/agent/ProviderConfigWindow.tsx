@@ -100,6 +100,14 @@ export function ProviderConfigWindow() {
     if (!pid) return;
     const modelId = draft.modelId.trim() || existing?.modelId || catalog?.models[0]?.id || '';
     const reasoningLevel = existing?.reasoningLevel ?? defaultReasoningLevel(catalog?.models[0]);
+    // Store the credential BEFORE creating the row. The load reconcile prunes a row
+    // that can connect to nothing (no credential, no baseUrl); persisting the key
+    // first means the just-created row is already credentialed when reconcile runs,
+    // so a fresh provider is never pruned out from under its own key
+    // (provider-config-cleanup A3).
+    if (draft.apiKey.trim()) {
+      await api.agentSetProviderApiKey(pid, draft.apiKey.trim());
+    }
     await api.agentUpsertProviderConfig({
       providerId: pid,
       modelId,
@@ -107,9 +115,6 @@ export function ProviderConfigWindow() {
       baseUrl: draft.baseUrl.trim() || null,
       enabled: true,
     });
-    if (draft.apiKey.trim()) {
-      await api.agentSetProviderApiKey(pid, draft.apiKey.trim());
-    }
     await window.lin?.notifySettingsChanged?.();
   }
 

@@ -112,7 +112,21 @@ export interface AgentProviderRuntimeConfig extends AgentProviderConfig {
 }
 
 export async function getProviderSettings(): Promise<AgentProviderSettingsView> {
-  return toSettingsView(await readProviderFile(), await readSecretFileSafe());
+  const file = await readProviderFile();
+  const secrets = await readSecretFileSafe();
+  // Reconcile on load: drop junk rows (an uncredentialed catalog provider with no
+  // local endpoint — the shape the old save-side-effect bug produced) and repoint a
+  // stale active provider. Persist only when something actually changed so the
+  // common (already-clean) read stays a pure read. See provider-config-cleanup A3.
+  if (reconcileProviderFile(file, secrets)) {
+    try {
+      await writeProviderFile(file);
+    } catch {
+      // Best-effort cleanup: a failed rewrite still yields a reconciled VIEW; the
+      // junk row is simply reconsidered on the next read rather than crashing it.
+    }
+  }
+  return toSettingsView(file, secrets);
 }
 
 export async function getAgentRuntimeSettings(): Promise<AgentRuntimeSettings> {
@@ -176,7 +190,10 @@ export async function upsertProviderConfig(input: AgentProviderConfigInput) {
   if (index >= 0) file.providers[index] = config;
   else file.providers.push(config);
   file.providers.sort((left, right) => left.providerId.localeCompare(right.providerId));
-  file.activeProviderId ??= file.providers[0]?.providerId;
+  // No auto-activation side effect (provider-config-cleanup A2): an upsert never
+  // makes a provider active by itself — the credential may not be stored yet. The
+  // reconcile in getProviderSettings sets the first credentialed provider active
+  // when none is, so a freshly credentialed provider still becomes active.
   await writeProviderFile(file);
   return getProviderSettings();
 }
@@ -200,7 +217,9 @@ export async function ensureProviderConfig(providerIdInput: string): Promise<voi
     enabled: true,
   });
   file.providers.sort((left, right) => left.providerId.localeCompare(right.providerId));
-  file.activeProviderId ??= file.providers[0]?.providerId;
+  // The OAuth credential is persisted before this row is created, so the reconcile
+  // in the subsequent getProviderSettings will activate this provider when none is
+  // active — no auto-activation side effect needed here (provider-config-cleanup A2).
   await writeProviderFile(file);
 }
 
@@ -437,7 +456,52 @@ function normalizeConfig(input: AgentProviderConfigInput): AgentProviderConfig {
 function providerHasCredential(provider: AgentProviderConfig, secrets: SecretFile): boolean {
   // A stored credential (api_key or oauth login), an env key, or a managed
   // ambient sentinel all count. Kind-agnostic, mirroring the resolver.
-  return provider.enabled && Boolean(secrets.credentials[provider.providerId] || getEnvApiKey(provider.providerId));
+  return provider.enabled && hasStoredOrEnvKey(provider.providerId, secrets);
+}
+
+// Credential existence independent of the `enabled` flag and the `baseUrl` local
+// endpoint: a stored credential (api_key / oauth) or an env / managed-ambient key.
+// Used by the junk-row prune predicate, which must not drop a disabled-but-keyed row.
+function hasStoredOrEnvKey(providerId: string, secrets: SecretFile): boolean {
+  return Boolean(secrets.credentials[providerId] || getEnvApiKey(providerId));
+}
+
+/**
+ * Reconcile a provider file against the stored secrets, mutating it in place and
+ * returning whether anything changed (provider-config-cleanup A3). Two repairs:
+ *
+ * 1. Prune JUNK rows — a row that can connect to nothing: no stored credential, no
+ *    env / managed key, AND no `baseUrl` local endpoint. This is exactly the shape
+ *    the old main-pane save side effect produced (a keyless catalog row); a legit
+ *    keyless row (local `baseUrl` or env-keyed provider) survives.
+ * 2. Repoint `activeProviderId` — if it is unset, or points at a row that is gone or
+ *    no longer usable (disabled / uncredentialed), set it to the first enabled +
+ *    credentialed provider, else clear it. Mirrors the runtime's usable-active rule
+ *    so the persisted active matches what the agent will actually resolve.
+ */
+function reconcileProviderFile(file: ProviderConfigFile, secrets: SecretFile): boolean {
+  let changed = false;
+
+  const kept = file.providers.filter(
+    (provider) => hasStoredOrEnvKey(provider.providerId, secrets) || Boolean(provider.baseUrl),
+  );
+  if (kept.length !== file.providers.length) {
+    file.providers = kept;
+    changed = true;
+  }
+
+  const activeIsUsable = file.providers.some(
+    (provider) => provider.providerId === file.activeProviderId && providerHasCredential(provider, secrets),
+  );
+  if (!activeIsUsable) {
+    const next = file.providers.find((provider) => providerHasCredential(provider, secrets))?.providerId;
+    if (file.activeProviderId !== next) {
+      file.activeProviderId = next;
+      changed = true;
+    }
+  }
+
+  return changed;
 }
 
 function normalizeProviderId(providerIdInput: string) {
