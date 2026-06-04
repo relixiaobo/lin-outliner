@@ -1,31 +1,15 @@
 import { useMemo, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import { EMPTY_RICH_TEXT, type NodeId, type NodeProjection } from '../../api/types';
-import { DAY_FIELD, OWNER_FIELD, REF_COUNT_FIELD, systemFieldDisplay } from '../../../core/systemFields';
 import type { DocumentIndex, UiState } from '../../state/document';
+import {
+  isNodeReferenceSystemField,
+  syntheticSystemReferenceId,
+  systemReferenceTargets,
+} from '../../state/systemReferenceRows';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
 import { OutlinerView } from './OutlinerView';
 
-// The read-only system fields that resolve to other nodes: References (backlink
-// sources), Owner (the parent), Day (the nearest day-tagged ancestor). They are
-// computed, not stored — see docs/plans/archive/reference-field-type.md (decision A).
-const NODE_REFERENCE_SYSTEM_FIELDS: ReadonlySet<string> = new Set([
-  REF_COUNT_FIELD,
-  OWNER_FIELD,
-  DAY_FIELD,
-]);
-
-/** Whether this system field's value is a set of node references (vs a date / checkbox / tags). */
-export function isNodeReferenceSystemField(systemFieldId: string): boolean {
-  return NODE_REFERENCE_SYSTEM_FIELDS.has(systemFieldId);
-}
-
-/** The target node ids a node-reference system field resolves to, in display order. */
-function systemReferenceTargets(owner: NodeProjection, systemFieldId: string, byId: Map<NodeId, NodeProjection>): NodeId[] {
-  const display = systemFieldDisplay(owner, systemFieldId, byId);
-  if (display.kind === 'nodeRefs') return display.refs.map((ref) => ref.id);
-  if (display.kind === 'dayRef') return display.nodeId ? [display.nodeId] : [];
-  return [];
-}
+export { isNodeReferenceSystemField };
 
 interface SystemReferenceValuesProps {
   panelId: string;
@@ -69,7 +53,7 @@ export function SystemReferenceValues(props: SystemReferenceValuesProps) {
     const byId = new Map(props.index.byId);
     const refIds: NodeId[] = [];
     for (const targetId of targets) {
-      const refId = `sysref:${props.entryId}:${targetId}`;
+      const refId = syntheticSystemReferenceId(props.entryId, targetId);
       refIds.push(refId);
       byId.set(refId, {
         id: refId,

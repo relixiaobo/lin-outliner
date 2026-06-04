@@ -1,5 +1,9 @@
 import type { NodeId, NodeProjection } from '../api/types';
 import { buildOutlinerRows } from './outlinerRows';
+import {
+  isSyntheticSystemReferenceId,
+  systemReferenceValueIds,
+} from './systemReferenceRows';
 
 export type SelectableRowKind =
   | 'content'
@@ -82,6 +86,19 @@ export function buildSelectableRows(
         panelRootId,
         byId,
       }));
+      if (row.type === 'field') {
+        const fieldEntry = byId.get(row.id);
+        const existingChildren = new Set(fieldEntry?.children ?? []);
+        for (const syntheticId of systemReferenceValueIds(fieldEntry, byId)) {
+          if (existingChildren.has(syntheticId)) continue;
+          result.push(selectableRowFor({
+            id: syntheticId,
+            parentId: row.id,
+            panelRootId,
+            byId,
+          }));
+        }
+      }
       const shouldDescend = row.type === 'field' || options.expanded.has(row.id);
       if (shouldDescend) {
         const childParentId = selectableChildParentId(row.id, byId);
@@ -178,5 +195,5 @@ function actionPolicyFor(kind: SelectableRowKind, mutable: boolean): SelectableR
 }
 
 function isSyntheticSystemValueId(id: NodeId): boolean {
-  return id.startsWith('sysref:');
+  return isSyntheticSystemReferenceId(id);
 }

@@ -216,9 +216,9 @@ export function App() {
     openRootInPanel(activeRootId);
   }, [activeOutlinerPanel, openRootInPanel]);
 
-  const requestEditFocus = useCallback((nodeId: NodeId) => {
-    setUi((prev) => requestFocusState(prev, rowFocusTarget(nodeId, null, null), cursorEnd()));
-    setPendingFocus({ nodeId, selectAll: false });
+  const requestEditFocus = useCallback((nodeId: NodeId, parentId: NodeId | null = null) => {
+    setUi((prev) => requestFocusState(prev, rowFocusTarget(nodeId, parentId, null), cursorEnd()));
+    setPendingFocus({ nodeId, parentId, selectAll: false });
   }, [setUi]);
 
   const appendTypedCharToRow = useCallback((rowId: NodeId, char: string) => {

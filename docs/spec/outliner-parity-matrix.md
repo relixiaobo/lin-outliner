@@ -101,7 +101,7 @@ field row but still appear in the selectable-row order.
 | Operation | nodex behavior | lin-outliner rule | Test coverage |
 | --- | --- | --- | --- |
 | Duplicate | Operate on top-level selected rows only. Plain field values may clone; reference/option-style values are filtered out instead of creating duplicate targets. | `selectedRootIds`, `selectionBatchActions`. | `outlinerParity.test.ts` |
-| Trash | Operate on top-level selected rows only. Field value rows route to `remove_field_value`, not generic trash, so option-pool cleanup still runs. | `selectedRootIds`, `selectionBatchActions`. | `outlinerParity.test.ts`, `outliner-selection.spec.ts` |
+| Trash | Operate on top-level selected rows only. Field value rows route to `remove_field_value`, not generic trash, so option-pool cleanup still runs. A single ref-clicked ordinary reference may hard-delete the reference row even if locked; a ref-clicked reference field value still uses `remove_field_value`. | `selectedRootIds`, `selectionBatchActions`. | `outlinerParity.test.ts`, `outliner-selection.spec.ts` |
 | Move up/down | Reorder selected rows inside their current sibling list. Field value rows may reorder only inside their owning field entry. | Core batch move commands via selectable-row policy. | core tests |
 | Done | For references, toggle the target node, not the display reference row. | `targetIdsForRows`. | `outlinerParity.test.ts`, `outliner-selection-keyboard.spec.ts` |
 | Add tag | Batch apply to selected target nodes; create tag then apply if needed. | `batch_apply_tag`. | core + renderer + E2E tests |

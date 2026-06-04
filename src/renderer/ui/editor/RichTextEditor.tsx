@@ -422,6 +422,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
           return false;
         },
         click(_viewInstance, event) {
+          if (event.shiftKey) return false;
           const target = event.target instanceof HTMLElement
             ? event.target.closest<HTMLElement>('[data-inline-ref]')
             : null;

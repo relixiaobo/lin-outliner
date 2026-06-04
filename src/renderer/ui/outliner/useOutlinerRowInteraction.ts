@@ -225,7 +225,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     const target = event.target as HTMLElement;
     const nearestRowWrap = target.closest<HTMLElement>('[data-node-id][data-parent-id]');
     if (nearestRowWrap?.dataset.nodeId && nearestRowWrap.dataset.nodeId !== rowId) return;
-    if (target.closest('[data-inline-ref], .inline-ref')) return;
+    if (target.closest('[data-inline-ref], .inline-ref') && !event.shiftKey) return;
     if (target.closest('button')) return;
     if (shouldPreserveSelectedRowContextClick({
       button: event.button,

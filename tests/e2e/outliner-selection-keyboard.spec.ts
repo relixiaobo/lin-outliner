@@ -87,6 +87,31 @@ async function createFieldValueFixture(page: import('@playwright/test').Page) {
   return result;
 }
 
+async function createOwnerSystemFieldFixture(page: import('@playwright/test').Page) {
+  const result = await page.evaluate(async (ids) => {
+    const win = window as Window & {
+      lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+    };
+    const field = await win.lin?.invoke<{ focus?: { nodeId: string } }>('create_inline_field', {
+      parentId: ids.today,
+      index: 1,
+      name: 'Owner',
+      fieldType: 'plain',
+    });
+    const entryId = field?.focus?.nodeId ?? '';
+    await win.lin?.invoke('reuse_field_definition', {
+      entryId,
+      targetDefId: 'sys:owner',
+    });
+    return {
+      entryId,
+      sysrefId: `sysref:${entryId}:${ids.daily}`,
+    };
+  }, ids);
+  await emitCurrentProjection(page);
+  return result;
+}
+
 test.describe('outliner selection keyboard parity', () => {
   test.beforeEach(async ({ page }) => {
     await openMockedApp(page);
@@ -171,6 +196,60 @@ test.describe('outliner selection keyboard parity', () => {
     await expect(rowBody(page, firstValueId)).toHaveClass(/selected/);
     await expect(rowBody(page, secondValueId)).toHaveClass(/selected/);
     await expect(rowBody(page, ids.beta)).not.toHaveClass(/selected/);
+  });
+
+  test('delete below field values focuses the previous field value row', async ({ page }) => {
+    const { secondValueId } = await createFieldValueFixture(page);
+
+    await multiSelect(page, [ids.beta]);
+    await page.keyboard.press('Backspace');
+
+    await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.trash);
+    await expect(rowEditor(page, secondValueId)).toBeFocused();
+  });
+
+  test('Cmd+A keeps synthetic system reference rows in the panel selection scope', async ({ page }) => {
+    const { entryId, sysrefId } = await createOwnerSystemFieldFixture(page);
+
+    await expect(row(page, sysrefId)).toBeVisible();
+    await rowBody(page, sysrefId).click();
+    await page.keyboard.press('Meta+A');
+
+    await expect(rowBody(page, ids.alpha)).toHaveClass(/selected/);
+    await expect(rowBody(page, entryId)).toHaveClass(/selected/);
+    await expect(rowBody(page, sysrefId)).toHaveClass(/selected/);
+    await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
+    await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
+  });
+
+  test('Shift click on an inline reference chip extends the row range', async ({ page }) => {
+    const inlineRefPayload = e2eNodeInlineRef(4, ids.gamma, 'Gamma');
+    await page.evaluate(async ({ ids, inlineRefPayload }) => {
+      const win = window as Window & {
+        lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      };
+      await win.lin?.invoke('apply_node_text_patch', {
+        nodeId: ids.beta,
+        patch: {
+          ops: [{
+            type: 'replace_all',
+            content: {
+              text: 'See ',
+              marks: [],
+              inlineRefs: [inlineRefPayload],
+            },
+          }],
+        },
+      });
+    }, { ids, inlineRefPayload });
+    await emitCurrentProjection(page);
+
+    await row(page, ids.alpha).click({ modifiers: ['Meta'] });
+    await row(page, ids.beta).locator('.inline-ref').first().click({ modifiers: ['Shift'] });
+
+    await expect(rowBody(page, ids.alpha)).toHaveClass(/selected/);
+    await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
+    await expect(rowBody(page, ids.gamma)).not.toHaveClass(/selected/);
   });
 
   test('Tab indents selected rows under the previous sibling and keeps the target expanded', async ({ page }) => {

@@ -156,6 +156,9 @@ Delete semantics:
 
 - Stored field value rows must use field-value removal semantics equivalent to
   `removeFieldValue`, so auto-collected options are cleaned up or promoted.
+- A single ref-clicked ordinary reference may still hard-delete the reference row
+  itself, matching the pre-existing reference-row affordance. If that reference
+  is a field value, field-value removal wins so field cleanup still runs.
 - Mixed selections may include body rows, field entries, and value rows. The
   batch delete planner should partition the selected roots by action policy and
   run the correct command(s) in one user gesture.

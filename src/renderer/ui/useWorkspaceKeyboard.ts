@@ -103,7 +103,7 @@ interface UseWorkspaceKeyboardOptions {
   onNavigateBack: () => void;
   onNavigateForward: () => void;
   onOpenPanel: () => void;
-  requestEditFocus: (nodeId: NodeId) => void;
+  requestEditFocus: (nodeId: NodeId, parentId?: NodeId | null) => void;
   rootId: NodeId | null;
   run: CommandRunner;
   setCommandOpen: (commandOpen: boolean) => void;
@@ -151,10 +151,12 @@ export function useWorkspaceKeyboard({
           return;
         }
         const selectionRootId = resolveKeyboardSelectionRoot(currentUi, currentIndex, currentRootId);
-        const rows = buildSelectableRows(selectionRootId, currentIndex.byId, {
+        const selectableRows = buildSelectableRows(selectionRootId, currentIndex.byId, {
           expanded: currentUi.expanded,
           expandedHiddenFields: currentUi.expandedHiddenFields,
-        }).map((row) => row.id);
+        });
+        const rows = selectableRows.map((row) => row.id);
+        const rowsById = selectableRowMap(selectableRows);
         const orderedSelected = orderedSelectedRows(rows, currentUi.selectedIds);
         const anchor = resolveSelectionAnchor({
           rows,
@@ -186,7 +188,8 @@ export function useWorkspaceKeyboard({
           });
           return;
         }
-        requestEditFocus(orderedSelected[0] ?? anchor);
+        const editId = orderedSelected[0] ?? anchor;
+        requestEditFocus(editId, rowsById.get(editId)?.parentId);
       };
 
       if (isImeComposingEvent(event)) {
@@ -329,7 +332,8 @@ export function useWorkspaceKeyboard({
       }
       if (action === 'enter_edit') {
         if (!anchor) return;
-        requestEditFocus(orderedSelected[0] ?? anchor);
+        const editId = orderedSelected[0] ?? anchor;
+        requestEditFocus(editId, rowsById.get(editId)?.parentId);
         return;
       }
       if (action === 'type_char') {
@@ -385,13 +389,18 @@ export function useWorkspaceKeyboard({
           action === 'navigate_down' ? 'down' : 'up',
         );
         if (next) {
-          requestEditFocus(next);
+          requestEditFocus(next, rowsById.get(next)?.parentId);
         }
         return;
       }
 
       if (!anchor) return;
-      const batchIds = selectedRootIds(orderedSelected.length > 0 ? orderedSelected : [anchor], currentIndex.byId);
+      const parentIdForSelectedRow = (id: NodeId) => rowsById.get(id)?.parentId ?? currentIndex.byId.get(id)?.parentId;
+      const batchIds = selectedRootIds(
+        orderedSelected.length > 0 ? orderedSelected : [anchor],
+        currentIndex.byId,
+        parentIdForSelectedRow,
+      );
       if (action === 'batch_copy' || action === 'batch_cut') {
         const clipboardText = serializeSelectedRows(rows, currentUi.selectedIds, currentIndex.byId);
         void writeClipboardText(clipboardText).then((ok) => {
@@ -407,7 +416,7 @@ export function useWorkspaceKeyboard({
             byId: currentIndex.byId,
             rowMap: rowsById,
           })).then(() => {
-            if (previous && !batchIds.includes(previous)) requestEditFocus(previous);
+            if (previous && !batchIds.includes(previous)) requestEditFocus(previous, rowsById.get(previous)?.parentId);
             else setUi(clearKeyboardSelectionState);
           });
         });
@@ -424,7 +433,7 @@ export function useWorkspaceKeyboard({
             ? singleSelectedId ?? undefined
             : undefined,
         })).then(() => {
-          if (previous && !batchIds.includes(previous)) requestEditFocus(previous);
+          if (previous && !batchIds.includes(previous)) requestEditFocus(previous, rowsById.get(previous)?.parentId);
           else setUi(clearKeyboardSelectionState);
         });
         return;

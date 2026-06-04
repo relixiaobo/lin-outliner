@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { NodeId, NodeProjection } from '../../src/core/types';
+import { OWNER_FIELD } from '../../src/core/systemFields';
 import { flattenVisibleRows } from '../../src/renderer/state/document';
 import {
   buildSelectableRows,
@@ -129,6 +130,35 @@ describe('buildSelectableRows', () => {
         checkbox: 'disabled',
       },
     }]);
+  });
+
+  test('synthesizes system reference rows for the global selectable order', () => {
+    const sysrefId = 'sysref:entry:parent';
+    const byId = byIdOf([
+      node('parent', { children: ['root'] }),
+      node('root', { parentId: 'parent', children: ['entry', 'after'] }),
+      node('entry', { parentId: 'root', type: 'fieldEntry', fieldDefId: OWNER_FIELD }),
+      node('after', { parentId: 'root' }),
+    ]);
+
+    const rows = buildSelectableRows('root', byId, { expanded: new Set() });
+
+    expect(rowIds(rows)).toEqual(['entry', sysrefId, 'after']);
+    expect(rows[1]).toMatchObject({
+      id: sysrefId,
+      parentId: 'entry',
+      panelRootId: 'root',
+      kind: 'syntheticSystemValue',
+      stored: false,
+      mutable: false,
+      actionPolicy: {
+        delete: 'disabled',
+        move: 'disabled',
+        duplicate: 'disabled',
+        tag: 'disabled',
+        checkbox: 'disabled',
+      },
+    });
   });
 
   test('uses the existing reference target resolution and cycle guard behavior', () => {

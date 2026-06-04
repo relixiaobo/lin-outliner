@@ -79,13 +79,17 @@ export function navigationTarget(
   return rows[from + (direction === 'down' ? 1 : -1)] ?? null;
 }
 
-export function selectedRootIds(ids: NodeId[], byId: Map<NodeId, NodeProjection>): NodeId[] {
+export function selectedRootIds(
+  ids: NodeId[],
+  byId: Map<NodeId, NodeProjection>,
+  parentIdForRow: (id: NodeId) => NodeId | null | undefined = (id) => byId.get(id)?.parentId,
+): NodeId[] {
   const selected = new Set(ids);
   return ids.filter((id) => {
-    let parentId = byId.get(id)?.parentId;
+    let parentId = parentIdForRow(id);
     while (parentId) {
       if (selected.has(parentId)) return false;
-      parentId = byId.get(parentId)?.parentId;
+      parentId = parentIdForRow(parentId);
     }
     return true;
   });

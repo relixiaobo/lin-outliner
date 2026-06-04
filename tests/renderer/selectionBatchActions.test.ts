@@ -9,6 +9,7 @@ import {
   idsAllowedForMoveTo,
   idsAllowedForStructuralBatch,
   idsEnabledForSelectionAction,
+  planSelectionDelete,
   selectableRowMap,
 } from '../../src/renderer/ui/interactions/selectionBatchActions';
 
@@ -105,5 +106,49 @@ describe('selection batch action policy', () => {
         byId,
       })).toEqual([]);
     }
+  });
+
+  test('hard-deletes locked ref-click references without affecting field value references', () => {
+    const byId = byIdOf([
+      node('root', { children: ['locked-ref', 'entry'] }),
+      node('target'),
+      node('locked-ref', {
+        parentId: 'root',
+        type: 'reference',
+        targetId: 'target',
+        locked: true,
+      }),
+      node('entry', { parentId: 'root', type: 'fieldEntry', children: ['field-ref'] }),
+      node('field-ref', {
+        parentId: 'entry',
+        type: 'reference',
+        targetId: 'target',
+      }),
+    ]);
+    const rowMap = selectableRowMap(buildSelectableRows('root', byId, { expanded: new Set() }));
+
+    expect(planSelectionDelete({
+      ids: ['locked-ref'],
+      hardDeleteSingleReferenceId: 'locked-ref',
+      panelRootId: 'root',
+      byId,
+      rowMap,
+    })).toEqual({
+      hardDeleteId: 'locked-ref',
+      trashIds: [],
+      fieldValueIds: [],
+    });
+
+    expect(planSelectionDelete({
+      ids: ['field-ref'],
+      hardDeleteSingleReferenceId: 'field-ref',
+      panelRootId: 'root',
+      byId,
+      rowMap,
+    })).toEqual({
+      hardDeleteId: null,
+      trashIds: [],
+      fieldValueIds: ['field-ref'],
+    });
   });
 });

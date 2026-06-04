@@ -12,6 +12,12 @@ export type SelectionCommandResult = CommandOutcome | DocumentProjection;
 
 type SelectionActionKey = keyof SelectableRowActionPolicy;
 
+export interface SelectionDeletePlan {
+  hardDeleteId: NodeId | null;
+  trashIds: NodeId[];
+  fieldValueIds: NodeId[];
+}
+
 export function selectableRowMap(rows: readonly SelectableRow[]): Map<NodeId, SelectableRow> {
   return new Map(rows.map((row) => [row.id, row]));
 }
@@ -95,6 +101,26 @@ export async function runSelectionDelete(params: {
   rowMap?: ReadonlyMap<NodeId, SelectableRow>;
   hardDeleteSingleReferenceId?: NodeId;
 }): Promise<SelectionCommandResult> {
+  const plan = planSelectionDelete(params);
+  if (plan.hardDeleteId) return api.deleteNode(plan.hardDeleteId);
+
+  let lastResult: SelectionCommandResult | null = null;
+  if (plan.trashIds.length > 0) {
+    lastResult = await api.batchTrashNodes(plan.trashIds);
+  }
+  for (const id of plan.fieldValueIds) {
+    lastResult = await api.removeFieldValue(id);
+  }
+  return lastResult ?? api.getProjection();
+}
+
+export function planSelectionDelete(params: {
+  ids: readonly NodeId[];
+  panelRootId: NodeId;
+  byId: Map<NodeId, NodeProjection>;
+  rowMap?: ReadonlyMap<NodeId, SelectableRow>;
+  hardDeleteSingleReferenceId?: NodeId;
+}): SelectionDeletePlan {
   const trashIds: NodeId[] = [];
   const fieldValueIds: NodeId[] = [];
   for (const id of params.ids) {
@@ -105,25 +131,20 @@ export async function runSelectionDelete(params: {
       rowMap: params.rowMap,
     });
     if (!row) continue;
+    const node = params.byId.get(id);
     if (
       params.hardDeleteSingleReferenceId === id
       && params.ids.length === 1
-      && row.actionPolicy.delete === 'node-trash'
+      && row.kind !== 'fieldValue'
+      && row.kind !== 'syntheticSystemValue'
+      && node?.type === 'reference'
     ) {
-      return api.deleteNode(id);
+      return { hardDeleteId: id, trashIds: [], fieldValueIds: [] };
     }
     if (row.actionPolicy.delete === 'field-value-remove') fieldValueIds.push(id);
     else if (row.actionPolicy.delete === 'node-trash') trashIds.push(id);
   }
-
-  let lastResult: SelectionCommandResult | null = null;
-  if (trashIds.length > 0) {
-    lastResult = await api.batchTrashNodes(trashIds);
-  }
-  for (const id of fieldValueIds) {
-    lastResult = await api.removeFieldValue(id);
-  }
-  return lastResult ?? api.getProjection();
+  return { hardDeleteId: null, trashIds, fieldValueIds };
 }
 
 export async function runSelectionDuplicate(params: {
