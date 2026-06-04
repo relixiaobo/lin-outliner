@@ -55,7 +55,7 @@ import { ConfirmDialog } from '../primitives/ConfirmDialog';
 import { IconButton } from '../primitives/IconButton';
 import { TextInputControl } from '../primitives/TextInputControl';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
-import { useT } from '../../i18n/I18nProvider';
+import { useI18n, useT } from '../../i18n/I18nProvider';
 
 const TRANSCRIPT_ROW_GAP_PX = 14;
 const TRANSCRIPT_ROW_ESTIMATE_PX = 104;
@@ -131,13 +131,13 @@ function readableSessionTitle(title: string | null | undefined, fallback: string
   return readable;
 }
 
-function formatSessionTime(timestamp: number): string {
+function formatSessionTime(timestamp: number, locale: string): string {
   const date = new Date(timestamp);
   const now = new Date();
   if (date.toDateString() === now.toDateString()) {
-    return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
   }
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return date.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
 }
 
 type AssistantEntry = AgentMessageEntry & { message: AssistantMessage };
@@ -480,6 +480,7 @@ export function AgentChatPanel({
   userViewContext,
 }: AgentChatPanelProps) {
   const t = useT();
+  const { locale } = useI18n();
   const {
     entries,
     error,
@@ -1010,7 +1011,7 @@ export function AgentChatPanel({
                     >
                       <span className="agent-session-name">{title}</span>
                       <span className="agent-session-meta">
-                        {formatSessionTime(session.updatedAt)}
+                        {formatSessionTime(session.updatedAt, locale)}
                         {session.messageCount > 0 ? ` · ${session.messageCount}` : ''}
                       </span>
                     </ButtonControl>
@@ -1063,17 +1064,17 @@ export function AgentChatPanel({
         {entries.length === 0 ? (
           <div className="agent-empty-state">
             {!settingsLoaded ? null : hasUsableProvider ? (
-              <p className="agent-empty-greeting">How can I help with your outline?</p>
+              <p className="agent-empty-greeting">{t.agent.chat.emptyGreeting}</p>
             ) : (
               <div className="agent-onboarding" role="status">
-                <p className="agent-onboarding-text">Connect an AI provider to start.</p>
+                <p className="agent-onboarding-text">{t.agent.chat.onboardingText}</p>
                 <ButtonControl
                   className="agent-onboarding-cta"
                   onClick={() => {
                     void window.lin?.openSettings();
                   }}
                 >
-                  Open Settings › Providers
+                  {t.agent.chat.onboardingCta}
                 </ButtonControl>
               </div>
             )}

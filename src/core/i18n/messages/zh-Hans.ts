@@ -51,9 +51,6 @@ export const zhHans: PartialMessages = {
     queryAriaLabel: '启动器查询',
     rootAriaLabel: ({ app }) => `${app} 启动器`,
     resultsAriaLabel: '结果',
-// --- launcher 命名空间扩展：将这些子键合并进已有的 `launcher` 对象
-// （与未改动的 placeholder / queryAriaLabel / rootAriaLabel / resultsAriaLabel 并列）。---
-
     actions: {
       nounPage: '页面',
       nounVideo: '视频',
@@ -84,8 +81,6 @@ export const zhHans: PartialMessages = {
     emptyState: '输入以捕获、搜索或运行命令。',
   },
   settings: {
-// === MERGE INTO the existing `settings: { ... }` object (alongside railTitle / loading / categories / general) ===
-
     providers: {
       connectedGroup: '已连接',
       connectedAriaLabel: '已连接的提供方',
@@ -223,8 +218,6 @@ export const zhHans: PartialMessages = {
       high: '高',
       xhigh: '极高',
     },
-
-// === ADD as NEW top-level namespaces (siblings of `settings`, `common`, `shell`) ===,
     railTitle: '设置',
     loading: '加载中…',
     categoriesAriaLabel: '设置分类',
@@ -322,8 +315,8 @@ export const zhHans: PartialMessages = {
   dateFormat: {
     weekdaysShort: ['周日', '周一', '周二', '周三', '周四', '周五', '周六'],
     monthsShort: [
-      '1 月', '2 月', '3 月', '4 月', '5 月', '6 月',
-      '7 月', '8 月', '9 月', '10 月', '11 月', '12 月',
+      '1月', '2月', '3月', '4月', '5月', '6月',
+      '7月', '8月', '9月', '10月', '11月', '12月',
     ],
     dayName: ({ weekday, month, day }) => `${month}${day}日 ${weekday}`,
     today: ({ dayName }) => `今天，${dayName}`,
@@ -633,11 +626,9 @@ commandPalette: {
 
   agent: {
     chat: {
-      suggestedPrompts: [
-        '总结当前大纲',
-        '规划 agent 接入阶段',
-        '列出下一步工具设计',
-      ] as readonly string[],
+      emptyGreeting: '我能帮你处理大纲的什么？',
+      onboardingText: '连接一个 AI 服务商即可开始。',
+      onboardingCta: '打开设置 › 服务商',
       showConversations: '显示对话',
       newConversation: '新建对话',
       showRunningSubagents: '显示运行中的子智能体',
@@ -860,8 +851,8 @@ commandPalette: {
     showKey: '显示密钥',
     hideKey: '隐藏密钥',
     modelLabel: '模型',
-    modelPlaceholder: 'Model ID',
-    baseUrlLabel: 'Base URL',
+    modelPlaceholder: '模型 ID',
+    baseUrlLabel: '基础 URL',
     getApiKey: '获取 API 密钥',
     validating: '正在校验…',
     cancel: '取消',

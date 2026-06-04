@@ -65,10 +65,6 @@ export const en = {
     queryAriaLabel: 'Launcher query',
     rootAriaLabel: ({ app }: { app: string }) => `${app} Launcher`,
     resultsAriaLabel: 'Results',
-// --- launcher namespace EXTENSION: merge these sub-keys into the existing
-// `launcher` object (alongside placeholder / queryAriaLabel / rootAriaLabel /
-// resultsAriaLabel, which are unchanged). ---
-
     // Result-row action labels (what Enter runs). `captureToToday` takes the
     // provider-aware noun (page / video); nounPage/nounVideo are those nouns.
     actions: {
@@ -111,8 +107,6 @@ export const en = {
   },
   // The settings window: rail chrome, categories, and the General pane.
   settings: {
-// === MERGE INTO the existing `settings: { ... }` object (alongside railTitle / loading / categories / general) ===
-
     providers: {
       connectedGroup: 'Connected',
       connectedAriaLabel: 'Connected providers',
@@ -259,10 +253,6 @@ export const en = {
       high: 'High',
       xhigh: 'XHigh',
     },
-
-// === ADD as NEW top-level namespaces (siblings of `settings`, `common`, `shell`) ===
-
-  // The per-provider connection form (API-key / managed-credential providers).,
     railTitle: 'Settings',
     loading: 'Loading…',
     categoriesAriaLabel: 'Settings categories',
@@ -370,6 +360,10 @@ export const en = {
   // relative day-node title ("Today, Wed, May 27"). Used to render a locked day
   // node's ISO date as a friendly label.
   dateFormat: {
+    // Sunday-first, indexed directly by `Date.getDay()` (Sun=0). Intentionally a
+    // different shape from `calendar.weekdayInitials` (Monday-first single letters for
+    // the mini-calendar header) — not a duplicate source. Both are length-guarded by
+    // tests/core/i18nCoverage and TODO: derive from Intl.DateTimeFormat per locale.
     weekdaysShort: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
     monthsShort: [
       'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
@@ -697,13 +691,11 @@ commandPalette: {
   agent: {
     // The chat panel header + conversation history menu.
     chat: {
-      // Suggested starter prompts shown in the empty conversation state. Source was
-      // Chinese-only; this English canonical was authored to match.
-      suggestedPrompts: [
-        'Summarize the current outline',
-        'Plan the agent integration phases',
-        'List the next tool design steps',
-      ] as readonly string[],
+      // Empty conversation state: a greeting when a provider is connected, else the
+      // connect-a-provider onboarding (gated on loaded provider settings).
+      emptyGreeting: 'How can I help with your outline?',
+      onboardingText: 'Connect an AI provider to start.',
+      onboardingCta: 'Open Settings › Providers',
       showConversations: 'Show conversations',
       newConversation: 'New conversation',
       showRunningSubagents: 'Show running subagents',

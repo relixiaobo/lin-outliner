@@ -746,9 +746,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       trigger.to,
       {
         target: nodeReferenceTarget(target.id),
-        // Stored ref display-name snapshot (persisted data), so the fallback stays a
-        // locale-independent English constant rather than the current UI language.
-        displayName: textOf(target) || 'Untitled',
+        // Stored ref display-name snapshot (persisted data): store the raw text and let
+        // the render path apply its own fallback (live title / id), matching every other
+        // displayName write site (NodePanel, core). Baking a literal here — English or
+        // the current UI language — would freeze it into the document.
+        displayName: textOf(target),
       },
     );
     if (onDraftTrigger) {

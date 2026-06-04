@@ -10,17 +10,32 @@ import { DEFAULT_LOCALE, SUPPORTED_LOCALES, type Locale } from '../../src/core/l
 
 type LeafKind = 'string' | 'function';
 
+interface Leaf {
+  kind: LeafKind;
+  // Set when the leaf is an array. The type system can't guard array length (`en` is
+  // not `as const` — that would collapse every string to a literal type and break the
+  // DeepPartial locale model), and `deepMerge` (core/i18n/index.ts) treats an array as
+  // a single leaf that a locale REPLACES wholesale (no per-element backfill). So a
+  // locale shipping a 6-element `weekdaysShort` would pass typecheck and the key checks,
+  // then return `undefined` at runtime on `weekdaysShort[getDay()]`. We record length
+  // here and assert parity below.
+  arrayLength?: number;
+}
+
 // Collect every leaf path in a message tree. Strings and interpolation functions
-// are leaves; only plain objects recurse (mirrors the resolver's deepMerge).
-function leafPaths(tree: unknown, prefix = ''): Map<string, LeafKind> {
-  const out = new Map<string, LeafKind>();
+// are leaves; arrays are single leaves (tagged with length); only plain objects
+// recurse (mirrors the resolver's deepMerge).
+function leafPaths(tree: unknown, prefix = ''): Map<string, Leaf> {
+  const out = new Map<string, Leaf>();
   if (!tree || typeof tree !== 'object') return out;
   for (const [key, value] of Object.entries(tree as Record<string, unknown>)) {
     const path = prefix ? `${prefix}.${key}` : key;
-    if (value && typeof value === 'object' && !Array.isArray(value)) {
-      for (const [p, kind] of leafPaths(value, path)) out.set(p, kind);
+    if (Array.isArray(value)) {
+      out.set(path, { kind: 'string', arrayLength: value.length });
+    } else if (value && typeof value === 'object') {
+      for (const [p, leaf] of leafPaths(value, path)) out.set(p, leaf);
     } else {
-      out.set(path, typeof value === 'function' ? 'function' : 'string');
+      out.set(path, { kind: typeof value === 'function' ? 'function' : 'string' });
     }
   }
   return out;
@@ -53,9 +68,21 @@ describe('i18n message coverage', () => {
 
       test('leaf kinds match English (string vs interpolation function)', () => {
         const mismatched = [...leaves.entries()]
-          .filter(([path, kind]) => ENGLISH_LEAVES.has(path) && ENGLISH_LEAVES.get(path) !== kind)
+          .filter(([path, leaf]) => ENGLISH_LEAVES.has(path) && ENGLISH_LEAVES.get(path)!.kind !== leaf.kind)
           .map(([path]) => path);
         expect(mismatched).toEqual([]);
+      });
+
+      test('array leaves match English length (deepMerge replaces arrays wholesale)', () => {
+        const wrongLength = [...leaves.entries()]
+          .filter(([path, leaf]) => {
+            const english = ENGLISH_LEAVES.get(path);
+            return english?.arrayLength !== undefined
+              && leaf.arrayLength !== undefined
+              && english.arrayLength !== leaf.arrayLength;
+          })
+          .map(([path]) => path);
+        expect(wrongLength).toEqual([]);
       });
     });
   }

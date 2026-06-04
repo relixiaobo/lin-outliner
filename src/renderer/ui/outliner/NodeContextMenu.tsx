@@ -189,9 +189,9 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       .filter((node) => node.type !== 'fieldEntry')
       .filter((node) => activeMoveToIds.every((nodeId) => !isDescendantOf(props.index.byId, node.id, nodeId)))
       .filter((node) => node.id !== props.index.projection.trashId)
-      .filter((node) => !normalized || textOf(node).toLowerCase().includes(normalized))
+      .filter((node) => !normalized || textOf(node, t.common.untitled).toLowerCase().includes(normalized))
       .slice(0, 10);
-  }, [activeMoveToIds, props.index, query]);
+  }, [activeMoveToIds, props.index, query, t.common.untitled]);
 
   useEffect(() => {
     const close = (event: globalThis.MouseEvent) => {
@@ -328,7 +328,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       <div className="node-context-separator" role="separator" />
       {item(target.description ? tc.editDescription : tc.addDescription, <DescriptionIcon size={ICON_SIZE.menu} />, props.onEditDescription)}
       <div className="node-context-separator" role="separator" />
-      {item(tc.copyText, <CopyIcon size={ICON_SIZE.menu} />, () => void writeClipboardText(textOf(target)))}
+      {item(tc.copyText, <CopyIcon size={ICON_SIZE.menu} />, () => void writeClipboardText(textOf(target, t.common.untitled)))}
       {item(tc.copyNodeId, <CopyIcon size={ICON_SIZE.menu} />, () => void writeClipboardText(props.targetId))}
       <div className="node-context-separator" role="separator" />
       {trashed

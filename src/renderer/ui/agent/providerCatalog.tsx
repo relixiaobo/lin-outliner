@@ -93,6 +93,9 @@ const PROVIDER_AUTH_DOCS_URL: Record<string, string> = {
 // Resolve the managed-credential note + docs link for a provider, or undefined if
 // it takes a normal API key. `t` supplies the localized note + docs label.
 export function providerAuthInfo(providerId: string, t: Messages): ProviderAuthInfo | undefined {
+  // Dynamic index: the cast asserts the key is present, so the runtime `if (!copy)`
+  // guard below is the real safety (the typed-dictionary compile-time guarantee only
+  // covers static `t.a.b` paths). Keep the guard if this is ever refactored.
   const copy = t.providerCatalog.auth[providerId as keyof typeof t.providerCatalog.auth];
   if (!copy) return undefined;
   return { note: copy.note, docsUrl: PROVIDER_AUTH_DOCS_URL[providerId], docsLabel: copy.docsLabel };

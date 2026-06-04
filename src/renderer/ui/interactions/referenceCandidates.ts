@@ -87,14 +87,15 @@ export function matchDateShortcuts(query: string, labels: ReferenceCandidateLabe
     });
 }
 
-function breadcrumbFor(node: NodeProjection, byId: Map<NodeId, NodeProjection>): string {
+function breadcrumbFor(node: NodeProjection, byId: Map<NodeId, NodeProjection>, untitled: string): string {
   const parts: string[] = [];
   let currentId = node.parentId;
   while (currentId && parts.length < 3) {
     const parent = byId.get(currentId);
     if (!parent || parent.locked) break;
-    const label = textOf(parent);
-    if (label) parts.unshift(label);
+    // Untitled ancestors still occupy a path segment — dropping them would collapse
+    // `A / <untitled> / Target` to `A / Target`, making Target look like a child of A.
+    parts.unshift(textOf(parent, untitled));
     currentId = parent.parentId;
   }
   return parts.join(' / ');
@@ -182,7 +183,7 @@ function nodeCandidates(
       type: 'node',
       id: node.id,
       label: candidate.label,
-      breadcrumb: breadcrumbFor(node, index.byId),
+      breadcrumb: breadcrumbFor(node, index.byId, labels.untitled),
       disabledReason: candidate.disabledReason,
     };
   });

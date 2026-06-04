@@ -1,6 +1,6 @@
 import { useMemo, type MouseEventHandler } from 'react';
 import { addLocalDays, isoLocalDate } from '../../api/types';
-import { useT } from '../../i18n/I18nProvider';
+import { useI18n, useT } from '../../i18n/I18nProvider';
 import { ChevronLeftIcon, ChevronRightIcon } from '../icons';
 import { ButtonControl } from './ButtonControl';
 
@@ -38,6 +38,7 @@ export function CalendarMonthGrid({
   year,
 }: CalendarMonthGridProps) {
   const t = useT();
+  const { locale } = useI18n();
   const calendarDays = useMemo(() => buildCalendarMonthDays(year, month), [month, year]);
   const selectedDates = useMemo(() => new Set(selectedIsoDates.filter(Boolean)), [selectedIsoDates]);
 
@@ -51,7 +52,7 @@ export function CalendarMonthGrid({
         >
           <ChevronLeftIcon size={13} strokeWidth={1.8} />
         </ButtonControl>
-        <span>{calendarMonthLabel(year, month)}</span>
+        <span>{calendarMonthLabel(year, month, locale)}</span>
         <ButtonControl
           aria-label={t.calendar.nextMonth}
           className="calendar-month-nav"
@@ -97,8 +98,8 @@ export function CalendarMonthGrid({
   );
 }
 
-export function calendarMonthLabel(year: number, monthIndex: number): string {
-  return new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' })
+export function calendarMonthLabel(year: number, monthIndex: number, locale: string): string {
+  return new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric' })
     .format(new Date(year, monthIndex, 1));
 }
 

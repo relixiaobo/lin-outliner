@@ -150,6 +150,22 @@ merged foundation:
       `togglefullscreen` title and macOS-injected items (Services, Emoji & Symbols / Start
       Dictation, the live Window list). PM-ratified 2026-06-04 (in-app picker over the
       native OS-language convention).
+- [x] **B14 — PR #110 review fixes** (rebased onto main; #112/#113 overlap resolved):
+      completed the `textOf` contract change via a `fallback` param + swept the missed
+      callers (breadcrumb untitled ancestors, move-to filter/copy-text, the persisted
+      `displayName` snapshot now stores raw text not a literal); fixed the `'1 月'`→`'1月'`
+      zh day-title defect; the coverage test now records array length and asserts parity
+      (`en as const` would break the DeepPartial model); the native menu + window titles
+      rebuild from the broadcast locale (consistent on a silent save failure) and the
+      effective locale is cached in-memory off the hot path; removed the authoring-scaffold
+      comments from `en.ts`/`zh-Hans.ts`; translated `modelPlaceholder`/`baseUrlLabel`;
+      localized the onboarding empty-state (replacing the rebase-orphaned `suggestedPrompts`).
+- [ ] **Dates / numbers — finish the second sweep** (started in B14): session-list
+      timestamps + calendar month header now pass the active `locale` to `Intl`/`toLocale*`.
+      Still OS-locale: the outliner group-by labels (`state/outlinerRows.ts` — `(Empty)` /
+      `Done` / `Yes` / `No` are also still hardcoded English, so this needs a labels bundle
+      threaded through the row pipeline, its own batch) and the agent debug/subagent
+      diagnostic timestamps + token tooltip (the latter verbatim by design).
 - [ ] **Remaining rare/edge fallbacks** (deferred, low impact): empty field-def / option
       labels (`outlinerRows`, `systemFields`, `fieldOptions` → `'Untitled'`/`'Field'`) only
       surface for empty-content definitions, and the ProseMirror-schema reference fallbacks
@@ -175,7 +191,7 @@ merged foundation:
 - **Do-not-translate:** vendor/brand names (AWS, Vertex AI, GitHub Copilot, ChatGPT,
   Claude, claude.ai…), CLI snippets, env-var names, format masks (`YYYY/MM/DD`),
   model-id placeholders.
-- **Chinese-only canonical gap:** suggested-prompt copy gets a fresh English
-  canonical + zh-Hans translation; `localFileKeywords` is parser-matching input, not
+- **Chinese-only canonical gap:** `localFileKeywords` is parser-matching input, not
   display copy — kept locale-independent (accepts EN+ZH keywords regardless of UI
-  locale).
+  locale). (The former agent suggested-prompt copy was superseded by the connect-a-
+  provider onboarding empty-state, which is fully localized — see B14.)

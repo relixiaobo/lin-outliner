@@ -297,10 +297,17 @@ function forwardWindowActivity(window: BrowserWindow): void {
 }
 
 // The effective UI language: the user's explicit pick, else the nearest supported
-// OS locale. Resolved fresh on each read so the app follows the OS until the user
-// chooses, and a stored pick wins from then on. (core/locale.ts).
+// OS locale (core/locale.ts). Cached in-memory because the ~8 hot-path callers
+// (right-click context menu, every window create, launcher node-search, menu rebuild)
+// would otherwise each do a sync readFileSync + JSON.parse for a value that only
+// changes via lin:set-language. That handler refreshes the cache to the broadcast
+// value — the in-session source of truth, the same way theme rides
+// nativeTheme.themeSource in memory rather than re-reading the file. The OS locale is
+// fixed for the session, so first read resolves it once.
+let cachedLocale: Locale | null = null;
 function effectiveLocale(): Locale {
-  return loadAppPreferences().language ?? resolveSystemLocale(app.getLocale());
+  cachedLocale ??= loadAppPreferences().language ?? resolveSystemLocale(app.getLocale());
+  return cachedLocale;
 }
 
 // Standard application menu (A2b). macOS gets the conventional App / Edit / View
@@ -1017,11 +1024,21 @@ function registerIpc() {
   });
   ipcMain.handle('lin:set-language', (_event, raw: unknown): void => {
     if (!isLocale(raw)) return;
-    saveLanguagePreference(raw);
+    saveLanguagePreference(raw); // best-effort persistence (see appPreferences.ts)
+    // The broadcast value is the in-session source of truth — persistence can fail
+    // silently. Refresh the cache from it so the native menu + window titles rebuilt
+    // below agree with the locale the windows switch to, even if the file write failed
+    // (otherwise effectiveLocale() would re-read the stale file and the menu would lag).
+    cachedLocale = raw;
     for (const window of BrowserWindow.getAllWindows()) {
       window.webContents.send(LIN_LANGUAGE_CHANGED_CHANNEL, raw);
     }
     Menu.setApplicationMenu(buildApplicationMenu());
+    // Open windows localize their native title bar once at construction; their content
+    // re-renders via I18nProvider, but the OS title bar would otherwise stay stale.
+    const messages = getMessages(raw);
+    settingsWindow?.setTitle(messages.window.settingsTitle({ app: APP_NAME }));
+    providerConfigWindow?.setTitle(messages.window.providerConfigTitle);
   });
   // Open the per-provider config as its own native (modal child) window.
   ipcMain.handle('lin:open-provider-config', (_event, args?: { providerId?: unknown; mode?: unknown }) => {
