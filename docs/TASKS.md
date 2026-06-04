@@ -18,7 +18,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Agent | Clone | Active branch | Current task |
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
-| Claude Code | `lin-outliner-cc/` | — | idle |
+| Claude Code | `lin-outliner-cc/` | `cc/provider-config-fix` | provider-config-cleanup Part A — reworking after gate NO-GO (#100); B/C/D merged (#101) |
 | Claude Code 2 | `lin-outliner-cc-2/` | (Phase 0 spike) | lazy-like-global-launcher (P0) |
 | Codex | `lin-outliner-codex/` | — | idle |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -35,6 +35,19 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
   `electron.vite.config.ts`, preload) — coordinate the merge window. Foundation
   `outliner-local-file-references` landed (PR #80). See
   `docs/plans/lazy-like-global-launcher.md`.
+
+- **provider-config-cleanup** (P1, **cc**) — fix the "shows *Add key* yet offers
+  *Remove provider*" contradiction. **Part B/C/D landed (PR #101):** provider-mark
+  neutral tile + symmetric row dividers, strong-neutral-solid auth-sheet primary,
+  OAuth "Claude Code" clarity + coverage guard, 32 provider display names + Xiaomi
+  MiMo icon. **Part A (core fix, PR #100) — NO-GO at the review gate, in rework:**
+  the load-time reconcile prunes+persists provider rows from a *transient* signal
+  (keychain-lock / key-rotation → `readSecretFileSafe` empty → mass-prune defeating
+  the `SecretsUnreadableError` data-loss guard; managed/env rows pruned on a
+  shell-less Finder launch; composer picker can throw `provider not found`). cc to
+  re-gate the prune on secrets being readable + the durable secret-file record.
+  Plan flips to `done` + archives once Part A lands. See
+  `docs/plans/provider-config-cleanup.md`.
 
 ## Backlog
 
@@ -82,15 +95,6 @@ Ordered by priority; lower items may depend on higher ones.
   load/undo/full-rewrite (measured spike: 10k cold ~225ms, edit→search ~0.3ms).
   One-shot v1 (no split). Coordinate with `lazy-like-global-launcher` so launcher
   search reuses this kernel. See `docs/plans/text-search-relevance-layer.md`.
-- **provider-config-cleanup** (P1, plan ratified → **cc**) — fix the "shows
-  *Add key* yet offers *Remove provider*" contradiction: the main Settings Save
-  mints keyless provider rows and auto-activates uncredentialed providers.
-  **Decided:** main pane stops creating rows (creation only via the per-provider
-  window + OAuth login); credential-aware activation; load-time reconcile of junk
-  rows. Bundles three Providers-UI fixes — icon neutral tile + divider alignment;
-  auth-sheet button hierarchy (strong-neutral-solid primary); OAuth label clarity
-  ("Claude Code" = the Anthropic Claude Pro/Max sign-in, not a missing provider).
-  See `docs/plans/provider-config-cleanup.md`.
 - **sidebar-pinned-nodes** (P2, **unblocked — workspace-tabs-to-single-pane landed in PR #85**) —
   implement the stubbed Pinned section: pin from right-click on BOTH outliner and
   sidebar node rows; persist across restart. Recommended storage = renderer layout

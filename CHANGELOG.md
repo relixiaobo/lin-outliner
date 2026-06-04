@@ -429,6 +429,25 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Provider settings polish — list tile, auth-sheet hierarchy, OAuth clarity (PR #101)** —
+  Parts B/C/D of `provider-config-cleanup.md` (Part A, the core fix, is still in rework after
+  the review gate — see TASKS). **B:** every provider mark — vendored brand logo or monogram —
+  now sits on one neutral `--fill-2` tile (a bare logo previously read as a "missing
+  background"), and provider-row separators are inset on **both** edges via a new tunable
+  `--inset-separator-inset-right` on the inset-list primitive (left aligns to the icon tile, a
+  matching right inset keeps the hairline within the card). **C:** the auth-sheet primary button
+  (`.settings-sheet-primary`) becomes a genuinely strong **neutral** fill — `--surface-inverse`
+  + `--panel-bg` text, the same "filled default button" language as `.agent-settings-primary`
+  and the composer send button — instead of the faint `--fill-3` tint that read weaker than the
+  bordered secondary (status colour stays reserved for status; danger for destructive actions).
+  **D:** the Anthropic OAuth hint now names it as the same Claude account Claude Code / claude.ai
+  use (pi-ai ships no separate "Claude Code" provider — the Anthropic OAuth flow *is* the Claude
+  subscription login), with a new `oauthProviderCoverage` guard test so a future pi-ai OAuth
+  provider can't silently surface without sign-in copy. Also adds display names for all 32 pi-ai
+  providers and a Xiaomi MiMo brand icon (with `ICON_ALIASES` so the regional token-plan variants
+  reuse the one mark). Renderer/CSS/copy only; B1/B11 token guards green; spec updated
+  (`design-system.md`, A6). ([#101](https://github.com/relixiaobo/lin-outliner/pull/101))
+
 - **Unified inline mention language (PR #89)** — implements `unify-mention-language.md`.
   One inline-mention language across the outliner, agent composer, and agent message: a
   **node reference is plain accent text with no icon**, and a **local-file / directory / image
