@@ -282,3 +282,131 @@
 .settings-sheet-danger:disabled {
   opacity: 0.5;
 }
+
+/* ── OAuth sign-in surface ──────────────────────────────────────────────────
+   Rendered in place of the key form for providers whose authKind is `oauth`.
+   Reuses the sheet's head/body/actions; these classes style only the sign-in
+   body (intro, the live device-code / loopback steps, and the connected state). */
+
+.settings-sheet-oauth-intro,
+.settings-sheet-oauth-running,
+.settings-sheet-oauth-connected {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.settings-sheet-oauth-hint {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+/* The interactive steps (device code, loopback link, prompt/select) sit in the
+   same inset card the key form uses, so the two surfaces read as one family. */
+.settings-sheet-oauth-code-block,
+.settings-sheet-oauth-step {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--fill-1);
+  padding: var(--space-4) var(--space-5);
+}
+
+.settings-sheet-oauth-step-label {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+/* The device code: large, monospace, easy to read off-screen onto a phone. */
+.settings-sheet-oauth-code {
+  margin: 0;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-heading-lg);
+  line-height: var(--line-heading-lg);
+  letter-spacing: 0.08em;
+  color: var(--text-strong);
+  user-select: text;
+}
+
+.settings-sheet-oauth-countdown {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
+
+.settings-sheet-oauth-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+/* A reply step (prompt / manual-code) — full-width input + Continue. */
+.settings-sheet-oauth-reply {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+}
+
+.settings-sheet-oauth-reply .settings-sheet-row-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* A select step (e.g. Anthropic "Pro vs Console key") — stacked option buttons. */
+.settings-sheet-oauth-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+/* Connected: a neutral confirmation, not a status colour (B3/B4) — only the check
+   carries the success hue, the way a settled state should read. */
+.settings-sheet-oauth-connected {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--fill-1);
+  padding: var(--space-4) var(--space-5);
+}
+
+.settings-sheet-oauth-connected-mark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: var(--status-success);
+}
+
+.settings-sheet-oauth-connected-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.settings-sheet-oauth-connected-title {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+}
+
+.settings-sheet-oauth-connected-sub {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}

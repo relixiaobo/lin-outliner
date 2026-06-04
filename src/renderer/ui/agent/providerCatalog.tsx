@@ -61,40 +61,45 @@ export const PROVIDER_DOCS_URL: Record<string, string> = {
   mistral: 'https://console.mistral.ai/api-keys',
 };
 
-// Providers pi-ai authenticates with something other than a pasteable API key.
-// Until the OAuth sign-in flow lands (docs/plans/agent-oauth-providers.md), we
-// at least stop showing a misleading "Paste key" field for them.
+// Presentation copy for providers that don't take a pasteable API key. The auth
+// CLASS now comes from main (`authKind`); this table is copy-only (note + docs),
+// keyed by provider id. Managed providers show the note in place of a key field;
+// oauth providers use the sign-in flow (ProviderOAuthForm).
 export interface ProviderAuthInfo {
-  kind: 'oauth' | 'managed';
   note: string;
   docsUrl?: string;
   docsLabel?: string;
 }
 
 export const PROVIDER_AUTH: Record<string, ProviderAuthInfo> = {
-  'github-copilot': {
-    kind: 'oauth',
-    note: 'GitHub Copilot signs in with your GitHub account — there is no API key to paste. Sign-in support is coming soon.',
-    docsUrl: 'https://github.com/features/copilot',
-    docsLabel: 'About GitHub Copilot',
-  },
-  'openai-codex': {
-    kind: 'oauth',
-    note: 'Codex uses your ChatGPT sign-in rather than an API key. Sign-in support is coming soon.',
-  },
   'amazon-bedrock': {
-    kind: 'managed',
     note: 'Bedrock uses your AWS credentials (a named profile, IAM role, or AWS_* environment variables) — there is no API key to paste here.',
     docsUrl: 'https://docs.aws.amazon.com/bedrock/latest/userguide/getting-started.html',
     docsLabel: 'AWS credential setup',
   },
   'google-vertex': {
-    kind: 'managed',
     note: 'Vertex AI uses Google Cloud Application Default Credentials (run `gcloud auth application-default login`) — there is no API key to paste here.',
     docsUrl: 'https://cloud.google.com/docs/authentication/provide-credentials-adc',
     docsLabel: 'Set up ADC',
   },
 };
+
+// Brand sign-in label + a docs link for the oauth providers, used by the
+// sign-in flow. Copy-only — the oauth CLASS is main's `authKind`.
+export const OAUTH_SIGN_IN: Record<string, { hint: string; docsUrl?: string; docsLabel?: string }> = {
+  anthropic: { hint: 'Sign in with your Claude Pro or Max subscription.' },
+  'github-copilot': {
+    hint: 'Sign in with your GitHub account — no API key to paste.',
+    docsUrl: 'https://github.com/features/copilot',
+    docsLabel: 'About GitHub Copilot',
+  },
+  'openai-codex': { hint: 'Sign in with your ChatGPT Plus or Pro subscription.' },
+};
+
+// OAuth providers that ALSO accept a pasted API key (Anthropic console keys). For
+// these the sign-in form offers an "Use an API key instead" escape hatch back to
+// the standard key form; the others are sign-in only.
+export const OAUTH_API_KEY_FALLBACK = new Set<string>(['anthropic']);
 
 export function formatProviderName(providerId: string): string {
   const known = PROVIDER_DISPLAY_NAMES[providerId];
@@ -149,7 +154,10 @@ export function providerHasCredential(
   provider: AgentProviderConfigView | undefined,
   catalog: AgentProviderOption | undefined,
 ): boolean {
-  return Boolean(provider?.hasApiKey || provider?.hasEnvApiKey || catalog?.hasEnvApiKey);
+  // `auth.credentialed` is main's authoritative signal (stored key, oauth login,
+  // env key, or managed ambient). Fall back to the catalog env flag for a
+  // provider that has no view row yet (not configured).
+  return Boolean(provider?.auth?.credentialed) || Boolean(catalog?.hasEnvApiKey);
 }
 
 export function resolveUsableActiveProvider(

@@ -264,13 +264,97 @@ agent-providers.json
   -> providers: providerId, modelId, baseUrl, enabled
 
 agent-secrets.json
-  -> providerId -> apiKey
+  -> credentials: providerId -> AuthCredential
+       AuthCredential = { type: 'api_key'; key }
+                      | ({ type: 'oauth' } & OAuthCredentials)   // refresh/access/expires
+  -> encrypted at rest with Electron safeStorage (OS keychain) when available;
+     a plaintext fallback applies only where the platform offers no safe store
   -> local only, private file permissions where the OS supports it
 ```
 
-Renderer-facing commands may return provider configuration and `hasApiKey`, but
-must not return the API key itself. Runtime provider resolution should happen
-through Electron AgentRuntime or the TypeScript tool/provider gateway.
+Renderer-facing commands may return provider configuration plus an `auth`
+descriptor (`authKind`, `credentialed`, `hasStoredKey`, oauth `connected` /
+`expiresAt`), but must never return the API key, OAuth access/refresh token, AWS
+credential, or ADC material itself. Runtime provider resolution happens through
+Electron AgentRuntime or the TypeScript tool/provider gateway — see
+[Provider Authentication](#provider-authentication).
+
+## Provider Authentication
+
+pi-ai recognizes three credential classes, and Tenon presents each correctly
+instead of modeling every provider as "paste an API key":
+
+1. **API key** — most providers. A user-pasted key persists in
+   `agent-secrets.json`; `getEnvApiKey(provider)` supplies an ambient env key.
+2. **OAuth sign-in** — Anthropic (Claude Pro/Max), GitHub Copilot, OpenAI Codex.
+   pi-ai ships the flows (`getOAuthProvider(id)`); Tenon orchestrates them and
+   stores the resulting `OAuthCredentials` (`{ refresh, access, expires }`).
+3. **Managed / ambient** — Amazon Bedrock (AWS profiles/IAM) and Google Vertex
+   (gcloud ADC). No key field applies; the pi-ai api client reads ambient
+   credentials at request time.
+
+`authKind` (`'api-key' | 'oauth' | 'managed'`) is classified in main from
+`getOAuthProviders()` plus a small managed set, defaulting to `api-key`, and
+flows to the renderer on the provider view models so the UI never hardcodes the
+classification.
+
+### Single credential resolver
+
+`getProviderApiKey(providerId)` is the one resolution path, used at stream time
+and by connection validation. It never throws — a failure resolves to "no key".
+Resolution order:
+
+1. a stored `api_key` credential (user-pasted);
+2. a stored `oauth` credential → `getOAuthApiKey(...)`, which auto-refreshes and
+   returns a fresh key; the rotated `OAuthCredentials` are persisted back;
+3. `getEnvApiKey(provider)` (an ambient env key, or the managed sentinel for
+   Bedrock/Vertex);
+4. otherwise undefined — the api client falls back to ambient credentials.
+
+The resolver is wired as pi-agent-core's per-call `getApiKey` hook, so OAuth
+tokens refresh transparently across a long run.
+
+### Login flow (main owns it)
+
+pi-ai's loopback flow binds `http.createServer` and is intended for non-browser
+environments — the Electron **main** process. Main runs
+`getOAuthProvider(id).login(callbacks)`; a pure orchestration (`agentOAuth.ts`)
+bridges pi-ai's callbacks to the renderer as a single `OAuthLoginEvent` union
+over one push channel, correlates the reply-needed steps (`prompt` / `select` /
+`manual-code`) by `requestId`, and supports cancellation via an
+`AbortController`. The production composition root (`agentOAuthManager.ts`)
+injects the real provider lookup and secret-store persistence, so the
+orchestration carries no native dependency and is unit-testable with fakes.
+
+IPC: `agent_oauth_login(providerId)` resolves with the updated
+`AgentProviderSettingsView` after persisting credentials;
+`agent_oauth_logout(providerId)` drops the stored credential;
+`agent_oauth_respond(requestId, value)` answers a reply step (undefined =
+cancel); `agent_oauth_cancel(providerId)` aborts an in-flight sign-in. The
+interactive events are pushed renderer-bound on `lin-agent-oauth-event`.
+
+Sign-in, sign-out, token storage, and raw key entry are runtime-owned,
+user-gated paths. The agent may read auth state (`authKind`, `connected`,
+`expiresAt`, health) and propose provider/model switches, but never initiates a
+login, persists a credential from model-generated text, writes the secret file,
+or sees a raw key / token / AWS credential / ADC material in any tool result or
+event log.
+
+### Provider detail UI states
+
+- **api-key** — the key field + base URL. Unchanged.
+- **oauth, disconnected** — a "Sign in with <Provider>" button; Anthropic also
+  offers "use an API key instead" (it accepts both).
+- **oauth, in progress** — device-code (code + verification URL + TTL countdown)
+  or loopback ("open the sign-in page"), plus the interactive prompt / select /
+  manual-code steps and a cancel control.
+- **oauth, connected** — a neutral "Connected" confirmation with the relative
+  renewal time, plus "Sign out" and "Re-authenticate".
+- **managed** — the guidance note + docs link; no key field.
+
+Usability (`canChooseModels`, active-provider resolution) treats oauth-connected
+and managed providers as credentialed via a single `auth.credentialed` signal,
+not "has a pasted key".
 
 ## System Prompt
 
@@ -803,6 +887,10 @@ Landed in main:
   payload refs.
 - Session list, search, user-message history, debug history/totals, and
   checkpoints are derived from the event store.
+- Provider authentication spans pi-ai's three credential classes: a single
+  non-throwing `getProviderApiKey` resolver (api-key / OAuth auto-refresh-persist
+  / env / managed), safeStorage-encrypted credential storage, and a main-owned
+  OAuth sign-in flow (loopback + device-code) bridged to a renderer sign-in UI.
 
 Remaining runtime work:
 
@@ -827,8 +915,13 @@ Current coverage should stay focused on the Tenon-owned boundary:
   node tool behavior, web tool normalization, and tool-result envelope mapping.
 - Renderer runtime hydration, projection events, branch actions, streaming view
   state, and payload-backed copy behavior.
+- Provider credential resolver (api-key, OAuth refresh-persist, env/managed
+  fallback, never-throws, encrypted-at-rest), OAuth login orchestration (callback
+  bridging, reply correlation, cancel, logout), and the renderer OAuth flow
+  reducer / expiry formatters.
 - E2E coverage for composer controls, model/settings behavior, process/tool
-  disclosure, debug panel, virtualization, and bounded large-output rendering.
+  disclosure, debug panel, virtualization, bounded large-output rendering, and
+  provider OAuth sign-in (device-code, loopback, connected, sign-out).
 
 Next coverage should land with the corresponding runtime features:
 

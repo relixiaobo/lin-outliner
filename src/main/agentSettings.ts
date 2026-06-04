@@ -408,6 +408,7 @@ function normalizeInteger(value: unknown, fallback: number | null, min: number):
 function getAvailableProviders(): AgentProviderOption[] {
   return getProviders().map((providerId) => ({
     providerId,
+    authKind: getProviderAuthKind(providerId),
     hasEnvApiKey: !!getEnvApiKey(providerId),
     envKeyNames: findEnvKeys(providerId) ?? [],
     defaultBaseUrl: getModels(providerId)[0]?.baseUrl,

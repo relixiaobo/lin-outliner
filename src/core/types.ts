@@ -761,6 +761,8 @@ export interface AgentModelOption {
 
 export interface AgentProviderOption {
   providerId: string;
+  /** Auth class for an as-yet-unconfigured provider, so the config window can pick the right UI. */
+  authKind: AgentProviderAuthKind;
   hasEnvApiKey: boolean;
   envKeyNames: string[];
   defaultBaseUrl?: string;

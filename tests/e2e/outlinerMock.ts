@@ -34,6 +34,8 @@ interface MockFixtureOptions {
   dateField?: boolean;
   optionsField?: boolean;
   referenceField?: boolean;
+  /** Adds an OAuth sign-in provider (GitHub Copilot) to the catalog for the OAuth specs. */
+  oauthProvider?: boolean;
 }
 
 type E2EWindow = Window & {
@@ -43,11 +45,14 @@ type E2EWindow = Window & {
     clipboardText: () => string;
     emitAgentEvent: (event: unknown) => void;
     emitDocumentEvent: (event: unknown) => void;
+    emitOAuthEvent: (envelope: unknown) => void;
+    resolveOAuthLogin: (providerId: string) => void;
   };
   lin?: {
     invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
     onAgentEvent: (listener: (event: unknown) => void) => () => void;
     onDocumentEvent: (listener: (event: unknown) => void) => () => void;
+    onAgentOAuthEvent?: (listener: (envelope: unknown) => void) => () => void;
     openProviderConfig?: (params: { providerId: string; mode: string }) => Promise<void>;
     closeProviderConfig?: () => Promise<void>;
     notifySettingsChanged?: () => Promise<void>;
@@ -193,6 +198,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
     const agentListeners: Array<(event: unknown) => void> = [];
     const documentListeners: Array<(event: unknown) => void> = [];
+    const oauthListeners: Array<(envelope: unknown) => void> = [];
+    // An in-flight sign-in's resolve/reject, keyed by providerId. The spec drives
+    // the event stream (emitOAuthEvent) and completes it (resolveOAuthLogin), so
+    // the flow is fully deterministic — no real provider, timers, or network.
+    const oauthPending = new Map<string, { resolve: (value: unknown) => void; reject: (err: unknown) => void }>();
     const agentSettings = {
       activeProviderId: 'openai',
       agent: {
@@ -215,9 +225,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         enabled: true,
         hasApiKey: true,
         hasEnvApiKey: false,
+        // Main now always populates the `auth` descriptor (the single
+        // `credentialed` signal the renderer reads); the mock mirrors it.
+        auth: { authKind: 'api-key', credentialed: true, hasStoredKey: true },
       }],
       availableProviders: [{
         providerId: 'openai',
+        authKind: 'api-key',
         hasEnvApiKey: false,
         envKeyNames: ['OPENAI_API_KEY'],
         defaultBaseUrl: 'https://api.openai.com/v1',
@@ -241,6 +255,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         ],
       }, {
         providerId: 'anthropic',
+        authKind: 'api-key',
         hasEnvApiKey: false,
         envKeyNames: ['ANTHROPIC_API_KEY'],
         defaultBaseUrl: 'https://api.anthropic.com',
@@ -256,6 +271,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         ],
       }, {
         providerId: 'amazon-bedrock',
+        authKind: 'managed',
         hasEnvApiKey: false,
         envKeyNames: [],
         defaultBaseUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -271,6 +287,28 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         ],
       }],
     };
+    // An OAuth sign-in provider for the OAuth specs. Gated so the api-key /
+    // managed specs keep their fixed catalog. `authKind: 'oauth'` makes the
+    // config window render the sign-in surface (ProviderOAuthForm).
+    if (options.oauthProvider) {
+      agentSettings.availableProviders.push({
+        providerId: 'github-copilot',
+        authKind: 'oauth',
+        hasEnvApiKey: false,
+        envKeyNames: [],
+        defaultBaseUrl: 'https://api.githubcopilot.com',
+        models: [
+          {
+            id: 'gpt-4o-copilot',
+            name: 'GPT-4o (Copilot)',
+            reasoning: false,
+            supportedThinkingLevels: ['off'],
+            contextWindow: 128_000,
+            maxTokens: 4096,
+          },
+        ],
+      });
+    }
     const agentToolPermissions = {
       permissions: { allow: [] as string[], ask: [] as string[], deny: [] as string[] },
       diagnostics: [] as Array<{ ruleValue: string; decision: 'allow' | 'ask' | 'deny'; code: string; message: string }>,
@@ -1174,7 +1212,46 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       }
     };
 
-    win.__LIN_E2E__ = { calls, projection, clipboardText: () => clipboardText, emitAgentEvent, emitDocumentEvent };
+    const emitOAuthEvent = (envelope: unknown) => {
+      for (const listener of oauthListeners) {
+        listener(clone(envelope));
+      }
+    };
+
+    // Mark an OAuth provider connected and resolve its pending login with the
+    // updated settings — the renderer re-renders into the connected state.
+    type MockAuthProvider = {
+      providerId: string;
+      modelId: string;
+      reasoningLevel: string;
+      baseUrl: string;
+      enabled: boolean;
+      hasApiKey: boolean;
+      hasEnvApiKey: boolean;
+      auth?: { authKind: string; credentialed: boolean; oauth?: { connected: boolean; expiresAt?: number } };
+    };
+    const resolveOAuthLogin = (providerId: string) => {
+      const providers = agentSettings.providers as unknown as MockAuthProvider[];
+      const catalog = agentSettings.availableProviders.find((item) => item.providerId === providerId);
+      const auth = { authKind: 'oauth', credentialed: true, oauth: { connected: true, expiresAt: now + 1_000 * 60 * 60 * 24 * 30 } };
+      const existing = providers.find((item) => item.providerId === providerId);
+      if (existing) { existing.enabled = true; existing.hasApiKey = false; existing.auth = auth; } else {
+        providers.push({
+          providerId,
+          modelId: catalog?.models[0]?.id ?? '',
+          reasoningLevel: 'medium',
+          baseUrl: '',
+          enabled: true,
+          hasApiKey: false,
+          hasEnvApiKey: false,
+          auth,
+        });
+      }
+      const pending = oauthPending.get(providerId);
+      if (pending) { oauthPending.delete(providerId); pending.resolve(clone(agentSettings)); }
+    };
+
+    win.__LIN_E2E__ = { calls, projection, clipboardText: () => clipboardText, emitAgentEvent, emitDocumentEvent, emitOAuthEvent, resolveOAuthLogin };
     win.lin = {
       // The per-provider config opens as its own native window in the app; in tests
       // it is reached by navigating to ?surface=provider-config directly, so this
@@ -1267,6 +1344,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               enabled: provider.enabled ?? true,
               hasApiKey: true,
               hasEnvApiKey: false,
+              auth: { authKind: 'api-key', credentialed: true, hasStoredKey: true },
             });
           }
           return clone(agentSettings) as T;
@@ -1342,8 +1420,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd === 'agent_set_provider_api_key') {
           const providerId = String(args.providerId);
           const existing = agentSettings.providers.find((item) => item.providerId === providerId);
+          const keyAuth = { authKind: 'api-key', credentialed: true, hasStoredKey: true };
           if (existing) {
             existing.hasApiKey = true;
+            existing.auth = keyAuth;
           } else {
             const catalog = agentSettings.availableProviders.find((item) => item.providerId === providerId);
             agentSettings.providers.push({
@@ -1354,6 +1434,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               enabled: true,
               hasApiKey: true,
               hasEnvApiKey: false,
+              auth: keyAuth,
             });
           }
           return clone({ providerId, hasApiKey: true }) as T;
@@ -1361,7 +1442,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd === 'agent_delete_provider_api_key') {
           const providerId = String(args.providerId);
           const existing = agentSettings.providers.find((item) => item.providerId === providerId);
-          if (existing) existing.hasApiKey = false;
+          if (existing) { existing.hasApiKey = false; existing.auth = { authKind: 'api-key', credentialed: false, hasStoredKey: false }; }
           return clone({ providerId, hasApiKey: false }) as T;
         }
         if (cmd === 'agent_delete_provider_config') {
@@ -1370,6 +1451,37 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           if (index >= 0) agentSettings.providers.splice(index, 1);
           if (agentSettings.activeProviderId === providerId) agentSettings.activeProviderId = '';
           return clone(agentSettings) as T;
+        }
+        if (cmd === 'open_external_url') {
+          // The OAuth form opens loopback / verification URLs through this; the
+          // spec asserts the call rather than launching a real browser.
+          return clone({ opened: true }) as T;
+        }
+        if (cmd === 'agent_oauth_login') {
+          // Resolve only when the spec calls resolveOAuthLogin (or rejects on
+          // cancel) — the renderer subscribes to oauth events while it awaits.
+          const providerId = String(args.providerId);
+          return new Promise<T>((resolve, reject) => {
+            oauthPending.set(providerId, { resolve: (value) => resolve(value as T), reject });
+          });
+        }
+        if (cmd === 'agent_oauth_logout') {
+          const providerId = String(args.providerId);
+          const existing = (agentSettings.providers as unknown as MockAuthProvider[]).find((item) => item.providerId === providerId);
+          if (existing) { existing.auth = { authKind: 'oauth', credentialed: false, oauth: { connected: false } }; existing.enabled = false; }
+          if (agentSettings.activeProviderId === providerId) agentSettings.activeProviderId = '';
+          return clone(agentSettings) as T;
+        }
+        if (cmd === 'agent_oauth_respond') {
+          // The renderer's answer to a prompt/select/manual-code step. Recorded
+          // (above) for assertions; the spec drives the next event itself.
+          return undefined as T;
+        }
+        if (cmd === 'agent_oauth_cancel') {
+          const providerId = String(args.providerId);
+          const pending = oauthPending.get(providerId);
+          if (pending) { oauthPending.delete(providerId); pending.reject(new Error('cancelled')); }
+          return undefined as T;
         }
         if (cmd === 'agent_debug_snapshot') {
           return clone(String(args.sessionId) === 'mock-agent-session' ? debugSnapshot : null) as T;
@@ -2093,6 +2205,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           if (index >= 0) documentListeners.splice(index, 1);
         };
       },
+      onAgentOAuthEvent: (listener: (envelope: unknown) => void) => {
+        oauthListeners.push(listener);
+        return () => {
+          const index = oauthListeners.indexOf(listener);
+          if (index >= 0) oauthListeners.splice(index, 1);
+        };
+      },
     };
   }, { ids, options });
 }
@@ -2125,6 +2244,24 @@ export async function emitAgentEvent(page: Page, event: unknown) {
     const win = window as E2EWindow;
     win.__LIN_E2E__?.emitAgentEvent(nextEvent);
   }, event);
+}
+
+// Push one main->renderer OAuth login event (device-code / auth / progress /
+// prompt / select / manual-code) to the subscribed sign-in form.
+export async function emitOAuthEvent(page: Page, providerId: string, event: unknown) {
+  await page.evaluate(({ providerId, event }) => {
+    const win = window as E2EWindow;
+    win.__LIN_E2E__?.emitOAuthEvent({ providerId, event });
+  }, { providerId, event });
+}
+
+// Complete the in-flight sign-in: mark the provider connected and resolve the
+// login promise so the form re-renders into its connected state.
+export async function resolveOAuthLogin(page: Page, providerId: string) {
+  await page.evaluate((providerId) => {
+    const win = window as E2EWindow;
+    win.__LIN_E2E__?.resolveOAuthLogin(providerId);
+  }, providerId);
 }
 
 export async function emitAgentProjection(page: Page, sessionId: string, state: Record<string, any>, revision = 1) {
