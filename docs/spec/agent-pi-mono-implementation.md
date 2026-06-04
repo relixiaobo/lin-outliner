@@ -369,16 +369,35 @@ into the "needs a key, yet offers *Remove provider*" contradiction:
   provider row. The main Settings pane's Save persists only runtime settings
   (permissions / skills / agents); it never upserts a provider. An upsert has no
   auto-activation side effect — a provider becomes active only on a deliberate
-  user action or the load reconcile below.
+  user action, or via the active-provider fallback at read time (the first
+  credentialed row), which the startup reconcile below later persists.
 
-- **Reconcile on load.** `getProviderSettings` repairs the file and persists only
-  when something changed: it prunes a *junk* row — one that can connect to nothing
-  (no stored credential, no env / managed key, and no `baseUrl` local endpoint) —
-  and repoints `activeProviderId` to the first enabled, credentialed provider (or
-  clears it) whenever the current pointer is unset, removed, or no longer usable.
-  A legit keyless row (a local `baseUrl` or an env-keyed provider) survives. This
-  makes the contradiction structurally impossible — an uncredentialed provider has
-  no row — rather than papering over it in the renderer. Per the pre-launch
+- **Reconcile once at startup, never on the read path.** `reconcileProviderConfig`
+  runs as a fire-and-forget step in `app.whenReady` (not inside
+  `getProviderSettings`, which is a pure read). It prunes a *junk* row and repoints
+  a now-dangling `activeProviderId`, persisting only when something changed. Two
+  invariants keep a transient or ambient signal from becoming permanent data loss:
+
+  - **Unreadable secrets ⇒ do nothing.** If the secrets file can't be read (keychain
+    locked, key rotated, safeStorage down), reconcile prunes nothing and writes
+    nothing — the credential picture is unknown, and "transient unavailability must
+    never become permanent loss." It reads via `readSecretsWithStatus` (reports
+    `readable`), never the degrading `readSecretFileSafe`.
+  - **Prune only on durable signals.** A row is *junk* only if it is a plain
+    `api-key`-kind catalog row with **no stored secret-file credential and no
+    `baseUrl`**. Managed (Bedrock/Vertex) and oauth kinds are exempt outright, and
+    ambient `getEnvApiKey` is **not** consulted — a Finder/Dock launch inherits no
+    shell env, so judging on env would delete a deliberate row whenever the env
+    happens to be absent. `activeProviderId` is repointed only when unset or
+    structurally dangling (no surviving row by that id), targeting the first row
+    with a durable stored credential; read paths
+    (`resolveUsableActiveProvider` / `getActiveProviderRuntimeConfig`) still fall
+    back through env/managed at runtime.
+
+  A legit keyless row (a local `baseUrl`) survives. This makes the contradiction
+  structurally impossible — a junk uncredentialed row has no row after the next
+  launch — rather than papering over it in the renderer, while keeping it off the
+  read path so a write never races concurrent writers. Per the pre-launch
   no-migration policy this reconcile (plus a dev `userData` wipe) is the only
   cleanup; there is no versioned migration.
 

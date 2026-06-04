@@ -3,13 +3,15 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-// Exercises the provider-config-cleanup Part A reconcile: a keyless "junk" row
-// (the shape the old main-pane save side effect produced) is pruned on load and an
-// uncredentialed provider is never made active, while a credentialed provider
-// survives and is auto-activated when none is active.
+// Exercises the provider-config-cleanup Part A startup reconcile: a keyless "junk"
+// row (the shape the old main-pane save side effect produced) is pruned and an
+// uncredentialed provider is never made active — WITHOUT ever deleting a row from a
+// transient/ambient signal (the data-loss findings from the #100 review):
+//   - unreadable secrets (keychain locked / key rotated) → prune nothing, write nothing
+//   - managed (Bedrock/Vertex) + oauth rows are exempt; ambient env is never consulted
 
 let currentUserData = '';
-const encryptionAvailable = true;
+let encryptionAvailable = true;
 
 const safeStorageMock = {
   isEncryptionAvailable: () => encryptionAvailable,
@@ -23,7 +25,7 @@ mock.module('electron', () => ({
 }));
 
 // Mirror the credential suite: only the oauth subpath is faked; the real pi-ai
-// (getProviders / getModels / getEnvApiKey) drives catalog + env lookups.
+// (getProviders / getModels / getEnvApiKey) drives catalog + env + kind lookups.
 mock.module('@earendil-works/pi-ai/oauth', () => ({
   getOAuthApiKey: async () => null,
   getOAuthProvider: (id: string) =>
@@ -32,6 +34,7 @@ mock.module('@earendil-works/pi-ai/oauth', () => ({
 
 const {
   getProviderSettings,
+  reconcileProviderConfig,
   upsertProviderConfig,
   ensureProviderConfig,
   setProviderApiKey,
@@ -39,6 +42,7 @@ const {
 } = await import('../../src/main/agentSettings');
 
 const providerPath = () => path.join(currentUserData, 'agent-providers.json');
+const secretPath = () => path.join(currentUserData, 'agent-secrets.json');
 
 interface OnDiskProvider {
   providerId: string;
@@ -60,12 +64,13 @@ async function readProviderFileRaw(): Promise<{ activeProviderId?: string; provi
 }
 
 // Env keys for the providers under test must be ABSENT, or a row would resolve a
-// credential from the ambient env and never be pruned. Snapshot + clear + restore.
-const ENV_KEYS = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'AWS_PROFILE', 'AWS_ACCESS_KEY_ID'];
+// credential from the ambient env. Snapshot + clear + restore.
+const ENV_KEYS = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'AWS_PROFILE', 'AWS_ACCESS_KEY_ID', 'GOOGLE_CLOUD_API_KEY'];
 let savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(async () => {
   currentUserData = await mkdtemp(path.join(tmpdir(), 'lin-provider-reconcile-'));
+  encryptionAvailable = true;
   savedEnv = {};
   for (const name of ENV_KEYS) {
     savedEnv[name] = process.env[name];
@@ -81,8 +86,8 @@ afterEach(async () => {
   await rm(currentUserData, { recursive: true, force: true });
 });
 
-describe('provider settings reconcile (Part A)', () => {
-  test('prunes a keyless junk row and clears the active pointer on load', async () => {
+describe('provider config startup reconcile (Part A)', () => {
+  test('prunes a keyless junk row and clears the active pointer', async () => {
     // Exactly the bug shape found on disk: an uncredentialed catalog row that was
     // also set active, while it has no usable key.
     await writeProviderFileRaw({
@@ -90,49 +95,47 @@ describe('provider settings reconcile (Part A)', () => {
       providers: [{ providerId: 'openai', modelId: 'gpt-5.5', reasoningLevel: 'off', enabled: true }],
     });
 
+    await reconcileProviderConfig();
+
     const view = await getProviderSettings();
     expect(view.providers).toHaveLength(0);
     expect(view.activeProviderId).toBeUndefined();
-
     // The cleanup is persisted, not just filtered for the view.
     expect((await readProviderFileRaw()).providers).toHaveLength(0);
   });
 
-  test('save-with-no-key creates no persisted row and never activates it', async () => {
-    // The config window writes the key BEFORE the row; an upsert with no credential
-    // (the user saved without entering a key) must not leave a keyless row behind.
-    const view = await upsertProviderConfig({
-      providerId: 'openai',
-      modelId: 'gpt-4o',
-      reasoningLevel: 'off',
-      enabled: true,
-    });
+  test('a keyless upserted row is pruned and never activated', async () => {
+    // An upsert with no credential leaves a keyless row (the read path no longer
+    // self-heals); the next startup reconcile removes it instead of leaving a
+    // removable-yet-keyless contradiction behind.
+    await upsertProviderConfig({ providerId: 'openai', modelId: 'gpt-4o', reasoningLevel: 'off', enabled: true });
+    await reconcileProviderConfig();
+
+    const view = await getProviderSettings();
     expect(view.providers.find((p) => p.providerId === 'openai')).toBeUndefined();
     expect(view.activeProviderId).toBeUndefined();
   });
 
   test('a credentialed provider survives and becomes the active provider', async () => {
-    // The reorder: credential first, then the row — the real config-window order.
+    // The real config-window order: credential first, then the row.
     await setProviderApiKey('openai', 'sk-test');
-    const view = await upsertProviderConfig({
-      providerId: 'openai',
-      modelId: 'gpt-4o',
-      reasoningLevel: 'off',
-      enabled: true,
-    });
+    await upsertProviderConfig({ providerId: 'openai', modelId: 'gpt-4o', reasoningLevel: 'off', enabled: true });
+    await reconcileProviderConfig();
+
+    const view = await getProviderSettings();
     const openai = view.providers.find((p) => p.providerId === 'openai');
     expect(openai).toBeDefined();
     expect(openai?.hasApiKey).toBe(true);
     expect(view.activeProviderId).toBe('openai');
   });
 
-  test('oauth login (credential then ensureProviderConfig) activates the provider', async () => {
+  test('oauth login (credential then ensureProviderConfig) reconciles to active', async () => {
     await persistOAuthCredential('anthropic', { refresh: 'r', access: 'a', expires: 999 });
     await ensureProviderConfig('anthropic');
+    await reconcileProviderConfig();
 
     const view = await getProviderSettings();
-    const anthropic = view.providers.find((p) => p.providerId === 'anthropic');
-    expect(anthropic).toBeDefined();
+    expect(view.providers.find((p) => p.providerId === 'anthropic')).toBeDefined();
     expect(view.activeProviderId).toBe('anthropic');
   });
 
@@ -143,9 +146,11 @@ describe('provider settings reconcile (Part A)', () => {
       ],
     });
 
+    await reconcileProviderConfig();
+
     const view = await getProviderSettings();
     expect(view.providers.find((p) => p.providerId === 'local-llm')).toBeDefined();
-    // No stored/env key → not auto-activated, but the row is kept.
+    // No stored key → not auto-activated, but the row is kept.
     expect(view.activeProviderId).toBeUndefined();
   });
 
@@ -159,8 +164,53 @@ describe('provider settings reconcile (Part A)', () => {
       ],
     });
 
+    await reconcileProviderConfig();
+
     const view = await getProviderSettings();
     expect(view.providers.map((p) => p.providerId)).toEqual(['anthropic']);
     expect(view.activeProviderId).toBe('anthropic');
+  });
+
+  test('🔴 unreadable secrets: prunes nothing and never rewrites the file', async () => {
+    // A real encrypted blob exists, so a later locked keychain makes it unreadable.
+    await setProviderApiKey('anthropic', 'sk-anthropic');
+    const onDisk = JSON.parse(await readFile(secretPath(), 'utf8'));
+    if (typeof onDisk.enc !== 'string') return; // only meaningful on the encrypted (file-alone) path
+    await writeProviderFileRaw({
+      activeProviderId: 'openai',
+      providers: [
+        { providerId: 'openai', modelId: 'gpt-5.5', reasoningLevel: 'off', enabled: true }, // would-be junk
+        { providerId: 'anthropic', modelId: 'claude-haiku-4-5', reasoningLevel: 'off', enabled: true },
+      ],
+    });
+    const before = await readFile(providerPath(), 'utf8');
+
+    // Keychain locked / key rotated: the encrypted blob can't be read.
+    encryptionAvailable = false;
+    await reconcileProviderConfig();
+
+    // Nothing pruned, file byte-for-byte untouched — a transient lock must not delete rows.
+    expect(await readFile(providerPath(), 'utf8')).toBe(before);
+    expect((await readProviderFileRaw()).providers.map((p) => p.providerId)).toEqual(['openai', 'anthropic']);
+
+    encryptionAvailable = true; // restore for any later read in this file
+  });
+
+  test('🟠 managed rows (Bedrock/Vertex) are exempt — never pruned without ambient env', async () => {
+    // No AWS/GCP env present (cleared in beforeEach), so getEnvApiKey returns nothing;
+    // managed rows must still survive because their credential is always ambient.
+    await writeProviderFileRaw({
+      providers: [
+        { providerId: 'amazon-bedrock', modelId: 'amazon.nova-lite-v1:0', reasoningLevel: 'off', enabled: true },
+        { providerId: 'google-vertex', modelId: 'gemini-2.5-flash', reasoningLevel: 'off', enabled: true },
+      ],
+    });
+
+    await reconcileProviderConfig();
+
+    expect((await readProviderFileRaw()).providers.map((p) => p.providerId).sort()).toEqual([
+      'amazon-bedrock',
+      'google-vertex',
+    ]);
   });
 });

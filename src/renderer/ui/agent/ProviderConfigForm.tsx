@@ -107,7 +107,14 @@ export function ProviderConfigForm({
     baseUrl: baseUrl.trim(),
     apiKey: apiKey.trim(),
   };
-  const canSave = Boolean(draft.providerId) && (isCustom ? Boolean(draft.modelId) : true) && !busy;
+  // A managed provider (authNote) persists a row with nothing to fill in; an
+  // api-key / custom provider needs a credential or a base URL, or the saved row is
+  // a keyless no-op the startup reconcile prunes — a confusing "saved, then gone".
+  const hasConnection = Boolean(draft.apiKey) || hasSavedKey || Boolean(draft.baseUrl);
+  const canSave = Boolean(draft.providerId)
+    && (isCustom ? Boolean(draft.modelId) : true)
+    && (authNote ? true : hasConnection)
+    && !busy;
   const canValidate = Boolean(draft.providerId) && !busy;
 
   function clearResult() {

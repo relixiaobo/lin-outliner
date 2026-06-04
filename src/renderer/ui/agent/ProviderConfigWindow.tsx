@@ -100,11 +100,10 @@ export function ProviderConfigWindow() {
     if (!pid) return;
     const modelId = draft.modelId.trim() || existing?.modelId || catalog?.models[0]?.id || '';
     const reasoningLevel = existing?.reasoningLevel ?? defaultReasoningLevel(catalog?.models[0]);
-    // Store the credential BEFORE creating the row. The load reconcile prunes a row
-    // that can connect to nothing (no credential, no baseUrl); persisting the key
-    // first means the just-created row is already credentialed when reconcile runs,
-    // so a fresh provider is never pruned out from under its own key
-    // (provider-config-cleanup A3).
+    // Store the credential BEFORE creating the row, so a crash between the two
+    // writes leaves no keyless orphan row (and the row is durably credentialed the
+    // moment it exists). The Save button is gated on a credential or base URL
+    // (ProviderConfigForm), so a keyless no-op row is never created here.
     if (draft.apiKey.trim()) {
       await api.agentSetProviderApiKey(pid, draft.apiKey.trim());
     }
