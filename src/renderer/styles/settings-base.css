@@ -53,13 +53,30 @@
   gap: var(--space-6);
 }
 
+/* Every pane sits FLAT on the content base (the macOS System Settings model the
+   inset primitive was built for): no opaque card wrapper — the grouped inset cards
+   float on the flat window base the same way the rail does. The rail already names
+   the pane, so panes carry no <h3> title; an optional one-line muted intro
+   (.settings-section-desc) explains a pane where it helps. */
 .agent-settings-section {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  border-radius: var(--radius-overlay-sm);
-  background: var(--fill-1);
-  padding: var(--space-6);
+  gap: var(--space-5);
+}
+
+/* The one small status / tag chip across Settings (provider Active marker, skill
+   source, permission decision, agent tool tags): neutral --fill ladder, --radius-xs,
+   sentence case (no uppercase). Status meaning rides on text, never a status fill
+   (B3/B4). */
+.settings-chip {
+  flex: 0 0 auto;
+  border-radius: var(--radius-xs);
+  background: var(--control-hover);
+  color: var(--text-soft);
+  font-size: var(--font-ui-2xs);
+  font-weight: 500;
+  line-height: var(--line-ui-2xs);
+  padding: var(--space-hairline) var(--space-3);
 }
 
 .agent-settings-section-header {

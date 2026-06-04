@@ -137,6 +137,46 @@
   white-space: nowrap;
 }
 
+/* Wrap variant: settings rows that carry an explanatory description let the label
+   and sublabel wrap instead of single-line ellipsis. The sublabel becomes a stack
+   so it can hold a description plus a secondary line (e.g. a permission's raw rule
+   value). Tall rows get a little more vertical room so the text breathes. */
+.inset-row-text.is-wrap .inset-row-label,
+.inset-row-text.is-wrap .inset-row-sublabel {
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
+}
+
+/* A wrapped headline can hold a trailing chip beside the title (skill source,
+   permission decision) — flow them inline so the chip sits next to the text. */
+.inset-row-text.is-wrap .inset-row-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.inset-row-text.is-wrap .inset-row-sublabel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.inset-row-main:has(.inset-row-text.is-wrap) {
+  padding-top: var(--space-3);
+  padding-bottom: var(--space-3);
+}
+
+/* The raw rule-value / code line under a wrapped description (permissions). */
+.inset-row-code {
+  color: var(--text-tertiary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+  word-break: break-word;
+}
+
 .inset-row-trailing {
   display: inline-flex;
   flex: 0 0 auto;

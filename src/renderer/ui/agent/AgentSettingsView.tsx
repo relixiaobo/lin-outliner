@@ -644,32 +644,31 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
 
           <div className="settings-content">
             {category === 'general' ? (
-              <section className="agent-settings-section settings-general-section" aria-labelledby="settings-general-heading">
-                <div className="settings-section-title-row">
-                  <h3 id="settings-general-heading">General</h3>
-                  <span className="settings-section-desc">Appearance and app-wide preferences.</span>
-                </div>
+              <section className="agent-settings-section settings-general-section" aria-label="General">
+                {/* No <h3> pane title — the rail names the pane; a one-line intro
+                    explains it (the Providers model, applied to every pane). */}
+                <p className="settings-section-desc">Appearance and app-wide preferences.</p>
 
-                <div className="settings-skills-list-section">
-                  <h4 className="settings-subheading">Appearance</h4>
-                  <div className="agent-settings-behavior-switches">
-                    <div className="behavior-switch-item">
-                      <div className="behavior-switch-info">
-                        <span className="behavior-switch-title">Theme</span>
-                        <p className="behavior-switch-desc">Match the system appearance, or always use light or dark.</p>
-                      </div>
+                <InsetGroup ariaLabel="Appearance" label="Appearance">
+                  <InsetRow
+                    label="Theme"
+                    sublabel="Match the system appearance, or always use light or dark."
+                    trailing={(
                       <SegmentedControl
                         label="Theme"
                         onChange={changeTheme}
                         options={THEME_OPTIONS}
                         value={themeMode}
                       />
-                    </div>
-                  </div>
-                </div>
+                    )}
+                    wrap
+                  />
+                </InsetGroup>
               </section>
             ) : category === 'providers' ? (
               <section className="agent-settings-section settings-providers-section" aria-label="Providers">
+                {/* Providers is the reference pane: flat base + grouped inset cards.
+                    The other panes were migrated onto this idiom. */}
                 {/* No "Providers" title — the selected rail category already names
                     the pane. Custom providers are added from the last row of the
                     Available list (no separate floating add control). */}
@@ -695,80 +694,75 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                 </div>
               </section>
             ) : category === 'permissions' ? (
-              <section className="agent-settings-section settings-permissions-section" aria-labelledby="settings-permissions-heading">
-                <div className="settings-section-title-row">
-                  <h3 id="settings-permissions-heading">Tool Permissions</h3>
-                  <span className="settings-section-desc">Choose which common agent actions run automatically and which ask first.</span>
-                </div>
+              <section className="agent-settings-section settings-permissions-section" aria-label="Tool Permissions">
+                <p className="settings-section-desc">Choose which common agent actions run automatically and which ask first.</p>
 
-                <div className="settings-skills-list-section">
-                  <h4 className="settings-subheading">Common Actions</h4>
-                  <div className="settings-skills-table">
-                    {COMMON_PERMISSION_RULES.map((rule) => {
-                      const decision = permissionDecision(rule.ruleValue);
-                      const denied = decision === 'deny';
-                      return (
-                        <div className={`settings-skill-row ${denied ? 'is-disabled' : ''}`} key={rule.ruleValue}>
-                          <div className="skill-row-info">
-                            <div className="skill-row-title">
-                              <span className="skill-name">{rule.label}</span>
-                              <span className="skill-source-badge">{denied ? 'Deny in JSON' : decision === 'allow' ? 'Allow' : 'Ask'}</span>
-                            </div>
-                            <p className="skill-desc">{rule.description}</p>
-                            <p className="skill-desc">{rule.ruleValue}</p>
-                          </div>
-                          <div className="agent-settings-field">
-                            <SelectControl
-                              disabled={denied}
-                              label={`${rule.label} permission`}
-                              onChange={(event) => setPermissionDecision(rule.ruleValue, event.target.value as 'allow' | 'ask')}
-                              value={denied ? 'deny' : decision}
-                            >
-                              <option value="ask">Ask first</option>
-                              {rule.allowable ? <option value="allow">Always allow</option> : null}
-                              {denied ? <option value="deny">Denied in JSON</option> : null}
-                            </SelectControl>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
+                <InsetGroup ariaLabel="Common actions" label="Common Actions">
+                  {COMMON_PERMISSION_RULES.map((rule) => {
+                    const decision = permissionDecision(rule.ruleValue);
+                    const denied = decision === 'deny';
+                    return (
+                      <InsetRow
+                        disabled={denied}
+                        key={rule.ruleValue}
+                        label={(
+                          <>
+                            {rule.label}
+                            <span className="settings-chip">{denied ? 'Deny in JSON' : decision === 'allow' ? 'Allow' : 'Ask'}</span>
+                          </>
+                        )}
+                        sublabel={(
+                          <>
+                            {rule.description}
+                            <span className="inset-row-code">{rule.ruleValue}</span>
+                          </>
+                        )}
+                        trailing={(
+                          <SelectControl
+                            disabled={denied}
+                            label={`${rule.label} permission`}
+                            onChange={(event) => setPermissionDecision(rule.ruleValue, event.target.value as 'allow' | 'ask')}
+                            value={denied ? 'deny' : decision}
+                          >
+                            <option value="ask">Ask first</option>
+                            {rule.allowable ? <option value="allow">Always allow</option> : null}
+                            {denied ? <option value="deny">Denied in JSON</option> : null}
+                          </SelectControl>
+                        )}
+                        wrap
+                      />
+                    );
+                  })}
+                </InsetGroup>
 
                 {permissionDiagnostics.length > 0 ? (
-                  <div className="settings-skills-list-section">
-                    <h4 className="settings-subheading">Ignored JSON Rules</h4>
-                    <div className="settings-skills-table">
-                      {permissionDiagnostics.map((diagnostic) => (
-                        <div className="settings-skill-row is-disabled" key={`${diagnostic.decision}:${diagnostic.ruleValue}:${diagnostic.code}`}>
-                          <div className="skill-row-info">
-                            <div className="skill-row-title">
-                              <span className="skill-name">{diagnostic.ruleValue}</span>
-                              <span className="skill-source-badge">{diagnostic.code}</span>
-                            </div>
-                            <p className="skill-desc">{diagnostic.message}</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                  <InsetGroup ariaLabel="Ignored JSON rules" label="Ignored JSON Rules">
+                    {permissionDiagnostics.map((diagnostic) => (
+                      <InsetRow
+                        disabled
+                        key={`${diagnostic.decision}:${diagnostic.ruleValue}:${diagnostic.code}`}
+                        label={(
+                          <>
+                            {diagnostic.ruleValue}
+                            <span className="settings-chip">{diagnostic.code}</span>
+                          </>
+                        )}
+                        sublabel={diagnostic.message}
+                        wrap
+                      />
+                    ))}
+                  </InsetGroup>
                 ) : null}
               </section>
             ) : category === 'skills' ? (
-              <section className="agent-settings-section settings-skills-section" aria-labelledby="settings-skills-heading">
-                <div className="settings-section-title-row">
-                  <h3 id="settings-skills-heading">Skills & Behaviors</h3>
-                  <span className="settings-section-desc">Manage installed capabilities and agent automation.</span>
-                </div>
-                
-                <div className="settings-skills-behavior">
-                  <h4 className="settings-subheading">Behavior Rules</h4>
-                  <div className="agent-settings-behavior-switches">
-                    <div className="behavior-switch-item">
-                      <div className="behavior-switch-info">
-                        <span className="behavior-switch-title">Automatic Skills</span>
-                        <p className="behavior-switch-desc">Allow agent to autonomously invoke skills to solve tasks.</p>
-                      </div>
+              <section className="agent-settings-section settings-skills-section" aria-label="Skills & Behaviors">
+                <p className="settings-section-desc">Manage installed capabilities and agent automation.</p>
+
+                <InsetGroup ariaLabel="Behavior rules" label="Behavior Rules">
+                  <InsetRow
+                    label="Automatic Skills"
+                    sublabel="Allow agent to autonomously invoke skills to solve tasks."
+                    trailing={(
                       <SwitchControl
                         checked={draft.automaticSkillsEnabled}
                         onCheckedChange={(automaticSkillsEnabled) => setDraft((current) => ({ ...current, automaticSkillsEnabled }))}
@@ -776,13 +770,13 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                       >
                         <SwitchMark checked={draft.automaticSkillsEnabled} />
                       </SwitchControl>
-                    </div>
-
-                    <div className="behavior-switch-item">
-                      <div className="behavior-switch-info">
-                        <span className="behavior-switch-title">Slash Skills</span>
-                        <p className="behavior-switch-desc">Enable users to directly invoke skills in chat via slash commands.</p>
-                      </div>
+                    )}
+                    wrap
+                  />
+                  <InsetRow
+                    label="Slash Skills"
+                    sublabel="Enable users to directly invoke skills in chat via slash commands."
+                    trailing={(
                       <SwitchControl
                         checked={draft.slashSkillsEnabled}
                         onCheckedChange={(slashSkillsEnabled) => setDraft((current) => ({ ...current, slashSkillsEnabled }))}
@@ -790,13 +784,13 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                       >
                         <SwitchMark checked={draft.slashSkillsEnabled} />
                       </SwitchControl>
-                    </div>
-
-                    <div className="behavior-switch-item">
-                      <div className="behavior-switch-info">
-                        <span className="behavior-switch-title">Compact Command</span>
-                        <p className="behavior-switch-desc">Enable automatic conversation context compaction when token budget runs low.</p>
-                      </div>
+                    )}
+                    wrap
+                  />
+                  <InsetRow
+                    label="Compact Command"
+                    sublabel="Enable automatic conversation context compaction when token budget runs low."
+                    trailing={(
                       <SwitchControl
                         checked={draft.compactEnabled}
                         onCheckedChange={(compactEnabled) => setDraft((current) => ({ ...current, compactEnabled }))}
@@ -804,70 +798,70 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                       >
                         <SwitchMark checked={draft.compactEnabled} />
                       </SwitchControl>
-                    </div>
-                  </div>
-                </div>
+                    )}
+                    wrap
+                  />
+                </InsetGroup>
 
-                <div className="settings-skills-list-section">
-                  <h4 className="settings-subheading">Installed Capabilities</h4>
-                  
-                  {loadingSkills ? (
-                    <div className="settings-loading-placeholder">Loading installed skills...</div>
-                  ) : allSkills.length === 0 ? (
-                    <div className="settings-empty-placeholder">No skills installed in ~/.agents/skills or .agents/skills.</div>
-                  ) : (
-                    <div className="settings-skills-table">
-                      {allSkills.map((skill) => {
-                        const disabled = isSkillDisabled(skill.name);
-                        return (
-                          <div className={`settings-skill-row ${disabled ? 'is-disabled' : ''}`} key={skill.name}>
-                            <div className="skill-row-action">
-                              <SwitchControl
-                                checked={!disabled}
-                                onCheckedChange={() => toggleSkill(skill.name)}
-                                label={`Toggle ${skill.name}`}
-                              >
-                                <SwitchMark checked={!disabled} />
-                              </SwitchControl>
-                            </div>
-                            <div className="skill-row-info">
-                              <div className="skill-row-title">
-                                <span className="skill-name">/{skill.displayName || skill.name}</span>
-                                <span className="skill-source-badge">{skill.source}</span>
-                              </div>
-                              <p className="skill-desc">{skill.description}</p>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
+                {loadingSkills ? (
+                  <div className="agent-settings-empty">Loading installed skills…</div>
+                ) : allSkills.length === 0 ? (
+                  <div className="agent-settings-empty">No skills installed in ~/.agents/skills or .agents/skills.</div>
+                ) : (
+                  <InsetGroup ariaLabel="Installed capabilities" label="Installed Capabilities">
+                    {allSkills.map((skill) => {
+                      const disabled = isSkillDisabled(skill.name);
+                      return (
+                        <InsetRow
+                          disabled={disabled}
+                          key={skill.name}
+                          label={(
+                            <>
+                              /{skill.displayName || skill.name}
+                              <span className="settings-chip">{skill.source}</span>
+                            </>
+                          )}
+                          sublabel={skill.description}
+                          trailing={(
+                            <SwitchControl
+                              checked={!disabled}
+                              onCheckedChange={() => toggleSkill(skill.name)}
+                              label={`Toggle ${skill.name}`}
+                            >
+                              <SwitchMark checked={!disabled} />
+                            </SwitchControl>
+                          )}
+                          wrap
+                        />
+                      );
+                    })}
+                  </InsetGroup>
+                )}
               </section>
             ) : (
-              <section className="agent-settings-section settings-agents-section" aria-labelledby="settings-agents-heading">
-                <div className="settings-section-title-row">
-                  <h3 id="settings-agents-heading">Agent Profiles</h3>
-                  <span className="settings-section-desc">Manage system subagents and view their persona details.</span>
-                </div>
+              <section className="agent-settings-section settings-agents-section" aria-label="Agent Profiles">
+                <p className="settings-section-desc">Manage system subagents and view their persona details.</p>
 
                 <div className="settings-agents-split">
                   <div className="settings-agents-aside">
                     {loadingAgents ? (
-                      <div className="settings-loading-placeholder">Loading profiles...</div>
+                      <div className="agent-settings-empty">Loading profiles…</div>
                     ) : allAgents.length === 0 ? (
-                      <div className="settings-empty-placeholder">No agent definitions found.</div>
+                      <div className="agent-settings-empty">No agent definitions found.</div>
                     ) : (
-                      <div className="settings-agents-list">
+                      <InsetGroup ariaLabel="Agent profiles">
                         {allAgents.map((agent) => {
                           const disabled = isAgentDisabled(agent.name);
                           const isSelected = agent.name === selectedAgentName;
                           return (
-                            <div
-                              className={`settings-agent-item-row ${isSelected ? 'is-selected' : ''} ${disabled ? 'is-disabled' : ''}`}
+                            <InsetRow
+                              ariaLabel={agent.name}
                               key={agent.name}
-                            >
-                              <span className="agent-item-switch">
+                              label={agent.name}
+                              onSelect={() => setSelectedAgentName(agent.name)}
+                              selected={isSelected}
+                              sublabel={agent.description}
+                              trailing={(
                                 <SwitchControl
                                   checked={!disabled}
                                   onCheckedChange={() => toggleAgent(agent.name)}
@@ -875,19 +869,11 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                                 >
                                   <SwitchMark checked={!disabled} />
                                 </SwitchControl>
-                              </span>
-                              <button
-                                className="agent-item-content"
-                                onClick={() => setSelectedAgentName(agent.name)}
-                                type="button"
-                              >
-                                <span className="agent-item-name">{agent.name}</span>
-                                <span className="agent-item-desc">{agent.description}</span>
-                              </button>
-                            </div>
+                              )}
+                            />
                           );
                         })}
-                      </div>
+                      </InsetGroup>
                     )}
                   </div>
 
@@ -934,14 +920,14 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                             <span className="agent-profile-field-label">Enabled Tools</span>
                             <div className="agent-profile-tags-container">
                               {selectedAgent.tools.map((tool) => (
-                                <span className="agent-profile-tag" key={tool}>{tool}</span>
+                                <span className="settings-chip" key={tool}>{tool}</span>
                               ))}
                             </div>
                           </div>
                         )}
                       </div>
                     ) : (
-                      <div className="settings-agents-detail-empty">Select an agent profile to view details.</div>
+                      <div className="agent-settings-empty is-centered">Select an agent profile to view details.</div>
                     )}
                   </div>
                 </div>

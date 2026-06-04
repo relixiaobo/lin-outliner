@@ -33,13 +33,19 @@ export function InsetGroup({ label, footnote, ariaLabel, className, children }: 
 }
 
 interface InsetRowProps {
-  /** Leading icon / avatar slot. */
+  /** Leading icon / avatar slot. Non-interactive only — it renders INSIDE the
+   *  selectable button, so an interactive control (a switch) belongs in `trailing`
+   *  (a sibling), never here. */
   leading?: ReactNode;
   label: ReactNode;
   sublabel?: ReactNode;
-  /** Trailing slot — status dots, a `⋯` menu trigger, a switch, etc. Rendered as
-   *  a sibling of the selectable area so it never nests buttons. */
+  /** Trailing slot — a `⋯` menu trigger, a switch, a select, a quiet button, etc.
+   *  Rendered as a sibling of the selectable area so it never nests buttons. */
   trailing?: ReactNode;
+  /** Let the label / sublabel wrap to multiple lines instead of single-line
+   *  ellipsis (settings rows that carry an explanatory description). The sublabel
+   *  becomes a stack, so it can hold a description plus e.g. a rule-value line. */
+  wrap?: boolean;
   selected?: boolean;
   disabled?: boolean;
   /** When provided, the row's main area is a button; otherwise it is static
@@ -55,6 +61,7 @@ export const InsetRow = memo(function InsetRow({
   label,
   sublabel,
   trailing,
+  wrap = false,
   selected = false,
   disabled = false,
   onSelect,
@@ -63,7 +70,7 @@ export const InsetRow = memo(function InsetRow({
   const body = (
     <>
       {leading ? <span className="inset-row-leading">{leading}</span> : null}
-      <span className="inset-row-text">
+      <span className={['inset-row-text', wrap ? 'is-wrap' : ''].filter(Boolean).join(' ')}>
         <span className="inset-row-label">{label}</span>
         {sublabel ? <span className="inset-row-sublabel">{sublabel}</span> : null}
       </span>

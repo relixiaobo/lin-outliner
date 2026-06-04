@@ -1,5 +1,5 @@
 ---
-status: draft
+status: in-progress
 owner: cc
 topic: settings-design-consistency
 ---
@@ -186,23 +186,24 @@ badge, focus-ring token, sheet body-block radius). Guard tests track the real
 DOM/CSS — extend/adjust `tests/e2e/typography-tokens.spec.ts` /
 `workspace-layout.spec.ts` if a class they assert is renamed/removed.
 
-## Open questions (PM ratifies before build)
+## Open questions — RESOLVED (PM ratified 2026-06-04)
 
-- **Q1 — Section title.** Give Providers a title to match the others, or drop
-  the per-pane `<h3>` everywhere (rail names the pane)? (taste)
-- **Q2 — Container model.** All panes flat-base + floating inset cards
-  (Providers model), or all stay inside an opaque `--fill-1` card? This sets the
-  whole Settings look. (taste — recommend flat-base, the idiom the primitive was
-  built for.)
-- **Q3 — Secondary button.** 28px `--fill-2` filled (`.agent-settings-secondary`)
-  or 30px bordered ghost (`.settings-sheet-secondary`) as the one secondary?
-- **Q4 — Empty state.** Dashed bordered box or plain muted text as the single
-  empty/loading treatment?
-- **Q5 — Sheet body-block radius.** Unify note/result/oauth blocks to
-  `--radius-md` 8, or to the inset-card's `--radius-lg` 12? (8 = the
-  "small-surface" tier; 12 = match the concentric field group.)
-- **Q6 — `settings-connection.css`.** Confirm fully dead → delete (W1.5), or is
-  any part still wired?
+- **Q1 — Section title → drop the per-pane `<h3>` everywhere.** The rail names the
+  pane (Providers model); a pane keeps a one-line muted `.settings-section-desc`
+  intro where it helps.
+- **Q2 — Container model → all panes flat-base + floating inset cards.**
+  `.agent-settings-section` carries no `--fill-1` card; the inset cards float on the
+  window base (the idiom the primitive was built for).
+- **Q3 — Secondary button → filled `--fill-2`, no border**
+  (`.agent-settings-secondary`); the sheet's `.settings-sheet-secondary` matches.
+  The native push-button, pairing with the filled-strong primary.
+- **Q4 — Empty state → plain muted text** (`.agent-settings-empty`, `+ .is-centered`
+  for a detail pane); no dashed box.
+- **Q5 — Sheet body-block radius → `--radius-md` 8** (the small-surface tier; only
+  the validation banner was 6). Decided by the dev (reversible CSS local).
+- **Q6 — `settings-connection.css` → fully dead, deleted.** Its `.connection-test-*`
+  / `.settings-url-*` classes have no renderer reference (validation now lives in
+  `.settings-sheet-result`). Verified by the dev.
 
 ## Sequencing
 
@@ -220,15 +221,18 @@ Keep WI-1 and WI-2 on separate branches (`cc/settings-polish-*` /
 
 ## Subtasks
 
-- [ ] PM ratifies plan + answers Q1–Q6.
-- [ ] PR-A: W1.1 danger hover → neutral; W1.2 shared `:focus-visible` ring;
-      W1.3 unify sheet body-block radius (Q5); W1.4 delete dead
-      `.settings-provider-sheet` (+ orphans); W1.5 verify + remove
-      `settings-connection.css` (Q6).
-- [ ] PR-B/Permissions: `.settings-skill-row` → `inset-*`; container/header per
-      Q1–Q2; secondary/empty/badge per Q3–Q4.
-- [ ] PR-B/Skills: same migration for the Skills list.
-- [ ] PR-B/Agents: `.settings-agent-item-row` → `inset-*` (master-detail
-      selection on `.inset-row.is-selected`).
-- [ ] Fold decisions into `docs/spec/design-system.md`; adjust guard specs;
-      flip status `done`; archive.
+- [x] PM ratifies plan + answers Q1–Q6 (2026-06-04).
+- [x] **PR-A (#105):** W1.1 danger hover → neutral; W1.2 shared `:focus-visible`
+      ring; W1.3 unify sheet body-block radius (Q5 → 8); W1.4 delete dead
+      `.settings-provider-sheet` (+ verified no other `.settings-sheet-*` orphans);
+      W1.5 remove dead `settings-connection.css` (Q6). Ready for gate.
+- [x] **PR-B (#106):** all panes migrated in ONE PR (shared CSS lands once, more
+      coherent to review than three near-identical PRs — deviates from the
+      per-pane split the plan floated). Permissions / Skills / Agent Profiles /
+      General → `inset-*`; container/header/secondary/empty/badge/banner per
+      Q1–Q4 + W2.7/W2.8. `InsetRow` gained a `wrap` variant; toggles/selects moved
+      to the trailing slot. Ready for gate (visual verified light + dark).
+- [x] Folded decisions into `docs/spec/design-system.md`; adjusted
+      `agent-settings.spec.ts` (the `<h3>` it keyed on is gone per Q1).
+- [ ] **Main agent, post-merge:** merge #105 then #106 (rebase #106 after #105);
+      flip this plan `done`; archive to `docs/plans/archive/`.
