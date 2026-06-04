@@ -429,6 +429,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Settings panes unified onto one design language (PRs #105 + #106)** — implements
+  `settings-design-consistency.md`. The Settings window no longer reads as two visual
+  generations. **#105 (WI-1, conformance):** danger hover → neutral `--control-hover` (B3);
+  unified text-control `:focus-visible` rings, with a row-level inset ring for borderless inputs
+  inside inset cards so the ring isn't clipped (B8); sheet body-block radius unified to
+  `--radius-md`; and deletion of the dead `.settings-provider-sheet` rule + the unwired
+  `settings-connection.css`. **#106 (WI-2, migration):** General / Permissions / Skills /
+  Agent Profiles moved onto the `InsetGroup`/`InsetRow` idiom (Providers is the reference) —
+  no panel titles (rail naming + a one-line muted intro), flat bottoms, filled `--fill-2`
+  secondary buttons, text-only empty states, a unified `.settings-chip` + neutral banners, and
+  switches/selects relocated to a trailing slot (a new `InsetRow` `wrap` variant), netting −134
+  lines of bespoke CSS. Gate: typecheck clean, renderer 293/0, token guards 8/8, agent-settings
+  + oauth e2e 21/21; light + dark visual verification passed all five panes; spec synced (A6).
+  ([#105](https://github.com/relixiaobo/lin-outliner/pull/105),
+  [#106](https://github.com/relixiaobo/lin-outliner/pull/106))
+
 - **Provider settings polish — list tile, auth-sheet hierarchy, OAuth clarity (PR #101)** —
   Parts B/C/D of `provider-config-cleanup.md` (Part A, the core fix, is still in rework after
   the review gate — see TASKS). **B:** every provider mark — vendored brand logo or monogram —
