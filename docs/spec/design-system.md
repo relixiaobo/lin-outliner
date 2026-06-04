@@ -319,7 +319,9 @@ Use these default desktop tokens before adding component-specific values:
   --agent-composer-radius: calc(var(--panel-radius) - var(--layout-gap));
 
   --motion-fast: 120ms ease;
-  --motion-layout: 160ms ease;
+  --motion-layout-duration: 160ms;
+  --motion-layout: var(--motion-layout-duration) ease;
+  --chrome-zone-backing-delay: var(--motion-layout-duration);
   --z-base: 0;
   --z-raised: 10;
   --z-resize: 30;
@@ -733,7 +735,8 @@ scale font size with viewport width.
 ### Motion
 
 - **Tokens:** `--motion-fast` (120ms) for hover/press/affordance reveals;
-  `--motion-layout` (160ms) for layout shifts (resize, collapse, panel changes).
+  `--motion-layout-duration` / `--motion-layout` (160ms) for layout shifts
+  (resize, collapse, panel changes).
   Add new durations only with a clear role.
 - **Easing:** standard `ease`; motion is functional feedback, never decoration.
 - **What animates:** state and layout transitions. Content does not animate in;
@@ -747,7 +750,9 @@ scale font size with viewport width.
   every frame; a content-bearing rail can't afford that, which is why it slides
   like the sidebar rather than unfurling.) The rail keeps its open width/position
   while collapsed; the fixed top-right toggle (window chrome) is the collapse
-  control in both states.
+  control in both states. The collapsed corner chrome's opaque backing appears
+  only after the rail slide completes, so it never paints a square over the
+  rail's rounded corner during the close transition.
 - **Reduced motion:** honor `prefers-reduced-motion` — collapse transitions to
   near-instant (the rail snaps open/closed, no slide). Never gate comprehension
   on an animation completing.

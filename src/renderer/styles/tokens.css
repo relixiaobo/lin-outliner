@@ -331,7 +331,9 @@
   --agent-composer-corner-inset: var(--space-3);
   --agent-composer-corner-radius: calc(var(--agent-composer-radius) - var(--agent-composer-corner-inset));
   --motion-fast: 120ms ease;
-  --motion-layout: 160ms ease;
+  --motion-layout-duration: 160ms;
+  --motion-layout: var(--motion-layout-duration) ease;
+  --chrome-zone-backing-delay: var(--motion-layout-duration);
   --panel-size: 1;
   --panel-content-x: 28px;
   --panel-content-top: 10px;
@@ -391,4 +393,3 @@
   --row-selection-start: 21px;
   --row-depth: 28px;
 }
-

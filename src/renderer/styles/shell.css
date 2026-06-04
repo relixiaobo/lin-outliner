@@ -55,6 +55,8 @@
   top: 0;
   z-index: var(--z-popover);
   height: var(--chrome-height);
+  background-color: transparent;
+  transition: background-color 0ms;
   -webkit-app-region: drag;
   user-select: none; /* don't rubber-band-select chrome text while dragging */
 }
@@ -131,13 +133,17 @@
    opaque content backing: it caps the top band so content scrolling up cannot peek
    behind the toggle / traffic lights, and pairs with the collapsed breadcrumb's
    margin (canvas.css) so the two abut instead of overlapping (no cross-subtree drag
-   flicker). When the rail is open the zone is transparent so the rail shows through. */
+   flicker). When the rail is open the zone is transparent so the rail shows through.
+   The backing delay lets the rail finish sliding away before the opaque corner
+   zone can paint over its rounded top corner. */
 .app.sidebar-collapsed .window-chrome-zone-left {
-  background: var(--bg-content);
+  background-color: var(--bg-content);
+  transition-delay: var(--chrome-zone-backing-delay);
 }
 
 .app:not(.agent-open) .window-chrome-zone-right {
-  background: var(--bg-content);
+  background-color: var(--bg-content);
+  transition-delay: var(--chrome-zone-backing-delay);
 }
 
 /* open-state toggles read slightly stronger (no fill, just colour) */
