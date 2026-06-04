@@ -49,6 +49,30 @@ test.describe('agent composer controls', () => {
     });
   });
 
+  test('pastes multi-line text as multiple lines instead of collapsing to one', async ({ page }) => {
+    const input = page.getByLabel('Agent message');
+    await input.click();
+    await page.evaluate(() => {
+      const data = new DataTransfer();
+      data.setData('text/plain', 'first line\nsecond line\nthird line');
+      document.activeElement?.dispatchEvent(
+        new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }),
+      );
+    });
+
+    // Every line survives: the single-paragraph schema keeps them as hardBreaks
+    // rather than dropping everything after the first line.
+    await expect.poll(async () => (
+      await input.evaluate((element) => (element as HTMLElement).innerText.replace(/\r/gu, ''))
+    )).toContain('third line');
+
+    await page.getByRole('button', { name: 'Send message' }).click();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.find((call) => call.cmd === 'agent_send_message')?.args.message;
+    }).toBe('first line\nsecond line\nthird line');
+  });
+
   test('inserts attachments inline and sends them as context', async ({ page }) => {
     await page.locator('.agent-composer-file-input').setInputFiles({
       name: 'notes.txt',
