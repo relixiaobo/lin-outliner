@@ -77,12 +77,6 @@ Ordered by priority; lower items may depend on higher ones.
   same core `search_nodes` kernel underneath. **Sequence after `search-retrieval-stack`
   Phase 2** (the shared node path). Supersedes the earlier "launcher absorbs cmd+k"
   framing. A dev agent drafts `docs/plans/<topic>.md`; the PM ratifies before build.
-- **agent-empty-state-onboarding** (P1) — agent panel empty state: remove the three
-  hardcoded suggestion chips (greeting / whitespace instead), and add a
-  no-LLM-key onboarding (CTA → Settings › Providers, disable send when no usable
-  provider — today send fires and only errors at runtime). Renderer empty-state +
-  send-guard only (`AgentChatPanel` + `AgentComposer`); no core surface. See
-  `docs/plans/agent-empty-state-onboarding.md`.
 - **agent-self-modification** (P1) — define a controlled product capability for
   agent self-modification (skills/profiles/config) instead of letting the model
   edit runtime files directly. Directional/security-sensitive — escalate the
@@ -174,6 +168,20 @@ Ordered by priority; lower items may depend on higher ones.
   while the tool arguments stream. See `docs/plans/agent-generative-ui.md`.
 
 ## Recently completed
+
+- **agent-empty-state-onboarding** (cc, PR #109) — agent panel empty state cleanup +
+  no-provider onboarding. Removed the hardcoded `SUGGESTED_PROMPTS` chips (now one muted
+  greeting line); when provider settings have **loaded** and none is usable, the panel shows
+  a quiet onboarding line + a neutral CTA to Settings › Providers and the composer send is
+  disabled with an actionable tooltip — gated on the loaded state so a key-holding user never
+  sees the onboarding flash during the async settings load. Consolidated the usable-provider
+  predicate to a single `isProviderUsable` / `resolveUsableActiveProvider` in
+  `providerCatalog.tsx` (also collapsed the copies in ProviderConfigWindow + AgentSettingsView).
+  Renderer-only, no protocol surface. Gate: typecheck + `test:renderer` (323) + new
+  `agent-onboarding.spec.ts` (send-guard blocks Enter, CTA fires `open_settings`) + light+dark
+  visual verification (with/without a key) — all green. Empty-state design folded into
+  `docs/spec/design-system.md` (A6); plan archived.
+  ([#109](https://github.com/relixiaobo/lin-outliner/pull/109))
 
 - **lazy-like-global-launcher (first slice)** (cc-2, PR #103) — modeless global-hotkey
   launcher + basic-info capture. Prewarmed Raycast-style window: one input = command filter +

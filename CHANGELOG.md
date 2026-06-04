@@ -12,6 +12,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent panel: no-provider onboarding + empty-state cleanup (PR #109)** — implements
+  `agent-empty-state-onboarding.md`. Removed the hardcoded suggested-prompt chips; an empty
+  conversation with a usable provider now shows a single muted greeting line. When provider
+  settings have **loaded** and no provider is usable, the panel shows a quiet onboarding line
+  with a neutral CTA that opens Settings › Providers (the settings window already defaults to
+  the Providers category), and the composer send button is disabled with an actionable tooltip
+  (`Add a provider in Settings`) so a message can no longer fire and only fail at runtime. The
+  guard is gated strictly on the loaded state, so a key-holding user never sees the onboarding
+  flash or a disabled send during the async settings load. The usable-provider predicate is now
+  one shared `isProviderUsable` / `resolveUsableActiveProvider` in `providerCatalog.tsx` (the
+  duplicated copies in the chat panel + composer, and the ad-hoc copies in ProviderConfigWindow
+  + AgentSettingsView, all route through it). Renderer-only; no protocol change. Empty-state
+  design folded into `docs/spec/design-system.md` (A6).
+  ([#109](https://github.com/relixiaobo/lin-outliner/pull/109))
+
 - **Modeless global launcher + basic-info capture (PR #103)** — first slice of
   `lazy-like-global-launcher.md`. A prewarmed, always-focused global-hotkey launcher window
   (Raycast-style flat list: glyph · title · subtitle · right-aligned type label) whose single

@@ -1,10 +1,17 @@
 ---
-status: in-progress
+status: done
 priority: P1
 owner: relixiaobo
 created: 2026-06-03
 updated: 2026-06-04
 ---
+
+> **Shipped in PR #109.** E1 (removed the `SUGGESTED_PROMPTS` chips → one muted
+> greeting) + E2 (no-provider onboarding card + CTA to Settings › Providers +
+> composer send-guard, gated on the loaded state to avoid a flash). The usable-
+> provider predicate was consolidated to a single `isProviderUsable` /
+> `resolveUsableActiveProvider` in `providerCatalog.tsx`. Empty-state design folded
+> into `docs/spec/design-system.md` (Content & States → Empty states, A6).
 
 # Agent Panel: Empty State + No-Provider Onboarding
 

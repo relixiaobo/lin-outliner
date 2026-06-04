@@ -1293,7 +1293,12 @@ nested cards.
   labels are verbs (`New page`, not `Create a brand-new page!`). Error messages
   say what happened and what to do — no blame, no stack traces in product UI.
 - **Empty states:** a single quiet hint at the point of action (the outliner idle
-  hint `Type here or '/' for commands`), not an illustrated empty-state card.
+  hint `Type here or '/' for commands`), not an illustrated empty-state card. The
+  empty agent panel follows the same rule: when a provider is usable it shows one
+  muted greeting line; when provider settings have **loaded** and none is usable it
+  shows a quiet onboarding line + a neutral CTA that opens Settings › Providers, and
+  the composer send is disabled (neutral, with a tooltip) — gated on the loaded
+  state so a key-holding user never sees the onboarding flash during the async load.
 - **Loading:** prefer an in-place reserved slot or skeleton over a spinner that
   shifts layout. The first frame is the working surface, not a splash.
 - **Error / offline:** surface errors inline near their cause; reserve full
