@@ -1,8 +1,17 @@
 ---
-status: draft
+status: done
 owner: cc
 topic: provider-config-cleanup
 ---
+
+> **Shipped.** Part A in PR #100 (core fix — deliberate rows, startup reconcile
+> guarded against keychain-lock / key-rotation / ambient-env data loss), Parts
+> B/C/D in PR #101 (provider-list tile + dividers, strong-neutral auth-sheet
+> primary, OAuth clarity + coverage guard, 32 display names + Xiaomi icon).
+> Design folded into `docs/spec/agent-pi-mono-implementation.md` (Part A) and
+> `docs/spec/design-system.md` (B/C/D). Follow-up surfaced post-merge: the OAuth
+> sheet keeps the strong primary on *Re-authenticate* in the connected state
+> instead of flipping it to *Done* — tracked separately as a fast-track fix.
 
 # Provider config cleanup + settings-UI polish
 
@@ -240,12 +249,14 @@ Independent enough to land separately; keep logic and CSS on separate branches
 
 ## Subtasks
 
-- [ ] PM ratifies plan + answers Q1–Q4.
-- [ ] PR-A: stop main-pane row creation; credential-aware activation; load
-      reconcile; re-derive row menu; unit test.
-- [ ] PR-B/B: icon neutral tile; divider geometry.
-- [ ] PR-B/C: auth-sheet button hierarchy + class-assignment audit.
-- [ ] PR-B/D: OAuth label/hint clarity + catalog-coverage assertion.
-- [ ] On ship: fold Part A semantics into `docs/spec/agent-*`, the visual rules
-      into `docs/spec/design-system.md`; flip status `done`; move to
-      `docs/plans/archive/`.
+- [x] PM ratifies plan + answers Q1–Q4.
+- [x] PR-A (#100): stop main-pane row creation; credential-aware activation;
+      startup reconcile (off the read path, guarded against transient-signal data
+      loss); unit tests.
+- [x] PR-B/B (#101): icon neutral tile; divider geometry.
+- [x] PR-B/C (#101): auth-sheet button hierarchy. **NB:** the class-assignment
+      audit missed the connected-state inversion (primary stays on
+      *Re-authenticate*, not *Done*) — see the follow-up note in the header.
+- [x] PR-B/D (#101): OAuth label/hint clarity + catalog-coverage assertion.
+- [x] On ship: Part A semantics folded into `agent-pi-mono-implementation.md`,
+      visual rules into `design-system.md`; status `done`; archived.

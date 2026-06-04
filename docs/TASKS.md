@@ -18,7 +18,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Agent | Clone | Active branch | Current task |
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
-| Claude Code | `lin-outliner-cc/` | `cc/provider-config-fix` | provider-config-cleanup Part A — reworking after gate NO-GO (#100); B/C/D merged (#101) |
+| Claude Code | `lin-outliner-cc/` | — | idle |
 | Claude Code 2 | `lin-outliner-cc-2/` | (Phase 0 spike) | lazy-like-global-launcher (P0) |
 | Codex | `lin-outliner-codex/` | — | idle |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -36,18 +36,6 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
   `outliner-local-file-references` landed (PR #80). See
   `docs/plans/lazy-like-global-launcher.md`.
 
-- **provider-config-cleanup** (P1, **cc**) — fix the "shows *Add key* yet offers
-  *Remove provider*" contradiction. **Part B/C/D landed (PR #101):** provider-mark
-  neutral tile + symmetric row dividers, strong-neutral-solid auth-sheet primary,
-  OAuth "Claude Code" clarity + coverage guard, 32 provider display names + Xiaomi
-  MiMo icon. **Part A (core fix, PR #100) — NO-GO at the review gate, in rework:**
-  the load-time reconcile prunes+persists provider rows from a *transient* signal
-  (keychain-lock / key-rotation → `readSecretFileSafe` empty → mass-prune defeating
-  the `SecretsUnreadableError` data-loss guard; managed/env rows pruned on a
-  shell-less Finder launch; composer picker can throw `provider not found`). cc to
-  re-gate the prune on secrets being readable + the durable secret-file record.
-  Plan flips to `done` + archives once Part A lands. See
-  `docs/plans/provider-config-cleanup.md`.
 
 ## Backlog
 
@@ -159,6 +147,20 @@ Ordered by priority; lower items may depend on higher ones.
   while the tool arguments stream. See `docs/plans/agent-generative-ui.md`.
 
 ## Recently completed
+
+- **provider-config-cleanup** (cc, PRs #100 + #101) — provider rows are now deliberate, and
+  the "shows *Add key* yet offers *Remove provider*" contradiction is structurally gone. **#100
+  (Part A):** main-pane Save no longer mints/auto-activates a keyless row — creation lives only
+  in the config window + OAuth login (credential stored before the row); a one-time **startup**
+  reconcile prunes the literal bug shape and is kept off the read path + guarded against
+  data loss (no prune when secrets are unreadable; durable-signal judgment only; managed/oauth
+  exempt). Three review-gate findings fixed before merge (🔴 keychain-lock mass-prune, 🟠
+  managed/env prune on a shell-less launch, 🟡 composer `provider not found`). **#101 (Parts
+  B/C/D):** provider-mark neutral tile + symmetric row dividers, strong-neutral-solid auth-sheet
+  primary, OAuth "Claude Code" clarity + coverage guard, 32 display names + Xiaomi MiMo icon.
+  Spec folded (`agent-pi-mono-implementation.md`, `design-system.md`); plan archived. **Follow-up
+  (fast-track):** the OAuth sheet keeps the strong primary on *Re-authenticate* when connected
+  instead of *Done* — being fixed separately.
 
 - **field-value-row-selection** (codex, PR #97) — field VALUE rows now join the global
   multi-selection model: a new `SelectableRow` action-policy layer (`state/selectableRows.ts`)

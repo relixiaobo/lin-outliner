@@ -726,6 +726,27 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Provider rows are deliberate; junk rows reconciled safely on load (PR #100)** —
+  Part A of `provider-config-cleanup.md`. Fixes the "shows *Add key* yet offers *Remove
+  provider*" contradiction, where the main Settings Save unconditionally minted a keyless
+  provider row (for whatever provider the draft defaulted to) and `upsertProviderConfig`
+  then auto-activated it. Now row creation lives in **one** place — the per-provider config
+  window and OAuth login, each storing the credential *before* the row — and the main pane's
+  Save persists only runtime settings; an upsert never auto-activates. A one-time **startup**
+  reconcile (`reconcileProviderConfig`, `main.ts`) prunes the literal bug shape (a keyless
+  api-key catalog row with no stored credential and no `baseUrl`) and repoints a dangling
+  active pointer. Crucially the reconcile is **off the read path** (`getProviderSettings` is a
+  pure read again) and honors two hard safety rules so a transient/ambient signal can never
+  cause permanent loss: it does nothing when the secrets file is unreadable (keychain locked /
+  key rotated — the `SecretsUnreadableError` invariant), and it judges rows only by durable
+  signals (stored secret-file credential, `baseUrl`, provider kind), never ambient env, with
+  managed (Bedrock/Vertex) and oauth kinds exempt. `ProviderConfigForm.canSave` now requires a
+  real connection so a keyless no-op row can't be created from the UI. These three gate findings
+  (🔴 keychain-lock mass-prune, 🟠 managed/env prune on a shell-less launch, 🟡 composer
+  `provider not found`) were fixed before merge. New `agentProviderReconcile` tests (8, incl.
+  unreadable-secrets + managed-exempt); spec updated (`agent-pi-mono-implementation.md`, A6).
+  ([#100](https://github.com/relixiaobo/lin-outliner/pull/100))
+
 - **Agent composer can @-mention the focused context node (PR #91)** — in the agent
   composer, `@` returned "No mentions" even when a matching node existed, and node search
   died entirely when nothing was focused. The composer reused the outliner's node-candidate
