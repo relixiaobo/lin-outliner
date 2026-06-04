@@ -1,4 +1,4 @@
-import type { CreateNodeTree, RichText, TextMark, TextMarkKind } from '../../api/types';
+import type { CreateNodeTree, ParsedPasteField, RichText, TextMark, TextMarkKind } from '../../api/types';
 import { normalizeCodeLanguage } from '../editor/codeLanguages';
 
 export interface ParsedPasteNode {
@@ -138,12 +138,42 @@ function fenceLanguage(info: string): string {
   return normalizeCodeLanguage(info.trim().split(/\s+/u)[0] ?? '');
 }
 
+// `#tag` and `name:: value` metadata harvested from a line (nodex parity). The
+// guards stay conservative so code and URLs survive: a tag needs whitespace (or
+// start) before `#letter`; a field needs a DOUBLE colon followed by whitespace
+// (`name:: value`), which excludes `std::cout`, `http://…`, and `foo::bar`. The
+// field value stops before the next ` name:: ` or ` #tag` so several fit on one
+// line. Only same-line metadata is harvested (a lone `#tag` / `field::` line has
+// no name left and is dropped by `treeHasContent`).
+const TAG_TOKEN = /(^|\s)#([A-Za-z][\w-]*)/gu;
+const FIELD_TOKEN = /(^|\s)([A-Za-z][\w-]*)::[ \t]+(.+?)(?=\s+[A-Za-z][\w-]*::[ \t]|\s+#[A-Za-z]|$)/gu;
+
+function extractTagsAndFields(text: string): { text: string; tags: string[]; fields: ParsedPasteField[] } {
+  const tags: string[] = [];
+  const fields: ParsedPasteField[] = [];
+  // Fields first: their values may contain words a later tag scan must not see.
+  let rest = text.replace(FIELD_TOKEN, (_match, lead: string, name: string, value: string) => {
+    fields.push({ name, value: value.trim() });
+    return lead;
+  });
+  rest = rest.replace(TAG_TOKEN, (_match, lead: string, name: string) => {
+    tags.push(name);
+    return lead;
+  });
+  return { text: rest.replace(/\s{2,}/gu, ' ').trim(), tags, fields };
+}
+
 function lineToTree(rawText: string): CreateNodeTree {
   const heading = rawText.match(/^(#{1,6})\s+(.*)$/u);
-  if (heading) {
-    return { content: applyHeadingMark(parseInlineMarkdown(heading[2] ?? '')), children: [] };
-  }
-  return { content: parseInlineMarkdown(rawText), children: [] };
+  const { text, tags, fields } = extractTagsAndFields(heading ? (heading[2] ?? '') : rawText);
+  const parsed = parseInlineMarkdown(text);
+  const tree: CreateNodeTree = {
+    content: heading ? applyHeadingMark(parsed) : parsed,
+    children: [],
+  };
+  if (tags.length > 0) tree.tags = tags;
+  if (fields.length > 0) tree.fields = fields;
+  return tree;
 }
 
 export function parseMarkdownBlocks(text: string): CreateNodeTree[] {

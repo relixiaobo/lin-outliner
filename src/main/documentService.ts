@@ -25,6 +25,7 @@ import type {
   FocusPlacement,
   IconKind,
   NodeProjection,
+  ParsedPasteField,
   RichText,
   RichTextPatch,
   SearchNodeConfig,
@@ -307,6 +308,8 @@ export class DocumentService {
           args.content as RichText,
           arrayArg(args.children),
           arrayArg(args.siblingsAfter),
+          arrayArg(args.firstTags) as string[],
+          arrayArg(args.firstFields) as ParsedPasteField[],
         );
       case 'split_node':
         return this.core.splitNode(String(args.nodeId), args.before as RichText, args.after as RichText, {

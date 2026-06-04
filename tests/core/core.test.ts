@@ -214,6 +214,71 @@ describe('Core', () => {
     expect(node.codeLanguage).toBeUndefined();
   });
 
+  test('materializes pasted #tag and field:: metadata into tag + field nodes', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const outcome = core.createNodesFromTree(today, [
+      {
+        content: plainText('Ship release'),
+        children: [],
+        tags: ['urgent'],
+        fields: [{ name: 'status', value: 'done' }],
+      },
+    ]);
+    const nodeId = mustFocus(outcome);
+    const node = core.state().nodes[nodeId];
+
+    const tag = Object.values(core.state().nodes).find((n) =>
+      n.type === 'tagDef' && n.content.text === 'urgent');
+    expect(tag).toBeDefined();
+    expect(node.tags).toEqual([tag!.id]);
+
+    const fieldDef = Object.values(core.state().nodes).find((n) =>
+      n.type === 'fieldDef' && n.parentId === SCHEMA_ID && n.content.text === 'status');
+    expect(fieldDef).toBeDefined();
+    const entry = node.children
+      .map((cid) => core.state().nodes[cid])
+      .find((c) => c?.type === 'fieldEntry' && c.fieldDefId === fieldDef!.id);
+    expect(entry).toBeDefined();
+    const valueTexts = entry!.children.map((cid) => core.state().nodes[cid]?.content.text);
+    expect(valueTexts).toContain('done');
+  });
+
+  test('reuses an existing field def by name across pasted field:: values', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    core.createNodesFromTree(today, [
+      { content: plainText('A'), children: [], fields: [{ name: 'status', value: 'todo' }] },
+    ]);
+    core.createNodesFromTree(today, [
+      { content: plainText('B'), children: [], fields: [{ name: 'status', value: 'done' }] },
+    ]);
+    const statusDefs = Object.values(core.state().nodes).filter((n) =>
+      n.type === 'fieldDef' && n.parentId === SCHEMA_ID && n.content.text === 'status');
+    expect(statusDefs).toHaveLength(1);
+  });
+
+  test('smart-selects a matching option when pasting into an existing options field', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const fieldEntryId = mustFocus(core.createInlineField(today, null, 'status', 'options'));
+    const fieldDefId = core.state().nodes[fieldEntryId].fieldDefId!;
+    core.registerCollectedOption(fieldDefId, 'Done');
+
+    const nodeId = mustFocus(core.createNodesFromTree(today, [
+      { content: plainText('Task'), children: [], fields: [{ name: 'status', value: 'Done' }] },
+    ]));
+    const entry = core.state().nodes[nodeId].children
+      .map((cid) => core.state().nodes[cid])
+      .find((c) => c?.type === 'fieldEntry' && c.fieldDefId === fieldDefId);
+    expect(entry).toBeDefined();
+    // The value is a reference to the pool option (smart select), not free text.
+    const valueRef = entry!.children
+      .map((cid) => core.state().nodes[cid])
+      .find((c) => c?.type === 'reference');
+    expect(valueRef).toBeDefined();
+  });
+
   test('creates a tagged node in one core command', () => {
     const core = Core.new();
     const today = core.projection().todayId;

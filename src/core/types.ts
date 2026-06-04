@@ -571,6 +571,12 @@ export interface CommandOutcome {
   focus?: FocusHint;
 }
 
+/** A `name:: value` field harvested from pasted text (resolved to ids in core). */
+export interface ParsedPasteField {
+  name: string;
+  value: string;
+}
+
 export interface CreateNodeTree {
   content: RichText;
   children: CreateNodeTree[];
@@ -578,6 +584,16 @@ export interface CreateNodeTree {
   type?: NodeType;
   /** Language hint for `codeBlock` trees; ignored for other types. */
   codeLanguage?: string;
+  /**
+   * Tag names (e.g. `urgent` from `#urgent`) to find-or-create under the schema
+   * and apply to the materialized node. Resolved in core, which owns the state.
+   */
+  tags?: string[];
+  /**
+   * Fields (e.g. `{name:'status', value:'done'}` from `status:: done`) to
+   * find-or-create and set on the materialized node.
+   */
+  fields?: ParsedPasteField[];
 }
 
 export interface Backlink {

@@ -144,6 +144,37 @@ describe('parseMarkdownBlocks', () => {
     ]);
   });
 
+  test('harvests #tags and field:: values, stripping them from the row text', () => {
+    expect(parseMarkdownBlocks('Ship release #urgent #work status:: done priority:: high')).toEqual([
+      {
+        content: { text: 'Ship release', marks: [], inlineRefs: [] },
+        children: [],
+        tags: ['urgent', 'work'],
+        fields: [
+          { name: 'status', value: 'done' },
+          { name: 'priority', value: 'high' },
+        ],
+      },
+    ]);
+  });
+
+  test('stops a field value before a following #tag', () => {
+    expect(parseMarkdownBlocks('Fix bug status:: done #later')).toEqual([
+      {
+        content: { text: 'Fix bug', marks: [], inlineRefs: [] },
+        children: [],
+        tags: ['later'],
+        fields: [{ name: 'status', value: 'done' }],
+      },
+    ]);
+  });
+
+  test('leaves code/URL colons and mid-word hashes alone', () => {
+    expect(parseMarkdownBlocks('run std::cout then visit http://x.com for C#9')).toEqual([
+      { content: { text: 'run std::cout then visit http://x.com for C#9', marks: [], inlineRefs: [] }, children: [] },
+    ]);
+  });
+
   test('keeps heading marks alongside inline marks', () => {
     expect(parseMarkdownBlocks('## A **bold** title')).toEqual([
       {

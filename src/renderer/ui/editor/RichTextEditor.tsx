@@ -3,7 +3,7 @@ import { toggleMark } from 'prosemirror-commands';
 import type { Node as PMNode } from 'prosemirror-model';
 import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
 import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
-import { replaceAllRichTextPatch, type CreateNodeTree, type RichText, type RichTextPatch } from '../../api/types';
+import { replaceAllRichTextPatch, type CreateNodeTree, type ParsedPasteField, type RichText, type RichTextPatch } from '../../api/types';
 import type { FocusRequest, FocusTarget, PendingInputChar } from '../../state/document';
 import type { EditorTrigger, NavigateRootOptions } from '../shared';
 import { wantsNewPaneFromClick } from '../shared';
@@ -91,6 +91,9 @@ interface RichTextEditorProps {
     content: RichText;
     children: CreateNodeTree[];
     siblingsAfter: CreateNodeTree[];
+    /** `#tag` / `field::` metadata harvested for the first (merged) block. */
+    tags?: string[];
+    fields?: ParsedPasteField[];
   }) => void;
   onPasteImage?: (images: PastedImage[]) => void;
   /** A lone remote image URL pasted with no active selection. */
@@ -543,6 +546,8 @@ export function RichTextEditor(props: RichTextEditorProps) {
             content: nextContent,
             children: first.children,
             siblingsAfter: parsed.slice(1),
+            tags: first.tags,
+            fields: first.fields,
           });
           return true;
         },
