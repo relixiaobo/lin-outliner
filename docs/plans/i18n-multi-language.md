@@ -113,31 +113,33 @@ merged foundation:
 
 - [x] PR1 — mechanism + slice (menu, launcher chrome, settings General) + en/zh-Hans
       + coverage test. (#110)
-- [ ] **B1 — App shell chrome** (~36): App, Sidebar, WindowChrome, WorkspaceCanvas,
-      WorkspacePanelSurface, AgentDock. The always-visible frame; establishes the
-      renderer `useT()` pattern beyond the General pane.
-- [ ] **B2 — Node panel + date nav + command palette** (~70): the other persistent
-      chrome. First plural (`{count} node/nodes`) → lands the `Intl.PluralRules`
-      wrapper; first `dateFormat.*` abbreviation table.
-- [ ] **B3 — `common` shared primitives + native dialog/window titles** (~14): land
-      the shared atoms BEFORE the big content batches (A7) so later surfaces
-      reference one key; folds in `Insert image` / `Configure provider` titles.
-- [ ] **B4 — Outliner view toolbar + system fields** (~67): ViewToolbar + sort/
-      filter/group config; `outliner.systemField.*` shared with B5 + palette.
-- [ ] **B5 — Outliner row chrome** (~76): context menu, field rows, pickers,
-      popovers; heavy two-state toggle dynamics.
-- [ ] **B6 — Definition / supertag config** (~36): self-contained; depends on B3.
-- [ ] **B7 — Agent chat + composer + message rows** (~75): author English canonical
-      for the Chinese-only suggested prompts first.
-- [ ] **B8 — Agent process / tool-call / subagent + main-process notifications**
-      (~38): main-process strings use `getMessages(locale)` + the language-changed
-      channel (no React provider).
-- [ ] **B9 — Agent settings panes** (~124, may split): providers/permissions/skills/
-      agents/OAuth/catalog; keep vendor brand names verbatim.
-- [ ] **B10 — Launcher dynamic strings** (~16): action/row/remediation labels in
-      `launcherModel.ts`; reconcile the empty-state placeholder.
+- [x] **B1 — App shell chrome**: App, Sidebar, WindowChrome, WorkspaceCanvas,
+      WorkspacePanelSurface, AgentDock. (#110, commit e229b71)
+- [x] **B2 — Node panel + date nav + command palette**: incl. `dateFormat.*`
+      abbreviation table + the day-title formatter (pure helper takes labels). (#110)
+- [x] **B3 — `common` shared primitives + native dialog/window titles**: `Insert image`
+      / `Configure provider` + the image-filter label now resolve via
+      `getMessages(effectiveLocale())`. (#110)
+- [x] **B4 — Outliner view toolbar + system fields**. (#110)
+- [x] **B5 — Outliner row chrome**: context menu, field rows, pickers, popovers. (#110)
+- [x] **B6 — Definition / supertag config**: pure registry takes a labels bundle. (#110)
+- [x] **B7 — Agent chat + composer + message rows**. (#110)
+- [x] **B8 — Agent process / tool-call / subagent + main-process strings**:
+      pure helpers (`summarizeProcess`, `summarizeToolCall`) take label sub-trees. (#110)
+- [x] **B9 — Agent settings panes**: providers/permissions/OAuth/catalog; vendor brand
+      names kept verbatim. (#110)
+- [x] **B10 — Launcher dynamic strings**: action/row/remediation labels threaded `t`
+      through `launcherModel.ts`. (#110)
+- [x] **B11 — Missed surfaces (self-review sweep)**: applied tag badges, the search-node
+      query UI (summary bar + builder + full operator chip vocabulary), and the agent
+      debug panel chrome. Two file-scan passes (attribute literals + JSX text) now come
+      back clean across `src/renderer`. (#110, commit 8db0c20)
+- [ ] **Plurals → `Intl.PluralRules`**: count-bearing strings still use an English
+      `n===1` ternary (correct for en + single-form zh; each site is `// TODO plural via
+      Intl`-marked). Wire the `Intl.PluralRules` helper when a European locale lands —
+      that is when the ternary becomes wrong.
 - [ ] Add 繁體中文, 日本語, European message files (after surfaces are extracted).
-- [ ] Expand `docs/spec/i18n.md` as migration completes.
+- [x] Expand `docs/spec/i18n.md` (pure-helper threading pattern + debug-panel boundary).
 
 ### Cross-batch rules (from the audit)
 
