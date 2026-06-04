@@ -19,6 +19,7 @@ import type { DocumentIndex } from '../../state/document';
 import { nextMenuIndex, clampMenuIndex } from '../interactions/menuNavigation';
 import { resolveEditorTriggerText } from '../interactions/rowInteractions';
 import { referenceItems } from '../outliner/ReferenceSelector';
+import { referenceCandidateLabels, type ReferenceCandidateLabels } from '../interactions/referenceCandidates';
 import { NodeReferenceMenuIcon } from '../outliner/NodeReferenceMenuIcon';
 import { PopoverEmpty, PopoverListbox, PopoverListItem } from '../outliner/PopoverList';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
@@ -303,6 +304,7 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
           localFileSearch,
           query: trigger.query,
           recentLocalFiles: props.recentLocalFiles,
+          labels: referenceCandidateLabels(t),
         })
       : [], [
         localFileSearch,
@@ -311,6 +313,7 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
         props.recentLocalFiles,
         trigger?.mode,
         trigger?.query,
+        t,
       ]);
     const mentionItems = useMemo(
       () => applyMentionFilePreviewThumbnails(rawMentionItems, filePreviewThumbnails),
@@ -1283,6 +1286,7 @@ function mentionMenuItems({
   localFileSearch,
   query,
   recentLocalFiles,
+  labels,
 }: {
   currentNodeId: NodeId | null;
   index: DocumentIndex;
@@ -1293,11 +1297,12 @@ function mentionMenuItems({
   };
   query: string;
   recentLocalFiles: readonly AgentComposerLocalFileCandidate[];
+  labels: ReferenceCandidateLabels;
 }): MentionMenuItem[] {
   const trimmedQuery = query.trim();
   if (!trimmedQuery) {
     return [
-      ...recentNodeMenuItems(index, currentNodeId, MAX_MENTION_NODES).map((item): MentionMenuItem => ({
+      ...recentNodeMenuItems(index, currentNodeId, MAX_MENTION_NODES, labels).map((item): MentionMenuItem => ({
         ...item,
         section: 'Recent',
       })),
@@ -1309,7 +1314,7 @@ function mentionMenuItems({
       })),
     ].slice(0, MAX_MENTION_NODES + MAX_MENTION_FILES);
   }
-  const nodeItems = referenceMenuItems(index, currentNodeId, trimmedQuery)
+  const nodeItems = referenceMenuItems(index, currentNodeId, trimmedQuery, labels)
     .slice(0, MAX_MENTION_NODES)
     .map((item): MentionMenuItem => ({
       ...item,
@@ -1326,8 +1331,8 @@ function mentionMenuItems({
   return [...nodeItems, ...fileItems];
 }
 
-function recentNodeMenuItems(index: DocumentIndex, currentNodeId: NodeId | null, limit: number) {
-  return referenceMenuItems(index, currentNodeId, '')
+function recentNodeMenuItems(index: DocumentIndex, currentNodeId: NodeId | null, limit: number, labels: ReferenceCandidateLabels) {
+  return referenceMenuItems(index, currentNodeId, '', labels)
     .sort((left, right) => {
       const leftUpdatedAt = left.node?.updatedAt ?? 0;
       const rightUpdatedAt = right.node?.updatedAt ?? 0;
@@ -1336,7 +1341,7 @@ function recentNodeMenuItems(index: DocumentIndex, currentNodeId: NodeId | null,
     .slice(0, limit);
 }
 
-function referenceMenuItems(index: DocumentIndex, currentNodeId: NodeId | null, query: string) {
+function referenceMenuItems(index: DocumentIndex, currentNodeId: NodeId | null, query: string, labels: ReferenceCandidateLabels) {
   // The composer is not itself a node, so it has no "self" to exclude: the
   // focused/context node must stay mentionable, and node search must work even
   // with no current node. (The outliner keeps the default self-exclusion.)
@@ -1345,6 +1350,7 @@ function referenceMenuItems(index: DocumentIndex, currentNodeId: NodeId | null, 
     index,
     query,
     excludeCurrentNode: false,
+    labels,
   }).flatMap((item) => {
     if (item.type !== 'node' || item.disabledReason) return [];
     const node = index.byId.get(item.id);
@@ -1352,7 +1358,7 @@ function referenceMenuItems(index: DocumentIndex, currentNodeId: NodeId | null, 
       kind: 'node' as const,
       key: `node:${item.id}`,
       id: item.id,
-      label: item.label || textOf(node),
+      label: item.label || textOf(node) || labels.untitled,
       breadcrumb: item.breadcrumb,
       node,
     }];

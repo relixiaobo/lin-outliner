@@ -408,7 +408,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
           key={targetNode.id}
           className="node-context-item"
           icon={<MoveToIcon size={ICON_SIZE.menu} />}
-          label={textOf(targetNode)}
+          label={textOf(targetNode) || t.common.untitled}
           onClick={() => {
             void props.run(async () => {
               let lastResult: CommandOutcome | null = null;

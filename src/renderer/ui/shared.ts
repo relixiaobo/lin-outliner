@@ -66,10 +66,14 @@ export function isContentNode(node: NodeProjection | undefined): boolean {
   return Boolean(node && (!node.type || node.type === 'codeBlock'));
 }
 
+// Raw node text for display/serialization. Returns '' for empty content — callers
+// that show this to the user apply their own localized "untitled" fallback
+// (`|| t.common.untitled`); previously this baked in an English 'Untitled', which
+// silently defeated those localized fallbacks.
 export function textOf(node: NodeProjection | undefined): string {
   if (!node) return '';
   if (node.type === 'reference' && node.targetId) return `@${node.targetId}`;
-  return node.content.text || 'Untitled';
+  return node.content.text;
 }
 
 export function outlinerChildren(

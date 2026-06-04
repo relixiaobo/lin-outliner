@@ -746,7 +746,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       trigger.to,
       {
         target: nodeReferenceTarget(target.id),
-        displayName: textOf(target),
+        // Stored ref display-name snapshot (persisted data), so the fallback stays a
+        // locale-independent English constant rather than the current UI language.
+        displayName: textOf(target) || 'Untitled',
       },
     );
     if (onDraftTrigger) {

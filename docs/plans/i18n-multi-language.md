@@ -131,9 +131,23 @@ merged foundation:
 - [x] **B10 — Launcher dynamic strings**: action/row/remediation labels threaded `t`
       through `launcherModel.ts`. (#110)
 - [x] **B11 — Missed surfaces (self-review sweep)**: applied tag badges, the search-node
-      query UI (summary bar + builder + full operator chip vocabulary), and the agent
-      debug panel chrome. Two file-scan passes (attribute literals + JSX text) now come
-      back clean across `src/renderer`. (#110, commit 8db0c20)
+      query UI (summary bar + builder + full operator chip vocabulary), the agent
+      debug panel chrome, the tag context menu, and the agent session-title sentinel.
+- [x] **B12 — Baked-in English fallbacks in pure helpers** (self-review): a class of
+      `content.text || 'Untitled'` (and `'Plain text'`, the `@`-picker date shortcuts,
+      slash-command menu labels) baked into pure helpers, which silently defeated callers'
+      localized fallbacks. Fixed the display-facing ones — `textOf` now returns raw text
+      (display callers apply `|| t.common.untitled`); reference-candidate date shortcuts +
+      untitled, code-language "Plain text", launcher node-match titles, and slash-command
+      labels are localized. Kept English by design: agent context (`userViewContext`),
+      clipboard serialization (`selectionActions`), node-content data (search/capture node
+      titles), search-engine internals, and the runtime session-title sentinel's matching.
+- [ ] **Remaining rare/edge fallbacks** (deferred, low impact): empty field-def / option
+      labels (`outlinerRows`, `systemFields`, `fieldOptions` → `'Untitled'`/`'Field'`) only
+      surface for empty-content definitions, and the ProseMirror-schema reference fallbacks
+      (`inlineReferenceAttrs` / `pmSchema` / composer `toDOM` → `'Referenced node/file'`)
+      run where `t` isn't reachable and the title attr is normally populated. Localize when
+      the schema gains a locale hook or these prove visible.
 - [ ] **Plurals → `Intl.PluralRules`**: count-bearing strings still use an English
       `n===1` ternary (correct for en + single-form zh; each site is `// TODO plural via
       Intl`-marked). Wire the `Intl.PluralRules` helper when a European locale lands —

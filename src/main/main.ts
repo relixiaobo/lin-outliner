@@ -542,7 +542,12 @@ async function searchLauncherNodes(query: string): Promise<LauncherNodeMatch[]> 
     icon: node.icon,
     iconKind: node.iconKind,
   }));
-  return resolveLauncherNodeMatches(hitIds, matchable, LAUNCHER_NODE_RESULT_LIMIT);
+  return resolveLauncherNodeMatches(
+    hitIds,
+    matchable,
+    LAUNCHER_NODE_RESULT_LIMIT,
+    getMessages(effectiveLocale()).common.untitled,
+  );
 }
 
 /** Max inline node results shown in the launcher (keeps the list scannable). */

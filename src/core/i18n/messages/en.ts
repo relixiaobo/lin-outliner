@@ -527,10 +527,25 @@ commandPalette: {
       referenceSuggestions: 'Reference suggestions',
       noMatches: 'No matches',
       createReference: ({ label }: { label: string }) => `Create "${label}"`,
+      // Date shortcuts shown at the top of the reference (@) picker.
+      referenceDateToday: 'Today',
+      referenceDateTomorrow: 'Tomorrow',
+      referenceDateYesterday: 'Yesterday',
       // # / / triggers.
       tagSuggestions: 'Tag suggestions',
       slashCommands: 'Slash commands',
       noCommands: 'No commands',
+      // Slash-command menu item labels (keyed by command id; keywords stay English
+      // for matching). Brand/format terms aren't translated.
+      slashLabels: {
+        field: 'Field',
+        reference: 'Reference',
+        heading: 'Heading',
+        checkbox: 'Checkbox',
+        code: 'Code block',
+        image: 'Image',
+        command_palette: 'Command palette',
+      },
       // Image block toolbar + missing state.
       image: {
         unavailable: 'Image unavailable',
@@ -544,6 +559,8 @@ commandPalette: {
       code: {
         languageLabel: 'Code language',
         copyCode: 'Copy code',
+        // Label shown when a code block has no (or an unrecognized) language set.
+        plainText: 'Plain text',
       },
       // Field-value date picker overlay.
       datePicker: {

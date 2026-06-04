@@ -80,10 +80,10 @@ export function DefinitionConfigPanel({ node, index, run }: DefinitionConfigPane
       .map((candidate) => ({
         color: resolveTagColor(candidate, index.byId).text,
         id: candidate.id,
-        label: textOf(candidate),
+        label: textOf(candidate) || t.common.untitled,
       }))
       .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' })),
-    [index.projection.nodes, index.byId, node.id],
+    [index.projection.nodes, index.byId, node.id, t.common.untitled],
   );
 
   const updateTag = (patch: TagConfigPatch) => {

@@ -316,7 +316,7 @@ export function CodeBlockRow(props: CodeBlockRowProps) {
           onClick={() => setLanguageMenuOpen((open) => !open)}
           onMouseDown={(event) => event.stopPropagation()}
         >
-          <span className="code-block-language-label">{codeLanguageLabel(language)}</span>
+          <span className="code-block-language-label">{codeLanguageLabel(language, tc.plainText)}</span>
           <ChevronDownIcon size={ICON_SIZE.tiny} />
         </ButtonControl>
         {languageMenuOpen ? (
@@ -395,7 +395,7 @@ function CodeLanguageMenu({
   const knownLanguage = CODE_LANGUAGE_OPTIONS.some((option) => option.id === language);
   const options = knownLanguage || !language
     ? CODE_LANGUAGE_OPTIONS
-    : [{ id: language, label: codeLanguageLabel(language) }, ...CODE_LANGUAGE_OPTIONS];
+    : [{ id: language, label: codeLanguageLabel(language, tc.plainText) }, ...CODE_LANGUAGE_OPTIONS];
   const style = useAnchoredOverlay(menuRef, {
     anchorRef,
     layoutKey: `${language}:${options.length}`,
@@ -443,7 +443,9 @@ function CodeLanguageMenu({
               {option.id === language ? <CheckIcon size={ICON_SIZE.menu} /> : null}
             </span>
           )}
-          label={option.label}
+          // Language names are proper nouns (not translated); only the empty/plain
+          // option carries a localizable label.
+          label={option.id === '' ? tc.plainText : option.label}
           onClick={() => onSelect(option.id)}
           role="menuitemradio"
         />

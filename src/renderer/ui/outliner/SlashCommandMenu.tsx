@@ -45,14 +45,15 @@ function slashCommandIcon(command: SlashCommandDefinition): ReactNode {
 export function slashCommandItems(
   query: string,
   enabledSlashCommandIds?: SlashCommandId[],
+  localizedLabels?: Record<SlashCommandId, string>,
 ): SlashCommandDefinition[] {
   const enabled = enabledSlashCommandIds ? new Set(enabledSlashCommandIds) : null;
-  return filterSlashCommands(query).filter((command) => !enabled || enabled.has(command.id));
+  return filterSlashCommands(query, localizedLabels).filter((command) => !enabled || enabled.has(command.id));
 }
 
 export function SlashCommandMenu(props: SlashCommandMenuProps) {
   const tf = useT().outliner.field;
-  const items = slashCommandItems(props.query, props.enabledSlashCommandIds);
+  const items = slashCommandItems(props.query, props.enabledSlashCommandIds, tf.slashLabels);
 
   if (items.length === 0) {
     return <PopoverEmpty>{tf.noCommands}</PopoverEmpty>;
@@ -66,7 +67,7 @@ export function SlashCommandMenu(props: SlashCommandMenuProps) {
           active={index === props.selectedIndex}
           icon={slashCommandIcon(command)}
           iconClassName="popover-item-icon"
-          label={command.shortcutHint ? `${command.label}  ${command.shortcutHint}` : command.label}
+          label={command.shortcutHint ? `${tf.slashLabels[command.id]}  ${command.shortcutHint}` : tf.slashLabels[command.id]}
           onMouseEnter={() => props.setSelectedIndex(index)}
           onClick={() => {
             props.close();

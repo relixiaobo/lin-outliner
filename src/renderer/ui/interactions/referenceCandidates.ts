@@ -1,9 +1,31 @@
 import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
+import { DEFAULT_MESSAGES, type Messages } from '../../../core/i18n';
 import { isContentNode, textOf } from '../shared';
 import { textMatchRank } from './candidateRanking';
 import { isNodeInTrash } from './nodeLocation';
 import { getTreeReferenceBlockMessage, getTreeReferenceBlockReason } from './referenceRules';
+
+// Localized strings the candidate builder needs (it is a pure helper outside React).
+// Callers thread these from useT(); they default to the canonical English tree so
+// tests and any non-localized caller still work without baking literals here.
+export interface ReferenceCandidateLabels {
+  untitled: string;
+  today: string;
+  tomorrow: string;
+  yesterday: string;
+}
+
+export function referenceCandidateLabels(t: Messages): ReferenceCandidateLabels {
+  return {
+    untitled: t.common.untitled,
+    today: t.outliner.field.referenceDateToday,
+    tomorrow: t.outliner.field.referenceDateTomorrow,
+    yesterday: t.outliner.field.referenceDateYesterday,
+  };
+}
+
+const DEFAULT_REFERENCE_LABELS = referenceCandidateLabels(DEFAULT_MESSAGES);
 
 export type ReferenceCandidate =
   | {
@@ -26,12 +48,11 @@ export type ReferenceCandidate =
 
 const DATE_SHORTCUTS: Array<{
   key: 'today' | 'tomorrow' | 'yesterday';
-  label: string;
   offset: number;
 }> = [
-  { key: 'today', label: 'Today', offset: 0 },
-  { key: 'tomorrow', label: 'Tomorrow', offset: 1 },
-  { key: 'yesterday', label: 'Yesterday', offset: -1 },
+  { key: 'today', offset: 0 },
+  { key: 'tomorrow', offset: 1 },
+  { key: 'yesterday', offset: -1 },
 ];
 
 const DEFAULT_REFERENCE_LIMIT = 24;
@@ -49,17 +70,18 @@ function dayLabel(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-export function matchDateShortcuts(query: string): ReferenceCandidate[] {
+export function matchDateShortcuts(query: string, labels: ReferenceCandidateLabels = DEFAULT_REFERENCE_LABELS): ReferenceCandidate[] {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return [];
   return DATE_SHORTCUTS
+    // Match on the stable key (locale-independent), not the displayed label.
     .filter((shortcut) => shortcut.key.startsWith(normalized))
     .map((shortcut) => {
       const date = dateWithOffset(shortcut.offset);
       return {
         type: 'date',
         key: shortcut.key,
-        label: `${shortcut.label} ${dayLabel(date)}`,
+        label: `${labels[shortcut.key]} ${dayLabel(date)}`,
         date,
       };
     });
@@ -108,6 +130,7 @@ function nodeCandidates(
   query: string,
   treeReferenceParentId: NodeId | null,
   excludeCurrentNode: boolean,
+  labels: ReferenceCandidateLabels,
 ): ReferenceCandidate[] {
   const normalized = query.trim().toLowerCase();
   const currentNode = currentNodeId ? index.byId.get(currentNodeId) : undefined;
@@ -117,7 +140,7 @@ function nodeCandidates(
       && !(excludeCurrentNode && node.id === currentNodeId)
       && !isNodeInTrash(index, node.id))
     .map((node) => {
-      const label = textOf(node);
+      const label = textOf(node) || labels.untitled;
       const rawText = node.content.text.trim();
       const reason = treeReferenceParentId
         ? getTreeReferenceBlockReason({
@@ -176,6 +199,8 @@ export function buildReferenceCandidates(params: {
   // and has no "self" — it passes false so the focused/context node stays
   // mentionable. Defaults to true to preserve the outliner contract.
   excludeCurrentNode?: boolean;
+  // Localized labels; defaults to English so tests/non-localized callers still work.
+  labels?: ReferenceCandidateLabels;
 }): ReferenceCandidate[] {
   const {
     index,
@@ -184,11 +209,12 @@ export function buildReferenceCandidates(params: {
     treeReferenceParentId = null,
     allowCreate = true,
     excludeCurrentNode = true,
+    labels = DEFAULT_REFERENCE_LABELS,
   } = params;
   const normalized = query.trim();
   return [
-    ...matchDateShortcuts(normalized),
-    ...nodeCandidates(index, currentNodeId, normalized, treeReferenceParentId, excludeCurrentNode),
+    ...matchDateShortcuts(normalized, labels),
+    ...nodeCandidates(index, currentNodeId, normalized, treeReferenceParentId, excludeCurrentNode, labels),
     ...(normalized && allowCreate ? [{ type: 'create' as const, label: normalized }] : []),
   ];
 }

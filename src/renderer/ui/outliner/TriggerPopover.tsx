@@ -59,8 +59,8 @@ export function TriggerPopover(props: TriggerPopoverProps) {
       }).length;
     }
     if (!props.executeSlashCommand) return 0;
-    return slashCommandItems(props.trigger.query, props.enabledSlashCommandIds).length;
-  }, [props, existingTagIds]);
+    return slashCommandItems(props.trigger.query, props.enabledSlashCommandIds, tf.slashLabels).length;
+  }, [props, existingTagIds, tf.slashLabels]);
   const anchoredDropStyle = useAnchoredOverlay(menuRef, {
     anchorRect: props.trigger.anchor ?? null,
     layoutKey: `${props.trigger.kind}:${props.trigger.query}:${itemCount}`,

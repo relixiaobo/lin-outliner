@@ -2,7 +2,7 @@ import { api } from '../../api/client';
 import type { CommandOutcome, DocumentProjection, NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { AddIcon, CalendarIcon, ICON_SIZE } from '../icons';
-import { buildReferenceCandidates, type ReferenceCandidate } from '../interactions/referenceCandidates';
+import { buildReferenceCandidates, referenceCandidateLabels, type ReferenceCandidate, type ReferenceCandidateLabels } from '../interactions/referenceCandidates';
 import type { CommandRunner } from '../shared';
 import { NodeReferenceMenuIcon } from './NodeReferenceMenuIcon';
 import { PopoverEmpty, PopoverListItem } from './PopoverList';
@@ -27,6 +27,7 @@ export function referenceItems(params: {
   currentNodeId: NodeId | null;
   treeReferenceParentId?: NodeId | null;
   excludeCurrentNode?: boolean;
+  labels?: ReferenceCandidateLabels;
 }): ReferenceCandidate[] {
   return buildReferenceCandidates({
     index: params.index,
@@ -34,6 +35,7 @@ export function referenceItems(params: {
     query: params.query,
     treeReferenceParentId: params.treeReferenceParentId,
     excludeCurrentNode: params.excludeCurrentNode,
+    labels: params.labels,
   });
 }
 
@@ -56,12 +58,14 @@ function iconForItem(item: ReferenceCandidate, index: DocumentIndex) {
 }
 
 export function ReferenceSelector(props: ReferenceSelectorProps) {
-  const tr = useT().outliner.field;
+  const t = useT();
+  const tr = t.outliner.field;
   const items = referenceItems({
     query: props.query,
     index: props.index,
     currentNodeId: props.currentNodeId,
     treeReferenceParentId: props.treeReferenceParentId,
+    labels: referenceCandidateLabels(t),
   });
 
   const selectTarget = (target: NodeProjection) => {

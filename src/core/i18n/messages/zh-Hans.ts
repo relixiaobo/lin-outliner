@@ -477,10 +477,22 @@ commandPalette: {
       referenceSuggestions: '引用建议',
       noMatches: '没有匹配项',
       createReference: ({ label }: { label: string }) => `创建“${label}”`,
+      referenceDateToday: '今天',
+      referenceDateTomorrow: '明天',
+      referenceDateYesterday: '昨天',
       // # / / 触发。
       tagSuggestions: '标签建议',
       slashCommands: '斜杠命令',
       noCommands: '没有命令',
+      slashLabels: {
+        field: '字段',
+        reference: '引用',
+        heading: '标题',
+        checkbox: '复选框',
+        code: '代码块',
+        image: '图片',
+        command_palette: '命令面板',
+      },
       // 图片块工具栏 + 缺失状态。
       image: {
         unavailable: '图片不可用',
@@ -494,6 +506,7 @@ commandPalette: {
       code: {
         languageLabel: '代码语言',
         copyCode: '复制代码',
+        plainText: '纯文本',
       },
       // 字段值日期选择器浮层。
       datePicker: {

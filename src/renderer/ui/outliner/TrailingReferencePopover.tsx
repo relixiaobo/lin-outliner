@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import type { NodeId } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
-import { buildReferenceCandidates, type ReferenceCandidate } from '../interactions/referenceCandidates';
+import { buildReferenceCandidates, referenceCandidateLabels, type ReferenceCandidate } from '../interactions/referenceCandidates';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { NodeReferenceMenuIcon } from './NodeReferenceMenuIcon';
@@ -31,13 +31,15 @@ interface TrailingReferencePopoverProps {
 // which would have to materialize a date node, are likewise out — references go
 // through the date *field type*, not this picker).
 export function TrailingReferencePopover(props: TrailingReferencePopoverProps) {
-  const tr = useT().outliner.field;
+  const t = useT();
+  const tr = t.outliner.field;
   const candidates = buildReferenceCandidates({
     index: props.index,
     currentNodeId: props.entryId,
     query: props.query,
     treeReferenceParentId: props.entryId,
     allowCreate: false,
+    labels: referenceCandidateLabels(t),
   }).filter((candidate): candidate is NodeCandidate => (
     candidate.type === 'node' && !candidate.disabledReason
   ));
