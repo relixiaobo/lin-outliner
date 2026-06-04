@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { isYouTubeWatchUrl } from '../../src/main/context/providers/browserScripts';
+import { activeTabScript, isYouTubeWatchUrl } from '../../src/main/context/providers/browserScripts';
 
 describe('isYouTubeWatchUrl', () => {
   test('matches watch / shorts / youtu.be across www and m subdomains', () => {
@@ -17,5 +17,23 @@ describe('isYouTubeWatchUrl', () => {
     expect(isYouTubeWatchUrl('https://example.com/watch?v=abc')).toBe(false);
     expect(isYouTubeWatchUrl('not a url')).toBe(false);
     expect(isYouTubeWatchUrl(undefined)).toBe(false);
+  });
+});
+
+describe('activeTabScript', () => {
+  test('embeds an allow-listed browser name verbatim (no special chars to escape)', () => {
+    expect(activeTabScript('chromium', 'Google Chrome')).toContain('tell application "Google Chrome"');
+    expect(activeTabScript('safari', 'Safari')).toContain('tell application "Safari"');
+  });
+
+  test('escapes quotes and backslashes so an app name cannot break out of the literal', () => {
+    // Not a reachable input today (appName is allow-listed), but the escape makes
+    // the function safe-by-construction for any future caller.
+    const script = activeTabScript('chromium', 'Eviltell application "Finder" to quit"');
+    expect(script).toContain('tell application "Eviltell application \\"Finder\\" to quit\\""');
+    // The injected `tell application "Finder"` must NOT appear as a live unescaped clause.
+    expect(script).not.toContain('"Finder" to quit"\n');
+    const withBackslash = activeTabScript('safari', 'Brave\\Browser');
+    expect(withBackslash).toContain('tell application "Brave\\\\Browser"');
   });
 });

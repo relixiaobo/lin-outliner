@@ -776,6 +776,14 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Launcher capture: escape the browser app name in the front-tab AppleScript (PR #103 follow-up)** —
+  `activeTabScript` interpolated the active app's name into `tell application "…"`. It was safe in
+  practice (the name is always an allow-listed browser, gated by `detectBrowserFamily`), but it was
+  defense-by-allow-list rather than defense-by-escaping. The app name is now escaped for the
+  AppleScript string literal (`\` and `"`), so a future caller that widens the input cannot break
+  out of the literal and inject script. A `/code-review` security-gate nit on #103, hardened
+  pre-emptively; no behavior change for allow-listed names.
+
 - **OAuth sheet: Done is the primary action once connected** — in the provider OAuth
   sheet the strong-neutral primary button sat on **Re-authenticate** even after a
   successful sign-in (Connected / Active), so the loud default action read as "you must
