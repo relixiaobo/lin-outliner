@@ -40,6 +40,7 @@ export type {
   NodeProjection,
   NodeType,
   ParsedPasteField,
+  PasteRowMeta,
   QueryLogic,
   QueryOp,
   ReferenceTarget,

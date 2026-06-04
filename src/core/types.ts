@@ -577,23 +577,29 @@ export interface ParsedPasteField {
   value: string;
 }
 
-export interface CreateNodeTree {
+/**
+ * Metadata harvested from a pasted Markdown line beyond its text/children, applied
+ * by core (which owns the state) to the materialized — or, for the first/merged
+ * block, the existing — row. Names are resolved find-or-create.
+ */
+export interface PasteRowMeta {
+  /** Tag names (e.g. `urgent` from `#urgent`). */
+  tags?: string[];
+  /** Fields (e.g. `{name:'status', value:'done'}` from `status:: done`). */
+  fields?: ParsedPasteField[];
+  /** A GFM task-list checkbox (`[ ]` / `[x]`) — show a manual checkbox. */
+  checkbox?: boolean;
+  /** Whether that checkbox is checked (`[x]`). */
+  done?: boolean;
+}
+
+export interface CreateNodeTree extends PasteRowMeta {
   content: RichText;
   children: CreateNodeTree[];
   /** Optional node type for the materialized node. Paste only emits `codeBlock`. */
   type?: NodeType;
   /** Language hint for `codeBlock` trees; ignored for other types. */
   codeLanguage?: string;
-  /**
-   * Tag names (e.g. `urgent` from `#urgent`) to find-or-create under the schema
-   * and apply to the materialized node. Resolved in core, which owns the state.
-   */
-  tags?: string[];
-  /**
-   * Fields (e.g. `{name:'status', value:'done'}` from `status:: done`) to
-   * find-or-create and set on the materialized node.
-   */
-  fields?: ParsedPasteField[];
 }
 
 export interface Backlink {

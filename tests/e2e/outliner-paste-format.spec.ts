@@ -105,6 +105,26 @@ test.describe('paste format support', () => {
     expect((await nodeById(page, children[idx + 2]))?.content.text).toBe('third');
   });
 
+  test('prefers a Markdown outline over flat HTML, keeping nesting and checkboxes', async ({ page }) => {
+    await selectEditorContents(page, ids.alpha);
+    // The clipboard carries the raw Markdown in text/plain and flat <div>s in
+    // text/html (the common editor-copy shape). The <div>s lost the indentation
+    // and keep the literal `- `/`[x]` markers, so the text/plain outline must win.
+    await pasteRich(page, {
+      plain: 'parent\n  - [x] done child\n  - [ ] todo child',
+      html: '<div>parent</div><div>- [x] done child</div><div>- [ ] todo child</div>',
+    });
+
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe('parent');
+    const alpha = await nodeById(page, ids.alpha);
+    const kids = await Promise.all((alpha?.children ?? []).map((cid) => nodeById(page, cid)));
+    // Markers stripped, hierarchy preserved (nested under the merged row), and
+    // the checkboxes carry their checked / unchecked state.
+    expect(kids.map((k) => k?.content.text)).toEqual(['done child', 'todo child']);
+    expect(kids[0]?.completedAt).toBeGreaterThan(0);
+    expect(kids[1]?.completedAt).toBe(0);
+  });
+
   test('pasting a single-line URL wraps the selection as a link', async ({ page }) => {
     await selectEditorContents(page, ids.alpha);
     await pasteRich(page, { plain: 'https://anthropic.com' });

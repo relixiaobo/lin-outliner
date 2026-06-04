@@ -279,6 +279,22 @@ describe('Core', () => {
     expect(valueRef).toBeDefined();
   });
 
+  test('materializes pasted task-list checkboxes into completedAt state', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    core.createNodesFromTree(today, [
+      { content: plainText('shipped'), children: [], checkbox: true, done: true },
+      { content: plainText('pending'), children: [], checkbox: true, done: false },
+      { content: plainText('plain'), children: [] },
+    ]);
+    const byText = (t: string) => core.state().nodes[today].children
+      .map((id) => core.state().nodes[id])
+      .find((n) => n.content.text === t)!;
+    expect(byText('shipped').completedAt).toBeGreaterThan(0);
+    expect(byText('pending').completedAt).toBe(0);
+    expect(byText('plain').completedAt).toBeUndefined();
+  });
+
   test('creates a tagged node in one core command', () => {
     const core = Core.new();
     const today = core.projection().todayId;

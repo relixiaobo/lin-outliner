@@ -11,7 +11,7 @@ import {
 } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { api } from '../../api/client';
-import type { AssetMetadata, CreateNodeTree, NodeId, NodeProjection, ParsedPasteField, RichText, RichTextPatch } from '../../api/types';
+import type { AssetMetadata, CreateNodeTree, NodeId, NodeProjection, PasteRowMeta, RichText, RichTextPatch } from '../../api/types';
 import { EMPTY_RICH_TEXT, inlineRefNodeId, nodeReferenceTarget, plainText, replaceAllRichTextPatch } from '../../api/types';
 import { projectFieldTypeById, nodeShowsCheckbox } from '../../../core/configProjection';
 import type { CursorPlacement } from '../../state/document';
@@ -539,8 +539,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     content: RichText;
     children: CreateNodeTree[];
     siblingsAfter: CreateNodeTree[];
-    tags?: string[];
-    fields?: ParsedPasteField[];
+    firstMeta?: PasteRowMeta;
   }) => {
     // The pristine trailing draft has no core node yet (it materializes on the
     // first committed character), so there is nothing to paste *into*: calling
@@ -556,8 +555,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         trees.push({
           content: payload.content,
           children: payload.children,
-          tags: payload.tags,
-          fields: payload.fields,
+          ...payload.firstMeta,
         });
       }
       trees.push(...payload.siblingsAfter);
@@ -580,8 +578,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       payload.content,
       payload.children,
       payload.siblingsAfter,
-      payload.tags ?? [],
-      payload.fields ?? [],
+      payload.firstMeta ?? {},
     );
     if (props.draft && !realNode) {
       // A materialize for this draft is already in flight; paste once the row

@@ -789,6 +789,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             if (lang) node.codeLanguage = lang;
             else delete node.codeLanguage;
           }
+          // GFM task-list paste: completedAt sentinel mirrors core
+          // (0 = unchecked checkbox, a timestamp = checked).
+          if (item.checkbox) node.completedAt = item.done ? ++now : 0;
         }
         if (item.children.length > 0) createTree(nodeId, item.children);
         lastId = nodeId;

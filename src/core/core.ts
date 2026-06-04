@@ -55,6 +55,7 @@ import {
   type CommandOutcome,
   type CreateNodeTree,
   type ParsedPasteField,
+  type PasteRowMeta,
   type DocumentProjection,
   type DocumentState,
   type NodeProjection,
@@ -608,8 +609,7 @@ export class Core {
     content: RichText,
     children: CreateNodeTree[],
     siblingsAfter: CreateNodeTree[],
-    firstTags: string[] = [],
-    firstFields: ParsedPasteField[] = [],
+    firstMeta: PasteRowMeta = {},
   ): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
@@ -619,11 +619,13 @@ export class Core {
       const siblingIndex = (childIndex(state, parentId, nodeId) ?? 0) + 1;
       const node = clone(requiredNode(state, nodeId));
       node.content = clone(content);
+      const completedAt = pasteCompletedAt(firstMeta);
+      if (completedAt !== undefined) node.completedAt = completedAt;
       node.updatedAt = nowMs();
       this.loro.writeNode(node);
       // The first pasted block merges into this row; apply its harvested tags
       // and fields here since it is not materialized via insertNodeTreeDirect.
-      this.applyPasteMetadataDirect(nodeId, firstTags, firstFields);
+      this.applyPasteMetadataDirect(nodeId, firstMeta.tags, firstMeta.fields);
 
       for (const child of children) this.insertNodeTreeDirect(nodeId, child);
 
@@ -2635,11 +2637,13 @@ export class Core {
     // Paste trees may carry a node type; only `codeBlock` is honored so the
     // materialization surface stays narrow and predictable.
     const type = tree.type === 'codeBlock' ? 'codeBlock' : undefined;
+    const completedAt = pasteCompletedAt(tree);
     this.loro.createNodeWithId(id, parentId, index, type, (node) => {
       node.content = clone(tree.content);
       if (type === 'codeBlock') {
         (node as CodeBlockNode).codeLanguage = normalizeCodeLanguage(tree.codeLanguage) || undefined;
       }
+      if (completedAt !== undefined) node.completedAt = completedAt;
     });
     this.applyChildTagsDirect(parentId, id);
     this.applyPasteMetadataDirect(id, tree.tags, tree.fields);
@@ -3766,6 +3770,13 @@ function findFieldDefByName(state: DocumentState, name: string) {
     node.type === 'fieldDef'
     && node.parentId === SCHEMA_ID
     && node.content.text.trim().toLowerCase() === needle)?.id;
+}
+
+// A pasted task-list row's `completedAt` sentinel: undefined → no checkbox,
+// 0 → an unchecked checkbox, a timestamp → checked/done (see setNodeCheckboxVisible).
+function pasteCompletedAt(meta: PasteRowMeta): number | undefined {
+  if (!meta.checkbox) return undefined;
+  return meta.done ? nowMs() : 0;
 }
 
 function findNamedChild(state: DocumentState, parentId: string, name: string) {

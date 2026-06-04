@@ -40,6 +40,16 @@ the agent composer (multi-line) and the outliner (format conversion depth).
    markers in `listText`.
 3. **Google-Docs unwrap.** An inline wrapper (`<b style="font-weight:normal">`)
    whose children are block elements is recursed into rather than flattened.
+4. **Markdown-over-flat-HTML routing.** A pasted outline often arrives as raw
+   Markdown in text/plain AND flat `<div>`-per-line text/html (editor copy). The
+   HTML whitespace-folds the indentation away and never strips the `-`/`[x]`
+   markers, so it pastes flat with literal `- `. `looksLikeStrongMarkdown` now
+   also fires on a multi-line bullet/task/numbered list, so the faithful
+   text/plain parser wins. (This was the live bug in the PM's paste test.)
+5. **GFM task lists → checkboxes.** `- [x]` / `- [ ]` become checkbox rows.
+   `lineToTree` strips the marker and sets `checkbox`/`done` on the tree;
+   `CreateNodeTree` carries them; core maps them to the `completedAt` sentinel
+   (`undefined` none, `0` unchecked, timestamp checked).
 
 ### B. `#tag` / `field:: value` extraction (protocol + core)
 

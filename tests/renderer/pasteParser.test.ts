@@ -175,6 +175,14 @@ describe('parseMarkdownBlocks', () => {
     ]);
   });
 
+  test('converts GFM task-list markers into checkbox rows', () => {
+    expect(parseMarkdownBlocks('- [x] shipped\n- [ ] pending\n- plain')).toEqual([
+      { content: { text: 'shipped', marks: [], inlineRefs: [] }, children: [], checkbox: true, done: true },
+      { content: { text: 'pending', marks: [], inlineRefs: [] }, children: [], checkbox: true, done: false },
+      { content: { text: 'plain', marks: [], inlineRefs: [] }, children: [] },
+    ]);
+  });
+
   test('keeps heading marks alongside inline marks', () => {
     expect(parseMarkdownBlocks('## A **bold** title')).toEqual([
       {

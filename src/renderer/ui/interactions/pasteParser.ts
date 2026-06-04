@@ -165,7 +165,11 @@ function extractTagsAndFields(text: string): { text: string; tags: string[]; fie
 
 function lineToTree(rawText: string): CreateNodeTree {
   const heading = rawText.match(/^(#{1,6})\s+(.*)$/u);
-  const { text, tags, fields } = extractTagsAndFields(heading ? (heading[2] ?? '') : rawText);
+  let body = heading ? (heading[2] ?? '') : rawText;
+  // GFM task list: `[ ]` is an unchecked checkbox, `[x]`/`[X]` a checked one.
+  const task = body.match(/^\[([ xX])\]\s+(.*)$/u);
+  if (task) body = task[2] ?? '';
+  const { text, tags, fields } = extractTagsAndFields(body);
   const parsed = parseInlineMarkdown(text);
   const tree: CreateNodeTree = {
     content: heading ? applyHeadingMark(parsed) : parsed,
@@ -173,6 +177,10 @@ function lineToTree(rawText: string): CreateNodeTree {
   };
   if (tags.length > 0) tree.tags = tags;
   if (fields.length > 0) tree.fields = fields;
+  if (task) {
+    tree.checkbox = true;
+    tree.done = task[1].toLowerCase() === 'x';
+  }
   return tree;
 }
 
@@ -459,7 +467,13 @@ function htmlHasRichStructure(html: string): boolean {
 
 function looksLikeStrongMarkdown(text: string): boolean {
   if (/(^|\n)\s*(```|~~~)/u.test(text)) return true;
-  return /(^|\n)#{1,6}\s+\S/u.test(text);
+  if (/(^|\n)#{1,6}\s+\S/u.test(text)) return true;
+  // A multi-line bullet / task / numbered list is a Markdown outline whose
+  // indentation carries the hierarchy. HTML whitespace-folds that indentation
+  // away and never strips the `-`/`[x]` markers, so when the clipboard also
+  // carries HTML the plain-text parser is the faithful one — prefer it.
+  const listLines = text.match(/(^|\n)[ \t]*(?:[-*+]|\d+[.)]|[•◦▪‣·●])[ \t]+\S/gu);
+  return (listLines?.length ?? 0) >= 2;
 }
 
 function treeHasContent(node: CreateNodeTree): boolean {
