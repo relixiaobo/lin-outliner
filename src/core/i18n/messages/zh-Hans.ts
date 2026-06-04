@@ -615,7 +615,6 @@ commandPalette: {
         '规划 agent 接入阶段',
         '列出下一步工具设计',
       ] as readonly string[],
-      conversationFallback: '对话',
       showConversations: '显示对话',
       newConversation: '新建对话',
       showRunningSubagents: '显示运行中的子智能体',

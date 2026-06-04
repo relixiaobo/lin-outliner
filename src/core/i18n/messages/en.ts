@@ -677,7 +677,6 @@ commandPalette: {
         'Plan the agent integration phases',
         'List the next tool design steps',
       ] as readonly string[],
-      conversationFallback: 'conversation',
       showConversations: 'Show conversations',
       newConversation: 'New conversation',
       showRunningSubagents: 'Show running subagents',

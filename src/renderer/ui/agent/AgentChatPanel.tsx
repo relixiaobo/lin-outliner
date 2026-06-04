@@ -881,7 +881,9 @@ export function AgentChatPanel({
   // it flash during the load window; until loaded we stay neutral.
   const settingsLoaded = providerSettings !== null;
   const hasUsableProvider = settingsLoaded && Boolean(resolveUsableActiveProvider(providerSettings));
-  const displayTitle = readableSessionTitle(sessionTitle, t.agent.chat.conversationFallback);
+  // Unnamed sessions read "untitled" in the header too, matching the session list
+  // and delete-confirm — one fallback everywhere so inside/outside never disagree.
+  const displayTitle = readableSessionTitle(sessionTitle, t.common.untitled);
   const historyMenuStyle = useAnchoredOverlay(historyMenuRef, {
     anchorRef: historyButtonRef,
     disabled: !historyOpen,
