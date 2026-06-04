@@ -1,4 +1,5 @@
 import type { AgentRenderProjection } from './agentRenderProjection';
+import type { CaptureNodeMetadata } from './launcher/sources';
 
 export type NodeId = string;
 
@@ -365,6 +366,16 @@ export interface NodeBase {
   templateId?: NodeId;
   autoCollected: boolean;
   aiSummary?: string;
+  /**
+   * Typed launcher-capture sidecar: provenance metadata only (what the node is
+   * and where it came from — provider, source, app, capture origin). System-owned
+   * JSON; persisted as a node scalar, hidden from normal outline rendering and
+   * default full-text search. Rich captured content / deferred enrichment is NOT
+   * stored here (basic-info-only capture; rich extraction returns via the browser
+   * extension path). See `src/core/launcher/sources.ts` and
+   * docs/plans/lazy-like-global-launcher.md.
+   */
+  capture?: CaptureNodeMetadata;
   trashedFromParentId?: NodeId;
   trashedFromIndex?: number;
 }

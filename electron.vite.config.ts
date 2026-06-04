@@ -31,7 +31,12 @@ export default defineConfig({
     },
     build: {
       rollupOptions: {
-        input: 'index.html',
+        // Two renderer entries: the main app and the dedicated, lightweight
+        // launcher. The launcher entry must not pull in the editor bundle.
+        input: {
+          index: 'index.html',
+          launcher: 'launcher.html',
+        },
       },
     },
     server: {

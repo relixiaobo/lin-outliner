@@ -81,6 +81,10 @@ const NODE_SCALAR_KEYS: NodeFieldKey[] = [
   'embedId',
   'sourceUrl',
   'aiSummary',
+  // Typed launcher-capture sidecar. A JSON-compatible object persists as a node
+  // scalar via the generic writeNodeData/clone path (same as filterValues), and
+  // round-trips through the JSON clone on read.
+  'capture',
   'trashedFromParentId',
   'trashedFromIndex',
 ];

@@ -8,6 +8,7 @@ export const DOCUMENT_COMMANDS = [
   'create_tagged_node',
   'create_tag_and_tagged_node',
   'create_nodes_from_tree',
+  'create_capture',
   'paste_nodes_into_node',
   'split_node',
   'apply_node_text_patch',

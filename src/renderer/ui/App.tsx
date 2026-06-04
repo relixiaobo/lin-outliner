@@ -168,6 +168,13 @@ export function App() {
     expandNodeInOutliner(nodeId);
   }, [expandNodeInOutliner, openPanel, setActivePanelRoot]);
 
+  // The global launcher opened an inline node search result — navigate the active
+  // panel to it and focus it (mirrors the in-app CommandPalette jump).
+  useEffect(() => window.lin?.onNavigateToNode?.((nodeId) => {
+    navigateRoot(nodeId as NodeId);
+    focusNode(nodeId as NodeId);
+  }) ?? undefined, [navigateRoot, focusNode]);
+
   const navigatePanelRoot = useCallback((panelId: string, nodeId: NodeId, options?: NavigateRootOptions) => {
     if (options?.newPane) {
       openPanel(nodeId);

@@ -3,7 +3,8 @@ status: in-progress
 priority: P0
 owner: cc-2
 created: 2026-06-02
-updated: 2026-06-03
+updated: 2026-06-04
+related: launcher-ai-actions.md, launcher-capture-destinations.md, browser-extension-integration.md, launcher-capture-resolvers.md
 ---
 
 # Lazy-Like Global Launcher
@@ -233,9 +234,11 @@ Expected behavior:
    - New Capture
    - Capture current context
    - Ask AI
-   - Search notes
    - Recent destinations
    - Permission warning if required
+
+   (Node search is **not** a default command — it is inline: typing matches
+   document nodes directly. See the As-built section.)
 4. External context capture starts asynchronously.
 5. When context arrives, provider-specific commands are inserted without moving
    the selected row unexpectedly.
@@ -307,6 +310,71 @@ The launcher renderer is a short-lived command state machine with these views:
 
 Do not implement these as separate routes initially. Use one renderer entry and
 a typed state machine.
+
+### As-built modeless model (PM-ratified 2026-06-03; IA redesign 2026-06-04)
+
+The UX is **modeless**, superseding the earlier "pick New Capture first" framing
+above. There is no `Mode` state and no `new-capture` command — a single
+always-focused input is simultaneously a **command filter**, a **live node
+search**, and a **live capture draft**, so the common path is hotkey → type
+(optional) → Enter.
+
+**Presentation (Raycast-style, ratified 2026-06-04).** One **flat** result list,
+**no section headers**, where every result renders as the same uniform row:
+`glyph · title · subtitle · right-aligned type label`. The type label is the
+category — `Command` (capture rows are commands too) or `Node` (a matched document
+node; it shows the node's own emoji icon, or a bullet when it has none).
+Crucially, the capture row reads as a clear **`Capture`** command (the
+page/note is the *subtitle*); the earlier design used the page title as the row
+headline, which read like a search result, not a command. Capture rows always use
+ONE uniform glyph (it's the same command regardless of what's captured), not a
+per-content-type icon. The per-row display is the pure `rowView()` in
+`launcherModel.ts`.
+
+The result list is derived purely from `(query, context, nodes, commands)` by
+`buildLauncherItems` in `src/renderer/launcher/launcherModel.ts` (unit-tested
+without a DOM in `tests/renderer/launcherModel.test.ts`). Ordering — capture rows
+first, then matching nodes, then commands:
+
+- **Page context + typed text** → a `capture-page` row (title "Capture") whose
+  default action captures the page **with the typed text riding along as the
+  capture's comment** (shown in the row subtitle as `+ "…"`). The action label
+  stays the plain `Capture page to Today` — there is no "+ note" label variant.
+  A `capture-note` row (title "New node") follows as the escape hatch to instead
+  make the typed text its own new node.
+- **Page context, no text** → a single `capture-page` row (page only).
+- **No context, typed text** → a `capture-note` row (title "New node") that creates
+  a new node in Today from the typed text.
+- **No context, no text** → commands only.
+- **Inline node search** → as the user types, matching document nodes appear as
+  `node` rows (between captures and commands); Enter **opens** the node in the main
+  window. There is **no "Search notes" command** — the input itself is the search.
+- Commands are always filtered by the same query and appended last.
+
+Each row carries ordered `actions`; `actions[0]` is what Enter runs. A persistent
+**action bar** at the bottom shows that primary label (`↵ …`). **Every shipped row
+has exactly one action today** — there are no disabled "coming soon" placeholders.
+The `actions: LauncherItemAction[]` array shape is kept so secondary actions are
+additive, but the ⌘K secondary-action menu itself was **removed** (it existed only
+to show coming-soon stubs) and returns with the features that need it. Deferred,
+split into follow-up plans:
+
+- `Save to Inbox`, the destination picker, navigation commands (Go to Today /
+  Library), recent destinations, and the **⌘K secondary-action mechanism** →
+  `launcher-capture-destinations.md`.
+- `Ask AI` (no context) and `Ask AI with source` → `launcher-ai-actions.md`.
+
+Action ids map to IPC in `LauncherApp.tsx`: `capture-page` →
+`launcher.createContextCapture({ note })`, `capture-note` →
+`launcher.createCapture({ title })`, `open-node` → `launcher.openNode(nodeId)`,
+`run-command` → `launcher.executeCommand`. Inline node search uses
+`launcher.searchNodes(query)` (debounced; main resolves `search_nodes` hits into
+`LauncherNodeMatch` views — node text + parent text — since the locked-down
+launcher renderer can't read the document). Opening a node sends
+`LAUNCHER_NAVIGATE_TO_NODE_CHANNEL` to the main window, which runs
+`navigateRoot + focusNode` (the same jump the in-app CommandPalette uses). The
+capture model itself (native fields + tags) is in `sources.ts` /
+`core.createCapture`; see Data Contracts below.
 
 ## Lazy v2.0.10 Findings
 
@@ -589,6 +657,18 @@ unless explicitly needed.
 Put stable shared types in `src/core/launcher/*`. Keep renderer-only UI state in
 `src/renderer/launcher/*`.
 
+> **Status (2026-06-04): the payload/resolver/content types below were REMOVED.**
+> The as-built contracts are leaner than this section's original design. Removed:
+> `ContextSelection`, `CapturedContent`, `CapturedMedia`, `ResolverKind`,
+> `PendingResolverJob`, `CapturePayloadRef`, `CaptureResolverRef`, and the
+> `selection`/`content`/`media`/`raw` fields on `ExternalContext`. The capture
+> sidecar (`CaptureNodeMetadata`) is **provenance-only** (source identity, origin,
+> `status: 'saved' | 'partial'`, warnings — no payloadRefs/resolverJobs). Capture is
+> basic-info only; body/transcript/media extraction returns with the unified
+> extension/CDP backend (`docs/plans/browser-extension-integration.md`), which will
+> design its own storage model. The original type listings are retained below as the
+> record of the deferred design.
+
 ### Provider identifiers
 
 ```ts
@@ -826,10 +906,18 @@ node. They update the node/source when complete.
 
 ### Static default commands
 
-These commands are always available:
+> **As-built note (2026-06-04).** The list below is the *original design
+> aspiration*. What actually ships is far smaller and contains **no disabled
+> placeholders**: `getStaticLauncherCommands()` returns only **Open main window**
+> and **Open Settings**. "New Capture" became the input itself (capture-first);
+> node search became inline (no command). The rest were split into follow-up
+> plans and will be added here only when they work:
+> - AI commands → `launcher-ai-actions.md`
+> - Go to Today / Library, recent destinations → `launcher-capture-destinations.md`
+
+These commands were the original always-available set:
 
 - New Capture
-- Search notes
 - Ask AI without context
 - Ask AI with latest context if one exists
 - Go to Today
@@ -976,6 +1064,57 @@ Supported first-release browsers:
 Firefox is unsupported for first release unless a reliable, consented integration
 is added. Return a permission/provider warning instead of pretending it works.
 
+### Accessibility-authoritative tab capture (multi-window / multi-instance)
+
+**Problem.** The AppleScript path addresses a browser by **bundle id** and reads
+`active tab of front window`. That returns the wrong page in two real cases:
+
+1. **Multiple windows** — `front window` is the app's internally-frontmost window,
+   not guaranteed to be the one the user sees.
+2. **Multiple instances of the same browser** (two profiles / `--user-data-dir`)
+   — AppleScript can only address one instance per bundle id, so it may read the
+   wrong instance's tab entirely. (This was the observed `csp-spike` capture.)
+
+Correct capture is a baseline-experience requirement, so this is not left to the
+AppleScript heuristic. The ecosystem consensus (Alfred, Raycast) is the
+**Accessibility (AX) API**: it identifies the focused window by **PID + key
+focus**, not by bundle + "front window".
+
+**Mechanism.** A native macOS addon (`native/browser-tab`, sibling of
+`window-corner`; loader `src/main/context/nativeBrowserTab.ts`) exposes:
+
+- `accessibilityTrusted()` — `AXIsProcessTrusted()`, no prompt.
+- `promptAccessibility()` — triggers the system grant prompt.
+- `getFocusedTab(pid)` — `AXUIElementCreateApplication(pid)` →
+  `kAXFocusedWindowAttribute` → a shallow, budgeted DFS for the first
+  `kAXURLAttribute` (Chrome `AXWebArea` / Safari web area expose it); returns
+  `{url, title, error}`. Bounded (depth 7 / 300 nodes / 0.4s messaging timeout) so
+  it can't hang the main process; never throws.
+
+The frontmost-app read now also returns the **PID** (`NSWorkspace
+.frontmostApplication.processIdentifier`), captured before focus is stolen.
+
+**Merge policy (in the pure `normalizeWebpageContext`).** The AX URL is
+**authoritative** when present (a real `http(s)` URL). The AppleScript `tab`/`page`
+reads still run (in parallel) for rich metadata (og:title, author, published,
+selection). Then:
+
+- **AX URL agrees with the scripted URL** → keep the rich metadata; `confidence
+  = exact`.
+- **AX URL disagrees** → the bridge read a different window/instance: trust AX
+  (url + window title, browser-name suffix stripped), **drop** the mismatched
+  metadata, record a `context-window-mismatch` warning; `confidence = probable`.
+- **No AX URL** (untrusted / addon missing / off-darwin) → existing front-window
+  behavior unchanged (graceful degradation). When AX is merely untrusted,
+  `macos-accessibility` is added to the context's `permissions` so a remediation
+  UI can offer the more reliable path.
+
+**Permission.** AX needs the Accessibility TCC grant (distinct from
+Automation/Apple Events). It is already in `PermissionRequirement`
+(`macos-accessibility`). A first-run grant affordance (calling
+`promptAccessibility`) is a later phase; until then capture works via the
+AppleScript fallback and the grant is done in System Settings.
+
 ### Site JS injection rules
 
 Provider scripts must be read-only and local:
@@ -1011,6 +1150,19 @@ tab via the browser's scripting interface.
 
 ## Provider Implementation Details
 
+> **Status (2026-06-04): all in-app rich extraction was REMOVED.** Capture runs
+> basic-info-only (URL + title + app + URL-derived classification). Two clean
+> deletions: (1) the AppleScript in-page page-script path, then (2) the offscreen
+> YouTube transcript resolver + the whole payload/resolver apparatus
+> (`resolverRunner`, `captureStore`, the `apply_capture_resolver_result` command,
+> `CapturePayloadRef`/`CaptureResolverRef`/`CapturedContent`/`CapturedMedia`). Body,
+> transcript, and media extraction are deferred wholesale to the unified browser
+> extension / CDP backend — see `docs/plans/browser-extension-integration.md`.
+> Provider *classification* still runs from the URL (`selectSiteProvider` +
+> `enrich*Context`), and rich page metadata returns when a `PageContentExtractor`
+> (the extension) supplies `raw`. The capture sidecar is now provenance-only. The
+> detail below documents the intended rich behavior the extension will restore.
+
 ### Generic webpage
 
 Extract:
@@ -1041,20 +1193,37 @@ Special cases to implement:
 
 ### YouTube
 
-Initial context:
+Initial context (LANDED, cc-2):
 
-- Standard YouTube and Shorts support.
-- Current time, duration, title, author name/avatar/url, JSON-LD.
-- Source URL should include timestamp when possible.
+- Standard YouTube and Shorts support; classified as `#video` from the URL alone
+  (so a watch/Shorts link is a video with no rich data needed).
+- Channel author is added when a `PageContentExtractor` (future extension) supplies
+  `raw`; with no extractor the video is captured by URL identity only.
+- **PM decision (2026-06-03): player position + duration are NOT surfaced.** No
+  `Timestamp`/`Duration` node fields, and the captured URL is the clean canonical
+  `watch?v=<id>` (the `&t=` anchor was judged noise). Position/duration are no longer
+  captured at all (the invisible `media` model was removed with the resolver path).
 
-Resolver:
+Transcript resolver (REMOVED 2026-06-04 — rebuilt on the unified backend):
 
-- Attempt transcript only for the current video and only after user-triggered
-  capture/AI command.
-- Capture a small context window around the current time. Lazy used roughly
-  current position minus 30 seconds to plus 5 seconds. Use that as a product
-  target, but make the window configurable.
-- Do not run playlist crawling or channel crawling.
+> The offscreen transcript resolver was built, then removed by clean deletion along
+> with the payload/resolver apparatus. Transcript extraction returns as a
+> first-class capability of the browser extension / CDP backend
+> (`docs/plans/browser-extension-integration.md`), on one path — not as a separate
+> offscreen-scrape mechanism kept alive in the meantime. The research below is
+> retained because it still informs that future implementation.
+
+- **Extraction (verified 2026): only in-page DOM scraping works.** InnerTube
+  `get_transcript`, caption `baseUrl` fetch (even same-origin), and page-HTML
+  scraping all fail now (FAILED_PRECONDITION / 0 bytes / LOGIN_REQUIRED). The
+  reliable path is: confirm captionTracks → click "Show transcript" → read
+  `transcript-segment-view-model`. Reference impls in sibling clones
+  (`nodex-claude/docs/research/youtube-transcript-extraction.md`,
+  `sider-agent/.../web/library/youtube.js`).
+- The extension reads it in-page via its content script; storage model for the
+  transcript (the old payload-to-file sidecar is gone) is an open question for the
+  successor plan. Clean session → public videos (~97%); login/age-gated fail gracefully.
+- Do not run playlist or channel crawling.
 
 Commands:
 
@@ -1293,6 +1462,29 @@ The original pointer lives at `capture.source.original` and uses the
 `OriginalResourceRef` union defined in the data-contract section.
 
 ### Hidden payload references
+
+**LANDED (cc-2, 2026-06-03): the at-capture content-payload pipeline.** Generic
+webpage captures now extract a bounded readable body (read-only, in-page) plus any
+selection AT capture time and store them as files under
+`userData/captures/<captureId>/` (`content.txt` `role:'cleaned-text'`,
+`selection.txt` `role:'selected-text'`), referenced by `capture.payloadRefs[]`
+with `searchPolicy: 'metadata-only'`. The capture node stays clean (title + URL +
+author); the snapshot never enters the outline. Store: `src/main/launcher/
+captureStore.ts` (path-fenced read, byte-capped write, root injected for tests).
+Pure ref builder: `buildCapturePayloadRef` in `src/core/launcher/sources.ts`.
+Done AT capture time (not deferred), honoring the local-extraction preference (no
+URL re-fetch — login-walled content would be lost).
+
+**Payloads are AGENT-FACING, not a user preview (PM decision 2026-06-03).** The
+consumer of `capture.payloadRefs` is the agent resource-context builder: when a
+capture node is referenced into a chat (or via "summarize this capture"), main
+reads the payload file and injects it into the agent context. There is no
+user-facing payload Preview/Open UI. DEFERRED to later slices: the resolver runner
+(async job queue), the system-origin payload **write-back command** (protocol;
+needed when a resolver updates the node after save), the **agent-context wiring**
+that reads payloads into a chat, and re-host resolvers (YouTube transcript via the
+hidden webContents above; server-fetched article body only where re-fetch is
+acceptable).
 
 Do not store captured full text as ordinary child nodes by default. Full webpage
 text, email bodies, chat logs, tweet threads, transcripts, and PDF text can

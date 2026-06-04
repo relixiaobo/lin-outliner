@@ -33,6 +33,7 @@ import type {
   TagConfigPatch,
   ViewMode,
 } from '../core/types';
+import type { CreateCaptureInput } from '../core/launcher/sources';
 import { parseLinOutline } from './agentOutlineParser';
 import { indexProjection } from './agentNodeToolProjection';
 import { resolveSearchSpecFromOutlineNode } from './agentNodeToolSearch';
@@ -288,6 +289,8 @@ export class DocumentService {
         return this.core.createTagAndTaggedNode(String(args.parentId), args.content as RichText, String(args.name ?? ''));
       case 'create_nodes_from_tree':
         return this.core.createNodesFromTree(String(args.parentId), arrayArg(args.nodes));
+      case 'create_capture':
+        return this.core.createCapture(args.input as CreateCaptureInput);
       case 'paste_nodes_into_node':
         return this.core.pasteNodesIntoNode(
           String(args.nodeId),
