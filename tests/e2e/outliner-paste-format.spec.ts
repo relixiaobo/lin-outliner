@@ -89,6 +89,22 @@ test.describe('paste format support', () => {
     expect((await nodeById(page, children[idx + 2]))?.content.text).toBe('two');
   });
 
+  test('splits a <br>-separated block into one row per line', async ({ page }) => {
+    await selectEditorContents(page, ids.alpha);
+    // Gmail / Apple Notes / many contenteditable sources wrap soft line breaks
+    // in a single block with <br>s; this must become rows, not one space-joined row.
+    await pasteRich(page, {
+      plain: 'first\nsecond\nthird',
+      html: '<div>first<br>second<br>third</div>',
+    });
+
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe('first');
+    const children = await todayChildren(page);
+    const idx = children.indexOf(ids.alpha);
+    expect((await nodeById(page, children[idx + 1]))?.content.text).toBe('second');
+    expect((await nodeById(page, children[idx + 2]))?.content.text).toBe('third');
+  });
+
   test('pasting a single-line URL wraps the selection as a link', async ({ page }) => {
     await selectEditorContents(page, ids.alpha);
     await pasteRich(page, { plain: 'https://anthropic.com' });

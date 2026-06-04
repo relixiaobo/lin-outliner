@@ -135,6 +135,15 @@ describe('parseMarkdownBlocks', () => {
     ]);
   });
 
+  test('normalizes special bullet glyphs and +/) list markers into rows', () => {
+    expect(parseMarkdownBlocks('▪ alpha\n‣ beta\n+ gamma\n1) delta')).toEqual([
+      { content: { text: 'alpha', marks: [], inlineRefs: [] }, children: [] },
+      { content: { text: 'beta', marks: [], inlineRefs: [] }, children: [] },
+      { content: { text: 'gamma', marks: [], inlineRefs: [] }, children: [] },
+      { content: { text: 'delta', marks: [], inlineRefs: [] }, children: [] },
+    ]);
+  });
+
   test('keeps heading marks alongside inline marks', () => {
     expect(parseMarkdownBlocks('## A **bold** title')).toEqual([
       {
