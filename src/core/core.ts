@@ -54,6 +54,8 @@ import {
   type RefRole,
   type CommandOutcome,
   type CreateNodeTree,
+  type ParsedPasteField,
+  type PasteRowMeta,
   type DocumentProjection,
   type DocumentState,
   type NodeProjection,
@@ -607,6 +609,7 @@ export class Core {
     content: RichText,
     children: CreateNodeTree[],
     siblingsAfter: CreateNodeTree[],
+    firstMeta: PasteRowMeta = {},
   ): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
@@ -616,8 +619,13 @@ export class Core {
       const siblingIndex = (childIndex(state, parentId, nodeId) ?? 0) + 1;
       const node = clone(requiredNode(state, nodeId));
       node.content = clone(content);
+      const completedAt = pasteCompletedAt(firstMeta);
+      if (completedAt !== undefined) node.completedAt = completedAt;
       node.updatedAt = nowMs();
       this.loro.writeNode(node);
+      // The first pasted block merges into this row; apply its harvested tags
+      // and fields here since it is not materialized via insertNodeTreeDirect.
+      this.applyPasteMetadataDirect(nodeId, firstMeta.tags, firstMeta.fields);
 
       for (const child of children) this.insertNodeTreeDirect(nodeId, child);
 
@@ -2629,13 +2637,16 @@ export class Core {
     // Paste trees may carry a node type; only `codeBlock` is honored so the
     // materialization surface stays narrow and predictable.
     const type = tree.type === 'codeBlock' ? 'codeBlock' : undefined;
+    const completedAt = pasteCompletedAt(tree);
     this.loro.createNodeWithId(id, parentId, index, type, (node) => {
       node.content = clone(tree.content);
       if (type === 'codeBlock') {
         (node as CodeBlockNode).codeLanguage = normalizeCodeLanguage(tree.codeLanguage) || undefined;
       }
+      if (completedAt !== undefined) node.completedAt = completedAt;
     });
     this.applyChildTagsDirect(parentId, id);
+    this.applyPasteMetadataDirect(id, tree.tags, tree.fields);
     for (const child of tree.children) this.insertNodeTreeDirect(id, child);
     return id;
   }
@@ -2657,6 +2668,67 @@ export class Core {
       node.content = plainText('');
     });
     return id;
+  }
+
+  // Apply `#tag` / `name:: value` metadata harvested from a paste onto a node.
+  // The parser runs in the renderer without state, so it emits names; here we
+  // own the state and do find-or-create (PM decision 2026-06-04: auto-create to
+  // match nodex). Tag/field syntax itself is recognized renderer-side and today
+  // diverges from `agentOutlineParser` (ASCII vs Unicode `#tag`); unifying the
+  // two on one canonical grammar is docs/plans/outline-syntax-unification.md.
+  private applyPasteMetadataDirect(
+    nodeId: string,
+    tags: string[] | undefined,
+    fields: ParsedPasteField[] | undefined,
+  ): void {
+    for (const rawName of tags ?? []) {
+      const name = rawName.trim();
+      if (!name) continue;
+      const tagId = findTagByName(this.snapshot(), name) ?? this.createTagDefDirect(name);
+      this.applyTagNoHistoryDirect(nodeId, tagId);
+    }
+    for (const field of fields ?? []) {
+      const name = field.name.trim();
+      const value = field.value.trim();
+      if (!name || !value) continue;
+      const fieldDefId = findFieldDefByName(this.snapshot(), name)
+        ?? this.insertFieldDefNodeDirect(SCHEMA_ID, name, 'plain');
+      const entryId = this.reuseOrCreateFieldEntryDirect(nodeId, fieldDefId);
+      // An existing `options` field find-or-creates+selects the option (smart
+      // select); every other type (incl. a freshly created `plain` field) stores
+      // the value as a plain content child, the same shape free-text values use.
+      if (fieldTypeOf(this.snapshot(), fieldDefId) === 'options') {
+        const optionId = this.ensureOptionNodeDirect(fieldDefId, value);
+        this.selectFieldOptionDirect(entryId, fieldDefId, optionId);
+      } else {
+        // Fill an empty value child a reused entry (e.g. a tag template's) already
+        // owns, instead of stacking a second value beside it; create one only when
+        // there is no empty slot to reuse.
+        const emptySlot = this.snapshot().nodes[entryId]?.children.find((childId) => {
+          const child = this.snapshot().nodes[childId];
+          return child?.type === undefined && child.content.text.trim().length === 0;
+        });
+        if (emptySlot) {
+          this.patchNodeData(emptySlot, (node) => { node.content = plainText(value); });
+        } else {
+          this.loro.createNodeWithId(freshId('value'), entryId, undefined, undefined, (node) => {
+            node.content = plainText(value);
+          });
+        }
+      }
+    }
+  }
+
+  // Reuse a field entry the node already owns for this def (e.g. one a tag
+  // template just instantiated) so a pasted `field::` fills it instead of
+  // stacking a second empty entry; otherwise create one.
+  private reuseOrCreateFieldEntryDirect(nodeId: string, fieldDefId: string): string {
+    const state = this.snapshot();
+    const existing = state.nodes[nodeId]?.children.find((childId) => {
+      const child = state.nodes[childId];
+      return child?.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
+    });
+    return existing ?? this.insertFieldEntryNodeDirect(nodeId, undefined, fieldDefId);
   }
 
   private touchNodeDirect(nodeId: string) {
@@ -3703,6 +3775,21 @@ function findTagByName(state: DocumentState, name: string) {
   const needle = name.trim().toLowerCase();
   return Object.values(state.nodes).find((node) =>
     node.type === 'tagDef' && node.content.text.trim().toLowerCase() === needle)?.id;
+}
+
+function findFieldDefByName(state: DocumentState, name: string) {
+  const needle = name.trim().toLowerCase();
+  return Object.values(state.nodes).find((node) =>
+    node.type === 'fieldDef'
+    && node.parentId === SCHEMA_ID
+    && node.content.text.trim().toLowerCase() === needle)?.id;
+}
+
+// A pasted task-list row's `completedAt` sentinel: undefined → no checkbox,
+// 0 → an unchecked checkbox, a timestamp → checked/done (see setNodeCheckboxVisible).
+function pasteCompletedAt(meta: PasteRowMeta): number | undefined {
+  if (!meta.checkbox) return undefined;
+  return meta.done ? nowMs() : 0;
 }
 
 function findNamedChild(state: DocumentState, parentId: string, name: string) {

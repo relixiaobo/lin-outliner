@@ -1,4 +1,4 @@
-import type { CreateNodeTree, RichText, TextMark, TextMarkKind } from '../../api/types';
+import type { CreateNodeTree, ParsedPasteField, RichText, TextMark, TextMarkKind } from '../../api/types';
 import { normalizeCodeLanguage } from '../editor/codeLanguages';
 
 export interface ParsedPasteNode {
@@ -35,9 +35,9 @@ function lineDepth(rawLine: string): number {
 function listText(rawLine: string): string {
   return rawLine
     .trim()
-    .replace(/^[-*]\s+/u, '')
-    .replace(/^\d+\.\s+/u, '')
-    .replace(/^•\s+/u, '')
+    .replace(/^[-*+]\s+/u, '')
+    .replace(/^\d+[.)]\s+/u, '')
+    .replace(/^[•◦▪‣·●]\s+/u, '')
     .trim();
 }
 
@@ -138,12 +138,91 @@ function fenceLanguage(info: string): string {
   return normalizeCodeLanguage(info.trim().split(/\s+/u)[0] ?? '');
 }
 
+// `#tag` and `name:: value` metadata harvested from a line (nodex parity). The
+// guards stay conservative so code and URLs survive: a tag needs whitespace (or
+// start) before `#letter`; a field needs a DOUBLE colon followed by whitespace
+// (`name:: value`), which excludes `std::cout`, `http://…`, and `foo::bar`. The
+// field value stops before the next ` name:: ` or ` #tag` so several fit on one
+// line. Only same-line metadata is harvested (a lone `#tag` / `field::` line has
+// no name left and is dropped by `treeHasContent`).
+const TAG_TOKEN = /(^|\s)#([A-Za-z][\w-]*)/gu;
+const FIELD_TOKEN = /(^|\s)([A-Za-z][\w-]*)::[ \t]+(.+?)(?=\s+[A-Za-z][\w-]*::[ \t]|\s+#[A-Za-z]|$)/gu;
+
+// Link `[label](url)` and inline-code `` `code` `` spans are off-limits to the
+// tag / field scan: a `#frag` or `name::` inside them is link text, a URL
+// fragment, or code — not metadata. Without this, `See [the #section](url)`
+// loses its label to a spurious `section` tag. Ranges are computed on the same
+// raw text the harvest scans, so positions line up.
+function harvestProtectedRanges(text: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  for (const match of text.matchAll(INLINE_TOKEN)) {
+    if (match[1] === undefined && match[7] === undefined) continue; // keep only link (1) / code (7)
+    const start = match.index ?? 0;
+    ranges.push([start, start + match[0].length]);
+  }
+  return ranges;
+}
+
+function inAnyRange(pos: number, ranges: ReadonlyArray<readonly [number, number]>): boolean {
+  return ranges.some(([start, end]) => pos >= start && pos < end);
+}
+
+function extractTagsAndFields(text: string): { text: string; tags: string[]; fields: ParsedPasteField[] } {
+  const tags: string[] = [];
+  const fields: ParsedPasteField[] = [];
+  const protectedRanges = harvestProtectedRanges(text);
+  // Collect harvest spans against the ORIGINAL text so positions stay valid;
+  // fields before tags so a field value's words are never re-scanned as a tag.
+  const removals: Array<{ start: number; end: number; lead: number }> = [];
+  for (const match of text.matchAll(FIELD_TOKEN)) {
+    const start = match.index ?? 0;
+    const lead = (match[1] ?? '').length;
+    if (inAnyRange(start + lead, protectedRanges)) continue;
+    fields.push({ name: match[2], value: (match[3] ?? '').trim() });
+    removals.push({ start, end: start + match[0].length, lead });
+  }
+  for (const match of text.matchAll(TAG_TOKEN)) {
+    const start = match.index ?? 0;
+    const lead = (match[1] ?? '').length;
+    if (inAnyRange(start + lead, protectedRanges)) continue;
+    // A `#word` that sits inside an already-harvested field span is part of that
+    // value (e.g. `color:: #fff`), not a separate tag.
+    if (removals.some((removal) => start + lead >= removal.start && start + lead < removal.end)) continue;
+    tags.push(match[2]);
+    removals.push({ start, end: start + match[0].length, lead });
+  }
+  // Rebuild the line minus the harvested tokens, keeping each token's lead ws.
+  removals.sort((a, b) => a.start - b.start);
+  let out = '';
+  let cursor = 0;
+  for (const removal of removals) {
+    if (removal.start < cursor) continue; // skip an overlap
+    out += text.slice(cursor, removal.start + removal.lead);
+    cursor = removal.end;
+  }
+  out += text.slice(cursor);
+  return { text: out.replace(/\s{2,}/gu, ' ').trim(), tags, fields };
+}
+
 function lineToTree(rawText: string): CreateNodeTree {
   const heading = rawText.match(/^(#{1,6})\s+(.*)$/u);
-  if (heading) {
-    return { content: applyHeadingMark(parseInlineMarkdown(heading[2] ?? '')), children: [] };
+  let body = heading ? (heading[2] ?? '') : rawText;
+  // GFM task list: `[ ]` is an unchecked checkbox, `[x]`/`[X]` a checked one.
+  const task = body.match(/^\[([ xX])\]\s+(.*)$/u);
+  if (task) body = task[2] ?? '';
+  const { text, tags, fields } = extractTagsAndFields(body);
+  const parsed = parseInlineMarkdown(text);
+  const tree: CreateNodeTree = {
+    content: heading ? applyHeadingMark(parsed) : parsed,
+    children: [],
+  };
+  if (tags.length > 0) tree.tags = tags;
+  if (fields.length > 0) tree.fields = fields;
+  if (task) {
+    tree.checkbox = true;
+    tree.done = task[1].toLowerCase() === 'x';
   }
-  return { content: parseInlineMarkdown(rawText), children: [] };
+  return tree;
 }
 
 export function parseMarkdownBlocks(text: string): CreateNodeTree[] {
@@ -240,10 +319,27 @@ function trimRichText(text: string, marks: TextMark[]): RichText {
   return { text: trimmed, marks: next, inlineRefs: [] };
 }
 
-function appendInline(builder: InlineBuilder, node: ChildNode, active: ActiveMark[]): void {
+// Accumulates inline content into one or more builders. When `splitOnBreak` is
+// set a `<br>` starts a new builder (so a `<div>a<br>b</div>` block becomes
+// sibling rows rather than one space-joined row); otherwise `<br>` is a space.
+interface InlineCollector {
+  builders: InlineBuilder[];
+  splitOnBreak: boolean;
+}
+
+function currentBuilder(collector: InlineCollector): InlineBuilder {
+  const last = collector.builders[collector.builders.length - 1];
+  if (last) return last;
+  const fresh: InlineBuilder = { text: '', marks: [] };
+  collector.builders.push(fresh);
+  return fresh;
+}
+
+function appendInline(collector: InlineCollector, node: ChildNode, active: ActiveMark[]): void {
   if (node.nodeType === 3 /* TEXT_NODE */) {
     const value = (node.textContent ?? '').replace(/\s+/gu, ' ');
     if (!value) return;
+    const builder = currentBuilder(collector);
     const start = builder.text.length;
     builder.text += value;
     const end = builder.text.length;
@@ -256,7 +352,8 @@ function appendInline(builder: InlineBuilder, node: ChildNode, active: ActiveMar
   const el = node as Element;
   const tag = el.tagName.toLowerCase();
   if (tag === 'br') {
-    builder.text += ' ';
+    if (collector.splitOnBreak) collector.builders.push({ text: '', marks: [] });
+    else currentBuilder(collector).text += ' ';
     return;
   }
   const next = [...active];
@@ -272,15 +369,31 @@ function appendInline(builder: InlineBuilder, node: ChildNode, active: ActiveMar
     if (/font-style\s*:\s*italic/u.test(style)) next.push({ type: 'italic' });
     if (/text-decoration[^;]*line-through/u.test(style)) next.push({ type: 'strike' });
   }
-  for (const child of Array.from(el.childNodes)) appendInline(builder, child, next);
+  for (const child of Array.from(el.childNodes)) appendInline(collector, child, next);
 }
 
+function collectBuilders(el: Element, splitOnBreak: boolean): InlineBuilder[] {
+  const collector: InlineCollector = { builders: [{ text: '', marks: [] }], splitOnBreak };
+  for (const child of Array.from(el.childNodes)) appendInline(collector, child, []);
+  return collector.builders;
+}
+
+// A single row (no `<br>` split) — used by headings, list items, and inline
+// wrappers where a line break stays an inline space.
 function inlineTreeFromElement(el: Element): CreateNodeTree | null {
-  const builder: InlineBuilder = { text: '', marks: [] };
-  for (const child of Array.from(el.childNodes)) appendInline(builder, child, []);
+  const [builder] = collectBuilders(el, false);
   const content = trimRichText(builder.text, builder.marks);
   if (content.text.length === 0) return null;
   return { content, children: [] };
+}
+
+// One row per `<br>`-delimited segment — used for block elements so soft line
+// breaks inside a paragraph become sibling rows.
+function inlineTreesFromElement(el: Element): CreateNodeTree[] {
+  return collectBuilders(el, true)
+    .map((builder) => trimRichText(builder.text, builder.marks))
+    .filter((content) => content.text.length > 0)
+    .map((content) => ({ content, children: [] }));
 }
 
 function headingTreeFromElement(el: Element): CreateNodeTree | null {
@@ -306,15 +419,16 @@ function codeTreeFromPre(el: Element): CreateNodeTree {
 function walkList(listEl: Element, out: CreateNodeTree[]): void {
   for (const item of Array.from(listEl.children)) {
     if (item.tagName.toLowerCase() !== 'li') continue;
-    const builder: InlineBuilder = { text: '', marks: [] };
+    const collector: InlineCollector = { builders: [{ text: '', marks: [] }], splitOnBreak: false };
     const nestedLists: Element[] = [];
     for (const child of Array.from(item.childNodes)) {
       if (child.nodeType === 1 && /^(ul|ol)$/u.test((child as Element).tagName.toLowerCase())) {
         nestedLists.push(child as Element);
       } else {
-        appendInline(builder, child, []);
+        appendInline(collector, child, []);
       }
     }
+    const builder = collector.builders[0];
     const node: CreateNodeTree = { content: trimRichText(builder.text, builder.marks), children: [] };
     for (const nested of nestedLists) walkList(nested, node.children);
     if (node.content.text.length > 0 || node.children.length > 0) out.push(node);
@@ -364,12 +478,14 @@ function walkBlocks(container: Element, out: CreateNodeTree[]): void {
       if (node) out.push(node);
       continue;
     }
-    if (isBlockElement(el) && hasBlockChild(el)) {
+    // Recurse into ANY element that wraps block children — not just block tags.
+    // This unwraps Google-Docs' `<b style="font-weight:normal"><p>…</p></b>`
+    // inline wrappers instead of flattening their paragraphs into one row.
+    if (hasBlockChild(el)) {
       walkBlocks(el, out);
       continue;
     }
-    const node = inlineTreeFromElement(el);
-    if (node) out.push(node);
+    for (const node of inlineTreesFromElement(el)) out.push(node);
   }
 }
 
@@ -390,9 +506,23 @@ function htmlHasRichStructure(html: string): boolean {
   return RICH_HTML_TAG.test(html);
 }
 
+// Real list elements mean the HTML carries the hierarchy itself (and its marks);
+// flat `<div>`/`<p>` that merely kept literal `-`/`[x]` markers does not. This
+// is what separates a rich web-list paste (trust the HTML, keep bold/links) from
+// an editor copy whose indentation was whitespace-folded (prefer the plain text).
+function htmlHasList(html: string): boolean {
+  return /<(ul|ol|li)\b/iu.test(html);
+}
+
 function looksLikeStrongMarkdown(text: string): boolean {
   if (/(^|\n)\s*(```|~~~)/u.test(text)) return true;
-  return /(^|\n)#{1,6}\s+\S/u.test(text);
+  if (/(^|\n)#{1,6}\s+\S/u.test(text)) return true;
+  // A multi-line bullet / task / numbered list is a Markdown outline whose
+  // indentation carries the hierarchy. HTML whitespace-folds that indentation
+  // away and never strips the `-`/`[x]` markers, so when the clipboard also
+  // carries HTML the plain-text parser is the faithful one — prefer it.
+  const listLines = text.match(/(^|\n)[ \t]*(?:[-*+]|\d+[.)]|[•◦▪‣·●])[ \t]+\S/gu);
+  return (listLines?.length ?? 0) >= 2;
 }
 
 function treeHasContent(node: CreateNodeTree): boolean {
@@ -406,7 +536,10 @@ export function parseClipboardPaste(plain: string, html?: string | null): Create
     typeof html === 'string' &&
     html.trim().length > 0 &&
     htmlHasRichStructure(html) &&
-    !looksLikeStrongMarkdown(text);
+    // A Markdown-looking plain text only wins over the HTML when the HTML is the
+    // lossy side — flat blocks with no real list. Genuine `<ul>/<ol>/<li>` keeps
+    // both the structure and its marks, so trust it.
+    (htmlHasList(html) || !looksLikeStrongMarkdown(text));
   const trees = canUseHtml ? htmlToTrees(html as string) : parseMarkdownBlocks(text);
   return trees.filter(treeHasContent);
 }

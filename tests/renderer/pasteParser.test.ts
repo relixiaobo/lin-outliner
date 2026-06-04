@@ -135,6 +135,77 @@ describe('parseMarkdownBlocks', () => {
     ]);
   });
 
+  test('normalizes special bullet glyphs and +/) list markers into rows', () => {
+    expect(parseMarkdownBlocks('▪ alpha\n‣ beta\n+ gamma\n1) delta')).toEqual([
+      { content: { text: 'alpha', marks: [], inlineRefs: [] }, children: [] },
+      { content: { text: 'beta', marks: [], inlineRefs: [] }, children: [] },
+      { content: { text: 'gamma', marks: [], inlineRefs: [] }, children: [] },
+      { content: { text: 'delta', marks: [], inlineRefs: [] }, children: [] },
+    ]);
+  });
+
+  test('harvests #tags and field:: values, stripping them from the row text', () => {
+    expect(parseMarkdownBlocks('Ship release #urgent #work status:: done priority:: high')).toEqual([
+      {
+        content: { text: 'Ship release', marks: [], inlineRefs: [] },
+        children: [],
+        tags: ['urgent', 'work'],
+        fields: [
+          { name: 'status', value: 'done' },
+          { name: 'priority', value: 'high' },
+        ],
+      },
+    ]);
+  });
+
+  test('stops a field value before a following #tag', () => {
+    expect(parseMarkdownBlocks('Fix bug status:: done #later')).toEqual([
+      {
+        content: { text: 'Fix bug', marks: [], inlineRefs: [] },
+        children: [],
+        tags: ['later'],
+        fields: [{ name: 'status', value: 'done' }],
+      },
+    ]);
+  });
+
+  test('leaves code/URL colons and mid-word hashes alone', () => {
+    expect(parseMarkdownBlocks('run std::cout then visit http://x.com for C#9')).toEqual([
+      { content: { text: 'run std::cout then visit http://x.com for C#9', marks: [], inlineRefs: [] }, children: [] },
+    ]);
+  });
+
+  test('does not harvest a #tag inside a markdown link label', () => {
+    // The `#section` is link text, not a tag — the label must stay intact.
+    expect(parseMarkdownBlocks('See [the #section](https://x.dev) details')).toEqual([
+      {
+        content: {
+          text: 'See the #section details',
+          marks: [{ start: 4, end: 16, type: 'link', attrs: { href: 'https://x.dev' } }],
+          inlineRefs: [],
+        },
+        children: [],
+      },
+    ]);
+  });
+
+  test('does not harvest a #tag inside an inline code span', () => {
+    expect(parseMarkdownBlocks('run `see #x now` end')).toEqual([
+      {
+        content: { text: 'run see #x now end', marks: [{ start: 4, end: 14, type: 'code' }], inlineRefs: [] },
+        children: [],
+      },
+    ]);
+  });
+
+  test('converts GFM task-list markers into checkbox rows', () => {
+    expect(parseMarkdownBlocks('- [x] shipped\n- [ ] pending\n- plain')).toEqual([
+      { content: { text: 'shipped', marks: [], inlineRefs: [] }, children: [], checkbox: true, done: true },
+      { content: { text: 'pending', marks: [], inlineRefs: [] }, children: [], checkbox: true, done: false },
+      { content: { text: 'plain', marks: [], inlineRefs: [] }, children: [] },
+    ]);
+  });
+
   test('keeps heading marks alongside inline marks', () => {
     expect(parseMarkdownBlocks('## A **bold** title')).toEqual([
       {

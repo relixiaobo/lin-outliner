@@ -39,6 +39,8 @@ export type {
   NodeId,
   NodeProjection,
   NodeType,
+  ParsedPasteField,
+  PasteRowMeta,
   QueryLogic,
   QueryOp,
   ReferenceTarget,

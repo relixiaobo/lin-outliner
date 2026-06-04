@@ -14,6 +14,7 @@ import type {
   SkillDefinition,
   CommandOutcome,
   CreateNodeTree,
+  PasteRowMeta,
   DocumentProjection,
   FieldConfigPatch,
   FieldType,
@@ -65,11 +66,13 @@ export const api = {
     content: RichText,
     children: CreateNodeTree[],
     siblingsAfter: CreateNodeTree[],
+    firstMeta: PasteRowMeta = {},
   ) => command<CommandOutcome>('paste_nodes_into_node', {
     nodeId,
     content,
     children,
     siblingsAfter,
+    firstMeta,
   }),
   splitNode: (nodeId: string, before: RichText, after: RichText, options: SplitNodeOptions = {}) =>
     command<CommandOutcome>('split_node', { nodeId, before, after, ...options }),

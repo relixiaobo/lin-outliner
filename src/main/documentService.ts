@@ -25,6 +25,7 @@ import type {
   FocusPlacement,
   IconKind,
   NodeProjection,
+  PasteRowMeta,
   RichText,
   RichTextPatch,
   SearchNodeConfig,
@@ -307,6 +308,7 @@ export class DocumentService {
           args.content as RichText,
           arrayArg(args.children),
           arrayArg(args.siblingsAfter),
+          (args.firstMeta ?? {}) as PasteRowMeta,
         );
       case 'split_node':
         return this.core.splitNode(String(args.nodeId), args.before as RichText, args.after as RichText, {

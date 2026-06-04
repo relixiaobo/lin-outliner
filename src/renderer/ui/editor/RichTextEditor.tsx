@@ -3,7 +3,7 @@ import { toggleMark } from 'prosemirror-commands';
 import type { Node as PMNode } from 'prosemirror-model';
 import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
 import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
-import { replaceAllRichTextPatch, type CreateNodeTree, type RichText, type RichTextPatch } from '../../api/types';
+import { replaceAllRichTextPatch, type CreateNodeTree, type PasteRowMeta, type RichText, type RichTextPatch } from '../../api/types';
 import type { FocusRequest, FocusTarget, PendingInputChar } from '../../state/document';
 import type { EditorTrigger, NavigateRootOptions } from '../shared';
 import { wantsNewPaneFromClick } from '../shared';
@@ -91,6 +91,8 @@ interface RichTextEditorProps {
     content: RichText;
     children: CreateNodeTree[];
     siblingsAfter: CreateNodeTree[];
+    /** Metadata (`#tag` / `field::` / task checkbox) for the first merged block. */
+    firstMeta?: PasteRowMeta;
   }) => void;
   onPasteImage?: (images: PastedImage[]) => void;
   /** A lone remote image URL pasted with no active selection. */
@@ -539,10 +541,21 @@ export function RichTextEditor(props: RichTextEditorProps) {
           const after = sliceRichText(current, to, current.text.length);
           const nextContent = concatRichText(before, first.content, after);
           setContent(nextContent);
+          // Derive the row metadata from the first block itself (it extends
+          // PasteRowMeta) so a future PasteRowMeta field can't be silently lost.
+          const { content: _content, children: _children, type: _type, codeLanguage: _codeLanguage, ...firstMeta } =
+            first;
+          // Merging into an existing non-empty row must not silently flip it into
+          // a checked task — only a genuinely empty row adopts the checkbox state.
+          if (current.text.trim().length > 0) {
+            delete firstMeta.checkbox;
+            delete firstMeta.done;
+          }
           onPasteOutliner({
             content: nextContent,
             children: first.children,
             siblingsAfter: parsed.slice(1),
+            firstMeta,
           });
           return true;
         },

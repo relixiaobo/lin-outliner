@@ -571,7 +571,29 @@ export interface CommandOutcome {
   focus?: FocusHint;
 }
 
-export interface CreateNodeTree {
+/** A `name:: value` field harvested from pasted text (resolved to ids in core). */
+export interface ParsedPasteField {
+  name: string;
+  value: string;
+}
+
+/**
+ * Metadata harvested from a pasted Markdown line beyond its text/children, applied
+ * by core (which owns the state) to the materialized — or, for the first/merged
+ * block, the existing — row. Names are resolved find-or-create.
+ */
+export interface PasteRowMeta {
+  /** Tag names (e.g. `urgent` from `#urgent`). */
+  tags?: string[];
+  /** Fields (e.g. `{name:'status', value:'done'}` from `status:: done`). */
+  fields?: ParsedPasteField[];
+  /** A GFM task-list checkbox (`[ ]` / `[x]`) — show a manual checkbox. */
+  checkbox?: boolean;
+  /** Whether that checkbox is checked (`[x]`). */
+  done?: boolean;
+}
+
+export interface CreateNodeTree extends PasteRowMeta {
   content: RichText;
   children: CreateNodeTree[];
   /** Optional node type for the materialized node. Paste only emits `codeBlock`. */

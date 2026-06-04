@@ -789,6 +789,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             if (lang) node.codeLanguage = lang;
             else delete node.codeLanguage;
           }
+          // GFM task-list paste: completedAt sentinel mirrors core
+          // (0 = unchecked checkbox, a timestamp = checked).
+          if (item.checkbox) node.completedAt = item.done ? ++now : 0;
         }
         if (item.children.length > 0) createTree(nodeId, item.children);
         lastId = nodeId;
@@ -1633,6 +1636,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           if (!node?.parentId) return clone(outcome());
           node.content = clone(args.content as RichText);
           node.updatedAt = ++now;
+          // Mirror core: the merged first row adopts the pasted checkbox state
+          // only when the renderer forwarded it (it suppresses checkbox/done for a
+          // non-empty target row so an existing line isn't silently checked).
+          const firstMeta = (args.firstMeta ?? {}) as { checkbox?: boolean; done?: boolean };
+          if (firstMeta.checkbox) node.completedAt = firstMeta.done ? ++now : 0;
           createTree(nodeId, args.children as CreateNodeTree[]);
           const parent = nodes.get(node.parentId);
           const index = parent ? parent.children.indexOf(nodeId) + 1 : null;
