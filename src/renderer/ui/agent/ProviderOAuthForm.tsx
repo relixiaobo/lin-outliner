@@ -334,16 +334,30 @@ export function ProviderOAuthForm({
             <ButtonControl className="settings-sheet-secondary" onClick={cancel}>
               Cancel sign-in
             </ButtonControl>
+          ) : connected ? (
+            // Connected: finishing is the main action, so Done is the (rightmost)
+            // primary; re-authenticating is a rare maintenance action and steps back
+            // to secondary. Without this the strong-neutral primary sat on
+            // Re-authenticate, reading as "you must sign in again".
+            <>
+              <ButtonControl className="settings-sheet-secondary" disabled={busy} onClick={signIn}>
+                Re-authenticate
+              </ButtonControl>
+              <ButtonControl className="settings-sheet-primary" disabled={busy} onClick={onClose}>
+                Done
+              </ButtonControl>
+            </>
           ) : (
-            <ButtonControl className="settings-sheet-secondary" disabled={busy} onClick={onClose}>
-              {connected ? 'Done' : 'Cancel'}
-            </ButtonControl>
+            // Disconnected: signing in is the main action.
+            <>
+              <ButtonControl className="settings-sheet-secondary" disabled={busy} onClick={onClose}>
+                Cancel
+              </ButtonControl>
+              <ButtonControl className="settings-sheet-primary" disabled={busy} onClick={signIn}>
+                Sign in to {providerName}
+              </ButtonControl>
+            </>
           )}
-          {!running ? (
-            <ButtonControl className="settings-sheet-primary" disabled={busy} onClick={signIn}>
-              {connected ? 'Re-authenticate' : `Sign in to ${providerName}`}
-            </ButtonControl>
-          ) : null}
         </div>
       </div>
     </>
