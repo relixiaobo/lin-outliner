@@ -181,6 +181,37 @@ export async function upsertProviderConfig(input: AgentProviderConfigInput) {
   return getProviderSettings();
 }
 
+/**
+ * Ensure a provider has a config row in agent-providers.json. The OAuth sign-in
+ * path persists a credential but, unlike the API-key form's `upsertProviderConfig`,
+ * has no step that creates a provider row — so a first-time login would be
+ * orphaned (credential on disk, no selectable provider). Creates a row with the
+ * catalog's default model when none exists; an existing row is left untouched.
+ */
+export async function ensureProviderConfig(providerIdInput: string): Promise<void> {
+  const providerId = normalizeProviderId(providerIdInput);
+  const file = await readProviderFile();
+  if (file.providers.some((provider) => provider.providerId === providerId)) return;
+  const modelId = normalizeModelId(providerId, firstModelId(providerId));
+  file.providers.push({
+    providerId,
+    modelId,
+    reasoningLevel: normalizeReasoningLevel(providerId, modelId, undefined),
+    enabled: true,
+  });
+  file.providers.sort((left, right) => left.providerId.localeCompare(right.providerId));
+  file.activeProviderId ??= file.providers[0]?.providerId;
+  await writeProviderFile(file);
+}
+
+function firstModelId(providerId: string): string {
+  try {
+    return getModels(providerId as KnownProvider)[0]?.id ?? '';
+  } catch {
+    return '';
+  }
+}
+
 export async function deleteProviderConfig(providerIdInput: string) {
   const providerId = normalizeProviderId(providerIdInput);
   const file = await readProviderFile();
@@ -275,11 +306,9 @@ export async function persistOAuthCredential(providerIdInput: string, credential
 /** Remove any stored credential for a provider (oauth sign-out). */
 export async function deleteProviderCredential(providerIdInput: string): Promise<void> {
   const providerId = normalizeProviderId(providerIdInput);
-  const secrets = await readSecretFile();
-  if (providerId in secrets.credentials) {
+  await mutateSecretFile((secrets) => {
     delete secrets.credentials[providerId];
-    await writeSecretFile(secrets);
-  }
+  });
 }
 
 function oauthCredentialsChanged(a: OAuthCredentials, b: OAuthCredentials): boolean {

@@ -1,14 +1,25 @@
 import type {
   OAuthCredentials,
   OAuthLoginCallbacks,
-  OAuthProviderId,
   OAuthProviderInterface,
 } from '@earendil-works/pi-ai';
-import { getOAuthProvider } from '@earendil-works/pi-ai/oauth';
 import type { AgentProviderSettingsView, OAuthLoginEvent, OAuthLoginEventEnvelope } from '../core/types';
-import { deleteProviderCredential, getProviderSettings, persistOAuthCredential } from './agentSettings';
+
+// Pure orchestration: callback bridging, response correlation, cancellation. It
+// imports nothing from Electron, the secret store, or pi-ai's runtime — only
+// types (erased at build). The production composition root that injects the real
+// provider/persist/settings lives in `agentOAuthManager.ts`, so loading this
+// module (e.g. from a unit test) drags in no native dependency.
 
 export type OAuthEventSink = (envelope: OAuthLoginEventEnvelope) => void;
+
+/** Raised when a sign-in is cancelled (flow-level cancel or a per-step undefined answer). */
+class OAuthCancelledError extends Error {
+  constructor() {
+    super('OAuth sign-in cancelled');
+    this.name = 'OAuthCancelledError';
+  }
+}
 
 /**
  * Dependencies are injected so the orchestration (callback bridging, response
@@ -19,6 +30,8 @@ export type OAuthEventSink = (envelope: OAuthLoginEventEnvelope) => void;
 export interface OAuthLoginDeps {
   getProvider: (providerId: string) => OAuthProviderInterface | undefined;
   persist: (providerId: string, credentials: OAuthCredentials) => Promise<void>;
+  /** Create the provider's config row if missing, so a fresh login is selectable. */
+  ensureProviderConfig: (providerId: string) => Promise<void>;
   removeCredential: (providerId: string) => Promise<void>;
   getSettings: () => Promise<AgentProviderSettingsView>;
 }
@@ -26,17 +39,24 @@ export interface OAuthLoginDeps {
 export interface OAuthLoginManager {
   /** Run a provider sign-in; resolves with the updated settings, rejects on failure/cancel. */
   startLogin(providerId: string, emit: OAuthEventSink): Promise<AgentProviderSettingsView>;
-  /** Answer a `prompt` / `select` / `manual-code` event (undefined = the user cancelled). */
+  /** Answer a `prompt` / `select` / `manual-code` event (undefined = the user cancelled that step). */
   respond(requestId: string, value: string | undefined): void;
   /** Abort an in-flight sign-in for a provider. */
   cancel(providerId: string): void;
+  /** Abort every in-flight sign-in (e.g. the config window closed or re-targeted). */
+  cancelAll(): void;
   /** Sign out: drop the stored credential, return the updated settings. */
   logout(providerId: string): Promise<AgentProviderSettingsView>;
 }
 
+interface PendingReply {
+  resolve: (value: string) => void;
+  reject: (error: Error) => void;
+}
+
 interface ActiveSession {
   abort: AbortController;
-  pending: Map<string, (value: string | undefined) => void>;
+  pending: Map<string, PendingReply>;
 }
 
 export function createOAuthLoginManager(deps: OAuthLoginDeps): OAuthLoginManager {
@@ -44,11 +64,13 @@ export function createOAuthLoginManager(deps: OAuthLoginDeps): OAuthLoginManager
   let requestCounter = 0;
 
   function buildCallbacks(providerId: string, session: ActiveSession, emit: OAuthEventSink): OAuthLoginCallbacks {
-    // Emit a reply-needed event and await the renderer's answer (or cancellation).
-    const ask = (build: (requestId: string) => OAuthLoginEvent): Promise<string | undefined> => {
+    // Emit a reply-needed event and await the renderer's answer. Rejects (not an
+    // empty string) on cancellation, so login() unwinds cleanly instead of being
+    // fed a blank code that some provider loops surface as "missing code".
+    const ask = (build: (requestId: string) => OAuthLoginEvent): Promise<string> => {
       const requestId = `oauth:${providerId}:${++requestCounter}`;
-      return new Promise<string | undefined>((resolve) => {
-        session.pending.set(requestId, resolve);
+      return new Promise<string>((resolve, reject) => {
+        session.pending.set(requestId, { resolve, reject });
         emit({ providerId, event: build(requestId) });
       });
     };
@@ -65,9 +87,9 @@ export function createOAuthLoginManager(deps: OAuthLoginDeps): OAuthLoginManager
           },
         }),
       onProgress: (message) => emit({ providerId, event: { kind: 'progress', message } }),
-      onPrompt: async (prompt) =>
-        (await ask((requestId) => ({ kind: 'prompt', requestId, message: prompt.message, placeholder: prompt.placeholder }))) ?? '',
-      onManualCodeInput: async () => (await ask((requestId) => ({ kind: 'manual-code', requestId }))) ?? '',
+      onPrompt: (prompt) =>
+        ask((requestId) => ({ kind: 'prompt', requestId, message: prompt.message, placeholder: prompt.placeholder })),
+      onManualCodeInput: () => ask((requestId) => ({ kind: 'manual-code', requestId })),
       onSelect: (prompt) =>
         ask((requestId) => ({
           kind: 'select',
@@ -88,6 +110,10 @@ export function createOAuthLoginManager(deps: OAuthLoginDeps): OAuthLoginManager
     try {
       const credentials = await provider.login(buildCallbacks(providerId, session, emit));
       await deps.persist(providerId, credentials);
+      // A login with no config row would be orphaned (credential on disk but no
+      // selectable provider). The api-key path upserts a row; the oauth path must
+      // too — do it before getSettings so the returned view shows the connection.
+      await deps.ensureProviderConfig(providerId);
       return await deps.getSettings();
     } finally {
       if (sessions.get(providerId) === session) sessions.delete(providerId);
@@ -96,10 +122,13 @@ export function createOAuthLoginManager(deps: OAuthLoginDeps): OAuthLoginManager
 
   function respond(requestId: string, value: string | undefined): void {
     for (const session of sessions.values()) {
-      const resolve = session.pending.get(requestId);
-      if (resolve) {
+      const pending = session.pending.get(requestId);
+      if (pending) {
         session.pending.delete(requestId);
-        resolve(value);
+        // The renderer only ever answers with a value; undefined means it cancelled
+        // that step, which unwinds the login the same way a flow-level cancel does.
+        if (value === undefined) pending.reject(new OAuthCancelledError());
+        else pending.resolve(value);
         return;
       }
     }
@@ -109,11 +138,15 @@ export function createOAuthLoginManager(deps: OAuthLoginDeps): OAuthLoginManager
     const session = sessions.get(providerId);
     if (!session) return;
     session.abort.abort();
-    // Unblock any awaiting prompt so login() can unwind (undefined = cancelled).
-    for (const [requestId, resolve] of session.pending) {
+    // Reject any awaiting prompt so login() rejects (a clean abort, not a blank answer).
+    for (const [requestId, pending] of session.pending) {
       session.pending.delete(requestId);
-      resolve(undefined);
+      pending.reject(new OAuthCancelledError());
     }
+  }
+
+  function cancelAll(): void {
+    for (const providerId of [...sessions.keys()]) cancel(providerId);
   }
 
   async function logout(providerId: string): Promise<AgentProviderSettingsView> {
@@ -122,12 +155,5 @@ export function createOAuthLoginManager(deps: OAuthLoginDeps): OAuthLoginManager
     return deps.getSettings();
   }
 
-  return { startLogin, respond, cancel, logout };
+  return { startLogin, respond, cancel, cancelAll, logout };
 }
-
-export const oauthLoginManager = createOAuthLoginManager({
-  getProvider: (providerId) => getOAuthProvider(providerId as OAuthProviderId),
-  persist: persistOAuthCredential,
-  removeCredential: deleteProviderCredential,
-  getSettings: getProviderSettings,
-});

@@ -8,7 +8,7 @@ const SETTINGS = { providers: [], availableProviders: [], agent: {} } as unknown
 
 // A fake pi-ai OAuth provider whose login() drives the callbacks: opens an auth
 // URL, shows a device code, asks the user to select, then prompts for a code.
-// `onSelect` returning undefined (cancel) makes login() reject.
+// A cancelled step makes the awaited callback reject, so login() rejects.
 function fakeProvider(): OAuthProviderInterface {
   return {
     id: 'github-copilot',
@@ -19,7 +19,6 @@ function fakeProvider(): OAuthProviderInterface {
       cb.onAuth({ url: 'https://example.test/auth' });
       cb.onDeviceCode({ userCode: 'WXYZ-1234', verificationUri: 'https://example.test/device', expiresInSeconds: 900 });
       const choice = await cb.onSelect({ message: 'Pick an org', options: [{ id: 'org-a', label: 'Org A' }] });
-      if (choice === undefined) throw new Error('cancelled');
       const code = await cb.onPrompt({ message: 'Paste code' });
       return { refresh: 'refresh-token', access: `access:${choice}:${code}`, expires: 4242 };
     },
@@ -27,18 +26,23 @@ function fakeProvider(): OAuthProviderInterface {
 }
 
 let persisted: Array<[string, OAuthCredentials]>;
+let ensured: string[];
 let removed: string[];
 let provider: OAuthProviderInterface | undefined;
 let manager: OAuthLoginManager;
 
 beforeEach(() => {
   persisted = [];
+  ensured = [];
   removed = [];
   provider = fakeProvider();
   manager = createOAuthLoginManager({
     getProvider: (id) => (id === provider?.id ? provider : undefined),
     persist: async (id, creds) => {
       persisted.push([id, creds]);
+    },
+    ensureProviderConfig: async (id) => {
+      ensured.push(id);
     },
     removeCredential: async (id) => {
       removed.push(id);
@@ -67,6 +71,9 @@ describe('oauth login manager', () => {
     expect(persisted).toEqual([
       ['github-copilot', { refresh: 'refresh-token', access: 'access:org-a:5678', expires: 4242 }],
     ]);
+    // A successful login must create the provider's config row, or the credential
+    // is orphaned (on disk but not selectable).
+    expect(ensured).toEqual(['github-copilot']);
     expect(events.map((e) => e.event.kind)).toEqual(['auth', 'device-code', 'select', 'prompt']);
 
     const deviceCode = events.find((e) => e.event.kind === 'device-code');
