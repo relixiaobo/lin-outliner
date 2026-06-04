@@ -712,13 +712,22 @@ function emptyEditorState(): EditorState {
   });
 }
 
-function editorStateFromText(text: string): EditorState {
+// Map plain text to inline paragraph content: one text node per non-empty line,
+// a hardBreak between consecutive lines. `\r\n?` is normalized first so CRLF text
+// (pasted from another app, or a loaded draft) never leaves a stray carriage
+// return inside a node.
+function linesToInlineNodes(text: string): PMNode[] {
   const nodes: PMNode[] = [];
-  const lines = text.split('\n');
+  const lines = text.replace(/\r\n?/gu, '\n').split('\n');
   lines.forEach((line, index) => {
     if (line) nodes.push(agentComposerSchema.text(line));
     if (index < lines.length - 1) nodes.push(agentComposerSchema.nodes.hardBreak.create());
   });
+  return nodes;
+}
+
+function editorStateFromText(text: string): EditorState {
+  const nodes = linesToInlineNodes(text);
   return EditorState.create({
     doc: agentComposerSchema.nodes.doc.create(
       null,
@@ -941,12 +950,7 @@ function insertHardBreak(view: EditorView) {
 // hardBreak so multi-line content survives the single-paragraph schema. Mirrors
 // how `editorStateFromText` builds the paragraph body from a draft string.
 function insertPlainTextWithBreaks(view: EditorView, text: string): void {
-  const nodes: PMNode[] = [];
-  const lines = text.replace(/\r\n?/gu, '\n').split('\n');
-  lines.forEach((line, index) => {
-    if (line) nodes.push(agentComposerSchema.text(line));
-    if (index < lines.length - 1) nodes.push(agentComposerSchema.nodes.hardBreak.create());
-  });
+  const nodes = linesToInlineNodes(text);
   if (nodes.length === 0) return;
   const slice = new Slice(Fragment.fromArray(nodes), 0, 0);
   view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView());
