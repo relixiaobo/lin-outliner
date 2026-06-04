@@ -64,6 +64,15 @@ Ordered by priority; lower items may depend on higher ones.
   unresolved questions across restart? edit-message scope? clarify contract?). Build
   on the merged path-first attachment model (#86); see the plan's "Integration notes"
   + "Directional decisions outstanding". `docs/plans/agent-ask-user-question-tool.md`.
+- **agent-import-skill** (P1, plan ratified, PR #98) — agent data-import capability:
+  bundled deterministic adapters (Tana reference, validated against the real
+  10,627-node export) for known formats + agent-authored parsers for unknown ones;
+  staging-first, undoable apply via a new `import_apply` tool. **Content tier =
+  zero-protocol; Medium/Full need a per-node id back-channel** — default to option C
+  (position-recovery, no protocol change), escalate if promoting to option B
+  (protocol surface → interface-first + ratify). Soft-depends on `ask_user_question`
+  (degrades to conversational turns until it exists). See
+  `docs/plans/agent-import-skill.md`.
 - **sidebar-pinned-nodes** (P2, **unblocked — workspace-tabs-to-single-pane landed in PR #85**) —
   implement the stubbed Pinned section: pin from right-click on BOTH outliner and
   sidebar node rows; persist across restart. Recommended storage = renderer layout
