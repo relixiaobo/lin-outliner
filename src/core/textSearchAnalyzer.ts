@@ -176,7 +176,6 @@ export function buildTextSearchSnippet(
 export function textSearchTextMatchesQuery(normalizedText: string, analysis: TextSearchQueryAnalysis): boolean {
   if (!normalizedText || !analysis.normalized || analysis.terms.length === 0) return false;
   if (normalizedText.includes(analysis.normalized)) return true;
-  if (analysis.hasCjk) return false;
   return analysis.terms.every((term) => normalizedText.includes(term));
 }
 

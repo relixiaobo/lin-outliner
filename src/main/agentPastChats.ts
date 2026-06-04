@@ -5,7 +5,6 @@ import {
 } from '../core/agentEventLog';
 import {
   analyzeTextSearchQuery,
-  buildTextSearchSnippet,
   normalizeSearchText,
   textSearchTextMatchesQuery,
   type TextSearchQueryAnalysis,
@@ -491,11 +490,37 @@ function scorePastChatText(text: string, analysis: TextSearchQueryAnalysis): Pas
   if (firstMatchIndex >= 0) score += Math.max(0, 8 - firstMatchIndex / 40);
   return {
     score,
-    snippet: buildTextSearchSnippet([{ normalized }], analysis, {
-      beforeChars: Math.floor(SEARCH_SNIPPET_CHARS / 2),
-      afterChars: Math.ceil(SEARCH_SNIPPET_CHARS / 2),
-    }),
+    snippet: buildPastChatSnippet(text, analysis),
   };
+}
+
+function buildPastChatSnippet(text: string, analysis: TextSearchQueryAnalysis): string {
+  const normalized = normalizeSearchText(text);
+  let matchIndex = normalized.indexOf(analysis.normalized);
+  let matchTerm = matchIndex >= 0 ? analysis.normalized : '';
+  for (const term of analysis.terms) {
+    const index = normalized.indexOf(term);
+    if (index >= 0 && (matchIndex < 0 || index < matchIndex)) {
+      matchIndex = index;
+      matchTerm = term;
+    }
+  }
+
+  const source = text.replace(/\s+/g, ' ').trim();
+  if (matchIndex < 0) return source.slice(0, SEARCH_SNIPPET_CHARS);
+  const half = Math.floor((SEARCH_SNIPPET_CHARS - matchTerm.length) / 2);
+  const start = Math.max(0, matchIndex - half);
+  const end = Math.min(source.length, start + SEARCH_SNIPPET_CHARS);
+  return `${start > 0 ? '...' : ''}${highlightPastChatSnippet(source.slice(start, end), analysis)}${end < source.length ? '...' : ''}`;
+}
+
+function highlightPastChatSnippet(text: string, analysis: TextSearchQueryAnalysis): string {
+  let highlighted = text;
+  for (const term of [...analysis.terms].sort((left, right) => right.length - left.length)) {
+    if (!term) continue;
+    highlighted = highlighted.replace(new RegExp(escapeRegExp(term), 'gi'), (match) => `<mark>${match}</mark>`);
+  }
+  return highlighted;
 }
 
 function firstTextSearchMatchIndex(
@@ -531,6 +556,10 @@ function summarizeJson(value: unknown): string {
   const text = JSON.stringify(value);
   if (!text) return '';
   return text.length > 180 ? `${text.slice(0, 180).trimEnd()}...` : text;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function isoTime(value: number): string {

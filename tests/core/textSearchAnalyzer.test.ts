@@ -48,6 +48,9 @@ describe('text search analyzer', () => {
     expect(textSearchTextHasCjk('天气')).toBe(true);
     expect(textSearchTextMatchesQuery(normalizeSearchText('成都天气预报'), analysis)).toBe(true);
     expect(textSearchTextMatchesQuery(normalizeSearchText('成都项目 天气归档'), analysis)).toBe(false);
+
+    const spaced = analyzeTextSearchQuery('成都 天气');
+    expect(textSearchTextMatchesQuery(normalizeSearchText('成都项目 今天 天气归档'), spaced)).toBe(true);
   });
 
   test('matches Latin text by full phrase or verified all-term fallback', () => {
