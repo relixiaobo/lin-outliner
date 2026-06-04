@@ -9,7 +9,7 @@ import {
 } from '@earendil-works/pi-ai';
 import type { Api, KnownProvider, Model, OAuthCredentials, OAuthProviderId, SimpleStreamOptions } from '@earendil-works/pi-ai';
 import { getOAuthApiKey, getOAuthProvider } from '@earendil-works/pi-ai/oauth';
-import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type {
   AgentModelOption,
@@ -112,7 +112,7 @@ export interface AgentProviderRuntimeConfig extends AgentProviderConfig {
 }
 
 export async function getProviderSettings(): Promise<AgentProviderSettingsView> {
-  return toSettingsView(await readProviderFile(), await readSecretFile());
+  return toSettingsView(await readProviderFile(), await readSecretFileSafe());
 }
 
 export async function getAgentRuntimeSettings(): Promise<AgentRuntimeSettings> {
@@ -121,7 +121,7 @@ export async function getAgentRuntimeSettings(): Promise<AgentRuntimeSettings> {
 
 export async function getActiveProviderRuntimeConfig(): Promise<AgentProviderRuntimeConfig | null> {
   const file = await readProviderFile();
-  const secrets = await readSecretFile();
+  const secrets = await readSecretFileSafe();
   const active = file.providers.find((provider) => provider.providerId === file.activeProviderId && providerHasCredential(provider, secrets))
     ?? file.providers.find((provider) => providerHasCredential(provider, secrets))
     ?? null;
@@ -189,11 +189,9 @@ export async function deleteProviderConfig(providerIdInput: string) {
   if (file.providers.length === previousLength) throw new Error(`provider not found: ${providerId}`);
   if (file.activeProviderId === providerId) file.activeProviderId = file.providers[0]?.providerId;
   await writeProviderFile(file);
-  const secrets = await readSecretFile();
-  if (providerId in secrets.credentials) {
+  await mutateSecretFile((secrets) => {
     delete secrets.credentials[providerId];
-    await writeSecretFile(secrets);
-  }
+  });
   return getProviderSettings();
 }
 
@@ -211,28 +209,28 @@ export async function setActiveProvider(providerIdInput: string) {
 export async function setProviderApiKey(providerIdInput: string, apiKeyInput: string): Promise<AgentProviderSecretStatus> {
   const providerId = normalizeProviderId(providerIdInput);
   const apiKey = apiKeyInput.trim();
-  const secrets = await readSecretFile();
-  if (apiKey) {
-    secrets.credentials[providerId] = { type: 'api_key', key: apiKey };
-  } else if (secrets.credentials[providerId]?.type === 'api_key') {
-    // Clearing the key field removes only a stored key — never an oauth login.
-    delete secrets.credentials[providerId];
-  }
-  await writeSecretFile(secrets);
+  await mutateSecretFile((secrets) => {
+    if (apiKey) {
+      secrets.credentials[providerId] = { type: 'api_key', key: apiKey };
+    } else if (secrets.credentials[providerId]?.type === 'api_key') {
+      // Clearing the key field removes only a stored key — never an oauth login.
+      delete secrets.credentials[providerId];
+    }
+  });
   return { providerId, hasApiKey: !!apiKey };
 }
 
 export async function deleteProviderApiKey(providerIdInput: string): Promise<AgentProviderSecretStatus> {
   const providerId = normalizeProviderId(providerIdInput);
-  const secrets = await readSecretFile();
-  if (secrets.credentials[providerId]?.type === 'api_key') delete secrets.credentials[providerId];
-  await writeSecretFile(secrets);
+  await mutateSecretFile((secrets) => {
+    if (secrets.credentials[providerId]?.type === 'api_key') delete secrets.credentials[providerId];
+  });
   return { providerId, hasApiKey: false };
 }
 
 export async function getProviderSecretStatus(providerIdInput: string): Promise<AgentProviderSecretStatus> {
   const providerId = normalizeProviderId(providerIdInput);
-  const secrets = await readSecretFile();
+  const secrets = await readSecretFileSafe();
   return { providerId, hasApiKey: secrets.credentials[providerId]?.type === 'api_key' };
 }
 
@@ -247,7 +245,7 @@ export async function getProviderSecretStatus(providerIdInput: string): Promise<
 export async function getProviderApiKey(providerIdInput: string): Promise<string | undefined> {
   try {
     const providerId = normalizeProviderId(providerIdInput);
-    const secrets = await readSecretFile();
+    const secrets = await readSecretFileSafe();
     const cred = secrets.credentials[providerId];
     if (cred?.type === 'api_key') return cred.key;
     if (cred?.type === 'oauth') {
@@ -269,9 +267,9 @@ export async function getProviderApiKey(providerIdInput: string): Promise<string
 /** Persist an oauth login / a rotated token. The only writer of oauth credentials. */
 export async function persistOAuthCredential(providerIdInput: string, credentials: OAuthCredentials): Promise<void> {
   const providerId = normalizeProviderId(providerIdInput);
-  const secrets = await readSecretFile();
-  secrets.credentials[providerId] = { type: 'oauth', ...credentials };
-  await writeSecretFile(secrets);
+  await mutateSecretFile((secrets) => {
+    secrets.credentials[providerId] = { type: 'oauth', ...credentials };
+  });
 }
 
 function oauthCredentialsChanged(a: OAuthCredentials, b: OAuthCredentials): boolean {
@@ -462,19 +460,50 @@ async function writeProviderFile(file: ProviderConfigFile) {
   await writeJsonFile(providerPath(), file, false);
 }
 
+/**
+ * Signals that an encrypted secrets file exists but cannot be read right now —
+ * safeStorage is unavailable or decryption failed (keychain locked, key rotated).
+ * Kept distinct from "no secrets" so the write path can REFUSE to overwrite a blob
+ * it could not read: transient unavailability must never become permanent loss.
+ */
+class SecretsUnreadableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SecretsUnreadableError';
+  }
+}
+
 async function readSecretFile(): Promise<SecretFile> {
   const envelope = await readJsonOrDefault<SecretEnvelope>(secretPath(), {});
   if (typeof envelope.enc === 'string') {
     const store = activeSafeStorage();
-    if (!store?.isEncryptionAvailable()) return { credentials: {} };
-    try {
-      const json = store.decryptString(Buffer.from(envelope.enc, 'base64'));
-      return normalizeSecretFile(JSON.parse(json));
-    } catch {
-      return { credentials: {} };
+    if (!store?.isEncryptionAvailable()) {
+      throw new SecretsUnreadableError('safeStorage is unavailable; refusing to read encrypted secrets');
     }
+    let json: string;
+    try {
+      json = store.decryptString(Buffer.from(envelope.enc, 'base64'));
+    } catch {
+      throw new SecretsUnreadableError('failed to decrypt secrets');
+    }
+    return normalizeSecretFile(JSON.parse(json));
   }
   return normalizeSecretFile(envelope);
+}
+
+/**
+ * Read for read-only consumers (settings view, status, key resolution): an
+ * unreadable encrypted blob degrades to "no credentials" so the UI still renders
+ * (the real credentials reappear once the keychain unlocks). The WRITE path uses
+ * the throwing `readSecretFile` so it never clobbers a blob it could not read.
+ */
+async function readSecretFileSafe(): Promise<SecretFile> {
+  try {
+    return await readSecretFile();
+  } catch (error) {
+    if (error instanceof SecretsUnreadableError) return { credentials: {} };
+    throw error;
+  }
 }
 
 async function writeSecretFile(file: SecretFile) {
@@ -483,6 +512,36 @@ async function writeSecretFile(file: SecretFile) {
     ? { enc: store.encryptString(JSON.stringify(file)).toString('base64') }
     : { credentials: file.credentials };
   await writeJsonFile(secretPath(), envelope, true);
+}
+
+// Per-path write serialization. Every secret-file mutation is read-modify-write,
+// and `getProviderApiKey` may persist a rotated token concurrently with a login
+// save or another provider's refresh. Without serialization each writer serializes
+// the WHOLE map, so the last write silently drops the other's just-saved update
+// (and both race on the same temp file). `mutateSecretFile` runs read→mutate→write
+// under a per-path lock so each mutation merges against the latest on-disk state.
+const fileWriteChains = new Map<string, Promise<unknown>>();
+
+function withFileLock<T>(path: string, task: () => Promise<T>): Promise<T> {
+  const prior = fileWriteChains.get(path) ?? Promise.resolve();
+  const run = prior.then(task, task);
+  // Keep the stored tail from rejecting — a failed task must not poison the lock.
+  fileWriteChains.set(path, run.then(() => undefined, () => undefined));
+  return run;
+}
+
+/**
+ * Serialized read-modify-write of the secret file. The read uses the throwing
+ * `readSecretFile`, so when the existing blob is unreadable the mutation aborts
+ * instead of overwriting it (the #5 data-loss guard).
+ */
+async function mutateSecretFile(mutator: (file: SecretFile) => void): Promise<SecretFile> {
+  return withFileLock(secretPath(), async () => {
+    const file = await readSecretFile();
+    mutator(file);
+    await writeSecretFile(file);
+    return file;
+  });
 }
 
 function normalizeSecretFile(value: SecretEnvelope): SecretFile {
@@ -507,10 +566,19 @@ async function writeJsonFile(path: string, value: unknown, privateFile: boolean)
   if (privateFile && process.platform !== 'win32') await chmod(path, 0o600);
 }
 
+let atomicWriteCounter = 0;
+
 async function atomicWrite(path: string, data: string) {
-  const tmp = `${path}.tmp`;
-  await writeFile(tmp, data);
-  await rename(tmp, path);
+  // Unique temp name per write so two in-flight writes to the same path never
+  // clobber each other's temp file (defense in depth alongside the write lock).
+  const tmp = `${path}.${process.pid}.${++atomicWriteCounter}.tmp`;
+  try {
+    await writeFile(tmp, data);
+    await rename(tmp, path);
+  } catch (error) {
+    await rm(tmp, { force: true });
+    throw error;
+  }
 }
 
 function providerPath() {
@@ -563,8 +631,10 @@ export async function testProviderConnection(input: {
 
     return { success: true, message: 'Connection successful.' };
   } catch (error: any) {
-    console.error('Test connection failed:', error);
     const errMsg = error?.message || String(error);
+    // Log only the message, never the raw error: provider SDK errors can embed the
+    // Authorization header / API key, and oauth/refresh keys now route through here.
+    console.error('Test connection failed:', errMsg);
     let message = `Connection failed: ${errMsg}`;
     let statusCode: number | undefined;
 

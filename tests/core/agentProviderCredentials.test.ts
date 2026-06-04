@@ -124,6 +124,21 @@ describe('provider credential resolver', () => {
     };
     expect(await getProviderApiKey('anthropic')).toBeUndefined();
   });
+
+  test('serializes concurrent writes so cross-provider updates are not lost', async () => {
+    // Without per-path serialization each writer read the same empty map and the
+    // last write would drop the others. The lock makes them merge.
+    await Promise.all([
+      setProviderApiKey('openai', 'sk-openai'),
+      persistOAuthCredential('anthropic', { refresh: 'r', access: 'a', expires: 5 }),
+      setProviderApiKey('groq', 'sk-groq'),
+    ]);
+    expect(await getProviderApiKey('openai')).toBe('sk-openai');
+    expect(await getProviderApiKey('groq')).toBe('sk-groq');
+    // The anthropic oauth login survived the concurrent api-key writes.
+    oauthApiKeyImpl = async () => ({ newCredentials: { refresh: 'r', access: 'a', expires: 5 }, apiKey: 'oauth-k' });
+    expect(await getProviderApiKey('anthropic')).toBe('oauth-k');
+  });
 });
 
 describe('secret file at rest', () => {
@@ -140,5 +155,25 @@ describe('secret file at rest', () => {
       // chmod-600 plaintext fallback (safeStorage unavailable).
       expect(onDisk.credentials?.openai).toEqual({ type: 'api_key', key: 'sk-secret' });
     }
+  });
+
+  test('refuses to overwrite an encrypted blob it cannot read (no silent data loss)', async () => {
+    await persistOAuthCredential('anthropic', { refresh: 'r', access: 'a', expires: 10 });
+    const onDisk = JSON.parse(await readFile(secretPath(), 'utf8')) as { enc?: string };
+    if (typeof onDisk.enc !== 'string') return; // only meaningful on the encrypted path
+    const before = await readFile(secretPath(), 'utf8');
+
+    // A later launch with the keychain locked / key rotated.
+    encryptionAvailable = false;
+    // Reads degrade to "no credential" rather than crashing the UI…
+    expect(await getProviderApiKey('anthropic')).toBeUndefined();
+    // …and a write REFUSES rather than clobbering the unreadable blob.
+    await expect(setProviderApiKey('openai', 'sk-new')).rejects.toThrow();
+    expect(await readFile(secretPath(), 'utf8')).toBe(before);
+
+    // Once the keychain is back, the original credential is intact.
+    encryptionAvailable = true;
+    oauthApiKeyImpl = async () => ({ newCredentials: { refresh: 'r', access: 'a', expires: 10 }, apiKey: 'k' });
+    expect(await getProviderApiKey('anthropic')).toBe('k');
   });
 });
