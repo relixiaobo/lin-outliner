@@ -142,6 +142,14 @@ merged foundation:
       labels are localized. Kept English by design: agent context (`userViewContext`),
       clipboard serialization (`selectionActions`), node-content data (search/capture node
       titles), search-engine internals, and the runtime session-title sentinel's matching.
+- [x] **B13 — Whole native menu bar follows the app language** (self-review): bare
+      `role`s take their title from the OS language, so Edit/Window were English even
+      under a 简体中文 pick while custom View read 视图. Expanded the `editMenu` /
+      `windowMenu` roles into explicit role+label items and labelled View's items + the
+      Help-menu title from the effective locale. Kept OS-localized by design: the dynamic
+      `togglefullscreen` title and macOS-injected items (Services, Emoji & Symbols / Start
+      Dictation, the live Window list). PM-ratified 2026-06-04 (in-app picker over the
+      native OS-language convention).
 - [ ] **Remaining rare/edge fallbacks** (deferred, low impact): empty field-def / option
       labels (`outlinerRows`, `systemFields`, `fieldOptions` → `'Untitled'`/`'Field'`) only
       surface for empty-content definitions, and the ProseMirror-schema reference fallbacks

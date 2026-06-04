@@ -306,12 +306,17 @@ function effectiveLocale(): Locale {
 // Standard application menu (A2b). macOS gets the conventional App / Edit / View
 // / Window / Help bar with Preferences on Cmd+,; other platforms drop the App
 // menu and surface Settings under File (no app menu exists there). Dev-only View
-// items (reload, devtools) are gated on a source run; everything else is
-// role-based so the OS owns the labels, accelerators, and enable state.
+// items (reload, devtools) are gated on a source run.
 //
-// Role-based submenus (editMenu, windowMenu, the help role) are localized by the OS
-// automatically; only our custom labels need translating, which we pull from the
-// effective locale. The menu is rebuilt on language change (see the set-language IPC).
+// Roles still carry the native behavior, accelerators, and enable state, but a
+// role's *label* defaults to the OS language, not the app's. So we expand the
+// role-based bars (Edit / Window) into explicit role+label items and give View's
+// standard items + the Help-menu title explicit labels too — the whole bar then
+// follows the effective locale (PM decision 2026-06-04: in-app language wins over
+// the macOS-native OS-language convention, since we expose an in-app picker). The
+// lone exception is `togglefullscreen`: its role title is dynamic ("Enter" vs
+// "Exit Full Screen"), which a static label would freeze, so it stays role-only.
+// The menu is rebuilt on language change (see the set-language IPC).
 function buildApplicationMenu(): Electron.Menu {
   const isMac = process.platform === 'darwin';
   const isDev = !app.isPackaged;
@@ -320,16 +325,17 @@ function buildApplicationMenu(): Electron.Menu {
   const viewSubmenu: Electron.MenuItemConstructorOptions[] = [
     ...(isDev
       ? ([
-          { role: 'reload' },
-          { role: 'forceReload' },
-          { role: 'toggleDevTools' },
+          { role: 'reload', label: t.reload },
+          { role: 'forceReload', label: t.forceReload },
+          { role: 'toggleDevTools', label: t.toggleDevTools },
           { type: 'separator' },
         ] satisfies Electron.MenuItemConstructorOptions[])
       : []),
-    { role: 'resetZoom' },
-    { role: 'zoomIn' },
-    { role: 'zoomOut' },
+    { role: 'resetZoom', label: t.resetZoom },
+    { role: 'zoomIn', label: t.zoomIn },
+    { role: 'zoomOut', label: t.zoomOut },
     { type: 'separator' },
+    // role-only by design: keeps macOS's dynamic "Enter/Exit Full Screen" title.
     { role: 'togglefullscreen' },
   ];
 
@@ -373,11 +379,63 @@ function buildApplicationMenu(): Electron.Menu {
     });
   }
 
-  template.push({ role: 'editMenu' });
+  // Manual equivalent of `role: 'editMenu'` (Electron's documented expansion) with
+  // explicit labels. macOS still auto-injects Emoji & Symbols / Start Dictation at
+  // the bottom; those stay OS-localized.
+  template.push({
+    label: t.edit,
+    submenu: [
+      { role: 'undo', label: t.undo },
+      { role: 'redo', label: t.redo },
+      { type: 'separator' },
+      { role: 'cut', label: t.cut },
+      { role: 'copy', label: t.copy },
+      { role: 'paste', label: t.paste },
+      ...(isMac
+        ? ([
+            { role: 'pasteAndMatchStyle', label: t.pasteAndMatchStyle },
+            { role: 'delete', label: t.delete },
+            { role: 'selectAll', label: t.selectAll },
+            { type: 'separator' },
+            {
+              label: t.speech,
+              submenu: [
+                { role: 'startSpeaking', label: t.startSpeaking },
+                { role: 'stopSpeaking', label: t.stopSpeaking },
+              ],
+            },
+          ] satisfies Electron.MenuItemConstructorOptions[])
+        : ([
+            { role: 'delete', label: t.delete },
+            { type: 'separator' },
+            { role: 'selectAll', label: t.selectAll },
+          ] satisfies Electron.MenuItemConstructorOptions[])),
+    ],
+  });
   template.push({ label: t.view, submenu: viewSubmenu });
-  template.push({ role: 'windowMenu' });
+  // Manual equivalent of `role: 'windowMenu'`; the trailing `role: 'window'` keeps
+  // macOS appending the live window list under the localized title.
+  template.push({
+    label: t.window,
+    submenu: isMac
+      ? [
+          { role: 'minimize', label: t.minimize },
+          { role: 'zoom', label: t.zoom },
+          { type: 'separator' },
+          { role: 'front', label: t.front },
+          { type: 'separator' },
+          { role: 'window' },
+        ]
+      : [
+          { role: 'minimize', label: t.minimize },
+          { role: 'zoom', label: t.zoom },
+          { type: 'separator' },
+          { role: 'close' },
+        ],
+  });
   template.push({
     role: 'help',
+    label: t.helpTitle,
     submenu: [
       {
         label: t.help({ app: APP_NAME }),
