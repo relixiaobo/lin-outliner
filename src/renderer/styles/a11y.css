@@ -60,6 +60,10 @@
    0.01ms (not 0) keeps transitionend/animationend events firing; the iteration
    cap collapses infinite loops (e.g. the reference-conversion pulse) to one. */
 @media (prefers-reduced-motion: reduce) {
+  :root {
+    --chrome-zone-backing-delay: 0ms;
+  }
+
   *,
   *::before,
   *::after {

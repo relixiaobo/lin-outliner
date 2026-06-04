@@ -220,6 +220,46 @@ test.describe('workspace layout resizing', () => {
     expect(collapsed.sidebarColor).not.toBe(initial.sidebarColor);
   });
 
+  test('agent collapse delays the corner chrome backing until the rail slides out', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+
+    const zone = page.locator('.window-chrome-zone-right');
+    await expect.poll(async () => zone.evaluate((element) => (
+      getComputedStyle(element).backgroundColor
+    ))).toBe('rgba(0, 0, 0, 0)');
+
+    await page.getByTitle('Collapse agent').click();
+    await expect(page.getByTitle('Expand agent')).toBeVisible();
+
+    await expect.poll(async () => zone.evaluate((element) => (
+      getComputedStyle(element).transitionDelay
+    ))).toBe('0.16s');
+
+    await page.waitForTimeout(180);
+    await expect.poll(async () => zone.evaluate((element) => (
+      getComputedStyle(element).backgroundColor
+    ))).not.toBe('rgba(0, 0, 0, 0)');
+  });
+
+  test('reduced motion removes the corner chrome backing delay', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+
+    const zone = page.locator('.window-chrome-zone-right');
+    await expect.poll(async () => zone.evaluate((element) => (
+      getComputedStyle(element).backgroundColor
+    ))).toBe('rgba(0, 0, 0, 0)');
+
+    await page.getByTitle('Collapse agent').click();
+    await expect(page.getByTitle('Expand agent')).toBeVisible();
+
+    await expect.poll(async () => zone.evaluate((element) => (
+      getComputedStyle(element).transitionDelay
+    ))).toBe('0s');
+    await expect.poll(async () => zone.evaluate((element) => (
+      getComputedStyle(element).backgroundColor
+    ))).not.toBe('rgba(0, 0, 0, 0)');
+  });
+
   test('single panel centers bounded content and fills when narrow', async ({ page }) => {
     await page.setViewportSize({ width: 1900, height: 900 });
 
