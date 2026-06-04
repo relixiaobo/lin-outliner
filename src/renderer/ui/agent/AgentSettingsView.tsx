@@ -13,6 +13,8 @@ import type {
 import { api } from '../../api/client';
 import { AddIcon, ChevronLeftIcon, ChevronRightIcon, ICON_SIZE, WarningIcon } from '../icons';
 import type { ThemeMode } from '../../../core/theme';
+import { SUPPORTED_LOCALES, type Locale } from '../../../core/locale';
+import { useI18n } from '../../i18n/I18nProvider';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
 import { SegmentedControl } from '../primitives/SegmentedControl';
@@ -136,19 +138,10 @@ const EMPTY_DRAFT: DraftConfig = {
   disabledAgents: [],
 };
 
-const THEME_OPTIONS: ReadonlyArray<{ value: ThemeMode; label: string }> = [
-  { value: 'system', label: 'System' },
-  { value: 'light', label: 'Light' },
-  { value: 'dark', label: 'Dark' },
-];
-
-const SETTINGS_CATEGORIES: Array<{ id: SettingsCategory; label: string; hint: string }> = [
-  { id: 'general', label: 'General', hint: 'Appearance & Theme' },
-  { id: 'providers', label: 'Providers', hint: 'Connections & API keys' },
-  { id: 'permissions', label: 'Permissions', hint: 'Tool Allow / Ask Rules' },
-  { id: 'skills', label: 'Skills', hint: 'Extension Capabilities' },
-  { id: 'agents', label: 'Agent Profiles', hint: 'Persona Definitions' },
-];
+// Theme segment values and category rail order; their visible labels + hints are
+// localized at render (settings.general.theme* and settings.categories.*).
+const THEME_VALUES: readonly ThemeMode[] = ['system', 'light', 'dark'];
+const SETTINGS_CATEGORY_IDS: readonly SettingsCategory[] = ['general', 'providers', 'permissions', 'skills', 'agents'];
 
 const COMMON_PERMISSION_RULES: Array<{
   ruleValue: string;
@@ -256,6 +249,14 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
   // permission save flow: it applies immediately across all windows via the main
   // process (nativeTheme.themeSource) and persists, so there is no Save step.
   const [themeMode, setThemeMode] = useState<ThemeMode>('system');
+  // Display language: the picker reads/writes the shared i18n context (seeded before
+  // first paint, broadcast across windows), so it applies instantly like the theme.
+  const { locale, t, setLocale } = useI18n();
+  const themeOptions = useMemo(() => {
+    const g = t.settings.general;
+    const labels: Record<ThemeMode, string> = { system: g.themeSystem, light: g.themeLight, dark: g.themeDark };
+    return THEME_VALUES.map((value) => ({ value, label: labels[value] }));
+  }, [t]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -621,45 +622,64 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
         </div>
       </div>
       {loading ? (
-        <div className="agent-settings-empty">Loading…</div>
+        <div className="agent-settings-empty">{t.settings.loading}</div>
       ) : (
         <div className="settings-layout">
           <aside className="settings-rail">
-            <h2 className="settings-rail-title" id="agent-settings-title">Settings</h2>
-            <nav className="settings-nav" aria-label="Settings categories">
-              {SETTINGS_CATEGORIES.map((item) => (
-                <button
-                  aria-current={category === item.id ? 'page' : undefined}
-                  className={`settings-nav-item ${category === item.id ? 'is-active' : ''}`}
-                  key={item.id}
-                  onClick={() => navigateCategory(item.id)}
-                  type="button"
-                >
-                  <span className="settings-nav-label">{item.label}</span>
-                  <span className="settings-nav-hint">{item.hint}</span>
-                </button>
-              ))}
+            <h2 className="settings-rail-title" id="agent-settings-title">{t.settings.railTitle}</h2>
+            <nav className="settings-nav" aria-label={t.settings.categoriesAriaLabel}>
+              {SETTINGS_CATEGORY_IDS.map((id) => {
+                const cat = t.settings.categories[id];
+                return (
+                  <button
+                    aria-current={category === id ? 'page' : undefined}
+                    className={`settings-nav-item ${category === id ? 'is-active' : ''}`}
+                    key={id}
+                    onClick={() => navigateCategory(id)}
+                    type="button"
+                  >
+                    <span className="settings-nav-label">{cat.label}</span>
+                    <span className="settings-nav-hint">{cat.hint}</span>
+                  </button>
+                );
+              })}
             </nav>
           </aside>
 
           <div className="settings-content">
             {category === 'general' ? (
-              <section className="agent-settings-section settings-general-section" aria-label="General">
+              <section className="agent-settings-section settings-general-section" aria-label={t.settings.categories.general.label}>
                 {/* No <h3> pane title — the rail names the pane; a one-line intro
                     explains it (the Providers model, applied to every pane). */}
-                <p className="settings-section-desc">Appearance and app-wide preferences.</p>
+                <p className="settings-section-desc">{t.settings.general.intro}</p>
 
-                <InsetGroup ariaLabel="Appearance" label="Appearance">
+                <InsetGroup ariaLabel={t.settings.general.appearanceGroup} label={t.settings.general.appearanceGroup}>
                   <InsetRow
-                    label="Theme"
-                    sublabel="Match the system appearance, or always use light or dark."
+                    label={t.settings.general.themeLabel}
+                    sublabel={t.settings.general.themeSublabel}
                     trailing={(
                       <SegmentedControl
-                        label="Theme"
+                        label={t.settings.general.themeLabel}
                         onChange={changeTheme}
-                        options={THEME_OPTIONS}
+                        options={themeOptions}
                         value={themeMode}
                       />
+                    )}
+                    wrap
+                  />
+                  <InsetRow
+                    label={t.settings.general.languageLabel}
+                    sublabel={t.settings.general.languageSublabel}
+                    trailing={(
+                      <SelectControl
+                        label={t.settings.general.languageLabel}
+                        onChange={(event) => setLocale(event.target.value as Locale)}
+                        value={locale}
+                      >
+                        {SUPPORTED_LOCALES.map((entry) => (
+                          <option key={entry.code} value={entry.code}>{entry.nativeName}</option>
+                        ))}
+                      </SelectControl>
                     )}
                     wrap
                   />

@@ -54,6 +54,7 @@ For agent work:
 | `agent-tool-design.md` | Public agent tool protocol and tool behavior contracts. | Adding or changing agent tools. |
 | `agent-tool-permissions.md` | The runtime allow/ask/deny permission policy: action kinds, platform hard blocks, the bash classifier, ask resolution, sensitive-data redlines, the global store, and events. | Changing how tool calls are allowed/asked/denied, hard blocks, the classifier, or the permission store. |
 | `launcher.md` | The global launcher: prewarmed window + NSPanel, hotkey, A3 security posture, the modeless capture/search model, basic-info capture + providers, inline node search, and the `launcher:*` IPC surface. | Changing the launcher window, capture, node search, or its commands/IPC. |
+| `i18n.md` | Internationalization: the typed message layer, locale selection/persistence, the language broadcast + native-menu rebuild, no-flash startup, and how to add a language. | Changing localized text, the language preference, or adding a locale. |
 
 ## Supporting Documents
 

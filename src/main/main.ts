@@ -41,8 +41,11 @@ import { oauthLoginManager } from './agentOAuthManager';
 import { IPC_TRACE_ENABLED, traceIpc } from './ipcTrace';
 import type { AgentProviderConfigInput, AgentRuntimeSettingsInput } from '../core/types';
 import { loadWindowState, trackWindowState } from './windowState';
-import { loadAppPreferences, saveThemePreference } from './appPreferences';
+import { loadAppPreferences, saveLanguagePreference, saveThemePreference } from './appPreferences';
 import { isThemeMode, type ThemeMode } from '../core/theme';
+import { isLocale, LIN_LANGUAGE_CHANGED_CHANNEL, resolveSystemLocale, type Locale } from '../core/locale';
+import { getMessages } from '../core/i18n';
+import { APP_NAME } from '../core/brand';
 import { MAX_RAW_INLINE_IMAGE_BYTES, MAX_STAGED_ATTACHMENT_BYTES } from '../core/agentAttachmentLimits';
 import { safeAttachmentFileName } from '../core/agentAttachmentPaths';
 import { agentAttachmentDir, pruneOldAgentAttachments } from './agentAttachmentMaterialization';
@@ -93,7 +96,6 @@ const IMAGE_FILE_FILTERS = [
   { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'bmp', 'heic'] },
 ];
 
-const APP_NAME = 'Tenon';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const APP_ICON_PNG_PATH = app.isPackaged
   ? join(process.resourcesPath, 'icon.png')
@@ -251,7 +253,7 @@ function attachNativeContextMenu(contents: Electron.WebContents): void {
           template.push({ label: suggestion, click: () => contents.replaceMisspelling(suggestion) });
         }
         template.push({
-          label: 'Add to Dictionary',
+          label: getMessages(effectiveLocale()).menu.addToDictionary,
           click: () => contents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
         });
         template.push({ type: 'separator' });
@@ -294,14 +296,26 @@ function forwardWindowActivity(window: BrowserWindow): void {
   window.webContents.on('did-finish-load', () => send(window.isFocused()));
 }
 
+// The effective UI language: the user's explicit pick, else the nearest supported
+// OS locale. Resolved fresh on each read so the app follows the OS until the user
+// chooses, and a stored pick wins from then on. (core/locale.ts).
+function effectiveLocale(): Locale {
+  return loadAppPreferences().language ?? resolveSystemLocale(app.getLocale());
+}
+
 // Standard application menu (A2b). macOS gets the conventional App / Edit / View
 // / Window / Help bar with Preferences on Cmd+,; other platforms drop the App
 // menu and surface Settings under File (no app menu exists there). Dev-only View
 // items (reload, devtools) are gated on a source run; everything else is
 // role-based so the OS owns the labels, accelerators, and enable state.
+//
+// Role-based submenus (editMenu, windowMenu, the help role) are localized by the OS
+// automatically; only our custom labels need translating, which we pull from the
+// effective locale. The menu is rebuilt on language change (see the set-language IPC).
 function buildApplicationMenu(): Electron.Menu {
   const isMac = process.platform === 'darwin';
   const isDev = !app.isPackaged;
+  const t = getMessages(effectiveLocale()).menu;
 
   const viewSubmenu: Electron.MenuItemConstructorOptions[] = [
     ...(isDev
@@ -335,24 +349,24 @@ function buildApplicationMenu(): Electron.Menu {
     template.push({
       label: APP_NAME,
       submenu: [
-        { role: 'about', label: `About ${APP_NAME}` },
+        { role: 'about', label: t.about({ app: APP_NAME }) },
         { type: 'separator' },
-        { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
+        { label: t.settings, accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
         { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },
-        { role: 'hide', label: `Hide ${APP_NAME}` },
+        { role: 'hide', label: t.hide({ app: APP_NAME }) },
         { role: 'hideOthers' },
         { role: 'unhide' },
         { type: 'separator' },
-        { role: 'quit', label: `Quit ${APP_NAME}` },
+        { role: 'quit', label: t.quit({ app: APP_NAME }) },
       ],
     });
   } else {
     template.push({
-      label: 'File',
+      label: t.file,
       submenu: [
-        { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
+        { label: t.settings, accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
         { type: 'separator' },
         { role: 'quit' },
       ],
@@ -360,17 +374,17 @@ function buildApplicationMenu(): Electron.Menu {
   }
 
   template.push({ role: 'editMenu' });
-  template.push({ label: 'View', submenu: viewSubmenu });
+  template.push({ label: t.view, submenu: viewSubmenu });
   template.push({ role: 'windowMenu' });
   template.push({
     role: 'help',
     submenu: [
       {
-        label: `${APP_NAME} Help`,
+        label: t.help({ app: APP_NAME }),
         click: () => void shell.openExternal('https://github.com/relixiaobo/lin-outliner'),
       },
       {
-        label: 'Report an Issue…',
+        label: t.reportIssue,
         click: () => void shell.openExternal('https://github.com/relixiaobo/lin-outliner/issues'),
       },
     ],
@@ -667,7 +681,7 @@ function openSettingsWindow() {
   // strip — the renderer provides the top drag region. Security defaults (A3) are
   // unchanged.
   settingsWindow = new BrowserWindow({
-    title: `${APP_NAME} Settings`,
+    title: getMessages(effectiveLocale()).window.settingsTitle({ app: APP_NAME }),
     width: 760,
     height: 620,
     minWidth: 560,
@@ -929,6 +943,22 @@ function registerIpc() {
     if (!isThemeMode(mode)) return;
     nativeTheme.themeSource = mode;
     saveThemePreference(mode);
+  });
+  // Language preference. Read synchronously so preload can seed the renderer's first
+  // paint without a flash; setting it persists, broadcasts to every window (open
+  // windows re-render via I18nProvider without a reload), and rebuilds the native
+  // menu in the new locale. Language has no nativeTheme-style free broadcast, so we
+  // push it ourselves. See core/locale.ts.
+  ipcMain.on('lin:get-language-sync', (event) => {
+    event.returnValue = effectiveLocale();
+  });
+  ipcMain.handle('lin:set-language', (_event, raw: unknown): void => {
+    if (!isLocale(raw)) return;
+    saveLanguagePreference(raw);
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send(LIN_LANGUAGE_CHANGED_CHANNEL, raw);
+    }
+    Menu.setApplicationMenu(buildApplicationMenu());
   });
   // Open the per-provider config as its own native (modal child) window.
   ipcMain.handle('lin:open-provider-config', (_event, args?: { providerId?: unknown; mode?: unknown }) => {

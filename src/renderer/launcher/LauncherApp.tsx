@@ -4,6 +4,8 @@ import type { ExternalContext } from '../../core/launcher/context';
 import { buildLauncherItems, deriveActiveIndex, primaryActionLabel, remediationForContext, rowKey, rowView, stepActiveKey } from './launcherModel';
 import type { LauncherItem, LauncherItemAction } from './launcherModel';
 import { iconForItem, LauncherInputIcon, LauncherRemediationIcon } from './launcherIcons';
+import { useT } from '../i18n/I18nProvider';
+import { APP_NAME } from '../../core/brand';
 
 // Raycast-style launcher: ONE always-focused input that is simultaneously a
 // command filter, a live node search, AND a live capture draft (no "pick New
@@ -21,6 +23,7 @@ import { iconForItem, LauncherInputIcon, LauncherRemediationIcon } from './launc
 const NODE_SEARCH_DEBOUNCE_MS = 120;
 
 export function LauncherApp() {
+  const t = useT();
   const inputRef = useRef<HTMLInputElement>(null);
   // Re-entrancy lock so a double Enter / Enter+click can't fire one action twice
   // (open two windows, double-navigate, double-capture).
@@ -188,7 +191,7 @@ export function LauncherApp() {
   const remediation = useMemo(() => remediationForContext(context), [context]);
 
   return (
-    <div className="launcher" role="dialog" aria-label="Tenon Launcher" onKeyDown={onKeyDown}>
+    <div className="launcher" role="dialog" aria-label={t.launcher.rootAriaLabel({ app: APP_NAME })} onKeyDown={onKeyDown}>
       <div className="launcher-inputrow">
         <LauncherInputIcon className="launcher-input-icon" size={18} strokeWidth={1.75} aria-hidden="true" />
         <input
@@ -198,8 +201,8 @@ export function LauncherApp() {
           autoFocus
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Capture, search, or run a command…"
-          aria-label="Launcher query"
+          placeholder={t.launcher.placeholder}
+          aria-label={t.launcher.queryAriaLabel}
           role="combobox"
           aria-expanded={navItems.length > 0}
           aria-controls="launcher-results"
@@ -218,7 +221,7 @@ export function LauncherApp() {
         </div>
       ) : null}
 
-      <div id="launcher-results" className="launcher-body" role="listbox" aria-label="Results">
+      <div id="launcher-results" className="launcher-body" role="listbox" aria-label={t.launcher.resultsAriaLabel}>
         <div className="launcher-body-inner">
           {navItems.map((item, index) => (
             <LauncherRow
