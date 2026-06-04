@@ -675,6 +675,7 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                         label={t.settings.general.languageLabel}
                         onChange={(event) => setLocale(event.target.value as Locale)}
                         value={locale}
+                        variant="popup"
                       >
                         {SUPPORTED_LOCALES.map((entry) => (
                           <option key={entry.code} value={entry.code}>{entry.nativeName}</option>
@@ -743,6 +744,7 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                             label={`${rule.label} permission`}
                             onChange={(event) => setPermissionDecision(rule.ruleValue, event.target.value as 'allow' | 'ask')}
                             value={denied ? 'deny' : decision}
+                            variant="popup"
                           >
                             <option value="ask">Ask first</option>
                             {rule.allowable ? <option value="allow">Always allow</option> : null}
