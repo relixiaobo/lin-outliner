@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../api/client';
-import type { CommandOutcome, NodeId, NodeProjection } from '../../api/types';
+import type { CommandResult, NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex, ToolbarDropdownSection } from '../../state/document';
 import {
   commonTagIdsForTargets,
@@ -411,7 +411,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
           label={textOf(targetNode) || t.common.untitled}
           onClick={() => {
             void props.run(async () => {
-              let lastResult: CommandOutcome | null = null;
+              let lastResult: CommandResult | null = null;
               for (const nodeId of activeMoveToIds) {
                 lastResult = await api.moveNode(nodeId, targetNode.id, null);
               }

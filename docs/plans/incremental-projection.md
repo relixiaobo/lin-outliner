@@ -1,5 +1,5 @@
 ---
-status: draft
+status: in-progress
 priority: P1
 owner: relixiaobo
 created: 2026-06-04
@@ -135,10 +135,15 @@ the held `{ projection, byId, renderRev }` index (folding `useRenderIndex` into 
 
 ### Resync safety valve
 
-Add `getProjectionSnapshot(): { revision, projection }` (IPC `invoke`). The
-renderer requests it if it ever holds a `delta` it can't apply (no prior state, or
-a revision gap main didn't catch). In steady state — one ordered IPC channel, main
-emits in commit order — this never fires; it is belt-and-suspenders.
+The existing `get_projection` command now returns a `ProjectionSnapshot
+{ revision, projection }` (it already round-trips through the renderer as a
+no-op refresh sentinel). The renderer requests it if it ever holds a `delta` it
+can't apply (no prior state, or a revision gap main didn't catch) — see
+`useProjectionStore`'s `resync` fallback. In steady state — one ordered IPC
+channel, main emits in commit order — this never fires; it is
+belt-and-suspenders. (The agent tool host's `documentService.getProjection()`
+stays returning a full `DocumentProjection`, so only the renderer-facing command
+case changed.)
 
 ## Staging (PM-ratified: two PRs)
 
@@ -161,11 +166,17 @@ pass separate:
 - **Structural moves:** a re-parent must include both old and new parent in
   `changedNodeIds`. Verify core already does (it tracks `affectedNodeIds`); add a
   delta test asserting both parents are present.
-- **Removal vs descendants:** removing a subtree — does `changedNodeIds` include
-  every descendant, or just the root? The text-search consumer walks descendants
-  itself (`collectDescendantIds`, `documentService.ts:606`). The renderer reducer
-  must do the same: on `removedIds`, drop the node's descendants from `byId` too.
-  (Open question — confirm core's `changedNodeIds` granularity on subtree delete.)
+- **Removal vs descendants:** *(resolved)* `deleteNode` → `removeSubtreeDirect`
+  deletes the **whole** subtree (`core.ts:2748`), so no child ever survives its
+  parent's removal — the "move a child out, then delete the parent, in one
+  revision" hazard cannot occur, and pruning descendants is always safe. Core's
+  own `patchProjectionCache` (`core.ts:310`) transforms the projection by exactly
+  "reproject the present affected ids, delete the absent ones," and `verifyCaches`
+  (`LIN_VERIFY_CACHE=1` in the suite) asserts that equals a full rebuild — so the
+  `changedNodeIds` set is provably complete. The renderer reducer still prunes
+  each `removedId`'s descendants from the previous `byId` (mirroring the
+  text-search consumer), which is correct whether core lists the root only or
+  every descendant, and is the cheaper, defensive choice.
 - **Whole-tree rewrites** (undo/redo/import) → `requiresFullSearchRebuild` → `full`.
   Covered.
 - **`todayId` rollover** → carried on every delta.
@@ -177,10 +188,25 @@ pass separate:
 
 ## Measurement
 
-Baseline before PR-2 with the existing probe (`renderProbe.ts` /
-`measureRenderIndex` reports `index=` time): capture at a known doc size (e.g.
-2k / 5k / 10k nodes), typing a character. Re-measure after. Expect `index=` to go
-from O(N) to ~flat in doc size. Record numbers in the PR.
+The probe (`renderProbe.ts` / `measureRenderIndex` reports `index=` time) is the
+live in-app metric. For a reproducible before/after at the Core+reducer layer
+(no Electron), `tmp/bench-projection-delta.ts` drives a single-keystroke edit at
+several document sizes and measures both the main-side payload and the renderer
+`index=` cost, old vs new:
+
+| nodes | OLD main stringify | OLD payload | NEW delta cost | NEW payload | OLD index | NEW index |
+|------:|-------------------:|------------:|---------------:|------------:|----------:|----------:|
+|   238 |            0.16 ms |       76 kB |        0.16 ms |       361 B |   0.16 ms |   0.05 ms |
+|  1038 |            0.70 ms |      338 kB |        0.33 ms |       362 B |   0.72 ms |   0.19 ms |
+|  3038 |            1.98 ms |      997 kB |        0.75 ms |       362 B |   2.35 ms |   0.38 ms |
+|  6038 |            4.64 ms |    1984 kB |        1.42 ms |       362 B |   7.03 ms |   1.24 ms |
+
+The headline is the **payload**: ~2 MB → 362 B at 6k nodes (and it crosses IPC
+twice per command), and the renderer `index=` pass drops from 7.0 ms → 1.2 ms
+(~5.7×) by deleting the whole-document `JSON.stringify` signature pass. The
+`index=` cost is not yet flat in doc size — the residual `new Map(prev.byId)` copy
+and `nextRevisions` rebuild are still O(N); PR-B (incremental reverse edges) and
+P3 close the rest.
 
 ## Decisions (PM-ratified)
 
@@ -197,11 +223,15 @@ from O(N) to ~flat in doc size. Record numbers in the PR.
 
 ## Checklist
 
-- [ ] PR-A `ProjectionUpdate` union; `CommandOutcome`/event carry `update`; main
-      boundary builder (delta + full fallback); renderer delta reducer (preserve
-      unchanged-node identity, prune removed subtrees, drop `nodeSignatures`);
-      `getProjectionSnapshot` resync valve; perf before/after
+- [x] PR-A `ProjectionUpdate` union; renderer-facing `CommandResult`/event carry
+      `update`; main boundary builder (`buildProjectionUpdate`: delta + full
+      fallback, per-revision cache, `lastEmittedProjectionRevision` chain);
+      renderer delta reducer (`reduceProjection`: preserve unchanged-node
+      identity, prune removed subtrees, drop `nodeSignatures`); `get_projection`
+      → `ProjectionSnapshot` resync valve; perf before/after captured above
 - [ ] PR-B incremental reverse-edge maps in `renderRev`
-- [ ] delta-application unit tests (identity preserved, subtree-delete prunes,
-      re-parent includes both parents); `renderRev.test.ts` still green
+- [x] delta-application unit tests (`reduceProjection.test.ts`: full seed/rebuild,
+      delta content edit preserves unchanged-node identity + bumps only the
+      affected closure, add node, subtree-delete prunes descendants, duplicate
+      revision is a no-op, gap/no-base → resync); `renderRev.test.ts` still green
 - [ ] fold the shipped design into `docs/spec/` (architecture / projection)

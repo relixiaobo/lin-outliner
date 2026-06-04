@@ -46,7 +46,9 @@ export function armReferenceTypeAhead(params: {
     let cursorTextLength = 0;
     const initialText = params.initialText ?? '';
     if (initialText) {
-      const convertedNode = result.projection.nodes.find((node) => node.id === inlineNodeId);
+      const convertedNode = result.update.kind === 'full'
+        ? result.update.projection.nodes.find((node) => node.id === inlineNodeId)
+        : result.update.changedNodes.find((node) => node.id === inlineNodeId);
       if (convertedNode) {
         cursorTextLength = initialText.length;
         await params.run(() => api.replaceNodeText(inlineNodeId, {

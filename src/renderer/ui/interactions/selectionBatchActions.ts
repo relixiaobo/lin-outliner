@@ -1,5 +1,5 @@
 import { projectFieldConfig } from '../../../core/configProjection';
-import type { CommandOutcome, DocumentProjection, NodeId, NodeProjection } from '../../api/types';
+import type { CommandResult, NodeId, NodeProjection, ProjectionSnapshot } from '../../api/types';
 import { api } from '../../api/client';
 import {
   selectableRowForId,
@@ -8,7 +8,7 @@ import {
 } from '../../state/selectableRows';
 import { isOptionsFieldType } from '../fields/fieldTypeRegistry';
 
-export type SelectionCommandResult = CommandOutcome | DocumentProjection;
+export type SelectionCommandResult = CommandResult | ProjectionSnapshot;
 
 type SelectionActionKey = keyof SelectableRowActionPolicy;
 

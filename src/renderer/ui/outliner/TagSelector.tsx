@@ -1,5 +1,5 @@
 import { api } from '../../api/client';
-import type { CommandOutcome, DocumentProjection, NodeId, NodeProjection } from '../../api/types';
+import type { CommandResult, NodeId, NodeProjection, ProjectionSnapshot } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { AddIcon, ICON_SIZE } from '../icons';
 import { tagSelectorItemLabel, tagSelectorItems } from '../interactions/tagSelector';
@@ -17,8 +17,8 @@ interface TagSelectorProps {
   run: CommandRunner;
   close: () => void;
   clearTriggerText: () => Promise<void>;
-  applyTag?: (tag: NodeProjection) => Promise<CommandOutcome | DocumentProjection | null | void>;
-  createTagAndApply?: (name: string) => Promise<CommandOutcome | DocumentProjection | null | void>;
+  applyTag?: (tag: NodeProjection) => Promise<CommandResult | ProjectionSnapshot | null | void>;
+  createTagAndApply?: (name: string) => Promise<CommandResult | ProjectionSnapshot | null | void>;
 }
 
 export function TagSelector(props: TagSelectorProps) {

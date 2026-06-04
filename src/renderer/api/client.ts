@@ -12,10 +12,11 @@ import type {
   AgentToolPermissionSettingsView,
   AgentDefinition,
   SkillDefinition,
-  CommandOutcome,
+  CommandResult,
   CreateNodeTree,
   PasteRowMeta,
   DocumentProjection,
+  ProjectionSnapshot,
   FieldConfigPatch,
   FieldType,
   FilterOperator,
@@ -44,30 +45,30 @@ function command<T>(name: string, args?: Record<string, unknown>): Promise<T> {
 }
 
 export const api = {
-  initWorkspace: () => command<DocumentProjection>('init_workspace'),
-  getProjection: () => command<DocumentProjection>('get_projection'),
+  initWorkspace: () => command<ProjectionSnapshot>('init_workspace'),
+  getProjection: () => command<ProjectionSnapshot>('get_projection'),
   createNode: (parentId: string, index: number | null, text: string, id?: string) =>
-    command<CommandOutcome>('create_node', { parentId, index, text, id }),
+    command<CommandResult>('create_node', { parentId, index, text, id }),
   // Eager materialization: turn a renderer-only draft row into a real node under
   // the client-proposed `id`. `materialize: true` makes the create open an undo
   // group that the following text patches join (one undo step for the new row).
   materializeDraftNode: (parentId: string, index: number | null, text: string, id: string) =>
-    command<CommandOutcome>('create_node', { parentId, index, text, id, materialize: true }),
+    command<CommandResult>('create_node', { parentId, index, text, id, materialize: true }),
   createRichTextNode: (parentId: string, index: number | null, content: RichText) =>
-    command<CommandOutcome>('create_rich_text_node', { parentId, index, content }),
+    command<CommandResult>('create_rich_text_node', { parentId, index, content }),
   createTaggedNode: (parentId: string, content: RichText, tagId: string) =>
-    command<CommandOutcome>('create_tagged_node', { parentId, content, tagId }),
+    command<CommandResult>('create_tagged_node', { parentId, content, tagId }),
   createTagAndTaggedNode: (parentId: string, content: RichText, name: string) =>
-    command<CommandOutcome>('create_tag_and_tagged_node', { parentId, content, name }),
+    command<CommandResult>('create_tag_and_tagged_node', { parentId, content, name }),
   createNodesFromTree: (parentId: string, nodes: CreateNodeTree[]) =>
-    command<CommandOutcome>('create_nodes_from_tree', { parentId, nodes }),
+    command<CommandResult>('create_nodes_from_tree', { parentId, nodes }),
   pasteNodesIntoNode: (
     nodeId: string,
     content: RichText,
     children: CreateNodeTree[],
     siblingsAfter: CreateNodeTree[],
     firstMeta: PasteRowMeta = {},
-  ) => command<CommandOutcome>('paste_nodes_into_node', {
+  ) => command<CommandResult>('paste_nodes_into_node', {
     nodeId,
     content,
     children,
@@ -75,30 +76,30 @@ export const api = {
     firstMeta,
   }),
   splitNode: (nodeId: string, before: RichText, after: RichText, options: SplitNodeOptions = {}) =>
-    command<CommandOutcome>('split_node', { nodeId, before, after, ...options }),
+    command<CommandResult>('split_node', { nodeId, before, after, ...options }),
   applyNodeTextPatch: (nodeId: string, patch: RichTextPatch) =>
-    command<CommandOutcome>('apply_node_text_patch', { nodeId, patch }),
+    command<CommandResult>('apply_node_text_patch', { nodeId, patch }),
   replaceNodeText: (nodeId: string, content: RichText) =>
-    command<CommandOutcome>('apply_node_text_patch', { nodeId, patch: replaceAllRichTextPatch(content) }),
+    command<CommandResult>('apply_node_text_patch', { nodeId, patch: replaceAllRichTextPatch(content) }),
   updateNodeDescription: (nodeId: string, description: string | null) =>
-    command<CommandOutcome>('update_node_description', { nodeId, description }),
+    command<CommandResult>('update_node_description', { nodeId, description }),
   setNodeCheckboxVisible: (nodeId: string, visible: boolean) =>
-    command<CommandOutcome>('set_node_checkbox_visible', { nodeId, visible }),
+    command<CommandResult>('set_node_checkbox_visible', { nodeId, visible }),
   setCodeBlock: (nodeId: string, codeLanguage?: string) =>
-    command<CommandOutcome>('set_code_block', { nodeId, codeLanguage: codeLanguage ?? null }),
+    command<CommandResult>('set_code_block', { nodeId, codeLanguage: codeLanguage ?? null }),
   setCodeLanguage: (nodeId: string, codeLanguage: string) =>
-    command<CommandOutcome>('set_code_language', { nodeId, codeLanguage }),
+    command<CommandResult>('set_code_language', { nodeId, codeLanguage }),
   // An image node's source is exactly one of `assetId` (local) or `mediaUrl`
   // (remote); the core validates that.
   createImageNode: (
     parentId: string,
     index: number | null,
     options: { assetId?: string; mediaUrl?: string; width?: number | null; height?: number | null; alt?: string | null },
-  ) => command<CommandOutcome>('create_image_node', { parentId, index, ...options }),
+  ) => command<CommandResult>('create_image_node', { parentId, index, ...options }),
   setNodeImage: (
     nodeId: string,
     options: { assetId?: string; mediaUrl?: string; width?: number | null; height?: number | null },
-  ) => command<CommandOutcome>('set_node_image', { nodeId, ...options }),
+  ) => command<CommandResult>('set_node_image', { nodeId, ...options }),
   // Renderer ingest is buffer-only by design; path ingest is a main-process
   // primitive (see pick_image_files) and is intentionally not exposed here.
   ingestAssetFromData: (data: Uint8Array, mimeType?: string, originalFilename?: string) =>
@@ -110,128 +111,128 @@ export const api = {
   revealAsset: (id: string) => command<{ revealed: boolean }>('reveal_asset', { id }),
   openExternalUrl: (url: string) => command<{ opened: boolean }>('open_external_url', { url }),
   setViewToolbarVisible: (nodeId: string, visible: boolean) =>
-    command<CommandOutcome>('set_view_toolbar_visible', { nodeId, visible }),
+    command<CommandResult>('set_view_toolbar_visible', { nodeId, visible }),
   setViewMode: (nodeId: string, mode: ViewMode) =>
-    command<CommandOutcome>('set_view_mode', { nodeId, mode }),
+    command<CommandResult>('set_view_mode', { nodeId, mode }),
   addSortRule: (nodeId: string, field: string, direction: SortDirection = 'asc') =>
-    command<CommandOutcome>('add_sort_rule', { nodeId, field, direction }),
+    command<CommandResult>('add_sort_rule', { nodeId, field, direction }),
   updateSortRule: (ruleId: string, field: string, direction: SortDirection = 'asc') =>
-    command<CommandOutcome>('update_sort_rule', { ruleId, field, direction }),
+    command<CommandResult>('update_sort_rule', { ruleId, field, direction }),
   removeSortRule: (ruleId: string) =>
-    command<CommandOutcome>('remove_sort_rule', { ruleId }),
+    command<CommandResult>('remove_sort_rule', { ruleId }),
   clearSortRules: (nodeId: string) =>
-    command<CommandOutcome>('clear_sort_rules', { nodeId }),
+    command<CommandResult>('clear_sort_rules', { nodeId }),
   addFilterRule: (
     nodeId: string,
     field: string,
     operator: FilterOperator = 'contains',
     values: string[] = [],
     valueLogic: FilterValueLogic = 'any',
-  ) => command<CommandOutcome>('add_filter_rule', { nodeId, field, operator, values, valueLogic }),
+  ) => command<CommandResult>('add_filter_rule', { nodeId, field, operator, values, valueLogic }),
   updateFilterRule: (
     ruleId: string,
     patch: { field?: string | null; operator?: FilterOperator | null; values?: string[] | null; valueLogic?: FilterValueLogic | null },
-  ) => command<CommandOutcome>('update_filter_rule', { ruleId, ...patch }),
+  ) => command<CommandResult>('update_filter_rule', { ruleId, ...patch }),
   removeFilterRule: (ruleId: string) =>
-    command<CommandOutcome>('remove_filter_rule', { ruleId }),
+    command<CommandResult>('remove_filter_rule', { ruleId }),
   clearFilterRules: (nodeId: string) =>
-    command<CommandOutcome>('clear_filter_rules', { nodeId }),
+    command<CommandResult>('clear_filter_rules', { nodeId }),
   setGroupField: (nodeId: string, field: string | null) =>
-    command<CommandOutcome>('set_group_field', { nodeId, field }),
+    command<CommandResult>('set_group_field', { nodeId, field }),
   addDisplayField: (nodeId: string, field: string) =>
-    command<CommandOutcome>('add_display_field', { nodeId, field }),
+    command<CommandResult>('add_display_field', { nodeId, field }),
   updateDisplayField: (
     displayFieldId: string,
     patch: { field?: string | null; visible?: boolean | null; width?: number | null; order?: number | null; label?: string | null; placement?: string | null },
-  ) => command<CommandOutcome>('update_display_field', { displayFieldId, ...patch }),
+  ) => command<CommandResult>('update_display_field', { displayFieldId, ...patch }),
   removeDisplayField: (displayFieldId: string) =>
-    command<CommandOutcome>('remove_display_field', { displayFieldId }),
+    command<CommandResult>('remove_display_field', { displayFieldId }),
   setNodeIcon: (nodeId: string, icon: string | null, iconKind: IconKind | null = null) =>
-    command<CommandOutcome>('set_node_icon', { nodeId, icon, iconKind }),
+    command<CommandResult>('set_node_icon', { nodeId, icon, iconKind }),
   setNodeBanner: (nodeId: string, assetId: string | null, position?: { x?: number | null; y?: number | null }) =>
-    command<CommandOutcome>('set_node_banner', { nodeId, assetId, positionX: position?.x, positionY: position?.y }),
+    command<CommandResult>('set_node_banner', { nodeId, assetId, positionX: position?.x, positionY: position?.y }),
   mergeNodeInto: (nodeId: string, targetId: string) =>
-    command<CommandOutcome>('merge_node_into', { nodeId, targetId }),
+    command<CommandResult>('merge_node_into', { nodeId, targetId }),
   moveNode: (nodeId: string, parentId: string, index: number | null = null) =>
-    command<CommandOutcome>('move_node', { nodeId, parentId, index }),
-  indentNode: (nodeId: string) => command<CommandOutcome>('indent_node', { nodeId }),
-  outdentNode: (nodeId: string) => command<CommandOutcome>('outdent_node', { nodeId }),
-  trashNode: (nodeId: string) => command<CommandOutcome>('trash_node', { nodeId }),
-  batchTrashNodes: (nodeIds: string[]) => command<CommandOutcome>('batch_trash_nodes', { nodeIds }),
-  batchIndentNodes: (nodeIds: string[]) => command<CommandOutcome>('batch_indent_nodes', { nodeIds }),
-  batchOutdentNodes: (nodeIds: string[]) => command<CommandOutcome>('batch_outdent_nodes', { nodeIds }),
-  batchToggleDone: (nodeIds: string[]) => command<CommandOutcome>('batch_toggle_done', { nodeIds }),
-  batchCycleDoneState: (nodeIds: string[]) => command<CommandOutcome>('batch_cycle_done_state', { nodeIds }),
-  batchDuplicateNodes: (nodeIds: string[]) => command<CommandOutcome>('batch_duplicate_nodes', { nodeIds }),
-  batchMoveNodesUp: (nodeIds: string[]) => command<CommandOutcome>('batch_move_nodes_up', { nodeIds }),
-  batchMoveNodesDown: (nodeIds: string[]) => command<CommandOutcome>('batch_move_nodes_down', { nodeIds }),
+    command<CommandResult>('move_node', { nodeId, parentId, index }),
+  indentNode: (nodeId: string) => command<CommandResult>('indent_node', { nodeId }),
+  outdentNode: (nodeId: string) => command<CommandResult>('outdent_node', { nodeId }),
+  trashNode: (nodeId: string) => command<CommandResult>('trash_node', { nodeId }),
+  batchTrashNodes: (nodeIds: string[]) => command<CommandResult>('batch_trash_nodes', { nodeIds }),
+  batchIndentNodes: (nodeIds: string[]) => command<CommandResult>('batch_indent_nodes', { nodeIds }),
+  batchOutdentNodes: (nodeIds: string[]) => command<CommandResult>('batch_outdent_nodes', { nodeIds }),
+  batchToggleDone: (nodeIds: string[]) => command<CommandResult>('batch_toggle_done', { nodeIds }),
+  batchCycleDoneState: (nodeIds: string[]) => command<CommandResult>('batch_cycle_done_state', { nodeIds }),
+  batchDuplicateNodes: (nodeIds: string[]) => command<CommandResult>('batch_duplicate_nodes', { nodeIds }),
+  batchMoveNodesUp: (nodeIds: string[]) => command<CommandResult>('batch_move_nodes_up', { nodeIds }),
+  batchMoveNodesDown: (nodeIds: string[]) => command<CommandResult>('batch_move_nodes_down', { nodeIds }),
   batchApplyTag: (nodeIds: string[], tagId: string) =>
-    command<CommandOutcome>('batch_apply_tag', { nodeIds, tagId }),
-  restoreNode: (nodeId: string) => command<CommandOutcome>('restore_node', { nodeId }),
-  deleteNode: (nodeId: string) => command<CommandOutcome>('delete_node', { nodeId }),
-  toggleDone: (nodeId: string) => command<CommandOutcome>('toggle_done', { nodeId }),
-  cycleDoneState: (nodeId: string) => command<CommandOutcome>('cycle_done_state', { nodeId }),
-  createTag: (name: string) => command<CommandOutcome>('create_tag', { name }),
+    command<CommandResult>('batch_apply_tag', { nodeIds, tagId }),
+  restoreNode: (nodeId: string) => command<CommandResult>('restore_node', { nodeId }),
+  deleteNode: (nodeId: string) => command<CommandResult>('delete_node', { nodeId }),
+  toggleDone: (nodeId: string) => command<CommandResult>('toggle_done', { nodeId }),
+  cycleDoneState: (nodeId: string) => command<CommandResult>('cycle_done_state', { nodeId }),
+  createTag: (name: string) => command<CommandResult>('create_tag', { name }),
   applyTag: (nodeId: string, tagId: string) =>
-    command<CommandOutcome>('apply_tag', { nodeId, tagId }),
+    command<CommandResult>('apply_tag', { nodeId, tagId }),
   removeTag: (nodeId: string, tagId: string) =>
-    command<CommandOutcome>('remove_tag', { nodeId, tagId }),
+    command<CommandResult>('remove_tag', { nodeId, tagId }),
   setTagConfig: (tagId: string, patch: TagConfigPatch) =>
-    command<CommandOutcome>('set_tag_config', { tagId, patch }),
+    command<CommandResult>('set_tag_config', { tagId, patch }),
   setFieldConfig: (fieldId: string, patch: FieldConfigPatch) =>
-    command<CommandOutcome>('set_field_config', { fieldId, patch }),
+    command<CommandResult>('set_field_config', { fieldId, patch }),
   createFieldDef: (tagId: string, name: string, fieldType: FieldType) =>
-    command<CommandOutcome>('create_field_def', { tagId, name, fieldType }),
+    command<CommandResult>('create_field_def', { tagId, name, fieldType }),
   createInlineFieldAfterNode: (afterNodeId: string, name: string, fieldType: FieldType) =>
-    command<CommandOutcome>('create_inline_field_after_node', { afterNodeId, name, fieldType }),
+    command<CommandResult>('create_inline_field_after_node', { afterNodeId, name, fieldType }),
   createInlineField: (parentId: string, index: number | null, name: string, fieldType: FieldType) =>
-    command<CommandOutcome>('create_inline_field', { parentId, index, name, fieldType }),
+    command<CommandResult>('create_inline_field', { parentId, index, name, fieldType }),
   reuseFieldDefinition: (entryId: string, targetDefId: string) =>
-    command<CommandOutcome>('reuse_field_definition', { entryId, targetDefId }),
+    command<CommandResult>('reuse_field_definition', { entryId, targetDefId }),
   registerCollectedOption: (fieldDefId: string, name: string) =>
-    command<CommandOutcome>('register_collected_option', { fieldDefId, name }),
+    command<CommandResult>('register_collected_option', { fieldDefId, name }),
   // `id` (optional) lets the renderer propose the trailing draft row's stable id
   // so the row's React identity (and any in-flight IME composition) survives the
   // draft->value materialization — the same contract as materializeDraftNode.
   createCollectedFieldOption: (fieldEntryId: string, name: string, id?: string) =>
-    command<CommandOutcome>('create_collected_field_option', { fieldEntryId, name, id }),
+    command<CommandResult>('create_collected_field_option', { fieldEntryId, name, id }),
   selectFieldOption: (fieldEntryId: string, optionNodeId: string, id?: string) =>
-    command<CommandOutcome>('select_field_option', { fieldEntryId, optionNodeId, id }),
+    command<CommandResult>('select_field_option', { fieldEntryId, optionNodeId, id }),
   addFieldReference: (fieldEntryId: string, targetNodeId: string, id?: string) =>
-    command<CommandOutcome>('add_field_reference', { fieldEntryId, targetNodeId, id }),
+    command<CommandResult>('add_field_reference', { fieldEntryId, targetNodeId, id }),
   setFieldFreeTextValue: (fieldEntryId: string, text: string, id?: string) =>
-    command<CommandOutcome>('set_field_free_text_value', { fieldEntryId, text, id }),
+    command<CommandResult>('set_field_free_text_value', { fieldEntryId, text, id }),
   clearFieldValue: (fieldEntryId: string) =>
-    command<CommandOutcome>('clear_field_value', { fieldEntryId }),
+    command<CommandResult>('clear_field_value', { fieldEntryId }),
   removeFieldValue: (valueId: string) =>
-    command<CommandOutcome>('remove_field_value', { valueId }),
+    command<CommandResult>('remove_field_value', { valueId }),
   addReference: (parentId: string, targetId: string, index: number | null = null) =>
-    command<CommandOutcome>('add_reference', { parentId, targetId, index }),
+    command<CommandResult>('add_reference', { parentId, targetId, index }),
   addReferenceConversion: (parentId: string, targetId: string, index: number | null = null) =>
-    command<CommandOutcome>('add_reference_conversion', { parentId, targetId, index }),
+    command<CommandResult>('add_reference_conversion', { parentId, targetId, index }),
   setReferenceTarget: (referenceId: string, targetId: string) =>
-    command<CommandOutcome>('set_reference_target', { referenceId, targetId }),
+    command<CommandResult>('set_reference_target', { referenceId, targetId }),
   replaceNodeWithReference: (nodeId: string, targetId: string) =>
-    command<CommandOutcome>('replace_node_with_reference', { nodeId, targetId }),
+    command<CommandResult>('replace_node_with_reference', { nodeId, targetId }),
   replaceNodeWithReferenceConversion: (nodeId: string, targetId: string) =>
-    command<CommandOutcome>('replace_node_with_reference_conversion', { nodeId, targetId }),
+    command<CommandResult>('replace_node_with_reference_conversion', { nodeId, targetId }),
   replaceNodeWithInlineReference: (nodeId: string, targetId: string) =>
-    command<CommandOutcome>('replace_node_with_inline_reference', { nodeId, targetId }),
+    command<CommandResult>('replace_node_with_inline_reference', { nodeId, targetId }),
   convertReferenceToInlineNode: (referenceId: string) =>
-    command<CommandOutcome>('convert_reference_to_inline_node', { referenceId }),
+    command<CommandResult>('convert_reference_to_inline_node', { referenceId }),
   restoreInlineReferenceNodeToReference: (nodeId: string, targetId: string) =>
-    command<CommandOutcome>('restore_inline_reference_node_to_reference', { nodeId, targetId }),
+    command<CommandResult>('restore_inline_reference_node_to_reference', { nodeId, targetId }),
   ensureDateNode: (year: number, month: number, day: number) =>
-    command<CommandOutcome>('ensure_date_node', { year, month, day }),
+    command<CommandResult>('ensure_date_node', { year, month, day }),
   searchNodes: (query: string) => command<SearchHit[]>('search_nodes', { query }),
-  ensureTagSearch: (tagId: string) => command<CommandOutcome>('ensure_tag_search', { tagId }),
+  ensureTagSearch: (tagId: string) => command<CommandResult>('ensure_tag_search', { tagId }),
   setSearchQueryOutline: (nodeId: string, queryOutline: string) =>
-    command<CommandOutcome>('set_search_query_outline', { nodeId, queryOutline }),
+    command<CommandResult>('set_search_query_outline', { nodeId, queryOutline }),
   refreshSearchNodeResults: (nodeId: string) =>
-    command<CommandOutcome>('refresh_search_node_results', { nodeId }),
+    command<CommandResult>('refresh_search_node_results', { nodeId }),
   backlinks: (targetId: string) => command<Backlink[]>('backlinks', { targetId }),
-  undo: () => command<CommandOutcome>('undo'),
-  redo: () => command<CommandOutcome>('redo'),
+  undo: () => command<CommandResult>('undo'),
+  redo: () => command<CommandResult>('redo'),
   agentRestoreLatestSession: () => command<AgentSession>('agent_restore_latest_session'),
   agentRestoreSession: (sessionId: string) => command<AgentSession>('agent_restore_session', { sessionId }),
   agentCreateSession: () => command<AgentSession>('agent_create_session'),

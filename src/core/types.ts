@@ -522,10 +522,33 @@ export interface DocumentProjection {
   nodes: NodeProjection[];
 }
 
+// A projection delivery to the renderer. `full` reseeds the whole document
+// (init, resync, whole-tree rewrites like undo/redo/import); `delta` carries only
+// the nodes a single mutation changed/removed so per-edit cost scales with the
+// change, not the document. `revision` is Core's monotonic counter: a `delta`
+// must apply onto `revision - 1`; any gap or a `full` reseeds. `todayId` is the
+// one envelope pointer that can move post-init (daily-note rollover); the other
+// system ids are immutable so a delta omits them. See docs/plans/incremental-projection.md.
+export type ProjectionUpdate =
+  | { kind: 'full'; revision: number; projection: DocumentProjection }
+  | {
+    kind: 'delta';
+    revision: number;
+    todayId: NodeId;
+    changedNodes: NodeProjection[];
+    removedIds: NodeId[];
+  };
+
+// A full projection plus its revision, for init and resync.
+export interface ProjectionSnapshot {
+  revision: number;
+  projection: DocumentProjection;
+}
+
 export interface DocumentProjectionChangedEvent {
   type: 'projection_changed';
   origin: 'agent' | 'user' | 'system';
-  projection: DocumentProjection;
+  update: ProjectionUpdate;
   timestamp: number;
 }
 
@@ -566,8 +589,18 @@ export interface SplitNodeOptions {
   focusPlacement?: FocusPlacement;
 }
 
+// Core's internal command result: a command assembles the full projection
+// in-process (cheap — cached refs, no clone). The main-process boundary converts
+// this to a `CommandResult` before crossing IPC.
 export interface CommandOutcome {
   projection: DocumentProjection;
+  focus?: FocusHint;
+}
+
+// The renderer-facing command result. The full projection is replaced by a
+// `ProjectionUpdate` (delta in the common case) so only changed nodes cross IPC.
+export interface CommandResult {
+  update: ProjectionUpdate;
   focus?: FocusHint;
 }
 

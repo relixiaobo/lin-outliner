@@ -2,11 +2,10 @@ import { inlineRefNodeId, type NodeId, type NodeProjection } from '../api/types'
 
 // Per-node "data revision" support for memoizing the outliner.
 //
-// The projection is structure-cloned across IPC, so every node object is fresh
-// on every command and reference identity tells us nothing. Instead we hash each
-// node and diff hashes against the previous projection to find the nodes whose
-// data actually changed, then propagate that to every node that must re-render
-// to reflect the change. A node must re-render when:
+// Core hands the renderer the exact set of changed node ids per edit (a
+// `ProjectionUpdate` delta), so the renderer never re-`JSON.stringify`s the whole
+// document to rediscover what changed. From that change set we propagate to every
+// node that must re-render to reflect it. A node must re-render when:
 //   - its own data changed, or
 //   - a node it transcludes / displays changed (reference target, applied tag
 //     definition, inline-reference target), or
@@ -14,29 +13,6 @@ import { inlineRefNodeId, type NodeId, type NodeProjection } from '../api/types'
 //     structural parent chain).
 // Bumping a per-node counter for exactly that set lets `React.memo` skip every
 // untouched subtree. Pure functions, unit-tested in renderRev.test.ts.
-
-export type SignatureMap = Map<NodeId, string>;
-
-export function nodeSignatures(byId: ReadonlyMap<NodeId, NodeProjection>): SignatureMap {
-  const signatures: SignatureMap = new Map();
-  for (const [id, node] of byId) signatures.set(id, JSON.stringify(node));
-  return signatures;
-}
-
-// Nodes whose serialized form differs from the previous projection. A removed
-// node needs no entry: its parent's children list changed, so the parent is
-// itself reported as changed and re-renders without it.
-export function collectChangedNodes(previous: SignatureMap | null, next: SignatureMap): Set<NodeId> {
-  const changed = new Set<NodeId>();
-  if (!previous) {
-    for (const id of next.keys()) changed.add(id);
-    return changed;
-  }
-  for (const [id, signature] of next) {
-    if (previous.get(id) !== signature) changed.add(id);
-  }
-  return changed;
-}
 
 interface ReverseEdges {
   // target node -> reference nodes pointing at it (immediate targetId).

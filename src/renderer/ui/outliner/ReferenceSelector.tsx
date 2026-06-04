@@ -1,6 +1,6 @@
 import { api } from '../../api/client';
-import type { CommandOutcome, DocumentProjection, NodeId, NodeProjection } from '../../api/types';
-import type { DocumentIndex } from '../../state/document';
+import type { CommandResult, NodeId, NodeProjection, ProjectionSnapshot } from '../../api/types';
+import { nodeFromProjectionUpdate, type DocumentIndex } from '../../state/document';
 import { AddIcon, CalendarIcon, ICON_SIZE } from '../icons';
 import { buildReferenceCandidates, referenceCandidateLabels, type ReferenceCandidate, type ReferenceCandidateLabels } from '../interactions/referenceCandidates';
 import type { CommandRunner } from '../shared';
@@ -18,7 +18,7 @@ interface ReferenceSelectorProps {
   run: CommandRunner;
   close: () => void;
   clearTriggerText: () => Promise<void>;
-  applyReference?: (target: NodeProjection) => Promise<CommandOutcome | DocumentProjection | null | void>;
+  applyReference?: (target: NodeProjection) => Promise<CommandResult | ProjectionSnapshot | null | void>;
 }
 
 export function referenceItems(params: {
@@ -39,8 +39,8 @@ export function referenceItems(params: {
   });
 }
 
-function nodeFromOutcome(outcome: CommandOutcome, nodeId: NodeId): NodeProjection | undefined {
-  return outcome.projection.nodes.find((node) => node.id === nodeId);
+function nodeFromOutcome(outcome: CommandResult, nodeId: NodeId): NodeProjection | undefined {
+  return nodeFromProjectionUpdate(outcome.update, nodeId);
 }
 
 function dateParts(date: Date): { year: number; month: number; day: number } {

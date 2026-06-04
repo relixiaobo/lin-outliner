@@ -197,6 +197,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const nodes = new Map<string, MockNode>();
     let now = 1_800_000_000_000;
     let sequence = 0;
+    // The mock doesn't track per-command change sets, so every command/event ships
+    // a `full` ProjectionUpdate (the renderer rebuilds from it). Revision advances
+    // monotonically to mirror the real emit chain; the delta path is unit-tested
+    // separately (reduceProjection.test.ts).
+    let revision = 0;
     let clipboardText = '';
     const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
     const agentListeners: Array<(event: unknown) => void> = [];
@@ -741,6 +746,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         nodes: [...emitted, ...sink.values()],
       };
     };
+    const projectionSnapshot = () => ({ revision: ++revision, projection: projection() });
+    const fullUpdate = () => ({ kind: 'full' as const, revision: ++revision, projection: projection() });
     const outcome = (focus?: {
       nodeId: string;
       selectAll: boolean;
@@ -748,7 +755,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       placement?: unknown;
       surface?: string;
     }) => ({
-      projection: projection(),
+      update: fullUpdate(),
       ...(focus ? { focus } : {}),
     });
     const createNode = (
@@ -1222,8 +1229,23 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     };
 
     const emitDocumentEvent = (event: unknown) => {
+      // Test-boundary adapter: specs author `projection_changed` events with a
+      // legacy `{ projection }` field; the renderer now consumes a
+      // `ProjectionUpdate`. Wrap a bare projection into a `full` update here so
+      // the many existing call sites stay terse. (Not a production shim — the
+      // real main process emits `update` directly.)
+      const normalized = ((): unknown => {
+        if (event && typeof event === 'object') {
+          const e = event as Record<string, unknown>;
+          if (e.type === 'projection_changed' && 'projection' in e && !('update' in e)) {
+            const { projection: proj, ...rest } = e;
+            return { ...rest, update: { kind: 'full', revision: ++revision, projection: proj } };
+          }
+        }
+        return event;
+      })();
       for (const listener of documentListeners) {
-        listener(clone(event));
+        listener(clone(normalized));
       }
     };
 
@@ -1583,7 +1605,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd === 'agent_queue_follow_up') return clone({ queued: true }) as T;
         if (cmd === 'agent_steer_session') return clone({ queued: true }) as T;
         if (cmd.startsWith('agent_')) return clone(undefined) as T;
-        if (cmd === 'init_workspace' || cmd === 'get_projection') return clone(projection());
+        if (cmd === 'init_workspace' || cmd === 'get_projection') return clone(projectionSnapshot());
         if (cmd === 'create_node') {
           const nodeId = createNode(
             String(args.parentId),

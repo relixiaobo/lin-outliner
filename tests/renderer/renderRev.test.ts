@@ -1,9 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { NodeId, NodeProjection } from '../../src/core/types';
 import {
-  collectChangedNodes,
   nextRevisions,
-  nodeSignatures,
   propagateDirty,
 } from '../../src/renderer/state/renderRev';
 
@@ -35,28 +33,6 @@ function tree(): Map<NodeId, NodeProjection> {
     node('c', { parentId: 'b' }),
   ]);
 }
-
-describe('collectChangedNodes', () => {
-  test('reports every node on first build (no previous signatures)', () => {
-    const sig = nodeSignatures(tree());
-    expect(collectChangedNodes(null, sig)).toEqual(new Set(['root', 'a', 'a2', 'b', 'c']));
-  });
-
-  test('reports only the nodes whose serialized form differs', () => {
-    const prev = nodeSignatures(tree());
-    const mutated = tree();
-    mutated.set('c', node('c', { parentId: 'b', content: { text: 'edited', marks: [], inlineRefs: [] } }));
-    const next = nodeSignatures(mutated);
-    expect(collectChangedNodes(prev, next)).toEqual(new Set(['c']));
-  });
-
-  test('reports a newly added node', () => {
-    const prev = nodeSignatures(tree());
-    const withNew = tree();
-    withNew.set('d', node('d', { parentId: 'b' }));
-    expect(collectChangedNodes(prev, nodeSignatures(withNew))).toEqual(new Set(['d']));
-  });
-});
 
 describe('propagateDirty', () => {
   test('marks the changed node and its structural ancestors only', () => {

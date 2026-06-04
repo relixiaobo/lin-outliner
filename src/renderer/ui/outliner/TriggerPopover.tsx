@@ -5,7 +5,7 @@ import {
   useState,
 } from 'react';
 import { createPortal } from 'react-dom';
-import type { CommandOutcome, DocumentProjection, NodeId, NodeProjection } from '../../api/types';
+import type { CommandResult, NodeId, NodeProjection, ProjectionSnapshot } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import type { CommandRunner, TriggerState } from '../shared';
 import type { SlashCommandId } from '../interactions/slashCommands';
@@ -27,10 +27,10 @@ interface TriggerPopoverProps {
   run: CommandRunner;
   close: () => void;
   clearTriggerText: () => Promise<void>;
-  applyReference?: (target: NodeProjection) => Promise<CommandOutcome | DocumentProjection | null | void>;
-  applyTag?: (tag: NodeProjection) => Promise<CommandOutcome | DocumentProjection | null | void>;
-  createTagAndApply?: (name: string) => Promise<CommandOutcome | DocumentProjection | null | void>;
-  executeSlashCommand?: (commandId: SlashCommandId) => Promise<CommandOutcome | DocumentProjection | null | void>;
+  applyReference?: (target: NodeProjection) => Promise<CommandResult | ProjectionSnapshot | null | void>;
+  applyTag?: (tag: NodeProjection) => Promise<CommandResult | ProjectionSnapshot | null | void>;
+  createTagAndApply?: (name: string) => Promise<CommandResult | ProjectionSnapshot | null | void>;
+  executeSlashCommand?: (commandId: SlashCommandId) => Promise<CommandResult | ProjectionSnapshot | null | void>;
   enabledSlashCommandIds?: SlashCommandId[];
   treeReferenceParentId?: NodeId | null;
   existingTagIds?: readonly NodeId[];

@@ -141,12 +141,12 @@ test.describe('outliner navigation and page title parity', () => {
       };
       let latestProjection: unknown = null;
       for (let index = 0; index < 14; index += 1) {
-        const outcome = await win.lin!.invoke<{ projection: unknown }>('create_node', {
+        const outcome = await win.lin!.invoke<{ update: { projection: unknown } }>('create_node', {
           parentId: todayId,
           index: null,
           text: `Scroll filler ${index + 1}`,
         });
-        latestProjection = outcome.projection;
+        latestProjection = outcome.update.projection;
       }
       return latestProjection;
     }, ids.today);
@@ -276,12 +276,12 @@ test.describe('outliner navigation and page title parity', () => {
           lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
           __LIN_E2E__?: { emitDocumentEvent: (event: unknown) => void };
         };
-        const outcome = await win.lin!.invoke<{ projection: unknown; focus?: { nodeId: string } }>('create_node', {
+        const outcome = await win.lin!.invoke<{ update: { projection: unknown }; focus?: { nodeId: string } }>('create_node', {
           parentId: targetParentId,
           index: null,
           text,
         });
-        win.__LIN_E2E__?.emitDocumentEvent({ type: 'projection_changed', projection: outcome.projection });
+        win.__LIN_E2E__?.emitDocumentEvent({ type: 'projection_changed', projection: outcome.update.projection });
         return outcome.focus!.nodeId;
       }, { parentId, text: `Ancestor ${index}` });
       await row(page, nodeId).getByRole('button', { name: 'Open' }).click();
