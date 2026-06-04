@@ -12,6 +12,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Text-search relevance layer (PR #102)** — implements `text-search-relevance-layer.md`.
+  A shared in-memory text-search kernel (`src/core/textSearchIndex.ts`) — inverted postings,
+  field-aware BM25, exact/prefix/phrase boosts, and CJK + Latin trigram candidate generation
+  with strict normalized verification — now backs `search_nodes` (command palette) and the
+  agent `node_search` tool, maintained **incrementally** off Core's revision deltas (a full
+  rebuild only on load / undo / full-rewrite). No protocol change. Review-gate findings were
+  fixed before merge: per-term candidates now **union** the trigram (interior-substring) matches
+  instead of early-returning on a prefix hit, so a query like `nation` again recalls
+  `internationalization` (pinned by a regression test); `normalizeSearchText` uses
+  locale-insensitive `toLowerCase()`; the dead bounded top-k heap was removed and the probe
+  retargeted to the real `candidateIds()` + `scoreRecord()` path; and an unrelated OAuth
+  device-code callback type was split out of this PR. ([#102](https://github.com/relixiaobo/lin-outliner/pull/102))
+
 - **Field value rows join panel selection (PR #97)** — implements
   `field-value-row-selection.md`. Field **value** rows can now be shift/cmd-selected into the
   global multi-selection (drag and keyboard) alongside content rows, keeping the append-only

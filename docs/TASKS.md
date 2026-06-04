@@ -74,15 +74,6 @@ Ordered by priority; lower items may depend on higher ones.
   (protocol surface → interface-first + ratify). Soft-depends on `ask_user_question`
   (degrades to conversational turns until it exists). See
   `docs/plans/agent-import-skill.md`.
-- **text-search-relevance-layer** (P1, plan ratified, PR #99) — shared TS text
-  relevance kernel (`src/core/textSearchIndex.ts`): inverted postings, field-aware
-  BM25, exact/prefix/phrase boosts, CJK n-gram candidates + strict normalized
-  verification; integrates into `STRING_MATCH` with no protocol change.
-  **Incremental** index maintenance — consume Core's existing `affectedNodeIds`
-  deltas + tag/field dependency-map fan-out; full rebuild only on
-  load/undo/full-rewrite (measured spike: 10k cold ~225ms, edit→search ~0.3ms).
-  One-shot v1 (no split). Coordinate with `lazy-like-global-launcher` so launcher
-  search reuses this kernel. See `docs/plans/text-search-relevance-layer.md`.
 - **sidebar-pinned-nodes** (P2, **unblocked — workspace-tabs-to-single-pane landed in PR #85**) —
   implement the stubbed Pinned section: pin from right-click on BOTH outliner and
   sidebar node rows; persist across restart. Recommended storage = renderer layout
@@ -147,6 +138,23 @@ Ordered by priority; lower items may depend on higher ones.
   while the tool arguments stream. See `docs/plans/agent-generative-ui.md`.
 
 ## Recently completed
+
+- **text-search-relevance-layer** (codex, PR #102) — implements
+  `text-search-relevance-layer.md`. A shared in-memory text-search kernel
+  (`src/core/textSearchIndex.ts`): inverted postings, field-aware BM25,
+  exact/prefix/phrase boosts, and CJK + Latin trigram candidates with strict
+  normalized verification, wired into `search_nodes` / `node_search` via an
+  **incremental** index (Core revision deltas; full rebuild only on
+  load/undo/full-rewrite). Review-gate findings fixed before merge: interior-substring
+  recall preserved (term candidates now **union** trigram matches instead of
+  early-returning on a prefix hit — `nation` again finds `internationalization`,
+  with a pinning test), `normalizeSearchText` is locale-insensitive, the dead
+  bounded-heap path was removed, the probe retargeted to the real
+  `candidateIds`+`scoreRecord` path, and the unrelated OAuth device-code type fix
+  was split out (see #108). Independent of #108; typecheck clean, `test:core`
+  508/2 (the 2 are the pre-existing ripgrep `agentLocalTools` fails). Spec synced
+  (`search-query-grammar.md`, `agent-tool-design.md`, A6).
+  ([#102](https://github.com/relixiaobo/lin-outliner/pull/102))
 
 - **settings-design-consistency** (cc, PRs #105 + #106) — every Settings pane now reads as one
   visual generation. **#105 (WI-1, fast-track):** conformance pass — danger hover → neutral

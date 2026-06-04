@@ -1,10 +1,14 @@
 ---
-status: in-progress
+status: done
 priority: P1
 owner: relixiaobo
 created: 2026-06-04
 updated: 2026-06-04
 ---
+
+> **Shipped** in PR #102 (kernel implemented in #102; plan ratified as #99).
+> Design folded into `docs/spec/search-query-grammar.md`; this plan is kept as
+> history.
 
 # Text Search Relevance Layer
 
