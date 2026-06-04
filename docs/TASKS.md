@@ -56,21 +56,27 @@ Ordered by priority; lower items may depend on higher ones.
   #103's launcher routes through the shared core `search_nodes`, not a parallel
   ranker. Implementer must re-verify the merged #102 scoring paths before claiming
   the substring scorers are gone (A8). See `docs/plans/search-retrieval-stack.md`.
-- **launcher-absorbs-commandpalette** (P2, **direction ratified by PM — needs a
-  dev-drafted one-pager**) — converge the two search/command surfaces onto a
-  single entry: the global launcher becomes the one launcher, the in-app cmd+k
-  `CommandPalette` retires over time. Both already share the core `search_nodes`
-  kernel (#102 relevance work) — cmd+k via `api.searchNodes`→`search_nodes`,
-  launcher via `launcher:searchNodes`→`search_nodes`+`projectionNodesByIds`; the
-  search **backend** unification is #107's territory (codex, `search-retrieval-stack`,
-  do not fold UI work into it — #107 scopes UI consolidation OUT). To absorb cmd+k
-  the launcher must gain what only cmd+k does today: workspace-root jumps
-  (Today/Library/Schema/Searches/Trash) and in-app *instant* in-renderer navigation
-  (no global-window round-trip when the app is already focused). **Sequence after
-  #107's shared retrieval path lands**; directional GO is given, so a dev agent
-  drafts the one-pager (`docs/plans/<topic>.md`) and the PM ratifies before build.
-  Distinct from "launcher follow-ups" (those extend the launcher; this one removes
-  cmd+k).
+- **unified-command-surface** (P2, **design ratified by PM — needs a dev-drafted
+  one-pager**) — collapse cmd+k and the launcher into **one** context-aware command
+  surface. Not "one absorbs the other": there is only one surface, summoned the same
+  way everywhere, with the same UI and logic. The **only** difference is the ambient
+  **context** auto-attached at summon time — context is a passive attachment, not a
+  mode. **Decided by PM:** (1) one global hotkey `Cmd+Shift+Space` everywhere (cmd+k
+  retires; plain cmd+k can't be a system-global key without hijacking it in every app);
+  (2) in-app context = the currently **focused node** or the **selected nodes**;
+  out-of-app context = the foreground app (e.g. browser tab, via the existing capture
+  path). Action model = **Target × Verb**: a small universal verb set — Go to · Capture
+  · Reference · Tag · **Ask AI** (current context auto-fed as the agent's source) · Run
+  command — where the attached context decides which verbs are available and the
+  default (Enter) action. **Open design work for the plan:** the full scenario→verb
+  enumeration + the v1 verb cut (Go to + Capture are the base; Ask AI is high-value and
+  the agent already exists; Reference/Tag/bulk can phase in), the per-context default
+  action (must be predictable), and the no-provider guard for Ask AI (ties to
+  `agent-empty-state-onboarding`). Reuses the existing context-provider shape
+  (`contextCapture.ts` + `providers/`) — in-app is just a new "Tenon self" provider;
+  same core `search_nodes` kernel underneath. **Sequence after `search-retrieval-stack`
+  Phase 2** (the shared node path). Supersedes the earlier "launcher absorbs cmd+k"
+  framing. A dev agent drafts `docs/plans/<topic>.md`; the PM ratifies before build.
 - **agent-empty-state-onboarding** (P1) — agent panel empty state: remove the three
   hardcoded suggestion chips (greeting / whitespace instead), and add a
   no-LLM-key onboarding (CTA → Settings › Providers, disable send when no usable
