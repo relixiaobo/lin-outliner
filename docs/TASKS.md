@@ -19,7 +19,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle |
-| Claude Code 2 | `lin-outliner-cc-2/` | (Phase 0 spike) | lazy-like-global-launcher (P0) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle |
 | Codex | `lin-outliner-codex/` | — | idle |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -30,20 +30,27 @@ _(nothing actively in flight)_
 
 ## Backlog
 
-- **launcher follow-ups (re-organized 2026-06-04)** — `lazy-like-global-launcher`
-  first slice shipped (#103) and is now **done** (as-built = `spec/launcher.md`).
-  The follow-ups were re-homed against the ratified `unified-command-surface`
-  design: the **command-surface** slices `launcher-capture-destinations` (⌘K
-  secondary actions, destination picker, Go-to) and `launcher-ai-actions` (Ask AI /
-  Ask AI with source) are **superseded** — folded into `unified-command-surface`
-  (D1/D4/D5; the load-bearing capture contracts preserved in its "Preserved
-  contracts" section). The two surviving **capture-pipeline** tracks stay separate
-  (orthogonal to the surface): `launcher-provider-expansion` (capture provider
-  breadth) and `browser-extension-integration` (rich extraction backend, record-only).
-  `launcher-capture-resolvers` remains **superseded**. Owners reset to unassigned —
-  future dev is not pre-committed to cc-2.
+Active plans grouped by theme; within each group, ordered by priority +
+build-readiness (a lower item may depend on a higher one). The `Pn` tag is the
+plan's own priority. This is the prioritized cut; the full catalog is the
+non-terminal `docs/plans/*.md` set (`rg -l '^status: (draft|in-progress|meta)'
+docs/plans/*.md`). Items with no `docs/plans/*.md` file are marked *(no plan
+file)*. All owners are unassigned — future dev is not pre-committed to any clone.
 
-Ordered by priority; lower items may depend on higher ones.
+**Top of queue (build-ready P1s):** `file-attachments` (unblocked, self-contained)
+and `unified-command-surface` (design ratified, retrieval dep shipped — needs a
+dev build one-pager first). The other P1s (`agent-self-modification`,
+`agent-ask-user-question-tool`, `agent-import-skill`) each carry an open
+directional/GO gate — escalate before code.
+
+### Command surface & capture
+
+The cmd+k / launcher convergence and the capture pipeline behind it. The
+`lazy-like-global-launcher` first slice shipped (#103, **done**, as-built =
+`spec/launcher.md`); its command-surface follow-ups (`launcher-capture-destinations`,
+`launcher-ai-actions`) were folded into `unified-command-surface` (D1/D4/D5) and the
+resolver track (`launcher-capture-resolvers`) superseded — all archived. The
+capture-pipeline tracks below stay separate (orthogonal to the surface).
 
 - **unified-command-surface** (P2, **design ratified by PM — needs a dev-drafted
   build one-pager**) — collapse cmd+k and the launcher into **one** context-aware
@@ -53,20 +60,29 @@ Ordered by priority; lower items may depend on higher ones.
   rail, Ask AI → agent panel, phased out-of-app fidelity, slash boundary, one-engine
   invariant) lives in `docs/plans/unified-command-surface.md`. Its retrieval
   dependency (`search-retrieval-stack` node-path unification) shipped in #111; a dev
-  agent now drafts the build one-pager
-  (phases/file-scope/tests) and the PM ratifies before code. Supersedes the earlier
-  "launcher absorbs cmd+k" framing; coordinates with the launcher follow-ups (cc-2)
-  and reuses #109's no-provider guard.
+  agent now drafts the build one-pager (phases/file-scope/tests) and the PM ratifies
+  before code. Supersedes the earlier "launcher absorbs cmd+k" framing; reuses #109's
+  no-provider guard.
+- **launcher-provider-expansion** (P2) — capture provider breadth: which URLs/apps
+  classify into which source `kind` + capture framing (Tier A browser web apps
+  classifiable now; Tier B native macOS apps later). Orthogonal to the command
+  surface and survives the convergence intact; does **not** own rich extraction. See
+  `docs/plans/launcher-provider-expansion.md`.
+- **browser-extension-integration** (**record-only — not approved to build**) — one
+  browser backend (extension or raw CDP) serving both read-only capture (rich page
+  body / transcript / media) and a future agent browser-control tool, as two tiers
+  of the same backend. Forward-looking design captured from a PM brainstorm; every
+  "PM decision" in it is an open gate. See
+  `docs/plans/browser-extension-integration.md`.
+
+### Agent capabilities
+
 - **agent-self-modification** (P1) — define a controlled product capability for
   agent self-modification (skills/profiles/config) instead of letting the model
   edit runtime files directly. Directional/security-sensitive — escalate the
   capability boundary to the PM before building. See
   `docs/plans/agent-self-modification.md`.
-- **file-attachments** (P1) — `attachment` node type for arbitrary local files
-  (plugs into `BlockNodeRow` via `renderBlockBody` + `isBlockNodeType`). Depends
-  on `asset-subsystem` (done) + `image-rendering` (done). See
-  `docs/plans/file-attachments.md`.
-- **agent-ask-user-question-tool** (P1, plan drafted, codex, PR #88) — full design
+- **agent-ask-user-question-tool** (P1, plan drafted, PR #88) — full design
   for a structured `ask_user_question` agent tool: a runtime pending-interaction
   model kept separate from approval, snake-case tool + answer contracts, the
   pending-question UI, composer-state cleanup, `@`-refs/attachments in answers, and
@@ -84,16 +100,10 @@ Ordered by priority; lower items may depend on higher ones.
   (protocol surface → interface-first + ratify). Soft-depends on `ask_user_question`
   (degrades to conversational turns until it exists). See
   `docs/plans/agent-import-skill.md`.
-- **sidebar-pinned-nodes** (P2, **unblocked — workspace-tabs-to-single-pane landed in PR #85**) —
-  implement the stubbed Pinned section: pin from right-click on BOTH outliner and
-  sidebar node rows; persist across restart. Recommended storage = renderer layout
-  state (not the core document — flag to PM if pins should be a document concept).
-  Builds on the merged v2 layout + post-refactor sidebar/menu. See
-  `docs/plans/sidebar-pinned-nodes.md`.
-- **file-preview** (P2, depends on **workspace-tabs-to-single-pane** — landed
-  PR #85) — in-app file/URL preview as a new per-pane *view-state* (generalizes
-  per-pane history from a `NodeId[]` stack to a discriminated view-state stack so
-  a `file-preview` entry slots in). See `docs/plans/file-preview.md`.
+- **agent-scheduled-routines** (P2) — a "command node" whose content is a
+  natural-language brief to the agent; setting its `date` field (one field
+  carrying both *when to start* and *how to repeat*) makes it run on a schedule.
+  See `docs/plans/agent-scheduled-routines.md`.
 - **agent-tool-permissions-hardening** (P2) — non-blocking follow-ups after the
   #60 permission implementation: move the `sessionApproved` short-circuit below
   configured-ask (don't silently relax a configured `ask`); re-validate
@@ -103,27 +113,48 @@ Ordered by priority; lower items may depend on higher ones.
   with the plan contract (`platform_hard_block`/`user_denied`, `recoverable`
   set). None is a live fail-open. Self-contained spec in
   `docs/plans/agent-tool-permissions-hardening.md`.
-- **agent-scheduled-routines** (P2) — a "command node" whose content is a
-  natural-language brief to the agent; setting its `date` field (one field
-  carrying both *when to start* and *how to repeat*) makes it run on a schedule.
-  See `docs/plans/agent-scheduled-routines.md`.
-- **media-types** (P2) — audio/video players + PDF thumbnail on the
+- **agent-image-awareness** (P2, *no plan file*) — surface `image` nodes in the
+  agent projection so the agent can read/insert them.
+- **agent-generative-ui** (P3, directional CSP/A3 gate) — Claude-style custom
+  visuals in agent chat: the assistant generates interactive HTML/SVG widgets
+  inline in the conversation while the tool arguments stream. See
+  `docs/plans/agent-generative-ui.md`.
+
+### Files & media
+
+- **file-attachments** (P1, **unblocked**) — `attachment` node type for arbitrary
+  local files (plugs into `BlockNodeRow` via `renderBlockBody` + `isBlockNodeType`).
+  Depends on `asset-subsystem` (done) + `image-rendering` (done) — both shipped in
+  PR #8. Coordinate with `media-types` to avoid double-building the audio/video
+  player + PDF thumbnail. See `docs/plans/file-attachments.md`.
+- **media-types** (P2, *no plan file*) — audio/video players + PDF thumbnail on the
   `BlockNodeRow` shell; `serve()` needs a streaming/range response for large
   media (current whole-file read is image-only).
-- **asset-gc** (P2) — asset `index.json` rebuild + garbage collection for
-  orphaned assets; drag-from-Finder ingest; inline alt-text editing.
-- **agent-image-awareness** (P2) — surface `image` nodes in the agent
-  projection so the agent can read/insert them.
+- **file-preview** (P2, depends on **workspace-tabs-to-single-pane** — landed
+  PR #85) — in-app file/URL preview as a new per-pane *view-state* (generalizes
+  per-pane history from a `NodeId[]` stack to a discriminated view-state stack so
+  a `file-preview` entry slots in). See `docs/plans/file-preview.md`.
+- **asset-gc** (P2, *no plan file*) — asset `index.json` rebuild + garbage
+  collection for orphaned assets; drag-from-Finder ingest; inline alt-text editing.
+
+### Outliner & UI polish
+
+- **sidebar-pinned-nodes** (P2, **unblocked — workspace-tabs-to-single-pane landed in PR #85**) —
+  implement the stubbed Pinned section: pin from right-click on BOTH outliner and
+  sidebar node rows; persist across restart. Recommended storage = renderer layout
+  state (not the core document — flag to PM if pins should be a document concept).
+  Builds on the merged v2 layout + post-refactor sidebar/menu. See
+  `docs/plans/sidebar-pinned-nodes.md`.
 - **macos-liquid-glass-icon** (P2) — true Liquid Glass app icon for macOS 26
   (Tahoe): the layered `.icon` (Icon Composer) format the OS renders with dynamic
   glass material, specular edges + depth, with a legacy `.icns` fallback for
   macOS < 26. Deferred from PR #84. See `docs/plans/macos-liquid-glass-icon.md`.
 - **floating-toolbar-polish** (P3) — heading-mark toggle + `#` selection
   extract in the floating editor toolbar.
-- **view-toolbar-name-filter** (P3) — quick incremental name filter as the
+- **view-toolbar-name-filter** (P3, *no plan file*) — quick incremental name filter as the
   view toolbar's first control (Tana-style); needs backend/data-model support.
   Optional follow-ons: `is_not` for options filters; relative-date operands.
-- **checkbox-row-long-text-wrap** (P3) — a done-checkbox row wraps its text onto
+- **checkbox-row-long-text-wrap** (P3, bug, *no plan file*) — a done-checkbox row wraps its text onto
   the next line when the text is long (checkbox sits alone on line 1). Root cause:
   in `.row-content-line` (display: block) the `.done-checkbox` and `.row-editor`
   are inline-level siblings, and the editor's `max-width: 100%`
@@ -136,16 +167,16 @@ Ordered by priority; lower items may depend on higher ones.
   block flow to wrap below); (b) minimal — `.row-content-line:has(> .done-checkbox)
   > .row-editor { max-width: calc(100% - 21px); }`. Prefer (a); verify visually
   with a long-text checkbox row.
-- **embed-strategy** (P3) — decide live iframe vs cached-metadata embeds.
-- **past-chats-output-polish** (P3) — minor cleanups deferred from PR #7:
+- **embed-strategy** (P3, decision-only, **no deadline**) — decide live iframe vs
+  cached-metadata embeds (Option B recommended), or fall back to Option C and remove
+  the dead `embedType`/`embedId` schema in a future data-model cleanup. See
+  `docs/plans/embed-strategy.md`.
+- **past-chats-output-polish** (P3, *no plan file*) — minor cleanups deferred from PR #7:
   (1) drop the now-redundant `returned_items` / `returned_hits` / `message_count`
   counts in `visiblePastChatsResult` (derivable from the inline arrays);
   (2) avoid `isJsonText` re-parsing on every render in `AgentToolCallBlock`
   (compute once in the memoized `resultParts`); (3) give `visiblePastChatsResult`
   a named return type instead of `unknown`. None affect behavior.
-- **agent-generative-ui** (P3) — Claude-style custom visuals in agent chat: the
-  assistant generates interactive HTML/SVG widgets inline in the conversation
-  while the tool arguments stream. See `docs/plans/agent-generative-ui.md`.
 
 ## Recently completed
 
