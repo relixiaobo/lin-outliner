@@ -229,7 +229,7 @@ export class Core {
       ...this.loro.serialize(SYSTEM_COMMIT_ORIGIN),
       operationHistory: this.history.entriesForSerialization(500),
     };
-    return JSON.stringify(serialized, null, 2);
+    return JSON.stringify(serialized);
   }
 
   projection(): DocumentProjection {

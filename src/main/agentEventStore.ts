@@ -136,8 +136,17 @@ export class AgentEventStore {
       await mkdir(paths.sessionDir, { recursive: true });
       await appendFile(paths.eventsPath, `${events.map((event) => JSON.stringify(event)).join('\n')}\n`, 'utf8');
       this.lastSeqBySessionId.set(sessionId, events.at(-1)!.seq);
-      await this.updateSessionIndex(sessionId, events);
-      await this.updateSearchIndex(sessionId, events);
+      // Streaming assistant deltas carry no index content: the session/search
+      // indexes derive assistant text from assistant_message.completed, and a
+      // delta only nudges latestSeq/updatedAt (cosmetic ordering, self-healed by
+      // the completed/run events that follow). Skipping the whole-file index
+      // rewrite for delta-only batches avoids re-reading + re-serializing both
+      // index files on every streamed token. The events.jsonl append above is
+      // the source of truth and still happens per delta.
+      if (events.some((event) => event.type !== 'assistant_message.delta')) {
+        await this.updateSessionIndex(sessionId, events);
+        await this.updateSearchIndex(sessionId, events);
+      }
     });
   }
 
@@ -555,7 +564,7 @@ export class AgentEventStore {
   private async writeSessionIndex(index: { sessions: Record<string, AgentEventSessionIndexEntry> }) {
     const indexPath = this.sessionIndexPath();
     await mkdir(path.dirname(indexPath), { recursive: true });
-    await atomicWriteFile(indexPath, `${JSON.stringify(index, null, 2)}\n`);
+    await atomicWriteFile(indexPath, `${JSON.stringify(index)}\n`);
   }
 
   private async readSearchIndex(): Promise<AgentEventSearchIndex | null> {
@@ -573,7 +582,7 @@ export class AgentEventStore {
   private async writeSearchIndex(index: AgentEventSearchIndex) {
     const indexPath = this.searchIndexPath();
     await mkdir(path.dirname(indexPath), { recursive: true });
-    await atomicWriteFile(indexPath, `${JSON.stringify(index, null, 2)}\n`);
+    await atomicWriteFile(indexPath, `${JSON.stringify(index)}\n`);
   }
 }
 
