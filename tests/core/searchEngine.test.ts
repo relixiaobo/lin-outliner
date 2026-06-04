@@ -1,12 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import { Core } from '../../src/core/core';
 import {
+  buildTextSearchIndex,
   runSearchExpr,
   runSearchNode,
   SEARCH_EXECUTABLE_QUERY_OPS,
   SEARCH_UNSUPPORTED_QUERY_OPS,
   searchNodeToQueryExpr,
 } from '../../src/core/searchEngine';
+import type { TextSearchIndex } from '../../src/core/textSearchIndex';
 import { QUERY_OPS, type EmbedNode, type ImageNode, type QueryOp } from '../../src/core/types';
 
 function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T) {
@@ -111,6 +113,111 @@ describe('core search engine', () => {
     sortRule.sortDirection = 'asc';
     const ascending = runSearchNode(state, searchId);
     expect(ascending.ok ? ascending.hits.map((hit) => hit.nodeId) : []).toEqual([older, newer]);
+
+    const indexedAscending = runSearchNode(state, searchId, { textIndex: buildTextSearchIndex(state) });
+    expect(indexedAscending.ok ? indexedAscending.hits.map((hit) => hit.nodeId) : []).toEqual([older, newer]);
+  });
+
+  test('uses text index relevance for loose multi-term string matches', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const exact = mustFocus(core.createNode(today, null, 'Launch design'));
+    const loose = mustFocus(core.createNode(today, null, 'Design review'));
+    core.updateNodeDescription(loose, 'Launch notes');
+    const partial = mustFocus(core.createNode(today, null, 'Launch only'));
+    const textIndex = buildTextSearchIndex(core.state());
+
+    const result = runSearchExpr(core.state(), {
+      kind: 'rule',
+      op: 'STRING_MATCH',
+      text: 'launch design',
+    }, { textIndex });
+
+    expect(result.ok).toBe(true);
+    const hits = result.ok ? result.hits.map((hit) => hit.nodeId) : [];
+    expect(hits.slice(0, 2)).toEqual([exact, loose]);
+    expect(hits).not.toContain(partial);
+  });
+
+  test('does not turn indexed string match into partial-term OR matching', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    mustFocus(core.createNode(today, null, 'Alpha project'));
+    mustFocus(core.createNode(today, null, 'Beta launch'));
+    mustFocus(core.createNode(today, null, 'Alpha beta'));
+    const textIndex = buildTextSearchIndex(core.state());
+
+    const legacy = runSearchExpr(core.state(), {
+      kind: 'rule',
+      op: 'STRING_MATCH',
+      text: 'alpha gamma',
+    });
+    const indexed = runSearchExpr(core.state(), {
+      kind: 'rule',
+      op: 'STRING_MATCH',
+      text: 'alpha gamma',
+    }, { textIndex });
+
+    expect(legacy.ok ? legacy.hits : []).toEqual([]);
+    expect(indexed.ok ? indexed.hits : []).toEqual([]);
+  });
+
+  test('does not use legacy fallback for short non-prefix substring matches', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const launch = mustFocus(core.createNode(today, null, 'Launch plan'));
+    const textIndex = buildTextSearchIndex(core.state());
+
+    const result = runSearchExpr(core.state(), {
+      kind: 'rule',
+      op: 'STRING_MATCH',
+      text: 'au',
+    }, { textIndex });
+
+    expect(result.ok ? result.hits.map((hit) => hit.nodeId) : []).not.toContain(launch);
+  });
+
+  test('does not fall back to legacy scoring when an indexed candidate is rejected', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const launch = mustFocus(core.createNode(today, null, 'Launch plan'));
+    const rejectingTextIndex: TextSearchIndex = {
+      size: 1,
+      hasRecord: (id) => id === launch,
+      candidateIds: () => new Set([launch]),
+      search: () => [],
+      scoreRecord: () => null,
+    };
+
+    const result = runSearchExpr(core.state(), {
+      kind: 'rule',
+      op: 'STRING_MATCH',
+      text: 'Launch',
+    }, { textIndex: rejectingTextIndex });
+
+    expect(result.ok ? result.hits : []).toEqual([]);
+  });
+
+  test('keeps OR semantics when only one branch can use text candidates', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const alpha = mustFocus(core.createNode(today, null, 'Alpha note'));
+    const tagged = mustFocus(core.createNode(today, null, 'Tagged beta'));
+    const tagId = mustFocus(core.createTag('project'));
+    core.applyTag(tagged, tagId);
+    const textIndex = buildTextSearchIndex(core.state());
+
+    const result = runSearchExpr(core.state(), {
+      kind: 'group',
+      logic: 'OR',
+      children: [
+        { kind: 'rule', op: 'STRING_MATCH', text: 'Alpha' },
+        { kind: 'rule', op: 'HAS_TAG', tagDefId: tagId },
+      ],
+    }, { textIndex });
+
+    expect(result.ok).toBe(true);
+    expect(result.ok ? result.hits.map((hit) => hit.nodeId) : []).toEqual(expect.arrayContaining([alpha, tagged]));
   });
 
   test('converts nested saved search conditions to QueryExpr', () => {

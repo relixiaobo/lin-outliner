@@ -59,11 +59,21 @@ interface ActiveSession {
   pending: Map<string, PendingReply>;
 }
 
+interface OAuthDeviceCodeInfo {
+  userCode: string;
+  verificationUri: string;
+  expiresInSeconds?: number;
+}
+
+type TenonOAuthLoginCallbacks = OAuthLoginCallbacks & {
+  onDeviceCode?: (info: OAuthDeviceCodeInfo) => void;
+};
+
 export function createOAuthLoginManager(deps: OAuthLoginDeps): OAuthLoginManager {
   const sessions = new Map<string, ActiveSession>();
   let requestCounter = 0;
 
-  function buildCallbacks(providerId: string, session: ActiveSession, emit: OAuthEventSink): OAuthLoginCallbacks {
+  function buildCallbacks(providerId: string, session: ActiveSession, emit: OAuthEventSink): TenonOAuthLoginCallbacks {
     // Emit a reply-needed event and await the renderer's answer. Rejects (not an
     // empty string) on cancellation, so login() unwinds cleanly instead of being
     // fed a blank code that some provider loops surface as "missing code".

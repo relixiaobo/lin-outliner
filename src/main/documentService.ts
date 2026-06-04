@@ -6,6 +6,16 @@ import { dirname, join } from 'node:path';
 import type { DocumentCommand } from '../core/commands';
 import { Core, type CoreTransactionMetadata, type OperationHistoryQuery } from '../core/core';
 import { CoreError } from '../core/errors';
+import {
+  buildTextSearchIndex,
+  buildTextSearchRecordSnapshot,
+  runSearchExpr,
+  textSearchRecordForNodeMap,
+} from '../core/searchEngine';
+import { addToSetMap, removeFromSetMap } from '../core/setUtils';
+import { createTextSearchIndex, type MutableTextSearchIndex, type TextSearchIndex } from '../core/textSearchIndex';
+import { collectDescendantIds, nodeIsInSubtree } from '../core/treeUtils';
+import { TRASH_ID } from '../core/types';
 import type {
   DocumentProjectionChangedEvent,
   DisplayPlacement,
@@ -15,6 +25,7 @@ import type {
   FilterValueLogic,
   FocusPlacement,
   IconKind,
+  NodeProjection,
   RichText,
   RichTextPatch,
   SearchNodeConfig,
@@ -52,14 +63,34 @@ export class DocumentService {
   private transactionContext = new AsyncLocalStorage<boolean>();
   private textEditGroup?: TextEditGroup;
   private readonly textEditFlushDelayMs = 700;
+  private textSearchIndex?: MutableTextSearchIndex;
+  private textSearchRevision = -1;
+  private textSearchNodes = new Map<string, NodeProjection>();
+  private textSearchRootId = '';
+  private textSearchLibraryId = '';
+  private textSearchTagDependents = new Map<string, Set<string>>();
+  private textSearchFieldDependents = new Map<string, Set<string>>();
+  private textSearchReferenceDependents = new Map<string, Set<string>>();
+  private textSearchNodeDependencies = new Map<string, {
+    tagDefIds: string[];
+    fieldDefIds: string[];
+    referencedNodeIds: string[];
+  }>();
 
   async initWorkspace() {
     this.core = await this.loadCore();
-    return this.core.projection();
+    const projection = this.core.projection();
+    this.rebuildTextSearchIndex(projection);
+    return projection;
   }
 
   getProjection() {
     return this.core.projection();
+  }
+
+  getTextSearchIndex(): TextSearchIndex {
+    this.ensureTextSearchIndex();
+    return this.textSearchIndex!;
   }
 
   onProjectionChanged(listener: ProjectionChangedListener) {
@@ -78,6 +109,7 @@ export class DocumentService {
       await this.flushTextEditGroupNow();
       const result = this.core.operationHistory(query);
       if (mutatesHistory && result.count > 0) {
+        this.refreshTextSearchIndexFromCoreDelta();
         await this.saveCore();
         this.emitProjectionChanged(historyChangeOrigin(query.origin));
       }
@@ -100,6 +132,7 @@ export class DocumentService {
       const result = await this.core.transaction(meta.origin ?? 'user', async () =>
         this.transactionContext.run(true, fn), transactionMetadata(meta));
       if (this.core.revision() !== revisionBefore) {
+        this.refreshTextSearchIndexFromCoreDelta();
         await this.saveCore();
         this.emitProjectionChanged(meta.origin ?? 'user');
       }
@@ -116,7 +149,7 @@ export class DocumentService {
       case 'get_projection':
         return this.mutationQueue.then(() => this.getProjection());
       case 'search_nodes':
-        return this.core.searchNodes(String(args.query ?? ''));
+        return this.searchNodes(String(args.query ?? ''));
       case 'backlinks':
         return this.core.backlinks(String(args.targetId));
       default:
@@ -163,8 +196,10 @@ export class DocumentService {
         if (changed) this.scheduleTextEditFlush();
         else await this.flushTextEditGroupNow();
       } else if (changed) {
+        this.refreshTextSearchIndexFromCoreDelta();
         await this.saveCore();
       }
+      if (changed && (command === 'apply_node_text_patch' || isMaterialize)) this.refreshTextSearchIndexFromCoreDelta();
       if (changed) this.emitProjectionChanged(effectiveMeta.origin ?? 'user');
       return outcome;
     });
@@ -451,11 +486,16 @@ export class DocumentService {
       case 'ensure_tag_search':
         return this.core.ensureTagSearch(String(args.tagId));
       case 'create_search_node':
-        return this.core.createSearchNode(String(args.parentId), nullableNumber(args.index), args.config as SearchNodeConfig);
+        return this.core.createSearchNode(
+          String(args.parentId),
+          nullableNumber(args.index),
+          args.config as SearchNodeConfig,
+          this.textSearchIndexForCoreMutation(),
+        );
       case 'set_search_node':
-        return this.core.setSearchNode(String(args.nodeId), args.config as SearchNodeConfig);
+        return this.core.setSearchNode(String(args.nodeId), args.config as SearchNodeConfig, this.textSearchIndexForCoreMutation());
       case 'refresh_search_node_results':
-        return this.core.refreshSearchNodeResults(String(args.nodeId));
+        return this.core.refreshSearchNodeResults(String(args.nodeId), this.textSearchIndexForCoreMutation());
       case 'undo':
         return this.core.operationHistory({
           action: 'undo',
@@ -473,6 +513,157 @@ export class DocumentService {
       default:
         throw new Error(`Unknown command: ${command}`);
     }
+  }
+
+  private searchNodes(query: string) {
+    const q = query.trim();
+    if (!q) return [];
+    const result = runSearchExpr(this.core.projection(), { kind: 'rule', op: 'STRING_MATCH', text: q }, {
+      limit: 50,
+      textIndex: this.getTextSearchIndex(),
+    });
+    return result.ok ? result.hits : [];
+  }
+
+  private textSearchIndexForCoreMutation(): TextSearchIndex | undefined {
+    return this.transactionContext.getStore()
+      ? buildTextSearchIndex(this.core.projection())
+      : this.getTextSearchIndex();
+  }
+
+  private ensureTextSearchIndex() {
+    if (!this.textSearchIndex) {
+      this.rebuildTextSearchIndex(this.core.projection());
+      return;
+    }
+    if (this.textSearchRevision !== this.core.revision()) {
+      this.refreshTextSearchIndexFromCoreDelta();
+    }
+  }
+
+  private rebuildTextSearchIndex(projection = this.core.projection()) {
+    const snapshot = buildTextSearchRecordSnapshot(projection);
+    this.textSearchIndex = createTextSearchIndex(snapshot.records.map((entry) => entry.record));
+    this.textSearchRevision = this.core.revision();
+    this.textSearchNodes = snapshot.nodes as Map<string, NodeProjection>;
+    this.textSearchRootId = snapshot.rootId;
+    this.textSearchLibraryId = snapshot.libraryId;
+    this.textSearchTagDependents.clear();
+    this.textSearchFieldDependents.clear();
+    this.textSearchReferenceDependents.clear();
+    this.textSearchNodeDependencies.clear();
+    for (const entry of snapshot.records) this.trackTextSearchDependencies(entry.record.id, entry.dependencies);
+  }
+
+  private refreshTextSearchIndexFromCoreDelta() {
+    if (!this.textSearchIndex) {
+      this.rebuildTextSearchIndex(this.core.projection());
+      return;
+    }
+
+    const delta = this.core.revisionDelta();
+    if (delta.revision === this.textSearchRevision) return;
+    if (
+      delta.requiresFullSearchRebuild
+      || delta.revision !== this.core.revision()
+      || delta.revision !== this.textSearchRevision + 1
+    ) {
+      this.rebuildTextSearchIndex(this.core.projection());
+      return;
+    }
+
+    const changedNodeIds = new Set(delta.changedNodeIds);
+    if (changedNodeIds.size === 0) {
+      this.rebuildTextSearchIndex(this.core.projection());
+      return;
+    }
+
+    const previousNodes = this.textSearchNodes;
+    const currentChangedNodes = this.core.projectionNodesFor([...changedNodeIds]);
+    const nextNodes = new Map(previousNodes);
+    for (const nodeId of changedNodeIds) {
+      const current = currentChangedNodes.get(nodeId);
+      if (current) nextNodes.set(nodeId, current);
+      else nextNodes.delete(nodeId);
+    }
+
+    const refreshIds = new Set<string>(changedNodeIds);
+    for (const nodeId of changedNodeIds) {
+      const before = previousNodes.get(nodeId);
+      const after = nextNodes.get(nodeId);
+      this.addDependentRefreshIds(refreshIds, nodeId, before, after);
+
+      if (before && !after) {
+        for (const descendantId of collectDescendantIds(previousNodes, nodeId)) {
+          refreshIds.add(descendantId);
+          nextNodes.delete(descendantId);
+        }
+        continue;
+      }
+
+      if (before && after && isInProjectionTrash(previousNodes, nodeId) !== isInProjectionTrash(nextNodes, nodeId)) {
+        for (const descendantId of collectDescendantIds(previousNodes, nodeId)) refreshIds.add(descendantId);
+        for (const descendantId of collectDescendantIds(nextNodes, nodeId)) refreshIds.add(descendantId);
+      }
+    }
+
+    this.textSearchNodes = nextNodes;
+    for (const nodeId of refreshIds) this.refreshTextSearchRecord(nodeId);
+    this.textSearchRevision = delta.revision;
+  }
+
+  private addDependentRefreshIds(
+    refreshIds: Set<string>,
+    nodeId: string,
+    before: NodeProjection | undefined,
+    after: NodeProjection | undefined,
+  ) {
+    if (before?.type === 'tagDef' || after?.type === 'tagDef') {
+      for (const dependentId of this.textSearchTagDependents.get(nodeId) ?? []) refreshIds.add(dependentId);
+    }
+    if (before?.type === 'fieldDef' || after?.type === 'fieldDef') {
+      for (const dependentId of this.textSearchFieldDependents.get(nodeId) ?? []) refreshIds.add(dependentId);
+    }
+    for (const dependentId of this.textSearchReferenceDependents.get(nodeId) ?? []) refreshIds.add(dependentId);
+  }
+
+  private refreshTextSearchRecord(nodeId: string) {
+    this.clearTextSearchDependencies(nodeId);
+    const entry = textSearchRecordForNodeMap(
+      this.textSearchNodes,
+      this.textSearchRootId,
+      this.textSearchLibraryId,
+      nodeId,
+    );
+    if (!entry) {
+      this.textSearchIndex?.remove(nodeId);
+      return;
+    }
+    this.textSearchIndex?.upsert(entry.record);
+    this.trackTextSearchDependencies(nodeId, entry.dependencies);
+  }
+
+  private trackTextSearchDependencies(
+    nodeId: string,
+    dependencies: { tagDefIds: string[]; fieldDefIds: string[]; referencedNodeIds: string[] },
+  ) {
+    this.textSearchNodeDependencies.set(nodeId, dependencies);
+    for (const tagDefId of dependencies.tagDefIds) addToSetMap(this.textSearchTagDependents, tagDefId, nodeId);
+    for (const fieldDefId of dependencies.fieldDefIds) addToSetMap(this.textSearchFieldDependents, fieldDefId, nodeId);
+    for (const referencedNodeId of dependencies.referencedNodeIds) {
+      addToSetMap(this.textSearchReferenceDependents, referencedNodeId, nodeId);
+    }
+  }
+
+  private clearTextSearchDependencies(nodeId: string) {
+    const dependencies = this.textSearchNodeDependencies.get(nodeId);
+    if (!dependencies) return;
+    for (const tagDefId of dependencies.tagDefIds) removeFromSetMap(this.textSearchTagDependents, tagDefId, nodeId);
+    for (const fieldDefId of dependencies.fieldDefIds) removeFromSetMap(this.textSearchFieldDependents, fieldDefId, nodeId);
+    for (const referencedNodeId of dependencies.referencedNodeIds) {
+      removeFromSetMap(this.textSearchReferenceDependents, referencedNodeId, nodeId);
+    }
+    this.textSearchNodeDependencies.delete(nodeId);
   }
 
   private async loadCore() {
@@ -511,7 +702,7 @@ export class DocumentService {
     return this.core.setSearchNode(nodeId, {
       title: searchNode.content.text.trim() || 'Search',
       query: spec.query,
-    });
+    }, this.textSearchIndexForCoreMutation());
   }
 
   private async saveCore() {
@@ -530,6 +721,10 @@ export class DocumentService {
     };
     for (const listener of this.projectionChangedListeners) listener(event);
   }
+}
+
+function isInProjectionTrash(nodes: ReadonlyMap<string, NodeProjection>, nodeId: string): boolean {
+  return nodeIsInSubtree(nodes, nodeId, TRASH_ID);
 }
 
 function workspacePath() {

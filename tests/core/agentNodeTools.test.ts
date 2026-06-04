@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
+import { buildTextSearchIndex } from '../../src/core/searchEngine';
 import { TRASH_ID } from '../../src/core/types';
 import { createNodeTools, visibleOperationHistory, type OutlinerToolHost } from '../../src/main/agentNodeTools';
 import type { OperationHistoryData } from '../../src/main/agentNodeToolTypes';
@@ -17,6 +18,7 @@ function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T) {
 function hostFor(core: Core): OutlinerToolHost {
   return {
     getProjection: () => core.projection(),
+    getTextSearchIndex: () => buildTextSearchIndex(core.projection()),
     transaction: async (meta, fn) => core.transaction(meta.origin ?? 'agent', fn, meta),
     operationHistory: (query) => core.operationHistory(query),
     handle: async (command, args = {}, meta = {}) => {
@@ -1269,6 +1271,25 @@ describe('agent node tools', () => {
     expect(envelope.data!.items).toEqual([
       expect.objectContaining({ nodeId: chengdu, title: 'Chengdu weather' }),
     ]);
+  });
+
+  test('node_search uses indexed relevance for loose multi-term keyword search', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const exact = mustFocus(core.createNode(today, null, 'Launch design'));
+    const loose = mustFocus(core.createNode(today, null, 'Design review'));
+    core.updateNodeDescription(loose, 'Launch notes');
+
+    const envelope = await executeTool<{
+      total: number;
+      items?: Array<{ nodeId: string; title: string }>;
+    }>(core, 'node_search', {
+      outline: '- %%search%% Launch design\n  - STRING_MATCH\n    - value:: launch design',
+      limit: 10,
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data!.items?.map((item) => item.nodeId)).toEqual([exact, loose]);
   });
 
   test('node_search model-visible result returns one annotated outline', async () => {

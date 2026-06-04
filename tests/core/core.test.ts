@@ -93,6 +93,28 @@ describe('Core', () => {
     expect(state.nodes[RESOURCES_ID]).toBeUndefined();
   });
 
+  test('reports changed node ids for incremental consumers and full rebuild on undo', () => {
+    const core = Core.new();
+    const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Delta source'));
+
+    expect(core.revisionDelta()).toMatchObject({
+      changedNodeIds: expect.arrayContaining([nodeId]),
+      requiresFullSearchRebuild: false,
+    });
+
+    core.updateNodeDescription(nodeId, 'Delta description');
+    expect(core.revisionDelta()).toMatchObject({
+      changedNodeIds: [nodeId],
+      requiresFullSearchRebuild: false,
+    });
+
+    core.undo();
+    expect(core.revisionDelta()).toMatchObject({
+      changedNodeIds: [],
+      requiresFullSearchRebuild: true,
+    });
+  });
+
   test('migrates legacy PARA root nodes without losing content', () => {
     const legacy = new LoroOutlinerDocument();
     legacy.createNodeWithId(WORKSPACE_ID, undefined, undefined, undefined, (node) => {

@@ -587,6 +587,12 @@ Result behavior:
 - Invalid, missing, trashed, or wrong-type operand references are errors. The
   tool does not silently drop unresolved structured conditions.
 - `search_node_id` executes an existing saved search node.
+- Positive `STRING_MATCH` searches use the shared derived text index when the
+  host exposes it. The index improves candidate generation and relevance order;
+  the structured search evaluator remains the final correctness check.
+- Text relevance ranks exact title matches, title prefixes, phrases, all-term
+  matches, tag labels, field names, and field values through the same core
+  relevance kernel used by saved search refresh.
 - Subtree restriction, parent restriction, backlink search, and relationship
   filters should be represented as search conditions in the outline, not as
   separate tool parameters.

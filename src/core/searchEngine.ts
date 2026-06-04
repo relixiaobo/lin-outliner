@@ -37,6 +37,15 @@ import {
   startOfLocalDay,
   startOfLocalWeek,
 } from './localDate';
+import { intersectSets, unionSets } from './setUtils';
+import {
+  createTextSearchIndex,
+  type MutableTextSearchIndex,
+  type TextSearchField,
+  type TextSearchIndex,
+  type TextSearchRecord,
+} from './textSearchIndex';
+import { nodeIsInSubtree } from './treeUtils';
 
 type SearchDocument = DocumentState | DocumentProjection;
 type SearchNode = Node | NodeProjection;
@@ -166,6 +175,7 @@ interface SearchIndex {
 
 interface SearchContext {
   searchNode: SearchNode;
+  textIndex?: TextSearchIndex;
 }
 
 interface SearchOperand {
@@ -196,7 +206,7 @@ interface OperandResolutionOptions {
 export function runSearchExpr(
   document: SearchDocument,
   query: SearchQueryExpr,
-  options: { limit?: number; searchNodeId?: NodeId } = {},
+  options: { limit?: number; searchNodeId?: NodeId; textIndex?: TextSearchIndex } = {},
 ): SearchRunResult {
   const baseIndex = indexSearchDocument(document);
   const searchNode = options.searchNodeId
@@ -213,10 +223,18 @@ export function runSearchExpr(
   const virtualTree = virtualConditionTreeFromQueryExpr(query, contextSearchNode.id, () => `virtual:query:${virtualCounter++}`);
   for (const node of virtualTree.nodes) evalIndex.nodes.set(node.id, node);
 
+  const candidateIds = candidateIdsForQuery(query, options.textIndex);
+  const candidateNodes = candidateIds
+    ? [...candidateIds].map((nodeId) => evalIndex.nodes.get(nodeId)).filter((node): node is SearchNode => Boolean(node))
+    : evalIndex.allNodes;
+
   const scored: SearchHit[] = [];
-  for (const node of evalIndex.allNodes) {
+  for (const node of candidateNodes) {
     if ((searchNode && node.id === searchNode.id) || !isSearchCandidate(evalIndex, node.id)) continue;
-    const evaluation = evaluateCondition(evalIndex, node, virtualTree.root, { searchNode: contextSearchNode });
+    const evaluation = evaluateCondition(evalIndex, node, virtualTree.root, {
+      searchNode: contextSearchNode,
+      textIndex: options.textIndex,
+    });
     if (!evaluation.ok) return evaluation;
     if (evaluation.match) scored.push({ nodeId: node.id, score: evaluation.score });
   }
@@ -260,7 +278,7 @@ function searchNodeSortRule(index: SearchIndex, searchNode: SearchNode): { field
 export function runSearchNode(
   document: SearchDocument,
   searchNodeId: NodeId,
-  options: { limit?: number } = {},
+  options: { limit?: number; textIndex?: TextSearchIndex } = {},
 ): SearchRunResult {
   const resolved = searchNodeToQueryExpr(document, searchNodeId);
   if (!resolved.ok) return { ok: false, issue: resolved.issue };
@@ -325,6 +343,53 @@ export function scoreSearchTerm(document: SearchDocument, nodeId: NodeId, term: 
   const index = indexSearchDocument(document);
   const node = index.nodes.get(nodeId);
   return node ? scoreTerm(index, node, term) : 0;
+}
+
+export interface NodeTextSearchRecord {
+  record: TextSearchRecord;
+  dependencies: {
+    tagDefIds: string[];
+    fieldDefIds: string[];
+    referencedNodeIds: string[];
+  };
+}
+
+export interface TextSearchRecordSnapshot {
+  records: NodeTextSearchRecord[];
+  nodes: Map<NodeId, SearchNode>;
+  rootId: NodeId;
+  libraryId: NodeId;
+}
+
+export function buildTextSearchIndex(document: SearchDocument): MutableTextSearchIndex {
+  return createTextSearchIndex(buildTextSearchRecordSnapshot(document).records.map((entry) => entry.record));
+}
+
+export function buildTextSearchRecordSnapshot(document: SearchDocument): TextSearchRecordSnapshot {
+  const index = indexSearchDocument(document);
+  const records = index.allNodes
+    .map((node) => textSearchRecordForNode(index, node.id))
+    .filter((entry): entry is NodeTextSearchRecord => Boolean(entry));
+  return {
+    records,
+    nodes: new Map(index.nodes),
+    rootId: index.rootId,
+    libraryId: index.libraryId,
+  };
+}
+
+export function textSearchRecordForNodeMap(
+  nodes: ReadonlyMap<NodeId, SearchNode>,
+  rootId: NodeId,
+  libraryId: NodeId,
+  nodeId: NodeId,
+): NodeTextSearchRecord | null {
+  return textSearchRecordForNode({
+    rootId,
+    libraryId,
+    nodes: nodes as Map<NodeId, SearchNode>,
+    allNodes: [],
+  }, nodeId);
 }
 
 function indexSearchDocument(document: SearchDocument): SearchIndex {
@@ -406,7 +471,7 @@ type SearchEvaluation =
   | { ok: false; issue: SearchConditionIssue };
 
 function evaluateSearchNode(index: SearchIndex, candidate: SearchNode, searchNode: SearchNode): SearchEvaluation {
-  const context = { searchNode };
+  const context: SearchContext = { searchNode };
   const conditionNodes = searchNode.children
     .map((childId) => index.nodes.get(childId))
     .filter((child): child is QueryBearingNode => child?.type === 'queryCondition' && !isInTrash(index, child.id));
@@ -599,7 +664,9 @@ function evaluateLeaf(index: SearchIndex, candidate: SearchNode, conditionNode: 
   }
 
   if (op === 'STRING_MATCH') {
-    const score = scoreTerm(index, candidate, conditionNode.content.text);
+    const score = context.textIndex
+      ? context.textIndex.scoreRecord(candidate.id, conditionNode.content.text, { includeSnippet: false })?.score ?? 0
+      : scoreTerm(index, candidate, conditionNode.content.text);
     return { ok: true, match: score > 0, score };
   }
 
@@ -794,6 +861,87 @@ function scoreTerm(index: SearchIndex, node: SearchNode, term: string): number {
     }
   }
   return score;
+}
+
+function candidateIdsForQuery(query: SearchQueryExpr, textIndex: TextSearchIndex | undefined): Set<NodeId> | null {
+  if (!textIndex) return null;
+  if (query.kind === 'rule') {
+    if (query.op !== 'STRING_MATCH' || !query.text?.trim()) return null;
+    const candidates = textIndex.candidateIds(query.text);
+    return candidates.size > 0 ? candidates : null;
+  }
+
+  const childSets = query.children.map((child) => candidateIdsForQuery(child, textIndex));
+  if (query.logic === 'NOT') return null;
+  if (query.logic === 'AND') {
+    const positiveSets = childSets.filter((set): set is Set<NodeId> => Boolean(set));
+    if (positiveSets.length === 0) return null;
+    return intersectCandidateSets(positiveSets);
+  }
+  if (query.logic === 'OR') {
+    if (childSets.length === 0 || childSets.some((set) => !set)) return null;
+    return unionCandidateSets(childSets as Set<NodeId>[]);
+  }
+  return null;
+}
+
+function intersectCandidateSets(sets: Set<NodeId>[]): Set<NodeId> {
+  const sorted = [...sets].sort((left, right) => left.size - right.size);
+  let result = new Set(sorted[0] ?? []);
+  for (let index = 1; index < sorted.length; index += 1) {
+    result = intersectSets(result, sorted[index]!);
+    if (result.size === 0) break;
+  }
+  return result;
+}
+
+function unionCandidateSets(sets: Set<NodeId>[]): Set<NodeId> {
+  return unionSets(sets);
+}
+
+function textSearchRecordForNode(index: SearchIndex, nodeId: NodeId): NodeTextSearchRecord | null {
+  const node = index.nodes.get(nodeId);
+  if (!node || !isSearchCandidate(index, nodeId)) return null;
+
+  const fields: TextSearchField[] = [];
+  const title = node.content.text.trim();
+  if (title) fields.push({ key: 'title', text: title });
+  if (node.description?.trim()) fields.push({ key: 'description', text: node.description });
+  if (node.type === 'codeBlock' && title) fields.push({ key: 'body', text: title });
+
+  const tagDefIds = uniqueStrings(node.tags);
+  for (const tagName of tagNames(index, node)) {
+    fields.push({ key: 'tag', text: tagName });
+    fields.push({ key: 'tag', text: `#${tagName}` });
+  }
+
+  const fieldDefIds: string[] = [];
+  const referencedNodeIds: string[] = [];
+  for (const field of fieldReads(index, node)) {
+    if (field.name.trim()) fields.push({ key: 'fieldName', text: field.name });
+    if (field.fieldDefId) fieldDefIds.push(field.fieldDefId);
+    for (const value of field.values) {
+      if (value.trim()) fields.push({ key: 'fieldValue', text: value });
+    }
+  }
+  for (const valueNode of fieldValueNodes(index, node)) {
+    if (valueNode.type === 'reference' && valueNode.targetId) referencedNodeIds.push(valueNode.targetId);
+  }
+
+  if (fields.length === 0) return null;
+  return {
+    record: {
+      id: node.id,
+      kind: node.type ?? 'node',
+      fields,
+      updatedAt: node.updatedAt,
+    },
+    dependencies: {
+      tagDefIds,
+      fieldDefIds: uniqueStrings(fieldDefIds),
+      referencedNodeIds: uniqueStrings(referencedNodeIds),
+    },
+  };
 }
 
 function nodeLinksTo(index: SearchIndex, node: SearchNode, targetId: NodeId): boolean {
@@ -1545,13 +1693,5 @@ function hasAncestorOfType(index: SearchIndex, nodeId: NodeId, type: SearchNode[
 }
 
 function isInTrash(index: SearchIndex, nodeId: NodeId): boolean {
-  if (nodeId === TRASH_ID) return true;
-  let current = index.nodes.get(nodeId)?.parentId;
-  const visited = new Set<NodeId>();
-  while (current && !visited.has(current)) {
-    if (current === TRASH_ID) return true;
-    visited.add(current);
-    current = index.nodes.get(current)?.parentId;
-  }
-  return false;
+  return nodeIsInSubtree(index.nodes, nodeId, TRASH_ID);
 }

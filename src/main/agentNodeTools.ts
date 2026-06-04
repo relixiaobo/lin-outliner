@@ -125,6 +125,7 @@ export function createNodeTools(host: OutlinerToolHost, options: NodeToolsOption
 function asAgentToolHost(host: OutlinerToolHost): OutlinerToolHost {
   return {
     getProjection: () => host.getProjection(),
+    getTextSearchIndex: host.getTextSearchIndex ? () => host.getTextSearchIndex!() : undefined,
     handle: (command, args = {}, meta = {}) => host.handle(command, args, { origin: 'agent', ...meta }),
     transaction: host.transaction
       ? (meta, fn) => host.transaction!({ origin: 'agent', ...meta }, fn)
@@ -959,7 +960,7 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
         }));
       }
 
-      const resultIds = runSearch(index, search);
+      const resultIds = runSearch(index, search, { textIndex: host.getTextSearchIndex?.() });
       if ('error' in resultIds) {
         return nodeErrorResult(errorEnvelope('node_search', resultIds.code, resultIds.error, {
           instructions: resultIds.instructions,
