@@ -187,6 +187,7 @@ describe('core search engine', () => {
       candidateIds: () => new Set([launch]),
       search: () => [],
       scoreRecord: () => null,
+      scoreAnalyzedRecord: () => null,
     };
 
     const result = runSearchExpr(core.state(), {

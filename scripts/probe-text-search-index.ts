@@ -5,6 +5,7 @@ import {
   type TextSearchRecord,
   type TextSearchResult,
 } from '../src/core/textSearchIndex';
+import { analyzeTextSearchQuery } from '../src/core/textSearchAnalyzer';
 
 const size = Number(process.argv[2] ?? 10000);
 const tagFanout = Math.max(1, Math.floor(size / 50));
@@ -74,9 +75,10 @@ function syntheticRecord(index: number, title?: string, tagName = `tag-${index %
 }
 
 function runTextSearchHotPath(index: TextSearchIndex, query: string, limit: number): TextSearchResult[] {
+  const analysis = analyzeTextSearchQuery(query);
   const results: TextSearchResult[] = [];
   for (const id of index.candidateIds(query)) {
-    const score = index.scoreRecord(id, query, { includeSnippet: false });
+    const score = index.scoreAnalyzedRecord(id, analysis, { includeSnippet: false });
     if (score) results.push(score);
   }
   return results

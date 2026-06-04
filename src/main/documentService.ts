@@ -9,7 +9,6 @@ import { CoreError } from '../core/errors';
 import {
   buildTextSearchIndex,
   buildTextSearchRecordSnapshot,
-  runSearchExpr,
   textSearchRecordForNodeMap,
 } from '../core/searchEngine';
 import { addToSetMap, removeFromSetMap } from '../core/setUtils';
@@ -37,6 +36,7 @@ import type { CreateCaptureInput } from '../core/launcher/sources';
 import { parseLinOutline } from './agentOutlineParser';
 import { indexProjection } from './agentNodeToolProjection';
 import { resolveSearchSpecFromOutlineNode } from './agentNodeToolSearch';
+import { NodeRetrievalService } from './nodeRetrievalService';
 
 const WORKSPACE_FILE = 'workspace.loro.json';
 
@@ -77,6 +77,10 @@ export class DocumentService {
     fieldDefIds: string[];
     referencedNodeIds: string[];
   }>();
+  private readonly nodeRetrieval = new NodeRetrievalService({
+    getProjection: () => this.core.projection(),
+    getTextSearchIndex: () => this.getTextSearchIndex(),
+  });
 
   async initWorkspace() {
     this.core = await this.loadCore();
@@ -525,13 +529,7 @@ export class DocumentService {
   }
 
   private searchNodes(query: string) {
-    const q = query.trim();
-    if (!q) return [];
-    const result = runSearchExpr(this.core.projection(), { kind: 'rule', op: 'STRING_MATCH', text: q }, {
-      limit: 50,
-      textIndex: this.getTextSearchIndex(),
-    });
-    return result.ok ? result.hits : [];
+    return this.nodeRetrieval.searchText(query, { limit: 50 });
   }
 
   private textSearchIndexForCoreMutation(): TextSearchIndex | undefined {

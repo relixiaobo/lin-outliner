@@ -13,6 +13,16 @@ import type { AgentProviderSettingsView, OAuthLoginEvent, OAuthLoginEventEnvelop
 
 export type OAuthEventSink = (envelope: OAuthLoginEventEnvelope) => void;
 
+export interface OAuthDeviceCodeInfo {
+  userCode: string;
+  verificationUri: string;
+  expiresInSeconds?: number;
+}
+
+export type DeviceCodeOAuthLoginCallbacks = OAuthLoginCallbacks & {
+  onDeviceCode?: (info: OAuthDeviceCodeInfo) => void;
+};
+
 /** Raised when a sign-in is cancelled (flow-level cancel or a per-step undefined answer). */
 class OAuthCancelledError extends Error {
   constructor() {
@@ -63,7 +73,7 @@ export function createOAuthLoginManager(deps: OAuthLoginDeps): OAuthLoginManager
   const sessions = new Map<string, ActiveSession>();
   let requestCounter = 0;
 
-  function buildCallbacks(providerId: string, session: ActiveSession, emit: OAuthEventSink): OAuthLoginCallbacks {
+  function buildCallbacks(providerId: string, session: ActiveSession, emit: OAuthEventSink): DeviceCodeOAuthLoginCallbacks {
     // Emit a reply-needed event and await the renderer's answer. Rejects (not an
     // empty string) on cancellation, so login() unwinds cleanly instead of being
     // fed a blank code that some provider loops surface as "missing code".
@@ -76,7 +86,7 @@ export function createOAuthLoginManager(deps: OAuthLoginDeps): OAuthLoginManager
     };
     return {
       onAuth: (info) => emit({ providerId, event: { kind: 'auth', url: info.url, instructions: info.instructions } }),
-      onDeviceCode: (info) =>
+      onDeviceCode: (info: OAuthDeviceCodeInfo) =>
         emit({
           providerId,
           event: {

@@ -3,6 +3,13 @@ import {
   type AgentEventMessageRecord,
   type AgentPersistedContent,
 } from '../core/agentEventLog';
+import {
+  analyzeTextSearchQuery,
+  buildTextSearchSnippet,
+  normalizeSearchText,
+  textSearchTextMatchesQuery,
+  type TextSearchQueryAnalysis,
+} from '../core/textSearchAnalyzer';
 import type {
   AgentEventSearchIndexEntry,
   AgentEventSessionIndexEntry,
@@ -146,8 +153,8 @@ export class AgentPastChatsService {
     params: PastChatsSearchParams,
     context: PastChatsRequestContext = {},
   ): Promise<PastChatsResult> {
-    const terms = normalizeQueryTerms(params.query);
-    if (terms.length === 0) {
+    const analysis = limitedQueryAnalysis(analyzeTextSearchQuery(params.query));
+    if (analysis.terms.length === 0) {
       return pastChatsError('MISSING_QUERY_OR_MESSAGE_ID', 'Pass a non-empty query or message_id.');
     }
 
@@ -163,33 +170,36 @@ export class AgentPastChatsService {
       .filter((entry) => params.includeCurrentSession || entry.sessionId !== currentSessionId)
       .filter((entry) => after === null || entry.createdAt >= after)
       .filter((entry) => before === null || entry.createdAt <= before)
-      .filter((entry) => terms.every((term) => entry.normalizedText.includes(term)));
+      .filter((entry) => textSearchTextMatchesQuery(entry.normalizedText, analysis));
 
-    const visibleHits: Array<{ entry: AgentEventSearchIndexEntry; text: string }> = [];
+    const visibleHits: Array<{ entry: AgentEventSearchIndexEntry; match: PastChatTextMatch }> = [];
     for (const entry of candidates) {
       const visible = await this.visibleSessionMessages(entry.sessionId);
       if (!visible.messageIds.has(entry.messageId)) continue;
       const text = searchResultText(entry, visible.messageById.get(entry.messageId));
-      if (!terms.every((term) => normalizeText(text).includes(term))) continue;
-      visibleHits.push({ entry, text });
+      const match = scorePastChatText(text, analysis);
+      if (!match) continue;
+      visibleHits.push({ entry, match });
     }
 
     visibleHits.sort((left, right) => {
       const leftSession = sessions.get(left.entry.sessionId)?.updatedAt ?? left.entry.updatedAt;
       const rightSession = sessions.get(right.entry.sessionId)?.updatedAt ?? right.entry.updatedAt;
-      return rightSession - leftSession || right.entry.updatedAt - left.entry.updatedAt;
+      return right.match.score - left.match.score
+        || rightSession - leftSession
+        || right.entry.updatedAt - left.entry.updatedAt;
     });
 
     const selected = visibleHits.slice(0, limit);
     return {
       mode: 'search',
-      hits: selected.map(({ entry, text }) => ({
+      hits: selected.map(({ entry, match }) => ({
         messageId: entry.messageId,
         sessionId: entry.sessionId,
         sessionTitle: sessions.get(entry.sessionId)?.title ?? null,
         role: entry.role,
         createdAt: isoTime(entry.createdAt),
-        snippet: buildSnippet(text, terms),
+        snippet: match.snippet,
       })),
       totalHits: visibleHits.length,
       truncated: visibleHits.length > selected.length,
@@ -454,43 +464,51 @@ function nearbyMessageIds(
     .map((message) => message.id);
 }
 
-function buildSnippet(text: string, terms: readonly string[]): string {
-  const normalized = normalizeText(text);
-  let matchIndex = -1;
-  let matchTerm = '';
-  for (const term of terms) {
+interface PastChatTextMatch {
+  score: number;
+  snippet: string;
+}
+
+function limitedQueryAnalysis(analysis: TextSearchQueryAnalysis): TextSearchQueryAnalysis {
+  return analysis.terms.length <= MAX_QUERY_TERMS
+    ? analysis
+    : { ...analysis, terms: analysis.terms.slice(0, MAX_QUERY_TERMS) };
+}
+
+function scorePastChatText(text: string, analysis: TextSearchQueryAnalysis): PastChatTextMatch | null {
+  const normalized = normalizeSearchText(text);
+  if (!textSearchTextMatchesQuery(normalized, analysis)) return null;
+  const phraseIndex = normalized.indexOf(analysis.normalized);
+  const phraseMatched = phraseIndex >= 0;
+  const matchedTerms = analysis.terms.filter((term) => normalized.includes(term));
+  const firstMatchIndex = firstTextSearchMatchIndex(normalized, analysis, phraseIndex);
+  let score = 0;
+  if (normalized === analysis.normalized) score += 120;
+  else if (normalized.startsWith(analysis.normalized)) score += 70;
+  if (phraseMatched) score += 42;
+  if (matchedTerms.length === analysis.terms.length) score += 26;
+  score += Math.min(matchedTerms.length, 4) * 4;
+  if (firstMatchIndex >= 0) score += Math.max(0, 8 - firstMatchIndex / 40);
+  return {
+    score,
+    snippet: buildTextSearchSnippet([{ normalized }], analysis, {
+      beforeChars: Math.floor(SEARCH_SNIPPET_CHARS / 2),
+      afterChars: Math.ceil(SEARCH_SNIPPET_CHARS / 2),
+    }),
+  };
+}
+
+function firstTextSearchMatchIndex(
+  normalized: string,
+  analysis: TextSearchQueryAnalysis,
+  phraseIndex: number,
+): number {
+  let result = phraseIndex;
+  for (const term of analysis.terms) {
     const index = normalized.indexOf(term);
-    if (index >= 0 && (matchIndex < 0 || index < matchIndex)) {
-      matchIndex = index;
-      matchTerm = term;
-    }
+    if (index >= 0 && (result < 0 || index < result)) result = index;
   }
-
-  const source = text.replace(/\s+/g, ' ').trim();
-  if (matchIndex < 0) return source.slice(0, SEARCH_SNIPPET_CHARS);
-  const half = Math.floor((SEARCH_SNIPPET_CHARS - matchTerm.length) / 2);
-  const start = Math.max(0, matchIndex - half);
-  const end = Math.min(source.length, start + SEARCH_SNIPPET_CHARS);
-  const prefix = start > 0 ? '...' : '';
-  const suffix = end < source.length ? '...' : '';
-  return `${prefix}${highlightTerms(source.slice(start, end), terms)}${suffix}`;
-}
-
-function highlightTerms(text: string, terms: readonly string[]): string {
-  let highlighted = text;
-  for (const term of [...terms].sort((left, right) => right.length - left.length)) {
-    if (!term) continue;
-    highlighted = highlighted.replace(new RegExp(escapeRegExp(term), 'gi'), (match) => `<mark>${match}</mark>`);
-  }
-  return highlighted;
-}
-
-function normalizeQueryTerms(query: string): string[] {
-  return [...new Set(normalizeText(query).split(/\s+/).filter(Boolean))].slice(0, MAX_QUERY_TERMS);
-}
-
-function normalizeText(text: string): string {
-  return text.replace(/\s+/g, ' ').trim().normalize('NFKC').toLocaleLowerCase();
+  return result;
 }
 
 function stringSet(values: readonly string[] | undefined): Set<string> | null {
@@ -513,10 +531,6 @@ function summarizeJson(value: unknown): string {
   const text = JSON.stringify(value);
   if (!text) return '';
   return text.length > 180 ? `${text.slice(0, 180).trimEnd()}...` : text;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function isoTime(value: number): string {

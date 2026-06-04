@@ -680,6 +680,15 @@ It may cache:
 If session/search/user-message indexes are corrupt or missing, discard them and
 rebuild them from event logs.
 
+Search/user-message indexes are candidate projections, not authority. Their
+normalized text uses the shared text-search analyzer so node search and
+conversation-history search agree on whitespace, punctuation, CJK grams, and
+query-term handling. `past_chats search` must still apply session/date/current
+session filters, replay each candidate session's visible active branch, and
+verify the visible message text before returning a hit. It sorts verified hits by
+relevance first, then session recency, then message recency; `recent` mode stays
+recency-only.
+
 ## Streaming Strategy
 
 Streaming has two separate paths:

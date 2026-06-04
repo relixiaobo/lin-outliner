@@ -123,6 +123,36 @@ describe('agent past chats', () => {
     });
   });
 
+  test('search sorts by relevance before recency', async () => {
+    await withStore(async (store, service) => {
+      const olderSessionId = 'session-relevance-old';
+      const newerSessionId = 'session-relevance-new';
+      await store.appendEvents(olderSessionId, [
+        { ...base(olderSessionId, 1, 'session.created'), title: 'Older exact' },
+        {
+          ...base(olderSessionId, 2, 'user_message.created', userActor),
+          messageId: 'older-phrase',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'sqlite checkpoint strategy' }],
+        },
+      ]);
+      await store.appendEvents(newerSessionId, [
+        { ...base(newerSessionId, 10, 'session.created'), title: 'Newer loose' },
+        {
+          ...base(newerSessionId, 11, 'user_message.created', userActor),
+          messageId: 'newer-loose',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'checkpoint details for sqlite migration' }],
+        },
+      ]);
+
+      const result = await service.search({ query: 'sqlite checkpoint', includeCurrentSession: true });
+      expect(result.mode).toBe('search');
+      if (result.mode !== 'search') throw new Error('Expected search result');
+      expect(result.hits.map((hit) => hit.messageId)).toEqual(['older-phrase', 'newer-loose']);
+    });
+  });
+
   test('read can recover compacted current-session history when opted in', async () => {
     await withStore(async (store, service) => {
       const sessionId = 'session-compact';

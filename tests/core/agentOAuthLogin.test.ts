@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { OAuthCredentials, OAuthLoginCallbacks, OAuthProviderInterface } from '@earendil-works/pi-ai';
 import type { AgentProviderSettingsView, OAuthLoginEventEnvelope } from '../../src/core/types';
-import { createOAuthLoginManager, type OAuthLoginManager } from '../../src/main/agentOAuth';
+import {
+  createOAuthLoginManager,
+  type DeviceCodeOAuthLoginCallbacks,
+  type OAuthLoginManager,
+} from '../../src/main/agentOAuth';
 
 // A marker settings view so tests can assert the manager returns getSettings().
 const SETTINGS = { providers: [], availableProviders: [], agent: {} } as unknown as AgentProviderSettingsView;
@@ -16,8 +20,9 @@ function fakeProvider(): OAuthProviderInterface {
     refreshToken: async (creds: OAuthCredentials) => creds,
     getApiKey: (creds: OAuthCredentials) => creds.access,
     login: async (cb: OAuthLoginCallbacks): Promise<OAuthCredentials> => {
+      const callbacks = cb as DeviceCodeOAuthLoginCallbacks;
       cb.onAuth({ url: 'https://example.test/auth' });
-      cb.onDeviceCode({ userCode: 'WXYZ-1234', verificationUri: 'https://example.test/device', expiresInSeconds: 900 });
+      callbacks.onDeviceCode?.({ userCode: 'WXYZ-1234', verificationUri: 'https://example.test/device', expiresInSeconds: 900 });
       const choice = await cb.onSelect({ message: 'Pick an org', options: [{ id: 'org-a', label: 'Org A' }] });
       const code = await cb.onPrompt({ message: 'Paste code' });
       return { refresh: 'refresh-token', access: `access:${choice}:${code}`, expires: 4242 };

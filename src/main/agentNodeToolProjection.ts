@@ -185,27 +185,6 @@ export function nodeContentText(node: NodeProjection): string {
   return richTextToReferenceMarkup(node.content);
 }
 
-export function scoreTerm(index: ProjectionIndex, node: NodeProjection, term: string): number {
-  const q = term.trim().toLowerCase();
-  if (!q) return 0;
-  let score = 0;
-  const text = node.content.text.toLowerCase();
-  if (text === q) score += 100;
-  else if (text.startsWith(q)) score += 60;
-  else if (text.includes(q)) score += 30;
-  if (node.description?.toLowerCase().includes(q)) score += 15;
-  for (const tag of tagLabels(index, node)) {
-    if (tag.toLowerCase().includes(q)) score += 15;
-  }
-  for (const field of fieldReads(index, node, false)) {
-    if (field.name.toLowerCase().includes(q)) score += 8;
-    for (const value of field.values) {
-      if (value.text.toLowerCase().includes(q)) score += 10;
-    }
-  }
-  return score;
-}
-
 export function isSearchCandidate(index: ProjectionIndex, nodeId: string): boolean {
   const node = index.nodes.get(nodeId);
   if (!node) return false;
