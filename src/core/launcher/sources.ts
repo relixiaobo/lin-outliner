@@ -25,8 +25,11 @@ import type {
 /**
  * Pointer to the live original resource the user can reopen later. Distinct from
  * the captured snapshot: opening the original may show newer/changed content.
- * `asset` and `remote-url` ReferenceTarget kinds are deferred in core; this union
- * models the original pointer directly around the landed path/url shape.
+ *
+ * Produced today: only `remote-url` (web captures) and an empty `app-resource`
+ * (manual / unknown-app). `local-file` and `asset` are the TARGET shape for the
+ * deferred preview / local-file capture (tracked in launcher-provider-expansion.md)
+ * — declared now so the contract is stable (A7: settle the foundation), not yet emitted.
  */
 export type OriginalResourceRef =
   | {
@@ -62,7 +65,15 @@ export type OriginalResourceRef =
     preview: 'app-open' | 'external-browser' | 'unsupported';
   };
 
-/** Normalized, provider-agnostic description of what was captured. */
+/**
+ * Normalized, provider-agnostic description of what was captured.
+ *
+ * The `kind` union is the TARGET classification. Produced today: `webpage`/`article`
+ * (generic), `video` (youtube), `tweet` (x-twitter), `repo`/`profile` (github), and
+ * `app` (manual / unknown). `email`/`chat`/`pdf`/`music` are declared for the
+ * roadmap providers (gmail/slack/pdf/spotify, …) tracked in
+ * launcher-provider-expansion.md — kept in the contract (A7), not yet emitted.
+ */
 export interface SourceDraft {
   kind:
     | 'webpage'
@@ -95,7 +106,12 @@ export interface SourceDraft {
   metadata?: Record<string, unknown>;
 }
 
-/** What the user asked the launcher to do with the source. */
+/**
+ * What the user asked the launcher to do with the source. Produced today: only
+ * `'capture'`. `clip`/`read-later`/`watch-later`/`summarize`/`ask-ai` are declared
+ * for the deferred destination / AI features (launcher-capture-destinations.md,
+ * launcher-ai-actions.md) — part of the target contract, not yet emitted.
+ */
 export type CaptureIntent =
   | 'capture'
   | 'clip'
@@ -110,6 +126,11 @@ export type CaptureIntent =
  * content (page body, transcript, email/DM threads, …) is NOT stored here today:
  * capture is basic-info only, and the content + enrichment model returns via the
  * unified browser-extension path (docs/plans/browser-extension-integration.md).
+ *
+ * The sidecar is written now and consumed later: today only the outline projection
+ * (tag + fields) is read back, while the sidecar's own consumers (re-open original,
+ * dedupe by captureId, provider/warnings display) arrive with the preview +
+ * extension phases. It is the durable provenance record those phases build on.
  */
 export interface CaptureNodeMetadata {
   schemaVersion: 1;
@@ -182,7 +203,7 @@ export interface CreateCaptureInput {
   destinationParentId: NodeId;
   index?: number | null;
   title: RichText;
-  /** Optional short user note (NOT the URL — the link lives in a Source field). */
+  /** Optional short user note (NOT the URL — the link is projected to the URL field). */
   description?: string;
   /** Tag to apply (most specific capture kind, e.g. 'article' or 'capture'). */
   tag?: string;
@@ -299,8 +320,8 @@ export function buildContextCaptureInput(args: {
 
   const fields: CaptureFieldInput[] = [];
   // A remote http(s) link → the typed URL field (clickable). Non-http sources
-  // (local file / app) get a Source field later; the raw value always lives in
-  // the sidecar regardless.
+  // (local file / app) get NO link field today — no provider emits one yet (that
+  // arrives with local-file capture); the raw value always stays in the sidecar.
   const link = source.canonicalUrl ?? source.url;
   if (link && /^https?:\/\//i.test(link)) fields.push({ field: CAPTURE_FIELD.url, value: link });
   const author = source.author?.handle ?? source.author?.name;
@@ -311,10 +332,10 @@ export function buildContextCaptureInput(args: {
     const dateValue = toDateFieldValue(source.publishedAt);
     if (dateValue) fields.push({ field: CAPTURE_FIELD.published, value: dateValue });
   }
-  // A video's player position and total length are intentionally NOT projected as
-  // fields: the position already lives in the URL as a `&t=` deep-link anchor (the
-  // actionable form), and the total duration is trivia. Both stay on the source /
-  // `media` for downstream resolvers without cluttering the captured node.
+  // A video's player position and total length are intentionally NOT captured at
+  // all: buildContextCapture's URL (via buildYoutubeUrl) strips the `t`/`start`
+  // anchor so the saved link is the clean canonical video — the resume-time was
+  // judged noise (PM decision) — and the duration is trivia. Neither is stored.
 
   const note_ = note?.trim();
   return {

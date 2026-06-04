@@ -16,6 +16,13 @@ export interface LauncherWindowDeps {
   /** Absolute path to the packaged launcher.html. */
   packagedHtmlPath: string;
   harden: (contents: Electron.WebContents) => void;
+  /**
+   * Called when the window hides because it lost focus (clicked away). The owner
+   * uses this to dismiss + forget the captured context through the SAME path as an
+   * explicit hide, so blur-dismiss can't leave stale page metadata behind. When
+   * omitted, the window just hides itself.
+   */
+  onBlurHide?: () => void;
 }
 
 const LAUNCHER_WIDTH = 760;
@@ -92,7 +99,11 @@ export function createLauncherWindow(deps: LauncherWindowDeps): BrowserWindow {
   applyMacWindowCorner(win, LAUNCHER_CORNER_RADIUS);
 
   win.on('blur', () => {
-    if (!blurHideDisabled) hideLauncherWindow();
+    if (blurHideDisabled) return;
+    // Route through the owner so the captured context is forgotten too; fall back
+    // to a plain hide if no handler was supplied.
+    if (deps.onBlurHide) deps.onBlurHide();
+    else hideLauncherWindow();
   });
   win.on('closed', () => {
     launcherWindow = null;

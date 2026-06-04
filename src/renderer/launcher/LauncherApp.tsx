@@ -22,9 +22,17 @@ const NODE_SEARCH_DEBOUNCE_MS = 120;
 
 export function LauncherApp() {
   const inputRef = useRef<HTMLInputElement>(null);
+  // Re-entrancy lock so a double Enter / Enter+click can't fire one action twice
+  // (open two windows, double-navigate, double-capture).
+  const runningRef = useRef(false);
+  // The active row element, scrolled into view as keyboard selection moves.
+  const activeRowRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<LauncherInitialState | null>(null);
   const [query, setQuery] = useState('');
-  const [activeIndex, setActiveIndex] = useState(0);
+  // Selection is tracked by row IDENTITY (key), not a raw index — an async list
+  // change (context / node results arriving) then can't leave the highlight on a
+  // different row than the user picked. activeIndex is DERIVED from it below.
+  const [activeKey, setActiveKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [context, setContext] = useState<ExternalContext | null>(null);
@@ -33,7 +41,7 @@ export function LauncherApp() {
 
   const reset = useCallback(() => {
     setQuery('');
-    setActiveIndex(0);
+    setActiveKey(null);
     setBusy(false);
     setError(null);
     setNodes([]);
@@ -88,13 +96,28 @@ export function LauncherApp() {
     [query, context, state, nodes],
   );
 
-  // Keep the active row in range as the list changes.
+  // Typing returns selection to the top row (capture-first) and clears any error.
   useEffect(() => {
-    setActiveIndex((i) => Math.min(i, Math.max(navItems.length - 1, 0)));
+    setActiveKey(null);
     setError(null);
-  }, [navItems.length]);
+  }, [query]);
 
+  // activeIndex is DERIVED from the selected row's identity: follow that row as the
+  // list reorders, falling back to the top row when it's gone or nothing is picked.
+  const activeIndex = useMemo(() => {
+    if (activeKey) {
+      const found = navItems.findIndex((it) => rowKey(it) === activeKey);
+      if (found >= 0) return found;
+    }
+    return 0;
+  }, [navItems, activeKey]);
   const activeItem = navItems[activeIndex];
+
+  // Keep the keyboard-selected row visible. `block: 'nearest'` is a no-op when the
+  // row is already on screen, so a hover-select of a visible row never scrolls.
+  useEffect(() => {
+    activeRowRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [activeIndex]);
 
   const finish = useCallback((result: { ok: boolean } | undefined, launcher: NonNullable<typeof window.lin>['launcher']) => {
     if (result?.ok) {
@@ -106,38 +129,43 @@ export function LauncherApp() {
   }, [reset]);
 
   // Run a specific action of an item. Capture actions hit the launcher IPC; the
-  // page note is the trimmed query (ratified: page + note). Unbuilt actions no-op.
+  // page note is the trimmed query (ratified: page + note). The runningRef lock
+  // makes every branch single-shot (no double window-open / navigate / capture).
   const runAction = useCallback(async (item: LauncherItem | undefined, action: LauncherItemAction | undefined) => {
     const launcher = window.lin?.launcher;
-    if (!launcher || !item || !action || !action.enabled || busy) return;
-    if (action.id === 'run-command') {
-      if (item.kind !== 'command') return;
-      const result = await launcher.executeCommand(item.command.id);
-      if (result.hide) void launcher.hide();
-      return;
-    }
-    if (action.id === 'open-node') {
-      if (item.kind !== 'node') return;
-      // Opens the node in the main window; main also hides the launcher.
-      void launcher.openNode(item.nodeId);
-      reset();
-      return;
-    }
-    setBusy(true);
-    setError(null);
+    if (!launcher || !item || !action || !action.enabled || runningRef.current) return;
+    runningRef.current = true;
     try {
-      if (action.id === 'capture-page') {
-        finish(await launcher.createContextCapture({ note: item.kind === 'capture-page' ? item.note : undefined }), launcher);
-      } else if (action.id === 'capture-note') {
-        const text = item.kind === 'capture-note' ? item.text : '';
-        finish(text ? await launcher.createCapture({ title: text }) : { ok: false }, launcher);
+      if (action.id === 'run-command') {
+        if (item.kind !== 'command') return;
+        const result = await launcher.executeCommand(item.command.id);
+        if (result.hide) void launcher.hide();
+        return;
       }
-    } catch {
-      setError('Save failed — restart the dev app (main process does not hot-reload).');
+      if (action.id === 'open-node') {
+        if (item.kind !== 'node') return;
+        // Opens the node in the main window; main also hides the launcher.
+        void launcher.openNode(item.nodeId);
+        reset();
+        return;
+      }
+      setBusy(true);
+      setError(null);
+      try {
+        if (action.id === 'capture-page') {
+          finish(await launcher.createContextCapture({ note: item.kind === 'capture-page' ? item.note : undefined }), launcher);
+        } else if (action.id === 'capture-note' && item.kind === 'capture-note' && item.text) {
+          finish(await launcher.createCapture({ title: item.text }), launcher);
+        }
+      } catch {
+        setError('Save failed — restart the dev app (main process does not hot-reload).');
+      } finally {
+        setBusy(false);
+      }
     } finally {
-      setBusy(false);
+      runningRef.current = false;
     }
-  }, [busy, finish]);
+  }, [reset, finish]);
 
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
@@ -148,21 +176,23 @@ export function LauncherApp() {
       }
       if (event.key === 'ArrowDown') {
         event.preventDefault();
-        setActiveIndex((i) => Math.min(i + 1, Math.max(navItems.length - 1, 0)));
+        const next = navItems[Math.min(activeIndex + 1, navItems.length - 1)];
+        if (next) setActiveKey(rowKey(next));
       } else if (event.key === 'ArrowUp') {
         event.preventDefault();
-        setActiveIndex((i) => Math.max(i - 1, 0));
+        const prev = navItems[Math.max(activeIndex - 1, 0)];
+        if (prev) setActiveKey(rowKey(prev));
       } else if (event.key === 'Enter') {
         event.preventDefault();
         void runAction(activeItem, activeItem?.actions[0]);
       }
     },
-    [activeItem, navItems.length, runAction],
+    [activeItem, activeIndex, navItems, runAction],
   );
 
   const primaryLabel = busy ? 'Saving…' : error ?? primaryActionLabel(activeItem);
-  // A quiet "saved, but here's how to capture more" hint when the page script was
-  // blocked / the tab was unreadable (the Lazy-style remediation prompt).
+  // A quiet "saved, but here's how to capture more" hint when the active tab could
+  // not be read at all (Automation denied) — the Lazy-style remediation prompt.
   const remediation = useMemo(() => remediationForContext(context), [context]);
 
   return (
@@ -176,8 +206,13 @@ export function LauncherApp() {
           autoFocus
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Capture, search, ask AI…"
+          placeholder="Capture, search, or run a command…"
           aria-label="Launcher query"
+          role="combobox"
+          aria-expanded={navItems.length > 0}
+          aria-controls="launcher-results"
+          aria-autocomplete="list"
+          aria-activedescendant={activeItem ? `launcher-row-${rowKey(activeItem)}` : undefined}
         />
       </div>
 
@@ -191,14 +226,15 @@ export function LauncherApp() {
         </div>
       ) : null}
 
-      <div className="launcher-body" role="listbox" aria-label="Results">
+      <div id="launcher-results" className="launcher-body" role="listbox" aria-label="Results">
         <div className="launcher-body-inner">
           {navItems.map((item, index) => (
             <LauncherRow
-              key={rowKey(item, index)}
+              key={rowKey(item)}
               item={item}
               active={index === activeIndex}
-              onHover={() => setActiveIndex(index)}
+              rowRef={index === activeIndex ? activeRowRef : undefined}
+              onHover={() => setActiveKey(rowKey(item))}
               onClick={() => void runAction(item, item.actions[0])}
             />
           ))}
@@ -228,10 +264,13 @@ export function LauncherApp() {
   );
 }
 
-function rowKey(item: LauncherItem, index: number): string {
+// A stable identity per row — used both as the React key AND as the selection key
+// (see activeKey). At most one capture-page / capture-note row exists per list, so
+// the kind alone is a stable id; commands and nodes key on their own id.
+function rowKey(item: LauncherItem): string {
   if (item.kind === 'command') return `cmd:${item.command.id}`;
   if (item.kind === 'node') return `node:${item.nodeId}`;
-  return `${item.kind}:${index}`;
+  return item.kind;
 }
 
 // One uniform row shape for every result (Raycast-style): leading glyph, a clear
@@ -240,13 +279,16 @@ function rowKey(item: LauncherItem, index: number): string {
 function LauncherRow(props: {
   item: LauncherItem;
   active: boolean;
+  rowRef?: React.Ref<HTMLDivElement>;
   onHover: () => void;
   onClick: () => void;
 }) {
-  const { item, active, onHover, onClick } = props;
+  const { item, active, rowRef, onHover, onClick } = props;
   const { title, subtitle, typeLabel, enabled } = rowView(item);
   return (
     <div
+      ref={rowRef}
+      id={`launcher-row-${rowKey(item)}`}
       role="option"
       aria-selected={active}
       aria-disabled={!enabled}
@@ -255,7 +297,7 @@ function LauncherRow(props: {
         active ? 'is-active' : '',
         enabled ? '' : 'is-disabled',
       ].filter(Boolean).join(' ')}
-      onMouseMove={onHover}
+      onMouseEnter={onHover}
       onClick={onClick}
     >
       <LauncherRowIcon item={item} />

@@ -479,6 +479,10 @@ function navigateMainToNode(nodeId: string): void {
   if (!mainWindow) {
     pendingNavigateNodeId = nodeId;
     createWindow();
+  } else if (mainWindow.webContents.isLoading()) {
+    // Window exists but its renderer hasn't finished loading (the listener isn't
+    // attached yet) — defer; the did-finish-load handler flushes pendingNavigateNodeId.
+    pendingNavigateNodeId = nodeId;
   } else {
     mainWindow.webContents.send(LAUNCHER_NAVIGATE_TO_NODE_CHANNEL, nodeId);
   }
@@ -530,6 +534,23 @@ let launcherHotkeyAccelerator: string | null = null;
 // this — so the saved metadata can't be tampered with from the renderer. Cleared
 // on each open and on hide.
 let launcherContext: ExternalContext | null = null;
+// Monotonic id per launcher open. An in-flight async context capture stamps the
+// open it belongs to and is dropped if the launcher was dismissed or re-opened
+// before it resolved — so a slow capture can never repopulate a stale/next open.
+let launcherOpenSeq = 0;
+
+/**
+ * Dismiss the launcher and forget its captured context. EVERY hide path routes
+ * here — including clicking away (window blur) — so the previous page's metadata
+ * can't linger and be saved into a later open. Bumping the open-seq also
+ * invalidates any context capture still in flight for the dismissed open.
+ */
+function dismissLauncher(): void {
+  hideLauncherWindow();
+  launcherContext = null;
+  launcherOpenSeq++;
+}
+
 // Request Accessibility at most once per app run (the first browser capture
 // without it). The system prompt both shows the dialog and registers the app in
 // Privacy & Security → Accessibility, so the user can enable the reliable AX
@@ -548,10 +569,10 @@ let accessibilityPrompted = false;
 async function toggleLauncher(): Promise<void> {
   const win = getLauncherWindow();
   if (win?.isVisible()) {
-    hideLauncherWindow();
-    launcherContext = null;
+    dismissLauncher();
     return;
   }
+  const openSeq = ++launcherOpenSeq;
   launcherContext = null;
   const contextId = `ctx:${randomUUID()}`;
   const capturedAt = new Date().toISOString();
@@ -569,6 +590,9 @@ async function toggleLauncher(): Promise<void> {
       captureOrigin: 'global-hotkey',
       frontmost: front.app,
     });
+    // Drop if this open was dismissed (click-away / Esc) or superseded by a newer
+    // open while we were capturing — never repopulate a stale or already-closed open.
+    if (openSeq !== launcherOpenSeq || !getLauncherWindow()?.isVisible()) return;
     launcherContext = context;
     // Dev diagnostic: surface what each capture layer resolved to, so a
     // wrong-page capture (e.g. the browser's "front window" ≠ the visible tab)
@@ -796,8 +820,7 @@ function registerIpc() {
   ipcMain.handle('lin:close-settings', () => settingsWindow?.close());
   // Launcher window IPC (the prewarmed global launcher).
   ipcMain.handle('launcher:hide', () => {
-    hideLauncherWindow();
-    launcherContext = null;
+    dismissLauncher();
   });
   ipcMain.handle('launcher:getInitialState', (): LauncherInitialState => ({
     commands: getStaticLauncherCommands(),
@@ -884,8 +907,7 @@ function registerIpc() {
   ipcMain.handle('launcher:openNode', (_event, raw: unknown): void => {
     if (typeof raw !== 'string' || !raw) return;
     navigateMainToNode(raw);
-    hideLauncherWindow();
-    launcherContext = null;
+    dismissLauncher();
   });
   // Appearance preference. Setting nativeTheme.themeSource rewrites
   // prefers-color-scheme in every renderer, so the @media rules in theme-dark.css
@@ -1777,6 +1799,7 @@ if (!app.requestSingleInstanceLock()) {
       devUrl: RENDERER_DEV_ORIGIN ? `${RENDERER_DEV_ORIGIN}/launcher.html` : null,
       packagedHtmlPath: join(__dirname, '../renderer/launcher.html'),
       harden: hardenWebContents,
+      onBlurHide: dismissLauncher,
     });
     // Tenon is a regular foreground app (dock icon + menu bar). Creating the
     // launcher as a non-activating NSPanel, plus launching the dev binary straight

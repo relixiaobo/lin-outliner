@@ -10,7 +10,16 @@
 
 import type { SourceDraft } from './sources';
 
-/** Which provider produced a captured context. `unknown-app` is the fallback. */
+/**
+ * Which provider produced a captured context. `unknown-app` is the fallback.
+ *
+ * Produced today (see `selectSiteProvider` in contextCapture.ts): `generic-webpage`,
+ * `youtube`, `x-twitter`, `github`, `substack`, and `unknown-app`. The rest
+ * (`gmail`, `superhuman`, `apple-mail`, `mimestream`, `linkedin`, `slack`,
+ * `whatsapp`, `loom`, `spotify`, `messages`, `pdf`, `circle`, `notion-public`) are
+ * the TARGET registry — declared so the contract is stable (A7), each lit up by
+ * its provider in launcher-provider-expansion.md. Not yet emitted.
+ */
 export type ContextProviderId =
   | 'generic-webpage'
   | 'youtube'
