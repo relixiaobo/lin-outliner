@@ -52,6 +52,20 @@ function useOAuthLogin(
   const [busy, setBusy] = useState(false);
   const runningRef = useRef(false);
   const cancelledRef = useRef(false);
+  const mountedRef = useRef(true);
+
+  // Own the event subscription for the component's lifetime and tear it down on
+  // unmount — closing the dialog mid-login must not leave a listener dispatching
+  // into a discarded reducer. Events only arrive during an active login.
+  useEffect(() => {
+    mountedRef.current = true;
+    const unsubscribe = window.lin?.onAgentOAuthEvent((envelope) => {
+      if (mountedRef.current && envelope.providerId === providerId) {
+        dispatch({ type: 'event', event: envelope.event });
+      }
+    });
+    return () => { mountedRef.current = false; unsubscribe?.(); };
+  }, [providerId]);
 
   const signIn = useCallback(() => {
     if (runningRef.current) return;
@@ -59,22 +73,24 @@ function useOAuthLogin(
     cancelledRef.current = false;
     setBusy(true);
     dispatch({ type: 'start' });
-    const unsubscribe = window.lin?.onAgentOAuthEvent((envelope) => {
-      if (envelope.providerId === providerId) dispatch({ type: 'event', event: envelope.event });
-    });
     api.agentOAuthLogin(providerId)
-      .then((settings) => { dispatch({ type: 'done' }); onSettingsChanged(settings); })
+      .then((settings) => { if (!mountedRef.current) return; dispatch({ type: 'done' }); onSettingsChanged(settings); })
       .catch((caught) => {
+        if (!mountedRef.current) return;
         // A user-initiated cancel rejects the login too — fold it back to idle, not an error.
         if (cancelledRef.current) dispatch({ type: 'reset' });
         else dispatch({ type: 'error', message: caught instanceof Error ? caught.message : String(caught) });
       })
-      .finally(() => { runningRef.current = false; setBusy(false); unsubscribe?.(); });
+      .finally(() => { runningRef.current = false; if (mountedRef.current) setBusy(false); });
   }, [providerId, onSettingsChanged]);
 
   const respond = useCallback((requestId: string, value: string | undefined) => {
     dispatch({ type: 'responded' });
-    void api.agentOAuthRespond(requestId, value);
+    // Surface a failed answer instead of swallowing it — otherwise a rejected
+    // respond would leave the form spinning on "Waiting…" with no way forward.
+    api.agentOAuthRespond(requestId, value).catch((caught) => {
+      if (mountedRef.current) dispatch({ type: 'error', message: caught instanceof Error ? caught.message : String(caught) });
+    });
   }, []);
 
   const cancel = useCallback(() => {
@@ -85,17 +101,19 @@ function useOAuthLogin(
   const signOut = useCallback(() => {
     setBusy(true);
     api.agentOAuthLogout(providerId)
-      .then(onSettingsChanged)
-      .catch((caught) => dispatch({ type: 'error', message: caught instanceof Error ? caught.message : String(caught) }))
-      .finally(() => setBusy(false));
+      .then((settings) => { if (mountedRef.current) onSettingsChanged(settings); })
+      .catch((caught) => { if (mountedRef.current) dispatch({ type: 'error', message: caught instanceof Error ? caught.message : String(caught) }); })
+      .finally(() => { if (mountedRef.current) setBusy(false); });
   }, [providerId, onSettingsChanged]);
 
   return { flow, busy, signIn, respond, cancel, signOut };
 }
 
 // A live "expires in M:SS" countdown for the device-code TTL. Returns null once
-// it lapses (the user has presumably finished, or it is genuinely stale).
-function useCountdown(expiresInSeconds: number | undefined): number | null {
+// it lapses. `nonce` re-arms the interval on each fresh device code even when the
+// TTL value is identical (the common case), so the timer restarts from the new
+// code rather than draining from the first one's start.
+function useCountdown(expiresInSeconds: number | undefined, nonce: number | undefined): number | null {
   const [remaining, setRemaining] = useState<number | null>(expiresInSeconds ?? null);
   const startedRef = useRef<number>(0);
   useEffect(() => {
@@ -109,7 +127,7 @@ function useCountdown(expiresInSeconds: number | undefined): number | null {
       if (left <= 0) window.clearInterval(tick);
     }, 1000);
     return () => window.clearInterval(tick);
-  }, [expiresInSeconds]);
+  }, [expiresInSeconds, nonce]);
   return remaining;
 }
 
@@ -190,7 +208,10 @@ export function ProviderOAuthForm({
 }: ProviderOAuthFormProps) {
   const { flow, busy, signIn, respond, cancel, signOut } = useOAuthLogin(providerId, onSettingsChanged);
   const running = flow.status === 'running';
-  const countdown = useCountdown(running ? flow.deviceCode?.expiresInSeconds : undefined);
+  const countdown = useCountdown(
+    running ? flow.deviceCode?.expiresInSeconds : undefined,
+    running ? flow.deviceCodeNonce : undefined,
+  );
 
   // Auto-open the loopback URL once when it arrives (the user can re-open it below).
   const openedAuthRef = useRef<string | null>(null);

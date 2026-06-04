@@ -16,6 +16,11 @@ export interface OAuthFlowState {
   auth?: { url: string; instructions?: string };
   /** Device-code sign-in: the code to type at `verificationUri`. */
   deviceCode?: { userCode: string; verificationUri: string; expiresInSeconds?: number };
+  /**
+   * Increments on each device-code event, so a re-issued code with an identical
+   * TTL still re-arms the countdown (a plain `expiresInSeconds` dep would not).
+   */
+  deviceCodeNonce?: number;
   /** The current reply-needed step, if main is awaiting an answer. */
   pending?: OAuthReplyEvent;
   /** Set when the sign-in failed (never on user-initiated cancel — that resets). */
@@ -69,6 +74,7 @@ export function applyOAuthEvent(state: OAuthFlowState, event: OAuthLoginEvent): 
           verificationUri: event.verificationUri,
           expiresInSeconds: event.expiresInSeconds,
         },
+        deviceCodeNonce: (state.deviceCodeNonce ?? 0) + 1,
       };
     case 'progress':
       return { ...base, pending: undefined, progress: event.message };
