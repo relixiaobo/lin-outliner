@@ -46,10 +46,7 @@ const designSystemSpecFile = 'docs/spec/design-system.md';
 // to make a fresh violation pass; tokenize the offending CSS instead (design-
 // system B11). Each entry should be retired as the sheet is tokenized.
 const PRE_SPLIT_DETOKENIZED_DEBT = new Set<string>([
-  // settings-connection.css: the decorative disclosure-triangle glyph
-  // (.settings-url-summary::before content "▶"); 8px is a glyph metric, not body
-  // type. settings-providers.css: pre-existing badge/chip paddings.
-  'font-size: 8px;',
+  // settings-providers.css: pre-existing badge/chip paddings.
   'padding: 3px 8px;',
   'padding: 1px 7px;',
   'padding: 2px 7px;',

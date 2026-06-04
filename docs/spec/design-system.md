@@ -777,10 +777,10 @@ Per-component contracts only note deviations from this table.
 | Hover | Region/row controls: `--fill-1` (subtle) or `--fill-2`. Icon-only controls: deepen the glyph colour (`--text-secondary` → `--text-primary`), no fill. Layout must not shift; cursor stays default on rows. |
 | Pressed / active | `--fill-4`. |
 | Selected | `--selection-bg` (`--fill-3`); multi-select / range uses `--selection-soft` (`--fill-2`). |
-| Focus (keyboard) | `--outline-focus` + `--focus-ring-shadow`. Always visible, neutral — never brand or system accent. |
+| Focus (keyboard) | `--outline-focus` + `--focus-ring-shadow`. Always visible, neutral — never brand or system accent. Text controls (`input` / `textarea` / `select`) carry the same neutral ring as buttons: the outer `--focus-ring-shadow` by default, or — for a borderless input inside a clipped inset card — the inset `--outline-focus` on the **row** (`:focus-within`), since an outer ring would be cropped by the card's `overflow:hidden`. |
 | Disabled | `--text-disabled` / `--text-quaternary`; no hover; reduced-intensity fill. |
 | Loading | Reserve one measured slot so the label and size do not jump; spinner uses `--text-secondary`. |
-| Error / destructive | `--status-danger` text/outline. The one place a focus or emphasis state may leave neutral. |
+| Error / destructive | `--status-danger` text/outline marks the resting destructive affordance. Its **hover stays neutral** (`--control-hover`), not a status tint — functional state is neutral (B3); the status colour rides on the label, not the hover fill. |
 
 Rules:
 
@@ -1180,6 +1180,14 @@ not Apple chrome. We borrow the interaction, not the chrome.
   multi-mode so managed credential modes (OAuth, AWS/Vertex) plug in later — an API
   key is one `mode`. Managed-credential providers (e.g. AWS Bedrock) show an auth
   note instead of a key field.
+- **One radius for sheet content blocks; row-level field focus.** Every framed body
+  block in the config window — the field-group inset card, the managed-credential
+  note, the OAuth step / code / connected blocks, and the validation banner — shares
+  the same radius, `--radius-md` 8 (the small-surface tier); inputs and buttons keep
+  their own control radii (B6), which this does not touch. The borderless field rows
+  show keyboard focus as the inset `--outline-focus` on the **row** (`:focus-within`),
+  because the inset card clips an outer ring (see the Focus row in the control-state
+  table).
 - **Status colour for status only (B4).** Validation success/failure uses
   `--status-success` / `--status-danger`; the primary action (Save / Sign in /
   Continue) is a genuinely strong NEUTRAL fill — the native "filled default button"

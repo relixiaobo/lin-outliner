@@ -188,8 +188,11 @@
   color: var(--danger);
 }
 
+/* Danger hover is NEUTRAL (B3): functional state uses the --fill-* ladder, never a
+   status tint — the resting --danger text label is what carries the danger
+   meaning. Matches .settings-sheet-danger:hover. */
 .agent-settings-danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--status-danger) 12%, transparent);
+  background: var(--control-hover);
 }
 
 .agent-settings-primary:disabled,
