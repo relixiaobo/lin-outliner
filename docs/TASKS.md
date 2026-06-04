@@ -42,28 +42,22 @@ _(nothing actively in flight)_
 
 Ordered by priority; lower items may depend on higher ones.
 
-- **search-retrieval-stack** (P1, codex, plan ratified — PR #107) — the follow-up
-  implementation path after #102: one shared, accurate, fast, clean retrieval
-  stack. Treat #102's `textSearchIndex` as the node-retrieval foundation; extract
-  reusable pure primitives (analyzer/ranking/snippet) **without** building a single
-  universal `SearchService`; keep domain adapters separate (node / past-chat /
-  launcher / file / capture-payload). **No protocol change**, no new deps, defer
-  WAND/persisted-index/SQLite/embeddings until probes show a concrete miss (A9).
-  **Land in small PRs:** Phase 1 = pure primitives + tests; Phase 2 = node-path
-  unification + remove the duplicate `agentNodeToolProjection.scoreTerm`; Phases
-  3 (past-chats) / 4 (reuse existing `candidateRanking.textMatchRank`) / 5
-  (capture-payload + scale) follow separately. Phase 0 constraint already met:
-  #103's launcher routes through the shared core `search_nodes`, not a parallel
-  ranker. Implementer must re-verify the merged #102 scoring paths before claiming
-  the substring scorers are gone (A8). See `docs/plans/search-retrieval-stack.md`.
+- **search-retrieval-stack Phase 5** (P2, codex, deferred — measurement-gated) — the
+  only remaining slice of `search-retrieval-stack` after Phases 1–4 shipped in PR #111:
+  the capture-payload retrieval adapter and any heavier scale work (WAND/block-max
+  top-k pruning, a persisted index, SQLite/FTS, semantic reranking). **None** of it is
+  in scope until fresh probes show a concrete miss (A9); the plan records the measured
+  starting evidence (50k broad query ~963ms, cold rebuild ~4.5s). Plan stays
+  `in-progress` for this slice. See `docs/plans/search-retrieval-stack.md`.
 - **unified-command-surface** (P2, **design ratified by PM — needs a dev-drafted
   build one-pager**) — collapse cmd+k and the launcher into **one** context-aware
   command surface (one surface, one hotkey `Cmd+Shift+Space`, context as an ambient
   attachment, `Target × Verb`). The full ratified design (D1–D8: Enter contract,
   context-forward + habit-adaptive default-highlight, reversibility tier B, chip
   rail, Ask AI → agent panel, phased out-of-app fidelity, slash boundary, one-engine
-  invariant) lives in `docs/plans/unified-command-surface.md`. **Sequence after
-  `search-retrieval-stack` Phase 2**; a dev agent then drafts the build one-pager
+  invariant) lives in `docs/plans/unified-command-surface.md`. Its retrieval
+  dependency (`search-retrieval-stack` node-path unification) shipped in #111; a dev
+  agent now drafts the build one-pager
   (phases/file-scope/tests) and the PM ratifies before code. Supersedes the earlier
   "launcher absorbs cmd+k" framing; coordinates with the launcher follow-ups (cc-2)
   and reuses #109's no-provider guard.
@@ -158,6 +152,23 @@ Ordered by priority; lower items may depend on higher ones.
   while the tool arguments stream. See `docs/plans/agent-generative-ui.md`.
 
 ## Recently completed
+
+- **search-retrieval-stack (Phases 1–4)** (codex, PR #111) — one shared, accurate, fast,
+  clean retrieval stack, landed in a single PM-ratified PR. Extracts the pure text-search
+  primitives (normalization, query analysis, CJK/Latin tokenization, snippet, label ranking)
+  into `src/core/textSearchAnalyzer.ts` (consumed by `textSearchIndex.ts`); adds a main-side
+  `NodeRetrievalService` (`src/main/nodeRetrievalService.ts`) around `runSearchExpr` + the live
+  index and routes document search and agent `node_search` through it; removes the duplicate
+  `agentNodeToolProjection.scoreTerm`; reworks `past_chats search` to shared-analyzer semantics
+  + visible-transcript verification + **relevance-first sorting** (was recency-only); reuses the
+  shared label ranking for the renderer field/slash pickers and local filename ordering. No
+  protocol change, no new deps. Phase 5 (capture-payload + scale) stays deferred and
+  measurement-gated in Backlog; the plan stays `in-progress`. Gate: medium code review (1 CJK
+  matching regression + 1 past-chat snippet casing/highlight regression found, both fixed in #111
+  and re-verified) + typecheck + `test:core` (584 pass; the 2 failures are the pre-existing
+  ripgrep `agentLocalTools` cases). Specs updated in-PR: `agent-tool-design.md` +
+  `agent-event-log-rendering.md` (A6).
+  ([#111](https://github.com/relixiaobo/lin-outliner/pull/111))
 
 - **agent-empty-state-onboarding** (cc, PR #109) — agent panel empty state cleanup +
   no-provider onboarding. Removed the hardcoded `SUGGESTED_PROMPTS` chips (now one muted

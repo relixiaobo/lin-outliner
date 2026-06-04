@@ -12,6 +12,28 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Search retrieval stack: shared analyzer + unified node/past-chat retrieval (PR #111)** —
+  implements `search-retrieval-stack.md` Phases 1–4 in one PR (PM-ratified single-PR scope).
+  Extracts the text-search primitives (normalization, query analysis, CJK + Latin tokenization,
+  snippet building, label ranking) into a shared pure module `src/core/textSearchAnalyzer.ts`,
+  leaving `textSearchIndex.ts` to consume them. Adds a main-side `NodeRetrievalService`
+  (`src/main/nodeRetrievalService.ts`) around `runSearchExpr` + the live text index and routes
+  document search and agent `node_search` through that single indexed path (the duplicate
+  `agentNodeToolProjection.scoreTerm` is gone). Reworks `past_chats search` to use the shared
+  analyzer semantics with active-branch visible-transcript verification and **relevance-first
+  ordering** (relevance → session recency → message recency; `recent` mode stays recency-only).
+  Reuses the shared label ranking for the renderer field/slash pickers
+  (`fieldOptions`/`slashCommands`/`candidateRanking`) and local filename ordering. No protocol
+  change, no new dependencies; heavier Phase 5 machinery (capture-payload, WAND/persisted-index/
+  SQLite/embeddings) stays deferred behind measurement (A9), with 10k/50k-node and 200-session
+  past-chat probes recorded in the plan. Also fixes the OAuth device-code callback typing that
+  blocked `typecheck` on the branch. Gate: medium code review — two regressions found (CJK
+  multi-term matching short-circuited to phrase-only; past-chat snippets lost original casing +
+  `<mark>` highlight) and both fixed in #111 and re-verified — plus typecheck + `test:core`
+  (584 pass; the 2 failures are the pre-existing ripgrep `agentLocalTools` cases). Specs updated
+  in the same PR (`agent-tool-design.md`, `agent-event-log-rendering.md`; A6).
+  ([#111](https://github.com/relixiaobo/lin-outliner/pull/111))
+
 - **Agent panel: no-provider onboarding + empty-state cleanup (PR #109)** — implements
   `agent-empty-state-onboarding.md`. Removed the hardcoded suggested-prompt chips; an empty
   conversation with a usable provider now shows a single muted greeting line. When provider
