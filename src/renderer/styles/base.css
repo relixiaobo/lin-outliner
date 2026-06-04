@@ -105,3 +105,17 @@ button:focus-visible {
   box-shadow: var(--focus-ring-shadow);
 }
 
+/* Text controls get the same neutral keyboard-focus ring as buttons (B8). For an
+   editable field :focus-visible also matches pointer focus — correct, since a text
+   field should always signal that it holds focus. Controls with their own
+   :focus-visible treatment (e.g. the borderless inputs inside the clipped inset
+   card) override this with higher specificity, so there is no double / clipped
+   ring. Honours prefers-contrast for free (--focus-ring-shadow strengthens in
+   a11y.css). */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-shadow);
+}
+

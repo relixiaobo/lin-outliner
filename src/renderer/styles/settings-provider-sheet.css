@@ -24,18 +24,6 @@
   padding: var(--space-6);
 }
 
-.settings-provider-sheet {
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
-  width: min(520px, calc(100vw - 32px));
-  max-height: calc(100vh - 64px);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  box-shadow: var(--overlay-shadow-level-2);
-  padding: var(--space-6);
-}
-
 /* Head: large brand avatar + title / subtitle (native alert layout). */
 .settings-sheet-head {
   display: flex;
@@ -127,6 +115,22 @@
   font-size: var(--font-ui-sm);
 }
 
+/* The field inputs are borderless inside the clipped inset card, so the global
+   outer text-control ring (base.css) would be cropped by the card's
+   overflow:hidden — show the neutral keyboard focus on the ROW instead, as the
+   inset ring the list primitive uses (.inset-row-main:focus-visible). focus-within
+   is right here: the only focusable things in a field row are the text input
+   (which shows focus on pointer too, as a field should) and the key-reveal toggle
+   (B8). The oauth reply input reuses .settings-sheet-row-input but sits outside an
+   inset card, so it keeps the global outer ring — not clipped there. */
+.inset-card .settings-sheet-row-input:focus-visible {
+  box-shadow: none;
+}
+
+.inset-card .settings-sheet-row:focus-within {
+  box-shadow: var(--outline-focus);
+}
+
 .settings-sheet-key {
   display: flex;
   flex: 1 1 auto;
@@ -173,11 +177,14 @@
   line-height: var(--line-meta);
 }
 
+/* One radius for every sheet content-block surface (note / oauth step / result):
+   --radius-md 8, the small-surface tier. Inputs / buttons keep their own control
+   radii (B6); this is only the framed body blocks. */
 .settings-sheet-result {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--fill-1);
   color: var(--text-soft);
   padding: var(--space-3) var(--space-4);
