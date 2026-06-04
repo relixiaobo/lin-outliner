@@ -813,6 +813,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Agent collapse: corner chrome backing no longer flashes a dark square over the rail (PR #114)** —
+  collapsing the agent dock briefly painted the opaque corner chrome zone (`--bg-content`) while
+  the agent rail was still sliding/fading out, so in dark mode the darker `#1e1e1e` rectangular
+  backing cut across the lighter `#2e2e30` rounded rail corner for ~100ms (white-on-white in light,
+  so the artifact was dark-mode-only). The collapsed zone's `background-color` now waits a
+  `--chrome-zone-backing-delay` (split out of `--motion-layout` as `--motion-layout-duration`,
+  160ms) before painting, so the rail finishes sliding away first; a `prefers-reduced-motion`
+  override drops the delay to 0. Symmetric delay applied to the sidebar corner zone. Verified with
+  a per-frame headless probe (dark): 16 "square over visible rail" frames on `main` → 0 on the fix
+  (backing paints ~24ms after the rail clears). Gate: `/code-review` (medium) + dark/light visual;
+  test-timing race and reduced-motion coverage hardened pre-merge. Spec updated in the same PR
+  (`design-system.md` Motion; A6). ([#114](https://github.com/relixiaobo/lin-outliner/pull/114))
+
 - **Launcher capture: escape the browser app name in the front-tab AppleScript (PR #103 follow-up)** —
   `activeTabScript` interpolated the active app's name into `tell application "…"`. It was safe in
   practice (the name is always an allow-listed browser, gated by `detectBrowserFamily`), but it was

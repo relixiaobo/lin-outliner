@@ -180,6 +180,14 @@ capture-pipeline tracks below stay separate (orthogonal to the surface).
 
 ## Recently completed
 
+- **agent-collapse-corner-backing** (codex, PR #114) — fixes the dark-mode square that flashed
+  over the agent rail's rounded top corner on collapse: the opaque corner chrome zone painted
+  immediately while the rail was still sliding out. The collapsed zone's `background-color` now
+  waits `--chrome-zone-backing-delay` (`--motion-layout-duration`, 160ms) so the rail clears first;
+  reduced-motion drops the delay; symmetric on the sidebar corner. Verified dark with a per-frame
+  headless probe (16 bad frames on `main` → 0 on the fix). Gate: medium review + dark/light visual;
+  spec (`design-system.md` Motion) updated in-PR.
+
 - **search-retrieval-stack (Phases 1–4)** (codex, PR #111) — one shared, accurate, fast,
   clean retrieval stack, landed in a single PM-ratified PR. Extracts the pure text-search
   primitives (normalization, query analysis, CJK/Latin tokenization, snippet, label ranking)
