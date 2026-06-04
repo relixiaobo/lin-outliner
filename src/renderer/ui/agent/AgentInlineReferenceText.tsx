@@ -9,6 +9,7 @@ import {
 } from '../editor/inlineFileIcon';
 import { wantsNewPaneFromClick } from '../shared';
 import { inlineReferenceTextColor } from '../tags/tagColors';
+import { useT } from '../../i18n/I18nProvider';
 
 export interface AgentNodeReferenceOpenOptions {
   newPane?: boolean;
@@ -50,6 +51,7 @@ export function AgentInlineReferenceText({
   onNodeReferenceOpen,
   text,
 }: AgentInlineReferenceTextProps) {
+  const t = useT();
   const segments = useMemo(() => splitNodeReferenceMarkers(text), [text]);
 
   return (
@@ -82,7 +84,7 @@ export function AgentInlineReferenceText({
             });
         }
         const style = nodeReferenceStyle(segment.nodeId, index);
-        const label = nodeReferenceDisplayLabel(segment.label, segment.nodeId, index);
+        const label = nodeReferenceDisplayLabel(segment.label, segment.nodeId, index, t.agent.message.referencedNode);
         const key = `${segment.raw}-${segment.nodeId}-${segmentIndex}`;
         if (!onNodeReferenceOpen) {
           return (
@@ -234,10 +236,11 @@ export function nodeReferenceDisplayLabel(
   label: string,
   nodeId: NodeId,
   index: DocumentIndex | undefined,
+  fallback: string,
 ): string {
   const explicit = label.trim();
   if (explicit) return explicit;
   const title = index?.byId.get(nodeId)?.content.text.trim();
   if (title) return title;
-  return 'Referenced node';
+  return fallback;
 }

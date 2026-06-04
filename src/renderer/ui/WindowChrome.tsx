@@ -1,5 +1,6 @@
 import { AgentToggleIcon, ICON_SIZE, SidebarToggleIcon } from './icons';
 import { IconButton } from './primitives/IconButton';
+import { useT } from '../i18n/I18nProvider';
 
 interface WindowChromeProps {
   agentOpen: boolean;
@@ -21,6 +22,9 @@ interface WindowChromeProps {
 // core/chromeGeometry.ts in main.tsx (CSS fallbacks in tokens.css), so the chrome
 // tracks the OS window controls with no JS-side duplicate to drift.
 export function WindowChrome(props: WindowChromeProps) {
+  const t = useT();
+  const sidebarToggleLabel = props.sidebarOpen ? t.shell.chrome.collapseSidebar : t.shell.chrome.expandSidebar;
+  const agentToggleLabel = props.agentOpen ? t.shell.chrome.collapseAgent : t.shell.chrome.expandAgent;
   return (
     <>
       <div className="window-chrome-zone window-chrome-zone-left">
@@ -29,10 +33,10 @@ export function WindowChrome(props: WindowChromeProps) {
             className="rail-toggle sidebar-toggle"
             icon={SidebarToggleIcon}
             iconSize={ICON_SIZE.toolbar}
-            label={props.sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+            label={sidebarToggleLabel}
             onClick={props.onToggleSidebar}
             strokeWidth={1.7}
-            title={props.sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+            title={sidebarToggleLabel}
             variant="chrome"
           />
         </div>
@@ -44,10 +48,10 @@ export function WindowChrome(props: WindowChromeProps) {
             className="rail-toggle agent-toggle"
             icon={AgentToggleIcon}
             iconSize={ICON_SIZE.toolbar}
-            label={props.agentOpen ? 'Collapse agent' : 'Expand agent'}
+            label={agentToggleLabel}
             onClick={props.onToggleAgent}
             strokeWidth={1.7}
-            title={props.agentOpen ? 'Collapse agent' : 'Expand agent'}
+            title={agentToggleLabel}
             variant="chrome"
           />
         </div>

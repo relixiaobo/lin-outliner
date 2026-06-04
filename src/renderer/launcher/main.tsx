@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { LauncherApp } from './LauncherApp';
+import { I18nProvider } from '../i18n/I18nProvider';
 // Design tokens first (defines :root), then the dark media override, then the
 // launcher's own rules that consume them. These are pure CSS custom-property
 // sheets — no JS, no editor graph — so the launcher inherits the app's color /
@@ -20,6 +21,8 @@ import '../styles/launcher.css';
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    <LauncherApp />
+    <I18nProvider>
+      <LauncherApp />
+    </I18nProvider>
   </React.StrictMode>,
 );

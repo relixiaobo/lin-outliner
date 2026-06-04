@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useReducer, useRef, useState, type React
 import type { AgentProviderSettingsView } from '../../api/types';
 import { api } from '../../api/client';
 import { CheckIcon, ICON_SIZE, LoaderIcon, OpenIcon } from '../icons';
+import { useT } from '../../i18n/I18nProvider';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { TextInputControl } from '../primitives/TextInputControl';
 import {
@@ -135,6 +136,7 @@ function ReplyStep({ pending, onRespond }: {
   pending: OAuthReplyEvent;
   onRespond: (value: string | undefined) => void;
 }) {
+  const t = useT();
   const [value, setValue] = useState('');
   const fieldId = useId();
   // Reset the field whenever a new reply step arrives.
@@ -162,8 +164,8 @@ function ReplyStep({ pending, onRespond }: {
     );
   }
 
-  const label = pending.kind === 'prompt' ? pending.message : 'Paste the code from your browser';
-  const placeholder = pending.kind === 'prompt' ? pending.placeholder : 'Authorization code';
+  const label = pending.kind === 'prompt' ? pending.message : t.providerOAuth.pasteCodeLabel;
+  const placeholder = pending.kind === 'prompt' ? pending.placeholder : t.providerOAuth.authorizationCodePlaceholder;
   return (
     <form
       className="settings-sheet-oauth-step"
@@ -181,7 +183,7 @@ function ReplyStep({ pending, onRespond }: {
           value={value}
         />
         <ButtonControl className="settings-sheet-primary" disabled={!value.trim()} type="submit">
-          Continue
+          {t.providerOAuth.continue}
         </ButtonControl>
       </div>
     </form>
@@ -206,6 +208,7 @@ export function ProviderOAuthForm({
   onSettingsChanged,
   onClose,
 }: ProviderOAuthFormProps) {
+  const t = useT();
   const { flow, busy, signIn, respond, cancel, signOut } = useOAuthLogin(providerId, onSettingsChanged);
   const running = flow.status === 'running';
   const countdown = useCountdown(
@@ -231,7 +234,7 @@ export function ProviderOAuthForm({
         <div className="settings-sheet-head-text">
           <h2 className="settings-sheet-title" id={titleId}>
             {providerName}
-            {isActive ? <span className="settings-chip">Active</span> : null}
+            {isActive ? <span className="settings-chip">{t.providerOAuth.activeChip}</span> : null}
           </h2>
           <p className="settings-sheet-subtitle">{description}</p>
         </div>
@@ -242,9 +245,9 @@ export function ProviderOAuthForm({
           <div className="settings-sheet-oauth-connected" role="group">
             <span className="settings-sheet-oauth-connected-mark"><CheckIcon size={ICON_SIZE.menu} /></span>
             <div className="settings-sheet-oauth-connected-text">
-              <p className="settings-sheet-oauth-connected-title">Connected</p>
+              <p className="settings-sheet-oauth-connected-title">{t.providerOAuth.connected}</p>
               {expiresAt ? (
-                <p className="settings-sheet-oauth-connected-sub">Access renews {formatRelativeExpiry(expiresAt, Date.now())}</p>
+                <p className="settings-sheet-oauth-connected-sub">{t.providerOAuth.accessRenews({ when: formatRelativeExpiry(expiresAt, Date.now()) })}</p>
               ) : null}
             </div>
           </div>
@@ -252,7 +255,7 @@ export function ProviderOAuthForm({
           <div className="settings-sheet-oauth-running" role="group">
             {flow.deviceCode ? (
               <div className="settings-sheet-oauth-code-block">
-                <p className="settings-sheet-oauth-step-label">Enter this code at the sign-in page:</p>
+                <p className="settings-sheet-oauth-step-label">{t.providerOAuth.enterCodeAtSignIn}</p>
                 <p className="settings-sheet-oauth-code">{flow.deviceCode.userCode}</p>
                 <button
                   className="agent-settings-doc-link"
@@ -263,7 +266,7 @@ export function ProviderOAuthForm({
                   <OpenIcon size={ICON_SIZE.tiny} />
                 </button>
                 {countdown !== null ? (
-                  <p className="settings-sheet-oauth-countdown">Expires in {formatCountdown(countdown)}</p>
+                  <p className="settings-sheet-oauth-countdown">{t.providerOAuth.expiresIn({ time: formatCountdown(countdown) })}</p>
                 ) : null}
               </div>
             ) : null}
@@ -271,10 +274,10 @@ export function ProviderOAuthForm({
             {flow.auth ? (
               <div className="settings-sheet-oauth-code-block">
                 <p className="settings-sheet-oauth-step-label">
-                  {flow.auth.instructions ?? 'Continue in your browser to finish signing in.'}
+                  {flow.auth.instructions ?? t.providerOAuth.continueInBrowser}
                 </p>
                 <button className="agent-settings-doc-link" onClick={() => onOpenExternal(flow.auth!.url)} type="button">
-                  <span>Open the sign-in page</span>
+                  <span>{t.providerOAuth.openSignInPage}</span>
                   <OpenIcon size={ICON_SIZE.tiny} />
                 </button>
               </div>
@@ -288,7 +291,7 @@ export function ProviderOAuthForm({
             ) : (
               <div className="settings-sheet-oauth-progress" role="status">
                 <LoaderIcon className="settings-sheet-spinner" size={ICON_SIZE.menu} />
-                <span>{flow.progress ?? 'Waiting for authorization…'}</span>
+                <span>{flow.progress ?? t.providerOAuth.waitingForAuthorization}</span>
               </div>
             )}
           </div>
@@ -297,7 +300,7 @@ export function ProviderOAuthForm({
             {signInHint ? <p className="settings-sheet-oauth-hint">{signInHint}</p> : null}
             {docsUrl ? (
               <button className="agent-settings-doc-link" onClick={() => onOpenExternal(docsUrl)} type="button">
-                <span>{docsLabel ?? 'Learn more'}</span>
+                <span>{docsLabel ?? t.providerOAuth.learnMore}</span>
                 <OpenIcon size={ICON_SIZE.tiny} />
               </button>
             ) : null}
@@ -315,24 +318,24 @@ export function ProviderOAuthForm({
         <div className="settings-sheet-actions-left">
           {connected && !running ? (
             <ButtonControl className="settings-sheet-danger" disabled={busy} onClick={signOut}>
-              Sign out
+              {t.providerOAuth.signOut}
             </ButtonControl>
           ) : null}
           {connected && !running && onSetActive && !isActive ? (
             <ButtonControl className="settings-sheet-secondary" disabled={busy} onClick={onSetActive}>
-              Set as Active
+              {t.providerOAuth.setActive}
             </ButtonControl>
           ) : null}
           {onUseApiKey && !running ? (
             <ButtonControl className="settings-sheet-secondary" disabled={busy} onClick={onUseApiKey}>
-              Use an API key instead
+              {t.providerOAuth.useApiKeyInstead}
             </ButtonControl>
           ) : null}
         </div>
         <div className="settings-sheet-actions-right">
           {running ? (
             <ButtonControl className="settings-sheet-secondary" onClick={cancel}>
-              Cancel sign-in
+              {t.providerOAuth.cancelSignIn}
             </ButtonControl>
           ) : connected ? (
             // Connected: finishing is the main action, so Done is the (rightmost)
@@ -341,20 +344,20 @@ export function ProviderOAuthForm({
             // Re-authenticate, reading as "you must sign in again".
             <>
               <ButtonControl className="settings-sheet-secondary" disabled={busy} onClick={signIn}>
-                Re-authenticate
+                {t.providerOAuth.reauthenticate}
               </ButtonControl>
               <ButtonControl className="settings-sheet-primary" disabled={busy} onClick={onClose}>
-                Done
+                {t.providerOAuth.done}
               </ButtonControl>
             </>
           ) : (
             // Disconnected: signing in is the main action.
             <>
               <ButtonControl className="settings-sheet-secondary" disabled={busy} onClick={onClose}>
-                Cancel
+                {t.providerOAuth.cancel}
               </ButtonControl>
               <ButtonControl className="settings-sheet-primary" disabled={busy} onClick={signIn}>
-                Sign in to {providerName}
+                {t.providerOAuth.signInTo({ provider: providerName })}
               </ButtonControl>
             </>
           )}

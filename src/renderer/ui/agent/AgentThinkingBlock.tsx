@@ -3,6 +3,7 @@ import { ButtonControl } from '../primitives/ButtonControl';
 import { AgentDisclosureIndicator } from './AgentDisclosureIndicator';
 import type { AgentExpandState } from './agentProcessTypes';
 import { firstLine, previewText } from './agentProcessTypes';
+import { useT } from '../../i18n/I18nProvider';
 
 interface AgentThinkingRowProps {
   expandState: AgentExpandState;
@@ -17,6 +18,7 @@ export function AgentThinkingRow({
   streaming,
   text,
 }: AgentThinkingRowProps) {
+  const t = useT();
   const trimmed = text.trim();
   if (!trimmed) {
     if (!streaming) return null;
@@ -28,7 +30,7 @@ export function AgentThinkingRow({
           icon={<BrainIcon size={ICON_SIZE.rowGlyph} />}
           interactive={false}
         />
-        <span className="agent-thinking-text">Thinking...</span>
+        <span className="agent-thinking-text">{t.agent.thinking.thinking}</span>
       </div>
     );
   }
@@ -69,9 +71,10 @@ export function AgentThinkingRow({
 }
 
 export function AgentThinkingBody({ streaming, text }: { streaming: boolean; text: string }) {
+  const t = useT();
   const trimmed = text.trim();
   if (!trimmed && streaming) {
-    return <span className="agent-thinking-placeholder">Thinking...</span>;
+    return <span className="agent-thinking-placeholder">{t.agent.thinking.thinking}</span>;
   }
   if (!trimmed) return null;
   return <pre className="agent-thinking-body">{trimmed}</pre>;

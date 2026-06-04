@@ -28,6 +28,7 @@ import { ButtonControl } from '../primitives/ButtonControl';
 import { AgentMarkdown } from './AgentMarkdown';
 import { AgentThinkingBody } from './AgentThinkingBlock';
 import { AgentToolCallBlock } from './AgentToolCallBlock';
+import { useT } from '../../i18n/I18nProvider';
 
 interface AgentSubagentDetailsPanelProps {
   onClose: () => void;
@@ -155,6 +156,7 @@ function textFromToolResult(message: ToolResultMessage): string {
 }
 
 function ResultText({ text }: { text: string }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   const CopyStateIcon = copied ? CheckIcon : CopyIcon;
 
@@ -172,23 +174,24 @@ function ResultText({ text }: { text: string }) {
           className="agent-message-action-button"
           disabled={!text}
           icon={CopyStateIcon}
-          label="Copy subagent result"
+          label={t.agent.subagent.copyResult}
           onClick={() => void copy()}
-          title="Copy"
+          title={t.agent.message.copy}
           variant="message"
         />
       </div>
-      <AgentMarkdown keyPrefix="subagent-result" text={text || 'No result yet.'} />
+      <AgentMarkdown keyPrefix="subagent-result" text={text || t.agent.subagent.noResultYet} />
     </div>
   );
 }
 
 function TranscriptUserMessage({ message }: { message: UserMessage }) {
+  const t = useT();
   const content = textFromUserContent(message.content);
   return (
     <article className={content.hidden ? 'agent-subagent-transcript-message is-system' : 'agent-subagent-transcript-message is-user'}>
       <div className="agent-subagent-transcript-head">
-        <span>{content.hidden ? 'system' : 'user'}</span>
+        <span>{content.hidden ? t.agent.subagent.roleSystem : t.agent.subagent.roleUser}</span>
         <time>{formatTime(message.timestamp)}</time>
       </div>
       {content.text.trim() ? <AgentMarkdown keyPrefix={`subagent-user-${message.timestamp}`} text={content.text} /> : null}
@@ -208,10 +211,11 @@ function TranscriptUserMessage({ message }: { message: UserMessage }) {
 }
 
 function TranscriptThinking({ block, index }: { block: ThinkingContent; index: number }) {
+  const t = useT();
   if (block.redacted || !block.thinking.trim()) return null;
   return (
     <details className="agent-subagent-thinking">
-      <summary>Thought {index + 1}</summary>
+      <summary>{t.agent.subagent.thoughtNumbered({ index: index + 1 })}</summary>
       <AgentThinkingBody streaming={false} text={block.thinking} />
     </details>
   );
@@ -230,10 +234,11 @@ function TranscriptAssistantMessage({
   subagentsByParentToolCallId?: Map<string, AgentRenderSubagentEntity>;
   toolResults: Map<string, AgentToolResultWithPayloads>;
 }) {
+  const t = useT();
   return (
     <article className="agent-subagent-transcript-message is-assistant">
       <div className="agent-subagent-transcript-head">
-        <span>assistant</span>
+        <span>{t.agent.subagent.roleAssistant}</span>
         <time>{formatTime(message.timestamp)}</time>
       </div>
       <div className="agent-subagent-assistant-body">
@@ -265,12 +270,13 @@ function TranscriptAssistantMessage({
 }
 
 function TranscriptOrphanToolResult({ message }: { message: ToolResultMessage }) {
+  const t = useT();
   const text = textFromToolResult(message);
   if (!text) return null;
   return (
     <article className="agent-subagent-transcript-message is-tool-result">
       <div className="agent-subagent-transcript-head">
-        <span>tool result</span>
+        <span>{t.agent.subagent.roleToolResult}</span>
         <time>{formatTime(message.timestamp)}</time>
       </div>
       <pre>{compactText(text, 1200)}</pre>
@@ -299,14 +305,15 @@ function TranscriptTimeline({
   subagentsByParentToolCallId?: Map<string, AgentRenderSubagentEntity>;
   toolResults: Map<string, AgentToolResultWithPayloads>;
 }) {
+  const t = useT();
   if (!subagent.transcriptPayloadId) {
-    return <div className="agent-subagent-empty">Transcript is not available for this run.</div>;
+    return <div className="agent-subagent-empty">{t.agent.subagent.transcriptNotAvailable}</div>;
   }
   if (loading && messages.length === 0) {
     return (
       <div className="agent-subagent-empty">
         <LoaderIcon className="agent-tool-call-spinner" size={ICON_SIZE.menu} />
-        <span>Loading transcript...</span>
+        <span>{t.agent.subagent.loadingTranscript}</span>
       </div>
     );
   }
@@ -315,12 +322,12 @@ function TranscriptTimeline({
       <div className="agent-subagent-empty is-error">
         <WarningIcon size={ICON_SIZE.menu} />
         <span>{error}</span>
-        <ButtonControl className="agent-subagent-small-button" onClick={reload}>Retry</ButtonControl>
+        <ButtonControl className="agent-subagent-small-button" onClick={reload}>{t.agent.subagent.retry}</ButtonControl>
       </div>
     );
   }
   if (messages.length === 0) {
-    return <div className="agent-subagent-empty">No transcript messages captured yet.</div>;
+    return <div className="agent-subagent-empty">{t.agent.subagent.noTranscriptMessages}</div>;
   }
 
   const assistantToolCallIds = new Set<string>();
@@ -360,6 +367,7 @@ export function AgentSubagentDetailsPanel({
   subagent,
   subagentsByParentToolCallId,
 }: AgentSubagentDetailsPanelProps) {
+  const t = useT();
   const [activeTab, setActiveTab] = useState<'timeline' | 'result' | 'metadata'>('timeline');
   const [followUpDraft, setFollowUpDraft] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
@@ -380,7 +388,7 @@ export function AgentSubagentDetailsPanel({
         if (requestId !== requestRef.current) return;
         if (text === null) {
           setRawTranscript(null);
-          setError('Transcript payload is unavailable.');
+          setError(t.agent.subagent.transcriptPayloadUnavailable);
           return;
         }
         setRawTranscript(text);
@@ -393,7 +401,7 @@ export function AgentSubagentDetailsPanel({
       .finally(() => {
         if (requestId === requestRef.current) setLoading(false);
       });
-  }, [sessionId, subagent?.transcriptPayloadId]);
+  }, [sessionId, subagent?.transcriptPayloadId, t.agent.subagent.transcriptPayloadUnavailable]);
 
   useEffect(() => {
     setActiveTab('timeline');
@@ -426,9 +434,9 @@ export function AgentSubagentDetailsPanel({
   const canSendFollowUp = true;
   const canStop = subagent.status === 'running';
   const tabs = [
-    ['timeline', `Timeline (${messages.length || subagent.transcriptMessageCount})`],
-    ['result', 'Result'],
-    ['metadata', 'Metadata'],
+    ['timeline', t.agent.subagent.tabTimeline({ count: messages.length || subagent.transcriptMessageCount })],
+    ['result', t.agent.subagent.tabResult],
+    ['metadata', t.agent.subagent.tabMetadata],
   ] as const;
 
   async function sendFollowUp() {
@@ -460,29 +468,34 @@ export function AgentSubagentDetailsPanel({
   }
 
   return (
-    <aside className="agent-subagent-details-panel" aria-label="Subagent details">
+    <aside className="agent-subagent-details-panel" aria-label={t.agent.subagent.detailsAriaLabel}>
       <header className="agent-subagent-details-header">
         <div className="agent-subagent-title-block">
           <div className="agent-subagent-title-line">
             <AgentIcon size={ICON_SIZE.menu} />
-            <span>Subagent</span>
+            <span>{t.agent.subagent.heading}</span>
             <span className={`agent-subagent-status is-${subagent.status}`}>{subagent.status}</span>
           </div>
           <h3>{subagent.description || subagent.name || subagent.id}</h3>
           <p>
-            {subagent.contextMode} · {subagent.subagentType} · {subagent.transcriptMessageCount} messages · {formatDuration(subagent.startedAt, endedAt)}
+            {t.agent.subagent.metaLine({
+              mode: subagent.contextMode,
+              type: subagent.subagentType,
+              count: subagent.transcriptMessageCount,
+              duration: formatDuration(subagent.startedAt, endedAt),
+            })}
           </p>
         </div>
         <IconButton
           className="agent-subagent-close"
           icon={CloseIcon}
-          label="Close subagent details"
+          label={t.agent.subagent.closeDetails}
           onClick={onClose}
-          title="Close"
+          title={t.agent.subagent.close}
           variant="panel"
         />
       </header>
-      <nav className="agent-subagent-tabs" aria-label="Subagent detail tabs">
+      <nav className="agent-subagent-tabs" aria-label={t.agent.subagent.detailTabsAriaLabel}>
         {tabs.map(([tab, label]) => (
           <ButtonControl
             aria-pressed={activeTab === tab}
@@ -494,10 +507,10 @@ export function AgentSubagentDetailsPanel({
           </ButtonControl>
         ))}
       </nav>
-      <section className="agent-subagent-actions" aria-label="Subagent actions">
+      <section className="agent-subagent-actions" aria-label={t.agent.subagent.actionsAriaLabel}>
         <div className="agent-subagent-followup">
           <textarea
-            aria-label="Subagent follow-up"
+            aria-label={t.agent.subagent.followUpAriaLabel}
             disabled={!canSendFollowUp || actionPending !== null}
             onChange={(event) => setFollowUpDraft(event.target.value)}
             onInput={(event) => setFollowUpDraft(event.currentTarget.value)}
@@ -507,7 +520,7 @@ export function AgentSubagentDetailsPanel({
                 void sendFollowUp();
               }
             }}
-            placeholder="Send follow-up to this subagent"
+            placeholder={t.agent.subagent.followUpPlaceholder}
             rows={2}
             value={followUpDraft}
           />
@@ -518,7 +531,7 @@ export function AgentSubagentDetailsPanel({
                 disabled={actionPending !== null}
                 onClick={() => void stopSubagent()}
               >
-                {actionPending === 'stop' ? 'Stopping...' : 'Stop'}
+                {actionPending === 'stop' ? t.agent.subagent.stopping : t.agent.subagent.stop}
               </ButtonControl>
             ) : null}
             <ButtonControl
@@ -526,7 +539,7 @@ export function AgentSubagentDetailsPanel({
               disabled={!canSendFollowUp || !followUpDraft.trim() || actionPending !== null}
               onClick={() => void sendFollowUp()}
             >
-              {actionPending === 'send' ? 'Sending...' : 'Send'}
+              {actionPending === 'send' ? t.agent.subagent.sending : t.agent.subagent.send}
             </ButtonControl>
           </div>
         </div>
@@ -557,39 +570,39 @@ export function AgentSubagentDetailsPanel({
         {activeTab === 'metadata' ? (
           <dl className="agent-subagent-metadata">
             <div>
-              <dt>Agent ID</dt>
+              <dt>{t.agent.subagent.metaAgentId}</dt>
               <dd>{subagent.id}</dd>
             </div>
             <div>
-              <dt>Name</dt>
-              <dd>{subagent.name ?? 'none'}</dd>
+              <dt>{t.agent.subagent.name}</dt>
+              <dd>{subagent.name ?? t.agent.subagent.metaNone}</dd>
             </div>
             <div>
-              <dt>Status</dt>
+              <dt>{t.agent.subagent.status}</dt>
               <dd>{subagent.status}</dd>
             </div>
             <div>
-              <dt>Mode</dt>
+              <dt>{t.agent.subagent.mode}</dt>
               <dd>{subagent.contextMode}</dd>
             </div>
             <div>
-              <dt>Type</dt>
+              <dt>{t.agent.subagent.metaType}</dt>
               <dd>{subagent.subagentType}</dd>
             </div>
             <div>
-              <dt>Parent tool call</dt>
-              <dd>{subagent.parentToolCallId ?? 'none'}</dd>
+              <dt>{t.agent.subagent.metaParentToolCall}</dt>
+              <dd>{subagent.parentToolCallId ?? t.agent.subagent.metaNone}</dd>
             </div>
             <div>
-              <dt>Transcript payload</dt>
-              <dd>{subagent.transcriptPayloadId ?? 'none'}</dd>
+              <dt>{t.agent.subagent.metaTranscriptPayload}</dt>
+              <dd>{subagent.transcriptPayloadId ?? t.agent.subagent.metaNone}</dd>
             </div>
             <div>
-              <dt>Started</dt>
+              <dt>{t.agent.subagent.metaStarted}</dt>
               <dd>{new Date(subagent.startedAt).toLocaleString()}</dd>
             </div>
             <div>
-              <dt>Updated</dt>
+              <dt>{t.agent.subagent.metaUpdated}</dt>
               <dd>{new Date(subagent.updatedAt).toLocaleString()}</dd>
             </div>
           </dl>

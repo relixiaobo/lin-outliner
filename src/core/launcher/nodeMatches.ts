@@ -4,6 +4,7 @@
 // here (no Electron / projection types) so it's unit-tested without a main process.
 
 import type { LauncherNodeMatch } from './commands';
+import { DEFAULT_MESSAGES } from '../i18n';
 
 /** The minimal node fields the matcher needs (a subset of NodeProjection). */
 export interface MatchableNode {
@@ -34,13 +35,16 @@ export function resolveLauncherNodeMatches(
   hitIds: readonly string[],
   nodes: readonly MatchableNode[],
   limit: number,
+  // Localized fallback for an empty-content node; defaults to canonical English so
+  // tests/non-localized callers still work. Main passes the effective-locale value.
+  untitled: string = DEFAULT_MESSAGES.common.untitled,
 ): LauncherNodeMatch[] {
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const matches: LauncherNodeMatch[] = [];
   for (const id of hitIds.slice(0, limit)) {
     const node = byId.get(id);
     if (!node) continue;
-    const title = collapseWhitespace(node.text) || 'Untitled';
+    const title = collapseWhitespace(node.text) || untitled;
     const parent = node.parentId ? byId.get(node.parentId) : undefined;
     const subtitle = parent ? collapseWhitespace(parent.text) || undefined : undefined;
     const icon = node.iconKind === 'emoji' && node.icon ? node.icon : undefined;

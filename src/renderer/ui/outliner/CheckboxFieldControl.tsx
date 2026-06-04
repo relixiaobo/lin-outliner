@@ -3,6 +3,7 @@ import type { NodeProjection } from '../../api/types';
 import { plainText } from '../../api/types';
 import { CheckboxMark } from '../primitives/CheckboxMark';
 import type { CommandRunner } from '../shared';
+import { useT } from '../../i18n/I18nProvider';
 
 interface CheckboxFieldControlProps {
   entryId: string;
@@ -15,6 +16,7 @@ interface CheckboxFieldControlProps {
 // no editable text, so it stays a single control. The value is still a node, so
 // the toggle creates or replaces it through the generic node commands.
 export function CheckboxFieldControl({ entryId, run, valueNode }: CheckboxFieldControlProps) {
+  const t = useT();
   const checked = booleanValue(valueNode?.content.text ?? '');
 
   const toggle = () => {
@@ -35,7 +37,7 @@ export function CheckboxFieldControl({ entryId, run, valueNode }: CheckboxFieldC
       onClick={toggle}
     >
       <CheckboxMark checked={checked} />
-      <span>{checked ? 'Yes' : 'No'}</span>
+      <span>{checked ? t.outliner.field.booleanYes : t.outliner.field.booleanNo}</span>
     </button>
   );
 }

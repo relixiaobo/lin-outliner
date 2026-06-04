@@ -2,6 +2,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import { CloseIcon } from './icons';
 import { IconButton } from './primitives/IconButton';
 import type { WorkspacePanelState } from './workspaceLayoutTypes';
+import { useT } from '../i18n/I18nProvider';
 
 interface WorkspacePanelSurfaceProps {
   active: boolean;
@@ -22,6 +23,7 @@ export function WorkspacePanelSurface({
   showClose,
   size,
 }: WorkspacePanelSurfaceProps) {
+  const t = useT();
   return (
     <div
       className={[
@@ -42,9 +44,9 @@ export function WorkspacePanelSurface({
         <IconButton
           className="outline-panel-close"
           icon={CloseIcon}
-          label="Close panel"
+          label={t.shell.panel.closeLabel}
           onClick={onClose}
-          title="Close panel"
+          title={t.shell.panel.closeLabel}
           variant="panel"
         />
       )}

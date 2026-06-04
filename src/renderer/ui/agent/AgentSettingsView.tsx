@@ -13,6 +13,9 @@ import type {
 import { api } from '../../api/client';
 import { AddIcon, ChevronLeftIcon, ChevronRightIcon, ICON_SIZE, WarningIcon } from '../icons';
 import type { ThemeMode } from '../../../core/theme';
+import { SUPPORTED_LOCALES, type Locale } from '../../../core/locale';
+import { useI18n, useT } from '../../i18n/I18nProvider';
+import type { Messages } from '../../../core/i18n';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
 import { SegmentedControl } from '../primitives/SegmentedControl';
@@ -85,36 +88,37 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
   menuOpen: boolean;
   handlers: ProviderRowHandlers;
 }) {
+  const t = useT();
   const name = formatProviderName(provider.providerId);
   const actions: RowMenuAction[] = [];
   if (provider.hasCredential && !provider.active) {
-    actions.push({ label: 'Set as Active', onSelect: () => handlers.onActivate(provider.providerId) });
+    actions.push({ label: t.settings.providers.setActive, onSelect: () => handlers.onActivate(provider.providerId) });
   }
-  actions.push({ label: 'Configure…', onSelect: () => handlers.onConfigure(provider.providerId) });
+  actions.push({ label: t.settings.providers.configureAction, onSelect: () => handlers.onConfigure(provider.providerId) });
   if (provider.configured) {
-    actions.push({ label: 'Remove provider', danger: true, onSelect: () => handlers.onRemove(provider.providerId) });
+    actions.push({ label: t.settings.providers.removeProvider, danger: true, onSelect: () => handlers.onRemove(provider.providerId) });
   }
   return (
     <InsetRow
-      ariaLabel={`${name}, ${providerStatusLabel(provider)}`}
+      ariaLabel={t.settings.providers.rowAriaLabel({ name, status: providerStatusLabel(provider, t) })}
       label={name}
       leading={<ProviderAvatar providerId={provider.providerId} />}
       onSelect={() => handlers.onConfigure(provider.providerId)}
       trailing={actions.length > 1 ? (
         <SettingsRowMenu
           actions={actions}
-          ariaLabel={`${name} actions`}
+          ariaLabel={t.settings.providers.rowActionsAriaLabel({ name })}
           onOpenChange={(open) => handlers.onMenuOpenChange(provider.providerId, open)}
           open={menuOpen}
         />
       ) : (
         <button
-          aria-label={`Configure ${name}`}
+          aria-label={t.settings.providers.configureNamed({ name })}
           className="settings-provider-configure"
           onClick={() => handlers.onConfigure(provider.providerId)}
           type="button"
         >
-          Configure
+          {t.settings.providers.configure}
         </button>
       )}
     />
@@ -136,86 +140,41 @@ const EMPTY_DRAFT: DraftConfig = {
   disabledAgents: [],
 };
 
-const THEME_OPTIONS: ReadonlyArray<{ value: ThemeMode; label: string }> = [
-  { value: 'system', label: 'System' },
-  { value: 'light', label: 'Light' },
-  { value: 'dark', label: 'Dark' },
-];
+// Theme segment values and category rail order; their visible labels + hints are
+// localized at render (settings.general.theme* and settings.categories.*).
+const THEME_VALUES: readonly ThemeMode[] = ['system', 'light', 'dark'];
+const SETTINGS_CATEGORY_IDS: readonly SettingsCategory[] = ['general', 'providers', 'permissions', 'skills', 'agents'];
 
-const SETTINGS_CATEGORIES: Array<{ id: SettingsCategory; label: string; hint: string }> = [
-  { id: 'general', label: 'General', hint: 'Appearance & Theme' },
-  { id: 'providers', label: 'Providers', hint: 'Connections & API keys' },
-  { id: 'permissions', label: 'Permissions', hint: 'Tool Allow / Ask Rules' },
-  { id: 'skills', label: 'Skills', hint: 'Extension Capabilities' },
-  { id: 'agents', label: 'Agent Profiles', hint: 'Persona Definitions' },
-];
+// The common permission rules: a stable `id` (the i18n key for label + description),
+// the `ruleValue` engine string, and whether a global "always allow" is offered.
+// Visible label/description come from t.settings.permissions.rules[id] at render.
+type PermissionRuleId =
+  | 'readOutsideArea'
+  | 'readSensitivePaths'
+  | 'fetchWeb'
+  | 'deleteFiles'
+  | 'runProjectScripts'
+  | 'installDependencies'
+  | 'publishGitRemotes'
+  | 'deployPublish'
+  | 'networkWrite'
+  | 'spawnSubagents';
 
 const COMMON_PERMISSION_RULES: Array<{
+  id: PermissionRuleId;
   ruleValue: string;
-  label: string;
-  description: string;
   allowable: boolean;
 }> = [
-  {
-    ruleValue: 'Action(file.read.outside_allowed_file_area)',
-    label: 'Read outside allowed area',
-    description: 'Local reads outside the configured file boundary.',
-    allowable: true,
-  },
-  {
-    ruleValue: 'Action(file.read.sensitive_local_path)',
-    label: 'Read sensitive local paths',
-    description: 'Credential-like paths such as SSH keys, env files, and package tokens.',
-    allowable: true,
-  },
-  {
-    ruleValue: 'Action(web.fetch)',
-    label: 'Fetch web pages',
-    description: 'Directly contact a URL and read its response.',
-    allowable: true,
-  },
-  {
-    ruleValue: 'Action(file.delete.allowed_file_area)',
-    label: 'Delete local files',
-    description: 'Remove files inside the allowed file area.',
-    allowable: true,
-  },
-  {
-    ruleValue: 'Action(shell.project_script)',
-    label: 'Run project scripts',
-    description: 'Execute local validation commands and package scripts.',
-    allowable: true,
-  },
-  {
-    ruleValue: 'Action(shell.dependency_install)',
-    label: 'Install dependencies',
-    description: 'Run package manager commands that change dependencies or lockfiles.',
-    allowable: true,
-  },
-  {
-    ruleValue: 'Action(git.publish_remote)',
-    label: 'Publish to Git remotes',
-    description: 'Push commits or mutate GitHub/Git remotes.',
-    allowable: true,
-  },
-  {
-    ruleValue: 'Action(deploy.publish_remote)',
-    label: 'Deploy or publish',
-    description: 'Publish packages, deployments, or remote environments.',
-    allowable: true,
-  },
-  {
-    ruleValue: 'Action(shell.network_write)',
-    label: 'Network write commands',
-    description: 'Shell commands that send data outward or mutate network services.',
-    allowable: true,
-  },
-  {
-    ruleValue: 'Action(agent.subagent.spawn)',
-    label: 'Spawn subagents',
-    description: 'Start another agent process. Global allow is intentionally unavailable.',
-    allowable: false,
-  },
+  { id: 'readOutsideArea', ruleValue: 'Action(file.read.outside_allowed_file_area)', allowable: true },
+  { id: 'readSensitivePaths', ruleValue: 'Action(file.read.sensitive_local_path)', allowable: true },
+  { id: 'fetchWeb', ruleValue: 'Action(web.fetch)', allowable: true },
+  { id: 'deleteFiles', ruleValue: 'Action(file.delete.allowed_file_area)', allowable: true },
+  { id: 'runProjectScripts', ruleValue: 'Action(shell.project_script)', allowable: true },
+  { id: 'installDependencies', ruleValue: 'Action(shell.dependency_install)', allowable: true },
+  { id: 'publishGitRemotes', ruleValue: 'Action(git.publish_remote)', allowable: true },
+  { id: 'deployPublish', ruleValue: 'Action(deploy.publish_remote)', allowable: true },
+  { id: 'networkWrite', ruleValue: 'Action(shell.network_write)', allowable: true },
+  { id: 'spawnSubagents', ruleValue: 'Action(agent.subagent.spawn)', allowable: false },
 ];
 
 const PREFERRED_PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'openrouter'];
@@ -256,6 +215,14 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
   // permission save flow: it applies immediately across all windows via the main
   // process (nativeTheme.themeSource) and persists, so there is no Save step.
   const [themeMode, setThemeMode] = useState<ThemeMode>('system');
+  // Display language: the picker reads/writes the shared i18n context (seeded before
+  // first paint, broadcast across windows), so it applies instantly like the theme.
+  const { locale, t, setLocale } = useI18n();
+  const themeOptions = useMemo(() => {
+    const g = t.settings.general;
+    const labels: Record<ThemeMode, string> = { system: g.themeSystem, light: g.themeLight, dark: g.themeDark };
+    return THEME_VALUES.map((value) => ({ value, label: labels[value] }));
+  }, [t]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -490,7 +457,7 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
         }
         setDraft(resolveInitialDraft(next));
         setCreatingCustom(false);
-        setNotice('Saved');
+        setNotice(t.settings.footer.savedNotice);
       }
       await onApplied();
     } catch (caught) {
@@ -528,11 +495,11 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
   }
 
   function activateProvider(providerId: string) {
-    void runProviderMutation(() => api.agentSetActiveProvider(providerId), 'Provider set as active');
+    void runProviderMutation(() => api.agentSetActiveProvider(providerId), t.settings.providers.setActiveNotice);
   }
 
   function deleteProviderFor(providerId: string) {
-    void runProviderMutation(() => api.agentDeleteProviderConfig(providerId), 'Provider removed', true);
+    void runProviderMutation(() => api.agentDeleteProviderConfig(providerId), t.settings.providers.removedNotice, true);
   }
 
   const isSkillDisabled = (skillName: string) => draft.disabledSkills.includes(skillName);
@@ -603,7 +570,7 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
             disabled={!canGoBack}
             icon={ChevronLeftIcon}
             iconSize={ICON_SIZE.toolbar}
-            label="Back"
+            label={t.settings.navigation.back}
             onClick={goBack}
             strokeWidth={1.7}
             variant="chrome"
@@ -613,7 +580,7 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
             disabled={!canGoForward}
             icon={ChevronRightIcon}
             iconSize={ICON_SIZE.toolbar}
-            label="Forward"
+            label={t.settings.navigation.forward}
             onClick={goForward}
             strokeWidth={1.7}
             variant="chrome"
@@ -621,52 +588,72 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
         </div>
       </div>
       {loading ? (
-        <div className="agent-settings-empty">Loading…</div>
+        <div className="agent-settings-empty">{t.settings.loading}</div>
       ) : (
         <div className="settings-layout">
           <aside className="settings-rail">
-            <h2 className="settings-rail-title" id="agent-settings-title">Settings</h2>
-            <nav className="settings-nav" aria-label="Settings categories">
-              {SETTINGS_CATEGORIES.map((item) => (
-                <button
-                  aria-current={category === item.id ? 'page' : undefined}
-                  className={`settings-nav-item ${category === item.id ? 'is-active' : ''}`}
-                  key={item.id}
-                  onClick={() => navigateCategory(item.id)}
-                  type="button"
-                >
-                  <span className="settings-nav-label">{item.label}</span>
-                  <span className="settings-nav-hint">{item.hint}</span>
-                </button>
-              ))}
+            <h2 className="settings-rail-title" id="agent-settings-title">{t.settings.railTitle}</h2>
+            <nav className="settings-nav" aria-label={t.settings.categoriesAriaLabel}>
+              {SETTINGS_CATEGORY_IDS.map((id) => {
+                const cat = t.settings.categories[id];
+                return (
+                  <button
+                    aria-current={category === id ? 'page' : undefined}
+                    className={`settings-nav-item ${category === id ? 'is-active' : ''}`}
+                    key={id}
+                    onClick={() => navigateCategory(id)}
+                    type="button"
+                  >
+                    <span className="settings-nav-label">{cat.label}</span>
+                    <span className="settings-nav-hint">{cat.hint}</span>
+                  </button>
+                );
+              })}
             </nav>
           </aside>
 
           <div className="settings-content">
             {category === 'general' ? (
-              <section className="agent-settings-section settings-general-section" aria-label="General">
+              <section className="agent-settings-section settings-general-section" aria-label={t.settings.categories.general.label}>
                 {/* No <h3> pane title — the rail names the pane; a one-line intro
                     explains it (the Providers model, applied to every pane). */}
-                <p className="settings-section-desc">Appearance and app-wide preferences.</p>
+                <p className="settings-section-desc">{t.settings.general.intro}</p>
 
-                <InsetGroup ariaLabel="Appearance" label="Appearance">
+                <InsetGroup ariaLabel={t.settings.general.appearanceGroup} label={t.settings.general.appearanceGroup}>
                   <InsetRow
-                    label="Theme"
-                    sublabel="Match the system appearance, or always use light or dark."
+                    label={t.settings.general.themeLabel}
+                    sublabel={t.settings.general.themeSublabel}
                     trailing={(
                       <SegmentedControl
-                        label="Theme"
+                        label={t.settings.general.themeLabel}
                         onChange={changeTheme}
-                        options={THEME_OPTIONS}
+                        options={themeOptions}
                         value={themeMode}
                       />
+                    )}
+                    wrap
+                  />
+                  <InsetRow
+                    label={t.settings.general.languageLabel}
+                    sublabel={t.settings.general.languageSublabel}
+                    trailing={(
+                      <SelectControl
+                        label={t.settings.general.languageLabel}
+                        onChange={(event) => setLocale(event.target.value as Locale)}
+                        value={locale}
+                        variant="popup"
+                      >
+                        {SUPPORTED_LOCALES.map((entry) => (
+                          <option key={entry.code} value={entry.code}>{entry.nativeName}</option>
+                        ))}
+                      </SelectControl>
                     )}
                     wrap
                   />
                 </InsetGroup>
               </section>
             ) : category === 'providers' ? (
-              <section className="agent-settings-section settings-providers-section" aria-label="Providers">
+              <section className="agent-settings-section settings-providers-section" aria-label={t.settings.categories.providers.label}>
                 {/* Providers is the reference pane: flat base + grouped inset cards.
                     The other panes were migrated onto this idiom. */}
                 {/* No "Providers" title — the selected rail category already names
@@ -674,15 +661,15 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                     Available list (no separate floating add control). */}
                 <div className="settings-provider-groups">
                   {connectedChoices.length > 0 ? (
-                    <InsetGroup ariaLabel="Connected providers" label="Connected">
+                    <InsetGroup ariaLabel={t.settings.providers.connectedAriaLabel} label={t.settings.providers.connectedGroup}>
                       {connectedChoices.map(renderProviderRow)}
                     </InsetGroup>
                   ) : null}
-                  <InsetGroup ariaLabel="Available providers" label="Available">
+                  <InsetGroup ariaLabel={t.settings.providers.availableAriaLabel} label={t.settings.providers.availableGroup}>
                     {availableChoices.map(renderProviderRow)}
                     <InsetRow
-                      ariaLabel="Add custom provider"
-                      label="Add custom provider"
+                      ariaLabel={t.settings.providers.addCustom}
+                      label={t.settings.providers.addCustom}
                       leading={(
                         <span className="settings-provider-add-leading" aria-hidden="true">
                           <AddIcon size={ICON_SIZE.menu} />
@@ -694,39 +681,41 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                 </div>
               </section>
             ) : category === 'permissions' ? (
-              <section className="agent-settings-section settings-permissions-section" aria-label="Tool Permissions">
-                <p className="settings-section-desc">Choose which common agent actions run automatically and which ask first.</p>
+              <section className="agent-settings-section settings-permissions-section" aria-label={t.settings.permissions.sectionAriaLabel}>
+                <p className="settings-section-desc">{t.settings.permissions.intro}</p>
 
-                <InsetGroup ariaLabel="Common actions" label="Common Actions">
+                <InsetGroup ariaLabel={t.settings.permissions.commonActionsAriaLabel} label={t.settings.permissions.commonActionsGroup}>
                   {COMMON_PERMISSION_RULES.map((rule) => {
                     const decision = permissionDecision(rule.ruleValue);
                     const denied = decision === 'deny';
+                    const ruleCopy = t.settings.permissions.rules[rule.id];
                     return (
                       <InsetRow
                         disabled={denied}
                         key={rule.ruleValue}
                         label={(
                           <>
-                            {rule.label}
-                            <span className="settings-chip">{denied ? 'Deny in JSON' : decision === 'allow' ? 'Allow' : 'Ask'}</span>
+                            {ruleCopy.label}
+                            <span className="settings-chip">{denied ? t.settings.permissions.denyChip : decision === 'allow' ? t.settings.permissions.allowChip : t.settings.permissions.askChip}</span>
                           </>
                         )}
                         sublabel={(
                           <>
-                            {rule.description}
+                            {ruleCopy.description}
                             <span className="inset-row-code">{rule.ruleValue}</span>
                           </>
                         )}
                         trailing={(
                           <SelectControl
                             disabled={denied}
-                            label={`${rule.label} permission`}
+                            label={t.settings.permissions.decisionAriaLabel({ rule: ruleCopy.label })}
                             onChange={(event) => setPermissionDecision(rule.ruleValue, event.target.value as 'allow' | 'ask')}
                             value={denied ? 'deny' : decision}
+                            variant="popup"
                           >
-                            <option value="ask">Ask first</option>
-                            {rule.allowable ? <option value="allow">Always allow</option> : null}
-                            {denied ? <option value="deny">Denied in JSON</option> : null}
+                            <option value="ask">{t.settings.permissions.askOption}</option>
+                            {rule.allowable ? <option value="allow">{t.settings.permissions.allowOption}</option> : null}
+                            {denied ? <option value="deny">{t.settings.permissions.deniedOption}</option> : null}
                           </SelectControl>
                         )}
                         wrap
@@ -736,7 +725,7 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                 </InsetGroup>
 
                 {permissionDiagnostics.length > 0 ? (
-                  <InsetGroup ariaLabel="Ignored JSON rules" label="Ignored JSON Rules">
+                  <InsetGroup ariaLabel={t.settings.permissions.ignoredRulesAriaLabel} label={t.settings.permissions.ignoredRulesGroup}>
                     {permissionDiagnostics.map((diagnostic) => (
                       <InsetRow
                         disabled
@@ -755,18 +744,18 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                 ) : null}
               </section>
             ) : category === 'skills' ? (
-              <section className="agent-settings-section settings-skills-section" aria-label="Skills & Behaviors">
-                <p className="settings-section-desc">Manage installed capabilities and agent automation.</p>
+              <section className="agent-settings-section settings-skills-section" aria-label={t.settings.skills.sectionAriaLabel}>
+                <p className="settings-section-desc">{t.settings.skills.intro}</p>
 
-                <InsetGroup ariaLabel="Behavior rules" label="Behavior Rules">
+                <InsetGroup ariaLabel={t.settings.skills.behaviorRulesAriaLabel} label={t.settings.skills.behaviorRulesGroup}>
                   <InsetRow
-                    label="Automatic Skills"
-                    sublabel="Allow agent to autonomously invoke skills to solve tasks."
+                    label={t.settings.skills.automaticSkillsLabel}
+                    sublabel={t.settings.skills.automaticSkillsSublabel}
                     trailing={(
                       <SwitchControl
                         checked={draft.automaticSkillsEnabled}
                         onCheckedChange={(automaticSkillsEnabled) => setDraft((current) => ({ ...current, automaticSkillsEnabled }))}
-                        label="Automatic Skills"
+                        label={t.settings.skills.automaticSkillsLabel}
                       >
                         <SwitchMark checked={draft.automaticSkillsEnabled} />
                       </SwitchControl>
@@ -774,13 +763,13 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                     wrap
                   />
                   <InsetRow
-                    label="Slash Skills"
-                    sublabel="Enable users to directly invoke skills in chat via slash commands."
+                    label={t.settings.skills.slashSkillsLabel}
+                    sublabel={t.settings.skills.slashSkillsSublabel}
                     trailing={(
                       <SwitchControl
                         checked={draft.slashSkillsEnabled}
                         onCheckedChange={(slashSkillsEnabled) => setDraft((current) => ({ ...current, slashSkillsEnabled }))}
-                        label="Slash Skills"
+                        label={t.settings.skills.slashSkillsLabel}
                       >
                         <SwitchMark checked={draft.slashSkillsEnabled} />
                       </SwitchControl>
@@ -788,13 +777,13 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                     wrap
                   />
                   <InsetRow
-                    label="Compact Command"
-                    sublabel="Enable automatic conversation context compaction when token budget runs low."
+                    label={t.settings.skills.compactLabel}
+                    sublabel={t.settings.skills.compactSublabel}
                     trailing={(
                       <SwitchControl
                         checked={draft.compactEnabled}
                         onCheckedChange={(compactEnabled) => setDraft((current) => ({ ...current, compactEnabled }))}
-                        label="Compact Command"
+                        label={t.settings.skills.compactLabel}
                       >
                         <SwitchMark checked={draft.compactEnabled} />
                       </SwitchControl>
@@ -804,11 +793,11 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                 </InsetGroup>
 
                 {loadingSkills ? (
-                  <div className="agent-settings-empty">Loading installed skills…</div>
+                  <div className="agent-settings-empty">{t.settings.skills.loadingInstalled}</div>
                 ) : allSkills.length === 0 ? (
-                  <div className="agent-settings-empty">No skills installed in ~/.agents/skills or .agents/skills.</div>
+                  <div className="agent-settings-empty">{t.settings.skills.noneInstalled}</div>
                 ) : (
-                  <InsetGroup ariaLabel="Installed capabilities" label="Installed Capabilities">
+                  <InsetGroup ariaLabel={t.settings.skills.installedAriaLabel} label={t.settings.skills.installedGroup}>
                     {allSkills.map((skill) => {
                       const disabled = isSkillDisabled(skill.name);
                       return (
@@ -826,7 +815,7 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                             <SwitchControl
                               checked={!disabled}
                               onCheckedChange={() => toggleSkill(skill.name)}
-                              label={`Toggle ${skill.name}`}
+                              label={t.settings.skills.toggleSkill({ name: skill.name })}
                             >
                               <SwitchMark checked={!disabled} />
                             </SwitchControl>
@@ -839,17 +828,17 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                 )}
               </section>
             ) : (
-              <section className="agent-settings-section settings-agents-section" aria-label="Agent Profiles">
-                <p className="settings-section-desc">Manage system subagents and view their persona details.</p>
+              <section className="agent-settings-section settings-agents-section" aria-label={t.settings.agents.sectionAriaLabel}>
+                <p className="settings-section-desc">{t.settings.agents.intro}</p>
 
                 <div className="settings-agents-split">
                   <div className="settings-agents-aside">
                     {loadingAgents ? (
-                      <div className="agent-settings-empty">Loading profiles…</div>
+                      <div className="agent-settings-empty">{t.settings.agents.loadingProfiles}</div>
                     ) : allAgents.length === 0 ? (
-                      <div className="agent-settings-empty">No agent definitions found.</div>
+                      <div className="agent-settings-empty">{t.settings.agents.noneFound}</div>
                     ) : (
-                      <InsetGroup ariaLabel="Agent profiles">
+                      <InsetGroup ariaLabel={t.settings.agents.profilesAriaLabel}>
                         {allAgents.map((agent) => {
                           const disabled = isAgentDisabled(agent.name);
                           const isSelected = agent.name === selectedAgentName;
@@ -865,7 +854,7 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                                 <SwitchControl
                                   checked={!disabled}
                                   onCheckedChange={() => toggleAgent(agent.name)}
-                                  label={`Toggle ${agent.name}`}
+                                  label={t.settings.agents.toggleAgent({ name: agent.name })}
                                 >
                                   <SwitchMark checked={!disabled} />
                                 </SwitchControl>
@@ -883,41 +872,41 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                         <div className="agent-profile-detail-header">
                           <div>
                             <h4 className="agent-profile-title">{selectedAgent.name}</h4>
-                            <span className="agent-profile-source-label">Source: {selectedAgent.source}</span>
+                            <span className="agent-profile-source-label">{t.settings.agents.sourceLabel({ source: selectedAgent.source })}</span>
                           </div>
                         </div>
 
                         <div className="agent-profile-field">
-                          <span className="agent-profile-field-label">Persona prompt (System instructions)</span>
+                          <span className="agent-profile-field-label">{t.settings.agents.personaPromptLabel}</span>
                           <textarea
                             className="agent-profile-prompt-preview"
                             readOnly
-                            value={selectedAgent.body || '(No instruction body)'}
+                            value={selectedAgent.body || t.settings.agents.noInstructionBody}
                           />
                         </div>
 
                         <div className="agent-profile-specs">
                           <div className="spec-item">
-                            <span className="spec-label">Model Override</span>
-                            <span className="spec-value">{selectedAgent.model || 'Inherit parent'}</span>
+                            <span className="spec-label">{t.settings.agents.modelOverride}</span>
+                            <span className="spec-value">{selectedAgent.model || t.settings.agents.inheritParent}</span>
                           </div>
                           <div className="spec-item">
-                            <span className="spec-label">Thinking Level</span>
-                            <span className="spec-value">{selectedAgent.effort || 'Default'}</span>
+                            <span className="spec-label">{t.settings.agents.thinkingLevel}</span>
+                            <span className="spec-value">{selectedAgent.effort || t.settings.agents.defaultValue}</span>
                           </div>
                           <div className="spec-item">
-                            <span className="spec-label">Permission Mode</span>
-                            <span className="spec-value">{selectedAgent.permissionMode || 'Restricted'}</span>
+                            <span className="spec-label">{t.settings.agents.permissionMode}</span>
+                            <span className="spec-value">{selectedAgent.permissionMode || t.settings.agents.restricted}</span>
                           </div>
                           <div className="spec-item">
-                            <span className="spec-label">Max Turns</span>
-                            <span className="spec-value">{selectedAgent.maxTurns || 'Unlimited'}</span>
+                            <span className="spec-label">{t.settings.agents.maxTurns}</span>
+                            <span className="spec-value">{selectedAgent.maxTurns || t.settings.agents.unlimited}</span>
                           </div>
                         </div>
 
                         {selectedAgent.tools && selectedAgent.tools.length > 0 && (
                           <div className="agent-profile-field">
-                            <span className="agent-profile-field-label">Enabled Tools</span>
+                            <span className="agent-profile-field-label">{t.settings.agents.enabledTools}</span>
                             <div className="agent-profile-tags-container">
                               {selectedAgent.tools.map((tool) => (
                                 <span className="settings-chip" key={tool}>{tool}</span>
@@ -927,7 +916,7 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                         )}
                       </div>
                     ) : (
-                      <div className="agent-settings-empty is-centered">Select an agent profile to view details.</div>
+                      <div className="agent-settings-empty is-centered">{t.settings.agents.selectToView}</div>
                     )}
                   </div>
                 </div>
@@ -951,10 +940,10 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                 <span />
                 <div className="agent-settings-footer-actions">
                   <ButtonControl className="agent-settings-secondary" onClick={onClose}>
-                    Cancel
+                    {t.settings.footer.cancel}
                   </ButtonControl>
                   <ButtonControl className="agent-settings-primary" disabled={saving} onClick={save}>
-                    {saving ? 'Saving...' : 'Save'}
+                    {saving ? t.settings.footer.saving : t.settings.footer.save}
                   </ButtonControl>
                 </div>
               </footer>
@@ -1049,11 +1038,13 @@ function compareProviderChoices(left: ProviderChoice, right: ProviderChoice): nu
   });
 }
 
-function providerStatusLabel(provider: ProviderChoice): string {
-  if (!provider.configured) return provider.hasCredential ? 'Ready' : 'Add key';
-  if (!provider.enabled) return 'Disabled';
-  if (!provider.hasCredential) return 'Needs key';
-  return provider.active ? 'Active' : 'Ready';
+// Module-level helper (can't call useT) — the component passes `t` in.
+function providerStatusLabel(provider: ProviderChoice, t: Messages): string {
+  const s = t.settings.providers.status;
+  if (!provider.configured) return provider.hasCredential ? s.ready : s.addKey;
+  if (!provider.enabled) return s.disabled;
+  if (!provider.hasCredential) return s.needsKey;
+  return provider.active ? s.active : s.ready;
 }
 
 function preferredProviderIndex(providerId: string): number {

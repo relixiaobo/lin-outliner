@@ -2,10 +2,11 @@ import { api } from '../../api/client';
 import type { CommandOutcome, DocumentProjection, NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { AddIcon, CalendarIcon, ICON_SIZE } from '../icons';
-import { buildReferenceCandidates, type ReferenceCandidate } from '../interactions/referenceCandidates';
+import { buildReferenceCandidates, referenceCandidateLabels, type ReferenceCandidate, type ReferenceCandidateLabels } from '../interactions/referenceCandidates';
 import type { CommandRunner } from '../shared';
 import { NodeReferenceMenuIcon } from './NodeReferenceMenuIcon';
 import { PopoverEmpty, PopoverListItem } from './PopoverList';
+import { useT } from '../../i18n/I18nProvider';
 
 interface ReferenceSelectorProps {
   query: string;
@@ -26,6 +27,7 @@ export function referenceItems(params: {
   currentNodeId: NodeId | null;
   treeReferenceParentId?: NodeId | null;
   excludeCurrentNode?: boolean;
+  labels?: ReferenceCandidateLabels;
 }): ReferenceCandidate[] {
   return buildReferenceCandidates({
     index: params.index,
@@ -33,6 +35,7 @@ export function referenceItems(params: {
     query: params.query,
     treeReferenceParentId: params.treeReferenceParentId,
     excludeCurrentNode: params.excludeCurrentNode,
+    labels: params.labels,
   });
 }
 
@@ -55,11 +58,14 @@ function iconForItem(item: ReferenceCandidate, index: DocumentIndex) {
 }
 
 export function ReferenceSelector(props: ReferenceSelectorProps) {
+  const t = useT();
+  const tr = t.outliner.field;
   const items = referenceItems({
     query: props.query,
     index: props.index,
     currentNodeId: props.currentNodeId,
     treeReferenceParentId: props.treeReferenceParentId,
+    labels: referenceCandidateLabels(t),
   });
 
   const selectTarget = (target: NodeProjection) => {
@@ -108,7 +114,7 @@ export function ReferenceSelector(props: ReferenceSelectorProps) {
   };
 
   if (items.length === 0) {
-    return <PopoverEmpty>No matches</PopoverEmpty>;
+    return <PopoverEmpty>{tr.noMatches}</PopoverEmpty>;
   }
 
   return (
@@ -126,7 +132,7 @@ export function ReferenceSelector(props: ReferenceSelectorProps) {
             iconClassName="popover-item-icon"
             label={(
               <>
-                <span>{item.type === 'create' ? `Create "${item.label}"` : item.label}</span>
+                <span>{item.type === 'create' ? tr.createReference({ label: item.label }) : item.label}</span>
                 {item.type === 'node' && item.breadcrumb && (
                   <span className="popover-item-meta">{item.breadcrumb}</span>
                 )}

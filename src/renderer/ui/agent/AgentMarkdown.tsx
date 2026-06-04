@@ -17,6 +17,7 @@ import type { NodeId } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { CheckIcon, CopyIcon, ICON_SIZE } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { useT } from '../../i18n/I18nProvider';
 import { highlightCode, plainCodeHtml } from '../editor/shikiHighlighter';
 import {
   nodeReferenceDisplayLabel,
@@ -60,6 +61,7 @@ function AgentCodeBlock({
   code: string;
   lang: string;
 }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   const resetTimerRef = useRef<number | null>(null);
   const [html, setHtml] = useState(() => plainCodeHtml(code));
@@ -94,9 +96,9 @@ function AgentCodeBlock({
   return (
     <div className="agent-code-block">
       <div className="agent-code-header">
-        <span>{lang || 'text'}</span>
+        <span>{lang || t.agent.markdown.codeLanguageFallback}</span>
         <ButtonControl
-          aria-label="Copy code"
+          aria-label={t.agent.markdown.copyCode}
           className="agent-code-copy"
           disabled={!code}
           onClick={copyCode}
@@ -168,12 +170,14 @@ function useMarkdownComponents(
   index: DocumentIndex | undefined,
   onNodeReferenceOpen: AgentNodeReferenceOpenHandler | undefined,
 ) {
+  const t = useT();
+  const referencedNodeLabel = t.agent.message.referencedNode;
   return useMemo(() => ({
     a({ children, href, ...rest }: ComponentPropsWithoutRef<'a'>) {
       const nodeId = nodeIdFromReferenceHref(href);
       if (nodeId) {
         const style = nodeReferenceStyle(nodeId, index);
-        const label = nodeReferenceDisplayLabel(reactNodeText(children), nodeId, index);
+        const label = nodeReferenceDisplayLabel(reactNodeText(children), nodeId, index, referencedNodeLabel);
         if (!onNodeReferenceOpen) {
           return (
             <span
@@ -233,7 +237,7 @@ function useMarkdownComponents(
         </div>
       );
     },
-  }), [index, onNodeReferenceOpen]);
+  }), [index, onNodeReferenceOpen, referencedNodeLabel]);
 }
 
 const MemoizedMarkdownBlock = memo(

@@ -8,10 +8,8 @@ import { NumberInputControl } from '../primitives/NumberInputControl';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
 import { TAG_COLOR_PRESETS } from '../tags/tagColors';
-import {
-  FIELD_TYPE_CONFIG_OPTIONS,
-  HIDE_FIELD_OPTIONS,
-} from './definitionConfig';
+import { useT } from '../../i18n/I18nProvider';
+import { FIELD_TYPE_CONFIG_OPTIONS } from './definitionConfig';
 
 export interface TagOption {
   color?: string;
@@ -25,13 +23,6 @@ interface ChoiceOption<T extends string> {
   value: T;
   label: string;
 }
-
-const AUTO_INIT_LABELS: Record<AutoInitStrategy, string> = {
-  current_date: 'Current date',
-  ancestor_day_node: 'Ancestor day node',
-  ancestor_field_value: 'Ancestor field value',
-  ancestor_supertag_ref: 'Ancestor with source supertag',
-};
 
 const AUTO_INIT_BY_FIELD_TYPE: Partial<Record<FieldType, AutoInitStrategy[]>> = {
   date: ['current_date', 'ancestor_day_node', 'ancestor_field_value'],
@@ -80,13 +71,14 @@ export function DefinitionFieldTypeSelect(props: {
 export function DefinitionHideFieldSelect(props: {
   label: string;
   value: HideFieldMode;
+  options: Array<{ value: HideFieldMode; label: string }>;
   onChange: (mode: HideFieldMode) => void;
 }) {
   return (
     <DefinitionChoicePicker
       label={props.label}
       value={props.value}
-      options={HIDE_FIELD_OPTIONS}
+      options={props.options}
       onChange={props.onChange}
     />
   );
@@ -98,6 +90,7 @@ export function DefinitionTagSelect(props: {
   options: TagOption[];
   onChange: (tagId: NodeId | null) => void;
 }) {
+  const t = useT();
   return (
     <NodeValuePicker
       allowClear={Boolean(props.value)}
@@ -106,11 +99,11 @@ export function DefinitionTagSelect(props: {
       onSelect={(tagId) => props.onChange(tagId as NodeId)}
       options={props.options.map((option) => ({
         id: option.id,
-        label: option.label || 'Untitled',
+        label: option.label || t.common.untitled,
         marker: 'hash',
         color: option.color,
       }))}
-      placeholder="None"
+      placeholder={t.definition.controls.none}
       selectedId={props.value}
     />
   );
@@ -123,7 +116,11 @@ interface TagOptionField {
 }
 
 /** Every options field carried by a tag (own + inherited via extends), with its options. */
-function tagOptionFields(byId: Map<NodeId, NodeProjection>, tagDefId: NodeId): TagOptionField[] {
+function tagOptionFields(
+  byId: Map<NodeId, NodeProjection>,
+  tagDefId: NodeId,
+  fieldFallback: string,
+): TagOptionField[] {
   const fields: TagOptionField[] = [];
   const seenFields = new Set<NodeId>();
   const visitedTags = new Set<NodeId>();
@@ -143,7 +140,7 @@ function tagOptionFields(byId: Map<NodeId, NodeProjection>, tagDefId: NodeId): T
       seenFields.add(fieldDefId);
       fields.push({
         fieldDefId,
-        label: fieldDef.content.text || 'Field',
+        label: fieldDef.content.text || fieldFallback,
         options: options.map((option) => ({ id: option.id, label: option.label })),
       });
     }
@@ -159,9 +156,10 @@ export function DefinitionDoneMappingControl(props: {
   value: NodeId[];
   onChange: (optionIds: NodeId[]) => void;
 }) {
-  const fields = tagOptionFields(props.byId, props.tagDefId);
+  const t = useT();
+  const fields = tagOptionFields(props.byId, props.tagDefId, t.definition.controls.fieldFallback);
   if (fields.length === 0) {
-    return <span className="definition-done-mapping-empty">Add an options field to map its done state.</span>;
+    return <span className="definition-done-mapping-empty">{t.definition.doneMapping.empty}</span>;
   }
   return (
     <span className="definition-done-mapping" aria-label={props.label}>
@@ -180,8 +178,8 @@ export function DefinitionDoneMappingControl(props: {
               ariaLabel={`${props.label}: ${field.label}`}
               onClear={() => setOption(null)}
               onSelect={(optionId) => setOption(optionId as NodeId)}
-              options={field.options.map((option) => ({ id: option.id, label: option.label || 'Untitled' }))}
-              placeholder="None"
+              options={field.options.map((option) => ({ id: option.id, label: option.label || t.common.untitled }))}
+              placeholder={t.definition.controls.none}
               selectedId={selected}
             />
           </span>
@@ -197,6 +195,7 @@ function DefinitionChoicePicker<T extends string>(props: {
   options: Array<ChoiceOption<T>>;
   onChange: (value: T) => void;
 }) {
+  const t = useT();
   return (
     <NodeValuePicker
       ariaLabel={props.label}
@@ -207,7 +206,7 @@ function DefinitionChoicePicker<T extends string>(props: {
         marker: option.marker,
         color: option.color,
       }))}
-      placeholder="None"
+      placeholder={t.definition.controls.none}
       selectedId={props.value}
     />
   );
@@ -219,6 +218,13 @@ export function DefinitionAutoInitializeControl(props: {
   value?: string;
   onChange: (value: string | null) => void;
 }) {
+  const t = useT();
+  const autoInitLabels: Record<AutoInitStrategy, string> = {
+    current_date: t.definition.autoInit.currentDate,
+    ancestor_day_node: t.definition.autoInit.ancestorDayNode,
+    ancestor_field_value: t.definition.autoInit.ancestorFieldValue,
+    ancestor_supertag_ref: t.definition.autoInit.ancestorSupertagRef,
+  };
   const enabled = parseAutoInitStrategies(props.value);
   const enabledSet = new Set(enabled);
   const strategies = autoInitStrategiesForField(props.fieldType);
@@ -230,7 +236,7 @@ export function DefinitionAutoInitializeControl(props: {
         return (
           <DefinitionSwitchControl
             key={strategy}
-            label={AUTO_INIT_LABELS[strategy]}
+            label={autoInitLabels[strategy]}
             checked={checked}
             onChange={(nextChecked) => {
               const next = new Set(enabled);
@@ -250,6 +256,7 @@ export function DefinitionSwitchControl(props: {
   checked: boolean;
   onChange: (checked: boolean) => void;
 }) {
+  const t = useT();
   return (
     <SwitchControl
       className={`definition-switch ${props.checked ? 'on' : ''}`}
@@ -258,7 +265,7 @@ export function DefinitionSwitchControl(props: {
       onCheckedChange={props.onChange}
     >
       <SwitchMark checked={props.checked} />
-      <span>{props.checked ? 'Yes' : 'No'}</span>
+      <span>{props.checked ? t.definition.controls.yes : t.definition.controls.no}</span>
     </SwitchControl>
   );
 }
@@ -268,6 +275,7 @@ export function DefinitionColorControl(props: {
   value?: string;
   onCommit: (value: string | null) => void;
 }) {
+  const t = useT();
   const selected = props.value ?? null;
   return (
     <span className="definition-color-control" role="radiogroup" aria-label={props.label}>
@@ -276,8 +284,8 @@ export function DefinitionColorControl(props: {
         className={`definition-color-swatch definition-color-swatch-none ${selected ? '' : 'selected'}`}
         role="radio"
         aria-checked={!selected}
-        aria-label="No color"
-        title="No color"
+        aria-label={t.definition.controls.noColor}
+        title={t.definition.controls.noColor}
         onClick={() => props.onCommit(null)}
       />
       {TAG_COLOR_PRESETS.map((preset) => {
@@ -305,6 +313,7 @@ export function DefinitionNumberControl(props: {
   value?: number;
   onCommit: (value: number | null) => void;
 }) {
+  const t = useT();
   const [draft, setDraft] = useState(props.value == null ? '' : String(props.value));
 
   useEffect(() => {
@@ -330,7 +339,7 @@ export function DefinitionNumberControl(props: {
       className="definition-text-input"
       label={props.label}
       value={draft}
-      placeholder="None"
+      placeholder={t.definition.controls.none}
       onChange={(event) => setDraft(event.target.value)}
       onBlur={() => commit(draft)}
       onKeyDown={(event) => {

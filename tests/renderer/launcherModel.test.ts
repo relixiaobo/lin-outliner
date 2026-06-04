@@ -3,6 +3,12 @@ import { buildLauncherItems, deriveActiveIndex, filterCommands, formatHotkey, pr
 import type { LauncherItem } from '../../src/renderer/launcher/launcherModel';
 import type { LauncherCommandView, LauncherNodeMatch } from '../../src/core/launcher/commands';
 import type { ExternalContext } from '../../src/core/launcher/context';
+import { getMessages } from '../../src/core/i18n';
+import { APP_NAME } from '../../src/core/brand';
+
+// These pure helpers run outside React, so callers thread localized strings in.
+// Tests exercise the canonical English tree.
+const t = getMessages('en');
 
 // Every shipped command is runnable — there is no disabled "coming soon" state.
 const COMMANDS: LauncherCommandView[] = [
@@ -43,13 +49,13 @@ function firstOfKind(items: LauncherItem[], kind: LauncherItem['kind']): Launche
 
 describe('buildLauncherItems', () => {
   test('no context, no query → only commands (no capture rows)', () => {
-    const items = buildLauncherItems({ query: '', context: null, commands: COMMANDS });
+    const items = buildLauncherItems({ query: '', context: null, commands: COMMANDS, t });
     expect(items.every((i) => i.kind === 'command')).toBe(true);
     expect(items).toHaveLength(COMMANDS.length);
   });
 
   test('no context, typed text → a standalone note row first', () => {
-    const items = buildLauncherItems({ query: '  buy milk  ', context: null, commands: COMMANDS });
+    const items = buildLauncherItems({ query: '  buy milk  ', context: null, commands: COMMANDS, t });
     expect(items[0].kind).toBe('capture-note');
     const note = items[0];
     if (note.kind !== 'capture-note') throw new Error('expected note');
@@ -58,7 +64,7 @@ describe('buildLauncherItems', () => {
   });
 
   test('page context, no query → a single capture-page row (page only), no note', () => {
-    const items = buildLauncherItems({ query: '', context: webpageContext(), commands: COMMANDS });
+    const items = buildLauncherItems({ query: '', context: webpageContext(), commands: COMMANDS, t });
     const page = firstOfKind(items, 'capture-page');
     expect(page?.kind).toBe('capture-page');
     if (page?.kind !== 'capture-page') throw new Error('expected page');
@@ -70,7 +76,7 @@ describe('buildLauncherItems', () => {
   });
 
   test('page context + typed text → page row (with note rider), then a new-node escape hatch', () => {
-    const items = buildLauncherItems({ query: 'great point on caching', context: webpageContext(), commands: COMMANDS });
+    const items = buildLauncherItems({ query: 'great point on caching', context: webpageContext(), commands: COMMANDS, t });
     expect(items[0].kind).toBe('capture-page');
     expect(items[1].kind).toBe('capture-note');
     const page = items[0];
@@ -85,7 +91,7 @@ describe('buildLauncherItems', () => {
   });
 
   test('capture-page has exactly one action — no disabled "coming soon" secondaries', () => {
-    const items = buildLauncherItems({ query: '', context: webpageContext(), commands: COMMANDS });
+    const items = buildLauncherItems({ query: '', context: webpageContext(), commands: COMMANDS, t });
     const page = items[0];
     if (page.kind !== 'capture-page') throw new Error('expected page');
     // Save to Inbox / Ask AI with source were removed; they return with their
@@ -99,6 +105,7 @@ describe('buildLauncherItems', () => {
       query: '',
       context: webpageContext({ kind: 'video', timestampSeconds: 95 }),
       commands: COMMANDS,
+      t,
     });
     const page = items[0];
     if (page.kind !== 'capture-page') throw new Error('expected page');
@@ -112,6 +119,7 @@ describe('buildLauncherItems', () => {
       query: 'key insight',
       context: webpageContext({ kind: 'video', timestampSeconds: 3661 }),
       commands: COMMANDS,
+      t,
     });
     const page = items[0];
     if (page.kind !== 'capture-page') throw new Error('expected page');
@@ -121,7 +129,7 @@ describe('buildLauncherItems', () => {
   });
 
   test('typed text also filters the command list by the same query', () => {
-    const items = buildLauncherItems({ query: 'settings', context: null, commands: COMMANDS });
+    const items = buildLauncherItems({ query: 'settings', context: null, commands: COMMANDS, t });
     const commands = items.filter((i) => i.kind === 'command');
     expect(commands).toHaveLength(1);
     if (commands[0].kind !== 'command') throw new Error('expected command');
@@ -131,7 +139,7 @@ describe('buildLauncherItems', () => {
   test('matching nodes appear inline (after captures, before commands), opening on Enter', () => {
     // Query "open" matches the node list (passed in) AND the open-* commands, so
     // both kinds are present to assert ordering.
-    const items = buildLauncherItems({ query: 'open', context: null, commands: COMMANDS, nodes: NODES });
+    const items = buildLauncherItems({ query: 'open', context: null, commands: COMMANDS, nodes: NODES, t });
     const kinds = items.map((i) => i.kind);
     // No context, but the note row leads since text was typed → note, then node
     // matches, then commands.
@@ -148,7 +156,7 @@ describe('buildLauncherItems', () => {
   });
 
   test('page context + nodes: capture row leads, then node matches', () => {
-    const items = buildLauncherItems({ query: 'cache', context: webpageContext(), commands: COMMANDS, nodes: NODES });
+    const items = buildLauncherItems({ query: 'cache', context: webpageContext(), commands: COMMANDS, nodes: NODES, t });
     expect(items[0].kind).toBe('capture-page');
     expect(items.some((i) => i.kind === 'node')).toBe(true);
     const firstNodeIndex = items.findIndex((i) => i.kind === 'node');
@@ -159,53 +167,53 @@ describe('buildLauncherItems', () => {
 
 describe('rowView', () => {
   test('capture-page reads as a "Capture" command with the page as subtitle', () => {
-    const items = buildLauncherItems({ query: '', context: webpageContext(), commands: COMMANDS });
-    const view = rowView(items[0]);
+    const items = buildLauncherItems({ query: '', context: webpageContext(), commands: COMMANDS, t });
+    const view = rowView(items[0], t);
     expect(view.title).toBe('Capture'); // the command name, NOT the page title
     expect(view.subtitle).toBe('An Example Article · example.com');
     expect(view.typeLabel).toBe('Command'); // capture is a command too
   });
 
   test('capture-page + note shows the note in the subtitle', () => {
-    const items = buildLauncherItems({ query: 'great point', context: webpageContext(), commands: COMMANDS });
-    const view = rowView(items[0]);
+    const items = buildLauncherItems({ query: 'great point', context: webpageContext(), commands: COMMANDS, t });
+    const view = rowView(items[0], t);
     expect(view.title).toBe('Capture');
     expect(view.subtitle).toBe('+ “great point” · example.com');
   });
 
   test('capture-note reads as "New node" with the quoted text', () => {
-    const items = buildLauncherItems({ query: 'buy milk', context: null, commands: COMMANDS });
-    const view = rowView(items[0]);
+    const items = buildLauncherItems({ query: 'buy milk', context: null, commands: COMMANDS, t });
+    const view = rowView(items[0], t);
     expect(view.title).toBe('New node');
     expect(view.subtitle).toBe('“buy milk”');
     expect(view.typeLabel).toBe('Command');
   });
 
   test('a node row keeps the node text as title, parent as subtitle, type "Node"', () => {
-    const items = buildLauncherItems({ query: 'cache', context: null, commands: COMMANDS, nodes: NODES });
+    const items = buildLauncherItems({ query: 'cache', context: null, commands: COMMANDS, nodes: NODES, t });
     const node = items.find((i) => i.kind === 'node');
     if (!node) throw new Error('expected node');
-    const view = rowView(node);
+    const view = rowView(node, t);
     expect(view.title).toBe('Caching strategies');
     expect(view.subtitle).toBe('Engineering');
     expect(view.typeLabel).toBe('Node');
   });
 
   test('every command row carries type "Command" and is runnable (no disabled state)', () => {
-    const items = buildLauncherItems({ query: '', context: null, commands: COMMANDS });
+    const items = buildLauncherItems({ query: '', context: null, commands: COMMANDS, t });
     const commands = items.filter((i) => i.kind === 'command');
     expect(commands).toHaveLength(COMMANDS.length);
     for (const cmd of commands) {
-      expect(rowView(cmd)).toMatchObject({ typeLabel: 'Command' });
+      expect(rowView(cmd, t)).toMatchObject({ typeLabel: 'Command' });
     }
     const main = items.find((i) => i.kind === 'command' && i.command.id === 'open-main');
     if (!main) throw new Error('expected open-main');
-    expect(rowView(main).title).toBe('Open main window');
+    expect(rowView(main, t).title).toBe('Open main window');
   });
 });
 
 describe('selection helpers (identity-based, not raw index)', () => {
-  const items = buildLauncherItems({ query: 'open', context: null, commands: COMMANDS, nodes: NODES });
+  const items = buildLauncherItems({ query: 'open', context: null, commands: COMMANDS, nodes: NODES, t });
   // items: capture-note, node:1, node:2, open-main, open-settings
 
   test('rowKey is stable per row identity', () => {
@@ -227,7 +235,7 @@ describe('selection helpers (identity-based, not raw index)', () => {
     // User selects open-main; then a query change drops the node rows.
     const before = items;
     const key = 'cmd:open-main';
-    const fewer = buildLauncherItems({ query: 'open', context: null, commands: COMMANDS, nodes: [] });
+    const fewer = buildLauncherItems({ query: 'open', context: null, commands: COMMANDS, nodes: [], t });
     // Same key resolves to a (different, now-earlier) index — selection follows the row.
     expect(before[deriveActiveIndex(before, key)].kind).toBe('command');
     expect(fewer[deriveActiveIndex(fewer, key)].kind).toBe('command');
@@ -264,7 +272,7 @@ describe('formatHotkey', () => {
 
 describe('primaryActionLabel', () => {
   test('returns the first action label, or null for nothing', () => {
-    const items = buildLauncherItems({ query: 'x', context: null, commands: [] });
+    const items = buildLauncherItems({ query: 'x', context: null, commands: [], t });
     expect(primaryActionLabel(items[0])).toBe('New node in Today');
     expect(primaryActionLabel(undefined)).toBeNull();
   });
@@ -287,12 +295,12 @@ describe('remediationForContext', () => {
   }
 
   test('no context or no warnings → no banner', () => {
-    expect(remediationForContext(null)).toBeNull();
-    expect(remediationForContext(contextWith([]))).toBeNull();
+    expect(remediationForContext(null, t, APP_NAME)).toBeNull();
+    expect(remediationForContext(contextWith([]), t, APP_NAME)).toBeNull();
   });
 
   test('browser-tab-unavailable → automation hint pointing at System Settings', () => {
-    const r = remediationForContext(contextWith(['browser-tab-unavailable']));
+    const r = remediationForContext(contextWith(['browser-tab-unavailable']), t, APP_NAME);
     expect(r?.kind).toBe('automation');
     expect(r?.detail).toContain('Automation');
     expect(r?.detail).toContain('Google Chrome');
@@ -301,9 +309,9 @@ describe('remediationForContext', () => {
   test('basic-info capture has no in-page-script / multi-window / multi-instance hints', () => {
     // Those degradation modes went away with the in-page extraction path; only the
     // unreadable-tab (Automation) remediation remains.
-    expect(remediationForContext(contextWith(['page-script-blocked']))).toBeNull();
-    expect(remediationForContext(contextWith(['context-window-mismatch']))).toBeNull();
-    expect(remediationForContext(contextWith(['browser-multiple-instances']))).toBeNull();
+    expect(remediationForContext(contextWith(['page-script-blocked']), t, APP_NAME)).toBeNull();
+    expect(remediationForContext(contextWith(['context-window-mismatch']), t, APP_NAME)).toBeNull();
+    expect(remediationForContext(contextWith(['browser-multiple-instances']), t, APP_NAME)).toBeNull();
   });
 });
 

@@ -5,6 +5,7 @@ import { windowMaterialKind } from '../core/windowMaterial';
 import { LIN_SETTINGS_CHANGED_CHANNEL } from '../core/settingsWindow';
 import { LIN_WINDOW_ACTIVE_CHANNEL } from '../core/windowActivity';
 import type { ThemeMode } from '../core/theme';
+import { DEFAULT_LOCALE, isLocale, LIN_LANGUAGE_CHANGED_CHANNEL, type Locale } from '../core/locale';
 import {
   LAUNCHER_CONTEXT_CHANNEL,
   LAUNCHER_NAVIGATE_TO_NODE_CHANNEL,
@@ -103,6 +104,19 @@ export interface LinStageAttachmentResult {
 const nativeAttachmentPickerDisabled = process.env.LIN_ATTACHMENT_PICKER_METHOD === 'web'
   || process.env.LIN_DISABLE_NATIVE_ATTACHMENT_PICKER === '1';
 
+// Read the effective UI language synchronously at preload time so the renderer's
+// I18nProvider can seed its first render before paint (no English→target flash).
+// The main process resolves it (stored pick, else OS locale); a one-time sendSync
+// is the standard Electron pattern for this and runs once per window.
+function readInitialLanguage(): Locale {
+  try {
+    const value = ipcRenderer.sendSync('lin:get-language-sync');
+    return isLocale(value) ? value : DEFAULT_LOCALE;
+  } catch {
+    return DEFAULT_LOCALE;
+  }
+}
+
 const api = {
   // Which OS window material the main process applied, so the renderer can make
   // its chrome surfaces translucent only when there's a material behind them.
@@ -142,6 +156,19 @@ const api = {
   // the stored mode so the settings control can reflect the current pick.
   getTheme: () => ipcRenderer.invoke('lin:get-theme') as Promise<ThemeMode>,
   setTheme: (mode: ThemeMode) => ipcRenderer.invoke('lin:set-theme', mode) as Promise<void>,
+  // Language preference. initialLanguage is the synchronously-resolved effective
+  // locale for first paint; setLanguage applies immediately across all windows (the
+  // main process broadcasts it + rebuilds the native menu) and persists;
+  // onLanguageChanged lets every window follow a change made from the settings pane.
+  initialLanguage: readInitialLanguage(),
+  setLanguage: (locale: Locale) => ipcRenderer.invoke('lin:set-language', locale) as Promise<void>,
+  onLanguageChanged: (listener: (locale: Locale) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, locale: Locale) => listener(locale);
+    ipcRenderer.on(LIN_LANGUAGE_CHANGED_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(LIN_LANGUAGE_CHANGED_CHANNEL, handler);
+    };
+  },
   openProviderConfig: (params: { providerId: string; mode: 'configure' | 'custom' }) =>
     ipcRenderer.invoke('lin:open-provider-config', params) as Promise<void>,
   closeProviderConfig: () => ipcRenderer.invoke('lin:close-provider-config') as Promise<void>,

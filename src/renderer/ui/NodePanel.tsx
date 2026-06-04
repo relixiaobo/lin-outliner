@@ -66,6 +66,7 @@ import { inlineReferenceTextColor, resolveTagColor } from './tags/tagColors';
 import { TagBar } from './tags/TagBar';
 import { buildPanelBreadcrumb } from './panelBreadcrumb';
 import { PanelDateNavigation } from './PanelDateNavigation';
+import { useT } from '../i18n/I18nProvider';
 
 const PANEL_HEADER_ICON_SIZE = 20;
 const PANEL_BREADCRUMB_ORIGIN_ICON_SIZE = 13;
@@ -110,32 +111,43 @@ function isDayTagId(tagId: NodeId, byId: DocumentIndex['byId']) {
   return tagId === TAG_DAY_ID || byId.get(tagId)?.content.text.toLowerCase() === 'day';
 }
 
-const WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const MONTH_ABBR = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-];
-
 const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+// Localized strings the day-title formatter needs. `formatDayNodeTitle` runs
+// outside React (module-level export), so it can't call useT — the component
+// passes these in from `t.dateFormat`.
+export interface DayNodeTitleLabels {
+  weekdaysShort: readonly string[];
+  monthsShort: readonly string[];
+  dayName: (parts: { weekday: string; month: string; day: number }) => string;
+  today: (parts: { dayName: string }) => string;
+  tomorrow: (parts: { dayName: string }) => string;
+  yesterday: (parts: { dayName: string }) => string;
+}
 
 // Humanize a day node's ISO date for the panel title: the weekday/month/day
 // ("Wed, May 27"), prefixed with a relative name for the adjacent days
 // ("Today, Wed, May 27"). Day nodes are locked, so this label is read-only
 // display only — the underlying `YYYY-MM-DD` content is untouched.
-export function formatDayNodeTitle(isoDate: string, now: Date): string {
+export function formatDayNodeTitle(isoDate: string, now: Date, labels: DayNodeTitleLabels): string {
   const [year, month, day] = isoDate.split('-').map(Number);
   const date = new Date(year, month - 1, day);
-  const dayName = `${WEEKDAY_ABBR[date.getDay()]}, ${MONTH_ABBR[date.getMonth()]} ${date.getDate()}`;
+  const dayName = labels.dayName({
+    weekday: labels.weekdaysShort[date.getDay()],
+    month: labels.monthsShort[date.getMonth()],
+    day: date.getDate(),
+  });
   const diffDays = Math.round(
     (startOfDay(date).getTime() - startOfDay(now).getTime()) / 86_400_000,
   );
-  if (diffDays === 0) return `Today, ${dayName}`;
-  if (diffDays === 1) return `Tomorrow, ${dayName}`;
-  if (diffDays === -1) return `Yesterday, ${dayName}`;
+  if (diffDays === 0) return labels.today({ dayName });
+  if (diffDays === 1) return labels.tomorrow({ dayName });
+  if (diffDays === -1) return labels.yesterday({ dayName });
   return dayName;
 }
 
 export function NodePanel(props: NodePanelProps) {
+  const t = useT();
   const rootNode = props.index.byId.get(props.rootId);
   const projection = props.index.projection;
   const [titleContent, setTitleContent] = useState<RichText>(rootNode?.content ?? EMPTY_RICH_TEXT);
@@ -157,7 +169,7 @@ export function NodePanel(props: NodePanelProps) {
   const descriptionReturnPlacementRef = useRef(cursorEnd());
   const rootDefinitionKind = definitionKind(rootNode);
   const definitionTemplateLabel = rootNode
-    ? definitionOutlinerLabel(rootNode, { fieldType: projectFieldTypeById(props.index.byId, rootNode.id) })
+    ? definitionOutlinerLabel(rootNode, { fieldType: projectFieldTypeById(props.index.byId, rootNode.id) }, t.definition.outliner)
     : null;
   const showOutliner = Boolean(rootNode && (!rootDefinitionKind || definitionTemplateLabel));
   const showTrailingInput = Boolean(rootNode && showOutliner && rootNode.type !== 'search');
@@ -269,8 +281,9 @@ export function NodePanel(props: NodePanelProps) {
   const now = new Date();
   const todayKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
   const dayTitleLabel = useMemo(
-    () => (panelIsoDate && rootNode?.locked ? formatDayNodeTitle(panelIsoDate, new Date()) : null),
-    [panelIsoDate, rootNode?.locked, todayKey],
+    () => (panelIsoDate && rootNode?.locked ? formatDayNodeTitle(panelIsoDate, new Date(), t.dateFormat) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- t.dateFormat is stable per locale; re-renders cover language change
+    [panelIsoDate, rootNode?.locked, todayKey, t.dateFormat],
   );
   const dayTitleContent = useMemo(
     () => (dayTitleLabel != null ? plainText(dayTitleLabel) : null),
@@ -399,13 +412,13 @@ export function NodePanel(props: NodePanelProps) {
       className="panel-title-more-button"
       icon={MoreIcon}
       iconSize={14}
-      label="More node actions"
+      label={t.nodePanel.moreActionsLabel}
       onClick={openHeaderMoreMenu}
       onMouseDown={(event) => {
         event.preventDefault();
         event.stopPropagation();
       }}
-      title="More"
+      title={t.nodePanel.moreActionsTitle}
       variant="panel"
     />
   ) : null;
@@ -415,7 +428,7 @@ export function NodePanel(props: NodePanelProps) {
       className={`panel-title-more-button ${searchQueryOpen ? 'is-active' : ''}`}
       icon={FilterIcon}
       iconSize={14}
-      label={searchQueryOpen ? 'Hide query' : 'Show query'}
+      label={searchQueryOpen ? t.nodePanel.hideQuery : t.nodePanel.showQuery}
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -426,7 +439,7 @@ export function NodePanel(props: NodePanelProps) {
         event.preventDefault();
         event.stopPropagation();
       }}
-      title={searchQueryOpen ? 'Hide query' : 'Show query'}
+      title={searchQueryOpen ? t.nodePanel.hideQuery : t.nodePanel.showQuery}
       variant="panel"
     />
   ) : null;
@@ -520,22 +533,22 @@ export function NodePanel(props: NodePanelProps) {
               disabled={!props.canGoBack}
               icon={ChevronLeftIcon}
               iconSize={14}
-              label="Previous page"
+              label={t.nodePanel.previousPage}
               onClick={props.onBack}
-              title="Previous page"
+              title={t.nodePanel.previousPage}
               variant="panel"
             />
             <ButtonControl
-              aria-label="Open library"
+              aria-label={t.nodePanel.openLibrary}
               className="panel-breadcrumb-origin"
               onClick={() => props.onRoot(projection.libraryId)}
             >
               <LibraryIcon size={PANEL_BREADCRUMB_ORIGIN_ICON_SIZE} />
             </ButtonControl>
           </div>
-          <nav className="panel-breadcrumb" aria-label="Panel breadcrumb">
+          <nav className="panel-breadcrumb" aria-label={t.nodePanel.breadcrumbAriaLabel}>
             {breadcrumbNodes.map((node, index) => {
-              const label = node.content.text || 'Untitled';
+              const label = node.content.text || t.common.untitled;
               const showCollapsedMarker = breadcrumb.collapsed && !breadcrumbExpanded && index === 1;
               return (
                 <span className="panel-breadcrumb-segment" key={node.id}>
@@ -544,9 +557,9 @@ export function NodePanel(props: NodePanelProps) {
                     <>
                       <ButtonControl
                         className="panel-breadcrumb-ellipsis"
-                        aria-label={`Show ${breadcrumb.hiddenNodes.length} hidden breadcrumb levels`}
+                        aria-label={t.nodePanel.showHiddenBreadcrumbLevels({ count: breadcrumb.hiddenNodes.length })}
                         onClick={() => setBreadcrumbExpanded(true)}
-                        title="Show hidden breadcrumb levels"
+                        title={t.nodePanel.showHiddenBreadcrumbLevelsTitle}
                       >
                         <MoreIcon size={ICON_SIZE.rowGlyph} />
                       </ButtonControl>
@@ -566,7 +579,7 @@ export function NodePanel(props: NodePanelProps) {
               <span className="panel-breadcrumb-segment panel-breadcrumb-current">
                 <span className="panel-breadcrumb-divider">/</span>
                 <span className="panel-breadcrumb-current-label" data-current-page-title>
-                  {dayTitleLabel ?? (rootNode.content.text || 'Untitled')}
+                  {dayTitleLabel ?? (rootNode.content.text || t.common.untitled)}
                 </span>
               </span>
             )}
@@ -579,9 +592,9 @@ export function NodePanel(props: NodePanelProps) {
             <IconButton
               className="panel-breadcrumb-close"
               icon={CloseIcon}
-              label="Close panel"
+              label={t.nodePanel.closePanel}
               onClick={props.onClose}
-              title="Close panel"
+              title={t.nodePanel.closePanel}
               variant="panel"
             />
           )}
@@ -595,7 +608,7 @@ export function NodePanel(props: NodePanelProps) {
             </div>
           )}
           <div className="panel-title-row" ref={titleRowRef}>
-            <div className="panel-title-editor" aria-label="Page title" onContextMenu={openHeaderContextMenu}>
+            <div className="panel-title-editor" aria-label={t.nodePanel.pageTitleAriaLabel} onContextMenu={openHeaderContextMenu}>
               {rootNode && showDoneCheckbox && (
                 <DoneCheckbox
                   checked={Boolean(rootNode.completedAt)}
@@ -606,7 +619,7 @@ export function NodePanel(props: NodePanelProps) {
                 nodeId={props.rootId}
                 content={dayTitleContent ?? titleContent}
                 contentRevision={titleContentRevision}
-                placeholder="Untitled"
+                placeholder={t.common.untitled}
                 readOnly={rootNode?.locked}
                 completed={Boolean(rootNode?.completedAt)}
                 onFocus={selectHeader}

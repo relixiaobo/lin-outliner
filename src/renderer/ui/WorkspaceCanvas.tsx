@@ -7,6 +7,7 @@ import { AgentDebugPanel } from './agent/AgentDebugPanel';
 import { ResizeHandle } from './primitives/ResizeHandle';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from './shared';
 import type { WorkspacePanelState } from './workspaceLayoutTypes';
+import { useT } from '../i18n/I18nProvider';
 
 interface WorkspaceCanvasProps {
   activePanelId: string | null;
@@ -38,12 +39,13 @@ interface WorkspaceCanvasProps {
 }
 
 export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
+  const t = useT();
   const activePanels = props.panels;
 
   return (
     <section
       className={`workspace-canvas ${activePanels.length === 1 ? 'single-panel' : ''}`}
-      aria-label="Workspace canvas"
+      aria-label={t.shell.workspace.canvasAriaLabel}
       ref={props.canvasRef}
     >
       {activePanels.map((panel, panelIndex) => (
@@ -82,7 +84,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
             <div className="panel-resize-slot">
               <ResizeHandle
                 className="panel-resize-handle"
-                label="Resize panels"
+                label={t.shell.workspace.resizePanelsLabel}
                 onDoubleClick={() => (
                   props.onPanelResizeReset(panel.id, activePanels[panelIndex + 1].id)
                 )}
@@ -92,7 +94,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 onPointerDown={(event) => (
                   props.onPanelResizeStart(panel.id, activePanels[panelIndex + 1].id, event)
                 )}
-                title="Resize panels (double-click to reset)"
+                title={t.shell.workspace.resizePanelsTitle}
               />
             </div>
           )}

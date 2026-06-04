@@ -18,6 +18,7 @@ import { Dialog } from './primitives/Dialog';
 import { MenuItem } from './primitives/MenuItem';
 import { TextInputControl } from './primitives/TextInputControl';
 import type { CommandRunner } from './shared';
+import { useT } from '../i18n/I18nProvider';
 
 interface CommandPaletteProps {
   projection: DocumentProjection;
@@ -39,11 +40,10 @@ interface PaletteItem {
   action: () => void;
 }
 
-function actionLabel(kind: PaletteItemKind) {
-  return kind === 'create' ? 'Create' : 'Open';
-}
-
 export function CommandPalette(props: CommandPaletteProps) {
+  const t = useT();
+  const actionLabel = (kind: PaletteItemKind) =>
+    kind === 'create' ? t.commandPalette.actionCreate : t.commandPalette.actionOpen;
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -91,42 +91,42 @@ export function CommandPalette(props: CommandPaletteProps) {
   const defaultItems: PaletteItem[] = [
     {
       id: props.projection.todayId,
-      label: 'Today',
+      label: t.commandPalette.navToday,
       icon: CalendarIcon,
       kind: 'navigate',
-      typeLabel: 'Navigate',
+      typeLabel: t.commandPalette.typeNavigate,
       action: () => openNode(props.projection.todayId),
     },
     {
       id: props.projection.libraryId,
-      label: 'Library',
+      label: t.commandPalette.navLibrary,
       icon: LibraryIcon,
       kind: 'navigate',
-      typeLabel: 'Navigate',
+      typeLabel: t.commandPalette.typeNavigate,
       action: () => openNode(props.projection.libraryId),
     },
     {
       id: props.projection.schemaId,
-      label: 'Schema',
+      label: t.commandPalette.navSchema,
       icon: SupertagIcon,
       kind: 'navigate',
-      typeLabel: 'Navigate',
+      typeLabel: t.commandPalette.typeNavigate,
       action: () => openNode(props.projection.schemaId),
     },
     {
       id: props.projection.searchesId,
-      label: 'Saved searches',
+      label: t.commandPalette.navSavedSearches,
       icon: SearchIcon,
       kind: 'navigate',
-      typeLabel: 'Navigate',
+      typeLabel: t.commandPalette.typeNavigate,
       action: () => openNode(props.projection.searchesId),
     },
     {
       id: props.projection.trashId,
-      label: 'Trash',
+      label: t.commandPalette.navTrash,
       icon: TrashIcon,
       kind: 'navigate',
-      typeLabel: 'Navigate',
+      typeLabel: t.commandPalette.typeNavigate,
       action: () => openNode(props.projection.trashId),
     },
   ];
@@ -135,9 +135,9 @@ export function CommandPalette(props: CommandPaletteProps) {
     const node = props.index.byId.get(hit.nodeId);
     return {
       id: hit.nodeId,
-      label: node?.content.text || 'Untitled',
+      label: node?.content.text || t.common.untitled,
       kind: 'node',
-      typeLabel: 'Node',
+      typeLabel: t.commandPalette.typeNode,
       action: () => openNode(hit.nodeId),
     };
   });
@@ -147,7 +147,7 @@ export function CommandPalette(props: CommandPaletteProps) {
       label: trimmedQuery,
       icon: AddChildIcon,
       kind: 'create',
-      typeLabel: 'New in Today',
+      typeLabel: t.commandPalette.typeNewInToday,
       action: createFromQuery,
     }
     : null;
@@ -172,7 +172,7 @@ export function CommandPalette(props: CommandPaletteProps) {
     <Dialog
       backdropClassName="overlay"
       initialFocus={() => inputRef.current}
-      label="Command palette"
+      label={t.commandPalette.dialogLabel}
       onBackdropMouseDown={props.onClose}
       onEscapeKeyDown={props.onClose}
       surfaceClassName="command-palette"
@@ -182,9 +182,9 @@ export function CommandPalette(props: CommandPaletteProps) {
         aria-activedescendant={selectedItemId}
         aria-controls="command-palette-list"
         className="command-input"
-        label="Search or create"
+        label={t.commandPalette.inputLabel}
         value={query}
-        placeholder="Search or create"
+        placeholder={t.commandPalette.inputPlaceholder}
         onChange={(event) => setQuery(event.target.value)}
         onKeyDown={(event) => {
           if (isImeComposingEvent(event)) {
@@ -206,8 +206,8 @@ export function CommandPalette(props: CommandPaletteProps) {
         }}
       />
       <div className="command-list" id="command-palette-list" ref={listRef} role="listbox">
-        {!trimmedQuery && <div className="command-group-heading">Navigate</div>}
-        {trimmedQuery && hitItems.length > 0 && <div className="command-group-heading">Nodes</div>}
+        {!trimmedQuery && <div className="command-group-heading">{t.commandPalette.headingNavigate}</div>}
+        {trimmedQuery && hitItems.length > 0 && <div className="command-group-heading">{t.commandPalette.headingNodes}</div>}
         {visibleItems.map((item, index) => {
           const Icon = item.icon;
           return (
@@ -223,7 +223,7 @@ export function CommandPalette(props: CommandPaletteProps) {
               ) : (
                 <span className="command-item-bullet" />
               )}
-              label={item.kind === 'create' ? `Create "${item.label}"` : item.label}
+              label={item.kind === 'create' ? t.commandPalette.createLabel({ label: item.label }) : item.label}
               labelClassName="command-item-label"
               meta={item.typeLabel}
               metaClassName="command-item-type"

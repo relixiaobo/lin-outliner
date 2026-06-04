@@ -11,6 +11,7 @@ import {
   PopoverListbox,
   PopoverListItem,
 } from './PopoverList';
+import { useT } from '../../i18n/I18nProvider';
 
 interface TrailingOptionsPopoverProps {
   anchorRef: RefObject<HTMLElement | null>;
@@ -30,6 +31,7 @@ interface TrailingOptionsPopoverProps {
 // trigger popover) so navigation does not depend on the editor's keymap. A
 // `Create "x"` affordance appears for a novel query on an `options` field.
 export function TrailingOptionsPopover(props: TrailingOptionsPopoverProps) {
+  const tf = useT().outliner.field;
   const config = projectFieldConfig(props.byId, props.optionField);
   const fieldType = config?.fieldType;
   const allOptions = resolveFieldOptions(props.optionField, props.byId);
@@ -123,10 +125,10 @@ export function TrailingOptionsPopover(props: TrailingOptionsPopoverProps) {
     <PopoverListbox
       ref={menuRef}
       className="node-picker-popover trailing-options-popover"
-      label="Field options"
+      label={tf.fieldOptionsLabel}
       style={menuStyle}
     >
-      {optionCount === 0 && <PopoverEmpty>No options</PopoverEmpty>}
+      {optionCount === 0 && <PopoverEmpty>{tf.noOptions}</PopoverEmpty>}
       {filteredOptions.map((option, index) => (
         <PopoverListItem
           key={option.id}
@@ -141,7 +143,7 @@ export function TrailingOptionsPopover(props: TrailingOptionsPopoverProps) {
         <PopoverListItem
           active={activeIndex === filteredOptions.length}
           icon={<PopoverBulletIcon />}
-          label={`Create "${trimmedQuery}"`}
+          label={tf.createOption({ label: trimmedQuery })}
           onMouseEnter={() => setActiveIndex(filteredOptions.length)}
           onClick={() => props.onCreate(trimmedQuery)}
         />

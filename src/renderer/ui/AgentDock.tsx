@@ -4,6 +4,7 @@ import type { DocumentIndex } from '../state/document';
 import { AgentChatPanel } from './agent/AgentChatPanel';
 import type { AgentNodeReferenceOpenHandler } from './agent/AgentInlineReferenceText';
 import { ResizeHandle } from './primitives/ResizeHandle';
+import { useT } from '../i18n/I18nProvider';
 
 // The agent rail is a 2-state surface:
 //   collapsed — a bare icon seed at the top-right toggle footprint (hover feedback
@@ -26,12 +27,13 @@ interface AgentDockProps {
 }
 
 export function AgentDock(props: AgentDockProps) {
+  const t = useT();
   const open = props.railState === 'open';
   return (
     <aside
       className={`agent-dock agent-dock-${props.railState}`}
       data-rail-state={props.railState}
-      aria-label="Agent"
+      aria-label={t.shell.agentDock.ariaLabel}
       inert={open ? undefined : true}
     >
       <AgentChatPanel
@@ -45,11 +47,11 @@ export function AgentDock(props: AgentDockProps) {
       <ResizeHandle
         className="dock-resize-handle agent-resize-handle"
         disabled={!open}
-        label="Resize agent"
+        label={t.shell.agentDock.resizeLabel}
         onDoubleClick={props.onResizeReset}
         onKeyDown={props.onResizeKeyDown}
         onPointerDown={props.onResizeStart}
-        title="Resize agent (double-click to reset)"
+        title={t.shell.agentDock.resizeTitle}
       />
     </aside>
   );

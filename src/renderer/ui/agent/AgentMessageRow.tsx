@@ -48,6 +48,7 @@ import {
   type AgentInlineFileReference,
   type AgentNodeReferenceOpenHandler,
 } from './AgentInlineReferenceText';
+import { useT } from '../../i18n/I18nProvider';
 
 interface AgentMessageRowProps {
   busy?: boolean;
@@ -369,6 +370,7 @@ export function AgentMessageRow({
   turnEnded = false,
   turnPhase = 'idle',
 }: AgentMessageRowProps) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState('');
@@ -439,17 +441,17 @@ export function AgentMessageRow({
               <IconButton
                 className="agent-message-action-button"
                 icon={CloseIcon}
-                label="Cancel edit"
+                label={t.agent.message.cancelEdit}
                 onClick={() => setEditing(false)}
-                title="Cancel"
+                title={t.agent.message.cancel}
                 variant="message"
               />
               <IconButton
                 className="agent-message-action-button"
                 icon={CheckIcon}
-                label="Save edit"
+                label={t.agent.message.saveEdit}
                 onClick={() => void saveEdit(nodeId)}
-                title="Save"
+                title={t.agent.message.save}
                 variant="message"
               />
             </div>
@@ -499,12 +501,12 @@ export function AgentMessageRow({
                   className="agent-message-action-button"
                   disabled={actionsDisabled}
                   icon={PencilIcon}
-                  label="Edit message"
+                  label={t.agent.message.editMessage}
                   onClick={() => {
                     setEditDraft(text);
                     setEditing(true);
                   }}
-                  title="Edit"
+                  title={t.agent.message.edit}
                   variant="message"
                 />
               ) : null}
@@ -512,9 +514,9 @@ export function AgentMessageRow({
                 className="agent-message-action-button"
                 disabled={!text.trim()}
                 icon={CopyStateIcon}
-                label="Copy message"
+                label={t.agent.message.copyMessage}
                 onClick={() => void copyMessage(text)}
-                title="Copy"
+                title={t.agent.message.copy}
                 variant="message"
               />
               <AgentBranchNavigator
@@ -565,9 +567,9 @@ export function AgentMessageRow({
                 className="agent-message-action-button"
                 disabled={actionsDisabled}
                 icon={RedoIcon}
-                label={hasError ? 'Retry response' : 'Regenerate response'}
+                label={hasError ? t.agent.message.retryResponse : t.agent.message.regenerateResponse}
                 onClick={() => void (hasError ? onRetry : onRegenerate)?.(nodeId)}
-                title={hasError ? 'Retry' : 'Regenerate'}
+                title={hasError ? t.agent.message.retry : t.agent.message.regenerate}
                 variant="message"
               />
             ) : null}
@@ -575,9 +577,9 @@ export function AgentMessageRow({
               className="agent-message-action-button"
               disabled={!copyText && !onCopy}
               icon={CopyStateIcon}
-              label="Copy message"
+              label={t.agent.message.copyMessage}
               onClick={() => void copyAssistantMessage(copyText)}
-              title="Copy"
+              title={t.agent.message.copy}
               variant="message"
             />
             <AgentBranchNavigator

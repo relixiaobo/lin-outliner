@@ -11,7 +11,8 @@ import {
 } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
-import { REASONING_LABELS } from './AgentComposerModelMenu';
+import { reasoningLabels } from './AgentComposerModelMenu';
+import { useT } from '../../i18n/I18nProvider';
 
 export function AgentQueuedSteer({
   note,
@@ -22,23 +23,24 @@ export function AgentQueuedSteer({
   onCancel: () => void;
   onEdit: () => void;
 }) {
+  const t = useT();
   return (
     <div className="agent-steer-bubble">
       <div className="agent-steer-actions">
         <IconButton
           className="agent-message-action-button"
           icon={PencilIcon}
-          label="Edit queued steer"
+          label={t.agent.composer.editQueuedSteer}
           onClick={onEdit}
-          title="Edit queued steer"
+          title={t.agent.composer.editQueuedSteer}
           variant="message"
         />
         <IconButton
           className="agent-message-action-button"
           icon={TrashIcon}
-          label="Cancel queued steer"
+          label={t.agent.composer.cancelQueuedSteer}
           onClick={onCancel}
-          title="Cancel queued steer"
+          title={t.agent.composer.cancelQueuedSteer}
           variant="message"
         />
       </div>
@@ -54,14 +56,15 @@ export function AgentComposerAttachmentButton({
   disabled: boolean;
   onClick: () => void;
 }) {
+  const t = useT();
   return (
     <IconButton
       className="agent-composer-tool-button"
       disabled={disabled}
       icon={AttachmentIcon}
-      label="Add attachment"
+      label={t.agent.composer.addAttachment}
       onClick={onClick}
-      title="Add attachment"
+      title={t.agent.composer.addAttachment}
       variant="composerTool"
     />
   );
@@ -86,11 +89,12 @@ export function AgentComposerModelButton({
   selectedReasoning: AgentReasoningLevel;
   supportsReasoning: boolean;
 }) {
+  const t = useT();
   return (
     <ButtonControl
       aria-expanded={open}
       aria-haspopup="menu"
-      aria-label="Select model"
+      aria-label={t.agent.composer.selectModel}
       className="agent-composer-model-button"
       disabled={disabled}
       onClick={onToggle}
@@ -98,7 +102,7 @@ export function AgentComposerModelButton({
     >
       <span className="agent-composer-model-name">{modelLabel}</span>
       {supportsReasoning && reasoningEnabled ? (
-        <span className="agent-composer-reasoning-chip">{REASONING_LABELS[selectedReasoning]}</span>
+        <span className="agent-composer-reasoning-chip">{reasoningLabels(t.agent.composer.reasoningLevels)[selectedReasoning]}</span>
       ) : null}
       <ChevronDownIcon size={ICON_SIZE.tiny} />
     </ButtonControl>
@@ -156,16 +160,17 @@ export function AgentComposerPrimaryAction({
   isStreaming: boolean;
   onStop: () => void;
 }) {
+  const t = useT();
   if (isStreaming && !hasDraft) {
     return (
       <IconButton
         className="agent-composer-action-button is-stop"
         icon={StopIcon}
         iconSize={10}
-        label="Stop agent"
+        label={t.agent.composer.stopAgent}
         onClick={onStop}
         strokeWidth={0}
-        title="Stop"
+        title={t.agent.composer.stop}
         variant="composerAction"
       />
     );
@@ -176,8 +181,14 @@ export function AgentComposerPrimaryAction({
       className="agent-composer-action-button"
       disabled={!canSubmit}
       icon={SendIcon}
-      label={isStreaming ? 'Steer agent' : 'Send message'}
-      title={!canSubmit && disabledTitle ? disabledTitle : isStreaming ? 'Steer agent' : 'Send'}
+      label={isStreaming ? t.agent.composer.steerAgent : t.agent.composer.sendMessage}
+      title={
+        !canSubmit && disabledTitle
+          ? disabledTitle
+          : isStreaming
+            ? t.agent.composer.steerAgent
+            : t.agent.composer.send
+      }
       type="submit"
       variant="composerAction"
     />

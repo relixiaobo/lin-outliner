@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { api } from '../../api/client';
 import { DescriptionIcon, ExpandIcon, ICON_SIZE, OpenIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { useT } from '../../i18n/I18nProvider';
 
 interface ImageRowProps {
   /** Resolved URL to load: `asset://<id>` for local, or the remote URL. */
@@ -30,6 +31,8 @@ interface ImageRowProps {
  * added on demand, not always shown.
  */
 export function ImageRow(props: ImageRowProps) {
+  const t = useT();
+  const ti = t.outliner.field.image;
   const [failed, setFailed] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const lightboxRef = useRef<HTMLDivElement | null>(null);
@@ -60,7 +63,7 @@ export function ImageRow(props: ImageRowProps) {
   if (failed) {
     return (
       <div className="outliner-image outliner-image--missing" contentEditable={false}>
-        Image unavailable
+        {ti.unavailable}
       </div>
     );
   }
@@ -84,7 +87,7 @@ export function ImageRow(props: ImageRowProps) {
         >
           {props.onAddCaption && (
             <ButtonControl
-              aria-label={props.hasCaption ? 'Edit caption' : 'Add caption'}
+              aria-label={props.hasCaption ? ti.editCaption : ti.addCaption}
               className="outliner-image-tool"
               onClick={() => props.onAddCaption?.()}
             >
@@ -92,14 +95,14 @@ export function ImageRow(props: ImageRowProps) {
             </ButtonControl>
           )}
           <ButtonControl
-            aria-label="Expand image"
+            aria-label={ti.expand}
             className="outliner-image-tool"
             onClick={() => setLightboxOpen(true)}
           >
             <ExpandIcon size={ICON_SIZE.toolbar} />
           </ButtonControl>
           <ButtonControl
-            aria-label={props.isRemote ? 'Open in browser' : 'Open original'}
+            aria-label={props.isRemote ? ti.openInBrowser : ti.openOriginal}
             className="outliner-image-tool"
             onClick={openOriginal}
           >

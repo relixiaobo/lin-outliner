@@ -16,6 +16,7 @@ import { idsEnabledForSelectionAction } from '../interactions/selectionBatchActi
 import { clampTagSelectorIndex, tagSelectorItemLabel, tagSelectorItems } from '../interactions/tagSelector';
 import type { CommandRunner } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
+import { useT } from '../../i18n/I18nProvider';
 
 interface BatchTagSelectorProps {
   open: boolean;
@@ -27,6 +28,8 @@ interface BatchTagSelectorProps {
 }
 
 export function BatchTagSelector(props: BatchTagSelectorProps) {
+  const t = useT();
+  const tc = t.outliner.contextMenu;
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -119,13 +122,13 @@ export function BatchTagSelector(props: BatchTagSelectorProps) {
       }}
     >
       <div className="batch-tag-selector" data-preserve-selection>
-        <div className="batch-tag-heading">Apply tag to {targetIds.length} nodes</div>
+        <div className="batch-tag-heading">{tc.applyTagToNodes(targetIds.length)}</div>
         <TextInputControl
           ref={inputRef}
           className="batch-tag-input"
-          label="Search or create tag"
+          label={tc.searchOrCreateTag}
           value={query}
-          placeholder="Search or create tag"
+          placeholder={tc.searchOrCreateTag}
           onChange={(event) => {
             setQuery(event.currentTarget.value);
             setSelectedIndex(0);
@@ -154,7 +157,7 @@ export function BatchTagSelector(props: BatchTagSelectorProps) {
           }}
         />
         <div ref={listRef} className="batch-tag-list">
-          {items.length === 0 && <div className="popover-empty">No tags</div>}
+          {items.length === 0 && <div className="popover-empty">{tc.noTags}</div>}
           {items.map((item, index) => {
             const active = index === selectedIndex;
             const label = tagSelectorItemLabel(item);

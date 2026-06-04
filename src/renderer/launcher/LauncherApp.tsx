@@ -4,6 +4,8 @@ import type { ExternalContext } from '../../core/launcher/context';
 import { buildLauncherItems, deriveActiveIndex, primaryActionLabel, remediationForContext, rowKey, rowView, stepActiveKey } from './launcherModel';
 import type { LauncherItem, LauncherItemAction } from './launcherModel';
 import { iconForItem, LauncherInputIcon, LauncherRemediationIcon } from './launcherIcons';
+import { useT } from '../i18n/I18nProvider';
+import { APP_NAME } from '../../core/brand';
 
 // Raycast-style launcher: ONE always-focused input that is simultaneously a
 // command filter, a live node search, AND a live capture draft (no "pick New
@@ -21,6 +23,7 @@ import { iconForItem, LauncherInputIcon, LauncherRemediationIcon } from './launc
 const NODE_SEARCH_DEBOUNCE_MS = 120;
 
 export function LauncherApp() {
+  const t = useT();
   const inputRef = useRef<HTMLInputElement>(null);
   // Re-entrancy lock so a double Enter / Enter+click can't fire one action twice
   // (open two windows, double-navigate, double-capture).
@@ -92,8 +95,8 @@ export function LauncherApp() {
   // One flat list of uniform rows (no section headers) — the order IS the
   // navigable order, so keyboard selection matches what is shown on screen.
   const navItems = useMemo<LauncherItem[]>(
-    () => buildLauncherItems({ query, context, commands: state?.commands ?? [], nodes }),
-    [query, context, state, nodes],
+    () => buildLauncherItems({ query, context, commands: state?.commands ?? [], nodes, t }),
+    [query, context, state, nodes, t],
   );
 
   // Typing returns selection to the top row (capture-first) and clears any error.
@@ -118,9 +121,9 @@ export function LauncherApp() {
       reset();
       void launcher.hide();
     } else {
-      setError('Save failed.');
+      setError(t.launcher.error.saveFailed);
     }
-  }, [reset]);
+  }, [reset, t]);
 
   // Run a specific action of an item. Capture actions hit the launcher IPC; the
   // page note is the trimmed query (ratified: page + note). The runningRef lock
@@ -152,14 +155,14 @@ export function LauncherApp() {
           finish(await launcher.createCapture({ title: item.text }), launcher);
         }
       } catch {
-        setError('Save failed — restart the dev app (main process does not hot-reload).');
+        setError(t.launcher.error.saveFailedRestart);
       } finally {
         setBusy(false);
       }
     } finally {
       runningRef.current = false;
     }
-  }, [reset, finish]);
+  }, [reset, finish, t]);
 
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
@@ -182,13 +185,13 @@ export function LauncherApp() {
     [activeItem, activeIndex, navItems, runAction],
   );
 
-  const primaryLabel = busy ? 'Saving…' : error ?? primaryActionLabel(activeItem);
+  const primaryLabel = busy ? t.launcher.saving : error ?? primaryActionLabel(activeItem);
   // A quiet "saved, but here's how to capture more" hint when the active tab could
   // not be read at all (Automation denied) — the Lazy-style remediation prompt.
-  const remediation = useMemo(() => remediationForContext(context), [context]);
+  const remediation = useMemo(() => remediationForContext(context, t, APP_NAME), [context, t]);
 
   return (
-    <div className="launcher" role="dialog" aria-label="Tenon Launcher" onKeyDown={onKeyDown}>
+    <div className="launcher" role="dialog" aria-label={t.launcher.rootAriaLabel({ app: APP_NAME })} onKeyDown={onKeyDown}>
       <div className="launcher-inputrow">
         <LauncherInputIcon className="launcher-input-icon" size={18} strokeWidth={1.75} aria-hidden="true" />
         <input
@@ -198,8 +201,8 @@ export function LauncherApp() {
           autoFocus
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Capture, search, or run a command…"
-          aria-label="Launcher query"
+          placeholder={t.launcher.placeholder}
+          aria-label={t.launcher.queryAriaLabel}
           role="combobox"
           aria-expanded={navItems.length > 0}
           aria-controls="launcher-results"
@@ -218,7 +221,7 @@ export function LauncherApp() {
         </div>
       ) : null}
 
-      <div id="launcher-results" className="launcher-body" role="listbox" aria-label="Results">
+      <div id="launcher-results" className="launcher-body" role="listbox" aria-label={t.launcher.resultsAriaLabel}>
         <div className="launcher-body-inner">
           {navItems.map((item, index) => (
             <LauncherRow
@@ -230,7 +233,7 @@ export function LauncherApp() {
               onClick={() => void runAction(item, item.actions[0])}
             />
           ))}
-          {navItems.length === 0 ? <div className="launcher-empty">Type to capture, search, or run a command.</div> : null}
+          {navItems.length === 0 ? <div className="launcher-empty">{t.launcher.emptyState}</div> : null}
         </div>
       </div>
 
@@ -266,8 +269,9 @@ function LauncherRow(props: {
   onHover: () => void;
   onClick: () => void;
 }) {
+  const t = useT();
   const { item, active, rowRef, onHover, onClick } = props;
-  const { title, subtitle, typeLabel } = rowView(item);
+  const { title, subtitle, typeLabel } = rowView(item, t);
   return (
     <div
       ref={rowRef}

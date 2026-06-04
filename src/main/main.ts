@@ -41,8 +41,11 @@ import { oauthLoginManager } from './agentOAuthManager';
 import { IPC_TRACE_ENABLED, traceIpc } from './ipcTrace';
 import type { AgentProviderConfigInput, AgentRuntimeSettingsInput } from '../core/types';
 import { loadWindowState, trackWindowState } from './windowState';
-import { loadAppPreferences, saveThemePreference } from './appPreferences';
+import { loadAppPreferences, saveLanguagePreference, saveThemePreference } from './appPreferences';
 import { isThemeMode, type ThemeMode } from '../core/theme';
+import { isLocale, LIN_LANGUAGE_CHANGED_CHANNEL, resolveSystemLocale, type Locale } from '../core/locale';
+import { getMessages } from '../core/i18n';
+import { APP_NAME } from '../core/brand';
 import { MAX_RAW_INLINE_IMAGE_BYTES, MAX_STAGED_ATTACHMENT_BYTES } from '../core/agentAttachmentLimits';
 import { safeAttachmentFileName } from '../core/agentAttachmentPaths';
 import { agentAttachmentDir, pruneOldAgentAttachments } from './agentAttachmentMaterialization';
@@ -89,11 +92,10 @@ protocol.registerSchemesAsPrivileged([
   { scheme: ASSET_URL_SCHEME, privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } },
 ]);
 
-const IMAGE_FILE_FILTERS = [
-  { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'bmp', 'heic'] },
-];
+// Image file extensions for the native "insert image" picker. The filter's display
+// name is localized at the call site (it shows in the OS dialog).
+const IMAGE_FILE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'bmp', 'heic'];
 
-const APP_NAME = 'Tenon';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const APP_ICON_PNG_PATH = app.isPackaged
   ? join(process.resourcesPath, 'icon.png')
@@ -251,7 +253,7 @@ function attachNativeContextMenu(contents: Electron.WebContents): void {
           template.push({ label: suggestion, click: () => contents.replaceMisspelling(suggestion) });
         }
         template.push({
-          label: 'Add to Dictionary',
+          label: getMessages(effectiveLocale()).menu.addToDictionary,
           click: () => contents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
         });
         template.push({ type: 'separator' });
@@ -294,28 +296,53 @@ function forwardWindowActivity(window: BrowserWindow): void {
   window.webContents.on('did-finish-load', () => send(window.isFocused()));
 }
 
+// The effective UI language: the user's explicit pick, else the nearest supported
+// OS locale (core/locale.ts). Cached in-memory because the ~8 hot-path callers
+// (right-click context menu, every window create, launcher node-search, menu rebuild)
+// would otherwise each do a sync readFileSync + JSON.parse for a value that only
+// changes via lin:set-language. That handler refreshes the cache to the broadcast
+// value — the in-session source of truth, the same way theme rides
+// nativeTheme.themeSource in memory rather than re-reading the file. The OS locale is
+// fixed for the session, so first read resolves it once.
+let cachedLocale: Locale | null = null;
+function effectiveLocale(): Locale {
+  cachedLocale ??= loadAppPreferences().language ?? resolveSystemLocale(app.getLocale());
+  return cachedLocale;
+}
+
 // Standard application menu (A2b). macOS gets the conventional App / Edit / View
 // / Window / Help bar with Preferences on Cmd+,; other platforms drop the App
 // menu and surface Settings under File (no app menu exists there). Dev-only View
-// items (reload, devtools) are gated on a source run; everything else is
-// role-based so the OS owns the labels, accelerators, and enable state.
+// items (reload, devtools) are gated on a source run.
+//
+// Roles still carry the native behavior, accelerators, and enable state, but a
+// role's *label* defaults to the OS language, not the app's. So we expand the
+// role-based bars (Edit / Window) into explicit role+label items and give View's
+// standard items + the Help-menu title explicit labels too — the whole bar then
+// follows the effective locale (PM decision 2026-06-04: in-app language wins over
+// the macOS-native OS-language convention, since we expose an in-app picker). The
+// lone exception is `togglefullscreen`: its role title is dynamic ("Enter" vs
+// "Exit Full Screen"), which a static label would freeze, so it stays role-only.
+// The menu is rebuilt on language change (see the set-language IPC).
 function buildApplicationMenu(): Electron.Menu {
   const isMac = process.platform === 'darwin';
   const isDev = !app.isPackaged;
+  const t = getMessages(effectiveLocale()).menu;
 
   const viewSubmenu: Electron.MenuItemConstructorOptions[] = [
     ...(isDev
       ? ([
-          { role: 'reload' },
-          { role: 'forceReload' },
-          { role: 'toggleDevTools' },
+          { role: 'reload', label: t.reload },
+          { role: 'forceReload', label: t.forceReload },
+          { role: 'toggleDevTools', label: t.toggleDevTools },
           { type: 'separator' },
         ] satisfies Electron.MenuItemConstructorOptions[])
       : []),
-    { role: 'resetZoom' },
-    { role: 'zoomIn' },
-    { role: 'zoomOut' },
+    { role: 'resetZoom', label: t.resetZoom },
+    { role: 'zoomIn', label: t.zoomIn },
+    { role: 'zoomOut', label: t.zoomOut },
     { type: 'separator' },
+    // role-only by design: keeps macOS's dynamic "Enter/Exit Full Screen" title.
     { role: 'togglefullscreen' },
   ];
 
@@ -335,42 +362,94 @@ function buildApplicationMenu(): Electron.Menu {
     template.push({
       label: APP_NAME,
       submenu: [
-        { role: 'about', label: `About ${APP_NAME}` },
+        { role: 'about', label: t.about({ app: APP_NAME }) },
         { type: 'separator' },
-        { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
+        { label: t.settings, accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
         { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },
-        { role: 'hide', label: `Hide ${APP_NAME}` },
+        { role: 'hide', label: t.hide({ app: APP_NAME }) },
         { role: 'hideOthers' },
         { role: 'unhide' },
         { type: 'separator' },
-        { role: 'quit', label: `Quit ${APP_NAME}` },
+        { role: 'quit', label: t.quit({ app: APP_NAME }) },
       ],
     });
   } else {
     template.push({
-      label: 'File',
+      label: t.file,
       submenu: [
-        { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
+        { label: t.settings, accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
         { type: 'separator' },
         { role: 'quit' },
       ],
     });
   }
 
-  template.push({ role: 'editMenu' });
-  template.push({ label: 'View', submenu: viewSubmenu });
-  template.push({ role: 'windowMenu' });
+  // Manual equivalent of `role: 'editMenu'` (Electron's documented expansion) with
+  // explicit labels. macOS still auto-injects Emoji & Symbols / Start Dictation at
+  // the bottom; those stay OS-localized.
+  template.push({
+    label: t.edit,
+    submenu: [
+      { role: 'undo', label: t.undo },
+      { role: 'redo', label: t.redo },
+      { type: 'separator' },
+      { role: 'cut', label: t.cut },
+      { role: 'copy', label: t.copy },
+      { role: 'paste', label: t.paste },
+      ...(isMac
+        ? ([
+            { role: 'pasteAndMatchStyle', label: t.pasteAndMatchStyle },
+            { role: 'delete', label: t.delete },
+            { role: 'selectAll', label: t.selectAll },
+            { type: 'separator' },
+            {
+              label: t.speech,
+              submenu: [
+                { role: 'startSpeaking', label: t.startSpeaking },
+                { role: 'stopSpeaking', label: t.stopSpeaking },
+              ],
+            },
+          ] satisfies Electron.MenuItemConstructorOptions[])
+        : ([
+            { role: 'delete', label: t.delete },
+            { type: 'separator' },
+            { role: 'selectAll', label: t.selectAll },
+          ] satisfies Electron.MenuItemConstructorOptions[])),
+    ],
+  });
+  template.push({ label: t.view, submenu: viewSubmenu });
+  // Manual equivalent of `role: 'windowMenu'`; the trailing `role: 'window'` keeps
+  // macOS appending the live window list under the localized title.
+  template.push({
+    label: t.window,
+    submenu: isMac
+      ? [
+          { role: 'minimize', label: t.minimize },
+          { role: 'zoom', label: t.zoom },
+          { type: 'separator' },
+          { role: 'front', label: t.front },
+          { type: 'separator' },
+          { role: 'window' },
+        ]
+      : [
+          { role: 'minimize', label: t.minimize },
+          { role: 'zoom', label: t.zoom },
+          { type: 'separator' },
+          { role: 'close' },
+        ],
+  });
   template.push({
     role: 'help',
+    label: t.helpTitle,
     submenu: [
       {
-        label: `${APP_NAME} Help`,
+        label: t.help({ app: APP_NAME }),
         click: () => void shell.openExternal('https://github.com/relixiaobo/lin-outliner'),
       },
       {
-        label: 'Report an Issue…',
+        label: t.reportIssue,
         click: () => void shell.openExternal('https://github.com/relixiaobo/lin-outliner/issues'),
       },
     ],
@@ -528,7 +607,12 @@ async function searchLauncherNodes(query: string): Promise<LauncherNodeMatch[]> 
     icon: node.icon,
     iconKind: node.iconKind,
   }));
-  return resolveLauncherNodeMatches(hitIds, matchable, LAUNCHER_NODE_RESULT_LIMIT);
+  return resolveLauncherNodeMatches(
+    hitIds,
+    matchable,
+    LAUNCHER_NODE_RESULT_LIMIT,
+    getMessages(effectiveLocale()).common.untitled,
+  );
 }
 
 /** Max inline node results shown in the launcher (keeps the list scannable). */
@@ -667,7 +751,7 @@ function openSettingsWindow() {
   // strip — the renderer provides the top drag region. Security defaults (A3) are
   // unchanged.
   settingsWindow = new BrowserWindow({
-    title: `${APP_NAME} Settings`,
+    title: getMessages(effectiveLocale()).window.settingsTitle({ app: APP_NAME }),
     width: 760,
     height: 620,
     minWidth: 560,
@@ -746,7 +830,7 @@ function openProviderConfigWindow(providerId: string, mode: ProviderConfigMode) 
     : {};
 
   providerConfigWindow = new BrowserWindow({
-    title: 'Configure provider',
+    title: getMessages(effectiveLocale()).window.providerConfigTitle,
     width,
     height,
     ...position,
@@ -930,6 +1014,32 @@ function registerIpc() {
     nativeTheme.themeSource = mode;
     saveThemePreference(mode);
   });
+  // Language preference. Read synchronously so preload can seed the renderer's first
+  // paint without a flash; setting it persists, broadcasts to every window (open
+  // windows re-render via I18nProvider without a reload), and rebuilds the native
+  // menu in the new locale. Language has no nativeTheme-style free broadcast, so we
+  // push it ourselves. See core/locale.ts.
+  ipcMain.on('lin:get-language-sync', (event) => {
+    event.returnValue = effectiveLocale();
+  });
+  ipcMain.handle('lin:set-language', (_event, raw: unknown): void => {
+    if (!isLocale(raw)) return;
+    saveLanguagePreference(raw); // best-effort persistence (see appPreferences.ts)
+    // The broadcast value is the in-session source of truth — persistence can fail
+    // silently. Refresh the cache from it so the native menu + window titles rebuilt
+    // below agree with the locale the windows switch to, even if the file write failed
+    // (otherwise effectiveLocale() would re-read the stale file and the menu would lag).
+    cachedLocale = raw;
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send(LIN_LANGUAGE_CHANGED_CHANNEL, raw);
+    }
+    Menu.setApplicationMenu(buildApplicationMenu());
+    // Open windows localize their native title bar once at construction; their content
+    // re-renders via I18nProvider, but the OS title bar would otherwise stay stale.
+    const messages = getMessages(raw);
+    settingsWindow?.setTitle(messages.window.settingsTitle({ app: APP_NAME }));
+    providerConfigWindow?.setTitle(messages.window.providerConfigTitle);
+  });
   // Open the per-provider config as its own native (modal child) window.
   ipcMain.handle('lin:open-provider-config', (_event, args?: { providerId?: unknown; mode?: unknown }) => {
     const providerId = typeof args?.providerId === 'string' ? args.providerId : '';
@@ -1095,10 +1205,11 @@ async function handleAssetCommand(command: AssetCommand, args: Record<string, un
       return assetService.delete(String(args.id));
     case 'pick_image_files': {
       const window = BrowserWindow.getFocusedWindow() ?? mainWindow;
+      const dialogStrings = getMessages(effectiveLocale()).window;
       const options = {
-        title: 'Insert image',
+        title: dialogStrings.insertImageTitle,
         properties: ['openFile', 'multiSelections'] as Array<'openFile' | 'multiSelections'>,
-        filters: IMAGE_FILE_FILTERS,
+        filters: [{ name: dialogStrings.imageFilesFilter, extensions: IMAGE_FILE_EXTENSIONS }],
       };
       const result = window
         ? await dialog.showOpenDialog(window, options)

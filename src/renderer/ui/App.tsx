@@ -29,8 +29,10 @@ import { useResizableLayout } from './useResizableLayout';
 import { useSelectionDismissal } from './useSelectionDismissal';
 import { useWorkspaceKeyboard } from './useWorkspaceKeyboard';
 import { useWorkspaceLayout } from './useWorkspaceLayout';
+import { useT } from '../i18n/I18nProvider';
 
 export function App() {
+  const t = useT();
   const [projection, setProjection] = useState<DocumentProjection | null>(null);
   const [ui, setUi] = useUiState();
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -300,7 +302,7 @@ export function App() {
     return (
       <div className="app">
         <div className="loading-panel">
-          {error ? `Startup failed: ${error}` : 'Loading...'}
+          {error ? t.shell.startupError({ error }) : t.common.loading}
         </div>
       </div>
     );
@@ -413,7 +415,7 @@ export function App() {
       {error && (
         <div className="error">
           <span>{error}</span>
-          <ButtonControl className="error-close-button" aria-label="Dismiss error" onClick={() => setError(null)}>
+          <ButtonControl className="error-close-button" aria-label={t.shell.errorDismiss} onClick={() => setError(null)}>
             <CloseIcon size={ICON_SIZE.menu} />
           </ButtonControl>
         </div>

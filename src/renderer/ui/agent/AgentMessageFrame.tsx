@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { ICON_SIZE, WarningIcon } from '../icons';
+import { useT } from '../../i18n/I18nProvider';
 
 export function AgentMessageFrame({
   children,
@@ -31,17 +32,19 @@ export function AgentAssistantContent({ children }: { children: ReactNode }) {
 }
 
 export function AgentStreamingCapsule({ labelled = false }: { labelled?: boolean }) {
+  const t = useT();
   return (
     <span
-      aria-label={labelled ? 'Assistant is responding' : undefined}
+      aria-label={labelled ? t.agent.message.assistantResponding : undefined}
       className="agent-streaming-capsule"
     />
   );
 }
 
 export function AgentStreamingIndicator() {
+  const t = useT();
   return (
-    <div className="agent-streaming-indicator" aria-label="Assistant is responding">
+    <div className="agent-streaming-indicator" aria-label={t.agent.message.assistantResponding}>
       <AgentStreamingCapsule />
     </div>
   );

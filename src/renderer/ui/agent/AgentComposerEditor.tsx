@@ -19,6 +19,7 @@ import type { DocumentIndex } from '../../state/document';
 import { nextMenuIndex, clampMenuIndex } from '../interactions/menuNavigation';
 import { resolveEditorTriggerText } from '../interactions/rowInteractions';
 import { referenceItems } from '../outliner/ReferenceSelector';
+import { referenceCandidateLabels, type ReferenceCandidateLabels } from '../interactions/referenceCandidates';
 import { NodeReferenceMenuIcon } from '../outliner/NodeReferenceMenuIcon';
 import { PopoverEmpty, PopoverListbox, PopoverListItem } from '../outliner/PopoverList';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
@@ -48,6 +49,7 @@ import {
   nodeReferenceOpenOptionsFromClick,
   type AgentNodeReferenceOpenHandler,
 } from './AgentInlineReferenceText';
+import { useT } from '../../i18n/I18nProvider';
 
 export interface AgentComposerNodeReference {
   nodeId: NodeId;
@@ -267,6 +269,7 @@ const agentComposerSchema = new Schema({
 
 export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentComposerEditorProps>(
   function AgentComposerEditor(props, ref) {
+    const t = useT();
     const mountRef = useRef<HTMLDivElement | null>(null);
     const viewRef = useRef<EditorView | null>(null);
     const propsRef = useRef(props);
@@ -286,6 +289,11 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
       status: 'idle' | 'loading' | 'ready' | 'error';
     }>({ error: null, query: '', results: [], status: 'idle' });
     const [filePreviewAnchor, setFilePreviewAnchor] = useState<FilePreviewAnchorRect | null>(null);
+    // The editor view is created once (empty-deps effect); read the latest aria-label
+    // through a ref so a language switch is picked up on the next view creation
+    // without recreating the editor (and losing in-progress draft state) on each render.
+    const editorAriaLabelRef = useRef(t.agent.composer.editorAriaLabel);
+    editorAriaLabelRef.current = t.agent.composer.editorAriaLabel;
 
     propsRef.current = props;
 
@@ -296,6 +304,7 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
           localFileSearch,
           query: trigger.query,
           recentLocalFiles: props.recentLocalFiles,
+          labels: referenceCandidateLabels(t),
         })
       : [], [
         localFileSearch,
@@ -304,6 +313,7 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
         props.recentLocalFiles,
         trigger?.mode,
         trigger?.query,
+        t,
       ]);
     const mentionItems = useMemo(
       () => applyMentionFilePreviewThumbnails(rawMentionItems, filePreviewThumbnails),
@@ -495,7 +505,7 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
 
       const view = new EditorView(mount, {
         attributes: {
-          'aria-label': 'Agent message',
+          'aria-label': editorAriaLabelRef.current,
         },
         state: emptyEditorState(),
         dispatchTransaction(transaction) {
@@ -620,8 +630,8 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
           ref={menuRef}
           className="trigger-popover agent-composer-trigger-popover"
           label={trigger.mode === 'slash'
-            ? 'Agent slash commands'
-            : 'Agent mention suggestions'}
+            ? t.agent.composer.slashCommandsLabel
+            : t.agent.composer.mentionSuggestionsLabel}
           preventMouseDown={false}
           style={anchoredStyle}
           onMouseDown={(event) => event.stopPropagation()}
@@ -630,6 +640,7 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
             ? (
                 <SlashMenu
                   commands={props.slashCommands}
+                  noCommandsLabel={t.agent.composer.noCommands}
                   query={trigger.query}
                   selectedIndex={selectedIndex}
                   setSelectedIndex={setSelectedIndex}
@@ -648,6 +659,12 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
                 <MentionMenu
                   index={props.index}
                   items={mentionItems}
+                  labels={{
+                    couldNotSearchFiles: t.agent.composer.couldNotSearchFiles,
+                    noMentions: t.agent.composer.noMentions,
+                    noRecentMentions: t.agent.composer.noRecentMentions,
+                    searchingFiles: t.agent.composer.searchingFiles,
+                  }}
                   query={trigger.query}
                   search={localFileSearch}
                   selectedIndex={selectedIndex}
@@ -1009,19 +1026,21 @@ function filterSlashCommands(commands: readonly AgentSlashCommandView[], query: 
 
 function SlashMenu({
   commands,
+  noCommandsLabel,
   onSelect,
   query,
   selectedIndex,
   setSelectedIndex,
 }: {
   commands: readonly AgentSlashCommandView[];
+  noCommandsLabel: string;
   onSelect: (command: AgentSlashCommandView) => void;
   query: string;
   selectedIndex: number;
   setSelectedIndex: (index: number | ((current: number) => number)) => void;
 }) {
   const items = filterSlashCommands(commands, query);
-  if (items.length === 0) return <PopoverEmpty>No commands</PopoverEmpty>;
+  if (items.length === 0) return <PopoverEmpty>{noCommandsLabel}</PopoverEmpty>;
   return (
     <>
       {items.map((command, index) => (
@@ -1047,6 +1066,7 @@ function SlashMenu({
 function MentionMenu({
   index,
   items,
+  labels,
   onSelect,
   query,
   search,
@@ -1055,6 +1075,12 @@ function MentionMenu({
 }: {
   index: DocumentIndex;
   items: MentionMenuItem[];
+  labels: {
+    couldNotSearchFiles: string;
+    noMentions: string;
+    noRecentMentions: string;
+    searchingFiles: string;
+  };
   onSelect: (item: MentionMenuItem) => void;
   query: string;
   search: {
@@ -1069,12 +1095,12 @@ function MentionMenu({
   const trimmedQuery = query.trim();
   if (items.length === 0) {
     if (trimmedQuery.length >= LOCAL_FILE_MIN_QUERY_LENGTH && search.status === 'loading') {
-      return <PopoverEmpty>Searching files...</PopoverEmpty>;
+      return <PopoverEmpty>{labels.searchingFiles}</PopoverEmpty>;
     }
     if (trimmedQuery.length >= LOCAL_FILE_MIN_QUERY_LENGTH && search.status === 'error') {
-      return <PopoverEmpty>{search.error ?? 'Could not search files'}</PopoverEmpty>;
+      return <PopoverEmpty>{search.error ?? labels.couldNotSearchFiles}</PopoverEmpty>;
     }
-    return <PopoverEmpty>{trimmedQuery ? 'No mentions' : 'No recent mentions'}</PopoverEmpty>;
+    return <PopoverEmpty>{trimmedQuery ? labels.noMentions : labels.noRecentMentions}</PopoverEmpty>;
   }
   let previousSection: MentionMenuItem['section'] | null = null;
   return (
@@ -1113,10 +1139,10 @@ function MentionMenu({
         return sectionHeader ? [sectionHeader, option] : [option];
       })}
       {trimmedQuery.length >= LOCAL_FILE_MIN_QUERY_LENGTH && search.status === 'loading' ? (
-        <div className="agent-composer-mention-status">Searching files...</div>
+        <div className="agent-composer-mention-status">{labels.searchingFiles}</div>
       ) : null}
       {trimmedQuery.length >= LOCAL_FILE_MIN_QUERY_LENGTH && search.status === 'error' ? (
-        <div className="agent-composer-mention-status">{search.error ?? 'Could not search files'}</div>
+        <div className="agent-composer-mention-status">{search.error ?? labels.couldNotSearchFiles}</div>
       ) : null}
     </>
   );
@@ -1260,6 +1286,7 @@ function mentionMenuItems({
   localFileSearch,
   query,
   recentLocalFiles,
+  labels,
 }: {
   currentNodeId: NodeId | null;
   index: DocumentIndex;
@@ -1270,11 +1297,12 @@ function mentionMenuItems({
   };
   query: string;
   recentLocalFiles: readonly AgentComposerLocalFileCandidate[];
+  labels: ReferenceCandidateLabels;
 }): MentionMenuItem[] {
   const trimmedQuery = query.trim();
   if (!trimmedQuery) {
     return [
-      ...recentNodeMenuItems(index, currentNodeId, MAX_MENTION_NODES).map((item): MentionMenuItem => ({
+      ...recentNodeMenuItems(index, currentNodeId, MAX_MENTION_NODES, labels).map((item): MentionMenuItem => ({
         ...item,
         section: 'Recent',
       })),
@@ -1286,7 +1314,7 @@ function mentionMenuItems({
       })),
     ].slice(0, MAX_MENTION_NODES + MAX_MENTION_FILES);
   }
-  const nodeItems = referenceMenuItems(index, currentNodeId, trimmedQuery)
+  const nodeItems = referenceMenuItems(index, currentNodeId, trimmedQuery, labels)
     .slice(0, MAX_MENTION_NODES)
     .map((item): MentionMenuItem => ({
       ...item,
@@ -1303,8 +1331,8 @@ function mentionMenuItems({
   return [...nodeItems, ...fileItems];
 }
 
-function recentNodeMenuItems(index: DocumentIndex, currentNodeId: NodeId | null, limit: number) {
-  return referenceMenuItems(index, currentNodeId, '')
+function recentNodeMenuItems(index: DocumentIndex, currentNodeId: NodeId | null, limit: number, labels: ReferenceCandidateLabels) {
+  return referenceMenuItems(index, currentNodeId, '', labels)
     .sort((left, right) => {
       const leftUpdatedAt = left.node?.updatedAt ?? 0;
       const rightUpdatedAt = right.node?.updatedAt ?? 0;
@@ -1313,7 +1341,7 @@ function recentNodeMenuItems(index: DocumentIndex, currentNodeId: NodeId | null,
     .slice(0, limit);
 }
 
-function referenceMenuItems(index: DocumentIndex, currentNodeId: NodeId | null, query: string) {
+function referenceMenuItems(index: DocumentIndex, currentNodeId: NodeId | null, query: string, labels: ReferenceCandidateLabels) {
   // The composer is not itself a node, so it has no "self" to exclude: the
   // focused/context node must stay mentionable, and node search must work even
   // with no current node. (The outliner keeps the default self-exclusion.)
@@ -1322,6 +1350,7 @@ function referenceMenuItems(index: DocumentIndex, currentNodeId: NodeId | null, 
     index,
     query,
     excludeCurrentNode: false,
+    labels,
   }).flatMap((item) => {
     if (item.type !== 'node' || item.disabledReason) return [];
     const node = index.byId.get(item.id);
@@ -1329,7 +1358,7 @@ function referenceMenuItems(index: DocumentIndex, currentNodeId: NodeId | null, 
       kind: 'node' as const,
       key: `node:${item.id}`,
       id: item.id,
-      label: item.label || textOf(node),
+      label: item.label || textOf(node) || labels.untitled,
       breadcrumb: item.breadcrumb,
       node,
     }];

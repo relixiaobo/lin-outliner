@@ -15,12 +15,13 @@ import {
 import { ButtonControl } from './primitives/ButtonControl';
 import { ResizeHandle } from './primitives/ResizeHandle';
 import { textOf } from './shared';
+import { useT } from '../i18n/I18nProvider';
 
 const primaryNavItems = [
-  { label: 'Today', key: 'today', icon: CalendarIcon },
-  { label: 'Library', key: 'library', icon: LibraryIcon },
-  { label: 'Recents', key: 'recents', icon: RecentsIcon },
-  { label: 'Schema', key: 'schema', icon: SupertagIcon },
+  { key: 'today', icon: CalendarIcon },
+  { key: 'library', icon: LibraryIcon },
+  { key: 'recents', icon: RecentsIcon },
+  { key: 'schema', icon: SupertagIcon },
 ] as const;
 
 interface SidebarProps {
@@ -38,6 +39,7 @@ interface SidebarProps {
 }
 
 export function Sidebar(props: SidebarProps) {
+  const t = useT();
   const navTargets = {
     today: props.projection.todayId,
     library: props.projection.libraryId,
@@ -53,13 +55,16 @@ export function Sidebar(props: SidebarProps) {
       Boolean(child && child.parentId === rootNode.id)
     )) ?? [];
   const pinnedNodeIds: NodeId[] = [];
-  const rootLabel = rootNode ? textOf(rootNode) || 'Untitled' : '';
+  const rootLabel = rootNode ? textOf(rootNode) || t.common.untitled : '';
   const rootActive = rootNode ? props.rootId === rootNode.id : false;
 
   const renderWorkspaceTree = (nodeId: NodeId, depth = 0, parentPath: readonly NodeId[] = [props.projection.rootId]) => {
     const node = props.index.byId.get(nodeId);
     if (!node) return null;
-    const presentation = sidebarNodePresentation(node, props.index.byId);
+    const presentation = sidebarNodePresentation(node, props.index.byId, {
+      untitled: t.common.untitled,
+      missingReference: t.shell.sidebar.missingReference,
+    });
     const childParent = presentation.childParent;
     const childParentId = childParent.id;
     const referenceCycle = parentPath.includes(childParentId);
@@ -78,7 +83,7 @@ export function Sidebar(props: SidebarProps) {
           style={{ '--tree-depth': depth } as CSSProperties}
         >
           <ButtonControl
-            aria-label={expanded ? `Collapse ${label}` : `Expand ${label}`}
+            aria-label={expanded ? t.shell.sidebar.collapseNode({ label }) : t.shell.sidebar.expandNode({ label })}
             className="workspace-tree-chevron-button"
             disabled={!hasChildren}
             onClick={() => props.onToggleTreeNode(node.id)}
@@ -110,7 +115,7 @@ export function Sidebar(props: SidebarProps) {
   };
 
   return (
-    <aside className="sidebar-dock" aria-label="Primary navigation">
+    <aside className="sidebar-dock" aria-label={t.shell.sidebar.ariaLabel}>
       {/* Top spacer keeps the rail's first row clear of the traffic lights +
           sidebar toggle (window chrome on the shared centreline). It is NOT a drag
           region: a drag region here would underlap the chrome toggle from a
@@ -135,21 +140,21 @@ export function Sidebar(props: SidebarProps) {
               }}
             >
               <NavIcon className="sidebar-nav-icon" size={ICON_SIZE.toolbar} strokeWidth={1.8} />
-              <span>{item.label}</span>
+              <span>{t.shell.sidebar.primaryNav[item.key]}</span>
             </ButtonControl>
           );
         })}
       </nav>
 
       <div className="sidebar-section">
-        <div className="sidebar-section-title">Pinned</div>
+        <div className="sidebar-section-title">{t.shell.sidebar.pinnedSection}</div>
         {pinnedNodeIds.length === 0 ? (
           <div className="sidebar-empty-row">
             <PinIcon className="sidebar-empty-icon" size={ICON_SIZE.menu} strokeWidth={1.7} />
-            <span>Drag to pin nodes</span>
+            <span>{t.shell.sidebar.noPinnedHint}</span>
           </div>
         ) : (
-          <div className="workspace-tree" aria-label="Pinned nodes">
+          <div className="workspace-tree" aria-label={t.shell.sidebar.pinnedNodesAriaLabel}>
             {pinnedNodeIds.map((nodeId) => renderWorkspaceTree(nodeId))}
           </div>
         )}
@@ -159,7 +164,7 @@ export function Sidebar(props: SidebarProps) {
         <div className="sidebar-section sidebar-root-section">
           <div className="sidebar-root-row">
             <ButtonControl
-              aria-label={`Open ${rootLabel}`}
+              aria-label={t.shell.sidebar.openRoot({ rootLabel })}
               className={`sidebar-root-button ${rootActive ? 'active' : ''}`}
               onClick={(event) => {
                 if (event.altKey) props.onOpenPanel(rootNode.id);
@@ -172,7 +177,7 @@ export function Sidebar(props: SidebarProps) {
               <span className="sidebar-root-label">{rootLabel}</span>
             </ButtonControl>
           </div>
-          <div className="workspace-tree" aria-label="Workspace root tree">
+          <div className="workspace-tree" aria-label={t.shell.sidebar.workspaceRootTreeAriaLabel}>
             {rootChildren.map((child) => (
               renderWorkspaceTree(child.id)
             ))}
@@ -186,16 +191,16 @@ export function Sidebar(props: SidebarProps) {
           onClick={props.onOpenSettings}
         >
           <SettingsIcon className="sidebar-nav-icon" size={ICON_SIZE.toolbar} strokeWidth={1.8} />
-          <span>Settings</span>
+          <span>{t.shell.sidebar.settings}</span>
         </ButtonControl>
       </div>
       <ResizeHandle
         className="dock-resize-handle sidebar-resize-handle"
-        label="Resize sidebar"
+        label={t.shell.sidebar.resizeLabel}
         onDoubleClick={props.onResizeReset}
         onKeyDown={props.onResizeKeyDown}
         onPointerDown={props.onResizeStart}
-        title="Resize sidebar (double-click to reset)"
+        title={t.shell.sidebar.resizeTitle}
       />
     </aside>
   );
@@ -210,10 +215,13 @@ interface SidebarNodePresentation {
 function sidebarNodePresentation(
   node: NodeProjection,
   byId: Map<NodeId, NodeProjection>,
+  // Localized fallbacks passed in from the component (this helper runs outside React,
+  // so it can't call useT itself).
+  fallbacks: { untitled: string; missingReference: string },
 ): SidebarNodePresentation {
   const target = referenceTargetNode(node, byId);
   const displayed = target ?? node;
-  const fallbackLabel = node.type === 'reference' && node.targetId ? 'Missing reference' : 'Untitled';
+  const fallbackLabel = node.type === 'reference' && node.targetId ? fallbacks.missingReference : fallbacks.untitled;
 
   return {
     childParent: displayed,

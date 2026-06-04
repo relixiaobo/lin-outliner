@@ -61,9 +61,11 @@ export function normalizeCodeLanguage(language: string | undefined | null): stri
   return LANGUAGE_ALIASES[trimmed] ?? trimmed;
 }
 
-export function codeLanguageLabel(language: string | undefined | null): string {
+// `plainTextLabel` is the localized fallback shown when a code block has no (or an
+// unrecognized) language; threaded in because this is a pure helper outside React.
+export function codeLanguageLabel(language: string | undefined | null, plainTextLabel: string): string {
   const id = normalizeCodeLanguage(language);
   const known = CODE_LANGUAGE_OPTIONS.find((option) => option.id === id);
   if (known) return known.label;
-  return id || 'Plain text';
+  return id || plainTextLabel;
 }

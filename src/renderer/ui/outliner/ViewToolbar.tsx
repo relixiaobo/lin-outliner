@@ -49,6 +49,10 @@ import {
   TAGS_FIELD,
   UPDATED_FIELD,
 } from '../../../core/systemFields';
+import { useT } from '../../i18n/I18nProvider';
+import type { Messages } from '../../../core/i18n';
+
+type ViewToolbarMessages = Messages['outliner']['viewToolbar'];
 
 type FilterKind = 'boolean' | 'date' | 'number' | 'options' | 'text';
 
@@ -89,17 +93,25 @@ function FieldKindIcon({ fieldId, byId }: { fieldId: string; byId: DocumentIndex
 }
 
 // Sort direction reads in the field's own terms: A→Z for text, 1→9 for
-// numbers, Old→New for dates, rather than an abstract "Ascending".
-const SORT_DIRECTION_LABELS: Record<FilterKind, { asc: string; desc: string }> = {
-  boolean: { asc: 'Unchecked → Checked', desc: 'Checked → Unchecked' },
-  date: { asc: 'Old → New', desc: 'New → Old' },
-  number: { asc: '1 → 9', desc: '9 → 1' },
-  options: { asc: 'A → Z', desc: 'Z → A' },
-  text: { asc: 'A → Z', desc: 'Z → A' },
-};
+// numbers, Old→New for dates, rather than an abstract "Ascending". Labels are
+// passed in from the component (these helpers run outside React).
+function sortDirectionLabels(t: ViewToolbarMessages): Record<FilterKind, { asc: string; desc: string }> {
+  return {
+    boolean: { asc: t.sortBooleanAsc, desc: t.sortBooleanDesc },
+    date: { asc: t.sortDateAsc, desc: t.sortDateDesc },
+    number: { asc: t.sortNumberAsc, desc: t.sortNumberDesc },
+    options: { asc: t.sortAlphaAsc, desc: t.sortAlphaDesc },
+    text: { asc: t.sortAlphaAsc, desc: t.sortAlphaDesc },
+  };
+}
 
-function sortDirectionLabel(fieldId: string, byId: DocumentIndex['byId'], direction: SortDirection): string {
-  const labels = SORT_DIRECTION_LABELS[filterFieldKind(fieldId, byId)];
+function sortDirectionLabel(
+  fieldId: string,
+  byId: DocumentIndex['byId'],
+  direction: SortDirection,
+  t: ViewToolbarMessages,
+): string {
+  const labels = sortDirectionLabels(t)[filterFieldKind(fieldId, byId)];
   return direction === 'desc' ? labels.desc : labels.asc;
 }
 
@@ -119,18 +131,20 @@ type ToolbarSection = ToolbarDropdownSection;
 type OpenSection = ToolbarSection | null;
 type FieldChoice = { id: string; label: string; section: 'System fields' | 'Fields' };
 
-const FILTER_OPERATORS: Array<{ id: FilterOperator; label: string }> = [
-  { id: 'contains', label: 'Contains' },
-  { id: 'not_contains', label: 'Does not contain' },
-  { id: 'is', label: 'Is' },
-  { id: 'is_not', label: 'Is not' },
-  { id: 'is_empty', label: 'Is empty' },
-  { id: 'is_not_empty', label: 'Is not empty' },
-  { id: 'gt', label: 'Greater than' },
-  { id: 'lt', label: 'Less than' },
-  { id: 'after', label: 'After' },
-  { id: 'before', label: 'Before' },
-];
+function filterOperators(t: ViewToolbarMessages): Array<{ id: FilterOperator; label: string }> {
+  return [
+    { id: 'contains', label: t.operatorContains },
+    { id: 'not_contains', label: t.operatorNotContains },
+    { id: 'is', label: t.operatorIs },
+    { id: 'is_not', label: t.operatorIsNot },
+    { id: 'is_empty', label: t.operatorIsEmpty },
+    { id: 'is_not_empty', label: t.operatorIsNotEmpty },
+    { id: 'gt', label: t.operatorGreaterThan },
+    { id: 'lt', label: t.operatorLessThan },
+    { id: 'after', label: t.operatorAfter },
+    { id: 'before', label: t.operatorBefore },
+  ];
+}
 
 // Fields that never make sense to group by: the row text itself and a derived count.
 const GROUP_FIELD_DENYLIST = new Set([NAME_FIELD, REF_COUNT_FIELD]);
@@ -138,12 +152,14 @@ const GROUP_FIELD_DENYLIST = new Set([NAME_FIELD, REF_COUNT_FIELD]);
 // Operators that match on presence alone, so the value input is hidden for them.
 const VALUELESS_OPERATORS = new Set<FilterOperator>(['is_empty', 'is_not_empty']);
 
-const SECTION_TITLES: Record<ToolbarSection, string> = {
-  display: 'Display',
-  group: 'Group by',
-  sort: 'Sort by',
-  filter: 'Filter by',
-};
+function sectionTitles(t: ViewToolbarMessages): Record<ToolbarSection, string> {
+  return {
+    display: t.display,
+    group: t.groupBy,
+    sort: t.sortBy,
+    filter: t.filterBy,
+  };
+}
 
 // Field pickers and option lists stay compact; the rule editors (sort/filter)
 // need room for the field/operator/value controls.
@@ -170,18 +186,18 @@ function bySection(choices: FieldChoice[]): Array<{ section: FieldChoice['sectio
 
 // One muted line restating what the view is currently doing, so the active
 // state is legible without opening each menu. Empty when the view is default.
-function summarizeView(view: ViewConfig, choices: FieldChoice[]): string {
+function summarizeView(view: ViewConfig, choices: FieldChoice[], t: ViewToolbarMessages): string {
   const labelOf = (fieldId: string) => choices.find((choice) => choice.id === fieldId)?.label ?? fieldId;
   const parts: string[] = [];
-  if (view.groupField) parts.push(`Grouped by ${labelOf(view.groupField)}`);
+  if (view.groupField) parts.push(t.summaryGroupedBy({ field: labelOf(view.groupField) }));
   if (view.sortRules.length > 0) {
     const [first] = view.sortRules;
     const arrow = first.direction === 'desc' ? '↓' : '↑';
     const more = view.sortRules.length > 1 ? ` +${view.sortRules.length - 1}` : '';
-    parts.push(`Sorted by ${labelOf(first.field)} ${arrow}${more}`);
+    parts.push(t.summarySortedBy({ field: labelOf(first.field), arrow: `${arrow}${more}` }));
   }
   if (view.filterRules.length > 0) {
-    parts.push(`${view.filterRules.length} filter${view.filterRules.length > 1 ? 's' : ''}`);
+    parts.push(t.summaryFilterCount(view.filterRules.length));
   }
   return parts.join(' · ');
 }
@@ -194,6 +210,8 @@ export function ViewToolbar({
   dropdownRequest,
   onDropdownRequestConsumed,
 }: ViewToolbarProps) {
+  const t = useT();
+  const tv = t.outliner.viewToolbar;
   const [open, setOpen] = useState<OpenSection>(null);
   const choices = useMemo(() => collectViewFieldChoices(node, index.byId), [node, index.byId]);
   const toolbarRef = useRef<HTMLDivElement>(null);
@@ -248,17 +266,18 @@ export function ViewToolbar({
 
   const visibleDisplayCount = view.displayFields.filter((field) => field.visible).length;
   const summary = useMemo(
-    () => summarizeView(view, choices),
-    [view, choices],
+    () => summarizeView(view, choices, tv),
+    [view, choices, tv],
   );
+  const titles = sectionTitles(tv);
 
   return (
-    <div className="view-toolbar" aria-label="View toolbar" ref={toolbarRef}>
+    <div className="view-toolbar" aria-label={tv.toolbarAriaLabel} ref={toolbarRef}>
       <div className="view-toolbar-button-row">
         <ToolbarButton
           ref={displayRef}
           active={visibleDisplayCount > 0}
-          label="Display"
+          label={tv.display}
           open={open === 'display'}
           onClick={() => toggle('display')}
         >
@@ -267,7 +286,7 @@ export function ViewToolbar({
         <ToolbarButton
           ref={groupRef}
           active={view.groupField != null}
-          label="Group by"
+          label={tv.groupBy}
           open={open === 'group'}
           onClick={() => toggle('group')}
         >
@@ -277,7 +296,7 @@ export function ViewToolbar({
           ref={sortRef}
           active={view.sortRules.length > 0}
           badge={view.sortRules.length}
-          label="Sort by"
+          label={tv.sortBy}
           open={open === 'sort'}
           onClick={() => toggle('sort')}
         >
@@ -291,7 +310,7 @@ export function ViewToolbar({
           ref={filterRef}
           active={view.filterRules.length > 0}
           badge={view.filterRules.length}
-          label="Filter by"
+          label={tv.filterBy}
           open={open === 'filter'}
           onClick={() => toggle('filter')}
         >
@@ -304,12 +323,12 @@ export function ViewToolbar({
       {open && createPortal(
         <div
           ref={menuRef}
-          aria-label={SECTION_TITLES[open]}
+          aria-label={titles[open]}
           className="view-toolbar-popover"
           role="dialog"
           style={menuStyle}
         >
-          <div className="view-toolbar-popover-title">{SECTION_TITLES[open]}</div>
+          <div className="view-toolbar-popover-title">{titles[open]}</div>
           {open === 'display' && (
             <DisplaySection byId={index.byId} choices={choices} node={node} run={run} view={view} />
           )}
@@ -418,13 +437,14 @@ function GroupSection({
   run: CommandRunner;
   view: ViewConfig;
 }) {
+  const t = useT();
   const groupable = choices.filter((choice) => !GROUP_FIELD_DENYLIST.has(choice.id));
   const groups = bySection(groupable);
   const current = view.groupField ?? '';
   return (
     <div className="view-toolbar-options">
       <OptionRow
-        label="No grouping"
+        label={t.outliner.viewToolbar.noGrouping}
         selected={current === ''}
         variant="radio"
         onSelect={() => void run(() => api.setGroupField(node.id, null))}
@@ -461,15 +481,17 @@ function SortSection({
   run: CommandRunner;
   view: ViewConfig;
 }) {
+  const t = useT();
+  const tv = t.outliner.viewToolbar;
   return (
     <div className="view-toolbar-rules">
       {view.sortRules.map((rule, index) => {
-        const directionLabel = sortDirectionLabel(rule.field, byId, rule.direction);
+        const directionLabel = sortDirectionLabel(rule.field, byId, rule.direction, tv);
         return (
         <div className="view-toolbar-rule" key={rule.id}>
-          <span className="view-toolbar-rule-label">{index === 0 ? 'Sort by' : 'Then by'}</span>
+          <span className="view-toolbar-rule-label">{index === 0 ? tv.sortBy : tv.thenBy}</span>
           <SelectControl
-            label="Sort field"
+            label={tv.sortFieldLabel}
             value={rule.field}
             onChange={(event) => {
               void run(() => api.updateSortRule(rule.id, event.currentTarget.value, rule.direction));
@@ -495,9 +517,9 @@ function SortSection({
             <span>{directionLabel}</span>
           </ButtonControl>
           <ButtonControl
-            aria-label="Remove sort rule"
+            aria-label={tv.removeSortRule}
             className="view-toolbar-rule-remove"
-            title="Remove"
+            title={tv.remove}
             onClick={() => void run(() => api.removeSortRule(rule.id))}
           >
             <CloseIcon size={ICON_SIZE.menu} />
@@ -508,7 +530,7 @@ function SortSection({
       <div className="view-toolbar-rule-actions">
         <AddFieldSelect
           choices={choices}
-          label={view.sortRules.length > 0 ? 'Add sort' : 'Sort field'}
+          label={view.sortRules.length > 0 ? tv.addSort : tv.sortFieldLabel}
           onSelect={(field) => void run(() => api.addSortRule(node.id, field, 'asc'))}
         />
         {view.sortRules.length > 0 && (
@@ -516,7 +538,7 @@ function SortSection({
             className="view-toolbar-reset"
             onClick={() => void run(() => api.clearSortRules(node.id))}
           >
-            Reset
+            {tv.reset}
           </ButtonControl>
         )}
       </div>
@@ -541,6 +563,8 @@ function FilterSection({
   run: CommandRunner;
   view: ViewConfig;
 }) {
+  const t = useT();
+  const tv = t.outliner.viewToolbar;
   const [editingField, setEditingField] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const ruleByField = useMemo(
@@ -549,7 +573,7 @@ function FilterSection({
   );
 
   if (editingField) {
-    const label = choices.find((choice) => choice.id === editingField)?.label ?? 'Field';
+    const label = choices.find((choice) => choice.id === editingField)?.label ?? tv.fieldFallback;
     const kind = filterFieldKind(editingField, index.byId);
     const options = kind === 'options'
       ? resolveFieldOptions(index.byId.get(editingField), index.byId)
@@ -584,13 +608,13 @@ function FilterSection({
       <input
         autoFocus
         className="view-toolbar-filter-search"
-        placeholder="Filter field"
+        placeholder={tv.filterFieldPlaceholder}
         spellCheck={false}
         value={query}
         onChange={(event) => setQuery(event.target.value)}
       />
       <div className="view-toolbar-options">
-        {matches.length === 0 && <div className="view-toolbar-empty">No matching fields</div>}
+        {matches.length === 0 && <div className="view-toolbar-empty">{tv.noMatchingFields}</div>}
         {bySection(matches).map((group) => (
           <div className="view-toolbar-option-group" key={group.section}>
             <div className="view-toolbar-option-section">{group.section}</div>
@@ -617,7 +641,7 @@ function FilterSection({
             className="view-toolbar-reset"
             onClick={() => void run(() => api.clearFilterRules(node.id))}
           >
-            Reset
+            {tv.reset}
           </ButtonControl>
         </div>
       )}
@@ -642,6 +666,7 @@ function FilterRuleEditor({
   run: CommandRunner;
   onBack: () => void;
 }) {
+  const tv = useT().outliner.viewToolbar;
   return (
     <div className="view-toolbar-filter-editor">
       <ButtonControl className="view-toolbar-filter-back" onClick={onBack}>
@@ -659,19 +684,19 @@ function FilterRuleEditor({
           )}
           <div className="view-toolbar-rule-actions">
             <ButtonControl
-              aria-label="Remove filter rule"
+              aria-label={tv.removeFilterRule}
               className="view-toolbar-reset"
               onClick={() => {
                 void run(() => api.removeFilterRule(rule.id));
                 onBack();
               }}
             >
-              Remove filter
+              {tv.removeFilter}
             </ButtonControl>
           </div>
         </div>
       ) : (
-        <div className="view-toolbar-empty">Adding filter…</div>
+        <div className="view-toolbar-empty">{tv.addingFilter}</div>
       )}
     </div>
   );
@@ -681,9 +706,12 @@ type FilterRule = ViewConfig['filterRules'][number];
 
 // Boolean / checkbox fields store 'true' | 'false', so they are a binary choice.
 function BooleanFilterBody({ field, rule, run }: { field: string; rule: FilterRule; run: CommandRunner }) {
+  const tv = useT().outliner.viewToolbar;
   const lowered = rule.operator === 'is' ? rule.values.map((value) => value.trim().toLowerCase()) : [];
   const selected = lowered.includes('true') ? 'true' : lowered.includes('false') ? 'false' : null;
-  const [onLabel, offLabel] = field === DONE_FIELD ? ['Done', 'Not done'] : ['Yes', 'No'];
+  const [onLabel, offLabel] = field === DONE_FIELD
+    ? [tv.booleanDone, tv.booleanNotDone]
+    : [tv.booleanYes, tv.booleanNo];
   return (
     <div className="view-toolbar-options">
       <OptionRow
@@ -704,7 +732,8 @@ function BooleanFilterBody({ field, rule, run }: { field: string; rule: FilterRu
 
 // Options fields filter by selecting one or more of the field's defined options.
 function OptionsFilterBody({ options, rule, run }: { options: FieldOption[]; rule: FilterRule; run: CommandRunner }) {
-  if (options.length === 0) return <div className="view-toolbar-empty">No options</div>;
+  const tv = useT().outliner.viewToolbar;
+  if (options.length === 0) return <div className="view-toolbar-empty">{tv.noOptions}</div>;
   const selected = new Set(rule.values.map((value) => value.trim().toLowerCase()));
   return (
     <div className="view-toolbar-options">
@@ -731,14 +760,15 @@ function OptionsFilterBody({ options, rule, run }: { options: FieldOption[]; rul
 
 // Date / number / text: an operator plus a kind-appropriate value control.
 function OperatorFilterBody({ kind, rule, run }: { kind: FilterKind; rule: FilterRule; run: CommandRunner }) {
+  const tv = useT().outliner.viewToolbar;
   const allowed = OPERATORS_BY_KIND[kind === 'date' ? 'date' : kind === 'number' ? 'number' : 'text'];
-  const operators = FILTER_OPERATORS.filter((operator) => allowed.includes(operator.id));
+  const operators = filterOperators(tv).filter((operator) => allowed.includes(operator.id));
   const needsValue = !VALUELESS_OPERATORS.has(rule.operator);
   const dateValue = /^\d{4}-\d{2}-\d{2}/.test(rule.values[0] ?? '') ? rule.values[0]!.slice(0, 10) : '';
   return (
     <div className="view-toolbar-rule view-toolbar-rule-filter">
       <SelectControl
-        label="Filter operator"
+        label={tv.filterOperatorLabel}
         value={rule.operator}
         onChange={(event) => {
           void run(() => api.updateFilterRule(rule.id, { operator: event.currentTarget.value as FilterOperator }));
@@ -750,7 +780,7 @@ function OperatorFilterBody({ kind, rule, run }: { kind: FilterKind; rule: Filte
       </SelectControl>
       {needsValue && kind === 'date' ? (
         <input
-          aria-label="Filter date"
+          aria-label={tv.filterDateLabel}
           className="view-toolbar-date-input"
           type="date"
           value={dateValue}
@@ -761,8 +791,8 @@ function OperatorFilterBody({ kind, rule, run }: { kind: FilterKind; rule: Filte
       ) : needsValue ? (
         <TextInputControl
           defaultValue={rule.values.join(', ')}
-          label="Filter values"
-          placeholder="value"
+          label={tv.filterValuesLabel}
+          placeholder={tv.filterValuePlaceholder}
           onBlur={(event) => {
             void run(() => api.updateFilterRule(rule.id, { values: normalizeValues(event.currentTarget.value) }));
           }}

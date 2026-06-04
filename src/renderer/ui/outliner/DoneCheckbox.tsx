@@ -1,5 +1,6 @@
 import { CheckboxMark } from '../primitives/CheckboxMark';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { useT } from '../../i18n/I18nProvider';
 
 interface DoneCheckboxProps {
   checked: boolean;
@@ -14,6 +15,7 @@ interface DoneCheckboxProps {
 }
 
 export function DoneCheckbox(props: DoneCheckboxProps) {
+  const t = useT();
   if (props.readOnly) {
     return (
       <span
@@ -31,7 +33,7 @@ export function DoneCheckbox(props: DoneCheckboxProps) {
     <ButtonControl
       className="done-checkbox"
       aria-pressed={props.checked}
-      title={props.checked ? 'Mark not done' : 'Mark done'}
+      title={props.checked ? t.outliner.contextMenu.markNotDone : t.outliner.contextMenu.markDone}
       onMouseDown={(event) => {
         event.preventDefault();
         event.stopPropagation();

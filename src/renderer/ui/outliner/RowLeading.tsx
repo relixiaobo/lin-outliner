@@ -6,6 +6,7 @@ import {
 } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { RowMarker, type RowMarkerVariant } from './RowMarker';
+import { useT } from '../../i18n/I18nProvider';
 
 export type RowLeadingVariant = RowMarkerVariant;
 
@@ -38,11 +39,12 @@ export function RowLeading({
   onDragStart,
   onDragEnd,
 }: RowLeadingProps) {
+  const t = useT();
   return (
     <div className="row-leading">
       <ButtonControl
         className="row-chevron-button"
-        title={expanded ? 'Collapse' : 'Expand'}
+        title={expanded ? t.outliner.field.collapse : t.outliner.field.expand}
         onMouseDown={(event) => {
           event.preventDefault();
         }}
@@ -60,7 +62,7 @@ export function RowLeading({
       </ButtonControl>
       <ButtonControl
         className="row-bullet-button"
-        title={variant === 'field' ? 'Open field' : 'Open'}
+        title={variant === 'field' ? t.outliner.field.openField : t.outliner.field.open}
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();

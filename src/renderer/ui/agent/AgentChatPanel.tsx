@@ -55,6 +55,7 @@ import { ConfirmDialog } from '../primitives/ConfirmDialog';
 import { IconButton } from '../primitives/IconButton';
 import { TextInputControl } from '../primitives/TextInputControl';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { useI18n, useT } from '../../i18n/I18nProvider';
 
 const TRANSCRIPT_ROW_GAP_PX = 14;
 const TRANSCRIPT_ROW_ESTIMATE_PX = 104;
@@ -103,6 +104,7 @@ function withReferencedNodes(
   context: AgentUserViewContext,
   refs: readonly AgentComposerNodeReference[],
   index: DocumentIndex,
+  untitled: string,
 ): AgentUserViewContext {
   if (refs.length === 0) return context;
   const seen = new Set<NodeId>();
@@ -111,23 +113,31 @@ function withReferencedNodes(
     seen.add(ref.nodeId);
     return [{
       nodeId: ref.nodeId,
-      title: ref.title.trim() || 'Untitled',
+      title: ref.title.trim() || untitled,
     }];
   });
   return referencedNodes.length > 0 ? { ...context, referencedNodes } : context;
 }
 
+// The agent runtime stores this English placeholder as a session's title until it
+// auto-derives a real one (src/main/agentRuntime.ts). It is a sentinel, not display
+// copy — treat it as "unnamed" so the localized fallback shows instead of leaking
+// raw English into the header / session list.
+const RUNTIME_UNTITLED_SENTINEL = 'Untitled';
+
 function readableSessionTitle(title: string | null | undefined, fallback: string): string {
-  return nodeReferenceMarkersToText(title ?? '').replace(/\s+/g, ' ').trim() || fallback;
+  const readable = nodeReferenceMarkersToText(title ?? '').replace(/\s+/g, ' ').trim();
+  if (!readable || readable === RUNTIME_UNTITLED_SENTINEL) return fallback;
+  return readable;
 }
 
-function formatSessionTime(timestamp: number): string {
+function formatSessionTime(timestamp: number, locale: string): string {
   const date = new Date(timestamp);
   const now = new Date();
   if (date.toDateString() === now.toDateString()) {
-    return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
   }
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return date.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
 }
 
 type AssistantEntry = AgentMessageEntry & { message: AssistantMessage };
@@ -469,6 +479,8 @@ export function AgentChatPanel({
   onOpenDebugPanel,
   userViewContext,
 }: AgentChatPanelProps) {
+  const t = useT();
+  const { locale } = useI18n();
   const {
     entries,
     error,
@@ -544,8 +556,8 @@ export function AgentChatPanel({
     attachments?: AgentMessageAttachmentInput[],
     nodeRefs: AgentComposerNodeReference[] = [],
   ) => (
-    sendRuntimeMessage(prompt, attachments, withReferencedNodes(userViewContext, nodeRefs, index))
-  ), [index, sendRuntimeMessage, userViewContext]);
+    sendRuntimeMessage(prompt, attachments, withReferencedNodes(userViewContext, nodeRefs, index, t.common.untitled))
+  ), [index, sendRuntimeMessage, userViewContext, t.common.untitled]);
 
   const updateScrollMetrics = useCallback((element: HTMLDivElement) => {
     const next = {
@@ -870,7 +882,9 @@ export function AgentChatPanel({
   // it flash during the load window; until loaded we stay neutral.
   const settingsLoaded = providerSettings !== null;
   const hasUsableProvider = settingsLoaded && Boolean(resolveUsableActiveProvider(providerSettings));
-  const displayTitle = readableSessionTitle(sessionTitle, 'conversation');
+  // Unnamed sessions read "untitled" in the header too, matching the session list
+  // and delete-confirm — one fallback everywhere so inside/outside never disagree.
+  const displayTitle = readableSessionTitle(sessionTitle, t.common.untitled);
   const historyMenuStyle = useAnchoredOverlay(historyMenuRef, {
     anchorRef: historyButtonRef,
     disabled: !historyOpen,
@@ -886,10 +900,10 @@ export function AgentChatPanel({
         <ButtonControl
           ref={historyButtonRef}
           aria-expanded={historyOpen}
-          aria-label="Show conversations"
+          aria-label={t.agent.chat.showConversations}
           className="agent-dock-title-button"
           onClick={() => setHistoryOpen((open) => !open)}
-          title="Show conversations"
+          title={t.agent.chat.showConversations}
         >
           <span className="agent-dock-title">{displayTitle}</span>
           <ChevronDownIcon
@@ -902,16 +916,16 @@ export function AgentChatPanel({
             className="agent-menu-button"
             disabled={isStreaming}
             icon={NewConversationIcon}
-            label="New conversation"
+            label={t.agent.chat.newConversation}
             onClick={() => void handleNewSession()}
-            title="New conversation"
+            title={t.agent.chat.newConversation}
             variant="composerTool"
           />
           {runningSubagentIds.length > 0 ? (
             <ButtonControl
               className="agent-subagent-running-button"
               onClick={() => setSelectedSubagentId(runningSubagentIds[0] ?? null)}
-              title="Show running subagents"
+              title={t.agent.chat.showRunningSubagents}
             >
               <AgentIcon size={ICON_SIZE.menu} />
               <span>{runningSubagentIds.length}</span>
@@ -920,9 +934,9 @@ export function AgentChatPanel({
           <IconButton
             className="agent-menu-button"
             icon={DebugIcon}
-            label="Open agent debug"
+            label={t.agent.chat.openDebug}
             onClick={() => onOpenDebugPanel?.(sessionId)}
-            title="Open agent debug"
+            title={t.agent.chat.openDebug}
             variant="composerTool"
           />
         </div>
@@ -931,36 +945,36 @@ export function AgentChatPanel({
             ref={historyMenuRef}
             className="agent-session-menu"
             role="dialog"
-            aria-label="Conversations"
+            aria-label={t.agent.chat.conversations}
             style={historyMenuStyle}
           >
             <div className="agent-session-menu-header">
-              <span>Conversations</span>
+              <span>{t.agent.chat.conversations}</span>
               <IconButton
                 className="agent-message-action-button"
                 disabled={isStreaming}
                 icon={NewConversationIcon}
-                label="New conversation"
+                label={t.agent.chat.newConversation}
                 onClick={() => void handleNewSession()}
-                title="New conversation"
+                title={t.agent.chat.newConversation}
                 variant="message"
               />
             </div>
             <div className="agent-session-list">
               {sessionsLoading ? (
-                <div className="agent-session-empty">Loading...</div>
+                <div className="agent-session-empty">{t.common.loading}</div>
               ) : sessions.length === 0 ? (
-                <div className="agent-session-empty">No conversations</div>
+                <div className="agent-session-empty">{t.agent.chat.noConversations}</div>
               ) : sessions.map((session) => {
                 const isCurrent = session.id === sessionId;
-                const title = readableSessionTitle(session.title, 'Untitled');
+                const title = readableSessionTitle(session.title, t.common.untitled);
                 if (editingSessionId === session.id) {
                   return (
                     <div className="agent-session-row is-editing" key={session.id}>
                       <TextInputControl
                         autoFocus
                         className="agent-session-title-input"
-                        label="Conversation title"
+                        label={t.agent.chat.conversationTitle}
                         onChange={(event) => setEditingTitle(event.target.value)}
                         onKeyDown={(event) => {
                           if (event.key === 'Escape') setEditingSessionId(null);
@@ -971,14 +985,14 @@ export function AgentChatPanel({
                       <IconButton
                         className="agent-message-action-button"
                         icon={CloseIcon}
-                        label="Cancel rename"
+                        label={t.agent.chat.cancelRename}
                         onClick={() => setEditingSessionId(null)}
                         variant="message"
                       />
                       <IconButton
                         className="agent-message-action-button"
                         icon={CheckIcon}
-                        label="Save rename"
+                        label={t.agent.chat.saveRename}
                         onClick={() => void handleRenameSession(session.id)}
                         variant="message"
                       />
@@ -997,7 +1011,7 @@ export function AgentChatPanel({
                     >
                       <span className="agent-session-name">{title}</span>
                       <span className="agent-session-meta">
-                        {formatSessionTime(session.updatedAt)}
+                        {formatSessionTime(session.updatedAt, locale)}
                         {session.messageCount > 0 ? ` · ${session.messageCount}` : ''}
                       </span>
                     </ButtonControl>
@@ -1006,21 +1020,21 @@ export function AgentChatPanel({
                         className="agent-message-action-button"
                         disabled={isStreaming}
                         icon={PencilIcon}
-                        label="Rename conversation"
+                        label={t.agent.chat.renameConversation}
                         onClick={() => {
                           setEditingSessionId(session.id);
                           setEditingTitle(title);
                         }}
-                        title="Rename"
+                        title={t.agent.chat.rename}
                         variant="message"
                       />
                       <IconButton
                         className="agent-message-action-button"
                         disabled={isStreaming}
                         icon={TrashIcon}
-                        label="Delete conversation"
+                        label={t.agent.chat.deleteConversation}
                         onClick={() => void handleDeleteSession(session.id, session.title)}
-                        title="Delete"
+                        title={t.agent.chat.delete}
                         variant="message"
                       />
                     </div>
@@ -1050,17 +1064,17 @@ export function AgentChatPanel({
         {entries.length === 0 ? (
           <div className="agent-empty-state">
             {!settingsLoaded ? null : hasUsableProvider ? (
-              <p className="agent-empty-greeting">How can I help with your outline?</p>
+              <p className="agent-empty-greeting">{t.agent.chat.emptyGreeting}</p>
             ) : (
               <div className="agent-onboarding" role="status">
-                <p className="agent-onboarding-text">Connect an AI provider to start.</p>
+                <p className="agent-onboarding-text">{t.agent.chat.onboardingText}</p>
                 <ButtonControl
                   className="agent-onboarding-cta"
                   onClick={() => {
                     void window.lin?.openSettings();
                   }}
                 >
-                  Open Settings › Providers
+                  {t.agent.chat.onboardingCta}
                 </ButtonControl>
               </div>
             )}
@@ -1117,10 +1131,10 @@ export function AgentChatPanel({
       />
       {pendingDeleteSession ? (
         <ConfirmDialog
-          title="Delete conversation?"
-          message={`"${readableSessionTitle(pendingDeleteSession.title, 'Untitled')}" will be permanently deleted. This cannot be undone.`}
-          confirmLabel="Delete"
-          cancelLabel="Cancel"
+          title={t.agent.chat.deleteConfirmTitle}
+          message={t.agent.chat.deleteConfirmMessage({ title: readableSessionTitle(pendingDeleteSession.title, t.common.untitled) })}
+          confirmLabel={t.agent.chat.delete}
+          cancelLabel={t.agent.chat.cancel}
           danger
           onConfirm={() => void confirmDeleteSession()}
           onCancel={() => setPendingDeleteSession(null)}
