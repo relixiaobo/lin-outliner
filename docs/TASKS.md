@@ -42,6 +42,21 @@ _(nothing actively in flight)_
 
 Ordered by priority; lower items may depend on higher ones.
 
+- **launcher-absorbs-commandpalette** (P2, **direction ratified by PM — needs a
+  dev-drafted one-pager**) — converge the two search/command surfaces onto a
+  single entry: the global launcher becomes the one launcher, the in-app cmd+k
+  `CommandPalette` retires over time. Both already share the core `search_nodes`
+  kernel (#102 relevance work) — cmd+k via `api.searchNodes`→`search_nodes`,
+  launcher via `launcher:searchNodes`→`search_nodes`+`projectionNodesByIds`; the
+  search **backend** unification is #107's territory (codex, `search-retrieval-stack`,
+  do not fold UI work into it — #107 scopes UI consolidation OUT). To absorb cmd+k
+  the launcher must gain what only cmd+k does today: workspace-root jumps
+  (Today/Library/Schema/Searches/Trash) and in-app *instant* in-renderer navigation
+  (no global-window round-trip when the app is already focused). **Sequence after
+  #107's shared retrieval path lands**; directional GO is given, so a dev agent
+  drafts the one-pager (`docs/plans/<topic>.md`) and the PM ratifies before build.
+  Distinct from "launcher follow-ups" (those extend the launcher; this one removes
+  cmd+k).
 - **agent-empty-state-onboarding** (P1) — agent panel empty state: remove the three
   hardcoded suggestion chips (greeting / whitespace instead), and add a
   no-LLM-key onboarding (CTA → Settings › Providers, disable send when no usable
