@@ -119,8 +119,16 @@ function withReferencedNodes(
   return referencedNodes.length > 0 ? { ...context, referencedNodes } : context;
 }
 
+// The agent runtime stores this English placeholder as a session's title until it
+// auto-derives a real one (src/main/agentRuntime.ts). It is a sentinel, not display
+// copy — treat it as "unnamed" so the localized fallback shows instead of leaking
+// raw English into the header / session list.
+const RUNTIME_UNTITLED_SENTINEL = 'Untitled';
+
 function readableSessionTitle(title: string | null | undefined, fallback: string): string {
-  return nodeReferenceMarkersToText(title ?? '').replace(/\s+/g, ' ').trim() || fallback;
+  const readable = nodeReferenceMarkersToText(title ?? '').replace(/\s+/g, ' ').trim();
+  if (!readable || readable === RUNTIME_UNTITLED_SENTINEL) return fallback;
+  return readable;
 }
 
 function formatSessionTime(timestamp: number): string {
