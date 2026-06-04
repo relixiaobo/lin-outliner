@@ -313,7 +313,8 @@ export function buildContextCaptureInput(args: {
   };
   // Project the source into native outline shape: a capture-kind tag + fields,
   // rendered/searched by the existing outliner (no bespoke capture rendering).
-  // `description` stays reserved for a real user note.
+  // A typed note becomes a CHILD node (see below), not the node description —
+  // the capture's headline is the source title, the note nests under it.
   const specificTag = CAPTURE_TAG_BY_KIND[source.kind];
   const tag = specificTag ?? 'capture';
   const tagExtends = specificTag ? 'capture' : undefined;
@@ -342,10 +343,13 @@ export function buildContextCaptureInput(args: {
     destinationParentId,
     ...(index === undefined ? {} : { index }),
     title: plainText(title),
-    ...(note_ ? { description: note_ } : {}),
     tag,
     ...(tagExtends ? { tagExtends } : {}),
     ...(fields.length > 0 ? { fields } : {}),
+    // The user's annotation on a source capture nests UNDER the captured node as
+    // its own child bullet (the outliner metaphor: "this source, and my note on
+    // it"), not as the node's description — the headline stays the source title.
+    ...(note_ ? { children: [{ content: plainText(note_), children: [] }] } : {}),
     metadata,
   };
 }

@@ -69,9 +69,9 @@ export function filterCommands(commands: readonly LauncherCommandView[], query: 
 /**
  * Build the ordered result list. Capture rows come first (capture-first intent),
  * so the common path is hotkey → Enter. With a page context, typing annotates the
- * page (the typed text rides along as the capture's comment; shown in the row
- * subtitle), with a separate row to instead make the text its own new node. Without
- * a page context, typed text becomes a new node. Then matching document nodes
+ * page (the typed text nests under the captured node as a child bullet; previewed
+ * in the row subtitle), with a separate row to instead make the text its own new
+ * node. Without a page context, typed text becomes a new node. Then matching nodes
  * (search results — opened on Enter), then commands; both are filtered/queried by
  * the same input. The whole list is flat (no section headers).
  */

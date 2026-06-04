@@ -262,15 +262,41 @@ describe('buildContextCaptureInput', () => {
     expect(input.tagExtends).toBeUndefined();
   });
 
-  test('a user note populates the description, separate from the Source field', () => {
+  test('a user note nests as a CHILD node, not the description, separate from the Source field', () => {
     const input = buildContextCaptureInput({
       context: webpageContext(),
       destinationParentId: 'node:today',
       captureId: 'cap:ctx-note',
       note: '  remember this  ',
     });
-    expect(input.description).toBe('remember this');
+    // The annotation on a source capture is a child bullet under the captured
+    // node (the outliner metaphor), never the node's description property.
+    expect(input.description).toBeUndefined();
+    expect(input.children).toHaveLength(1);
+    expect(input.children?.[0]?.content.text).toBe('remember this'); // trimmed
+    expect(input.children?.[0]?.children).toEqual([]);
     expect(input.fields).toEqual([{ field: CAPTURE_FIELD.url, value: 'https://example.com/a' }]);
+  });
+
+  test('end-to-end: a source capture with a note materializes the note as a child node', () => {
+    const core = Core.new();
+    const libraryId = core.projection().libraryId;
+    const input = buildContextCaptureInput({
+      context: webpageContext(),
+      destinationParentId: libraryId,
+      captureId: 'cap:ctx-note-e2e',
+      note: 'remember this',
+    });
+    const id = mustFocus(core.createCapture(input));
+    const nodes = core.projection().nodes;
+    const node = nodes.find((entry) => entry.id === id);
+    expect(node?.content.text).toBe('A great article'); // headline = source title
+    expect(node?.description).toBeUndefined(); // NOT the description
+    // Children are the projected URL field entry + the note; the note is the
+    // ordinary (non-fieldEntry) child bullet.
+    const childNodes = node?.children.map((cid) => nodes.find((n) => n.id === cid));
+    const noteChild = childNodes?.find((c) => c?.type !== 'fieldEntry');
+    expect(noteChild?.content.text).toBe('remember this');
   });
 
   test('warnings on the context mark the capture partial and are carried over', () => {

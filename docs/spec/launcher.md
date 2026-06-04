@@ -74,8 +74,9 @@ section headers.
 Ordering is **capture-first**:
 
 - **Page context + typed text** → a `capture-page` row (title "Capture") that
-  captures the page with the typed text riding along as a comment, then a
-  `capture-note` row ("New node") as the escape hatch to make the text its own node.
+  captures the page with the typed text nested **under** the captured node as a
+  child bullet (not the node description), then a `capture-note` row ("New node")
+  as the escape hatch to make the text its own standalone node instead.
 - **Page context, no text** → a single `capture-page` row.
 - **No context, typed text** → a `capture-note` row ("New node") in Today.
 - Then matching document nodes, then the filtered commands.
@@ -108,7 +109,9 @@ player-position anchor is stripped).
 authoritative `ExternalContext`; the renderer supplies only an optional note, so
 it can't tamper with the saved source. The node carries a hidden `capture`
 provenance sidecar plus an outline projection (capture-kind tag + URL/Author/
-Published fields). See [`commands.md`](commands.md) (`create_capture`).
+Published fields). A typed note nests **under** the capture as a child bullet (the
+outliner metaphor — "this source, and my note on it"), never the node's
+`description`. See [`commands.md`](commands.md) (`create_capture`).
 
 A first browser capture without Accessibility prompts for it once. When the active
 tab can't be read at all (Automation denied), the launcher shows a quiet
