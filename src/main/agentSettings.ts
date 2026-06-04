@@ -659,19 +659,26 @@ async function readJsonOrDefault<T>(path: string, fallback: T): Promise<T> {
 async function writeJsonFile(path: string, value: unknown, privateFile: boolean) {
   const parent = dirname(path);
   await mkdir(parent, { recursive: true });
-  if (privateFile && process.platform !== 'win32') await chmod(parent, 0o700);
-  await atomicWrite(path, `${JSON.stringify(value, null, 2)}\n`);
-  if (privateFile && process.platform !== 'win32') await chmod(path, 0o600);
+  const privateMode = privateFile && process.platform !== 'win32';
+  if (privateMode) await chmod(parent, 0o700);
+  // Create the temp file 0600 from the start (not only after the rename) so the
+  // plaintext secret is never even briefly world-readable, and a crash between
+  // rename and the post-rename chmod can never leave a 0644 file behind. The
+  // post-rename chmod stays as a belt-and-suspenders guarantee against an
+  // unusual umask. Windows cannot set POSIX modes — secrets there rely on the
+  // user-profile ACL (tracked as a follow-up).
+  await atomicWrite(path, `${JSON.stringify(value, null, 2)}\n`, privateMode ? 0o600 : undefined);
+  if (privateMode) await chmod(path, 0o600);
 }
 
 let atomicWriteCounter = 0;
 
-async function atomicWrite(path: string, data: string) {
+async function atomicWrite(path: string, data: string, mode?: number) {
   // Unique temp name per write so two in-flight writes to the same path never
   // clobber each other's temp file (defense in depth alongside the write lock).
   const tmp = `${path}.${process.pid}.${++atomicWriteCounter}.tmp`;
   try {
-    await writeFile(tmp, data);
+    await writeFile(tmp, data, mode === undefined ? undefined : { mode });
     await rename(tmp, path);
   } catch (error) {
     await rm(tmp, { force: true });
