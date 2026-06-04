@@ -144,11 +144,14 @@ export function AgentComposerToolbar({
 
 export function AgentComposerPrimaryAction({
   canSubmit,
+  disabledTitle,
   hasDraft,
   isStreaming,
   onStop,
 }: {
   canSubmit: boolean;
+  /** Tooltip shown when the action is disabled for a specific reason (e.g. no provider). */
+  disabledTitle?: string;
   hasDraft: boolean;
   isStreaming: boolean;
   onStop: () => void;
@@ -174,7 +177,7 @@ export function AgentComposerPrimaryAction({
       disabled={!canSubmit}
       icon={SendIcon}
       label={isStreaming ? 'Steer agent' : 'Send message'}
-      title={isStreaming ? 'Steer agent' : 'Send'}
+      title={!canSubmit && disabledTitle ? disabledTitle : isStreaming ? 'Steer agent' : 'Send'}
       type="submit"
       variant="composerAction"
     />

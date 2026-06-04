@@ -35,6 +35,7 @@ import {
   AgentComposerModelMenu,
   type ComposerModelChoice,
 } from './AgentComposerModelMenu';
+import { isProviderUsable, resolveUsableActiveProvider } from './providerCatalog';
 import {
   AgentComposerEditor,
   type AgentComposerDraft,
@@ -208,10 +209,14 @@ export function AgentComposer({
     return () => window.clearTimeout(timer);
   }, [attachmentError]);
   const hasAttachments = attachments.length > 0;
-  const canSubmit = pendingApproval ? false : isStreaming
+  const activeProvider = settings ? resolveUsableActiveProvider(settings) ?? null : null;
+  // No usable provider once settings have LOADED → block send and explain why.
+  // While settings are still loading (settings === null) stay neutral, so a
+  // key-holding user's send button never disables during the load window.
+  const providerBlocksSend = settings !== null && !activeProvider;
+  const canSubmit = (pendingApproval ? false : isStreaming
     ? hasDraft && !hasAttachments
-    : !sending && (hasDraft || hasAttachments);
-  const activeProvider = getActiveProvider(settings);
+    : !sending && (hasDraft || hasAttachments)) && !providerBlocksSend;
   const modelOptions = getModelChoices(settings, activeProvider);
   const selectedModel = modelOptions.find(
     (model) => model.providerId === activeProvider?.providerId && model.id === activeProvider?.modelId,
@@ -705,6 +710,7 @@ export function AgentComposer({
               primaryAction={(
                 <AgentComposerPrimaryAction
                   canSubmit={canSubmit}
+                  disabledTitle={providerBlocksSend ? 'Add a provider in Settings' : undefined}
                   hasDraft={hasDraft}
                   isStreaming={isStreaming}
                   onStop={onStop}
@@ -1195,14 +1201,6 @@ function formatBytes(bytes: number): string {
   return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
 }
 
-function getActiveProvider(settings: AgentProviderSettingsView | null): AgentProviderConfigView | null {
-  if (!settings) return null;
-  const active = settings.activeProviderId
-    ? settings.providers.find((provider) => provider.providerId === settings.activeProviderId && providerCanUseModels(settings, provider))
-    : undefined;
-  return active ?? settings.providers.find((provider) => providerCanUseModels(settings, provider)) ?? null;
-}
-
 function getModelChoices(
   settings: AgentProviderSettingsView | null,
   activeProvider: AgentProviderConfigView | null,
@@ -1210,7 +1208,7 @@ function getModelChoices(
   if (!settings) return [];
   const usableProviderIds = new Set(
     settings.providers
-      .filter((provider) => providerCanUseModels(settings, provider))
+      .filter((provider) => isProviderUsable(settings, provider))
       .map((provider) => provider.providerId),
   );
   const choices = settings.availableProviders
@@ -1231,13 +1229,6 @@ function getModelChoices(
     contextWindow: 0,
     maxTokens: 0,
   }, ...choices];
-}
-
-function providerCanUseModels(settings: AgentProviderSettingsView, provider: AgentProviderConfigView): boolean {
-  const catalog = settings.availableProviders.find((candidate) => candidate.providerId === provider.providerId);
-  // main's authoritative `auth.credentialed` (stored key, oauth login, env, or
-  // managed ambient); catalog env flag covers a provider with no view row yet.
-  return provider.enabled && (Boolean(provider.auth?.credentialed) || Boolean(catalog?.hasEnvApiKey));
 }
 
 function shortenModelName(name: string): string {

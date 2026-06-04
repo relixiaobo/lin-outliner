@@ -1,0 +1,62 @@
+import { expect, test } from '@playwright/test';
+import { commandCalls, openMockedApp } from './outlinerMock';
+
+async function waitForAgentSession(page: import('@playwright/test').Page) {
+  await expect.poll(async () => {
+    const calls = await commandCalls(page);
+    return calls.some((call) => call.cmd === 'agent_restore_latest_session');
+  }).toBe(true);
+}
+
+test.describe('agent panel empty state', () => {
+  test('with a provider: shows the greeting and sends normally', async ({ page }) => {
+    await openMockedApp(page);
+    await waitForAgentSession(page);
+
+    await expect(page.getByText('How can I help with your outline?')).toBeVisible();
+    await expect(page.getByText('Connect an AI provider to start.')).toHaveCount(0);
+
+    const send = page.getByRole('button', { name: 'Send message' });
+    await expect(send).toBeDisabled(); // empty draft
+
+    await page.getByLabel('Agent message').fill('Summarize current outline.');
+    await expect(send).toBeEnabled();
+    await send.click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.find((call) => call.cmd === 'agent_send_message')?.args;
+    }).toMatchObject({
+      message: 'Summarize current outline.',
+      sessionId: 'mock-agent-session',
+    });
+  });
+
+  test('without a provider: shows onboarding, CTA opens Settings, and send is blocked', async ({ page }) => {
+    await openMockedApp(page, { noProvider: true });
+    await waitForAgentSession(page);
+
+    // Onboarding replaces the greeting; no suggestion chips remain.
+    await expect(page.getByText('Connect an AI provider to start.')).toBeVisible();
+    await expect(page.getByText('How can I help with your outline?')).toHaveCount(0);
+
+    // Send is guarded even with a non-empty draft, with an actionable tooltip.
+    const send = page.getByRole('button', { name: 'Send message' });
+    await page.getByLabel('Agent message').fill('Summarize current outline.');
+    await expect(send).toBeDisabled();
+    await expect(send).toHaveAttribute('title', 'Add a provider in Settings');
+
+    // Enter does not slip a message past the guard.
+    await page.getByLabel('Agent message').press('Enter');
+    await page.waitForTimeout(150);
+    const callsAfterEnter = await commandCalls(page);
+    expect(callsAfterEnter.some((call) => call.cmd === 'agent_send_message')).toBe(false);
+
+    // The CTA deep-links to Settings › Providers (openSettings defaults there).
+    await page.getByRole('button', { name: 'Open Settings › Providers' }).click();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.some((call) => call.cmd === 'open_settings');
+    }).toBe(true);
+  });
+});

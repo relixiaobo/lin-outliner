@@ -52,22 +52,40 @@
   padding-bottom: var(--space-2);
 }
 
-.agent-suggestion {
-  width: 100%;
-  min-height: 34px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--material-popover);
+.agent-empty-greeting {
+  margin: 0;
   color: var(--text-soft);
   font-size: var(--font-ui-sm);
   line-height: var(--line-meta);
-  padding: var(--space-4) var(--space-6);
-  text-align: left;
 }
 
-.agent-suggestion:hover {
-  background: var(--material-popover);
+.agent-onboarding {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.agent-onboarding-text {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-meta);
+}
+
+.agent-onboarding-cta {
+  min-height: 34px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--fill-2);
   color: var(--text-strong);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-meta);
+  padding: var(--space-3) var(--space-6);
+}
+
+.agent-onboarding-cta:hover {
+  background: var(--fill-3);
 }
 
 .agent-message-row {
