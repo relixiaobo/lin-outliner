@@ -1,7 +1,7 @@
 ---
 status: draft
 priority: P1
-owner: relixiaobo
+owner: codex
 created: 2026-06-04
 updated: 2026-06-04
 ---
@@ -57,11 +57,11 @@ Tenon already has several text search shapes:
 
 | Surface | Current behavior | Retrieval decision |
 |---|---|---|
-| Saved search / `search_nodes` command | `src/core/searchEngine.ts` evaluates structured `SearchQueryExpr`; `STRING_MATCH` currently scores text with local substring weights on `main`. PR #102 replaces this with a derived text index while keeping evaluator-backed correctness. | This is the primary indexed node retrieval surface. Keep it authoritative for node search semantics. |
-| Agent `node_search` tool | `src/main/agentNodeToolSearch.ts` parses temporary/saved search outlines, calls `runSearchExpr`, then builds agent-visible items/snippets. | Must benefit from the node retrieval index through the same `runSearchExpr` path. It should not own a separate ranker. |
+| Saved search / `search_nodes` command | `src/core/searchEngine.ts` evaluates structured `SearchQueryExpr`. PR #102 adds a derived text index for `STRING_MATCH` candidate generation and indexed scoring while keeping evaluator-backed correctness. The implementer must verify the merged #102 state before claiming legacy substring scoring is gone; evaluator fallback code may still exist for non-indexed paths. | This is the primary indexed node retrieval surface. Keep it authoritative for node search semantics. |
+| Agent `node_search` tool | `src/main/agentNodeToolSearch.ts` parses temporary/saved search outlines, calls `runSearchExpr`, then builds agent-visible items/snippets. `src/main/agentNodeToolProjection.ts` may still carry duplicate substring-weight scoring after #102. | Must benefit from the node retrieval index through the same `runSearchExpr` path. It should not own a separate ranker, and duplicated agent presentation scoring should be removed or routed through shared primitives in Phase 2. |
 | In-app `CommandPalette` node lookup | Renderer calls `api.searchNodes(query)`, so it uses the same command surface as saved search keyword lookup. | Reuse node retrieval. UI-specific create/navigation rows can have separate ordering around the retrieved hits. |
 | Lazy-like launcher node search / destination search | PR #103 adds launcher search and destination flows. Its plan explicitly references "Search notes" and "Search existing node by query". | Reuse node retrieval from main. The launcher may add surface-local command recency boosts, but node result relevance should come from the shared node path. |
-| Reference, tag, field, option, slash-command pickers | Renderer helpers use `textMatchRank`: exact, prefix, word-prefix, contains, then context/length/updated tie-breaks. | Keep lightweight. Optionally extract a tiny label-ranker primitive, but do not force the full index into these latency-sensitive menus. |
+| Reference, tag, field, option, slash-command pickers | Renderer helpers already include `src/renderer/ui/interactions/candidateRanking.ts`, which exports `textMatchRank` for exact, prefix, word-prefix, and contains ordering. `referenceCandidates` and `tagSelector` already reuse it; `fieldOptions`, slash commands, and filename ranking still have local simple filters. | Keep lightweight. Reuse the existing `candidateRanking.textMatchRank` where it removes duplication, but do not force the full index into these latency-sensitive menus. |
 | Agent `past_chats` | `src/main/agentPastChats.ts` filters derived event-log indexes by term-AND substring and sorts mostly by recency. | Reuse analyzer/ranking primitives in a message adapter after node retrieval lands. Keep event logs as source of truth. |
 | Local file mention search | Main uses Spotlight filename search on macOS, falls back to `rg --files`, then ranks filenames by exact/prefix/word-prefix/contains. | Keep OS/filesystem candidate generation. A small shared label-ranker can clean up filename ordering; the node text index should not index the user's home directory. |
 | Agent `file_grep` | `src/main/agentLocalTools.ts` shells to `rg` with bounded output modes, context, glob/type filters, and pagination. | Keep ripgrep. It is already the right engine for file content search. |
@@ -181,8 +181,13 @@ and easier to audit.
 - Land or rebase on PR #102 before implementing code.
 - Fold the shipped node retrieval behavior into `docs/spec/search-query-grammar.md`
   or a dedicated retrieval spec if #102 changes intended semantics.
-- Confirm with the launcher owner that PR #103's launcher node search and
-  destination search will call the shared node path, not create a second ranker.
+- Before PR #103 merges, confirm with the launcher owner that launcher node
+  search and destination search call the shared node path instead of creating a
+  parallel launcher ranker. This is a time-sensitive A7 foundation constraint,
+  not a later cleanup.
+- Re-read the merged #102 code before implementation and verify exactly which
+  legacy scoring paths remain. The follow-up should not over-claim that the
+  index replaced every substring scorer until the diff proves it.
 
 ### Phase 1: Stabilize shared text primitives
 
@@ -192,8 +197,8 @@ and easier to audit.
   normalization, query analysis, CJK term handling, label ranking, and snippet
   building.
 - Add unit tests that make these primitives stable across Bun and Electron.
-- Replace duplicated node text scoring in `agentNodeToolProjection` only if #102
-  has not already removed it.
+- Keep this PR pure and small: analyzer/index primitive cleanup plus tests only.
+  Do not also rewire all node consumers in the same PR.
 
 Expected files:
 
@@ -209,6 +214,9 @@ Expected files:
   `runSearchExpr` plus the live index.
 - Route saved-search materialization, command palette node lookup, and agent
   `node_search` through that wrapper where practical.
+- Remove or centralize duplicate node text scoring in
+  `src/main/agentNodeToolProjection.ts`; on the reviewed #102 path this duplicate
+  scorer is still live work.
 - If the launcher branch has landed, route launcher note search and destination
   search through the same wrapper.
 - Keep renderer pickers separate unless they intentionally call main for global
@@ -244,11 +252,13 @@ Expected files:
 
 ### Phase 4: Clean up lightweight UI/file label ranking
 
-- Extract the renderer's exact/prefix/word-prefix/contains ranker into a small
-  shared pure helper only if it reduces duplication.
+- Reuse the existing renderer helper
+  `src/renderer/ui/interactions/candidateRanking.ts` and its `textMatchRank`
+  export. Do not re-extract a second label ranker.
 - Keep context-specific tie-breaks in their local picker modules.
-- Optionally apply the same label ranker to local filename ranking in main, but
-  keep Spotlight/`rg --files` as candidate generation.
+- Fold `fieldOptions`, slash-command filtering, or local filename ranking into
+  that helper only if doing so removes real duplication. Keep Spotlight /
+  `rg --files` as local-file candidate generation.
 
 Expected files:
 
@@ -309,6 +319,9 @@ Cleanliness:
   agent runtime code.
 - Main adapters do not leak Node/Electron APIs into renderer.
 - Spec changes land in the same PR as behavior changes.
+- Phase 1 and Phase 2 land as separate PRs. Phase 1 is pure primitives/tests;
+  Phase 2 is node-path unification and duplicate scorer removal. Phases 3, 4,
+  and 5 remain separate follow-up PRs.
 
 ## Collision Self-check
 
@@ -335,9 +348,10 @@ This plan PR itself touches only this plan file.
   separate node, past-chat, launcher, file, and payload adapters?
 - Should renderer pickers reuse only a tiny label ranker, or should any picker
   become main-backed after the node index lands?
-- Should past-chat relevance be the first follow-up after node retrieval, or
-  should launcher node search take priority because #103 is already in flight?
+- After Phase 1 and Phase 2 land, should Phase 3 prioritize past-chat relevance
+  or launcher/capture payload retrieval? Launcher node search itself should
+  already be constrained in Phase 0 to reuse the shared node path.
 - Are WAND/block-max pruning and persisted indexes correctly deferred until
   measured broad-query or cold-start failures?
-- Does this plan keep the implementation clean enough for Claude Code review, or
-  should Phase 1 and Phase 2 be split into separate PRs?
+- Are the Phase 1 / Phase 2 split boundaries small enough for review, or should
+  duplicate scorer removal be isolated as its own Phase 2a PR?
