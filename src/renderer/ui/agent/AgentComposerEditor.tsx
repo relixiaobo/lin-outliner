@@ -9,7 +9,7 @@ import {
   type CSSProperties,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { Schema, type Node as PMNode } from 'prosemirror-model';
+import { Fragment, Schema, Slice, type Node as PMNode } from 'prosemirror-model';
 import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { formatFileReferenceMarker, sanitizeFileReferenceRef } from '../../../core/referenceMarkup';
@@ -530,10 +530,22 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
             return false;
           },
           paste(viewInstance, event) {
-            const files = Array.from((event as ClipboardEvent).clipboardData?.files ?? []);
-            if (files.length === 0) return false;
+            const clipboard = (event as ClipboardEvent).clipboardData;
+            const files = Array.from(clipboard?.files ?? []);
+            if (files.length > 0) {
+              event.preventDefault();
+              propsRef.current.onFilesPasted(files);
+              return true;
+            }
+            const text = clipboard?.getData('text/plain') ?? '';
+            if (!text) return false;
+            // This composer is a single paragraph that carries newlines as
+            // hardBreaks (the same shape Shift+Enter produces). ProseMirror's
+            // default paste splits text into paragraphs that the one-paragraph
+            // schema then collapses to a single line, so we insert it ourselves
+            // and map each newline to a hardBreak.
             event.preventDefault();
-            propsRef.current.onFilesPasted(files);
+            insertPlainTextWithBreaks(viewInstance, text);
             return true;
           },
         },
@@ -923,6 +935,21 @@ function insertHardBreak(view: EditorView) {
   const pos = Math.min(view.state.selection.from + node.nodeSize, tr.doc.content.size - 1);
   tr = tr.setSelection(TextSelection.create(tr.doc, pos));
   view.dispatch(tr);
+}
+
+// Inserts pasted plain text at the selection, mapping each newline to a
+// hardBreak so multi-line content survives the single-paragraph schema. Mirrors
+// how `editorStateFromText` builds the paragraph body from a draft string.
+function insertPlainTextWithBreaks(view: EditorView, text: string): void {
+  const nodes: PMNode[] = [];
+  const lines = text.replace(/\r\n?/gu, '\n').split('\n');
+  lines.forEach((line, index) => {
+    if (line) nodes.push(agentComposerSchema.text(line));
+    if (index < lines.length - 1) nodes.push(agentComposerSchema.nodes.hardBreak.create());
+  });
+  if (nodes.length === 0) return;
+  const slice = new Slice(Fragment.fromArray(nodes), 0, 0);
+  view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView());
 }
 
 function removeFileReferenceNodes(view: EditorView, attachmentIds: ReadonlySet<string>) {
