@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { Core } from '../../src/core/core';
 import { plainText } from '../../src/core/types';
-import { buildContextCaptureInput, buildManualCaptureInput, CAPTURE_FIELD } from '../../src/core/launcher/sources';
+import { buildContextCaptureInput, buildManualNoteInput, CAPTURE_FIELD, isCaptureIntent } from '../../src/core/launcher/sources';
 import type { CaptureNodeMetadata } from '../../src/core/launcher/sources';
 import type { ExternalContext } from '../../src/core/launcher/context';
-import { projectFieldTypeById } from '../../src/core/configProjection';
+import { buildConfigIndex, projectFieldTypeById } from '../../src/core/configProjection';
 
 function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T) {
   expect(outcome.focus).toBeDefined();
@@ -82,53 +82,46 @@ describe('Core.createCapture', () => {
   });
 });
 
-describe('buildManualCaptureInput', () => {
-  test('builds a minimal launcher capture with no reopenable original', () => {
-    const input = buildManualCaptureInput({
+describe('buildManualNoteInput', () => {
+  test('builds a plain note: title + description, NO capture sidecar or tag', () => {
+    const input = buildManualNoteInput({
       destinationParentId: 'node:today',
       title: '  Buy milk  ',
       note: '  from the launcher  ',
-      captureId: 'cap:1',
-      capturedAt: '2026-06-03T10:00:00.000Z',
     });
     expect(input.destinationParentId).toBe('node:today');
     expect(input.title.text).toBe('Buy milk'); // collapsed to a single line + trimmed
     expect(input.description).toBe('from the launcher'); // note trimmed
-    expect(input.metadata.createdBy).toBe('launcher');
-    expect(input.metadata.intent).toBe('capture');
-    expect(input.metadata.providerId).toBe('unknown-app');
-    expect(input.metadata.source.original).toEqual({ kind: 'app-resource', preview: 'unsupported' });
-    expect(input.tag).toBeUndefined(); // a typed note is not tagged #capture
+    // A manual note has no external source — it is NOT a capture, so it carries
+    // neither a #capture tag nor a `capture` provenance sidecar.
+    expect(input.metadata).toBeUndefined();
+    expect(input.tag).toBeUndefined();
   });
 
   test('drops an empty note', () => {
-    const input = buildManualCaptureInput({
+    const input = buildManualNoteInput({
       destinationParentId: 'node:today',
       title: 'No note',
       note: '   ',
-      captureId: 'cap:2',
-      capturedAt: '2026-06-03T10:00:00.000Z',
     });
     expect(input.description).toBeUndefined();
   });
 
-  test('manual capture lands under today and carries the launcher sidecar', () => {
+  test('a manual note lands under today as a plain node (no sidecar)', () => {
     const core = Core.new();
     const now = new Date();
     const ensured = core.ensureDateNode(now.getFullYear(), now.getMonth() + 1, now.getDate());
     const todayId = ensured.projection.todayId;
-    const input = buildManualCaptureInput({
+    const input = buildManualNoteInput({
       destinationParentId: todayId,
-      title: 'Captured from launcher',
-      captureId: 'cap:3',
-      capturedAt: now.toISOString(),
+      title: 'Typed into the launcher',
     });
     const id = mustFocus(core.createCapture(input));
     const node = core.projection().nodes.find((entry) => entry.id === id);
     expect(node?.parentId).toBe(todayId);
-    expect(node?.content.text).toBe('Captured from launcher');
-    expect(node?.capture?.createdBy).toBe('launcher');
-    expect(node?.capture?.source.kind).toBe('app');
+    expect(node?.content.text).toBe('Typed into the launcher');
+    expect(node?.capture).toBeUndefined(); // plain note → no capture provenance
+    expect(node?.tags).toEqual([]); // and no #capture tag
   });
 });
 
@@ -396,5 +389,64 @@ describe('buildContextCaptureInput', () => {
     expect(nodes.filter((n) => n.id === CAPTURE_FIELD.url.id)).toHaveLength(1);
     expect(nodes.filter((n) => n.type === 'tagDef' && n.content.text === 'article')).toHaveLength(1);
     expect(nodes.filter((n) => n.type === 'tagDef' && n.content.text === 'capture')).toHaveLength(1);
+  });
+
+  test('reusing a user-owned same-named tag never rewrites its extends (data-integrity)', () => {
+    const core = Core.new();
+    // A user already owns a personal #video tag NOT rolled up under #capture.
+    const userVideoTag = mustFocus(core.createTag('video'));
+    expect(buildConfigIndex(core.state()).tag(userVideoTag)?.extends).toBeUndefined();
+
+    const libraryId = core.projection().libraryId;
+    const input = buildContextCaptureInput({
+      context: webpageContext({
+        providerId: 'youtube',
+        source: {
+          kind: 'video',
+          title: 'Some talk',
+          original: { kind: 'remote-url', url: 'https://youtube.com/watch?v=x', preview: 'web-preview' },
+          url: 'https://youtube.com/watch?v=x',
+          providerId: 'youtube',
+        },
+      }),
+      destinationParentId: libraryId,
+      captureId: 'cap:video',
+    });
+    expect(input.tag).toBe('video');
+    expect(input.tagExtends).toBe('capture');
+
+    const id = mustFocus(core.createCapture(input));
+    const node = core.projection().nodes.find((n) => n.id === id);
+    // The capture reused the user's existing #video tag (same id) ...
+    expect(node?.tags).toContain(userVideoTag);
+    // ... but did NOT silently re-parent it under #capture (would pull every
+    // node tagged #video into the capture rollup, non-undoably).
+    expect(buildConfigIndex(core.state()).tag(userVideoTag)?.extends).toBeUndefined();
+  });
+});
+
+describe('isCaptureIntent (process-seam allow-list)', () => {
+  test('accepts every known intent and rejects anything else', () => {
+    for (const intent of ['capture', 'clip', 'read-later', 'watch-later', 'summarize', 'ask-ai']) {
+      expect(isCaptureIntent(intent)).toBe(true);
+    }
+    expect(isCaptureIntent('delete-everything')).toBe(false);
+    expect(isCaptureIntent('')).toBe(false);
+    expect(isCaptureIntent(undefined)).toBe(false);
+    expect(isCaptureIntent(42)).toBe(false);
+    expect(isCaptureIntent({ intent: 'capture' })).toBe(false);
+  });
+});
+
+describe('Core.projectionNodesByIds', () => {
+  test('resolves only the requested nodes, skips missing, preserves input order', () => {
+    const core = Core.new();
+    const libraryId = core.projection().libraryId;
+    const a = mustFocus(core.createCapture(buildManualNoteInput({ destinationParentId: libraryId, title: 'Alpha' })));
+    const b = mustFocus(core.createCapture(buildManualNoteInput({ destinationParentId: libraryId, title: 'Beta' })));
+
+    const resolved = core.projectionNodesByIds([b, 'node:missing', a]);
+    expect(resolved.map((n) => n.content.text)).toEqual(['Beta', 'Alpha']);
+    expect(core.projectionNodesByIds([])).toEqual([]);
   });
 });

@@ -1,18 +1,4 @@
-import { existsSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { join } from 'node:path';
-
-// `electron` is resolved lazily (not a top-level import) so this module's graph
-// stays Electron-free: the unit-tested capture orchestrator imports it, and bun's
-// test runtime cannot load the `electron` shim's named exports.
-function appIsPackaged(): boolean {
-  try {
-    const electron = createRequire(import.meta.url)('electron') as typeof import('electron');
-    return Boolean(electron.app?.isPackaged);
-  } catch {
-    return false;
-  }
-}
+import { loadOptionalMacAddon } from '../nativeAddon';
 
 // Loader for the optional macOS `browser_tab` native addon (see
 // native/browser-tab/src/browser_tab.mm). It reads the focused browser window's
@@ -41,30 +27,14 @@ interface BrowserTabAddon {
 // undefined = not yet attempted; null = attempted and unavailable.
 let cached: BrowserTabAddon | null | undefined;
 
-function candidatePaths(): string[] {
-  if (appIsPackaged()) {
-    return [join(process.resourcesPath, 'native', 'browser_tab.node')];
-  }
-  // Dev/build-from-source: __dirname is <repo>/out/main, so the compiled addon
-  // sits two levels up under native/browser-tab/build/Release/.
-  return [join(__dirname, '../../native/browser-tab/build/Release/browser_tab.node')];
-}
-
 function loadAddon(): BrowserTabAddon | null {
   if (cached !== undefined) return cached;
-  cached = null;
-  if (process.platform !== 'darwin') return cached;
-  try {
-    const found = candidatePaths().find((path) => existsSync(path));
-    if (!found) return cached;
-    const requireAddon = createRequire(import.meta.url);
-    const mod = requireAddon(found) as BrowserTabAddon;
-    if (typeof mod?.getFocusedTab === 'function') {
-      cached = mod;
-    }
-  } catch {
-    cached = null;
-  }
+  cached = loadOptionalMacAddon<BrowserTabAddon>({
+    fileName: 'browser_tab.node',
+    devSubdir: 'browser-tab',
+    validate: (mod): mod is BrowserTabAddon =>
+      typeof (mod as BrowserTabAddon)?.getFocusedTab === 'function',
+  });
   return cached;
 }
 

@@ -54,7 +54,7 @@ describe('buildLauncherItems', () => {
     const note = items[0];
     if (note.kind !== 'capture-note') throw new Error('expected note');
     expect(note.text).toBe('buy milk');
-    expect(note.actions[0]).toMatchObject({ id: 'capture-note', enabled: true });
+    expect(note.actions[0]).toMatchObject({ id: 'capture-note' });
   });
 
   test('page context, no query → a single capture-page row (page only), no note', () => {
@@ -91,7 +91,7 @@ describe('buildLauncherItems', () => {
     // Save to Inbox / Ask AI with source were removed; they return with their
     // follow-up plans rather than shipping as disabled stubs.
     expect(page.actions).toHaveLength(1);
-    expect(page.actions[0]).toMatchObject({ id: 'capture-page', enabled: true });
+    expect(page.actions[0]).toMatchObject({ id: 'capture-page' });
   });
 
   test('a video source frames the row as "Capture video" with a plain hostname subtitle', () => {
@@ -140,7 +140,7 @@ describe('buildLauncherItems', () => {
     const firstNode = items.find((i) => i.kind === 'node');
     if (firstNode?.kind !== 'node') throw new Error('expected node');
     expect(firstNode.nodeId).toBe('node:1');
-    expect(firstNode.actions[0]).toMatchObject({ id: 'open-node', enabled: true });
+    expect(firstNode.actions[0]).toMatchObject({ id: 'open-node' });
     // Order: every node precedes every command.
     const lastNode = kinds.lastIndexOf('node');
     const firstCommand = kinds.indexOf('command');
@@ -196,7 +196,7 @@ describe('rowView', () => {
     const commands = items.filter((i) => i.kind === 'command');
     expect(commands).toHaveLength(COMMANDS.length);
     for (const cmd of commands) {
-      expect(rowView(cmd)).toMatchObject({ typeLabel: 'Command', enabled: true });
+      expect(rowView(cmd)).toMatchObject({ typeLabel: 'Command' });
     }
     const main = items.find((i) => i.kind === 'command' && i.command.id === 'open-main');
     if (!main) throw new Error('expected open-main');

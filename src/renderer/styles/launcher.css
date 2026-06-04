@@ -203,11 +203,6 @@ body {
   color: var(--text);
 }
 
-.launcher-row.is-disabled .launcher-row-title,
-.launcher-row.is-disabled .launcher-row-icon {
-  color: var(--text-tertiary);
-}
-
 .launcher-row-title {
   flex: 0 1 auto;
   min-width: 0;

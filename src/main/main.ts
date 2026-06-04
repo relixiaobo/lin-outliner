@@ -62,13 +62,12 @@ import {
   type LauncherInitialState,
   type LauncherNodeMatch,
 } from '../core/launcher/commands';
-import { buildContextCaptureInput, buildManualCaptureInput } from '../core/launcher/sources';
+import { buildContextCaptureInput, buildManualNoteInput, isCaptureIntent } from '../core/launcher/sources';
 import { resolveLauncherNodeMatches } from '../core/launcher/nodeMatches';
 import { captureExternalContext } from './context/contextCapture';
 import { isAccessibilityTrusted, promptAccessibility } from './context/nativeBrowserTab';
 import { getFrontmostApp } from './context/providers/browser';
 import type { FrontmostApp } from './context/providers/browser';
-import type { CaptureIntent } from '../core/launcher/sources';
 import type { ExternalContext } from '../core/launcher/context';
 import type { SearchHit } from '../core/types';
 
@@ -451,12 +450,13 @@ function createWindow() {
   });
   mainWindow.webContents.once('did-finish-load', () => {
     agentRuntime.ready();
-    // A launcher "open node" that had to spin up the main window waits for the
-    // renderer to load before the navigate event can land.
-    if (pendingNavigateNodeId) {
-      mainWindow?.webContents.send(LAUNCHER_NAVIGATE_TO_NODE_CHANNEL, pendingNavigateNodeId);
-      pendingNavigateNodeId = null;
-    }
+  });
+  // A launcher "open node" that had to spin up the main window — or that arrived
+  // during a renderer reload — waits for the renderer to load before the navigate
+  // can land. `on` (not `once`) so it re-arms across reloads (dev HMR full reload,
+  // in-app reload); a spent `once` would silently drop a later deferred navigate.
+  mainWindow.webContents.on('did-finish-load', () => {
+    flushPendingNavigates();
   });
 }
 
@@ -467,23 +467,34 @@ function focusMainWindow() {
   mainWindow.focus();
 }
 
-// A node id the launcher asked to open before the main window finished loading;
-// sent once `did-finish-load` fires (see createWindow).
-let pendingNavigateNodeId: string | null = null;
+// Node ids the launcher asked to open before the main window's renderer had
+// finished loading; flushed on each `did-finish-load` (see createWindow). A queue,
+// not a single slot, so two rapid cold opens before load don't clobber each other.
+let pendingNavigateNodeIds: string[] = [];
+
+function flushPendingNavigates(): void {
+  if (pendingNavigateNodeIds.length === 0) return;
+  const ids = pendingNavigateNodeIds;
+  pendingNavigateNodeIds = [];
+  for (const id of ids) {
+    mainWindow?.webContents.send(LAUNCHER_NAVIGATE_TO_NODE_CHANNEL, id);
+  }
+}
 
 /**
  * Open a document node in the main window (from a launcher inline search result):
  * bring the window up and tell the renderer to navigate + focus. If the window
- * isn't created yet, defer the navigate until its renderer has loaded.
+ * isn't created yet, or its renderer hasn't finished loading, defer the navigate
+ * until the next `did-finish-load` flush (re-armable across reloads).
  */
 function navigateMainToNode(nodeId: string): void {
   if (!mainWindow) {
-    pendingNavigateNodeId = nodeId;
+    pendingNavigateNodeIds.push(nodeId);
     createWindow();
   } else if (mainWindow.webContents.isLoading()) {
-    // Window exists but its renderer hasn't finished loading (the listener isn't
-    // attached yet) — defer; the did-finish-load handler flushes pendingNavigateNodeId.
-    pendingNavigateNodeId = nodeId;
+    // Window exists but its renderer hasn't finished loading — defer; the
+    // did-finish-load handler flushes the queue.
+    pendingNavigateNodeIds.push(nodeId);
   } else {
     mainWindow.webContents.send(LAUNCHER_NAVIGATE_TO_NODE_CHANNEL, nodeId);
   }
@@ -500,18 +511,23 @@ async function searchLauncherNodes(query: string): Promise<LauncherNodeMatch[]> 
   if (!q) return [];
   const hits = (await documentService.handle('search_nodes', { query: q })) as SearchHit[];
   if (hits.length === 0) return [];
-  const nodes = documentService.getProjection().nodes;
-  return resolveLauncherNodeMatches(
-    hits.map((hit) => hit.nodeId),
-    nodes.map((node) => ({
-      id: node.id,
-      text: node.content.text,
-      parentId: node.parentId,
-      icon: node.icon,
-      iconKind: node.iconKind,
-    })),
-    LAUNCHER_NODE_RESULT_LIMIT,
-  );
+  // Only the top hits are shown — resolve just those nodes (+ their parents, for
+  // the subtitle) by id, never materializing/mapping the whole-document projection
+  // on every debounced keystroke. Slice before lookup so work is bounded by the
+  // result limit, not the hit count.
+  const hitIds = hits.slice(0, LAUNCHER_NODE_RESULT_LIMIT).map((hit) => hit.nodeId);
+  const hitNodes = documentService.projectionNodesByIds(hitIds);
+  const parentIds = hitNodes
+    .map((node) => node.parentId)
+    .filter((id): id is string => Boolean(id));
+  const matchable = [...hitNodes, ...documentService.projectionNodesByIds(parentIds)].map((node) => ({
+    id: node.id,
+    text: node.content.text,
+    parentId: node.parentId,
+    icon: node.icon,
+    iconKind: node.iconKind,
+  }));
+  return resolveLauncherNodeMatches(hitIds, matchable, LAUNCHER_NODE_RESULT_LIMIT);
 }
 
 /** Max inline node results shown in the launcher (keeps the list scannable). */
@@ -821,7 +837,8 @@ function registerIpc() {
   }));
   ipcMain.handle('launcher:executeCommand', (_event, id: unknown): LauncherExecuteResult =>
     executeLauncherCommand(id));
-  // Manual New Capture: ensure today's date node, then create a capture under it.
+  // New node from the launcher: a plain typed note (no external source). Ensure
+  // today's date node, then create the node under it. NOT a capture — no sidecar.
   ipcMain.handle('launcher:createCapture', async (_event, raw: unknown): Promise<LauncherCreateCaptureResult> => {
     const payload = (raw ?? {}) as { title?: unknown; note?: unknown };
     const title = typeof payload.title === 'string' ? payload.title.trim() : '';
@@ -834,12 +851,10 @@ function registerIpc() {
         month: now.getMonth() + 1,
         day: now.getDate(),
       }) as CommandOutcome;
-      const input = buildManualCaptureInput({
+      const input = buildManualNoteInput({
         destinationParentId: ensured.projection.todayId,
         title,
         note,
-        captureId: `cap:${randomUUID()}`,
-        capturedAt: now.toISOString(),
       });
       const outcome = await documentService.handle('create_capture', { input }) as CommandOutcome;
       return { ok: true, nodeId: outcome.focus?.nodeId };
@@ -856,7 +871,9 @@ function registerIpc() {
     if (!context) return { ok: false };
     const payload = (raw ?? {}) as { note?: unknown; intent?: unknown };
     const note = typeof payload.note === 'string' ? payload.note : undefined;
-    const intent = typeof payload.intent === 'string' ? (payload.intent as CaptureIntent) : undefined;
+    // Validate against the known set — an out-of-enum string must not be persisted
+    // into the durable CaptureNodeMetadata (the renderer is across the seam).
+    const intent = isCaptureIntent(payload.intent) ? payload.intent : undefined;
     try {
       const now = new Date();
       const ensured = await documentService.handle('ensure_date_node', {

@@ -127,7 +127,7 @@ export function LauncherApp() {
   // makes every branch single-shot (no double window-open / navigate / capture).
   const runAction = useCallback(async (item: LauncherItem | undefined, action: LauncherItemAction | undefined) => {
     const launcher = window.lin?.launcher;
-    if (!launcher || !item || !action || !action.enabled || runningRef.current) return;
+    if (!launcher || !item || !action || runningRef.current) return;
     runningRef.current = true;
     try {
       if (action.id === 'run-command') {
@@ -242,7 +242,7 @@ export function LauncherApp() {
             <button
               type="button"
               className="launcher-actionbar-item launcher-actionbar-primary"
-              disabled={busy || !(activeItem?.actions[0]?.enabled ?? false)}
+              disabled={busy}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => void runAction(activeItem, activeItem?.actions[0])}
             >
@@ -267,19 +267,14 @@ function LauncherRow(props: {
   onClick: () => void;
 }) {
   const { item, active, rowRef, onHover, onClick } = props;
-  const { title, subtitle, typeLabel, enabled } = rowView(item);
+  const { title, subtitle, typeLabel } = rowView(item);
   return (
     <div
       ref={rowRef}
       id={`launcher-row-${rowKey(item)}`}
       role="option"
       aria-selected={active}
-      aria-disabled={!enabled}
-      className={[
-        'launcher-row',
-        active ? 'is-active' : '',
-        enabled ? '' : 'is-disabled',
-      ].filter(Boolean).join(' ')}
+      className={['launcher-row', active ? 'is-active' : ''].filter(Boolean).join(' ')}
       onMouseEnter={onHover}
       onClick={onClick}
     >

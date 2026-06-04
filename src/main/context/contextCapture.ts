@@ -529,14 +529,20 @@ export async function captureExternalContext(args: {
     // synchronous native call) and is authoritative for the URL + title.
     ax = pid ? getFocusedBrowserTab(pid) : null;
     const axUrl = ax?.url && /^https?:\/\//i.test(ax.url) ? ax.url : undefined;
-    // Classify the provider from the authoritative URL — drives the enricher even
-    // with no rich data (e.g. a YouTube link still becomes a #video + transcript).
-    siteProvider = selectSiteProvider(axUrl);
-    // Basic info: URL + title via the AppleScript front-tab read (the AX fallback
-    // when the native addon is unavailable).
-    tab = await getActiveTab(family, frontmost.name);
+    const axTitle = ax?.title?.trim() ? ax.title : undefined;
+    // The AppleScript front-tab read is the FALLBACK for URL + title. Skip its
+    // ~800ms osascript spawn when the AX read is authoritative AND complete (both
+    // URL + title present) — its output would be unused. Run it whenever AX is
+    // missing either field, so a generic webpage still gets its link/title.
+    tab = axUrl && axTitle ? null : await getActiveTab(family, frontmost.name);
+    const tabUrl = tab?.url && /^https?:\/\//i.test(tab.url) ? tab.url : undefined;
+    // Classify from the authoritative URL, falling back to the AppleScript tab URL
+    // so a YouTube/X/GitHub/Substack page is still recognized when Accessibility
+    // isn't granted (axUrl undefined). Classifying from axUrl alone would silently
+    // downgrade such a page to a generic #webpage even though the link is captured.
+    const url = axUrl ?? tabUrl;
+    siteProvider = selectSiteProvider(url);
     // Rich page data only when a backend extractor is supplied (none today).
-    const url = axUrl ?? tab?.url;
     if (args.extractor && url) {
       raw = await args.extractor.extract({ url, family, appName: frontmost.name, provider: siteProvider });
     }

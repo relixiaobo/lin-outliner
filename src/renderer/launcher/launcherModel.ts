@@ -16,13 +16,14 @@ import type { ExternalContext } from '../../core/launcher/context';
  * An action runnable from a row. Every row currently has exactly one action
  * (`actions[0]`, what Enter runs); the array shape is kept for when secondary
  * actions return (Save to Inbox, Ask AI with source — see the follow-up plans).
- * There are no disabled/"coming soon" actions: an action exists only if it works.
+ * There are no disabled/"coming soon" actions: an action exists only if it works
+ * (so there is deliberately no `enabled` flag — reintroduce it with its first real
+ * disabled-state consumer).
  */
 export interface LauncherItemAction {
   /** Stable behavior id the component maps to an IPC call. */
   id: 'capture-page' | 'capture-note' | 'open-node' | 'run-command';
   label: string;
-  enabled: boolean;
 }
 
 /** A navigable row. Capture/node rows are synthesized from the input; commands are static. */
@@ -97,20 +98,20 @@ export function buildLauncherItems(args: {
       title: source.title,
       subtitle: where,
       note: note || undefined,
-      actions: [{ id: 'capture-page', label: `Capture ${noun} to Today`, enabled: true }],
+      actions: [{ id: 'capture-page', label: `Capture ${noun} to Today` }],
     });
     if (note) {
       items.push({
         kind: 'capture-note',
         text: note,
-        actions: [{ id: 'capture-note', label: 'New node in Today', enabled: true }],
+        actions: [{ id: 'capture-note', label: 'New node in Today' }],
       });
     }
   } else if (note) {
     items.push({
       kind: 'capture-note',
       text: note,
-      actions: [{ id: 'capture-note', label: 'New node in Today', enabled: true }],
+      actions: [{ id: 'capture-note', label: 'New node in Today' }],
     });
   }
 
@@ -123,7 +124,7 @@ export function buildLauncherItems(args: {
       title: match.title,
       subtitle: match.subtitle,
       icon: match.icon,
-      actions: [{ id: 'open-node', label: 'Open', enabled: true }],
+      actions: [{ id: 'open-node', label: 'Open' }],
     });
   }
 
@@ -131,7 +132,7 @@ export function buildLauncherItems(args: {
     items.push({
       kind: 'command',
       command,
-      actions: [{ id: 'run-command', label: command.title, enabled: true }],
+      actions: [{ id: 'run-command', label: command.title }],
     });
   }
   return items;
@@ -146,7 +147,6 @@ export interface LauncherRowView {
   title: string;
   subtitle?: string;
   typeLabel: string;
-  enabled: boolean;
 }
 
 /** Quote a single-line snippet for a subtitle (already single-line upstream). */
@@ -167,16 +167,16 @@ export function rowView(item: LauncherItem): LauncherRowView {
   if (item.kind === 'capture-page') {
     const where = item.subtitle;
     const subtitle = item.note ? `+ ${quoted(item.note)} · ${where}` : `${item.title} · ${where}`;
-    return { title: 'Capture', subtitle, typeLabel: 'Command', enabled: true };
+    return { title: 'Capture', subtitle, typeLabel: 'Command' };
   }
   if (item.kind === 'capture-note') {
-    return { title: 'New node', subtitle: quoted(item.text), typeLabel: 'Command', enabled: true };
+    return { title: 'New node', subtitle: quoted(item.text), typeLabel: 'Command' };
   }
   if (item.kind === 'node') {
-    return { title: item.title, subtitle: item.subtitle, typeLabel: 'Node', enabled: true };
+    return { title: item.title, subtitle: item.subtitle, typeLabel: 'Node' };
   }
   const { command } = item;
-  return { title: command.title, subtitle: command.subtitle, typeLabel: 'Command', enabled: true };
+  return { title: command.title, subtitle: command.subtitle, typeLabel: 'Command' };
 }
 
 /** A short, human label for what Enter will do on the active row (for the action bar). */

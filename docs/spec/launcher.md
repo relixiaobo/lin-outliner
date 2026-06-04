@@ -95,7 +95,11 @@ URL** — no in-page body/transcript/selection extraction (that returns with the
 browser-extension backend). Orchestrated by `captureExternalContext`
 (`src/main/context/contextCapture.ts`): frontmost app via JXA NSWorkspace, the
 active tab via the Accessibility addon (authoritative, by PID) with an AppleScript
-front-tab fallback.
+front-tab fallback. The AppleScript spawn is skipped when the AX read already
+returned both URL + title (its output would be unused); it runs whenever either is
+missing. The provider is classified from `axUrl ?? tabUrl`, so a YouTube/X/GitHub/
+Substack page is still recognized when Accessibility isn't granted (rather than
+downgrading to a generic `#webpage`).
 
 Providers produced today (`selectSiteProvider`): `generic-webpage`, `youtube`
 (watch/Shorts → `video`), `x-twitter` (status → `tweet`), `github`
@@ -106,12 +110,20 @@ player-position anchor is stripped).
 `Enter` on a capture row calls `launcher:createContextCapture` /
 `launcher:createCapture`, which ensures today's date node and runs the
 `create_capture` document command under it. The main process holds the
-authoritative `ExternalContext`; the renderer supplies only an optional note, so
-it can't tamper with the saved source. The node carries a hidden `capture`
-provenance sidecar plus an outline projection (capture-kind tag + URL/Author/
-Published fields). A typed note nests **under** the capture as a child bullet (the
-outliner metaphor — "this source, and my note on it"), never the node's
-`description`. See [`commands.md`](commands.md) (`create_capture`).
+authoritative `ExternalContext`; the renderer supplies only an optional note (and
+intent — validated against the known `CaptureIntent` set at the seam before it
+reaches the durable sidecar), so it can't tamper with the saved source. A **page
+capture** node carries a hidden `capture` provenance sidecar plus an outline
+projection (capture-kind tag + URL/Author/Published fields); a typed note nests
+**under** it as a child bullet (the outliner metaphor — "this source, and my note
+on it"), never the node's `description`. A **plain manual note** (`capture-note`
+row, no source) is just a node under Today — no sidecar, no `#capture` tag, since
+it isn't a capture of anything. See [`commands.md`](commands.md) (`create_capture`).
+
+Capture-kind tags (`#article`/`#video`/…) roll up to `#capture` only when the
+launcher **creates** them. A pre-existing user tag of the same name is reused
+as-is — its `extends` is never rewritten — so a personal `#video` is not silently
+re-parented under `#capture`.
 
 A first browser capture without Accessibility prompts for it once. When the active
 tab can't be read at all (Automation denied), the launcher shows a quiet
@@ -123,12 +135,14 @@ There is **no** "Search notes" command — typing IS the search. The renderer
 debounces (120ms) and calls `launcher:searchNodes`; main runs the `search_nodes`
 document command and resolves the top hits (limit 8) into `LauncherNodeMatch`
 views (single-line title + parent text + emoji icon), since the locked-down
-launcher renderer can't read the document. `Enter` on a node calls
+launcher renderer can't read the document. Resolution looks up only the hit nodes
+(+ their parents) by id via `Core.projectionNodesByIds`, never materializing the
+whole-document projection per keystroke. `Enter` on a node calls
 `launcher:openNode` → `navigateMainToNode`, which brings up / creates the main
 window and sends `LAUNCHER_NAVIGATE_TO_NODE_CHANNEL` so the main renderer runs
 `navigateRoot + focusNode` (the same jump the in-app command palette uses). A
-navigate that arrives before the main window's renderer has loaded is deferred and
-flushed on `did-finish-load`.
+navigate that arrives before the main window's renderer has loaded is queued and
+flushed on each `did-finish-load` (re-armable, so it survives a renderer reload).
 
 ## Commands
 

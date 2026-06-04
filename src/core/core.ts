@@ -240,6 +240,24 @@ export class Core {
     return assembleProjection(state.workspaceId, state.rootId, todayId, this.projectionOrder, this.projectionNodes);
   }
 
+  /**
+   * Project specific nodes by id from the incremental cache — O(ids), skipping the
+   * whole-document `materializeState` + `assembleProjection` that `projection()`
+   * runs. For the launcher's per-keystroke inline search, which only needs the few
+   * hit nodes (+ a parent lookup) and would otherwise rebuild + map the full doc on
+   * every keystroke. Missing ids are skipped; order follows the input. (The cache
+   * reflects committed state; not for use mid-transaction.)
+   */
+  projectionNodesByIds(ids: Iterable<string>): NodeProjection[] {
+    this.ensureProjectionCache();
+    const out: NodeProjection[] = [];
+    for (const id of ids) {
+      const node = this.projectionNodes.get(id);
+      if (node) out.push(node);
+    }
+    return out;
+  }
+
   // The revision changes only when a mutation actually alters the document, so
   // the caller can detect "did anything change" without comparing snapshots.
   revision(): number {
@@ -521,7 +539,8 @@ export class Core {
       this.loro.createNodeWithId(id, input.destinationParentId, input.index ?? null, undefined, (node) => {
         node.content = clone(input.title);
         if (input.description !== undefined) node.description = input.description;
-        node.capture = clone(input.metadata);
+        // A plain manual note supplies no metadata → no capture sidecar.
+        if (input.metadata) node.capture = clone(input.metadata);
       });
       this.applyChildTagsDirect(input.destinationParentId, id);
       // Project the capture into native outline shape: a tag (most specific kind,
@@ -541,14 +560,22 @@ export class Core {
   }
 
   // Reuse a tag definition by name (creating it under the schema if absent), and
-  // ensure it extends the given supertag (e.g. #article extends #capture) so
-  // capture-type tags roll up to a single #capture collection. All idempotent so
-  // repeated captures never duplicate defs or rewrite an unchanged extends ref.
+  // wire `extends` to the given supertag (e.g. #article extends #capture) so
+  // capture-type tags roll up to a single #capture collection. Idempotent: repeated
+  // captures never duplicate defs.
+  //
+  // CRITICAL — only set `extends` on a tag WE just created. A user may already own a
+  // same-named personal tag (e.g. their own #video); silently re-parenting it under
+  // #capture would pull every node tagged with it into the capture rollup, and undo
+  // wouldn't restore the hierarchy. Reusing an existing tag's name is reversible
+  // (undo the capture removes the tag application); corrupting its hierarchy is not.
+  // So a pre-existing tag is reused as-is and its config is left untouched.
   private ensureCaptureTagDirect(name: string, extendsName?: string): string {
-    const tagId = findTagByName(this.snapshot(), name) ?? this.createTagDefDirect(name);
-    if (extendsName) {
+    const existing = findTagByName(this.snapshot(), name);
+    const tagId = existing ?? this.createTagDefDirect(name);
+    if (!existing && extendsName) {
       const superId = findTagByName(this.snapshot(), extendsName) ?? this.createTagDefDirect(extendsName);
-      if (superId !== tagId && configRefTarget(this.snapshot(), tagId, 'extends') !== superId) {
+      if (superId !== tagId) {
         this.setConfigValueDirect(tagId, { kind: 'ref', configKey: 'extends', targetId: superId });
       }
     }

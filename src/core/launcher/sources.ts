@@ -120,6 +120,27 @@ export type CaptureIntent =
   | 'summarize'
   | 'ask-ai';
 
+/** The known `CaptureIntent` values, for runtime validation at the process seam. */
+export const CAPTURE_INTENTS = [
+  'capture',
+  'clip',
+  'read-later',
+  'watch-later',
+  'summarize',
+  'ask-ai',
+] as const satisfies readonly CaptureIntent[];
+
+/**
+ * Whether a value is a known `CaptureIntent`. The launcher renderer is across the
+ * process seam, and `intent` is persisted into the durable, event-sourced
+ * `CaptureNodeMetadata`, so validate against the allow-list before trusting it —
+ * an out-of-enum string must never reach a saved node (a future exhaustive switch
+ * on intent would hit an unhandled value).
+ */
+export function isCaptureIntent(value: unknown): value is CaptureIntent {
+  return typeof value === 'string' && (CAPTURE_INTENTS as readonly string[]).includes(value);
+}
+
 /**
  * Typed JSON sidecar persisted on `NodeBase.capture`. Stores normalized PROVENANCE
  * metadata for a captured node — what it is and where it came from. Rich captured
@@ -191,13 +212,16 @@ export interface CaptureFieldInput {
 }
 
 /**
- * Input to the atomic `create_capture` document command: one root capture node
- * (title + optional user note + typed `capture` sidecar) projected into native
- * outline shape — a `tag` (the most specific capture-kind tag, rolling up to
- * `tagExtends`) and `fields` (`Source::`, `Author::`, …) — plus bounded visible
- * child nodes. Created in a single transaction so undo/redo stays coherent. The
- * outline is the readable/searchable projection; the hidden `capture` sidecar
+ * Input to the atomic `create_capture` document command: one root node (title +
+ * optional description) projected into native outline shape — an optional `tag`
+ * (the most specific capture-kind tag, rolling up to `tagExtends`) and `fields`
+ * (`Source::`, `Author::`, …) — plus bounded visible child nodes. Created in a
+ * single transaction so undo/redo stays coherent. The outline is the
+ * readable/searchable projection; the hidden `capture` sidecar (when present)
  * carries provider/resolver metadata only.
+ *
+ * `metadata` is optional: a real capture supplies it (provenance), while a plain
+ * manual note has no source and supplies none (no sidecar, no #capture tag).
  */
 export interface CreateCaptureInput {
   destinationParentId: NodeId;
@@ -211,7 +235,8 @@ export interface CreateCaptureInput {
   tagExtends?: string;
   /** Native outline fields projected from the source, in display order. */
   fields?: CaptureFieldInput[];
-  metadata: CaptureNodeMetadata;
+  /** Capture provenance sidecar; omitted for a plain (non-capture) manual note. */
+  metadata?: CaptureNodeMetadata;
   children?: CreateNodeTree[];
 }
 
@@ -228,47 +253,26 @@ const CAPTURE_TAG_BY_KIND: Partial<Record<SourceDraft['kind'], string>> = {
 };
 
 /**
- * Build a `CreateCaptureInput` for a manual launcher capture (no external
- * context): a plain title (+ optional note) saved under a destination, carrying
- * a minimal sidecar that records it came from the launcher. There is no
- * reopenable original resource, so `source.original` is an empty app-resource.
- * Pure + deterministic (ids/timestamps passed in) so it is unit-testable.
+ * Build a `CreateCaptureInput` for a plain manual note typed into the launcher (no
+ * external source): just a title (+ optional description) saved under a
+ * destination. A manual note is NOT a capture — there is no source to record — so
+ * it carries neither a #capture tag NOR a `capture` sidecar. (Stamping capture
+ * provenance on a plain note would leave a half-state: hidden provenance that
+ * capture consumers can't reach by tag, forcing them to special-case
+ * 'sidecar-but-untagged' or over-count notes as captures.) Pure + deterministic.
  */
-export function buildManualCaptureInput(args: {
+export function buildManualNoteInput(args: {
   destinationParentId: NodeId;
   title: string;
   note?: string;
-  captureId: string;
-  capturedAt: string;
 }): CreateCaptureInput {
-  const { destinationParentId, note, captureId, capturedAt } = args;
+  const { destinationParentId, note } = args;
   const title = singleLine(args.title);
-  const metadata: CaptureNodeMetadata = {
-    schemaVersion: 1,
-    captureId,
-    createdBy: 'launcher',
-    capturedAt,
-    origin: 'global-hotkey',
-    providerId: 'unknown-app',
-    app: { name: 'Tenon Launcher' },
-    source: {
-      kind: 'app',
-      title,
-      original: { kind: 'app-resource', preview: 'unsupported' },
-      providerId: 'unknown-app',
-    },
-    status: 'saved',
-    intent: 'capture',
-    warnings: [],
-  };
   const note_ = note?.trim();
-  // A manual note is just text the user typed — not a capture of external
-  // content — so it carries no #capture tag (only context captures are tagged).
   return {
     destinationParentId,
     title: plainText(title),
     ...(note_ ? { description: note_ } : {}),
-    metadata,
   };
 }
 

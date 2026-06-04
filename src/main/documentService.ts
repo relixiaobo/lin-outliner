@@ -94,6 +94,12 @@ export class DocumentService {
     return this.textSearchIndex!;
   }
 
+  /** Project specific nodes by id without rebuilding the whole-document projection
+   *  (the launcher inline-search hot path). See Core.projectionNodesByIds. */
+  projectionNodesByIds(ids: Iterable<string>) {
+    return this.core.projectionNodesByIds(ids);
+  }
+
   onProjectionChanged(listener: ProjectionChangedListener) {
     this.projectionChangedListeners.add(listener);
     return () => {
