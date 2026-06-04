@@ -42,6 +42,20 @@ _(nothing actively in flight)_
 
 Ordered by priority; lower items may depend on higher ones.
 
+- **search-retrieval-stack** (P1, codex, plan ratified — PR #107) — the follow-up
+  implementation path after #102: one shared, accurate, fast, clean retrieval
+  stack. Treat #102's `textSearchIndex` as the node-retrieval foundation; extract
+  reusable pure primitives (analyzer/ranking/snippet) **without** building a single
+  universal `SearchService`; keep domain adapters separate (node / past-chat /
+  launcher / file / capture-payload). **No protocol change**, no new deps, defer
+  WAND/persisted-index/SQLite/embeddings until probes show a concrete miss (A9).
+  **Land in small PRs:** Phase 1 = pure primitives + tests; Phase 2 = node-path
+  unification + remove the duplicate `agentNodeToolProjection.scoreTerm`; Phases
+  3 (past-chats) / 4 (reuse existing `candidateRanking.textMatchRank`) / 5
+  (capture-payload + scale) follow separately. Phase 0 constraint already met:
+  #103's launcher routes through the shared core `search_nodes`, not a parallel
+  ranker. Implementer must re-verify the merged #102 scoring paths before claiming
+  the substring scorers are gone (A8). See `docs/plans/search-retrieval-stack.md`.
 - **launcher-absorbs-commandpalette** (P2, **direction ratified by PM — needs a
   dev-drafted one-pager**) — converge the two search/command surfaces onto a
   single entry: the global launcher becomes the one launcher, the in-app cmd+k
