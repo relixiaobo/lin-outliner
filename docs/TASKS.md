@@ -64,13 +64,6 @@ Ordered by priority; lower items may depend on higher ones.
   unresolved questions across restart? edit-message scope? clarify contract?). Build
   on the merged path-first attachment model (#86); see the plan's "Integration notes"
   + "Directional decisions outstanding". `docs/plans/agent-ask-user-question-tool.md`.
-- **field-value-row-selection** (P2) — make field VALUE rows join the global node
-  multi-selection model (shift/cmd-select multiple value rows, then batch
-  delete/move/duplicate); keeps the append-only value model (no cardinality
-  revert). Leading fix: have `flattenVisibleRows` emit field-entry value children
-  — but **reproduce the real blocker first** (code-only analysis was
-  inconclusive). Mostly `state/document.ts`; batch commands already generic. See
-  `docs/plans/field-value-row-selection.md`.
 - **sidebar-pinned-nodes** (P2, **unblocked — workspace-tabs-to-single-pane landed in PR #85**) —
   implement the stubbed Pinned section: pin from right-click on BOTH outliner and
   sidebar node rows; persist across restart. Recommended storage = renderer layout
@@ -135,6 +128,17 @@ Ordered by priority; lower items may depend on higher ones.
   while the tool arguments stream. See `docs/plans/agent-generative-ui.md`.
 
 ## Recently completed
+
+- **field-value-row-selection** (codex, PR #97) — field VALUE rows now join the global
+  multi-selection model: a new `SelectableRow` action-policy layer (`state/selectableRows.ts`)
+  drives drag + keyboard selection and routes batch delete/move/duplicate/tag/checkbox through
+  one policy (field values delete via `removeFieldValue`, structural ops skip them). Computed
+  `sysref:` system-reference rows are emitted into the shared selectable model so mouse and
+  keyboard agree. Review-gate findings fixed before merge (focus-after-delete parentId, sysref
+  rows missing from the global path, locked-ref hard-delete regression, shift+click on a ref
+  chip, ref-click delete routing). Plan-track, renderer-only; typecheck clean, renderer 283/0,
+  e2e selection-keyboard 24/24. Spec updated (`outliner-parity-matrix.md`, `ui-behavior.md`,
+  A6); plan archived (`docs/plans/archive/field-value-row-selection.md`).
 
 - **agent-oauth-providers** (cc, PRs #92–#96) — real sign-in for the non-key auth classes
   (Anthropic Pro/Max, GitHub Copilot, OpenAI Codex) plus correct classification of managed

@@ -12,6 +12,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Field value rows join panel selection (PR #97)** — implements
+  `field-value-row-selection.md`. Field **value** rows can now be shift/cmd-selected into the
+  global multi-selection (drag and keyboard) alongside content rows, keeping the append-only
+  value model. A new `SelectableRow` action-policy layer (`state/selectableRows.ts` +
+  `interactions/selectionBatchActions.ts`) is the single source for what each row supports:
+  field values delete via `removeFieldValue` while structural ops (move/indent/duplicate) skip
+  them, and computed `sysref:` system-reference rows are emitted into the shared model so mouse
+  and keyboard selection agree. Review-gate findings were fixed before merge — focus-after-delete
+  now carries the row's parentId, the global selectable path includes system-reference rows
+  (no drag stall / mouse-keyboard divergence), a locked reference hard-deletes again, and
+  shift+click on an inline-ref chip extends the range. Spec updated
+  (`outliner-parity-matrix.md`, `ui-behavior.md`, A6).
+  ([#97](https://github.com/relixiaobo/lin-outliner/pull/97))
+
 - **Agent OAuth & managed-credential providers (PRs #92–#96)** — implements
   `agent-oauth-providers.md`. Providers that authenticate with a sign-in rather than a
   pasteable key (Anthropic Pro/Max, GitHub Copilot, OpenAI Codex) now have a real
