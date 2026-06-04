@@ -82,6 +82,15 @@ Ordered by priority; lower items may depend on higher ones.
   load/undo/full-rewrite (measured spike: 10k cold ~225ms, edit→search ~0.3ms).
   One-shot v1 (no split). Coordinate with `lazy-like-global-launcher` so launcher
   search reuses this kernel. See `docs/plans/text-search-relevance-layer.md`.
+- **provider-config-cleanup** (P1, plan ratified → **cc**) — fix the "shows
+  *Add key* yet offers *Remove provider*" contradiction: the main Settings Save
+  mints keyless provider rows and auto-activates uncredentialed providers.
+  **Decided:** main pane stops creating rows (creation only via the per-provider
+  window + OAuth login); credential-aware activation; load-time reconcile of junk
+  rows. Bundles three Providers-UI fixes — icon neutral tile + divider alignment;
+  auth-sheet button hierarchy (strong-neutral-solid primary); OAuth label clarity
+  ("Claude Code" = the Anthropic Claude Pro/Max sign-in, not a missing provider).
+  See `docs/plans/provider-config-cleanup.md`.
 - **sidebar-pinned-nodes** (P2, **unblocked — workspace-tabs-to-single-pane landed in PR #85**) —
   implement the stubbed Pinned section: pin from right-click on BOTH outliner and
   sidebar node rows; persist across restart. Recommended storage = renderer layout
