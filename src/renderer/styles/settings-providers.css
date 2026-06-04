@@ -141,16 +141,21 @@
   flex-direction: column;
 }
 
-/* Align the inset hairline with the row LABEL, leaving the 22px brand-avatar gutter
-   undivided (macOS grouped-list separators): row pad (--space-4) + avatar (22px) +
-   leading→text gap (--space-3). */
+/* Row separators sit WITHIN the row content, not bleeding to the panel edge: the
+   left edge aligns with the brand tile (the row's content padding, where the icon
+   starts), and a matching right inset balances it. A symmetric, inset hairline
+   reads as "one card of rows" rather than full-bleed rules. */
 .settings-provider-groups .inset-card {
-  --inset-separator-inset: calc(var(--space-4) + 22px + var(--space-3));
+  --inset-separator-inset: var(--space-4);
+  --inset-separator-inset-right: var(--space-4);
 }
 
-/* Brand avatar. The monogram fallback (no vendored logo) keeps a neutral fill so
-   the letter reads; a vendored logo shows bare — no box or border (the brand mark
-   is the identity, not a chip). */
+/* Brand avatar. Every provider mark — vendored brand logo OR monogram fallback —
+   sits on ONE neutral tile (a quiet --fill-* fill + concentric radius, like an app
+   icon). The brand SVG keeps its own colour (identity, not a functional-state
+   colour); the tile itself never carries brand/system colour (B3/B4). A logo
+   previously rendered bare, so it read as "missing background" next to the
+   monogram's fill — the unified tile removes that inconsistency. */
 .settings-provider-avatar {
   display: flex;
   flex: 0 0 auto;
@@ -159,7 +164,7 @@
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-sm);
-  background: var(--control-hover);
+  background: var(--fill-2);
   color: var(--text-soft);
   font-size: var(--font-ui-2xs);
   font-weight: 700;
@@ -170,11 +175,6 @@
   height: 38px;
   border-radius: var(--radius-md);
   font-size: var(--font-ui-md);
-}
-
-.settings-provider-avatar.has-logo {
-  background: transparent;
-  border: 0;
 }
 
 /* Inline brand SVG. `color` drives monochrome `currentColor` marks (OpenAI,

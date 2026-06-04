@@ -87,7 +87,10 @@ export const PROVIDER_AUTH: Record<string, ProviderAuthInfo> = {
 // Brand sign-in label + a docs link for the oauth providers, used by the
 // sign-in flow. Copy-only — the oauth CLASS is main's `authKind`.
 export const OAUTH_SIGN_IN: Record<string, { hint: string; docsUrl?: string; docsLabel?: string }> = {
-  anthropic: { hint: 'Sign in with your Claude Pro or Max subscription.' },
+  // pi-ai exposes no separate "Claude Code" provider — the Anthropic OAuth flow IS
+  // the Claude subscription login (its scopes include `user:sessions:claude_code`).
+  // Name it so it reads as that login, closing the "where's Claude Code?" gap.
+  anthropic: { hint: 'Sign in with your Claude Pro or Max subscription — the same Claude account Claude Code and claude.ai use.' },
   'github-copilot': {
     hint: 'Sign in with your GitHub account — no API key to paste.',
     docsUrl: 'https://github.com/features/copilot',

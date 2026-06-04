@@ -1138,10 +1138,16 @@ not Apple chrome. We borrow the interaction, not the chrome.
   later for consistency.
 - **Provider rows.** Providers group into "Connected" (has a credential — key,
   env, or managed) and "Available". Each row is the brand avatar as identity + the
-  name; clicking it opens the config sheet. The avatar shows the vendored brand SVG
-  bare (no box/border); it is INLINED (not an `<img>`) so monochrome marks using
-  `fill="currentColor"` (OpenAI, OpenRouter, Groq, …) follow the light/dark theme
-  via the avatar's `color`, while multicolour logos keep their own fills. The
+  name; clicking it opens the config sheet. Every provider mark — vendored brand
+  logo OR monogram fallback — sits on ONE neutral tile (a quiet `--fill-2` fill +
+  concentric radius, like an app icon); the tile never carries brand/system colour
+  (B3/B4), but the logo keeps its own (identity, not a functional-state colour). The
+  logo is INLINED (not an `<img>`) so monochrome marks using `fill="currentColor"`
+  (OpenAI, OpenRouter, Groq, …) follow the light/dark theme via the avatar's
+  `color`, while multicolour logos keep their own fills. Row separators are inset on
+  BOTH edges — the left aligns with the tile (the row's content padding), a matching
+  right inset keeps the hairline within the card rather than bleeding to the panel
+  edge. The
   trailing `⋯` (when present) is icon-only — just the glyph, no border or box (B6:
   signal by colour, not a frame); it deepens on hover and takes a quiet circular
   fill only while open. Its floating menu reuses the shared popover glass with the
@@ -1175,8 +1181,14 @@ not Apple chrome. We borrow the interaction, not the chrome.
   key is one `mode`. Managed-credential providers (e.g. AWS Bedrock) show an auth
   note instead of a key field.
 - **Status colour for status only (B4).** Validation success/failure uses
-  `--status-success` / `--status-danger`; the primary config action is a NEUTRAL
-  strong fill (`--fill-3`), never a system-blue accent.
+  `--status-success` / `--status-danger`; the primary action (Save / Sign in /
+  Continue) is a genuinely strong NEUTRAL fill — the native "filled default button"
+  idiom on `--surface-inverse` (shared with `.agent-settings-primary` and the
+  composer send button), never a system-blue accent (B4). The earlier `--fill-3`
+  tint read weaker than the bordered secondary; the solid fill makes the main action
+  unmistakable. Secondary is the bordered surface button; danger (`--status-danger`
+  text) is reserved for genuinely destructive actions (Sign out / Remove provider),
+  so exactly one button per footer reads as primary.
 
 ## Patterns
 
