@@ -54,16 +54,17 @@
   min-height: 40px;
 }
 
-/* Content-aligned hairline (macOS): the separator is INSET on the left to start at
-   the row's content, NOT edge-to-edge — the leading icon/avatar sits in an
-   undivided gutter, the way native grouped lists divide rows. Drawn as a pseudo so
-   the inset is a single tunable token; `--inset-separator-inset` defaults to the
-   row's text padding and consumers with a leading column widen it to clear the
-   icon. Flush to the right edge; painted over the row's hover/selection fill. */
+/* Content-aligned hairline (macOS): the separator is INSET so it starts at the
+   row's content, NOT edge-to-edge. Drawn as a pseudo so both insets are single
+   tunable tokens: `--inset-separator-inset` (left) defaults to the row's text
+   padding — a consumer with a leading column either widens it to clear the icon or
+   aligns it to the icon — and `--inset-separator-inset-right` defaults to 0 (flush
+   right) but a consumer can set it for a balanced, within-content rule. Painted
+   over the row's hover/selection fill. */
 .inset-row:not(:last-child)::after {
   content: '';
   position: absolute;
-  right: 0;
+  right: var(--inset-separator-inset-right, 0);
   bottom: 0;
   left: var(--inset-separator-inset, var(--space-4));
   height: 1px;

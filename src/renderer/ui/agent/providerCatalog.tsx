@@ -30,9 +30,20 @@ export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   fireworks: 'Fireworks AI',
   cerebras: 'Cerebras',
   minimax: 'MiniMax',
+  'minimax-cn': 'MiniMax (CN)',
   huggingface: 'Hugging Face',
   'kimi-coding': 'Kimi Coding',
   'github-copilot': 'GitHub Copilot',
+  'amazon-bedrock': 'Amazon Bedrock',
+  'vercel-ai-gateway': 'Vercel AI Gateway',
+  'cloudflare-workers-ai': 'Cloudflare Workers AI',
+  'cloudflare-ai-gateway': 'Cloudflare AI Gateway',
+  opencode: 'OpenCode',
+  'opencode-go': 'OpenCode Go',
+  xiaomi: 'Xiaomi MiMo',
+  'xiaomi-token-plan-cn': 'Xiaomi Token Plan (CN)',
+  'xiaomi-token-plan-ams': 'Xiaomi Token Plan (AMS)',
+  'xiaomi-token-plan-sgp': 'Xiaomi Token Plan (SGP)',
 };
 
 // Tokens that should keep a specific casing when a provider id falls through to
@@ -87,7 +98,10 @@ export const PROVIDER_AUTH: Record<string, ProviderAuthInfo> = {
 // Brand sign-in label + a docs link for the oauth providers, used by the
 // sign-in flow. Copy-only — the oauth CLASS is main's `authKind`.
 export const OAUTH_SIGN_IN: Record<string, { hint: string; docsUrl?: string; docsLabel?: string }> = {
-  anthropic: { hint: 'Sign in with your Claude Pro or Max subscription.' },
+  // pi-ai exposes no separate "Claude Code" provider — the Anthropic OAuth flow IS
+  // the Claude subscription login (its scopes include `user:sessions:claude_code`).
+  // Name it so it reads as that login, closing the "where's Claude Code?" gap.
+  anthropic: { hint: 'Sign in with your Claude Pro or Max subscription — the same Claude account Claude Code and claude.ai use.' },
   'github-copilot': {
     hint: 'Sign in with your GitHub account — no API key to paste.',
     docsUrl: 'https://github.com/features/copilot',

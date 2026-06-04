@@ -257,15 +257,20 @@
   background: var(--control-hover);
 }
 
-/* Primary = neutral strong fill, never a system-blue accent (B4). */
+/* Primary = a genuinely STRONG neutral fill: the native "filled default button"
+   idiom, but neutral (--surface-inverse), never a system-blue accent (B4). The
+   old --fill-3 tint (~1.7:1) read weaker than the bordered secondary; this solid
+   dark-on-light (light-on-dark in dark mode) fill makes the main action — Sign in
+   / Save / Continue — unmistakable. Matches .agent-settings-primary / the composer
+   send button, so the app has one primary-button language. */
 .settings-sheet-primary {
-  background: var(--fill-3);
+  background: var(--surface-inverse);
   border-color: transparent;
-  color: var(--text-primary);
+  color: var(--panel-bg);
 }
 
 .settings-sheet-primary:hover:not(:disabled) {
-  background: var(--fill-4);
+  background: var(--surface-inverse-strong);
 }
 
 .settings-sheet-danger {

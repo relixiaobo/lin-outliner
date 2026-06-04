@@ -18,4 +18,11 @@ is not a dependency — only these files are checked in.
 To add or refresh an icon, copy the matching SVG out of that package and
 rename it to the pi-ai provider id. The brand names there differ from the
 provider ids (e.g. `anthropic` ← `claude-color`, `google` ← `gemini-color`,
-`amazon-bedrock` ← `bedrock-color`, `xai` ← `grok`).
+`amazon-bedrock` ← `bedrock-color`, `xai` ← `grok`, `xiaomi` ← `xiaomimimo`
+— that provider serves Xiaomi's MiMo models).
+
+## Aliases
+
+Regional / plan variants of one brand reuse its mark instead of shipping a
+near-identical copy per id. The mapping lives in `providerIcon.ts`
+(`ICON_ALIASES`): e.g. `xiaomi-token-plan-{cn,ams,sgp}` → `xiaomi`.
