@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../core/agentTypes';
-import { LIN_DOCUMENT_EVENT_CHANNEL, type DocumentProjectionChangedEvent } from '../core/types';
+import { LIN_AGENT_OAUTH_EVENT_CHANNEL, LIN_DOCUMENT_EVENT_CHANNEL, type DocumentProjectionChangedEvent, type OAuthLoginEventEnvelope } from '../core/types';
 import { windowMaterialKind } from '../core/windowMaterial';
 import { LIN_SETTINGS_CHANGED_CHANNEL } from '../core/settingsWindow';
 import { LIN_WINDOW_ACTIVE_CHANNEL } from '../core/windowActivity';
@@ -102,6 +102,13 @@ const api = {
     ipcRenderer.on(LIN_AGENT_EVENT_CHANNEL, handler);
     return () => {
       ipcRenderer.removeListener(LIN_AGENT_EVENT_CHANNEL, handler);
+    };
+  },
+  onAgentOAuthEvent: (listener: (envelope: OAuthLoginEventEnvelope) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: OAuthLoginEventEnvelope) => listener(payload);
+    ipcRenderer.on(LIN_AGENT_OAUTH_EVENT_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(LIN_AGENT_OAUTH_EVENT_CHANNEL, handler);
     };
   },
   onDocumentEvent: (listener: (event: DocumentProjectionChangedEvent) => void) => {

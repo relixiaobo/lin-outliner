@@ -312,6 +312,14 @@ export const api = {
     command<AgentProviderSecretStatus>('agent_delete_provider_api_key', { providerId }),
   agentGetProviderSecretStatus: (providerId: string) =>
     command<AgentProviderSecretStatus>('agent_get_provider_secret_status', { providerId }),
+  agentOAuthLogin: (providerId: string) =>
+    command<AgentProviderSettingsView>('agent_oauth_login', { providerId }),
+  agentOAuthLogout: (providerId: string) =>
+    command<AgentProviderSettingsView>('agent_oauth_logout', { providerId }),
+  agentOAuthRespond: (requestId: string, value: string | undefined) =>
+    command<void>('agent_oauth_respond', { requestId, value }),
+  agentOAuthCancel: (providerId: string) =>
+    command<void>('agent_oauth_cancel', { providerId }),
   agentListAllDefinitions: (sessionId: string) =>
     command<AgentDefinition[]>('agent_list_all_definitions', { sessionId }),
   agentTestProviderConnection: (options: { providerId: string; modelId: string; baseUrl?: string; apiKey?: string }) =>

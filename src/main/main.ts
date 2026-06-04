@@ -19,7 +19,7 @@ import {
 } from '../core/settingsWindow';
 import { LIN_WINDOW_ACTIVE_CHANNEL } from '../core/windowActivity';
 import { ASSET_URL_SCHEME } from '../core/assets';
-import { LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput } from '../core/types';
+import { LIN_AGENT_OAUTH_EVENT_CHANNEL, LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput } from '../core/types';
 import {
   deleteProviderApiKey,
   deleteProviderConfig,
@@ -36,6 +36,7 @@ import {
   writeAgentToolPermissionSettingsView,
 } from './agentToolPermissionStore';
 import { isAgentCommand, isAssetCommand, isDocumentCommand, type AgentCommand, type AssetCommand } from '../core/commands';
+import { oauthLoginManager } from './agentOAuthManager';
 import { IPC_TRACE_ENABLED, traceIpc } from './ipcTrace';
 import type { AgentProviderConfigInput, AgentRuntimeSettingsInput } from '../core/types';
 import { loadWindowState, trackWindowState } from './windowState';
@@ -510,6 +511,10 @@ function openProviderConfigWindow(providerId: string, mode: ProviderConfigMode) 
   const parent = settingsWindow ?? undefined;
   // Replace any open config window (clicking another provider re-targets it).
   if (providerConfigWindow) {
+    // Abort any in-flight sign-in tied to the window we're replacing, so its
+    // loopback server / parked prompts don't leak and stale events can't reach
+    // the new window. (Only this provider's login can be in flight here.)
+    oauthLoginManager.cancelAll();
     providerConfigWindow.close();
     providerConfigWindow = null;
   }
@@ -569,7 +574,13 @@ function openProviderConfigWindow(providerId: string, mode: ProviderConfigMode) 
   }
 
   target.on('closed', () => {
-    providerConfigWindow = null;
+    // Act only on a genuine close of the *current* window — a re-target already
+    // cancelled the old login and reassigned the ref. Closing the live window
+    // must abort its in-flight sign-in (loopback server / parked prompts).
+    if (providerConfigWindow === target) {
+      oauthLoginManager.cancelAll();
+      providerConfigWindow = null;
+    }
   });
 }
 
@@ -1385,6 +1396,25 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
       return deleteProviderApiKey(String(args.providerId));
     case 'agent_get_provider_secret_status':
       return getProviderSecretStatus(String(args.providerId));
+    case 'agent_oauth_login': {
+      // Route events to the window that initiated this sign-in, so a re-target to
+      // another provider can't deliver them to the wrong window (where they'd be
+      // dropped, leaving the interactive step unanswerable and login() hung).
+      const loginWindow = providerConfigWindow;
+      return oauthLoginManager.startLogin(String(args.providerId), (envelope) => {
+        if (loginWindow && !loginWindow.isDestroyed()) {
+          loginWindow.webContents.send(LIN_AGENT_OAUTH_EVENT_CHANNEL, envelope);
+        }
+      });
+    }
+    case 'agent_oauth_logout':
+      return oauthLoginManager.logout(String(args.providerId));
+    case 'agent_oauth_respond':
+      oauthLoginManager.respond(String(args.requestId), args.value === undefined ? undefined : String(args.value));
+      return undefined;
+    case 'agent_oauth_cancel':
+      oauthLoginManager.cancel(String(args.providerId));
+      return undefined;
     case 'agent_list_all_definitions':
       return agentRuntime.listAllAgentDefinitions(String(args.sessionId));
     case 'agent_test_provider_connection':
