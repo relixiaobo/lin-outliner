@@ -39,6 +39,10 @@ import { buildOutlinerRows, hiddenFieldKey } from '../../src/renderer/ui/outline
 import { DONE_FIELD, NAME_FIELD } from '../../src/core/systemFields';
 import { searchQueryOutlineText, searchQuerySummaryModel } from '../../src/renderer/ui/search/SearchQuerySummaryBar';
 import { concatRichText } from '../../src/renderer/ui/editor/richTextCodec';
+import { getMessages } from '../../src/core/i18n';
+
+// The search-query summary/outline helpers take localized labels; exercise English.
+const enMessages = getMessages('en');
 
 describe('row interaction resolvers', () => {
   const makeNode = (id: string, text: string, overrides: Record<string, unknown> = {}) => ({
@@ -184,14 +188,14 @@ describe('row interaction resolvers', () => {
       ['target', makeNode('target', 'Task', { parentId: 'workspace' })],
     ]);
 
-	    expect(searchQuerySummaryModel({ byId, projection: {} } as any, 'search')).toEqual({
+	    expect(searchQuerySummaryModel({ byId, projection: {} } as any, 'search', enMessages)).toEqual({
 	      chips: [
 	        { kind: 'tag', label: '#card' },
 	        { kind: 'field', label: 'Status = Backlog' },
 	      ],
 	      resultCount: 1,
 	    });
-	    expect(searchQueryOutlineText({ byId, projection: {} } as any, 'search')).toBe([
+	    expect(searchQueryOutlineText({ byId, projection: {} } as any, 'search', enMessages)).toBe([
 	      '- AND',
 	      '  - HAS_TAG',
 	      '    - tag:: [[node:#card^tag-card]]',

@@ -1,6 +1,7 @@
 import type { CSSProperties, MouseEventHandler } from 'react';
 import { CloseIcon, ICON_SIZE, TrashIcon, WarningIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { useT } from '../../i18n/I18nProvider';
 import type { TagColor } from './tagColors';
 
 interface AppliedTagProps {
@@ -20,9 +21,10 @@ export function AppliedTag({
   onRemove,
   onContextMenu,
 }: AppliedTagProps) {
+  const t = useT();
   if (trashed) {
     return (
-      <span className="tag-badge trashed" title={`Tag "${label}" has been deleted`}>
+      <span className="tag-badge trashed" title={t.tags.deletedTitle({ label })}>
         <span className="tag-badge-hash">#</span>
         <span className="tag-badge-label">{label}</span>
         <WarningIcon size={ICON_SIZE.tiny + 1} />
@@ -44,9 +46,9 @@ export function AppliedTag({
       onContextMenu={onContextMenu}
     >
       <ButtonControl
-        aria-label={`Remove ${label} tag`}
+        aria-label={t.tags.removeAriaLabel({ label })}
         className="tag-badge-remove"
-        title="Remove tag"
+        title={t.tags.removeTitle}
         onMouseDown={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -61,7 +63,7 @@ export function AppliedTag({
         <CloseIcon className="tag-badge-x" size={ICON_SIZE.tiny + 1} strokeWidth={2.5} />
       </ButtonControl>
       <ButtonControl
-        aria-label={`Open ${label} tag`}
+        aria-label={t.tags.openAriaLabel({ label })}
         className="tag-badge-label clickable"
         title={label}
         onMouseDown={(event) => {

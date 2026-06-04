@@ -7,9 +7,13 @@ import type {
   AgentDebugUsage,
   AgentRuntimeEvent,
 } from '../../../core/agentTypes';
+import type { Messages } from '../../../core/i18n';
 import { api } from '../../api/client';
+import { useT } from '../../i18n/I18nProvider';
 import { ChevronDownIcon, CopyIcon, RefreshIcon, ICON_SIZE } from '../icons';
 import { IconButton } from '../primitives/IconButton';
+
+type DebugLabels = Messages['agentDebug'];
 
 interface AgentDebugPanelProps {
   sessionId: string | null;
@@ -71,22 +75,22 @@ function formatTime(timestamp: number): string {
   });
 }
 
-function formatPercent(value: number | null): string {
-  return value == null ? 'unknown' : `${value.toFixed(1)}%`;
+function formatPercent(value: number | null, labels: DebugLabels): string {
+  return value == null ? labels.unknown : `${value.toFixed(1)}%`;
 }
 
-function sourceLabel(snapshot: AgentDebugSnapshot): string {
-  if (snapshot.source === 'provider_payload') return 'Provider payload';
-  if (snapshot.source === 'provider_response') return 'Provider response';
-  return 'Runtime state';
+function sourceLabel(snapshot: AgentDebugSnapshot, labels: DebugLabels): string {
+  if (snapshot.source === 'provider_payload') return labels.sourceProviderPayload;
+  if (snapshot.source === 'provider_response') return labels.sourceProviderResponse;
+  return labels.sourceRuntimeState;
 }
 
-function statusLabel(input: Pick<AgentDebugSnapshot, 'status'>): string {
-  if (input.status === 'running') return 'Running';
-  if (input.status === 'completed') return 'Completed';
-  if (input.status === 'aborted') return 'Aborted';
-  if (input.status === 'interrupted') return 'Interrupted';
-  return 'Error';
+function statusLabel(input: Pick<AgentDebugSnapshot, 'status'>, labels: DebugLabels): string {
+  if (input.status === 'running') return labels.statusRunning;
+  if (input.status === 'completed') return labels.statusCompleted;
+  if (input.status === 'aborted') return labels.statusAborted;
+  if (input.status === 'interrupted') return labels.statusInterrupted;
+  return labels.statusError;
 }
 
 function statusClassName(input: Pick<AgentDebugSnapshot, 'status'>): string {
@@ -118,14 +122,14 @@ function previewFromPart(part: AgentDebugMessagePart): string {
   return truncate(part.body, 120);
 }
 
-function previewFromSnapshot(snapshot: AgentDebugSnapshot): string {
+function previewFromSnapshot(snapshot: AgentDebugSnapshot, labels: DebugLabels): string {
   for (let i = snapshot.messages.length - 1; i >= 0; i -= 1) {
     const message = snapshot.messages[i]!;
     if (message.role !== 'user') continue;
     const text = message.parts.find((part) => part.kind === 'text' && !part.isReminder);
     if (text?.kind === 'text') return truncate(text.body, 80);
   }
-  return `Provider request #${snapshot.turnIndex}`;
+  return labels.requestFallbackPreview({ index: snapshot.turnIndex });
 }
 
 function addUsage(total: AgentDebugUsage, usage: AgentDebugUsage) {
@@ -165,7 +169,7 @@ interface AgentDebugQueryBlock {
   total: AgentDebugUsage;
 }
 
-function buildQueryBlocks(history: AgentDebugSnapshot[]): AgentDebugQueryBlock[] {
+function buildQueryBlocks(history: AgentDebugSnapshot[], labels: DebugLabels): AgentDebugQueryBlock[] {
   const blocks = new Map<number, AgentDebugQueryBlock>();
   for (const snapshot of history) {
     const queryIndex = snapshot.queryIndex || snapshot.turnIndex;
@@ -174,7 +178,7 @@ function buildQueryBlocks(history: AgentDebugSnapshot[]): AgentDebugQueryBlock[]
       block = {
         id: `query-${queryIndex}`,
         queryIndex,
-        preview: previewFromSnapshot(snapshot),
+        preview: previewFromSnapshot(snapshot, labels),
         rounds: [],
         status: snapshot.status,
         total: emptyUsage(),
@@ -183,7 +187,7 @@ function buildQueryBlocks(history: AgentDebugSnapshot[]): AgentDebugQueryBlock[]
     }
     block.rounds.push(snapshot);
     block.status = snapshot.status;
-    const nextPreview = previewFromSnapshot(snapshot);
+    const nextPreview = previewFromSnapshot(snapshot, labels);
     if (nextPreview) block.preview = nextPreview;
     if (snapshot.usage) addUsage(block.total, snapshot.usage);
   }
@@ -295,14 +299,15 @@ function useAgentDebug(sessionId: string | null) {
 }
 
 export function AgentDebugPanel({ sessionId }: AgentDebugPanelProps) {
+  const labels = useT().agentDebug;
   const { error, history, loading, refresh, resolvedSessionId, snapshot, totals } = useAgentDebug(sessionId);
   const latest = snapshot ?? history.at(-1) ?? null;
-  const queryBlocks = useMemo(() => buildQueryBlocks(history), [history]);
+  const queryBlocks = useMemo(() => buildQueryBlocks(history, labels), [history, labels]);
 
   if (!sessionId && !resolvedSessionId && loading) {
     return (
       <div className="agent-debug-panel">
-        <div className="agent-debug-empty">Loading latest agent session...</div>
+        <div className="agent-debug-empty">{labels.loadingSession}</div>
       </div>
     );
   }
@@ -310,7 +315,7 @@ export function AgentDebugPanel({ sessionId }: AgentDebugPanelProps) {
   if (!sessionId && !resolvedSessionId) {
     return (
       <div className="agent-debug-panel">
-        <div className="agent-debug-empty">No active agent session.</div>
+        <div className="agent-debug-empty">{labels.noSession}</div>
       </div>
     );
   }
@@ -319,65 +324,66 @@ export function AgentDebugPanel({ sessionId }: AgentDebugPanelProps) {
     <div className="agent-debug-panel">
       <header className="agent-debug-header">
         <div>
-          <h2>Agent Debug</h2>
+          <h2>{labels.title}</h2>
           <p>{resolvedSessionId ?? sessionId}</p>
         </div>
         <IconButton
           className="agent-debug-icon-button"
           icon={RefreshIcon}
-          label="Refresh agent debug"
+          label={labels.refreshLabel}
           onClick={() => void refresh()}
-          title="Refresh"
+          title={labels.refreshTitle}
           variant="panel"
         />
       </header>
 
-      {loading && !latest ? <div className="agent-debug-card is-muted">Loading live runtime data...</div> : null}
+      {loading && !latest ? <div className="agent-debug-card is-muted">{labels.loadingRuntime}</div> : null}
       {error ? <div className="agent-debug-error">{error}</div> : null}
 
       {latest ? (
         <>
           <SessionBar latest={latest} totals={totals} />
           <ContextCard snapshot={latest} />
-          <section className="agent-debug-query-stack" aria-label="Provider request timeline">
+          <section className="agent-debug-query-stack" aria-label={labels.timelineAriaLabel}>
             {queryBlocks.length === 0 ? (
-              <div className="agent-debug-card is-muted">No provider requests captured yet.</div>
+              <div className="agent-debug-card is-muted">{labels.noRequests}</div>
             ) : queryBlocks.map((block) => (
               <QueryCard block={block} key={block.id} />
             ))}
           </section>
         </>
       ) : (
-        <div className="agent-debug-card is-muted">No runtime data available.</div>
+        <div className="agent-debug-card is-muted">{labels.noRuntimeData}</div>
       )}
     </div>
   );
 }
 
 function SessionBar(props: { latest: AgentDebugSnapshot; totals: AgentDebugTotals }) {
+  const labels = useT().agentDebug;
   const latest = props.latest;
   const estimate = latest.tokenEstimate;
-  const contextWindow = estimate.contextWindow ? formatTokens(estimate.contextWindow) : 'unknown';
+  const contextWindow = estimate.contextWindow ? formatTokens(estimate.contextWindow) : labels.unknown;
   return (
-    <section className="agent-debug-overview-grid" aria-label="Agent debug overview">
+    <section className="agent-debug-overview-grid" aria-label={labels.overviewAriaLabel}>
       <DebugMetric
-        label="Session"
-        value={`${props.totals.queries} queries`}
-        meta={<>{props.totals.rounds} rounds · <CostInline usage={props.totals} /></>}
+        label={labels.metricSession}
+        value={labels.queries({ count: props.totals.queries })}
+        meta={<>{labels.rounds({ count: props.totals.rounds })} · <CostInline usage={props.totals} /></>}
       />
       <DebugMetric
-        label="Model"
+        label={labels.metricModel}
         value={latest.modelId}
-        meta={<>{latest.provider} · {sourceLabel(latest)}</>}
+        meta={<>{latest.provider} · {sourceLabel(latest, labels)}</>}
       />
       <DebugMetric
-        label="Context"
+        label={labels.metricContext}
         value={`${formatTokens(estimate.total)} / ${contextWindow}`}
-        meta={formatPercent(estimate.usagePercent)}
+        meta={formatPercent(estimate.usagePercent, labels)}
       />
       <DebugMetric
-        label="Status"
-        value={<span className={statusClassName(latest)}>{statusLabel(latest)}</span>}
+        label={labels.metricStatus}
+        value={<span className={statusClassName(latest)}>{statusLabel(latest, labels)}</span>}
         meta={formatTime(latest.capturedAt)}
       />
     </section>
@@ -385,23 +391,29 @@ function SessionBar(props: { latest: AgentDebugSnapshot; totals: AgentDebugTotal
 }
 
 function ContextCard({ snapshot }: { snapshot: AgentDebugSnapshot }) {
+  const labels = useT().agentDebug;
   const estimate = snapshot.tokenEstimate;
-  const contextWindow = estimate.contextWindow ? formatTokens(estimate.contextWindow) : 'unknown';
+  const contextWindow = estimate.contextWindow ? formatTokens(estimate.contextWindow) : labels.unknown;
+  const requestJson = labels.requestJson({ size: formatBytes(snapshot.wire.bytes) });
   return (
     <section className="agent-debug-card agent-debug-context-card" aria-labelledby="agent-debug-context-heading">
       <DebugSectionHeader
         id="agent-debug-context-heading"
-        title="Request Context"
-        meta={`${formatBytes(snapshot.wire.bytes)} request JSON`}
+        title={labels.requestContext}
+        meta={requestJson}
       />
       <div className="agent-debug-context-head">
         <div>
-          <div className="agent-debug-section-title">Context</div>
+          <div className="agent-debug-section-title">{labels.contextLabel}</div>
           <div className="agent-debug-context-summary">
-            {formatTokens(estimate.total)} / {contextWindow} tokens · {formatPercent(estimate.usagePercent)}
+            {labels.contextSummary({
+              total: formatTokens(estimate.total),
+              window: contextWindow,
+              percent: formatPercent(estimate.usagePercent, labels),
+            })}
           </div>
         </div>
-        <code>{formatBytes(snapshot.wire.bytes)} request JSON</code>
+        <code>{requestJson}</code>
       </div>
       <div className="agent-debug-token-bar">
         <div
@@ -410,24 +422,24 @@ function ContextCard({ snapshot }: { snapshot: AgentDebugSnapshot }) {
         />
       </div>
       <div className="agent-debug-stat-row">
-        <span>system {formatTokens(estimate.systemPrompt)}</span>
-        <span>tools {formatTokens(estimate.tools)}</span>
-        <span>messages {formatTokens(estimate.messages)}</span>
-        <strong>total {formatTokens(estimate.total)}</strong>
+        <span>{labels.statSystem} {formatTokens(estimate.systemPrompt)}</span>
+        <span>{labels.statTools} {formatTokens(estimate.tools)}</span>
+        <span>{labels.statMessages} {formatTokens(estimate.messages)}</span>
+        <strong>{labels.statTotal} {formatTokens(estimate.total)}</strong>
       </div>
       <div className="agent-debug-context-details">
-        <ContextDisclosure title={`System Prompt · ${formatBytes(snapshot.systemPromptBytes)}`} copyText={snapshot.systemPrompt}>
-          <pre>{snapshot.systemPrompt || '(empty)'}</pre>
+        <ContextDisclosure title={labels.systemPromptDisclosure({ size: formatBytes(snapshot.systemPromptBytes) })} copyText={snapshot.systemPrompt}>
+          <pre>{snapshot.systemPrompt || labels.empty}</pre>
         </ContextDisclosure>
-        <ContextDisclosure title={`Tools · ${snapshot.tools.length}`}>
+        <ContextDisclosure title={labels.toolsDisclosure({ count: snapshot.tools.length })}>
           {snapshot.tools.length === 0 ? (
-            <div className="agent-debug-empty-line">No tools in this request.</div>
+            <div className="agent-debug-empty-line">{labels.noTools}</div>
           ) : snapshot.tools.map((tool) => (
             <details className="agent-debug-tool-row" key={tool.name}>
               <summary>
                 <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.tiny} />
                 <strong>{tool.name}</strong>
-                <span>{tool.description || 'No description'}</span>
+                <span>{tool.description || labels.noDescription}</span>
                 <code>{formatBytes(tool.bytes)}</code>
               </summary>
               <pre>{tool.schema}</pre>
@@ -440,16 +452,17 @@ function ContextCard({ snapshot }: { snapshot: AgentDebugSnapshot }) {
 }
 
 function QueryCard({ block }: { block: AgentDebugQueryBlock }) {
+  const labels = useT().agentDebug;
   return (
     <details className="agent-debug-card agent-debug-query-card" open>
       <summary>
         <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.menu} />
-        <span className="agent-debug-query-index">Q{block.queryIndex}</span>
+        <span className="agent-debug-query-index">{labels.queryIndex({ index: block.queryIndex })}</span>
         <strong>{block.preview}</strong>
         <span className="agent-debug-query-meta">
-          {block.rounds.length} rounds · <CostInline usage={block.total} />
+          {labels.rounds({ count: block.rounds.length })} · <CostInline usage={block.total} />
         </span>
-        <span className={statusClassName({ status: block.status })}>{statusLabel({ status: block.status })}</span>
+        <span className={statusClassName({ status: block.status })}>{statusLabel({ status: block.status }, labels)}</span>
       </summary>
       <div className="agent-debug-query-body">
         {block.rounds.map((round) => (
@@ -461,21 +474,22 @@ function QueryCard({ block }: { block: AgentDebugQueryBlock }) {
 }
 
 function RoundCard({ round }: { round: AgentDebugSnapshot }) {
+  const labels = useT().agentDebug;
   return (
     <article className="agent-debug-round-card">
       <div className="agent-debug-round-head">
         <div>
-          <strong>Round {round.turnIndex}</strong>
+          <strong>{labels.round({ index: round.turnIndex })}</strong>
           <span>{formatTime(round.capturedAt)} · {round.modelId}</span>
         </div>
         <div className="agent-debug-round-meta">
-          <span className={statusClassName(round)}>{statusLabel(round)}</span>
-          <span>{round.usage ? <CostInline usage={round.usage} /> : 'usage pending'}</span>
+          <span className={statusClassName(round)}>{statusLabel(round, labels)}</span>
+          <span>{round.usage ? <CostInline usage={round.usage} /> : labels.usagePending}</span>
           <code>{round.wire.hash}</code>
         </div>
       </div>
       <div className="agent-debug-round-timeline">
-        <div className="agent-debug-subsection-title">Messages · {round.messageCount} request messages</div>
+        <div className="agent-debug-subsection-title">{labels.messagesSubsection({ count: round.messageCount })}</div>
         <div className="agent-debug-message-list">
           {round.messages.map((message) => (
             <MessageRow message={message} key={message.id} />
@@ -489,6 +503,7 @@ function RoundCard({ round }: { round: AgentDebugSnapshot }) {
 }
 
 function RawProviderPayload({ round }: { round: AgentDebugSnapshot }) {
+  const labels = useT().agentDebug;
   const [payload, setPayload] = useState<string | null>(round.wire.json ?? null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -507,11 +522,11 @@ function RawProviderPayload({ round }: { round: AgentDebugSnapshot }) {
     void api.agentDebugPayload(round.sessionId, payloadId)
       .then((nextPayload) => {
         setPayload(nextPayload ?? '');
-        if (nextPayload == null) setError('Payload is no longer available.');
+        if (nextPayload == null) setError(labels.payloadUnavailableNow);
       })
       .catch((nextError) => setError(nextError instanceof Error ? nextError.message : String(nextError)))
       .finally(() => setLoading(false));
-  }, [loading, payload, round.sessionId, round.wire.payloadRef?.id]);
+  }, [labels, loading, payload, round.sessionId, round.wire.payloadRef?.id]);
 
   return (
     <details
@@ -522,13 +537,13 @@ function RawProviderPayload({ round }: { round: AgentDebugSnapshot }) {
     >
       <summary>
         <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.menu} />
-        <span>Raw Provider Payload · {formatBytes(round.wire.bytes)}</span>
+        <span>{labels.rawPayload({ size: formatBytes(round.wire.bytes) })}</span>
         {payload ? (
           <IconButton
             className="agent-debug-copy-button"
             icon={CopyIcon}
             iconSize={ICON_SIZE.tiny}
-            label="Copy Raw Provider Payload"
+            label={labels.copyRawPayload}
             onClick={(event) => {
               event.preventDefault();
               void copyText(payload);
@@ -543,11 +558,11 @@ function RawProviderPayload({ round }: { round: AgentDebugSnapshot }) {
         ) : error ? (
           <div className="agent-debug-error">{error}</div>
         ) : loading ? (
-          <div className="agent-debug-empty-line">Loading payload...</div>
+          <div className="agent-debug-empty-line">{labels.loadingPayload}</div>
         ) : round.wire.payloadRef ? (
-          <div className="agent-debug-empty-line">Open this section to load the stored payload.</div>
+          <div className="agent-debug-empty-line">{labels.openToLoad}</div>
         ) : (
-          <div className="agent-debug-empty-line">Raw payload is unavailable.</div>
+          <div className="agent-debug-empty-line">{labels.rawPayloadUnavailable}</div>
         )}
       </div>
     </details>
@@ -555,16 +570,18 @@ function RawProviderPayload({ round }: { round: AgentDebugSnapshot }) {
 }
 
 function ResponseMessageRow({ round }: { round: AgentDebugSnapshot }) {
+  const labels = useT().agentDebug;
   return (
     <article className="agent-debug-message-row is-response">
       <div className="agent-debug-message-head">
+        {/* `assistant` is the wire role name, mirrored verbatim like other protocol fields. */}
         <span>assistant</span>
-        <strong>Provider response</strong>
-        <span>{round.usage ? <CostInline usage={round.usage} /> : 'usage pending'}</span>
+        <strong>{labels.providerResponse}</strong>
+        <span>{round.usage ? <CostInline usage={round.usage} /> : labels.usagePending}</span>
       </div>
       <div className="agent-debug-part-list">
         {round.responseParts.length === 0 ? (
-          <div className="agent-debug-empty-line">No response parts captured yet.</div>
+          <div className="agent-debug-empty-line">{labels.noResponseParts}</div>
         ) : round.responseParts.map((part, index) => (
           <PartRow part={part} rowId={`response-${round.id}`} index={index} key={`response-${index}`} />
         ))}
@@ -575,6 +592,7 @@ function ResponseMessageRow({ round }: { round: AgentDebugSnapshot }) {
 }
 
 function MessageRow({ message }: { message: AgentDebugMessageRow }) {
+  const labels = useT().agentDebug;
   return (
     <article className="agent-debug-message-row">
       <div className="agent-debug-message-head">
@@ -587,7 +605,7 @@ function MessageRow({ message }: { message: AgentDebugMessageRow }) {
           <PartRow part={part} rowId={message.id} index={index} key={`${message.id}-${index}`} />
         ))}
       </div>
-      <ContextDisclosure title="Raw message JSON" copyText={message.json}>
+      <ContextDisclosure title={labels.rawMessageJson} copyText={message.json}>
         <pre>{message.json}</pre>
       </ContextDisclosure>
     </article>
@@ -595,6 +613,7 @@ function MessageRow({ message }: { message: AgentDebugMessageRow }) {
 }
 
 function PartRow(props: { index: number; part: AgentDebugMessagePart; rowId: string }) {
+  const labels = useT().agentDebug;
   const body = partBody(props.part);
   return (
     <details className={`agent-debug-part-details is-${props.part.kind}`}>
@@ -606,7 +625,7 @@ function PartRow(props: { index: number; part: AgentDebugMessagePart; rowId: str
           className="agent-debug-copy-button"
           icon={CopyIcon}
           iconSize={ICON_SIZE.tiny}
-          label={`Copy ${partTitle(props.part)}`}
+          label={labels.copyTitle({ title: partTitle(props.part) })}
           onClick={(event) => {
             event.preventDefault();
             void copyText(body);
@@ -620,6 +639,7 @@ function PartRow(props: { index: number; part: AgentDebugMessagePart; rowId: str
 }
 
 function ContextDisclosure(props: { children: ReactNode; copyText?: string; title: string }) {
+  const labels = useT().agentDebug;
   return (
     <details className="agent-debug-disclosure">
       <summary>
@@ -630,7 +650,7 @@ function ContextDisclosure(props: { children: ReactNode; copyText?: string; titl
             className="agent-debug-copy-button"
             icon={CopyIcon}
             iconSize={ICON_SIZE.tiny}
-            label={`Copy ${props.title}`}
+            label={labels.copyTitle({ title: props.title })}
             onClick={(event) => {
               event.preventDefault();
               void copyText(props.copyText ?? '');
