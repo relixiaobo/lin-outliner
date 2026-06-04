@@ -148,19 +148,60 @@ function fenceLanguage(info: string): string {
 const TAG_TOKEN = /(^|\s)#([A-Za-z][\w-]*)/gu;
 const FIELD_TOKEN = /(^|\s)([A-Za-z][\w-]*)::[ \t]+(.+?)(?=\s+[A-Za-z][\w-]*::[ \t]|\s+#[A-Za-z]|$)/gu;
 
+// Link `[label](url)` and inline-code `` `code` `` spans are off-limits to the
+// tag / field scan: a `#frag` or `name::` inside them is link text, a URL
+// fragment, or code — not metadata. Without this, `See [the #section](url)`
+// loses its label to a spurious `section` tag. Ranges are computed on the same
+// raw text the harvest scans, so positions line up.
+function harvestProtectedRanges(text: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  for (const match of text.matchAll(INLINE_TOKEN)) {
+    if (match[1] === undefined && match[7] === undefined) continue; // keep only link (1) / code (7)
+    const start = match.index ?? 0;
+    ranges.push([start, start + match[0].length]);
+  }
+  return ranges;
+}
+
+function inAnyRange(pos: number, ranges: ReadonlyArray<readonly [number, number]>): boolean {
+  return ranges.some(([start, end]) => pos >= start && pos < end);
+}
+
 function extractTagsAndFields(text: string): { text: string; tags: string[]; fields: ParsedPasteField[] } {
   const tags: string[] = [];
   const fields: ParsedPasteField[] = [];
-  // Fields first: their values may contain words a later tag scan must not see.
-  let rest = text.replace(FIELD_TOKEN, (_match, lead: string, name: string, value: string) => {
-    fields.push({ name, value: value.trim() });
-    return lead;
-  });
-  rest = rest.replace(TAG_TOKEN, (_match, lead: string, name: string) => {
-    tags.push(name);
-    return lead;
-  });
-  return { text: rest.replace(/\s{2,}/gu, ' ').trim(), tags, fields };
+  const protectedRanges = harvestProtectedRanges(text);
+  // Collect harvest spans against the ORIGINAL text so positions stay valid;
+  // fields before tags so a field value's words are never re-scanned as a tag.
+  const removals: Array<{ start: number; end: number; lead: number }> = [];
+  for (const match of text.matchAll(FIELD_TOKEN)) {
+    const start = match.index ?? 0;
+    const lead = (match[1] ?? '').length;
+    if (inAnyRange(start + lead, protectedRanges)) continue;
+    fields.push({ name: match[2], value: (match[3] ?? '').trim() });
+    removals.push({ start, end: start + match[0].length, lead });
+  }
+  for (const match of text.matchAll(TAG_TOKEN)) {
+    const start = match.index ?? 0;
+    const lead = (match[1] ?? '').length;
+    if (inAnyRange(start + lead, protectedRanges)) continue;
+    // A `#word` that sits inside an already-harvested field span is part of that
+    // value (e.g. `color:: #fff`), not a separate tag.
+    if (removals.some((removal) => start + lead >= removal.start && start + lead < removal.end)) continue;
+    tags.push(match[2]);
+    removals.push({ start, end: start + match[0].length, lead });
+  }
+  // Rebuild the line minus the harvested tokens, keeping each token's lead ws.
+  removals.sort((a, b) => a.start - b.start);
+  let out = '';
+  let cursor = 0;
+  for (const removal of removals) {
+    if (removal.start < cursor) continue; // skip an overlap
+    out += text.slice(cursor, removal.start + removal.lead);
+    cursor = removal.end;
+  }
+  out += text.slice(cursor);
+  return { text: out.replace(/\s{2,}/gu, ' ').trim(), tags, fields };
 }
 
 function lineToTree(rawText: string): CreateNodeTree {
@@ -465,6 +506,14 @@ function htmlHasRichStructure(html: string): boolean {
   return RICH_HTML_TAG.test(html);
 }
 
+// Real list elements mean the HTML carries the hierarchy itself (and its marks);
+// flat `<div>`/`<p>` that merely kept literal `-`/`[x]` markers does not. This
+// is what separates a rich web-list paste (trust the HTML, keep bold/links) from
+// an editor copy whose indentation was whitespace-folded (prefer the plain text).
+function htmlHasList(html: string): boolean {
+  return /<(ul|ol|li)\b/iu.test(html);
+}
+
 function looksLikeStrongMarkdown(text: string): boolean {
   if (/(^|\n)\s*(```|~~~)/u.test(text)) return true;
   if (/(^|\n)#{1,6}\s+\S/u.test(text)) return true;
@@ -487,7 +536,10 @@ export function parseClipboardPaste(plain: string, html?: string | null): Create
     typeof html === 'string' &&
     html.trim().length > 0 &&
     htmlHasRichStructure(html) &&
-    !looksLikeStrongMarkdown(text);
+    // A Markdown-looking plain text only wins over the HTML when the HTML is the
+    // lossy side — flat blocks with no real list. Genuine `<ul>/<ol>/<li>` keeps
+    // both the structure and its marks, so trust it.
+    (htmlHasList(html) || !looksLikeStrongMarkdown(text));
   const trees = canUseHtml ? htmlToTrees(html as string) : parseMarkdownBlocks(text);
   return trees.filter(treeHasContent);
 }

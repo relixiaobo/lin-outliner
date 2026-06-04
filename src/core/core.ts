@@ -2673,7 +2673,9 @@ export class Core {
   // Apply `#tag` / `name:: value` metadata harvested from a paste onto a node.
   // The parser runs in the renderer without state, so it emits names; here we
   // own the state and do find-or-create (PM decision 2026-06-04: auto-create to
-  // match nodex). Reuses the same primitives as the launcher capture path.
+  // match nodex). Tag/field syntax itself is recognized renderer-side and today
+  // diverges from `agentOutlineParser` (ASCII vs Unicode `#tag`); unifying the
+  // two on one canonical grammar is docs/plans/outline-syntax-unification.md.
   private applyPasteMetadataDirect(
     nodeId: string,
     tags: string[] | undefined,
@@ -2699,9 +2701,20 @@ export class Core {
         const optionId = this.ensureOptionNodeDirect(fieldDefId, value);
         this.selectFieldOptionDirect(entryId, fieldDefId, optionId);
       } else {
-        this.loro.createNodeWithId(freshId('value'), entryId, undefined, undefined, (node) => {
-          node.content = plainText(value);
+        // Fill an empty value child a reused entry (e.g. a tag template's) already
+        // owns, instead of stacking a second value beside it; create one only when
+        // there is no empty slot to reuse.
+        const emptySlot = this.snapshot().nodes[entryId]?.children.find((childId) => {
+          const child = this.snapshot().nodes[childId];
+          return child?.type === undefined && child.content.text.trim().length === 0;
         });
+        if (emptySlot) {
+          this.patchNodeData(emptySlot, (node) => { node.content = plainText(value); });
+        } else {
+          this.loro.createNodeWithId(freshId('value'), entryId, undefined, undefined, (node) => {
+            node.content = plainText(value);
+          });
+        }
       }
     }
   }

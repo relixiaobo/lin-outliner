@@ -175,6 +175,29 @@ describe('parseMarkdownBlocks', () => {
     ]);
   });
 
+  test('does not harvest a #tag inside a markdown link label', () => {
+    // The `#section` is link text, not a tag — the label must stay intact.
+    expect(parseMarkdownBlocks('See [the #section](https://x.dev) details')).toEqual([
+      {
+        content: {
+          text: 'See the #section details',
+          marks: [{ start: 4, end: 16, type: 'link', attrs: { href: 'https://x.dev' } }],
+          inlineRefs: [],
+        },
+        children: [],
+      },
+    ]);
+  });
+
+  test('does not harvest a #tag inside an inline code span', () => {
+    expect(parseMarkdownBlocks('run `see #x now` end')).toEqual([
+      {
+        content: { text: 'run see #x now end', marks: [{ start: 4, end: 14, type: 'code' }], inlineRefs: [] },
+        children: [],
+      },
+    ]);
+  });
+
   test('converts GFM task-list markers into checkbox rows', () => {
     expect(parseMarkdownBlocks('- [x] shipped\n- [ ] pending\n- plain')).toEqual([
       { content: { text: 'shipped', marks: [], inlineRefs: [] }, children: [], checkbox: true, done: true },

@@ -1636,6 +1636,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           if (!node?.parentId) return clone(outcome());
           node.content = clone(args.content as RichText);
           node.updatedAt = ++now;
+          // Mirror core: the merged first row adopts the pasted checkbox state
+          // only when the renderer forwarded it (it suppresses checkbox/done for a
+          // non-empty target row so an existing line isn't silently checked).
+          const firstMeta = (args.firstMeta ?? {}) as { checkbox?: boolean; done?: boolean };
+          if (firstMeta.checkbox) node.completedAt = firstMeta.done ? ++now : 0;
           createTree(nodeId, args.children as CreateNodeTree[]);
           const parent = nodes.get(node.parentId);
           const index = parent ? parent.children.indexOf(nodeId) + 1 : null;

@@ -125,6 +125,36 @@ test.describe('paste format support', () => {
     expect(kids[1]?.completedAt).toBe(0);
   });
 
+  test('keeps a rich HTML list with marks even when the plain text is a bullet list', async ({ page }) => {
+    await selectEditorContents(page, ids.alpha);
+    // The clipboard carries real <ul><li> structure with a bold mark AND a plain
+    // bullet fallback. The HTML is the lossless side, so it must win — without it
+    // the bold would be dropped by the Markdown path.
+    await pasteRich(page, {
+      plain: '- one\n- two',
+      html: '<ul><li><strong>one</strong></li><li>two</li></ul>',
+    });
+
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe('one');
+    const alpha = await nodeById(page, ids.alpha);
+    expect(alpha?.content.marks).toEqual([{ start: 0, end: 3, type: 'bold' }]);
+    const children = await todayChildren(page);
+    expect((await nodeById(page, children[children.indexOf(ids.alpha) + 1]))?.content.text).toBe('two');
+  });
+
+  test('merging a task line into a non-empty row does not silently check it', async ({ page }) => {
+    // Alpha is a non-empty row (a shown-but-unchecked checkbox, completedAt 0).
+    await selectEditorContents(page, ids.alpha);
+    await pasteRich(page, { plain: '[x] done\nmore' });
+
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe('done');
+    const alpha = await nodeById(page, ids.alpha);
+    // The row had content, so the pasted `[x]` is NOT imposed — it stays unchecked.
+    expect(alpha?.completedAt).toBe(0);
+    const children = await todayChildren(page);
+    expect((await nodeById(page, children[children.indexOf(ids.alpha) + 1]))?.content.text).toBe('more');
+  });
+
   test('pasting a single-line URL wraps the selection as a link', async ({ page }) => {
     await selectEditorContents(page, ids.alpha);
     await pasteRich(page, { plain: 'https://anthropic.com' });

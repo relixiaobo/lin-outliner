@@ -46,10 +46,18 @@ the agent composer (multi-line) and the outliner (format conversion depth).
    markers, so it pastes flat with literal `- `. `looksLikeStrongMarkdown` now
    also fires on a multi-line bullet/task/numbered list, so the faithful
    text/plain parser wins. (This was the live bug in the PM's paste test.)
+   **But** the text-plain preference applies only when the HTML is the lossy side
+   — flat `<div>`/`<p>`. When the HTML carries real `<ul>/<ol>/<li>` structure
+   (`htmlHasList`) it keeps both hierarchy and its inline marks, so it is trusted
+   and a rich web-list paste does not lose its bold/links. (Review #3, 2026-06-04.)
 5. **GFM task lists → checkboxes.** `- [x]` / `- [ ]` become checkbox rows.
    `lineToTree` strips the marker and sets `checkbox`/`done` on the tree;
    `CreateNodeTree` carries them; core maps them to the `completedAt` sentinel
-   (`undefined` none, `0` unchecked, timestamp checked).
+   (`undefined` none, `0` unchecked, timestamp checked). When the first block
+   **merges into an existing non-empty row**, the renderer suppresses
+   `checkbox`/`done` so an existing line is never silently flipped to checked;
+   only a genuinely empty target row adopts the pasted checkbox state. (PM
+   decision, Review #2, 2026-06-04.)
 
 ### B. `#tag` / `field:: value` extraction (protocol + core)
 
@@ -63,7 +71,10 @@ nodex's `ParsedPasteNode` carrying tags/fields and `applyParsedPasteMetadata`.
   mangling code/URLs: tag = `(^|\s)#[A-Za-z][\w-]*`; field requires a double colon
   **followed by whitespace** (`name::␣value`) so `std::cout`, `http://…`,
   `foo::bar` never match. Applied in `lineToTree` (before `parseInlineMarkdown`
-  so `#`/`::` don't perturb mark offsets).
+  so `#`/`::` don't perturb mark offsets). Link `[label](url)` and inline-code
+  `` `code` `` spans are masked out of the scan, so a `#frag` or `name::` inside
+  link text / a URL / code is left alone (`See [the #section](url)` keeps its
+  label — Review #1, 2026-06-04).
 - **Protocol** (`types.ts`): `CreateNodeTree` gains `tags?: string[]` and
   `fields?: ParsedPasteField[]` (`ParsedPasteField = {name; value}`).
 - **Core** (`core.ts`): new `applyPasteMetadataDirect(nodeId, tags, fields)` —
@@ -92,9 +103,14 @@ handler, gated by a keydown flag). Lowest priority; ship last.
 
 ## Open questions
 
-- Duplicate field entries when a pasted `field::` names a tag-template field on
-  the same paste — mitigated by reusing an existing empty entry; deeper dedup
-  deferred.
+- Duplicate field *values*: a pasted `field::` for a def whose entry a tag
+  template already instantiated now fills that entry's existing empty value child
+  instead of stacking a second one (`applyPasteMetadataDirect`, Review #4,
+  2026-06-04). A reused entry that already holds a *non-empty* value still gets an
+  appended value — acceptable for multi-value fields, revisit only if it surfaces.
+- Tag/field syntax is recognized renderer-side (ASCII `#tag`) and diverges from
+  `agentOutlineParser` (Unicode + brackets). Unification is tracked separately in
+  `outline-syntax-unification.md` (Review #6).
 
 ## Review
 
