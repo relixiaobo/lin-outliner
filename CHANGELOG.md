@@ -12,6 +12,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Multi-language (i18n): typed foundation + full en / 简体中文 migration (PR #110)** — the app now
+  ships English and Simplified Chinese with a typed message layer. All UI strings live in
+  `src/core/i18n/messages/<locale>.ts` keyed off a single `Messages` tree (`= typeof en`), read via
+  `t.group.key` so a missing or mistyped key is a compile error; non-`en` locales are `DeepPartial`
+  and fall through to English via `deepMerge`. The Settings → General language picker persists the
+  choice, which the main process broadcasts to every window (`lin:set-language`) — panes re-render and
+  the native menu bar + open-window titles rebuild from the same locale, consistent even on a silent
+  save failure. Locale is seeded before first paint (no English flash), `effectiveLocale()` is memoized
+  off the ~8-site hot path (no per-call `readFileSync`), and an `i18nCoverage` test asserts key **and
+  array-length** parity between every locale and the English canon (828/828). The settings language /
+  permission `<select>`s were restyled as design-system pop-up buttons (`SelectControl variant="popup"`:
+  elevated thumb + overlaid chevron, no native OS box). Action identifiers (`Action(...)`) stay English
+  by design; the textOf/displayName/date boundaries are documented in `docs/spec/i18n.md`. Gate: xhigh
+  review (9 findings, all fixed) + typecheck + `test:core` + `test:renderer` 330/330 + light/dark × en/zh
+  visual verification. ([#110](https://github.com/relixiaobo/lin-outliner/pull/110))
+
 - **Outliner paste: nodex parity — `<br>` split, format routing, GFM checkboxes, `#tag` / `field::` (PR #113)** —
   brings clipboard paste up to nodex parity (`paste-nodex-parity.md`). `<br>`-separated HTML blocks
   (Gmail / Apple Notes / contenteditable) split into one row per line; list markers widened

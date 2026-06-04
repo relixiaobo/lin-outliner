@@ -154,6 +154,14 @@ capture-pipeline tracks below stay separate (orthogonal to the surface).
   (Tahoe): the layered `.icon` (Icon Composer) format the OS renders with dynamic
   glass material, specular edges + depth, with a legacy `.icns` fallback for
   macOS < 26. Deferred from PR #84. See `docs/plans/macos-liquid-glass-icon.md`.
+- **i18n-followups** (P3) — deferred i18n work after the #110 foundation + en/zh
+  shipped: (1) wire an `Intl.PluralRules` helper for count-bearing strings (each
+  site is `// TODO plural via Intl`-marked; the `n===1` ternary only breaks when a
+  multi-form European locale lands); (2) finish the date/number second sweep —
+  outliner group-by labels (`state/outlinerRows.ts`: `(Empty)`/`Done`/`Yes`/`No`)
+  + agent debug timestamps still OS-locale, need a labels bundle threaded through
+  the row pipeline; (3) add 繁體中文 / 日本語 / a European locale once more surfaces
+  are extracted. Full detail in the archived plan `docs/plans/archive/i18n-multi-language.md`.
 - **floating-toolbar-polish** (P3) — heading-mark toggle + `#` selection
   extract in the floating editor toolbar.
 - **view-toolbar-name-filter** (P3, *no plan file*) — quick incremental name filter as the
@@ -184,6 +192,16 @@ capture-pipeline tracks below stay separate (orthogonal to the surface).
   a named return type instead of `unknown`. None affect behavior.
 
 ## Recently completed
+
+- **i18n-multi-language** (cc-2, PR #110) — shipped English + 简体中文 on a typed message layer
+  (`Messages = typeof en`, `t.group.key`, `DeepPartial` locales + English `deepMerge` fallback).
+  Language picker persists + broadcasts (`lin:set-language`); panes, native menu bar, and open-window
+  titles rebuild from the same locale (consistent on silent save failure); locale seeded before first
+  paint; `effectiveLocale()` memoized off the hot path; `i18nCoverage` asserts key + array-length parity
+  (828/828). Settings selects restyled as design-system pop-up buttons. Gate: xhigh review (9 findings,
+  all fixed + verified file:line) + typecheck + core + renderer 330/330 + light/dark × en/zh visual
+  verification. Plan `done` → `archive/`; design folded into `docs/spec/i18n.md`. Follow-up: plurals +
+  remaining OS-locale date/number sites (tracked in the plan).
 
 - **remove-keychain-secret-storage** (codex, PR #115) — dropped Electron `safeStorage`/Keychain
   backing (it triggered a macOS password prompt on startup/settings reads). Agent provider secrets
