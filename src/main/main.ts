@@ -63,6 +63,7 @@ import {
   type LauncherNodeMatch,
 } from '../core/launcher/commands';
 import { buildContextCaptureInput, buildManualCaptureInput } from '../core/launcher/sources';
+import { resolveLauncherNodeMatches } from '../core/launcher/nodeMatches';
 import { captureExternalContext } from './context/contextCapture';
 import { isAccessibilityTrusted, promptAccessibility } from './context/nativeBrowserTab';
 import { getFrontmostApp } from './context/providers/browser';
@@ -500,25 +501,17 @@ async function searchLauncherNodes(query: string): Promise<LauncherNodeMatch[]> 
   const hits = (await documentService.handle('search_nodes', { query: q })) as SearchHit[];
   if (hits.length === 0) return [];
   const nodes = documentService.getProjection().nodes;
-  const byId = new Map(nodes.map((node) => [node.id, node]));
-  const matches: LauncherNodeMatch[] = [];
-  for (const hit of hits.slice(0, LAUNCHER_NODE_RESULT_LIMIT)) {
-    const node = byId.get(hit.nodeId);
-    if (!node) continue;
-    const title = collapseWhitespace(node.content.text) || 'Untitled';
-    const parent = node.parentId ? byId.get(node.parentId) : undefined;
-    const subtitle = parent ? collapseWhitespace(parent.content.text) || undefined : undefined;
-    // Only a renderable emoji icon travels; image/generated icons fall back to a
-    // bullet in the launcher (which can't load assets).
-    const icon = node.iconKind === 'emoji' && node.icon ? node.icon : undefined;
-    matches.push({ nodeId: hit.nodeId, title, subtitle, icon });
-  }
-  return matches;
-}
-
-/** Collapse whitespace/newlines into a single display line. */
-function collapseWhitespace(text: string): string {
-  return text.replace(/\s+/g, ' ').trim();
+  return resolveLauncherNodeMatches(
+    hits.map((hit) => hit.nodeId),
+    nodes.map((node) => ({
+      id: node.id,
+      text: node.content.text,
+      parentId: node.parentId,
+      icon: node.icon,
+      iconKind: node.iconKind,
+    })),
+    LAUNCHER_NODE_RESULT_LIMIT,
+  );
 }
 
 /** Max inline node results shown in the launcher (keeps the list scannable). */

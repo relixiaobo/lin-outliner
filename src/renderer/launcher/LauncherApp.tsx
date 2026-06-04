@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LauncherInitialState, LauncherNodeMatch } from '../../core/launcher/commands';
 import type { ExternalContext } from '../../core/launcher/context';
-import { buildLauncherItems, primaryActionLabel, remediationForContext, rowView } from './launcherModel';
+import { buildLauncherItems, deriveActiveIndex, primaryActionLabel, remediationForContext, rowKey, rowView, stepActiveKey } from './launcherModel';
 import type { LauncherItem, LauncherItemAction } from './launcherModel';
 import { iconForItem, LauncherInputIcon, LauncherRemediationIcon } from './launcherIcons';
 
@@ -104,13 +104,7 @@ export function LauncherApp() {
 
   // activeIndex is DERIVED from the selected row's identity: follow that row as the
   // list reorders, falling back to the top row when it's gone or nothing is picked.
-  const activeIndex = useMemo(() => {
-    if (activeKey) {
-      const found = navItems.findIndex((it) => rowKey(it) === activeKey);
-      if (found >= 0) return found;
-    }
-    return 0;
-  }, [navItems, activeKey]);
+  const activeIndex = useMemo(() => deriveActiveIndex(navItems, activeKey), [navItems, activeKey]);
   const activeItem = navItems[activeIndex];
 
   // Keep the keyboard-selected row visible. `block: 'nearest'` is a no-op when the
@@ -176,12 +170,10 @@ export function LauncherApp() {
       }
       if (event.key === 'ArrowDown') {
         event.preventDefault();
-        const next = navItems[Math.min(activeIndex + 1, navItems.length - 1)];
-        if (next) setActiveKey(rowKey(next));
+        setActiveKey(stepActiveKey(navItems, activeIndex, 1));
       } else if (event.key === 'ArrowUp') {
         event.preventDefault();
-        const prev = navItems[Math.max(activeIndex - 1, 0)];
-        if (prev) setActiveKey(rowKey(prev));
+        setActiveKey(stepActiveKey(navItems, activeIndex, -1));
       } else if (event.key === 'Enter') {
         event.preventDefault();
         void runAction(activeItem, activeItem?.actions[0]);
@@ -262,15 +254,6 @@ export function LauncherApp() {
       </div>
     </div>
   );
-}
-
-// A stable identity per row — used both as the React key AND as the selection key
-// (see activeKey). At most one capture-page / capture-note row exists per list, so
-// the kind alone is a stable id; commands and nodes key on their own id.
-function rowKey(item: LauncherItem): string {
-  if (item.kind === 'command') return `cmd:${item.command.id}`;
-  if (item.kind === 'node') return `node:${item.nodeId}`;
-  return item.kind;
 }
 
 // One uniform row shape for every result (Raycast-style): leading glyph, a clear

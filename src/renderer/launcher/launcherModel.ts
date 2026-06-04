@@ -185,6 +185,40 @@ export function primaryActionLabel(item: LauncherItem | undefined): string | nul
 }
 
 /**
+ * A stable identity per row — used as BOTH the React key and the selection key.
+ * At most one capture-page / capture-note row exists per list, so the kind alone
+ * is a stable id; commands and nodes key on their own id.
+ */
+export function rowKey(item: LauncherItem): string {
+  if (item.kind === 'command') return `cmd:${item.command.id}`;
+  if (item.kind === 'node') return `node:${item.nodeId}`;
+  return item.kind;
+}
+
+/**
+ * The index of the row matching `activeKey`, or 0 (the top row) when nothing is
+ * selected or the selected row is gone. Selection is tracked by identity, not a
+ * raw index, so an async list change can't leave the highlight on the wrong row.
+ */
+export function deriveActiveIndex(items: readonly LauncherItem[], activeKey: string | null): number {
+  if (activeKey) {
+    const found = items.findIndex((it) => rowKey(it) === activeKey);
+    if (found >= 0) return found;
+  }
+  return 0;
+}
+
+/**
+ * The selection key after stepping `delta` rows from `currentIndex` (clamped to
+ * the list bounds), or null when the list is empty. Drives ArrowUp/ArrowDown.
+ */
+export function stepActiveKey(items: readonly LauncherItem[], currentIndex: number, delta: number): string | null {
+  if (items.length === 0) return null;
+  const next = Math.min(Math.max(currentIndex + delta, 0), items.length - 1);
+  return rowKey(items[next]!);
+}
+
+/**
  * A capture-degraded-but-saved hint with the fix the user can act on. Surfaced as
  * a quiet banner so a partial capture (link only) explains how to unlock the full
  * one — the equivalent of Lazy's "noJXA" prompt. Capture still succeeds regardless.

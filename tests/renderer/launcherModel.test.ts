@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { buildLauncherItems, filterCommands, formatHotkey, primaryActionLabel, remediationForContext, rowView } from '../../src/renderer/launcher/launcherModel';
+import { buildLauncherItems, deriveActiveIndex, filterCommands, formatHotkey, primaryActionLabel, remediationForContext, rowKey, rowView, stepActiveKey } from '../../src/renderer/launcher/launcherModel';
 import type { LauncherItem } from '../../src/renderer/launcher/launcherModel';
 import type { LauncherCommandView, LauncherNodeMatch } from '../../src/core/launcher/commands';
 import type { ExternalContext } from '../../src/core/launcher/context';
@@ -201,6 +201,44 @@ describe('rowView', () => {
     const main = items.find((i) => i.kind === 'command' && i.command.id === 'open-main');
     if (!main) throw new Error('expected open-main');
     expect(rowView(main).title).toBe('Open main window');
+  });
+});
+
+describe('selection helpers (identity-based, not raw index)', () => {
+  const items = buildLauncherItems({ query: 'open', context: null, commands: COMMANDS, nodes: NODES });
+  // items: capture-note, node:1, node:2, open-main, open-settings
+
+  test('rowKey is stable per row identity', () => {
+    expect(rowKey(items[0])).toBe('capture-note');
+    const node = items.find((i) => i.kind === 'node')!;
+    expect(rowKey(node)).toBe('node:node:1');
+    const cmd = items.find((i) => i.kind === 'command')!;
+    expect(rowKey(cmd)).toBe('cmd:open-main');
+  });
+
+  test('deriveActiveIndex follows the key, falling back to the top row', () => {
+    expect(deriveActiveIndex(items, null)).toBe(0);
+    expect(deriveActiveIndex(items, 'cmd:open-settings')).toBe(items.length - 1);
+    // A key that no longer exists (its row vanished) falls back to the top.
+    expect(deriveActiveIndex(items, 'node:gone')).toBe(0);
+  });
+
+  test('a selected row keeps its selection when the list reorders (the B-1 fix)', () => {
+    // User selects open-main; then a query change drops the node rows.
+    const before = items;
+    const key = 'cmd:open-main';
+    const fewer = buildLauncherItems({ query: 'open', context: null, commands: COMMANDS, nodes: [] });
+    // Same key resolves to a (different, now-earlier) index — selection follows the row.
+    expect(before[deriveActiveIndex(before, key)].kind).toBe('command');
+    expect(fewer[deriveActiveIndex(fewer, key)].kind).toBe('command');
+    expect((fewer[deriveActiveIndex(fewer, key)] as { command: { id: string } }).command.id).toBe('open-main');
+  });
+
+  test('stepActiveKey clamps at both ends and returns null for an empty list', () => {
+    expect(stepActiveKey(items, 0, -1)).toBe(rowKey(items[0])); // clamp at top
+    expect(stepActiveKey(items, items.length - 1, 1)).toBe(rowKey(items[items.length - 1])); // clamp at bottom
+    expect(stepActiveKey(items, 0, 1)).toBe(rowKey(items[1]));
+    expect(stepActiveKey([], 0, 1)).toBeNull();
   });
 });
 
