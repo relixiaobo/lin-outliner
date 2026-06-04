@@ -52,7 +52,7 @@ allowing long provider lists to scroll.
 ### 3. Make the rail denser without changing the IA
 
 Keep the five top-level categories. Add a compact neutral icon slot per category
-and reduce the secondary copy's visual weight. The rail selection stays neutral
+and render each category as a single-line label. The rail selection stays neutral
 (`--fill-*`) per B3/B4; the icon slot is identity/chrome, not functional color.
 
 ### 4. Reduce first-level explanatory noise
@@ -98,8 +98,9 @@ Expected implementation scope:
   all functional states on the existing neutral token ladder.
 - A too-narrow content column can harm provider and permission rows. Validate
   Providers, Permissions, Skills, and Agent Profiles at the target window size.
-- Adding rail icons can increase clutter if the hint line remains equally
-  prominent. Treat icons as compact scan aids, not decoration.
+- Adding rail icons can increase clutter if the row also carries explanatory
+  subcopy. Keep the row single-line and treat icons as compact scan aids, not
+  decoration.
 
 ## Collision result
 
@@ -116,7 +117,7 @@ No live file-level overlap.
 
 - [x] Add toolbar page title and render history controls as one capsule group.
 - [x] Constrain the content column and tune vertical rhythm.
-- [x] Add compact rail icon slots and reduce rail hint dominance.
+- [x] Add compact rail icon slots and remove rail hint subcopy.
 - [x] Remove/demote redundant pane intro copy.
 - [x] Soften inset-card chrome without weakening focus/selection states.
 - [x] Update `docs/spec/design-system.md`.

@@ -640,7 +640,6 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                     </span>
                     <span className="settings-nav-copy">
                       <span className="settings-nav-label">{cat.label}</span>
-                      <span className="settings-nav-hint">{cat.hint}</span>
                     </span>
                   </button>
                 );

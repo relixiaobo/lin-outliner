@@ -14,6 +14,8 @@ test.describe('agent settings window', () => {
     await expect(settings.getByRole('heading', { name: 'Settings' })).toBeVisible();
     // The category rail floats off the content base (its own elevated panel).
     await expect(settings.locator('.settings-rail')).toBeVisible();
+    await expect(settings.getByRole('button', { name: 'Providers', exact: true })).toBeVisible();
+    await expect(settings.locator('.settings-nav-hint')).toHaveCount(0);
     // Frameless window: a top drag strip stands in for the native title bar (the
     // OS traffic lights overlay it), so there is no separate title-bar row.
     await expect(settings.locator('.settings-drag-region')).toHaveCount(1);
@@ -50,6 +52,24 @@ test.describe('agent settings window', () => {
     await forward.click();
     await expect(settings.getByRole('list', { name: 'Common actions' })).toBeVisible();
     await expect(forward).toBeDisabled();
+  });
+
+  test('uses a flat settings pop-up button for select controls', async ({ page }) => {
+    const settings = await openSettings(page);
+    await settings.getByRole('button', { name: 'General', exact: true }).click();
+    const popup = settings.locator('.select-popup-input').first();
+    await expect(popup).toBeVisible();
+    const style = await popup.evaluate((element) => {
+      const computed = getComputedStyle(element);
+      return {
+        backgroundColor: computed.backgroundColor,
+        borderWidth: computed.borderTopWidth,
+        boxShadow: computed.boxShadow,
+      };
+    });
+    expect(style.backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+    expect(style.borderWidth).toBe('0px');
+    expect(style.boxShadow).toBe('none');
   });
 
   test('groups providers by credential and reads status on each row', async ({ page }) => {

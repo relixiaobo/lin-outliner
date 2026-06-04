@@ -1104,11 +1104,12 @@ not Apple chrome. We borrow the interaction, not the chrome.
   rail that floats off the content base rather than a flat column. On real native
   windows it uses `--material-sidebar` + `--material-backdrop`, with the central
   reduced-transparency / high-contrast opaque fallback. Rail rows keep the
-  category IA, but add a compact neutral icon slot so scanning is closer to
-  System Settings without using status or brand color for functional state. The
-  content pane is the flat window base (no surrounding card) and is the single
-  scroll container, so the rail stays put; the grouped cards float on it on an
-  opaque `--bg-elevated` surface. The content column is constrained
+  category IA, but add a compact neutral icon slot and a single clear label per
+  row so scanning is closer to System Settings without explanatory subcopy or
+  functional status color. The content pane is the flat window base (no
+  surrounding card) and is the single scroll container, so the rail stays put; the
+  grouped cards float on it on an opaque `--bg-elevated` surface. The content
+  column is constrained
   (`--settings-content-max-width`) so rows keep a stable reading width instead of
   stretching across the whole window. There is NO permanent side detail pane:
   per-provider config opens in its own native window (below). Categories — not
@@ -1121,8 +1122,11 @@ not Apple chrome. We borrow the interaction, not the chrome.
   (`--shadow-thumb`) — a neutral functional state, never an accent (B3) — with
   concentric `--radius-md` track / `--radius-sm` segment (B9), rendered as an ARIA
   `radiogroup` with roving tabindex + arrow-key navigation and a neutral
-  `:focus-visible` ring (B8). Unlike the runtime / permission panes it has **no
-  Save footer**: a pick applies INSTANTLY across every window — it sets
+  `:focus-visible` ring (B8). Language uses `SelectControl variant="popup"`: a
+  compact flat `--fill-2` pop-up button with an overlaid chevron, no border and no
+  lifted thumb; the native option list still opens on click (B10). Unlike the
+  runtime / permission panes it has **no Save footer**: a pick applies INSTANTLY
+  across every window — it sets
   `nativeTheme.themeSource` in the main process (`lin:set-theme`), which rewrites
   each renderer's `prefers-color-scheme` so the one dark `@media` block (see
   Appearance above) drives the flip — and persists to `app-preferences.json` in
@@ -1185,8 +1189,8 @@ not Apple chrome. We borrow the interaction, not the chrome.
     (only Providers leads with the brand avatar); the row toggle / decision select
     lives in the `trailing` slot (native macOS — toggles sit on the right). General's
     Theme/Language, Skills' behaviour switches + installed-skill toggles, Permissions'
-    common actions (a decision `select`; the row sublabel stays human-readable and
-    does not expose raw rule strings),
+    common actions (a compact flat decision pop-up; the row sublabel stays
+    human-readable and does not expose raw rule strings),
     Agent Profiles' selectable master list — all are `InsetRow`s. Agent Profiles is
     master/detail: the master inset list selects (`.inset-row.is-selected`), the
     detail card floats on the base like an inset card (`--bg-elevated`, `--radius-lg`).

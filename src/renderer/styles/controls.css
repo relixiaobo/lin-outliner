@@ -121,13 +121,11 @@
   box-shadow: var(--shadow-thumb), var(--focus-ring-shadow);
 }
 
-/* Pop-up button (SelectControl variant="popup"): a one-of-many picker that sits
-   beside a SegmentedControl in a settings inset row. The native <select> chrome is
-   stripped and restyled as a single elevated thumb — same --bg-elevated fill,
-   --shadow-thumb, and --radius-sm as a selected segment — so it reads as part of the
-   same control family instead of a raw OS box (B3 neutral fill, B6 no hard border,
-   B9 concentric radius). The chevron is a real icon in currentColor, so it tracks
-   the text token in both themes; the native option list still opens on click (B10). */
+/* Pop-up button (SelectControl variant="popup"): a one-of-many picker for settings
+   rows. The native <select> chrome is stripped and restyled as a compact flat
+   neutral control — --fill-2 at rest, no border, no lifted thumb — so it reads like
+   a macOS pop-up button instead of a heavy web select (B3/B9). The chevron is a
+   real icon in currentColor, and the native option list still opens on click (B10). */
 .select-popup {
   position: relative;
   display: inline-flex;
@@ -139,26 +137,29 @@
   -webkit-appearance: none;
   margin: 0;
   /* Leave room on the right for the overlaid chevron (glyph + gutter). */
-  padding: var(--space-2) calc(var(--space-6) + var(--space-6)) var(--space-2) var(--space-6);
+  padding: var(--space-2) calc(var(--space-6) + var(--space-6)) var(--space-2) var(--space-5);
   border: 0;
-  border-radius: var(--radius-sm);
-  background: var(--bg-elevated);
+  border-radius: var(--radius-md);
+  background: var(--fill-2);
   color: var(--text-primary);
   font: inherit;
-  font-weight: 500;
+  font-weight: 600;
   white-space: nowrap;
-  box-shadow: var(--shadow-thumb);
-  transition: color var(--motion-fast), box-shadow var(--motion-fast);
+  transition: background var(--motion-fast), color var(--motion-fast), box-shadow var(--motion-fast);
+}
+
+.select-popup-input:hover {
+  background: var(--fill-3);
+  color: var(--text-strong);
 }
 
 .select-popup-input:focus-visible {
   outline: none;
-  box-shadow: var(--shadow-thumb), var(--focus-ring-shadow);
+  box-shadow: var(--focus-ring-shadow);
 }
 
 .select-popup-input:disabled {
   opacity: 0.45;
-  box-shadow: none;
 }
 
 .select-popup-chevron {
