@@ -689,6 +689,24 @@ export interface AgentProviderConfigInput {
   enabled?: boolean;
 }
 
+export type AgentProviderAuthKind = 'api-key' | 'oauth' | 'managed';
+
+/**
+ * The renderer-visible auth descriptor for a provider. Classification and all
+ * credential reasoning live in main (sourced from pi-ai's `getOAuthProviders()`
+ * plus a managed set); the renderer only renders this. Carries no secret —
+ * never an API key, OAuth token, or AWS/ADC material.
+ */
+export interface ProviderAuthView {
+  authKind: AgentProviderAuthKind;
+  /** The single authoritative "can use models / show connected" signal. */
+  credentialed: boolean;
+  /** True when a user-pasted key is stored (clearable), vs an ambient env key. */
+  hasStoredKey?: boolean;
+  /** Present for oauth providers. `expiresAt` is read from stored creds — no refresh. */
+  oauth?: { connected: boolean; expiresAt?: number };
+}
+
 export interface AgentProviderConfigView {
   providerId: string;
   modelId: string;
@@ -697,6 +715,36 @@ export interface AgentProviderConfigView {
   enabled: boolean;
   hasApiKey: boolean;
   hasEnvApiKey?: boolean;
+  /**
+   * Auth descriptor. Optional during the OAuth-providers rollout; once the main
+   * builder populates it and the renderer reads it, `hasApiKey`/`hasEnvApiKey`
+   * collapse into `auth.credentialed`/`auth.hasStoredKey`.
+   */
+  auth?: ProviderAuthView;
+}
+
+export interface OAuthLoginSelectOption {
+  id: string;
+  label: string;
+}
+
+/**
+ * One interactive step of an OAuth sign-in, pushed main→renderer. Folds pi-ai's
+ * login callbacks into a single union so loopback (Anthropic) and device-code
+ * (Copilot/Codex) share one renderer state machine. `prompt` / `select` /
+ * `manual-code` carry a `requestId` the renderer answers via `agent_oauth_respond`.
+ */
+export type OAuthLoginEvent =
+  | { kind: 'auth'; url: string; instructions?: string }
+  | { kind: 'device-code'; userCode: string; verificationUri: string; expiresInSeconds?: number }
+  | { kind: 'progress'; message: string }
+  | { kind: 'prompt'; requestId: string; message: string; placeholder?: string }
+  | { kind: 'select'; requestId: string; message: string; options: OAuthLoginSelectOption[] }
+  | { kind: 'manual-code'; requestId: string };
+
+export interface OAuthLoginEventEnvelope {
+  providerId: string;
+  event: OAuthLoginEvent;
 }
 
 export interface AgentModelOption {
