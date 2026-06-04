@@ -117,6 +117,20 @@ Ordered by priority; lower items may depend on higher ones.
   (Tahoe): the layered `.icon` (Icon Composer) format the OS renders with dynamic
   glass material, specular edges + depth, with a legacy `.icns` fallback for
   macOS < 26. Deferred from PR #84. See `docs/plans/macos-liquid-glass-icon.md`.
+- **settings-design-consistency** (P2, plan drafted → **cc**) — from the
+  2026-06-04 Settings UI audit: the Settings window reads as two visual
+  generations — Providers was migrated to the `inset-*` System-Settings list
+  idiom, but Permissions / Skills / Agent Profiles still use bespoke bordered-row
+  cards. Plan unifies all panes onto the `inset-*` primitive (Providers is the
+  reference) and fixes B3/B8 nits (danger-hover → neutral; missing
+  `:focus-visible` rings on the provider-window key/baseURL inputs + agent prompt
+  textarea; unify the provider-sheet body-block radius; delete dead
+  `.settings-provider-sheet` + the unwired `settings-connection.css`). **WI-1 is
+  a low-risk fast-track (conformance/polish); WI-2 is the plan-track pane
+  migration — split per pane.** PM ratifies Q1–Q6 (container model, section
+  title, canonical secondary button / empty state / badge, sheet body radius)
+  before build. Renderer/CSS + spec only; no logic/protocol. See
+  `docs/plans/settings-design-consistency.md`.
 - **floating-toolbar-polish** (P3) — heading-mark toggle + `#` selection
   extract in the floating editor toolbar.
 - **view-toolbar-name-filter** (P3) — quick incremental name filter as the
