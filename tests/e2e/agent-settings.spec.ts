@@ -32,9 +32,11 @@ test.describe('agent settings window', () => {
     await expect(back).toBeDisabled();
     await expect(forward).toBeDisabled();
 
-    // Visiting another category records history, so back becomes available.
+    // Visiting another category records history, so back becomes available. Panes
+    // carry no <h3> title now (the rail names them, Q1) — assert the pane by its
+    // grouped inset list, symmetric with the Providers check below.
     await settings.getByRole('button', { name: /^Permissions/ }).click();
-    await expect(settings.getByRole('heading', { name: 'Tool Permissions' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Common actions' })).toBeVisible();
     await expect(back).toBeEnabled();
     await expect(forward).toBeDisabled();
 
@@ -46,7 +48,7 @@ test.describe('agent settings window', () => {
 
     // Forward replays the visit.
     await forward.click();
-    await expect(settings.getByRole('heading', { name: 'Tool Permissions' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Common actions' })).toBeVisible();
     await expect(forward).toBeDisabled();
   });
 

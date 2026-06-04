@@ -86,13 +86,10 @@
 }
 
 /* ── Providers: a full-width grouped list on the flat content base (native System
-   Settings Wi-Fi model). The per-provider config opens in a sheet, so there is
-   no permanent side detail pane, and no surrounding panel competes with the rail. */
-.settings-providers-section {
-  gap: var(--space-5);
-  background: transparent;
-  padding: 0;
-}
+   Settings Wi-Fi model). The per-provider config opens in a sheet, so there is no
+   permanent side detail pane, and no surrounding panel competes with the rail. The
+   pane is flat by default now (.agent-settings-section), so no section override is
+   needed — every pane shares that flat base. */
 
 /* Leading slot for the "Add custom provider" row — a quiet `+` aligned to the
    brand-avatar column (icon only, no box). */
@@ -196,21 +193,6 @@
 .settings-provider-avatar.is-large .settings-provider-logo {
   width: 24px;
   height: 24px;
-}
-
-/* Used in the provider sheet header to mark the active provider. */
-.settings-provider-badge {
-  flex: 0 0 auto;
-  border-radius: var(--radius-pill);
-  background: var(--fill-3);
-  color: var(--text-primary);
-  font-size: var(--font-ui-2xs);
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  line-height: 1;
-  /* 3px has no spacing-ladder token (the ladder is 2/4/6…); the 8px is --space-4. */
-  padding: 3px var(--space-4);
-  text-transform: uppercase;
 }
 
 .agent-settings-doc-link {

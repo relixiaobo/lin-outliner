@@ -144,17 +144,19 @@
   padding: var(--space-5) var(--space-6);
 }
 
+/* Notice / error banner = neutral box, status colour on TEXT only (B4) — the same
+   treatment as .settings-sheet-result, not a status-tinted fill. */
 .agent-settings-alert {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  gap: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--fill-1);
   color: var(--status-danger);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
   margin-bottom: var(--space-5);
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-3) var(--space-4);
 }
 
 .agent-settings-footer {
@@ -199,10 +201,23 @@
   cursor: default;
 }
 
+/* The one empty / loading treatment across Settings: plain muted text, no box
+   (native — not the web dashed-border "drop zone"). The centred variant fills a
+   detail pane (e.g. "Select an agent profile"). */
 .agent-settings-empty {
   color: var(--muted-2);
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
   padding: var(--space-8) 0;
+}
+
+.agent-settings-empty.is-centered {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 120px;
+  padding: var(--space-8);
+  text-align: center;
 }
 

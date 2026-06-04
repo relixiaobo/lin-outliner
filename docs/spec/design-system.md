@@ -1104,10 +1104,12 @@ not Apple chrome. We borrow the interaction, not the chrome.
   `userData`, reapplied before first paint on the next launch.
 - **No redundant chrome.** The window is closed through native window chrome
   (the traffic lights), like System Settings — there is no in-content Close
-  button. The content pane carries no "Providers" title (the selected rail
-  category already names it), no search field, and no leading status column —
-  "Connected" vs "Available" already carries connection state, so a per-row marker
-  would be redundant. Rows show a trailing `⋯` menu ONLY when they have more than
+  button. **No pane carries an `<h3>` title** (the selected rail category already
+  names it); a pane that needs a word of explanation shows a single muted intro
+  line (`.settings-section-desc`) instead. The content pane carries no search
+  field, and the Providers list no leading status column — "Connected" vs
+  "Available" already carries connection state, so a per-row marker would be
+  redundant. Rows show a trailing `⋯` menu ONLY when they have more than
   one action; a single-action row's lone "Configure" is what clicking the row
   already does, so instead it exposes a trailing **"Configure" button** — the macOS
   Wi-Fi "Connect" / "Details" idiom: a quiet secondary control (`--fill-3`,
@@ -1134,8 +1136,43 @@ not Apple chrome. We borrow the interaction, not the chrome.
   "Configure" button / `⋯` menu) as the locator, not a row-wide tint (which read as
   a redundant box). The in-card focus
   ring is the inset `--outline-focus` so it is not clipped by the card's
-  `overflow: hidden`. This is the A7 foundation: Permissions / Skills can adopt it
-  later for consistency.
+  `overflow: hidden`. This is the A7 foundation, now the canonical list idiom for
+  **every** Settings pane — see "Settings panes share one idiom" below. An
+  `InsetRow` maps richer settings rows onto its slots: a non-interactive mark in
+  `leading`, the title (optionally with an inline `.settings-chip`) as `label`, an
+  explanatory line as `sublabel`, and any **interactive** control — a switch, a
+  decision `select`, a segmented control — in `trailing` (a sibling of the
+  selectable button, so a toggle never nests inside it). A `wrap` variant lets the
+  title / description wrap instead of single-line ellipsis (and stacks a secondary
+  line, e.g. a permission's raw rule value, under the description).
+- **Settings panes share one idiom.** Every pane (General, Providers, Permissions,
+  Skills, Agent Profiles) renders on the same primitives, so the window reads as one
+  generation:
+  - **Container — flat base.** Panes sit FLAT on the content base
+    (`.agent-settings-section` carries no card); the grouped inset cards float on it
+    like the rail. No opaque `--fill-1` pane wrapper.
+  - **Header — none; one intro line.** No `<h3>` pane title; sub-group headers are
+    the primitive's `.inset-group-header`, not a bespoke `<h4>`.
+  - **Rows — text-led; controls trailing.** Migrated rows carry no leading tile
+    (only Providers leads with the brand avatar); the row toggle / decision select
+    lives in the `trailing` slot (native macOS — toggles sit on the right). General's
+    Theme, Skills' behaviour switches + installed-skill toggles, Permissions' common
+    actions (a decision `select` + an inline decision chip + the raw rule value),
+    Agent Profiles' selectable master list — all are `InsetRow`s. Agent Profiles is
+    master/detail: the master inset list selects (`.inset-row.is-selected`), the
+    detail card floats on the base like an inset card (`--bg-elevated`, `--radius-lg`).
+  - **One secondary button.** Filled neutral `--fill-2`, no border
+    (`.agent-settings-secondary` / `.settings-sheet-secondary`) — the native push
+    button, pairing with the filled-strong primary; never a ghost outline.
+  - **One chip.** `.settings-chip` — `--radius-xs`, `--control-hover`, sentence case
+    (no uppercase) — for the provider Active marker, skill source, permission
+    decision, and agent tool tags alike.
+  - **One empty / loading state.** Plain muted text (`.agent-settings-empty`), no
+    dashed box (native, not a web drop-zone); a `.is-centered` variant fills a
+    detail pane.
+  - **One notice / banner.** Neutral `--fill-1` box with the status colour on TEXT
+    only (`.agent-settings-alert` / `.settings-sheet-result`), never a status-tinted
+    fill (B4).
 - **Provider rows.** Providers group into "Connected" (has a credential — key,
   env, or managed) and "Available". Each row is the brand avatar as identity + the
   name; clicking it opens the config sheet. Every provider mark — vendored brand

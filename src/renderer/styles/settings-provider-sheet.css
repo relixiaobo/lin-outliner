@@ -248,13 +248,18 @@
   padding: 0 var(--space-6);
 }
 
+/* One secondary language across panes and sheets: a filled neutral --fill-2
+   button (no border), matching .agent-settings-secondary and pairing with the
+   filled-strong primary — the native macOS push-button look, not a ghost outline. */
 .settings-sheet-secondary {
-  background: var(--surface);
-  color: var(--text-strong);
+  background: var(--fill-2);
+  border-color: transparent;
+  color: var(--text-soft);
 }
 
 .settings-sheet-secondary:hover:not(:disabled) {
   background: var(--control-hover);
+  color: var(--text-strong);
 }
 
 /* Primary = a genuinely STRONG neutral fill: the native "filled default button"

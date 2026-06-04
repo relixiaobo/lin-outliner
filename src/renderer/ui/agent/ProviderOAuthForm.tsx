@@ -231,7 +231,7 @@ export function ProviderOAuthForm({
         <div className="settings-sheet-head-text">
           <h2 className="settings-sheet-title" id={titleId}>
             {providerName}
-            {isActive ? <span className="settings-provider-badge is-active">Active</span> : null}
+            {isActive ? <span className="settings-chip">Active</span> : null}
           </h2>
           <p className="settings-sheet-subtitle">{description}</p>
         </div>
