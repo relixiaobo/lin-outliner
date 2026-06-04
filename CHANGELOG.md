@@ -726,6 +726,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **OAuth sheet: Done is the primary action once connected** — in the provider OAuth
+  sheet the strong-neutral primary button sat on **Re-authenticate** even after a
+  successful sign-in (Connected / Active), so the loud default action read as "you must
+  sign in again" when the natural next step is to finish. The connected footer now puts
+  the primary on **Done** (rightmost, macOS default-button position) and steps
+  Re-authenticate back to the bordered secondary; the disconnected footer is unchanged
+  (Cancel secondary, Sign in primary). Exactly one primary per footer is preserved (B4).
+  Renderer-only (`ProviderOAuthForm.tsx`); surfaced after #101 strengthened the primary
+  fill. ([#104](https://github.com/relixiaobo/lin-outliner/pull/104))
+
 - **Provider rows are deliberate; junk rows reconciled safely on load (PR #100)** —
   Part A of `provider-config-cleanup.md`. Fixes the "shows *Add key* yet offers *Remove
   provider*" contradiction, where the main Settings Save unconditionally minted a keyless
