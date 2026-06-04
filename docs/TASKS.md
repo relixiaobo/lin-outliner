@@ -113,6 +113,11 @@ capture-pipeline tracks below stay separate (orthogonal to the surface).
   with the plan contract (`platform_hard_block`/`user_denied`, `recoverable`
   set). None is a live fail-open. Self-contained spec in
   `docs/plans/agent-tool-permissions-hardening.md`.
+- **agent-secrets-windows-acl** (P3, *no plan file*) — follow-up from #115: the
+  plaintext `agent-secrets.json` is hardened to `0600`/`0700` on POSIX only;
+  Windows currently falls back to the user-profile ACL with no extra restriction.
+  Add Windows ACL hardening if/when Windows becomes a supported target. See
+  `[[agent-secrets-plaintext-decision]]` rationale.
 - **agent-image-awareness** (P2, *no plan file*) — surface `image` nodes in the
   agent projection so the agent can read/insert them.
 - **agent-generative-ui** (P3, directional CSP/A3 gate) — Claude-style custom
@@ -179,6 +184,16 @@ capture-pipeline tracks below stay separate (orthogonal to the surface).
   a named return type instead of `unknown`. None affect behavior.
 
 ## Recently completed
+
+- **remove-keychain-secret-storage** (codex, PR #115) — dropped Electron `safeStorage`/Keychain
+  backing (it triggered a macOS password prompt on startup/settings reads). Agent provider secrets
+  now persist as plaintext `agent-secrets.json` (file `0600`, parent dir `0700`) under `userData` — a
+  PM-ratified trade of at-rest security for UX, pre-broad-ship. Main-gate hardening: the atomic temp
+  file is created `0600` from the start so the secret is never briefly world-readable nor left `0644`
+  on a mid-write crash. Old `{enc:…}` files read empty → a stored api-key row with no `baseUrl` is
+  pruned at first launch (user re-enters the key once). POSIX-only; Windows ACL hardening is a
+  follow-up. Security review (one finding fixed, two accepted/scoped) + typecheck + `test:core`
+  (`agentProviderCredentials`/`agentProviderReconcile` 16/16).
 
 - **paste-nodex-parity / outliner** (cc, PR #113) — clipboard paste to nodex parity: `<br>`-split
   into rows, wider list markers, Google-Docs unwrap, Markdown-over-flat-HTML routing (but trust real

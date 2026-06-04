@@ -831,6 +831,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Agent secrets: removed the keychain prompt; secrets now stored as local 0600 JSON (PR #115)** —
+  Electron `safeStorage`/macOS Keychain backing triggered a macOS password prompt during
+  startup/settings reads, a poor first-run experience. Agent provider credentials (API keys / OAuth
+  tokens) are now persisted as plaintext `agent-secrets.json` under `userData` with `chmod 0600` on
+  the file and `0700` on its parent dir — a deliberate trade of some at-rest security for UX,
+  accepted pre-broad-ship (PM-ratified). The atomic temp file is created `0600` from the start (not
+  only chmod'd after the rename) so the secret is never even briefly world-readable and a crash
+  mid-write can't leave a `0644` file behind; the post-rename chmod stays as a belt-and-suspenders
+  guard. Old encrypted `{enc:…}` files read as empty, so a stored api-key row with no `baseUrl` is
+  pruned at first launch and the user re-enters the key once. Secrets stay out of the document,
+  renderer state, IPC payloads, tool results, and logs. POSIX-only; Windows ACL hardening tracked as
+  a follow-up. Gate: security review (one finding fixed, two accepted/scoped) + `typecheck` +
+  `test:core` (`agentProviderCredentials`/`agentProviderReconcile` 16/16).
+  ([#115](https://github.com/relixiaobo/lin-outliner/pull/115))
+
 - **Agent composer: multi-line paste keeps every line (PR #112)** — pasting multi-line text into
   the agent composer dropped everything after the first line: the composer's ProseMirror schema is
   a single paragraph and its paste handler only intercepted files, so a multi-line `text/plain`
