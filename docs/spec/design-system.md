@@ -81,7 +81,7 @@ paper palettes, or feature concepts Tenon does not own.
 | Agent dock | `AgentDock.tsx`, `AgentChatPanel.tsx`, `AgentDebugPanel.tsx` | Persistent dock, chat scroll, debug surface, settings entry. |
 | Agent messages | `AgentMessageRow.tsx`, `AgentMessageFrame.tsx`, `AgentBranchNavigator.tsx`, `AgentProcessBlock.tsx`, `AgentProcessTimeline.tsx`, `AgentThinkingBlock.tsx`, `AgentToolCallBlock.tsx`, `AgentToolCallDisclosure.tsx` | Messages, process disclosure, thinking, tool calls, status slots. |
 | Agent composer | `AgentComposer.tsx`, `AgentComposerControls.tsx`, `AgentComposerModelMenu.tsx` | Textarea, attachments, model menu, reasoning switch, send/stop slot. |
-| Agent settings | `AgentSettingsView.tsx`, `SettingsInsetList.tsx`, `SettingsRowMenu.tsx`, `ProviderConfigWindow.tsx` / `ProviderConfigForm.tsx`, `providerCatalog.tsx`, `styles/settings-*.css` | Standalone settings window: category sidebar + full-width inset grouped provider list, per-row `⋯` menu, and the per-provider config as its own native (modal child) window. See "Settings window" below. |
+| Agent settings | `AgentSettingsView.tsx`, `SettingsInsetList.tsx`, `SettingsRowMenu.tsx`, `ProviderConfigWindow.tsx` / `ProviderConfigForm.tsx`, `providerCatalog.tsx`, `styles/settings-*.css` | Standalone settings window: category sidebar + right-pane toolbar title, constrained inset grouped content, per-row `⋯` menu, and the per-provider config as its own native (modal child) window. See "Settings window" below. |
 | Primitives | `ButtonControl.tsx`, `CheckboxControl.tsx`, `CheckboxMark.tsx`, `IconButton.tsx`, `SwitchControl.tsx`, `SwitchMark.tsx`, `SelectControl.tsx`, `TextInputControl.tsx`, `NumberInputControl.tsx` | Thin semantic or visual primitives. Behavior remains caller-owned unless the primitive explicitly owns native control semantics. |
 
 ## Foundations
@@ -1080,32 +1080,39 @@ not Apple chrome. We borrow the interaction, not the chrome.
   radii match the main shell exactly — `--layout-gap` float + gap, `--sidebar-width`
   rail, `--panel-radius` corners — so the rail nests concentrically inside the
   window corner (window 24 = gap 8 + rail 16, B9).
-- **Back / forward toolbar arrows.** The drag region carries macOS System Settings'
-  `‹ ›` arrows. They reuse the SAME chrome control as the main window's rail toggles
-  — the shared `IconButton variant="chrome"` with `.rail-toggle` (icon-only, glyph
-  deepens `--text-secondary` → `--text-primary` on hover, dims to `--text-disabled`
-  when inert, no box; B6) — NOT a bespoke style. Only their placement is
-  settings-specific: the `.settings-history-nav` cluster (a sibling of
-  `.window-chrome-cluster`) anchors them over the content column on the
-  traffic-light centreline (`--chrome-control-inset`), and they are no-drag DOM
-  children of the strip — the one reliable drag-region carve-out on macOS. They walk
-  a category visit-history stack: switching categories pushes (truncating any
-  forward entries), back / forward move the cursor; each is disabled when there is
-  nothing to traverse that way.
-- **Floating category rail + full-width list.** A left rail lists settings
+- **Back / forward toolbar arrows + page title.** The drag region carries macOS
+  System Settings' `‹ ›` history controls and the selected category title. The
+  arrows reuse the SAME chrome control as the main window's rail toggles — the
+  shared `IconButton variant="chrome"` with `.rail-toggle` (icon-only, glyph
+  deepens `--text-secondary` → `--text-primary` on hover, dims to
+  `--text-disabled` when inert, no box; B6) — NOT a bespoke style. Only their
+  placement is settings-specific: `.settings-toolbar` anchors over the content
+  column on the traffic-light centreline (`--chrome-control-inset`), with
+  `.settings-history-nav` as the no-drag control group. The `.settings-toolbar-title`
+  is the right-pane anchor ("General", "Providers", etc.), so the content no longer
+  relies on the rail alone to name the page. History walks a category visit-history
+  stack: switching categories pushes (truncating any forward entries), back /
+  forward move the cursor; each is disabled when there is nothing to traverse.
+- **Floating category rail + constrained grouped content.** A left rail lists settings
   categories (General / Providers / Permissions / Skills / Agent Profiles); the
   window opens to Providers (the primary connection task). The rail is the
   app's own floating glass panel — elevated surface, soft elevation, rounded,
   hairline edge — mirroring the main window's `.sidebar-dock`, so it reads as a
-  rail that floats off the content base rather than a flat column. The content
-  pane is the flat window base (no surrounding card) and is the single scroll
-  container, so the rail stays put; the grouped cards float on it on the same
-  `--bg-elevated` surface as the rail. The content pane shows the selected
-  category full-width — for Providers, a grouped provider list. There is NO
-  permanent side detail pane: per-provider config opens in its own native window (below).
-  Categories — not individual providers — are the top-level rail rows.
+  rail that floats off the content base rather than a flat column. On real native
+  windows it uses `--material-sidebar` + `--material-backdrop`, with the central
+  reduced-transparency / high-contrast opaque fallback. Rail rows keep the
+  category IA, but add a compact neutral icon slot so scanning is closer to
+  System Settings without using status or brand color for functional state. The
+  content pane is the flat window base (no surrounding card) and is the single
+  scroll container, so the rail stays put; the grouped cards float on it on an
+  opaque `--bg-elevated` surface. The content column is constrained
+  (`--settings-content-max-width`) so rows keep a stable reading width instead of
+  stretching across the whole window. There is NO permanent side detail pane:
+  per-provider config opens in its own native window (below). Categories — not
+  individual providers — are the top-level rail rows.
 - **General pane — appearance.** The **General** category holds app-wide
-  preferences; today a single **Theme** row. The control is a `SegmentedControl`
+  preferences; today it has **Theme** and **Language** rows. Theme uses a
+  `SegmentedControl`
   (System / Light / Dark): a recessed `--fill-1` track (`--segmented-track-shadow`
   inset hairline) whose selected segment is a lifted `--bg-elevated` capsule
   (`--shadow-thumb`) — a neutral functional state, never an accent (B3) — with
@@ -1119,12 +1126,13 @@ not Apple chrome. We borrow the interaction, not the chrome.
   `userData`, reapplied before first paint on the next launch.
 - **No redundant chrome.** The window is closed through native window chrome
   (the traffic lights), like System Settings — there is no in-content Close
-  button. **No pane carries an `<h3>` title** (the selected rail category already
-  names it); a pane that needs a word of explanation shows a single muted intro
-  line (`.settings-section-desc`) instead. The content pane carries no search
-  field, and the Providers list no leading status column — "Connected" vs
-  "Available" already carries connection state, so a per-row marker would be
-  redundant. Rows show a trailing `⋯` menu ONLY when they have more than
+  button. The right-pane toolbar title names the selected category; sections inside
+  the content do NOT repeat that pane title with another `<h3>`. Pane-level intro
+  lines are avoided unless they carry information that cannot live in a section
+  header or row sublabel. The content pane carries no search field, and the
+  Providers list no leading status column — "Connected" vs "Available" already
+  carries connection state, so a per-row marker would be redundant. Rows show a
+  trailing `⋯` menu ONLY when they have more than
   one action; a single-action row's lone "Configure" is what clicking the row
   already does, so instead it exposes a trailing **"Configure" button** — the macOS
   Wi-Fi "Connect" / "Details" idiom: a quiet secondary control (`--fill-3`,
@@ -1138,7 +1146,8 @@ not Apple chrome. We borrow the interaction, not the chrome.
   above a rounded inset card whose rows are split by hairlines; geometry derives
   from the radius / hairline ladders (B9). The card is its own region by COLOUR —
   `--bg-elevated` floating on the content base — per the surface ladder (`--bg-window`
-  < `--bg-content` < `--bg-elevated`), not by a heavy border. **Row hairlines are
+  < `--bg-content` < `--bg-elevated`), with only an inset hairline shadow rather
+  than a heavy border. **Row hairlines are
   content-aligned, not edge-to-edge** (the macOS grouped-list rule): the separator
   is inset on the left to start at the row's content, leaving the leading
   icon/avatar in an undivided gutter, and runs flush to the right edge. The inset is
@@ -1158,21 +1167,23 @@ not Apple chrome. We borrow the interaction, not the chrome.
   explanatory line as `sublabel`, and any **interactive** control — a switch, a
   decision `select`, a segmented control — in `trailing` (a sibling of the
   selectable button, so a toggle never nests inside it). A `wrap` variant lets the
-  title / description wrap instead of single-line ellipsis (and stacks a secondary
-  line, e.g. a permission's raw rule value, under the description).
+  title / description wrap instead of single-line ellipsis (and can stack a secondary
+  technical line for diagnostics or advanced detail under the description).
 - **Settings panes share one idiom.** Every pane (General, Providers, Permissions,
   Skills, Agent Profiles) renders on the same primitives, so the window reads as one
   generation:
   - **Container — flat base.** Panes sit FLAT on the content base
     (`.agent-settings-section` carries no card); the grouped inset cards float on it
     like the rail. No opaque `--fill-1` pane wrapper.
-  - **Header — none; one intro line.** No `<h3>` pane title; sub-group headers are
-    the primitive's `.inset-group-header`, not a bespoke `<h4>`.
+  - **Header — toolbar title + section headers.** The right-pane toolbar carries the
+    category title; sub-group headers are the primitive's `.inset-group-header`, not
+    a bespoke `<h4>`. Pane intro lines are minimized.
   - **Rows — text-led; controls trailing.** Migrated rows carry no leading tile
     (only Providers leads with the brand avatar); the row toggle / decision select
     lives in the `trailing` slot (native macOS — toggles sit on the right). General's
-    Theme, Skills' behaviour switches + installed-skill toggles, Permissions' common
-    actions (a decision `select` + an inline decision chip + the raw rule value),
+    Theme/Language, Skills' behaviour switches + installed-skill toggles, Permissions'
+    common actions (a decision `select`; the row sublabel stays human-readable and
+    does not expose raw rule strings),
     Agent Profiles' selectable master list — all are `InsetRow`s. Agent Profiles is
     master/detail: the master inset list selects (`.inset-row.is-selected`), the
     detail card floats on the base like an inset card (`--bg-elevated`, `--radius-lg`).
@@ -1180,8 +1191,9 @@ not Apple chrome. We borrow the interaction, not the chrome.
     (`.agent-settings-secondary` / `.settings-sheet-secondary`) — the native push
     button, pairing with the filled-strong primary; never a ghost outline.
   - **One chip.** `.settings-chip` — `--radius-xs`, `--control-hover`, sentence case
-    (no uppercase) — for the provider Active marker, skill source, permission
-    decision, and agent tool tags alike.
+    (no uppercase) — for quiet metadata such as skill source, ignored-rule
+    diagnostics, and agent tool tags. Do not duplicate a trailing control's current
+    value with an inline chip.
   - **One empty / loading state.** Plain muted text (`.agent-settings-empty`), no
     dashed box (native, not a web drop-zone); a `.is-centered` variant fills a
     detail pane.

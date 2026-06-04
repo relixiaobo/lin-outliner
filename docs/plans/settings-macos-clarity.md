@@ -113,11 +113,23 @@ No live file-level overlap.
 
 ## Checklist
 
-- [ ] Add toolbar page title and align it with the history controls.
-- [ ] Constrain the content column and tune vertical rhythm.
-- [ ] Add compact rail icon slots and reduce rail hint dominance.
-- [ ] Remove/demote redundant pane intro copy.
-- [ ] Soften inset-card chrome without weakening focus/selection states.
-- [ ] Update `docs/spec/design-system.md`.
-- [ ] Run `bun run typecheck` and relevant renderer tests.
-- [ ] Visually verify light and dark settings panes.
+- [x] Add toolbar page title and align it with the history controls.
+- [x] Constrain the content column and tune vertical rhythm.
+- [x] Add compact rail icon slots and reduce rail hint dominance.
+- [x] Remove/demote redundant pane intro copy.
+- [x] Soften inset-card chrome without weakening focus/selection states.
+- [x] Update `docs/spec/design-system.md`.
+- [x] Run `bun run typecheck` and relevant renderer tests.
+- [x] Visually verify light and dark settings panes.
+
+## Verification
+
+- `bun run typecheck`
+- `bun run test:renderer`
+- `bunx playwright test tests/e2e/agent-settings.spec.ts`
+- `bunx playwright test tests/e2e/cursor-affordances.spec.ts -g "settings inset rows"`
+- In-app Browser visual pass for Providers, General, and Permissions at
+  `http://127.0.0.1:5174/?surface=settings`
+- Playwright screenshot pass for Providers and Permissions in light + dark:
+  `tmp/settings-dark.png`, `tmp/settings-permissions-dark.png`,
+  `tmp/settings-light.png`, `tmp/settings-permissions-light.png`

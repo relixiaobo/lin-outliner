@@ -3,7 +3,7 @@ import { commandCalls, installElectronMock } from './outlinerMock';
 
 // Settings render in their own window (the ?surface=settings route). The Providers
 // surface follows the macOS System Settings idiom: a floating category rail + a
-// full-width inset grouped list (Connected / Available). Clicking a provider opens
+// constrained inset grouped list (Connected / Available). Clicking a provider opens
 // its connection config in its OWN native window — a modal child of settings
 // (?surface=provider-config), NOT an in-renderer modal — the way System Settings
 // opens a real attached dialog. The list window has no provider search and no
@@ -32,9 +32,9 @@ test.describe('agent settings window', () => {
     await expect(back).toBeDisabled();
     await expect(forward).toBeDisabled();
 
-    // Visiting another category records history, so back becomes available. Panes
-    // carry no <h3> title now (the rail names them, Q1) — assert the pane by its
-    // grouped inset list, symmetric with the Providers check below.
+    // Visiting another category records history, so back becomes available. The
+    // toolbar title names the pane; assert the content by its grouped inset list,
+    // symmetric with the Providers check below.
     await settings.getByRole('button', { name: /^Permissions/ }).click();
     await expect(settings.getByRole('list', { name: 'Common actions' })).toBeVisible();
     await expect(back).toBeEnabled();

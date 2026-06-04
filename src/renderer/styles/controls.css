@@ -90,7 +90,7 @@
 .segmented-control-option {
   appearance: none;
   margin: 0;
-  padding: var(--space-2) var(--space-8);
+  padding: var(--space-2) var(--space-6);
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -139,7 +139,7 @@
   -webkit-appearance: none;
   margin: 0;
   /* Leave room on the right for the overlaid chevron (glyph + gutter). */
-  padding: var(--space-2) calc(var(--space-6) + var(--space-8)) var(--space-2) var(--space-8);
+  padding: var(--space-2) calc(var(--space-6) + var(--space-6)) var(--space-2) var(--space-6);
   border: 0;
   border-radius: var(--radius-sm);
   background: var(--bg-elevated);
@@ -167,4 +167,3 @@
   color: var(--text-secondary);
   pointer-events: none;
 }
-
