@@ -7,6 +7,7 @@ import { shouldPreserveSelectedRowContextClick } from '../../src/renderer/ui/int
 import {
   orderedSelectedRows,
   selectedRootIds,
+  serializeSelectedRows,
   toggleVisibleSelection,
 } from '../../src/renderer/ui/interactions/selectionActions';
 import {
@@ -93,6 +94,33 @@ describe('nodex outliner parity matrix', () => {
 
     expect(orderedSelectedRows(rows, selectedIds)).toEqual(['parent', 'child', 'sibling']);
     expect(selectedRootIds(orderedSelectedRows(rows, selectedIds), byId)).toEqual(['parent', 'sibling']);
+  });
+
+  test('clipboard avoids duplicating field values when their field entry is also selected', () => {
+    const byId = new Map<string, any>([
+      ['field', node('field', { content: { text: 'Status', marks: [], inlineRefs: [] } })],
+      ['entry', node('entry', {
+        type: 'fieldEntry',
+        fieldDefId: 'field',
+        children: ['value-a', 'value-b'],
+      })],
+      ['value-a', node('value-a', {
+        parentId: 'entry',
+        content: { text: 'Todo', marks: [], inlineRefs: [] },
+      })],
+      ['value-b', node('value-b', {
+        parentId: 'entry',
+        content: { text: 'Later', marks: [], inlineRefs: [] },
+      })],
+    ]);
+    const rows = ['entry', 'value-a', 'value-b'];
+
+    expect(serializeSelectedRows(rows, new Set(['entry']), byId)).toBe('- >Status: Todo, Later');
+    expect(serializeSelectedRows(rows, new Set(rows), byId)).toBe([
+      '- >Status',
+      '  - Todo',
+      '  - Later',
+    ].join('\n'));
   });
 
   test('modifier row selection drops hidden root/title selections outside the visible row scope', () => {

@@ -12,6 +12,7 @@ import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { isDescendantOf, isNodeInTrash } from '../interactions/nodeLocation';
 import { tagSelectorItemLabel, tagSelectorItems } from '../interactions/tagSelector';
 import {
+  idsAllowedForDuplicate,
   idsAllowedForMoveTo,
   idsEnabledForSelectionAction,
   runSelectionDelete,
@@ -115,6 +116,32 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     () => idsEnabledForSelectionAction({
       ids: activeNodeIds,
       action: 'checkbox',
+      panelRootId: actionPanelRootId,
+      byId: props.index.byId,
+    }),
+    [actionPanelRootId, activeNodeIds, props.index.byId],
+  );
+  const activeDeleteIds = useMemo(
+    () => idsEnabledForSelectionAction({
+      ids: activeNodeIds,
+      action: 'delete',
+      panelRootId: actionPanelRootId,
+      byId: props.index.byId,
+    }),
+    [actionPanelRootId, activeNodeIds, props.index.byId],
+  );
+  const activeDuplicateIds = useMemo(
+    () => idsAllowedForDuplicate({
+      ids: activeNodeIds,
+      panelRootId: actionPanelRootId,
+      byId: props.index.byId,
+    }),
+    [actionPanelRootId, activeNodeIds, props.index.byId],
+  );
+  const activeMoveIds = useMemo(
+    () => idsEnabledForSelectionAction({
+      ids: activeNodeIds,
+      action: 'move',
       panelRootId: actionPanelRootId,
       byId: props.index.byId,
     }),
@@ -232,22 +259,22 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     <>
       {item('Open in split pane', <OpenIcon size={ICON_SIZE.menu} />, () => props.onRoot(props.openId, { newPane: true }))}
       {item(`${activeLabelPrefix}Duplicate`, <DuplicateIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionDuplicate({
-        ids: activeNodeIds,
+        ids: activeDuplicateIds,
         panelRootId: actionPanelRootId,
         byId: props.index.byId,
-      })))}
+      })), activeDuplicateIds.length === 0)}
       {item(`${activeLabelPrefix}Move up`, <MoveUpIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionMove({
-        ids: activeNodeIds,
+        ids: activeMoveIds,
         direction: 'up',
         panelRootId: actionPanelRootId,
         byId: props.index.byId,
-      })))}
+      })), activeMoveIds.length === 0)}
       {item(`${activeLabelPrefix}Move down`, <MoveDownIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionMove({
-        ids: activeNodeIds,
+        ids: activeMoveIds,
         direction: 'down',
         panelRootId: actionPanelRootId,
         byId: props.index.byId,
-      })))}
+      })), activeMoveIds.length === 0)}
       <MenuItem
         className="node-context-item"
         disabled={activeMoveToIds.length === 0}
@@ -300,10 +327,10 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       {trashed
         ? item('Restore', <RestoreIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.restoreNode(props.node.id)))
         : item(`${activeLabelPrefix}Trash`, <TrashIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionDelete({
-          ids: activeNodeIds,
+          ids: activeDeleteIds,
           panelRootId: actionPanelRootId,
           byId: props.index.byId,
-        })))}
+        })), activeDeleteIds.length === 0)}
     </>
   );
 

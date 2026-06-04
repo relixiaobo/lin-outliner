@@ -155,6 +155,13 @@ computed.
 
 ## Selection Mode Matrix
 
+Selection scope is panel-level, not value-column-local. Field value rows render
+inside the field row's value column, but stored value rows participate in
+Shift/Cmd selection, drag selection, `Mod+A`, clipboard, and batch actions in the
+same panel-level selectable order as ordinary rows. Visual editing navigation
+continues to use the body/reference visible row order, so value rows do not become
+implicit previous/next body rows for text editing commands.
+
 | Interaction | Expected behavior |
 | --- | --- |
 | Click row body | Select row. |

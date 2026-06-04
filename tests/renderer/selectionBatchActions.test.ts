@@ -5,6 +5,7 @@ import {
   selectableRowForId,
 } from '../../src/renderer/state/selectableRows';
 import {
+  idsAllowedForDuplicate,
   idsAllowedForMoveTo,
   idsAllowedForStructuralBatch,
   idsEnabledForSelectionAction,
@@ -61,6 +62,24 @@ describe('selection batch action policy', () => {
       byId,
       rowMap: rowsById,
     })).toEqual(['body']);
+  });
+
+  test('allows only clone-safe field values for duplicate commands', () => {
+    const byId = byIdOf([
+      node('root', { children: ['entry'] }),
+      node('target'),
+      node('entry', { parentId: 'root', type: 'fieldEntry', children: ['plain', 'ref'] }),
+      node('plain', { parentId: 'entry' }),
+      node('ref', { parentId: 'entry', type: 'reference', targetId: 'target' }),
+    ]);
+    const rowsById = selectableRowMap(buildSelectableRows('root', byId, { expanded: new Set() }));
+
+    expect(idsAllowedForDuplicate({
+      ids: ['plain', 'ref'],
+      panelRootId: 'root',
+      byId,
+      rowMap: rowsById,
+    })).toEqual(['plain']);
   });
 
   test('filters synthetic system values out of every mutable action', () => {

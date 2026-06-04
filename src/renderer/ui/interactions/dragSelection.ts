@@ -1,6 +1,7 @@
 import { useEffect, useRef, type Dispatch, type SetStateAction } from 'react';
 import type { NodeId } from '../../api/types';
-import { flattenVisibleRows, type DocumentIndex, type UiState } from '../../state/document';
+import type { DocumentIndex, UiState } from '../../state/document';
+import { buildSelectableRows } from '../../state/selectableRows';
 import { clearFocusState } from '../focus/focusModel';
 
 const DRAG_SELECT_THRESHOLD_PX = 5;
@@ -56,12 +57,10 @@ function selectedRange(rows: NodeId[], startId: NodeId, endId: NodeId): NodeId[]
 
 function visibleRows(context: DragSelectionContext): NodeId[] {
   if (!context.rootId || !context.index) return [];
-  return flattenVisibleRows(
-    context.rootId,
-    context.index.byId,
-    context.ui.expanded,
-    context.ui.expandedHiddenFields,
-  );
+  return buildSelectableRows(context.rootId, context.index.byId, {
+    expanded: context.ui.expanded,
+    expandedHiddenFields: context.ui.expandedHiddenFields,
+  }).map((row) => row.id);
 }
 
 export function useDragSelection(options: UseDragSelectionOptions) {

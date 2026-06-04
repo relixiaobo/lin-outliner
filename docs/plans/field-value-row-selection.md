@@ -3,7 +3,7 @@ status: in-progress
 priority: P2
 owner: relixiaobo
 created: 2026-06-03
-updated: 2026-06-03
+updated: 2026-06-04
 ---
 
 # Field Value Rows Join the Node Selection Model
@@ -30,7 +30,7 @@ value creation.
 - Rewriting the whole outliner renderer or landing flat outliner as part of this
   work.
 
-## Current Reality
+## Pre-change Reality
 
 This is not a one-line `flattenVisibleRows` patch.
 
@@ -105,10 +105,10 @@ The exact shape can vary, but the model must be explicit about:
   affordances, but destructive actions are disabled.
 
 The producer should live near the existing row-ordering code and be unit tested
-before interaction rewiring. `flattenVisibleRows` may become a thin projection of
-this model, or it may remain as a legacy helper while interaction code moves to
-the richer model. The key rule: one canonical panel-level selection order, not
-one order per nested `OutlinerView`.
+before interaction rewiring. Implementation choice: `flattenVisibleRows` remains
+the legacy visual/editing row-order helper, while selection entrypoints consume
+`buildSelectableRows` directly. The key rule is one canonical panel-level
+selection order, not one order per nested `OutlinerView`.
 
 ### 2. Split Render Root From Selection Root
 
@@ -188,16 +188,14 @@ Synthetic/read-only system values:
 - Reference affordances may still navigate/edit the target where existing
   read-only behavior allows it.
 
-### 5. Keep Visual Ordering Producers In Sync
+### 5. Keep Visual And Selection Ordering Separate
 
-If `flattenVisibleRows` starts including field value children, update
-`buildVisualRows` and the parity tests together. If the richer selectable model
-supersedes `flattenVisibleRows`, rewrite the parity tests so they compare the
-intended projections rather than forcing an obsolete helper to match the flat
-renderer.
-
-The implementation must not leave recursive and flat renderer paths with
-different selection orders.
+`flattenVisibleRows` and `buildVisualRows` stay parity-pinned for visual/editing
+navigation. Field value rows render inside their field row, so they are not
+ordinary body rows in that projection. `buildSelectableRows` is the selection
+projection and includes field value rows in panel order. Tests must compare each
+producer to its intended projection instead of forcing selection and visual order
+to match.
 
 ### 6. Spec And Test Migration
 
@@ -240,6 +238,7 @@ The PR should still keep the build sequence disciplined:
 
 - Thread `selectionRootId` separately from render `rootId`.
 - Include stored field value rows in the panel-level selectable order.
+- Keep `flattenVisibleRows` as the visual/editing row-order helper.
 - Rewire pointer, keyboard, drag, context-menu, and clipboard paths to consume
   the selectable-row model.
 - Implement field-value-aware batch planning/commands.

@@ -70,6 +70,24 @@ export function idsAllowedForMoveTo(params: {
   return idsAllowedForStructuralBatch(params);
 }
 
+export function idsAllowedForDuplicate(params: {
+  ids: readonly NodeId[];
+  panelRootId: NodeId;
+  byId: Map<NodeId, NodeProjection>;
+  rowMap?: ReadonlyMap<NodeId, SelectableRow>;
+}): NodeId[] {
+  return params.ids.filter((id) => {
+    const row = resolveSelectableRow({
+      id,
+      panelRootId: params.panelRootId,
+      byId: params.byId,
+      rowMap: params.rowMap,
+    });
+    if (!row || row.actionPolicy.duplicate !== 'node-clone') return false;
+    return canDuplicateSelectableRow(row, params.byId);
+  });
+}
+
 export async function runSelectionDelete(params: {
   ids: readonly NodeId[];
   panelRootId: NodeId;
@@ -114,16 +132,7 @@ export async function runSelectionDuplicate(params: {
   byId: Map<NodeId, NodeProjection>;
   rowMap?: ReadonlyMap<NodeId, SelectableRow>;
 }): Promise<SelectionCommandResult> {
-  const duplicateIds = params.ids.filter((id) => {
-    const row = resolveSelectableRow({
-      id,
-      panelRootId: params.panelRootId,
-      byId: params.byId,
-      rowMap: params.rowMap,
-    });
-    if (!row || row.actionPolicy.duplicate !== 'node-clone') return false;
-    return canDuplicateSelectableRow(row, params.byId);
-  });
+  const duplicateIds = idsAllowedForDuplicate(params);
   return duplicateIds.length > 0
     ? api.batchDuplicateNodes(duplicateIds)
     : api.getProjection();

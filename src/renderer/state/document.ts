@@ -10,10 +10,10 @@ import type {
 import { collectChangedNodes, nextRevisions, nodeSignatures, propagateDirty, type SignatureMap } from './renderRev';
 import { measureRenderIndex } from '../ui/outliner/renderProbe';
 import {
-  buildSelectableRows,
   resolveSelectableReferenceTargetId,
   selectableChildParentId,
 } from './selectableRows';
+import { buildOutlinerRows } from './outlinerRows';
 
 export interface DocumentIndex {
   projection: DocumentProjection;
@@ -157,8 +157,22 @@ export function flattenVisibleRows(
   expanded: Set<NodeId>,
   expandedHiddenFields: Set<string> = new Set(),
 ): NodeId[] {
-  return buildSelectableRows(rootId, byId, { expanded, expandedHiddenFields })
-    .map((row) => row.id);
+  const result: NodeId[] = [];
+  const visit = (parentId: NodeId, referencePath: NodeId[]) => {
+    const parent = byId.get(parentId);
+    if (!parent) return;
+    const rows = buildOutlinerRows(parent, byId, { expandedHiddenFields });
+    for (const row of rows) {
+      if (row.type !== 'field' && row.type !== 'content') continue;
+      result.push(row.id);
+      if (!expanded.has(row.id)) continue;
+      const childParentId = outlinerChildParentId(row.id, byId);
+      if (!childParentId || referencePath.includes(childParentId)) continue;
+      visit(childParentId, [...referencePath, childParentId]);
+    }
+  };
+  visit(rootId, [rootId]);
+  return result;
 }
 
 export function outlinerChildParentId(

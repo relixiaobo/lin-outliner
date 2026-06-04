@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { NodeId, NodeProjection } from '../../src/core/types';
 import { flattenVisibleRows } from '../../src/renderer/state/document';
+import { buildSelectableRows } from '../../src/renderer/state/selectableRows';
 import { buildVisualRows, visualRowNodeIds } from '../../src/renderer/state/visualRows';
 
 function node(id: string, patch: Partial<NodeProjection> = {}): NodeProjection {
@@ -67,8 +68,10 @@ describe('buildVisualRows body/reference parity with flattenVisibleRows', () => 
     ]);
     const flat = flattenVisibleRows('root', byId, new Set(), new Set());
     const visual = visualRowNodeIds(buildVisualRows('root', byId, { expanded: new Set() }));
+    const selectable = buildSelectableRows('root', byId, { expanded: new Set() }).map((row) => row.id);
 
-    expect(flat).toEqual(['before', 'entry', 'value-a', 'value-b', 'after']);
+    expect(selectable).toEqual(['before', 'entry', 'value-a', 'value-b', 'after']);
+    expect(flat).toEqual(['before', 'entry', 'after']);
     expect(visual).toEqual(['before', 'entry', 'after']);
   });
 });

@@ -32,7 +32,7 @@ function rowIds(rows: ReturnType<typeof buildSelectableRows>): NodeId[] {
 }
 
 describe('buildSelectableRows', () => {
-  test('is the panel-level projection behind flattenVisibleRows', () => {
+  test('adds field values to panel selection order without changing visible flattening', () => {
     const byId = byIdOf([
       node('root', { children: ['before', 'entry', 'after'] }),
       node('before', { parentId: 'root' }),
@@ -53,8 +53,6 @@ describe('buildSelectableRows', () => {
     expect(flattenVisibleRows('root', byId, expanded)).toEqual([
       'before',
       'entry',
-      'value-a',
-      'value-b',
       'after',
     ]);
     expect(rowIds(buildSelectableRows('entry', byId, { expanded }))).toEqual(['value-a', 'value-b']);

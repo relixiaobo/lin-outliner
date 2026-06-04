@@ -13,6 +13,7 @@ import type { NodeId } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
 import { OUTLINER_NODE_DRAG_MIME, resolveOutlinerDropMove } from '../interactions/dragDrop';
 import { flattenVisibleRows } from '../../state/document';
+import { buildSelectableRows } from '../../state/selectableRows';
 import { resolveDropHoverPosition, type DropHoverPosition } from '../interactions/dropPosition';
 import {
   resolveRowPointerSelectAction,
@@ -257,7 +258,10 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
-    const rows = flattenVisibleRows(selectionRootId, byId, liveUi.expanded, liveUi.expandedHiddenFields);
+    const rows = buildSelectableRows(selectionRootId, byId, {
+      expanded: liveUi.expanded,
+      expandedHiddenFields: liveUi.expandedHiddenFields,
+    }).map((row) => row.id);
     const selectionMeta: Pick<UiState, 'selectionRootId' | 'selectionSource'> = {
       selectionRootId,
       selectionSource: 'global',
