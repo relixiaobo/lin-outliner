@@ -42,13 +42,6 @@ _(nothing actively in flight)_
 
 Ordered by priority; lower items may depend on higher ones.
 
-- **search-retrieval-stack Phase 5** (P2, codex, deferred — measurement-gated) — the
-  only remaining slice of `search-retrieval-stack` after Phases 1–4 shipped in PR #111:
-  the capture-payload retrieval adapter and any heavier scale work (WAND/block-max
-  top-k pruning, a persisted index, SQLite/FTS, semantic reranking). **None** of it is
-  in scope until fresh probes show a concrete miss (A9); the plan records the measured
-  starting evidence (50k broad query ~963ms, cold rebuild ~4.5s). Plan stays
-  `in-progress` for this slice. See `docs/plans/search-retrieval-stack.md`.
 - **unified-command-surface** (P2, **design ratified by PM — needs a dev-drafted
   build one-pager**) — collapse cmd+k and the launcher into **one** context-aware
   command surface (one surface, one hotkey `Cmd+Shift+Space`, context as an ambient
@@ -162,8 +155,11 @@ Ordered by priority; lower items may depend on higher ones.
   `agentNodeToolProjection.scoreTerm`; reworks `past_chats search` to shared-analyzer semantics
   + visible-transcript verification + **relevance-first sorting** (was recency-only); reuses the
   shared label ranking for the renderer field/slash pickers and local filename ordering. No
-  protocol change, no new deps. Phase 5 (capture-payload + scale) stays deferred and
-  measurement-gated in Backlog; the plan stays `in-progress`. Gate: medium code review (1 CJK
+  protocol change, no new deps. Phase 5 closed by PM decision: 5a (capture-payload search)
+  dropped — its `CapturePayloadRef.searchPolicy` contract was removed in #103; 5b (persisted
+  index / WAND / SQLite-FTS / embeddings) shelved under A9 with re-open triggers recorded in the
+  archived plan. Plan flipped to `done` and moved to `docs/plans/archive/`. Gate: medium code
+  review (1 CJK
   matching regression + 1 past-chat snippet casing/highlight regression found, both fixed in #111
   and re-verified) + typecheck + `test:core` (584 pass; the 2 failures are the pre-existing
   ripgrep `agentLocalTools` cases). Specs updated in-PR: `agent-tool-design.md` +

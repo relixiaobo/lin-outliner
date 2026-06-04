@@ -1,10 +1,19 @@
 ---
-status: in-progress
+status: done
 priority: P1
 owner: codex
 created: 2026-06-04
 updated: 2026-06-04
 ---
+
+> **Closed 2026-06-04 (PR #111).** Phases 1–4 shipped; their design lives in
+> `docs/spec/search-query-grammar.md`, `docs/spec/agent-tool-design.md`, and
+> `docs/spec/agent-event-log-rendering.md`. Phase 5 is closed by PM decision:
+> 5a (capture-payload search) is dropped because the `CapturePayloadRef.searchPolicy`
+> contract it depended on was removed in PR #103 (capture nodes are now plain
+> indexed nodes); 5b (persisted index / WAND-block-max / SQLite-FTS / embeddings)
+> is **shelved**, not done — re-open only when a probe against a real workspace
+> trips one of the documented triggers (see Phase 5 below).
 
 # Search Retrieval Stack
 
@@ -269,15 +278,28 @@ Expected files:
 - `src/main/main.ts` for filename ranking only if the shared helper can be used
   without leaking renderer code into main
 
-### Phase 5: Capture payload and scale follow-ups
+### Phase 5: Capture payload and scale follow-ups — CLOSED (PM decision, 2026-06-04)
 
-Implement only after the default node and past-chat paths are stable:
+- **5a — capture-payload search: dropped.** This was specified as "explicit payload
+  search honoring `CapturePayloadRef.searchPolicy`." That contract no longer exists:
+  PR #103 removed the payload-to-file / deferred-enrichment mechanism, and the
+  `NodeBase.capture` sidecar is now provenance-only (`CaptureNodeMetadata`,
+  `src/core/types.ts`). Capture nodes are already indexed and searched as plain nodes
+  by the shared layer, so there is nothing to add. Reopen only if rich-content capture
+  is reintroduced, as part of that feature's own plan.
 
-- explicit payload search honoring `CapturePayloadRef.searchPolicy`;
-- persisted text index if cold rebuild or memory probes require it;
-- WAND/block-max pruning if broad top-k queries are too slow;
-- embeddings/model reranking only for an explicit semantic-recall feature, never
-  as default `STRING_MATCH` ranking.
+- **5b — scale machinery: shelved (A9 measurement-gated), not done.** Do **not** add a
+  persisted text index, WAND/block-max top-k pruning, SQLite/FTS, or embedding/model
+  reranking on speculation. The only recorded evidence is synthetic probes (50k broad
+  query ~963ms, cold rebuild ~4.5s); no real workspace has shown a miss. Re-open this
+  plan (or spin a focused successor) only when a probe against a **real** workspace
+  trips a documented trigger:
+  - broad 10k/50k node query latency is unacceptable in practice;
+  - cold rebuild cost hurts startup or workspace switching;
+  - index memory grows beyond a documented budget;
+  - users need semantic recall that lexical search cannot satisfy.
+  Embedding/model reranking, if it ever lands, is for an explicit semantic-recall
+  feature only — never the default `STRING_MATCH` ranking.
 
 ### Current implementation scope
 
