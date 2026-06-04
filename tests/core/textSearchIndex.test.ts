@@ -85,6 +85,17 @@ describe('text search index', () => {
     expect(index.search('cat').map((result) => result.id)).toEqual(['category', 'scatter']);
   });
 
+  test('keeps interior substring recall for longer Latin queries with prefix matches elsewhere', () => {
+    const index = createTextSearchIndex([
+      record('national', [{ key: 'title', text: 'National park' }]),
+      record('international', [{ key: 'title', text: 'Internationalization notes' }]),
+    ]);
+
+    expect(index.candidateIds('nation')).toEqual(new Set(['national', 'international']));
+    expect(index.scoreRecord('international', 'nation')?.score).toBeGreaterThan(0);
+    expect(index.search('nation').map((result) => result.id)).toEqual(['national', 'international']);
+  });
+
   test('keeps short Latin search prefix-oriented', () => {
     const index = createTextSearchIndex([
       record('launch', [{ key: 'title', text: 'Launch plan' }]),

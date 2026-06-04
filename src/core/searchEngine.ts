@@ -37,7 +37,7 @@ import {
   startOfLocalDay,
   startOfLocalWeek,
 } from './localDate';
-import { intersectSets, unionSets } from './setUtils';
+import { intersectSetList, unionSets } from './setUtils';
 import {
   createTextSearchIndex,
   type MutableTextSearchIndex,
@@ -876,27 +876,13 @@ function candidateIdsForQuery(query: SearchQueryExpr, textIndex: TextSearchIndex
   if (query.logic === 'AND') {
     const positiveSets = childSets.filter((set): set is Set<NodeId> => Boolean(set));
     if (positiveSets.length === 0) return null;
-    return intersectCandidateSets(positiveSets);
+    return intersectSetList(positiveSets);
   }
   if (query.logic === 'OR') {
     if (childSets.length === 0 || childSets.some((set) => !set)) return null;
-    return unionCandidateSets(childSets as Set<NodeId>[]);
+    return unionSets(childSets as Set<NodeId>[]);
   }
   return null;
-}
-
-function intersectCandidateSets(sets: Set<NodeId>[]): Set<NodeId> {
-  const sorted = [...sets].sort((left, right) => left.size - right.size);
-  let result = new Set(sorted[0] ?? []);
-  for (let index = 1; index < sorted.length; index += 1) {
-    result = intersectSets(result, sorted[index]!);
-    if (result.size === 0) break;
-  }
-  return result;
-}
-
-function unionCandidateSets(sets: Set<NodeId>[]): Set<NodeId> {
-  return unionSets(sets);
 }
 
 function textSearchRecordForNode(index: SearchIndex, nodeId: NodeId): NodeTextSearchRecord | null {

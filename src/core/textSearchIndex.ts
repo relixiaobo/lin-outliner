@@ -1,4 +1,4 @@
-import { intersectSets, unionSets } from './setUtils';
+import { intersectSetList, unionSets } from './setUtils';
 
 export type TextSearchFieldKey = 'title' | 'description' | 'tag' | 'fieldName' | 'fieldValue' | 'body';
 
@@ -129,7 +129,7 @@ export function createTextSearchIndex(records: Iterable<TextSearchRecord> = []):
 export function normalizeSearchText(text: string): string {
   return text
     .normalize('NFKC')
-    .toLocaleLowerCase()
+    .toLowerCase()
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -299,11 +299,7 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
     if (candidateSets.length === 0) return new Set();
 
     const requiredCount = candidateSets.length === analysis.terms.length ? candidateSets.length : 1;
-    let ids = new Set(candidateSets[0]!);
-    for (let index = 1; index < requiredCount; index += 1) {
-      ids = intersectSets(ids, candidateSets[index]!);
-      if (ids.size === 0) break;
-    }
+    let ids = intersectSetList(candidateSets.slice(0, requiredCount));
     if (ids.size === 0 && candidateSets.length > 1) {
       ids = unionSets(candidateSets);
     }
@@ -318,18 +314,15 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
     const candidates = this.candidateIdsForAnalysis(analysis, options);
     const limit = normalizedResultLimit(options.limit);
     if (limit === 0) return [];
-    const boundedResults = limit === null ? null : new BoundedTextSearchResults(limit);
     const results: TextSearchResult[] = [];
     for (const id of candidates) {
       const record = this.records.get(id);
       const score = record ? this.scoreIndexedRecord(record, analysis, false) : null;
       if (!score) continue;
-      if (boundedResults) boundedResults.add(score);
-      else results.push(score);
+      results.push(score);
     }
-    const limited = boundedResults
-      ? boundedResults.results()
-      : results.sort(compareTextSearchResults);
+    const sorted = results.sort(compareTextSearchResults);
+    const limited = limit === null ? sorted : sorted.slice(0, limit);
     if (options.includeSnippets === false) return limited;
     return limited.map((result) => {
       const record = this.records.get(result.id);
@@ -403,9 +396,7 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
       .filter((ids) => ids.size > 0)
       .sort((left, right) => left.size - right.size);
     if (sets.length !== grams.length) return new Set();
-    let ids = new Set(sets[0]!);
-    for (let index = 1; index < sets.length; index += 1) ids = intersectSets(ids, sets[index]!);
-    return ids;
+    return intersectSetList(sets);
   }
 
   private bm25(record: IndexedRecord, term: string): number {
@@ -434,53 +425,6 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
         .sort();
     }
     return this.sortedPrefixTerms;
-  }
-}
-
-class BoundedTextSearchResults {
-  private heap: TextSearchResult[] = [];
-
-  constructor(private readonly limit: number) {}
-
-  add(result: TextSearchResult) {
-    if (this.limit <= 0) return;
-    if (this.heap.length < this.limit) {
-      this.heap.push(result);
-      this.bubbleUp(this.heap.length - 1);
-      return;
-    }
-    const currentWorst = this.heap[0]!;
-    if (!isBetterTextSearchResult(result, currentWorst)) return;
-    this.heap[0] = result;
-    this.sinkDown(0);
-  }
-
-  results(): TextSearchResult[] {
-    return [...this.heap].sort(compareTextSearchResults);
-  }
-
-  private bubbleUp(index: number) {
-    let current = index;
-    while (current > 0) {
-      const parent = Math.floor((current - 1) / 2);
-      if (compareWorstFirst(this.heap[current]!, this.heap[parent]!) >= 0) break;
-      swap(this.heap, current, parent);
-      current = parent;
-    }
-  }
-
-  private sinkDown(index: number) {
-    let current = index;
-    while (true) {
-      const left = current * 2 + 1;
-      const right = left + 1;
-      let next = current;
-      if (left < this.heap.length && compareWorstFirst(this.heap[left]!, this.heap[next]!) < 0) next = left;
-      if (right < this.heap.length && compareWorstFirst(this.heap[right]!, this.heap[next]!) < 0) next = right;
-      if (next === current) return;
-      swap(this.heap, current, next);
-      current = next;
-    }
   }
 }
 
@@ -639,20 +583,6 @@ function normalizedResultLimit(limit: number | undefined): number | null {
 
 function compareTextSearchResults(left: TextSearchResult, right: TextSearchResult): number {
   return right.score - left.score || left.id.localeCompare(right.id);
-}
-
-function isBetterTextSearchResult(left: TextSearchResult, right: TextSearchResult): boolean {
-  return compareTextSearchResults(left, right) < 0;
-}
-
-function compareWorstFirst(left: TextSearchResult, right: TextSearchResult): number {
-  return -compareTextSearchResults(left, right);
-}
-
-function swap<T>(values: T[], left: number, right: number) {
-  const value = values[left]!;
-  values[left] = values[right]!;
-  values[right] = value;
 }
 
 function lowerBound(values: readonly string[], target: string): number {

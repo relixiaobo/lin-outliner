@@ -1,5 +1,10 @@
 import { performance } from 'node:perf_hooks';
-import { createTextSearchIndex, type TextSearchRecord } from '../src/core/textSearchIndex';
+import {
+  createTextSearchIndex,
+  type TextSearchIndex,
+  type TextSearchRecord,
+  type TextSearchResult,
+} from '../src/core/textSearchIndex';
 
 const size = Number(process.argv[2] ?? 10000);
 const tagFanout = Math.max(1, Math.floor(size / 50));
@@ -17,7 +22,7 @@ const queries = [
 ];
 
 const queryTimings = queries.map((query) => {
-  const measured = time(() => index.search(query, { limit: 20 }));
+  const measured = time(() => runTextSearchHotPath(index, query, 20));
   return {
     query,
     durationMs: measured.durationMs,
@@ -27,7 +32,7 @@ const queryTimings = queries.map((query) => {
 
 const edited = syntheticRecord(Math.floor(size / 2), 'Edited launch design notes 成都天气');
 const editTiming = time(() => index.upsert(edited));
-const editSearchTiming = time(() => index.search('edited launch design', { limit: 20 }));
+const editSearchTiming = time(() => runTextSearchHotPath(index, 'edited launch design', 20));
 
 const fanoutRecords = Array.from({ length: tagFanout }, (_, offset) =>
   syntheticRecord(offset, undefined, `renamed-tag-${offset % 5}`));
@@ -66,6 +71,17 @@ function syntheticRecord(index: number, title?: string, tagName = `tag-${index %
       { key: 'body', text: `Body text common token ${index % 250} ${topic}` },
     ],
   };
+}
+
+function runTextSearchHotPath(index: TextSearchIndex, query: string, limit: number): TextSearchResult[] {
+  const results: TextSearchResult[] = [];
+  for (const id of index.candidateIds(query)) {
+    const score = index.scoreRecord(id, query, { includeSnippet: false });
+    if (score) results.push(score);
+  }
+  return results
+    .sort((left, right) => right.score - left.score || left.id.localeCompare(right.id))
+    .slice(0, limit);
 }
 
 function time<T>(fn: () => T): { value: T; durationMs: number } {

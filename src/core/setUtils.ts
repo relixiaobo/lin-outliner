@@ -23,6 +23,17 @@ export function intersectSets<T>(left: Set<T>, right: Set<T>): Set<T> {
   return result;
 }
 
+export function intersectSetList<T>(sets: Iterable<Set<T>>): Set<T> {
+  const sorted = [...sets].sort((left, right) => left.size - right.size);
+  if (sorted.length === 0) return new Set();
+  let result = new Set(sorted[0]!);
+  for (let index = 1; index < sorted.length; index += 1) {
+    result = intersectSets(result, sorted[index]!);
+    if (result.size === 0) break;
+  }
+  return result;
+}
+
 export function unionSets<T>(sets: Iterable<Set<T>>): Set<T> {
   const result = new Set<T>();
   for (const set of sets) {
