@@ -158,9 +158,9 @@ Ordered by priority; lower items may depend on higher ones.
   managed/env prune on a shell-less launch, 🟡 composer `provider not found`). **#101 (Parts
   B/C/D):** provider-mark neutral tile + symmetric row dividers, strong-neutral-solid auth-sheet
   primary, OAuth "Claude Code" clarity + coverage guard, 32 display names + Xiaomi MiMo icon.
-  Spec folded (`agent-pi-mono-implementation.md`, `design-system.md`); plan archived. **Follow-up
-  (fast-track):** the OAuth sheet keeps the strong primary on *Re-authenticate* when connected
-  instead of *Done* — being fixed separately.
+  Spec folded (`agent-pi-mono-implementation.md`, `design-system.md`); plan archived. Fast-track
+  follow-up shipped (PR #104): the connected OAuth sheet now puts the primary on *Done* (was
+  stuck on *Re-authenticate*).
 
 - **field-value-row-selection** (codex, PR #97) — field VALUE rows now join the global
   multi-selection model: a new `SelectableRow` action-policy layer (`state/selectableRows.ts`)
