@@ -11,6 +11,11 @@ import type {
   AgentPayloadRole,
 } from '../core/agentEventLog';
 import { appendAgentEventToReplayState, replayAgentEvents } from '../core/agentEventLog';
+import {
+  analyzeTextSearchQuery,
+  normalizeSearchText,
+  textSearchTextMatchesQuery,
+} from '../core/textSearchAnalyzer';
 
 const EVENT_LOG_FILE = 'events.jsonl';
 const SESSION_INDEX_FILE = 'session-index.json';
@@ -273,10 +278,11 @@ export class AgentEventStore {
   ): Promise<AgentEventSearchIndexEntry[]> {
     const terms = normalizeSearchTerms(query);
     if (terms.length === 0) return [];
+    const analysis = { ...analyzeTextSearchQuery(query), terms };
     const index = await this.getSearchIndex();
     return Object.values(index.messages)
       .filter((entry) => !options.sessionId || entry.sessionId === options.sessionId)
-      .filter((entry) => terms.every((term) => entry.normalizedText.includes(term)))
+      .filter((entry) => textSearchTextMatchesQuery(entry.normalizedText, analysis))
       .sort((left, right) => right.updatedAt - left.updatedAt)
       .slice(0, clampSearchLimit(options.limit));
   }
@@ -794,11 +800,11 @@ function searchIndexKey(sessionId: string, messageId: string): string {
 }
 
 function normalizeSearchTerms(query: string): string[] {
-  return uniqueStrings(normalizeIndexText(query).split(/\s+/).filter(Boolean)).slice(0, 12);
+  return analyzeTextSearchQuery(query).terms.slice(0, 12);
 }
 
 function normalizeIndexText(text: string): string {
-  return normalizeDisplayText(text).normalize('NFKC').toLocaleLowerCase();
+  return normalizeSearchText(normalizeDisplayText(text));
 }
 
 function normalizeDisplayText(text: string): string {

@@ -2,6 +2,7 @@ import type { NodeId, NodeProjection } from '../../api/types';
 import { projectFieldConfig } from '../../../core/configProjection';
 import { isInternalConfigNode } from '../../../core/configSchema';
 import { isOptionsFieldType } from '../fields/fieldTypeRegistry';
+import { textMatchRank } from './candidateRanking';
 
 export interface FieldOption {
   id: NodeId;
@@ -64,9 +65,9 @@ function dedupeOptions(options: FieldOption[]): FieldOption[] {
 }
 
 export function filterFieldOptions(options: readonly FieldOption[], query: string): FieldOption[] {
-  const normalized = query.trim().toLowerCase();
+  const normalized = query.trim();
   if (!normalized) return [...options];
-  return options.filter((option) => option.label.toLowerCase().includes(normalized));
+  return options.filter((option) => textMatchRank(option.label, normalized) !== null);
 }
 
 export function resolveSelectedOptionId(

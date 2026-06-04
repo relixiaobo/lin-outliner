@@ -1,4 +1,25 @@
 import { intersectSetList, unionSets } from './setUtils';
+import {
+  analyzeTextSearchField,
+  analyzeTextSearchQuery,
+  buildTextSearchSnippet,
+  canTextSearchMatchMidWordSubstring,
+  isShortLatinSingleTermTextSearchQuery,
+  isTextSearchGramTerm,
+  isTextSearchPrefixIndexableTerm,
+  isTextSearchPrefixIndexableToken,
+  textSearchTextHasCjk,
+  tokenizeSearchText,
+  type TextSearchQueryAnalysis,
+} from './textSearchAnalyzer';
+
+export {
+  analyzeTextSearchField,
+  analyzeTextSearchQuery,
+  buildTextSearchSnippet,
+  normalizeSearchText,
+  tokenizeSearchText,
+} from './textSearchAnalyzer';
 
 export type TextSearchFieldKey = 'title' | 'description' | 'tag' | 'fieldName' | 'fieldValue' | 'body';
 
@@ -40,6 +61,7 @@ export interface TextSearchIndex {
   search(query: string, options?: TextSearchOptions): TextSearchResult[];
   candidateIds(query: string, options?: TextSearchOptions): Set<string>;
   scoreRecord(id: string, query: string, options?: TextSearchScoreOptions): TextSearchScore | null;
+  scoreAnalyzedRecord(id: string, analysis: TextSearchQueryAnalysis, options?: TextSearchScoreOptions): TextSearchScore | null;
   hasRecord(id: string): boolean;
   readonly size: number;
 }
@@ -74,12 +96,6 @@ interface Posting {
   fieldTf: Map<TextSearchFieldKey, number>;
 }
 
-interface QueryAnalysis {
-  normalized: string;
-  terms: string[];
-  hasCjk: boolean;
-}
-
 const DEFAULT_FIELD_WEIGHTS: Record<TextSearchFieldKey, number> = {
   title: 4.2,
   body: 2.4,
@@ -89,131 +105,8 @@ const DEFAULT_FIELD_WEIGHTS: Record<TextSearchFieldKey, number> = {
   fieldValue: 1.4,
 };
 
-const STOP_WORDS = new Set([
-  'a',
-  'an',
-  'and',
-  'are',
-  'as',
-  'at',
-  'be',
-  'by',
-  'for',
-  'from',
-  'in',
-  'is',
-  'it',
-  'of',
-  'on',
-  'or',
-  'that',
-  'the',
-  'this',
-  'to',
-  'with',
-]);
-
-const CJK_RUN_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+/gu;
-const CJK_CHAR_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
-const WORD_RE = /[\p{L}\p{N}]+(?:_[\p{L}\p{N}]+)*/gu;
-const GRAM_PREFIX = '$gram:';
-const MIN_PREFIX_LENGTH = 2;
-const MAX_PREFIX_LENGTH = 16;
-
-let cachedSegmenter: Intl.Segmenter | null | undefined;
-
 export function createTextSearchIndex(records: Iterable<TextSearchRecord> = []): MutableTextSearchIndex {
   return new InMemoryTextSearchIndex(records);
-}
-
-export function normalizeSearchText(text: string): string {
-  return text
-    .normalize('NFKC')
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-export function tokenizeSearchText(text: string): string[] {
-  const normalized = normalizeSearchText(text);
-  if (!normalized) return [];
-  const terms: string[] = [];
-  const segmenter = wordSegmenter();
-  if (segmenter) {
-    for (const segment of segmenter.segment(normalized)) {
-      if (!segment.isWordLike) continue;
-      emitWordTerms(segment.segment, terms);
-    }
-  } else {
-    emitWordTerms(normalized, terms);
-  }
-  emitCjkTerms(normalized, terms);
-  emitLatinTrigrams(normalized, terms);
-  return terms.filter(Boolean);
-}
-
-function wordSegmenter(): Intl.Segmenter | null {
-  if (cachedSegmenter !== undefined) return cachedSegmenter;
-  cachedSegmenter = typeof Intl.Segmenter === 'function'
-    ? new Intl.Segmenter(undefined, { granularity: 'word' })
-    : null;
-  return cachedSegmenter;
-}
-
-function emitWordTerms(text: string, terms: string[]) {
-  for (const match of text.matchAll(WORD_RE)) {
-    const value = match[0];
-    if (!value || CJK_CHAR_RE.test(value)) continue;
-    terms.push(value);
-  }
-}
-
-function emitCjkTerms(text: string, terms: string[]) {
-  for (const match of text.matchAll(CJK_RUN_RE)) {
-    const chars = [...match[0]];
-    if (chars.length === 1) {
-      terms.push(chars[0]!);
-      continue;
-    }
-    for (let index = 0; index < chars.length - 1; index += 1) {
-      terms.push(`${chars[index]}${chars[index + 1]}`);
-    }
-  }
-}
-
-function emitLatinTrigrams(text: string, terms: string[]) {
-  for (const match of text.matchAll(WORD_RE)) {
-    const value = match[0];
-    if (value.length < 3 || CJK_CHAR_RE.test(value)) continue;
-    for (let index = 0; index < value.length - 2; index += 1) {
-      terms.push(`${GRAM_PREFIX}${value.slice(index, index + 3)}`);
-    }
-  }
-}
-
-function analyzeQuery(query: string): QueryAnalysis {
-  const normalized = normalizeSearchText(query);
-  if (!normalized) return { normalized: '', terms: [], hasCjk: false };
-  const rawTerms = uniqueTerms(tokenizeSearchText(normalized));
-  const wordTerms = rawTerms.filter((term) => !term.startsWith(GRAM_PREFIX));
-  const nonStopTerms = wordTerms.filter((term) => !STOP_WORDS.has(term));
-  const terms = nonStopTerms.length > 0 ? nonStopTerms : wordTerms;
-  return {
-    normalized,
-    terms,
-    hasCjk: CJK_CHAR_RE.test(normalized),
-  };
-}
-
-function uniqueTerms(terms: Iterable<string>): string[] {
-  const result: string[] = [];
-  const seen = new Set<string>();
-  for (const term of terms) {
-    if (!term || seen.has(term)) continue;
-    seen.add(term);
-    result.push(term);
-  }
-  return result;
 }
 
 class InMemoryTextSearchIndex implements MutableTextSearchIndex {
@@ -286,11 +179,11 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
   }
 
   candidateIds(query: string, options: TextSearchOptions = {}): Set<string> {
-    const analysis = analyzeQuery(query);
+    const analysis = analyzeTextSearchQuery(query);
     return this.candidateIdsForAnalysis(analysis, options);
   }
 
-  private candidateIdsForAnalysis(analysis: QueryAnalysis, options: TextSearchOptions = {}): Set<string> {
+  private candidateIdsForAnalysis(analysis: TextSearchQueryAnalysis, options: TextSearchOptions = {}): Set<string> {
     if (analysis.terms.length === 0) return new Set();
     const candidateSets = analysis.terms
       .map((term) => this.matchingIdsForTerm(term))
@@ -310,7 +203,7 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
   }
 
   search(query: string, options: TextSearchOptions = {}): TextSearchResult[] {
-    const analysis = analyzeQuery(query);
+    const analysis = analyzeTextSearchQuery(query);
     const candidates = this.candidateIdsForAnalysis(analysis, options);
     const limit = normalizedResultLimit(options.limit);
     if (limit === 0) return [];
@@ -326,20 +219,28 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
     if (options.includeSnippets === false) return limited;
     return limited.map((result) => {
       const record = this.records.get(result.id);
-      return record ? { ...result, snippet: snippetFor(record, analysis) } : result;
+      return record ? { ...result, snippet: buildTextSearchSnippet(record.fields, analysis) } : result;
     });
   }
 
   scoreRecord(id: string, query: string, options: TextSearchScoreOptions = {}): TextSearchScore | null {
+    const analysis = analyzeTextSearchQuery(query);
+    return this.scoreAnalyzedRecord(id, analysis, options);
+  }
+
+  scoreAnalyzedRecord(
+    id: string,
+    analysis: TextSearchQueryAnalysis,
+    options: TextSearchScoreOptions = {},
+  ): TextSearchScore | null {
     const record = this.records.get(id);
     if (!record) return null;
-    const analysis = analyzeQuery(query);
     return this.scoreIndexedRecord(record, analysis, options.includeSnippet !== false);
   }
 
   private scoreIndexedRecord(
     record: IndexedRecord,
-    analysis: QueryAnalysis,
+    analysis: TextSearchQueryAnalysis,
     includeSnippet: boolean,
   ): TextSearchScore | null {
     if (!analysis.normalized || analysis.terms.length === 0) return null;
@@ -362,7 +263,7 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
       matchedTerms,
       allTermsMatched,
       phraseMatched,
-      snippet: includeSnippet ? snippetFor(record, analysis) : '',
+      snippet: includeSnippet ? buildTextSearchSnippet(record.fields, analysis) : '',
     };
   }
 
@@ -371,13 +272,13 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
     if (exact.size >= this.records.size) return exact;
     const prefix = this.prefixMatchingIds(term);
     const tokenMatches = unionSets([exact, prefix]);
-    if (term.startsWith(GRAM_PREFIX) || CJK_CHAR_RE.test(term) || term.length < 3) return tokenMatches;
+    if (isTextSearchGramTerm(term) || textSearchTextHasCjk(term) || term.length < 3) return tokenMatches;
     if (tokenMatches.size >= this.records.size) return tokenMatches;
     return unionSets([tokenMatches, this.trigramMatchingIds(term)]);
   }
 
   private prefixMatchingIds(term: string): Set<string> {
-    if (!isPrefixIndexableTerm(term)) return new Set();
+    if (!isTextSearchPrefixIndexableTerm(term)) return new Set();
     const result = new Set<string>();
     const terms = this.prefixTerms();
     for (let index = lowerBound(terms, term); index < terms.length; index += 1) {
@@ -389,7 +290,7 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
   }
 
   private trigramMatchingIds(term: string): Set<string> {
-    const grams = tokenizeSearchText(term).filter((value) => value.startsWith(GRAM_PREFIX));
+    const grams = tokenizeSearchText(term).filter(isTextSearchGramTerm);
     if (grams.length === 0) return new Set();
     const sets = grams
       .map((gram) => idsForPosting(this.postings.get(gram)))
@@ -421,7 +322,7 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
   private prefixTerms(): string[] {
     if (!this.sortedPrefixTerms) {
       this.sortedPrefixTerms = [...this.postings.keys()]
-        .filter(isPrefixIndexableToken)
+        .filter(isTextSearchPrefixIndexableToken)
         .sort();
     }
     return this.sortedPrefixTerms;
@@ -431,9 +332,8 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
 function indexRecord(record: TextSearchRecord): IndexedRecord | null {
   const fields = record.fields
     .map((field): IndexedField | null => {
-      const normalized = normalizeSearchText(field.text);
+      const { normalized, tokens } = analyzeTextSearchField(field.text);
       if (!normalized) return null;
-      const tokens = tokenizeSearchText(normalized);
       if (tokens.length === 0) return null;
       return {
         key: field.key,
@@ -473,7 +373,7 @@ function indexRecord(record: TextSearchRecord): IndexedRecord | null {
 
 function boostScore(
   record: IndexedRecord,
-  analysis: QueryAnalysis,
+  analysis: TextSearchQueryAnalysis,
   match: { phraseMatched: boolean; allTermsMatched: boolean; matchedTerms: string[] },
 ): number {
   const title = record.fields.find((field) => field.key === 'title')?.normalized ?? '';
@@ -491,49 +391,19 @@ function boostScore(
 
 function recordHasTerm(record: IndexedRecord, term: string): boolean {
   if (record.tokens.has(term)) return true;
-  if (term.startsWith(GRAM_PREFIX)) return false;
+  if (isTextSearchGramTerm(term)) return false;
   return record.fields.some((field) =>
     fieldHasTokenPrefix(field, term)
-    || (canMatchMidWordSubstring(term) && field.normalized.includes(term)));
+    || (canTextSearchMatchMidWordSubstring(term) && field.normalized.includes(term)));
 }
 
-function fieldMatchesPhrase(field: IndexedField, analysis: QueryAnalysis): boolean {
-  if (isShortLatinSingleTermQuery(analysis)) return fieldHasTokenPrefix(field, analysis.terms[0]!);
+function fieldMatchesPhrase(field: IndexedField, analysis: TextSearchQueryAnalysis): boolean {
+  if (isShortLatinSingleTermTextSearchQuery(analysis)) return fieldHasTokenPrefix(field, analysis.terms[0]!);
   return field.normalized.includes(analysis.normalized);
 }
 
 function fieldHasTokenPrefix(field: IndexedField, term: string): boolean {
-  return field.tokens.some((token) => !token.startsWith(GRAM_PREFIX) && token.startsWith(term));
-}
-
-function canMatchMidWordSubstring(term: string): boolean {
-  return term.length >= 3 || CJK_CHAR_RE.test(term);
-}
-
-function isShortLatinSingleTermQuery(analysis: QueryAnalysis): boolean {
-  const term = analysis.terms[0];
-  return analysis.terms.length === 1
-    && term === analysis.normalized
-    && term.length < 3
-    && !CJK_CHAR_RE.test(term);
-}
-
-function snippetFor(record: IndexedRecord, analysis: QueryAnalysis): string {
-  const field = bestSnippetField(record, analysis);
-  if (!field) return '';
-  const exactIndex = field.normalized.indexOf(analysis.normalized);
-  const term = analysis.terms.find((value) => field.normalized.includes(value));
-  const index = exactIndex >= 0 ? exactIndex : term ? field.normalized.indexOf(term) : 0;
-  const start = Math.max(0, index - 60);
-  const end = Math.min(field.normalized.length, index + Math.max(analysis.normalized.length, term?.length ?? 0) + 80);
-  return `${start > 0 ? '...' : ''}${field.normalized.slice(start, end)}${end < field.normalized.length ? '...' : ''}`;
-}
-
-function bestSnippetField(record: IndexedRecord, analysis: QueryAnalysis): IndexedField | undefined {
-  const phrase = record.fields.find((field) => field.normalized.includes(analysis.normalized));
-  if (phrase) return phrase;
-  return record.fields.find((field) => analysis.terms.some((term) => field.normalized.includes(term)))
-    ?? record.fields[0];
+  return field.tokens.some((token) => !isTextSearchGramTerm(token) && token.startsWith(term));
 }
 
 function averageFieldLength(
@@ -561,19 +431,6 @@ function decrementMap<K>(map: Map<K, number>, key: K, value: number) {
 
 function idsForPosting(posting: Map<string, Posting> | undefined): Set<string> {
   return new Set(posting?.keys() ?? []);
-}
-
-function isPrefixIndexableToken(token: string): boolean {
-  return token.length > MIN_PREFIX_LENGTH
-    && !token.startsWith(GRAM_PREFIX)
-    && !CJK_CHAR_RE.test(token);
-}
-
-function isPrefixIndexableTerm(term: string): boolean {
-  return term.length >= MIN_PREFIX_LENGTH
-    && term.length <= MAX_PREFIX_LENGTH
-    && !term.startsWith(GRAM_PREFIX)
-    && !CJK_CHAR_RE.test(term);
 }
 
 function normalizedResultLimit(limit: number | undefined): number | null {

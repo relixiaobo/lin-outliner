@@ -19,6 +19,7 @@ import {
   searchQueryTerms,
 } from '../core/searchEngine';
 import type { TextSearchIndex } from '../core/textSearchIndex';
+import { searchNodeQuery } from './nodeRetrievalService';
 import { parseLinOutline, type OutlineDocument, type OutlineNode, type OutlineValue } from './agentOutlineParser';
 import {
   NODE_REFERENCE_GUIDANCE,
@@ -253,10 +254,10 @@ export function runSearch(index: ProjectionIndex, search: {
   searchNodeId?: string;
   query: SearchQueryExpr;
 }, options: { textIndex?: TextSearchIndex } = {}): string[] | NodeToolIssue {
-  const result = runSearchExpr(index.projection, search.query, {
-    searchNodeId: search.searchNodeId,
-    textIndex: options.textIndex,
-  });
+  const textIndex = options.textIndex;
+  const result = textIndex
+    ? searchNodeQuery(index.projection, textIndex, search.query, { searchNodeId: search.searchNodeId })
+    : runSearchExprFallback(index, search);
   if (!result.ok) {
     return {
       code: result.issue.code,
@@ -265,6 +266,13 @@ export function runSearch(index: ProjectionIndex, search: {
     };
   }
   return result.hits.map((hit) => hit.nodeId);
+}
+
+function runSearchExprFallback(index: ProjectionIndex, search: {
+  searchNodeId?: string;
+  query: SearchQueryExpr;
+}) {
+  return runSearchExpr(index.projection, search.query, { searchNodeId: search.searchNodeId });
 }
 
 export function validateReferenceTargetIds(index: ProjectionIndex, targetIds: string[]): NodeToolIssue | null {

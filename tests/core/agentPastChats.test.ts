@@ -123,6 +123,56 @@ describe('agent past chats', () => {
     });
   });
 
+  test('search sorts by relevance before recency', async () => {
+    await withStore(async (store, service) => {
+      const olderSessionId = 'session-relevance-old';
+      const newerSessionId = 'session-relevance-new';
+      await store.appendEvents(olderSessionId, [
+        { ...base(olderSessionId, 1, 'session.created'), title: 'Older exact' },
+        {
+          ...base(olderSessionId, 2, 'user_message.created', userActor),
+          messageId: 'older-phrase',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'sqlite checkpoint strategy' }],
+        },
+      ]);
+      await store.appendEvents(newerSessionId, [
+        { ...base(newerSessionId, 10, 'session.created'), title: 'Newer loose' },
+        {
+          ...base(newerSessionId, 11, 'user_message.created', userActor),
+          messageId: 'newer-loose',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'checkpoint details for sqlite migration' }],
+        },
+      ]);
+
+      const result = await service.search({ query: 'sqlite checkpoint', includeCurrentSession: true });
+      expect(result.mode).toBe('search');
+      if (result.mode !== 'search') throw new Error('Expected search result');
+      expect(result.hits.map((hit) => hit.messageId)).toEqual(['older-phrase', 'newer-loose']);
+    });
+  });
+
+  test('search matches spaced CJK terms across visible message text', async () => {
+    await withStore(async (store, service) => {
+      const sessionId = 'session-cjk-spaced';
+      await store.appendEvents(sessionId, [
+        { ...base(sessionId, 1, 'session.created'), title: 'CJK spaced terms' },
+        {
+          ...base(sessionId, 2, 'user_message.created', userActor),
+          messageId: 'user-cjk-spaced',
+          parentMessageId: null,
+          content: [{ type: 'text', text: '成都项目 今天 天气归档' }],
+        },
+      ]);
+
+      const result = await service.search({ query: '成都 天气', includeCurrentSession: true });
+      expect(result.mode).toBe('search');
+      if (result.mode !== 'search') throw new Error('Expected search result');
+      expect(result.hits.map((hit) => hit.messageId)).toEqual(['user-cjk-spaced']);
+    });
+  });
+
   test('read can recover compacted current-session history when opted in', async () => {
     await withStore(async (store, service) => {
       const sessionId = 'session-compact';
@@ -287,7 +337,7 @@ describe('agent past chats', () => {
       const visibleSearch = await service.search({ query: 'agent-past-chats API' });
       expect(visibleSearch.mode).toBe('search');
       if (visibleSearch.mode !== 'search') throw new Error('Expected search result');
-      expect(visibleSearch.hits[0]?.snippet).toContain('agent-past-chats');
+      expect(visibleSearch.hits[0]?.snippet).toContain('<mark>agent</mark>-<mark>past</mark>-<mark>chats</mark>');
       expect(visibleSearch.hits[0]?.snippet).not.toContain('system-reminder');
     });
   });
@@ -327,12 +377,12 @@ describe('agent past chats', () => {
           ...base(sessionId, 2, 'user_message.created', userActor),
           messageId: 'user-api',
           parentMessageId: null,
-          content: [{ type: 'text', text: 'We chose sqlite checkpoints for past chats' }],
+          content: [{ type: 'text', text: 'We chose SQLite Checkpoints for past chats' }],
         },
       ]);
 
       const tool = createPastChatsTool({ service, currentSessionId: () => 'session-current' });
-      const result = await (tool.execute as any)('tool-call-1', { query: 'sqlite' });
+      const result = await (tool.execute as any)('tool-call-1', { query: 'sqlite checkpoints' });
       const first = result.content[0];
       if (!first || first.type !== 'text') throw new Error('Expected model-visible text envelope');
       const visible = JSON.parse(first.text);
@@ -343,7 +393,7 @@ describe('agent past chats', () => {
         returned_hits: 1,
         hits: [{ message_id: 'user-api' }],
       });
-      expect(visible.data.hits[0].snippet).toContain('sqlite');
+      expect(visible.data.hits[0].snippet).toContain('<mark>SQLite</mark> <mark>Checkpoints</mark>');
       expect(visible.data.totalHits).toBeUndefined();
       expect(visible.data.messageIds).toBeUndefined();
       expect(visible.instructions).toContain('message_id');

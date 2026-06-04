@@ -1996,12 +1996,31 @@ Example read result data:
 
 ### `past_chats`
 
-Canonical contract lives in [`../plans/agent-past-chats.md`](../plans/agent-past-chats.md).
-The plan supersedes any earlier sketch of this tool. One tool, three modes
-(`recent`/`search`/`read`) selected by parameters, internally backed by the
-existing event store, user-message/search indexes, and visible transcript
-filtering. Move the final stable contract into this spec once the
-implementation PR lands.
+`past_chats` is a single read-only conversation-history tool. It has three
+parameter-selected modes:
+
+- `recent`: `recent: true` returns recent visible user messages with
+  `message_id` anchors. It is ordered by user-message recency and strips system
+  reminders. Use it when the user asks about prior conversations but gives no
+  concrete keywords.
+- `search`: `query` searches visible messages across older sessions. The
+  derived event-store search index provides candidates only; the service then
+  replays each candidate session, checks that the message is on the active
+  visible branch, verifies the visible message text with shared text-search
+  analysis, and sorts by relevance before session/message recency. Search
+  snippets are navigation aids, not citation context.
+- `read`: `message_id` reads bounded visible conversation context around a
+  `recent` or `search` anchor.
+
+All modes support optional `after`, `before`, `session_ids`, and `limit` filters
+where applicable. The current session is excluded by default; agents may pass
+`include_current_session: true` only after compaction when earlier turns from the
+same session are no longer in working context.
+
+The event store remains the source of truth. Session, search, and user-message
+indexes are derived and rebuildable, and text ranking never bypasses active
+branch visibility, session/date/current-session filters, or read-mode context
+bounds.
 
 ## Self-Maintenance Controls
 

@@ -1,3 +1,5 @@
+import { textMatchRank } from './candidateRanking';
+
 export type SlashCommandId =
   | 'field'
   | 'reference'
@@ -65,11 +67,11 @@ export const SLASH_COMMANDS: readonly SlashCommandDefinition[] = [
 ] as const;
 
 export function filterSlashCommands(query: string): SlashCommandDefinition[] {
-  const normalized = query.trim().toLowerCase();
+  const normalized = query.trim();
   const enabled = SLASH_COMMANDS.filter((command) => command.enabled);
   if (!normalized) return enabled;
   return enabled.filter((command) => (
-    command.label.toLowerCase().includes(normalized)
-    || command.keywords.some((keyword) => keyword.toLowerCase().includes(normalized))
+    textMatchRank(command.label, normalized) !== null
+    || command.keywords.some((keyword) => textMatchRank(keyword, normalized) !== null)
   ));
 }

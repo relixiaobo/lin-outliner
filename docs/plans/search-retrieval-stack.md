@@ -1,5 +1,5 @@
 ---
-status: draft
+status: in-progress
 priority: P1
 owner: codex
 created: 2026-06-04
@@ -279,6 +279,33 @@ Implement only after the default node and past-chat paths are stable:
 - embeddings/model reranking only for an explicit semantic-recall feature, never
   as default `STRING_MATCH` ranking.
 
+### Current implementation scope
+
+Per PM direction, this implementation lands Phases 1-4 together in one PR:
+shared primitives, node retrieval unification, `past_chats` relevance, and
+lightweight UI/file label ranking cleanup. Phase 5 stays deferred and requires
+fresh measurement before adding heavier retrieval machinery.
+
+### Probe results for current implementation
+
+Local Bun probes on 2026-06-04:
+
+- `bun scripts/probe-text-search-index.ts 10000`: cold rebuild ~0.9s;
+  selective/prefix/CJK queries ~4-14ms; broad `common` query ~36ms; edit ->
+  search ~5ms; 200-record tag fan-out ~16ms.
+- `bun scripts/probe-text-search-index.ts 50000`: cold rebuild ~4.5s;
+  selective/prefix/CJK queries ~40-293ms; broad `common` query ~963ms; edit ->
+  search ~31ms; 1000-record tag fan-out ~164ms.
+- `bun scripts/probe-past-chats-search.ts 200 20`: 200 sessions / 4000 messages;
+  phrase search ~157ms, CJK search ~67ms, session-filtered search ~16ms,
+  date-filtered search ~34ms, current-session exclusion ~15ms.
+
+Decision: keep this PR on the pure TypeScript indexed path plus query-analysis
+reuse. Do not add WAND/block-max pruning, a persisted index, SQLite/FTS, or
+semantic reranking in this PR. The 50k broad-query and cold-rebuild numbers are
+the measured evidence for Phase 5, where heavier top-k pruning or persistence
+can be evaluated without changing the simpler default retrieval contract here.
+
 ## Acceptance Criteria
 
 Accuracy:
@@ -302,7 +329,7 @@ Performance:
   node in steady state.
 - Single-node edit -> index update -> node search is O(changed nodes), excluding
   explicit full-rebuild cases.
-- Probes cover 10k and 50k nodes; selective, prefix, broad, phrase, and CJK
+- Node probes cover 10k and 50k nodes; selective, prefix, broad, phrase, and CJK
   queries; tag/field definition fan-out; memory; cold rebuild; and edit ->
   search.
 - Past-chat probes cover many sessions and messages with date/session filters.
@@ -319,9 +346,8 @@ Cleanliness:
   agent runtime code.
 - Main adapters do not leak Node/Electron APIs into renderer.
 - Spec changes land in the same PR as behavior changes.
-- Phase 1 and Phase 2 land as separate PRs. Phase 1 is pure primitives/tests;
-  Phase 2 is node-path unification and duplicate scorer removal. Phases 3, 4,
-  and 5 remain separate follow-up PRs.
+- Phases 1-4 land together in this single PR per PM direction. Phase 5 remains
+  separate follow-up work and must be measurement-gated.
 
 ## Collision Self-check
 

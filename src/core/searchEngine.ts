@@ -45,6 +45,7 @@ import {
   type TextSearchIndex,
   type TextSearchRecord,
 } from './textSearchIndex';
+import { analyzeTextSearchQuery, type TextSearchQueryAnalysis } from './textSearchAnalyzer';
 import { nodeIsInSubtree } from './treeUtils';
 
 type SearchDocument = DocumentState | DocumentProjection;
@@ -176,6 +177,7 @@ interface SearchIndex {
 interface SearchContext {
   searchNode: SearchNode;
   textIndex?: TextSearchIndex;
+  textAnalysisByQuery?: Map<string, TextSearchQueryAnalysis>;
 }
 
 interface SearchOperand {
@@ -229,11 +231,13 @@ export function runSearchExpr(
     : evalIndex.allNodes;
 
   const scored: SearchHit[] = [];
+  const textAnalysisByQuery = options.textIndex ? new Map<string, TextSearchQueryAnalysis>() : undefined;
   for (const node of candidateNodes) {
     if ((searchNode && node.id === searchNode.id) || !isSearchCandidate(evalIndex, node.id)) continue;
     const evaluation = evaluateCondition(evalIndex, node, virtualTree.root, {
       searchNode: contextSearchNode,
       textIndex: options.textIndex,
+      textAnalysisByQuery,
     });
     if (!evaluation.ok) return evaluation;
     if (evaluation.match) scored.push({ nodeId: node.id, score: evaluation.score });
@@ -665,7 +669,7 @@ function evaluateLeaf(index: SearchIndex, candidate: SearchNode, conditionNode: 
 
   if (op === 'STRING_MATCH') {
     const score = context.textIndex
-      ? context.textIndex.scoreRecord(candidate.id, conditionNode.content.text, { includeSnippet: false })?.score ?? 0
+      ? scoreTextSearchRecord(context, candidate.id, conditionNode.content.text)
       : scoreTerm(index, candidate, conditionNode.content.text);
     return { ok: true, match: score > 0, score };
   }
@@ -842,7 +846,21 @@ function invalidSearchNode(searchNodeId: NodeId): SearchConditionIssue {
   };
 }
 
+function scoreTextSearchRecord(context: SearchContext, nodeId: NodeId, query: string): number {
+  const textIndex = context.textIndex;
+  if (!textIndex) return 0;
+  let analysis = context.textAnalysisByQuery?.get(query);
+  if (!analysis) {
+    analysis = analyzeTextSearchQuery(query);
+    context.textAnalysisByQuery?.set(query, analysis);
+  }
+  return textIndex.scoreAnalyzedRecord(nodeId, analysis, { includeSnippet: false })?.score ?? 0;
+}
+
 function scoreTerm(index: SearchIndex, node: SearchNode, term: string): number {
+  // Compatibility scorer for direct core calls that do not provide a
+  // TextSearchIndex. DocumentService, launcher search, and agent node_search pass
+  // the live index, so this is not a competing main/agent ranker.
   const q = term.trim().toLowerCase();
   if (!q) return 0;
   let score = 0;

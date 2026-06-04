@@ -64,6 +64,7 @@ import {
 } from '../core/launcher/commands';
 import { buildContextCaptureInput, buildManualNoteInput, isCaptureIntent } from '../core/launcher/sources';
 import { resolveLauncherNodeMatches } from '../core/launcher/nodeMatches';
+import { rankTextSearchLabel } from '../core/textSearchAnalyzer';
 import { captureExternalContext } from './context/contextCapture';
 import { isAccessibilityTrusted, promptAccessibility } from './context/nativeBrowserTab';
 import { getFrontmostApp } from './context/providers/browser';
@@ -1388,15 +1389,8 @@ function shouldLoadLocalFileThumbnail(file: { entryKind?: string; mimeType?: str
 }
 
 function localFilePathRank(filePath: string, query: string): number {
-  const name = basename(filePath).toLowerCase();
-  const lowerQuery = query.toLowerCase();
-  if (name === lowerQuery) return 0;
-  if (name.startsWith(lowerQuery)) return 1;
-  const wordIndex = name.search(new RegExp(`(^|[\\s._-])${escapeRegExp(lowerQuery)}`, 'u'));
-  if (wordIndex >= 0) return 2 + wordIndex / 1000;
-  const containsIndex = name.indexOf(lowerQuery);
-  if (containsIndex >= 0) return 4 + containsIndex / 1000;
-  return 10;
+  const match = rankTextSearchLabel(basename(filePath), query);
+  return match ? match.rank + match.index / 1000 : 10;
 }
 
 // Bounded LRU-ish insert: re-touch the key so it stays fresh and evict the
@@ -1492,10 +1486,6 @@ function promiseWithTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback:
         resolve(fallback);
       });
   });
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 async function localPickedFile(filePath: string) {
