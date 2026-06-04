@@ -4,10 +4,27 @@ priority: P0
 owner: cc-2
 created: 2026-06-02
 updated: 2026-06-04
-related: launcher-ai-actions.md, launcher-capture-destinations.md, browser-extension-integration.md, launcher-capture-resolvers.md
+related: launcher-ai-actions.md, launcher-capture-destinations.md, launcher-provider-expansion.md, browser-extension-integration.md, launcher-capture-resolvers.md
 ---
 
 # Lazy-Like Global Launcher
+
+> **⚠️ As-built authority (2026-06-04).** This plan is `in-progress`. The SHIPPED
+> behavior is the launcher described in [`../spec/launcher.md`](../spec/launcher.md)
+> — read that for what actually works. The slice that landed: the modeless launcher
+> + basic-info capture + inline node search + Open main/Settings. Deferred work is
+> split into `launcher-ai-actions.md`, `launcher-capture-destinations.md`,
+> `launcher-provider-expansion.md`, and `browser-extension-integration.md`.
+>
+> Large parts of the BODY below still describe the original Lazy-level V1 aspiration
+> and are **HISTORICAL design, not the build state** — notably the provider matrix +
+> Provider Implementation Details, the `LauncherMode` command state machine,
+> Captured content / Pending resolver jobs, the Save Model payload references, the
+> "Recommended shared types" listing (the old `CaptureNodeMetadata` with
+> payload/resolver fields — the shipped type is **provenance-only**), the Proposed
+> new files list, the latency targets (never measured), and the Workstreams /
+> Definition of Done. **Trust the code and `../spec/launcher.md` over those
+> sections.** Each is marked inline where it would most mislead.
 
 ## Purpose
 
@@ -801,6 +818,10 @@ export type OriginalResourceRef =
 
 ### Captured content
 
+> **HISTORICAL — not built.** `CapturedContent`/`CapturedMedia` and the whole
+> in-app content/selection/media extraction were removed (basic-info-only capture).
+> Rich content returns via `browser-extension-integration.md`. Kept as design record.
+
 ```ts
 export interface CapturedContent {
   format: 'plain-text' | 'html' | 'markdown' | 'json';
@@ -863,6 +884,10 @@ renderer receives command views and invokes by `commandId` plus parameter values
 Do not send functions over IPC.
 
 ### Command state machine
+
+> **HISTORICAL — not built.** There is no `LauncherMode` / mode state machine in
+> the shipped launcher: the model is modeless (one input = filter + search + capture
+> draft), built purely in `launcherModel.ts`. See the As-built section + `../spec/launcher.md`.
 
 ```ts
 export type LauncherMode =
@@ -1418,6 +1443,12 @@ Do not send messages.
 
 ## Save Model
 
+> **PARTLY HISTORICAL.** The capture-node + outline-projection + `create_capture`
+> transaction shipped. But the **hidden payload references / raw-payload storage /
+> resolver-job** parts of this section were removed — the sidecar is provenance-only
+> (`CaptureNodeMetadata` in `sources.ts`). Preview / open-original / local-file
+> capture are deferred (see the split plans). Read `../spec/launcher.md` for what's real.
+
 The launcher saves captures into the existing document model. Do not create a
 second primary capture database. The durable source of truth stays the
 `workspace.loro.json` file written by `DocumentService`, so captures participate
@@ -1664,6 +1695,12 @@ export interface NodeBase {
 Add `'capture'` to `NODE_SCALAR_KEYS` in `src/core/loroDocument.ts`. The Loro
 persistence layer already writes scalar values generically through
 `writeNodeData`, so a JSON-compatible object can persist as a node scalar.
+
+> **HISTORICAL — the listing below is the OLD shape.** The shipped
+> `CaptureNodeMetadata` (`src/core/launcher/sources.ts`) is **provenance-only**:
+> `status` is `'saved' | 'partial'` and there are NO `contentRefs` / `payloadRefs`
+> / `resolverJobs` / `artifactRefs`. Do not build from the types below — use the
+> actual file. `'capture'` IS in `NODE_SCALAR_KEYS` as described.
 
 Recommended shared types live in `src/core/launcher/sources.ts`:
 
