@@ -25,6 +25,7 @@ import {
   deleteProviderConfig,
   getProviderSecretStatus,
   getProviderSettings,
+  reconcileProviderConfig,
   setActiveProvider,
   setProviderApiKey,
   updateAgentRuntimeSettings,
@@ -1488,6 +1489,11 @@ if (!app.requestSingleInstanceLock()) {
     // the first paint (prePaintBackgroundColor → shouldUseDarkColors) already
     // matches the chosen theme rather than the OS default.
     nativeTheme.themeSource = loadAppPreferences().theme;
+    // One-time, best-effort cleanup of any keyless junk provider row left on disk
+    // (the old save-side-effect bug); skips itself when secrets are unreadable so a
+    // locked keychain never turns into row loss. Fire-and-forget — boot never waits
+    // on or fails from it. See `reconcileProviderConfig`.
+    void reconcileProviderConfig().catch(() => { /* best-effort; cleaned next launch */ });
     configureSessionSecurity();
     registerIpc();
     createWindow();

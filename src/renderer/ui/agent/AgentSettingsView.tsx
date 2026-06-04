@@ -27,7 +27,7 @@ import {
   resolveUsableActiveProvider,
 } from './providerCatalog';
 import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
-import { coerceReasoningLevel, defaultReasoningLevel } from './settingsReasoning';
+import { defaultReasoningLevel } from './settingsReasoning';
 
 interface AgentSettingsViewProps {
   onClose: () => void;
@@ -225,7 +225,6 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
   const [permissionSettings, setPermissionSettings] = useState<AgentToolPermissionSettingsView | null>(null);
   const [permissionDraft, setPermissionDraft] = useState<AgentToolPermissionSettingsView | null>(null);
   const [draft, setDraft] = useState<DraftConfig>(EMPTY_DRAFT);
-  const [apiKey, setApiKey] = useState('');
   // Category navigation history, so the window can offer macOS System Settings'
   // back / forward (‹ ›) chrome: `stack` is the visited categories, `index` the
   // current position. Switching to a new category truncates any forward entries
@@ -332,7 +331,6 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
         setPermissionSettings(nextPermissions);
         setPermissionDraft(nextPermissions);
         setDraft(resolveInitialDraft(next));
-        setApiKey('');
       })
       .catch((caught) => {
         if (isCurrentRequest(requestId)) setError(caught instanceof Error ? caught.message : String(caught));
@@ -406,15 +404,6 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     return catalog;
   }, [settings]);
 
-  // The active provider's draft model determines which reasoning levels the global
-  // save() may coerce to (the per-provider connection is edited in its own window).
-  const selectedCatalog = providerCatalog.get(draft.providerId);
-  const catalogModels = selectedCatalog?.models ?? [];
-  const selectedModel = catalogModels.find((model) => model.id === draft.modelId);
-  const selectedReasoningLevels: AgentReasoningLevel[] = selectedModel?.supportedThinkingLevels.length
-    ? selectedModel.supportedThinkingLevels
-    : ['off'];
-
   const providerChoices = useMemo(
     () => settings ? buildProviderChoices(settings, draft.providerId, providerCatalog) : [],
     [draft.providerId, providerCatalog, settings],
@@ -467,37 +456,19 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     void window.lin?.openProviderConfig?.({ providerId: '', mode: 'custom' });
   }
 
+  // The footer Save persists ONLY what this pane owns — runtime (permissions /
+  // skills / agents) settings. It never creates or edits a provider row: row
+  // creation lives solely in the per-provider config window and the OAuth login
+  // (provider-config-cleanup A1). Materializing a keyless row here for whatever
+  // provider the draft happened to default to was the root of the "Add key" yet
+  // "Remove provider" contradiction.
   async function save() {
-    const providerId = draft.providerId.trim();
-    const modelId = draft.modelId.trim() || selectedCatalog?.models[0]?.id || '';
-
-    // Only validate modelId if a providerId is actively selected/provided.
-    if (providerId && !modelId) {
-      setError('model is required');
-      navigateCategory('providers');
-      return;
-    }
-
     const requestId = beginRequest();
     setSaving(true);
     setError(null);
     setNotice(null);
     try {
-      if (providerId) {
-        await api.agentUpsertProviderConfig({
-          providerId,
-          modelId,
-          reasoningLevel: coerceReasoningLevel(draft.reasoningLevel, selectedReasoningLevels),
-          baseUrl: draft.baseUrl.trim() || null,
-          enabled: true,
-        });
-        if (apiKey.trim()) {
-          await api.agentSetProviderApiKey(providerId, apiKey.trim());
-          setApiKey('');
-        }
-      }
-
-      let next = await api.agentUpdateRuntimeSettings({
+      await api.agentUpdateRuntimeSettings({
         permissionMode: draft.permissionMode,
         automaticSkillsEnabled: draft.automaticSkillsEnabled,
         slashSkillsEnabled: draft.slashSkillsEnabled,
@@ -510,20 +481,15 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
         ? await api.agentUpdateToolPermissionSettings(permissionDraft)
         : null;
 
-      next = await api.agentGetProviderSettings();
+      const next = await api.agentGetProviderSettings();
       if (isCurrentRequest(requestId)) {
         setSettings(next);
         if (nextPermissions) {
           setPermissionSettings(nextPermissions);
           setPermissionDraft(nextPermissions);
         }
-        if (providerId) {
-          setDraft(resolveDraftForProvider(next, providerId));
-        } else {
-          setDraft(resolveInitialDraft(next));
-        }
+        setDraft(resolveInitialDraft(next));
         setCreatingCustom(false);
-        setApiKey('');
         setNotice('Saved');
       }
       await onApplied();

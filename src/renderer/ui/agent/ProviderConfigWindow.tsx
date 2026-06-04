@@ -100,6 +100,13 @@ export function ProviderConfigWindow() {
     if (!pid) return;
     const modelId = draft.modelId.trim() || existing?.modelId || catalog?.models[0]?.id || '';
     const reasoningLevel = existing?.reasoningLevel ?? defaultReasoningLevel(catalog?.models[0]);
+    // Store the credential BEFORE creating the row, so a crash between the two
+    // writes leaves no keyless orphan row (and the row is durably credentialed the
+    // moment it exists). The Save button is gated on a credential or base URL
+    // (ProviderConfigForm), so a keyless no-op row is never created here.
+    if (draft.apiKey.trim()) {
+      await api.agentSetProviderApiKey(pid, draft.apiKey.trim());
+    }
     await api.agentUpsertProviderConfig({
       providerId: pid,
       modelId,
@@ -107,9 +114,6 @@ export function ProviderConfigWindow() {
       baseUrl: draft.baseUrl.trim() || null,
       enabled: true,
     });
-    if (draft.apiKey.trim()) {
-      await api.agentSetProviderApiKey(pid, draft.apiKey.trim());
-    }
     await window.lin?.notifySettingsChanged?.();
   }
 

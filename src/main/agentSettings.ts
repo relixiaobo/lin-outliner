@@ -112,6 +112,10 @@ export interface AgentProviderRuntimeConfig extends AgentProviderConfig {
 }
 
 export async function getProviderSettings(): Promise<AgentProviderSettingsView> {
+  // A pure read — never destructive. Junk-row cleanup happens once at startup via
+  // `reconcileProviderConfig`, NOT on every read: a write on the read path both
+  // raced concurrent writers and (with a degrading secret read) could prune rows
+  // from a transient keychain lock. See `reconcileProviderConfig`.
   return toSettingsView(await readProviderFile(), await readSecretFileSafe());
 }
 
@@ -176,7 +180,11 @@ export async function upsertProviderConfig(input: AgentProviderConfigInput) {
   if (index >= 0) file.providers[index] = config;
   else file.providers.push(config);
   file.providers.sort((left, right) => left.providerId.localeCompare(right.providerId));
-  file.activeProviderId ??= file.providers[0]?.providerId;
+  // No auto-activation side effect (provider-config-cleanup A2): an upsert never
+  // makes a provider active by itself — the credential may not be stored yet. Read
+  // paths resolve the active provider by falling back through credentialed rows, so
+  // a freshly credentialed provider is usable immediately; the startup reconcile
+  // tidies the persisted activeProviderId at the next launch.
   await writeProviderFile(file);
   return getProviderSettings();
 }
@@ -200,7 +208,10 @@ export async function ensureProviderConfig(providerIdInput: string): Promise<voi
     enabled: true,
   });
   file.providers.sort((left, right) => left.providerId.localeCompare(right.providerId));
-  file.activeProviderId ??= file.providers[0]?.providerId;
+  // The OAuth credential is persisted before this row is created, so read paths
+  // resolve it as the active provider via the credentialed-row fallback even before
+  // the startup reconcile tidies the persisted activeProviderId — no auto-activation
+  // side effect needed here (provider-config-cleanup A2).
   await writeProviderFile(file);
 }
 
@@ -435,9 +446,85 @@ function normalizeConfig(input: AgentProviderConfigInput): AgentProviderConfig {
 }
 
 function providerHasCredential(provider: AgentProviderConfig, secrets: SecretFile): boolean {
-  // A stored credential (api_key or oauth login), an env key, or a managed
-  // ambient sentinel all count. Kind-agnostic, mirroring the resolver.
+  // A stored credential (api_key or oauth login), an env key, or a managed ambient
+  // sentinel all count. Kind-agnostic, mirroring the resolver. Used by the runtime
+  // active-provider resolution — which may legitimately consult ambient env — NOT
+  // by the prune, which keys only on durable signals (see `isPrunableJunkRow`).
   return provider.enabled && Boolean(secrets.credentials[provider.providerId] || getEnvApiKey(provider.providerId));
+}
+
+/**
+ * One-time, startup cleanup of `agent-providers.json` (provider-config-cleanup A3).
+ * Removes the literal bug shape — a keyless catalog row the old main-pane save side
+ * effect produced — and repoints a now-dangling active pointer. Intentionally NOT
+ * run on the read path: a write there raced concurrent writers and, fed the
+ * degrading secret read, could prune rows from a transient keychain lock.
+ *
+ * Two hard safety rules, each guarding against permanent loss from a transient or
+ * ambient signal:
+ *
+ * 1. If the secrets file is UNREADABLE (keychain locked, key rotated, safeStorage
+ *    down), do nothing — never prune, never write. The credential picture is
+ *    unknown, and "transient unavailability must never become permanent loss"
+ *    (the SecretsUnreadableError invariant the secret store is built around).
+ * 2. Judge a row only by DURABLE, launch-stable signals: a stored secret-file
+ *    credential, a `baseUrl`, and the provider kind. Ambient env keys are NOT
+ *    consulted — they are launch-context-dependent (a Finder/Dock launch inherits
+ *    no shell env), so judging on them would delete a deliberate row whenever the
+ *    env happens to be absent. Managed (Bedrock/Vertex) and oauth kinds are exempt
+ *    outright: managed credentials are always ambient, and oauth rows carry a
+ *    stored credential.
+ */
+export async function reconcileProviderConfig(): Promise<void> {
+  const { secrets, readable } = await readSecretsWithStatus();
+  if (!readable) return; // rule 1: credential picture unknown → touch nothing
+  const file = await readProviderFile();
+  if (reconcileProviderFile(file, secrets)) {
+    await writeProviderFile(file);
+  }
+}
+
+/** Mutates `file` in place; returns whether anything changed. See `reconcileProviderConfig`. */
+function reconcileProviderFile(file: ProviderConfigFile, secrets: SecretFile): boolean {
+  let changed = false;
+
+  const kept = file.providers.filter((provider) => !isPrunableJunkRow(provider, secrets));
+  if (kept.length !== file.providers.length) {
+    file.providers = kept;
+    changed = true;
+  }
+
+  // Repoint the active pointer only when it is unset or DANGLING (no surviving row
+  // by that id) — a purely structural check, never a credential judgment, so a
+  // deliberately-active managed/env provider is never churned. Target the first row
+  // holding a durable stored credential, else clear it; read paths
+  // (`resolveUsableActiveProvider` / `getActiveProviderRuntimeConfig`) already fall
+  // back through env/managed at runtime.
+  const activeExists = file.providers.some((provider) => provider.providerId === file.activeProviderId);
+  if (!file.activeProviderId || !activeExists) {
+    const next = file.providers.find(
+      (provider) => provider.enabled && secrets.credentials[provider.providerId],
+    )?.providerId;
+    if (file.activeProviderId !== next) {
+      file.activeProviderId = next;
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
+/**
+ * The literal bug shape, and ONLY it: a plain api-key catalog row with no durable
+ * stored credential and no `baseUrl`. Exempts managed/oauth kinds and any row with
+ * a stored credential or a local endpoint. Never consults ambient env (see
+ * `reconcileProviderConfig` rule 2).
+ */
+function isPrunableJunkRow(provider: AgentProviderConfig, secrets: SecretFile): boolean {
+  if (getProviderAuthKind(provider.providerId) !== 'api-key') return false; // exempt managed + oauth
+  if (secrets.credentials[provider.providerId]) return false;               // durable stored credential
+  if (provider.baseUrl) return false;                                       // local endpoint
+  return true;
 }
 
 function normalizeProviderId(providerIdInput: string) {
@@ -542,6 +629,22 @@ async function readSecretFileSafe(): Promise<SecretFile> {
     return await readSecretFile();
   } catch (error) {
     if (error instanceof SecretsUnreadableError) return { credentials: {} };
+    throw error;
+  }
+}
+
+/**
+ * Like `readSecretFileSafe` but reports whether the read actually succeeded. The
+ * reconcile path needs this: an unreadable blob degrades to empty credentials,
+ * which must NOT be mistaken for "these providers have no credential" and drive a
+ * destructive prune. `readable: false` means "credential picture unknown — do not
+ * delete anything."
+ */
+async function readSecretsWithStatus(): Promise<{ secrets: SecretFile; readable: boolean }> {
+  try {
+    return { secrets: await readSecretFile(), readable: true };
+  } catch (error) {
+    if (error instanceof SecretsUnreadableError) return { secrets: { credentials: {} }, readable: false };
     throw error;
   }
 }
