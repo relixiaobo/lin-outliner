@@ -49,4 +49,51 @@ export const zhHans: PartialMessages = {
       languageSublabel: '选择菜单和界面的显示语言。',
     },
   },
+  common: {
+    untitled: '未命名',
+    loading: '加载中…',
+  },
+  shell: {
+    startupError: ({ error }) => `启动失败：${error}`,
+    errorDismiss: '关闭错误',
+    sidebar: {
+      ariaLabel: '主导航',
+      primaryNav: {
+        today: '今天',
+        library: '资料库',
+        recents: '最近',
+        schema: '结构',
+      },
+      collapseNode: ({ label }) => `折叠 ${label}`,
+      expandNode: ({ label }) => `展开 ${label}`,
+      pinnedSection: '已固定',
+      noPinnedHint: '拖拽以固定节点',
+      pinnedNodesAriaLabel: '已固定节点',
+      openRoot: ({ rootLabel }) => `打开 ${rootLabel}`,
+      workspaceRootTreeAriaLabel: '工作区根节点树',
+      settings: '设置',
+      resizeLabel: '调整侧栏宽度',
+      resizeTitle: '调整侧栏宽度（双击重置）',
+      missingReference: '引用缺失',
+    },
+    chrome: {
+      collapseSidebar: '收起侧栏',
+      expandSidebar: '展开侧栏',
+      collapseAgent: '收起智能体',
+      expandAgent: '展开智能体',
+    },
+    workspace: {
+      canvasAriaLabel: '工作区画布',
+      resizePanelsLabel: '调整面板宽度',
+      resizePanelsTitle: '调整面板宽度（双击重置）',
+    },
+    panel: {
+      closeLabel: '关闭面板',
+    },
+    agentDock: {
+      ariaLabel: '智能体',
+      resizeLabel: '调整智能体宽度',
+      resizeTitle: '调整智能体宽度（双击重置）',
+    },
+  },
 };

@@ -59,6 +59,57 @@ export const en = {
       languageSublabel: 'Choose the display language for menus and the interface.',
     },
   },
+  // Cross-surface shared atoms — declared once so the same word has one key and one
+  // translation everywhere (avoids divergent 'Untitled' / 'Loading…' per surface).
+  common: {
+    untitled: 'Untitled',
+    loading: 'Loading…',
+  },
+  // The always-visible app shell: window chrome, sidebar, workspace canvas, panels,
+  // and the agent dock frame (B1 migration).
+  shell: {
+    startupError: ({ error }: { error: string }) => `Startup failed: ${error}`,
+    errorDismiss: 'Dismiss error',
+    sidebar: {
+      ariaLabel: 'Primary navigation',
+      primaryNav: {
+        today: 'Today',
+        library: 'Library',
+        recents: 'Recents',
+        schema: 'Schema',
+      },
+      collapseNode: ({ label }: { label: string }) => `Collapse ${label}`,
+      expandNode: ({ label }: { label: string }) => `Expand ${label}`,
+      pinnedSection: 'Pinned',
+      noPinnedHint: 'Drag to pin nodes',
+      pinnedNodesAriaLabel: 'Pinned nodes',
+      openRoot: ({ rootLabel }: { rootLabel: string }) => `Open ${rootLabel}`,
+      workspaceRootTreeAriaLabel: 'Workspace root tree',
+      settings: 'Settings',
+      resizeLabel: 'Resize sidebar',
+      resizeTitle: 'Resize sidebar (double-click to reset)',
+      missingReference: 'Missing reference',
+    },
+    chrome: {
+      collapseSidebar: 'Collapse sidebar',
+      expandSidebar: 'Expand sidebar',
+      collapseAgent: 'Collapse agent',
+      expandAgent: 'Expand agent',
+    },
+    workspace: {
+      canvasAriaLabel: 'Workspace canvas',
+      resizePanelsLabel: 'Resize panels',
+      resizePanelsTitle: 'Resize panels (double-click to reset)',
+    },
+    panel: {
+      closeLabel: 'Close panel',
+    },
+    agentDock: {
+      ariaLabel: 'Agent',
+      resizeLabel: 'Resize agent',
+      resizeTitle: 'Resize agent (double-click to reset)',
+    },
+  },
 };
 
 export type Messages = typeof en;
