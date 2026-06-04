@@ -1,9 +1,11 @@
 import type { DocumentCommand } from '../core/commands';
 import type { DocumentProjection, NodeProjection, SearchQueryExpr } from '../core/types';
+import type { TextSearchIndex } from '../core/textSearchIndex';
 import type { ToolEnvelope } from './agentToolEnvelope';
 
 export interface OutlinerToolHost {
   getProjection(): DocumentProjection;
+  getTextSearchIndex?(): TextSearchIndex;
   handle(
     command: DocumentCommand,
     args?: Record<string, unknown>,

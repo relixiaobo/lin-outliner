@@ -18,6 +18,7 @@ import {
   searchQueryHasRules,
   searchQueryTerms,
 } from '../core/searchEngine';
+import type { TextSearchIndex } from '../core/textSearchIndex';
 import { parseLinOutline, type OutlineDocument, type OutlineNode, type OutlineValue } from './agentOutlineParser';
 import {
   NODE_REFERENCE_GUIDANCE,
@@ -251,8 +252,11 @@ export function searchViewModeOf(index: ProjectionIndex, node: NodeProjection): 
 export function runSearch(index: ProjectionIndex, search: {
   searchNodeId?: string;
   query: SearchQueryExpr;
-}): string[] | NodeToolIssue {
-  const result = runSearchExpr(index.projection, search.query, { searchNodeId: search.searchNodeId });
+}, options: { textIndex?: TextSearchIndex } = {}): string[] | NodeToolIssue {
+  const result = runSearchExpr(index.projection, search.query, {
+    searchNodeId: search.searchNodeId,
+    textIndex: options.textIndex,
+  });
   if (!result.ok) {
     return {
       code: result.issue.code,

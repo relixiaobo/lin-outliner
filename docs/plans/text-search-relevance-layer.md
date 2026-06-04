@@ -1,5 +1,5 @@
 ---
-status: draft
+status: in-progress
 priority: P1
 owner: relixiaobo
 created: 2026-06-04
@@ -34,8 +34,9 @@ Requirements:
   generation may be broad, but final matches must be verified against real
   normalized text so index artifacts never create false positives.
 - **Fast:** positive text searches should not linearly score every node on every
-  query. Use an inverted index, rare-term candidate selection, bounded fallback,
-  and explicit benchmarks.
+  query. Use an inverted index, sorted-term prefix range lookup, rare-term
+  candidate selection, bounded top-k result selection, bounded fallback, and explicit
+  benchmarks.
 - **Simple:** pure TypeScript first. No SQLite, native module, or dependency
   change in v1.
 - **Clean:** document state and agent event logs remain the source of truth.
@@ -223,6 +224,10 @@ Tokenization:
 - Fall back to a Unicode letter/number regex for Latin-like text.
 - For CJK script runs, emit character bigrams for candidate generation, plus a
   one-character fallback only for one-character queries.
+- For Latin-like tokens, keep sorted searchable terms for short prefix range
+  lookup. Prefix matching scans only the matching term range, not every posting.
+- Short Latin queries are exact/prefix-oriented; mid-word Latin substring recall
+  starts at three characters through trigram candidates.
 - Store each field's normalized raw text. This lets final verification check
   phrase and substring matches exactly, even when n-grams are broad.
 
@@ -235,12 +240,14 @@ For a query:
 
 1. Normalize and split into phrase text plus query terms.
 2. Use the rarest required term/posting list first.
-3. For multi-term queries, prefer AND candidate intersection.
-4. If the AND set is empty or too small, allow OR fallback only as a lower-ranked
+3. Use exact postings, prefix range lookup, and trigram substring candidates for
+   candidate recall. Final scoring still verifies the normalized source text.
+4. For multi-term queries, prefer AND candidate intersection.
+5. If the AND set is empty or too small, allow OR fallback only as a lower-ranked
    retrieval tier.
-5. For CJK queries, use n-gram postings to find candidates, then verify the
+6. For CJK queries, use n-gram postings to find candidates, then verify the
    original normalized query substring against field text.
-6. For very short queries, cap broad candidate sets before scoring and keep UI
+7. For very short queries, cap broad candidate sets before scoring and keep UI
    picker heuristics separate.
 
 This keeps recall high while preserving correctness: the index proposes, the
@@ -349,8 +356,8 @@ Recommended v1 scheme:
 1. Full rebuild on workspace load and undo/redo/full-rewrite invalidations.
 2. Incremental `upsert`/`remove` for ordinary node mutations.
 3. Dependency-map fan-out for tag/field definition changes.
-4. Exact candidate-set scoring for correctness, with benchmark data captured for
-   broad-query cases before adding more complex top-k algorithms.
+4. Exact candidate-set scoring for correctness, with a bounded top-k heap for
+   limited searches so broad queries do not sort every scored candidate.
 
 If measurement later shows cold builds are too slow, add a rebuildable persisted
 index as a separate infrastructure plan.
@@ -430,7 +437,7 @@ Add a benchmark-style core test or script with synthetic nodes:
 
 - 10k nodes with title, description, tags, and fields.
 - Mixed English and CJK data.
-- Queries covering exact, prefix, phrase, AND, OR fallback, and CJK.
+- Queries covering exact, prefix range lookup, phrase, AND, OR fallback, and CJK.
 - Representative edits: one title edit, one body/description edit, one tag-name
   edit affecting tagged nodes, one field-name edit affecting field-bearing
   nodes, one delete/trash, and one undo/redo full-rebuild case.
@@ -448,9 +455,9 @@ Targets for a local dev Mac:
 - Tag/field definition edits report dependent-record update cost separately, so
   broad schema renames are visible rather than hidden in average latency.
 - Broad high-frequency queries are measured separately from selective queries.
-  If a 10k broad query misses the 20 ms target, the PR must either optimize the
-  scorer or explicitly document why that query class needs a later WAND/top-k
-  path.
+  The v1 bounded top-k path avoids full-result sorting; later WAND/block-max
+  pruning remains a separate scale optimization if scoring every broad candidate
+  is still too expensive.
 - Memory usage reported for the synthetic corpus before considering persistence.
 - `Intl.Segmenter` tokenization behavior verified under both `bun test` and the
   Electron runtime. If they diverge, the regex/n-gram fallback must produce the
@@ -499,8 +506,9 @@ No active file-scope conflict found.
   first follow-up after the integrated kernel + `node_search` v1 lands?
   Recommendation: follow-up.
 - Should prefix matching be broad for all fields, or only title/tag/field-name?
-  Recommendation: broad prefix for title/tag/field-name, exact term/phrase for
-  long body-like text.
+  Decision for v1: prefix lookup covers every indexed Latin token through a
+  sorted term range scan. It preserves recall without storing per-prefix doc-id
+  copies.
 - Should recency ever boost default `node_search` relevance? Recommendation: no
   for saved search determinism; only UI pickers should use recency as a
   convenience tie-breaker.

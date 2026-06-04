@@ -17,6 +17,7 @@ import {
 } from './operationJournal';
 import { assembleProjection, buildDocumentProjection, projectNode } from './projection';
 import { runSearchExpr, runSearchNode, searchNodeHasRules } from './searchEngine';
+import type { TextSearchIndex } from './textSearchIndex';
 import {
   CONFIG_SCHEMA,
   ENUM_DOMAINS,
@@ -109,6 +110,12 @@ export type {
   OperationHistoryScope,
 };
 
+export interface CoreRevisionDelta {
+  revision: number;
+  changedNodeIds: string[];
+  requiresFullSearchRebuild: boolean;
+}
+
 interface TemplateFieldRef {
   fieldDefId: NodeId;
   templateOriginId: NodeId;
@@ -160,6 +167,11 @@ export class Core {
   // service layer compares it before/after a command for O(1) change detection
   // instead of stringifying the whole document.
   private revisionValue = 0;
+  private lastRevisionDelta: CoreRevisionDelta = {
+    revision: 0,
+    changedNodeIds: [],
+    requiresFullSearchRebuild: true,
+  };
 
   constructor(state?: CoreSerializedState) {
     this.loro = new LoroOutlinerDocument(state);
@@ -231,6 +243,29 @@ export class Core {
   // the caller can detect "did anything change" without comparing snapshots.
   revision(): number {
     return this.revisionValue;
+  }
+
+  revisionDelta(): CoreRevisionDelta {
+    return {
+      revision: this.lastRevisionDelta.revision,
+      changedNodeIds: [...this.lastRevisionDelta.changedNodeIds],
+      requiresFullSearchRebuild: this.lastRevisionDelta.requiresFullSearchRebuild,
+    };
+  }
+
+  projectionNodesFor(nodeIds: readonly NodeId[]): Map<NodeId, NodeProjection> {
+    if (this.activeTransaction) {
+      const state = this.loro.materializeState();
+      return new Map(nodeIds.flatMap((nodeId): Array<[NodeId, NodeProjection]> => {
+        const node = state.nodes[nodeId];
+        return node ? [[nodeId, projectNode(node)]] : [];
+      }));
+    }
+    this.ensureProjectionCache();
+    return new Map(nodeIds.flatMap((nodeId): Array<[NodeId, NodeProjection]> => {
+      const node = this.projectionNodes.get(nodeId);
+      return node ? [[nodeId, node]] : [];
+    }));
   }
 
   private ensureProjectionCache() {
@@ -315,7 +350,7 @@ export class Core {
       if (transaction && changedTouchedNodes(affectedNodeIds, transaction.before, after)) {
         this.commitCurrentTransaction(transaction.origin, transaction.before, after, transaction.metadata, affectedNodeIds);
         this.patchProjectionCache(affectedNodeIds, after);
-        this.revisionValue += 1;
+        this.bumpRevision(affectedNodeIds, false);
       }
       this.activeTransaction = undefined;
       this.refreshStateFromLoro();
@@ -1706,7 +1741,7 @@ export class Core {
     return this.mutate(() => focus(this.ensureDateNodeDirect(year, month, day)));
   }
 
-  createSearchNode(parentId: string, index: number | null | undefined, config: SearchNodeConfig): CommandOutcome {
+  createSearchNode(parentId: string, index: number | null | undefined, config: SearchNodeConfig, textIndex?: TextSearchIndex): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureParentMutable(state, parentId);
@@ -1714,23 +1749,23 @@ export class Core {
       this.loro.createNodeWithId(searchId, parentId, index, 'search', (node) => {
         node.content = plainText(normalizeSearchTitle(config.title));
       });
-      this.writeSearchNodeConfigDirect(searchId, config);
+      this.writeSearchNodeConfigDirect(searchId, config, textIndex);
       return focus(searchId);
     });
   }
 
-  setSearchNode(nodeId: string, config: SearchNodeConfig): CommandOutcome {
+  setSearchNode(nodeId: string, config: SearchNodeConfig, textIndex?: TextSearchIndex): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureNodeEditable(state, nodeId);
-      this.writeSearchNodeConfigDirect(nodeId, config);
+      this.writeSearchNodeConfigDirect(nodeId, config, textIndex);
       return focus(nodeId);
     });
   }
 
-  refreshSearchNodeResults(nodeId: string): CommandOutcome {
+  refreshSearchNodeResults(nodeId: string, textIndex?: TextSearchIndex): CommandOutcome {
     return this.mutate(() => {
-      this.materializeSearchNodeResultsDirect(nodeId);
+      this.materializeSearchNodeResultsDirect(nodeId, textIndex);
       return undefined;
     });
   }
@@ -1914,7 +1949,7 @@ export class Core {
     if (changedTouchedNodes(affectedNodeIds, before, after)) {
       this.commitCurrentTransaction(this.currentCommitOrigin(), before, after, this.currentCommitMetadata(), affectedNodeIds);
       this.patchProjectionCache(affectedNodeIds, after);
-      this.revisionValue += 1;
+      this.bumpRevision(affectedNodeIds, false);
       this.verifyCaches();
     }
     this.stateValue = after;
@@ -1939,6 +1974,15 @@ export class Core {
     // demand, so no explicit rebuild is needed here. materializeState is a cheap
     // cache read.
     this.stateValue = this.loro.materializeState();
+  }
+
+  private bumpRevision(changedNodeIds: readonly string[], requiresFullSearchRebuild: boolean) {
+    this.revisionValue += 1;
+    this.lastRevisionDelta = {
+      revision: this.revisionValue,
+      changedNodeIds: uniqueNodeIds([...changedNodeIds]),
+      requiresFullSearchRebuild,
+    };
   }
 
   private commitCurrentTransaction(
@@ -1988,7 +2032,7 @@ export class Core {
       changed.push(decorateHistoryItem(entry ?? synthesizeHistoryEntry(action, origin, before, after), stackAfter));
     }
 
-    if (changed.length > 0) this.revisionValue += 1;
+    if (changed.length > 0) this.bumpRevision([], true);
     // Undo/redo rewrites the tree without per-node touch tracking, so the
     // incremental caches cannot be patched — rebuild them from scratch.
     this.invalidateProjectionCache();
@@ -2032,7 +2076,7 @@ export class Core {
     this.loro.writeNode(node);
   }
 
-  private writeSearchNodeConfigDirect(nodeId: string, config: SearchNodeConfig) {
+  private writeSearchNodeConfigDirect(nodeId: string, config: SearchNodeConfig, textIndex?: TextSearchIndex) {
     const state = this.snapshot();
     const existing = clone(requiredNode(state, nodeId));
     // Rebuild as a search node with its inline query cleared (the query lives in
@@ -2054,16 +2098,16 @@ export class Core {
       if (latest.nodes[childId]?.type === 'queryCondition') this.removeSubtreeDirect(childId);
     }
     this.createSearchQueryConditionDirect(nodeId, config.query, 0);
-    this.materializeSearchNodeResultsDirect(nodeId);
+    this.materializeSearchNodeResultsDirect(nodeId, textIndex);
   }
 
-  private materializeSearchNodeResultsDirect(nodeId: string) {
+  private materializeSearchNodeResultsDirect(nodeId: string, textIndex?: TextSearchIndex) {
     const state = this.snapshot();
     const searchNode = requiredNode(state, nodeId);
     if (searchNode.type !== 'search') throw CoreError.invalidOperation('expected a search node');
 
     const result = searchNodeHasRules(state, nodeId)
-      ? runSearchNode(state, nodeId)
+      ? runSearchNode(state, nodeId, { textIndex })
       : { ok: true, hits: [] } as const;
     if (!result.ok) throw CoreError.invalidOperation(result.issue.message);
 
