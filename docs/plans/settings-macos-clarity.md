@@ -38,8 +38,9 @@ or technical copy at the first visual level.
 
 Add a settings toolbar title beside the existing back/forward history controls.
 The selected rail category remains the navigation label, but the right pane must
-also name itself like System Settings (`‹ ›` + page title). Back/forward stay
-neutral chrome controls and do not gain a filled box.
+also name itself like System Settings (`‹ ›` + page title). Back/forward render as
+one neutral capsule group with a divider; the individual arrows stay shared chrome
+controls and do not gain independent filled boxes.
 
 ### 2. Constrain the content reading width
 
@@ -113,7 +114,7 @@ No live file-level overlap.
 
 ## Checklist
 
-- [x] Add toolbar page title and align it with the history controls.
+- [x] Add toolbar page title and render history controls as one capsule group.
 - [x] Constrain the content column and tune vertical rhythm.
 - [x] Add compact rail icon slots and reduce rail hint dominance.
 - [x] Remove/demote redundant pane intro copy.

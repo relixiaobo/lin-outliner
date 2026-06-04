@@ -32,12 +32,10 @@
   -webkit-app-region: drag;
 }
 
-/* Back / forward (‹ ›) toolbar arrows, like macOS System Settings. This is the
-   main window's chrome-control CLUSTER (mirrors .window-chrome-cluster): the
-   buttons themselves reuse the shared chrome control (.rail-toggle, below), so
-   only their position is settings-specific — anchored over the content column
-   (window pad + rail width + layout gap = the content's left edge) and centred on
-   the traffic-light line via --chrome-control-inset, in the OS window-control band. */
+/* Back / forward (‹ ›) toolbar group, like macOS System Settings. The buttons
+   still reuse the shared chrome control (.rail-toggle), but Settings gives that
+   pair one neutral pill container plus a hairline divider so it reads as one
+   native history control instead of two loose icons. */
 .settings-toolbar {
   position: absolute;
   top: var(--chrome-control-inset);
@@ -54,8 +52,27 @@
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: var(--space-1);
+  gap: 0;
+  height: var(--chrome-control-height);
+  border-radius: var(--radius-pill);
+  background: var(--fill-1);
+  box-shadow: inset 0 0 0 0.5px var(--border-subtle);
+  padding: 0 var(--space-1);
   -webkit-app-region: no-drag;
+}
+
+.settings-history-nav .rail-toggle {
+  flex: 0 0 var(--chrome-control-height);
+  width: var(--chrome-control-height);
+  height: var(--chrome-control-height);
+  border-radius: var(--radius-pill);
+}
+
+.settings-history-divider {
+  flex: 0 0 auto;
+  width: 1px;
+  height: calc(var(--chrome-control-height) - var(--space-4));
+  background: var(--border-subtle);
 }
 
 .settings-toolbar-title {

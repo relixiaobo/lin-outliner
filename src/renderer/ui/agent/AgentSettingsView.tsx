@@ -590,7 +590,8 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
           <div className="settings-history-nav">
             {/* The same chrome control as the main window's rail toggles
                 (IconButton variant="chrome" + .rail-toggle): icon-only, colour
-                deepens on hover, no box (B6) — not a bespoke style. */}
+                deepens on hover. The Settings-only wrapper supplies the neutral
+                capsule group, so individual arrows do not get bespoke boxes. */}
             <IconButton
               className="rail-toggle"
               disabled={!canGoBack}
@@ -601,6 +602,7 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
               strokeWidth={1.7}
               variant="chrome"
             />
+            <span className="settings-history-divider" aria-hidden="true" />
             <IconButton
               className="rail-toggle"
               disabled={!canGoForward}

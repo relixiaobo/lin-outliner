@@ -1080,19 +1080,22 @@ not Apple chrome. We borrow the interaction, not the chrome.
   radii match the main shell exactly — `--layout-gap` float + gap, `--sidebar-width`
   rail, `--panel-radius` corners — so the rail nests concentrically inside the
   window corner (window 24 = gap 8 + rail 16, B9).
-- **Back / forward toolbar arrows + page title.** The drag region carries macOS
+- **Back / forward toolbar capsule + page title.** The drag region carries macOS
   System Settings' `‹ ›` history controls and the selected category title. The
   arrows reuse the SAME chrome control as the main window's rail toggles — the
   shared `IconButton variant="chrome"` with `.rail-toggle` (icon-only, glyph
   deepens `--text-secondary` → `--text-primary` on hover, dims to
-  `--text-disabled` when inert, no box; B6) — NOT a bespoke style. Only their
-  placement is settings-specific: `.settings-toolbar` anchors over the content
-  column on the traffic-light centreline (`--chrome-control-inset`), with
-  `.settings-history-nav` as the no-drag control group. The `.settings-toolbar-title`
-  is the right-pane anchor ("General", "Providers", etc.), so the content no longer
-  relies on the rail alone to name the page. History walks a category visit-history
-  stack: switching categories pushes (truncating any forward entries), back /
-  forward move the cursor; each is disabled when there is nothing to traverse.
+  `--text-disabled` when inert; B6) — NOT a bespoke style. Settings-specific
+  styling lives only on the group: `.settings-history-nav` is one neutral
+  `--radius-pill` capsule (`--fill-1` + inset hairline) with a center divider;
+  individual arrows do not get independent rounded-square boxes. Placement is
+  settings-specific: `.settings-toolbar` anchors over the content column on the
+  traffic-light centreline (`--chrome-control-inset`), with `.settings-history-nav`
+  as the no-drag control group. The `.settings-toolbar-title` is the right-pane
+  anchor ("General", "Providers", etc.), so the content no longer relies on the
+  rail alone to name the page. History walks a category visit-history stack:
+  switching categories pushes (truncating any forward entries), back / forward move
+  the cursor; each is disabled when there is nothing to traverse.
 - **Floating category rail + constrained grouped content.** A left rail lists settings
   categories (General / Providers / Permissions / Skills / Agent Profiles); the
   window opens to Providers (the primary connection task). The rail is the
