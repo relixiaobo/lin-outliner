@@ -174,15 +174,24 @@ export function providerHasCredential(
   return Boolean(provider?.auth?.credentialed) || Boolean(catalog?.hasEnvApiKey);
 }
 
+// The one "can this provider drive models right now?" predicate, shared by the
+// chat panel (empty-state gating), the composer (send-guard + model choices),
+// and the settings views. `auth.credentialed` already generalizes across
+// api-key / oauth / managed (main's authoritative signal), so there is no need
+// for caller-specific copies.
+export function isProviderUsable(
+  settings: AgentProviderSettingsView,
+  provider: AgentProviderConfigView,
+): boolean {
+  const catalog = settings.availableProviders.find((candidate) => candidate.providerId === provider.providerId);
+  return provider.enabled && providerHasCredential(provider, catalog);
+}
+
 export function resolveUsableActiveProvider(
   settings: AgentProviderSettingsView,
 ): AgentProviderConfigView | undefined {
-  const isUsable = (provider: AgentProviderConfigView) => {
-    const catalog = settings.availableProviders.find((candidate) => candidate.providerId === provider.providerId);
-    return provider.enabled && providerHasCredential(provider, catalog);
-  };
   return settings.activeProviderId
-    ? settings.providers.find((provider) => provider.providerId === settings.activeProviderId && isUsable(provider))
-      ?? settings.providers.find(isUsable)
-    : settings.providers.find(isUsable);
+    ? settings.providers.find((provider) => provider.providerId === settings.activeProviderId && isProviderUsable(settings, provider))
+      ?? settings.providers.find((provider) => isProviderUsable(settings, provider))
+    : settings.providers.find((provider) => isProviderUsable(settings, provider));
 }

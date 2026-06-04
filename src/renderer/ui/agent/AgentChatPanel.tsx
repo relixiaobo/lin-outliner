@@ -17,7 +17,6 @@ import type {
 } from '../../../core/agentTypes';
 import { nodeReferenceMarkersToText } from '../../../core/referenceMarkup';
 import type {
-  AgentProviderConfigView,
   AgentProviderSettingsView,
   AgentReasoningLevel,
   AgentSessionMeta,
@@ -50,17 +49,13 @@ import type { AgentComposerNodeReference } from './AgentComposerEditor';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentMessageRow } from './AgentMessageRow';
 import { AgentSubagentDetailsPanel } from './AgentSubagentDetailsPanel';
+import { resolveUsableActiveProvider } from './providerCatalog';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { ConfirmDialog } from '../primitives/ConfirmDialog';
 import { IconButton } from '../primitives/IconButton';
 import { TextInputControl } from '../primitives/TextInputControl';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 
-const SUGGESTED_PROMPTS = [
-  '总结当前大纲',
-  '规划 agent 接入阶段',
-  '列出下一步工具设计',
-];
 const TRANSCRIPT_ROW_GAP_PX = 14;
 const TRANSCRIPT_ROW_ESTIMATE_PX = 104;
 const TRANSCRIPT_VIRTUAL_MIN_ROWS = 40;
@@ -75,21 +70,6 @@ interface AgentChatPanelProps {
 
 function shouldStickToBottom(element: HTMLDivElement): boolean {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= 56;
-}
-
-function getActiveProvider(settings: AgentProviderSettingsView | null): AgentProviderConfigView | null {
-  if (!settings) return null;
-  const active = settings.activeProviderId
-    ? settings.providers.find((provider) => provider.providerId === settings.activeProviderId && providerCanUseModels(settings, provider))
-    : undefined;
-  return active ?? settings.providers.find((provider) => providerCanUseModels(settings, provider)) ?? null;
-}
-
-function providerCanUseModels(settings: AgentProviderSettingsView, provider: AgentProviderConfigView): boolean {
-  const catalog = settings.availableProviders.find((candidate) => candidate.providerId === provider.providerId);
-  // main's authoritative `auth.credentialed` (stored key, oauth login, env, or
-  // managed ambient); catalog env flag covers a provider with no view row yet.
-  return provider.enabled && (Boolean(provider.auth?.credentialed) || Boolean(catalog?.hasEnvApiKey));
 }
 
 function getSupportedReasoningLevels(
@@ -764,7 +744,7 @@ export function AgentChatPanel({
 
   async function updateActiveProviderConfig(patch: { modelId?: string; reasoningLevel?: AgentReasoningLevel }) {
     if (!providerSettings) return;
-    const activeProvider = getActiveProvider(providerSettings);
+    const activeProvider = resolveUsableActiveProvider(providerSettings);
     const providerId = activeProvider?.providerId ?? providerSettings.availableProviders[0]?.providerId;
     if (!providerId) return;
     await updateProviderConfig(providerId, patch);
@@ -885,6 +865,11 @@ export function AgentChatPanel({
   }
 
   const visibleError = error ?? settingsError;
+  // Provider settings load async (`providerSettings` starts null). Gate the
+  // no-provider onboarding on the LOADED state so a key-holding user never sees
+  // it flash during the load window; until loaded we stay neutral.
+  const settingsLoaded = providerSettings !== null;
+  const hasUsableProvider = settingsLoaded && Boolean(resolveUsableActiveProvider(providerSettings));
   const displayTitle = readableSessionTitle(sessionTitle, 'conversation');
   const historyMenuStyle = useAnchoredOverlay(historyMenuRef, {
     anchorRef: historyButtonRef,
@@ -1064,17 +1049,21 @@ export function AgentChatPanel({
         ) : null}
         {entries.length === 0 ? (
           <div className="agent-empty-state">
-            {SUGGESTED_PROMPTS.map((prompt) => (
-              <ButtonControl
-                className="agent-suggestion"
-                key={prompt}
-                onClick={() => {
-                  void sendMessage(prompt);
-                }}
-              >
-                {prompt}
-              </ButtonControl>
-            ))}
+            {!settingsLoaded ? null : hasUsableProvider ? (
+              <p className="agent-empty-greeting">How can I help with your outline?</p>
+            ) : (
+              <div className="agent-onboarding" role="status">
+                <p className="agent-onboarding-text">Connect an AI provider to start.</p>
+                <ButtonControl
+                  className="agent-onboarding-cta"
+                  onClick={() => {
+                    void window.lin?.openSettings();
+                  }}
+                >
+                  Open Settings › Providers
+                </ButtonControl>
+              </div>
+            )}
           </div>
         ) : (
           <div

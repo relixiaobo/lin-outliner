@@ -36,6 +36,8 @@ interface MockFixtureOptions {
   referenceField?: boolean;
   /** Adds an OAuth sign-in provider (GitHub Copilot) to the catalog for the OAuth specs. */
   oauthProvider?: boolean;
+  /** Leaves every provider uncredentialed so the agent panel shows the no-provider onboarding. */
+  noProvider?: boolean;
 }
 
 type E2EWindow = Window & {
@@ -54,6 +56,7 @@ type E2EWindow = Window & {
     onDocumentEvent: (listener: (event: unknown) => void) => () => void;
     onAgentOAuthEvent?: (listener: (envelope: unknown) => void) => () => void;
     openProviderConfig?: (params: { providerId: string; mode: string }) => Promise<void>;
+    openSettings?: () => Promise<void>;
     closeProviderConfig?: () => Promise<void>;
     notifySettingsChanged?: () => Promise<void>;
     previewLocalFile?: (options: { id: string }) => Promise<{ thumbnailDataUrl: string | null }>;
@@ -287,6 +290,15 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         ],
       }],
     };
+    // Strip every credential so the agent panel renders the no-provider
+    // onboarding and the send-guard engages (settings still LOAD — they just
+    // report no usable provider).
+    if (options.noProvider) {
+      for (const provider of agentSettings.providers) {
+        provider.hasApiKey = false;
+        provider.auth = { authKind: 'api-key', credentialed: false, hasStoredKey: false };
+      }
+    }
     // An OAuth sign-in provider for the OAuth specs. Gated so the api-key /
     // managed specs keep their fixed catalog. `authKind: 'oauth'` makes the
     // config window render the sign-in surface (ProviderOAuthForm).
@@ -1258,6 +1270,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       // just records the open request (so the list can assert it) and no-ops close.
       openProviderConfig: async (params: { providerId: string; mode: string }) => {
         calls.push({ cmd: 'open_provider_config', args: clone(params) });
+      },
+      // The Settings window opens natively; in tests just record the request so
+      // the onboarding CTA can be asserted (it deep-links to Providers).
+      openSettings: async () => {
+        calls.push({ cmd: 'open_settings', args: {} });
       },
       closeProviderConfig: async () => {},
       notifySettingsChanged: async () => {},

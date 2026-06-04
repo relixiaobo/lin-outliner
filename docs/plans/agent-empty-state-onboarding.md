@@ -1,9 +1,9 @@
 ---
-status: draft
+status: in-progress
 priority: P1
 owner: relixiaobo
 created: 2026-06-03
-updated: 2026-06-03
+updated: 2026-06-04
 ---
 
 # Agent Panel: Empty State + No-Provider Onboarding
@@ -127,17 +127,29 @@ dimension in mind and coordinate with the oauth work so the predicate has one ho
 - `tests/e2e/outlinerMock.ts` + a no-provider e2e spec; possibly a small CSS tweak for the
   onboarding card. No core/protocol surface (oauth #93 owns the `authKind` types).
 
+## Build notes (2026-06-04, cc)
+
+The `authKind` / `auth.credentialed` dimension (oauth #93) has since merged to `main`,
+so the two duplicated copies were already authKind-aware and logically identical to
+`providerCatalog`'s canonical helpers — consolidation became a plain import-swap rather
+than a generalization. Promoted `isProviderUsable(settings, provider)` in
+`providerCatalog.tsx` and routed `resolveUsableActiveProvider` through it; both
+`AgentChatPanel` and `AgentComposer` now import these (no local copies). The composer
+derives `hasUsableProvider`/loaded-state from its existing `settings` prop (same object the
+panel passes) instead of taking a new prop — single source via the shared helper.
+
 ## Checklist
 
-- [ ] Extract/reuse one usable-provider helper (`providerCatalog.tsx`); replace the two
-  duplicated copies in `AgentChatPanel` + `AgentComposer`. Generalize for `authKind`.
-- [ ] Delete `SUGGESTED_PROMPTS` + its render block.
-- [ ] Empty state w/ provider: minimal greeting / whitespace.
-- [ ] Empty state w/o provider (settings LOADED only): onboarding card + CTA → Settings ›
+- [x] Extract/reuse one usable-provider helper (`providerCatalog.tsx` → `isProviderUsable`);
+  replaced the two duplicated copies in `AgentChatPanel` + `AgentComposer`. authKind already
+  generalized upstream.
+- [x] Delete `SUGGESTED_PROMPTS` + its render block.
+- [x] Empty state w/ provider: minimal muted greeting line.
+- [x] Empty state w/o provider (settings LOADED only): onboarding card + CTA → Settings ›
   Providers (existing `openSettings()`).
-- [ ] `AgentComposer` send-guard when loaded && no usable provider; `disabledReason`
-  tooltip → Settings (do NOT disable during the load window).
-- [ ] `bun run typecheck` + `test:renderer`.
-- [ ] e2e: no-provider variant (onboarding + CTA + no `agent_send_message` on click/Enter)
-  and with-provider (greeting + sends).
-- [ ] Light + dark visual gate (UI change), both with and without a key.
+- [x] `AgentComposer` send-guard when loaded && no usable provider; `disabledTitle`
+  tooltip ("Add a provider in Settings"); does NOT disable during the load window.
+- [x] `bun run typecheck` + `test:renderer` (323 pass).
+- [x] e2e: no-provider variant (onboarding + CTA + no `agent_send_message` on Enter) and
+  with-provider (greeting + sends) — `tests/e2e/agent-onboarding.spec.ts`.
+- [x] Light + dark visual gate (UI change), both with and without a key — verified.
