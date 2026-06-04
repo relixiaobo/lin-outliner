@@ -813,6 +813,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Agent composer: multi-line paste keeps every line (PR #112)** — pasting multi-line text into
+  the agent composer dropped everything after the first line: the composer's ProseMirror schema is
+  a single paragraph and its paste handler only intercepted files, so a multi-line `text/plain`
+  paste fell through to a default that can't add paragraph breaks. The paste handler now reads
+  `text/plain`, normalizes newlines, and inserts each line as inline text separated by `hardBreak`
+  nodes (the shape Shift+Enter already produces). Extracted a shared `linesToInlineNodes` helper so
+  paste and `editorStateFromText` map text→nodes identically (also fixes a CRLF-normalization drift
+  where only the paste path stripped `\r\n`). Renderer-only; gate: medium review (one cleanup, C10,
+  applied) + `typecheck` + `agent-composer.spec.ts` 34/34.
+  ([#112](https://github.com/relixiaobo/lin-outliner/pull/112))
+
 - **Agent collapse: corner chrome backing no longer flashes a dark square over the rail (PR #114)** —
   collapsing the agent dock briefly painted the opaque corner chrome zone (`--bg-content`) while
   the agent rail was still sliding/fading out, so in dark mode the darker `#1e1e1e` rectangular

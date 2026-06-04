@@ -180,6 +180,11 @@ capture-pipeline tracks below stay separate (orthogonal to the surface).
 
 ## Recently completed
 
+- **composer-multiline-paste** (cc, PR #112) — multi-line paste into the agent composer no longer
+  drops everything after the first line; the single-paragraph schema now keeps each line as a
+  `hardBreak`. Shared `linesToInlineNodes` helper unifies paste + `editorStateFromText` (fixes a
+  CRLF drift). Renderer-only; medium review + typecheck + `agent-composer.spec.ts` 34/34.
+
 - **agent-collapse-corner-backing** (codex, PR #114) — fixes the dark-mode square that flashed
   over the agent rail's rounded top corner on collapse: the opaque corner chrome zone painted
   immediately while the rail was still sliding out. The collapsed zone's `background-color` now
