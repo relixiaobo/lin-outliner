@@ -98,14 +98,60 @@ message files land.
 - Whether to code-split message namespaces per renderer surface if the launcher
   bundle's string weight ever matters (negligible at current scale).
 
-## Subtasks
+## Migration backlog
+
+A multi-agent audit (2026-06-04) inventoried **542 hardcoded user-facing string
+sites** (84 dynamic; the count includes aria/title pairs that collapse to one key).
+Raw inventory: `tmp/i18n-audit.json` (regenerate via the `i18n-string-audit`
+workflow). Namespaces: existing `menu` / `window` / `launcher` / `settings`
+extended; new `shell`, `nodePanel`, `commandPalette`, `outliner`, `definition`,
+`agent`, and a cross-surface `common` (shared atoms — Untitled / Loading… / None /
+Save / Cancel / Yes / No — declared once so translations don't drift).
+
+Batches, front-loaded by visibility; each is one self-contained PR on top of the
+merged foundation:
 
 - [x] PR1 — mechanism + slice (menu, launcher chrome, settings General) + en/zh-Hans
-      + coverage test.
-- [ ] Migrate main-app chrome (sidebar, command palette, window chrome, node panel).
-- [ ] Migrate the agent panel (chat, composer, settings panes beyond General).
-- [ ] Migrate the outliner (view config, definition config, date picker).
-- [ ] Migrate remaining native dialogs (file/image pickers).
-- [ ] Add 繁體中文, 日本語, European message files.
-- [ ] Fold this design into a `docs/spec/i18n.md` once migration is broadly done
-      (PR1 adds the initial spec).
+      + coverage test. (#110)
+- [ ] **B1 — App shell chrome** (~36): App, Sidebar, WindowChrome, WorkspaceCanvas,
+      WorkspacePanelSurface, AgentDock. The always-visible frame; establishes the
+      renderer `useT()` pattern beyond the General pane.
+- [ ] **B2 — Node panel + date nav + command palette** (~70): the other persistent
+      chrome. First plural (`{count} node/nodes`) → lands the `Intl.PluralRules`
+      wrapper; first `dateFormat.*` abbreviation table.
+- [ ] **B3 — `common` shared primitives + native dialog/window titles** (~14): land
+      the shared atoms BEFORE the big content batches (A7) so later surfaces
+      reference one key; folds in `Insert image` / `Configure provider` titles.
+- [ ] **B4 — Outliner view toolbar + system fields** (~67): ViewToolbar + sort/
+      filter/group config; `outliner.systemField.*` shared with B5 + palette.
+- [ ] **B5 — Outliner row chrome** (~76): context menu, field rows, pickers,
+      popovers; heavy two-state toggle dynamics.
+- [ ] **B6 — Definition / supertag config** (~36): self-contained; depends on B3.
+- [ ] **B7 — Agent chat + composer + message rows** (~75): author English canonical
+      for the Chinese-only suggested prompts first.
+- [ ] **B8 — Agent process / tool-call / subagent + main-process notifications**
+      (~38): main-process strings use `getMessages(locale)` + the language-changed
+      channel (no React provider).
+- [ ] **B9 — Agent settings panes** (~124, may split): providers/permissions/skills/
+      agents/OAuth/catalog; keep vendor brand names verbatim.
+- [ ] **B10 — Launcher dynamic strings** (~16): action/row/remediation labels in
+      `launcherModel.ts`; reconcile the empty-state placeholder.
+- [ ] Add 繁體中文, 日本語, European message files (after surfaces are extracted).
+- [ ] Expand `docs/spec/i18n.md` as migration completes.
+
+### Cross-batch rules (from the audit)
+
+- **Dynamic strings → typed arrow functions** in `en.ts` (never placeholder
+  strings); `DeepPartial` enforces matching param names across locales.
+- **Plurals → `Intl.PluralRules`**, never an `n===1` ternary (Chinese has one form,
+  Slavic several). Relative-time / list joins → `Intl.RelativeTimeFormat` /
+  `Intl.ListFormat`.
+- **Two-state toggles** ("Collapse|Expand") split into two keys or a boolean-param
+  function — never store the pipe string.
+- **Do-not-translate:** vendor/brand names (AWS, Vertex AI, GitHub Copilot, ChatGPT,
+  Claude, claude.ai…), CLI snippets, env-var names, format masks (`YYYY/MM/DD`),
+  model-id placeholders.
+- **Chinese-only canonical gap:** suggested-prompt copy gets a fresh English
+  canonical + zh-Hans translation; `localFileKeywords` is parser-matching input, not
+  display copy — kept locale-independent (accepts EN+ZH keywords regardless of UI
+  locale).
