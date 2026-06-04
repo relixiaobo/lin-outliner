@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 priority: P1
 owner: relixiaobo
 created: 2026-06-04
@@ -7,6 +7,14 @@ updated: 2026-06-04
 ---
 
 # Multi-Language (i18n) Support
+
+> **Shipped** in PR #110 (merge `702c80e`, 2026-06-04): typed message layer +
+> full English / 简体中文 migration, language picker + cross-window broadcast,
+> native-menu/title rebuild, no-flash startup, and the `i18nCoverage` key +
+> array-length parity test. Design folded into `docs/spec/i18n.md`. The unchecked
+> boxes below are deferred follow-ups (additional locales, `Intl.PluralRules`,
+> the OS-locale date/number + group-by-label second sweep), tracked in
+> `docs/TASKS.md` Backlog as `i18n-followups`.
 
 ## Goal
 
