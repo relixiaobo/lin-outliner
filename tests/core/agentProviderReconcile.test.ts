@@ -7,21 +7,13 @@ import path from 'node:path';
 // row (the shape the old main-pane save side effect produced) is pruned and an
 // uncredentialed provider is never made active — WITHOUT ever deleting a row from a
 // transient/ambient signal (the data-loss findings from the #100 review):
-//   - unreadable secrets (keychain locked / key rotated) → prune nothing, write nothing
+//   - unreadable secrets => prune nothing, write nothing
 //   - managed (Bedrock/Vertex) + oauth rows are exempt; ambient env is never consulted
 
 let currentUserData = '';
-let encryptionAvailable = true;
-
-const safeStorageMock = {
-  isEncryptionAvailable: () => encryptionAvailable,
-  encryptString: (value: string) => Buffer.from(`enc:${value}`, 'utf8'),
-  decryptString: (buffer: Buffer) => buffer.toString('utf8').replace(/^enc:/, ''),
-};
 
 mock.module('electron', () => ({
   app: { getPath: () => currentUserData },
-  safeStorage: safeStorageMock,
 }));
 
 // Mirror the credential suite: only the oauth subpath is faked; the real pi-ai
@@ -70,7 +62,6 @@ let savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(async () => {
   currentUserData = await mkdtemp(path.join(tmpdir(), 'lin-provider-reconcile-'));
-  encryptionAvailable = true;
   savedEnv = {};
   for (const name of ENV_KEYS) {
     savedEnv[name] = process.env[name];
@@ -171,11 +162,8 @@ describe('provider config startup reconcile (Part A)', () => {
     expect(view.activeProviderId).toBe('anthropic');
   });
 
-  test('🔴 unreadable secrets: prunes nothing and never rewrites the file', async () => {
-    // A real encrypted blob exists, so a later locked keychain makes it unreadable.
-    await setProviderApiKey('anthropic', 'sk-anthropic');
-    const onDisk = JSON.parse(await readFile(secretPath(), 'utf8'));
-    if (typeof onDisk.enc !== 'string') return; // only meaningful on the encrypted (file-alone) path
+  test('unreadable secrets: prunes nothing and never rewrites the provider file', async () => {
+    await writeFile(secretPath(), '{not-json');
     await writeProviderFileRaw({
       activeProviderId: 'openai',
       providers: [
@@ -185,15 +173,11 @@ describe('provider config startup reconcile (Part A)', () => {
     });
     const before = await readFile(providerPath(), 'utf8');
 
-    // Keychain locked / key rotated: the encrypted blob can't be read.
-    encryptionAvailable = false;
     await reconcileProviderConfig();
 
-    // Nothing pruned, file byte-for-byte untouched — a transient lock must not delete rows.
+    // Nothing pruned, file byte-for-byte untouched.
     expect(await readFile(providerPath(), 'utf8')).toBe(before);
     expect((await readProviderFileRaw()).providers.map((p) => p.providerId)).toEqual(['openai', 'anthropic']);
-
-    encryptionAvailable = true; // restore for any later read in this file
   });
 
   test('🟠 managed rows (Bedrock/Vertex) are exempt — never pruned without ambient env', async () => {

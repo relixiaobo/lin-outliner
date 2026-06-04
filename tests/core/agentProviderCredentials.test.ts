@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -7,7 +7,6 @@ type StoredOAuth = { refresh: string; access: string; expires: number };
 
 // ── Mutable test controls, read by the module mocks below ──
 let currentUserData = '';
-let encryptionAvailable = true;
 // getOAuthApiKey impl, overridden per test. Mirrors pi-ai's signature:
 // (providerId, { [id]: creds }) => { newCredentials, apiKey } | null
 let oauthApiKeyImpl: (
@@ -15,17 +14,13 @@ let oauthApiKeyImpl: (
   creds: Record<string, StoredOAuth>,
 ) => Promise<{ newCredentials: StoredOAuth; apiKey: string } | null> = async () => null;
 
-// A reversible fake of Electron safeStorage so the encrypted-at-rest path can be
-// exercised (file-alone run); in the shared suite the plaintext branch is fine.
-const safeStorageMock = {
-  isEncryptionAvailable: () => encryptionAvailable,
-  encryptString: (value: string) => Buffer.from(`enc:${value}`, 'utf8'),
-  decryptString: (buffer: Buffer) => buffer.toString('utf8').replace(/^enc:/, ''),
-};
-
 mock.module('electron', () => ({
   app: { getPath: () => currentUserData },
-  safeStorage: safeStorageMock,
+  safeStorage: {
+    isEncryptionAvailable: () => { throw new Error('safeStorage should not be used'); },
+    encryptString: () => { throw new Error('safeStorage should not be used'); },
+    decryptString: () => { throw new Error('safeStorage should not be used'); },
+  },
 }));
 
 // Only the oauth subpath is mocked (no other suite imports it, so this can't
@@ -54,7 +49,6 @@ function restoreEnv(name: string, value: string | undefined) {
 
 beforeEach(async () => {
   currentUserData = await mkdtemp(path.join(tmpdir(), 'lin-oauth-creds-'));
-  encryptionAvailable = true;
   oauthApiKeyImpl = async () => null;
 });
 
@@ -142,38 +136,27 @@ describe('provider credential resolver', () => {
 });
 
 describe('secret file at rest', () => {
-  test('persists and round-trips secrets without exposing them in plaintext', async () => {
+  test('persists and round-trips secrets as chmod-600 plaintext', async () => {
     await setProviderApiKey('openai', 'sk-secret');
     expect(await getProviderApiKey('openai')).toBe('sk-secret');
 
     const raw = await readFile(secretPath(), 'utf8');
     const onDisk = JSON.parse(raw) as { enc?: string; credentials?: Record<string, unknown> };
-    if (typeof onDisk.enc === 'string') {
-      // safeStorage path: the raw blob must not expose the secret.
-      expect(raw).not.toContain('sk-secret');
-    } else {
-      // chmod-600 plaintext fallback (safeStorage unavailable).
-      expect(onDisk.credentials?.openai).toEqual({ type: 'api_key', key: 'sk-secret' });
+    expect(onDisk.enc).toBeUndefined();
+    expect(onDisk.credentials?.openai).toEqual({ type: 'api_key', key: 'sk-secret' });
+    if (process.platform !== 'win32') {
+      expect((await stat(secretPath())).mode & 0o777).toBe(0o600);
     }
   });
 
-  test('refuses to overwrite an encrypted blob it cannot read (no silent data loss)', async () => {
-    await persistOAuthCredential('anthropic', { refresh: 'r', access: 'a', expires: 10 });
-    const onDisk = JSON.parse(await readFile(secretPath(), 'utf8')) as { enc?: string };
-    if (typeof onDisk.enc !== 'string') return; // only meaningful on the encrypted path
-    const before = await readFile(secretPath(), 'utf8');
+  test('stale encrypted envelopes are ignored and overwritten by the next save', async () => {
+    await writeFile(secretPath(), `${JSON.stringify({ enc: 'old-safe-storage-blob' }, null, 2)}\n`);
 
-    // A later launch with the keychain locked / key rotated.
-    encryptionAvailable = false;
-    // Reads degrade to "no credential" rather than crashing the UI…
-    expect(await getProviderApiKey('anthropic')).toBeUndefined();
-    // …and a write REFUSES rather than clobbering the unreadable blob.
-    await expect(setProviderApiKey('openai', 'sk-new')).rejects.toThrow();
-    expect(await readFile(secretPath(), 'utf8')).toBe(before);
+    expect(await getProviderApiKey('openai')).toBeUndefined();
+    await setProviderApiKey('openai', 'sk-new');
 
-    // Once the keychain is back, the original credential is intact.
-    encryptionAvailable = true;
-    oauthApiKeyImpl = async () => ({ newCredentials: { refresh: 'r', access: 'a', expires: 10 }, apiKey: 'k' });
-    expect(await getProviderApiKey('anthropic')).toBe('k');
+    const onDisk = JSON.parse(await readFile(secretPath(), 'utf8')) as { enc?: string; credentials?: Record<string, unknown> };
+    expect(onDisk.enc).toBeUndefined();
+    expect(onDisk.credentials?.openai).toEqual({ type: 'api_key', key: 'sk-new' });
   });
 });

@@ -26,14 +26,6 @@ import type {
 } from '../core/types';
 import { compareModels } from './modelRanking';
 
-// safeStorage is accessed off the namespace (not a named import) so unit-test
-// electron mocks that only provide `app` still link. Returns null when the OS
-// keychain is unavailable → callers fall back to chmod-600 plaintext.
-function activeSafeStorage(): typeof electron.safeStorage | null {
-  const candidate = electron.safeStorage as typeof electron.safeStorage | undefined;
-  return candidate && typeof candidate.isEncryptionAvailable === 'function' ? candidate : null;
-}
-
 const PROVIDERS_FILE = 'agent-providers.json';
 const SECRETS_FILE = 'agent-secrets.json';
 
@@ -64,11 +56,8 @@ interface SecretFile {
   credentials: Record<string, AuthCredential>;
 }
 
-// On-disk envelope. When safeStorage (OS keychain) is available the whole
-// SecretFile is encrypted into `enc`; otherwise it is written in `credentials`
-// as plaintext (still chmod 600). See D1 in docs/plans/agent-oauth-providers.md.
+// On-disk envelope. Credentials are local plaintext JSON with chmod 600.
 interface SecretEnvelope {
-  enc?: string;
   credentials?: Record<string, AuthCredential>;
 }
 
@@ -114,8 +103,8 @@ export interface AgentProviderRuntimeConfig extends AgentProviderConfig {
 export async function getProviderSettings(): Promise<AgentProviderSettingsView> {
   // A pure read — never destructive. Junk-row cleanup happens once at startup via
   // `reconcileProviderConfig`, NOT on every read: a write on the read path both
-  // raced concurrent writers and (with a degrading secret read) could prune rows
-  // from a transient keychain lock. See `reconcileProviderConfig`.
+  // raced concurrent writers and could prune rows from a transient read failure.
+  // See `reconcileProviderConfig`.
   return toSettingsView(await readProviderFile(), await readSecretFileSafe());
 }
 
@@ -334,10 +323,10 @@ function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): AgentPro
     providers: file.providers.map((provider): AgentProviderConfigView => {
       const modelId = normalizeModelId(provider.providerId, provider.modelId);
       const cred = secrets.credentials[provider.providerId];
-      const hasStoredKey = cred?.type === 'api_key';
       const hasEnvApiKey = !!getEnvApiKey(provider.providerId);
       const authKind = getProviderAuthKind(provider.providerId);
       const oauthCred = cred?.type === 'oauth' ? cred : undefined;
+      const hasStoredKey = cred?.type === 'api_key';
       const auth: ProviderAuthView = {
         authKind,
         // Authoritative "can use models": any stored credential, env key, or
@@ -458,15 +447,13 @@ function providerHasCredential(provider: AgentProviderConfig, secrets: SecretFil
  * Removes the literal bug shape — a keyless catalog row the old main-pane save side
  * effect produced — and repoints a now-dangling active pointer. Intentionally NOT
  * run on the read path: a write there raced concurrent writers and, fed the
- * degrading secret read, could prune rows from a transient keychain lock.
+ * degrading secret read, could prune rows from a transient read failure.
  *
  * Two hard safety rules, each guarding against permanent loss from a transient or
  * ambient signal:
  *
- * 1. If the secrets file is UNREADABLE (keychain locked, key rotated, safeStorage
- *    down), do nothing — never prune, never write. The credential picture is
- *    unknown, and "transient unavailability must never become permanent loss"
- *    (the SecretsUnreadableError invariant the secret store is built around).
+ * 1. If the secrets file cannot be read, do nothing: never prune, never write.
+ *    The credential picture is unknown.
  * 2. Judge a row only by DURABLE, launch-stable signals: a stored secret-file
  *    credential, a `baseUrl`, and the provider kind. Ambient env keys are NOT
  *    consulted — they are launch-context-dependent (a Finder/Dock launch inherits
@@ -587,73 +574,41 @@ async function writeProviderFile(file: ProviderConfigFile) {
   await writeJsonFile(providerPath(), file, false);
 }
 
-/**
- * Signals that an encrypted secrets file exists but cannot be read right now —
- * safeStorage is unavailable or decryption failed (keychain locked, key rotated).
- * Kept distinct from "no secrets" so the write path can REFUSE to overwrite a blob
- * it could not read: transient unavailability must never become permanent loss.
- */
-class SecretsUnreadableError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'SecretsUnreadableError';
-  }
-}
-
 async function readSecretFile(): Promise<SecretFile> {
   const envelope = await readJsonOrDefault<SecretEnvelope>(secretPath(), {});
-  if (typeof envelope.enc === 'string') {
-    const store = activeSafeStorage();
-    if (!store?.isEncryptionAvailable()) {
-      throw new SecretsUnreadableError('safeStorage is unavailable; refusing to read encrypted secrets');
-    }
-    let json: string;
-    try {
-      json = store.decryptString(Buffer.from(envelope.enc, 'base64'));
-    } catch {
-      throw new SecretsUnreadableError('failed to decrypt secrets');
-    }
-    return normalizeSecretFile(JSON.parse(json));
-  }
   return normalizeSecretFile(envelope);
 }
 
 /**
- * Read for read-only consumers (settings view, status, key resolution): an
- * unreadable encrypted blob degrades to "no credentials" so the UI still renders
- * (the real credentials reappear once the keychain unlocks). The WRITE path uses
- * the throwing `readSecretFile` so it never clobbers a blob it could not read.
+ * Read for read-only consumers (settings view, status, key resolution): malformed
+ * files degrade to "no credentials" so the UI still renders. The write path uses
+ * the throwing `readSecretFile` so it never clobbers a file it could not read.
  */
 async function readSecretFileSafe(): Promise<SecretFile> {
   try {
     return await readSecretFile();
-  } catch (error) {
-    if (error instanceof SecretsUnreadableError) return { credentials: {} };
-    throw error;
+  } catch {
+    return { credentials: {} };
   }
 }
 
 /**
  * Like `readSecretFileSafe` but reports whether the read actually succeeded. The
- * reconcile path needs this: an unreadable blob degrades to empty credentials,
+ * reconcile path needs this: an unreadable file degrades to empty credentials,
  * which must NOT be mistaken for "these providers have no credential" and drive a
- * destructive prune. `readable: false` means "credential picture unknown — do not
+ * destructive prune. `readable: false` means "credential picture unknown; do not
  * delete anything."
  */
 async function readSecretsWithStatus(): Promise<{ secrets: SecretFile; readable: boolean }> {
   try {
     return { secrets: await readSecretFile(), readable: true };
-  } catch (error) {
-    if (error instanceof SecretsUnreadableError) return { secrets: { credentials: {} }, readable: false };
-    throw error;
+  } catch {
+    return { secrets: { credentials: {} }, readable: false };
   }
 }
 
 async function writeSecretFile(file: SecretFile) {
-  const store = activeSafeStorage();
-  const envelope: SecretEnvelope = store?.isEncryptionAvailable()
-    ? { enc: store.encryptString(JSON.stringify(file)).toString('base64') }
-    : { credentials: file.credentials };
+  const envelope: SecretEnvelope = { credentials: file.credentials };
   await writeJsonFile(secretPath(), envelope, true);
 }
 
@@ -704,19 +659,26 @@ async function readJsonOrDefault<T>(path: string, fallback: T): Promise<T> {
 async function writeJsonFile(path: string, value: unknown, privateFile: boolean) {
   const parent = dirname(path);
   await mkdir(parent, { recursive: true });
-  if (privateFile && process.platform !== 'win32') await chmod(parent, 0o700);
-  await atomicWrite(path, `${JSON.stringify(value, null, 2)}\n`);
-  if (privateFile && process.platform !== 'win32') await chmod(path, 0o600);
+  const privateMode = privateFile && process.platform !== 'win32';
+  if (privateMode) await chmod(parent, 0o700);
+  // Create the temp file 0600 from the start (not only after the rename) so the
+  // plaintext secret is never even briefly world-readable, and a crash between
+  // rename and the post-rename chmod can never leave a 0644 file behind. The
+  // post-rename chmod stays as a belt-and-suspenders guarantee against an
+  // unusual umask. Windows cannot set POSIX modes — secrets there rely on the
+  // user-profile ACL (tracked as a follow-up).
+  await atomicWrite(path, `${JSON.stringify(value, null, 2)}\n`, privateMode ? 0o600 : undefined);
+  if (privateMode) await chmod(path, 0o600);
 }
 
 let atomicWriteCounter = 0;
 
-async function atomicWrite(path: string, data: string) {
+async function atomicWrite(path: string, data: string, mode?: number) {
   // Unique temp name per write so two in-flight writes to the same path never
   // clobber each other's temp file (defense in depth alongside the write lock).
   const tmp = `${path}.${process.pid}.${++atomicWriteCounter}.tmp`;
   try {
-    await writeFile(tmp, data);
+    await writeFile(tmp, data, mode === undefined ? undefined : { mode });
     await rename(tmp, path);
   } catch (error) {
     await rm(tmp, { force: true });

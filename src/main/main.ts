@@ -1787,7 +1787,7 @@ if (!app.requestSingleInstanceLock()) {
     nativeTheme.themeSource = loadAppPreferences().theme;
     // One-time, best-effort cleanup of any keyless junk provider row left on disk
     // (the old save-side-effect bug); skips itself when secrets are unreadable so a
-    // locked keychain never turns into row loss. Fire-and-forget — boot never waits
+    // transient secret-file read failure never turns into row loss. Fire-and-forget — boot never waits
     // on or fails from it. See `reconcileProviderConfig`.
     void reconcileProviderConfig().catch(() => { /* best-effort; cleaned next launch */ });
     configureSessionSecurity();

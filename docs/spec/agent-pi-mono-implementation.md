@@ -267,9 +267,8 @@ agent-secrets.json
   -> credentials: providerId -> AuthCredential
        AuthCredential = { type: 'api_key'; key }
                       | ({ type: 'oauth' } & OAuthCredentials)   // refresh/access/expires
-  -> encrypted at rest with Electron safeStorage (OS keychain) when available;
-     a plaintext fallback applies only where the platform offers no safe store
-  -> local only, private file permissions where the OS supports it
+  -> local plaintext JSON with private file permissions (`0600`) where the OS
+     supports it; never written to the document, renderer state, or agent logs
 ```
 
 Renderer-facing commands may return provider configuration plus an `auth`
@@ -378,11 +377,10 @@ into the "needs a key, yet offers *Remove provider*" contradiction:
   a now-dangling `activeProviderId`, persisting only when something changed. Two
   invariants keep a transient or ambient signal from becoming permanent data loss:
 
-  - **Unreadable secrets ⇒ do nothing.** If the secrets file can't be read (keychain
-    locked, key rotated, safeStorage down), reconcile prunes nothing and writes
-    nothing — the credential picture is unknown, and "transient unavailability must
-    never become permanent loss." It reads via `readSecretsWithStatus` (reports
-    `readable`), never the degrading `readSecretFileSafe`.
+  - **Unreadable secrets => do nothing.** If the secrets file can't be read,
+    reconcile prunes nothing and writes nothing; the credential picture is
+    unknown. It reads via `readSecretsWithStatus` (reports `readable`), never the
+    degrading `readSecretFileSafe`.
   - **Prune only on durable signals.** A row is *junk* only if it is a plain
     `api-key`-kind catalog row with **no stored secret-file credential and no
     `baseUrl`**. Managed (Bedrock/Vertex) and oauth kinds are exempt outright, and
@@ -934,8 +932,8 @@ Landed in main:
   checkpoints are derived from the event store.
 - Provider authentication spans pi-ai's three credential classes: a single
   non-throwing `getProviderApiKey` resolver (api-key / OAuth auto-refresh-persist
-  / env / managed), safeStorage-encrypted credential storage, and a main-owned
-  OAuth sign-in flow (loopback + device-code) bridged to a renderer sign-in UI.
+  / env / managed), chmod-600 local credential storage, and a main-owned OAuth
+  sign-in flow (loopback + device-code) bridged to a renderer sign-in UI.
 
 Remaining runtime work:
 
@@ -961,7 +959,7 @@ Current coverage should stay focused on the Tenon-owned boundary:
 - Renderer runtime hydration, projection events, branch actions, streaming view
   state, and payload-backed copy behavior.
 - Provider credential resolver (api-key, OAuth refresh-persist, env/managed
-  fallback, never-throws, encrypted-at-rest), OAuth login orchestration (callback
+  fallback, never-throws, chmod-600 storage), OAuth login orchestration (callback
   bridging, reply correlation, cancel, logout), and the renderer OAuth flow
   reducer / expiry formatters.
 - E2E coverage for composer controls, model/settings behavior, process/tool
