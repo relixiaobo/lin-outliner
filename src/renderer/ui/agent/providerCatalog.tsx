@@ -30,9 +30,20 @@ export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   fireworks: 'Fireworks AI',
   cerebras: 'Cerebras',
   minimax: 'MiniMax',
+  'minimax-cn': 'MiniMax (CN)',
   huggingface: 'Hugging Face',
   'kimi-coding': 'Kimi Coding',
   'github-copilot': 'GitHub Copilot',
+  'amazon-bedrock': 'Amazon Bedrock',
+  'vercel-ai-gateway': 'Vercel AI Gateway',
+  'cloudflare-workers-ai': 'Cloudflare Workers AI',
+  'cloudflare-ai-gateway': 'Cloudflare AI Gateway',
+  opencode: 'OpenCode',
+  'opencode-go': 'OpenCode Go',
+  xiaomi: 'Xiaomi MiMo',
+  'xiaomi-token-plan-cn': 'Xiaomi Token Plan (CN)',
+  'xiaomi-token-plan-ams': 'Xiaomi Token Plan (AMS)',
+  'xiaomi-token-plan-sgp': 'Xiaomi Token Plan (SGP)',
 };
 
 // Tokens that should keep a specific casing when a provider id falls through to
