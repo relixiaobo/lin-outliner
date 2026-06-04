@@ -8,6 +8,7 @@ import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared
 import { OutlinerView } from './OutlinerView';
 import { buildOutlinerRows } from './row-model';
 import { CheckboxFieldControl } from './CheckboxFieldControl';
+import { useT } from '../../i18n/I18nProvider';
 
 interface FieldValueOutlinerProps {
   panelId: string;
@@ -28,6 +29,7 @@ interface FieldValueOutlinerProps {
 }
 
 export function FieldValueOutliner(props: FieldValueOutlinerProps) {
+  const tf = useT().outliner.field;
   const entry = props.index.byId.get(props.entryId);
   const rows = buildOutlinerRows(entry, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
@@ -49,9 +51,9 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
   // reference date interaction the design follows. A reference field's draft is a
   // node-search box, so its placeholder names that intent.
   const valuePlaceholder = descriptor.interaction === 'datePicker'
-    ? 'Press Space to pick a date…'
+    ? tf.datePlaceholder
     : descriptor.interaction === 'referencePicker'
-      ? 'Search for a node to reference…'
+      ? tf.referencePlaceholder
       : props.placeholder;
 
   // Materialize the trailing draft as a field value, carrying the renderer's
@@ -111,7 +113,7 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
     <div
       className={`field-value-outliner field-value-node-preview ${empty ? 'empty' : ''}`}
       data-field-value
-      aria-label={empty ? props.placeholder : 'Field value'}
+      aria-label={empty ? props.placeholder : tf.fieldValueAriaLabel}
     >
       {canUseWholeFieldControl && props.optionField ? (
         <CheckboxFieldControl

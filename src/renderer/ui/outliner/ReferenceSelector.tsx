@@ -6,6 +6,7 @@ import { buildReferenceCandidates, type ReferenceCandidate } from '../interactio
 import type { CommandRunner } from '../shared';
 import { NodeReferenceMenuIcon } from './NodeReferenceMenuIcon';
 import { PopoverEmpty, PopoverListItem } from './PopoverList';
+import { useT } from '../../i18n/I18nProvider';
 
 interface ReferenceSelectorProps {
   query: string;
@@ -55,6 +56,7 @@ function iconForItem(item: ReferenceCandidate, index: DocumentIndex) {
 }
 
 export function ReferenceSelector(props: ReferenceSelectorProps) {
+  const tr = useT().outliner.field;
   const items = referenceItems({
     query: props.query,
     index: props.index,
@@ -108,7 +110,7 @@ export function ReferenceSelector(props: ReferenceSelectorProps) {
   };
 
   if (items.length === 0) {
-    return <PopoverEmpty>No matches</PopoverEmpty>;
+    return <PopoverEmpty>{tr.noMatches}</PopoverEmpty>;
   }
 
   return (
@@ -126,7 +128,7 @@ export function ReferenceSelector(props: ReferenceSelectorProps) {
             iconClassName="popover-item-icon"
             label={(
               <>
-                <span>{item.type === 'create' ? `Create "${item.label}"` : item.label}</span>
+                <span>{item.type === 'create' ? tr.createReference({ label: item.label }) : item.label}</span>
                 {item.type === 'node' && item.breadcrumb && (
                   <span className="popover-item-meta">{item.breadcrumb}</span>
                 )}

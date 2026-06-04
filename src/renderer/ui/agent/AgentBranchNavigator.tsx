@@ -4,6 +4,7 @@ import {
   ForwardIcon,
 } from '../icons';
 import { IconButton } from '../primitives/IconButton';
+import { useT } from '../../i18n/I18nProvider';
 
 interface AgentBranchNavigatorProps {
   branches: AgentMessageBranchState | null;
@@ -16,6 +17,7 @@ export function AgentBranchNavigator({
   disabled,
   onSwitchBranch,
 }: AgentBranchNavigatorProps) {
+  const t = useT();
   if (!branches || branches.ids.length <= 1) return null;
 
   const canGoPrev = !disabled && branches.currentIndex > 0;
@@ -27,9 +29,9 @@ export function AgentBranchNavigator({
         className="agent-message-action-button"
         disabled={!canGoPrev}
         icon={BackIcon}
-        label="Show previous branch"
+        label={t.agent.message.showPreviousBranch}
         onClick={() => canGoPrev && void onSwitchBranch?.(branches.ids[branches.currentIndex - 1]!)}
-        title="Previous branch"
+        title={t.agent.message.previousBranch}
         variant="message"
       />
       <span className="agent-branch-counter">
@@ -39,9 +41,9 @@ export function AgentBranchNavigator({
         className="agent-message-action-button"
         disabled={!canGoNext}
         icon={ForwardIcon}
-        label="Show next branch"
+        label={t.agent.message.showNextBranch}
         onClick={() => canGoNext && void onSwitchBranch?.(branches.ids[branches.currentIndex + 1]!)}
-        title="Next branch"
+        title={t.agent.message.nextBranch}
         variant="message"
       />
     </div>

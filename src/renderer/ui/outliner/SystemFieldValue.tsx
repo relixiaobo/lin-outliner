@@ -5,6 +5,7 @@ import { resolveTagColor } from '../tags/tagColors';
 import { CalendarIcon } from '../icons';
 import { CheckboxMark } from '../primitives/CheckboxMark';
 import type { SystemFieldDisplay } from '../../../core/systemFields';
+import { useT } from '../../i18n/I18nProvider';
 
 interface SystemFieldValueProps {
   display: SystemFieldDisplay;
@@ -27,11 +28,12 @@ const systemEmpty = <span className="field-value-system-empty">—</span>;
  * unless the owner is locked (then it shows the state read-only).
  */
 export function SystemFieldValue({ display, byId, onRoot, onToggleDone }: SystemFieldValueProps) {
+  const ts = useT().outliner.systemField;
   if (display.kind === 'done') {
     const mark = (
       <>
         <CheckboxMark checked={display.checked} />
-        <span>{display.checked ? 'Done' : 'Not done'}</span>
+        <span>{display.checked ? ts.done : ts.notDone}</span>
       </>
     );
     return (
@@ -75,7 +77,7 @@ export function SystemFieldValue({ display, byId, onRoot, onToggleDone }: System
   return (
     <div className="field-value-cell">
       <div className={`field-value-system ${modifier}`} data-field-value aria-readonly="true">
-        {renderValue(display, byId, onRoot)}
+        {renderValue(display, byId, onRoot, (label) => ts.openTag({ label }))}
       </div>
     </div>
   );
@@ -85,6 +87,8 @@ function renderValue(
   display: Exclude<SystemFieldDisplay, { kind: 'done' }>,
   byId: Map<NodeId, NodeProjection>,
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void,
+  // Localized "Open <tag>" title, passed in because this helper runs outside React.
+  openTagTitle: (label: string) => string,
 ) {
   switch (display.kind) {
     case 'date':
@@ -104,7 +108,7 @@ function renderValue(
               type="button"
               className="tag-badge tag-badge-button"
               style={{ '--tag-bg': color.background, '--tag-text': color.text } as CSSProperties}
-              title={`Open ${label}`}
+              title={openTagTitle(label)}
               onClick={() => onRoot(tagId)}
             >
               <span className="tag-badge-hash">#</span>

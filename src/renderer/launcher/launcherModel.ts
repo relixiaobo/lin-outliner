@@ -1,5 +1,6 @@
 import type { LauncherCommandView, LauncherNodeMatch } from '../../core/launcher/commands';
 import type { ExternalContext } from '../../core/launcher/context';
+import type { Messages } from '../../core/i18n';
 
 // Pure derivation of the launcher's result list from (query, context, nodes,
 // commands). This is the heart of the Raycast-style model: ONE always-focused
@@ -81,37 +82,40 @@ export function buildLauncherItems(args: {
   context: ExternalContext | null;
   commands: readonly LauncherCommandView[];
   nodes?: readonly LauncherNodeMatch[];
+  // Localized strings threaded in from the component — this is a pure helper that
+  // runs outside React, so it cannot call useT itself.
+  t: Messages;
 }): LauncherItem[] {
-  const { query, context, commands, nodes = [] } = args;
+  const { query, context, commands, nodes = [], t } = args;
   const note = query.trim();
   const items: LauncherItem[] = [];
   const source = context?.source;
 
   if (source) {
-    const where = context?.browser?.hostname ?? context?.app.name ?? 'current page';
+    const where = context?.browser?.hostname ?? context?.app.name ?? t.launcher.rowView.currentPage;
     // Provider-aware framing: a video reads as "Capture video …". The subtitle is
     // just where it's from — the player position is deliberately not shown.
     const isVideo = source.kind === 'video';
-    const noun = isVideo ? 'video' : 'page';
+    const noun = isVideo ? t.launcher.actions.nounVideo : t.launcher.actions.nounPage;
     items.push({
       kind: 'capture-page',
       title: source.title,
       subtitle: where,
       note: note || undefined,
-      actions: [{ id: 'capture-page', label: `Capture ${noun} to Today` }],
+      actions: [{ id: 'capture-page', label: t.launcher.actions.captureToToday({ noun }) }],
     });
     if (note) {
       items.push({
         kind: 'capture-note',
         text: note,
-        actions: [{ id: 'capture-note', label: 'New node in Today' }],
+        actions: [{ id: 'capture-note', label: t.launcher.actions.newNodeInToday }],
       });
     }
   } else if (note) {
     items.push({
       kind: 'capture-note',
       text: note,
-      actions: [{ id: 'capture-note', label: 'New node in Today' }],
+      actions: [{ id: 'capture-note', label: t.launcher.actions.newNodeInToday }],
     });
   }
 
@@ -124,7 +128,7 @@ export function buildLauncherItems(args: {
       title: match.title,
       subtitle: match.subtitle,
       icon: match.icon,
-      actions: [{ id: 'open-node', label: 'Open' }],
+      actions: [{ id: 'open-node', label: t.launcher.actions.open }],
     });
   }
 
@@ -163,20 +167,22 @@ function quoted(text: string): string {
  * its parent as subtitle. Commands pass through (all are runnable — no disabled
  * "coming soon" state).
  */
-export function rowView(item: LauncherItem): LauncherRowView {
+export function rowView(item: LauncherItem, t: Messages): LauncherRowView {
   if (item.kind === 'capture-page') {
     const where = item.subtitle;
-    const subtitle = item.note ? `+ ${quoted(item.note)} · ${where}` : `${item.title} · ${where}`;
-    return { title: 'Capture', subtitle, typeLabel: 'Command' };
+    const subtitle = item.note
+      ? t.launcher.rowView.captureWithNote({ note: quoted(item.note), where })
+      : t.launcher.rowView.captureFromPage({ page: item.title, where });
+    return { title: t.launcher.rowView.captureTitle, subtitle, typeLabel: t.launcher.rowView.typeCommand };
   }
   if (item.kind === 'capture-note') {
-    return { title: 'New node', subtitle: quoted(item.text), typeLabel: 'Command' };
+    return { title: t.launcher.rowView.newNodeTitle, subtitle: quoted(item.text), typeLabel: t.launcher.rowView.typeCommand };
   }
   if (item.kind === 'node') {
-    return { title: item.title, subtitle: item.subtitle, typeLabel: 'Node' };
+    return { title: item.title, subtitle: item.subtitle, typeLabel: t.launcher.rowView.typeNode };
   }
   const { command } = item;
-  return { title: command.title, subtitle: command.subtitle, typeLabel: 'Command' };
+  return { title: command.title, subtitle: command.subtitle, typeLabel: t.launcher.rowView.typeCommand };
 }
 
 /** A short, human label for what Enter will do on the active row (for the action bar). */
@@ -238,17 +244,17 @@ export interface LauncherRemediation {
  * the in-page extraction path; rich capture returns via the browser extension —
  * docs/plans/browser-extension-integration.md.)
  */
-export function remediationForContext(context: ExternalContext | null): LauncherRemediation | null {
+export function remediationForContext(context: ExternalContext | null, t: Messages, app: string): LauncherRemediation | null {
   if (!context) return null;
   const codes = new Set(context.warnings.map((w) => w.code));
-  const browser = context.browser?.name ?? context.app.name ?? 'your browser';
+  const browser = context.browser?.name ?? context.app.name ?? t.launcher.remediation.fallbackBrowser;
 
   // Couldn't read the active tab at all → Automation access is denied.
   if (codes.has('browser-tab-unavailable')) {
     return {
       kind: 'automation',
-      title: `Can’t read ${browser}`,
-      detail: `Allow Tenon to control ${browser} in System Settings → Privacy & Security → Automation, then reopen.`,
+      title: t.launcher.remediation.cannotReadTitle({ browser }),
+      detail: t.launcher.remediation.cannotReadDetail({ app, browser }),
     };
   }
   return null;

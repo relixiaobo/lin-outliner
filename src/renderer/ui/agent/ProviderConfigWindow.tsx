@@ -2,13 +2,14 @@ import { useEffect, useId, useState } from 'react';
 import type { AgentProviderSettingsView } from '../../api/types';
 import { api } from '../../api/client';
 import { providerConfigParamsFromSearch } from '../../../core/settingsWindow';
+import { useT } from '../../i18n/I18nProvider';
 import { defaultReasoningLevel } from './settingsReasoning';
 import {
   formatProviderName,
   getFallbackModelId,
   OAUTH_API_KEY_FALLBACK,
-  OAUTH_SIGN_IN,
-  PROVIDER_AUTH,
+  oauthSignInInfo,
+  providerAuthInfo,
   PROVIDER_DOCS_URL,
   ProviderAvatar,
   providerDescription,
@@ -25,6 +26,7 @@ import { ProviderOAuthForm } from './ProviderOAuthForm';
 // so the settings list (and the main window) re-fetch. Closing is delegated to the
 // main process (the window has no chrome of its own — it is a dialog).
 export function ProviderConfigWindow() {
+  const t = useT();
   const { providerId, mode } = providerConfigParamsFromSearch(window.location.search);
   const isCustom = mode === 'custom';
   const titleId = useId();
@@ -63,7 +65,7 @@ export function ProviderConfigWindow() {
   if (!settings) {
     return (
       <main className="provider-config-window" aria-labelledby={titleId}>
-        <div className="agent-settings-empty" id={titleId}>Loading…</div>
+        <div className="agent-settings-empty" id={titleId}>{t.common.loading}</div>
       </main>
     );
   }
@@ -73,13 +75,13 @@ export function ProviderConfigWindow() {
   const activeId = resolveUsableActiveProvider(settings)?.providerId ?? '';
   const isActive = Boolean(providerId) && providerId === activeId;
   const hasSavedKey = providerHasCredential(existing, catalog);
-  const authNote = isCustom ? undefined : PROVIDER_AUTH[providerId];
+  const authNote = isCustom ? undefined : providerAuthInfo(providerId, t);
   const docsUrl = isCustom ? undefined : PROVIDER_DOCS_URL[providerId];
   // Auth class comes from main (`authKind`), falling back to the configured view's
   // descriptor for a provider with no catalog row. Custom providers are always api-key.
   const authKind = isCustom ? 'api-key' : (catalog?.authKind ?? existing?.auth?.authKind ?? 'api-key');
   const showOAuth = authKind === 'oauth' && !useApiKey;
-  const oauthInfo = OAUTH_SIGN_IN[providerId];
+  const oauthInfo = oauthSignInInfo(providerId, t);
 
   async function handleValidate(draft: ProviderConfigDraft) {
     const pid = draft.providerId.trim() || providerId;
@@ -133,7 +135,7 @@ export function ProviderConfigWindow() {
         <ProviderOAuthForm
           avatar={<ProviderAvatar large providerId={providerId} />}
           connected={Boolean(existing?.auth?.oauth?.connected)}
-          description={providerDescription(catalog)}
+          description={providerDescription(catalog, t)}
           docsLabel={oauthInfo?.docsLabel}
           docsUrl={oauthInfo?.docsUrl}
           expiresAt={existing?.auth?.oauth?.expiresAt}
@@ -163,7 +165,7 @@ export function ProviderConfigWindow() {
           : <ProviderAvatar large providerId={providerId} />}
         baseUrlPlaceholder={catalog?.defaultBaseUrl ?? 'https://api.example.com/v1'}
         defaultBaseUrl={catalog?.defaultBaseUrl}
-        description={isCustom ? 'Connect any OpenAI-compatible endpoint.' : providerDescription(catalog)}
+        description={isCustom ? t.providerCatalog.openAiCompatible : providerDescription(catalog, t)}
         docsUrl={docsUrl}
         hasSavedKey={hasSavedKey}
         initial={{
@@ -183,7 +185,7 @@ export function ProviderConfigWindow() {
           : undefined}
         onSubmit={handleSubmit}
         onValidate={handleValidate}
-        providerName={isCustom ? 'Custom provider' : (providerId ? formatProviderName(providerId) : 'Custom provider')}
+        providerName={isCustom ? t.providerCatalog.customProvider : (providerId ? formatProviderName(providerId) : t.providerCatalog.customProvider)}
         titleId={titleId}
       />
     </main>

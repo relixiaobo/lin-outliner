@@ -1,4 +1,5 @@
 import { useId, useRef } from 'react';
+import { useT } from '../../i18n/I18nProvider';
 import { ButtonControl } from './ButtonControl';
 import { Dialog } from './Dialog';
 
@@ -20,16 +21,19 @@ interface ConfirmDialogProps {
 export function ConfirmDialog({
   title,
   message,
-  confirmLabel = 'Confirm',
-  cancelLabel = 'Cancel',
+  confirmLabel,
+  cancelLabel,
   danger = false,
   onConfirm,
   onCancel,
   restoreFocus,
 }: ConfirmDialogProps) {
+  const t = useT();
   const titleId = useId();
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const confirmRef = useRef<HTMLButtonElement | null>(null);
+  const resolvedConfirmLabel = confirmLabel ?? t.dialog.confirm;
+  const resolvedCancelLabel = cancelLabel ?? t.dialog.cancel;
 
   return (
     <Dialog
@@ -45,14 +49,14 @@ export function ConfirmDialog({
       {message ? <p className="confirm-dialog-message">{message}</p> : null}
       <div className="confirm-dialog-actions">
         <ButtonControl ref={cancelRef} className="confirm-dialog-cancel" onClick={onCancel}>
-          {cancelLabel}
+          {resolvedCancelLabel}
         </ButtonControl>
         <ButtonControl
           ref={confirmRef}
           className={danger ? 'confirm-dialog-confirm is-danger' : 'confirm-dialog-confirm'}
           onClick={onConfirm}
         >
-          {confirmLabel}
+          {resolvedConfirmLabel}
         </ButtonControl>
       </div>
     </Dialog>

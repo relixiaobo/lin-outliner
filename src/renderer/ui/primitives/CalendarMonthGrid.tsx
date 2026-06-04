@@ -1,5 +1,6 @@
 import { useMemo, type MouseEventHandler } from 'react';
 import { addLocalDays, isoLocalDate } from '../../api/types';
+import { useT } from '../../i18n/I18nProvider';
 import { ChevronLeftIcon, ChevronRightIcon } from '../icons';
 import { ButtonControl } from './ButtonControl';
 
@@ -23,8 +24,6 @@ interface CalendarMonthGridProps {
   year: number;
 }
 
-const WEEKDAY_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
-
 export function CalendarMonthGrid({
   className,
   getDayAriaLabel,
@@ -38,6 +37,7 @@ export function CalendarMonthGrid({
   todayIsoDate,
   year,
 }: CalendarMonthGridProps) {
+  const t = useT();
   const calendarDays = useMemo(() => buildCalendarMonthDays(year, month), [month, year]);
   const selectedDates = useMemo(() => new Set(selectedIsoDates.filter(Boolean)), [selectedIsoDates]);
 
@@ -45,7 +45,7 @@ export function CalendarMonthGrid({
     <div className={['calendar-month', className].filter(Boolean).join(' ')}>
       <div className="calendar-month-header">
         <ButtonControl
-          aria-label="Previous month"
+          aria-label={t.calendar.previousMonth}
           className="calendar-month-nav"
           onClick={() => onMoveMonth(-1)}
         >
@@ -53,7 +53,7 @@ export function CalendarMonthGrid({
         </ButtonControl>
         <span>{calendarMonthLabel(year, month)}</span>
         <ButtonControl
-          aria-label="Next month"
+          aria-label={t.calendar.nextMonth}
           className="calendar-month-nav"
           onClick={() => onMoveMonth(1)}
         >
@@ -61,7 +61,7 @@ export function CalendarMonthGrid({
         </ButtonControl>
       </div>
       <div className="calendar-month-weekdays" aria-hidden="true">
-        {WEEKDAY_LABELS.map((day, index) => (
+        {t.calendar.weekdayInitials.map((day, index) => (
           <span key={`${day}-${index}`}>{day}</span>
         ))}
       </div>
@@ -75,7 +75,7 @@ export function CalendarMonthGrid({
             : undefined;
           return (
             <ButtonControl
-              aria-label={getDayAriaLabel?.(day) ?? `Select ${day.isoDate}`}
+              aria-label={getDayAriaLabel?.(day) ?? t.calendar.selectDate({ isoDate: day.isoDate })}
               className={[
                 'calendar-month-day',
                 day.inMonth ? '' : 'is-outside-month',

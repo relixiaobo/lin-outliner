@@ -89,6 +89,7 @@ import {
   PopoverListItem,
 } from './PopoverList';
 import { noteOutlinerItemRender } from './renderProbe';
+import { useT } from '../../i18n/I18nProvider';
 
 interface OutlinerItemProps {
   panelId: string;
@@ -128,6 +129,7 @@ interface OutlinerItemProps {
 
 function OutlinerItemImpl(props: OutlinerItemProps) {
   noteOutlinerItemRender();
+  const tf = useT().outliner.field;
   const realNode = props.index.byId.get(props.nodeId);
   // A draft row synthesizes an empty plain node so the normal render path runs;
   // `realNode` distinguishes "not materialized yet" from a real node.
@@ -1661,7 +1663,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
                 <button
                   type="button"
                   className="field-value-affordance field-value-open"
-                  aria-label="Open link"
+                  aria-label={tf.openLink}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => void api.openExternalUrl(fieldValueHref)}
                 ><OpenIcon size={12} strokeWidth={1.8} /></button>
@@ -1670,7 +1672,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
                 <button
                   type="button"
                   className="field-value-affordance field-value-date-trigger"
-                  aria-label="Pick a date"
+                  aria-label={tf.pickADate}
                   aria-expanded={dateOverlayOpen}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => setDateOverlayOpen((open) => !open)}
@@ -1877,6 +1879,7 @@ function SelectedReferenceOptionPicker({
   valueNode,
   onSelectOption,
 }: SelectedReferenceOptionPickerProps) {
+  const tf = useT().outliner.field;
   const options = resolveFieldOptions(optionField, byId);
   const selectedOptionId = resolveSelectedOptionId(valueNode, options);
   const [open, setOpen] = useState(true);
@@ -1944,7 +1947,7 @@ function SelectedReferenceOptionPicker({
       <PopoverListbox
         ref={menuRef}
         className="node-picker-popover trailing-options-popover"
-        label="Selected field options"
+        label={tf.selectedFieldOptions}
         style={menuStyle}
       >
         {options.map((option, index) => (

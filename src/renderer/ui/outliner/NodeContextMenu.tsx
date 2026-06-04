@@ -48,6 +48,7 @@ import type { CommandRunner, NavigateRootOptions } from '../shared';
 import { textOf } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
 import { readViewConfig } from './row-model';
+import { useT } from '../../i18n/I18nProvider';
 
 interface NodeContextMenuProps {
   x: number;
@@ -81,6 +82,8 @@ async function writeClipboardText(text: string): Promise<void> {
 }
 
 export function NodeContextMenu(props: NodeContextMenuProps) {
+  const t = useT();
+  const tc = t.outliner.contextMenu;
   const [mode, setMode] = useState<'main' | 'tag' | 'move'>('main');
   const [query, setQuery] = useState('');
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -257,19 +260,19 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
 
   const renderMain = () => (
     <>
-      {item('Open in split pane', <OpenIcon size={ICON_SIZE.menu} />, () => props.onRoot(props.openId, { newPane: true }))}
-      {item(`${activeLabelPrefix}Duplicate`, <DuplicateIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionDuplicate({
+      {item(tc.openInSplitPane, <OpenIcon size={ICON_SIZE.menu} />, () => props.onRoot(props.openId, { newPane: true }))}
+      {item(tc.duplicate({ prefix: activeLabelPrefix }), <DuplicateIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionDuplicate({
         ids: activeDuplicateIds,
         panelRootId: actionPanelRootId,
         byId: props.index.byId,
       })), activeDuplicateIds.length === 0)}
-      {item(`${activeLabelPrefix}Move up`, <MoveUpIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionMove({
+      {item(tc.moveUp({ prefix: activeLabelPrefix }), <MoveUpIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionMove({
         ids: activeMoveIds,
         direction: 'up',
         panelRootId: actionPanelRootId,
         byId: props.index.byId,
       })), activeMoveIds.length === 0)}
-      {item(`${activeLabelPrefix}Move down`, <MoveDownIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionMove({
+      {item(tc.moveDown({ prefix: activeLabelPrefix }), <MoveDownIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionMove({
         ids: activeMoveIds,
         direction: 'down',
         panelRootId: actionPanelRootId,
@@ -279,7 +282,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
         className="node-context-item"
         disabled={activeMoveToIds.length === 0}
         icon={<MoveToIcon size={ICON_SIZE.menu} />}
-        label="Move to"
+        label={tc.moveTo}
         onClick={() => {
           if (activeMoveToIds.length === 0) return;
           setMode('move');
@@ -289,7 +292,11 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       />
       <div className="node-context-separator" role="separator" />
       {item(
-        `${activeLabelPrefix}${activeNodeIds.length > 1 ? 'Toggle done' : target.completedAt ? 'Mark not done' : 'Mark done'}`,
+        activeNodeIds.length > 1
+          ? tc.toggleDone({ prefix: activeLabelPrefix })
+          : target.completedAt
+            ? tc.markNotDonePrefixed({ prefix: activeLabelPrefix })
+            : tc.markDonePrefixed({ prefix: activeLabelPrefix }),
         <CheckboxIcon size={ICON_SIZE.menu} />,
         () => void props.run(() => activeCheckboxTargetIds.length > 1
           ? api.batchToggleDone(activeCheckboxTargetIds)
@@ -300,7 +307,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
         className="node-context-item"
         disabled={activeTargetIds.length === 0}
         icon={<SupertagIcon size={ICON_SIZE.menu} />}
-        label={`${activeLabelPrefix}Add tag`}
+        label={tc.addTag({ prefix: activeLabelPrefix })}
         onClick={() => {
           if (activeTargetIds.length === 0) return;
           setMode('tag');
@@ -310,23 +317,23 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       />
       <div className="node-context-separator" role="separator" />
       {item(
-        view.toolbarVisible ? 'Hide view toolbar' : 'Show view toolbar',
+        view.toolbarVisible ? tc.hideViewToolbar : tc.showViewToolbar,
         view.toolbarVisible ? <HideToolbarIcon size={ICON_SIZE.menu} /> : <ShowToolbarIcon size={ICON_SIZE.menu} />,
         () => void props.run(() => api.setViewToolbarVisible(props.targetId, !view.toolbarVisible)).then(props.onClose),
       )}
-      {item('Filter by', <FilterIcon size={ICON_SIZE.menu} />, () => openViewSection('filter'))}
-      {item('Sort by', <SortAscIcon size={ICON_SIZE.menu} />, () => openViewSection('sort'))}
-      {item('Group by', <GroupIcon size={ICON_SIZE.menu} />, () => openViewSection('group'))}
-      {item('Display', <FieldIcon size={ICON_SIZE.menu} />, () => openViewSection('display'))}
+      {item(tc.filterBy, <FilterIcon size={ICON_SIZE.menu} />, () => openViewSection('filter'))}
+      {item(tc.sortBy, <SortAscIcon size={ICON_SIZE.menu} />, () => openViewSection('sort'))}
+      {item(tc.groupBy, <GroupIcon size={ICON_SIZE.menu} />, () => openViewSection('group'))}
+      {item(tc.display, <FieldIcon size={ICON_SIZE.menu} />, () => openViewSection('display'))}
       <div className="node-context-separator" role="separator" />
-      {item(target.description ? 'Edit description' : 'Add description', <DescriptionIcon size={ICON_SIZE.menu} />, props.onEditDescription)}
+      {item(target.description ? tc.editDescription : tc.addDescription, <DescriptionIcon size={ICON_SIZE.menu} />, props.onEditDescription)}
       <div className="node-context-separator" role="separator" />
-      {item('Copy text', <CopyIcon size={ICON_SIZE.menu} />, () => void writeClipboardText(textOf(target)))}
-      {item('Copy node id', <CopyIcon size={ICON_SIZE.menu} />, () => void writeClipboardText(props.targetId))}
+      {item(tc.copyText, <CopyIcon size={ICON_SIZE.menu} />, () => void writeClipboardText(textOf(target)))}
+      {item(tc.copyNodeId, <CopyIcon size={ICON_SIZE.menu} />, () => void writeClipboardText(props.targetId))}
       <div className="node-context-separator" role="separator" />
       {trashed
-        ? item('Restore', <RestoreIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.restoreNode(props.node.id)))
-        : item(`${activeLabelPrefix}Trash`, <TrashIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionDelete({
+        ? item(tc.restore, <RestoreIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.restoreNode(props.node.id)))
+        : item(tc.trash({ prefix: activeLabelPrefix }), <TrashIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionDelete({
           ids: activeDeleteIds,
           panelRootId: actionPanelRootId,
           byId: props.index.byId,
@@ -337,14 +344,14 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   const renderTagMode = () => (
     <>
       <div className="node-context-subhead">
-        <ButtonControl onClick={() => setMode('main')}>Back</ButtonControl>
-        <span>Add tag</span>
+        <ButtonControl onClick={() => setMode('main')}>{tc.back}</ButtonControl>
+        <span>{tc.addTagTitle}</span>
       </div>
       <TextInputControl
         className="node-context-search"
-        label="Tag name"
+        label={tc.tagNameLabel}
         value={query}
-        placeholder="tag name"
+        placeholder={tc.tagNamePlaceholder}
         autoFocus
         onChange={(event) => setQuery(event.currentTarget.value)}
         onKeyDown={(event) => {
@@ -385,14 +392,14 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   const renderMoveMode = () => (
     <>
       <div className="node-context-subhead">
-        <ButtonControl onClick={() => setMode('main')}>Back</ButtonControl>
-        <span>Move to</span>
+        <ButtonControl onClick={() => setMode('main')}>{tc.back}</ButtonControl>
+        <span>{tc.moveTo}</span>
       </div>
       <TextInputControl
         className="node-context-search"
-        label="Node name"
+        label={tc.nodeNameLabel}
         value={query}
-        placeholder="node name"
+        placeholder={tc.nodeNamePlaceholder}
         autoFocus
         onChange={(event) => setQuery(event.currentTarget.value)}
       />
@@ -417,9 +424,9 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     </>
   );
 
-  const modeLabel = mode === 'main' ? 'Node actions'
-    : mode === 'tag' ? 'Add tag'
-      : 'Move node';
+  const modeLabel = mode === 'main' ? tc.nodeActions
+    : mode === 'tag' ? tc.addTagTitle
+      : tc.moveNode;
 
   return createPortal(
     <MenuSurface

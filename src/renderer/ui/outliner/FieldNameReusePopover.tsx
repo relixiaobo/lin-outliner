@@ -4,6 +4,7 @@ import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import type { FieldReuseCandidate } from '../interactions/fieldReuseCandidates';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { PopoverBulletIcon, PopoverEmpty, PopoverListbox, PopoverListItem } from './PopoverList';
+import { useT } from '../../i18n/I18nProvider';
 
 interface FieldNameReusePopoverProps {
   anchorRef: RefObject<HTMLElement | null>;
@@ -22,6 +23,7 @@ interface FieldNameReusePopoverProps {
 // commits the user's own (new) field. This keeps "type a fresh name + Enter"
 // creating a new field, never silently relinking to a lookalike.
 export function FieldNameReusePopover(props: FieldNameReusePopoverProps) {
+  const tf = useT().outliner.field;
   const count = props.candidates.length;
   const [activeIndex, setActiveIndex] = useState(-1);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -88,10 +90,10 @@ export function FieldNameReusePopover(props: FieldNameReusePopoverProps) {
     <PopoverListbox
       ref={menuRef}
       className="node-picker-popover field-name-reuse-popover"
-      label="Reuse field"
+      label={tf.reuseFieldLabel}
       style={menuStyle}
     >
-      {count === 0 && <PopoverEmpty>No matching fields</PopoverEmpty>}
+      {count === 0 && <PopoverEmpty>{tf.noMatchingFields}</PopoverEmpty>}
       {props.candidates.map((candidate, index) => {
         // Candidates arrive grouped (user fields, then system fields); a header
         // marks each section's first row. Headers are non-interactive, so they

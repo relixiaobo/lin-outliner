@@ -22,12 +22,15 @@ import {
   SupertagIcon,
 } from '../icons';
 import { FieldTypeIcon } from '../outliner/fieldTypePresentation';
+import { useT } from '../../i18n/I18nProvider';
 import type { CommandRunner } from '../shared';
 import { textOf } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
 import {
   definitionConfigItems,
+  hideFieldOptions,
   type DefinitionConfigItem,
+  type DefinitionConfigLabels,
 } from './definitionConfig';
 import {
   DefinitionColorControl,
@@ -48,7 +51,18 @@ interface DefinitionConfigPanelProps {
   run: CommandRunner;
 }
 
+/** The `definition.*` label bag shaped for the pure config-item builders. */
+export function definitionConfigLabels(t: ReturnType<typeof useT>): DefinitionConfigLabels {
+  return {
+    tagConfig: t.definition.tagConfig,
+    fieldConfig: t.definition.fieldConfig,
+    hideFieldOptions: t.definition.hideFieldOptions,
+    outliner: t.definition.outliner,
+  };
+}
+
 export function DefinitionConfigPanel({ node, index, run }: DefinitionConfigPanelProps) {
+  const t = useT();
   // config-as-nodes: definition config is read from the defConfig subtree via
   // the projected accessor, not flat Node fields.
   const byId = index.byId;
@@ -59,7 +73,7 @@ export function DefinitionConfigPanel({ node, index, run }: DefinitionConfigPane
     fieldType: fieldConfig?.fieldType,
     showCheckbox: tagConfig?.showCheckbox,
     doneStateEnabled: tagConfig?.doneStateEnabled,
-  });
+  }, definitionConfigLabels(t));
   const tagOptions = useMemo(
     () => index.projection.nodes
       .filter((candidate) => candidate.type === 'tagDef' && candidate.id !== node.id)
@@ -80,7 +94,7 @@ export function DefinitionConfigPanel({ node, index, run }: DefinitionConfigPane
   };
 
   return (
-    <section className="definition-config-panel" aria-label="Definition configuration">
+    <section className="definition-config-panel" aria-label={t.definition.panel.ariaLabel}>
       {items.map((item, index) => (
         <DefinitionConfigRow
           key={item.key}
@@ -150,6 +164,7 @@ function ConfigControl(props: {
   updateField: (patch: FieldConfigPatch) => void;
 }) {
   const { item, node, byId, tagConfig, fieldConfig, tagOptions, updateTag, updateField } = props;
+  const t = useT();
 
   switch (item.key) {
     case 'color':
@@ -253,6 +268,7 @@ function ConfigControl(props: {
       return (
         <DefinitionHideFieldSelect
           label={item.label}
+          options={hideFieldOptions(t.definition.hideFieldOptions)}
           value={(fieldConfig?.hideField as HideFieldMode | undefined) ?? 'never'}
           onChange={(hideField) => updateField({ hideField: hideField === 'never' ? null : hideField })}
         />

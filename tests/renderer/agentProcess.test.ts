@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import type { ToolCall, ToolResultMessage } from '../../src/core/agentTypes';
 import { summarizeProcess } from '../../src/renderer/ui/agent/AgentProcessBlock';
+import { getMessages } from '../../src/core/i18n';
+
+const { process, toolCall: toolCallLabels } = getMessages('en').agent;
 
 const readTool: ToolCall = {
   type: 'toolCall',
@@ -29,6 +32,8 @@ describe('agent process summary', () => {
       sealed: false,
       turnActive: true,
       turnFailedWithoutProse: false,
+      process,
+      toolCallLabels,
     })).toBe('Working...');
   });
 
@@ -42,6 +47,8 @@ describe('agent process summary', () => {
       sealed: true,
       turnActive: false,
       turnFailedWithoutProse: false,
+      process,
+      toolCallLabels,
     })).toBe('Thought · used 2 tools');
   });
 
@@ -55,6 +62,8 @@ describe('agent process summary', () => {
       sealed: true,
       turnActive: false,
       turnFailedWithoutProse: false,
+      process,
+      toolCallLabels,
     })).toBe('Read node "node-alpha"');
   });
 
@@ -68,6 +77,8 @@ describe('agent process summary', () => {
       sealed: false,
       turnActive: false,
       turnFailedWithoutProse: true,
+      process,
+      toolCallLabels,
     })).toBe('Interrupted after thinking');
   });
 });

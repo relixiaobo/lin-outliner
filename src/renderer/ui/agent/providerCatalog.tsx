@@ -3,6 +3,7 @@ import type {
   AgentProviderOption,
   AgentProviderSettingsView,
 } from '../../api/types';
+import type { Messages } from '../../../core/i18n';
 import { providerIconSvg } from './providerIcon';
 
 // Pure provider-catalog helpers shared by the settings list (AgentSettingsView)
@@ -73,42 +74,54 @@ export const PROVIDER_DOCS_URL: Record<string, string> = {
 };
 
 // Presentation copy for providers that don't take a pasteable API key. The auth
-// CLASS now comes from main (`authKind`); this table is copy-only (note + docs),
-// keyed by provider id. Managed providers show the note in place of a key field;
-// oauth providers use the sign-in flow (ProviderOAuthForm).
+// CLASS now comes from main (`authKind`); the visible note + docs LABEL are i18n
+// (t.providerCatalog.auth.*), keyed by provider id; the docsURL stays here (not
+// localizable). Managed providers show the note in place of a key field; oauth
+// providers use the sign-in flow (ProviderOAuthForm).
 export interface ProviderAuthInfo {
   note: string;
   docsUrl?: string;
   docsLabel?: string;
 }
 
-export const PROVIDER_AUTH: Record<string, ProviderAuthInfo> = {
-  'amazon-bedrock': {
-    note: 'Bedrock uses your AWS credentials (a named profile, IAM role, or AWS_* environment variables) — there is no API key to paste here.',
-    docsUrl: 'https://docs.aws.amazon.com/bedrock/latest/userguide/getting-started.html',
-    docsLabel: 'AWS credential setup',
-  },
-  'google-vertex': {
-    note: 'Vertex AI uses Google Cloud Application Default Credentials (run `gcloud auth application-default login`) — there is no API key to paste here.',
-    docsUrl: 'https://cloud.google.com/docs/authentication/provide-credentials-adc',
-    docsLabel: 'Set up ADC',
-  },
+// docsUrl per managed-credential provider (the localizable copy is in i18n).
+const PROVIDER_AUTH_DOCS_URL: Record<string, string> = {
+  'amazon-bedrock': 'https://docs.aws.amazon.com/bedrock/latest/userguide/getting-started.html',
+  'google-vertex': 'https://cloud.google.com/docs/authentication/provide-credentials-adc',
 };
 
-// Brand sign-in label + a docs link for the oauth providers, used by the
-// sign-in flow. Copy-only — the oauth CLASS is main's `authKind`.
-export const OAUTH_SIGN_IN: Record<string, { hint: string; docsUrl?: string; docsLabel?: string }> = {
-  // pi-ai exposes no separate "Claude Code" provider — the Anthropic OAuth flow IS
-  // the Claude subscription login (its scopes include `user:sessions:claude_code`).
-  // Name it so it reads as that login, closing the "where's Claude Code?" gap.
-  anthropic: { hint: 'Sign in with your Claude Pro or Max subscription — the same Claude account Claude Code and claude.ai use.' },
-  'github-copilot': {
-    hint: 'Sign in with your GitHub account — no API key to paste.',
-    docsUrl: 'https://github.com/features/copilot',
-    docsLabel: 'About GitHub Copilot',
-  },
-  'openai-codex': { hint: 'Sign in with your ChatGPT Plus or Pro subscription.' },
+// Resolve the managed-credential note + docs link for a provider, or undefined if
+// it takes a normal API key. `t` supplies the localized note + docs label.
+export function providerAuthInfo(providerId: string, t: Messages): ProviderAuthInfo | undefined {
+  const copy = t.providerCatalog.auth[providerId as keyof typeof t.providerCatalog.auth];
+  if (!copy) return undefined;
+  return { note: copy.note, docsUrl: PROVIDER_AUTH_DOCS_URL[providerId], docsLabel: copy.docsLabel };
+}
+
+// docsUrl per oauth provider (the localizable hint + docs label live in i18n).
+const OAUTH_SIGN_IN_DOCS_URL: Record<string, string> = {
+  'github-copilot': 'https://github.com/features/copilot',
 };
+
+export interface OAuthSignInInfo {
+  hint: string;
+  docsUrl?: string;
+  docsLabel?: string;
+}
+
+// Brand sign-in hint + docs link for an oauth provider, or undefined for a provider
+// with no sign-in copy. The oauth CLASS is main's `authKind`; `t` supplies the copy.
+// pi-ai exposes no separate "Claude Code" provider — the Anthropic OAuth flow IS the
+// Claude subscription login (scopes include `user:sessions:claude_code`); the copy
+// names it so it reads as that login, closing the "where's Claude Code?" gap.
+export function oauthSignInInfo(providerId: string, t: Messages): OAuthSignInInfo | undefined {
+  const copy = t.providerCatalog.oauth[providerId as keyof typeof t.providerCatalog.oauth];
+  if (!copy) return undefined;
+  // Only some providers carry a docs link (and thus a docsLabel); narrow safely so
+  // the heterogeneous message union still type-checks.
+  const docsLabel = 'docsLabel' in copy ? copy.docsLabel : undefined;
+  return { hint: copy.hint, docsUrl: OAUTH_SIGN_IN_DOCS_URL[providerId], docsLabel };
+}
 
 // OAuth providers that ALSO accept a pasted API key (Anthropic console keys). For
 // these the sign-in form offers an "Use an API key instead" escape hatch back to
@@ -146,11 +159,11 @@ export function ProviderAvatar({ providerId, large }: { providerId: string; larg
   );
 }
 
-export function providerDescription(catalog: AgentProviderOption | undefined): string {
-  if (!catalog || catalog.models.length === 0) return 'Connect any OpenAI-compatible endpoint.';
+export function providerDescription(catalog: AgentProviderOption | undefined, t: Messages): string {
+  if (!catalog || catalog.models.length === 0) return t.providerCatalog.openAiCompatible;
   const names = catalog.models.slice(0, 3).map((model) => model.name.replace(/\s*\(latest\)/i, ''));
-  const suffix = catalog.models.length > names.length ? ', and more' : '';
-  return `Includes ${names.join(', ')}${suffix}.`;
+  const hasMore = catalog.models.length > names.length;
+  return t.providerCatalog.includesModels({ models: names.join(', '), more: hasMore });
 }
 
 export function getFallbackModelId(providerId: string): string {

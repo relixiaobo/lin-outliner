@@ -28,6 +28,7 @@ import {
   normalizeCodeLanguage,
   plainCodeHtml,
 } from '../editor/shikiHighlighter';
+import { useT } from '../../i18n/I18nProvider';
 
 const INDENT = '  ';
 
@@ -66,6 +67,7 @@ function caretForPlacement(placement: CursorPlacement, length: number): PendingS
 }
 
 export function CodeBlockRow(props: CodeBlockRowProps) {
+  const tc = useT().outliner.field.code;
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const highlightRef = useRef<HTMLDivElement | null>(null);
   const propsRef = useRef(props);
@@ -308,7 +310,7 @@ export function CodeBlockRow(props: CodeBlockRowProps) {
           ref={languageTriggerRef}
           aria-expanded={languageMenuOpen}
           aria-haspopup="menu"
-          aria-label="Code language"
+          aria-label={tc.languageLabel}
           className="code-block-language"
           disabled={props.readOnly}
           onClick={() => setLanguageMenuOpen((open) => !open)}
@@ -329,7 +331,7 @@ export function CodeBlockRow(props: CodeBlockRowProps) {
           />
         ) : null}
         <ButtonControl
-          aria-label="Copy code"
+          aria-label={tc.copyCode}
           className="code-block-copy"
           disabled={!value}
           onClick={copyCode}
@@ -388,6 +390,7 @@ function CodeLanguageMenu({
   onClose: () => void;
   onSelect: (id: string) => void;
 }) {
+  const tc = useT().outliner.field.code;
   const menuRef = useRef<HTMLDivElement>(null);
   const knownLanguage = CODE_LANGUAGE_OPTIONS.some((option) => option.id === language);
   const options = knownLanguage || !language
@@ -423,7 +426,7 @@ function CodeLanguageMenu({
   return createPortal(
     <MenuSurface
       ref={menuRef}
-      aria-label="Code language"
+      aria-label={tc.languageLabel}
       className="code-block-language-menu"
       role="menu"
       style={style}

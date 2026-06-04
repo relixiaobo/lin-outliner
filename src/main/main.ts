@@ -92,9 +92,9 @@ protocol.registerSchemesAsPrivileged([
   { scheme: ASSET_URL_SCHEME, privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } },
 ]);
 
-const IMAGE_FILE_FILTERS = [
-  { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'bmp', 'heic'] },
-];
+// Image file extensions for the native "insert image" picker. The filter's display
+// name is localized at the call site (it shows in the OS dialog).
+const IMAGE_FILE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'bmp', 'heic'];
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const APP_ICON_PNG_PATH = app.isPackaged
@@ -760,7 +760,7 @@ function openProviderConfigWindow(providerId: string, mode: ProviderConfigMode) 
     : {};
 
   providerConfigWindow = new BrowserWindow({
-    title: 'Configure provider',
+    title: getMessages(effectiveLocale()).window.providerConfigTitle,
     width,
     height,
     ...position,
@@ -1125,10 +1125,11 @@ async function handleAssetCommand(command: AssetCommand, args: Record<string, un
       return assetService.delete(String(args.id));
     case 'pick_image_files': {
       const window = BrowserWindow.getFocusedWindow() ?? mainWindow;
+      const dialogStrings = getMessages(effectiveLocale()).window;
       const options = {
-        title: 'Insert image',
+        title: dialogStrings.insertImageTitle,
         properties: ['openFile', 'multiSelections'] as Array<'openFile' | 'multiSelections'>,
-        filters: IMAGE_FILE_FILTERS,
+        filters: [{ name: dialogStrings.imageFilesFilter, extensions: IMAGE_FILE_EXTENSIONS }],
       };
       const result = window
         ? await dialog.showOpenDialog(window, options)

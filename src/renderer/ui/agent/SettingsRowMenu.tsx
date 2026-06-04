@@ -1,6 +1,7 @@
 import { useEffect, useRef, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { ICON_SIZE, MoreIcon } from '../icons';
+import { useT } from '../../i18n/I18nProvider';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
@@ -68,6 +69,7 @@ function FloatingRowMenu({
   anchorRef: RefObject<HTMLElement | null>;
   onClose: () => void;
 }) {
+  const t = useT();
   const menuRef = useRef<HTMLDivElement>(null);
   const style = useAnchoredOverlay(menuRef, {
     anchorRef,
@@ -98,7 +100,7 @@ function FloatingRowMenu({
 
   return createPortal(
     <MenuSurface
-      aria-label="Provider actions"
+      aria-label={t.settings.providers.rowMenuAriaLabel}
       className="settings-row-menu"
       ref={menuRef}
       role="menu"

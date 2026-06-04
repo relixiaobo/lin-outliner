@@ -5,6 +5,11 @@ import {
   definitionKind,
   definitionOutlinerLabel,
 } from '../../src/renderer/ui/definition/definitionConfig';
+import { definitionConfigLabels } from '../../src/renderer/ui/definition/DefinitionConfigPanel';
+import { getMessages } from '../../src/core/i18n';
+
+// The pure registry takes localized labels; exercise the canonical English tree.
+const labels = definitionConfigLabels(getMessages('en'));
 
 function makeNode(overrides: Partial<NodeProjection>): NodeProjection {
   return {
@@ -30,8 +35,8 @@ describe('definition config registry', () => {
   });
 
   test('shows tag done mapping only after checkbox is enabled', () => {
-    const withoutCheckbox = definitionConfigItems(makeNode({ type: 'tagDef' }), { showCheckbox: false }).map((item) => item.key);
-    const withCheckbox = definitionConfigItems(makeNode({ type: 'tagDef' }), { showCheckbox: true }).map((item) => item.key);
+    const withoutCheckbox = definitionConfigItems(makeNode({ type: 'tagDef' }), { showCheckbox: false }, labels).map((item) => item.key);
+    const withCheckbox = definitionConfigItems(makeNode({ type: 'tagDef' }), { showCheckbox: true }, labels).map((item) => item.key);
 
     expect(withoutCheckbox).not.toContain('doneStateEnabled');
     expect(withCheckbox).toContain('doneStateEnabled');
@@ -39,8 +44,8 @@ describe('definition config registry', () => {
 
   test('reveals done-state mapping rows only when both checkbox and mapping are on', () => {
     const tag = makeNode({ type: 'tagDef' });
-    const checkboxOnly = definitionConfigItems(tag, { showCheckbox: true, doneStateEnabled: false }).map((item) => item.key);
-    const mappingOn = definitionConfigItems(tag, { showCheckbox: true, doneStateEnabled: true }).map((item) => item.key);
+    const checkboxOnly = definitionConfigItems(tag, { showCheckbox: true, doneStateEnabled: false }, labels).map((item) => item.key);
+    const mappingOn = definitionConfigItems(tag, { showCheckbox: true, doneStateEnabled: true }, labels).map((item) => item.key);
 
     expect(checkboxOnly).not.toContain('doneMapChecked');
     expect(checkboxOnly).not.toContain('doneMapUnchecked');
@@ -50,10 +55,10 @@ describe('definition config registry', () => {
 
   test('shows field type-specific rows without storing config as real children', () => {
     const fieldNode = makeNode({ type: 'fieldDef' });
-    const plain = definitionConfigItems(fieldNode, { fieldType: 'plain' }).map((item) => item.key);
-    const options = definitionConfigItems(fieldNode, { fieldType: 'options' }).map((item) => item.key);
-    const optionsFromTag = definitionConfigItems(fieldNode, { fieldType: 'options_from_supertag' }).map((item) => item.key);
-    const number = definitionConfigItems(fieldNode, { fieldType: 'number' }).map((item) => item.key);
+    const plain = definitionConfigItems(fieldNode, { fieldType: 'plain' }, labels).map((item) => item.key);
+    const options = definitionConfigItems(fieldNode, { fieldType: 'options' }, labels).map((item) => item.key);
+    const optionsFromTag = definitionConfigItems(fieldNode, { fieldType: 'options_from_supertag' }, labels).map((item) => item.key);
+    const number = definitionConfigItems(fieldNode, { fieldType: 'number' }, labels).map((item) => item.key);
 
     expect(plain).toContain('fieldType');
     expect(plain).toContain('autoInitialize');
@@ -65,8 +70,8 @@ describe('definition config registry', () => {
   });
 
   test('only field options and tags expose template outliner sections', () => {
-    expect(definitionOutlinerLabel(makeNode({ type: 'tagDef' }), {})).toBe('Default content');
-    expect(definitionOutlinerLabel(makeNode({ type: 'fieldDef' }), { fieldType: 'options' })).toBe('Pre-determined options');
-    expect(definitionOutlinerLabel(makeNode({ type: 'fieldDef' }), { fieldType: 'plain' })).toBeNull();
+    expect(definitionOutlinerLabel(makeNode({ type: 'tagDef' }), {}, labels.outliner)).toBe('Default content');
+    expect(definitionOutlinerLabel(makeNode({ type: 'fieldDef' }), { fieldType: 'options' }, labels.outliner)).toBe('Pre-determined options');
+    expect(definitionOutlinerLabel(makeNode({ type: 'fieldDef' }), { fieldType: 'plain' }, labels.outliner)).toBeNull();
   });
 });

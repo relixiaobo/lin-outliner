@@ -15,6 +15,8 @@ import { AgentProcessTimeline } from './AgentProcessTimeline';
 import { getToolCallStatus, summarizeToolCall } from './AgentToolCallBlock';
 import type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
 import { firstLine, previewText } from './agentProcessTypes';
+import { useT } from '../../i18n/I18nProvider';
+import type { Messages } from '../../../core/i18n';
 
 export type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
 
@@ -45,6 +47,8 @@ export function summarizeProcess({
   turnActive,
   sealed,
   turnFailedWithoutProse,
+  process,
+  toolCallLabels,
 }: {
   firstThinkingText: string | null;
   thinkingCount: number;
@@ -54,40 +58,42 @@ export function summarizeProcess({
   sealed: boolean;
   turnActive: boolean;
   turnFailedWithoutProse: boolean;
+  process: Messages['agent']['process'];
+  toolCallLabels: Messages['agent']['toolCall'];
 }): string {
   const toolCount = toolCalls.length;
 
-  if (turnActive && !sealed) return 'Working...';
+  if (turnActive && !sealed) return process.working;
 
   if (turnFailedWithoutProse) {
-    if (thinkingCount > 0 && toolCount > 0) return 'Interrupted after thinking';
-    if (thinkingCount > 0) return 'Thought (interrupted)';
-    return 'Interrupted';
+    if (thinkingCount > 0 && toolCount > 0) return process.interruptedAfterThinking;
+    if (thinkingCount > 0) return process.thoughtInterrupted;
+    return process.interrupted;
   }
 
   if (thinkingCount === 0 && toolCount === 1) {
     const toolCall = toolCalls[0]!;
     const status = getToolCallStatus(toolCall.id, results.get(toolCall.id), pendingToolCallIds, turnActive);
-    return summarizeToolCall(toolCall, status);
+    return summarizeToolCall(toolCall, status, toolCallLabels);
   }
 
-  if (thinkingCount === 0 && toolCount >= 2) return `Used ${toolCount} tools`;
+  if (thinkingCount === 0 && toolCount >= 2) return process.usedTools({ count: toolCount });
 
   if (thinkingCount === 1 && toolCount === 0) {
-    return firstThinkingText ? `Thought · ${previewText(firstThinkingText, 80)}` : 'Thought';
+    return firstThinkingText ? process.thoughtPreview({ preview: previewText(firstThinkingText, 80) }) : process.thought;
   }
 
-  if (thinkingCount > 0 && toolCount === 0) return 'Thought';
+  if (thinkingCount > 0 && toolCount === 0) return process.thought;
 
   if (thinkingCount > 0 && toolCount === 1) {
     const toolCall = toolCalls[0]!;
     const status = getToolCallStatus(toolCall.id, results.get(toolCall.id), pendingToolCallIds, turnActive);
-    return `Thought · ${summarizeToolCall(toolCall, status)}`;
+    return process.thoughtAndTool({ tool: summarizeToolCall(toolCall, status, toolCallLabels) });
   }
 
-  if (thinkingCount > 0 && toolCount >= 2) return `Thought · used ${toolCount} tools`;
+  if (thinkingCount > 0 && toolCount >= 2) return process.thoughtAndUsedTools({ count: toolCount });
 
-  return 'Working...';
+  return process.working;
 }
 
 export function AgentProcessBlock({
@@ -105,6 +111,7 @@ export function AgentProcessBlock({
   turnActive,
   turnFailedWithoutProse,
 }: AgentProcessBlockProps) {
+  const t = useT();
   const thinkingBlocks = blocks.filter(
     (block): block is Extract<AgentProcessSegmentBlock, { kind: 'thinking' }> => block.kind === 'thinking',
   );
@@ -146,6 +153,8 @@ export function AgentProcessBlock({
             turnActive,
             sealed,
             turnFailedWithoutProse,
+            process: t.agent.process,
+            toolCallLabels: t.agent.toolCall,
           })}
         </span>
       </ButtonControl>

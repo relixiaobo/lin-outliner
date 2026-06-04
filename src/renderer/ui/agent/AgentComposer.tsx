@@ -46,6 +46,8 @@ import {
   type AgentComposerNodeReference,
 } from './AgentComposerEditor';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
+import { useT } from '../../i18n/I18nProvider';
+import type { Messages } from '../../../core/i18n';
 
 interface AgentComposerProps {
   currentNodeId: NodeId | null;
@@ -180,6 +182,7 @@ export function AgentComposer({
   slashCommands,
   steeringNote,
 }: AgentComposerProps) {
+  const t = useT();
   const [draft, setDraft] = useState<AgentComposerDraft>(EMPTY_DRAFT);
   const [sending, setSending] = useState(false);
   const [configSubmitting, setConfigSubmitting] = useState(false);
@@ -271,7 +274,7 @@ export function AgentComposer({
 
     if (isStreaming) {
       if (sentAttachments.length > 0) {
-        setAttachmentError('Attachments cannot be queued while the agent is running.');
+        setAttachmentError(t.agent.composer.attachmentsCannotQueue);
         return;
       }
       editorRef.current?.clear();
@@ -319,7 +322,7 @@ export function AgentComposer({
 
     const remainingSlots = MAX_ATTACHMENTS - attachmentsRef.current.length;
     if (remainingSlots <= 0) {
-      setAttachmentError(`You can attach up to ${MAX_ATTACHMENTS} files.`);
+      setAttachmentError(t.agent.composer.maxAttachments({ max: MAX_ATTACHMENTS }));
       return [];
     }
 
@@ -364,8 +367,8 @@ export function AgentComposer({
     }
     setAttachmentError(
       failures[0]
-        ?? duplicateMessage(skippedDuplicates)
-        ?? overflowMessage(skippedOverflow)
+        ?? duplicateMessage(skippedDuplicates, t.agent.composer)
+        ?? overflowMessage(skippedOverflow, t.agent.composer)
         ?? null,
     );
     return referencedAttachments;
@@ -386,7 +389,7 @@ export function AgentComposer({
     if (files.length === 0) return [];
     const remainingSlots = MAX_ATTACHMENTS - attachmentsRef.current.length;
     if (remainingSlots <= 0) {
-      setAttachmentError(`You can attach up to ${MAX_ATTACHMENTS} files.`);
+      setAttachmentError(t.agent.composer.maxAttachments({ max: MAX_ATTACHMENTS }));
       return [];
     }
 
@@ -424,16 +427,16 @@ export function AgentComposer({
       if (insertReferences) editorRef.current?.insertFileReferences(refs);
       setAttachmentError(
         failures[0]
-          ?? duplicateMessage(skippedDuplicates)
-          ?? overflowMessage(skippedOverflow)
+          ?? duplicateMessage(skippedDuplicates, t.agent.composer)
+          ?? overflowMessage(skippedOverflow, t.agent.composer)
           ?? null,
       );
       return refs;
     }
     setAttachmentError(
       failures[0]
-        ?? duplicateMessage(skippedDuplicates)
-        ?? overflowMessage(skippedOverflow)
+        ?? duplicateMessage(skippedDuplicates, t.agent.composer)
+        ?? overflowMessage(skippedOverflow, t.agent.composer)
         ?? null,
     );
     return [];
@@ -462,7 +465,7 @@ export function AgentComposer({
         if (!result.canceled) {
           await addPickedLocalFilesInline(result.files);
           if (result.skippedCount) {
-            setAttachmentError((current) => current ?? overflowMessage(result.skippedCount ?? 0));
+            setAttachmentError((current) => current ?? overflowMessage(result.skippedCount ?? 0, t.agent.composer));
           }
         }
         return;
@@ -494,12 +497,12 @@ export function AgentComposer({
     file: AgentComposerLocalFileCandidate,
   ): Promise<AgentComposerFileReference | null> {
     if (!window.lin?.prepareLocalFile) {
-      setAttachmentError('Local file search is not available in this window.');
+      setAttachmentError(t.agent.composer.localFileSearchUnavailable);
       return null;
     }
     const result = await window.lin.prepareLocalFile({ id: file.id });
     if (!result.file) {
-      setAttachmentError('That local file is no longer available.');
+      setAttachmentError(t.agent.composer.localFileNoLongerAvailable);
       return null;
     }
     const refs = await addPickedLocalFilesInline([{
@@ -583,7 +586,7 @@ export function AgentComposer({
     ? shortenModelName(selectedModel.name || selectedModel.id)
     : activeProvider?.modelId
       ? shortenModelName(activeProvider.modelId)
-      : 'Select model';
+      : t.agent.composer.selectModel;
 
   function handleDraftChange(nextDraft: AgentComposerDraft) {
     if (!sendingRef.current) pruneUnreferencedAttachments(nextDraft);
@@ -630,7 +633,7 @@ export function AgentComposer({
         onDragOver={handleDragOver}
         onDrop={handleDrop}
       >
-        {dragActive ? <div className="agent-composer-drop-overlay">Drop files to attach</div> : null}
+        {dragActive ? <div className="agent-composer-drop-overlay">{t.agent.composer.dropFilesToAttach}</div> : null}
         {attachmentError ? (
           <div className="agent-composer-error" role="status">
             {attachmentError}
@@ -659,8 +662,8 @@ export function AgentComposer({
               onSubmit={() => void submit()}
               placeholder={
                 isStreaming
-                  ? steeringNote ? 'Append another steer...' : 'Steer the conversation...'
-                  : 'Ask anything...'
+                  ? steeringNote ? t.agent.composer.appendSteerPlaceholder : t.agent.composer.steerPlaceholder
+                  : t.agent.composer.askPlaceholder
               }
               slashCommands={slashCommands}
             />
@@ -674,7 +677,7 @@ export function AgentComposer({
                   <AgentComposerModelButton
                     disabled={configDisabled || modelOptions.length === 0}
                     modelLabel={modelLabel}
-                    modelTitle={activeProvider ? `${activeProvider.providerId}/${activeProvider.modelId}` : 'No model configured'}
+                    modelTitle={activeProvider ? `${activeProvider.providerId}/${activeProvider.modelId}` : t.agent.composer.noModelConfigured}
                     onToggle={() => setModelMenuOpen((open) => !open)}
                     open={modelMenuOpen}
                     reasoningEnabled={reasoningEnabled}
@@ -735,6 +738,7 @@ function AgentApprovalCard({
     scope?: AgentApprovalResolutionScope,
   ) => Promise<boolean>;
 }) {
+  const t = useT();
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [submitting, setSubmitting] = useState<AgentApprovalResolutionScope | 'deny' | null>(null);
 
@@ -759,7 +763,7 @@ function AgentApprovalCard({
           onClick={() => setDetailsOpen((open) => !open)}
           type="button"
         >
-          {detailsOpen ? 'Hide details' : 'Show details'}
+          {detailsOpen ? t.agent.composer.hideDetails : t.agent.composer.showDetails}
         </button>
         {detailsOpen ? (
           <div className="agent-approval-details-panel">
@@ -771,7 +775,7 @@ function AgentApprovalCard({
             ))}
             {approval.alwaysAllowRule ? (
               <div className="agent-approval-detail">
-                <span className="agent-approval-detail-label">Always allow rule</span>
+                <span className="agent-approval-detail-label">{t.agent.composer.alwaysAllowRule}</span>
                 <span className="agent-approval-detail-value">{approval.alwaysAllowRule}</span>
               </div>
             ) : null}
@@ -785,7 +789,7 @@ function AgentApprovalCard({
           onClick={() => void resolve(true, 'once')}
           type="button"
         >
-          Approve once
+          {t.agent.composer.approveOnce}
         </button>
         {approval.alwaysAllowRule ? (
           <button
@@ -794,7 +798,7 @@ function AgentApprovalCard({
             onClick={() => void resolve(true, 'always')}
             type="button"
           >
-            Always allow
+            {t.agent.composer.alwaysAllow}
           </button>
         ) : null}
         <button
@@ -803,7 +807,7 @@ function AgentApprovalCard({
           onClick={() => void resolve(false, 'once')}
           type="button"
         >
-          Deny once
+          {t.agent.composer.denyOnce}
         </button>
       </div>
     </div>
@@ -1174,18 +1178,14 @@ function createAttachmentId(): string {
     : `attachment-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function duplicateMessage(count: number): string | null {
+function duplicateMessage(count: number, labels: Messages['agent']['composer']): string | null {
   if (count <= 0) return null;
-  return count === 1
-    ? "Skipped 1 file that's already attached."
-    : `Skipped ${count} files that are already attached.`;
+  return labels.skippedDuplicates({ count });
 }
 
-function overflowMessage(count: number): string | null {
+function overflowMessage(count: number, labels: Messages['agent']['composer']): string | null {
   if (count <= 0) return null;
-  return count === 1
-    ? `Skipped 1 file over the ${MAX_ATTACHMENTS} attachment limit.`
-    : `Skipped ${count} files over the ${MAX_ATTACHMENTS} attachment limit.`;
+  return labels.skippedOverflow({ count, max: MAX_ATTACHMENTS });
 }
 
 function formatBytes(bytes: number): string {

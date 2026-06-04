@@ -23,15 +23,21 @@ import { MenuSurface } from '../primitives/MenuSurface';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { useT } from '../../i18n/I18nProvider';
+import type { Messages } from '../../../core/i18n';
 
-export const REASONING_LABELS: Record<AgentReasoningLevel, string> = {
-  off: 'Off',
-  minimal: 'Minimal',
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-  xhigh: 'Max',
-};
+export function reasoningLabels(
+  labels: Messages['agent']['composer']['reasoningLevels'],
+): Record<AgentReasoningLevel, string> {
+  return {
+    off: labels.off,
+    minimal: labels.minimal,
+    low: labels.low,
+    medium: labels.medium,
+    high: labels.high,
+    xhigh: labels.max,
+  };
+}
 
 export interface ComposerModelChoice extends AgentModelOption {
   providerId: string;
@@ -72,6 +78,8 @@ export function AgentComposerModelMenu({
   selectedReasoning: AgentReasoningLevel;
   supportsReasoning: boolean;
 }) {
+  const t = useT();
+  const REASONING_LABELS = reasoningLabels(t.agent.composer.reasoningLevels);
   const featuredModels = useMemo(
     () => getFeaturedModelChoices(models, activeProvider),
     [activeProvider, models],
@@ -112,7 +120,7 @@ export function AgentComposerModelMenu({
                   size={ICON_SIZE.menu}
                 />
               )}
-              label={<span>More models</span>}
+              label={<span>{t.agent.composer.moreModels}</span>}
               onClick={() => onMoreModelsOpenChange(!moreModelsOpen)}
               role="menuitem"
             />
@@ -140,13 +148,13 @@ export function AgentComposerModelMenu({
       {supportsReasoning ? (
         <div className="agent-composer-thinking-row">
           <BrainIcon size={ICON_SIZE.menu} />
-          <span>Thinking</span>
+          <span>{t.agent.composer.thinking}</span>
           {reasoningEnabled ? (
             <div className="agent-composer-thinking-level-wrap">
               <ButtonControl
                 aria-expanded={reasoningMenuOpen}
                 aria-haspopup="menu"
-                aria-label="Thinking level"
+                aria-label={t.agent.composer.thinkingLevel}
                 className="agent-composer-thinking-level"
                 onClick={() => onReasoningMenuOpenChange(!reasoningMenuOpen)}
               >
@@ -155,7 +163,7 @@ export function AgentComposerModelMenu({
               </ButtonControl>
               {reasoningMenuOpen ? (
                 <MenuSurface
-                  aria-label="Thinking levels"
+                  aria-label={t.agent.composer.thinkingLevels}
                   className="agent-composer-thinking-level-menu"
                   role="menu"
                 >
@@ -181,7 +189,7 @@ export function AgentComposerModelMenu({
             className={`agent-composer-thinking-switch ${reasoningEnabled ? 'is-on' : ''}`}
             checked={reasoningEnabled}
             disabled={configDisabled || !reasoningOptions.includes('off')}
-            label="Thinking"
+            label={t.agent.composer.thinking}
             onCheckedChange={onReasoningToggle}
           >
             <SwitchMark checked={reasoningEnabled} />
@@ -231,6 +239,7 @@ function FloatingComposerMenu({
   layoutKey: string;
   onClose: () => void;
 }) {
+  const t = useT();
   const menuRef = useRef<HTMLDivElement>(null);
   const style = useAnchoredOverlay(menuRef, {
     anchorRef,
@@ -262,7 +271,7 @@ function FloatingComposerMenu({
   return createPortal(
     <MenuSurface
       ref={menuRef}
-      aria-label="Model and reasoning settings"
+      aria-label={t.agent.composer.modelAndReasoningSettings}
       className="agent-composer-model-menu"
       role="menu"
       style={style}

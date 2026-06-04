@@ -55,6 +55,7 @@ import { NodeDescription } from './NodeDescription';
 import { OutlinerRowShell } from './OutlinerRowShell';
 import { RowLeading } from './RowLeading';
 import { useOutlinerRowInteraction } from './useOutlinerRowInteraction';
+import { useT } from '../../i18n/I18nProvider';
 
 interface OutlinerFieldRowProps {
   panelId: string;
@@ -104,6 +105,8 @@ function resolveFieldOwnerColor(
 }
 
 export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
+  const t = useT();
+  const tf = t.outliner.field;
   const entry = props.index.byId.get(props.entryId);
   const entryFieldDefId = entry?.type === 'fieldEntry' ? entry.fieldDefId : undefined;
   const field = entryFieldDefId ? props.index.byId.get(entryFieldDefId) : undefined;
@@ -412,13 +415,13 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       ref={nameInputRef}
       className={`field-name-input ${entry.completedAt ? 'done' : ''} ${systemFieldId ? 'system' : ''}`}
       data-focus-node-id={props.entryId}
-      label="Field name"
+      label={tf.fieldNameLabel}
       value={systemFieldId ? systemFieldLabel : nameDraft}
       readOnly={Boolean(systemFieldId)}
-      placeholder="Field name"
+      placeholder={tf.fieldNameLabel}
       title={systemFieldId
-        ? `${systemFieldLabel} (System field)`
-        : `${nameDraft || 'Field name'} (${fieldTypeLabel(fieldType)})`}
+        ? tf.systemFieldTitle({ name: systemFieldLabel })
+        : tf.fieldNameTitle({ name: nameDraft || tf.fieldNameLabel, type: fieldTypeLabel(fieldType) })}
       onFocus={() => {
         reuse.onFocus();
         props.setUi((prev) => selectFocusState(prev, fieldNameFocusTarget));
@@ -446,8 +449,8 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   );
 
   const valuePlaceholder = fieldType === 'options' || fieldType === 'options_from_supertag'
-    ? 'Select option'
-    : 'Empty';
+    ? tf.selectOption
+    : tf.empty;
 
   // The Done checkbox writes the owner's done state, but a locked owner (e.g. a
   // daily-note date page) rejects `toggle_done` — render it read-only there.

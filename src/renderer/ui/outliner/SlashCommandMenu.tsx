@@ -19,6 +19,7 @@ import {
 } from '../interactions/slashCommands';
 import type { CommandRunner } from '../shared';
 import { PopoverEmpty, PopoverListItem } from './PopoverList';
+import { useT } from '../../i18n/I18nProvider';
 
 interface SlashCommandMenuProps {
   query: string;
@@ -50,10 +51,11 @@ export function slashCommandItems(
 }
 
 export function SlashCommandMenu(props: SlashCommandMenuProps) {
+  const tf = useT().outliner.field;
   const items = slashCommandItems(props.query, props.enabledSlashCommandIds);
 
   if (items.length === 0) {
-    return <PopoverEmpty>No commands</PopoverEmpty>;
+    return <PopoverEmpty>{tf.noCommands}</PopoverEmpty>;
   }
 
   return (

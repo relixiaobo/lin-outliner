@@ -18,6 +18,7 @@ import { referenceItems, ReferenceSelector } from './ReferenceSelector';
 import { slashCommandItems, SlashCommandMenu } from './SlashCommandMenu';
 import { TagSelector } from './TagSelector';
 import { PopoverListbox } from './PopoverList';
+import { useT } from '../../i18n/I18nProvider';
 
 interface TriggerPopoverProps {
   trigger: NonNullable<TriggerState>;
@@ -36,6 +37,7 @@ interface TriggerPopoverProps {
 }
 
 export function TriggerPopover(props: TriggerPopoverProps) {
+  const tf = useT().outliner.field;
   const [selectedIndex, setSelectedIndex] = useState(0);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const existingTagIds = props.existingTagIds ?? [];
@@ -125,10 +127,10 @@ export function TriggerPopover(props: TriggerPopoverProps) {
   }, [selectedIndex]);
 
   const label = props.trigger.kind === '#'
-    ? 'Tag suggestions'
+    ? tf.tagSuggestions
     : props.trigger.kind === '@'
-      ? 'Reference suggestions'
-      : 'Slash commands';
+      ? tf.referenceSuggestions
+      : tf.slashCommands;
 
   return createPortal(
     <PopoverListbox

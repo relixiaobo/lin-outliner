@@ -16,6 +16,7 @@ import { CalendarMonthGrid, shiftedCalendarMonth, type CalendarMonthDay } from '
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { useT } from '../../i18n/I18nProvider';
 
 interface DateValuePickerProps {
   // The row content line the popover anchors to (so the calendar opens under the
@@ -40,6 +41,7 @@ const DEFAULT_TIME = '09:00';
 // calendar logic mirrors the reference date interaction: optional end date for a
 // range, optional time, today / clear.
 export function DateValuePicker({ anchorRef, value, open, onOpenChange, onCommit }: DateValuePickerProps) {
+  const td = useT().outliner.field.datePicker;
   const initial = dateDraftFromValue(value);
   const today = useMemo(() => isoLocalDate(new Date()), []);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -257,14 +259,16 @@ export function DateValuePicker({ anchorRef, value, open, onOpenChange, onCommit
       ref={popoverRef}
       className="typed-field-date-popover"
       role="dialog"
-      aria-label="Date picker"
+      aria-label={td.title}
       style={popoverStyle}
     >
       <div className="typed-field-date-summary">
         <DateSummaryRow
           active={editingEdge === 'start'}
           includeTime={includeTime}
-          label="Start"
+          label={td.start}
+          dateAriaLabel={td.startDate}
+          timeAriaLabel={td.startTime}
           time={startTimeDraft}
           value={startDraft}
           onSelect={() => setEditingEdge('start')}
@@ -275,7 +279,9 @@ export function DateValuePicker({ anchorRef, value, open, onOpenChange, onCommit
           <DateSummaryRow
             active={editingEdge === 'end'}
             includeTime={includeTime}
-            label="End"
+            label={td.end}
+            dateAriaLabel={td.endDate}
+            timeAriaLabel={td.endTime}
             time={endTimeDraft}
             value={endDraft}
             onSelect={() => setEditingEdge('end')}
@@ -296,12 +302,12 @@ export function DateValuePicker({ anchorRef, value, open, onOpenChange, onCommit
         year={viewYear}
       />
       <div className="typed-field-date-settings">
-        <DateSettingRow label="End date" checked={includeEnd} onToggle={toggleIncludeEnd} />
-        <DateSettingRow label="Include time" checked={includeTime} onToggle={toggleIncludeTime} />
+        <DateSettingRow label={td.endDateToggle} checked={includeEnd} onToggle={toggleIncludeEnd} />
+        <DateSettingRow label={td.includeTimeToggle} checked={includeTime} onToggle={toggleIncludeTime} />
       </div>
       <div className="typed-field-date-actions">
-        <ButtonControl onClick={pickToday}>Today</ButtonControl>
-        <ButtonControl onClick={clearDate}>Clear</ButtonControl>
+        <ButtonControl onClick={pickToday}>{td.today}</ButtonControl>
+        <ButtonControl onClick={clearDate}>{td.clear}</ButtonControl>
       </div>
     </div>,
     document.body,
@@ -312,6 +318,11 @@ interface DateSummaryRowProps {
   active: boolean;
   includeTime: boolean;
   label: string;
+  // Pre-built accessible names for the date / time inputs (the parent owns the
+  // localization so the "Start date" / "End time" wording stays whole, not
+  // concatenated). See DateValuePicker.
+  dateAriaLabel: string;
+  timeAriaLabel: string;
   onDateChange: (isoDate: string) => void;
   onSelect: () => void;
   onTimeChange: (time: string) => void;
@@ -323,6 +334,8 @@ function DateSummaryRow({
   active,
   includeTime,
   label,
+  dateAriaLabel,
+  timeAriaLabel,
   onDateChange,
   onSelect,
   onTimeChange,
@@ -348,7 +361,7 @@ function DateSummaryRow({
       <label className="typed-field-date-summary-main">
         <span>{label}</span>
         <input
-          aria-label={`${label} date`}
+          aria-label={dateAriaLabel}
           className="typed-field-date-date-input"
           onBlur={(event) => commitDateDraft(event.currentTarget.value)}
           onChange={(event) => setDateDraft(event.currentTarget.value)}
@@ -374,7 +387,7 @@ function DateSummaryRow({
       </label>
       {includeTime && (
         <input
-          aria-label={`${label} time`}
+          aria-label={timeAriaLabel}
           className="typed-field-date-time-input"
           type="time"
           value={dateFieldEndpointTime(value) || time}

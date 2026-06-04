@@ -21,6 +21,8 @@ import {
   WarningIcon,
 } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { useT } from '../../i18n/I18nProvider';
+import type { Messages } from '../../../core/i18n';
 import { highlightCode, plainCodeHtml } from '../editor/shikiHighlighter';
 import {
   AgentInlineReferenceText,
@@ -109,81 +111,93 @@ function pastChatsMode(args: Record<string, unknown>): PastChatsMode {
   return 'recent';
 }
 
-function quoteSubject(subject: string): string {
+type ToolCallLabels = Messages['agent']['toolCall'];
+type ToolVerbForms = { base: string; pending: string; done: string };
+
+function quoteSubject(subject: string, labels: ToolCallLabels): string {
   const trimmed = subject.trim();
   const short = trimmed.length > 72 ? `${trimmed.slice(0, 72)}...` : trimmed;
   if (short.startsWith('http://') || short.startsWith('https://')) return short;
-  return `"${short}"`;
+  return labels.quote({ text: short });
 }
 
-type VerbForms = [base: string, pending: string, done: string];
-
-function verbByStatus(forms: VerbForms, status: ToolStatus): string {
-  if (status === 'pending') return forms[1];
-  if (status === 'done') return forms[2];
-  return `Failed to ${forms[0]}`;
+function verbByStatus(forms: ToolVerbForms, status: ToolStatus, labels: ToolCallLabels): string {
+  if (status === 'pending') return forms.pending;
+  if (status === 'done') return forms.done;
+  return labels.failed({ verb: forms.base });
 }
 
-export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus): string {
+function withSubject(verb: string, subject: string | null, labels: ToolCallLabels): string {
+  return subject ? labels.withSubject({ verb, subject: quoteSubject(subject, labels) }) : verb;
+}
+
+export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels: ToolCallLabels): string {
+  const verbs = labels.verbs;
   if (toolCall.name === 'Agent') {
     const subject = pickSubject(toolCall.arguments, 'description', 'subagent_type');
-    return `${verbByStatus(['run subagent', 'Running subagent', 'Ran subagent'], status)}${subject ? ` ${quoteSubject(subject)}` : ''}`;
+    return withSubject(verbByStatus(verbs.runSubagent, status, labels), subject, labels);
   }
-  if (toolCall.name === 'AgentStatus') return verbByStatus(['check subagent', 'Checking subagent', 'Checked subagent'], status);
-  if (toolCall.name === 'AgentSend') return verbByStatus(['message subagent', 'Messaging subagent', 'Messaged subagent'], status);
-  if (toolCall.name === 'AgentStop') return verbByStatus(['stop subagent', 'Stopping subagent', 'Stopped subagent'], status);
+  if (toolCall.name === 'AgentStatus') return verbByStatus(verbs.checkSubagent, status, labels);
+  if (toolCall.name === 'AgentSend') return verbByStatus(verbs.messageSubagent, status, labels);
+  if (toolCall.name === 'AgentStop') return verbByStatus(verbs.stopSubagent, status, labels);
   const args = toolCall.arguments;
   if (toolCall.name === 'past_chats') {
     const mode = pastChatsMode(args);
     if (mode === 'read') {
       const subject = pickSubject(args, 'message_id');
-      return `${verbByStatus(['read past chat', 'Reading past chat', 'Read past chat'], status)}${subject ? ` ${quoteSubject(subject)}` : ''}`;
+      return withSubject(verbByStatus(verbs.readPastChat, status, labels), subject, labels);
     }
     if (mode === 'search') {
       const subject = pickSubject(args, 'query');
-      return `${verbByStatus(['search past chats', 'Searching past chats', 'Searched past chats'], status)}${subject ? ` ${quoteSubject(subject)}` : ''}`;
+      return withSubject(verbByStatus(verbs.searchPastChats, status, labels), subject, labels);
     }
-    return verbByStatus(['list recent past chat messages', 'Listing recent past chat messages', 'Listed recent past chat messages'], status);
+    return verbByStatus(verbs.listRecentPastChats, status, labels);
   }
   if (toolCall.name === 'node_create') {
     const subject = pickSubject(args, 'parentId', 'afterId');
-    const target = subject ? ` under ${quoteSubject(subject)}` : '';
-    return `${verbByStatus(['create node', 'Creating node', 'Created node'], status)}${target}`;
+    const verb = verbByStatus(verbs.createNode, status, labels);
+    return subject ? labels.under({ verb, subject: quoteSubject(subject, labels) }) : verb;
   }
   if (toolCall.name === 'node_read') {
     const subject = pickSubject(args, 'nodeId');
-    return `${verbByStatus(['read node', 'Reading node', 'Read node'], status)}${subject ? ` ${quoteSubject(subject)}` : ''}`;
+    return withSubject(verbByStatus(verbs.readNode, status, labels), subject, labels);
   }
   if (toolCall.name === 'node_edit') {
     const subject = pickSubject(args, 'nodeId');
-    return `${verbByStatus(['edit node', 'Editing node', 'Edited node'], status)}${subject ? ` ${quoteSubject(subject)}` : ''}`;
+    return withSubject(verbByStatus(verbs.editNode, status, labels), subject, labels);
   }
   if (toolCall.name === 'node_delete') {
     const subject = pickSubject(args, 'nodeId');
-    return `${verbByStatus(['delete node', 'Deleting node', 'Deleted node'], status)}${subject ? ` ${quoteSubject(subject)}` : ''}`;
+    return withSubject(verbByStatus(verbs.deleteNode, status, labels), subject, labels);
   }
   if (toolCall.name === 'node_search') {
     const subject = pickSubject(args, 'query', 'rules');
-    return `${verbByStatus(['search nodes', 'Searching nodes', 'Searched nodes'], status)}${subject ? ` ${quoteSubject(subject)}` : ''}`;
+    return withSubject(verbByStatus(verbs.searchNodes, status, labels), subject, labels);
   }
   if (toolCall.name === 'web_search') {
     const subject = pickSubject(args, 'query');
-    return `${verbByStatus(['search web', 'Searching web', 'Searched web'], status)}${subject ? ` ${quoteSubject(subject)}` : ''}`;
+    return withSubject(verbByStatus(verbs.searchWeb, status, labels), subject, labels);
   }
   if (toolCall.name === 'web_fetch') {
     const subject = pickSubject(args, 'url');
-    return `${verbByStatus(['fetch web', 'Fetching web', 'Fetched web'], status)}${subject ? ` ${quoteSubject(subject)}` : ''}`;
+    return withSubject(verbByStatus(verbs.fetchWeb, status, labels), subject, labels);
   }
   if (toolCall.name === 'bash') {
     const command = pickSubject(args, 'command', 'cmd');
-    const firstLine = command?.split('\n').map((line) => line.trim()).find(Boolean);
-    return `${verbByStatus(['run bash', 'Running bash', 'Ran bash'], status)}${firstLine ? ` ${quoteSubject(firstLine)}` : ''}`;
+    const firstLine = command?.split('\n').map((line) => line.trim()).find(Boolean) ?? null;
+    return withSubject(verbByStatus(verbs.runBash, status, labels), firstLine, labels);
   }
   if (toolCall.name === 'file_edit') {
     const subject = pickSubject(args, 'path', 'file_path');
-    return `${verbByStatus(['edit file', 'Editing file', 'Edited file'], status)}${subject ? ` ${quoteSubject(subject)}` : ''}`;
+    return withSubject(verbByStatus(verbs.editFile, status, labels), subject, labels);
   }
-  return verbByStatus([toolCall.name, `${toolCall.name}...`, toolCall.name], status);
+  // Unknown tools fall back to the raw tool name (an identifier, not translatable);
+  // only the trailing pending ellipsis is localized.
+  return verbByStatus(
+    { base: toolCall.name, pending: labels.unknownPending({ name: toolCall.name }), done: toolCall.name },
+    status,
+    labels,
+  );
 }
 
 function subagentToolStatus(subagent: AgentRenderSubagentEntity): ToolStatus {
@@ -210,9 +224,9 @@ function formatSubagentDuration(subagent: AgentRenderSubagentEntity): string {
   return minuteRest > 0 ? `${hours}h ${minuteRest}m` : `${hours}h`;
 }
 
-function subagentSummary(subagent: AgentRenderSubagentEntity): string {
+function subagentSummary(subagent: AgentRenderSubagentEntity, labels: Messages['agent']['subagent']): string {
   const description = subagent.description.trim() || subagent.name || subagent.id;
-  return `Subagent · ${description}`;
+  return labels.summary({ description });
 }
 
 function previewText(text: string | undefined, maxLength = 520): string {
@@ -231,6 +245,7 @@ function SubagentInlineDetails({
   onOpenTranscript?: (subagentId: string) => void;
   subagent: AgentRenderSubagentEntity;
 }) {
+  const t = useT();
   const result = previewText(subagent.result);
   const error = previewText(subagent.error);
   const prompt = previewText(subagent.prompt);
@@ -240,26 +255,26 @@ function SubagentInlineDetails({
     <div className="agent-subagent-inline">
       <dl className="agent-subagent-meta-grid">
         <div>
-          <dt>Status</dt>
+          <dt>{t.agent.subagent.status}</dt>
           <dd>{subagent.status}</dd>
         </div>
         <div>
-          <dt>Mode</dt>
+          <dt>{t.agent.subagent.mode}</dt>
           <dd>{formatSubagentMode(subagent)}</dd>
         </div>
         <div>
-          <dt>Messages</dt>
+          <dt>{t.agent.subagent.messages}</dt>
           <dd>{subagent.transcriptMessageCount}</dd>
         </div>
         <div>
-          <dt>Duration</dt>
+          <dt>{t.agent.subagent.duration}</dt>
           <dd>{formatSubagentDuration(subagent)}</dd>
         </div>
       </dl>
       {subagent.name ? (
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
-            <div className="agent-tool-call-section-title">Name</div>
+            <div className="agent-tool-call-section-title">{t.agent.subagent.name}</div>
           </div>
           <pre>
             <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={subagent.name} />
@@ -269,8 +284,8 @@ function SubagentInlineDetails({
       {prompt ? (
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
-            <div className="agent-tool-call-section-title">Prompt</div>
-            <ToolCopyButton ariaLabel="Copy subagent prompt" text={subagent.prompt} />
+            <div className="agent-tool-call-section-title">{t.agent.subagent.prompt}</div>
+            <ToolCopyButton ariaLabel={t.agent.subagent.copyPrompt} text={subagent.prompt} />
           </div>
           <pre>
             <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={prompt} />
@@ -280,8 +295,8 @@ function SubagentInlineDetails({
       {result ? (
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
-            <div className="agent-tool-call-section-title">Result</div>
-            <ToolCopyButton ariaLabel="Copy subagent result" text={subagent.result ?? ''} />
+            <div className="agent-tool-call-section-title">{t.agent.subagent.result}</div>
+            <ToolCopyButton ariaLabel={t.agent.subagent.copyResult} text={subagent.result ?? ''} />
           </div>
           <pre>
             <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={result} />
@@ -292,10 +307,10 @@ function SubagentInlineDetails({
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
             <div className="agent-tool-call-section-title">
-              Error
-              <span>error</span>
+              {t.agent.subagent.error}
+              <span>{t.agent.toolCall.errorBadge}</span>
             </div>
-            <ToolCopyButton ariaLabel="Copy subagent error" text={subagent.error ?? ''} />
+            <ToolCopyButton ariaLabel={t.agent.subagent.copyError} text={subagent.error ?? ''} />
           </div>
           <pre>
             <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={error} />
@@ -309,9 +324,9 @@ function SubagentInlineDetails({
           onClick={() => onOpenTranscript?.(subagent.id)}
         >
           <FileTextIcon size={ICON_SIZE.menu} />
-          <span>{subagent.transcriptPayloadId ? 'View transcript' : 'Transcript unavailable'}</span>
+          <span>{subagent.transcriptPayloadId ? t.agent.subagent.viewTranscript : t.agent.subagent.transcriptUnavailable}</span>
         </ButtonControl>
-        <ToolCopyButton ariaLabel="Copy subagent id" text={subagent.id} />
+        <ToolCopyButton ariaLabel={t.agent.subagent.copyId} text={subagent.id} />
       </div>
     </div>
   );
@@ -407,7 +422,10 @@ function formatBytes(bytes: number): string {
   return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
 }
 
-function outputWindow(text: string): { text: string; windowed: boolean } {
+function outputWindow(
+  text: string,
+  formatOmitted: (params: { count: string }) => string,
+): { text: string; windowed: boolean } {
   const limit = TOOL_OUTPUT_WINDOW_HEAD_CHARS + TOOL_OUTPUT_WINDOW_TAIL_CHARS;
   if (text.length <= limit) return { text, windowed: false };
   const omitted = text.length - limit;
@@ -415,7 +433,7 @@ function outputWindow(text: string): { text: string; windowed: boolean } {
     text: [
       text.slice(0, TOOL_OUTPUT_WINDOW_HEAD_CHARS),
       '',
-      `[... ${omitted.toLocaleString()} chars omitted ...]`,
+      formatOmitted({ count: omitted.toLocaleString() }),
       '',
       text.slice(-TOOL_OUTPUT_WINDOW_TAIL_CHARS),
     ].join('\n'),
@@ -456,6 +474,7 @@ function ToolCopyButton({ ariaLabel, text }: { ariaLabel: string; text: string }
 }
 
 function ToolResultImages({ images }: { images: Array<{ data: string; mimeType: string }> }) {
+  const t = useT();
   if (images.length === 0) return null;
   return (
     <div className="agent-tool-image-list">
@@ -463,7 +482,7 @@ function ToolResultImages({ images }: { images: Array<{ data: string; mimeType: 
         const src = `data:${image.mimeType};base64,${image.data}`;
         return (
           <a href={src} key={`${image.mimeType}-${index}`} rel="noreferrer" target="_blank">
-            <img alt={`Tool result ${index + 1}`} loading="lazy" src={src} />
+            <img alt={t.agent.toolCall.resultImageAlt({ index: index + 1 })} loading="lazy" src={src} />
           </a>
         );
       })}
@@ -484,12 +503,13 @@ function PersistedToolOutput({
   payloadRef: AgentToolResultPayloadPart;
   sessionId?: string | null;
 }) {
+  const t = useT();
   const [fullText, setFullText] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const requestRef = useRef(0);
   const payload = payloadRef.payload;
-  const visible = outputWindow(fullText ?? initialText);
+  const visible = outputWindow(fullText ?? initialText, t.agent.toolCall.charsOmitted);
   const canLoad = !!sessionId && (payload.mimeType.startsWith('text/') || payload.mimeType === 'application/json');
 
   useEffect(() => () => {
@@ -506,7 +526,7 @@ function PersistedToolOutput({
       const text = await api.agentPayloadText(sessionId, payload.id);
       if (requestId !== requestRef.current) return;
       if (text === null) {
-        setLoadError('Payload unavailable');
+        setLoadError(t.agent.toolCall.payloadUnavailable);
         return;
       }
       setFullText(text);
@@ -523,7 +543,7 @@ function PersistedToolOutput({
     <div className="agent-tool-persisted-output">
       <div className="agent-tool-persisted-meta">
         <FileTextIcon size={ICON_SIZE.menu} />
-        <span>{payload.summary || 'Stored tool output'}</span>
+        <span>{payload.summary || t.agent.toolCall.storedOutput}</span>
         <small>{formatBytes(payload.byteLength)}</small>
       </div>
       <pre>
@@ -536,13 +556,13 @@ function PersistedToolOutput({
           onClick={() => void loadFullOutput()}
         >
           <FileTextIcon size={ICON_SIZE.menu} />
-          <span>{fullText ? 'Reload full output' : loading ? 'Loading...' : 'Load full output'}</span>
+          <span>{fullText ? t.agent.toolCall.reloadFullOutput : loading ? t.common.loading : t.agent.toolCall.loadFullOutput}</span>
         </ButtonControl>
         {fullText ? (
-          <ToolCopyButton ariaLabel="Copy full tool output" text={fullText} />
+          <ToolCopyButton ariaLabel={t.agent.toolCall.copyFullOutput} text={fullText} />
         ) : null}
         {visible.windowed ? (
-          <small>Windowed</small>
+          <small>{t.agent.toolCall.windowed}</small>
         ) : null}
         {loadError ? (
           <small className="is-error">{loadError}</small>
@@ -566,6 +586,7 @@ export function AgentToolCallBlock({
   toolCall,
   turnActive,
 }: AgentToolCallBlockProps) {
+  const t = useT();
   const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
   const status = subagent ? subagentToolStatus(subagent) : getToolCallStatus(toolCall.id, result, pendingToolCallIds, turnActive);
   const Icon = getToolIcon(toolCall);
@@ -596,7 +617,7 @@ export function AgentToolCallBlock({
       status={status}
       statusIcon={StatusIcon}
       statusIconClassName={status === 'pending' ? 'agent-tool-call-spinner' : undefined}
-      summary={subagent ? subagentSummary(subagent) : summarizeToolCall(toolCall, status)}
+      summary={subagent ? subagentSummary(subagent, t.agent.subagent) : summarizeToolCall(toolCall, status, t.agent.toolCall)}
     >
       {subagent ? (
         <SubagentInlineDetails
@@ -609,8 +630,8 @@ export function AgentToolCallBlock({
       {!hasSubagentDetails && inputText !== '{}' ? (
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
-            <div className="agent-tool-call-section-title">Input</div>
-            <ToolCopyButton ariaLabel="Copy tool input" text={inputText} />
+            <div className="agent-tool-call-section-title">{t.agent.toolCall.input}</div>
+            <ToolCopyButton ariaLabel={t.agent.toolCall.copyInput} text={inputText} />
           </div>
           <HighlightedJson code={inputText} />
         </section>
@@ -619,16 +640,16 @@ export function AgentToolCallBlock({
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
             <div className="agent-tool-call-section-title">
-              Output
-              {result.isError ? <span>error</span> : null}
+              {t.agent.toolCall.output}
+              {result.isError ? <span>{t.agent.toolCall.errorBadge}</span> : null}
             </div>
-            <ToolCopyButton ariaLabel="Copy tool output" text={outputText} />
+            <ToolCopyButton ariaLabel={t.agent.toolCall.copyOutput} text={outputText} />
           </div>
           {parts.map((part, partIndex) =>
             part.type === 'imagePlaceholder' ? (
               <div className="agent-tool-image-placeholder" key={`placeholder-${partIndex}`}>
                 <FileTextIcon size={ICON_SIZE.menu} />
-                <span>Screenshot captured</span>
+                <span>{t.agent.toolCall.screenshotCaptured}</span>
               </div>
             ) : part.type === 'persistedOutput' ? (
               <PersistedToolOutput

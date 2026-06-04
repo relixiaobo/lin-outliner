@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { HideIcon, ICON_SIZE, LoaderIcon, OpenIcon, PasswordIcon, ShowIcon } from '../icons';
+import { useT } from '../../i18n/I18nProvider';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { TextInputControl } from '../primitives/TextInputControl';
 
@@ -77,6 +78,7 @@ export function ProviderConfigForm({
   onOpenExternal,
   onClose,
 }: ProviderConfigFormProps) {
+  const t = useT();
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
   const validationToken = useRef(0);
   const isCustom = mode === 'custom';
@@ -169,7 +171,7 @@ export function ProviderConfigForm({
         <div className="settings-sheet-head-text">
           <h2 className="settings-sheet-title" id={titleId}>
             {providerName}
-            {isActive ? <span className="settings-chip">Active</span> : null}
+            {isActive ? <span className="settings-chip">{t.providerConfig.activeChip}</span> : null}
           </h2>
           <p className="settings-sheet-subtitle">{description}</p>
         </div>
@@ -185,7 +187,7 @@ export function ProviderConfigForm({
                 onClick={() => onOpenExternal(authNote.docsUrl as string)}
                 type="button"
               >
-                <span>{authNote.docsLabel ?? 'Learn more'}</span>
+                <span>{authNote.docsLabel ?? t.providerConfig.learnMore}</span>
                 <OpenIcon size={ICON_SIZE.tiny} />
               </button>
             ) : null}
@@ -195,12 +197,12 @@ export function ProviderConfigForm({
             <div className="inset-card" role="group">
               {isCustom ? (
                 <label className="settings-sheet-row">
-                  <span className="settings-sheet-row-label">Provider ID</span>
+                  <span className="settings-sheet-row-label">{t.providerConfig.providerIdLabel}</span>
                   <TextInputControl
                     className="settings-sheet-row-input"
-                    label="Provider ID"
+                    label={t.providerConfig.providerIdLabel}
                     onChange={(event) => { setProviderId(event.target.value.trim()); clearResult(); }}
-                    placeholder="my-provider"
+                    placeholder={t.providerConfig.providerIdPlaceholder}
                     ref={firstFieldRef}
                     value={providerId}
                   />
@@ -212,15 +214,15 @@ export function ProviderConfigForm({
                     <PasswordIcon size={ICON_SIZE.menu} />
                     <TextInputControl
                       className="settings-sheet-row-input"
-                      label="API key"
+                      label={t.providerConfig.apiKeyLabel}
                       onChange={(event) => { setApiKey(event.target.value); clearResult(); }}
-                      placeholder={hasSavedKey ? 'Saved (encrypted) — paste to replace' : 'Paste API key'}
+                      placeholder={hasSavedKey ? t.providerConfig.apiKeySavedPlaceholder : t.providerConfig.apiKeyPlaceholder}
                       ref={isCustom ? undefined : firstFieldRef}
                       type={reveal ? 'text' : 'password'}
                       value={apiKey}
                     />
                     <button
-                      aria-label={reveal ? 'Hide key' : 'Show key'}
+                      aria-label={reveal ? t.providerConfig.hideKey : t.providerConfig.showKey}
                       aria-pressed={reveal}
                       className="settings-sheet-reveal"
                       onClick={() => setReveal((current) => !current)}
@@ -233,21 +235,21 @@ export function ProviderConfigForm({
               ) : null}
               {isCustom ? (
                 <label className="settings-sheet-row">
-                  <span className="settings-sheet-row-label">Model</span>
+                  <span className="settings-sheet-row-label">{t.providerConfig.modelLabel}</span>
                   <TextInputControl
                     className="settings-sheet-row-input"
-                    label="Model"
+                    label={t.providerConfig.modelLabel}
                     onChange={(event) => { setModelId(event.target.value); clearResult(); }}
-                    placeholder="Model ID"
+                    placeholder={t.providerConfig.modelPlaceholder}
                     value={modelId}
                   />
                 </label>
               ) : null}
               <label className="settings-sheet-row">
-                <span className="settings-sheet-row-label">Base URL</span>
+                <span className="settings-sheet-row-label">{t.providerConfig.baseUrlLabel}</span>
                 <TextInputControl
                   className="settings-sheet-row-input"
-                  label="Base URL"
+                  label={t.providerConfig.baseUrlLabel}
                   onChange={(event) => { setBaseUrl(event.target.value); clearResult(); }}
                   placeholder={defaultBaseUrl || baseUrlPlaceholder}
                   value={baseUrl}
@@ -256,7 +258,7 @@ export function ProviderConfigForm({
             </div>
             {!hasSavedKey && docsUrl ? (
               <button className="agent-settings-doc-link settings-sheet-getkey" onClick={() => onOpenExternal(docsUrl)} type="button">
-                <span>Get API key</span>
+                <span>{t.providerConfig.getApiKey}</span>
                 <OpenIcon size={ICON_SIZE.tiny} />
               </button>
             ) : null}
@@ -268,13 +270,13 @@ export function ProviderConfigForm({
             {validating ? (
               <>
                 <LoaderIcon className="settings-sheet-spinner" size={ICON_SIZE.menu} />
-                <span className="settings-sheet-result-text">Validating…</span>
-                <button className="settings-sheet-cancel-test" onClick={cancelValidate} type="button">Cancel</button>
+                <span className="settings-sheet-result-text">{t.providerConfig.validating}</span>
+                <button className="settings-sheet-cancel-test" onClick={cancelValidate} type="button">{t.providerConfig.cancel}</button>
               </>
             ) : status === 'success' ? (
-              <span className="settings-sheet-result-text">✓ {message || 'Connection successful'}</span>
+              <span className="settings-sheet-result-text">✓ {message || t.providerConfig.connectionSuccessful}</span>
             ) : (
-              <span className="settings-sheet-result-text">✗ {message || 'Validation failed'}</span>
+              <span className="settings-sheet-result-text">✗ {message || t.providerConfig.validationFailed}</span>
             )}
           </div>
         ) : null}
@@ -284,24 +286,24 @@ export function ProviderConfigForm({
         <div className="settings-sheet-actions-left">
           {onRemoveProvider ? (
             <ButtonControl className="settings-sheet-danger" disabled={busy} onClick={onRemoveProvider}>
-              Remove provider
+              {t.providerConfig.removeProvider}
             </ButtonControl>
           ) : null}
           {onSetActive && !isActive ? (
             <ButtonControl className="settings-sheet-secondary" disabled={busy} onClick={onSetActive}>
-              Set as Active
+              {t.providerConfig.setActive}
             </ButtonControl>
           ) : null}
         </div>
         <div className="settings-sheet-actions-right">
           <ButtonControl className="settings-sheet-secondary" disabled={saving} onClick={onClose}>
-            Cancel
+            {t.providerConfig.cancel}
           </ButtonControl>
           <ButtonControl className="settings-sheet-secondary" disabled={!canValidate} onClick={runValidate}>
-            {validating ? 'Validating…' : 'Validate'}
+            {validating ? t.providerConfig.validating : t.providerConfig.validate}
           </ButtonControl>
           <ButtonControl className="settings-sheet-primary" disabled={!canSave} onClick={runSave}>
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? t.providerConfig.saving : t.providerConfig.save}
           </ButtonControl>
         </div>
       </div>

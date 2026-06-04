@@ -8,6 +8,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { useT } from '../../i18n/I18nProvider';
 import {
   PopoverBulletIcon,
   PopoverEmpty,
@@ -54,9 +55,9 @@ export function NodeValuePicker({
   allowClear = false,
   allowCreate = false,
   ariaLabel,
-  clearLabel = 'Clear selection',
-  createLabel = (label) => `Create "${label}"`,
-  emptyLabel = 'No options',
+  clearLabel,
+  createLabel,
+  emptyLabel,
   maxHeight = 260,
   onClear,
   onCreate,
@@ -68,6 +69,11 @@ export function NodeValuePicker({
   selectedMarkerWhenPresent = 'bullet',
   width = 280,
 }: NodeValuePickerProps) {
+  const tp = useT().outliner.field.valuePicker;
+  const resolvedClearLabel = clearLabel ?? tp.clearSelection;
+  const resolvedCreateLabel = createLabel ?? ((label: string) => tp.create({ label }));
+  const resolvedEmptyLabel = emptyLabel ?? tp.noOptions;
+  const optionsAriaLabel = tp.optionsListLabel({ name: ariaLabel });
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
@@ -248,16 +254,16 @@ export function NodeValuePicker({
         <PopoverListbox
           ref={menuRef}
           className="node-picker-popover field-option-picker-popover"
-          label={`${ariaLabel} options`}
+          label={optionsAriaLabel}
           style={menuStyle}
         >
-          {actions.length === 0 && <PopoverEmpty>{emptyLabel}</PopoverEmpty>}
+          {actions.length === 0 && <PopoverEmpty>{resolvedEmptyLabel}</PopoverEmpty>}
           {actions.map((action, index) => (
             <PopoverListItem
               key={actionKey(action)}
               active={index === activeIndex}
               icon={actionIcon(action)}
-              label={actionLabel(action, { clearLabel, createLabel })}
+              label={actionLabel(action, { clearLabel: resolvedClearLabel, createLabel: resolvedCreateLabel })}
               onMouseEnter={() => setActiveIndex(index)}
               onClick={() => runAction(action)}
             />

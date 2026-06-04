@@ -55,6 +55,7 @@ import { ConfirmDialog } from '../primitives/ConfirmDialog';
 import { IconButton } from '../primitives/IconButton';
 import { TextInputControl } from '../primitives/TextInputControl';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { useT } from '../../i18n/I18nProvider';
 
 const TRANSCRIPT_ROW_GAP_PX = 14;
 const TRANSCRIPT_ROW_ESTIMATE_PX = 104;
@@ -103,6 +104,7 @@ function withReferencedNodes(
   context: AgentUserViewContext,
   refs: readonly AgentComposerNodeReference[],
   index: DocumentIndex,
+  untitled: string,
 ): AgentUserViewContext {
   if (refs.length === 0) return context;
   const seen = new Set<NodeId>();
@@ -111,7 +113,7 @@ function withReferencedNodes(
     seen.add(ref.nodeId);
     return [{
       nodeId: ref.nodeId,
-      title: ref.title.trim() || 'Untitled',
+      title: ref.title.trim() || untitled,
     }];
   });
   return referencedNodes.length > 0 ? { ...context, referencedNodes } : context;
@@ -469,6 +471,7 @@ export function AgentChatPanel({
   onOpenDebugPanel,
   userViewContext,
 }: AgentChatPanelProps) {
+  const t = useT();
   const {
     entries,
     error,
@@ -544,8 +547,8 @@ export function AgentChatPanel({
     attachments?: AgentMessageAttachmentInput[],
     nodeRefs: AgentComposerNodeReference[] = [],
   ) => (
-    sendRuntimeMessage(prompt, attachments, withReferencedNodes(userViewContext, nodeRefs, index))
-  ), [index, sendRuntimeMessage, userViewContext]);
+    sendRuntimeMessage(prompt, attachments, withReferencedNodes(userViewContext, nodeRefs, index, t.common.untitled))
+  ), [index, sendRuntimeMessage, userViewContext, t.common.untitled]);
 
   const updateScrollMetrics = useCallback((element: HTMLDivElement) => {
     const next = {
@@ -870,7 +873,7 @@ export function AgentChatPanel({
   // it flash during the load window; until loaded we stay neutral.
   const settingsLoaded = providerSettings !== null;
   const hasUsableProvider = settingsLoaded && Boolean(resolveUsableActiveProvider(providerSettings));
-  const displayTitle = readableSessionTitle(sessionTitle, 'conversation');
+  const displayTitle = readableSessionTitle(sessionTitle, t.agent.chat.conversationFallback);
   const historyMenuStyle = useAnchoredOverlay(historyMenuRef, {
     anchorRef: historyButtonRef,
     disabled: !historyOpen,
@@ -886,10 +889,10 @@ export function AgentChatPanel({
         <ButtonControl
           ref={historyButtonRef}
           aria-expanded={historyOpen}
-          aria-label="Show conversations"
+          aria-label={t.agent.chat.showConversations}
           className="agent-dock-title-button"
           onClick={() => setHistoryOpen((open) => !open)}
-          title="Show conversations"
+          title={t.agent.chat.showConversations}
         >
           <span className="agent-dock-title">{displayTitle}</span>
           <ChevronDownIcon
@@ -902,16 +905,16 @@ export function AgentChatPanel({
             className="agent-menu-button"
             disabled={isStreaming}
             icon={NewConversationIcon}
-            label="New conversation"
+            label={t.agent.chat.newConversation}
             onClick={() => void handleNewSession()}
-            title="New conversation"
+            title={t.agent.chat.newConversation}
             variant="composerTool"
           />
           {runningSubagentIds.length > 0 ? (
             <ButtonControl
               className="agent-subagent-running-button"
               onClick={() => setSelectedSubagentId(runningSubagentIds[0] ?? null)}
-              title="Show running subagents"
+              title={t.agent.chat.showRunningSubagents}
             >
               <AgentIcon size={ICON_SIZE.menu} />
               <span>{runningSubagentIds.length}</span>
@@ -920,9 +923,9 @@ export function AgentChatPanel({
           <IconButton
             className="agent-menu-button"
             icon={DebugIcon}
-            label="Open agent debug"
+            label={t.agent.chat.openDebug}
             onClick={() => onOpenDebugPanel?.(sessionId)}
-            title="Open agent debug"
+            title={t.agent.chat.openDebug}
             variant="composerTool"
           />
         </div>
@@ -931,36 +934,36 @@ export function AgentChatPanel({
             ref={historyMenuRef}
             className="agent-session-menu"
             role="dialog"
-            aria-label="Conversations"
+            aria-label={t.agent.chat.conversations}
             style={historyMenuStyle}
           >
             <div className="agent-session-menu-header">
-              <span>Conversations</span>
+              <span>{t.agent.chat.conversations}</span>
               <IconButton
                 className="agent-message-action-button"
                 disabled={isStreaming}
                 icon={NewConversationIcon}
-                label="New conversation"
+                label={t.agent.chat.newConversation}
                 onClick={() => void handleNewSession()}
-                title="New conversation"
+                title={t.agent.chat.newConversation}
                 variant="message"
               />
             </div>
             <div className="agent-session-list">
               {sessionsLoading ? (
-                <div className="agent-session-empty">Loading...</div>
+                <div className="agent-session-empty">{t.common.loading}</div>
               ) : sessions.length === 0 ? (
-                <div className="agent-session-empty">No conversations</div>
+                <div className="agent-session-empty">{t.agent.chat.noConversations}</div>
               ) : sessions.map((session) => {
                 const isCurrent = session.id === sessionId;
-                const title = readableSessionTitle(session.title, 'Untitled');
+                const title = readableSessionTitle(session.title, t.common.untitled);
                 if (editingSessionId === session.id) {
                   return (
                     <div className="agent-session-row is-editing" key={session.id}>
                       <TextInputControl
                         autoFocus
                         className="agent-session-title-input"
-                        label="Conversation title"
+                        label={t.agent.chat.conversationTitle}
                         onChange={(event) => setEditingTitle(event.target.value)}
                         onKeyDown={(event) => {
                           if (event.key === 'Escape') setEditingSessionId(null);
@@ -971,14 +974,14 @@ export function AgentChatPanel({
                       <IconButton
                         className="agent-message-action-button"
                         icon={CloseIcon}
-                        label="Cancel rename"
+                        label={t.agent.chat.cancelRename}
                         onClick={() => setEditingSessionId(null)}
                         variant="message"
                       />
                       <IconButton
                         className="agent-message-action-button"
                         icon={CheckIcon}
-                        label="Save rename"
+                        label={t.agent.chat.saveRename}
                         onClick={() => void handleRenameSession(session.id)}
                         variant="message"
                       />
@@ -1006,21 +1009,21 @@ export function AgentChatPanel({
                         className="agent-message-action-button"
                         disabled={isStreaming}
                         icon={PencilIcon}
-                        label="Rename conversation"
+                        label={t.agent.chat.renameConversation}
                         onClick={() => {
                           setEditingSessionId(session.id);
                           setEditingTitle(title);
                         }}
-                        title="Rename"
+                        title={t.agent.chat.rename}
                         variant="message"
                       />
                       <IconButton
                         className="agent-message-action-button"
                         disabled={isStreaming}
                         icon={TrashIcon}
-                        label="Delete conversation"
+                        label={t.agent.chat.deleteConversation}
                         onClick={() => void handleDeleteSession(session.id, session.title)}
-                        title="Delete"
+                        title={t.agent.chat.delete}
                         variant="message"
                       />
                     </div>
@@ -1117,10 +1120,10 @@ export function AgentChatPanel({
       />
       {pendingDeleteSession ? (
         <ConfirmDialog
-          title="Delete conversation?"
-          message={`"${readableSessionTitle(pendingDeleteSession.title, 'Untitled')}" will be permanently deleted. This cannot be undone.`}
-          confirmLabel="Delete"
-          cancelLabel="Cancel"
+          title={t.agent.chat.deleteConfirmTitle}
+          message={t.agent.chat.deleteConfirmMessage({ title: readableSessionTitle(pendingDeleteSession.title, t.common.untitled) })}
+          confirmLabel={t.agent.chat.delete}
+          cancelLabel={t.agent.chat.cancel}
           danger
           onConfirm={() => void confirmDeleteSession()}
           onCancel={() => setPendingDeleteSession(null)}

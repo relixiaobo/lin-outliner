@@ -1,4 +1,5 @@
 import type { KeyboardEventHandler, Ref } from 'react';
+import { useT } from '../../i18n/I18nProvider';
 
 interface NodeDescriptionEditorProps {
   inputRef: Ref<HTMLTextAreaElement>;
@@ -19,6 +20,7 @@ export function NodeDescriptionEditor({
   onFocus,
   onKeyDown,
 }: NodeDescriptionEditorProps) {
+  const t = useT();
   return (
     <textarea
       ref={inputRef}
@@ -26,7 +28,7 @@ export function NodeDescriptionEditor({
       data-focus-node-id={focusId}
       rows={1}
       value={value}
-      placeholder="Description"
+      placeholder={t.outliner.field.descriptionPlaceholder}
       onMouseDown={(event) => event.stopPropagation()}
       onFocus={onFocus}
       onChange={(event) => onValueChange(event.currentTarget.value)}
