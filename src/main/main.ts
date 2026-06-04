@@ -19,7 +19,7 @@ import {
 } from '../core/settingsWindow';
 import { LIN_WINDOW_ACTIVE_CHANNEL } from '../core/windowActivity';
 import { ASSET_URL_SCHEME } from '../core/assets';
-import { LIN_AGENT_OAUTH_EVENT_CHANNEL, LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput } from '../core/types';
+import { LIN_AGENT_OAUTH_EVENT_CHANNEL, LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput, type CommandOutcome } from '../core/types';
 import {
   deleteProviderApiKey,
   deleteProviderConfig,
@@ -46,6 +46,30 @@ import { isThemeMode, type ThemeMode } from '../core/theme';
 import { MAX_RAW_INLINE_IMAGE_BYTES, MAX_STAGED_ATTACHMENT_BYTES } from '../core/agentAttachmentLimits';
 import { safeAttachmentFileName } from '../core/agentAttachmentPaths';
 import { agentAttachmentDir, pruneOldAgentAttachments } from './agentAttachmentMaterialization';
+import {
+  createLauncherWindow,
+  getLauncherWindow,
+  hideLauncherWindow,
+  showLauncherWindow,
+} from './launcher/launcherWindow';
+import { registerLauncherHotkey, unregisterLauncherHotkeys } from './launcher/launcherHotkey';
+import {
+  getStaticLauncherCommands,
+  LAUNCHER_CONTEXT_CHANNEL,
+  LAUNCHER_NAVIGATE_TO_NODE_CHANNEL,
+  type LauncherCreateCaptureResult,
+  type LauncherExecuteResult,
+  type LauncherInitialState,
+  type LauncherNodeMatch,
+} from '../core/launcher/commands';
+import { buildContextCaptureInput, buildManualNoteInput, isCaptureIntent } from '../core/launcher/sources';
+import { resolveLauncherNodeMatches } from '../core/launcher/nodeMatches';
+import { captureExternalContext } from './context/contextCapture';
+import { isAccessibilityTrusted, promptAccessibility } from './context/nativeBrowserTab';
+import { getFrontmostApp } from './context/providers/browser';
+import type { FrontmostApp } from './context/providers/browser';
+import type { ExternalContext } from '../core/launcher/context';
+import type { SearchHit } from '../core/types';
 
 if (process.env.ELECTRON_USER_DATA_DIR) {
   app.setPath('userData', process.env.ELECTRON_USER_DATA_DIR);
@@ -424,7 +448,16 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
-  mainWindow.webContents.once('did-finish-load', () => agentRuntime.ready());
+  mainWindow.webContents.once('did-finish-load', () => {
+    agentRuntime.ready();
+  });
+  // A launcher "open node" that had to spin up the main window — or that arrived
+  // during a renderer reload — waits for the renderer to load before the navigate
+  // can land. `on` (not `once`) so it re-arms across reloads (dev HMR full reload,
+  // in-app reload); a spent `once` would silently drop a later deferred navigate.
+  mainWindow.webContents.on('did-finish-load', () => {
+    flushPendingNavigates();
+  });
 }
 
 function focusMainWindow() {
@@ -432,6 +465,187 @@ function focusMainWindow() {
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
+}
+
+// Node ids the launcher asked to open before the main window's renderer had
+// finished loading; flushed on each `did-finish-load` (see createWindow). A queue,
+// not a single slot, so two rapid cold opens before load don't clobber each other.
+let pendingNavigateNodeIds: string[] = [];
+
+function flushPendingNavigates(): void {
+  if (pendingNavigateNodeIds.length === 0) return;
+  const ids = pendingNavigateNodeIds;
+  pendingNavigateNodeIds = [];
+  for (const id of ids) {
+    mainWindow?.webContents.send(LAUNCHER_NAVIGATE_TO_NODE_CHANNEL, id);
+  }
+}
+
+/**
+ * Open a document node in the main window (from a launcher inline search result):
+ * bring the window up and tell the renderer to navigate + focus. If the window
+ * isn't created yet, or its renderer hasn't finished loading, defer the navigate
+ * until the next `did-finish-load` flush (re-armable across reloads).
+ */
+function navigateMainToNode(nodeId: string): void {
+  if (!mainWindow) {
+    pendingNavigateNodeIds.push(nodeId);
+    createWindow();
+  } else if (mainWindow.webContents.isLoading()) {
+    // Window exists but its renderer hasn't finished loading — defer; the
+    // did-finish-load handler flushes the queue.
+    pendingNavigateNodeIds.push(nodeId);
+  } else {
+    mainWindow.webContents.send(LAUNCHER_NAVIGATE_TO_NODE_CHANNEL, nodeId);
+  }
+  focusMainWindow();
+}
+
+/**
+ * Resolve `search_nodes` hits into serializable matches for the launcher (which
+ * can't read the document itself). Each match carries the node's single-line text
+ * and its parent's text for disambiguation. Bounded to the top results.
+ */
+async function searchLauncherNodes(query: string): Promise<LauncherNodeMatch[]> {
+  const q = query.trim();
+  if (!q) return [];
+  const hits = (await documentService.handle('search_nodes', { query: q })) as SearchHit[];
+  if (hits.length === 0) return [];
+  // Only the top hits are shown — resolve just those nodes (+ their parents, for
+  // the subtitle) by id, never materializing/mapping the whole-document projection
+  // on every debounced keystroke. Slice before lookup so work is bounded by the
+  // result limit, not the hit count.
+  const hitIds = hits.slice(0, LAUNCHER_NODE_RESULT_LIMIT).map((hit) => hit.nodeId);
+  const hitNodes = documentService.projectionNodesByIds(hitIds);
+  const parentIds = hitNodes
+    .map((node) => node.parentId)
+    .filter((id): id is string => Boolean(id));
+  const matchable = [...hitNodes, ...documentService.projectionNodesByIds(parentIds)].map((node) => ({
+    id: node.id,
+    text: node.content.text,
+    parentId: node.parentId,
+    icon: node.icon,
+    iconKind: node.iconKind,
+  }));
+  return resolveLauncherNodeMatches(hitIds, matchable, LAUNCHER_NODE_RESULT_LIMIT);
+}
+
+/** Max inline node results shown in the launcher (keeps the list scannable). */
+const LAUNCHER_NODE_RESULT_LIMIT = 8;
+
+// The accelerator the launcher hotkey actually registered under (or null if none
+// was free), surfaced to the launcher renderer so it can reflect/repair it later.
+let launcherHotkeyAccelerator: string | null = null;
+
+// The external context captured for the CURRENT launcher open (what app/page the
+// user was looking at when the hotkey fired). Main holds the authoritative copy;
+// the renderer gets a pushed view for display, and "Capture page" saves from
+// this — so the saved metadata can't be tampered with from the renderer. Cleared
+// on each open and on hide.
+let launcherContext: ExternalContext | null = null;
+// Monotonic id per launcher open. An in-flight async context capture stamps the
+// open it belongs to and is dropped if the launcher was dismissed or re-opened
+// before it resolved — so a slow capture can never repopulate a stale/next open.
+let launcherOpenSeq = 0;
+
+/**
+ * Dismiss the launcher and forget its captured context. EVERY hide path routes
+ * here — including clicking away (window blur) — so the previous page's metadata
+ * can't linger and be saved into a later open. Bumping the open-seq also
+ * invalidates any context capture still in flight for the dismissed open.
+ */
+function dismissLauncher(): void {
+  hideLauncherWindow();
+  launcherContext = null;
+  launcherOpenSeq++;
+}
+
+// Request Accessibility at most once per app run (the first browser capture
+// without it). The system prompt both shows the dialog and registers the app in
+// Privacy & Security → Accessibility, so the user can enable the reliable AX
+// capture path; without this the unsigned dev binary never appears in the list.
+let accessibilityPrompted = false;
+
+/**
+ * Hotkey handler: toggle the launcher, capturing what the user was looking at.
+ *
+ * Order matters — the launcher steals focus on show, after which the frontmost
+ * app is us. So we read the frontmost app in the `beforeFocus` window (while the
+ * old app is still active), then finish the slower tab/page reads after focus
+ * (those target the browser by name, so focus having moved is fine) and push the
+ * result to the renderer.
+ */
+async function toggleLauncher(): Promise<void> {
+  const win = getLauncherWindow();
+  if (win?.isVisible()) {
+    dismissLauncher();
+    return;
+  }
+  const openSeq = ++launcherOpenSeq;
+  launcherContext = null;
+  const contextId = `ctx:${randomUUID()}`;
+  const capturedAt = new Date().toISOString();
+  // Holder (not a bare `let`) so the value assigned inside the async beforeFocus
+  // callback keeps its declared type for later reads — TS control flow does not
+  // track assignments made through a callback.
+  const front: { app: FrontmostApp | null } = { app: null };
+  await showLauncherWindow(async () => {
+    front.app = await getFrontmostApp();
+  });
+  try {
+    const context = await captureExternalContext({
+      id: contextId,
+      capturedAt,
+      captureOrigin: 'global-hotkey',
+      frontmost: front.app,
+    });
+    // Drop if this open was dismissed (click-away / Esc) or superseded by a newer
+    // open while we were capturing — never repopulate a stale or already-closed open.
+    if (openSeq !== launcherOpenSeq || !getLauncherWindow()?.isVisible()) return;
+    launcherContext = context;
+    // Dev diagnostic: surface what each capture layer resolved to, so a
+    // wrong-page capture (e.g. the browser's "front window" ≠ the visible tab)
+    // can be pinpointed from the dev terminal. Quiet in packaged builds.
+    if (!app.isPackaged) {
+      console.log('[launcher] captured context', {
+        frontmostApp: front.app?.name ?? null,
+        pid: front.app?.pid ?? null,
+        axTrusted: isAccessibilityTrusted(),
+        providerId: context.providerId,
+        confidence: context.confidence,
+        browser: context.browser?.name ?? null,
+        url: context.browser?.url ?? null,
+        title: context.source?.title ?? null,
+        warnings: context.warnings.map((w) => w.code),
+      });
+    }
+    getLauncherWindow()?.webContents.send(LAUNCHER_CONTEXT_CHANNEL, context);
+    // First browser capture without Accessibility → request it once (shows the
+    // system prompt and registers the app in the Privacy list).
+    if (!accessibilityPrompted && context.providerId === 'generic-webpage' && !isAccessibilityTrusted()) {
+      accessibilityPrompted = true;
+      promptAccessibility();
+    }
+  } catch (error) {
+    console.error('[launcher] context capture failed', error);
+  }
+}
+
+function executeLauncherCommand(id: unknown): LauncherExecuteResult {
+  switch (id) {
+    case 'open-main':
+      if (!mainWindow) createWindow();
+      focusMainWindow();
+      return { hide: true };
+    case 'open-settings':
+      openSettingsWindow();
+      return { hide: true };
+    default:
+      // Only open-main / open-settings ship today; AI, capture destinations, and
+      // navigation commands are deferred to follow-up plans and aren't registered
+      // yet. An unknown id just dismisses the launcher.
+      return { hide: true };
+  }
 }
 
 // Settings open in their own window — the native "Preferences" convention —
@@ -613,6 +827,98 @@ function registerIpc() {
 
   ipcMain.handle('lin:open-settings', () => openSettingsWindow());
   ipcMain.handle('lin:close-settings', () => settingsWindow?.close());
+  // Launcher window IPC (the prewarmed global launcher).
+  ipcMain.handle('launcher:hide', () => {
+    dismissLauncher();
+  });
+  ipcMain.handle('launcher:getInitialState', (): LauncherInitialState => ({
+    commands: getStaticLauncherCommands(),
+    hotkey: launcherHotkeyAccelerator,
+  }));
+  ipcMain.handle('launcher:executeCommand', (_event, id: unknown): LauncherExecuteResult =>
+    executeLauncherCommand(id));
+  // New node from the launcher: a plain typed note (no external source). Ensure
+  // today's date node, then create the node under it. NOT a capture — no sidecar.
+  ipcMain.handle('launcher:createCapture', async (_event, raw: unknown): Promise<LauncherCreateCaptureResult> => {
+    const payload = (raw ?? {}) as { title?: unknown; note?: unknown };
+    const title = typeof payload.title === 'string' ? payload.title.trim() : '';
+    if (!title) return { ok: false };
+    const note = typeof payload.note === 'string' ? payload.note : undefined;
+    try {
+      const now = new Date();
+      const ensured = await documentService.handle('ensure_date_node', {
+        year: now.getFullYear(),
+        month: now.getMonth() + 1,
+        day: now.getDate(),
+      }) as CommandOutcome;
+      const input = buildManualNoteInput({
+        destinationParentId: ensured.projection.todayId,
+        title,
+        note,
+      });
+      const outcome = await documentService.handle('create_capture', { input }) as CommandOutcome;
+      return { ok: true, nodeId: outcome.focus?.nodeId };
+    } catch (error) {
+      console.error('[launcher] createCapture failed', error);
+      return { ok: false };
+    }
+  });
+  // Context capture: save what the user was looking at (the main-held authoritative
+  // ExternalContext for this open) under Today. The renderer supplies only an
+  // optional note/intent — never the source metadata — so it can't be tampered with.
+  ipcMain.handle('launcher:createContextCapture', async (_event, raw: unknown): Promise<LauncherCreateCaptureResult> => {
+    const context = launcherContext;
+    if (!context) return { ok: false };
+    const payload = (raw ?? {}) as { note?: unknown; intent?: unknown };
+    const note = typeof payload.note === 'string' ? payload.note : undefined;
+    // Validate against the known set — an out-of-enum string must not be persisted
+    // into the durable CaptureNodeMetadata (the renderer is across the seam).
+    const intent = isCaptureIntent(payload.intent) ? payload.intent : undefined;
+    try {
+      const now = new Date();
+      const ensured = await documentService.handle('ensure_date_node', {
+        year: now.getFullYear(),
+        month: now.getMonth() + 1,
+        day: now.getDate(),
+      }) as CommandOutcome;
+      const captureId = `cap:${randomUUID()}`;
+      // Basic-info capture: the node carries title + URL + author only. Rich page
+      // content (body/selection/transcript) is not extracted today — it returns
+      // with the unified browser extension/CDP backend
+      // (docs/plans/browser-extension-integration.md).
+      const input = buildContextCaptureInput({
+        context,
+        destinationParentId: ensured.projection.todayId,
+        captureId,
+        note,
+        intent,
+      });
+      const outcome = await documentService.handle('create_capture', { input }) as CommandOutcome;
+      if (!app.isPackaged) {
+        console.log('[launcher] capture saved', { nodeId: outcome.focus?.nodeId ?? null });
+      }
+      return { ok: true, nodeId: outcome.focus?.nodeId };
+    } catch (error) {
+      console.error('[launcher] createContextCapture failed', error);
+      return { ok: false };
+    }
+  });
+  // Inline node search: the launcher input queries the document directly (no
+  // "Search notes" command). Read-only; main enriches hits with node text.
+  ipcMain.handle('launcher:searchNodes', async (_event, raw: unknown): Promise<LauncherNodeMatch[]> => {
+    try {
+      return await searchLauncherNodes(typeof raw === 'string' ? raw : '');
+    } catch (error) {
+      console.error('[launcher] searchNodes failed', error);
+      return [];
+    }
+  });
+  // Open a node search result: bring up the main window and navigate to it.
+  ipcMain.handle('launcher:openNode', (_event, raw: unknown): void => {
+    if (typeof raw !== 'string' || !raw) return;
+    navigateMainToNode(raw);
+    dismissLauncher();
+  });
   // Appearance preference. Setting nativeTheme.themeSource rewrites
   // prefers-color-scheme in every renderer, so the @media rules in theme-dark.css
   // flip all windows at once — no per-window broadcast needed. We mirror the stored
@@ -1497,9 +1803,30 @@ if (!app.requestSingleInstanceLock()) {
     configureSessionSecurity();
     registerIpc();
     createWindow();
+    // Prewarm the hidden launcher window and bind the global toggle hotkey.
+    createLauncherWindow({
+      preloadPath: join(__dirname, '../preload/index.cjs'),
+      devUrl: RENDERER_DEV_ORIGIN ? `${RENDERER_DEV_ORIGIN}/launcher.html` : null,
+      packagedHtmlPath: join(__dirname, '../renderer/launcher.html'),
+      harden: hardenWebContents,
+      onBlurHide: dismissLauncher,
+    });
+    // Tenon is a regular foreground app (dock icon + menu bar). Creating the
+    // launcher as a non-activating NSPanel, plus launching the dev binary straight
+    // from the terminal (not via LaunchServices), can leave the app in macOS
+    // "accessory" activation policy (background-only → no dock icon). Re-assert the
+    // regular policy after the launcher exists so the dock icon is always present;
+    // this does NOT affect the launcher panel's per-window non-activating behavior.
+    if (process.platform === 'darwin') void app.dock?.show();
+    const hotkey = registerLauncherHotkey(() => void toggleLauncher());
+    launcherHotkeyAccelerator = hotkey.accelerator;
+    if (hotkey.accelerator) console.log(`[launcher] global hotkey: ${hotkey.accelerator}`);
+    else console.warn(`[launcher] no global hotkey registered; tried: ${hotkey.attempted.join(', ')}`);
     Menu.setApplicationMenu(buildApplicationMenu());
+    // The prewarmed launcher window is always present (hidden), so check for the
+    // main window specifically rather than "no windows at all".
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+      if (!mainWindow) createWindow();
     });
   }).catch((error) => {
     console.error(error);
@@ -1509,6 +1836,9 @@ if (!app.requestSingleInstanceLock()) {
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
   });
+
+  // Release the global hotkey(s) on quit so we never leave a dangling binding.
+  app.on('will-quit', () => unregisterLauncherHotkeys());
 
   app.on('before-quit', (event) => {
     if (quitAfterFlush) return;

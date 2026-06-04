@@ -96,6 +96,7 @@ import {
   type ViewFieldRef,
   type ViewMode,
 } from './types';
+import type { CaptureFieldDef, CreateCaptureInput } from './launcher/sources';
 
 type Mutator = () => FocusHint | undefined;
 type FocusOptions = Omit<FocusHint, 'nodeId' | 'selectAll'> & { selectAll?: boolean };
@@ -237,6 +238,24 @@ export class Core {
     const state = this.loro.materializeState();
     const todayId = this.currentTodayNodeId();
     return assembleProjection(state.workspaceId, state.rootId, todayId, this.projectionOrder, this.projectionNodes);
+  }
+
+  /**
+   * Project specific nodes by id from the incremental cache — O(ids), skipping the
+   * whole-document `materializeState` + `assembleProjection` that `projection()`
+   * runs. For the launcher's per-keystroke inline search, which only needs the few
+   * hit nodes (+ a parent lookup) and would otherwise rebuild + map the full doc on
+   * every keystroke. Missing ids are skipped; order follows the input. (The cache
+   * reflects committed state; not for use mid-transaction.)
+   */
+  projectionNodesByIds(ids: Iterable<string>): NodeProjection[] {
+    this.ensureProjectionCache();
+    const out: NodeProjection[] = [];
+    for (const id of ids) {
+      const node = this.projectionNodes.get(id);
+      if (node) out.push(node);
+    }
+    return out;
   }
 
   // The revision changes only when a mutation actually alters the document, so
@@ -503,6 +522,84 @@ export class Core {
       }
       return lastCreatedId ? focus(lastCreatedId, { parentId, placement: { kind: 'end' } }) : undefined;
     });
+  }
+
+  /**
+   * Create one capture: a root content node carrying the typed `capture`
+   * sidecar plus its bounded visible children, in a single transaction so undo
+   * removes the whole capture atomically. The launcher builds metadata in the
+   * main process; this method only persists it. The sidecar is provenance-only
+   * (source identity, origin, status, warnings) — capture stores no page body.
+   */
+  createCapture(input: CreateCaptureInput): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      ensureParentMutable(state, input.destinationParentId);
+      const id = freshId('node');
+      this.loro.createNodeWithId(id, input.destinationParentId, input.index ?? null, undefined, (node) => {
+        node.content = clone(input.title);
+        if (input.description !== undefined) node.description = input.description;
+        // A plain manual note supplies no metadata → no capture sidecar.
+        if (input.metadata) node.capture = clone(input.metadata);
+      });
+      this.applyChildTagsDirect(input.destinationParentId, id);
+      // Project the capture into native outline shape: a tag (most specific kind,
+      // rolling up to #capture) + fields (Source::, Author::, …). This is what
+      // makes a capture an ordinary, filterable/searchable outline node rather
+      // than bespoke-rendered data (see docs/plans/lazy-like-global-launcher.md).
+      if (input.tag) {
+        const tagId = this.ensureCaptureTagDirect(input.tag, input.tagExtends);
+        this.applyTagNoHistoryDirect(id, tagId);
+      }
+      for (const field of input.fields ?? []) {
+        this.createCaptureFieldDirect(id, field.field, field.value);
+      }
+      for (const child of input.children ?? []) this.insertNodeTreeDirect(id, child);
+      return focus(id, { parentId: input.destinationParentId, placement: { kind: 'end' } });
+    });
+  }
+
+  // Reuse a tag definition by name (creating it under the schema if absent), and
+  // wire `extends` to the given supertag (e.g. #article extends #capture) so
+  // capture-type tags roll up to a single #capture collection. Idempotent: repeated
+  // captures never duplicate defs.
+  //
+  // CRITICAL — only set `extends` on a tag WE just created. A user may already own a
+  // same-named personal tag (e.g. their own #video); silently re-parenting it under
+  // #capture would pull every node tagged with it into the capture rollup, and undo
+  // wouldn't restore the hierarchy. Reusing an existing tag's name is reversible
+  // (undo the capture removes the tag application); corrupting its hierarchy is not.
+  // So a pre-existing tag is reused as-is and its config is left untouched.
+  private ensureCaptureTagDirect(name: string, extendsName?: string): string {
+    const existing = findTagByName(this.snapshot(), name);
+    const tagId = existing ?? this.createTagDefDirect(name);
+    if (!existing && extendsName) {
+      const superId = findTagByName(this.snapshot(), extendsName) ?? this.createTagDefDirect(extendsName);
+      if (superId !== tagId) {
+        this.setConfigValueDirect(tagId, { kind: 'ref', configKey: 'extends', targetId: superId });
+      }
+    }
+    return tagId;
+  }
+
+  // Attach a capture field: ensure its (stable-id) definition exists, then add one
+  // field entry holding the value as an ordinary content child.
+  private createCaptureFieldDirect(ownerId: string, field: CaptureFieldDef, value: string): void {
+    this.ensureSeededFieldDefDirect(field);
+    const entryId = this.insertFieldEntryNodeDirect(ownerId, null, field.id);
+    this.insertNodeTreeDirect(entryId, { content: plainText(value), children: [] });
+  }
+
+  // Seed a capture field def at its stable id with the registry name + type, but
+  // only if absent — an existing def (seeded earlier, or since renamed/retyped by
+  // the user) is left untouched. Identity is the id, never the name, so this is
+  // stable across renames and never duplicates a def.
+  private ensureSeededFieldDefDirect(field: CaptureFieldDef): void {
+    if (this.loro.hasNode(field.id)) return;
+    this.loro.createNodeWithId(field.id, SCHEMA_ID, undefined, 'fieldDef', (node) => {
+      node.content = plainText(field.name);
+    });
+    this.setConfigValueDirect(field.id, { kind: 'enum', configKey: 'fieldType', value: field.type });
   }
 
   pasteNodesIntoNode(

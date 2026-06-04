@@ -592,11 +592,20 @@ Rules:
 | --- | --- | --- |
 | Chrome material | sidebar rail, agent rail | Translucent rail material (`--material-sidebar`) over OS vibrancy. |
 | Elevated overlay | menus, popovers (`MenuSurface`) | Higher-opacity material (`--material-popover`) + level-1 shadow. Floats over content; not the same sheet as the rails. |
-| Opaque elevated | dialogs, command palette | Opaque `--bg-elevated` + level-2 shadow. Never translucent — these own the user's focus. |
+| Opaque elevated | dialogs, in-app command palette | Opaque `--bg-elevated` + level-2 shadow. Never translucent — these own the user's focus over busy in-app content. |
+| System launcher | the global capture launcher (its own window) | Vibrant Spotlight/Raycast glass: OS `vibrancy` (`hud`) under a **transparent** CSS surface; functional fills + alpha-on-ink separators tint the glass, no second `backdrop-filter`. Native window shadow + custom 16px corner. Opaque `--bg-elevated` fallback under reduced-transparency / increased-contrast. |
 
-So `MenuSurface` uses `--material-popover`; a `Dialog`/command palette uses
+So `MenuSurface` uses `--material-popover`; a `Dialog`/in-app command palette uses
 `--bg-elevated`. Never glass-on-glass: an overlay opened over a rail steps up to
 the elevated-overlay tier rather than stacking another rail material.
+
+**The global launcher is the deliberate exception to the opaque-palette rule.**
+As a *system* overlay summoned over other apps and the desktop (the Spotlight /
+Raycast idiom), it IS vibrant glass, not the in-app opaque command palette. The
+distinction is the backdrop: an in-app palette floats over our own busy content
+(opaque, to own focus); the system launcher floats over the OS, where glass is
+the native expectation. A `⌘K` menu opened inside it steps up to the opaque
+elevated tier (`--bg-elevated` + level-1 shadow) — not a second sheet of glass.
 
 **Reduced transparency fallback.** Honor `prefers-reduced-transparency` (the user
 turned on macOS "Reduce transparency"): all materials collapse to their opaque
@@ -624,6 +633,7 @@ Vibrancy mapping (the window itself uses `sidebar` vibrancy, set in `main.ts`):
 | Agent rail | `sidebar` | Sidebar | `--material-sidebar` |
 | Menus / popovers | `popover` | Menu / Popover | `--material-popover` |
 | Transient HUD / peek | `hud` | HUDWindow | `--bg-elevated` |
+| Global launcher window | `hud` | HUDWindow | transparent (functional fills tint the glass) |
 
 There is no separate full-width toolbar material: the top strip is the window's
 drag region; over the content base it is transparent, over a rail it is the

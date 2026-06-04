@@ -1,0 +1,326 @@
+/*
+ * Launcher window styles. Built on the shared design tokens (tokens.css +
+ * theme-dark.css, imported by the launcher entry) so color, type, spacing,
+ * radius, and elevation all match the app and invert with the OS theme for free
+ * (alpha-on-ink — no dark @media block here).
+ *
+ * The launcher is the Spotlight/Raycast-style liquid-glass system overlay: the
+ * surface is transparent so the window's OS vibrancy (hud) shows through, with a
+ * hairline edge (alpha-on-ink → a light glass edge in dark, a quiet border in
+ * light). Results are ONE flat list of uniform rows (no section headers), each a
+ * leading glyph · title · subtitle · right-aligned type label (B-system: neutral
+ * fills B3, one rose accent reserved). Reduce-Transparency collapses the glass to
+ * an opaque elevated surface (B8).
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  font-family: var(--font-family-sans);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* Chrome text is not user-selectable (B10) — re-enabled on the input below. */
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+.launcher {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  /* Transparent so the window's OS vibrancy (hud) shows through — the liquid-glass
+   * system overlay. Functional fills/separators (alpha-on-ink) tint the glass. */
+  background: transparent;
+  color: var(--text);
+  /* A hairline glass edge that follows the native window corner: alpha-on-ink so
+   * it reads as a light catch in dark mode and a quiet border in light. (Border,
+   * not box-shadow — the token guard requires box-shadow be a token.) */
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-xl);
+  /* Uniform perimeter inset on all four sides — the same design language as the
+   * main window's floating rails (--layout-gap). Inner highlights inset by this
+   * use radius (--radius-xl − --launcher-inset) so their corners stay concentric
+   * with the window corner ("圆角对圆心"). */
+  --launcher-inset: var(--layout-gap);
+}
+
+/* Reduce Transparency / Increase Contrast: collapse the glass to an opaque
+ * elevated surface (the OS also drops vibrancy here). Legibility never depends on
+ * the blur (B8 / Materials → reduced-transparency fallback). */
+@media (prefers-contrast: more), (prefers-reduced-transparency: reduce) {
+  .launcher {
+    background: var(--bg-elevated);
+  }
+}
+
+/* Input row: a leading glyph + the always-focused query field. Horizontal inset
+ * aligns the glyph with the row glyphs (perimeter inset + row content padding).
+ * Vertical padding is EQUAL top and bottom (Raycast-balanced): the input sits in
+ * its own roomy header zone, separated from the list by whitespace alone — no
+ * divider/fill (B-clean). */
+.launcher-inputrow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-8) calc(var(--launcher-inset) + var(--space-3));
+}
+
+.launcher-input-icon {
+  flex-shrink: 0;
+  color: var(--muted-2);
+}
+
+.launcher-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  padding: 0;
+  font-size: var(--font-heading-lg);
+  line-height: var(--line-heading-lg);
+  /* The one selectable surface — it is the user's text, not chrome. */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.launcher-input::placeholder {
+  color: var(--muted-2);
+}
+
+/* Capture-degraded remediation hint (Lazy's "noJXA" equivalent): a quiet, NEUTRAL
+ * banner — not a status color (B4), the launcher stays restrained. Inset by the
+ * perimeter and concentric like a row, so it reads as part of the same surface. */
+.launcher-remediation {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin: 0 var(--launcher-inset) var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: calc(var(--radius-xl) - var(--launcher-inset));
+  background: var(--fill-1);
+}
+
+.launcher-remediation-icon {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.launcher-remediation-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.launcher-remediation-title {
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.launcher-remediation-detail {
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  color: var(--text-secondary);
+}
+
+/* No divider under the input — the input row's bottom whitespace separates them
+ * (cleaner, Raycast-like). The body flex-stretches to fill the fixed golden window
+ * and scrolls when the list is long, so the footer always sits pinned at the bottom. */
+.launcher-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+
+/* Inner wrapper carries the list's horizontal inset (the uniform perimeter);
+ * rows pad their content inward from there. */
+.launcher-body-inner {
+  padding: 0 var(--launcher-inset);
+}
+
+/* One flat list of uniform rows (no section headers) — every result reads as the
+ * same Raycast-style command row: glyph · title · subtitle · right-aligned type. */
+.launcher-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  /* Concentric with the window corner: inset by --launcher-inset, so radius =
+   * window radius (--radius-xl) − that inset. Equals --radius-md today. */
+  border-radius: calc(var(--radius-xl) - var(--launcher-inset));
+  cursor: default;
+}
+
+.launcher-row.is-active {
+  /* Keyboard/pointer selection = the neutral selection fill (B3), not hover. */
+  background: var(--selection-bg);
+}
+
+.launcher-row-icon {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+/* A node search result without its own icon: the outliner bullet (a small neutral
+ * disc), sized to the same 16px slot as a Lucide glyph so titles stay aligned. */
+.launcher-row-bullet {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.launcher-row-bullet::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--text-tertiary);
+}
+
+/* A node's own emoji icon, in the same 16px slot. */
+.launcher-row-emoji {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  font-size: var(--font-ui-sm);
+  line-height: 1;
+}
+
+.launcher-row.is-active .launcher-row-icon {
+  color: var(--text);
+}
+
+.launcher-row-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--font-ui-md);
+  line-height: var(--line-ui-md);
+  color: var(--text);
+}
+
+.launcher-row-subtitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  color: var(--text-secondary);
+}
+
+/* Right-aligned category label (Command / Node) — the Raycast "type" column.
+ * margin-left:auto pins it right even when a row has no subtitle. */
+.launcher-row-type {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-left: var(--space-3);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  color: var(--text-tertiary);
+}
+
+.launcher-empty {
+  padding: var(--space-8);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  color: var(--text-secondary);
+}
+
+/* Persistent footer: every keyboard hint lives in ONE cluster on the right — the
+ * primary action (what Enter does) and the ⌘K menu, each label-then-key. No
+ * divider or fill — whitespace alone separates it (cleaner, Raycast-like). The
+ * footer gets the SAME roomy invisible box as the input header so the launcher is
+ * balanced top↔bottom: --space-6 container padding + the item's own --space-2
+ * padding nets ≈ --space-8 from the button text to the window edge, mirroring the
+ * input row's --space-8 top inset. */
+.launcher-actionbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-5);
+  padding: var(--space-6) var(--launcher-inset);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  color: var(--text-secondary);
+}
+
+.launcher-actionbar-hints {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+/* The hints double as buttons (Raycast): click runs Enter / opens the ⌘K menu.
+ * Real <button>s with a reset; hover/focus get a subtle NEUTRAL fill (B3), no hand
+ * cursor (B10, not a link). Keyboard focus shows the neutral ring (B8). */
+.launcher-actionbar-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  white-space: nowrap;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  cursor: default;
+  transition: background var(--motion-fast), color var(--motion-fast);
+}
+
+button.launcher-actionbar-item:hover:not(:disabled) {
+  background: var(--fill-2);
+}
+
+button.launcher-actionbar-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-shadow);
+}
+
+button.launcher-actionbar-item:disabled {
+  color: var(--text-tertiary);
+}
+
+button.launcher-actionbar-item:disabled .launcher-kbd {
+  color: var(--text-tertiary);
+}
+
+.launcher-actionbar-primary {
+  min-width: 0;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.launcher-kbd {
+  display: inline-flex;
+  min-width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--fill-1);
+  color: var(--text-secondary);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+  font-weight: 500;
+}

@@ -53,6 +53,7 @@ For agent work:
 | `agent-subagent-runtime-plan.md` | Same-session Agent/subagent runtime, cc-2.1 alignment, non-goals, tools, implementation status, and tests. | Changing subagents, fork/fresh agent runs, background subagents, sidechain transcripts, or skill `context: fork`. |
 | `agent-tool-design.md` | Public agent tool protocol and tool behavior contracts. | Adding or changing agent tools. |
 | `agent-tool-permissions.md` | The runtime allow/ask/deny permission policy: action kinds, platform hard blocks, the bash classifier, ask resolution, sensitive-data redlines, the global store, and events. | Changing how tool calls are allowed/asked/denied, hard blocks, the classifier, or the permission store. |
+| `launcher.md` | The global launcher: prewarmed window + NSPanel, hotkey, A3 security posture, the modeless capture/search model, basic-info capture + providers, inline node search, and the `launcher:*` IPC surface. | Changing the launcher window, capture, node search, or its commands/IPC. |
 
 ## Supporting Documents
 

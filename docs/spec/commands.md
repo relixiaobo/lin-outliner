@@ -22,9 +22,19 @@ The renderer calls them through `window.lin.invoke(...)` via
 ### Document — tree and editing
 `init_workspace`, `get_projection`, `create_node`, `create_rich_text_node`,
 `create_tagged_node`, `create_tag_and_tagged_node`, `create_nodes_from_tree`,
-`paste_nodes_into_node`, `split_node`, `apply_node_text_patch`,
+`create_capture`, `paste_nodes_into_node`, `split_node`, `apply_node_text_patch`,
 `update_node_description`, `merge_node_into`, `move_node`, `indent_node`,
 `outdent_node`.
+
+`create_capture` atomically creates one launcher-capture node: a plain node
+carrying a hidden, typed `capture` provenance sidecar (`CaptureNodeMetadata` on
+`NodeBase.capture`) plus the source projected into native outline shape — a
+capture-kind tag (rolling up to `#capture`) and typed fields (URL / Author /
+Published) — in a single transaction so undo/redo stays coherent. The sidecar is
+system-owned JSON, hidden from outline rendering and default full-text search; the
+outline projection is the readable/searchable surface. The launcher invokes this
+through the `launcher:*` main-process IPC (not the renderer command client) so the
+renderer can't supply the source metadata. See [`launcher.md`](launcher.md).
 
 ### Document — batch operations on a row selection
 `batch_trash_nodes`, `batch_indent_nodes`, `batch_outdent_nodes`,

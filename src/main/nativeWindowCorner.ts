@@ -1,7 +1,5 @@
-import { app, type BrowserWindow } from 'electron';
-import { existsSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { join } from 'node:path';
+import { type BrowserWindow } from 'electron';
+import { loadOptionalMacAddon } from './nativeAddon';
 
 // Loader for the optional macOS `window_corner` native addon. It sets a custom
 // NSWindow corner radius (see native/window-corner/src/window_corner.mm) while
@@ -19,32 +17,14 @@ interface WindowCornerAddon {
 // undefined = not yet attempted; null = attempted and unavailable.
 let cached: WindowCornerAddon | null | undefined;
 
-function candidatePaths(): string[] {
-  if (app.isPackaged) {
-    // electron-builder copies the .node into Resources/native/ (see the
-    // `extraResources` entry in package.json's build config).
-    return [join(process.resourcesPath, 'native', 'window_corner.node')];
-  }
-  // Dev/build-from-source: __dirname is <repo>/out/main, so the compiled addon
-  // sits two levels up under native/window-corner/build/Release/.
-  return [join(__dirname, '../../native/window-corner/build/Release/window_corner.node')];
-}
-
 function loadAddon(): WindowCornerAddon | null {
   if (cached !== undefined) return cached;
-  cached = null;
-  if (process.platform !== 'darwin') return cached;
-  try {
-    const found = candidatePaths().find((path) => existsSync(path));
-    if (!found) return cached;
-    const requireAddon = createRequire(import.meta.url);
-    const mod = requireAddon(found) as WindowCornerAddon;
-    if (typeof mod?.setWindowCornerRadius === 'function') {
-      cached = mod;
-    }
-  } catch {
-    cached = null;
-  }
+  cached = loadOptionalMacAddon<WindowCornerAddon>({
+    fileName: 'window_corner.node',
+    devSubdir: 'window-corner',
+    validate: (mod): mod is WindowCornerAddon =>
+      typeof (mod as WindowCornerAddon)?.setWindowCornerRadius === 'function',
+  });
   return cached;
 }
 
