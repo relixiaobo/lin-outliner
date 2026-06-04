@@ -18,7 +18,7 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 | Agent | Clone | Active branch | Current task |
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
-| Claude Code | `lin-outliner-cc/` | (starting) | agent-oauth-providers (P2) |
+| Claude Code | `lin-outliner-cc/` | — | idle |
 | Claude Code 2 | `lin-outliner-cc-2/` | (Phase 0 spike) | lazy-like-global-launcher (P0) |
 | Codex | `lin-outliner-codex/` | — | idle |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -35,14 +35,6 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
   `electron.vite.config.ts`, preload) — coordinate the merge window. Foundation
   `outliner-local-file-references` landed (PR #80). See
   `docs/plans/lazy-like-global-launcher.md`.
-- **agent-oauth-providers** (P2, cc) — OAuth sign-in (Anthropic Pro/Max, GitHub
-  Copilot, OpenAI Codex) + managed-credential providers (Bedrock AWS, Vertex
-  ADC): real credential resolution via pi-ai's OAuth flows, Electron-main login
-  over IPC, credential storage, view-model `authKind`, sign-in / connected /
-  sign-out UI. The cosmetic auth-class fix already shipped (PR #37); this makes
-  those providers actually authenticate. Security-sensitive (credential storage)
-  — open: keychain vs `agent-secrets.json`, loopback port under packaged app. See
-  `docs/plans/agent-oauth-providers.md`.
 
 ## Backlog
 
@@ -143,6 +135,20 @@ Ordered by priority; lower items may depend on higher ones.
   while the tool arguments stream. See `docs/plans/agent-generative-ui.md`.
 
 ## Recently completed
+
+- **agent-oauth-providers** (cc, PRs #92–#96) — real sign-in for the non-key auth classes
+  (Anthropic Pro/Max, GitHub Copilot, OpenAI Codex) plus correct classification of managed
+  providers (Bedrock, Vertex). Stack: #93 protocol surface (`agent_oauth_*` + `OAuthLoginEvent`
+  / `ProviderAuthView`); #94 single credential resolver + `safeStorage`-encrypted store
+  (serialized per-path writes, unreadable-blob overwrite guard); #95 main-process login
+  orchestration + IPC (config row on first sign-in, cancel on window close/re-target, scoped
+  event routing); #96 interactive sign-in UI (loopback + device-code, reply steps, connected /
+  sign-out). Plan-track, security-sensitive; review-gate findings (store data-loss races,
+  orphaned-credential blocker, window-lifecycle leaks, renderer subscription/respond) fixed
+  before merge. typecheck clean, core 477/2 (2 pre-existing rg fails), renderer 282/0, e2e
+  agent-oauth 6/6; visual-verified light + dark. Design folded into
+  `agent-pi-mono-implementation.md` (A6); plan archived
+  (`docs/plans/archive/agent-oauth-providers.md`).
 
 - **unify-mention-language** (cc, PR #89) — one inline-mention language across outliner,
   composer, and agent message: node ref = plain accent text (no icon), file/dir/image ref =

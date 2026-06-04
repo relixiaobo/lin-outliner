@@ -12,6 +12,30 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent OAuth & managed-credential providers (PRs #92–#96)** — implements
+  `agent-oauth-providers.md`. Providers that authenticate with a sign-in rather than a
+  pasteable key (Anthropic Pro/Max, GitHub Copilot, OpenAI Codex) now have a real
+  interactive sign-in flow, and managed providers (Amazon Bedrock, Google Vertex) are
+  classified and surfaced correctly instead of showing a misleading key field. **#93** lands
+  the protocol surface (`agent_oauth_*` commands + `OAuthLoginEvent` / `ProviderAuthView`
+  types). **#94** adds the single credential resolver and a `safeStorage`-encrypted secret
+  store: per-path write serialization (no lost cross-provider updates), unique atomic-write
+  temp names, and a guard that refuses to overwrite an unreadable encrypted blob so a
+  transiently-locked keychain never becomes permanent credential loss. **#95** is the
+  main-process login orchestration + IPC — pure callback-bridging/cancellation with the
+  composition root split out, a provider config row created on first sign-in (no orphaned
+  credential), in-flight sign-ins cancelled on window close/re-target, and events routed to
+  the initiating window. **#96** is the interactive sign-in UI (loopback + device-code, reply
+  steps, connected / expiry / sign-out), token-only theming (B1–B4), verified light + dark.
+  Review-gate findings across the stack (store data-loss races, orphaned-credential blocker,
+  window-lifecycle leaks, renderer subscription/respond bugs) were fixed before merge. Design
+  folded into `agent-pi-mono-implementation.md` (A6); plan archived.
+  ([#92](https://github.com/relixiaobo/lin-outliner/pull/92),
+  [#93](https://github.com/relixiaobo/lin-outliner/pull/93),
+  [#94](https://github.com/relixiaobo/lin-outliner/pull/94),
+  [#95](https://github.com/relixiaobo/lin-outliner/pull/95),
+  [#96](https://github.com/relixiaobo/lin-outliner/pull/96))
+
 - **Agent composer attachment path model (PR #86)** — implements
   `agent-composer-attachment-path-model.md`. Composer attachments are now **path-first**:
   pathless files are staged under the agent's local root and every attachment carries a
