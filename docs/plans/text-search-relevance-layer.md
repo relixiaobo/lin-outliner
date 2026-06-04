@@ -23,6 +23,10 @@ canonical search-node syntax and structured query semantics, but replaces the
 current all-node substring scoring with a small derived text index and
 field-aware relevance scoring.
 
+PM decision: v1 is one integrated implementation, not a split kernel-only PR
+followed by a separate `node_search` wiring PR. The design must therefore make
+the edit -> search loop fast enough in the same release.
+
 Requirements:
 
 - **Accurate:** exact, prefix, phrase, multi-term, CJK, title, description, tag,
@@ -50,6 +54,9 @@ Requirements:
   exact/prefix/context heuristics are interaction-specific and should stay light.
 - No local file content search. File attachment search currently uses file names
   and Spotlight/fallback path search.
+- No split between the core relevance kernel and `node_search` integration in
+  v1. Reviewability is handled by a small kernel API, focused tests, and a
+  narrow integration surface, not by staging the feature across PRs.
 
 ## Current State
 
@@ -91,6 +98,60 @@ Tenon should borrow the relevance model and rebuildable-index discipline, but
 not Lens's storage shape. Tenon's source of truth is the document state and
 agent event log, not Markdown files.
 
+## Local Research Findings
+
+Codex ran two local spikes on 2026-06-04. The scripts live under
+`tmp/research/` and are intentionally not part of this plan PR.
+
+### Tokenizer parity
+
+`Intl.Segmenter(undefined, { granularity: "word" })` was tested under:
+
+- Bun 1.3.12,
+- Node 24.4.1,
+- Electron 42.0.1 (`Chrome 148.0.7778.97`, Node 24.15.0).
+
+Findings:
+
+- CJK examples (`成都天气`, `今日开放任务`, Japanese, Korean) segmented
+  consistently across all three runtimes in this sample.
+- Mixed Latin/CJK (`AI-agent 搜索性能`) segmented consistently.
+- Punctuation-heavy Latin diverged: Bun/Node treated `baz.qux` as one token in
+  `foo_bar-baz.qux`, while Electron split it into `baz` and `qux`.
+
+Conclusion: `Intl.Segmenter` is suitable as a helper, but the product index
+must own normalization and fallback tokenization. Tests must assert the final
+indexed tokens, not merely the raw `Intl.Segmenter` output.
+
+### Performance spike
+
+A throwaway pure-JS inverted index was tested against synthetic records with
+title, description, tag, field name, field value, and body text. It maintained
+postings and corpus stats incrementally (`upsert` / `remove`) and compared
+against a naive all-record substring scan.
+
+Median timings:
+
+| Corpus | Runtime | Cold rebuild | Indexed query | Naive query | Single-node upsert | Edit -> query | Tag rename fan-out |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 10k | Bun | ~225 ms | ~0.3-3.9 ms | ~20-25 ms | ~0.016 ms | ~0.29 ms | 200 nodes ~5.4 ms |
+| 10k | Node | ~211 ms | ~0.3-2.1 ms | ~25-28 ms | ~0.020 ms | ~0.28 ms | 200 nodes ~4.8 ms |
+| 50k | Bun | ~1.5 s | ~6-37 ms | ~96-163 ms | ~0.039 ms | ~6.9 ms | 1000 nodes ~33 ms |
+| 50k | Node | ~1.2 s | ~4.7-16 ms | ~108-163 ms | ~0.024 ms | ~4.7 ms | 1000 nodes ~35 ms |
+
+Conclusion:
+
+- Rebuilding on every `Core.revision()` change is not viable. It is already
+  hundreds of milliseconds at 10k and over a second at 50k.
+- Incremental maintenance is viable. Single-node edits are effectively free
+  relative to search latency, and edit -> search stays well under the 10k target.
+- Definition fan-out is the real steady-state expensive case. Tag/field renames
+  need explicit dependency maps and measurement, not hidden full rebuilds.
+- Very broad high-frequency queries can still be expensive at larger corpus
+  sizes. v1 should score exact candidate sets for correctness, but the benchmark
+  must include broad-query cases so future WAND/top-k optimization can be
+  justified with data rather than guessed.
+
 ## Design
 
 ### 1. Add a pure text relevance kernel
@@ -131,6 +192,21 @@ The module owns:
 - snippet extraction.
 
 It does not import Electron, React, `Core`, renderer state, or agent-tool code.
+
+The index supports both full rebuild and incremental maintenance:
+
+```ts
+export interface MutableTextSearchIndex extends TextSearchIndex {
+  upsert(record: TextSearchRecord): void;
+  remove(id: string): void;
+  rebuild(records: Iterable<TextSearchRecord>): void;
+}
+```
+
+`upsert` removes the old postings for one record, re-tokenizes that record, and
+updates document-frequency counters and field-length totals by delta. Corpus
+statistics (`recordCount`, per-token `df`, per-field average length) are running
+counters, not recomputed from all records after every edit.
 
 ### 2. Tokenization and normalization
 
@@ -219,16 +295,62 @@ Execution model:
 This gives performance wins for the common text-dominant case while keeping
 complex search semantics correct and easy to review.
 
-### 6. Cache indexes at the right boundary
+### 6. Maintain indexes incrementally at the right boundary
 
-Do not persist a node text index in v1.
+Do not persist a node text index in v1, but also do not rebuild it solely
+because `Core.revision()` changed. `revision()` bumps after every applied
+mutation, which is exactly the path users hit before searching. A cache keyed
+only by `revision()` would be cold in the normal edit -> search loop.
 
-- In main process, `DocumentService` can keep a `TextSearchIndexCache` keyed by
-  `Core.revision()`.
-- In renderer, a future global search UI can memoize against projection identity
-  or the existing render-revision machinery.
-- For tests and pure core callers, building an index from a `DocumentState` or
+Use a long-lived mutable index plus revision deltas:
+
+- On workspace load, build the index once from the current projection.
+- After ordinary mutations and transactions, consume the changed node ids that
+  `Core` already computes as `affectedNodeIds` for commit/projection-cache
+  patching. For each changed id:
+  - if the node still exists and is searchable, `upsert(record)`;
+  - if the node was deleted, trashed, became non-searchable, or moved under
+    Trash, `remove(id)`;
+  - if a changed node is a tag/field definition, also update dependent records
+    whose indexed tag names, field names, or option labels changed.
+- After undo/redo or any whole-tree rewrite that invalidates the projection
+  cache, rebuild the index once from projection.
+- Keep `Core.revision()` as a staleness assertion and debug guard, not as the
+  primary cache key.
+- For tests and pure core callers, full rebuild from `DocumentState` or
   `DocumentProjection` remains a pure function.
+
+Maintain dependency maps next to the live index:
+
+- `tagDefId -> nodeIds` for nodes whose indexed tag labels depend on that tag.
+- `fieldDefId -> nodeIds` for nodes whose indexed field names/values depend on
+  that field definition.
+- `nodeId -> dependency ids` so `upsert` can remove old dependency edges before
+  adding new ones.
+
+When a changed id is a tag or field definition, fan out through those maps and
+`upsert` each dependent record. This keeps the common case O(changed nodes) and
+makes schema-rename costs explicit and measurable.
+
+Implementation shape:
+
+- Add a small non-protocol Core surface such as `lastChangedNodeIds()` /
+  `lastChangeRequiresFullSearchRebuild()` or a returned mutation metadata object.
+  This does not touch `src/core/types.ts`, `src/core/commands.ts`, or IPC
+  contracts.
+- `DocumentService` owns the live mutable index. It updates the index inside the
+  mutation queue after a successful mutation, before emitting projection-change
+  events.
+- The kernel stays pure and rebuildable; the service layer owns lifecycle and
+  cache invalidation.
+
+Recommended v1 scheme:
+
+1. Full rebuild on workspace load and undo/redo/full-rewrite invalidations.
+2. Incremental `upsert`/`remove` for ordinary node mutations.
+3. Dependency-map fan-out for tag/field definition changes.
+4. Exact candidate-set scoring for correctness, with benchmark data captured for
+   broad-query cases before adding more complex top-k algorithms.
 
 If measurement later shows cold builds are too slow, add a rebuildable persisted
 index as a separate infrastructure plan.
@@ -263,10 +385,12 @@ Do not mix similarity search into normal `STRING_MATCH` ranking.
 Expected v1 implementation files:
 
 - `src/core/textSearchIndex.ts` - new relevance kernel.
+- `src/core/core.ts` - expose a small read-only revision-delta signal for the
+  service layer, reusing the existing `affectedNodeIds` path.
 - `src/core/searchEngine.ts` - optional text index integration for
   `STRING_MATCH`.
 - `src/main/documentService.ts` - main-process index cache keyed by
-  `Core.revision()` for search-node refresh and agent tool execution.
+  incremental Core deltas for search-node refresh and agent tool execution.
 - `src/main/agentNodeTools.ts` / `src/main/agentNodeToolSearch.ts` - pass the
   cached text index into `runSearchExpr` without changing tool contracts.
 - `src/main/agentNodeToolProjection.ts` - remove duplicated text scoring or
@@ -307,14 +431,30 @@ Add a benchmark-style core test or script with synthetic nodes:
 - 10k nodes with title, description, tags, and fields.
 - Mixed English and CJK data.
 - Queries covering exact, prefix, phrase, AND, OR fallback, and CJK.
+- Representative edits: one title edit, one body/description edit, one tag-name
+  edit affecting tagged nodes, one field-name edit affecting field-bearing
+  nodes, one delete/trash, and one undo/redo full-rebuild case.
 
 Targets for a local dev Mac:
 
-- Warm text query under 20 ms for common positive `STRING_MATCH` searches.
+- Warm text query under 20 ms for common positive `STRING_MATCH` searches after
+  a representative single-node edit.
+- The edit -> index-update -> search path for a single changed node should be
+  O(changed nodes), not O(total nodes), excluding the explicit undo/redo
+  full-rebuild case.
 - No all-node scoring for positive text-only or positive text `AND` searches.
-- Cold index build measured and reported; if it is above an acceptable UI
-  threshold, cache by `Core.revision()` before wiring renderer/global search.
+- Cold full-index build measured and reported separately from the steady-state
+  edit -> search path.
+- Tag/field definition edits report dependent-record update cost separately, so
+  broad schema renames are visible rather than hidden in average latency.
+- Broad high-frequency queries are measured separately from selective queries.
+  If a 10k broad query misses the 20 ms target, the PR must either optimize the
+  scorer or explicitly document why that query class needs a later WAND/top-k
+  path.
 - Memory usage reported for the synthetic corpus before considering persistence.
+- `Intl.Segmenter` tokenization behavior verified under both `bun test` and the
+  Electron runtime. If they diverge, the regex/n-gram fallback must produce the
+  same indexed terms for the covered CJK and Latin fixtures.
 
 These are targets, not claims. The PR must report measured numbers.
 
@@ -326,19 +466,28 @@ These are targets, not claims. The PR must report measured numbers.
   substring verification is required.
 - **Complex query pruning:** candidate pruning must never drop valid results for
   `OR` or `NOT`. Keep pruning conservative and evaluator-backed.
-- **Cache staleness:** main-process cache must be keyed by `Core.revision()`.
+- **Cache staleness:** `Core.revision()` must be used only as a
+  staleness/debug guard; steady-state updates must consume changed-node deltas.
   Renderer cache must be keyed by projection identity or render-revision data.
+- **Delta completeness:** tag and field definition edits can change the indexed
+  text of many dependent records. The dependency map must make those fan-outs
+  explicit instead of silently leaving stale postings.
+- **Runtime tokenizer drift:** `Intl.Segmenter` is not used elsewhere in the repo
+  today. Tests must cover Bun and Electron behavior before relying on it for CJK
+  correctness.
 - **Scope creep:** past chats and related-node suggestions should be follow-ups
   unless the core kernel lands cleanly.
 
 ## Collision Self-check
 
-Checked on 2026-06-04:
+Checked on 2026-06-04 after the review-comment update:
 
-- `gh pr list --state open`: no open PRs.
+- `gh pr list --state open`: #98 (`plan/agent-import-skill`) touches only
+  `docs/plans/agent-import-skill.md`; #99 is this plan. No file overlap.
 - `docs/TASKS.md`: only `lazy-like-global-launcher` is in progress. It may touch
-  agent runtime/tool infrastructure, so this plan avoids protocol changes and
-  dependency changes in v1.
+  agent runtime/tool infrastructure. This plan avoids protocol/dependency
+  changes in v1 and must coordinate with that work so this kernel is the shared
+  search foundation for launcher search surfaces, not a parallel ranking system.
 - Intended v1 files avoid the infrastructure-ownership files
   `package.json`, `bun.lock`, `src/core/types.ts`, and `src/core/commands.ts`.
 
@@ -347,7 +496,8 @@ No active file-scope conflict found.
 ## Open Questions
 
 - Should node-search v1 include past-chats ranking, or should past chats be the
-  first follow-up after the kernel lands? Recommendation: follow-up.
+  first follow-up after the integrated kernel + `node_search` v1 lands?
+  Recommendation: follow-up.
 - Should prefix matching be broad for all fields, or only title/tag/field-name?
   Recommendation: broad prefix for title/tag/field-name, exact term/phrase for
   long body-like text.
@@ -358,16 +508,23 @@ No active file-scope conflict found.
 ## Implementation Checklist
 
 - [ ] Add `textSearchIndex.ts` with normalization, tokenization, postings,
-      BM25 scoring, verification, and snippets.
+      BM25 scoring, incremental `upsert`/`remove`, verification, and snippets.
 - [ ] Add unit tests for English, CJK, phrase, AND/OR fallback, field weights,
       exact/prefix boosts, and deterministic ties.
+- [ ] Add Bun and Electron tokenizer parity coverage for `Intl.Segmenter` and
+      fallback tokenization.
+- [ ] Expose Core changed-node/full-rebuild deltas without changing protocol
+      files.
+- [ ] Add `DocumentService` live-index maintenance: cold rebuild on load/full
+      rewrite, incremental updates on ordinary mutations.
 - [ ] Integrate optional text index into `runSearchExpr`.
 - [ ] Keep all structured search tests passing unchanged except intentional
       ordering assertions.
-- [ ] Add `DocumentService` cache keyed by `Core.revision()`.
 - [ ] Route agent `node_search` through the cached index.
 - [ ] Remove or centralize duplicated scoring in `agentNodeToolProjection.ts`.
-- [ ] Add benchmark/probe results to the PR body.
+- [ ] Add benchmark/probe results to the PR body, including edit -> search.
+- [ ] Confirm with the `lazy-like-global-launcher` owner that launcher search
+      will reuse this kernel rather than building a parallel search ranking.
 - [ ] Update `docs/spec/search-query-grammar.md` or
       `docs/spec/agent-tool-design.md` only if implementation behavior changes
       the intended semantics; otherwise keep the protocol docs unchanged.
