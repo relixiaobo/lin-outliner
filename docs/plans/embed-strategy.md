@@ -65,12 +65,13 @@ some users expect.
 
 **Option B**, deferred. The plan here exists to keep the decision visible,
 not to schedule it. Build only after `asset-subsystem.md` and
-`image-rendering.md` have landed.
+`image-rendering.md` have landed (both shipped, PR #8).
 
-If Option B is not started within two months of this plan being written
-(2026-05-25 → ~2026-07-25), switch to Option C: remove the schema fields
-during the next data-model cleanup so we stop carrying dead state. The
-asset subsystem stays useful regardless.
+This is an open decision with **no deadline** — decide on demand (build Option B,
+or fall back to Option C and remove the dead `embedType`/`embedId` fields in a
+future data-model cleanup). The earlier self-imposed "~2026-07-25 auto-switch to
+Option C" trigger was removed by PM decision (2026-06-04); the asset subsystem
+stays useful regardless of which path we pick.
 
 ## Non-goals
 
