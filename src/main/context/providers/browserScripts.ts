@@ -83,14 +83,27 @@ export function isYouTubeWatchUrl(url: string | undefined): boolean {
 /** Separator used to return two AppleScript values in one line (quote/backslash-free). */
 export const TAB_FIELD_SEPARATOR = ' <<|LIN|>> ';
 
+/**
+ * Escape a value for embedding in an AppleScript double-quoted string literal.
+ * Only `\` and `"` are special inside an AppleScript string. Callers pass the app
+ * name into `tell application "…"`, which today is always an allow-listed browser
+ * name (see `detectBrowserFamily`) — but escape rather than trust the allow-list,
+ * so a future caller widening the input can't break out of the literal and inject
+ * script (defense-by-escaping, not defense-by-allow-list).
+ */
+function escapeAppleScriptString(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 /** AppleScript to read the active tab's URL + title without injecting JS. */
 export function activeTabScript(family: BrowserFamily, appName: string): string {
+  const app = escapeAppleScriptString(appName);
   if (family === 'safari') {
-    return `tell application "${appName}"\n`
+    return `tell application "${app}"\n`
       + `return (URL of front document) & "${TAB_FIELD_SEPARATOR}" & (name of front document)\n`
       + 'end tell';
   }
-  return `tell application "${appName}"\n`
+  return `tell application "${app}"\n`
     + `return (URL of active tab of front window) & "${TAB_FIELD_SEPARATOR}" & (title of active tab of front window)\n`
     + 'end tell';
 }
