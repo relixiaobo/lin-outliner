@@ -13,6 +13,7 @@ import type { NodeId } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
 import { OUTLINER_NODE_DRAG_MIME, resolveOutlinerDropMove } from '../interactions/dragDrop';
 import { flattenVisibleRows } from '../../state/document';
+import { buildSelectableRows } from '../../state/selectableRows';
 import { resolveDropHoverPosition, type DropHoverPosition } from '../interactions/dropPosition';
 import {
   resolveRowPointerSelectAction,
@@ -37,6 +38,7 @@ interface UseOutlinerRowInteractionOptions {
   childParentId?: NodeId;
   panelId: string;
   rootId: NodeId;
+  selectionRootId: NodeId;
   depth: number;
   childIds: NodeId[];
   index: DocumentIndex;
@@ -63,6 +65,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     childParentId = rowId,
     panelId,
     rootId,
+    selectionRootId,
     depth,
     childIds,
     index,
@@ -220,6 +223,9 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
   const selectFromPointer = useCallback((event: MouseEvent<HTMLDivElement>) => {
     const liveUi = uiRef.current;
     const target = event.target as HTMLElement;
+    const nearestRowWrap = target.closest<HTMLElement>('[data-node-id][data-parent-id]');
+    if (nearestRowWrap?.dataset.nodeId && nearestRowWrap.dataset.nodeId !== rowId) return;
+    if (target.closest('[data-inline-ref], .inline-ref') && !event.shiftKey) return;
     if (target.closest('button')) return;
     if (shouldPreserveSelectedRowContextClick({
       button: event.button,
@@ -252,9 +258,12 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
-    const rows = flattenVisibleRows(rootId, byId, liveUi.expanded, liveUi.expandedHiddenFields);
+    const rows = buildSelectableRows(selectionRootId, byId, {
+      expanded: liveUi.expanded,
+      expandedHiddenFields: liveUi.expandedHiddenFields,
+    }).map((row) => row.id);
     const selectionMeta: Pick<UiState, 'selectionRootId' | 'selectionSource'> = {
-      selectionRootId: rootId,
+      selectionRootId,
       selectionSource: 'global',
     };
     let appliedSelection: {
@@ -308,7 +317,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     });
 
     setUi(applySelection);
-  }, [byId, rootId, rowId, setUi, uiRef]);
+  }, [byId, rowId, selectionRootId, setUi, uiRef]);
 
   const onDragStart = useCallback((event: DragEvent<HTMLElement>) => {
     event.dataTransfer.effectAllowed = 'move';

@@ -12,6 +12,7 @@ import { CheckboxFieldControl } from './CheckboxFieldControl';
 interface FieldValueOutlinerProps {
   panelId: string;
   entryId: NodeId;
+  selectionRootId: NodeId;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   index: DocumentIndex;
   ui: UiState;
@@ -123,6 +124,7 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
           panelId={props.panelId}
           parentId={props.entryId}
           rootId={props.entryId}
+          selectionRootId={props.selectionRootId}
           onRoot={props.onRoot}
           depth={0}
           index={props.index}

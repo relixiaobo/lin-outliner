@@ -79,13 +79,17 @@ export function navigationTarget(
   return rows[from + (direction === 'down' ? 1 : -1)] ?? null;
 }
 
-export function selectedRootIds(ids: NodeId[], byId: Map<NodeId, NodeProjection>): NodeId[] {
+export function selectedRootIds(
+  ids: NodeId[],
+  byId: Map<NodeId, NodeProjection>,
+  parentIdForRow: (id: NodeId) => NodeId | null | undefined = (id) => byId.get(id)?.parentId,
+): NodeId[] {
   const selected = new Set(ids);
   return ids.filter((id) => {
-    let parentId = byId.get(id)?.parentId;
+    let parentId = parentIdForRow(id);
     while (parentId) {
       if (selected.has(parentId)) return false;
-      parentId = byId.get(parentId)?.parentId;
+      parentId = parentIdForRow(parentId);
     }
     return true;
   });
@@ -108,7 +112,7 @@ export function serializeSelectedRows(
   return selectedRows
     .map((id) => {
       const depth = selectedAncestorDepth(id, selected, byId);
-      return `${'  '.repeat(depth)}- ${rowClipboardLabel(id, byId)}`;
+      return `${'  '.repeat(depth)}- ${rowClipboardLabel(id, byId, selected)}`;
     })
     .join('\n');
 }
@@ -127,11 +131,18 @@ function selectedAncestorDepth(
   return depth;
 }
 
-function rowClipboardLabel(nodeId: NodeId, byId: Map<NodeId, NodeProjection>): string {
+function rowClipboardLabel(
+  nodeId: NodeId,
+  byId: Map<NodeId, NodeProjection>,
+  selectedIds: ReadonlySet<NodeId>,
+): string {
   const node = byId.get(nodeId);
   if (!node) return nodeId;
   if (node.type === 'fieldEntry') {
     const fieldName = node.fieldDefId ? byId.get(node.fieldDefId)?.content.text : undefined;
+    if (node.children.some((childId) => selectedIds.has(childId))) {
+      return `>${fieldName || 'Field'}`;
+    }
     const values = node.children
       .map((childId) => byId.get(childId)?.content.text)
       .filter((text): text is string => Boolean(text));

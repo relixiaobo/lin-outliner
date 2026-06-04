@@ -272,6 +272,10 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
 
   const openPanel = useCallback((nodeId: NodeId | null = rootId) => {
     if (!nodeId) return;
+    const keepActive = (panelId: string) => {
+      setActivePanelId(panelId);
+      window.requestAnimationFrame(() => setActivePanelId(panelId));
+    };
     if (panels.length >= MAX_PERSISTED_PANELS) {
       // At the cap, repurpose an existing outliner pane (rightmost first) so a
       // debug session is never silently dropped — symmetric with how
@@ -279,13 +283,13 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
       // pane only if somehow none is an outliner.
       const replacePanel = [...panels].reverse().find(isOutlinerPanel) ?? panels.at(-1);
       if (!replacePanel) return;
-      setActivePanelId(replacePanel.id);
+      keepActive(replacePanel.id);
       setPanels((prev) => prev.map((panel) => (
         panel.id === replacePanel.id ? outlinerPanel(panel.id, nodeId, panel.size) : panel
       )));
     } else {
       const panelId = nextId('panel');
-      setActivePanelId(panelId);
+      keepActive(panelId);
       setPanels((prev) => [...prev, outlinerPanel(panelId, nodeId)]);
     }
     focusNode(nodeId);

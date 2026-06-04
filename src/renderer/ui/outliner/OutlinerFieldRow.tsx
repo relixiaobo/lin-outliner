@@ -61,6 +61,7 @@ interface OutlinerFieldRowProps {
   entryId: NodeId;
   parentId: NodeId;
   rootId: NodeId;
+  selectionRootId: NodeId;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   depth: number;
   index: DocumentIndex;
@@ -113,6 +114,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     parentId: props.parentId,
     panelId: props.panelId,
     rootId: props.rootId,
+    selectionRootId: props.selectionRootId,
     depth: props.depth,
     childIds: rowChildIds,
     index: props.index,
@@ -240,7 +242,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       selectedId: props.entryId,
       selectedIds: new Set([props.entryId]),
       selectionAnchorId: props.entryId,
-      selectionRootId: props.rootId,
+      selectionRootId: props.selectionRootId,
       selectionSource: 'global',
     }));
   };
@@ -399,7 +401,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       selectedId: props.entryId,
       selectedIds: prev.selectedIds.has(props.entryId) ? new Set(prev.selectedIds) : new Set([props.entryId]),
       selectionAnchorId: prev.selectedIds.has(props.entryId) ? prev.selectionAnchorId ?? props.entryId : props.entryId,
-      selectionRootId: props.rootId,
+      selectionRootId: props.selectionRootId,
       selectionSource: 'global',
     }));
     setContextMenu({ x: event.clientX, y: event.clientY });
@@ -461,6 +463,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
         entryId={props.entryId}
         ownerId={props.parentId}
         systemFieldId={systemFieldId}
+        selectionRootId={props.selectionRootId}
         onRoot={props.onRoot}
         index={props.index}
         ui={props.ui}
@@ -485,6 +488,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       <FieldValueOutliner
         panelId={props.panelId}
         entryId={props.entryId}
+        selectionRootId={props.selectionRootId}
         onRoot={props.onRoot}
         index={props.index}
         ui={props.ui}

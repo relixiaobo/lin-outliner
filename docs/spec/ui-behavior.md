@@ -35,6 +35,10 @@ keyboard or pointer change should be checked against this matrix.
 
 - `focusedId` means the row is in edit mode.
 - `selectedId` and `selectedIds` mean row selection mode.
+- `selectionRootId` is the panel-level selection scope. Field values still render
+  inside a nested value-column `OutlinerView`, but their selection root is the
+  outer panel root so a single range can span body rows, field entries, and field
+  value rows.
 - `expanded` controls visible children and trailing child inputs.
 - `focusOffset` preserves cursor position across remounting structural moves.
 
@@ -151,6 +155,13 @@ computed.
 
 ## Selection Mode Matrix
 
+Selection scope is panel-level, not value-column-local. Field value rows render
+inside the field row's value column, but stored value rows participate in
+Shift/Cmd selection, drag selection, `Mod+A`, clipboard, and batch actions in the
+same panel-level selectable order as ordinary rows. Visual editing navigation
+continues to use the body/reference visible row order, so value rows do not become
+implicit previous/next body rows for text editing commands.
+
 | Interaction | Expected behavior |
 | --- | --- |
 | Click row body | Select row. |
@@ -159,8 +170,9 @@ computed.
 | `Enter` on selected row | Enter edit mode. |
 | Printable key on selected row | Append that character and enter edit mode. |
 | `Shift+ArrowUp/Down` | Extend visible row selection. |
-| `Tab` / `Shift+Tab` | Batch indent/outdent selected root rows and preserve selection anchor. |
-| `Backspace` / `Delete` | Trash selected root rows. |
+| `Mod+A` | Select every selectable row in the current panel scope, including stored field value rows. |
+| `Tab` / `Shift+Tab` | Batch indent/outdent selected root rows and preserve selection anchor. Field value rows are excluded from structural indent/outdent because they may not leave their owning field entry. |
+| `Backspace` / `Delete` | Remove selected root rows by selectable-row policy: ordinary rows trash normally, stored field value rows route through `remove_field_value`, and synthetic `sysref:*` rows no-op. A single ref-clicked ordinary reference deletes the reference row itself; a ref-clicked reference field value still routes through field-value removal. |
 
 ## Leading Control Matrix
 

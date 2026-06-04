@@ -114,6 +114,7 @@ interface OutlinerFlatViewProps {
   panelId: string;
   parentId: NodeId;
   rootId: NodeId;
+  selectionRootId?: NodeId;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   index: DocumentIndex;
   ui: UiState;
@@ -186,6 +187,7 @@ function FlatRowShell({
 export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   const { index, ui } = props;
   const byId = index.byId;
+  const selectionRootId = props.selectionRootId ?? props.rootId;
   const draftIdFor = useFlatDraftIds(byId);
 
   const trailingFocusedParentId = ui.focusSurface === 'trailing' && ui.focusedPanelId === props.panelId
@@ -436,6 +438,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
             entryId={row.nodeId}
             parentId={row.parentId}
             rootId={props.rootId}
+            selectionRootId={selectionRootId}
             onRoot={props.onRoot}
             depth={row.depth}
             index={index}
@@ -458,6 +461,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
             nodeId={row.nodeId}
             parentId={row.parentId}
             rootId={props.rootId}
+            selectionRootId={selectionRootId}
             onRoot={props.onRoot}
             depth={row.depth}
             index={index}
