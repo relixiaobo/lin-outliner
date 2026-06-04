@@ -893,6 +893,8 @@ commandPalette: {
     removeAriaLabel: ({ label }) => `移除 ${label} 标签`,
     removeTitle: '移除标签',
     openAriaLabel: ({ label }) => `打开 ${label} 标签`,
+    everythingTagged: ({ label }) => `带 #${label} 标签的全部内容`,
+    configureTag: '配置标签',
   },
   search: {
     builder: {

@@ -973,6 +973,10 @@ commandPalette: {
     removeAriaLabel: ({ label }: { label: string }) => `Remove ${label} tag`,
     removeTitle: 'Remove tag',
     openAriaLabel: ({ label }: { label: string }) => `Open ${label} tag`,
+    // The tag context menu (right-click a tag badge). `#${label}` keeps the tag
+    // name verbatim.
+    everythingTagged: ({ label }: { label: string }) => `Everything tagged #${label}`,
+    configureTag: 'Configure tag',
   },
   // The search-node query UI: the summary bar (read-only chips) and the inline
   // query builder, plus the chip vocabulary for each query operator.

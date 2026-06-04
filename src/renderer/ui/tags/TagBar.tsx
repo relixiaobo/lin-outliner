@@ -7,6 +7,7 @@ import { isNodeInTrash } from '../interactions/nodeLocation';
 import { CloseIcon, ICON_SIZE, SearchIcon, SettingsIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { overlayAnchorFromPoint, useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { useT } from '../../i18n/I18nProvider';
 import type { CommandRunner } from '../shared';
 import { textOf } from '../shared';
 import { AppliedTag } from './AppliedTag';
@@ -29,6 +30,7 @@ interface TagBadgeProps {
 }
 
 function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
+  const t = useT();
   const color = resolveTagColor(tag, index.byId);
   const label = textOf(tag);
   const trashed = isNodeInTrash(index, tag.id);
@@ -117,7 +119,7 @@ function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
             }}
           >
             <CloseIcon size={ICON_SIZE.menu} />
-            Remove tag
+            {t.tags.removeTitle}
           </ButtonControl>
           <ButtonControl
             className="tag-context-item"
@@ -127,7 +129,7 @@ function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
             }}
           >
             <SearchIcon size={ICON_SIZE.menu} />
-            Everything tagged #{label}
+            {t.tags.everythingTagged({ label })}
           </ButtonControl>
           <div className="tag-context-separator" />
           <ButtonControl
@@ -138,7 +140,7 @@ function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
             }}
           >
             <SettingsIcon size={ICON_SIZE.menu} />
-            Configure tag
+            {t.tags.configureTag}
           </ButtonControl>
         </div>,
         document.body,
