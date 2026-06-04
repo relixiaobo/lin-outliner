@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 priority: medium
 owner: relixiaobo
 created: 2026-06-04
@@ -7,6 +7,12 @@ updated: 2026-06-04
 ---
 
 # Paste: nodex parity
+
+> **Shipped.** Composer multi-line paste in #112; outliner format + `#tag` /
+> `field::` metadata parity in #113. The behavioral contract is folded into
+> [`../../spec/ui-behavior.md`](../../spec/ui-behavior.md) (Paste And Clipboard
+> Conversion Matrix); this plan is kept as history. Plain paste `Cmd+Shift+V`
+> (Design section C) was not in scope for #112/#113 and remains a follow-up.
 
 Bring clipboard paste up to nodex's level on two surfaces the PM flagged:
 the agent composer (multi-line) and the outliner (format conversion depth).

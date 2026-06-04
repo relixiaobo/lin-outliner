@@ -180,6 +180,14 @@ capture-pipeline tracks below stay separate (orthogonal to the surface).
 
 ## Recently completed
 
+- **paste-nodex-parity / outliner** (cc, PR #113) — clipboard paste to nodex parity: `<br>`-split
+  into rows, wider list markers, Google-Docs unwrap, Markdown-over-flat-HTML routing (but trust real
+  `<ul>/<ol>/<li>`), GFM `- [x]`/`- [ ]` checkbox rows (no silent check on merge into a non-empty
+  row), and `#tag` / `field:: value` harvest with core find-or-create. Protocol: `CreateNodeTree`
+  gains `PasteRowMeta` (`tags`/`fields`/`checkbox`/`done`); `paste_nodes_into_node` carries
+  `firstMeta`. Review: 6 findings fixed + e2e de-flaked (48 runs green); typecheck + pasteParser
+  19/19 + core 78/78. Plan `done` → `archive/`; behavior folded into `spec/ui-behavior.md`.
+
 - **composer-multiline-paste** (cc, PR #112) — multi-line paste into the agent composer no longer
   drops everything after the first line; the single-paragraph schema now keeps each line as a
   `hardBreak`. Shared `linesToInlineNodes` helper unifies paste + `editorStateFromText` (fixes a

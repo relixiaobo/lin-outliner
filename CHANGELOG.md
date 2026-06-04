@@ -12,6 +12,24 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Outliner paste: nodex parity — `<br>` split, format routing, GFM checkboxes, `#tag` / `field::` (PR #113)** —
+  brings clipboard paste up to nodex parity (`paste-nodex-parity.md`). `<br>`-separated HTML blocks
+  (Gmail / Apple Notes / contenteditable) split into one row per line; list markers widened
+  (`+`, `1)`, bullets `•◦▪‣·●`); Google-Docs inline wrappers unwrapped. GFM task lists `- [x]`/`- [ ]`
+  become checkbox rows via a `completedAt` sentinel (`undefined` none / `0` unchecked / timestamp
+  checked) — merging a task line into an existing **non-empty** row never silently checks it (only an
+  empty target adopts the state). `#tag` and `name:: value` are harvested from Markdown/plain lines
+  and materialized by core (find-or-create, auto-create unknowns; `options` fields smart-select);
+  conservative guards keep code/URLs intact, and link/`code` spans are masked so
+  `See [the #section](url)` keeps its label. Markdown-over-flat-HTML routing prefers the faithful
+  `text/plain` outline when the HTML is lossy flat `<div>`, but trusts real `<ul>/<ol>/<li>` so a
+  rich web-list keeps its marks. Protocol: `CreateNodeTree` gains `tags`/`fields`/`checkbox`/`done`
+  (via `PasteRowMeta`); `paste_nodes_into_node` carries `firstMeta` for the merged row. Gate: review
+  (6 findings fixed: link/code-safe harvest, non-empty-row checkbox suppression, list routing,
+  empty-value-child reuse, comment/`firstMeta` cleanup; e2e de-flaked — 48 runs green) + `typecheck`
+  + `pasteParser.test.ts` 19/19 + `core.test.ts` 78/78. Spec folded into `ui-behavior.md` (A6).
+  ([#113](https://github.com/relixiaobo/lin-outliner/pull/113))
+
 - **Search retrieval stack: shared analyzer + unified node/past-chat retrieval (PR #111)** —
   implements `search-retrieval-stack.md` Phases 1–4 in one PR (PM-ratified single-PR scope).
   Extracts the text-search primitives (normalization, query analysis, CJK + Latin tokenization,

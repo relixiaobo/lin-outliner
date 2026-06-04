@@ -174,6 +174,32 @@ implicit previous/next body rows for text editing commands.
 | `Tab` / `Shift+Tab` | Batch indent/outdent selected root rows and preserve selection anchor. Field value rows are excluded from structural indent/outdent because they may not leave their owning field entry. |
 | `Backspace` / `Delete` | Remove selected root rows by selectable-row policy: ordinary rows trash normally, stored field value rows route through `remove_field_value`, and synthetic `sysref:*` rows no-op. A single ref-clicked ordinary reference deletes the reference row itself; a ref-clicked reference field value still routes through field-value removal. |
 
+## Paste And Clipboard Conversion Matrix
+
+Paste is structure-aware: the parser (`pasteParser.ts`) converts the most
+faithful clipboard representation into rows. When the clipboard carries both
+`text/html` and a `text/plain` fallback, the plain-text Markdown parser wins only
+when the HTML is the lossy side — flat `<div>`/`<p>`-per-line (the editor-copy
+shape that whitespace-folds indentation and keeps literal `- `/`[x]` markers).
+Genuine `<ul>/<ol>/<li>` HTML is trusted so a rich web-list keeps both its
+hierarchy and its inline marks. The first pasted block merges into the target
+row; the rest become siblings/children. Behavior parity target is nodex
+(`html-to-nodes.ts` / `applyParsedPasteMetadata`).
+
+| Interaction | Expected behavior |
+| --- | --- |
+| Paste multi-line plain text | One row per line. In the agent composer (single-paragraph schema) the lines are kept as `hardBreak`s within the row. |
+| `<br>` inside an HTML block | Split the block's inline run at each `<br>` into sibling rows, not a single space-joined row. |
+| List markers `- * +`, `1.` / `1)`, bullets `• ◦ ▪ ‣ · ●` | Stripped from the start of a line; nesting from indentation is preserved. |
+| Fenced ```` ``` ```` / `~~~` block | Becomes a code-block row with detected language. |
+| Inline Markdown (`**bold**`, `*italic*`, `~~strike~~`, `[label](url)`) | Converted to the corresponding marks. |
+| Single-line bare URL with a text selection | Wraps the selection as a link. |
+| GFM task line `- [ ]` / `- [x]` | Becomes a checkbox row (`completedAt` sentinel: `undefined` none, `0` unchecked, timestamp checked). Merging a task line into an existing **non-empty** row never flips it to checked — only a genuinely empty target row adopts the pasted checkbox state. |
+| `#tag` on a Markdown/plain line | Harvested and applied; unknown tags are auto-created (find-or-create), reusing same-named defs. Guard: `(^\|\s)#[A-Za-z][\w-]*`. |
+| `name:: value` on a Markdown/plain line | Harvested as a field; unknown fields auto-created as `plain`, existing `options` fields smart-select the option. Guard: a double colon **followed by whitespace** (`name:: value`), so `std::cout`, `http://…`, `foo::bar` never match. |
+| `#tag` / `name::` inside a link label, URL, or `` `code` `` span | Left literal — link/code spans are masked out of the metadata scan (so `See [the #section](url)` keeps its label). |
+| Metadata on the HTML paste path | Not harvested — `#tag` / `field::` extraction is scoped to the plain-text / Markdown path; HTML pastes still convert structure. |
+
 ## Leading Control Matrix
 
 | Interaction | Expected behavior |
