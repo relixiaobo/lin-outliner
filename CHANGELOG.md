@@ -534,6 +534,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Perf P0: stop per-token agent index rewrites + drop pretty-print write amplification (PR #117)** —
+  first quick-win of the performance-optimization program (`performance-optimization.md`, #116).
+  `AgentEventStore.appendEvents` rewrote both `session-index.json` and `search-index.json` (read +
+  parse + serialize + atomic write of the **whole** file) on every `assistant_message.delta`, i.e.
+  per streamed token batch, scaling O(all messages ever). Delta-only batches now skip the index
+  rewrite — content-preserving, since the indexes derive assistant text from
+  `assistant_message.completed` and a delta only nudges cosmetic `latestSeq`/`updatedAt` (self-healed
+  by the events that follow); `events.jsonl` is still appended per delta (source of truth). Separately,
+  `JSON.stringify(_, null, 2)` was dropped from the Loro document snapshot and the two agent index
+  writes (~half the bytes per write); readers use `JSON.parse`, so existing on-disk files still load
+  (no migration). Human-edited config/permission/debug writes keep pretty-printing. Gate: verified
+  content-preserving (index fields are write-only; mixed batches still index) + typecheck + renderer
+  330/0 + agent event-store/large-session/past-chats suites green.
+  ([#117](https://github.com/relixiaobo/lin-outliner/pull/117))
+
 - **Settings panes unified onto one design language (PRs #105 + #106)** — implements
   `settings-design-consistency.md`. The Settings window no longer reads as two visual
   generations. **#105 (WI-1, conformance):** danger hover → neutral `--control-hover` (B3);

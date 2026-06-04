@@ -191,7 +191,30 @@ capture-pipeline tracks below stay separate (orthogonal to the surface).
   (compute once in the memoized `resultParts`); (3) give `visiblePastChatsResult`
   a named return type instead of `unknown`. None affect behavior.
 
+### Performance
+
+- **performance-optimization** (P0–P3 program, PR #116) — prioritized catalog from a
+  three-way perf audit (`docs/plans/performance-optimization.md`). **P0 shipped** (#117).
+  **Next: P1 — incremental projection delta** over the `core↔renderer` seam (the keystone:
+  today every mutation ships the full projection and the renderer re-derives the change set
+  via a whole-document `JSON.stringify` + full `byId`/reverse-edge rebuild, all O(N) per
+  keystroke, though core already computes `changedNodeIds`). P1 touches the
+  infrastructure-ownership files `src/core/types.ts` + `projection.ts` → **must land
+  interface-first** per AGENTS.md, then core emit, then renderer ingest. P2 (default
+  windowed outliner; agent streaming delta) and P3 (localized O(N) cleanups; several
+  retired by P1) follow. Establish a `measureRenderIndex` baseline before P1.
+
 ## Recently completed
+
+- **perf-p0-write-amplification** (cc, PR #117) — P0 of the performance program: skip the
+  agent session/search index whole-file rewrite for delta-only batches (was rewriting both
+  indexes per streamed token, O(all messages ever)); drop `JSON.stringify(_, null, 2)` from
+  the Loro snapshot + both agent indexes (~half the bytes/write, no migration — readers use
+  `JSON.parse`). Content-preserving (index fields are write-only; mixed batches still index;
+  `events.jsonl` stays the per-delta source of truth). Gate: verified content-preserving +
+  typecheck + renderer 330/0 + agent event-store/large-session/past-chats suites green.
+
+
 
 - **i18n-multi-language** (cc-2, PR #110) — shipped English + 简体中文 on a typed message layer
   (`Messages = typeof en`, `t.group.key`, `DeepPartial` locales + English `deepMerge` fallback).

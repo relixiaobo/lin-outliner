@@ -1,5 +1,5 @@
 ---
-status: draft
+status: in-progress
 priority: P0
 owner: relixiaobo
 created: 2026-06-04
@@ -91,9 +91,9 @@ collapses at once, instead of being optimized one memo at a time.
 
 Both are surgical, no behavior change, no protocol change. P0-1 is the fastest-firing offender in the codebase; P0-2 roughly halves the bytes written on every save.
 
-> **Status:** implemented in PR #117 (`cc/perf-p0-write-amplification`) — P0-1 skips
-> the index rewrite for delta-only batches; P0-2 drops `null, 2` from the doc
-> snapshot + both agent indexes. Pending the merge gate.
+> **Status: shipped** in PR #117 (`cc/perf-p0-write-amplification`, merged `d29f110`) —
+> P0-1 skips the index rewrite for delta-only batches; P0-2 drops `null, 2` from the doc
+> snapshot + both agent indexes.
 
 ---
 
@@ -333,8 +333,8 @@ now — recorded so they are not "lost"):
 
 ## Checklist
 
-- [ ] P0-1 agent index update at message boundaries (or debounced)
-- [ ] P0-2 drop `null, 2` from doc snapshot + agent index writes
+- [x] P0-1 agent index update at message boundaries (or debounced) — shipped #117
+- [x] P0-2 drop `null, 2` from doc snapshot + agent index writes — shipped #117
 - [ ] P1 delta projection envelope (interface-only PR) → core emit → renderer ingest; delete whole-doc signature pass; incrementalize reverse edges
 - [ ] P2-1 default flat/virtual outliner after parity verify (light/dark)
 - [ ] P2-2 agent streaming delta + transcript row memo + tail-markdown throttle + rAF auto-scroll
