@@ -12,6 +12,27 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Modeless global launcher + basic-info capture (PR #103)** — first slice of
+  `lazy-like-global-launcher.md`. A prewarmed, always-focused global-hotkey launcher window
+  (Raycast-style flat list: glyph · title · subtitle · right-aligned type label) whose single
+  input is command filter + live node search + capture draft at once. Inline node search resolves
+  `search_nodes` hits in main and opens the picked node in the main window
+  (`navigateRoot + focusNode`); **Capture to Today** saves the active page/video/note with the
+  typed text as the capture's comment. New protocol surface: a `create_capture` command and a
+  provenance-only `NodeBase.capture` sidecar (`src/core/{commands,types}.ts`). The launcher
+  renderer and offscreen capture stay A3-locked down (contextIsolation/sandbox, no preload on
+  remote content, popups denied, navigation fenced to `^https?://`), source-guarded by
+  `launcherSecurity.test.ts`; capture source metadata is main-authoritative (the renderer supplies
+  only an optional note/intent, intent allow-list-validated). External context is read via a
+  read-only AX native addon (`native/browser-tab`) with an `osascript` front-tab fallback. Capture
+  nodes flow through the normal mutate path, so they are indexed by the #102 search layer.
+  Unsupported features ship **removed, not greyed-out** (no coming-soon placeholders); deferred
+  work is split into `launcher-ai-actions.md`, `launcher-capture-destinations.md`,
+  `launcher-provider-expansion.md`, and `browser-extension-integration.md`. Gate: high code review
+  (9 findings fixed), dedicated A3 security review, rebase/integration review, and light+dark
+  visual verification — all green; spec `docs/spec/launcher.md` added (A6).
+  ([#103](https://github.com/relixiaobo/lin-outliner/pull/103))
+
 - **Text-search relevance layer (PR #102)** — implements `text-search-relevance-layer.md`.
   A shared in-memory text-search kernel (`src/core/textSearchIndex.ts`) — inverted postings,
   field-aware BM25, exact/prefix/phrase boosts, and CJK + Latin trigram candidate generation

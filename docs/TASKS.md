@@ -25,19 +25,20 @@ design lives in `docs/plans/<topic>.md` (terminal plans in
 
 ## In progress
 
-- **lazy-like-global-launcher** (P0, cc-2) — Lazy-level global capture launcher
-  (global hotkey, prewarmed window, external app/browser context capture,
-  context-aware commands, clip/read-later, AI commands, destination picker,
-  permissions). PM-ratified: one internally-phased PR, gated on a **Phase 0
-  feasibility spike** (unsigned-packaging `osascript` + in-page JS + Automation
-  TCC-persistence-across-relaunch); GO/NO-GO to PM before Phase 1. The build PR
-  will touch infra-ownership files (`src/core/types.ts`, `src/core/commands.ts`,
-  `electron.vite.config.ts`, preload) — coordinate the merge window. Foundation
-  `outliner-local-file-references` landed (PR #80). See
-  `docs/plans/lazy-like-global-launcher.md`.
+_(nothing actively in flight)_
 
 
 ## Backlog
+
+- **launcher follow-ups** (P1, cc-2) — deferred slices of the now-shipped
+  `lazy-like-global-launcher` (first slice landed in PR #103). Split into
+  `launcher-capture-destinations.md` (Save to Inbox, destination picker, Go to
+  Today/Library, recent destinations, the ⌘K secondary-action mechanism),
+  `launcher-ai-actions.md` (Ask AI / Ask AI with source),
+  `launcher-provider-expansion.md` (remaining web/native content providers +
+  preview/local-file), and `browser-extension-integration.md` (rich extraction
+  via the extension path). `launcher-capture-resolvers.md` is **superseded** (the
+  payload-to-file / deferred-enrichment mechanism was removed in #103).
 
 Ordered by priority; lower items may depend on higher ones.
 
@@ -138,6 +139,19 @@ Ordered by priority; lower items may depend on higher ones.
   while the tool arguments stream. See `docs/plans/agent-generative-ui.md`.
 
 ## Recently completed
+
+- **lazy-like-global-launcher (first slice)** (cc-2, PR #103) — modeless global-hotkey
+  launcher + basic-info capture. Prewarmed Raycast-style window: one input = command filter +
+  live node search + capture draft; inline `search_nodes` opens the node in the main window;
+  **Capture to Today** (page/video/note) with the typed text as the comment. New protocol
+  surface (`create_capture` command + provenance-only `NodeBase.capture` sidecar), A3-locked
+  launcher/capture webContents (guard-tested), main-authoritative capture metadata, read-only AX
+  native addon (`native/browser-tab`) with `osascript` fallback. Capture nodes are indexed by the
+  #102 search layer. Gate: high code review (9 findings fixed + verified intact post-rebase),
+  dedicated A3 security review (SECURE — 3 non-blocking nits), integration review, light+dark
+  visual verification — all green. Spec `docs/spec/launcher.md` added (A6). The plan stays
+  `in-progress`; follow-ups are in Backlog (see "launcher follow-ups").
+  ([#103](https://github.com/relixiaobo/lin-outliner/pull/103))
 
 - **text-search-relevance-layer** (codex, PR #102) — implements
   `text-search-relevance-layer.md`. A shared in-memory text-search kernel
