@@ -21,8 +21,9 @@ This plan records the **design decisions ratified by the PM** (a co-design pass,
 2026-06-04, grounded in a product survey of launchers, PKM/outliner apps, and AI
 products — see "Research basis"). It is the *what + how direction*. The
 **implementation one-pager** (phase sequencing, file scope, tests) is left for a
-dev agent to draft when the work is scheduled (after `search-retrieval-stack`
-Phase 2), with the PM ratifying that build plan before code.
+dev agent to draft (the `search-retrieval-stack` retrieval dependency this waited
+on shipped in #111, so it is unblocked), with the PM ratifying that build plan
+before code.
 
 ## Non-goals
 
@@ -203,24 +204,49 @@ Decisions were grounded in a 2026-06-04 product survey across three categories:
 
 ## Dependencies & sequencing
 
-- **Sequence after `search-retrieval-stack` Phase 2** (the shared node retrieval
-  path) — otherwise this is built against an interim search interface (A7).
-- **Coordinates with the launcher follow-ups** (cc-2): `launcher-ai-actions`
-  (the Ask AI verb), `launcher-capture-destinations` (Capture destination picker),
-  `browser-extension-integration` (D6 rich content). This plan is the umbrella
-  vision those slices feed; it does not own those plan files.
+- **Retrieval dependency satisfied.** `search-retrieval-stack` Phases 1–4 shipped
+  in **#111** (shared node-retrieval path `NodeRetrievalService` + analyzer
+  primitives; `agentNodeToolProjection.scoreTerm` duplicate removed). The
+  node-path-unification gate this plan waited on is met — **the surface is
+  unblocked.** Next step is a dev-drafted **build one-pager**.
+- **Absorbs the launcher command-surface follow-ups** (now superseded): the Ask AI
+  verb (was `launcher-ai-actions`, see D5) and Capture destinations / secondary
+  actions / navigation (was `launcher-capture-destinations`, see D4 + the preserved
+  contracts below). **Coordinates with** the surviving capture-pipeline tracks —
+  `launcher-provider-expansion` (capture provider breadth) and
+  `browser-extension-integration` (D6 rich content) — which this plan consumes but
+  does not own.
 - **Reuses #109** (`agent-empty-state-onboarding`) for the no-provider guard on
   Ask AI.
+
+## Preserved contracts (folded from the superseded launcher follow-ups)
+
+Concrete, still-valid contracts the build one-pager must carry (the rest of those
+plans is replaced by D1–D8; the standalone ⌘K secondary-action *menu mechanism* is
+NOT carried — it is replaced by the chip rail + WYSIWYG verb rows):
+
+- **Capture destination** (→ D4 / open question #3): an **Inbox** node resolved/
+  created in main; a `destination` param on the capture IPC
+  (`launcher.createContextCapture`); default Today, picker selects Today / Inbox /
+  a chosen node.
+- **Recent destinations** (→ D2 cold-start): persist the last N capture/jump
+  targets in `userData`; surface as empty-query quick rows.
+- **Navigation** (→ D1 "Go to" verb): reuse `LAUNCHER_NAVIGATE_TO_NODE_CHANNEL` →
+  `navigateRoot` + `focusNode` for Go-to-Today/Library and node jumps.
+- **Ask AI IPC** (→ D5): a `launcher.askAi({ prompt?, sourceNodeId? })`-shaped
+  call + a main→renderer focus-agent-surface channel (mirrors the node-navigate
+  channel) to open/seed the panel session.
 
 ## Collision self-check (2026-06-04)
 
 Open PRs: none. The eventual build will touch `CommandPalette.tsx`, the launcher
 (`src/main/launcher/*`, `src/renderer/launcher/*`), the agent panel, and the
 command/verb engine — overlapping with the launcher follow-ups (cc-2) and the
-verb/retrieval engine (`search-retrieval-stack`, codex). Because build is
-**deferred** (after `search-retrieval-stack` Phase 2), there is no active
-collision now; the build one-pager must re-run this check and coordinate
-sequencing with whatever launcher/retrieval branches are then in flight.
+verb/retrieval engine (`search-retrieval-stack`, now shipped via #111). Because
+build is **deferred** (the design is ratified; a dev still drafts the build
+one-pager), there is no active collision now; the build one-pager must re-run this
+check and coordinate sequencing with whatever launcher/retrieval branches are then
+in flight.
 
 ## Checklist (design phase)
 
@@ -229,4 +255,4 @@ sequencing with whatever launcher/retrieval branches are then in flight.
 - [x] Ratify D1–D8 (Enter contract, default-highlight, reversibility tier, chip
   model, Ask AI routing, out-of-app fidelity, slash boundary, engine invariant).
 - [ ] Dev agent drafts the implementation one-pager (phases, file scope, tests),
-  PM ratifies — **after `search-retrieval-stack` Phase 2**.
+  PM ratifies — **retrieval dependency now satisfied (#111); unblocked**.

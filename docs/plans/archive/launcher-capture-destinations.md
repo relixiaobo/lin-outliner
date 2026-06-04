@@ -1,11 +1,20 @@
 ---
-status: draft
+status: superseded
 priority: P2
-owner: cc-2
+owner: unassigned
 created: 2026-06-04
 updated: 2026-06-04
-related: lazy-like-global-launcher.md, launcher-ai-actions.md
+related: lazy-like-global-launcher.md, launcher-ai-actions.md, unified-command-surface.md
 ---
+
+> **Superseded by `unified-command-surface.md` (2026-06-04).** In the ratified
+> design Capture is a verb, the destination is a chip-rail target (D4), Go-to is a
+> verb (D1), and "more actions" is the WYSIWYG verb list / secondary-action panel
+> (D1/D4) — so the standalone launcher-local ⌘K menu this plan rebuilt is replaced.
+> The load-bearing contracts (Inbox node resolve/create, the `destination` capture
+> IPC param, recent-destinations persistence, navigation via
+> `LAUNCHER_NAVIGATE_TO_NODE_CHANNEL`) are folded into
+> `unified-command-surface.md` → "Preserved contracts". Kept as history.
 
 # Launcher Capture Destinations, Secondary Actions & Navigation
 

@@ -1,20 +1,25 @@
 ---
-status: in-progress
+status: done
 priority: P0
 owner: cc-2
 created: 2026-06-02
 updated: 2026-06-04
-related: launcher-ai-actions.md, launcher-capture-destinations.md, launcher-provider-expansion.md, browser-extension-integration.md, launcher-capture-resolvers.md
+related: unified-command-surface.md, launcher-provider-expansion.md, browser-extension-integration.md
 ---
 
 # Lazy-Like Global Launcher
 
-> **⚠️ As-built authority (2026-06-04).** This plan is `in-progress`. The SHIPPED
-> behavior is the launcher described in [`../spec/launcher.md`](../spec/launcher.md)
-> — read that for what actually works. The slice that landed: the modeless launcher
-> + basic-info capture + inline node search + Open main/Settings. Deferred work is
-> split into `launcher-ai-actions.md`, `launcher-capture-destinations.md`,
-> `launcher-provider-expansion.md`, and `browser-extension-integration.md`.
+> **Done / re-homed (2026-06-04).** First slice shipped in **#103**; the as-built
+> behavior is the authority in [`../spec/launcher.md`](../spec/launcher.md). Every
+> *remaining* ambition has been re-homed: command-surface evolution →
+> `unified-command-surface.md` (cmd+k + launcher convergence); capture-content
+> breadth → `launcher-provider-expansion.md`; rich extraction backend →
+> `browser-extension-integration.md`. The follow-ups `launcher-ai-actions` and
+> `launcher-capture-destinations` are **superseded** by `unified-command-surface`.
+> No live work remains under this plan; kept as history.
+>
+> The slice that landed: the modeless launcher + basic-info capture + inline node
+> search + Open main/Settings.
 >
 > Large parts of the BODY below still describe the original Lazy-level V1 aspiration
 > and are **HISTORICAL design, not the build state** — notably the provider matrix +

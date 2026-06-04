@@ -17,7 +17,10 @@ This is a deliberate **superset** of nodex, not a parity feature. It is
 listed in [`nodex-parity-decisions.md`](nodex-parity-decisions.md) as a
 local-app-specific extension.
 
-Depends on [`asset-subsystem.md`](asset-subsystem.md).
+Depends on [`asset-subsystem.md`](archive/asset-subsystem.md) **(shipped, PR #8)**
+and `image-rendering` **(shipped, PR #8)** — both blockers have landed, so this
+plan is **unblocked**. Coordinate with the `media-types` backlog item to avoid
+double-building the audio/video player + PDF thumbnail.
 
 ## Goal
 

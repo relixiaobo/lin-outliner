@@ -30,15 +30,18 @@ _(nothing actively in flight)_
 
 ## Backlog
 
-- **launcher follow-ups** (P1, cc-2) — deferred slices of the now-shipped
-  `lazy-like-global-launcher` (first slice landed in PR #103). Split into
-  `launcher-capture-destinations.md` (Save to Inbox, destination picker, Go to
-  Today/Library, recent destinations, the ⌘K secondary-action mechanism),
-  `launcher-ai-actions.md` (Ask AI / Ask AI with source),
-  `launcher-provider-expansion.md` (remaining web/native content providers +
-  preview/local-file), and `browser-extension-integration.md` (rich extraction
-  via the extension path). `launcher-capture-resolvers.md` is **superseded** (the
-  payload-to-file / deferred-enrichment mechanism was removed in #103).
+- **launcher follow-ups (re-organized 2026-06-04)** — `lazy-like-global-launcher`
+  first slice shipped (#103) and is now **done** (as-built = `spec/launcher.md`).
+  The follow-ups were re-homed against the ratified `unified-command-surface`
+  design: the **command-surface** slices `launcher-capture-destinations` (⌘K
+  secondary actions, destination picker, Go-to) and `launcher-ai-actions` (Ask AI /
+  Ask AI with source) are **superseded** — folded into `unified-command-surface`
+  (D1/D4/D5; the load-bearing capture contracts preserved in its "Preserved
+  contracts" section). The two surviving **capture-pipeline** tracks stay separate
+  (orthogonal to the surface): `launcher-provider-expansion` (capture provider
+  breadth) and `browser-extension-integration` (rich extraction backend, record-only).
+  `launcher-capture-resolvers` remains **superseded**. Owners reset to unassigned —
+  future dev is not pre-committed to cc-2.
 
 Ordered by priority; lower items may depend on higher ones.
 

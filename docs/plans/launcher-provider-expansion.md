@@ -1,13 +1,19 @@
 ---
 status: draft
 priority: P2
-owner: cc-2
+owner: unassigned
 created: 2026-06-04
 updated: 2026-06-04
-related: lazy-like-global-launcher.md, browser-extension-integration.md, launcher-ai-actions.md, launcher-capture-destinations.md
+related: unified-command-surface.md, browser-extension-integration.md
 ---
 
 # Launcher Provider Expansion
+
+> **Re-scoped (2026-06-04):** this is the **capture-provider-breadth** track —
+> which URLs/apps we classify into which source `kind` + capture framing. It is
+> *orthogonal* to the command surface (`unified-command-surface.md`) and survives
+> the cmd+k/launcher unification intact. Rich extraction (page body/transcript)
+> belongs to `browser-extension-integration.md`, not here.
 
 ## Why this plan exists
 

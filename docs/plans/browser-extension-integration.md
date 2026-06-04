@@ -1,8 +1,8 @@
 ---
 status: draft
-owner: cc-2
+owner: unassigned
 branch: (none yet)
-related: lazy-like-global-launcher.md, launcher-capture-resolvers.md
+related: unified-command-surface.md, launcher-provider-expansion.md
 ---
 
 # Browser Extension / CDP Integration — One Backend, Two Tiers
