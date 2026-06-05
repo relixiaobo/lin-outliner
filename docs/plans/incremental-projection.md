@@ -166,17 +166,20 @@ pass separate:
 - **Structural moves:** a re-parent must include both old and new parent in
   `changedNodeIds`. Verify core already does (it tracks `affectedNodeIds`); add a
   delta test asserting both parents are present.
-- **Removal vs descendants:** *(resolved)* `deleteNode` → `removeSubtreeDirect`
-  deletes the **whole** subtree (`core.ts:2748`), so no child ever survives its
-  parent's removal — the "move a child out, then delete the parent, in one
-  revision" hazard cannot occur, and pruning descendants is always safe. Core's
-  own `patchProjectionCache` (`core.ts:310`) transforms the projection by exactly
-  "reproject the present affected ids, delete the absent ones," and `verifyCaches`
-  (`LIN_VERIFY_CACHE=1` in the suite) asserts that equals a full rebuild — so the
-  `changedNodeIds` set is provably complete. The renderer reducer still prunes
-  each `removedId`'s descendants from the previous `byId` (mirroring the
-  text-search consumer), which is correct whether core lists the root only or
-  every descendant, and is the cheaper, defensive choice.
+- **Removal vs descendants / merge survivors:** *(resolved — the keystone
+  correctness point, caught at the gate)* The reducer deletes **exactly
+  `removedIds`** — it does NOT walk the previous tree to prune descendants. Two
+  facts make that complete AND correct: (a) `loro.deleteNode` touches every
+  descendant of a genuine removal (`loroDocument.ts:330` `subtreeIds → touchNode`),
+  and core's `patchProjectionCache` (`core.ts:310`) "reproject-present /
+  delete-absent" is asserted equal to a full rebuild by `verifyCaches`
+  (`LIN_VERIFY_CACHE=1`), so a removed subtree is always fully enumerated in
+  `removedIds`; (b) a child re-parented OUT of a node that the *same revision* then
+  removes — `merge_node_into` moves a node's children up, then drops the emptied
+  node (`core.ts:3114-3118`) — arrives in `changedNodes`, not `removedIds`. An
+  earlier draft pruned the stale subtree defensively; that **dropped the merge
+  survivors** (their grandchildren weren't in either set). Covered by
+  `projectionDeltaIntegration.test.ts` (merge-with-grandchildren).
 - **Whole-tree rewrites** (undo/redo/import) → `requiresFullSearchRebuild` → `full`.
   Covered.
 - **`todayId` rollover** → carried on every delta.
@@ -214,12 +217,11 @@ P3 close the rest.
    opted to combine rather than the interface-first three-PR split.
 2. **Wire shape** — the clean node-level discriminated union above (no transitional
    alongside-full variant). Pre-launch, no compat constraint.
-3. **Subtree-delete granularity** — the reducer prunes descendants of any
-   `removedId` from the previous `byId`, mirroring the proven text-search consumer
-   (`collectDescendantIds`, `documentService.ts:606`). This is correct whether or
-   not core's `changedNodeIds` already enumerates descendants, so no dependency on
-   that detail — but a delta test will assert subtree-delete prunes the whole
-   subtree.
+3. **Subtree-delete granularity** — *(superseded by the gate)* the reducer deletes
+   **exactly `removedIds`** and does not walk the previous tree. Core enumerates
+   every genuinely-removed node (`loro.deleteNode` touches the whole subtree), and
+   walking the stale tree instead would drop a `merge_node_into` survivor whose
+   grandchildren are in `changedNodes`. See the Risks section.
 
 ## Checklist
 
@@ -227,11 +229,13 @@ P3 close the rest.
       `update`; main boundary builder (`buildProjectionUpdate`: delta + full
       fallback, per-revision cache, `lastEmittedProjectionRevision` chain);
       renderer delta reducer (`reduceProjection`: preserve unchanged-node
-      identity, prune removed subtrees, drop `nodeSignatures`); `get_projection`
-      → `ProjectionSnapshot` resync valve; perf before/after captured above
+      identity, delete exactly `removedIds`, drop `nodeSignatures`, no-op reseed
+      guard); `get_projection` → `ProjectionSnapshot` resync valve; perf captured
+- [x] PR-A gate fixes: merge-survivor pruning bug, idempotent-date-ref fallback,
+      no-op-sentinel full reseed, pure projection-store updater + resync guard
 - [ ] PR-B incremental reverse-edge maps in `renderRev`
-- [x] delta-application unit tests (`reduceProjection.test.ts`: full seed/rebuild,
-      delta content edit preserves unchanged-node identity + bumps only the
-      affected closure, add node, subtree-delete prunes descendants, duplicate
-      revision is a no-op, gap/no-base → resync); `renderRev.test.ts` still green
+- [x] delta-application unit tests (`reduceProjection.test.ts`) + real-core
+      integration (`projectionDeltaIntegration.test.ts`: folds a delta stream and
+      asserts equality with an independent rebuild after each command, incl.
+      merge-with-grandchildren); `renderRev.test.ts` still green
 - [ ] fold the shipped design into `docs/spec/` (architecture / projection)
