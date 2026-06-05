@@ -1741,6 +1741,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           }
           return clone(outcome({ nodeId: String(args.targetId), selectAll: false }));
         }
+        if (cmd === 'move_node') {
+          moveNode(String(args.nodeId), String(args.parentId), typeof args.index === 'number' ? args.index : null);
+          return clone(outcome({ nodeId: String(args.nodeId), parentId: String(args.parentId), selectAll: false }));
+        }
         if (cmd === 'trash_node') {
           if (nodes.has(String(args.nodeId))) moveNode(String(args.nodeId), ids.trash);
           return clone(outcome());

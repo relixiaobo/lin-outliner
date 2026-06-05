@@ -207,6 +207,9 @@ The layout does **not** include:
 panes on demand (see Interaction Examples). There is no saved/named multi-pane
 layout feature — that capability went away with tabs and is not replaced by pins
 (pins park individual nodes for quick access, a different and smaller thing).
+The ephemeral pane layout is restored only within the same local calendar day;
+on a later day, startup ignores the stale pane roots and returns to the current
+Today node.
 
 ### Extensibility seam (preview, etc.)
 
@@ -409,11 +412,16 @@ Open node from sidebar:
 
 ```txt
 User clicks Today in sidebar
-  -> active pane root changes to Today (plain click), or
-  -> a new pane opens on Today (Alt/Option-click)
+  -> ensure the local-calendar date node exists for today
+  -> active pane root changes to that date node (plain click), or
+  -> a new pane opens on that date node (Alt/Option-click)
   -> sidebar remains mounted
   -> agent remains mounted
 ```
+
+The in-app command palette uses the same ensure-first path for its Today item and
+for "New node in Today"; it must not rely on a stale renderer `projection.todayId`
+after a session crosses midnight.
 
 Open node in a split pane:
 

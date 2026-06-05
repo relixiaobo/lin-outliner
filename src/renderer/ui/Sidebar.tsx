@@ -15,6 +15,7 @@ import {
 import { ButtonControl } from './primitives/ButtonControl';
 import { ResizeHandle } from './primitives/ResizeHandle';
 import { textOf } from './shared';
+import type { NavigateRootOptions } from './shared';
 import { useT } from '../i18n/I18nProvider';
 
 const primaryNavItems = [
@@ -27,6 +28,7 @@ const primaryNavItems = [
 interface SidebarProps {
   expandedIds: Set<NodeId>;
   index: DocumentIndex;
+  onNavigateToday: (options?: NavigateRootOptions) => void;
   onNavigateRoot: (nodeId: NodeId) => void;
   onOpenPanel: (nodeId: NodeId) => void;
   onOpenSettings: () => void;
@@ -135,6 +137,10 @@ export function Sidebar(props: SidebarProps) {
               key={item.key}
               onClick={(event) => {
                 if (!target) return;
+                if (item.key === 'today') {
+                  props.onNavigateToday({ newPane: event.altKey });
+                  return;
+                }
                 if (event.altKey) props.onOpenPanel(target);
                 else props.onNavigateRoot(target);
               }}

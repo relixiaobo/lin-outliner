@@ -34,7 +34,10 @@ import {
   indentTargetParentId,
   previousVisibleRowId,
 } from '../../src/renderer/ui/interactions/outlinerStructure';
-import { resolveOutlinerDropMove } from '../../src/renderer/ui/interactions/dragDrop';
+import {
+  resolveOutlinerDropBatchMove,
+  resolveOutlinerDropMove,
+} from '../../src/renderer/ui/interactions/dragDrop';
 import { buildOutlinerRows, hiddenFieldKey } from '../../src/renderer/ui/outliner/row-model';
 import { DONE_FIELD, NAME_FIELD } from '../../src/core/systemFields';
 import { searchQueryOutlineText, searchQuerySummaryModel } from '../../src/renderer/ui/search/SearchQuerySummaryBar';
@@ -368,6 +371,67 @@ describe('row interaction resolvers', () => {
       currentParentId: 'parent',
       currentIndex: 1,
     })).toEqual({ parentId: 'parent', index: 3, expandTargetId: undefined });
+  });
+
+  test('resolves batch drag-drop moves while preserving selected order', () => {
+    const parents = new Map([
+      ['a', 'parent'],
+      ['b', 'parent'],
+      ['c', 'parent'],
+      ['d', 'parent'],
+      ['parent', 'root'],
+    ]);
+    const children = new Map([
+      ['parent', ['a', 'b', 'c', 'd']],
+    ]);
+    expect(resolveOutlinerDropBatchMove({
+      dragNodeIds: ['a', 'b'],
+      targetNodeId: 'd',
+      targetParentId: 'parent',
+      siblingIndex: 3,
+      dropPosition: 'before',
+      targetHasChildren: false,
+      targetIsExpanded: false,
+      parentIdForNode: (id) => parents.get(id),
+      childrenForParent: (id) => children.get(id) ?? [],
+    })?.moves).toEqual([
+      { nodeId: 'b', parentId: 'parent', index: 2 },
+      { nodeId: 'a', parentId: 'parent', index: 1 },
+    ]);
+
+    expect(resolveOutlinerDropBatchMove({
+      dragNodeIds: ['c', 'd'],
+      targetNodeId: 'a',
+      targetParentId: 'parent',
+      siblingIndex: 0,
+      dropPosition: 'before',
+      targetHasChildren: false,
+      targetIsExpanded: false,
+      parentIdForNode: (id) => parents.get(id),
+      childrenForParent: (id) => children.get(id) ?? [],
+    })?.moves).toEqual([
+      { nodeId: 'c', parentId: 'parent', index: 0 },
+      { nodeId: 'd', parentId: 'parent', index: 1 },
+    ]);
+  });
+
+  test('rejects batch drops into the selected subtree', () => {
+    const parents = new Map([
+      ['parent', 'root'],
+      ['child', 'parent'],
+      ['target', 'child'],
+    ]);
+    expect(resolveOutlinerDropBatchMove({
+      dragNodeIds: ['parent'],
+      targetNodeId: 'target',
+      targetParentId: 'child',
+      siblingIndex: 0,
+      dropPosition: 'before',
+      targetHasChildren: false,
+      targetIsExpanded: false,
+      parentIdForNode: (id) => parents.get(id),
+      childrenForParent: () => [],
+    })).toBeNull();
   });
 
 

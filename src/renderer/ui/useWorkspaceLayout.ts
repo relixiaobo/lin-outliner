@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { DocumentProjection, NodeId } from '../api/types';
+import { todayIsoLocalDate, type DocumentProjection, type NodeId } from '../api/types';
 import type { NavigateRootOptions } from './shared';
 import type {
   AgentDebugPanelState,
@@ -113,6 +113,7 @@ function loadPersistedLayout(initial: DocumentProjection): WorkspaceLayout | nul
     if (!raw) return null;
     const parsed = JSON.parse(raw) as unknown;
     if (!isRecord(parsed) || parsed.version !== 2) return null;
+    if (parsed.localDate !== todayIsoLocalDate()) return null;
     return sanitizeLayout(parsed, nodeIds);
   } catch {
     return null;
@@ -124,6 +125,7 @@ function persistLayout(activePanelId: string | null, panels: WorkspacePanelState
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
       version: 2,
+      localDate: todayIsoLocalDate(),
       activePanelId,
       panels,
     }));

@@ -29,7 +29,7 @@ test.describe('outliner navigation and page title parity', () => {
 
     await page.getByRole('button', { name: 'Previous page' }).first().click();
 
-    await expect(page.locator('.panel-title-editor').first()).toContainText('2026-05-13');
+    await expect(page.locator('.panel-title-editor').first()).toContainText('May 13');
     await expect.poll(async () => page.evaluate(() => (
       (window as typeof window & {
         __LIN_E2E__?: { calls: Array<{ cmd: string }> };
@@ -50,7 +50,7 @@ test.describe('outliner navigation and page title parity', () => {
 
     await page.getByRole('button', { name: 'Collapse sidebar' }).focus();
     await page.keyboard.press('Alt+ArrowLeft');
-    await expect(page.locator('.panel-title-editor').first()).toContainText('2026-05-13');
+    await expect(page.locator('.panel-title-editor').first()).toContainText('May 13');
     await expect(back).toBeDisabled();
 
     await page.keyboard.press('Alt+ArrowRight');
@@ -58,7 +58,7 @@ test.describe('outliner navigation and page title parity', () => {
     await expect(back).toBeEnabled();
 
     await back.click();
-    await expect(page.locator('.panel-title-editor').first()).toContainText('2026-05-13');
+    await expect(page.locator('.panel-title-editor').first()).toContainText('May 13');
     await row(page, ids.beta).getByRole('button', { name: 'Open' }).click();
     await expect(page.locator('.panel-title-editor').first()).toContainText('Beta');
 
@@ -75,7 +75,7 @@ test.describe('outliner navigation and page title parity', () => {
     await page.getByRole('button', { name: 'Collapse sidebar' }).focus();
 
     await page.keyboard.press('Alt+ArrowLeft');
-    await expect(page.locator('.panel-title-editor').first()).toContainText('2026-05-13');
+    await expect(page.locator('.panel-title-editor').first()).toContainText('May 13');
 
     await page.keyboard.press('Alt+ArrowRight');
     await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
@@ -101,6 +101,30 @@ test.describe('outliner navigation and page title parity', () => {
 
     await expect(page.locator('.panel-title-editor').first()).toContainText(todayLabel);
     expect((await commandCalls(page)).map((call) => call.cmd)).toContain('ensure_date_node');
+  });
+
+  test('sidebar Today ensures the current date before navigating', async ({ page }) => {
+    const todayLabel = await page.evaluate(() => {
+      const date = new Date();
+      const year = String(date.getFullYear()).padStart(4, '0');
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    });
+    await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
+    await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
+
+    await page.locator('.sidebar-primary-nav .sidebar-nav-item').filter({ hasText: 'Today' }).click();
+
+    await expect(page.locator('.panel-title-editor').first()).toContainText(todayLabel);
+    const calls = await commandCalls(page);
+    expect(calls.map((call) => call.cmd)).toContain('ensure_date_node');
+    const ensureCall = calls.find((call) => call.cmd === 'ensure_date_node');
+    expect(ensureCall?.args).toMatchObject({
+      year: Number(todayLabel.slice(0, 4)),
+      month: Number(todayLabel.slice(5, 7)),
+      day: Number(todayLabel.slice(8, 10)),
+    });
   });
 
   test('page-history navigation keeps the outliner pane context when a debug pane shares the canvas', async ({ page }) => {
@@ -164,7 +188,7 @@ test.describe('outliner navigation and page title parity', () => {
       element.dispatchEvent(new Event('scroll', { bubbles: true }));
     });
 
-    await expect(firstPanel.locator('[data-current-page-title]')).toHaveText('2026-05-13');
+    await expect(firstPanel.locator('[data-current-page-title]')).toContainText('May 13');
     const metrics = await firstPanel.evaluate((panel) => {
       const breadcrumb = panel.querySelector('.panel-sticky-breadcrumb')?.getBoundingClientRect();
       const panelBox = panel.getBoundingClientRect();
@@ -446,23 +470,26 @@ test.describe('outliner navigation and page title parity', () => {
   });
 
   test('Cmd+Enter in page title commits current text while cycling checkbox state', async ({ page }) => {
+    await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
     const titleEditor = page.locator('.panel-title-editor .ProseMirror').first();
     await titleEditor.click();
     await page.keyboard.press('Meta+A');
-    await page.keyboard.type('Today renamed');
+    await page.keyboard.type('Alpha title done');
     await page.keyboard.press('Meta+Enter');
 
-    await expect.poll(async () => (await nodeById(page, ids.today))?.content.text).toBe('Today renamed');
-    await expect.poll(async () => (await nodeById(page, ids.today))?.showCheckbox).toBe(true);
-    await expect.poll(async () => Boolean((await nodeById(page, ids.today))?.completedAt)).toBe(false);
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe('Alpha title done');
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.showCheckbox).toBe(true);
+    await expect.poll(async () => Boolean((await nodeById(page, ids.alpha))?.completedAt)).toBe(true);
 
+    await titleEditor.click();
     await page.keyboard.press('Meta+Enter');
-    await expect.poll(async () => (await nodeById(page, ids.today))?.showCheckbox).toBe(true);
-    await expect.poll(async () => Boolean((await nodeById(page, ids.today))?.completedAt)).toBe(true);
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.showCheckbox).toBe(false);
+    await expect.poll(async () => Boolean((await nodeById(page, ids.alpha))?.completedAt)).toBe(false);
 
+    await titleEditor.click();
     await page.keyboard.press('Meta+Enter');
-    await expect.poll(async () => (await nodeById(page, ids.today))?.showCheckbox).toBe(false);
-    await expect.poll(async () => Boolean((await nodeById(page, ids.today))?.completedAt)).toBe(false);
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.showCheckbox).toBe(true);
+    await expect.poll(async () => Boolean((await nodeById(page, ids.alpha))?.completedAt)).toBe(false);
   });
 
   test('Cmd+Enter in row editor commits current text while cycling checkbox state', async ({ page }) => {

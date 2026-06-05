@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import {
   e2eProjection,
+  emitDocumentEvent,
   ids,
   nodeByText,
   openMockedApp,
@@ -48,9 +49,42 @@ async function dispatchCompositionEvent(
   }, { data, type });
 }
 
+async function clickIndentGuideLine(page: Parameters<typeof trailingEditor>[0], rowId: string) {
+  const guide = row(page, rowId).locator('> .indent-guide');
+  const box = await guide.boundingBox();
+  if (!box) throw new Error(`Missing indent guide for ${rowId}`);
+  await page.mouse.click(box.x + box.width - 1, box.y + Math.min(10, box.height / 2));
+}
+
 test.describe('outliner trailing input and expansion parity', () => {
   test.beforeEach(async ({ page }) => {
     await openMockedApp(page);
+  });
+
+  test('clicking an expanded row guide toggles direct children expansion', async ({ page }) => {
+    await page.evaluate(async ({ alphaId, betaId, gammaId }) => {
+      const win = window as Window & {
+        lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      };
+      await win.lin?.invoke('move_node', { nodeId: betaId, parentId: alphaId, index: null });
+      await win.lin?.invoke('move_node', { nodeId: gammaId, parentId: betaId, index: null });
+    }, { alphaId: ids.alpha, betaId: ids.beta, gammaId: ids.gamma });
+    await emitDocumentEvent(page, {
+      type: 'projection_changed',
+      origin: 'test',
+      projection: await e2eProjection(page),
+      timestamp: Date.now(),
+    });
+
+    await row(page, ids.alpha).locator('.row-chevron-button').click({ force: true });
+    await expect(row(page, ids.beta)).toBeVisible();
+    await expect(row(page, ids.gamma)).toHaveCount(0);
+
+    await clickIndentGuideLine(page, ids.alpha);
+    await expect(row(page, ids.gamma)).toBeVisible();
+
+    await clickIndentGuideLine(page, ids.alpha);
+    await expect(row(page, ids.gamma)).toHaveCount(0);
   });
 
   test('typing in the panel trailing input eagerly commits a real node', async ({ page }) => {
