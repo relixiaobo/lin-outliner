@@ -106,9 +106,11 @@
   flex: 1 1 auto;
   flex-direction: column;
   gap: var(--space-6);
-  /* Clear the frameless window's top drag strip so the content's first controls
-     are not under it; this also vertically aligns the content with the rail title. */
-  padding-top: calc(var(--chrome-height) + var(--space-lg));
+  /* The toolbar is fixed chrome. Keep the SCROLLPORT below it with margin, not
+     padding: padding scrolls away and lets dense rows pass under the history
+     capsule/title. This structural exclusion keeps the opaque content layer from
+     bleeding through the chrome controls. */
+  margin-top: calc(var(--chrome-height) + var(--space-lg));
   overflow-y: auto;
   scrollbar-gutter: stable;
 }

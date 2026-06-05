@@ -54,6 +54,21 @@ test.describe('agent settings window', () => {
     await expect(forward).toBeDisabled();
   });
 
+  test('keeps scrolled content below the fixed toolbar chrome', async ({ page }) => {
+    const settings = await openSettings(page);
+    const toolbarBox = await settings.locator('.settings-toolbar').boundingBox();
+    const contentBox = await settings.locator('.settings-content').boundingBox();
+    expect(toolbarBox).not.toBeNull();
+    expect(contentBox).not.toBeNull();
+    expect(contentBox!.y).toBeGreaterThanOrEqual(toolbarBox!.y + toolbarBox!.height);
+
+    await settings.locator('.settings-content').evaluate((element) => {
+      element.scrollTop = 240;
+    });
+    const scrolledContentBox = await settings.locator('.settings-content').boundingBox();
+    expect(scrolledContentBox!.y).toBeCloseTo(contentBox!.y, 1);
+  });
+
   test('uses a flat settings pop-up button for select controls', async ({ page }) => {
     const settings = await openSettings(page);
     await settings.getByRole('button', { name: 'General', exact: true }).click();

@@ -1091,7 +1091,9 @@ not Apple chrome. We borrow the interaction, not the chrome.
   individual arrows do not get independent rounded-square boxes. Placement is
   settings-specific: `.settings-toolbar` anchors over the content column on the
   traffic-light centreline (`--chrome-control-inset`), with `.settings-history-nav`
-  as the no-drag control group. The `.settings-toolbar-title` is the right-pane
+  as the no-drag control group. The content scrollport starts below this fixed
+  chrome via `margin-top`, not scrollable padding, so dense rows never pass behind
+  the history capsule or title. The `.settings-toolbar-title` is the right-pane
   anchor ("General", "Providers", etc.), so the content no longer relies on the
   rail alone to name the page. History walks a category visit-history stack:
   switching categories pushes (truncating any forward entries), back / forward move
