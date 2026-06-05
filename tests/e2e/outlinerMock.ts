@@ -2362,12 +2362,28 @@ export async function emitAgentProjection(page: Page, sessionId: string, state: 
     const content = typeof message.content === 'string'
       ? [{ type: 'text', text: message.content }]
       : message.content ?? [];
-    return content.map((part: any) => {
+    return content.map((part: any, index: number) => {
       if (part.type === 'text') return { type: 'text', text: part.text };
       if (part.type === 'thinking') return { type: 'thinking', thinking: part.thinking, redacted: part.redacted };
       if (part.type === 'toolCall') return { type: 'toolCall', id: part.id, name: part.name, arguments: part.arguments ?? {} };
       if (part.type === 'payload_ref') return part;
-      if (part.type === 'image') return { type: 'text', text: `[image:${part.mimeType ?? 'image'}]` };
+      if (part.type === 'image') {
+        const mimeType = part.mimeType ?? 'image/png';
+        return {
+          type: 'image',
+          alt: part.alt ?? 'Image attachment',
+          imageRef: {
+            kind: 'payload_ref',
+            id: `mock-image-${index}`,
+            storage: 'file',
+            mimeType,
+            byteLength: 0,
+            sha256: `mock-image-${index}`,
+            role: 'source',
+            summary: part.alt ?? 'Image attachment',
+          },
+        };
+      }
       return { type: 'text', text: JSON.stringify(part) };
     });
   };

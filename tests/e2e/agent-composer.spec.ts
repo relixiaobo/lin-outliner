@@ -212,36 +212,7 @@ test.describe('agent composer controls', () => {
   });
 
   test('renders sent attachment mentions inline without raw image placeholders', async ({ page }) => {
-    const marker = {
-      version: 1,
-      instructions: 'Images are visible as image content blocks. Files and folders are available at local paths; use file_read for files and file_glob for folders instead of assuming they are already visible. Inline text attachments are included in this user message.',
-      attachments: [
-        {
-          kind: 'file',
-          ref: '.DS_Store',
-          name: '.DS_Store',
-          mimeType: 'application/octet-stream',
-          sizeBytes: 26_624,
-          path: '/Users/test/Desktop/.DS_Store',
-        },
-        {
-          kind: 'file',
-          ref: 'Coding',
-          name: 'Coding',
-          mimeType: 'inode/directory',
-          sizeBytes: 0,
-          path: '/Users/test/Documents/Coding',
-        },
-        {
-          kind: 'image',
-          ref: 'Screenshot 2026-05-26 at 14.50.16.png',
-          name: 'Screenshot 2026-05-26 at 14.50.16.png',
-          mimeType: 'image/png',
-          sizeBytes: 481_000,
-          inline: true,
-        },
-      ],
-    };
+    const imagePath = '/Users/test/Desktop/Screenshot 2026-05-26 at 14.50.16.png';
 
     await emitAgentProjection(page, 'mock-agent-session', {
       sessionTitle: 'Agent System',
@@ -254,13 +225,13 @@ test.describe('agent composer controls', () => {
           content: [
             {
               type: 'text',
-              text: `<system-reminder>\n<user-attachments>\n${JSON.stringify(marker, null, 2)}\n</user-attachments>\n</system-reminder>`,
+              text: `[[file:.DS_Store^%2FUsers%2Ftest%2FDesktop%2F.DS_Store]] 总结一下，然后跟 [[file:Coding^%2FUsers%2Ftest%2FDocuments%2FCoding^directory]] 对比一下，然后添加到 [[node:Alpha^node-alpha]]，参考 [[file:Screenshot 2026-05-26 at 14.50.16.png^${encodeURIComponent(imagePath)}]]`,
             },
             {
-              type: 'text',
-              text: '[[file:.DS_Store^%2FUsers%2Ftest%2FDesktop%2F.DS_Store]] 总结一下，然后跟 [[file:Coding^%2FUsers%2Ftest%2FDocuments%2FCoding]] 对比一下，然后添加到 [[node:Alpha^node-alpha]]，参考 @Screenshot 2026-05-26 at 14.50.16.png',
+              type: 'image',
+              data: 'iVBORw0KGgo=',
+              mimeType: 'image/png',
             },
-            { type: 'text', text: 'Image attachment' },
           ],
         },
         branches: null,
