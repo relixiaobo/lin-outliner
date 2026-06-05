@@ -602,6 +602,9 @@ commandPalette: {
     outliner: {
       defaultContent: '默认内容',
       predeterminedOptions: '预设选项',
+      // 空态时草稿行上的添加提示。
+      defaultContentPlaceholder: '添加默认内容…',
+      predeterminedOptionsPlaceholder: '添加选项…',
     },
   },
 

@@ -115,4 +115,24 @@ test.describe('definition configuration parity', () => {
       maxValue: undefined,
     });
   });
+
+  // An empty Default-content / Pre-determined-options block used to read as an
+  // orphaned label over a near-invisible ghost bullet. Its trailing draft now
+  // carries an "add here" placeholder so the section's intent is legible.
+  test('definition template/options blocks invite content via the trailing-draft placeholder', async ({ page }) => {
+    await openSchema(page);
+
+    // tagDef → Default content (empty template).
+    await row(page, ids.projectTag).getByRole('button', { name: 'Open' }).click();
+    await expect(page.getByRole('region', { name: 'Definition configuration' })).toBeVisible();
+    await expect(page.locator('.definition-template-outliner .row-editor.is-empty').first())
+      .toHaveAttribute('data-placeholder', 'Add default content…');
+
+    // options fieldDef → Pre-determined options (same affordance, option copy).
+    await openSchema(page);
+    await row(page, ids.statusField).getByRole('button', { name: 'Open' }).click();
+    await chooseConfigOption(page, 'Field type', 'options');
+    await expect(page.locator('.definition-template-outliner .row-editor.is-empty').first())
+      .toHaveAttribute('data-placeholder', 'Add an option…');
+  });
 });

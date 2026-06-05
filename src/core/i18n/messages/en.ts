@@ -661,6 +661,9 @@ commandPalette: {
     outliner: {
       defaultContent: 'Default content',
       predeterminedOptions: 'Pre-determined options',
+      // Empty-state call-to-action on the block's trailing draft row.
+      defaultContentPlaceholder: 'Add default content…',
+      predeterminedOptionsPlaceholder: 'Add an option…',
     },
   },
 

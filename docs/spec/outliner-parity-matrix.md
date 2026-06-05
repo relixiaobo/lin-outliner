@@ -139,6 +139,7 @@ keymap, not the removed `resolveTrailingRow*` / `*EffectiveParent` /
 | Backspace in empty trailing draft | Focus last visible row, or collapse empty expanded parent. | `OutlinerItem.handleBackspaceAtStart` draft branch. | `outliner-trailing-expand.spec.ts` |
 | Chevron on leaf node | Expand leaf to show child trailing draft and focus it. | `toggleExpandOrSelect`. | `outliner-trailing-expand.spec.ts` |
 | Parent with content child | Do not render another child trailing draft under that parent. | `OutlinerView.showDraft`. | `outliner-trailing-expand.spec.ts` |
+| Empty trailing draft in a definition Default-content / Pre-determined-options block | Show an "add here" placeholder on the draft editor (`Add default content…` / `Add an option…`) so the section is not a label over a ghost bullet; the generic body draft stays unlabeled. | `definitionOutlinerPlaceholder` → `NodePanel` `draftPlaceholder` → `OutlinerItem` editor placeholder (root draft only). | `definition-config.spec.ts` |
 
 ## Implementation Rules
 

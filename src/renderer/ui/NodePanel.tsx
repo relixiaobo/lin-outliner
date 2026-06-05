@@ -23,7 +23,7 @@ import {
   richTextEquals,
 } from './editor/richTextCodec';
 import { DefinitionConfigPanel } from './definition/DefinitionConfigPanel';
-import { definitionKind, definitionOutlinerLabel } from './definition/definitionConfig';
+import { definitionKind, definitionOutlinerLabel, definitionOutlinerPlaceholder } from './definition/definitionConfig';
 import { projectFieldTypeById, nodeShowsCheckbox } from '../../core/configProjection';
 import type { SlashCommandId } from './interactions/slashCommands';
 import type { CommandRunner, EditorTrigger, NavigateRootOptions, TriggerState } from './shared';
@@ -170,6 +170,12 @@ export function NodePanel(props: NodePanelProps) {
   const rootDefinitionKind = definitionKind(rootNode);
   const definitionTemplateLabel = rootNode
     ? definitionOutlinerLabel(rootNode, { fieldType: projectFieldTypeById(props.index.byId, rootNode.id) }, t.definition.outliner)
+    : null;
+  // Empty-state hint for the definition template/options block: the trailing
+  // draft carries it so an empty section reads "add here" rather than a lone
+  // label over a near-invisible ghost bullet.
+  const definitionTemplatePlaceholder = rootNode
+    ? definitionOutlinerPlaceholder(rootNode, { fieldType: projectFieldTypeById(props.index.byId, rootNode.id) }, t.definition.outliner)
     : null;
   const showOutliner = Boolean(rootNode && (!rootDefinitionKind || definitionTemplateLabel));
   const showTrailingInput = Boolean(rootNode && showOutliner && rootNode.type !== 'search');
@@ -811,6 +817,7 @@ export function NodePanel(props: NodePanelProps) {
                 dragId={props.dragId}
                 setDragId={props.setDragId}
                 trailingDraft={showTrailingInput ? 'always' : 'none'}
+                draftPlaceholder={definitionTemplatePlaceholder ?? undefined}
                 scrollParentRef={mainPanelRef}
               />
             ) : (
@@ -833,6 +840,7 @@ export function NodePanel(props: NodePanelProps) {
                 // The body always offers a place to add a node; the trailing draft
                 // (eager materialization) subsumes the old body TrailingInput.
                 trailingDraft={showTrailingInput ? 'always' : 'none'}
+                draftPlaceholder={definitionTemplatePlaceholder ?? undefined}
               />
             )}
           </div>

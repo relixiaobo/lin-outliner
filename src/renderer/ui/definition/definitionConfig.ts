@@ -57,7 +57,12 @@ export interface DefinitionConfigLabels {
   tagConfig: Record<TagConfigKey, string>;
   fieldConfig: Record<FieldConfigKey, string>;
   hideFieldOptions: Record<HideFieldMode, string>;
-  outliner: { defaultContent: string; predeterminedOptions: string };
+  outliner: {
+    defaultContent: string;
+    predeterminedOptions: string;
+    defaultContentPlaceholder: string;
+    predeterminedOptionsPlaceholder: string;
+  };
 }
 
 export function hideFieldOptions(
@@ -163,5 +168,18 @@ export function definitionOutlinerLabel(
 ): string | null {
   if (node.type === 'tagDef') return labels.defaultContent;
   if (node.type === 'fieldDef' && config.fieldType === 'options') return labels.predeterminedOptions;
+  return null;
+}
+
+// Call-to-action shown on the template/options block's empty trailing draft, so
+// the section reads as "add here" instead of an orphaned label over a ghost
+// bullet. Mirrors definitionOutlinerLabel one-to-one.
+export function definitionOutlinerPlaceholder(
+  node: NodeProjection,
+  config: DefinitionConfigVisibility,
+  labels: DefinitionConfigLabels['outliner'],
+): string | null {
+  if (node.type === 'tagDef') return labels.defaultContentPlaceholder;
+  if (node.type === 'fieldDef' && config.fieldType === 'options') return labels.predeterminedOptionsPlaceholder;
   return null;
 }
