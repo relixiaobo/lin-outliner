@@ -1064,7 +1064,7 @@ export function AgentChatPanel({
         {entries.length === 0 ? (
           <div className="agent-empty-state">
             {!settingsLoaded ? null : hasUsableProvider ? (
-              <p className="agent-empty-greeting">{t.agent.chat.emptyGreeting}</p>
+              null
             ) : (
               <div className="agent-onboarding" role="status">
                 <p className="agent-onboarding-text">{t.agent.chat.onboardingText}</p>

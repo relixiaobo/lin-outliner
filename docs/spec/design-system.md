@@ -1042,6 +1042,12 @@ category history; see "Settings window".)
   surfaces, sparse semantic color, low elevation, and compact controls.
 - Assistant prose, user bubbles, and composer input use
   `--font-content / --line-content`.
+- Empty agent conversations stay visually blank when a provider is ready. The
+  provider-missing state replaces the blank area with the settings CTA.
+- User message content defaults to a compact view when its rendered content
+  exceeds roughly five content lines. The collapsed region covers the whole user
+  display group (text, inline references, attachment chips, and image previews);
+  copy/edit actions still operate on the full message.
 - Process summaries, thinking rows, and tool summaries use
   `--font-meta / --line-meta`.
 - Process and tool-call disclosures use one measured disclosure/status slot so
