@@ -39,9 +39,12 @@ file)*. All owners are unassigned — future dev is not pre-committed to any clo
 
 **Top of queue (build-ready P1s):** `file-attachments` (unblocked, self-contained)
 and `unified-command-surface` (design ratified, retrieval dep shipped — needs a
-dev build one-pager first). The other P1s (`agent-self-modification`,
-`agent-ask-user-question-tool`, `agent-import-skill`) each carry an open
-directional/GO gate — escalate before code.
+dev build one-pager first). The agent P1s (`agent-conversation-model`,
+`agent-skills-authoring`, `agent-self-modification`, `agent-ask-user-question-tool`,
+`agent-import-skill`) are now sequenced under the **`agent-program`** umbrella
+(foundation **M0** → M3); the program + member-plan reorg is drafted and **pending PM
+ratification before M0 (the interface-first foundation PRs) starts** — escalate before
+code.
 
 ### Command surface & capture
 
@@ -77,12 +80,37 @@ capture-pipeline tracks below stay separate (orthogonal to the surface).
 
 ### Agent capabilities
 
-- **agent-self-modification** (P1) — define a controlled product capability for
-  agent self-modification (skills/profiles/config) instead of letting the model
-  edit runtime files directly. Directional/security-sensitive — escalate the
+The agent subsystem is being rebuilt as **one program over a shared foundation**, not a
+loose set of plans. **`agent-program`** (`meta`) is the umbrella: it owns the L0
+foundation (**M0**, interface-first), the cross-plan **event taxonomy**, the consolidated
+protocol-surface change list, the dependency graph, and the milestones **M0 foundation →
+M1 single-agent self → M2 off-floor+extension → M3 multi-agent**. Members below reference
+it; standalone agent items (not in the program) follow at the end. **The program +
+member reorg is drafted; pending PM ratification before M0 starts.**
+
+- **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
+  dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
+- **agent-conversation-model** (P1, the spine, M0–M3) — IM-native rebuild: durable Agents
+  in **DMs/Channels** over the ambient outline; the per-agent **memory line**; background
+  tasks + notifications; sequential multi-member Channels + **coordinator** routing;
+  "session" dissolves into per-turn assembly. Code-grounded (stress-tested against the real
+  runtime). Owns the detailed design of the M0 seams it analyzed (identity, `actor`,
+  session→conversation, `AgentSessionState` split). See
+  `docs/plans/agent-conversation-model.md`.
+- **agent-skills-authoring** (P1, M0–M2) — skill **structure** (one unified library +
+  by-name binding via `AgentDefinition.skills` + a `built-in` immutable floor) and
+  **governed self-authoring** (skillify + file tools, provenance/snapshot/rollback,
+  hot-reload, no allowed-tools self-escalation, opt-in curation). Extracted from
+  conversation-model (§Skills) + self-modification (§7/§8) so skills live in one place.
+  See `docs/plans/agent-skills-authoring.md`.
+- **agent-self-modification** (P1, M1–M3, **slimmed by the reorg**) — controlled
+  self-maintenance: self-observation (`runtime_status` / doctor), the cc-2.1-style
+  `config` tool (single-agent self-configuration), **hooks** (untrusted consumer of the
+  program event bus), config recovery. **Skills moved to `agent-skills-authoring`; memory
+  is `agent-conversation-model`'s.** Directional/security-sensitive — escalate the
   capability boundary to the PM before building. See
   `docs/plans/agent-self-modification.md`.
-- **agent-ask-user-question-tool** (P1, plan drafted, PR #88) — full design
+- **agent-ask-user-question-tool** (P1, M1, plan drafted, PR #88) — full design
   for a structured `ask_user_question` agent tool: a runtime pending-interaction
   model kept separate from approval, snake-case tool + answer contracts, the
   pending-question UI, composer-state cleanup, `@`-refs/attachments in answers, and
@@ -91,7 +119,7 @@ capture-pipeline tracks below stay separate (orthogonal to the surface).
   unresolved questions across restart? edit-message scope? clarify contract?). Build
   on the merged path-first attachment model (#86); see the plan's "Integration notes"
   + "Directional decisions outstanding". `docs/plans/agent-ask-user-question-tool.md`.
-- **agent-import-skill** (P1, plan ratified, PR #98) — agent data-import capability:
+- **agent-import-skill** (P1, M1–M2 consumer, plan ratified, PR #98) — agent data-import capability:
   bundled deterministic adapters (Tana reference, validated against the real
   10,627-node export) for known formats + agent-authored parsers for unknown ones;
   staging-first, undoable apply via a new `import_apply` tool. **Content tier =
@@ -100,11 +128,15 @@ capture-pipeline tracks below stay separate (orthogonal to the surface).
   (protocol surface → interface-first + ratify). Soft-depends on `ask_user_question`
   (degrades to conversational turns until it exists). See
   `docs/plans/agent-import-skill.md`.
-- **agent-scheduled-routines** (P2) — a "command node" whose content is a
+- **agent-scheduled-routines** (P2, M2) — a "command node" whose content is a
   natural-language brief to the agent; setting its `date` field (one field
   carrying both *when to start* and *how to repeat*) makes it run on a schedule.
-  See `docs/plans/agent-scheduled-routines.md`.
-- **agent-tool-permissions-hardening** (P2) — non-blocking follow-ups after the
+  Needs the `AgentSessionState` split (M0). See `docs/plans/agent-scheduled-routines.md`.
+- **agent-generative-ui** (P3, M1/M2, directional CSP/A3 gate) — Claude-style custom
+  visuals in agent chat: the assistant generates interactive HTML/SVG widgets inline
+  while the tool arguments stream; its `widget_state.updated` event joins the program
+  taxonomy. Mostly independent. See `docs/plans/agent-generative-ui.md`.
+- **agent-tool-permissions-hardening** (P2, independent) — non-blocking follow-ups after the
   #60 permission implementation: move the `sessionApproved` short-circuit below
   configured-ask (don't silently relax a configured `ask`); re-validate
   pre-shaped configs in `parseGlobalToolPermissionSettings`; extend the exfil
@@ -113,6 +145,8 @@ capture-pipeline tracks below stay separate (orthogonal to the surface).
   with the plan contract (`platform_hard_block`/`user_denied`, `recoverable`
   set). None is a live fail-open. Self-contained spec in
   `docs/plans/agent-tool-permissions-hardening.md`.
+Standalone agent items (not part of the program):
+
 - **agent-secrets-windows-acl** (P3, *no plan file*) — follow-up from #115: the
   plaintext `agent-secrets.json` is hardened to `0600`/`0700` on POSIX only;
   Windows currently falls back to the user-profile ACL with no extra restriction.
@@ -131,10 +165,6 @@ capture-pipeline tracks below stay separate (orthogonal to the surface).
   stays (mutually exclusive) — presentation only. Touches `ProviderConfigWindow.tsx`,
   `ProviderOAuthForm.tsx`, i18n en/zh + `i18nCoverage`; design-system neutral tokens
   (B3/B4), UI gate = light/dark visual. Dev drafts the build one-pager.
-- **agent-generative-ui** (P3, directional CSP/A3 gate) — Claude-style custom
-  visuals in agent chat: the assistant generates interactive HTML/SVG widgets
-  inline in the conversation while the tool arguments stream. See
-  `docs/plans/agent-generative-ui.md`.
 
 ### Files & media
 
