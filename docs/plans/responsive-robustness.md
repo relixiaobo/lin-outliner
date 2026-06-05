@@ -323,8 +323,10 @@ intended files against open-PR scopes.
 - **Infrastructure-ownership files:** none touched. We do **not** edit
   `src/core/commands.ts`/`types.ts`, build config, `AGENTS.md`, `docs/TASKS.md`,
   or `CHANGELOG.md` (main-agent-owned).
-- **PR #118** (codex settings-macOS-clarity) owns `settings-*.css` — not touched
-  here. No gate.
+- **PR #118** (codex settings-macOS-clarity) is **merged**; this plan touches none
+  of its files (`useResizableLayout` / `useWorkspaceLayout` /
+  `useOutlinerRowInteraction` / `Sidebar.tsx` / `outliner.css` / `breadcrumb.css`)
+  — no overlap, no gate.
 - **Action at plan time:** re-run `gh pr list` and grep these exact files against
   open-PR scopes immediately before opening the Draft PR; report "no overlap" or
   the specific conflict. (Snapshot at draft time: no sibling PR claims these

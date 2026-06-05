@@ -78,8 +78,9 @@ loading/skeleton policy, and unifies error iconography/placement.
   for CTAs but does not restyle it.
 - Accent-focus, overlay radius, context-menu glass, list-row idiom, token sweep —
   owned by `design-system-consistency.md` / `composition-rhythm.md`.
-- The full **`settings-*.css` migration** — gated behind PR #118 (see Collision
-  check). The settings-pane empty/error migrations land **after** #118 merges.
+- The full **`settings-*.css` migration** — was gated behind PR #118 (now MERGED;
+  see Collision check). The settings-pane empty/error migrations are unblocked and
+  land on top of post-#118 `AgentSettingsView.tsx`.
 - **Image-row loading placeholder** (`ImageRow.tsx:63-68`, native lazy decode
   reflow) — noted in the report but deferred; it is a layout/decode concern, not
   an empty/error idiom. Tracked in "Decisions deferred".
@@ -136,7 +137,8 @@ interface ErrorStateProps {
   and leave a `// TODO(button-primitive)` — do not invent a new button.
 
 **Migration map** (text-only empties → `<EmptyState>`; errors → `<ErrorState>`).
-Settings rows are gated behind #118.
+#118 is merged, so the settings rows are unblocked (rebase on `main`; #118 reshaped
+`AgentSettingsView.tsx`, so re-verify the cited lines).
 
 | Call site (file:line) | Current class | Migrate to | Gate |
 |---|---|---|---|
@@ -150,7 +152,8 @@ Settings rows are gated behind #118.
 | `AgentDebugPanel.tsx:341` (`agent-debug-error`, css `agent-debug.css:621`) | text, **no icon** | `<ErrorState>` (adds `WarningIcon`) | — |
 | `launcher/LauncherApp.tsx:236` | `launcher-empty` (css `launcher.css:239`) | `<EmptyState size="inline">` | — |
 | `PopoverList.tsx:91` (`popover-empty`, css `popover-command.css:159`) | shared empty | re-express on `<EmptyState size="inline">` | — |
-| `AgentSettingsView.tsx:590,796,837,919` | `agent-settings-empty` (css `settings-fields.css:210`) | `<EmptyState>` | **after #118** |
+| `AgentSettingsView.tsx:642,834,836,871,940,946,948` | `agent-settings-empty` (css `settings-fields.css:210`) | `<EmptyState>` | **after #118** |
+| `AgentSettingsView.tsx:970-974` (#118-new) | `agent-settings-alert` (`WarningIcon` + `role="alert"`) | already canonical (`WarningIcon`) — leave, or fold into `<ErrorState>` candidate | **after #118** |
 | `ProviderConfigForm.tsx:276-279` | `settings-sheet-result` `✓`/`✗` glyph | success → `CheckIcon`; error → `<ErrorState>` | **after #118** |
 | `ProviderOAuthForm.tsx:310-314` | `settings-sheet-result` `✗` glyph | `<ErrorState>` | **after #118** |
 | `ProviderConfigWindow.tsx:61,68` | `agent-settings-empty` (text error/loading) | `<ErrorState>` / `<EmptyState>` | **after #118** |
@@ -170,15 +173,22 @@ above* the blank rows, keyed off the panel's root node type.
 
 Search results live behind `OutlinerView.tsx:77-82` (the `parent?.type ===
 'search'` effect that refreshes `refreshSearchNodeResults`); when that returns no
-children the pane is blank. Trash / Recents are system nodes resolved in
-`NodePanel.tsx` (`projection.trashId` at `NodePanel.tsx:257`,
-`projection.recentsId` via the system-node header path).
+children the pane is blank. Trash is a system node whose header icon resolves in
+`NodePanel.tsx` (`projection.trashId` at `NodePanel.tsx:257`); `renderHeaderIcon`
+only branches on libraryId / schemaId / trashId / searchesId (+ `type ===
+'search'`) — there is **no `recentsId` branch**. Recents is itself configured as a
+`type === 'search'` node (`core.ts:2354`) and its id is resolved in
+`Sidebar.tsx:46`, **not** in `NodePanel.tsx`. **Because Recents is a search-type
+node, its empty state overlaps the Search "no results" case — reconcile the two**
+(a Recents pane with no children is structurally the same blank-search pane, so do
+not invent a separate Recents-only path that diverges from search's loading/empty
+handling).
 
 | Surface | Trigger | Icon | Title (copy) | Body (copy) | CTA |
 |---|---|---|---|---|---|
 | Search — no results | `parent.type === 'search'` AND `builtRows.length === 0` after refresh settles | `SearchIcon` (`icons.ts:83`) | "No results" | "No nodes match this search." | — |
 | Trash empty | root is `projection.trashId` AND no children | `TrashIcon` (`icons.ts:93`) | "Trash is empty" | "Deleted nodes will appear here." | — |
-| Recents empty | root is `projection.recentsId` AND no children | `RecentsIcon` (`icons.ts:28`) | "No recent nodes" | "Nodes you open will show up here." | — |
+| Recents empty | root is `projection.recentsId` (a `type === 'search'` node, so it also matches the Search row — reconcile, see above) AND no children | `RecentsIcon` (`icons.ts:28`) | "No recent nodes" | "Nodes you open will show up here." | — |
 | Document empty (generic) | regular node, no children, not search/trash/recents | `FileTextIcon` (`icons.ts:44`) | "Empty" | "Press Enter to add your first node." | — |
 
 - **Distinguishing empty from loading is the whole point.** Search must only show
@@ -232,6 +242,7 @@ inline).
 | Agent message error | `AgentMessageRow.tsx:560`, css `agent-tool-rows.css:214` | `WarningIcon` | keep (canonical) |
 | Subagent transcript error | `AgentSubagentDetailsPanel.tsx:320-327` | `WarningIcon` + retry | `<ErrorState onRetry>` |
 | Chat error banner | `AgentChatPanel.tsx:1058-1062` | `WarningIcon`, `role=status` | keep; route through `<ErrorState>` |
+| Settings pane-level error (#118-new) | `AgentSettingsView.tsx:970-974` | `WarningIcon` + `role="alert"` | already canonical — keep, or `<ErrorState>` candidate (after #118) |
 | Provider config validate error | `ProviderConfigForm.tsx:279` | **`✗` glyph** | `WarningIcon` via `<ErrorState>` (after #118) |
 | OAuth error | `ProviderOAuthForm.tsx:310-314` | **`✗` glyph** | `WarningIcon` via `<ErrorState>` (after #118) |
 | Debug runtime error | `AgentDebugPanel.tsx:341`, css `agent-debug.css:621` | **no icon** | add `WarningIcon` via `<ErrorState>` |
@@ -301,14 +312,18 @@ directional calls to confirm with the PM (escalate-don't-guess):
 
 ## Collision check
 
-- `gh pr list`: **PR #118** ([codex] Settings macOS clarity pass,
-  `codex/settings-macos-clarity`, OPEN) owns `settings-*.css`, `controls.css`,
-  `design-system.md`. **Overlap:** the settings-pane empty/error migrations
-  (`agent-settings-empty` in `settings-fields.css:210`, the `✓`/`✗`
-  `settings-sheet-result` glyphs in `ProviderConfigForm.tsx` /
-  `ProviderOAuthForm.tsx`). **Resolution:** those rows are explicitly gated
-  **after #118** in the migration map; the new-primitive + outliner-empty +
-  abort-marker work has **no overlap** with #118 and can start immediately.
+- **PR #118** ([codex] Settings macOS clarity pass, `codex/settings-macos-clarity`)
+  is now **MERGED**. It owned `settings-*.css`, `controls.css`, `design-system.md`,
+  and rewrote `AgentSettingsView.tsx`. It kept `agent-settings-empty` as the
+  settings empty idiom and added the `agent-settings-alert` (`WarningIcon` +
+  `role="alert"`) pane-level error — it did **not** introduce an
+  `EmptyState`/`ErrorState` primitive, so this plan's premise still holds. The
+  settings-pane empty/error migrations (`agent-settings-empty` in
+  `settings-fields.css:210`, the `✓`/`✗` `settings-sheet-result` glyphs in
+  `ProviderConfigForm.tsx` / `ProviderOAuthForm.tsx`) were gated **after #118** and
+  are now unblocked; line numbers in the migration map reflect post-#118
+  `AgentSettingsView.tsx`. The new-primitive + outliner-empty + abort-marker work
+  has **no overlap** with #118.
 - `docs/plans/sidebar-pinned-nodes.md` — owns the dead "Pinned" section
   (`Sidebar.tsx:57`). **No overlap:** this plan excludes `sidebar-empty-row` and
   cross-references it only.
@@ -357,7 +372,7 @@ Phase A — primitive (no #118 dependency):
   list (`AgentChatPanel.tsx:964-967`), debug panel
   (`AgentDebugPanel.tsx:309-318,341`), launcher (`LauncherApp.tsx:236`).
 - [ ] Delete migrated CSS families; point a comment at `feedback-state.css` for
-  any held behind #118.
+  each migrated family.
 
 Phase B — outliner empty states:
 - [ ] Thread root-type + search-loading signal into `OutlinerView.tsx:49-82`.

@@ -57,8 +57,9 @@ never keyboard-focused, so suppression is correct per B8.
 - Switches / segmented / select / checkbox — separate primitives, compliant.
 - Redesigning the look — we adopt the **dominant** canonical per role, not a new
   visual language.
-- `settings-*` button migration in the FIRST PR — deferred behind #118 (see
-  Collision); the primitive + non-settings call sites land first.
+- `settings-*` button migration was originally deferred behind #118; #118 is now
+  merged (see Collision), so settings buttons are unblocked and may land in the
+  same wave.
 
 ## Design
 
@@ -96,7 +97,7 @@ never keyboard-focused, so suppression is correct per B8.
 - `agent-subagent-send-button` → `primary size=sm`; `-stop-button` → `danger size=sm`;
   `-small`/`-transcript-button` → `ghost size=sm`.
 
-**Wave 2 (after #118):**
+**Wave 2 (settings buttons — #118 merged, gate OPEN; may collapse into Wave 1):**
 - `agent-settings-primary`/`-secondary`/`-danger`, `settings-sheet-primary`/
   `-secondary`/`-danger`/`-cancel-test` → the matching variants.
 
@@ -108,7 +109,7 @@ never keyboard-focused, so suppression is correct per B8.
 
 Add a "Button" row to the Components table in `design-system.md` documenting the
 variant taxonomy and the canonical tokens, next to the existing `IconButton`
-entry. Lands after #118 (which also edits that file).
+entry. #118 (which also edited that file) is merged, so this is unblocked.
 
 ## Decisions (PM-ratified 2026-06-05 — all defaults below adopted)
 
@@ -129,17 +130,25 @@ entry. Lands after #118 (which also edits that file).
 
 ## Collision check
 
-- **PR #118** (codex, `codex/settings-macos-clarity`) owns `settings-base.css`,
-  `settings-provider-sheet.css`, `settings-fields.css`, `controls.css`,
-  `design-system.md`. **Mitigation:** Wave-1 migration excludes all settings
-  buttons; Wave 2 + the `design-system.md` Components edit land after #118.
+- **PR #118** (codex, `codex/settings-macos-clarity`) — **MERGED.** Its actual
+  scope was `design-system.md`, `controls.css`, `tokens.css`,
+  `settings-agents.css`, `settings-base.css`, `settings-inset-list.css`,
+  `settings-providers.css`, `settings-skills.css`, `AgentSettingsView.tsx`,
+  `SettingsInsetList.tsx`, `SelectControl.tsx`, i18n messages, settings e2e — it
+  did NOT touch `settings-provider-sheet.css` or `settings-fields.css` (the
+  settings buttons `agent-settings-primary`/`-danger` and `settings-sheet-*` live
+  in those two files, never in #118's scope). In `controls.css` #118 touched only
+  `.segmented-control-option` and `.select-popup`, not any text buttons. **Status:**
+  the gate is OPEN — Wave 2 + the `design-system.md` Components edit are unblocked
+  and may collapse into one wave (the dev's call at build time).
 - This overlaps the `design-system-consistency.md` plan only at the edges
   (that plan's §1c thinking-level + the small button one-offs). **Resolution:**
   the button one-offs (danger hover, missing transitions, 30px) are absorbed HERE;
   remove them from that plan's scope to avoid double-editing the same lines.
-- New files: `src/renderer/ui/primitives/Button.tsx` + a `.button-*` block (in
-  `controls.css` — but that's #118-owned, so put the new block in a NEW
-  `button.css` to stay off #118's lines).
+- New files: `src/renderer/ui/primitives/Button.tsx` + a `.button-*` block. #118
+  (merged) touched only `.segmented-control-option`/`.select-popup` in
+  `controls.css`, not text buttons, so there is no collision there; still, put the
+  new block in a NEW `button.css` to keep the primitive self-contained.
 - Wave-1 CSS files touched: `confirm-dialog.css`, `launcher.css`, `outliner.css`
   (search builder), `overlay-palette.css`, `agent-subagent.css`, + new `button.css`
   and the TSX call sites. None are infrastructure-ownership.
@@ -153,7 +162,8 @@ entry. Lands after #118 (which also edits that file).
   migration is visual-token consolidation, not logic change.
 - **Scope** — resist absorbing icon buttons / pill capsules; they have their own
   correct primitive.
-- **#118 sequencing** — Wave 2 + spec edit must wait for #118.
+- **#118 sequencing** — RESOLVED: #118 is merged, so Wave 2 + spec edit are
+  unblocked.
 
 ## Checklist
 
@@ -165,4 +175,5 @@ entry. Lands after #118 (which also edits that file).
 - [ ] `bun run typecheck` + `bun run test:renderer` + e2e guard suite.
 - [ ] Visual verify confirm-dialog / launcher / search / command palette /
       subagent, light + dark, all states.
-- [ ] Wave 2 (settings) + `design-system.md` Components row — after #118.
+- [ ] Wave 2 (settings) + `design-system.md` Components row — #118 merged, may
+      land in the same wave.

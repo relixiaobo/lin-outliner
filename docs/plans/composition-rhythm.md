@@ -37,12 +37,12 @@ is zero-behaviour-change CSS:
    comfortable measure as `--reading-max`, and bound the two currently-uncapped
    prose columns (agent prose, settings content) so no surface stretches text
    unboundedly. (F#1)
-2. **A row-height tier** — name the 26 / 22 / 40 split as an explicit ladder
+2. **A row-height tier** — name the 26 / 22 / 44 split as an explicit ladder
    (`--row-h-dense` / `--row-h-compact` / `--row-h-comfortable`) so the outliner
    row, agent tool row, and settings inset row pull from a deliberate scale
    instead of three hard-coded numbers. (F#2)
 3. **Text-gutter alignment tokens** — name the per-surface left reading gutters
-   (42 / 18 / 12) as a documented set so the cross-surface relationship is
+   (42 / 18 / 10) as a documented set so the cross-surface relationship is
    visible and tunable in one place, even where the values legitimately differ.
    (F#3)
 4. **A shared section-title / heading scale** — express the per-surface heading
@@ -83,9 +83,10 @@ plan **references but does not own**:
 - **No change to the 16px/26px content type metric** — it is the one solid
   cross-surface anchor the reports say to keep; we only touch heading sizes and
   geometry, never the body ramp.
-- **No spec rewrite of `docs/spec/design-system.md` in this PR** — it is gated
-  behind PR #118 (see Collision check). The spec update is a fast-follow once #118
-  lands; this PR ships the tokens + a pointer comment.
+- **No full spec rewrite of `docs/spec/design-system.md` in this PR** — #118 is
+  now merged and already added the `--settings-content-max-width` spec line; this
+  PR records the new `--reading-max` / `--row-h-*` / `--title-*` tokens and the
+  context-menu glass move in the same change (A6), alongside the tokens.
 
 ## Design
 
@@ -101,9 +102,9 @@ ladder at tokens.css:311-325 (`--radius-md` 8, `--radius-overlay-sm` 10).
 
 | Surface | Current measure | Cap source |
 |---|---|---|
-| Outliner | **720px** | `--panel-content-max: 720px` (tokens.css:344); applied at `canvas.css:134` (`.panel-inner width: min(100%, …)`) and repeated as `max-width: 720px` literals in panel.css:15,44,71,85,90 + `breadcrumb.css` |
+| Outliner | **720px** | `--panel-content-max: 720px` (tokens.css:348); applied at `canvas.css:134` (`.panel-inner width: min(100%, …)`) and repeated as `max-width: 720px` literals in panel.css:15,44,71,85,90 |
 | Agent prose | **none** → ~308px at default rail, grows to ~484px at `--agent-max-width: 520px` | `.agent-assistant-content max-width: 100%` (agent-message.css:181); `.agent-chat-scroll` pads `--agent-content-x` (panel.css:15 / agent-transcript.css:15) |
-| Settings content | **none on `origin/main`** → ~540px+, grows with the window | `.settings-content` (settings-providers.css:74) has no `max-width` on `main` |
+| Settings content | **920px** (added by #118, now on `main`) | `--settings-content-max-width: 920px` applied to `.settings-content` (settings-providers.css:96, used at :117) — a field-grid utility cap, intentionally distinct from the 720 prose measure (see Decision 1) |
 
 **Target.**
 
@@ -111,7 +112,7 @@ ladder at tokens.css:311-325 (`--radius-md` 8, `--radius-overlay-sm` 10).
    measure; the outliner's established 720 is the canonical value." Re-point
    `--panel-content-max` at it (`--panel-content-max: var(--reading-max)`) so the
    outliner is unchanged byte-for-byte but now derives from the shared name. The
-   five `max-width: 720px` literals in `panel.css` and the one in `breadcrumb.css`
+   five `max-width: 720px` literals in `panel.css`
    stay as-is in *this* PR (they are correct; converting them to
    `var(--panel-content-max)` is a tidy-up that can ride a later sweep — flagged in
    the checklist, not load-bearing).
@@ -122,10 +123,9 @@ ladder at tokens.css:311-325 (`--radius-md` 8, `--radius-overlay-sm` 10).
    deferred → agent measure).
 3. Settings content: **this is the one uncapped-and-growing column.** It needs an
    upper bound so a stretched window doesn't produce an over-long settings line.
-   **However, PR #118 already adds `--settings-content-max-width: 920px` +
-   `width: min(100%, …)` to the settings content** (confirmed in
-   `origin/codex/settings-macos-clarity`, settings-providers.css). So this plan
-   does **not** edit the settings width — it instead, *after #118 lands*, either
+   **#118 (now merged) already added `--settings-content-max-width: 920px` +
+   `width: min(100%, …)` to the settings content** (settings-providers.css). So
+   this plan does **not** edit the settings width — it instead either
    (a) re-points #118's `--settings-content-max-width` at a shared token, or
    (b) leaves 920 as the deliberate "settings is a wider utility surface than a
    reading column" value and documents that in tokens.css next to `--reading-max`.
@@ -147,7 +147,7 @@ by #118; agent width is a documented non-change.
 | Sidebar nav/tree row | 28px (`--control-size-xl`) | tokens.css:292; sidebar.css |
 | Agent tool / thinking row | ~22px (2px pad on 18px `--line-meta`) | agent-tool-rows.css:150,201,253 |
 | Agent session row | `min-height: 54px` (two-line) | agent-dock.css:298,316 |
-| Settings inset row | `min-height: 40px` | settings-inset-list.css:54 |
+| Settings inset row | `min-height: 44px` | settings-inset-list.css:55 |
 
 **Target.** Add a named ladder to tokens.css:
 
@@ -155,19 +155,19 @@ by #118; agent width is a documented non-change.
 /* List-row height tier — the deliberate density steps across surfaces.
    Dense = the outliner/sidebar line-locked row; compact = the agent tool/
    process register; comfortable = the System-Settings inset row. A surface
-   picks a step on purpose instead of hard-coding 26/22/40. The two-line
+   picks a step on purpose instead of hard-coding 26/22/44. The two-line
    agent session row derives comfortable + a line (it is intentionally tall). */
 --row-h-dense: 26px;        /* outliner doc row, line-locked to --line-content */
 --row-h-compact: 22px;      /* agent tool/thinking register */
---row-h-comfortable: 40px;  /* settings inset row */
+--row-h-comfortable: 44px;  /* settings inset row */
 ```
 
 Re-point the call sites that are a pure rename (zero visual change):
 
 - `.row { min-height: var(--row-h-dense) }` (outliner.css:844 — was 26px).
-- `.inset-row { min-height: var(--row-h-comfortable) }` — **owned by #118's
-  settings-*.css; defer this one edit behind #118** (see Collision check). On
-  `main` it is `min-height: 40px` (settings-inset-list.css:54).
+- `.inset-row { min-height: var(--row-h-comfortable) }` — settings-*.css landed
+  with #118 (now merged), so this rename folds into this plan's own PR (see
+  Collision check). On `main` it is `min-height: 44px` (settings-inset-list.css:55).
 - Agent tool rows currently express height via `padding: var(--space-1) 0` on an
   `--line-meta` line, not a `min-height` — leave the padding form as-is (changing
   it to `min-height` would be a behaviour change, not a rename) but **document
@@ -190,11 +190,11 @@ it from local geometry:
 |---|---|---|
 | Outliner | 28px column inset + 42px row leading → body text ~70px in | `--panel-content-x: 28px` (tokens.css:338); `--row-leading-width: 42px` (tokens.css:385) |
 | Agent | 18px | `--agent-content-x` (tokens.css:279-281 = dock-inset 8 + composer-corner 6 + space-2 4) |
-| Settings | ~12px card pad | `.inset-row-main padding: var(--space-2) var(--space-4)` (settings-inset-list.css:83) |
+| Settings | ~10px card pad | `.inset-row-main padding: var(--space-3) var(--space-5)` (settings-inset-list.css:84) |
 
 **Target.** These gutters legitimately differ — the outliner's 42px holds a
 chevron+bullet affordance; the agent's 18px reproduces the composer's text inset;
-settings' 12px is a flush card. Forcing them equal would break each surface's
+settings' 10px is a flush card. Forcing them equal would break each surface's
 internal logic (and the reports flag the inconsistency as *cross-surface awareness*,
 not a bug to flatten). So D3 is **documentation-as-token**, not a value change:
 
@@ -210,7 +210,7 @@ affordance, with the cross-surface relationship spelled out:
      outliner = --panel-content-x (28) + --row-leading-width (42) ≈ 70px
        (chevron + bullet gutter; the deepest, an editable outline)
      agent    = --agent-content-x (18)  (mirrors the composer text inset)
-     settings = inset-row text pad (--space-4 = 8, inside a flush card)
+     settings = inset-row text pad (--space-5 = 10, inside a flush card)
    Do NOT flatten these to one value; converge only within a surface. ── */
 ```
 
@@ -248,20 +248,20 @@ future surface picks a step instead of a number. Add to tokens.css:
 ```
 
 These are **aliases** onto the existing font tokens — zero visual change. Re-point
-only the safe, non-#118 call site:
+the safe call sites:
 
 - Agent markdown h1 → `--title-section` (agent-markdown.css) — a rename.
 - Outliner title may reference `--title-display` (panel.css:55) — a rename; low
   risk but optional, flag in checklist.
-- **Settings headers (`--title-group`) are in #118-owned settings-*.css → defer
-  the rename behind #118.**
+- **Settings headers (`--title-group`) are in settings-*.css, which #118 (now
+  merged) introduced → fold this rename into this plan's own PR.**
 
 Two real questions ride this and are deferred (see Decisions deferred): (a) whether
 settings should adopt a *large* heading anchor (it currently has none above 13px),
 and (b) lifting the agent dock title weight 400→600 (H#3). Both are
-behaviour-visible and belong to the surface owners (settings → #118; agent dock
-title weight is a one-line follow-up) — D4 ships only the scale tokens + the safe
-renames.
+behaviour-visible and belong to the surface owners (settings → a settings
+follow-up; agent dock title weight is a one-line follow-up) — D4 ships only the
+scale tokens + the safe renames.
 
 ### D5 — Unify the list-row idiom (hover ≠ current)
 
@@ -368,9 +368,9 @@ Open questions with a recommended default; escalate only the directional ones.
    (`--font-ui-sm`); it has no display title (the rail names the pane). *Recommended
    default:* **no large heading in this plan** — D4 only ships the `--title-*` scale
    tokens; whether settings grows a `--title-section`-sized pane heading is a
-   settings-surface design call that belongs to #118 / a settings follow-up, not a
-   foundation token PR. *Escalate?* Surface to the PM as a one-line note when #118
-   lands; it is taste, not foundation.
+   settings-surface design call that belongs to a settings follow-up, not a
+   foundation token PR. *Escalate?* Surface to the PM as a one-line note; it is
+   taste, not foundation.
 
 3. **Agent dock title weight 400 → 600 (H#3).** Reads as a label, not a header.
    *Recommended default:* **defer to a tiny agent-dock follow-up** — it is a
@@ -378,8 +378,8 @@ Open questions with a recommended default; escalate only the directional ones.
    foundation-token critical path. Not in this PR's scope (this PR is tokens +
    renames + the two targeted fixes D5/D6).
 
-4. **Row-density convergence (settings 40 vs outliner 26).** Should settings rows
-   really be 1.5× the outliner? *Recommended default:* **keep the gap, name it.**
+4. **Row-density convergence (settings 44 vs outliner 26).** Should settings rows
+   really be ~1.7× the outliner? *Recommended default:* **keep the gap, name it.**
    D2 ships `--row-h-*` tokens so the difference is an explicit step; converging the
    actual heights is a separate, visible redesign that needs the PM's eye and the
    settings owner. *Escalate?* No — the tokens are the reversible foundation; any
@@ -401,31 +401,32 @@ Ran `gh pr list` + scanned `docs/TASKS.md` + the roadmap boundary contract +
 grepped the intended files against open-PR scopes on 2026-06-05.
 
 **Open PRs:** #119 (`cc/incremental-projection`, perf — core/types + renderer
-state; **no CSS overlap**) and **#118 (`codex/settings-macos-clarity`)**.
+state; **no CSS overlap**). **#118 (`codex/settings-macos-clarity`) is merged
+into main** and is no longer a live collision.
 
-**#118 is the live collision.** It owns `settings-*.css`, `controls.css`, and
-`docs/spec/design-system.md`, and — confirmed by diffing
-`origin/codex/settings-macos-clarity` — it already:
-- adds `--settings-content-max-width: 920px` + `width: min(100%, …)` to
+**#118 (merged) shaped the settings surface this plan builds on.** It landed
+`settings-*.css`, `controls.css`, and a `docs/spec/design-system.md` line, and:
+- added `--settings-content-max-width: 920px` + `width: min(100%, …)` to
   `.settings-content` (settings-providers.css). → **This plan does NOT touch the
-  settings content width** (D1). After #118 merges, reconcile (default: leave 920
-  as a documented utility cap distinct from `--reading-max`).
-- owns `.inset-row` (the 40px `--row-h-comfortable` rename, D2) and the settings
-  group/section headers (the `--title-group` rename, D4). → **Defer those two
-  renames behind #118**; ship the tokens now, re-point the settings call sites in a
-  fast-follow once #118 lands so we never double-edit settings-*.css.
-- owns `design-system.md`. → **No spec edit in this PR.** The spec note describing
-  the new `--reading-max` / `--row-h-*` / `--title-*` tokens and the context-menu
-  glass move lands as a fast-follow after #118 (A6 — spec ⇄ code stay in sync, but
-  serialized behind the file owner).
+  settings content width** (D1); reconcile in this plan's own PR (default: leave
+  920 as a documented utility cap distinct from `--reading-max`).
+- shaped `.inset-row` (the 44px `--row-h-comfortable` rename, D2) and the settings
+  group/section headers (the `--title-group` rename, D4). → **Now #118 is merged,
+  fold those two settings renames into this plan's own PR** — there is no longer a
+  concurrent owner to double-edit against.
+- added a `--settings-content-max-width` spec line in `design-system.md`. → This
+  plan records the new `--reading-max` / `--row-h-*` / `--title-*` tokens and the
+  context-menu glass move in the same change (A6 — spec ⇄ code stay in sync).
 
-**This plan's exclusive scope (no overlap with #118 or #119):** `tokens.css` (the
+**This plan's scope (no overlap with #119; #118 is merged):** `tokens.css` (the
 new tokens — coordinate as an infra-ownership file but no concurrent claim on it),
 `outliner.css` (D2 `.row` rename, D6 context-menus), `agent-dock.css` (D5 session
-current), `agent-markdown.css` (D4 h1 rename), and the `--panel-content-max`
-re-point in tokens.css. `tokens.css` is on the infra-ownership list — open this as
-an isolated, small PR and let siblings rebase (it touches only additive token
-declarations + comments + four re-points, so rebase cost is near zero).
+current), `agent-markdown.css` (D4 h1 rename), `settings-*.css` (D2 `.inset-row`
++ D4 `--title-group` renames, now that #118 has merged), and the
+`--panel-content-max` re-point in tokens.css. `tokens.css` is on the
+infra-ownership list — open this as an isolated, small PR and let siblings rebase
+(it touches only additive token declarations + comments + four re-points, so
+rebase cost is near zero).
 
 **Boundary-contract overlaps (reference-only, by design):** button shape incl.
 ConfirmDialog buttons → `button-primitive`; accent-focus → `design-system-consistency`
@@ -454,13 +455,13 @@ This plan touches none of those lines.
   `--row-h-dense: 26px` → `.row min-height` must compute to the identical pixel.
   Guard: the existing guard tests track real DOM/CSS (A6/B11) — run
   `bun run test:renderer` and any geometry guard; do not relax a guard to pass.
-- **Deferred-behind-#118 work could rot** if #118 stalls. Mitigation: the tokens
-  ship independently and are usable; the settings re-points are a 3-line
-  fast-follow tracked in the checklist, not a blocker for this PR's value.
+- **Settings renames now fold into this PR** (#118 is merged), so the settings
+  `.inset-row` / `--title-group` re-points and the spec line ride this change
+  rather than a separate fast-follow — no cross-PR rot risk remains.
 
 ## Checklist
 
-Build (this PR — independent of #118):
+Build (this PR — #118 is merged, so settings renames fold in):
 - [ ] tokens.css: add `--reading-max: 720px` + comment; re-point
   `--panel-content-max: var(--reading-max)` (D1).
 - [ ] tokens.css: add `--row-h-dense/-compact/-comfortable` ladder + comment (D2).
@@ -474,6 +475,13 @@ Build (this PR — independent of #118):
 - [ ] outliner.css:2229-2249,2314-2322 — `.node-context-menu` / `.tag-context-menu`
   / `.batch-tag-selector` → `--material-popover` + `--material-backdrop` +
   `--radius-overlay-sm` (D6).
+- [ ] settings-inset-list.css:55 — `.inset-row min-height: var(--row-h-comfortable)`
+  (D2 rename, no-op).
+- [ ] settings section/group headers → `--title-group` (settings-*.css) (D4 rename).
+- [ ] Reconcile #118's `--settings-content-max-width: 920px` with `--reading-max`
+  (default: document 920 as the settings utility cap, distinct from prose 720).
+- [ ] `docs/spec/design-system.md`: record `--reading-max`, the `--row-h-*` tier,
+  the `--title-*` scale, and the context-menu glass move (A6).
 
 Verify:
 - [ ] `bun run typecheck`.
@@ -481,15 +489,7 @@ Verify:
 - [ ] Visual verification light + dark: outliner context menu over content (D6);
   agent session list hover vs current (D5).
 
-Fast-follow (after PR #118 merges — defer to avoid double-editing settings-*.css):
-- [ ] settings-inset-list.css:54 — `.inset-row min-height: var(--row-h-comfortable)`.
-- [ ] settings section/group headers → `--title-group` (settings-*.css).
-- [ ] Reconcile #118's `--settings-content-max-width: 920px` with `--reading-max`
-  (default: document 920 as the settings utility cap, distinct from prose 720).
-- [ ] `docs/spec/design-system.md`: record `--reading-max`, the `--row-h-*` tier,
-  the `--title-*` scale, and the context-menu glass move (A6).
-
 Tidy-up (optional, any later sweep):
-- [ ] Convert the `max-width: 720px` literals in panel.css:15,44,71,85,90 +
-  breadcrumb.css to `var(--panel-content-max)` (cosmetic; not load-bearing).
+- [ ] Convert the `max-width: 720px` literals in panel.css:15,44,71,85,90
+  to `var(--panel-content-max)` (cosmetic; not load-bearing).
 - [ ] Agent dock title weight 400→600 follow-up (H#3, deferred D-decision 3).

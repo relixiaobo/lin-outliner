@@ -68,9 +68,10 @@ The fix shape is already proven twice in the repo:
   `button-primitive`), **no text-input/placeholder styling** (owned by
   `input-primitive`), **no empty-state copy** (owned by `feedback-states`). This
   pass only touches color/contrast *values*.
-- **No `settings-*.css` edits** while PR #118 is open (see Collision check) —
-  status-color fixes there, if any, land as token nudges in `theme-dark.css`,
-  which #118 does not own.
+- **No `settings-*.css` edits** (see Collision check) — status-color fixes there,
+  if any, land as token nudges in `theme-dark.css`. (#118 is merged; its tokens —
+  added `--inset-hairline`, uses `--border-subtle` — don't affect this pass's
+  targets.)
 - Not a WCAG-AA certification effort — the bar is "reads cleanly in the product on
   a real dark screen", judged by eye, consistent with the design system's
   perceptual-over-benchmark stance (A9).
@@ -157,16 +158,15 @@ default so the pass isn't blocked.
 
 ## Collision check
 
-- **`gh pr list`:** open PRs are **#119** (cc/incremental-projection — core↔renderer
-  projection protocol, no CSS) and **#118** (codex/settings-macOS-clarity). Only
-  #118 overlaps, and only on `settings-*.css` + `design-system.md`.
-- **Overlap with #118:** the report cites `settings-provider-sheet.css:202,408`
+- **`gh pr list`:** #119 (cc/incremental-projection — core↔renderer projection
+  protocol, no CSS) and **#118** (codex/settings-macOS-clarity) are both **merged**;
+  #118's tokens (added `--inset-hairline`, uses `--border-subtle`) don't affect
+  this pass's targets.
+- **Settings sites:** the report cites `settings-provider-sheet.css:202,408`
   (plain-success text) and other `settings-*.css` sites. This pass's fix is a
-  **token nudge in `theme-dark.css`**, which #118 does **not** own — so the
-  status-color fix lands without touching #118's files. Do **not** edit any
-  `settings-*.css` or `design-system.md` while #118 is open; if a spec edit is
-  needed, sequence it after #118 merges (per `ui-quality-roadmap.md` dependency
-  note).
+  **token nudge in `theme-dark.css`** — it does **not** edit any `settings-*.css`
+  regardless. Re-grep cited `file:line`s against `main` (#118 reshaped the settings
+  CSS).
 - **Sequence after Layer 1/2** (`ui-quality-roadmap.md`): this pass verifies the
   *final* state. Running it before `design-system-consistency`, `composition-rhythm`,
   `button-primitive`, `input-primitive`, `feedback-states` land would re-confirm a

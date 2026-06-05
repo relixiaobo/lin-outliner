@@ -31,7 +31,7 @@ builds on it. Settle the shared mechanism first (A7).
   measure, row-height tier, text-gutter alignment, heading scale, list-row idiom,
   context-menu glass/radius alignment. *(new — from reports F + H)*
 
-**Layer 2 — Primitives (TSX + CSS, migrate call sites, coordinate #118).**
+**Layer 2 — Primitives (TSX + CSS, migrate call sites; #118 merged — no longer a gate).**
 Component consolidation; consumes Layer-1 tokens.
 - `button-primitive.md` — `<Button variant>`. *(ratified)*
 - `input-primitive.md` — `<Input>/<Textarea>/<Select>/<Field>`. *(new — report C)*
@@ -67,14 +67,20 @@ colors, faint-on-material) and apply one-token `theme-dark.css` nudges. Runs
 
 ## Dependencies & sequencing
 
-- **PR #118** (codex settings-macOS-clarity) owns `settings-*.css`, `controls.css`,
-  `design-system.md`. Gates: button Wave 2, input-primitive's settings-field
-  migration, every `design-system.md` spec edit. Land those AFTER #118.
+- **PR #118** (codex settings-macOS-clarity) is **MERGED into `main`** — it is the
+  baseline now, not an open PR to sequence behind. The gates it once imposed
+  (button Wave 2, input-primitive's settings-field migration, every
+  `design-system.md` spec edit) are **OPEN**: the settings-touching waves no longer
+  need to wait and can fold into each plan's own PR (re-grep against `main`, since
+  #118 reshaped `settings-*.css` / `controls.css` / `design-system.md`).
+- **First plan to pull (ratified):** `responsive-robustness` is **#1** — P1,
+  independent, all 7 bugs verified real.
 - **Recommended order:** (1) Layer-3 bugs that don't touch the cosmetic layers can
-  start immediately — `responsive-robustness` and `keyboard-a11y` are the highest
-  user-impact. (2) Layer-1 `composition-rhythm` tokens before Layer-2 primitives
-  that consume them. (3) Primitives, settings-touching waves behind #118.
-  (4) `dark-mode-contrast-pass` last. (5) `icon-semantics` anytime (small, isolated).
+  start immediately — `responsive-robustness` (#1) and `keyboard-a11y` are the
+  highest user-impact. (2) Layer-1 `composition-rhythm` tokens before Layer-2
+  primitives that consume them. (3) Primitives + settings-touching waves (no longer
+  gated — #118 is merged). (4) `dark-mode-contrast-pass` last. (5) `icon-semantics`
+  anytime (small, isolated).
 - **Priority cut:** P1 `responsive-robustness`; P2 `keyboard-a11y`,
   `input-primitive`, `feedback-states`, `button-primitive`; P3 `composition-rhythm`,
   `icon-semantics`, `dark-mode-contrast-pass`, `design-system-consistency`.
@@ -88,7 +94,10 @@ colors, faint-on-material) and apply one-token `theme-dark.css` nudges. Runs
 | button-primitive | 2 | button audit | ratified, not started |
 | input-primitive | 2 | C | draft |
 | feedback-states | 2 | B | draft |
-| responsive-robustness | 3 | D | draft |
+| responsive-robustness | 3 | D | draft — **pull first (#1)** |
 | keyboard-a11y | 3 | E | draft |
 | icon-semantics | 3 | G | draft |
 | dark-mode-contrast-pass | x | A | draft |
+
+> Baseline: **PR #118** (settings-macOS-clarity) is **merged into `main`** — its
+> former gates on the settings-touching waves are open.

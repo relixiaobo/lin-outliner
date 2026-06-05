@@ -217,8 +217,10 @@ to match the textbook widget the app already ships elsewhere (`SegmentedControl`
 - **Command-palette input** — `CommandPalette.tsx:180-207` has
   `aria-activedescendant`/`aria-controls` but no `role="combobox"`/`aria-expanded`/
   `aria-autocomplete`. Target: add those three, mirroring Launcher
-  (`launcher/LauncherApp.tsx`), which sets all of them. (Listbox below at `:208`
-  is already correct.)
+  (`src/renderer/launcher/LauncherApp.tsx` — a separate `BrowserWindow` renderer
+  root, **not** under `ui/`; `role="combobox"`/`aria-autocomplete="list"` at
+  `:206`/`:209`), which sets all of them. (Listbox below at `:208` is already
+  correct.)
 
 ## Decisions deferred
 

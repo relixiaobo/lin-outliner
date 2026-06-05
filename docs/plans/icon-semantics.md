@@ -13,8 +13,8 @@ glyph resolves through one lucide alias table (`src/renderer/ui/icons.ts`), the
 field-type vocabulary flows through one `FIELD_TYPE_ICONS` map
 (`src/renderer/ui/outliner/fieldTypePresentation.tsx`), and inline file mentions
 go through one `inlineFileIconKind` resolver (`src/renderer/ui/editor/inlineFileIcon.ts`).
-There are **no rogue `from 'lucide-react'` imports** anywhere in the renderer
-(verified by grep in report G). Because of that, this is **not** a "scatter of
+There are **no rogue `from 'lucide-react'` imports** outside the launcher's own
+icon table (`launcherIcons.tsx`) in the renderer (verified by grep in report G). Because of that, this is **not** a "scatter of
 inconsistent icons" cleanup — it is a small set of **semantic-mapping fixes**:
 a handful of cases where one lucide glyph is aliased to two unrelated meanings,
 or where a resolver's fallback reaches for a glyph that already carries a
@@ -79,23 +79,21 @@ against the current file. The recommended choices are spelled out under
 
 | # | Collision | Current | Proposed glyph | file:line |
 |---|---|---|---|---|
-| G5 | "Remove tag" drawn as `CloseIcon` (X) in the TagBar context menu, but tag-delete drawn as `TrashIcon` in AppliedTag — adjacent surfaces, same noun ("tag"), different glyph | TagBar `Remove` → `CloseIcon`; AppliedTag trashed badge → `TrashIcon` | codify the rule **X = detach/dismiss a transient chip or close UI; Trash = destroy persisted data**, then re-audit. "Remove tag" detaches the tag from a node (not destroying the tag entity) → X is correct; **no glyph change**, document the rule in `icons.ts` and leave AppliedTag's trashed-state Trash as-is | TagBar `removeTitle`: `TagBar.tsx:121`; AppliedTag trashed: `AppliedTag.tsx:31`; AppliedTag detach X: `AppliedTag.tsx:63` |
+| G5 | "Remove tag" drawn as `CloseIcon` (X) in the TagBar context menu, but tag-delete drawn as `TrashIcon` in AppliedTag — adjacent surfaces, same noun ("tag"), different glyph | TagBar `Remove` → `CloseIcon`; AppliedTag trashed badge → `TrashIcon` | codify the rule **X = detach/dismiss a transient chip or close UI; Trash = destroy persisted data**, then re-audit. "Remove tag" detaches the tag from a node (not destroying the tag entity) → X is correct; **no glyph change**, document the rule in `icons.ts` and leave AppliedTag's trashed-state Trash as-is | TagBar `removeTitle`: `tags/TagBar.tsx:121`; AppliedTag trashed: `tags/AppliedTag.tsx:31`; AppliedTag detach X: `tags/AppliedTag.tsx:63` |
 
-#### Tier 3 — alias collisions to watch / dead alias (low / non-user-facing)
+#### Tier 3 — alias collisions to watch (low / non-user-facing)
 
 | # | Collision | Current | Proposed glyph | file:line |
 |---|---|---|---|---|
 | G6a | `Square` aliases BOTH `CheckboxIcon` (unchecked checkbox) AND `StopIcon` (agent stop) | both `= Square` | low risk (Stop is rendered as a styled filled square button; checkbox lives in a checkbox row) → **keep both; add a comment** noting the deliberate share. Optional: `StopIcon` → `Square` stays, document. No change recommended | `icons.ts:24,87`; Stop: `AgentComposerControls.tsx:168`; checkbox: `NodeContextMenu.tsx:300`, field-type |
 | G6b | Two "edit" glyphs: `PencilIcon` (Pencil) for message/text edit vs `DescriptionIcon`/`NodeEditToolIcon` (FilePenLine) for edit-description / node-edit-tool | `PencilIcon=Pencil`, `DescriptionIcon=NodeEditToolIcon=FilePenLine` | **deliberate distinction** — Pencil = edit free text (message, composer), FilePenLine = edit a structured node's description/content. **Keep both; document** the split in `icons.ts`. No change | Pencil: `AgentComposerControls.tsx:32`, `AgentMessageRow.tsx:503`, `AgentChatPanel.tsx:1022`; FilePenLine: `NodeContextMenu.tsx:329`, `getToolIcon:79,92` |
-| G6c | `SettingsIcon` (gear) doubles as the **generic config-row fallback** in DefinitionConfigPanel — a gear on a config row reads as "settings for this row" rather than "misc property" | `autoInitialize` + catch-all `return <SettingsIcon>` | give the catch-all a neutral glyph distinct from the app-settings gear → `SlidersHorizontal` (recommend) for the catch-all; keep `SettingsIcon` for actual Settings entry points | `DefinitionConfigPanel.tsx:148` (`autoInitialize`), `:153` (catch-all) |
-| G7 | `RefreshIcon` (RefreshCw) exported but **zero JSX usages** (dead alias) | `RefreshCw as RefreshIcon` | **drop the alias** to keep the map honest (A8). If a refresh action is wanted later, re-add then | `icons.ts:81` |
+| G6c | `SettingsIcon` (gear) doubles as the **generic config-row fallback** in DefinitionConfigPanel — a gear on a config row reads as "settings for this row" rather than "misc property" | `autoInitialize` + catch-all `return <SettingsIcon>` | give the catch-all a neutral glyph distinct from the app-settings gear → `SlidersHorizontal` (recommend) for the catch-all; keep `SettingsIcon` for actual Settings entry points. (#118 further loaded `SettingsIcon` as the **settings category** glyph — gear now carries three distinct meanings, reinforcing the catch-all collision.) | `DefinitionConfigPanel.tsx:148` (`autoInitialize`), `:153` (catch-all) |
 
 ### Implementation shape
 
 - **icons.ts is the hub.** G1 (number→`Binary`), G2 (add a `GenericToolIcon`/
   reuse `Wrench`), G4 (add a split-pane alias e.g. `SplitPaneIcon = Columns2`),
-  G6c (add `MiscConfigIcon = SlidersHorizontal`), and G7 (delete `RefreshIcon`)
-  are all alias-table edits. New glyphs are added as **named aliases** so the
+  and G6c (add `MiscConfigIcon = SlidersHorizontal`) are all alias-table edits. New glyphs are added as **named aliases** so the
   one-table architecture is preserved — call sites import the semantic name,
   never the raw lucide name.
 - **Resolver edits (3 lines):** `getToolIcon` fallback (G2),
@@ -115,9 +113,9 @@ authority) recording the load-bearing rules this plan establishes:
 `#`=supertag-only, number-field gets its own glyph; AlertTriangle = status-only
 (never a neutral fallback); split-pane ≠ external-link; X = detach/dismiss,
 Trash = destroy; the deliberate Pencil-vs-FilePenLine and Square-share notes.
-Done in the same change. (If #118 still owns `design-system.md` at build time,
-land this spec paragraph behind #118 per the roadmap's dependency note, and keep
-the code change ahead of it.)
+Done in the same change. (#118 is merged into main; its `design-system.md`
+paragraph is no longer a forward gate, so this spec paragraph lands with the code
+change.)
 
 ## Decisions deferred
 
@@ -158,11 +156,11 @@ follows whatever is chosen.
   shape (not icons), `feedback-states` owns empty/error *idioms* (it may render
   `WarningIcon` for error states — **unaffected**, G2 only changes the
   unknown-tool *fallback*, not error states). No overlap.
-- **`design-system.md` is co-owned with PR #118** (codex settings-macOS-clarity).
-  Only risk: the spec-paragraph edit. Mitigation: land the spec paragraph behind
-  #118 (code change can land ahead). Flagged per the roadmap dependency note.
+- **`design-system.md` was co-owned with PR #118** (codex settings-macOS-clarity).
+  #118 is now merged into main; its `design-system.md` paragraph is no longer a
+  forward gate, so the spec-paragraph edit lands with the code change.
 - Result: **no overlap.** The only shared file is `design-system.md` (spec
-  paragraph only), sequenced behind #118.
+  paragraph only), no longer sequenced behind anything.
 
 ## Risks (low)
 
@@ -178,8 +176,6 @@ follows whatever is chosen.
   spreadsheet, text, video) with a `text`→`FileTextIcon` default. Low risk; the
   aliases already exist in `icons.ts` (FileArchive/Audio/Code/Image/Spreadsheet/
   Video, Folder, Database; presentation→`PresentationIcon`).
-- **Dead-alias removal (G7).** Confirm zero usages before deleting (report G
-  grepped zero; re-grep at build). Reversible.
 - **Verification.** Visual check (light + dark) of: a number field row vs a
   supertag, an unknown agent tool call, a `.zip`/`.xlsx` attachment chip, the
   node context-menu "Open in split pane" item, a definition-config catch-all row.
@@ -196,11 +192,10 @@ follows whatever is chosen.
 - [ ] **G4** add split-pane alias to `icons.ts`; swap `NodeContextMenu.tsx:263`.
 - [ ] **G6c** `ConfigIcon` catch-all + `autoInitialize`
   (`DefinitionConfigPanel.tsx:148,153`) → neutral config glyph; add alias.
-- [ ] **G7** delete unused `RefreshIcon` alias (`icons.ts:81`) after re-grep.
 - [ ] **G5 / G6a / G6b** add documenting comments in `icons.ts` (detach-vs-destroy
   rule; Square share; Pencil-vs-FilePenLine deliberate split) — no glyph change
   unless PM overrides.
 - [ ] Spec: add "Icon semantics" subsection to `docs/spec/design-system.md`
-  (sequenced behind #118 if it still owns the file).
+  (#118 is merged; no longer sequenced behind it).
 - [ ] `bun run typecheck` + `bun run test:renderer`.
 - [ ] Visual verification (light + dark) per the Risks list.

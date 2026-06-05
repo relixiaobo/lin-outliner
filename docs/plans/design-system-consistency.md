@@ -96,8 +96,9 @@ Reference-correct already: `.rail-toggle` (color-only), `.panel-breadcrumb-origi
 drop the rest fill → plain color-only marker, peer of the text crumbs.
 `.panel-breadcrumb-origin` (breadcrumb.css:125): keep as the single anchor *(Q1)*.
 
-**1c. Composer one-offs.** `.agent-approval-button` (agent-composer.css:152) r8
-rounded-square → `--radius-pill` *(Q2)*. `.agent-composer-thinking-level`
+**1c. Composer one-offs.** `.agent-approval-button` (agent-composer.css:152)
+rounded-square (uses the derived `--agent-composer-corner-radius` token) →
+`--radius-pill` *(Q2)*. `.agent-composer-thinking-level`
 (agent-composer.css:619) `--radius-md` → align to pill/menu rung *(Q2)*.
 
 **1d. Color-only chrome — focus-ring radius (optional).** `.rail-toggle`,
@@ -170,17 +171,19 @@ risks the selection paint order.
 
 ### §9 — Spec sync (A6)
 
-- **B2 (dark mode).** `design-system.md` (and the AGENTS.md B2 one-liner) still
-  describe `[data-theme]` + JS bridge as the interim mechanism. The code has
-  fully migrated to `@media (prefers-color-scheme)` with zero `[data-theme]`.
-  Update B2 to record the migration as **done**. *(AGENTS.md is an
-  infrastructure-ownership / symlinked file — coordinate that one-line edit with
-  the main agent; the `design-system.md` detail we own.)*
+- **B2 (dark mode).** `design-system.md` is already done — it documents pure
+  `@media (prefers-color-scheme: dark)` with zero `[data-theme]` (matching the
+  code, which fully migrated; see Audit verdict). The ONLY remaining stale text is
+  the **AGENTS.md B2 one-liner**, which still says "the current `[data-theme]` +
+  JS bridge is interim only". Remaining work: that one-line `AGENTS.md` B2 edit.
+  *(AGENTS.md is an infrastructure-ownership / symlinked file — coordinate that
+  one-line edit with the main agent.)*
 - **Icons.** `design-system.md` says "hand-curated inline-SVG set, no icon
   libraries"; the app uses lucide-react as the single set. Update the spec to
   bless lucide-react as THE set (and note the inline-ref hand-SVGs are stroke=2)
   *(Q6)*.
-- Both `design-system.md` edits land **after** #118 (it also touches that file).
+- The `design-system.md` icons edit was sequenced behind #118; #118 is now merged,
+  so the gate is open — rebase on `main` first, then land it.
 
 ## Decisions (PM-ratified 2026-06-05 — all defaults below adopted)
 
@@ -203,12 +206,16 @@ risks the selection paint order.
 
 ## Collision check
 
-- **PR #118** (codex, `codex/settings-macos-clarity`) touches
-  `settings-providers.css`, `controls.css`, `settings-base.css`,
+- **PR #118** (codex, `codex/settings-macos-clarity`) — **now merged into `main`**
+  — touched `settings-providers.css`, `controls.css`, `settings-base.css`,
   `settings-inset-list.css`, `settings-agents.css`, `settings-skills.css`,
-  `design-system.md`. **Mitigation:** this plan excludes every settings/controls
-  file (§4/§5 settings items deferred to #118); `design-system.md` edits (§9)
-  land after #118 merges / rebase.
+  `design-system.md`. The gates it blocked are now open: rebase on `main`, then the
+  deferred items are unblocked — the §4 settings-field `:focus-visible` input
+  (settings-fields.css:37) and §5 `.inset-group-header`
+  (settings-inset-list.css:22) / `.agent-settings-section-header`
+  (settings-base.css:82) `user-select` items, plus the `design-system.md` icons
+  spec edit (§9), can all land. *(The §9 B2 dark-mode spec drift was already
+  resolved in `design-system.md`; only the AGENTS.md B2 one-liner remains — see §9.)*
 - `AGENTS.md` B2 one-liner (§9) is infrastructure-ownership — main-agent
   coordination, not a drive-by.
 - No other open PRs. `floating-toolbar-polish.md` is a different component.
@@ -225,7 +232,8 @@ risks the selection paint order.
   focus + open states, not just typecheck.
 - **Spacing snapping** — never snap a value that shifts a visible content measure
   (§7 is case-by-case for this reason).
-- **#118 / spec overlap** — sequence the `design-system.md` edits behind #118.
+- **#118 / spec overlap** — #118 is merged; rebase on `main`, then land the
+  `design-system.md` edits with the change (no longer a forward gate).
 
 ## Checklist
 
