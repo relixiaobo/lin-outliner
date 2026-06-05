@@ -85,6 +85,9 @@ hover / focus / press, matching macOS' text-led pop-up rhythm. Agent Profiles
 should remain a single-column settings flow: profile list first, full-width
 detail card below. Avoid a side-by-side master/detail pane inside this Settings
 window because it creates a large empty middle field at normal window sizes.
+Permission decision pop-ups keep a stable width across all rows, including the
+non-allowable final rule, so the transparent chrome still scans as one aligned
+control family.
 
 ## Files
 
@@ -132,6 +135,7 @@ No live file-level overlap.
 - [x] Remove/demote redundant pane intro copy.
 - [x] Soften inset-card chrome without weakening focus/selection states.
 - [x] Keep pop-up selects transparent at rest with hover/focus/press fill only.
+- [x] Keep Permissions decision pop-ups aligned through the non-allowable last row.
 - [x] Stack Agent Profiles list and detail in one content column.
 - [x] Update `docs/spec/design-system.md`.
 - [x] Run `bun run typecheck` and relevant renderer tests.

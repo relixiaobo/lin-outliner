@@ -92,6 +92,29 @@ test.describe('agent settings window', () => {
     }).not.toBe('rgba(0, 0, 0, 0)');
   });
 
+  test('keeps permission decision pop-ups aligned through the last row', async ({ page }) => {
+    const settings = await openSettings(page);
+    await settings.getByRole('button', { name: /^Permissions/ }).click();
+    const content = settings.locator('.settings-content');
+    const popups = settings.locator('.settings-permissions-section .select-popup-input');
+    await expect(popups).toHaveCount(10);
+
+    const firstBox = await popups.first().boundingBox();
+    const lastBox = await popups.last().boundingBox();
+    expect(firstBox).not.toBeNull();
+    expect(lastBox).not.toBeNull();
+    expect(lastBox!.width).toBeCloseTo(firstBox!.width, 1);
+
+    await content.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    const contentBox = await content.boundingBox();
+    const scrolledLastBox = await popups.last().boundingBox();
+    expect(contentBox).not.toBeNull();
+    expect(scrolledLastBox).not.toBeNull();
+    expect(scrolledLastBox!.y + scrolledLastBox!.height).toBeLessThan(contentBox!.y + contentBox!.height - 6);
+  });
+
   test('stacks agent profile list and detail in one settings column', async ({ page }) => {
     const settings = await openSettings(page);
     await settings.getByRole('button', { name: 'Agent Profiles', exact: true }).click();

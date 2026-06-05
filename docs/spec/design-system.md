@@ -1193,8 +1193,9 @@ not Apple chrome. We borrow the interaction, not the chrome.
     (only Providers leads with the brand avatar); the row toggle / decision select
     lives in the `trailing` slot (native macOS — toggles sit on the right). General's
     Theme/Language, Skills' behaviour switches + installed-skill toggles, Permissions'
-    common actions (a compact transparent-at-rest decision pop-up; the row sublabel stays
-    human-readable and does not expose raw rule strings),
+    common actions (a compact transparent-at-rest decision pop-up with a stable
+    decision width, so non-allowable rows do not collapse to a different-looking
+    control; the row sublabel stays human-readable and does not expose raw rule strings),
     Agent Profiles' selectable profile list — all are `InsetRow`s. Agent Profiles
     stays single-column inside Settings: the profile list selects
     (`.inset-row.is-selected`), then the detail card follows below at full content

@@ -111,6 +111,7 @@
      capsule/title. This structural exclusion keeps the opaque content layer from
      bleeding through the chrome controls. */
   margin-top: calc(var(--chrome-height) + var(--space-lg));
+  padding-bottom: var(--space-6);
   overflow-y: auto;
   scrollbar-gutter: stable;
 }
