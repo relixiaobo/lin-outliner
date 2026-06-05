@@ -194,17 +194,25 @@ capture-pipeline tracks below stay separate (orthogonal to the surface).
 ### Performance
 
 - **performance-optimization** (P0–P3 program, PR #116) — prioritized catalog from a
-  three-way perf audit (`docs/plans/performance-optimization.md`). **P0 shipped** (#117).
-  **Next: P1 — incremental projection delta** over the `core↔renderer` seam (the keystone:
-  today every mutation ships the full projection and the renderer re-derives the change set
-  via a whole-document `JSON.stringify` + full `byId`/reverse-edge rebuild, all O(N) per
-  keystroke, though core already computes `changedNodeIds`). P1 touches the
-  infrastructure-ownership files `src/core/types.ts` + `projection.ts` → **must land
-  interface-first** per AGENTS.md, then core emit, then renderer ingest. P2 (default
-  windowed outliner; agent streaming delta) and P3 (localized O(N) cleanups; several
-  retired by P1) follow. Establish a `measureRenderIndex` baseline before P1.
+  three-way perf audit (`docs/plans/performance-optimization.md`). **P0 shipped** (#117);
+  **P1 PR-A shipped** (#119: `ProjectionUpdate` delta over the `core↔renderer` seam —
+  payload ~2 MB→362 B and index pass 7.0→1.2 ms at 6k nodes; `nodeSignatures` pass deleted;
+  unchanged-node identity now stable). **Next: P1 PR-B — incremental reverse-edge maps** in
+  `renderRev` (retire the last O(N) per-keystroke pass; `incremental-projection.md`), then
+  P2 (default windowed outliner; agent streaming delta) and P3 (localized O(N) cleanups —
+  several now unlocked by the stable-identity foundation P1 PR-A laid).
 
 ## Recently completed
+
+- **incremental-projection (P1 PR-A)** (cc, PR #119) — perf keystone: deliver each edit's projection
+  change as a `ProjectionUpdate` (`full | delta`) across the `core→IPC→renderer` seam instead of the
+  whole `DocumentProjection`; `reduceProjection` folds deltas in, preserves unchanged-node identity,
+  and drops the whole-doc `nodeSignatures` `JSON.stringify` pass (6k nodes: payload ~2 MB→362 B,
+  index 7.0→1.2 ms). Gate: xhigh review caught + fixed 2 correctness (merge grandchild survival via
+  delete-exact-`removedIds`; idempotent date-ref `byId` fallback) + 1 perf (no-op reseed
+  short-circuit) regression, re-verified with a real-core delta integration test (`byId` == full
+  rebuild under `LIN_VERIFY_CACHE=1`) + 4-level-delete worktree repro + typecheck + renderer 340/0 +
+  core. Follow-up: P1 PR-B (incremental reverse edges). `incremental-projection.md` stays in-progress.
 
 - **perf-p0-write-amplification** (cc, PR #117) — P0 of the performance program: skip the
   agent session/search index whole-file rewrite for delta-only batches (was rewriting both

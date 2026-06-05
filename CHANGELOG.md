@@ -534,6 +534,23 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Perf P1 (PR-A): incremental projection delta over the core↔renderer seam (PR #119)** — the
+  keystone of the performance program (`incremental-projection.md`). Instead of shipping the entire
+  `DocumentProjection` across IPC on every mutation and having the renderer re-`JSON.stringify` every
+  node to rediscover the change set, core's existing change set is delivered as a `ProjectionUpdate`
+  discriminated union (`full | delta`). `documentService.buildProjectionUpdate` emits a `delta`
+  (changed/removed nodes only) when the revision advances by exactly one, and a `full` on whole-tree
+  rewrites / discontinuity; the renderer's `reduceProjection` folds it into the held index,
+  **preserving object identity for every unchanged node** (the stable-reference foundation later memo
+  work builds on) and deleting the whole-document `nodeSignatures` pass. Measured single-keystroke
+  cost at 6k nodes: IPC payload ~1984 kB → 362 B, renderer index pass 7.0 ms → 1.2 ms. A
+  `ProjectionSnapshot` resync valve covers any delta gap (belt-and-suspenders; never fires on the one
+  ordered channel). Gate: xhigh review — 2 correctness + 1 perf regression caught and fixed
+  (merge-node grandchild survival via delete-exact-`removedIds`, idempotent date-ref fallback, no-op
+  reseed short-circuit), verified by a new real-core delta integration test (`byId` == full rebuild
+  under `LIN_VERIFY_CACHE=1`) + typecheck + renderer 340/0 + core. PR-B (incremental reverse-edge
+  maps) tracked separately. ([#119](https://github.com/relixiaobo/lin-outliner/pull/119))
+
 - **Perf P0: stop per-token agent index rewrites + drop pretty-print write amplification (PR #117)** —
   first quick-win of the performance-optimization program (`performance-optimization.md`, #116).
   `AgentEventStore.appendEvents` rewrote both `session-index.json` and `search-index.json` (read +

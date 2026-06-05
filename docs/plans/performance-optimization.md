@@ -335,7 +335,7 @@ now — recorded so they are not "lost"):
 
 - [x] P0-1 agent index update at message boundaries (or debounced) — shipped #117
 - [x] P0-2 drop `null, 2` from doc snapshot + agent index writes — shipped #117
-- [ ] P1 delta projection envelope (interface-only PR) → core emit → renderer ingest; delete whole-doc signature pass; incrementalize reverse edges
+- [~] P1 delta projection envelope → core emit → renderer ingest; delete whole-doc signature pass — **PR-A shipped #119** (`ProjectionUpdate` union, `buildProjectionUpdate`, `reduceProjection` with stable unchanged-node identity, `nodeSignatures` pass deleted). PR-B (incrementalize reverse edges) still open — see `incremental-projection.md`
 - [ ] P2-1 default flat/virtual outliner after parity verify (light/dark)
 - [ ] P2-2 agent streaming delta + transcript row memo + tail-markdown throttle + rAF auto-scroll
 - [ ] P2-3 coalesce structural-mutation saves; evaluate Loro incremental export
