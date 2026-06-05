@@ -40,6 +40,9 @@ interface OutlinerViewProps {
   //  - 'auto':   append when the list is empty or nav focuses the trailing line
   //  - 'none' (default): no trailing draft
   trailingDraft?: 'always' | 'auto' | 'none';
+  // Empty-state placeholder for the trailing draft row (definition template /
+  // options blocks). Only the draft row receives it.
+  draftPlaceholder?: string;
 }
 
 export function OutlinerView(props: OutlinerViewProps) {
@@ -158,6 +161,7 @@ export function OutlinerView(props: OutlinerViewProps) {
             setDragId={props.setDragId}
             referencePath={props.referencePath ?? [props.rootId]}
             draft={row.draft}
+            draftPlaceholder={row.draft ? props.draftPlaceholder : undefined}
             fieldValue={props.fieldValue}
             // An already-selected (not focused) reference value row reuses the
             // legacy read-only option picker; keep feeding it optionField +

@@ -127,6 +127,9 @@ interface OutlinerFlatViewProps {
   setDragId: (nodeId: NodeId | null) => void;
   showViewToolbar?: boolean;
   trailingDraft?: 'always' | 'auto' | 'none';
+  // Empty-state placeholder for the root-level trailing draft (definition
+  // template / options blocks). Only the draft directly under `parentId` gets it.
+  draftPlaceholder?: string;
   // The panel's scroll container (NodePanel's <main>). Windowing measures the
   // flat list's offset within it to decide which rows fall in the viewport.
   scrollParentRef: RefObject<HTMLElement | null>;
@@ -475,6 +478,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
             setDragId={props.setDragId}
             referencePath={row.referencePath}
             draft={row.draft}
+            draftPlaceholder={row.draft && row.parentId === props.parentId ? props.draftPlaceholder : undefined}
             flat
           />
         );

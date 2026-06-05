@@ -121,6 +121,10 @@ interface OutlinerItemProps {
   // under `nodeId` (kept stable so the editor is never remounted), after which
   // the row is rendered like any other content row.
   draft?: boolean;
+  // Empty-state placeholder shown on this trailing draft's editor (definition
+  // template / options blocks), so an empty section reads "add here" instead of
+  // a lone label over a near-invisible ghost bullet. Ignored once materialized.
+  draftPlaceholder?: string;
   // Flat (virtualized) rendering: the row's children are emitted as sibling rows
   // by the flat producer, so this row must not render its own nested OutlinerView.
   // Indentation comes from `depth` (cumulative) instead of nested `.children`.
@@ -1533,7 +1537,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             inlineSlotEl={inlineTagSlot}
             readOnly={displayed.locked}
             completed={Boolean(displayed.completedAt)}
-            placeholder={fieldValueDraft ? props.fieldValue?.placeholder : undefined}
+            placeholder={fieldValueDraft
+              ? props.fieldValue?.placeholder
+              : (props.draft === true && !realNode ? props.draftPlaceholder : undefined)}
             onFocus={() => {
               row.updateSelection();
               // optionPicker / referencePicker: open the picker overlay on a
