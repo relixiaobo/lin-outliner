@@ -249,6 +249,16 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **sidebar-tag-visual-fixes** (cc-2, PR #133) — three sidebar/tag visual fixes. The workspace-tree
+  system rows under Root regained their per-type icons (Daily Notes / Library / Schema / Saved searches /
+  Trash) via a new `systemIconForNode` map in `Sidebar.tsx`, reversing #30's removal (PM-ratified); the
+  `workspace-layout` guard now asserts one icon per system row. The tagDef NodePanel header accent chip
+  no longer crushes in dark mode (a wrapper `mix-blend-mode: multiply` reset on
+  `.panel-header-icon:has(> .panel-header-tag-icon)`). The selected colour swatch trades the faint
+  `--border-emphasis` border for a strong ink ring; main-agent follow-up tokenised the multi-layer shadow
+  as `--swatch-selected-ring` so it passes the box-shadow guard. Gate: typecheck + `test:renderer` 353/0 +
+  `typography-tokens` 8/8 + light/dark visual verification.
+
 - **agent-tool-result-trim** (cc, PR #128) — the model-visible tool result now carries only what the
   model can't cheaply derive (full envelope stays on `details`): one shared `modelVisibleEnvelope`
   projector drops `tool`/redundant `status`/`kind`/`action`, projects errors to `{code,message}`, and

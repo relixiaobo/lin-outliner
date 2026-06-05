@@ -948,6 +948,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Sidebar system-node icons restored; tagDef header + colour-picker selection (PR #133)** — three
+  sidebar/tag visual fixes. (1) The workspace-tree system rows under Root regained their per-type icons
+  (Daily Notes → calendar, Library → library, Schema → supertag, Saved searches → search, Trash → trash)
+  via a new `systemIconForNode` mapping in `Sidebar.tsx`, reversing the icon removal from #30 (PM-ratified);
+  the `workspace-layout` guard now asserts exactly one icon per system row. (2) The tagDef NodePanel header
+  accent chip was being crushed in dark mode by the wrapper's `mix-blend-mode: multiply` — `panel.css` now
+  resets `background: transparent; mix-blend-mode: normal` on `.panel-header-icon:has(> .panel-header-tag-icon)`
+  so the solid accent fill + white hash reads cleanly in both themes. (3) The selected colour swatch swapped
+  the too-faint `--border-emphasis` border for a strong ink ring with a surface-coloured gap; the multi-layer
+  shadow lives in a new `--swatch-selected-ring` token (matching `--view-radio-checked-shadow`) so it satisfies
+  the box-shadow token guard. Gate: typecheck + `test:renderer` 353/0 + `typography-tokens` 8/8 +
+  light/dark visual verification (sidebar icons, tagDef header chip, selected-swatch ring).
+  ([#133](https://github.com/relixiaobo/lin-outliner/pull/133))
+
 - **Agent: process block collapses by default; one spinner; never auto-collapses (PR #129)** — the
   thinking/tool process block had three flaws while live: it auto-expanded during a run (instead of a
   compact status), the header *and* the running tool both span (two spinners), and once prose arrived the
