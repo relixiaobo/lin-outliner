@@ -42,11 +42,13 @@ and `unified-command-surface` (design ratified, retrieval dep shipped — needs 
 dev build one-pager first). The agent P1s (`agent-conversation-model`,
 `agent-skills-authoring`, `agent-self-modification`, `agent-ask-user-question-tool`,
 `agent-import-skill`) are now sequenced under the **`agent-program`** umbrella
-(foundation **M0** → M3). The **M0 data structure is now specified** in
-`agent-conversation-model` §Data structure (one log engine · `session`→`{conversation,
-run}` · `Principal`/`members`, no stored `kind` · run anchored to one conversation ·
-distillation ladder · context cache-discipline invariant), with `agent-program`
-F2/F3/F5/F6 + the event taxonomy + protocol-surface list updated to match. **Four
+(foundation **M0** → M3). The **M0 data structure is now specified** in its own
+**`agent-data-model`** plan (the authoritative persistence + context contract: one log
+engine · `session`→`{conversation, run}` · `Principal`/`members`, no stored `kind` · run
+anchored to one conversation · distillation ladder · context cache-discipline invariant),
+extracted from `agent-conversation-model` (which keeps the experience design and now
+references it), with `agent-program` F2/F3/F5/F6 + the event taxonomy + protocol-surface
+list updated to match. **Four
 foundational decisions PM-ratified (2026-06-05):** canonical DM + user-creatable Channels ·
 split-now + mixed-resolution replay (execution incl. `tool_result` in the run log) · memory
 = one global pool, pure-relevance · memory writes via a privileged `agent-memory/` path.

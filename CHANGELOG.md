@@ -1341,9 +1341,12 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
-- **Agent data-structure design landed in the plans (`agent-conversation-model` + `agent-program`)** —
+- **Agent data-structure design landed, then extracted into a dedicated `agent-data-model` plan** —
   a multi-pass design conversation converged the agent storage model and was written into the plans
-  (docs-only; no code). The model: **three storage families** (linear event log · Loro CRDT · skills file
+  (docs-only; no code); the authoritative shape now lives in its own **`docs/plans/agent-data-model.md`**
+  (single source for the persistence + context contract — F2/F3/F6 cut against it), with
+  `agent-conversation-model` slimmed to the experience design + a pointer, and `agent-program` adding it as
+  a member plan. The model: **three storage families** (linear event log · Loro CRDT · skills file
   tree), **one log engine with three instances** (conversation / run / memory, differing only by id /
   writer / retention / vocabulary), **`session` split into `{conversation, run}`** (messages vs execution
   — keeps the conversation log low-volume and `tool_call ↔ tool_result` off the shared channel stream),
