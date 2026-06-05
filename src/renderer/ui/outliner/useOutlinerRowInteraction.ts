@@ -455,12 +455,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
         const single = move.moves[0]!;
         await run(() => api.moveNode(single.nodeId, single.parentId, single.index), { applyFocus: false });
       } else {
-        await run(async () => {
-          for (const item of move.moves) {
-            await api.moveNode(item.nodeId, item.parentId, item.index);
-          }
-          return api.getProjection();
-        }, { applyFocus: false });
+        await run(() => api.batchMoveNodes(move.moves), { applyFocus: false });
       }
     } finally {
       clearDropState();

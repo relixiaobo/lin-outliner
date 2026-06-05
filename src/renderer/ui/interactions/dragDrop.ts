@@ -1,4 +1,4 @@
-import type { NodeId } from '../../api/types';
+import type { BatchMoveNodeInput, NodeId } from '../../api/types';
 import type { DropHoverPosition } from './dropPosition';
 
 export interface ResolveOutlinerDropMoveInput {
@@ -19,12 +19,6 @@ export interface OutlinerDropMove {
   expandTargetId?: NodeId;
 }
 
-export interface OutlinerDropBatchMove {
-  nodeId: NodeId;
-  parentId: NodeId;
-  index: number;
-}
-
 export interface ResolveOutlinerDropBatchMoveInput {
   dragNodeIds: readonly NodeId[];
   targetNodeId: NodeId;
@@ -38,7 +32,7 @@ export interface ResolveOutlinerDropBatchMoveInput {
 }
 
 export interface ResolvedOutlinerDropBatchMove {
-  moves: OutlinerDropBatchMove[];
+  moves: BatchMoveNodeInput[];
   expandTargetId?: NodeId;
 }
 

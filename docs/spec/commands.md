@@ -23,8 +23,8 @@ The renderer calls them through `window.lin.invoke(...)` via
 `init_workspace`, `get_projection`, `create_node`, `create_rich_text_node`,
 `create_tagged_node`, `create_tag_and_tagged_node`, `create_nodes_from_tree`,
 `create_capture`, `paste_nodes_into_node`, `split_node`, `apply_node_text_patch`,
-`update_node_description`, `merge_node_into`, `move_node`, `indent_node`,
-`outdent_node`.
+`update_node_description`, `merge_node_into`, `move_node`, `batch_move_nodes`,
+`indent_node`, `outdent_node`.
 
 `create_capture` atomically creates one launcher-capture node: a plain node
 carrying a hidden, typed `capture` provenance sidecar (`CaptureNodeMetadata` on
@@ -39,7 +39,8 @@ renderer can't supply the source metadata. See [`launcher.md`](launcher.md).
 ### Document — batch operations on a row selection
 `batch_trash_nodes`, `batch_indent_nodes`, `batch_outdent_nodes`,
 `batch_toggle_done`, `batch_cycle_done_state`, `batch_duplicate_nodes`,
-`batch_move_nodes_up`, `batch_move_nodes_down`, `batch_apply_tag`.
+`batch_move_nodes`, `batch_move_nodes_up`, `batch_move_nodes_down`,
+`batch_apply_tag`.
 
 ### Document — done state and trash
 `toggle_done`, `cycle_done_state`, `trash_node`, `restore_node`, `delete_node`.

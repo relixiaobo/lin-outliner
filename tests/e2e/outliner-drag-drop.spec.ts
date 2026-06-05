@@ -98,11 +98,15 @@ test.describe('outliner drag and drop', () => {
     await expect(rowEditor(page, ids.beta)).not.toBeFocused();
 
     const moveCalls = (await commandCalls(page))
-      .filter((call) => call.cmd === 'move_node')
+      .filter((call) => call.cmd === 'batch_move_nodes')
       .map((call) => call.args);
     expect(moveCalls).toEqual([
-      { nodeId: ids.beta, parentId: ids.today, index: 2 },
-      { nodeId: ids.alpha, parentId: ids.today, index: 1 },
+      {
+        moves: [
+          { nodeId: ids.beta, parentId: ids.today, index: 2 },
+          { nodeId: ids.alpha, parentId: ids.today, index: 1 },
+        ],
+      },
     ]);
   });
 
@@ -118,7 +122,8 @@ test.describe('outliner drag and drop', () => {
     await expect(rowEditor(page, ids.alpha)).not.toBeFocused();
     await expect(rowEditor(page, ids.beta)).not.toBeFocused();
 
-    const moveCalls = (await commandCalls(page)).filter((call) => call.cmd === 'move_node');
+    const moveCalls = (await commandCalls(page))
+      .filter((call) => call.cmd === 'move_node' || call.cmd === 'batch_move_nodes');
     expect(moveCalls).toHaveLength(0);
   });
 

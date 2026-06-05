@@ -17,6 +17,7 @@ import { collectDescendantIds, nodeIsInSubtree } from '../core/treeUtils';
 import { TRASH_ID } from '../core/types';
 import type {
   CommandResult,
+  BatchMoveNodeInput,
   DocumentProjectionChangedEvent,
   ProjectionSnapshot,
   ProjectionUpdate,
@@ -468,6 +469,8 @@ export class DocumentService {
         return this.core.mergeNodeInto(String(args.nodeId), String(args.targetId));
       case 'move_node':
         return this.core.moveNode(String(args.nodeId), String(args.parentId), nullableNumber(args.index));
+      case 'batch_move_nodes':
+        return this.core.batchMoveNodes(batchMoveNodeArgs(args.moves));
       case 'indent_node':
         return this.core.indentNode(String(args.nodeId));
       case 'outdent_node':
@@ -831,6 +834,19 @@ function nullableNumber(value: unknown): number | null {
 
 function arrayArg<T>(value: unknown): T[] {
   return Array.isArray(value) ? value as T[] : [];
+}
+
+function batchMoveNodeArgs(value: unknown): BatchMoveNodeInput[] {
+  return arrayArg<unknown>(value)
+    .map((item) => {
+      const record = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+      return {
+        nodeId: String(record.nodeId ?? ''),
+        parentId: String(record.parentId ?? ''),
+        index: nullableNumber(record.index),
+      };
+    })
+    .filter((move) => move.nodeId && move.parentId);
 }
 
 function transactionMetadata(meta: DocumentMutationMeta): CoreTransactionMetadata {
