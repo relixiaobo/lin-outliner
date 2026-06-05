@@ -249,6 +249,24 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **agent-ref-inline-anchor** (cc-2, PR #127, supersedes closed #126) — inline node references in agent
+  responses now render as `<a href>` instead of `<button>`, so they flow inline / break across lines /
+  sit on the baseline instead of orphaning onto their own line with a gap. Root cause: a `<button>` is an
+  atomic inline box that can't break — corrected from #126, which wrongly blamed a stray model `\n`. The
+  synthetic `#lin-node:<id>` href is `#`-prefixed + `encodeURIComponent`-escaped and intercepted
+  (`preventDefault`/`stopPropagation`), never navigated; `white-space: pre-wrap` kept so genuine model
+  line breaks survive (no #126 tradeoff). Gate: typecheck + `test:renderer` 347/0 + `agent-composer` e2e
+  34/34 (click + cmd+click) + light/dark visual (`display:inline`, baseline 0px, rose, no rest underline)
+  + A3 confirmed (same-document hash, click intercepted, cmd/middle-click → window-open deny).
+
+- **agent-code-dark-readability** (cc-2, PR #125) — agent (and outliner) code blocks are now readable in
+  dark mode: Shiki loads both `github-light` + `github-dark` and emits per-token `--shiki-light` /
+  `--shiki-dark` vars (`codeToHtml` `defaultColor:false`), resolved via `@media (prefers-color-scheme)` —
+  pure CSS, no JS theme bridge (B2). Also flattened `.agent-tool-code` (dropped redundant border/bg/overflow
+  box) + corrected chevron-center alignment. App-wide (outliner + agent share the highlighter). Gate:
+  typecheck + `test:renderer` 347/0 + code-block / agent-process e2e + light/dark visual. (Unrelated
+  pre-existing `typography-tokens` guard failure on `shell.css:59` noted separately.)
+
 - **persist-outline-view-state** (codex, PR #124) — outliner expansion now survives reload/reopen: a
   renderer-local store (`outlineViewState.ts`) persists each root page's expanded node ids + revealed
   hidden-field keys in `localStorage` (scoped to the root's structural subtree, references not followed,

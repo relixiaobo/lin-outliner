@@ -927,6 +927,36 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Agent: inline node references render as `<a>`, not `<button>` (PR #127)** — in an agent response an
+  inline node reference (the rose link) dropped onto its own line with an empty gap before it instead of
+  flowing with the sentence. Root cause (corrected from the closed #126, which had wrongly blamed a stray
+  model `\n`): interactive references rendered as a `<button>`, an **atomic inline box that cannot break
+  across lines** — when it didn't fit the remaining line width it jumped to the next line as a whole, and
+  sat ~3.5px off the text baseline. References now render as **`<a href>`**: inline, breakable across
+  lines (honoring `.inline-ref { box-decoration-break: clone }`), baseline-aligned, natively
+  focusable/clickable/keyboard-activatable. The synthetic `#lin-node:<id>` href (always `#`-prefixed and
+  `encodeURIComponent`-escaped) is intercepted (`preventDefault` + `stopPropagation`) and never
+  navigated; both render sites (`AgentMarkdown`, `AgentInlineReferenceText`) updated and the scheme prefix
+  centralized. Two coordinated CSS keys so anchors don't change the look: `.agent-markdown a` →
+  `a:not(.inline-ref)` (the generic rose-link underline must not override inline-ref styling now that refs
+  are anchors), and `.agent-message-inline-ref:not(button)` → `:not([href])` (interactive vs
+  non-interactive now keys on `href`, both being non-`<button>`). `white-space: pre-wrap` is left
+  untouched, so the model's genuine line breaks are preserved (no #126 tradeoff). Supersedes the closed
+  #126. Gate: typecheck + `test:renderer` 347/0 + `agent-composer` e2e 34/34 (inline-ref click + cmd+click)
+  + light/dark visual (`display:inline`, baseline delta 0px, rose color, no rest underline) + A3 confirmed
+  (same-document hash, click intercepted, cmd/middle-click → window-open deny). ([#127](https://github.com/relixiaobo/lin-outliner/pull/127))
+
+- **Agent: code blocks readable in dark mode (PR #125)** — agent (and outliner) code blocks were
+  highlighted with a single `github-light` Shiki theme, so syntax tokens were near-invisible on the dark
+  surface. Shiki now loads both `github-light` + `github-dark` and emits per-token `--shiki-light` /
+  `--shiki-dark` CSS variables (`codeToHtml` with `defaultColor: false`), resolved via
+  `@media (prefers-color-scheme: dark)` — pure CSS, no JS theme bridge (design-system **B2**). Also
+  flattened `.agent-tool-code` (dropped the redundant border / background / overflow box) and corrected
+  chevron-center alignment. App-wide: the outliner and agent code blocks share the same highlighter. Gate:
+  typecheck + `test:renderer` 347/0 + outliner-code-block / agent-process e2e + light/dark visual (tokens
+  adapt to github-dark, readable in both themes). A pre-existing `typography-tokens` guard failure on
+  `shell.css:59` (`transition: background-color 0ms`) is unrelated to this PR. ([#125](https://github.com/relixiaobo/lin-outliner/pull/125))
+
 - **Startup: no more per-launch macOS keychain password prompt** — the unsigned local build
   (`mac.identity: null`) can't present a stable code signature to the macOS Keychain, so Chromium's
   `os_crypt` (cookie / network-state encryption) re-prompted for the keychain password on *every*
