@@ -342,7 +342,7 @@ describe('agent past chats', () => {
     });
   });
 
-  test('tool wrapper returns structured recoverable mode errors', async () => {
+  test('tool wrapper returns structured mode errors without data when no recovery anchors', async () => {
     await withStore(async (_store, service) => {
       const tool = createPastChatsTool({ service, currentSessionId: () => 'session-current' });
       const result = await (tool.execute as any)('tool-call-1', { query: 'x', message_id: 'm_x' });
@@ -350,19 +350,23 @@ describe('agent past chats', () => {
 
       expect(details.ok).toBe(false);
       expect(details.data).toMatchObject({ mode: 'error', code: 'AMBIGUOUS_MODE' });
-      expect(result.content[0]?.text).toContain('"tool": "past_chats"');
       const first = result.content[0];
       if (!first || first.type !== 'text') throw new Error('Expected model-visible text envelope');
-      expect(JSON.parse(first.text)).toMatchObject({
+      const visible = JSON.parse(first.text);
+
+      // AMBIGUOUS_MODE has no nearby ids, so the visible envelope carries no `data` —
+      // the failure is fully described by `error.{code,message}`.
+      expect(visible).toMatchObject({
         ok: false,
-        tool: 'past_chats',
-        status: 'error',
         error: { code: 'AMBIGUOUS_MODE' },
-        data: {
-          mode: 'error',
-          code: 'AMBIGUOUS_MODE',
-        },
       });
+      expect(typeof visible.error.message).toBe('string');
+      expect(visible).not.toHaveProperty('data');
+      // `tool` and `status` are dropped from the visible envelope; success/error
+      // status restates `ok`, so it is omitted. `recoverable` is gone from `error`.
+      expect(visible).not.toHaveProperty('tool');
+      expect(visible).not.toHaveProperty('status');
+      expect(visible.error).not.toHaveProperty('recoverable');
       // Single self-contained block: no parallel markdown rendering.
       expect(result.content).toHaveLength(1);
     });
@@ -388,12 +392,13 @@ describe('agent past chats', () => {
       const visible = JSON.parse(first.text);
 
       expect(visible.data).toMatchObject({
-        mode: 'search',
         total_hits: 1,
-        returned_hits: 1,
+        truncated: false,
         hits: [{ message_id: 'user-api' }],
       });
       expect(visible.data.hits[0].snippet).toContain('<mark>SQLite</mark> <mark>Checkpoints</mark>');
+      expect(visible.data).not.toHaveProperty('mode');
+      expect(visible.data).not.toHaveProperty('returned_hits');
       expect(visible.data.totalHits).toBeUndefined();
       expect(visible.data.messageIds).toBeUndefined();
       expect(visible.instructions).toContain('message_id');
@@ -421,9 +426,8 @@ describe('agent past chats', () => {
       const visible = JSON.parse(first.text);
 
       expect(visible.data).toMatchObject({
-        mode: 'recent',
         total_items: 1,
-        returned_items: 1,
+        truncated: false,
         items: [{
           message_id: 'user-wrapper',
           session_id: sessionId,
@@ -431,6 +435,8 @@ describe('agent past chats', () => {
         }],
       });
       expect(visible.data.items[0].text).toContain('Review the');
+      expect(visible.data).not.toHaveProperty('mode');
+      expect(visible.data).not.toHaveProperty('returned_items');
       expect(visible.instructions).toContain('message_id');
       expect(result.content).toHaveLength(1);
     });
@@ -448,15 +454,17 @@ describe('agent past chats', () => {
 
       expect(visible).toMatchObject({
         ok: true,
-        tool: 'past_chats',
-        status: 'success',
         data: {
-          mode: 'search',
           total_hits: 0,
-          returned_hits: 0,
+          truncated: false,
           hits: [],
         },
       });
+      // Success status restates `ok:true`; `tool` is dropped from the visible envelope.
+      expect(visible).not.toHaveProperty('tool');
+      expect(visible).not.toHaveProperty('status');
+      expect(visible.data).not.toHaveProperty('mode');
+      expect(visible.data).not.toHaveProperty('returned_hits');
       expect(visible.instructions).toContain('Do not claim this is the first conversation');
       expect(result.content).toHaveLength(1);
     });

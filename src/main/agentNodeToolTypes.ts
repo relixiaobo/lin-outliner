@@ -1,7 +1,7 @@
 import type { DocumentCommand } from '../core/commands';
 import type { DocumentProjection, NodeProjection, SearchQueryExpr } from '../core/types';
 import type { TextSearchIndex } from '../core/textSearchIndex';
-import type { ToolEnvelope } from './agentToolEnvelope';
+import type { ToolEnvelope, VisibleToolError } from './agentToolEnvelope';
 
 export interface OutlinerToolHost {
   getProjection(): DocumentProjection;
@@ -288,38 +288,37 @@ export type NodeVisibleResult =
 
 export interface NodeVisibleEnvelope {
   ok: boolean;
-  tool: string;
-  status: ToolEnvelope['status'];
+  status?: ToolEnvelope['status'];
   instructions?: string;
   data?: NodeVisibleResult;
-  error?: ToolEnvelope['error'];
+  error?: VisibleToolError;
   warnings?: string[];
 }
 
 export interface NodeVisibleReadResult {
-  kind: 'read';
   outline?: string;
   references?: NodeVisibleReference[];
   page?: NodeVisiblePage;
 }
 
 export interface NodeVisibleSearchResult {
-  kind: 'search';
   outline?: string;
   references?: NodeVisibleReference[];
   page: NodeVisiblePage;
 }
 
 export interface NodeVisibleMutationResult {
-  kind: 'mutation';
-  action: 'create' | 'edit' | 'delete';
-  status: 'applied' | 'preview' | 'unchanged';
+  /**
+   * Internal: drives the preview-vs-applied instruction text. Stripped from the
+   * model-visible JSON by `nodeVisibleEnvelope` — the model derives preview from
+   * its own `preview_only` arg, and `changes` already reports what happened.
+   */
+  status?: 'applied' | 'preview' | 'unchanged';
   changes: NodeVisibleChanges;
   outline?: string;
 }
 
 export interface NodeVisibleCountResult {
-  kind: 'count';
   total: number;
   page: NodeVisiblePage;
 }

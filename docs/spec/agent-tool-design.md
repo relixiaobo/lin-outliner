@@ -169,6 +169,31 @@ interface ToolMetrics {
 }
 ```
 
+### Model-visible redundancy rule
+
+The model-visible projection carries **only what the model cannot cheaply derive**
+from its own call plus the rest of the payload. The full runtime envelope stays in
+`details`. Across **every** tool, the shared `modelVisibleEnvelope` / node
+`nodeVisibleEnvelope` apply these cuts:
+
+- **No `tool`.** The model already knows which tool it called (tool-call
+  correlation).
+- **`status` only when informative.** `success` merely restates `ok: true` and
+  `error` merely restates `ok: false` + the `error` object, so both are omitted;
+  only `unchanged` / `partial` / `denied` are shown.
+- **`error` is `{ code, message }`.** `recoverable` is a constant `true` and is
+  dropped from the visible projection (kept on `details`).
+
+A field is otherwise redundant — and cut — when it is a discriminant derivable
+from the tool + args (`kind`, `action`, `mode`, file-read `type`), a count equal
+to a sibling array's length (`returned_items`, `numLines`, `message_count`), an
+echo of an input arg (`task_id`, `anchor_message_id`, `replaceAll`), a constant
+(`userModified`), an internal path (pdf `outputDir`), or a cross-field duplicate
+(past_chats error `code`/`message` already in `error`; notebook `cells` vs the
+rendered `content`). Pass `NO_MODEL_DATA` as `modelData` to omit the `data` block
+entirely (needed because an explicit `undefined` triggers the default and falls
+back to `envelope.data`).
+
 For `node_*`, model-visible `content.text` uses one concise envelope. Runtime
 debug details stay in `details`; the model-facing payload avoids duplicated
 representations.
@@ -176,11 +201,10 @@ representations.
 ```ts
 interface NodeVisibleEnvelope {
   ok: boolean;
-  tool: string;
-  status: "success" | "partial" | "unchanged" | "denied" | "error";
+  status?: "partial" | "unchanged" | "denied"; // omitted for success/error
   instructions?: string;
   data?: NodeVisibleResult;
-  error?: ToolError;
+  error?: { code: string; message: string };
   warnings?: string[];
 }
 
@@ -190,28 +214,30 @@ type NodeVisibleResult =
   | NodeVisibleCountResult
   | NodeVisibleMutationResult;
 
+// The result kind is no longer carried in the payload — it is implied by
+// `envelope.tool` (read/search/create/edit/delete) and, for search-vs-count, the
+// payload shape (`total` is present only for count).
 interface NodeVisibleReadResult {
-  kind: "read";
   outline?: string;
+  references?: NodeVisibleReference[];
   page?: NodeVisiblePage;
 }
 
 interface NodeVisibleSearchResult {
-  kind: "search";
   outline?: string;
+  references?: NodeVisibleReference[];
   page: NodeVisiblePage;
 }
 
+// `kind`/`action`/`status` dropped: the tool name implies the operation; the
+// model derives preview from its own `preview_only` arg; `changes` already
+// reports what happened.
 interface NodeVisibleMutationResult {
-  kind: "mutation";
-  action: "create" | "edit" | "delete";
-  status: "applied" | "preview" | "unchanged";
   changes: NodeVisibleChanges;
   outline?: string;
 }
 
 interface NodeVisibleCountResult {
-  kind: "count";
   total: number;
   page: NodeVisiblePage;
 }
@@ -274,6 +300,19 @@ Example:
     "message": "Node not found: node_123",
     "recoverable": true
   },
+  "instructions": "Use node_search or node_read on the parent context to find the correct node id. The node id may be stale after a delete, restore, or undo."
+}
+```
+
+This is the runtime `ToolResult` (kept in `details`). Its model-visible
+projection is slimmer per the redundancy rule above — no `tool`, no
+`version`, no `status` (`error` is implied by `ok: false`), and `error` is
+`{ code, message }`:
+
+```json
+{
+  "ok": false,
+  "error": { "code": "node_not_found", "message": "Node not found: node_123" },
   "instructions": "Use node_search or node_read on the parent context to find the correct node id. The node id may be stale after a delete, restore, or undo."
 }
 ```

@@ -625,12 +625,13 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
               }]
             : [];
           await notifySuccessfulFileTouch(workspace, filePath);
+          const visible = visibleFileRead(parts);
           return agentToolResult(successEnvelope('file_read', parts, {
             instructions: extractedText
               ? 'PDF text was extracted for searchable content, and pages were also rendered as images for visual layout inspection.'
               : 'PDF pages were rendered as images and attached to this tool result so the model can inspect them. No embedded text was extracted.',
-            metrics: metrics(started, parts),
-          }), parts, [...textContent, ...imageContent]);
+            metrics: metrics(started, visible),
+          }), visible, [...textContent, ...imageContent]);
         }
         if (ext === '.ipynb') {
           const buffer = await readFile(filePath);
@@ -661,7 +662,8 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
             },
           };
           await notifySuccessfulFileTouch(workspace, filePath);
-          return agentToolResult(successEnvelope('file_read', data, { metrics: metrics(started, data) }));
+          const visible = visibleFileRead(data);
+          return agentToolResult(successEnvelope('file_read', data, { metrics: metrics(started, visible) }), visible);
         }
         if (fileStat.size > MAX_TEXT_FILE_BYTES) {
           throw new LocalToolFailure('file_too_large', `File is too large to read as text: ${filePath}`, 'Use file_grep to locate relevant content or read a smaller file.');
@@ -690,11 +692,12 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
             file: { filePath },
           };
           await notifySuccessfulFileTouch(workspace, filePath);
+          const visible = visibleFileRead(data);
           return agentToolResult(successEnvelope('file_read', data, {
             status: 'unchanged',
             instructions: 'The file is unchanged since the previous full file_read result. Use the earlier content already in context instead of reading it again.',
-            metrics: metrics(started, data),
-          }));
+            metrics: metrics(started, visible),
+          }), visible);
         }
         const selected = lines.slice(lineOffset, lineOffset + limit);
         const partial = lineOffset > 0 || selected.length < lines.length;
@@ -722,10 +725,11 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
         };
         const nextOffset = startLine + selected.length;
         await notifySuccessfulFileTouch(workspace, filePath);
+        const visible = visibleFileRead(data);
         return agentToolResult(successEnvelope('file_read', data, {
           instructions: partial ? `Call file_read with offset ${nextOffset} to continue, or read the whole file before editing it.` : undefined,
-          metrics: { ...metrics(started, data), truncated: partial },
-        }));
+          metrics: { ...metrics(started, visible), truncated: partial },
+        }), visible);
       } catch (error) {
         return localErrorResult('file_read', error, started);
       }
@@ -2060,27 +2064,41 @@ async function appendTaskOutput(task: BackgroundTask) {
 }
 
 function visibleFileEdit(data: FileEditData) {
+  // `replaceAll` echoes the model's own arg; `userModified` is a constant false.
   return {
     filePath: data.filePath,
-    replaceAll: data.replaceAll,
     structuredPatch: data.structuredPatch,
-    userModified: data.userModified,
   };
 }
 
+// Model-visible projection for every file_read shape. `type` is dropped (the
+// model derives the kind from the path extension it passed + the payload shape /
+// attached content); derivable counts (`numLines`, `totalCells`, `count`,
+// `extractedText.chars`), the internal pdf `outputDir`, the image mime (`type`,
+// also on the attached image block), and the notebook `cells` (a duplicate of the
+// rendered `content`) are all stripped. The full data stays on the envelope.
 function visibleFileRead(data: FileReadData): unknown {
   if (data.type === 'image') {
+    return { file: { filePath: data.file.filePath, originalSize: data.file.originalSize, dimensions: data.file.dimensions } };
+  }
+  if (data.type === 'text') {
+    return { file: { filePath: data.file.filePath, content: data.file.content, startLine: data.file.startLine, totalLines: data.file.totalLines } };
+  }
+  if (data.type === 'notebook') {
+    return { file: { filePath: data.file.filePath, content: data.file.content, originalSize: data.file.originalSize } };
+  }
+  if (data.type === 'parts') {
+    const file = data.file;
     return {
-      type: data.type,
       file: {
-        filePath: data.file.filePath,
-        type: data.file.type,
-        originalSize: data.file.originalSize,
-        dimensions: data.file.dimensions,
+        filePath: file.filePath,
+        originalSize: file.originalSize,
+        pages: file.pages,
+        ...(file.extractedText ? { extractedText: { truncated: file.extractedText.truncated } } : {}),
       },
     };
   }
-  return data;
+  return { file: { filePath: data.file.filePath } };
 }
 
 function visibleFileWrite(data: FileWriteData) {
@@ -2102,14 +2120,16 @@ export function visibleFileGlob(data: FileGlobData) {
 }
 
 export function visibleFileGrep(data: FileGrepData): unknown {
+  // `mode` echoes the model's arg and is already implied by the payload shape
+  // (`content` vs `filenames`).
   const mode = data.mode ?? 'files_with_matches';
   if (mode === 'content') {
-    return { mode, content: data.content ?? '' };
+    return { content: data.content ?? '' };
   }
   if (mode === 'count') {
-    return { mode, content: data.content ?? '', numMatches: data.numMatches ?? 0 };
+    return { content: data.content ?? '', numMatches: data.numMatches ?? 0 };
   }
-  return { mode, filenames: data.filenames };
+  return { filenames: data.filenames };
 }
 
 export function visibleBash(data: BashData): unknown {
@@ -2127,9 +2147,9 @@ export function visibleBash(data: BashData): unknown {
 }
 
 export function visibleTaskStop(data: TaskStopData) {
+  // `task_id` echoes the sole arg; `status` is a constant 'stopped' beside the
+  // envelope status. `outputPath` (where to read captured output) is the new bit.
   return {
-    task_id: data.task_id,
-    status: data.status,
     outputPath: data.outputPath,
   };
 }

@@ -205,28 +205,28 @@ describe('agent node tools', () => {
 
     const visible = parseVisibleToolResult<{
       ok: boolean;
-      tool: string;
-      status: 'success' | 'error' | 'unchanged';
       instructions?: string;
       data?: {
-        kind: 'mutation';
-        action: 'create';
-        status: 'applied' | 'preview' | 'unchanged';
         outline?: string;
         changes?: { created?: string[] };
       };
     }>(result.contentText);
 
     expect(visible.ok).toBe(true);
-    expect(visible.tool).toBe('node_create');
-    expect(visible.data!.kind).toBe('mutation');
-    expect(visible.data!.action).toBe('create');
-    expect(visible.data!.status).toBe('applied');
+    // The echoed `tool`, the redundant envelope `status: 'success'`, and the
+    // derivable `kind`/`action`/`status` discriminants are no longer model-visible.
+    expect(visible).not.toHaveProperty('tool');
+    expect(visible).not.toHaveProperty('status');
+    expect(visible.data).not.toHaveProperty('kind');
+    expect(visible.data).not.toHaveProperty('action');
+    expect(visible.data).not.toHaveProperty('status');
     expect((visible as any).metrics).toBeUndefined();
     expect(visible.data!.outline).toContain(`%%node:${result.details.data!.createdRootIds[0]}%% Launch`);
     expect(visible.data!.outline).toContain('Status::');
     expect(visible.data!.changes!.created).toEqual(result.details.data!.createdNodeIds);
     expect((visible.data! as any).refs).toBeUndefined();
+    // create now carries the final-answer citation guidance.
+    expect(visible.instructions).toContain('[[node:');
     expect(result.details.data!.outline).toContain('Status:: Active');
   });
 
@@ -681,11 +681,8 @@ describe('agent node tools', () => {
 
     const visible = parseVisibleToolResult<{
       ok: boolean;
-      tool: string;
+      instructions?: string;
       data?: {
-        kind: 'mutation';
-        action: 'edit';
-        status: 'applied' | 'preview' | 'unchanged';
         outline?: string;
         changes?: { updated?: string[] };
       };
@@ -693,8 +690,12 @@ describe('agent node tools', () => {
 
     expect(result.details.data!.beforeOutline).toContain('Task A');
     expect(result.details.data!.afterOutline).toContain('Task B');
-    expect(visible).toMatchObject({ ok: true, tool: 'node_edit' });
-    expect(visible.data).toMatchObject({ kind: 'mutation', action: 'edit', status: 'applied' });
+    expect(visible).toMatchObject({ ok: true });
+    expect(visible).not.toHaveProperty('tool');
+    expect(visible).not.toHaveProperty('status');
+    expect(visible.data).not.toHaveProperty('kind');
+    expect(visible.data).not.toHaveProperty('action');
+    expect(visible.data).not.toHaveProperty('status');
     expect(visible.data!.outline).toContain(`%%node:${root}%% Root`);
     expect(visible.data!.outline).toContain('Task B');
     expect(visible.data!.changes!.updated).toEqual(result.details.data!.affectedNodeIds);
@@ -1146,17 +1147,15 @@ describe('agent node tools', () => {
     }>(core, 'node_read', { node_id: root, depth: 1 });
     const visible = parseVisibleToolResult<{
       ok: boolean;
-      tool: string;
       data?: {
-        kind: 'read';
         outline?: string;
         references?: Array<{ node_id: string; title: string; display_ref: string; edit_handle: string; type: string }>;
       };
     }>(result.contentText);
 
     expect(visible.ok).toBe(true);
-    expect(visible.tool).toBe('node_read');
-    expect(visible.data!.kind).toBe('read');
+    expect(visible).not.toHaveProperty('tool');
+    expect(visible.data).not.toHaveProperty('kind');
     expect((visible as any).metrics).toBeUndefined();
     expect(visible.data!.outline).toBe(`- %%node:${root}%% Root\n  - %%node:${child}%% Child`);
     expect((visible.data! as any).refs).toBeUndefined();
@@ -1227,26 +1226,23 @@ describe('agent node tools', () => {
     const result = await executeRawTool(core, 'node_read', { node_id: 'missing-node' });
     const visible = parseVisibleToolResult<{
       ok: boolean;
-      tool: string;
-      status: string;
       instructions?: string;
       error?: {
         code: string;
         message: string;
-        recoverable: boolean;
       };
     }>(result.contentText);
 
     expect(result.details.ok).toBe(false);
+    // The visible error drops the echoed `tool`, the redundant `status: 'error'`
+    // (implied by `ok: false`), and the constant `recoverable`.
     expect(visible).toMatchObject({
       ok: false,
-      tool: 'node_read',
-      status: 'error',
-      error: {
-        code: 'node_not_found',
-        recoverable: true,
-      },
+      error: { code: 'node_not_found' },
     });
+    expect(visible).not.toHaveProperty('tool');
+    expect(visible).not.toHaveProperty('status');
+    expect(visible.error).not.toHaveProperty('recoverable');
     expect(visible.instructions).toContain('node_search');
     expect((visible as any).details).toBeUndefined();
     expect((visible as any).metrics).toBeUndefined();
@@ -1307,22 +1303,21 @@ describe('agent node tools', () => {
     });
     const visible = parseVisibleToolResult<{
       ok: boolean;
-      tool: string;
       instructions?: string;
       data?: {
-        kind: 'search';
         outline?: string;
         references?: Array<{ node_id: string; title: string; display_ref: string; edit_handle: string; type: string }>;
         page?: { total: number; offset: number; limit: number; next_offset?: number };
       };
     }>(result.contentText);
 
-    expect(visible).toMatchObject({ ok: true, tool: 'node_search' });
+    expect(visible).toMatchObject({ ok: true });
+    expect(visible).not.toHaveProperty('tool');
+    expect(visible.data).not.toHaveProperty('kind');
     expect(visible.instructions).toContain('[[node:Display^...]]');
     expect(visible.instructions).toContain('[[node:^...]]');
     expect(visible.instructions).toContain('never show %%node:id%%');
     expect(visible.instructions).toContain('data.references[].display_ref');
-    expect(visible.data!.kind).toBe('search');
     expect(visible.data!.outline).toBe(`- %%node:${chengdu}%% Chengdu weather`);
     expect((visible.data! as any).matches).toBeUndefined();
     expect((visible.data! as any).refs).toBeUndefined();

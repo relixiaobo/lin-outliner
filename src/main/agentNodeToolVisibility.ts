@@ -1,6 +1,6 @@
 import type { AgentToolResult } from '@earendil-works/pi-agent-core';
 import { formatNodeReferenceMarker } from '../core/referenceMarkup';
-import type { ToolEnvelope } from './agentToolEnvelope';
+import { isInformativeStatus, visibleToolError, type ToolEnvelope } from './agentToolEnvelope';
 import { FINAL_ANSWER_NODE_REFERENCE_GUIDANCE } from './agentNodeToolGuidance';
 import { nodeKind, nodeTitle, normalChildIds, requiredNode } from './agentNodeToolProjection';
 import { serializeAnnotatedOutlines } from './agentNodeToolRead';
@@ -47,12 +47,12 @@ function nodeVisibleEnvelope<TData>(
   envelope: ToolEnvelope<TData>,
   data: NodeVisibleResult,
 ): NodeVisibleEnvelope {
+  const instructions = nodeInstructions(envelope, data);
   return compactVisibleEnvelope({
     ok: envelope.ok,
-    tool: envelope.tool,
-    status: envelope.status,
-    instructions: nodeInstructions(envelope, data),
-    data,
+    status: isInformativeStatus(envelope.status) ? envelope.status : undefined,
+    instructions,
+    data: modelVisibleData(data),
     warnings: envelope.warnings,
   });
 }
@@ -65,12 +65,24 @@ function nodeVisibleErrorEnvelope<TData>(envelope: ToolEnvelope<TData>): NodeVis
   };
   return compactVisibleEnvelope({
     ok: false,
-    tool: envelope.tool,
-    status: 'error',
     instructions: errorInstructions(envelope),
-    error,
+    error: visibleToolError(error),
     warnings: envelope.warnings,
   });
+}
+
+/**
+ * Strip instruction-only fields from a result before it goes to the model. Today
+ * that is the mutation `status` (preview/applied/unchanged) — it drives the
+ * instruction text but the model derives preview from its own `preview_only`
+ * arg, and `changes` already reports what happened.
+ */
+function modelVisibleData(data: NodeVisibleResult): NodeVisibleResult {
+  if ('status' in data && data.status !== undefined) {
+    const { status: _status, ...rest } = data;
+    return rest;
+  }
+  return data;
 }
 
 export function visibleReadResult(
@@ -84,7 +96,6 @@ export function visibleReadResult(
     .filter((page) => page.total > page.limit || page.offset > 0);
   const page = rootPages.length === 1 ? rootPages[0] : undefined;
   return compactVisibleResult({
-    kind: 'read',
     outline,
     references: visibleReferences(index, visibleReadReferenceIds(index, nodeIds, params)),
     page,
@@ -108,7 +119,6 @@ export function visibleSearchResult(index: ProjectionIndex, data: NodeSearchData
   const items = data.items ?? [];
   const page = visiblePage({ total: data.total, offset: data.offset, limit: data.limit, items });
   return compactVisibleResult({
-    kind: data.items ? 'search' : 'count',
     ...(data.items ? {
       outline: serializeAnnotatedOutlines(index, items.map((item) => item.nodeId), 0, 0, 0, false),
       references: visibleReferences(index, items.map((item) => item.nodeId)),
@@ -119,8 +129,6 @@ export function visibleSearchResult(index: ProjectionIndex, data: NodeSearchData
 
 export function visibleCreateResult(data: NodeCreateData, previewOnly: boolean, index?: ProjectionIndex): NodeVisibleMutationResult {
   return compactVisibleResult({
-    kind: 'mutation',
-    action: 'create',
     status: previewOnly ? 'preview' : 'applied',
     outline: previewOnly
       ? data.outline
@@ -131,8 +139,6 @@ export function visibleCreateResult(data: NodeCreateData, previewOnly: boolean, 
 
 export function visibleDeleteResult(data: NodeDeleteData, previewOnly: boolean): NodeVisibleMutationResult {
   return compactVisibleResult({
-    kind: 'mutation',
-    action: 'delete',
     status: previewOnly ? 'preview' : 'applied',
     changes: previewOnly
       ? compactChanges({ trashed: data.preview.map((item) => item.nodeId) }) ?? {}
@@ -147,8 +153,6 @@ export function visibleEditResult(data: NodeEditData, previewOnly: boolean, inde
   const changed = data.status === 'updated';
   const readableIds = readableEditNodeIds(data);
   return compactVisibleResult({
-    kind: 'mutation',
-    action: 'edit',
     status: previewOnly ? 'preview' : changed ? 'applied' : 'unchanged',
     outline: previewOnly
       ? data.afterOutline
@@ -188,41 +192,61 @@ function readableEditNodeIds(data: NodeEditData): string[] {
   return data.affectedNodeIds.filter((nodeId) => !trashedIds.has(nodeId));
 }
 
+// The visible result no longer carries a `kind`/`action` discriminant (both were
+// derivable from the tool name), so guidance branches on `envelope.tool` and the
+// payload's own shape instead.
 function nodeInstructions<TData>(envelope: ToolEnvelope<TData>, data: NodeVisibleResult): string {
   const parts: string[] = [];
-  if (data.kind === 'read') {
+  const preview = isPreviewResult(data);
+  if (envelope.tool === 'node_read') {
     parts.push('Use data.outline as the single source of truth for follow-up edits. Preserve existing %%node:id%% markers for existing nodes; omit markers only for newly created lines.');
-    if (data.references?.length) parts.push('For final answers, prefer copying data.references[].display_ref for node mentions.');
+    if (resultReferences(data)?.length) parts.push('For final answers, prefer copying data.references[].display_ref for node mentions.');
     parts.push(FINAL_ANSWER_NODE_REFERENCE_GUIDANCE);
-    if (data.page?.next_offset !== undefined) {
-      parts.push(`More root children are available. Call node_read again with child_offset ${data.page.next_offset} and the same node_id/depth/child_limit.`);
+    const nextOffset = resultNextOffset(data);
+    if (nextOffset !== undefined) {
+      parts.push(`More root children are available. Call node_read again with child_offset ${nextOffset} and the same node_id/depth/child_limit.`);
     }
-  } else if (data.kind === 'search') {
-    parts.push('Use the %%node:id%% markers in data.outline when reading or editing a search result.');
-    if (data.references?.length) parts.push('For final answers, prefer copying data.references[].display_ref for result mentions.');
+  } else if (envelope.tool === 'node_search') {
+    if ('total' in data) {
+      parts.push('Only the result count was requested; call node_search without count when you need editable node ids.');
+    } else {
+      parts.push('Use the %%node:id%% markers in data.outline when reading or editing a search result.');
+      if (resultReferences(data)?.length) parts.push('For final answers, prefer copying data.references[].display_ref for result mentions.');
+      parts.push(FINAL_ANSWER_NODE_REFERENCE_GUIDANCE);
+      const nextOffset = resultNextOffset(data);
+      if (nextOffset !== undefined) {
+        parts.push(`More search results are available. Call node_search again with offset ${nextOffset} and the same outline/search_node_id/limit.`);
+      }
+    }
+  } else if (envelope.tool === 'node_create') {
+    parts.push(preview
+      ? 'Preview only; no nodes were created.'
+      : 'Created nodes are included in data.outline with fresh %%node:id%% markers for follow-up edits.');
     parts.push(FINAL_ANSWER_NODE_REFERENCE_GUIDANCE);
-    if (data.page.next_offset !== undefined) {
-      parts.push(`More search results are available. Call node_search again with offset ${data.page.next_offset} and the same outline/search_node_id/limit.`);
-    }
-  } else if (data.kind === 'count') {
-    parts.push('Only the result count was requested; call node_search without count when you need editable node ids.');
-  } else if (data.kind === 'mutation') {
-    if (data.action === 'create') {
-      parts.push(data.status === 'preview'
-        ? 'Preview only; no nodes were created.'
-        : 'Created nodes are included in data.outline with fresh %%node:id%% markers for follow-up edits.');
-    } else if (data.action === 'edit') {
-      parts.push(data.status === 'preview'
-        ? 'Preview only; no edit was applied.'
-        : 'Edit applied. Marked existing nodes were updated in place; unmarked new lines were created; removed marked lines were moved to Trash.');
-    } else if (data.action === 'delete') {
-      parts.push(data.status === 'preview'
-        ? 'Preview only; no nodes were moved.'
-        : 'Nodes were moved to Trash, not permanently deleted.');
-    }
+  } else if (envelope.tool === 'node_edit') {
+    parts.push(preview
+      ? 'Preview only; no edit was applied.'
+      : 'Edit applied. Marked existing nodes were updated in place; unmarked new lines were created; removed marked lines were moved to Trash.');
+    parts.push(FINAL_ANSWER_NODE_REFERENCE_GUIDANCE);
+  } else if (envelope.tool === 'node_delete') {
+    parts.push(preview
+      ? 'Preview only; no nodes were moved.'
+      : 'Nodes were moved to Trash, not permanently deleted.');
   }
   if (envelope.instructions) parts.push(envelope.instructions);
   return parts.join(' ');
+}
+
+function isPreviewResult(data: NodeVisibleResult): boolean {
+  return 'status' in data && data.status === 'preview';
+}
+
+function resultReferences(data: NodeVisibleResult): NodeVisibleReference[] | undefined {
+  return 'references' in data ? data.references : undefined;
+}
+
+function resultNextOffset(data: NodeVisibleResult): number | undefined {
+  return 'page' in data ? data.page?.next_offset : undefined;
 }
 
 function errorInstructions<TData>(envelope: ToolEnvelope<TData>): string | undefined {

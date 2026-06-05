@@ -29,11 +29,41 @@ export interface ToolEnvelope<TData = unknown> {
 
 export const TOOL_RESULT_VERSION = 1;
 
+/**
+ * The model-visible error carries only what the model can act on. `recoverable`
+ * is dropped (it is a constant `true`); the runtime `details` envelope keeps it.
+ */
+export type VisibleToolError = Pick<ToolError, 'code' | 'message'>;
+
 export type ModelVisibleToolEnvelope<TData = unknown> =
-  Pick<ToolEnvelope<TData>, 'ok' | 'tool' | 'status'>
-  & Partial<Pick<ToolEnvelope<TData>, 'data' | 'error' | 'instructions' | 'warnings'>>;
+  Pick<ToolEnvelope<TData>, 'ok'>
+  & Partial<Pick<ToolEnvelope<TData>, 'status' | 'data' | 'instructions' | 'warnings'>>
+  & { error?: VisibleToolError };
+
+/**
+ * `status` is only worth showing the model when it adds something beyond `ok` +
+ * `error`. `success` merely restates `ok:true`; `error` merely restates
+ * `ok:false` + the `error` object. The informative states are `unchanged`,
+ * `partial`, and `denied`.
+ */
+export function isInformativeStatus(status: ToolStatus): boolean {
+  return status !== 'success' && status !== 'error';
+}
+
+export function visibleToolError(error: ToolError): VisibleToolError {
+  return { code: error.code, message: error.message };
+}
 
 const MODEL_DATA_UNSET = Symbol('model-data-unset');
+
+/**
+ * Pass as `modelData` to omit the `data` block from the model-visible envelope
+ * entirely. Needed because an explicit `undefined` argument triggers the
+ * `MODEL_DATA_UNSET` default (JS default-parameter semantics) and would fall
+ * back to `envelope.data`. Use when the runtime `details` keep a payload but the
+ * model needs nothing beyond `ok` / `error` / `instructions`.
+ */
+export const NO_MODEL_DATA = Symbol('no-model-data');
 
 export function agentToolResult<TData>(
   envelope: ToolEnvelope<TData>,
@@ -107,13 +137,14 @@ function modelVisibleEnvelope<TData>(
   envelope: ToolEnvelope<TData>,
   modelData: unknown,
 ): ModelVisibleToolEnvelope<unknown> {
-  const data = modelData === MODEL_DATA_UNSET ? envelope.data : modelData;
+  const data = modelData === MODEL_DATA_UNSET ? envelope.data
+    : modelData === NO_MODEL_DATA ? undefined
+    : modelData;
   return {
     ok: envelope.ok,
-    tool: envelope.tool,
-    status: envelope.status,
+    ...(isInformativeStatus(envelope.status) ? { status: envelope.status } : {}),
     ...(data !== undefined ? { data } : {}),
-    ...(envelope.error ? { error: envelope.error } : {}),
+    ...(envelope.error ? { error: visibleToolError(envelope.error) } : {}),
     ...(envelope.instructions ? { instructions: envelope.instructions } : {}),
     ...(envelope.warnings?.length ? { warnings: envelope.warnings } : {}),
   };
