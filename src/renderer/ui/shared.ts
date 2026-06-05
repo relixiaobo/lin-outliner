@@ -14,7 +14,6 @@ import { measureRender } from './outliner/renderProbe';
 
 export interface CommandRunnerOptions {
   applyFocus?: boolean;
-  applyProjection?: boolean;
 }
 
 export type CommandRunner = (
@@ -110,10 +109,6 @@ export function useCommandRunner(
     lifecycle.onLocalCommandStart?.();
     try {
       const result = await operation();
-      if (options?.applyProjection === false) {
-        setError(null);
-        return result;
-      }
       // A mutation returns a `CommandResult` (an `update` to fold in); a no-op /
       // query path returns a `ProjectionSnapshot` (apply as a full reseed).
       if ('update' in result) {

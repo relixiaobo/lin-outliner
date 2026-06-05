@@ -129,22 +129,54 @@ describe('reduceProjection — delta structural change', () => {
     expect(next.index.projection.nodes.some((n) => n.id === 'd')).toBe(true);
   });
 
-  test('prunes a removed subtree (root and descendants) and carries todayId', () => {
+  test('deletes exactly the removed ids and carries todayId', () => {
     const prev = seed(1);
     const editedA = node('a', { parentId: 'root', children: [] }); // lost child b
+    // Core enumerates the WHOLE removed subtree (`loro.deleteNode` touches every
+    // descendant), so `removedIds` lists both b and c — the reducer deletes exactly
+    // that set rather than walking the stale tree (which would wrongly drop a child
+    // that the same revision moved out of b; see projectionDeltaIntegration merge).
     const next = reduceProjection(prev, {
       kind: 'delta',
       revision: 2,
       todayId: 'a2',
       changedNodes: [editedA],
-      removedIds: ['b'], // core reports the subtree root; descendants derived here
+      removedIds: ['b', 'c'],
     })!;
 
     expect(next.index.byId.has('b')).toBe(false);
-    expect(next.index.byId.has('c')).toBe(false); // descendant pruned too
+    expect(next.index.byId.has('c')).toBe(false);
     expect(next.index.byId.has('a')).toBe(true);
     expect(next.index.projection.todayId).toBe('a2');
     expect(next.index.projection.nodes.some((n) => n.id === 'c')).toBe(false);
+  });
+
+  test('a survivor moved out of a removed node is kept (removedIds-only delete)', () => {
+    const prev = seed(1);
+    // b is removed, but its child c was re-parented under a2 in the same revision —
+    // so c arrives in changedNodes, not removedIds. Deleting only removedIds keeps c.
+    const editedA = node('a', { parentId: 'root', children: [] });
+    const movedC = node('c', { parentId: 'a2' });
+    const editedA2 = node('a2', { parentId: 'root', children: ['c'] });
+    const next = reduceProjection(prev, {
+      kind: 'delta',
+      revision: 2,
+      todayId: 'root',
+      changedNodes: [editedA, movedC, editedA2],
+      removedIds: ['b'],
+    })!;
+
+    expect(next.index.byId.has('b')).toBe(false);
+    expect(next.index.byId.has('c')).toBe(true);
+    expect(next.index.byId.get('c')!.parentId).toBe('a2');
+  });
+
+  test('a same-revision full reseed is a no-op (sentinel refresh)', () => {
+    const prev = seed(5);
+    // `api.getProjection()` returns the current snapshot; folding it as a full at
+    // the held revision must not churn renderRev (it would invalidate every memo).
+    const same = reduceProjection(prev, { kind: 'full', revision: 5, projection: prev.index.projection });
+    expect(same).toBe(prev);
   });
 });
 

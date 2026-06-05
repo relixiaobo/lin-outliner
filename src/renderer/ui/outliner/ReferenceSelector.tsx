@@ -102,7 +102,12 @@ export function ReferenceSelector(props: ReferenceSelectorProps) {
       const parts = dateParts(date);
       const outcome = await api.ensureDateNode(parts.year, parts.month, parts.day);
       const targetId = outcome.focus?.nodeId;
-      const target = targetId ? nodeFromOutcome(outcome, targetId) : undefined;
+      // `ensure_date_node` is idempotent: referencing an already-existing daily
+      // note bumps no revision, so its delta is empty and the node isn't in
+      // `changedNodes`. Fall back to the held index, where it already lives.
+      const target = targetId
+        ? nodeFromOutcome(outcome, targetId) ?? props.index.byId.get(targetId)
+        : undefined;
       if (!target) return outcome;
       if (props.applyReference) {
         const result = await props.applyReference(target);

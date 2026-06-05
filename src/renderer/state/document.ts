@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type {
   DocumentProjection,
   FocusPlacement,
@@ -53,30 +53,20 @@ interface ProjectionState {
   revision: number;
 }
 
-// Collect a node and all its descendants from a byId snapshot. A delta removal
-// carries the subtree root; descendants are derived here (mirroring the
-// main-process text-search consumer) so the renderer prunes the whole subtree
-// regardless of whether core enumerated descendants in the change set.
-function collectSubtreeIds(byId: ReadonlyMap<NodeId, NodeProjection>, rootId: NodeId): NodeId[] {
-  const out: NodeId[] = [];
-  const stack: NodeId[] = [rootId];
-  while (stack.length > 0) {
-    const id = stack.pop()!;
-    out.push(id);
-    const node = byId.get(id);
-    if (node) for (const childId of node.children) stack.push(childId);
-  }
-  return out;
-}
-
 // Fold a ProjectionUpdate into the previous state. Returns the next state, the
-// unchanged `prev` (already-applied duplicate), or `null` to signal the caller
-// must resync (a delta with no base, or a revision gap).
+// unchanged `prev` (already-applied duplicate / identical reseed), or `null` to
+// signal the caller must resync (a delta with no base, or a revision gap).
 export function reduceProjection(
   prev: ProjectionState | null,
   update: ProjectionUpdate,
 ): ProjectionState | null {
   if (update.kind === 'full') {
+    // A reseed at a revision we already hold (or older) is an identical no-op —
+    // the `api.getProjection()` sentinels return the current snapshot without
+    // mutating. Return `prev` so we don't bump every node's renderRev and force a
+    // full-tree memo invalidation for a pure refresh. (Core bumps the revision on
+    // every change, so equal revision ⇒ identical content.)
+    if (prev && update.revision <= prev.revision) return prev;
     const byId = new Map(update.projection.nodes.map((node) => [node.id, node]));
     const affected = new Set<NodeId>(byId.keys());
     const renderRev = nextRevisions(prev?.index.renderRev ?? null, affected, byId.keys());
@@ -88,16 +78,25 @@ export function reduceProjection(
 
   const byId = new Map(prev.index.byId);
   const changed = new Set<NodeId>();
+  // Delete EXACTLY the removed ids — no stale-subtree walk. Core enumerates every
+  // genuinely-removed node in the change set (`loro.deleteNode` touches the whole
+  // subtree, asserted by `verifyCaches`), so `removedIds` is complete. Walking the
+  // *previous* tree to prune descendants would wrongly drop a child that a single
+  // revision moved OUT of the removed node before deleting it (e.g.
+  // `merge_node_into` re-parents grandchildren, then removes the emptied node):
+  // those survivors arrive in `changedNodes`, not `removedIds`.
   for (const id of update.removedIds) {
-    for (const descId of collectSubtreeIds(prev.index.byId, id)) {
-      byId.delete(descId);
-      changed.add(descId);
-    }
+    byId.delete(id);
+    changed.add(id);
   }
   for (const node of update.changedNodes) {
     byId.set(node.id, node);
     changed.add(node.id);
   }
+  // `nodes` follows Map insertion order (newly-created nodes append at the end),
+  // whereas a full projection from core is id-sorted. `projection.nodes` order is
+  // NOT a stable contract — the tree is defined by each node's `children`, and
+  // display lists that iterate it sort/filter for themselves.
   const projection: DocumentProjection = { ...prev.index.projection, todayId: update.todayId, nodes: [...byId.values()] };
   const affected = propagateDirty(changed, byId);
   const renderRev = nextRevisions(prev.index.renderRev, affected, byId.keys());
@@ -127,21 +126,40 @@ export interface ProjectionStore {
 // If a delta can't apply (no base or a revision gap), it pulls a full snapshot via
 // `resync` and reseeds — the safety valve; in steady state (one ordered channel,
 // init seeds full) it never fires.
+//
+// `stateRef` mirrors `state` and is the authoritative `prev` for the reducer, so
+// the reduce stays a pure function call OUTSIDE the setState updater (no resync
+// side effect inside an updater that StrictMode double-invokes) and back-to-back
+// applies in one tick chain correctly before React commits. A single in-flight
+// guard collapses duplicate resync requests.
 export function useProjectionStore(resync: () => Promise<ProjectionSnapshot>): ProjectionStore {
   const [state, setState] = useState<ProjectionState | null>(null);
+  const stateRef = useRef<ProjectionState | null>(null);
+  const resyncInFlight = useRef(false);
+
+  const commit = useCallback((next: ProjectionState | null) => {
+    if (next !== null && next !== stateRef.current) {
+      stateRef.current = next;
+      setState(next);
+    }
+  }, []);
+
   const applyProjectionUpdate = useCallback((update: ProjectionUpdate) => {
-    setState((prev) => {
-      const next = measureRenderIndex(() => reduceProjection(prev, update));
-      if (next === null) {
-        void resync().then((snapshot) => setState((cur) => reduceProjection(
-          cur,
-          { kind: 'full', revision: snapshot.revision, projection: snapshot.projection },
-        )));
-        return prev;
-      }
-      return next;
-    });
-  }, [resync]);
+    const next = measureRenderIndex(() => reduceProjection(stateRef.current, update));
+    if (next !== null) {
+      commit(next);
+      return;
+    }
+    if (resyncInFlight.current) return;
+    resyncInFlight.current = true;
+    void resync()
+      .then((snapshot) => commit(reduceProjection(
+        stateRef.current,
+        { kind: 'full', revision: snapshot.revision, projection: snapshot.projection },
+      )))
+      .finally(() => { resyncInFlight.current = false; });
+  }, [commit, resync]);
+
   return { index: state?.index ?? null, applyProjectionUpdate };
 }
 

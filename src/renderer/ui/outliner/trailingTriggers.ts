@@ -19,6 +19,9 @@ function isEmptyFieldNameError(error: unknown): boolean {
   return message.includes('field name cannot be empty');
 }
 
+// Reads the field entry + its definition straight out of the create's delta. Safe
+// because both are freshly created by the same `create_inline_field*` command, so
+// both are in its `changedNodeIds` (a delta never omits a node it just created).
 async function clearFallbackFieldName(outcome: CommandResult): Promise<CommandResult> {
   const fieldEntry = nodeFromProjectionUpdate(outcome.update, outcome.focus?.nodeId);
   const fieldDefId = fieldEntry?.type === 'fieldEntry' ? fieldEntry.fieldDefId : undefined;
