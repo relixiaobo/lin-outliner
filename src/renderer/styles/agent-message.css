@@ -33,8 +33,12 @@
   text-underline-offset: 0.12em;
 }
 
-.agent-message-inline-ref:not(button),
-.agent-message-inline-ref:not(button):hover {
+/* Non-interactive reference (a plain `<span>` with no open handler, so no
+   `href`): no pointer, no hover underline. Interactive refs are `<a href>` and
+   keep the link affordance. (Keyed on `[href]`, not the element type, since both
+   interactive and non-interactive are now non-`<button>`.) */
+.agent-message-inline-ref:not([href]),
+.agent-message-inline-ref:not([href]):hover {
   cursor: default;
   text-decoration-line: none;
 }

@@ -100,9 +100,10 @@ export function AgentInlineReferenceText({
           );
         }
         return (
-          <button
+          <a
             className="inline-ref agent-message-inline-ref"
             data-inline-ref={segment.nodeId}
+            href={nodeReferenceHref(segment.nodeId)}
             key={key}
             onClick={(event) => {
               event.preventDefault();
@@ -111,10 +112,9 @@ export function AgentInlineReferenceText({
             }}
             style={style}
             title={label}
-            type="button"
           >
             {label}
-          </button>
+          </a>
         );
       })}
     </>
@@ -220,6 +220,17 @@ function mergeAdjacentTextSegments(segments: FileReferenceTextSegment[]): FileRe
     }
   }
   return out;
+}
+
+// Synthetic href scheme for node-reference anchors. The value is never navigated
+// (clicks are intercepted); it exists so the reference can be a real `<a>` —
+// inline, breakable across lines, and natively focusable/clickable — instead of
+// an atomic `<button>` that orphans onto its own line. The markdown link
+// transform in AgentMarkdown emits the same scheme.
+export const NODE_REFERENCE_LINK_PREFIX = 'lin-node:';
+
+export function nodeReferenceHref(nodeId: NodeId): string {
+  return `#${NODE_REFERENCE_LINK_PREFIX}${encodeURIComponent(nodeId)}`;
 }
 
 export function nodeReferenceStyle(nodeId: NodeId, index: DocumentIndex | undefined): CSSProperties | undefined {

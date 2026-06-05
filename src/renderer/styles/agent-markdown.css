@@ -61,7 +61,10 @@
   white-space: pre-wrap;
 }
 
-.agent-markdown a {
+/* Real markdown links only. Node references are also `<a>` now (so they break
+   across lines like text) but carry `.inline-ref`; excluding them keeps the rose
+   inline-ref styling from being overridden by the rose-link underline here. */
+.agent-markdown a:not(.inline-ref) {
   color: var(--link);
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, var(--link) 34%, transparent);
