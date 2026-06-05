@@ -249,6 +249,16 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **agent-tool-result-trim** (cc, PR #128) — the model-visible tool result now carries only what the
+  model can't cheaply derive (full envelope stays on `details`): one shared `modelVisibleEnvelope`
+  projector drops `tool`/redundant `status`/`kind`/`action`, projects errors to `{code,message}`, and
+  omits `data` on a plain `undefined` (the `NO_MODEL_DATA` sentinel + its leak are gone). Node guidance is
+  single-sourced from `NodeInstructionContext {count?, outcome?}` (a real no-op edit now says "No change
+  was needed"); `file_read` routes through a typed, exhaustiveness-guarded `visibleFileRead` and sets
+  `status:"partial"` on a paginated read. Re-reviewed (high) after a revision addressing all nine
+  findings; main-agent follow-up made the `nodeInstructions` exhaustiveness guard actually fire. Gate:
+  typecheck + `test:core` 602/0 (2 rg-env skips).
+
 - **agent-process-block-collapse** (cc-2, PR #129) — the agent thinking/tool process block now collapses
   by default in every steady state, shows exactly one activity spinner, and never auto-collapses on a
   user mid-read. While live + collapsed the header doubles as a status line (running tool → latest thought

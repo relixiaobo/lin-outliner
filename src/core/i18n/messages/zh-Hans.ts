@@ -623,7 +623,6 @@ commandPalette: {
 
   agent: {
     chat: {
-      emptyGreeting: '我能帮你处理大纲的什么？',
       onboardingText: '连接一个 AI 服务商即可开始。',
       onboardingCta: '打开设置 › 服务商',
       showConversations: '显示对话',
@@ -715,6 +714,8 @@ commandPalette: {
       editMessage: '编辑消息',
       copy: '复制',
       copyMessage: '复制消息',
+      showMore: '展开',
+      showLess: '收起',
       retry: '重试',
       retryResponse: '重试回复',
       regenerate: '重新生成',

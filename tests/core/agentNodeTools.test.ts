@@ -205,28 +205,28 @@ describe('agent node tools', () => {
 
     const visible = parseVisibleToolResult<{
       ok: boolean;
-      tool: string;
-      status: 'success' | 'error' | 'unchanged';
       instructions?: string;
       data?: {
-        kind: 'mutation';
-        action: 'create';
-        status: 'applied' | 'preview' | 'unchanged';
         outline?: string;
         changes?: { created?: string[] };
       };
     }>(result.contentText);
 
     expect(visible.ok).toBe(true);
-    expect(visible.tool).toBe('node_create');
-    expect(visible.data!.kind).toBe('mutation');
-    expect(visible.data!.action).toBe('create');
-    expect(visible.data!.status).toBe('applied');
+    // The echoed `tool`, the redundant envelope `status: 'success'`, and the
+    // derivable `kind`/`action`/`status` discriminants are no longer model-visible.
+    expect(visible).not.toHaveProperty('tool');
+    expect(visible).not.toHaveProperty('status');
+    expect(visible.data).not.toHaveProperty('kind');
+    expect(visible.data).not.toHaveProperty('action');
+    expect(visible.data).not.toHaveProperty('status');
     expect((visible as any).metrics).toBeUndefined();
     expect(visible.data!.outline).toContain(`%%node:${result.details.data!.createdRootIds[0]}%% Launch`);
     expect(visible.data!.outline).toContain('Status::');
     expect(visible.data!.changes!.created).toEqual(result.details.data!.createdNodeIds);
     expect((visible.data! as any).refs).toBeUndefined();
+    // create now carries the final-answer citation guidance.
+    expect(visible.instructions).toContain('[[node:');
     expect(result.details.data!.outline).toContain('Status:: Active');
   });
 
@@ -557,6 +557,24 @@ describe('agent node tools', () => {
     expect(core.state().nodes[root]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual(['', 'New child']);
   });
 
+  test('node_edit guidance reports a real no-op instead of claiming the edit applied', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Task'));
+
+    // old_string === new_string leaves the outline byte-identical → unchanged.
+    const result = await executeRawTool<{ status: 'updated' | 'unchanged' }>(core, 'node_edit', {
+      node_id: root,
+      old_string: 'Task',
+      new_string: 'Task',
+    });
+    const visible = parseVisibleToolResult<{ instructions?: string }>(result.contentText);
+
+    expect(result.details.status).toBe('unchanged');
+    expect(visible.instructions).toContain('No change was needed');
+    expect(visible.instructions).not.toContain('Edit applied');
+  });
+
   test('node_edit rejects out-of-root local-file markers from agent outlines', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-node-root-'));
     const sourceRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-node-source-'));
@@ -681,11 +699,8 @@ describe('agent node tools', () => {
 
     const visible = parseVisibleToolResult<{
       ok: boolean;
-      tool: string;
+      instructions?: string;
       data?: {
-        kind: 'mutation';
-        action: 'edit';
-        status: 'applied' | 'preview' | 'unchanged';
         outline?: string;
         changes?: { updated?: string[] };
       };
@@ -693,8 +708,12 @@ describe('agent node tools', () => {
 
     expect(result.details.data!.beforeOutline).toContain('Task A');
     expect(result.details.data!.afterOutline).toContain('Task B');
-    expect(visible).toMatchObject({ ok: true, tool: 'node_edit' });
-    expect(visible.data).toMatchObject({ kind: 'mutation', action: 'edit', status: 'applied' });
+    expect(visible).toMatchObject({ ok: true });
+    expect(visible).not.toHaveProperty('tool');
+    expect(visible).not.toHaveProperty('status');
+    expect(visible.data).not.toHaveProperty('kind');
+    expect(visible.data).not.toHaveProperty('action');
+    expect(visible.data).not.toHaveProperty('status');
     expect(visible.data!.outline).toContain(`%%node:${root}%% Root`);
     expect(visible.data!.outline).toContain('Task B');
     expect(visible.data!.changes!.updated).toEqual(result.details.data!.affectedNodeIds);
@@ -1146,17 +1165,15 @@ describe('agent node tools', () => {
     }>(core, 'node_read', { node_id: root, depth: 1 });
     const visible = parseVisibleToolResult<{
       ok: boolean;
-      tool: string;
       data?: {
-        kind: 'read';
         outline?: string;
         references?: Array<{ node_id: string; title: string; display_ref: string; edit_handle: string; type: string }>;
       };
     }>(result.contentText);
 
     expect(visible.ok).toBe(true);
-    expect(visible.tool).toBe('node_read');
-    expect(visible.data!.kind).toBe('read');
+    expect(visible).not.toHaveProperty('tool');
+    expect(visible.data).not.toHaveProperty('kind');
     expect((visible as any).metrics).toBeUndefined();
     expect(visible.data!.outline).toBe(`- %%node:${root}%% Root\n  - %%node:${child}%% Child`);
     expect((visible.data! as any).refs).toBeUndefined();
@@ -1227,26 +1244,23 @@ describe('agent node tools', () => {
     const result = await executeRawTool(core, 'node_read', { node_id: 'missing-node' });
     const visible = parseVisibleToolResult<{
       ok: boolean;
-      tool: string;
-      status: string;
       instructions?: string;
       error?: {
         code: string;
         message: string;
-        recoverable: boolean;
       };
     }>(result.contentText);
 
     expect(result.details.ok).toBe(false);
+    // The visible error drops the echoed `tool`, the redundant `status: 'error'`
+    // (implied by `ok: false`), and the constant `recoverable`.
     expect(visible).toMatchObject({
       ok: false,
-      tool: 'node_read',
-      status: 'error',
-      error: {
-        code: 'node_not_found',
-        recoverable: true,
-      },
+      error: { code: 'node_not_found' },
     });
+    expect(visible).not.toHaveProperty('tool');
+    expect(visible).not.toHaveProperty('status');
+    expect(visible.error).not.toHaveProperty('recoverable');
     expect(visible.instructions).toContain('node_search');
     expect((visible as any).details).toBeUndefined();
     expect((visible as any).metrics).toBeUndefined();
@@ -1307,22 +1321,21 @@ describe('agent node tools', () => {
     });
     const visible = parseVisibleToolResult<{
       ok: boolean;
-      tool: string;
       instructions?: string;
       data?: {
-        kind: 'search';
         outline?: string;
         references?: Array<{ node_id: string; title: string; display_ref: string; edit_handle: string; type: string }>;
         page?: { total: number; offset: number; limit: number; next_offset?: number };
       };
     }>(result.contentText);
 
-    expect(visible).toMatchObject({ ok: true, tool: 'node_search' });
+    expect(visible).toMatchObject({ ok: true });
+    expect(visible).not.toHaveProperty('tool');
+    expect(visible.data).not.toHaveProperty('kind');
     expect(visible.instructions).toContain('[[node:Display^...]]');
     expect(visible.instructions).toContain('[[node:^...]]');
     expect(visible.instructions).toContain('never show %%node:id%%');
     expect(visible.instructions).toContain('data.references[].display_ref');
-    expect(visible.data!.kind).toBe('search');
     expect(visible.data!.outline).toBe(`- %%node:${chengdu}%% Chengdu weather`);
     expect((visible.data! as any).matches).toBeUndefined();
     expect((visible.data! as any).refs).toBeUndefined();
@@ -1335,6 +1348,35 @@ describe('agent node tools', () => {
     }]);
     expect(visible.data!.page).toMatchObject({ total: 1, offset: 0, limit: 10 });
     expect(result.details.data!.items![0]!.nodeId).toBe(chengdu);
+  });
+
+  test('node_search count mode guides toward an id-returning call instead of an outline', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    mustFocus(core.createNode(today, null, 'Chengdu weather'));
+    core.createNode(today, null, 'Beijing itinerary');
+
+    const result = await executeRawTool(core, 'node_search', {
+      outline: '- %%search%% Chengdu\n  - STRING_MATCH\n    - value:: Chengdu',
+      count: true,
+      limit: 10,
+    });
+    const visible = parseVisibleToolResult<{
+      ok: boolean;
+      instructions?: string;
+      data?: { total?: number; outline?: string; references?: unknown };
+    }>(result.contentText);
+
+    // Count-only mode is signalled by the caller-supplied ctx, not by sniffing
+    // the payload shape — guidance must point back to an id-returning call.
+    expect(visible.instructions).toContain('Only the result count was requested');
+    expect(visible.instructions).toContain('without count');
+    // Editing guidance is suppressed: no outline markers, no reference hints.
+    expect(visible.instructions).not.toContain('%%node:id%%');
+    expect(visible.instructions).not.toContain('display_ref');
+    expect(visible.data!.total).toBe(1);
+    expect(visible.data).not.toHaveProperty('outline');
+    expect(visible.data).not.toHaveProperty('references');
   });
 
   test('node_search resolves tag conditions from temporary search outlines', async () => {

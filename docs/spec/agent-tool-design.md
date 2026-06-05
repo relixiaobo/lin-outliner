@@ -169,18 +169,44 @@ interface ToolMetrics {
 }
 ```
 
-For `node_*`, model-visible `content.text` uses one concise envelope. Runtime
-debug details stay in `details`; the model-facing payload avoids duplicated
-representations.
+### Model-visible redundancy rule
+
+The model-visible projection carries **only what the model cannot cheaply derive**
+from its own call plus the rest of the payload. The full runtime envelope stays in
+`details`. Across **every** tool, the shared `modelVisibleEnvelope` / node
+`nodeVisibleEnvelope` apply these cuts:
+
+- **No `tool`.** The model already knows which tool it called (tool-call
+  correlation).
+- **`status` only when informative.** `success` merely restates `ok: true` and
+  `error` merely restates `ok: false` + the `error` object, so both are omitted;
+  only `unchanged` / `partial` / `denied` are shown.
+- **`error` is `{ code, message }`.** `recoverable` is a constant `true` and is
+  dropped from the visible projection (kept on `details`).
+
+A field is otherwise redundant — and cut — when it is a discriminant derivable
+from the tool + args (`kind`, `action`, `mode`, file-read `type`), a count equal
+to a sibling array's length (`returned_items`, `numLines`, `message_count`), an
+echo of an input arg (`task_id`, `anchor_message_id`, `replaceAll`), a constant
+(`userModified`), an internal path (pdf `outputDir`), or a cross-field duplicate
+(past_chats error `code`/`message` already in `error`; notebook `cells` vs the
+rendered `content`). `data` is omitted from the visible envelope whenever
+`modelData` is `undefined` (the default) — the safe path is the natural one, so
+there is no sentinel and no accidental fallback to the full runtime payload. To
+show the model a slim projection, pass it; to echo `envelope.data` in full, pass
+it explicitly.
+
+All tools — `node_*` included — project through one shared `modelVisibleEnvelope`
+(the `node_*` path passes its own computed `instructions` via a throwaway
+envelope copy, keeping `details` untouched). The model-visible shape is:
 
 ```ts
-interface NodeVisibleEnvelope {
+interface ModelVisibleToolEnvelope {
   ok: boolean;
-  tool: string;
-  status: "success" | "partial" | "unchanged" | "denied" | "error";
+  status?: "partial" | "unchanged" | "denied"; // omitted for success/error
   instructions?: string;
-  data?: NodeVisibleResult;
-  error?: ToolError;
+  data?: NodeVisibleResult; // any tool's slim projection
+  error?: { code: string; message: string };
   warnings?: string[];
 }
 
@@ -190,28 +216,35 @@ type NodeVisibleResult =
   | NodeVisibleCountResult
   | NodeVisibleMutationResult;
 
+// The result kind is no longer carried in the payload — it is implied by
+// `envelope.tool` (read/search/create/edit/delete). The data shape still differs
+// honestly (count returns `total`, results return `outline`), but the *guidance*
+// text is selected from a caller-supplied `NodeInstructionContext { count?,
+// outcome? }` — `count` is node_search's count-only mode, `outcome` is the
+// mutation result ("preview" / "applied" / a real no-op "unchanged"). These are
+// facts the builder already holds; guidance never sniffs the payload shape
+// (which would drift) and a no-op edit reports "no change", not "edit applied".
 interface NodeVisibleReadResult {
-  kind: "read";
   outline?: string;
+  references?: NodeVisibleReference[];
   page?: NodeVisiblePage;
 }
 
 interface NodeVisibleSearchResult {
-  kind: "search";
   outline?: string;
+  references?: NodeVisibleReference[];
   page: NodeVisiblePage;
 }
 
+// `kind`/`action`/`status` dropped: the tool name implies the operation; the
+// model derives preview from its own `preview_only` arg; `changes` already
+// reports what happened.
 interface NodeVisibleMutationResult {
-  kind: "mutation";
-  action: "create" | "edit" | "delete";
-  status: "applied" | "preview" | "unchanged";
   changes: NodeVisibleChanges;
   outline?: string;
 }
 
 interface NodeVisibleCountResult {
-  kind: "count";
   total: number;
   page: NodeVisiblePage;
 }
@@ -274,6 +307,19 @@ Example:
     "message": "Node not found: node_123",
     "recoverable": true
   },
+  "instructions": "Use node_search or node_read on the parent context to find the correct node id. The node id may be stale after a delete, restore, or undo."
+}
+```
+
+This is the runtime `ToolResult` (kept in `details`). Its model-visible
+projection is slimmer per the redundancy rule above — no `tool`, no
+`version`, no `status` (`error` is implied by `ok: false`), and `error` is
+`{ code, message }`:
+
+```json
+{
+  "ok": false,
+  "error": { "code": "node_not_found", "message": "Node not found: node_123" },
   "instructions": "Use node_search or node_read on the parent context to find the correct node id. The node id may be stale after a delete, restore, or undo."
 }
 ```
@@ -1457,7 +1503,10 @@ Result behavior:
 
 - Reading directories should fail. Use `file_glob` for file discovery, or
   `bash` with `ls` only when directory metadata is required.
-- Large text files are paginated with `offset` and `limit`.
+- Large text files are paginated with `offset` and `limit`. A partial read
+  (offset past the start, or fewer lines returned than the file holds) sets
+  `status: "partial"` so the model gets a structured truncation signal it can act
+  on without relying on the prose instructions.
 - Image reads return dimensions when they can be determined, attach the image
   block for the model to inspect, and omit base64 from the model-visible JSON so
   text output stays compact.

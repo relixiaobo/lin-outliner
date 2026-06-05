@@ -549,6 +549,27 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Agent: strip model-visible redundancy across all tools (PR #128)** — the model-visible tool result
+  (`content[0].text`) now carries only what the model cannot cheaply derive; the full runtime envelope
+  stays on `details` unchanged. A shared `modelVisibleEnvelope` projector backs every tool: it drops
+  `tool` (known via tool-call correlation), emits `status` only when informative
+  (`partial`/`unchanged`/`denied`, never `success`/`error`), and projects errors to `{ code, message }`.
+  Node tools drop `kind`/`action` (always the tool name) and select guidance from a single-source
+  `NodeInstructionContext { count?, outcome? }` computed beside the visible result — never re-derived from
+  the payload shape, never duplicated at the call site — so a real no-op edit reports "No change was
+  needed" instead of "Edit applied". `file_read` text/notebook/pdf paths route through a typed
+  `visibleFileRead` (exhaustiveness-guarded) that strips derivable counts / internal paths / base64 /
+  duplicated cells, and a partial read now sets `status: "partial"` as a structured truncation signal.
+  `data` is omitted from the visible envelope whenever `modelData` is `undefined` (the safe default — the
+  prior `NO_MODEL_DATA` sentinel and its undefined-fallback leak are gone). `past_chats`, `file_edit`,
+  `task_stop`, `file_grep` shed echoed args / constants / cross-field duplicates. Design folded into
+  `docs/spec/agent-tool-design.md`. Gate: re-reviewed (high) after a revision that addressed all nine
+  findings; typecheck + `test:core` 602/0 (2 ripgrep-env skips). A follow-up commit fixed the
+  `nodeInstructions` exhaustiveness guard, which was cosmetic as merged (it switched on a cast expression
+  and assigned `envelope.tool as never`, so adding a `NodeToolName` member did not fail to compile) — now
+  it switches on a typed local and the `never` default genuinely enforces coverage (verified: a sixth
+  member raises TS2322). ([#128](https://github.com/relixiaobo/lin-outliner/pull/128))
+
 - **Settings: macOS System Settings clarity pass (PR #118)** — the standalone Settings window now reads
   closer to macOS System Settings while keeping Tenon's neutral design system. A fixed toolbar pairs the
   back/forward history controls as one neutral pill capsule (with a hairline divider) and a right-pane
@@ -1214,6 +1235,13 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   ([#24](https://github.com/relixiaobo/lin-outliner/pull/24))
 
 ### Internal
+
+- **Agent user-message UI cleanups (post-#130 review)** — two behavior-preserving tidies surfaced
+  during the PR #130 gate: collapsed the nested empty-state ternary in `AgentChatPanel`
+  (`!settingsLoaded ? null : hasUsableProvider ? null : X` → `!settingsLoaded || hasUsableProvider ? null : X`),
+  and keyed the collapsible user-content measure on the full `text` rather than `text.length` so an edit
+  to a different same-length message re-measures and resets the expand state. Fast-track; typecheck +
+  `test:renderer` 353/0 + agent-onboarding/agent-process e2e 8/8.
 
 - **Chrome-zone backing transition off a literal `0ms` (guard hygiene)** — `.window-chrome-zone`
   declared `transition: background-color 0ms`, whose literal `0ms` tripped the `typography-tokens`

@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { AgentMessageEntry, AgentTurnPhase } from '../../agent/runtime';
 import type {
   AssistantMessage,
@@ -17,6 +17,7 @@ import {
 import type { DocumentIndex } from '../../state/document';
 import {
   CheckIcon,
+  ChevronDownIcon,
   CloseIcon,
   CopyIcon,
   FileImageIcon,
@@ -53,6 +54,10 @@ import {
   inlineFilePreviewAttrs,
   localFileReferenceHref,
 } from '../editor/inlineFilePreviewData';
+import { ButtonControl } from '../primitives/ButtonControl';
+
+const USER_MESSAGE_COLLAPSED_LINES = 5;
+const USER_MESSAGE_COLLAPSED_EXTRA_PX = 16;
 
 interface AgentMessageRowProps {
   busy?: boolean;
@@ -267,6 +272,69 @@ function textFromAssistant(message: AssistantMessage): string {
     .trim();
 }
 
+function AgentUserCollapsibleContent({
+  children,
+  measureKey,
+}: {
+  children: ReactNode;
+  measureKey: string;
+}) {
+  const t = useT();
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [canCollapse, setCanCollapse] = useState(false);
+
+  useLayoutEffect(() => {
+    setExpanded(false);
+  }, [measureKey]);
+
+  const measure = useCallback(() => {
+    const element = contentRef.current;
+    if (!element) return;
+    const style = window.getComputedStyle(element);
+    const lineHeight = Number.parseFloat(style.lineHeight) || 26;
+    const collapsedHeight = lineHeight * USER_MESSAGE_COLLAPSED_LINES + USER_MESSAGE_COLLAPSED_EXTRA_PX;
+    const nextCanCollapse = element.scrollHeight > collapsedHeight + 1;
+    setCanCollapse((current) => (current === nextCanCollapse ? current : nextCanCollapse));
+  }, []);
+
+  useLayoutEffect(() => {
+    measure();
+    const element = contentRef.current;
+    if (!element || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [measure, measureKey]);
+
+  const collapsed = canCollapse && !expanded;
+
+  return (
+    <div className="agent-user-content-shell">
+      <div
+        ref={contentRef}
+        className={collapsed ? 'agent-user-content-body is-collapsed' : 'agent-user-content-body'}
+      >
+        {children}
+      </div>
+      {canCollapse ? (
+        <ButtonControl
+          aria-expanded={expanded}
+          className="agent-user-expand-button"
+          onClick={() => setExpanded((current) => !current)}
+        >
+          <span>{expanded ? t.agent.message.showLess : t.agent.message.showMore}</span>
+          <ChevronDownIcon
+            aria-hidden
+            className={expanded ? 'agent-user-expand-chevron is-expanded' : 'agent-user-expand-chevron'}
+            size={ICON_SIZE.tiny}
+          />
+        </ButtonControl>
+      ) : null}
+    </div>
+  );
+}
+
 function renderAssistantBlocks(
   message: AssistantMessage,
   contentKey: string,
@@ -464,6 +532,8 @@ export function AgentMessageRow({
     const inlineAttachmentRefs = referencedAttachmentRefs(text, userContent.attachments);
     const listedAttachments = userContent.attachments.filter((attachment) => !inlineAttachmentRefs.has(attachment.ref));
     const hasAttachments = userContent.attachments.length > 0 || userContent.images.length > 0;
+    const hasVisibleContent = listedAttachments.length > 0 || userContent.images.length > 0 || text.trim().length > 0;
+    const contentMeasureKey = `${entry.id}:${message.timestamp}:${text}:${listedAttachments.length}:${userContent.images.length}`;
     const CopyStateIcon = copied ? CheckIcon : CopyIcon;
     const nodeId = entry.nodeId;
     if (editing && nodeId) {
@@ -507,33 +577,37 @@ export function AgentMessageRow({
     return (
       <AgentMessageFrame role="user">
         <div className="agent-user-content">
-          {listedAttachments.length > 0 ? (
-            <div className="agent-user-file-list">
+          {hasVisibleContent ? (
+            <AgentUserCollapsibleContent measureKey={contentMeasureKey}>
+              {listedAttachments.length > 0 ? (
+                <div className="agent-user-file-list">
                   {listedAttachments.map((attachment, index) => (
                     <AgentUserFileChip attachment={attachment} key={`${attachment.ref}-${index}`} />
                   ))}
                 </div>
-          ) : null}
-          {userContent.images.length > 0 ? (
-            <div className="agent-user-image-list">
-              {userContent.images.map((image, index) => (
-                <img
-                  alt=""
-                  key={`${image.mimeType}-${index}`}
-                  src={`data:${image.mimeType};base64,${image.data}`}
-                />
-              ))}
-            </div>
-          ) : null}
-          {text.trim().length > 0 ? (
-            <div className="agent-user-bubble">
-              <AgentInlineReferenceText
-                fileAttachments={userContent.attachments}
-                index={index}
-                onNodeReferenceOpen={onNodeReferenceOpen}
-                text={text}
-              />
-            </div>
+              ) : null}
+              {userContent.images.length > 0 ? (
+                <div className="agent-user-image-list">
+                  {userContent.images.map((image, index) => (
+                    <img
+                      alt=""
+                      key={`${image.mimeType}-${index}`}
+                      src={`data:${image.mimeType};base64,${image.data}`}
+                    />
+                  ))}
+                </div>
+              ) : null}
+              {text.trim().length > 0 ? (
+                <div className="agent-user-bubble">
+                  <AgentInlineReferenceText
+                    fileAttachments={userContent.attachments}
+                    index={index}
+                    onNodeReferenceOpen={onNodeReferenceOpen}
+                    text={text}
+                  />
+                </div>
+              ) : null}
+            </AgentUserCollapsibleContent>
           ) : null}
           {!turnActive ? (
             <AgentMessageActions>

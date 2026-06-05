@@ -176,11 +176,14 @@ describe('agent web tools', () => {
     const visible = JSON.parse(result.content[0]!.type === 'text' ? result.content[0]!.text : '{}');
 
     expect(result.details).toBe(envelope);
+    // The model-visible projection drops `tool` and omits `status` on success;
+    // the runtime envelope on details keeps the full shape.
+    expect(visible).not.toHaveProperty('tool');
+    expect(visible).not.toHaveProperty('status');
+    expect(result.details!.tool).toBe('web_fetch');
     // The full WebFetchData stays on details; the model only sees title + metadata.
     expect(visible).toMatchObject({
       ok: true,
-      tool: 'web_fetch',
-      status: 'success',
       data: {
         title: 'Lin Docs',
         metadata: {

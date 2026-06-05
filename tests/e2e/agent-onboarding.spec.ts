@@ -9,11 +9,12 @@ async function waitForAgentSession(page: import('@playwright/test').Page) {
 }
 
 test.describe('agent panel empty state', () => {
-  test('with a provider: shows the greeting and sends normally', async ({ page }) => {
+  test('with a provider: stays blank and sends normally', async ({ page }) => {
     await openMockedApp(page);
     await waitForAgentSession(page);
 
-    await expect(page.getByText('How can I help with your outline?')).toBeVisible();
+    await expect(page.locator('.agent-empty-state')).toBeVisible();
+    await expect(page.locator('.agent-empty-greeting')).toHaveCount(0);
     await expect(page.getByText('Connect an AI provider to start.')).toHaveCount(0);
 
     const send = page.getByRole('button', { name: 'Send message' });
@@ -38,7 +39,7 @@ test.describe('agent panel empty state', () => {
 
     // Onboarding replaces the greeting; no suggestion chips remain.
     await expect(page.getByText('Connect an AI provider to start.')).toBeVisible();
-    await expect(page.getByText('How can I help with your outline?')).toHaveCount(0);
+    await expect(page.locator('.agent-empty-greeting')).toHaveCount(0);
 
     // Send is guarded even with a non-empty draft, with an actionable tooltip.
     const send = page.getByRole('button', { name: 'Send message' });

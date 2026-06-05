@@ -159,7 +159,7 @@ test.describe('agent process disclosure', () => {
     });
 
     const row = page.locator('.agent-message-row.user').last();
-    const bubble = row.locator('.agent-user-bubble');
+    const bubble = row.locator('.agent-user-content-shell');
     const actions = row.locator('.agent-message-actions');
     await row.hover();
     await expect(actions).toHaveCSS('opacity', '1');
@@ -170,6 +170,92 @@ test.describe('agent process disclosure', () => {
     expect(actionsBox).toBeTruthy();
     expect(actionsBox!.y).toBeGreaterThanOrEqual(bubbleBox!.y + bubbleBox!.height - 1);
     expect(actionsBox!.x + actionsBox!.width).toBeLessThanOrEqual(bubbleBox!.x + bubbleBox!.width + 1);
+  });
+
+  test('collapses long user message content and expands on demand', async ({ page }) => {
+    const marker = {
+      version: 1,
+      instructions: 'Files and folders are available at local paths.',
+      attachments: [{
+        kind: 'file',
+        ref: 'long-context-file',
+        name: 'long-context.md',
+        mimeType: 'text/markdown',
+        sizeBytes: 4096,
+        path: '/Users/test/Documents/long-context.md',
+        readPath: '/Users/test/Documents/long-context.md',
+      }],
+    };
+    const longText = [
+      'Line 1: summarize this outline.',
+      'Line 2: include all open tasks.',
+      'Line 3: compare priorities.',
+      'Line 4: note blockers.',
+      'Line 5: call out stale work.',
+      'Line 6: keep the answer concise.',
+      'Line 7: preserve links.',
+      'Line 8: include follow-up actions.',
+      'Line 9 final: this must still copy.',
+    ].join('\n');
+    const user = {
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: `<system-reminder>\n<user-attachments>\n${JSON.stringify(marker, null, 2)}\n</user-attachments>\n</system-reminder>`,
+        },
+        { type: 'text', text: longText },
+      ],
+      timestamp: 1_800_000_000_350,
+    };
+
+    await emitAgentProjection(page, 'mock-agent-session', {
+      sessionTitle: 'Agent System',
+      systemPrompt: '',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      thinkingLevel: 'medium',
+      messages: [user],
+      conversation: [{
+        nodeId: 'long-user-node',
+        message: user,
+        branches: null,
+      }],
+      streamingMessage: null,
+      isStreaming: false,
+      pendingToolCallIds: [],
+      errorMessage: null,
+    });
+
+    const row = page.locator('.agent-message-row.user').last();
+    const shell = row.locator('.agent-user-content-shell');
+    const body = row.locator('.agent-user-content-body');
+    const expand = row.getByRole('button', { name: 'Show more' });
+    await expect(row.locator('.agent-user-file-chip')).toContainText('long-context.md');
+    await expect(expand).toBeVisible();
+    await expect(body).toHaveClass(/is-collapsed/u);
+
+    const collapsedHeight = await body.evaluate((element) => element.getBoundingClientRect().height);
+    expect(collapsedHeight).toBeLessThanOrEqual((26 * 5) + 18);
+    await expect(row.locator('.agent-user-collapse-ellipsis')).toHaveCount(0);
+    const shellBox = await shell.boundingBox();
+    const expandBox = await expand.boundingBox();
+    expect(shellBox).toBeTruthy();
+    expect(expandBox).toBeTruthy();
+    expect(expandBox!.y + expandBox!.height).toBeLessThanOrEqual(shellBox!.y + shellBox!.height + 1);
+    expect(expandBox!.x).toBeGreaterThanOrEqual(shellBox!.x - 1);
+    expect(expandBox!.x).toBeLessThanOrEqual(shellBox!.x + 16);
+    await expand.hover();
+    await expect(expand).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+
+    await expand.click();
+    await expect(row.getByRole('button', { name: 'Show less' })).toBeVisible();
+    await expect(body).not.toHaveClass(/is-collapsed/u);
+    const expandedHeight = await body.evaluate((element) => element.getBoundingClientRect().height);
+    expect(expandedHeight).toBeGreaterThan(collapsedHeight + 40);
+
+    await row.hover();
+    await row.getByRole('button', { name: 'Copy message' }).click();
+    await expect.poll(() => clipboardText(page)).toContain('Line 9 final: this must still copy.');
   });
 
   test('previews and opens assistant local file refs', async ({ page }) => {
