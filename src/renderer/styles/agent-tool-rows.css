@@ -134,7 +134,11 @@
   flex-direction: column;
   gap: var(--space-3);
   margin-top: var(--space-2);
-  margin-left: 5px;
+  /* Center the 1px rail under the 14px disclosure-indicator column above it
+     (chevron center = 7px), so the rail reads as descending from the toggle.
+     7px − half the 1px border = 6.5px. Row content stays indent-right via
+     padding-left. */
+  margin-left: 6.5px;
   border-left: 1px solid var(--border-subtle);
   padding-left: var(--space-5);
 }
