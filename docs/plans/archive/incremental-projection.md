@@ -1,9 +1,9 @@
 ---
-status: in-progress
+status: done
 priority: P1
 owner: relixiaobo
 created: 2026-06-04
-updated: 2026-06-04
+updated: 2026-06-05
 ---
 
 # Incremental Projection Protocol (perf P1 keystone)
@@ -257,4 +257,5 @@ OLD is clearly O(N); NEW grows far slower (its residual is the shared
       folds a delta stream and asserts both the index AND the reverse edges equal
       an independent rebuild after each command, incl. merge-with-grandchildren and
       tag/reference churn); `renderRev.test.ts` still green
-- [ ] fold the shipped design into `docs/spec/` (architecture / projection)
+- [x] fold the shipped design into `docs/spec/` (`architecture.md` → "Projection
+      Updates (incremental delta)")

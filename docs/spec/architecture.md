@@ -27,11 +27,48 @@ React interaction
   -> Electron main document service
   -> TypeScript core mutation
   -> persisted workspace snapshot
-  -> DocumentProjection returned to React
+  -> ProjectionUpdate (delta | full) folded into the renderer index
 ```
 
 No renderer module may directly mutate document state. UI changes that affect
 document content or tree structure must use commands.
+
+## Projection Updates (incremental delta)
+
+The renderer holds its projection index across edits and folds **change sets**
+into it, instead of receiving and re-deriving the whole document each mutation.
+Per-edit cost scales with what changed, not document size.
+
+- **Wire type** (`src/core/types.ts`): `ProjectionUpdate` is a discriminated
+  union — `{ kind: 'full'; revision; projection }` for init / resync / whole-tree
+  rewrites, or `{ kind: 'delta'; revision; todayId; changedNodes; removedIds }`
+  for normal mutations. Both renderer-facing payloads carry it: a command's
+  `CommandResult.update` and the `DocumentProjectionChangedEvent.update`.
+- **Main boundary builder** (`documentService.buildProjectionUpdate`): mirrors
+  the text-search delta logic. It reads core's `revisionDelta()` and emits a
+  `delta` (changed nodes via `projectionNodesFor`, with absent ids becoming
+  `removedIds`) for a clean `+1` revision step; any discontinuity, or core's
+  `requiresFullSearchRebuild` (undo/redo/import/load), falls back to `full`. Core
+  is untouched — the delta is assembled at the process boundary from existing core
+  APIs.
+- **Renderer reducer** (`reduceProjection` in `renderer/state/document.ts`): a
+  `full` rebuilds the index; a `delta` patches a copy of the previous `byId` —
+  `set` each changed node, `delete` **exactly** `removedIds` (no stale-subtree
+  walk: core enumerates every genuinely-removed node, and a merge survivor whose
+  grandchildren re-parented out arrives in `changedNodes`). Every unchanged node
+  keeps its object reference, the stable identity the outliner's `React.memo`
+  relies on. A revision gap or a delta with no base returns `null`, triggering the
+  `get_projection` → `ProjectionSnapshot` resync valve (belt-and-suspenders; in
+  steady state the single ordered channel never needs it).
+- **Re-render closure** (`renderer/state/renderRev.ts`): a per-node revision
+  counter drives the memo. From the change set, `propagateDirty` walks a held
+  reverse-edge index (`ReverseEdges`: target → referrers, for reference targets /
+  tag definitions / inline-ref targets) plus structural ancestors to mark exactly
+  the nodes that must re-render. The index is carried across edits and patched per
+  delta (`patchReverseEdges`, copy-on-write with a same-keys skip so a plain text
+  edit allocates nothing), never rebuilt by scanning the document. Consistency
+  against a full rebuild is asserted after every command in
+  `tests/renderer/projectionDeltaIntegration.test.ts`.
 
 ## Type Boundary
 
