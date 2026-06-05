@@ -257,6 +257,9 @@ export function NodePanel(props: NodePanelProps) {
     if (props.rootId === projection.trashId) return <TrashIcon size={PANEL_HEADER_ICON_SIZE} />;
     if (props.rootId === projection.searchesId || rootNode.type === 'search') return <SearchIcon size={PANEL_HEADER_ICON_SIZE} />;
     if (rootNode.type === 'tagDef') {
+      // Solid accent fill with a white hash. The accent IS the tag's colour, and
+      // white-on-accent stays high-contrast in both themes — a soft tinted
+      // background instead left the dark accent hash near-invisible in dark mode.
       return (
         <span className="panel-header-tag-icon" style={{ background: resolveTagColor(rootNode, props.index.byId).text }}>
           <HashIcon size={ICON_SIZE.rowGlyph} />

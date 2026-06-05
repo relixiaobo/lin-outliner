@@ -39,6 +39,15 @@
   mix-blend-mode: multiply;
 }
 
+/* The tag marker carries its own solid accent fill. The wrapper's subtle chip
+   fill + multiply blend (tuned for the neutral system-page icons) multiplied
+   that accent against the dark backdrop and crushed it to near-black, so drop
+   both for the tag case and let the accent render at full strength. */
+.panel-header-icon:has(> .panel-header-tag-icon) {
+  background: transparent;
+  mix-blend-mode: normal;
+}
+
 .panel-title-editor {
   display: flex;
   max-width: 720px;
@@ -298,6 +307,8 @@
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-pill);
+  /* Solid accent fill is set inline from the tag's colour; the hash is white so
+     it reads against any accent in both themes. */
   color: var(--text-on-accent);
 }
 

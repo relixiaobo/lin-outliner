@@ -425,14 +425,15 @@ test.describe('workspace layout resizing', () => {
     await expect(workspaceTree).toContainText('2026-05-13');
   });
 
-  test('system workspace nodes render without a hardcoded fallback icon', async ({ page }) => {
+  test('system workspace nodes render their fixed fallback icon', async ({ page }) => {
     const workspaceTree = page.getByLabel('Workspace root tree');
-    // System nodes carry no icon of their own, so their tree rows show none
-    // (no calendar on Daily Notes, no library / search / trash glyphs).
-    for (const name of ['Daily Notes', 'Library', 'Saved searches', 'Trash']) {
+    // System roots carry no icon of their own, so each falls back to a fixed glyph
+    // matching its primary-nav shortcut (calendar on Daily Notes, library / schema /
+    // search / trash on the others).
+    for (const name of ['Daily Notes', 'Library', 'Schema', 'Saved searches', 'Trash']) {
       const row = workspaceTree.locator('.workspace-tree-row', { hasText: name }).first();
       await expect(row).toBeVisible();
-      await expect(row.locator('.workspace-tree-label-icon')).toHaveCount(0);
+      await expect(row.locator('.workspace-tree-label-icon')).toHaveCount(1);
     }
   });
 

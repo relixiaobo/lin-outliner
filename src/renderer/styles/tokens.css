@@ -139,6 +139,11 @@
   --agent-side-panel-shadow: -18px 0 48px rgba(0, 0, 0, 0.12);
   --view-radio-shadow: inset 0 0 0 1.5px var(--separator-opaque);
   --view-radio-checked-shadow: inset 0 0 0 1.5px var(--text-primary);
+  /* Selected colour swatch: a strong ink ring with a surface-coloured gap so the
+     pick reads clearly over a coloured swatch in both themes (replaces the too-faint
+     --border-emphasis border). Two layers, so it must live as a token to satisfy
+     the box-shadow token guard. */
+  --swatch-selected-ring: 0 0 0 2px var(--panel-bg), 0 0 0 3.5px var(--text-primary);
   --search-builder-focus-shadow: var(--focus-ring-shadow);
   --typed-field-section-shadow: inset 0 1px 0 var(--separator);
   --segmented-track-shadow: inset 0 0 0 1px var(--separator);
