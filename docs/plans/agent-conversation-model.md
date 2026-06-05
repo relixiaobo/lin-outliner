@@ -15,6 +15,12 @@ memory-bearing **Agents** converse inside **DMs and Channels** over an
 **ambient outline**, and "session" dissolves into invisible per-turn context
 assembly.
 
+**Part of the [[agent-program]].** The shared L0 foundation (agent identity, `actor`,
+session→conversation, the typed event bus + taxonomy, the `AgentSessionState` split) is
+**sequenced as M0** in the program doc — this plan keeps the detailed, code-grounded
+design of the seams it analyzed, and owns the conversation / memory / task / multi-agent
+substance on top. Skills moved to [[agent-skills-authoring]].
+
 Foundation work (AGENTS.md A7): settle the mechanism before layering features.
 **This revision is code-grounded** — every load-bearing claim was stress-tested
 against the real runtime (see *Adversarial review*), and several were wrong. The
@@ -399,6 +405,30 @@ answer / explanation / brainstorm?* → reply. The agent decides; the user overr
   **separate** store with its own tool — don't "rewire past_chats into memory";
   keep two distinct things (raw recall vs distilled memory).
 
+### Skills (capability) — owned by agent-skills-authoring
+
+Skills are part of capability and bind to the **agent identity, not the conversation**
+(they travel into every DM/Channel the agent is in, like the memory line). Full design
+in [[agent-skills-authoring]]; two facts this plan relies on:
+
+- **One unified library, many bindings.** Skills live in shared stores
+  (`built-in` / `user` / `project` / `dynamic`), not per-agent folders; an agent
+  *binds* the ones it carries by name (`AgentDefinition.skills`, `agentSubagents.ts:640`).
+  A Channel that needs skill X staffs a member who binds X — never a room-owned skill
+  bag (that would reintroduce per-session config). So the coordinator's "who can do X?"
+  is answerable per-member from binding lists (§Channel routing).
+- **Governed self-authoring** is memory's sibling: an agent authors skills into the
+  shared `user` store under review / audit / rollback, never the `built-in` floor,
+  never self-escalating tools — see [[agent-skills-authoring]].
+
+**Agent self-/cross-configuration (directional, owned here, not yet pinned).** The same
+governed-write pattern as the memory line and skills extends to an agent editing its
+own capability (prompt / model / effort / bound skills) and — at least the main agent —
+configuring others. The single-agent `config` tool is built in
+[[agent-self-modification]]; the **multi-agent "configure each other"** angle is this
+plan's (it needs multiple agents → P3). Unresolved cut: **main-agent-first vs every
+specialist self-configuring from the start** (Open questions).
+
 ### Runtime — pi-agent-core stays the per-turn engine
 
 The redesign lives **above** the engine. `@earendil-works/pi-agent-core` runs one
@@ -685,7 +715,9 @@ profile UI (view/edit/forget) + the v1 inline-write prompt + reminder-stack
 injection; later the v2 extraction definition and v3 consolidation. **The task
 plane:** a visible per-agent task panel + conversation-scoped notification
 (generalize `pendingSubagentNotifications`) + `needs-input`; the trigger modeled as
-a typed event for a future hooks consumer (§Background tasks).
+a typed event for a future hooks consumer (§Background tasks). **Skills structure +
+self-authoring** are built in [[agent-skills-authoring]] (not here); this plan only
+consumes binding (`AgentDefinition.skills`) for coordinator routing.
 
 **Honest scope.** Renaming session→conversation is the shallow ~20%. It does NOT
 cover: storing `actor` on message records, per-agent POV derivation, splitting the
@@ -693,12 +725,14 @@ cover: storing `actor` on message records, per-agent POV derivation, splitting t
 refactor, or the memory subsystem. The real builds are the **memory line** and the
 **sequential multi-member room layer**.
 
-**Protocol-surface coordination (A4 / A7).** `actor` on `AgentEventMessageRecord`
-(`src/core/agentEventLog.ts`), `forAgentId` derivation, and the conversation's typed
-`identity` / `members` (`src/core/types.ts`) touch the **coordinated protocol
-surface** (the infrastructure-ownership list). Land each as an **interface-first PR**
-before consumers build on it — never a drive-by edit, even though the `actor` add is
-backward-compatible.
+**Protocol-surface coordination (A4 / A7).** This plan's surface items — `actor` on
+`AgentEventMessageRecord` (`src/core/agentEventLog.ts`), `forAgentId` derivation, the
+conversation's typed `identity` / `members` (`src/core/types.ts`) — are part of the
+**consolidated M0 protocol-surface change list** in [[agent-program]] (which also
+covers `SkillDefinition.source += 'built-in'`, the `user_question.*` / `widget_state`
+events, etc. — the event taxonomy is decided there once). Land each as an
+**interface-first PR** before consumers build on it — never a drive-by edit, even
+though the `actor` add is backward-compatible.
 
 ## Phases (revised effort)
 
@@ -718,6 +752,11 @@ generalized session→conversation-scoped (with rate-limiting) can land at **P2*
 floor-aware delivery in Channels + `needs-input` wake ride **P3** (they need the
 coordinator/floor). The **hooks** subsystem is out of this plan (forward-pointer in
 §Background tasks).
+
+**Skills** (structure + self-authoring) are built in [[agent-skills-authoring]] across
+the same milestones (its `built-in` source is a program-M0 protocol add; authoring
+lands at M1). **Agent self-/cross-configuration** is gated on the *who-configures-whom*
+decision (Open questions); the single-agent `config` tool is [[agent-self-modification]].
 
 ## Rejected / reconsidered (decision record)
 
@@ -742,6 +781,9 @@ coordinator/floor). The **hooks** subsystem is out of this plan (forward-pointer
   substrates only — ambient outline / coordinator briefing / seed / **combined,
   provenance-marked message forwarding** — never the private DM transcript
   (§Adding an agent).
+- **Skill structure decisions** (rejected per-agent private storage; kept `project` —
+  no `workspace` rename; `built-in` floor is not a "system skill" *category*) →
+  moved to [[agent-skills-authoring]], which records them in its design.
 - **memory-as-node-subtree, boundNode, Session/Participant/Artifact as concepts**
   → rejected earlier (see Concepts).
 
@@ -769,6 +811,12 @@ coordinator/floor). The **hooks** subsystem is out of this plan (forward-pointer
 - **Per-conversation capability override** — **decided: no** (capability is identity,
   §Agent). Tracked only as a watch-item, not an open decision: revisit solely if a
   real need ever forces an exception.
+- **Who authors / configures whom.** Self-authoring (memory, skills, capability) is
+  governed, but the *scope of the actor* is unpinned: **main-agent-first** (only the
+  main agent self-/cross-configures) vs **every specialist self-configures from the
+  start**. Directional/taste call for the PM; default to main-agent-first until a real
+  need appears. (Skill-authoring mechanics — hot-reload, ratify/sandbox — live in
+  [[agent-skills-authoring]].)
 - **Result routing judgment.** The boundary between conversational output (reply)
   and an artifact, and between node vs file when it *is* an artifact — who decides
   (agent default + user override) and the draft gray zone ("draft an intro" → node?

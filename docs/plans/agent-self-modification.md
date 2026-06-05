@@ -8,6 +8,16 @@ updated: 2026-06-02
 
 # Agent Self-Modification
 
+**Part of the [[agent-program]].** Scope after the program reorg: this plan owns
+**self-observation, the `config` tool, hooks, config recovery, and curation policy**.
+**Skill structure + authoring moved to [[agent-skills-authoring]]** (this plan no longer
+owns §Skill Maintenance / §Curation). **Memory is owned by [[agent-conversation-model]]**.
+Hooks here ride the program's typed **event bus + taxonomy** (F4); the task/teammate
+hook events (`TaskCreated` / `TaskCompleted` / `TeammateIdle` / `Notification`) are
+gated on the task/channel layer that [[agent-conversation-model]] builds (program
+M2/M3). Single-agent self-configuration is this plan's; **multi-agent "configure each
+other"** is [[agent-conversation-model]]'s.
+
 ## Goal
 
 Define what "self-modification" means for Lin's agent and turn it into a
@@ -374,7 +384,11 @@ Mutating repair actions should be separate review/approval requests.
 
 ### 4. Hook System
 
-Add first-class lifecycle hooks in phases.
+Add first-class lifecycle hooks in phases. **Hooks are an untrusted consumer of the
+program's typed event bus + taxonomy** (F4, [[agent-program]]) — the same bus that
+feeds [[agent-conversation-model]]'s trusted notifications. Design the event names once
+in the program taxonomy; this section owns the **hook dispatch + trust gate**
+(interceptors that can block/mutate, sandbox, precedence), not a private event vocab.
 
 cc-2.1's hook event vocabulary includes:
 
@@ -461,84 +475,16 @@ system/admin > user > project > skill > model-suggested session hook
 
 Lower-trust hooks must not override higher-trust denials.
 
-### 7. Skill Maintenance
+### 7–8. Skill Maintenance & Curation → moved to agent-skills-authoring
 
-Add controlled skill creation and editing in the first self-modification
-release. This is the main user-facing self-optimization capability.
-
-Initial user flows:
-
-```text
-/skillify <workflow or selected messages>
-save this as a skill
-update the <skill-name> skill with what we just learned
-fix the skill that failed
-```
-
-Requirements:
-
-- do not add dedicated model-facing skill CRUD tools such as `skill_create`,
-  `skill_patch`, `skill_replace`, or `skill_write_support_file` in the first
-  version;
-- use cc-2.1-style `skillify` review and confirmation flows plus existing
-  `file_write`/`file_edit` calls;
-- prefer `file_edit` for existing skills; use `file_write` only for new skills,
-  major rewrites, or malformed files that cannot be patched safely;
-- generate or update a concrete `SKILL.md`;
-- use the current visible session, selected messages, and user-supplied
-  description as input; do not depend on a memory subsystem;
-- use the same stable local skill shape documented in `docs/spec/agent-skills.md`;
-- save only to `.agents/skills`-compatible locations, not legacy command
-  directories;
-- allow writes only to user-local skills and workspace-local skills. Additional
-  configured skill directories are read-only unless explicitly marked writable;
-- include description, when-to-use guidance, arguments, and minimal
-  `allowed-tools`;
-- enable a newly created skill immediately only when the user explicitly asked
-  for that. Agent-initiated skills default to draft or disabled until accepted;
-- never infer broad `allowed-tools` from a successful session;
-- store agent-created skills in a clearly labeled location;
-- mark provenance as agent-created;
-- show the complete `SKILL.md` or a focused diff before agent-initiated writes;
-- ask for explicit confirmation before agent-initiated writes;
-- allow compact confirmation for explicit user-directed writes, because the
-  user's command is already the product intent;
-- classify `file_write`/`file_edit` calls under `.agents/skills/**` as
-  skill-content writes, not generic document edits;
-- validate frontmatter, size, paths, and supported subdirectories before or
-  immediately after write, and surface validation failures as repairable errors;
-- write atomically where the file tool supports it, snapshot the previous
-  version, and expose undo;
-- reject path traversal, symlinks escaping the skill directory, executable/binary
-  support files unless explicitly allowed, and secret-looking content;
-- record skill create, patch, replace, support-file write, enable, disable, and
-  rollback events.
-
-Skill maintenance should use ordinary `file_edit`/`file_write` as the
-model-facing tool interface. The product workflow and file-tool gateway must
-still preserve permission, provenance, audit data, and rollback. The first
-version does not include background review that rewrites skills without a user
-request or accepted review.
-
-### 8. Skill Curation
-
-Add background skill curation only after controlled skill maintenance has shipped.
-
-Requirements:
-
-- curate only agent-created skills by default;
-- never mutate pinned or user-authored skills silently;
-- prefer archive over delete;
-- snapshot before any mutation;
-- produce a review report;
-- support dry run;
-- apply curation only when the user enables it;
-- never rewrite a skill because a background model inferred a preference unless
-  the user approves the concrete patch.
-
-The first curation version should report stale, duplicate, malformed, or unused
-agent-created skills. It should not automatically edit `SKILL.md` files from a
-background pass.
+**Moved.** Skill creation / editing (`skillify` + `file_write`/`file_edit`, no
+model-facing CRUD tool family, provenance / snapshot / rollback, `.agents/skills/**`
+write classification, draft-default for agent-initiated writes, no allowed-tools
+self-escalation) and background **curation** (agent-created only, archive-over-delete,
+dry-run, opt-in) are now owned by [[agent-skills-authoring]]. They reuse this plan's
+permission + audit + event machinery; the skill rows of the Policy Matrix moved with
+them. This plan keeps **config / hooks / recovery / observation**; the `config` tool is
+still the mechanism for the *capability* side of self-configuration.
 
 ### 9. Config Recovery
 
@@ -565,10 +511,6 @@ Requirements:
 | Provider summary | allow | allow | deny | ask for active provider/model switch | API key value writes |
 | Skill toggles | allow | allow | deny initially | ask | hidden install from network |
 | Compaction toggle | allow | allow | deny initially | ask | bypassing context safety |
-| Skill creation | allow templates | allow | explicit user-requested local create | ask for agent-initiated create | broad tool preapproval or legacy command writes |
-| Agent-created skill edits | allow diffs | allow | explicit user-requested patch | ask for agent-initiated patch | silent background mutation |
-| User-authored skill edits | allow diffs | allow | deny | ask | silent mutation of user-authored skills |
-| Skill curation | allow reports | allow | deny initially | ask | user-authored silent mutation |
 | Hooks | allow listing | allow | deny initially | ask | unapproved shell hooks |
 | Permissions | summary only | narrow ask-rule preview | deny | ask for user-authored allow/ask changes | hard-block or deny removal |
 | Credentials | capability flags only | setup guidance | deny | user UI only | model-provided raw secret persistence |
@@ -634,14 +576,12 @@ Events should include:
 - Add read-only doctor workflow.
 - Add basic event-log entries for diagnostics.
 
-### Stage 2: Controlled Skill Maintenance
+### Stage 2: Controlled Skill Maintenance → moved to agent-skills-authoring
 
-- Add `/skillify` and natural-language "save/update this as a skill" handling.
-- Allow user-directed skill create/edit through existing `file_write`/`file_edit`
-  calls after permission resolution.
-- Add skill-path classification for `.agents/skills/**` writes.
-- Render a focused diff or full `SKILL.md` before agent-initiated writes.
-- Add skill provenance, snapshots, rollback, and event-log entries.
+The `/skillify` + file-tool authoring, `.agents/skills/**` write classification,
+diff/preview, provenance / snapshots / rollback, and event-log entries are now planned
+in [[agent-skills-authoring]] (program M1). It reuses Stage 1's read/observe surface and
+Stage 3's permission/audit machinery.
 
 ### Stage 3: Controlled Config Writes
 
@@ -696,13 +636,7 @@ Events should include:
 - [ ] Add review/approval card UI.
 - [ ] Add config base version/hash checks and write queue.
 - [ ] Add accepted config write adapter for whitelisted settings.
-- [ ] Add cc-2.1-style skillify and skill edit workflows using existing file
-      tools.
-- [ ] Add skill-path write classification for `.agents/skills/**`.
-- [ ] Add skill diff/full-preview approval UI.
-- [ ] Add skill rollback snapshots.
-- [ ] Add prompt-only hook registry.
-- [ ] Add agent-created skill provenance metadata.
-- [ ] Add skill curation dry-run reports.
+- [ ] Add prompt-only hook registry (on the program F4 event bus — [[agent-program]]).
 - [ ] Add last-known-good config snapshots.
 - [ ] Add rollback events and UI.
+- [ ] (Skill authoring + curation checklist → [[agent-skills-authoring]].)
