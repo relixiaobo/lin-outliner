@@ -257,8 +257,12 @@ export function NodePanel(props: NodePanelProps) {
     if (props.rootId === projection.trashId) return <TrashIcon size={PANEL_HEADER_ICON_SIZE} />;
     if (props.rootId === projection.searchesId || rootNode.type === 'search') return <SearchIcon size={PANEL_HEADER_ICON_SIZE} />;
     if (rootNode.type === 'tagDef') {
+      // Match the inline `.tag-badge` chip model: a soft theme-tinted background
+      // with the accent as the glyph colour, so the hash stays legible in both
+      // themes instead of a saturated fill that turned near-black in dark mode.
+      const tagColor = resolveTagColor(rootNode, props.index.byId);
       return (
-        <span className="panel-header-tag-icon" style={{ background: resolveTagColor(rootNode, props.index.byId).text }}>
+        <span className="panel-header-tag-icon" style={{ background: tagColor.background, color: tagColor.text }}>
           <HashIcon size={ICON_SIZE.rowGlyph} />
         </span>
       );

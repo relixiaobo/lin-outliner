@@ -298,6 +298,7 @@
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-pill);
-  color: var(--text-on-accent);
+  /* background + glyph colour are set inline from the tag's theme-aware chip
+     colours (soft tint + accent), mirroring `.tag-badge`. */
 }
 
