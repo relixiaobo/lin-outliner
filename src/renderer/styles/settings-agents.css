@@ -1,34 +1,29 @@
-/* Agent Profiles — a master / detail pane. The master list (left) is the .inset-*
-   grouped-list primitive (settings-inset-list.css): selectable inset rows with the
-   toggle in the trailing slot, neutral selection. The detail card (right) shows the
-   selected profile. No bespoke row / tag styling here — rows use .inset-row, tags
-   use .settings-chip, empty states use .agent-settings-empty. */
+/* Agent Profiles — a single-column settings flow. The selectable profile list is
+   the .inset-* grouped-list primitive (settings-inset-list.css), followed by a
+   full-width detail card for the selected profile. No side-by-side master/detail
+   pane here; Settings panes should read as one clean vertical column. */
 .settings-agents-split {
-  display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   gap: var(--space-6);
-  align-items: stretch;
-  min-height: 380px;
+  min-height: 0;
 }
 
-/* Master column: the inset card list scrolls on its own (master / detail), so a
-   long profile list never pushes the detail card off-screen. */
 .settings-agents-aside {
   display: flex;
   flex-direction: column;
-  max-height: 420px;
-  overflow-y: auto;
+  max-height: none;
+  overflow: visible;
 }
 
 .settings-agents-detail-panel {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  flex: 1 1 auto;
 }
 
-/* Detail surface floats on the flat base like an inset card (--bg-elevated,
-   --radius-lg, hairline edge), so it reads as one family with the master list. */
+/* Detail surface follows the master list in the same column and floats on the flat
+   base like an inset card (--bg-elevated, --radius-lg, hairline edge). */
 .agent-profile-detail-card {
   display: flex;
   flex-direction: column;
@@ -38,9 +33,9 @@
   border-radius: var(--radius-lg);
   background: var(--bg-elevated);
   box-shadow: inset 0 0 0 0.5px var(--border-subtle);
-  height: 100%;
-  max-height: 420px;
-  overflow-y: auto;
+  height: auto;
+  max-height: none;
+  overflow: visible;
 }
 
 .agent-profile-detail-header {

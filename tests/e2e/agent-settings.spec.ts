@@ -74,7 +74,7 @@ test.describe('agent settings window', () => {
     await settings.getByRole('button', { name: 'General', exact: true }).click();
     const popup = settings.locator('.select-popup-input').first();
     await expect(popup).toBeVisible();
-    const style = await popup.evaluate((element) => {
+    const restingStyle = await popup.evaluate((element) => {
       const computed = getComputedStyle(element);
       return {
         backgroundColor: computed.backgroundColor,
@@ -82,9 +82,30 @@ test.describe('agent settings window', () => {
         boxShadow: computed.boxShadow,
       };
     });
-    expect(style.backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
-    expect(style.borderWidth).toBe('0px');
-    expect(style.boxShadow).toBe('none');
+    expect(restingStyle.backgroundColor).toBe('rgba(0, 0, 0, 0)');
+    expect(restingStyle.borderWidth).toBe('0px');
+    expect(restingStyle.boxShadow).toBe('none');
+
+    await popup.hover();
+    await expect.poll(async () => {
+      return popup.evaluate((element) => getComputedStyle(element).backgroundColor);
+    }).not.toBe('rgba(0, 0, 0, 0)');
+  });
+
+  test('stacks agent profile list and detail in one settings column', async ({ page }) => {
+    const settings = await openSettings(page);
+    await settings.getByRole('button', { name: 'Agent Profiles', exact: true }).click();
+    const list = settings.locator('.settings-agents-aside');
+    const detail = settings.locator('.agent-profile-detail-card');
+    await expect(list.getByRole('button', { name: 'general' })).toBeVisible();
+    await expect(detail).toBeVisible();
+
+    const listBox = await list.boundingBox();
+    const detailBox = await detail.boundingBox();
+    expect(listBox).not.toBeNull();
+    expect(detailBox).not.toBeNull();
+    expect(detailBox!.y).toBeGreaterThan(listBox!.y + listBox!.height - 1);
+    expect(detailBox!.x).toBeCloseTo(listBox!.x, 1);
   });
 
   test('groups providers by credential and reads status on each row', async ({ page }) => {

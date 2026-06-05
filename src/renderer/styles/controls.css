@@ -122,10 +122,9 @@
 }
 
 /* Pop-up button (SelectControl variant="popup"): a one-of-many picker for settings
-   rows. The native <select> chrome is stripped and restyled as a compact flat
-   neutral control — --fill-2 at rest, no border, no lifted thumb — so it reads like
-   a macOS pop-up button instead of a heavy web select (B3/B9). The chevron is a
-   real icon in currentColor, and the native option list still opens on click (B10). */
+   rows. Native macOS pop-up buttons read mostly as text at rest; the neutral fill
+   appears only on hover/focus/press. Keep it borderless and unlifted (B3/B9), with
+   the native option list still opening on click (B10). */
 .select-popup {
   position: relative;
   display: inline-flex;
@@ -140,7 +139,7 @@
   padding: var(--space-2) calc(var(--space-6) + var(--space-6)) var(--space-2) var(--space-5);
   border: 0;
   border-radius: var(--radius-md);
-  background: var(--fill-2);
+  background: transparent;
   color: var(--text-primary);
   font: inherit;
   font-weight: 600;
@@ -149,11 +148,17 @@
 }
 
 .select-popup-input:hover {
+  background: var(--fill-2);
+  color: var(--text-strong);
+}
+
+.select-popup-input:active {
   background: var(--fill-3);
   color: var(--text-strong);
 }
 
 .select-popup-input:focus-visible {
+  background: var(--fill-2);
   outline: none;
   box-shadow: var(--focus-ring-shadow);
 }

@@ -4,7 +4,7 @@ priority: P2
 owner: codex
 branch: codex/settings-macos-clarity
 created: 2026-06-04
-updated: 2026-06-04
+updated: 2026-06-05
 ---
 
 # Settings macOS Clarity Pass
@@ -78,6 +78,14 @@ Update `docs/spec/design-system.md` so the current intended Settings behavior
 matches the implemented toolbar title, content width, denser rail, and reduced
 intro-copy strategy.
 
+### 7. Refine native control and profile layout details
+
+Keep settings pop-up selects transparent at rest, with neutral fill only on
+hover / focus / press, matching macOS' text-led pop-up rhythm. Agent Profiles
+should remain a single-column settings flow: profile list first, full-width
+detail card below. Avoid a side-by-side master/detail pane inside this Settings
+window because it creates a large empty middle field at normal window sizes.
+
 ## Files
 
 Expected implementation scope:
@@ -123,6 +131,8 @@ No live file-level overlap.
 - [x] Add compact rail icon slots and remove rail hint subcopy.
 - [x] Remove/demote redundant pane intro copy.
 - [x] Soften inset-card chrome without weakening focus/selection states.
+- [x] Keep pop-up selects transparent at rest with hover/focus/press fill only.
+- [x] Stack Agent Profiles list and detail in one content column.
 - [x] Update `docs/spec/design-system.md`.
 - [x] Run `bun run typecheck` and relevant renderer tests.
 - [x] Visually verify light and dark settings panes.

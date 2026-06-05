@@ -1125,8 +1125,10 @@ not Apple chrome. We borrow the interaction, not the chrome.
   concentric `--radius-md` track / `--radius-sm` segment (B9), rendered as an ARIA
   `radiogroup` with roving tabindex + arrow-key navigation and a neutral
   `:focus-visible` ring (B8). Language uses `SelectControl variant="popup"`: a
-  compact flat `--fill-2` pop-up button with an overlaid chevron, no border and no
-  lifted thumb; the native option list still opens on click (B10). Unlike the
+  compact pop-up button with an overlaid chevron, no border and no lifted thumb;
+  it is transparent at rest and gains a neutral `--fill-*` background only on
+  hover / focus / press, so it reads like macOS text chrome rather than a heavy web
+  select. The native option list still opens on click (B10). Unlike the
   runtime / permission panes it has **no Save footer**: a pick applies INSTANTLY
   across every window — it sets
   `nativeTheme.themeSource` in the main process (`lin:set-theme`), which rewrites
@@ -1191,11 +1193,13 @@ not Apple chrome. We borrow the interaction, not the chrome.
     (only Providers leads with the brand avatar); the row toggle / decision select
     lives in the `trailing` slot (native macOS — toggles sit on the right). General's
     Theme/Language, Skills' behaviour switches + installed-skill toggles, Permissions'
-    common actions (a compact flat decision pop-up; the row sublabel stays
+    common actions (a compact transparent-at-rest decision pop-up; the row sublabel stays
     human-readable and does not expose raw rule strings),
-    Agent Profiles' selectable master list — all are `InsetRow`s. Agent Profiles is
-    master/detail: the master inset list selects (`.inset-row.is-selected`), the
-    detail card floats on the base like an inset card (`--bg-elevated`, `--radius-lg`).
+    Agent Profiles' selectable profile list — all are `InsetRow`s. Agent Profiles
+    stays single-column inside Settings: the profile list selects
+    (`.inset-row.is-selected`), then the detail card follows below at full content
+    width and floats on the base like an inset card (`--bg-elevated`,
+    `--radius-lg`). Do not split it into a side-by-side master/detail pane.
   - **One secondary button.** Filled neutral `--fill-2`, no border
     (`.agent-settings-secondary` / `.settings-sheet-secondary`) — the native push
     button, pairing with the filled-strong primary; never a ghost outline.
