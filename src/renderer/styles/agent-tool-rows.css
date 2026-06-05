@@ -148,6 +148,7 @@
   color: var(--text-soft);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
+  padding: 0;
   text-align: left;
 }
 
@@ -250,6 +251,7 @@
   color: inherit;
   font-size: var(--font-meta);
   line-height: var(--line-meta);
+  padding: 0;
   text-align: left;
   transition: color var(--motion-fast);
 }
