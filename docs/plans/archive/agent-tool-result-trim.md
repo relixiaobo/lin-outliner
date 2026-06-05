@@ -1,8 +1,12 @@
 ---
-status: in-progress
+status: done
 ---
 
 # Agent tool result trim — strip model-visible redundancy
+
+> **Shipped** in PR #128. Design folded into
+> `docs/spec/agent-tool-design.md` § *Model-visible redundancy rule*
+> (the shared `modelVisibleEnvelope` projector). This plan is kept as history.
 
 ## Goal
 
