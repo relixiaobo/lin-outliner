@@ -34,9 +34,10 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--border-subtle);
+  border: 0;
   border-radius: var(--radius-lg);
   background: var(--bg-elevated);
+  box-shadow: var(--inset-hairline);
 }
 
 .inset-group-footnote {
@@ -51,7 +52,7 @@
   position: relative;
   display: flex;
   align-items: stretch;
-  min-height: 40px;
+  min-height: 44px;
 }
 
 /* Content-aligned hairline (macOS): the separator is INSET so it starts at the
@@ -80,7 +81,7 @@
   gap: var(--space-3);
   background: transparent;
   color: var(--text-strong);
-  padding: var(--space-2) var(--space-4);
+  padding: var(--space-3) var(--space-5);
   text-align: left;
 }
 
@@ -121,9 +122,9 @@
 .inset-row-label {
   overflow: hidden;
   color: var(--text-strong);
-  font-size: var(--font-meta);
+  font-size: var(--font-ui-sm);
   font-weight: 600;
-  line-height: var(--line-meta);
+  line-height: var(--line-ui-sm-tight);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -131,8 +132,8 @@
 .inset-row-sublabel {
   overflow: hidden;
   color: var(--muted-2);
-  font-size: var(--font-ui-2xs);
-  line-height: var(--line-ui-2xs);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -164,11 +165,11 @@
 }
 
 .inset-row-main:has(.inset-row-text.is-wrap) {
-  padding-top: var(--space-3);
-  padding-bottom: var(--space-3);
+  padding-top: var(--space-4);
+  padding-bottom: var(--space-4);
 }
 
-/* The raw rule-value / code line under a wrapped description (permissions). */
+/* Technical code line under a wrapped description (diagnostics / advanced detail). */
 .inset-row-code {
   color: var(--text-tertiary);
   font-family: var(--font-family-mono);
@@ -182,5 +183,17 @@
   flex: 0 0 auto;
   align-items: center;
   gap: var(--space-2);
-  padding-right: var(--space-3);
+  padding-right: var(--space-4);
+}
+
+.settings-drilldown-chevron {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+
+/* Permission decisions include one non-allowable rule ("Spawn subagents"). Keep
+   every decision pop-up the same width so the transparent-at-rest chrome aligns
+   with the rows above even when the native select has fewer options. */
+.settings-permissions-section .select-popup-input {
+  min-width: 11rem;
 }

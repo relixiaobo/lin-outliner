@@ -1,45 +1,21 @@
-/* Agent Profiles — a master / detail pane. The master list (left) is the .inset-*
-   grouped-list primitive (settings-inset-list.css): selectable inset rows with the
-   toggle in the trailing slot, neutral selection. The detail card (right) shows the
-   selected profile. No bespoke row / tag styling here — rows use .inset-row, tags
-   use .settings-chip, empty states use .agent-settings-empty. */
-.settings-agents-split {
-  display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
-  gap: var(--space-6);
-  align-items: stretch;
-  min-height: 380px;
-}
+/* Agent Profiles — the category page is only the selectable profile list. Persona
+   detail is a drill-down route reached by clicking a row, so the top-level Settings
+   pane stays scannable instead of flattening list + details into one surface. */
 
-/* Master column: the inset card list scrolls on its own (master / detail), so a
-   long profile list never pushes the detail card off-screen. */
-.settings-agents-aside {
-  display: flex;
-  flex-direction: column;
-  max-height: 420px;
-  overflow-y: auto;
-}
-
-.settings-agents-detail-panel {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-/* Detail surface floats on the flat base like an inset card (--bg-elevated,
-   --radius-lg, hairline edge), so it reads as one family with the master list. */
+/* The drill-down detail surface floats on the flat base like an inset card
+   (--bg-elevated, --radius-lg, hairline edge). */
 .agent-profile-detail-card {
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
   padding: var(--space-5) var(--space-6);
-  border: 1px solid var(--border-subtle);
+  border: 0;
   border-radius: var(--radius-lg);
   background: var(--bg-elevated);
-  height: 100%;
-  max-height: 420px;
-  overflow-y: auto;
+  box-shadow: var(--inset-hairline);
+  height: auto;
+  max-height: none;
+  overflow: visible;
 }
 
 .agent-profile-detail-header {

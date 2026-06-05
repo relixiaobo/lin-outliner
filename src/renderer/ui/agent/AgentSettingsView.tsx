@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import type { AppIcon } from '../icons';
 import type {
   AgentModelOption,
   AgentPermissionMode,
@@ -11,7 +12,18 @@ import type {
   SkillDefinition,
 } from '../../api/types';
 import { api } from '../../api/client';
-import { AddIcon, ChevronLeftIcon, ChevronRightIcon, ICON_SIZE, WarningIcon } from '../icons';
+import {
+  AddIcon,
+  AgentIcon,
+  BrainIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  DatabaseIcon,
+  ICON_SIZE,
+  PasswordIcon,
+  SettingsIcon,
+  WarningIcon,
+} from '../icons';
 import type { ThemeMode } from '../../../core/theme';
 import { SUPPORTED_LOCALES, type Locale } from '../../../core/locale';
 import { useI18n, useT } from '../../i18n/I18nProvider';
@@ -39,6 +51,9 @@ interface AgentSettingsViewProps {
 }
 
 type SettingsCategory = 'general' | 'providers' | 'permissions' | 'skills' | 'agents';
+type SettingsRoute =
+  | { type: 'category'; category: SettingsCategory }
+  | { type: 'agent-detail'; agentName: string };
 
 interface DraftConfig {
   providerId: string;
@@ -144,6 +159,13 @@ const EMPTY_DRAFT: DraftConfig = {
 // localized at render (settings.general.theme* and settings.categories.*).
 const THEME_VALUES: readonly ThemeMode[] = ['system', 'light', 'dark'];
 const SETTINGS_CATEGORY_IDS: readonly SettingsCategory[] = ['general', 'providers', 'permissions', 'skills', 'agents'];
+const SETTINGS_CATEGORY_ICONS = {
+  general: SettingsIcon,
+  providers: DatabaseIcon,
+  permissions: PasswordIcon,
+  skills: BrainIcon,
+  agents: AgentIcon,
+} satisfies Record<SettingsCategory, AppIcon>;
 
 // The common permission rules: a stable `id` (the i18n key for label + description),
 // the `ruleValue` engine string, and whether a global "always allow" is offered.
@@ -179,20 +201,32 @@ const COMMON_PERMISSION_RULES: Array<{
 
 const PREFERRED_PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'openrouter'];
 
+function routeCategory(route: SettingsRoute): SettingsCategory {
+  return route.type === 'category' ? route.category : 'agents';
+}
+
+function routesEqual(left: SettingsRoute, right: SettingsRoute): boolean {
+  if (left.type !== right.type) return false;
+  return left.type === 'category'
+    ? left.category === (right as Extract<SettingsRoute, { type: 'category' }>).category
+    : left.agentName === (right as Extract<SettingsRoute, { type: 'agent-detail' }>).agentName;
+}
+
 export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettingsViewProps) {
   const [settings, setSettings] = useState<AgentProviderSettingsView | null>(null);
   const [permissionSettings, setPermissionSettings] = useState<AgentToolPermissionSettingsView | null>(null);
   const [permissionDraft, setPermissionDraft] = useState<AgentToolPermissionSettingsView | null>(null);
   const [draft, setDraft] = useState<DraftConfig>(EMPTY_DRAFT);
-  // Category navigation history, so the window can offer macOS System Settings'
-  // back / forward (‹ ›) chrome: `stack` is the visited categories, `index` the
-  // current position. Switching to a new category truncates any forward entries
-  // and pushes; back / forward just move the index. `category` derives from it.
-  const [nav, setNav] = useState<{ stack: SettingsCategory[]; index: number }>({
-    stack: ['providers'],
+  // Route navigation history, so the window can offer macOS System Settings'
+  // back / forward (‹ ›) chrome. Top-level categories and drill-down pages share
+  // the same stack; Agent Profiles details are a child route, not flat content on
+  // the category page.
+  const [nav, setNav] = useState<{ stack: SettingsRoute[]; index: number }>({
+    stack: [{ type: 'category', category: 'providers' }],
     index: 0,
   });
-  const category = nav.stack[nav.index];
+  const route = nav.stack[nav.index];
+  const category = routeCategory(route);
   const canGoBack = nav.index > 0;
   const canGoForward = nav.index < nav.stack.length - 1;
   const [creatingCustom, setCreatingCustom] = useState(false);
@@ -207,7 +241,6 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
   const [loadingSkills, setLoadingSkills] = useState(false);
   const [allAgents, setAllAgents] = useState<AgentDefinition[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(false);
-  const [selectedAgentName, setSelectedAgentName] = useState<string>('general');
   // The per-row ⋯ actions menu (only one open at a time, keyed by providerId). The
   // per-provider config opens in its own native window, not an in-renderer sheet.
   const [openRowMenu, setOpenRowMenu] = useState<string | null>(null);
@@ -218,6 +251,9 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
   // Display language: the picker reads/writes the shared i18n context (seeded before
   // first paint, broadcast across windows), so it applies instantly like the theme.
   const { locale, t, setLocale } = useI18n();
+  const categoryLabel = route.type === 'agent-detail'
+    ? route.agentName
+    : t.settings.categories[category].label;
   const themeOptions = useMemo(() => {
     const g = t.settings.general;
     const labels: Record<ThemeMode, string> = { system: g.themeSystem, light: g.themeLight, dark: g.themeDark };
@@ -260,14 +296,22 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     return mountedRef.current && requestId === requestRef.current;
   }
 
-  // Navigate to a category, recording history for back / forward. Re-selecting the
-  // current category is a no-op (no duplicate history entry).
-  function navigateCategory(next: SettingsCategory) {
+  // Navigate to a route, recording history for back / forward. Re-selecting the
+  // current route is a no-op (no duplicate history entry).
+  function navigateRoute(next: SettingsRoute) {
     setNav((current) => {
-      if (current.stack[current.index] === next) return current;
+      if (routesEqual(current.stack[current.index], next)) return current;
       const stack = [...current.stack.slice(0, current.index + 1), next];
       return { stack, index: stack.length - 1 };
     });
+  }
+
+  function navigateCategory(next: SettingsCategory) {
+    navigateRoute({ type: 'category', category: next });
+  }
+
+  function navigateAgentDetail(agentName: string) {
+    navigateRoute({ type: 'agent-detail', agentName });
   }
 
   function goBack() {
@@ -285,7 +329,7 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     setLoading(true);
     setError(null);
     setNotice(null);
-    setNav({ stack: ['providers'], index: 0 });
+    setNav({ stack: [{ type: 'category', category: 'providers' }], index: 0 });
     setCreatingCustom(false);
 
     void Promise.all([
@@ -347,12 +391,7 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
       setNotice(null);
       api.agentListAllDefinitions(sessionId || 'workspace')
         .then((agents) => {
-          if (isCurrentRequest(id)) {
-            setAllAgents(agents);
-            if (agents.length > 0 && !agents.some((a) => a.name === selectedAgentName)) {
-              setSelectedAgentName(agents[0].name);
-            }
-          }
+          if (isCurrentRequest(id)) setAllAgents(agents);
         })
         .catch((caught) => {
           if (isCurrentRequest(id)) setError(caught instanceof Error ? caught.message : String(caught));
@@ -386,8 +425,15 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
     [providerChoices],
   );
 
-  const selectedAgent = allAgents.find((a) => a.name === selectedAgentName) || allAgents[0];
+  const selectedAgent = route.type === 'agent-detail'
+    ? allAgents.find((agent) => agent.name === route.agentName)
+    : null;
   const permissionDiagnostics = permissionDraft?.diagnostics ?? permissionSettings?.diagnostics ?? [];
+  const runtimeDraftDirty = settings ? hasRuntimeDraftChanged(draft, settings) : false;
+  const permissionDraftDirty = permissionDraft !== permissionSettings;
+  const showFooterActions = category === 'permissions'
+    ? permissionDraftDirty
+    : (category === 'skills' || category === 'agents') && runtimeDraftDirty;
 
   function permissionDecision(ruleValue: string): 'deny' | 'allow' | 'ask' {
     const permissions = permissionDraft?.permissions;
@@ -553,7 +599,7 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
   );
 
   return (
-    <main className="settings-window" aria-labelledby="agent-settings-title">
+    <main className="settings-window" aria-labelledby="settings-page-title">
       {/* Frameless window: this top strip is the drag region that stands in for the
           native title bar. The OS traffic lights overlay it; the rail title/nav and
           content controls all sit below --chrome-height, so none overlaps it. The
@@ -561,30 +607,35 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
           reliable carve-out from a drag region on macOS — anchored over the content
           column, on the traffic-light centreline, like System Settings' toolbar. */}
       <div className="settings-drag-region">
-        <div className="settings-history-nav">
-          {/* The same chrome control as the main window's rail toggles
-              (IconButton variant="chrome" + .rail-toggle): icon-only, colour
-              deepens on hover, no box (B6) — not a bespoke style. */}
-          <IconButton
-            className="rail-toggle"
-            disabled={!canGoBack}
-            icon={ChevronLeftIcon}
-            iconSize={ICON_SIZE.toolbar}
-            label={t.settings.navigation.back}
-            onClick={goBack}
-            strokeWidth={1.7}
-            variant="chrome"
-          />
-          <IconButton
-            className="rail-toggle"
-            disabled={!canGoForward}
-            icon={ChevronRightIcon}
-            iconSize={ICON_SIZE.toolbar}
-            label={t.settings.navigation.forward}
-            onClick={goForward}
-            strokeWidth={1.7}
-            variant="chrome"
-          />
+        <div className="settings-toolbar">
+          <div className="settings-history-nav">
+            {/* The same chrome control as the main window's rail toggles
+                (IconButton variant="chrome" + .rail-toggle): icon-only, colour
+                deepens on hover. The Settings-only wrapper supplies the neutral
+                capsule group, so individual arrows do not get bespoke boxes. */}
+            <IconButton
+              className="rail-toggle"
+              disabled={!canGoBack}
+              icon={ChevronLeftIcon}
+              iconSize={ICON_SIZE.toolbar}
+              label={t.settings.navigation.back}
+              onClick={goBack}
+              strokeWidth={1.7}
+              variant="chrome"
+            />
+            <span className="settings-history-divider" aria-hidden="true" />
+            <IconButton
+              className="rail-toggle"
+              disabled={!canGoForward}
+              icon={ChevronRightIcon}
+              iconSize={ICON_SIZE.toolbar}
+              label={t.settings.navigation.forward}
+              onClick={goForward}
+              strokeWidth={1.7}
+              variant="chrome"
+            />
+          </div>
+          <h1 className="settings-toolbar-title" id="settings-page-title">{categoryLabel}</h1>
         </div>
       </div>
       {loading ? (
@@ -592,10 +643,11 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
       ) : (
         <div className="settings-layout">
           <aside className="settings-rail">
-            <h2 className="settings-rail-title" id="agent-settings-title">{t.settings.railTitle}</h2>
+            <h2 className="settings-rail-title">{t.settings.railTitle}</h2>
             <nav className="settings-nav" aria-label={t.settings.categoriesAriaLabel}>
               {SETTINGS_CATEGORY_IDS.map((id) => {
                 const cat = t.settings.categories[id];
+                const CategoryIcon = SETTINGS_CATEGORY_ICONS[id];
                 return (
                   <button
                     aria-current={category === id ? 'page' : undefined}
@@ -604,8 +656,12 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                     onClick={() => navigateCategory(id)}
                     type="button"
                   >
-                    <span className="settings-nav-label">{cat.label}</span>
-                    <span className="settings-nav-hint">{cat.hint}</span>
+                    <span className="settings-nav-icon" aria-hidden="true">
+                      <CategoryIcon size={ICON_SIZE.menu} strokeWidth={1.75} />
+                    </span>
+                    <span className="settings-nav-copy">
+                      <span className="settings-nav-label">{cat.label}</span>
+                    </span>
                   </button>
                 );
               })}
@@ -615,10 +671,6 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
           <div className="settings-content">
             {category === 'general' ? (
               <section className="agent-settings-section settings-general-section" aria-label={t.settings.categories.general.label}>
-                {/* No <h3> pane title — the rail names the pane; a one-line intro
-                    explains it (the Providers model, applied to every pane). */}
-                <p className="settings-section-desc">{t.settings.general.intro}</p>
-
                 <InsetGroup ariaLabel={t.settings.general.appearanceGroup} label={t.settings.general.appearanceGroup}>
                   <InsetRow
                     label={t.settings.general.themeLabel}
@@ -682,8 +734,6 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
               </section>
             ) : category === 'permissions' ? (
               <section className="agent-settings-section settings-permissions-section" aria-label={t.settings.permissions.sectionAriaLabel}>
-                <p className="settings-section-desc">{t.settings.permissions.intro}</p>
-
                 <InsetGroup ariaLabel={t.settings.permissions.commonActionsAriaLabel} label={t.settings.permissions.commonActionsGroup}>
                   {COMMON_PERMISSION_RULES.map((rule) => {
                     const decision = permissionDecision(rule.ruleValue);
@@ -693,18 +743,8 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                       <InsetRow
                         disabled={denied}
                         key={rule.ruleValue}
-                        label={(
-                          <>
-                            {ruleCopy.label}
-                            <span className="settings-chip">{denied ? t.settings.permissions.denyChip : decision === 'allow' ? t.settings.permissions.allowChip : t.settings.permissions.askChip}</span>
-                          </>
-                        )}
-                        sublabel={(
-                          <>
-                            {ruleCopy.description}
-                            <span className="inset-row-code">{rule.ruleValue}</span>
-                          </>
-                        )}
+                        label={ruleCopy.label}
+                        sublabel={ruleCopy.description}
                         trailing={(
                           <SelectControl
                             disabled={denied}
@@ -745,8 +785,6 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
               </section>
             ) : category === 'skills' ? (
               <section className="agent-settings-section settings-skills-section" aria-label={t.settings.skills.sectionAriaLabel}>
-                <p className="settings-section-desc">{t.settings.skills.intro}</p>
-
                 <InsetGroup ariaLabel={t.settings.skills.behaviorRulesAriaLabel} label={t.settings.skills.behaviorRulesGroup}>
                   <InsetRow
                     label={t.settings.skills.automaticSkillsLabel}
@@ -827,99 +865,105 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                   </InsetGroup>
                 )}
               </section>
+            ) : route.type === 'agent-detail' ? (
+              <section className="agent-settings-section settings-agents-section" aria-label={t.settings.agents.detailAriaLabel({ name: route.agentName })}>
+                {loadingAgents ? (
+                  <div className="agent-settings-empty">{t.settings.agents.loadingProfiles}</div>
+                ) : selectedAgent ? (
+                  <>
+                    <InsetGroup ariaLabel={t.settings.agents.detailOptionsAriaLabel({ name: selectedAgent.name })}>
+                      <InsetRow
+                        label={t.settings.agents.enabledLabel}
+                        sublabel={t.settings.agents.enabledSublabel}
+                        trailing={(
+                          <SwitchControl
+                            checked={!draft.disabledAgents.includes(selectedAgent.name)}
+                            onCheckedChange={() => toggleAgent(selectedAgent.name)}
+                            label={t.settings.agents.toggleAgent({ name: selectedAgent.name })}
+                          >
+                            <SwitchMark checked={!draft.disabledAgents.includes(selectedAgent.name)} />
+                          </SwitchControl>
+                        )}
+                        wrap
+                      />
+                    </InsetGroup>
+
+                    <div className="agent-profile-detail-card">
+                      <div className="agent-profile-detail-header">
+                        <div>
+                          <h4 className="agent-profile-title">{selectedAgent.name}</h4>
+                          <span className="agent-profile-source-label">{t.settings.agents.sourceLabel({ source: selectedAgent.source })}</span>
+                        </div>
+                      </div>
+
+                      <div className="agent-profile-field">
+                        <span className="agent-profile-field-label">{t.settings.agents.personaPromptLabel}</span>
+                        <textarea
+                          className="agent-profile-prompt-preview"
+                          readOnly
+                          value={selectedAgent.body || t.settings.agents.noInstructionBody}
+                        />
+                      </div>
+
+                      <div className="agent-profile-specs">
+                        <div className="spec-item">
+                          <span className="spec-label">{t.settings.agents.modelOverride}</span>
+                          <span className="spec-value">{selectedAgent.model || t.settings.agents.inheritParent}</span>
+                        </div>
+                        <div className="spec-item">
+                          <span className="spec-label">{t.settings.agents.thinkingLevel}</span>
+                          <span className="spec-value">{selectedAgent.effort || t.settings.agents.defaultValue}</span>
+                        </div>
+                        <div className="spec-item">
+                          <span className="spec-label">{t.settings.agents.permissionMode}</span>
+                          <span className="spec-value">{selectedAgent.permissionMode || t.settings.agents.restricted}</span>
+                        </div>
+                        <div className="spec-item">
+                          <span className="spec-label">{t.settings.agents.maxTurns}</span>
+                          <span className="spec-value">{selectedAgent.maxTurns || t.settings.agents.unlimited}</span>
+                        </div>
+                      </div>
+
+                      {selectedAgent.tools && selectedAgent.tools.length > 0 && (
+                        <div className="agent-profile-field">
+                          <span className="agent-profile-field-label">{t.settings.agents.enabledTools}</span>
+                          <div className="agent-profile-tags-container">
+                            {selectedAgent.tools.map((tool) => (
+                              <span className="settings-chip" key={tool}>{tool}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div className="agent-settings-empty">{t.settings.agents.profileNotFound}</div>
+                )}
+              </section>
             ) : (
               <section className="agent-settings-section settings-agents-section" aria-label={t.settings.agents.sectionAriaLabel}>
-                <p className="settings-section-desc">{t.settings.agents.intro}</p>
-
-                <div className="settings-agents-split">
-                  <div className="settings-agents-aside">
-                    {loadingAgents ? (
-                      <div className="agent-settings-empty">{t.settings.agents.loadingProfiles}</div>
-                    ) : allAgents.length === 0 ? (
-                      <div className="agent-settings-empty">{t.settings.agents.noneFound}</div>
-                    ) : (
-                      <InsetGroup ariaLabel={t.settings.agents.profilesAriaLabel}>
-                        {allAgents.map((agent) => {
-                          const disabled = isAgentDisabled(agent.name);
-                          const isSelected = agent.name === selectedAgentName;
-                          return (
-                            <InsetRow
-                              ariaLabel={agent.name}
-                              key={agent.name}
-                              label={agent.name}
-                              onSelect={() => setSelectedAgentName(agent.name)}
-                              selected={isSelected}
-                              sublabel={agent.description}
-                              trailing={(
-                                <SwitchControl
-                                  checked={!disabled}
-                                  onCheckedChange={() => toggleAgent(agent.name)}
-                                  label={t.settings.agents.toggleAgent({ name: agent.name })}
-                                >
-                                  <SwitchMark checked={!disabled} />
-                                </SwitchControl>
-                              )}
-                            />
-                          );
-                        })}
-                      </InsetGroup>
-                    )}
-                  </div>
-
-                  <div className="settings-agents-detail-panel">
-                    {selectedAgent ? (
-                      <div className="agent-profile-detail-card">
-                        <div className="agent-profile-detail-header">
-                          <div>
-                            <h4 className="agent-profile-title">{selectedAgent.name}</h4>
-                            <span className="agent-profile-source-label">{t.settings.agents.sourceLabel({ source: selectedAgent.source })}</span>
-                          </div>
-                        </div>
-
-                        <div className="agent-profile-field">
-                          <span className="agent-profile-field-label">{t.settings.agents.personaPromptLabel}</span>
-                          <textarea
-                            className="agent-profile-prompt-preview"
-                            readOnly
-                            value={selectedAgent.body || t.settings.agents.noInstructionBody}
-                          />
-                        </div>
-
-                        <div className="agent-profile-specs">
-                          <div className="spec-item">
-                            <span className="spec-label">{t.settings.agents.modelOverride}</span>
-                            <span className="spec-value">{selectedAgent.model || t.settings.agents.inheritParent}</span>
-                          </div>
-                          <div className="spec-item">
-                            <span className="spec-label">{t.settings.agents.thinkingLevel}</span>
-                            <span className="spec-value">{selectedAgent.effort || t.settings.agents.defaultValue}</span>
-                          </div>
-                          <div className="spec-item">
-                            <span className="spec-label">{t.settings.agents.permissionMode}</span>
-                            <span className="spec-value">{selectedAgent.permissionMode || t.settings.agents.restricted}</span>
-                          </div>
-                          <div className="spec-item">
-                            <span className="spec-label">{t.settings.agents.maxTurns}</span>
-                            <span className="spec-value">{selectedAgent.maxTurns || t.settings.agents.unlimited}</span>
-                          </div>
-                        </div>
-
-                        {selectedAgent.tools && selectedAgent.tools.length > 0 && (
-                          <div className="agent-profile-field">
-                            <span className="agent-profile-field-label">{t.settings.agents.enabledTools}</span>
-                            <div className="agent-profile-tags-container">
-                              {selectedAgent.tools.map((tool) => (
-                                <span className="settings-chip" key={tool}>{tool}</span>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="agent-settings-empty is-centered">{t.settings.agents.selectToView}</div>
-                    )}
-                  </div>
-                </div>
+                {loadingAgents ? (
+                  <div className="agent-settings-empty">{t.settings.agents.loadingProfiles}</div>
+                ) : allAgents.length === 0 ? (
+                  <div className="agent-settings-empty">{t.settings.agents.noneFound}</div>
+                ) : (
+                  <InsetGroup ariaLabel={t.settings.agents.profilesAriaLabel}>
+                    {allAgents.map((agent) => {
+                      return (
+                        <InsetRow
+                          ariaLabel={agent.name}
+                          key={agent.name}
+                          label={agent.name}
+                          onSelect={() => navigateAgentDetail(agent.name)}
+                          sublabel={agent.description}
+                          trailing={(
+                            <ChevronRightIcon className="settings-drilldown-chevron" size={ICON_SIZE.rowGlyph} aria-hidden />
+                          )}
+                        />
+                      );
+                    })}
+                  </InsetGroup>
+                )}
               </section>
             )}
 
@@ -935,7 +979,7 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                 and the General pane applies instantly (no draft), like native
                 Settings — so the global footer is only for the runtime/permission
                 categories that batch a draft into one Save. */}
-            {category !== 'providers' && category !== 'general' ? (
+            {showFooterActions ? (
               <footer className="agent-settings-footer">
                 <span />
                 <div className="agent-settings-footer-actions">
@@ -1078,6 +1122,23 @@ function runtimeSettingsToDraft(settings: AgentProviderSettingsView): Pick<
   };
 }
 
+function hasRuntimeDraftChanged(draft: DraftConfig, settings: AgentProviderSettingsView): boolean {
+  const runtime = runtimeSettingsToDraft(settings);
+  return draft.permissionMode !== runtime.permissionMode
+    || draft.automaticSkillsEnabled !== runtime.automaticSkillsEnabled
+    || draft.slashSkillsEnabled !== runtime.slashSkillsEnabled
+    || draft.compactEnabled !== runtime.compactEnabled
+    || draft.additionalSkillDirectoriesText !== runtime.additionalSkillDirectoriesText
+    || !sameStringSet(draft.disabledSkills, settings.agent.disabledSkills ?? [])
+    || !sameStringSet(draft.disabledAgents, settings.agent.disabledAgents ?? []);
+}
+
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const rightSet = new Set(right);
+  return left.every((value) => rightSet.has(value));
+}
+
 function parseSkillDirectoryInput(value: string): string[] {
   return [...new Set(value
     .split(/[,\n]/g)
@@ -1093,4 +1154,3 @@ function removeRule(rules: readonly string[], ruleValue: string): string[] {
 function uniqueStrings(values: readonly string[]): string[] {
   return [...new Set(values)];
 }
-

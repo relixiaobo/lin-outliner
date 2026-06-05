@@ -1,6 +1,6 @@
-/* The one-line muted intro under a pane (the rail names the pane, so there is no
-   <h3> title — see .agent-settings-section). Shared by every pane that needs a word
-   of explanation. The pane's list groups are the .inset-* primitive
+/* Optional muted pane copy. Most Settings panes rely on the toolbar title plus
+   grouped-list headers; keep this quiet treatment only for copy that cannot live in
+   a row sublabel. The pane's list groups are the .inset-* primitive
    (settings-inset-list.css); behaviour toggles, skills, and permission rows all
    render as inset rows, so there is no bespoke row / card styling here anymore. */
 .settings-section-desc {

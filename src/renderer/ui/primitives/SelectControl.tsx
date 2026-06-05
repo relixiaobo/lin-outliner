@@ -6,8 +6,8 @@ interface SelectControlProps extends Omit<SelectHTMLAttributes<HTMLSelectElement
   label: string;
   /**
    * 'popup' renders a design-system pop-up button — the native chrome is stripped
-   * (appearance: none) and replaced with an elevated thumb + overlaid chevron that
-   * matches the SegmentedControl it sits beside (settings inset rows). 'plain'
+   * (appearance: none) and replaced with compact text chrome + overlaid chevron
+   * for settings inset rows. Its neutral fill appears only on interaction. 'plain'
    * (default) is a bare <select> for callers that style it in their own context
    * (e.g. the view toolbar). The native option list still opens on click (B10).
    */

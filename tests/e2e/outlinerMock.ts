@@ -330,6 +330,21 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       permissions: { allow: [] as string[], ask: [] as string[], deny: [] as string[] },
       diagnostics: [] as Array<{ ruleValue: string; decision: 'allow' | 'ask' | 'deny'; code: string; message: string }>,
     };
+    const agentDefinitions = [
+      {
+        name: 'general',
+        source: 'built-in',
+        rootDir: 'built-in',
+        agentFile: 'built-in/general',
+        description: 'General-purpose focused subagent for research, analysis, and execution.',
+        body: [
+          'You are a focused subagent running inside Lin.',
+          'Complete the assigned task independently and report only the result that matters.',
+        ].join('\n'),
+        permissionMode: 'restricted',
+        maxTurns: null,
+      },
+    ];
     const debugUsage = {
       input: 12000,
       output: 420,
@@ -1438,6 +1453,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_get_tool_permission_settings') {
           return clone(agentToolPermissions) as T;
+        }
+        if (cmd === 'agent_list_all_definitions') {
+          return clone(agentDefinitions) as T;
         }
         if (cmd === 'agent_update_tool_permission_settings') {
           const next = args.settings as { permissions?: { allow?: string[]; ask?: string[]; deny?: string[] } };

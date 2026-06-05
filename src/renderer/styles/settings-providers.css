@@ -39,53 +39,85 @@
 
 .settings-nav-item {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-hairline);
+  min-height: 34px;
+  align-items: center;
+  gap: var(--space-3);
   border-radius: var(--radius-sm);
-  color: var(--text-soft);
-  padding: var(--space-3) var(--space-5);
+  color: var(--text-primary);
+  padding: var(--space-2) var(--space-3);
   text-align: left;
 }
 
 .settings-nav-item:hover {
-  background: var(--control-hover);
+  background: var(--fill-1);
 }
 
 .settings-nav-item.is-active {
-  background: var(--fill-3);
+  background: var(--fill-2);
   color: var(--text-strong);
+}
+
+.settings-nav-icon {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  background: var(--fill-1);
+  color: var(--text-tertiary);
+}
+
+.settings-nav-item.is-active .settings-nav-icon {
+  background: var(--fill-2);
+  color: var(--text-strong);
+}
+
+.settings-nav-copy {
+  display: flex;
+  min-width: 0;
+  align-items: center;
 }
 
 .settings-nav-label {
   font-size: var(--font-ui-sm);
   font-weight: 600;
   line-height: var(--line-ui-sm-tight);
-}
-
-.settings-nav-hint {
-  color: var(--muted-2);
-  font-size: var(--font-ui-2xs);
-  line-height: var(--line-ui-2xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* The content pane is the single scroll container (the rail stays put). It is the
    flat window base — no card wrapper — so the grouped cards float on it the same
    way the rail does (shared --bg-elevated). */
 .settings-content {
+  --settings-content-max-width: 920px;
   display: flex;
   min-width: 0;
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
   gap: var(--space-6);
-  /* Clear the frameless window's top drag strip so the content's first controls
-     are not under it; this also vertically aligns the content with the rail title. */
-  padding-top: var(--chrome-height);
+  /* The toolbar is fixed chrome. Keep the SCROLLPORT below it with margin, not
+     padding: padding scrolls away and lets dense rows pass under the history
+     capsule/title. This structural exclusion keeps the opaque content layer from
+     bleeding through the chrome controls. */
+  margin-top: calc(var(--chrome-height) + var(--space-lg));
+  padding-bottom: var(--space-6);
   overflow-y: auto;
   scrollbar-gutter: stable;
 }
 
-/* ── Providers: a full-width grouped list on the flat content base (native System
+.settings-content > .agent-settings-section,
+.settings-content > .agent-settings-alert,
+.settings-content > .agent-settings-notice,
+.settings-content > .agent-settings-footer {
+  width: min(100%, var(--settings-content-max-width));
+}
+
+/* ── Providers: a constrained grouped list on the flat content base (native System
    Settings Wi-Fi model). The per-provider config opens in a sheet, so there is no
    permanent side detail pane, and no surrounding panel competes with the rail. The
    pane is flat by default now (.agent-settings-section), so no section override is

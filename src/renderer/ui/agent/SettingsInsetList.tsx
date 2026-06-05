@@ -10,7 +10,7 @@ import { memo, type ReactNode } from 'react';
 // Permissions / Skills can adopt it later for free consistency.
 
 interface InsetGroupProps {
-  /** Small uppercase caption above the card (e.g. "Connected"). */
+  /** Sentence-case section header above the card (e.g. "Connected"). */
   label?: string;
   /** Optional explanatory footnote under the card. */
   footnote?: ReactNode;

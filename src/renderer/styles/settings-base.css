@@ -32,19 +32,59 @@
   -webkit-app-region: drag;
 }
 
-/* Back / forward (‹ ›) toolbar arrows, like macOS System Settings. This is the
-   main window's chrome-control CLUSTER (mirrors .window-chrome-cluster): the
-   buttons themselves reuse the shared chrome control (.rail-toggle, below), so
-   only their position is settings-specific — anchored over the content column
-   (window pad + rail width + layout gap = the content's left edge) and centred on
-   the traffic-light line via --chrome-control-inset, in the OS window-control band. */
-.settings-history-nav {
+/* Back / forward (‹ ›) toolbar group, like macOS System Settings. The buttons
+   still reuse the shared chrome control (.rail-toggle), but Settings gives that
+   pair one neutral pill container plus a hairline divider so it reads as one
+   native history control instead of two loose icons. */
+.settings-toolbar {
   position: absolute;
   top: var(--chrome-control-inset);
   left: calc(var(--layout-gap) + var(--sidebar-width) + var(--layout-gap));
+  right: var(--layout-gap);
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-5);
+  height: var(--chrome-control-height);
+  min-width: 0;
+}
+
+.settings-history-nav {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0;
+  height: var(--chrome-control-height);
+  border-radius: var(--radius-pill);
+  background: var(--fill-1);
+  box-shadow: var(--inset-hairline);
+  padding: 0 var(--space-1);
+  -webkit-app-region: no-drag;
+}
+
+.settings-history-nav .rail-toggle {
+  flex: 0 0 var(--chrome-control-height);
+  width: var(--chrome-control-height);
+  height: var(--chrome-control-height);
+  border-radius: var(--radius-pill);
+}
+
+.settings-history-divider {
+  flex: 0 0 auto;
+  width: 1px;
+  height: calc(var(--chrome-control-height) - var(--space-4));
+  background: var(--border-subtle);
+}
+
+.settings-toolbar-title {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: var(--font-content);
+  font-weight: 650;
+  line-height: var(--chrome-control-height);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-settings-body {
@@ -55,9 +95,9 @@
 
 /* Every pane sits FLAT on the content base (the macOS System Settings model the
    inset primitive was built for): no opaque card wrapper — the grouped inset cards
-   float on the flat window base the same way the rail does. The rail already names
-   the pane, so panes carry no <h3> title; an optional one-line muted intro
-   (.settings-section-desc) explains a pane where it helps. */
+   float on the flat window base the same way the rail does. The toolbar title names
+   the selected pane; content sections use grouped-list headers instead of another
+   pane-level heading. */
 .agent-settings-section {
   display: flex;
   flex-direction: column;
@@ -148,4 +188,3 @@
   /* Same rail↔content gap as the main shell (--shell-gap). */
   gap: var(--layout-gap);
 }
-

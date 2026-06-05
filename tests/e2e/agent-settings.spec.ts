@@ -3,7 +3,7 @@ import { commandCalls, installElectronMock } from './outlinerMock';
 
 // Settings render in their own window (the ?surface=settings route). The Providers
 // surface follows the macOS System Settings idiom: a floating category rail + a
-// full-width inset grouped list (Connected / Available). Clicking a provider opens
+// constrained inset grouped list (Connected / Available). Clicking a provider opens
 // its connection config in its OWN native window — a modal child of settings
 // (?surface=provider-config), NOT an in-renderer modal — the way System Settings
 // opens a real attached dialog. The list window has no provider search and no
@@ -14,6 +14,8 @@ test.describe('agent settings window', () => {
     await expect(settings.getByRole('heading', { name: 'Settings' })).toBeVisible();
     // The category rail floats off the content base (its own elevated panel).
     await expect(settings.locator('.settings-rail')).toBeVisible();
+    await expect(settings.getByRole('button', { name: 'Providers', exact: true })).toBeVisible();
+    await expect(settings.locator('.settings-nav-hint')).toHaveCount(0);
     // Frameless window: a top drag strip stands in for the native title bar (the
     // OS traffic lights overlay it), so there is no separate title-bar row.
     await expect(settings.locator('.settings-drag-region')).toHaveCount(1);
@@ -32,9 +34,9 @@ test.describe('agent settings window', () => {
     await expect(back).toBeDisabled();
     await expect(forward).toBeDisabled();
 
-    // Visiting another category records history, so back becomes available. Panes
-    // carry no <h3> title now (the rail names them, Q1) — assert the pane by its
-    // grouped inset list, symmetric with the Providers check below.
+    // Visiting another category records history, so back becomes available. The
+    // toolbar title names the pane; assert the content by its grouped inset list,
+    // symmetric with the Providers check below.
     await settings.getByRole('button', { name: /^Permissions/ }).click();
     await expect(settings.getByRole('list', { name: 'Common actions' })).toBeVisible();
     await expect(back).toBeEnabled();
@@ -50,6 +52,96 @@ test.describe('agent settings window', () => {
     await forward.click();
     await expect(settings.getByRole('list', { name: 'Common actions' })).toBeVisible();
     await expect(forward).toBeDisabled();
+  });
+
+  test('keeps scrolled content below the fixed toolbar chrome', async ({ page }) => {
+    const settings = await openSettings(page);
+    const toolbarBox = await settings.locator('.settings-toolbar').boundingBox();
+    const contentBox = await settings.locator('.settings-content').boundingBox();
+    expect(toolbarBox).not.toBeNull();
+    expect(contentBox).not.toBeNull();
+    expect(contentBox!.y).toBeGreaterThanOrEqual(toolbarBox!.y + toolbarBox!.height);
+
+    await settings.locator('.settings-content').evaluate((element) => {
+      element.scrollTop = 240;
+    });
+    const scrolledContentBox = await settings.locator('.settings-content').boundingBox();
+    expect(scrolledContentBox!.y).toBeCloseTo(contentBox!.y, 1);
+  });
+
+  test('uses a flat settings pop-up button for select controls', async ({ page }) => {
+    const settings = await openSettings(page);
+    await settings.getByRole('button', { name: 'General', exact: true }).click();
+    const popup = settings.locator('.select-popup-input').first();
+    await expect(popup).toBeVisible();
+    const restingStyle = await popup.evaluate((element) => {
+      const computed = getComputedStyle(element);
+      return {
+        backgroundColor: computed.backgroundColor,
+        borderWidth: computed.borderTopWidth,
+        boxShadow: computed.boxShadow,
+      };
+    });
+    expect(restingStyle.backgroundColor).toBe('rgba(0, 0, 0, 0)');
+    expect(restingStyle.borderWidth).toBe('0px');
+    expect(restingStyle.boxShadow).toBe('none');
+
+    await popup.hover();
+    await expect.poll(async () => {
+      return popup.evaluate((element) => getComputedStyle(element).backgroundColor);
+    }).not.toBe('rgba(0, 0, 0, 0)');
+  });
+
+  test('keeps permission decision pop-ups aligned through the last row', async ({ page }) => {
+    const settings = await openSettings(page);
+    await settings.getByRole('button', { name: /^Permissions/ }).click();
+    const content = settings.locator('.settings-content');
+    const popups = settings.locator('.settings-permissions-section .select-popup-input');
+    await expect(popups).toHaveCount(10);
+
+    const firstBox = await popups.first().boundingBox();
+    const lastBox = await popups.last().boundingBox();
+    expect(firstBox).not.toBeNull();
+    expect(lastBox).not.toBeNull();
+    expect(lastBox!.width).toBeCloseTo(firstBox!.width, 1);
+
+    await content.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    const contentBox = await content.boundingBox();
+    const scrolledLastBox = await popups.last().boundingBox();
+    expect(contentBox).not.toBeNull();
+    expect(scrolledLastBox).not.toBeNull();
+    expect(scrolledLastBox!.y + scrolledLastBox!.height).toBeLessThan(contentBox!.y + contentBox!.height - 6);
+  });
+
+  test('opens agent profile details as a drill-down settings page', async ({ page }) => {
+    const settings = await openSettings(page);
+    const back = settings.getByRole('button', { name: 'Back' });
+    const forward = settings.getByRole('button', { name: 'Forward' });
+    await settings.getByRole('button', { name: 'Agent Profiles', exact: true }).click();
+    await expect(settings.locator('.settings-toolbar-title')).toHaveText('Agent Profiles');
+    await expect(settings.getByRole('list', { name: 'Agent profiles' })).toBeVisible();
+    await expect(settings.locator('.agent-profile-detail-card')).toHaveCount(0);
+    await expect(settings.getByRole('switch', { name: 'Toggle general' })).toHaveCount(0);
+
+    await settings.getByRole('button', { name: 'general', exact: true }).click();
+    await expect(settings.locator('.settings-toolbar-title')).toHaveText('general');
+    await expect(settings.locator('.agent-profile-detail-card')).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Agent profiles' })).toHaveCount(0);
+    await expect(settings.getByRole('switch', { name: 'Toggle general' })).toBeVisible();
+    await expect(back).toBeEnabled();
+    await expect(forward).toBeDisabled();
+
+    await back.click();
+    await expect(settings.locator('.settings-toolbar-title')).toHaveText('Agent Profiles');
+    await expect(settings.getByRole('list', { name: 'Agent profiles' })).toBeVisible();
+    await expect(settings.locator('.agent-profile-detail-card')).toHaveCount(0);
+    await expect(forward).toBeEnabled();
+
+    await forward.click();
+    await expect(settings.locator('.settings-toolbar-title')).toHaveText('general');
+    await expect(settings.locator('.agent-profile-detail-card')).toBeVisible();
   });
 
   test('groups providers by credential and reads status on each row', async ({ page }) => {
