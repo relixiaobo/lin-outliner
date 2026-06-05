@@ -49,6 +49,10 @@ import {
   type AgentNodeReferenceOpenHandler,
 } from './AgentInlineReferenceText';
 import { useT } from '../../i18n/I18nProvider';
+import {
+  inlineFilePreviewAttrs,
+  localFileReferenceHref,
+} from '../editor/inlineFilePreviewData';
 
 interface AgentMessageRowProps {
   busy?: boolean;
@@ -123,6 +127,7 @@ function displayContentFromUser(content: UserMessage['content']): UserDisplayCon
         for (const item of marker.attachments) {
           if (item.kind === 'file') {
             attachments.push({
+              entryKind: item.mimeType === 'inode/directory' ? 'directory' : 'file',
               kind: 'file',
               name: item.name,
               ref: item.ref,
@@ -132,6 +137,7 @@ function displayContentFromUser(content: UserMessage['content']): UserDisplayCon
             });
           } else if (item.kind === 'image') {
             attachments.push({
+              entryKind: 'file',
               kind: 'image',
               name: item.name,
               ref: item.ref,
@@ -185,6 +191,45 @@ function iconForUserAttachment(attachment: UserAttachmentDisplayItem) {
   if (attachment.mimeType === 'inode/directory') return <FolderIcon size={ICON_SIZE.menu} />;
   if (attachment.kind === 'image' || attachment.mimeType.startsWith('image/')) return <FileImageIcon size={ICON_SIZE.menu} />;
   return <FileTextIcon size={ICON_SIZE.menu} />;
+}
+
+function userAttachmentPreviewAttrs(attachment: UserAttachmentDisplayItem): Record<string, string> {
+  return inlineFilePreviewAttrs({
+    entryKind: attachment.entryKind ?? (attachment.mimeType === 'inode/directory' ? 'directory' : 'file'),
+    mimeType: attachment.mimeType,
+    name: attachment.name,
+    path: attachment.path,
+    ref: attachment.ref,
+    sizeBytes: attachment.sizeBytes,
+  });
+}
+
+function AgentUserFileChip({ attachment }: { attachment: UserAttachmentDisplayItem }) {
+  const content = (
+    <>
+      {iconForUserAttachment(attachment)}
+      <span title={attachment.name}>{attachment.name}</span>
+      <small>{formatBytes(attachment.sizeBytes)}</small>
+    </>
+  );
+  const attrs = userAttachmentPreviewAttrs(attachment);
+  const entryKind = attachment.entryKind ?? (attachment.mimeType === 'inode/directory' ? 'directory' : 'file');
+  if (attachment.path) {
+    return (
+      <a
+        {...attrs}
+        className="agent-user-file-chip"
+        href={localFileReferenceHref(attachment.path, entryKind)}
+      >
+        {content}
+      </a>
+    );
+  }
+  return (
+    <div {...attrs} className="agent-user-file-chip">
+      {content}
+    </div>
+  );
 }
 
 function referencedAttachmentRefs(
@@ -464,14 +509,10 @@ export function AgentMessageRow({
         <div className="agent-user-content">
           {listedAttachments.length > 0 ? (
             <div className="agent-user-file-list">
-              {listedAttachments.map((attachment, index) => (
-                <div className="agent-user-file-chip" key={`${attachment.ref}-${index}`}>
-                  {iconForUserAttachment(attachment)}
-                  <span title={attachment.name}>{attachment.name}</span>
-                  <small>{formatBytes(attachment.sizeBytes)}</small>
+                  {listedAttachments.map((attachment, index) => (
+                    <AgentUserFileChip attachment={attachment} key={`${attachment.ref}-${index}`} />
+                  ))}
                 </div>
-              ))}
-            </div>
           ) : null}
           {userContent.images.length > 0 ? (
             <div className="agent-user-image-list">

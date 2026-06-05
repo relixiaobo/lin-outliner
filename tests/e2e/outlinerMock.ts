@@ -59,7 +59,21 @@ type E2EWindow = Window & {
     openSettings?: () => Promise<void>;
     closeProviderConfig?: () => Promise<void>;
     notifySettingsChanged?: () => Promise<void>;
+    openLocalFile?: (options: { path: string }) => Promise<{ opened: boolean }>;
     previewLocalFile?: (options: { id: string }) => Promise<{ thumbnailDataUrl: string | null }>;
+    previewLocalFileReference?: (options: { path: string }) => Promise<{
+      file: {
+        entryKind: 'file' | 'directory';
+        path: string;
+        name: string;
+        parentPath: string;
+        mimeType: string;
+        sizeBytes: number;
+        lastModified: number;
+        iconDataUrl?: string;
+        thumbnailDataUrl?: string;
+      } | null;
+    }>;
     recentLocalFiles?: (options?: { limit?: number }) => Promise<{
       files: Array<{
         entryKind: 'file' | 'directory';

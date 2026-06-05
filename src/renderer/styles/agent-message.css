@@ -66,6 +66,16 @@
   font-size: var(--font-meta);
   line-height: var(--line-meta);
   padding: 0 var(--space-4);
+  text-decoration: none;
+}
+
+.agent-user-file-chip[href]:hover {
+  color: var(--text-strong);
+}
+
+.agent-user-file-chip:focus-visible {
+  box-shadow: var(--focus-ring-shadow);
+  outline: none;
 }
 
 .agent-user-file-chip span {
@@ -195,4 +205,3 @@
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
-

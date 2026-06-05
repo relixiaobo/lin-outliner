@@ -88,6 +88,34 @@ export interface LinPreviewLocalFileResult {
   thumbnailDataUrl: string | null;
 }
 
+export interface LinLocalFileReferencePreview {
+  entryKind: 'file' | 'directory';
+  path: string;
+  name: string;
+  parentPath: string;
+  mimeType: string;
+  sizeBytes: number;
+  lastModified: number;
+  iconDataUrl?: string;
+  thumbnailDataUrl?: string;
+}
+
+export interface LinPreviewLocalFileReferenceOptions {
+  path: string;
+}
+
+export interface LinPreviewLocalFileReferenceResult {
+  file: LinLocalFileReferencePreview | null;
+}
+
+export interface LinOpenLocalFileOptions {
+  path: string;
+}
+
+export interface LinOpenLocalFileResult {
+  opened: boolean;
+}
+
 export interface LinStageAttachmentInput {
   name: string;
   mimeType: string;
@@ -235,6 +263,10 @@ const api = {
     ipcRenderer.invoke('lin:prepare-local-file', options) as Promise<LinPrepareLocalFileResult>,
   previewLocalFile: (options: LinPreviewLocalFileOptions) =>
     ipcRenderer.invoke('lin:preview-local-file', options) as Promise<LinPreviewLocalFileResult>,
+  previewLocalFileReference: (options: LinPreviewLocalFileReferenceOptions) =>
+    ipcRenderer.invoke('lin:preview-local-file-reference', options) as Promise<LinPreviewLocalFileReferenceResult>,
+  openLocalFile: (options: LinOpenLocalFileOptions) =>
+    ipcRenderer.invoke('lin:open-local-file', options) as Promise<LinOpenLocalFileResult>,
   recentLocalFiles: (options: LinRecentLocalFilesOptions = {}) =>
     ipcRenderer.invoke('lin:recent-local-files', options) as Promise<LinRecentLocalFilesResult>,
   searchLocalFiles: (options: LinSearchLocalFilesOptions) =>

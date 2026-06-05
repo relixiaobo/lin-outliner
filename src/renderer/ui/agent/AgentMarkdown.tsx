@@ -19,6 +19,11 @@ import { CheckIcon, CopyIcon, ICON_SIZE } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { useT } from '../../i18n/I18nProvider';
 import { highlightCode, plainCodeHtml } from '../editor/shikiHighlighter';
+import { InlineFileReference } from '../editor/InlineFileReference';
+import {
+  localFileReferenceFromHref,
+  localFileReferenceHref,
+} from '../editor/inlineFilePreviewData';
 import {
   NODE_REFERENCE_LINK_PREFIX,
   nodeReferenceDisplayLabel,
@@ -135,9 +140,12 @@ function referenceMarkdownNodes(text: string): MarkdownAstNode[] {
   return splitReferenceMarkers(text).map((segment) => {
     if (segment.type === 'text') return { type: 'text', value: segment.text };
     if (segment.target.kind === 'local-file') {
+      const label = segment.label || basenameForPath(segment.target.path) || segment.target.path;
       return {
-        type: 'text',
-        value: segment.label || basenameForPath(segment.target.path) || segment.target.path,
+        children: [{ type: 'text', value: label }],
+        title: segment.target.entryKind,
+        type: 'link',
+        url: localFileReferenceHref(segment.target.path, segment.target.entryKind),
       };
     }
     return {
@@ -174,6 +182,24 @@ function useMarkdownComponents(
   const referencedNodeLabel = t.agent.message.referencedNode;
   return useMemo(() => ({
     a({ children, href, ...rest }: ComponentPropsWithoutRef<'a'>) {
+      const fileRef = localFileReferenceFromHref(href);
+      if (fileRef) {
+        const label = reactNodeText(children) || basenameForPath(fileRef.path) || fileRef.path;
+        return (
+          <InlineFileReference
+            className="agent-message-inline-ref"
+            file={{
+              entryKind: fileRef.entryKind,
+              kind: 'file',
+              mimeType: fileRef.entryKind === 'directory' ? 'inode/directory' : 'application/octet-stream',
+              name: label,
+              path: fileRef.path,
+              ref: label,
+            }}
+          />
+        );
+      }
+
       const nodeId = nodeIdFromReferenceHref(href);
       if (nodeId) {
         const style = nodeReferenceStyle(nodeId, index);

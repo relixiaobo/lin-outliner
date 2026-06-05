@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, pr
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, extname, join, resolve } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DocumentService } from './documentService';
 import { AssetService } from './assetService';
@@ -1148,6 +1148,19 @@ function registerIpc() {
     }
   });
 
+  ipcMain.handle('lin:preview-local-file-reference', async (_event, rawOptions?: { path?: unknown }) => {
+    const filePath = localFileReferencePath(rawOptions?.path);
+    if (!filePath) return { file: null };
+    return { file: await localFileReferencePreview(filePath) };
+  });
+
+  ipcMain.handle('lin:open-local-file', async (_event, rawOptions?: { path?: unknown }) => {
+    const filePath = localFileReferencePath(rawOptions?.path);
+    if (!filePath || !(await localFileReferenceExists(filePath))) return { opened: false };
+    const error = await shell.openPath(filePath);
+    return { opened: error.length === 0 };
+  });
+
   ipcMain.handle('lin:stage-attachment', async (_event, rawOptions?: {
     bytes?: unknown;
     mimeType?: unknown;
@@ -1469,6 +1482,48 @@ async function localFileMetadataResults(paths: string[], limit: number) {
     }
   }
   return files;
+}
+
+function localFileReferencePath(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length === 0) return null;
+  if (value.includes('\0') || !isAbsolute(value)) return null;
+  return value;
+}
+
+async function localFileReferencePreview(filePath: string) {
+  try {
+    const fileStat = await stat(filePath);
+    const entryKind = fileStat.isDirectory() ? 'directory' : fileStat.isFile() ? 'file' : null;
+    if (!entryKind) return null;
+    const [visual] = await withLocalFileIcons([{
+      entryKind,
+      mimeType: entryKind === 'directory' ? 'inode/directory' : inferMimeType(filePath),
+      name: basename(filePath),
+      path: filePath,
+    }]);
+    return {
+      entryKind,
+      path: filePath,
+      name: basename(filePath),
+      parentPath: dirname(filePath),
+      mimeType: entryKind === 'directory' ? 'inode/directory' : inferMimeType(filePath),
+      sizeBytes: entryKind === 'directory' ? 0 : fileStat.size,
+      lastModified: fileStat.mtimeMs,
+      ...(visual?.iconDataUrl ? { iconDataUrl: visual.iconDataUrl } : {}),
+      ...(visual?.thumbnailDataUrl ? { thumbnailDataUrl: visual.thumbnailDataUrl } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function localFileReferenceExists(filePath: string): Promise<boolean> {
+  try {
+    const fileStat = await stat(filePath);
+    return fileStat.isFile() || fileStat.isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function withLocalFileIcons<T extends {
