@@ -966,6 +966,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Checkbox-row long text wraps beside the checkbox, not under it (PR #131)** — on a checkbox row (a node
+  with a Done field / `completedAt`), long content wrapped onto its own line **underneath** the 16px+5px
+  done checkbox instead of beside it, breaking the hanging indent. Root cause: `.row-editor` is an
+  `inline-block` capped at `max-width:100%`, so it could not share the first line with the 21px checkbox
+  gutter and the whole block dropped to the next line. Fix: one CSS rule reserves the gutter, scoped with
+  `:has()` so only checkbox rows are touched — `.row-content-line:has(> .done-checkbox) > .row-editor {
+  max-width: calc(100% - 21px); }`. The editor now stays beside the checkbox and wraps in a column aligned
+  to the text start. Gate: typecheck + new `outliner-checkbox-wrap.spec.ts` guard (editor sits right of +
+  shares the checkbox's first line + wraps >1 line; fails pre-fix) + light/dark visual; cross-PR merge with
+  #133's outliner.css edit verified conflict-free. ([#131](https://github.com/relixiaobo/lin-outliner/pull/131))
+
 - **Definition template/options blocks invite content via an empty-state placeholder (PR #134)** — a
   tagDef's *Default content* and an options fieldDef's *Pre-determined options* block used to read as an
   orphaned ALL-CAPS label over a near-invisible ghost bullet when empty (the PM's "looks weird"). The

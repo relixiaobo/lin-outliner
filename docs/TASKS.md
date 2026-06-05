@@ -249,6 +249,12 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **outliner-checkbox-wrap** (cc-2, PR #131) — long text on a checkbox row (Done field / `completedAt`) now
+  wraps beside the checkbox with a hanging indent instead of dropping onto its own line underneath. One CSS
+  rule reserves the 21px checkbox gutter on `.row-editor`'s max-width, scoped via `:has(> .done-checkbox)`
+  so only checkbox rows are affected; new `outliner-checkbox-wrap.spec.ts` guard. Gate: typecheck + guard
+  1/1 + light/dark visual; clean cross-PR merge with #133.
+
 - **definition-empty-state-placeholder** (cc-2, PR #134) — a tagDef's *Default content* / options fieldDef's
   *Pre-determined options* block now shows an "add here" placeholder on its empty trailing draft
   (`Add default content…` / `Add an option…`) instead of an orphaned label over a ghost bullet — the
