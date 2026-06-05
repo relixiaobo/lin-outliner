@@ -567,6 +567,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Agent: morphing geometric "still generating" mark (PR #138)** — the flat rose streaming pulse is
+  replaced by a richer brand mark: an SVG whose path morphs **triangle → square → circle** and back while
+  rotating a full turn. All three shapes are 4-corner rounded polygons sharing one command structure
+  (`M, (L Q)×4, Z`) so the `d` interpolates continuously with rounded corners throughout (no sharp points,
+  incl. the triangle apex); they carry equal **optical area** (centroid-centered) so the triangle no longer
+  reads smaller than the square and the apparent size "breathes" while visual weight stays constant.
+  Rotation runs in lock-step with the morph. Adds material depth — a top-lit rose gradient
+  (`--accent` → `--accent-strong`) plus a soft rose `drop-shadow` on the non-rotating wrapper. Sized to
+  20px (~0.77 of the 26px body line) and centered on the **same 14px icon column** as the tool / thinking
+  status icons (measured: icon center == mark center). Also restores `--caret` to brand rose. Gate:
+  typecheck + `test:renderer` 354/0 + token guard 8/8 + light/dark visual & alignment; all values tokenized
+  (B11). ([#138](https://github.com/relixiaobo/lin-outliner/pull/138))
+
 - **Agent: strip model-visible redundancy across all tools (PR #128)** — the model-visible tool result
   (`content[0].text`) now carries only what the model cannot cheaply derive; the full runtime envelope
   stays on `details` unchanged. A shared `modelVisibleEnvelope` projector backs every tool: it drops

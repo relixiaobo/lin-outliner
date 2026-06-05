@@ -249,6 +249,13 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **agent-streaming-shape-morph** (main, PR #138) — replaced the flat rose streaming pulse with a morphing
+  geometric mark: an SVG path morphs triangle → square → circle and back (rounded corners throughout) while
+  rotating, with equal optical area (centroid-centered) so the triangle isn't visually small and the size
+  "breathes" naturally. Adds top-lit rose gradient + soft rose drop-shadow for depth; 20px, centered on the
+  same 14px icon column as tool/thinking status icons. Restores `--caret` to brand rose. Gate: typecheck +
+  `test:renderer` 354/0 + token guard 8/8 + light/dark visual & alignment measurement.
+
 - **agent-stop-caret-polish** (main, PR #137) — the composer stop button glyph was 10px in a 28px disc
   (undersized, near-white-on-dark); bumped to 14px so the rounded square sits proportionally (light + dark).
   The streaming "still generating" signals (inline `.agent-stream-caret` via `--caret`, standalone

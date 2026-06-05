@@ -33,11 +33,26 @@ export function AgentAssistantContent({ children }: { children: ReactNode }) {
 
 export function AgentStreamingCapsule({ labelled = false }: { labelled?: boolean }) {
   const t = useT();
+  // "Still generating" mark: an SVG whose `d` morphs triangle -> square -> circle
+  // (rounded corners throughout) — see `.agent-streaming-capsule` in CSS. The path
+  // is decorative; the wrapper / aria-label carries the meaning.
   return (
-    <span
+    <svg
+      aria-hidden={labelled ? undefined : true}
       aria-label={labelled ? t.agent.message.assistantResponding : undefined}
       className="agent-streaming-capsule"
-    />
+      role={labelled ? 'img' : undefined}
+      viewBox="0 0 48 48"
+    >
+      <defs>
+        <linearGradient className="agent-shape-grad" id="agentShapeFill" x1="0" x2="0" y1="0" y2="1">
+          <stop className="agent-shape-stop-0" offset="0%" />
+          <stop className="agent-shape-stop-1" offset="55%" />
+          <stop className="agent-shape-stop-2" offset="100%" />
+        </linearGradient>
+      </defs>
+      <path />
+    </svg>
   );
 }
 
