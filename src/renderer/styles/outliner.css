@@ -1912,6 +1912,16 @@
   vertical-align: top;
 }
 
+/* A done checkbox sits inline before the editor (16px box + 5px gap = 21px).
+   The editor is an inline-block capped at max-width:100%, so without reserving
+   that gutter it cannot share the first line with the checkbox and drops onto
+   its own line underneath it. Reserve the checkbox column so the editor stays
+   beside the checkbox and wraps its own text with a hanging indent aligned to
+   the text start. */
+.row-content-line:has(> .done-checkbox) > .row-editor {
+  max-width: calc(100% - 21px);
+}
+
 .row-content-line > .row-editor .ProseMirror {
   display: inline-block;
   width: auto;
