@@ -41,8 +41,11 @@ export function emptyReverseEdges(): ReverseEdges {
   return { references: new Map(), taggers: new Map(), inlineReferrers: new Map() };
 }
 
-// The reverse-edge keys a single node contributes, by category.
-function nodeReverseKeys(node: NodeProjection): Record<ReverseCategory, NodeId[]> {
+// The reverse-edge keys a single node contributes, by category. The returned
+// arrays are only ever iterated and length/element-compared (never mutated), so
+// `taggers` aliases the node's own `tags` rather than copying it — a per-node
+// allocation saved on the per-keystroke path.
+function nodeReverseKeys(node: NodeProjection): Record<ReverseCategory, readonly NodeId[]> {
   const inlineReferrers: NodeId[] = [];
   for (const inlineRef of node.content.inlineRefs) {
     const nodeId = inlineRefNodeId(inlineRef);
@@ -50,7 +53,7 @@ function nodeReverseKeys(node: NodeProjection): Record<ReverseCategory, NodeId[]
   }
   return {
     references: node.type === 'reference' && node.targetId ? [node.targetId] : [],
-    taggers: node.tags.slice(),
+    taggers: node.tags,
     inlineReferrers,
   };
 }
@@ -105,7 +108,7 @@ export function patchReverseEdges(
     set.delete(id);
     if (set.size === 0) mapFor(category).delete(key);
   };
-  const removeNode = (id: NodeId, keys: Record<ReverseCategory, NodeId[]>) => {
+  const removeNode = (id: NodeId, keys: Record<ReverseCategory, readonly NodeId[]>) => {
     for (const category of REVERSE_CATEGORIES) {
       for (const key of keys[category]) removeKey(category, key, id);
     }
@@ -131,8 +134,8 @@ export function patchReverseEdges(
 }
 
 function sameReverseKeys(
-  a: Record<ReverseCategory, NodeId[]>,
-  b: Record<ReverseCategory, NodeId[]>,
+  a: Record<ReverseCategory, readonly NodeId[]>,
+  b: Record<ReverseCategory, readonly NodeId[]>,
 ): boolean {
   return REVERSE_CATEGORIES.every((category) => sameList(a[category], b[category]));
 }

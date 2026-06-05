@@ -570,6 +570,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   under `LIN_VERIFY_CACHE=1`) + typecheck + renderer 340/0 + core. PR-B (incremental reverse-edge
   maps) tracked separately. ([#119](https://github.com/relixiaobo/lin-outliner/pull/119))
 
+- **Perf P1 (PR-B): incremental reverse-edge index — retire the last O(N) per-keystroke pass (PR #121)** —
+  follow-up to #119. `propagateDirty` used to rebuild the reverse-edge index (reference / tag / inline-ref
+  target → referrers) from *every node* on every edit. The index (`ReverseEdges`, now `Set`-valued for O(1)
+  add/remove) is held in the renderer's `ProjectionState` and patched per delta by `patchReverseEdges`
+  (copy-on-write at both the category-map and member-set level, leaving `prev` untouched; a node whose edge
+  keys are unchanged is skipped, so a plain text edit allocates nothing). `propagateDirty` now takes the
+  held index instead of building it. Bench (edge-build + propagate, single keystroke, ~20% nodes tagged):
+  6041 nodes 1.22 ms → 0.29 ms; the patched index is asserted equal to a full rebuild after **every**
+  command in `projectionDeltaIntegration.test.ts` (tag/reference/inline-ref churn added). Gate:
+  `/code-review` (3 finders + 1.5k-case fuzz, 0 bugs) + typecheck + renderer 345/0; a follow-up dropped a
+  redundant `node.tags.slice()` on the hot path (alias the read-only array). Residual per-keystroke O(N)
+  (`new Map(prev.byId)`, `nextRevisions`) is the P3 cleanup.
+  ([#121](https://github.com/relixiaobo/lin-outliner/pull/121))
+
 - **Perf P0: stop per-token agent index rewrites + drop pretty-print write amplification (PR #117)** —
   first quick-win of the performance-optimization program (`performance-optimization.md`, #116).
   `AgentEventStore.appendEvents` rewrote both `session-index.json` and `search-index.json` (read +

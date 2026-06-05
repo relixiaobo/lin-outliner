@@ -230,12 +230,24 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   three-way perf audit (`docs/plans/performance-optimization.md`). **P0 shipped** (#117);
   **P1 PR-A shipped** (#119: `ProjectionUpdate` delta over the `core↔renderer` seam —
   payload ~2 MB→362 B and index pass 7.0→1.2 ms at 6k nodes; `nodeSignatures` pass deleted;
-  unchanged-node identity now stable). **Next: P1 PR-B — incremental reverse-edge maps** in
-  `renderRev` (retire the last O(N) per-keystroke pass; `incremental-projection.md`), then
-  P2 (default windowed outliner; agent streaming delta) and P3 (localized O(N) cleanups —
-  several now unlocked by the stable-identity foundation P1 PR-A laid).
+  unchanged-node identity now stable). **P1 PR-B shipped** (#121: reverse-edge index held in
+  `ProjectionState` and patched per delta — retires the last O(N) per-keystroke scan; 6k nodes
+  1.22→0.29 ms). **Next: P2** (default windowed outliner; agent streaming delta) and **P3**
+  (localized O(N) cleanups — the residual `new Map(prev.byId)` + `nextRevisions` whole-map
+  rebuild; several unlocked by the stable-identity foundation P1 PR-A laid).
 
 ## Recently completed
+
+- **incremental-projection (P1 PR-B)** (cc, PR #121) — perf follow-up to #119: the renderer's
+  reverse-edge index (reference / tag / inline-ref target → referrers, now `Set`-valued) is held in
+  `ProjectionState` and patched per delta by `patchReverseEdges` (copy-on-write at the category-map +
+  member-set level; a node whose edge keys are unchanged is skipped, so a plain text edit allocates
+  nothing) instead of rebuilt from every node in `propagateDirty` — retiring the last O(N) per-keystroke
+  scan (6k nodes 1.22→0.29 ms). Gate: `/code-review` (3 finders + 1.5k-case fuzz, 0 bugs) + typecheck +
+  renderer 345/0; `projectionDeltaIntegration.test.ts` asserts the patched index equals a full rebuild
+  after every command (tag/reference/inline-ref churn added); a follow-up dropped a redundant
+  `node.tags.slice()` on the hot path. Residual P3: `new Map(prev.byId)` + `nextRevisions`.
+  `incremental-projection.md` stays in-progress (P3 + spec fold-in remain).
 
 - **settings-macos-clarity** (codex, PR #118) — Settings window macOS System Settings clarity pass:
   fixed toolbar = back/forward pill capsule + right-pane page title, scrollport below chrome via margin;
