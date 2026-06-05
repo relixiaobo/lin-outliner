@@ -258,6 +258,105 @@ test.describe('agent process disclosure', () => {
     await expect.poll(() => clipboardText(page)).toContain('Line 9 final: this must still copy.');
   });
 
+  test('previews and opens assistant local file refs', async ({ page }) => {
+    await page.evaluate(() => {
+      const thumbnail = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lPvsZAAAAABJRU5ErkJggg==';
+      const win = window as typeof window & {
+        __openedLocalFiles?: string[];
+        lin?: {
+          invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+          openLocalFile?: (options: { path: string }) => Promise<{ opened: boolean }>;
+          previewLocalFileReference?: (options: { path: string }) => Promise<{
+            file: {
+              entryKind: 'file' | 'directory';
+              path: string;
+              name: string;
+              parentPath: string;
+              mimeType: string;
+              sizeBytes: number;
+              lastModified: number;
+              thumbnailDataUrl?: string;
+            } | null;
+          }>;
+        };
+      };
+      win.__openedLocalFiles = [];
+      if (!win.lin) return;
+      win.lin.previewLocalFileReference = async (options) => ({
+        file: options.path === '/Users/test/Pictures/diagram.png'
+          ? {
+              entryKind: 'file',
+              path: options.path,
+              name: 'diagram.png',
+              parentPath: '/Users/test/Pictures',
+              mimeType: 'image/png',
+              sizeBytes: 4096,
+              lastModified: 1_800_000_000_000,
+              thumbnailDataUrl: thumbnail,
+            }
+          : null,
+      });
+      win.lin.openLocalFile = async (options) => {
+        win.__openedLocalFiles?.push(options.path);
+        return { opened: true };
+      };
+    });
+
+    const assistant = {
+      role: 'assistant',
+      api: 'responses',
+      provider: 'openai',
+      model: 'gpt-5.4',
+      usage,
+      stopReason: 'stop',
+      timestamp: 1_800_000_000_801,
+      content: [{
+        type: 'text',
+        text: 'See [[file:diagram.png^%2FUsers%2Ftest%2FPictures%2Fdiagram.png]] for the layout.',
+      }],
+    };
+
+    await emitAgentProjection(page, 'mock-agent-session', {
+      sessionTitle: 'Agent System',
+      systemPrompt: '',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      thinkingLevel: 'medium',
+      messages: [],
+      conversation: [{ nodeId: 'assistant-file-ref-node', message: assistant, branches: null }],
+      streamingMessage: null,
+      isStreaming: false,
+      pendingToolCallIds: [],
+      errorMessage: null,
+    });
+
+    const ref = page.locator('.agent-message-row.assistant [data-inline-ref-kind="local-file"]').first();
+    await expect(ref).toHaveText('diagram.png');
+    await expect(ref.locator('.inline-ref-file-icon')).toHaveAttribute('data-file-icon-kind', 'image');
+    await ref.hover();
+
+    const preview = page.locator('[data-inline-file-preview]');
+    await expect(preview).toBeVisible();
+    await expect(preview).toContainText('diagram.png');
+    await expect(preview).toContainText('/Users/test/Pictures/diagram.png');
+    await expect(preview.locator('.inline-file-preview-image img')).toBeVisible();
+
+    await ref.click();
+    await expect.poll(async () => page.evaluate(() => {
+      const win = window as typeof window & { __openedLocalFiles?: string[] };
+      return win.__openedLocalFiles ?? [];
+    })).toEqual(['/Users/test/Pictures/diagram.png']);
+
+    await page.evaluate(() => {
+      const win = window as typeof window & {
+        lin?: { openLocalFile?: (options: { path: string }) => Promise<{ opened: boolean }> };
+      };
+      if (win.lin) delete win.lin.openLocalFile;
+      window.location.hash = '';
+    });
+    await ref.click();
+    await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('');
+  });
+
   test('keeps completed process collapsed and expands thinking and tool details on demand', async ({ page }) => {
     const assistant = {
       role: 'assistant',

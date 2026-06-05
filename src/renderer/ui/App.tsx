@@ -30,6 +30,7 @@ import { useSelectionDismissal } from './useSelectionDismissal';
 import { useWorkspaceKeyboard } from './useWorkspaceKeyboard';
 import { useWorkspaceLayout } from './useWorkspaceLayout';
 import { useT } from '../i18n/I18nProvider';
+import { InlineFilePreviewLayer } from './editor/InlineFilePreviewLayer';
 import {
   persistOutlineViewState,
   restoreOutlineExpansionForRoot,
@@ -488,6 +489,8 @@ export function App() {
           </ButtonControl>
         </div>
       )}
+
+      <InlineFilePreviewLayer />
     </div>
   );
 }

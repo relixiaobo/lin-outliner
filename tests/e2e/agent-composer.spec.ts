@@ -212,36 +212,7 @@ test.describe('agent composer controls', () => {
   });
 
   test('renders sent attachment mentions inline without raw image placeholders', async ({ page }) => {
-    const marker = {
-      version: 1,
-      instructions: 'Images are visible as image content blocks. Files and folders are available at local paths; use file_read for files and file_glob for folders instead of assuming they are already visible. Inline text attachments are included in this user message.',
-      attachments: [
-        {
-          kind: 'file',
-          ref: '.DS_Store',
-          name: '.DS_Store',
-          mimeType: 'application/octet-stream',
-          sizeBytes: 26_624,
-          path: '/Users/test/Desktop/.DS_Store',
-        },
-        {
-          kind: 'file',
-          ref: 'Coding',
-          name: 'Coding',
-          mimeType: 'inode/directory',
-          sizeBytes: 0,
-          path: '/Users/test/Documents/Coding',
-        },
-        {
-          kind: 'image',
-          ref: 'Screenshot 2026-05-26 at 14.50.16.png',
-          name: 'Screenshot 2026-05-26 at 14.50.16.png',
-          mimeType: 'image/png',
-          sizeBytes: 481_000,
-          inline: true,
-        },
-      ],
-    };
+    const imagePath = '/Users/test/Desktop/Screenshot 2026-05-26 at 14.50.16.png';
 
     await emitAgentProjection(page, 'mock-agent-session', {
       sessionTitle: 'Agent System',
@@ -254,13 +225,13 @@ test.describe('agent composer controls', () => {
           content: [
             {
               type: 'text',
-              text: `<system-reminder>\n<user-attachments>\n${JSON.stringify(marker, null, 2)}\n</user-attachments>\n</system-reminder>`,
+              text: `[[file:.DS_Store^%2FUsers%2Ftest%2FDesktop%2F.DS_Store]] 总结一下，然后跟 [[file:Coding^%2FUsers%2Ftest%2FDocuments%2FCoding^directory]] 对比一下，然后添加到 [[node:Alpha^node-alpha]]，参考 [[file:Screenshot 2026-05-26 at 14.50.16.png^${encodeURIComponent(imagePath)}]]`,
             },
             {
-              type: 'text',
-              text: '[[file:.DS_Store^%2FUsers%2Ftest%2FDesktop%2F.DS_Store]] 总结一下，然后跟 [[file:Coding^%2FUsers%2Ftest%2FDocuments%2FCoding]] 对比一下，然后添加到 [[node:Alpha^node-alpha]]，参考 @Screenshot 2026-05-26 at 14.50.16.png',
+              type: 'image',
+              data: 'iVBORw0KGgo=',
+              mimeType: 'image/png',
             },
-            { type: 'text', text: 'Image attachment' },
           ],
         },
         branches: null,
@@ -566,8 +537,10 @@ test.describe('agent composer controls', () => {
       const thumbnail = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lPvsZAAAAABJRU5ErkJggg==';
       const imageDataBase64 = thumbnail.slice(thumbnail.indexOf(',') + 1);
       const win = window as typeof window & {
+        __openedLocalFiles?: string[];
         lin?: {
           invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+          openLocalFile?: (options: { path: string }) => Promise<{ opened: boolean }>;
           prepareLocalFile?: (options: { id: string }) => Promise<{
             file: {
               entryKind?: 'file' | 'directory';
@@ -577,6 +550,18 @@ test.describe('agent composer controls', () => {
               sizeBytes: number;
               lastModified: number;
               imageDataBase64?: string;
+              thumbnailDataUrl?: string;
+            } | null;
+          }>;
+          previewLocalFileReference?: (options: { path: string }) => Promise<{
+            file: {
+              entryKind: 'file' | 'directory';
+              path: string;
+              name: string;
+              parentPath: string;
+              mimeType: string;
+              sizeBytes: number;
+              lastModified: number;
               thumbnailDataUrl?: string;
             } | null;
           }>;
@@ -596,6 +581,7 @@ test.describe('agent composer controls', () => {
           }>;
         };
       };
+      win.__openedLocalFiles = [];
       if (!win.lin) return;
       win.lin.searchLocalFiles = async (options) => ({
         files: options.query.toLowerCase().includes('image')
@@ -627,6 +613,24 @@ test.describe('agent composer controls', () => {
             }
           : null,
       });
+      win.lin.previewLocalFileReference = async (options) => ({
+        file: options.path === '/Users/test/Pictures/gpt4.png'
+          ? {
+              entryKind: 'file',
+              path: '/Users/test/Pictures/gpt4.png',
+              name: 'gpt4.png',
+              parentPath: '/Users/test/Pictures',
+              mimeType: 'image/png',
+              sizeBytes: 4096,
+              lastModified: 1_800_000_000_000,
+              thumbnailDataUrl: thumbnail,
+            }
+          : null,
+      });
+      win.lin.openLocalFile = async (options) => {
+        win.__openedLocalFiles?.push(options.path);
+        return { opened: true };
+      };
     });
 
     const input = page.getByLabel('Agent message');
@@ -650,6 +654,36 @@ test.describe('agent composer controls', () => {
     await expect(page.locator('[data-agent-file-ref] .inline-ref-file-icon')).toHaveAttribute('data-file-icon-kind', 'image');
     await expect(page.locator('[data-agent-file-ref]')).not.toHaveAttribute('title', /gpt4\.png/);
     await expect(page.locator('[data-agent-file-ref]')).toHaveAttribute('aria-label', /gpt4\.png/);
+
+    const inlineRef = page.locator('[data-agent-file-ref]');
+    const inlinePreview = page.locator('[data-inline-file-preview]');
+    await inlineRef.hover();
+    await page.waitForTimeout(100);
+    await page.mouse.move(20, 20);
+    await page.waitForTimeout(500);
+    await expect(inlinePreview).toHaveCount(0);
+
+    await inlineRef.hover();
+    await expect(inlinePreview).toBeVisible();
+    await expect(inlinePreview).toContainText('gpt4.png');
+    const [inlineRefBox, inlinePreviewBox] = await Promise.all([
+      inlineRef.boundingBox(),
+      inlinePreview.boundingBox(),
+    ]);
+    expect(inlineRefBox).toBeTruthy();
+    expect(inlinePreviewBox).toBeTruthy();
+    expect(inlinePreviewBox!.y + inlinePreviewBox!.height).toBeLessThanOrEqual(inlineRefBox!.y - 4);
+    expect(inlineRefBox!.y - (inlinePreviewBox!.y + inlinePreviewBox!.height)).toBeLessThan(24);
+    await page.mouse.move(20, 20);
+    await expect(inlinePreview).toHaveCount(0);
+
+    await inlineRef.hover();
+    await expect(inlinePreview).toBeVisible();
+    await inlineRef.click();
+    await expect.poll(async () => page.evaluate(() => {
+      const win = window as typeof window & { __openedLocalFiles?: string[] };
+      return win.__openedLocalFiles ?? [];
+    })).toEqual([]);
 
     await page.getByRole('button', { name: 'Send message' }).click();
     await expect.poll(async () => {

@@ -771,6 +771,12 @@ commandPalette: {
           ? `Skipped 1 file over the ${max} attachment limit.`
           : `Skipped ${count} files over the ${max} attachment limit.`,
     },
+    filePreview: {
+      file: 'File',
+      folder: 'Folder',
+      modified: ({ date }: { date: string }) => `Modified ${date}`,
+      unavailable: 'File unavailable',
+    },
     // Message-row actions + shared message atoms.
     message: {
       assistantResponding: 'Assistant is responding',

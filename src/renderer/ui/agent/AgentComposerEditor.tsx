@@ -44,6 +44,7 @@ import {
   inlineFileMentionDomChildren,
   type InlineFileIconKind,
 } from '../editor/inlineFileIcon';
+import { inlineFilePreviewAttrs } from '../editor/inlineFilePreviewData';
 import { inlineReferenceTextColor } from '../tags/tagColors';
 import {
   nodeReferenceOpenOptionsFromClick,
@@ -257,8 +258,17 @@ const agentComposerSchema = new Schema({
             'aria-label': detail,
             class: 'inline-ref agent-composer-inline-ref',
             contenteditable: 'false',
-            'data-inline-ref-kind': 'local-file',
             'data-agent-file-ref': String(node.attrs.attachmentId ?? ''),
+            ...inlineFilePreviewAttrs({
+              entryKind,
+              iconDataUrl: String(node.attrs.iconDataUrl ?? ''),
+              mimeType,
+              name,
+              path: String(node.attrs.path ?? ''),
+              ref: String(node.attrs.ref ?? ''),
+              sizeBytes,
+              thumbnailDataUrl: String(node.attrs.thumbnailDataUrl ?? ''),
+            }),
           },
           ...inlineFileMentionDomChildren(iconKind, name),
         ];

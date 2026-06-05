@@ -287,7 +287,11 @@ function toolResultFromEntity(entity: AgentRenderMessageEntity): AgentToolResult
 }
 
 function toUserContent(content: AgentPersistedContent[]): UserMessage['content'] {
-  const parts = toVisibleContent(content);
+  const parts = content.flatMap((part): Array<TextContent | ImageContent> => {
+    if (part.type === 'image') return [];
+    if (part.type === 'text') return [{ type: 'text', text: part.text }];
+    return [{ type: 'text', text: persistedContentSummary(part) }];
+  });
   return parts.length > 0 ? parts : textContent('');
 }
 

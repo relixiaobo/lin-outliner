@@ -50,6 +50,11 @@ import { MAX_RAW_INLINE_IMAGE_BYTES, MAX_STAGED_ATTACHMENT_BYTES } from '../core
 import { safeAttachmentFileName } from '../core/agentAttachmentPaths';
 import { agentAttachmentDir, pruneOldAgentAttachments } from './agentAttachmentMaterialization';
 import {
+  isSafeLocalFileOpenTarget,
+  resolveTrustedLocalFileReference,
+  type TrustedLocalFileReference,
+} from './localFileReferenceSecurity';
+import {
   createLauncherWindow,
   getLauncherWindow,
   hideLauncherWindow,
@@ -1148,6 +1153,19 @@ function registerIpc() {
     }
   });
 
+  ipcMain.handle('lin:preview-local-file-reference', async (_event, rawOptions?: { path?: unknown }) => {
+    const file = await resolveTrustedLocalFileReference(rawOptions?.path, [agentLocalFileRoot]);
+    if (!file) return { file: null };
+    return { file: await localFileReferencePreview(file) };
+  });
+
+  ipcMain.handle('lin:open-local-file', async (_event, rawOptions?: { path?: unknown }) => {
+    const file = await resolveTrustedLocalFileReference(rawOptions?.path, [agentLocalFileRoot]);
+    if (!file || !isSafeLocalFileOpenTarget(file)) return { opened: false };
+    const error = await shell.openPath(file.path);
+    return { opened: error.length === 0 };
+  });
+
   ipcMain.handle('lin:stage-attachment', async (_event, rawOptions?: {
     bytes?: unknown;
     mimeType?: unknown;
@@ -1469,6 +1487,27 @@ async function localFileMetadataResults(paths: string[], limit: number) {
     }
   }
   return files;
+}
+
+async function localFileReferencePreview(file: TrustedLocalFileReference) {
+  const mimeType = file.entryKind === 'directory' ? 'inode/directory' : inferMimeType(file.path);
+  const [visual] = await withLocalFileIcons([{
+    entryKind: file.entryKind,
+    mimeType,
+    name: basename(file.path),
+    path: file.path,
+  }]);
+  return {
+    entryKind: file.entryKind,
+    path: file.path,
+    name: basename(file.path),
+    parentPath: dirname(file.path),
+    mimeType,
+    sizeBytes: file.entryKind === 'directory' ? 0 : file.stats.size,
+    lastModified: file.stats.mtimeMs,
+    ...(visual?.iconDataUrl ? { iconDataUrl: visual.iconDataUrl } : {}),
+    ...(visual?.thumbnailDataUrl ? { thumbnailDataUrl: visual.thumbnailDataUrl } : {}),
+  };
 }
 
 function withLocalFileIcons<T extends {

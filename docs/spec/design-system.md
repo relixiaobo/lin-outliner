@@ -984,6 +984,24 @@ category history; see "Settings window".)
   Render sites never invent a second file-chip species (the retired
   `.agent-composer-inline-file` / `.agent-message-inline-file` were exactly that —
   a parallel `inline-flex` chip with a full-colour macOS icon).
+- Local-file inline refs carry shared `data-inline-ref-*` metadata. A global
+  `InlineFilePreviewLayer` listens for hover/focus on
+  `[data-inline-ref-kind="local-file"]` and shows one neutral popover: images use
+  the native thumbnail when available; other files/folders use the same metadata
+  card shell with icon, name, type/size, path, modified time, and unavailable
+  state. Pointer hover waits briefly before opening to avoid accidental peeks while
+  the cursor moves through dense prose; keyboard focus opens immediately. The ref
+  itself keeps the normal text-link hover treatment; the popover is the only added
+  surface and uses the elevated popover material + level-1 shadow with
+  reduced-transparency fallback.
+- Clicking a local-file inline ref opens the file or folder through the preload
+  bridge and main-process `shell.openPath` only after the main process
+  canonicalizes the path under the non-root agent local file root, stats it as a
+  regular file/folder, and rejects executable or bundle-like open targets.
+  Renderer code must not navigate to `file://`, call `openExternal` for file
+  paths, or read local bytes directly. Composer local-file atoms expose the same
+  preview metadata, but click handling stays with the editor so draft text
+  remains selectable and editable.
 
 ### Fields And Definition Configuration
 

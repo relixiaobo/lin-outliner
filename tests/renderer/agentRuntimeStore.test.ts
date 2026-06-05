@@ -127,11 +127,24 @@ function projection(
 function persistedContent(message: UserMessage | AssistantMessage): AgentPersistedContent[] {
   const content = typeof message.content === 'string'
     ? [{ type: 'text' as const, text: message.content }]
-    : message.content.map((part): AgentPersistedContent => {
+    : message.content.map((part, index): AgentPersistedContent => {
         if (part.type === 'text') return { type: 'text', text: part.text };
         if (part.type === 'thinking') return { type: 'thinking', thinking: part.thinking, redacted: part.redacted };
         if (part.type === 'toolCall') return { type: 'toolCall', id: part.id, name: part.name, arguments: part.arguments };
-        return { type: 'text', text: `[image:${part.mimeType}]` };
+        return {
+          type: 'image',
+          alt: 'Image attachment',
+          imageRef: {
+            kind: 'payload_ref',
+            id: `image-${index}`,
+            storage: 'file',
+            mimeType: part.mimeType,
+            byteLength: 0,
+            sha256: `image-${index}`,
+            role: 'source',
+            summary: 'Image attachment',
+          },
+        };
       });
   return content;
 }
@@ -248,6 +261,33 @@ describe('agent runtime store', () => {
     expect(store.getSnapshot().entries.map((entry) => entry.nodeId))
       .toEqual(['u1', 'a1']);
     expect(fake.calls.closeSession).toEqual([]);
+    unsubscribe();
+  });
+
+  test('omits persisted user image summaries from visible message text', async () => {
+    const user: UserMessage = {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Review [[file:shot.png^%2Ftmp%2Fshot.png]].' },
+        { type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png' },
+      ],
+      timestamp: 1,
+    };
+    const restored = session('saved', projection([
+      { nodeId: 'u1', message: user, branches: null },
+    ]));
+    const fake = createFakeClient({ latestSession: restored });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+
+    await flushMicrotasks();
+
+    const entry = store.getSnapshot().entries[0];
+    expect(entry?.kind).toBe('message');
+    expect(entry?.message.role).toBe('user');
+    expect(entry?.message.content).toEqual([
+      { type: 'text', text: 'Review [[file:shot.png^%2Ftmp%2Fshot.png]].' },
+    ]);
     unsubscribe();
   });
 

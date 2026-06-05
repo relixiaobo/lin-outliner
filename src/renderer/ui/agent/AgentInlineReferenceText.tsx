@@ -2,11 +2,7 @@ import { useMemo, type CSSProperties } from 'react';
 import { splitFileReferenceMarkers, splitNodeReferenceMarkers } from '../../../core/referenceMarkup';
 import type { NodeId } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
-import {
-  INLINE_FILE_ICON_CLASS,
-  INLINE_FILE_NAME_CLASS,
-  inlineFileIconKind,
-} from '../editor/inlineFileIcon';
+import { InlineFileReference } from '../editor/InlineFileReference';
 import { wantsNewPaneFromClick } from '../shared';
 import { inlineReferenceTextColor } from '../tags/tagColors';
 import { useT } from '../../i18n/I18nProvider';
@@ -39,10 +35,16 @@ interface AgentInlineReferenceTextProps {
 }
 
 export interface AgentInlineFileReference {
+  entryKind?: 'file' | 'directory';
+  iconDataUrl?: string;
   kind: 'file' | 'image' | 'inline_text';
+  lastModified?: number;
   name: string;
+  path?: string;
   ref: string;
   mimeType: string;
+  sizeBytes?: number;
+  thumbnailDataUrl?: string;
 }
 
 export function AgentInlineReferenceText({
@@ -62,24 +64,12 @@ export function AgentInlineReferenceText({
             .map((fileSegment, fileSegmentIndex) => {
               if (fileSegment.type === 'text') return fileSegment.text;
               return (
-                <span
-                  aria-label={fileSegment.file.name}
-                  className="inline-ref agent-message-inline-ref"
-                  data-agent-message-file-ref={fileSegment.file.ref}
-                  data-inline-ref-kind="local-file"
+                <InlineFileReference
+                  className="agent-message-inline-ref"
+                  extraAttrs={{ 'data-agent-message-file-ref': fileSegment.file.ref }}
+                  file={fileSegment.file}
                   key={`${segmentIndex}-${fileSegment.file.ref}-${fileSegmentIndex}`}
-                  title={fileSegment.file.name}
-                >
-                  <span
-                    aria-hidden="true"
-                    className={INLINE_FILE_ICON_CLASS}
-                    data-file-icon-kind={inlineFileIconKind({
-                      mimeType: fileSegment.file.mimeType,
-                      name: fileSegment.file.name,
-                    })}
-                  />
-                  <span className={INLINE_FILE_NAME_CLASS}>{fileSegment.file.name}</span>
-                </span>
+                />
               );
             });
         }
@@ -136,7 +126,7 @@ function splitFileReferenceMentions(
       if (segment.type === 'text') return segment;
       return {
         type: 'file',
-        file: attachmentsByRef.get(segment.ref) ?? fallbackInlineFile(segment.ref, segment.entryKind),
+        file: fileWithMarkerFallback(attachmentsByRef.get(segment.ref), segment),
       };
     }));
   }
@@ -195,12 +185,28 @@ function attachmentMapByRef(
   return byRef;
 }
 
-function fallbackInlineFile(ref: string, entryKind: 'file' | 'directory'): AgentInlineFileReference {
+function fileWithMarkerFallback(
+  attachment: AgentInlineFileReference | undefined,
+  marker: Extract<ReturnType<typeof splitFileReferenceMarkers>[number], { type: 'file' }>,
+): AgentInlineFileReference {
+  if (!attachment) return fallbackInlineFile(marker);
   return {
+    ...attachment,
+    entryKind: attachment.entryKind ?? marker.entryKind,
+    path: attachment.path ?? marker.path,
+  };
+}
+
+function fallbackInlineFile(
+  marker: Extract<ReturnType<typeof splitFileReferenceMarkers>[number], { type: 'file' }>,
+): AgentInlineFileReference {
+  return {
+    entryKind: marker.entryKind,
     kind: 'file',
-    name: ref || 'file',
-    ref: ref || 'file',
-    mimeType: entryKind === 'directory' ? 'inode/directory' : 'application/octet-stream',
+    name: marker.ref || 'file',
+    path: marker.path,
+    ref: marker.ref || 'file',
+    mimeType: marker.entryKind === 'directory' ? 'inode/directory' : 'application/octet-stream',
   };
 }
 

@@ -250,4 +250,63 @@ describe('agent runtime attachments', () => {
     await expect(readdir(path.join(localRoot, 'tmp', 'agent-attachments'))).rejects.toThrow();
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
   });
+
+  test('keeps out-of-root directory attachments as live paths for folder tools', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-attachment-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-attachment-data-'));
+    const sourceRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-attachment-source-'));
+    roots.push(localRoot, dataRoot, sourceRoot);
+    const contexts: Context[] = [];
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-4.1',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: captureStream(contexts),
+      },
+    );
+
+    const created = await runtime.createSession();
+    await runtime.sendMessage(
+      created.sessionId,
+      `List ${formatFileReferenceMarker('Projects', sourceRoot, 'directory')}.`,
+      [{
+        id: 'attachment-projects',
+        kind: 'file',
+        name: 'Projects',
+        mimeType: 'inode/directory',
+        sizeBytes: 0,
+        path: sourceRoot,
+      }],
+    );
+
+    const contextText = textFromContext(contexts[0]!);
+    const marker = splitFileReferenceMarkers(contextText).find((segment) => segment.type === 'file');
+
+    expect(contexts).toHaveLength(1);
+    expect(contextText).toContain(encodeURIComponent(sourceRoot));
+    expect(marker?.path).toBe(sourceRoot);
+    expect(marker?.entryKind).toBe('directory');
+    await expect(readdir(path.join(localRoot, 'tmp', 'agent-attachments'))).rejects.toThrow();
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+  });
 });

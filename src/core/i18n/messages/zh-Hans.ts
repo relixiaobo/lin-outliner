@@ -693,6 +693,12 @@ commandPalette: {
       // TODO plural via Intl
       skippedOverflow: ({ count, max }) => `已跳过 ${count} 个超出 ${max} 个附件上限的文件。`,
     },
+    filePreview: {
+      file: '文件',
+      folder: '文件夹',
+      modified: ({ date }) => `修改于 ${date}`,
+      unavailable: '文件不可用',
+    },
     message: {
       assistantResponding: '助手正在回复',
       referencedNode: '引用节点',

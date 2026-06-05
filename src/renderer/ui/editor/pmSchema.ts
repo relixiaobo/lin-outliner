@@ -1,6 +1,7 @@
 import { Schema } from 'prosemirror-model';
 import { basenameForPath } from '../../../core/referenceMarkup';
 import { inlineFileIconKind, inlineFileMentionDomChildren } from './inlineFileIcon';
+import { inlineFilePreviewAttrs } from './inlineFilePreviewData';
 
 export const pmSchema = new Schema({
   nodes: {
@@ -56,12 +57,13 @@ export const pmSchema = new Schema({
         };
         if (targetKind === 'node') attrs['data-inline-ref'] = String(node.attrs.targetNodeId ?? '');
         if (targetKind === 'local-file') {
-          attrs['data-inline-ref-path'] = targetPath;
-          attrs['data-inline-ref-entry-kind'] = String(node.attrs.entryKind ?? 'file');
-          if (node.attrs.mimeType) attrs['data-inline-ref-mime-type'] = String(node.attrs.mimeType);
-          if (typeof node.attrs.sizeBytes === 'number' && Number.isFinite(node.attrs.sizeBytes)) {
-            attrs['data-inline-ref-size-bytes'] = String(node.attrs.sizeBytes);
-          }
+          Object.assign(attrs, inlineFilePreviewAttrs({
+            entryKind: node.attrs.entryKind === 'directory' ? 'directory' : 'file',
+            mimeType: String(node.attrs.mimeType ?? ''),
+            name: displayName || basenameForPath(targetPath),
+            path: targetPath,
+            sizeBytes: typeof node.attrs.sizeBytes === 'number' ? node.attrs.sizeBytes : undefined,
+          }));
         }
         if (node.attrs.color) {
           attrs.style = `color: ${node.attrs.color}; --inline-ref-accent: ${node.attrs.color}`;
