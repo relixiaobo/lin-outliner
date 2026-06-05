@@ -488,7 +488,7 @@ export function AgentMessageRow({
     const listedAttachments = userContent.attachments.filter((attachment) => !inlineAttachmentRefs.has(attachment.ref));
     const hasAttachments = userContent.attachments.length > 0 || userContent.images.length > 0;
     const hasVisibleContent = listedAttachments.length > 0 || userContent.images.length > 0 || text.trim().length > 0;
-    const contentMeasureKey = `${entry.id}:${message.timestamp}:${text.length}:${listedAttachments.length}:${userContent.images.length}`;
+    const contentMeasureKey = `${entry.id}:${message.timestamp}:${text}:${listedAttachments.length}:${userContent.images.length}`;
     const CopyStateIcon = copied ? CheckIcon : CopyIcon;
     const nodeId = entry.nodeId;
     if (editing && nodeId) {
