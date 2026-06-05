@@ -22,6 +22,18 @@ export type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessT
 
 const PROCESS_STATUS_ICON_SIZE = 13;
 
+// The latest thinking block that has streamed any text — drives the live status
+// line during the thinking phase (before/between tool calls).
+function lastNonEmptyThinking(
+  thinkingBlocks: Extract<AgentProcessSegmentBlock, { kind: 'thinking' }>[],
+): string | null {
+  for (let i = thinkingBlocks.length - 1; i >= 0; i -= 1) {
+    const text = thinkingBlocks[i]!.text.trim();
+    if (text) return text;
+  }
+  return null;
+}
+
 interface AgentProcessBlockProps {
   blocks: AgentProcessSegmentBlock[];
   expandState: AgentExpandState;
@@ -40,30 +52,47 @@ interface AgentProcessBlockProps {
 
 export function summarizeProcess({
   firstThinkingText,
+  lastThinkingText,
   thinkingCount,
   pendingToolCallIds,
   results,
   toolCalls,
   turnActive,
-  sealed,
+  liveCollapsed,
   turnFailedWithoutProse,
   process,
   toolCallLabels,
+  thinkingLabel,
 }: {
   firstThinkingText: string | null;
+  lastThinkingText: string | null;
   thinkingCount: number;
   pendingToolCallIds: ReadonlySet<string>;
   results: Map<string, AgentToolResultWithPayloads>;
   toolCalls: ToolCall[];
-  sealed: boolean;
+  liveCollapsed: boolean;
   turnActive: boolean;
   turnFailedWithoutProse: boolean;
   process: Messages['agent']['process'];
   toolCallLabels: Messages['agent']['toolCall'];
+  thinkingLabel: string;
 }): string {
   const toolCount = toolCalls.length;
 
-  if (turnActive && !sealed) return process.working;
+  // While the turn is live AND the block is collapsed, the header doubles as a
+  // live status line: whichever tool is currently running, else the latest
+  // streaming thought. Once expanded, control falls through to the static summary
+  // below and the running tool row inside the timeline carries the only spinner.
+  if (liveCollapsed) {
+    for (let i = toolCalls.length - 1; i >= 0; i -= 1) {
+      const toolCall = toolCalls[i]!;
+      const status = getToolCallStatus(toolCall.id, results.get(toolCall.id), pendingToolCallIds, turnActive);
+      if (status === 'pending') return summarizeToolCall(toolCall, status, toolCallLabels);
+    }
+    if (lastThinkingText) return previewText(lastThinkingText, 80);
+    if (thinkingCount > 0) return thinkingLabel;
+    return process.working;
+  }
 
   if (turnFailedWithoutProse) {
     if (thinkingCount > 0 && toolCount > 0) return process.interruptedAfterThinking;
@@ -119,10 +148,19 @@ export function AgentProcessBlock({
     .filter((block): block is Extract<AgentProcessSegmentBlock, { kind: 'toolCall' }> => block.kind === 'toolCall')
     .map((block) => block.toolCall);
   const firstThinkingText = firstLine(thinkingBlocks[0]?.text ?? '');
+  const lastThinkingText = lastNonEmptyThinking(thinkingBlocks);
   const liveSegment = turnActive && !sealed;
-  const defaultExpanded = liveSegment || turnFailedWithoutProse;
+  // Default collapsed in every steady state. Only a turn that failed without any
+  // prose auto-expands, so the error context is visible. A live, in-progress block
+  // stays collapsed by default — its header shows the live status — and once a
+  // user opens it, the sticky override keeps it open: it never auto-collapses when
+  // the turn seals.
+  const defaultExpanded = turnFailedWithoutProse;
   const expanded = expandState.isExpanded(id, defaultExpanded);
-  const processIcon = liveSegment
+  const liveCollapsed = liveSegment && !expanded;
+  // The spinner appears in exactly one place: the collapsed live header, or — once
+  // expanded — the running tool row inside the timeline. Never both at once.
+  const processIcon = liveCollapsed
     ? <LoaderIcon className="agent-process-spinner" size={ICON_SIZE.rowGlyph} />
     : turnFailedWithoutProse
       ? <WarningIcon size={PROCESS_STATUS_ICON_SIZE} />
@@ -141,20 +179,22 @@ export function AgentProcessBlock({
           className="agent-process-indicator"
           expanded={expanded}
           icon={processIcon}
-          statusPersistent={liveSegment}
+          statusPersistent={liveCollapsed}
         />
         <span className="agent-process-title">
           {summarizeProcess({
             firstThinkingText,
+            lastThinkingText,
             thinkingCount: thinkingBlocks.length,
             pendingToolCallIds,
             results,
             toolCalls,
             turnActive,
-            sealed,
+            liveCollapsed,
             turnFailedWithoutProse,
             process: t.agent.process,
             toolCallLabels: t.agent.toolCall,
+            thinkingLabel: t.agent.thinking.thinking,
           })}
         </span>
       </ButtonControl>

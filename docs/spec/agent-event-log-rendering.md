@@ -633,6 +633,14 @@ Rules:
 - The compact root user message remains available for pi-mono projection but is
   not rendered as a normal user bubble.
 - Long output rows are collapsed by default.
+- The thinking/tool **process block is collapsed by default** in every steady
+  state. While its turn is live, the collapsed header acts as a status line: it
+  shows the currently running tool (with status), else the latest streaming
+  thought, and carries the single activity spinner. Expanding the block moves the
+  spinner to the running tool row inside the timeline and reverts the header to
+  the static group summary (e.g. "Thought · used N tools"). A user-expanded block
+  never auto-collapses when the turn seals; only a turn that failed without any
+  prose auto-expands so the error context stays visible.
 - Large details are refs, not row payloads.
 - A run/provider failure rides on the terminal assistant message: the run marks
   it `assistant_message.failed` (error stop reason + `errorMessage`), so it
