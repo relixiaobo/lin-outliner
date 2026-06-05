@@ -5,7 +5,7 @@ import {
   BrainIcon,
   ICON_SIZE,
   LoaderIcon,
-  OptionsIcon,
+  UsedToolsIcon,
   WarningIcon,
 } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
@@ -165,7 +165,7 @@ export function AgentProcessBlock({
     : turnFailedWithoutProse
       ? <WarningIcon size={PROCESS_STATUS_ICON_SIZE} />
       : toolCalls.length > 0
-        ? <OptionsIcon size={PROCESS_STATUS_ICON_SIZE} />
+        ? <UsedToolsIcon size={PROCESS_STATUS_ICON_SIZE} />
         : <BrainIcon size={PROCESS_STATUS_ICON_SIZE} />;
 
   return (
