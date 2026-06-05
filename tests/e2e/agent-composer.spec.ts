@@ -685,8 +685,14 @@ test.describe('agent composer controls', () => {
 	    await expect(page.locator('[data-agent-file-ref]')).toHaveAttribute('aria-label', /gpt4\.png/);
 
 	    const inlineRef = page.locator('[data-agent-file-ref]');
-	    await inlineRef.hover();
 	    const inlinePreview = page.locator('[data-inline-file-preview]');
+	    await inlineRef.hover();
+	    await page.waitForTimeout(100);
+	    await page.mouse.move(20, 20);
+	    await page.waitForTimeout(500);
+	    await expect(inlinePreview).toHaveCount(0);
+
+	    await inlineRef.hover();
 	    await expect(inlinePreview).toBeVisible();
 	    await expect(inlinePreview).toContainText('gpt4.png');
 	    const [inlineRefBox, inlinePreviewBox] = await Promise.all([
@@ -697,6 +703,11 @@ test.describe('agent composer controls', () => {
 	    expect(inlinePreviewBox).toBeTruthy();
 	    expect(inlinePreviewBox!.y + inlinePreviewBox!.height).toBeLessThanOrEqual(inlineRefBox!.y - 4);
 	    expect(inlineRefBox!.y - (inlinePreviewBox!.y + inlinePreviewBox!.height)).toBeLessThan(24);
+	    await page.mouse.move(20, 20);
+	    await expect(inlinePreview).toHaveCount(0);
+
+	    await inlineRef.hover();
+	    await expect(inlinePreview).toBeVisible();
 	    await inlineRef.click();
 	    await expect.poll(async () => page.evaluate(() => {
 	      const win = window as typeof window & { __openedLocalFiles?: string[] };

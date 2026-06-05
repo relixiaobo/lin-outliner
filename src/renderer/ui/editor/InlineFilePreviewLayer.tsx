@@ -29,6 +29,7 @@ export function InlineFilePreviewLayer() {
   const t = useT();
   const [preview, setPreview] = useState<InlineFilePreviewState | null>(null);
   const activeElementRef = useRef<HTMLElement | null>(null);
+  const pendingElementRef = useRef<HTMLElement | null>(null);
   const showTimerRef = useRef<number | null>(null);
   const hideTimerRef = useRef<number | null>(null);
   const requestIdRef = useRef(0);
@@ -39,6 +40,7 @@ export function InlineFilePreviewLayer() {
         window.clearTimeout(showTimerRef.current);
         showTimerRef.current = null;
       }
+      pendingElementRef.current = null;
     }
 
     function clearHideTimer() {
@@ -66,6 +68,9 @@ export function InlineFilePreviewLayer() {
       if (activeElementRef.current === element && previewElementStillConnected(element)) return;
       clearShowTimer();
       const run = () => {
+        showTimerRef.current = null;
+        pendingElementRef.current = null;
+        if (!previewElementStillConnected(element)) return;
         const file = fileFromElement(element);
         if (!file) return;
         const anchorRect = element.getBoundingClientRect();
@@ -100,6 +105,7 @@ export function InlineFilePreviewLayer() {
         run();
         return;
       }
+      pendingElementRef.current = element;
       showTimerRef.current = window.setTimeout(run, SHOW_DELAY_MS);
     }
 
@@ -113,6 +119,7 @@ export function InlineFilePreviewLayer() {
       const element = inlineFileElementFromTarget(event.target);
       if (!element) return;
       if (event.relatedTarget instanceof Node && element.contains(event.relatedTarget)) return;
+      if (pendingElementRef.current === element) clearShowTimer();
       if (activeElementRef.current === element) scheduleHide();
     }
 
@@ -128,6 +135,12 @@ export function InlineFilePreviewLayer() {
       if (activeElementRef.current === element) scheduleHide();
     }
 
+    function handlePointerDown(event: PointerEvent) {
+      const element = inlineFileElementFromTarget(event.target);
+      if (element === activeElementRef.current) return;
+      hidePreview();
+    }
+
     function handleClick(event: MouseEvent) {
       const element = inlineFileElementFromTarget(event.target);
       if (!element) return;
@@ -136,6 +149,11 @@ export function InlineFilePreviewLayer() {
       event.preventDefault();
       event.stopPropagation();
       void window.lin.openLocalFile({ path: file.path });
+      hidePreview();
+    }
+
+    function handleKeyboardOrInput() {
+      hidePreview();
     }
 
     function updateAnchorRect() {
@@ -151,8 +169,11 @@ export function InlineFilePreviewLayer() {
 
     document.addEventListener('pointerover', handlePointerOver);
     document.addEventListener('pointerout', handlePointerOut);
+    document.addEventListener('pointerdown', handlePointerDown, true);
     document.addEventListener('focusin', handleFocusIn);
     document.addEventListener('focusout', handleFocusOut);
+    document.addEventListener('keydown', handleKeyboardOrInput, true);
+    document.addEventListener('input', handleKeyboardOrInput, true);
     document.addEventListener('click', handleClick, true);
     window.addEventListener('scroll', updateAnchorRect, true);
     window.addEventListener('resize', updateAnchorRect);
@@ -161,8 +182,11 @@ export function InlineFilePreviewLayer() {
       clearHideTimer();
       document.removeEventListener('pointerover', handlePointerOver);
       document.removeEventListener('pointerout', handlePointerOut);
+      document.removeEventListener('pointerdown', handlePointerDown, true);
       document.removeEventListener('focusin', handleFocusIn);
       document.removeEventListener('focusout', handleFocusOut);
+      document.removeEventListener('keydown', handleKeyboardOrInput, true);
+      document.removeEventListener('input', handleKeyboardOrInput, true);
       document.removeEventListener('click', handleClick, true);
       window.removeEventListener('scroll', updateAnchorRect, true);
       window.removeEventListener('resize', updateAnchorRect);
