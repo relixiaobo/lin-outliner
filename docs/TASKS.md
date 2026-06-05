@@ -120,6 +120,17 @@ capture-pipeline tracks below stay separate (orthogonal to the surface).
   `[[agent-secrets-plaintext-decision]]` rationale.
 - **agent-image-awareness** (P2, *no plan file*) — surface `image` nodes in the
   agent projection so the agent can read/insert them.
+- **anthropic-auth-clarity** (P3, *no plan file*) — Anthropic is the only provider
+  carrying BOTH an OAuth login (Claude Pro/Max) and an API key on one pi-ai id
+  (`OAUTH_API_KEY_FALLBACK = {'anthropic'}` in `providerCatalog.tsx`), shown
+  OAuth-primary with a buried "use API key instead" link; `openai-codex` /
+  `github-copilot` are oauth-only, the rest api-key-only. PM picked **option B
+  (clarity, no data-model change)**: on the Anthropic row, replace the hidden toggle
+  with an explicit segmented control ("API key" | "Claude Pro/Max") up front,
+  defaulting to whichever credential is stored. Single `anthropic` credential slot
+  stays (mutually exclusive) — presentation only. Touches `ProviderConfigWindow.tsx`,
+  `ProviderOAuthForm.tsx`, i18n en/zh + `i18nCoverage`; design-system neutral tokens
+  (B3/B4), UI gate = light/dark visual. Dev drafts the build one-pager.
 - **agent-generative-ui** (P3, directional CSP/A3 gate) — Claude-style custom
   visuals in agent chat: the assistant generates interactive HTML/SVG widgets
   inline in the conversation while the tool arguments stream. See
