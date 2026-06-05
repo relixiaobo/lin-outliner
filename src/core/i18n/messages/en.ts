@@ -218,6 +218,7 @@ export const en = {
       loadingProfiles: 'Loading profiles…',
       noneFound: 'No agent definitions found.',
       toggleAgent: ({ name }: { name: string }) => `Toggle ${name}`,
+      detailAriaLabel: ({ name }: { name: string }) => `${name} profile details`,
       sourceLabel: ({ source }: { source: string }) => `Source: ${source}`,
       personaPromptLabel: 'Persona prompt (System instructions)',
       noInstructionBody: '(No instruction body)',
@@ -230,6 +231,7 @@ export const en = {
       maxTurns: 'Max Turns',
       unlimited: 'Unlimited',
       enabledTools: 'Enabled Tools',
+      profileNotFound: 'Agent profile not found.',
       selectToView: 'Select an agent profile to view details.',
     },
     footer: {

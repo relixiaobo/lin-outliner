@@ -82,12 +82,18 @@ intro-copy strategy.
 
 Keep settings pop-up selects transparent at rest, with neutral fill only on
 hover / focus / press, matching macOS' text-led pop-up rhythm. Agent Profiles
-should remain a single-column settings flow: profile list first, full-width
-detail card below. Avoid a side-by-side master/detail pane inside this Settings
-window because it creates a large empty middle field at normal window sizes.
+should remain a top-level profile list; persona details live in a drill-down child
+route reached by clicking the profile row and navigated through the same
+back/forward capsule. Avoid showing list + detail together in the category page:
+that flattens the hierarchy and creates a large competing detail surface.
 Permission decision pop-ups keep a stable width across all rows, including the
 non-allowable final rule, so the transparent chrome still scans as one aligned
 control family.
+
+Hierarchy audit: General, Permissions, and Skills are direct preference rows and
+stay inline; Providers already opens provider configuration in its own native
+window; Agent Profiles was the only Settings pane flattening a rich detail view
+into its top-level category.
 
 ## Files
 
@@ -136,7 +142,8 @@ No live file-level overlap.
 - [x] Soften inset-card chrome without weakening focus/selection states.
 - [x] Keep pop-up selects transparent at rest with hover/focus/press fill only.
 - [x] Keep Permissions decision pop-ups aligned through the non-allowable last row.
-- [x] Stack Agent Profiles list and detail in one content column.
+- [x] Move Agent Profiles persona details into a drill-down child route.
+- [x] Audit all Settings panes for flattened detail surfaces.
 - [x] Update `docs/spec/design-system.md`.
 - [x] Run `bun run typecheck` and relevant renderer tests.
 - [x] Visually verify light and dark settings panes.

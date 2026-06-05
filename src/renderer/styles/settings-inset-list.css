@@ -186,6 +186,11 @@
   padding-right: var(--space-4);
 }
 
+.settings-drilldown-chevron {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+
 /* Permission decisions include one non-allowable rule ("Spawn subagents"). Keep
    every decision pop-up the same width so the transparent-at-rest chrome aligns
    with the rows above even when the native select has fewer options. */

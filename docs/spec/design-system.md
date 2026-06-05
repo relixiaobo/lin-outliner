@@ -1197,10 +1197,11 @@ not Apple chrome. We borrow the interaction, not the chrome.
     decision width, so non-allowable rows do not collapse to a different-looking
     control; the row sublabel stays human-readable and does not expose raw rule strings),
     Agent Profiles' selectable profile list — all are `InsetRow`s. Agent Profiles
-    stays single-column inside Settings: the profile list selects
-    (`.inset-row.is-selected`), then the detail card follows below at full content
-    width and floats on the base like an inset card (`--bg-elevated`,
-    `--radius-lg`). Do not split it into a side-by-side master/detail pane.
+    is hierarchical: the category page shows the profile list only, rows carry a
+    trailing switch plus chevron, and clicking the row pushes an `agent-detail`
+    route onto the Settings history stack. The detail route uses the same toolbar
+    back/forward capsule and shows the persona card as the next level, not as flat
+    content below or beside the list.
   - **One secondary button.** Filled neutral `--fill-2`, no border
     (`.agent-settings-secondary` / `.settings-sheet-secondary`) — the native push
     button, pairing with the filled-strong primary; never a ghost outline.

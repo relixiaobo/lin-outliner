@@ -115,20 +115,31 @@ test.describe('agent settings window', () => {
     expect(scrolledLastBox!.y + scrolledLastBox!.height).toBeLessThan(contentBox!.y + contentBox!.height - 6);
   });
 
-  test('stacks agent profile list and detail in one settings column', async ({ page }) => {
+  test('opens agent profile details as a drill-down settings page', async ({ page }) => {
     const settings = await openSettings(page);
+    const back = settings.getByRole('button', { name: 'Back' });
+    const forward = settings.getByRole('button', { name: 'Forward' });
     await settings.getByRole('button', { name: 'Agent Profiles', exact: true }).click();
-    const list = settings.locator('.settings-agents-aside');
-    const detail = settings.locator('.agent-profile-detail-card');
-    await expect(list.getByRole('button', { name: 'general' })).toBeVisible();
-    await expect(detail).toBeVisible();
+    await expect(settings.locator('.settings-toolbar-title')).toHaveText('Agent Profiles');
+    await expect(settings.getByRole('list', { name: 'Agent profiles' })).toBeVisible();
+    await expect(settings.locator('.agent-profile-detail-card')).toHaveCount(0);
 
-    const listBox = await list.boundingBox();
-    const detailBox = await detail.boundingBox();
-    expect(listBox).not.toBeNull();
-    expect(detailBox).not.toBeNull();
-    expect(detailBox!.y).toBeGreaterThan(listBox!.y + listBox!.height - 1);
-    expect(detailBox!.x).toBeCloseTo(listBox!.x, 1);
+    await settings.getByRole('button', { name: 'general', exact: true }).click();
+    await expect(settings.locator('.settings-toolbar-title')).toHaveText('general');
+    await expect(settings.locator('.agent-profile-detail-card')).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Agent profiles' })).toHaveCount(0);
+    await expect(back).toBeEnabled();
+    await expect(forward).toBeDisabled();
+
+    await back.click();
+    await expect(settings.locator('.settings-toolbar-title')).toHaveText('Agent Profiles');
+    await expect(settings.getByRole('list', { name: 'Agent profiles' })).toBeVisible();
+    await expect(settings.locator('.agent-profile-detail-card')).toHaveCount(0);
+    await expect(forward).toBeEnabled();
+
+    await forward.click();
+    await expect(settings.locator('.settings-toolbar-title')).toHaveText('general');
+    await expect(settings.locator('.agent-profile-detail-card')).toBeVisible();
   });
 
   test('groups providers by credential and reads status on each row', async ({ page }) => {

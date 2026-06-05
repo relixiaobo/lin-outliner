@@ -186,6 +186,7 @@ export const zhHans: PartialMessages = {
       loadingProfiles: '正在加载配置…',
       noneFound: '未找到任何智能体定义。',
       toggleAgent: ({ name }: { name: string }) => `切换 ${name}`,
+      detailAriaLabel: ({ name }: { name: string }) => `${name} 配置详情`,
       sourceLabel: ({ source }: { source: string }) => `来源：${source}`,
       personaPromptLabel: '角色提示词（系统指令）',
       noInstructionBody: '（无指令正文）',
@@ -198,6 +199,7 @@ export const zhHans: PartialMessages = {
       maxTurns: '最大轮次',
       unlimited: '无限制',
       enabledTools: '已启用的工具',
+      profileNotFound: '未找到智能体配置。',
       selectToView: '选择一个智能体配置以查看详情。',
     },
     footer: {

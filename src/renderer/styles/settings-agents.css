@@ -1,29 +1,9 @@
-/* Agent Profiles — a single-column settings flow. The selectable profile list is
-   the .inset-* grouped-list primitive (settings-inset-list.css), followed by a
-   full-width detail card for the selected profile. No side-by-side master/detail
-   pane here; Settings panes should read as one clean vertical column. */
-.settings-agents-split {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-6);
-  min-height: 0;
-}
+/* Agent Profiles — the category page is only the selectable profile list. Persona
+   detail is a drill-down route reached by clicking a row, so the top-level Settings
+   pane stays scannable instead of flattening list + details into one surface. */
 
-.settings-agents-aside {
-  display: flex;
-  flex-direction: column;
-  max-height: none;
-  overflow: visible;
-}
-
-.settings-agents-detail-panel {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-/* Detail surface follows the master list in the same column and floats on the flat
-   base like an inset card (--bg-elevated, --radius-lg, hairline edge). */
+/* The drill-down detail surface floats on the flat base like an inset card
+   (--bg-elevated, --radius-lg, hairline edge). */
 .agent-profile-detail-card {
   display: flex;
   flex-direction: column;
