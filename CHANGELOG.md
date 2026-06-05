@@ -1215,6 +1215,13 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Agent user-message UI cleanups (post-#130 review)** — two behavior-preserving tidies surfaced
+  during the PR #130 gate: collapsed the nested empty-state ternary in `AgentChatPanel`
+  (`!settingsLoaded ? null : hasUsableProvider ? null : X` → `!settingsLoaded || hasUsableProvider ? null : X`),
+  and keyed the collapsible user-content measure on the full `text` rather than `text.length` so an edit
+  to a different same-length message re-measures and resets the expand state. Fast-track; typecheck +
+  `test:renderer` 353/0 + agent-onboarding/agent-process e2e 8/8.
+
 - **Chrome-zone backing transition off a literal `0ms` (guard hygiene)** — `.window-chrome-zone`
   declared `transition: background-color 0ms`, whose literal `0ms` tripped the `typography-tokens`
   motion guard (durations must be tokenized; there is no zero-duration motion token). Rewritten as the
