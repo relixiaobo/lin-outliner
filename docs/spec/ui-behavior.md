@@ -40,6 +40,13 @@ keyboard or pointer change should be checked against this matrix.
   outer panel root so a single range can span body rows, field entries, and field
   value rows.
 - `expanded` controls visible children and trailing child inputs.
+- Outliner expansion is renderer-local **view state**, not document state. Each
+  root node page persists its own expanded node ids and revealed hidden-field
+  keys in local storage. Because the current renderer keeps one global
+  `expanded` set shared by every split pane, restoring a root page only merges
+  its saved expansion into the global set; it never clears rows that another pane
+  may be showing. This state is not part of core commands, undo/redo,
+  import/export, or agent-editable document content.
 - `focusOffset` preserves cursor position across remounting structural moves.
 
 ## Content Row Matrix

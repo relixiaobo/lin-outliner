@@ -199,6 +199,8 @@ replaced by the default single pane rather than booting into a rootless canvas.
 The layout does **not** include:
 
 - Sidebar visibility or navigation state.
+- Outliner row expansion state. Each root node page has renderer-local outline
+  view state, stored separately from the pane layout.
 - Agent conversation state, scroll, or input.
 - Document operation undo/redo state. Per-pane page history is navigation history
   only and must not change document history.
@@ -210,6 +212,10 @@ layout feature — that capability went away with tabs and is not replaced by pi
 The ephemeral pane layout is restored only within the same local calendar day;
 on a later day, startup ignores the stale pane roots and returns to the current
 Today node.
+When a same-day layout restores multiple outliner panes, startup replays outline
+view state for every outliner pane root. That replay belongs to the separate
+outline view-state store and merges into the shared renderer expansion set; it
+does not live in the pane layout record.
 
 ### Extensibility seam (preview, etc.)
 

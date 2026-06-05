@@ -5,6 +5,9 @@ import {
 } from '../../src/core/chromeGeometry';
 import { e2eProjection, emitDocumentEvent, ids, openMockedApp, row } from './outlinerMock';
 
+const WORKSPACE_LAYOUT_STORAGE_KEY = 'lin-outliner:workspace-layout:v2';
+const OUTLINE_VIEW_STATE_STORAGE_KEY = 'lin-outliner:outline-view-state:v1';
+
 test.describe('workspace layout resizing', () => {
   test.beforeEach(async ({ page }) => {
     await openMockedApp(page);
@@ -502,6 +505,105 @@ test.describe('workspace layout resizing', () => {
     await page.locator('.outline-panel-surface.active-panel')
       .getByRole('button', { name: 'Close panel' }).click();
     await expect(panels).toHaveCount(1);
+  });
+
+  test('outline expansion state restores by root page across reload', async ({ page }) => {
+    await page.evaluate(({ layoutStorageKey, rootId }) => {
+      const date = new Date();
+      const localDate = [
+        String(date.getFullYear()).padStart(4, '0'),
+        String(date.getMonth() + 1).padStart(2, '0'),
+        String(date.getDate()).padStart(2, '0'),
+      ].join('-');
+      window.localStorage.setItem(layoutStorageKey, JSON.stringify({
+        version: 2,
+        localDate,
+        activePanelId: 'panel-root',
+        panels: [{
+          id: 'panel-root',
+          type: 'outliner',
+          rootId,
+          size: 1,
+          pageBackStack: [],
+          pageForwardStack: [],
+        }],
+      }));
+    }, { layoutStorageKey: WORKSPACE_LAYOUT_STORAGE_KEY, rootId: ids.root });
+    await page.reload();
+    await expect(page.locator('.panel-title-editor').first()).toContainText('Root');
+    await expect(row(page, ids.daily)).toBeVisible();
+    await expect(row(page, ids.today)).toHaveCount(0);
+
+    await row(page, ids.daily).locator(':scope > .row .row-chevron-button').first().click({ force: true });
+    await expect(row(page, ids.today)).toBeVisible();
+    await expect.poll(async () => page.evaluate(() => (
+      window.localStorage.getItem('lin-outliner:outline-view-state:v1') ?? ''
+    ))).toContain(ids.daily);
+
+    await page.reload();
+
+    await expect(page.locator('.panel-title-editor').first()).toContainText('Root');
+    await expect(row(page, ids.today)).toBeVisible();
+    await expect(row(page, ids.daily)).toHaveClass(/expanded/);
+  });
+
+  test('outline expansion state restores every persisted outliner pane', async ({ page }) => {
+    await page.evaluate(({ ids, layoutStorageKey, outlineStorageKey }) => {
+      const date = new Date();
+      const localDate = [
+        String(date.getFullYear()).padStart(4, '0'),
+        String(date.getMonth() + 1).padStart(2, '0'),
+        String(date.getDate()).padStart(2, '0'),
+      ].join('-');
+      window.localStorage.setItem(layoutStorageKey, JSON.stringify({
+        version: 2,
+        localDate,
+        activePanelId: 'panel-daily',
+        panels: [{
+          id: 'panel-root',
+          type: 'outliner',
+          rootId: ids.root,
+          size: 0.5,
+          pageBackStack: [],
+          pageForwardStack: [],
+        }, {
+          id: 'panel-daily',
+          type: 'outliner',
+          rootId: ids.daily,
+          size: 0.5,
+          pageBackStack: [],
+          pageForwardStack: [],
+        }],
+      }));
+      window.localStorage.setItem(outlineStorageKey, JSON.stringify({
+        version: 1,
+        byRootNodeId: {
+          [ids.root]: {
+            expandedNodeIds: [ids.daily],
+            expandedHiddenFieldKeys: [],
+            updatedAt: 2,
+          },
+          [ids.daily]: {
+            expandedNodeIds: [ids.today],
+            expandedHiddenFieldKeys: [],
+            updatedAt: 1,
+          },
+        },
+      }));
+    }, {
+      ids,
+      layoutStorageKey: WORKSPACE_LAYOUT_STORAGE_KEY,
+      outlineStorageKey: OUTLINE_VIEW_STATE_STORAGE_KEY,
+    });
+
+    await page.reload();
+
+    const panels = page.locator('.outline-panel-surface');
+    await expect(panels).toHaveCount(2);
+    await expect(panels.nth(0).locator('.panel-title-editor')).toContainText('Root');
+    await expect(panels.nth(1).locator('.panel-title-editor')).toContainText('Daily Notes');
+    await expect(panels.nth(0).locator(`[data-node-id="${ids.today}"]`)).toBeVisible();
+    await expect(panels.nth(1).locator(`[data-node-id="${ids.alpha}"]`)).toBeVisible();
   });
 
   test('stale persisted pane layout falls back to Today on a new local day', async ({ page }) => {

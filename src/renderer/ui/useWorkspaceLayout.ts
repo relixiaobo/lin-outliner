@@ -138,6 +138,11 @@ interface UseWorkspaceLayoutOptions {
   focusNode: (nodeId: NodeId | null) => void;
 }
 
+interface InitializedWorkspaceLayout {
+  focusRootId: NodeId;
+  outlinerRootIds: NodeId[];
+}
+
 export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
   const [panels, setPanels] = useState<WorkspacePanelState[]>([]);
   const [activePanelId, setActivePanelId] = useState<string | null>(null);
@@ -157,16 +162,22 @@ export function useWorkspaceLayout({ focusNode }: UseWorkspaceLayoutOptions) {
   const ambientOutlinerPanel = activeOutlinerPanel ?? panels.find(isOutlinerPanel) ?? null;
   const rootId = ambientOutlinerPanel?.rootId ?? null;
 
-  const initializeLayout = useCallback((initial: DocumentProjection) => {
+  const initializeLayout = useCallback((initial: DocumentProjection): InitializedWorkspaceLayout => {
     const layout = loadPersistedLayout(initial) ?? defaultLayout(initial);
     setPanels(layout.panels);
     setActivePanelId(layout.activePanelId);
     initializedRef.current = true;
     const activeLayoutPanel = layout.panels.find((panel) => panel.id === layout.activePanelId)
       ?? layout.panels[0];
-    return isOutlinerPanel(activeLayoutPanel)
+    const focusRootId = isOutlinerPanel(activeLayoutPanel)
       ? activeLayoutPanel.rootId
       : layout.panels.find(isOutlinerPanel)?.rootId ?? initial.todayId;
+    return {
+      focusRootId,
+      outlinerRootIds: layout.panels
+        .filter(isOutlinerPanel)
+        .map((panel) => panel.rootId),
+    };
   }, []);
 
   useEffect(() => {

@@ -30,6 +30,10 @@ import { useSelectionDismissal } from './useSelectionDismissal';
 import { useWorkspaceKeyboard } from './useWorkspaceKeyboard';
 import { useWorkspaceLayout } from './useWorkspaceLayout';
 import { useT } from '../i18n/I18nProvider';
+import {
+  persistOutlineViewState,
+  restoreOutlineExpansionForRoot,
+} from '../state/outlineViewState';
 
 export function App() {
   const t = useT();
@@ -46,6 +50,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [trigger, setTrigger] = useState<TriggerState>(null);
   const [dragId, setDragId] = useState<NodeId | null>(null);
+  const indexRef = useRef(index);
   const pendingLocalUserCommandsRef = useRef(0);
   const ignoreLocalUserEventsThroughRef = useRef(0);
   const commandRunnerLifecycle = useMemo(() => ({
@@ -109,19 +114,51 @@ export function App() {
   useDragSelection({ rootId, index, ui, setUi });
 
   useEffect(() => {
+    indexRef.current = index;
+  }, [index]);
+
+  useEffect(() => {
     void run(async () => {
       const initial = await api.initWorkspace();
-      const initialFocusId = initializeLayout(initial.projection);
+      const initialLayout = initializeLayout(initial.projection);
+      const initialById = new Map(initial.projection.nodes.map((node) => [node.id, node]));
       setUi((prev) => {
-        const next = requestFocusState(prev, rowFocusTarget(initialFocusId, null, null), cursorEnd());
+        const next = requestFocusState(prev, rowFocusTarget(initialLayout.focusRootId, null, null), cursorEnd());
+        let restored = {
+          expanded: new Set([...next.expanded, initial.projection.libraryId]),
+          expandedHiddenFields: new Set(next.expandedHiddenFields),
+        };
+        for (const rootNodeId of initialLayout.outlinerRootIds) {
+          restored = restoreOutlineExpansionForRoot(
+            rootNodeId,
+            initialById,
+            restored.expanded,
+            restored.expandedHiddenFields,
+          );
+        }
         return {
           ...next,
-          expanded: new Set([...next.expanded, initial.projection.libraryId]),
+          expanded: restored.expanded,
+          expandedHiddenFields: restored.expandedHiddenFields,
         };
       });
       return initial;
     });
   }, [initializeLayout, run, setUi]);
+
+  useEffect(() => {
+    const currentIndex = indexRef.current;
+    if (!currentIndex) return;
+    const persistedRootIds = new Set<NodeId>();
+    for (const panel of panels) {
+      if (panel.type !== 'outliner' || persistedRootIds.has(panel.rootId)) continue;
+      persistedRootIds.add(panel.rootId);
+      persistOutlineViewState(panel.rootId, currentIndex.byId, {
+        expanded: ui.expanded,
+        expandedHiddenFields: ui.expandedHiddenFields,
+      });
+    }
+  }, [panels, ui.expanded, ui.expandedHiddenFields]);
 
   useEffect(() => {
     const unlisten = window.lin?.onDocumentEvent((event) => {
@@ -151,23 +188,36 @@ export function App() {
     document.documentElement.classList.toggle('window-inactive', !active);
   }) ?? undefined, []);
 
-  const expandNodeInOutliner = useCallback((nodeId: NodeId) => {
+  const restoreNodeInOutliner = useCallback((nodeId: NodeId) => {
     setUi((prev) => {
-      const expanded = new Set(prev.expanded);
-      expanded.add(nodeId);
-      return { ...prev, expanded };
+      if (!index) {
+        const expanded = new Set(prev.expanded);
+        expanded.add(nodeId);
+        return { ...prev, expanded };
+      }
+      const restored = restoreOutlineExpansionForRoot(
+        nodeId,
+        index.byId,
+        prev.expanded,
+        prev.expandedHiddenFields,
+      );
+      return {
+        ...prev,
+        expanded: restored.expanded,
+        expandedHiddenFields: restored.expandedHiddenFields,
+      };
     });
-  }, [setUi]);
+  }, [index, setUi]);
 
   const navigateRoot = useCallback((nodeId: NodeId, options?: NavigateRootOptions) => {
     if (options?.newPane) {
       openPanel(nodeId);
-      expandNodeInOutliner(nodeId);
+      restoreNodeInOutliner(nodeId);
       return;
     }
     setActivePanelRoot(nodeId, options);
-    expandNodeInOutliner(nodeId);
-  }, [expandNodeInOutliner, openPanel, setActivePanelRoot]);
+    restoreNodeInOutliner(nodeId);
+  }, [openPanel, restoreNodeInOutliner, setActivePanelRoot]);
 
   const ensureTodayNode = useCallback(async (): Promise<NodeId | null> => {
     const today = parseIsoLocalDate(todayIsoLocalDate());
@@ -196,22 +246,22 @@ export function App() {
   const navigatePanelRoot = useCallback((panelId: string, nodeId: NodeId, options?: NavigateRootOptions) => {
     if (options?.newPane) {
       openPanel(nodeId);
-      expandNodeInOutliner(nodeId);
+      restoreNodeInOutliner(nodeId);
       return;
     }
     setPanelRoot(panelId, nodeId, options);
-    expandNodeInOutliner(nodeId);
-  }, [expandNodeInOutliner, openPanel, setPanelRoot]);
+    restoreNodeInOutliner(nodeId);
+  }, [openPanel, restoreNodeInOutliner, setPanelRoot]);
 
   const navigatePanelBack = useCallback((panelId: string) => {
     const nodeId = goPanelBack(panelId);
-    if (nodeId) expandNodeInOutliner(nodeId);
-  }, [expandNodeInOutliner, goPanelBack]);
+    if (nodeId) restoreNodeInOutliner(nodeId);
+  }, [goPanelBack, restoreNodeInOutliner]);
 
   const navigatePanelForward = useCallback((panelId: string) => {
     const nodeId = goPanelForward(panelId);
-    if (nodeId) expandNodeInOutliner(nodeId);
-  }, [expandNodeInOutliner, goPanelForward]);
+    if (nodeId) restoreNodeInOutliner(nodeId);
+  }, [goPanelForward, restoreNodeInOutliner]);
 
   const navigateActivePanelBack = useCallback(() => {
     if (!pageHistoryPanel) return;
@@ -225,8 +275,8 @@ export function App() {
 
   const openRootInPanel = useCallback((nodeId: NodeId) => {
     openPanel(nodeId);
-    expandNodeInOutliner(nodeId);
-  }, [expandNodeInOutliner, openPanel]);
+    restoreNodeInOutliner(nodeId);
+  }, [openPanel, restoreNodeInOutliner]);
 
   const openNodeReferenceFromAgent = useCallback((nodeId: NodeId, options?: NavigateRootOptions) => {
     navigateRoot(nodeId, { focus: false, newPane: options?.newPane });
