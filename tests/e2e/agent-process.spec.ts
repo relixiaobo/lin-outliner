@@ -331,7 +331,7 @@ test.describe('agent process disclosure', () => {
 
     const ref = page.locator('.agent-message-row.assistant [data-inline-ref-kind="local-file"]').first();
     await expect(ref).toHaveText('diagram.png');
-    await expect(ref.locator('.inline-ref-file-icon')).toHaveAttribute('data-file-icon-kind', 'text');
+    await expect(ref.locator('.inline-ref-file-icon')).toHaveAttribute('data-file-icon-kind', 'image');
     await ref.hover();
 
     const preview = page.locator('[data-inline-file-preview]');
@@ -345,6 +345,16 @@ test.describe('agent process disclosure', () => {
       const win = window as typeof window & { __openedLocalFiles?: string[] };
       return win.__openedLocalFiles ?? [];
     })).toEqual(['/Users/test/Pictures/diagram.png']);
+
+    await page.evaluate(() => {
+      const win = window as typeof window & {
+        lin?: { openLocalFile?: (options: { path: string }) => Promise<{ opened: boolean }> };
+      };
+      if (win.lin) delete win.lin.openLocalFile;
+      window.location.hash = '';
+    });
+    await ref.click();
+    await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('');
   });
 
   test('keeps completed process collapsed and expands thinking and tool details on demand', async ({ page }) => {

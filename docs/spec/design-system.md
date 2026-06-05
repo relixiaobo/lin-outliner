@@ -979,11 +979,11 @@ category history; see "Settings window".)
   (`.inline-ref-file-icon`, see `inlineFileIcon.ts`) painted with `currentColor`,
   so it themes automatically (B1/B8). The icon and its filename never split across
   a line break: the mention is `white-space: nowrap` and the name re-opens
-	  wrapping inside its own `.inline-ref-file-name` span, so the icon always travels
-	  with the start of the (still-wrapping) name and is never orphaned at a line end.
-	  Render sites never invent a second file-chip species (the retired
-	  `.agent-composer-inline-file` / `.agent-message-inline-file` were exactly that —
-	  a parallel `inline-flex` chip with a full-colour macOS icon).
+  wrapping inside its own `.inline-ref-file-name` span, so the icon always travels
+  with the start of the (still-wrapping) name and is never orphaned at a line end.
+  Render sites never invent a second file-chip species (the retired
+  `.agent-composer-inline-file` / `.agent-message-inline-file` were exactly that —
+  a parallel `inline-flex` chip with a full-colour macOS icon).
 - Local-file inline refs carry shared `data-inline-ref-*` metadata. A global
   `InlineFilePreviewLayer` listens for hover/focus on
   `[data-inline-ref-kind="local-file"]` and shows one neutral popover: images use
@@ -995,10 +995,13 @@ category history; see "Settings window".)
   surface and uses the elevated popover material + level-1 shadow with
   reduced-transparency fallback.
 - Clicking a local-file inline ref opens the file or folder through the preload
-  bridge and main-process `shell.openPath` after absolute-path/stat validation.
+  bridge and main-process `shell.openPath` only after the main process
+  canonicalizes the path under the non-root agent local file root, stats it as a
+  regular file/folder, and rejects executable or bundle-like open targets.
   Renderer code must not navigate to `file://`, call `openExternal` for file
-  paths, or read local bytes directly. Composer local-file atoms use the same
-  click-open behavior as other render sites.
+  paths, or read local bytes directly. Composer local-file atoms expose the same
+  preview metadata, but click handling stays with the editor so draft text
+  remains selectable and editable.
 
 ### Fields And Definition Configuration
 

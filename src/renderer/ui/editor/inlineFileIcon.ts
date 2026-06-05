@@ -34,11 +34,13 @@ export interface InlineFileIconDescriptor {
   name?: string;
 }
 
+const IMAGE_FILE_ICON_EXTENSIONS = new Set(['avif', 'bmp', 'gif', 'heic', 'jpeg', 'jpg', 'png', 'svg', 'webp']);
+
 export function inlineFileIconKind(file: InlineFileIconDescriptor): InlineFileIconKind {
   if (file.entryKind === 'directory' || file.mimeType === 'inode/directory') return 'folder';
   const mimeType = (file.mimeType ?? '').toLowerCase();
   const extension = (file.name ?? '').match(/\.([a-z0-9]{1,8})$/iu)?.[1]?.toLowerCase() ?? '';
-  if (mimeType.startsWith('image/')) return 'image';
+  if (mimeType.startsWith('image/') || IMAGE_FILE_ICON_EXTENSIONS.has(extension)) return 'image';
   if (mimeType.startsWith('audio/')) return 'audio';
   if (mimeType.startsWith('video/')) return 'video';
   if (mimeType.includes('presentation') || mimeType.includes('powerpoint') || ['ppt', 'pptx', 'key', 'keynote', 'odp'].includes(extension)) {

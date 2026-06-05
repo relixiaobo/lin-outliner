@@ -161,7 +161,7 @@ function displayContentFromUser(content: UserMessage['content']): UserDisplayCon
   }
 
   return {
-    text: removeImageAttachmentSummaries(textBlocks.join('\n\n')),
+    text: normalizeUserMessageText(textBlocks.join('\n\n')),
     attachments,
     images,
   };
@@ -184,7 +184,7 @@ function formatBytes(bytes: number): string {
   return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
 }
 
-function removeImageAttachmentSummaries(text: string): string {
+function normalizeUserMessageText(text: string): string {
   return text
     .replace(/[ \t]+\n/gu, '\n')
     .replace(/\n[ \t]+/gu, '\n')

@@ -144,15 +144,27 @@ export function InlineFilePreviewLayer() {
     function handleClick(event: MouseEvent) {
       const element = inlineFileElementFromTarget(event.target);
       if (!element) return;
-      const file = fileFromElement(element);
-      if (!file?.path || !window.lin?.openLocalFile) return;
+      if (isEditableInlineFileElement(element)) {
+        hidePreview();
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
+      const file = fileFromElement(element);
+      if (!file?.path || !window.lin?.openLocalFile) {
+        hidePreview();
+        return;
+      }
       void window.lin.openLocalFile({ path: file.path });
       hidePreview();
     }
 
-    function handleKeyboardOrInput() {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (isPreviewPreservingKey(event)) return;
+      hidePreview();
+    }
+
+    function handleInput() {
       hidePreview();
     }
 
@@ -172,21 +184,24 @@ export function InlineFilePreviewLayer() {
     document.addEventListener('pointerdown', handlePointerDown, true);
     document.addEventListener('focusin', handleFocusIn);
     document.addEventListener('focusout', handleFocusOut);
-    document.addEventListener('keydown', handleKeyboardOrInput, true);
-    document.addEventListener('input', handleKeyboardOrInput, true);
+    document.addEventListener('keydown', handleKeyDown, true);
+    document.addEventListener('input', handleInput, true);
     document.addEventListener('click', handleClick, true);
     window.addEventListener('scroll', updateAnchorRect, true);
     window.addEventListener('resize', updateAnchorRect);
     return () => {
       clearShowTimer();
       clearHideTimer();
+      requestIdRef.current += 1;
+      activeElementRef.current = null;
+      pendingElementRef.current = null;
       document.removeEventListener('pointerover', handlePointerOver);
       document.removeEventListener('pointerout', handlePointerOut);
       document.removeEventListener('pointerdown', handlePointerDown, true);
       document.removeEventListener('focusin', handleFocusIn);
       document.removeEventListener('focusout', handleFocusOut);
-      document.removeEventListener('keydown', handleKeyboardOrInput, true);
-      document.removeEventListener('input', handleKeyboardOrInput, true);
+      document.removeEventListener('keydown', handleKeyDown, true);
+      document.removeEventListener('input', handleInput, true);
       document.removeEventListener('click', handleClick, true);
       window.removeEventListener('scroll', updateAnchorRect, true);
       window.removeEventListener('resize', updateAnchorRect);
@@ -248,6 +263,31 @@ function FilePreviewIcon({ file }: { file: InlineFilePreviewFile }) {
 function inlineFileElementFromTarget(target: EventTarget | null): HTMLElement | null {
   if (!(target instanceof Element)) return null;
   return target.closest<HTMLElement>('[data-inline-ref-kind="local-file"]');
+}
+
+function isEditableInlineFileElement(element: HTMLElement): boolean {
+  return Boolean(element.closest('.ProseMirror, [contenteditable="true"], .agent-composer-editor'));
+}
+
+function isPreviewPreservingKey(event: KeyboardEvent): boolean {
+  if (event.key === 'Escape') return false;
+  if (event.metaKey || event.ctrlKey || event.altKey) return true;
+  return [
+    'Alt',
+    'ArrowDown',
+    'ArrowLeft',
+    'ArrowRight',
+    'ArrowUp',
+    'CapsLock',
+    'Control',
+    'End',
+    'Home',
+    'Meta',
+    'PageDown',
+    'PageUp',
+    'Shift',
+    'Tab',
+  ].includes(event.key);
 }
 
 function previewElementStillConnected(element: HTMLElement): boolean {

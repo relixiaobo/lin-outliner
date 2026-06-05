@@ -8,6 +8,7 @@ describe('inlineFileIconKind', () => {
     expect(inlineFileIconKind({ entryKind: 'directory' })).toBe('folder');
     expect(inlineFileIconKind({ mimeType: 'inode/directory' })).toBe('folder');
     expect(inlineFileIconKind({ mimeType: 'image/png', name: 'shot.png' })).toBe('image');
+    expect(inlineFileIconKind({ mimeType: 'application/octet-stream', name: 'diagram.png' })).toBe('image');
     expect(inlineFileIconKind({ mimeType: 'audio/mpeg', name: 'song.mp3' })).toBe('audio');
     expect(inlineFileIconKind({ name: 'sheet.csv' })).toBe('spreadsheet');
     expect(inlineFileIconKind({ name: 'main.ts' })).toBe('code');
