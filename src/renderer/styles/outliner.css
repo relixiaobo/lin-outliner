@@ -135,8 +135,11 @@
   box-shadow: var(--outline-muted);
 }
 
+/* Selected swatch: a strong ink ring with a surface gap so the pick is obvious
+   in both themes. The old --border-emphasis (rgb(ink/0.18)) border was too faint
+   to read against a coloured swatch, especially in dark mode. */
 .definition-color-swatch.selected {
-  border-color: var(--border-emphasis);
+  box-shadow: 0 0 0 2px var(--panel-bg), 0 0 0 3.5px var(--text-primary);
 }
 
 .definition-color-swatch:focus-visible {
