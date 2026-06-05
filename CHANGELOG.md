@@ -1357,7 +1357,14 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   → tail; compact at segment boundaries, never slide). Validated against the real runtime: pi-agent-core is
   stateless transcript-replay driven by two seams (`deriveRuntimePiMessages` read / `handlePiAgentEvent`
   write), so the whole structure lives above the engine unchanged. `agent-program` F2/F3/F5/F6, the event
-  taxonomy, and the consolidated protocol-surface list were updated to match.
+  taxonomy, and the consolidated protocol-surface list were updated to match. Four foundational decisions
+  were then **PM-ratified (2026-06-05)**: **canonical DM + user-creatable Channels** (the session list
+  becomes the Channel list; the DM is the always-on continuous thread); **split-now + mixed-resolution
+  replay** (execution incl. `tool_result` lives only in the run log; recent turns join the run log, old
+  segments render as compaction summaries — the agent stops re-seeing old tool outputs verbatim);
+  **memory = one global pool with pure-relevance retrieval** (no per-workspace partition; visible/edit/forget
+  is the bleed guard); **memory writes via a privileged, permission-exempt `agent-memory/` path** (serialized,
+  not a dedicated tool).
 
 - **Refresh stale workspace-layout e2e guards to floating-rails geometry (PR #135)** — three assertions in
   `workspace-layout.spec.ts` still encoded the pre-#57 sidebar/divider shape and failed on current main:

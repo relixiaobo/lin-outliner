@@ -46,10 +46,13 @@ dev build one-pager first). The agent P1s (`agent-conversation-model`,
 `agent-conversation-model` §Data structure (one log engine · `session`→`{conversation,
 run}` · `Principal`/`members`, no stored `kind` · run anchored to one conversation ·
 distillation ladder · context cache-discipline invariant), with `agent-program`
-F2/F3/F5/F6 + the event taxonomy + protocol-surface list updated to match. **Still
-pending PM ratification before M0 (the interface-first foundation PRs) starts** — and a
-few needs-PM decisions remain (history-replay fidelity, doc snapshot+delta, group
-default-`addressedTo`, canonical-DM vs session-list UX); escalate before code.
+F2/F3/F5/F6 + the event taxonomy + protocol-surface list updated to match. **Four
+foundational decisions PM-ratified (2026-06-05):** canonical DM + user-creatable Channels ·
+split-now + mixed-resolution replay (execution incl. `tool_result` in the run log) · memory
+= one global pool, pure-relevance · memory writes via a privileged `agent-memory/` path.
+**Still pending PM ratification of the overall program before M0 (the interface-first
+foundation PRs) starts**; remaining needs-PM decisions are lower-priority (doc snapshot+delta,
+group default-`addressedTo` (M3), who-configures-whom (M3)). Escalate before code.
 
 ### Command surface & capture
 
