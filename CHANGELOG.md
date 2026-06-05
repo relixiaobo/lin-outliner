@@ -12,6 +12,24 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Inline local-file references: hover preview + click-to-open (PR #132)** — agent chat messages can
+  now carry `[[file:name^/abs/path]]` references that render as an inline chip (file icon + name); hovering
+  shows a preview popover (native icon / image thumbnail, type, size, path, modified date) and clicking
+  opens the file with the OS default app. The capability lives entirely in the native host: both new IPC
+  handlers (`lin:preview-local-file-reference`, `lin:open-local-file`) re-validate the renderer-supplied
+  path through `resolveTrustedLocalFileReference` — `realpath` on **both** the candidate and each allowed
+  root (symlink-escape safe), confinement to the agent local root via `isPathInside`, filesystem-root
+  rejected, and `\0`/relative/non-string rejected — so the renderer's DOM attributes are never trusted.
+  Open is additionally gated by `isSafeLocalFileOpenTarget`: an executable-bit check plus a denylist of
+  executables / installers / app + automation bundles **and** location/shortcut files
+  (`.fileloc`/`.inetloc`/`.url`/`.webloc`/`.desktop`, `.scptd`/`.action`/`.wflow`/`.shortcut`) that would
+  otherwise let a click escape the root by indirection. Opening requires a real user click (preview never
+  opens; previews fire one-at-a-time on hover with a 450ms delay); references render as `#`-fragment
+  anchors so they never trigger navigation. Gate: typecheck + `test:core` 609/0 + `test:renderer` 354/0 +
+  3-angle review (security / renderer-correctness / cross-cutting) + light/dark visual verification; the
+  initial path-confinement hardening shipped on the branch, and the location-file denylist gap found at
+  the gate was fixed + regression-tested before merge. ([#132](https://github.com/relixiaobo/lin-outliner/pull/132))
+
 - **Outliner expansion survives reload (renderer-local view state) (PR #124)** — each root-node page
   now remembers its expanded rows and revealed hidden-field keys across reload / reopen, instead of
   collapsing back on every reload. A new renderer-local store (`outlineViewState.ts`) persists, per root

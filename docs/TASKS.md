@@ -249,6 +249,17 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **inline-file-hover-preview** (codex, PR #132) — agent chat messages render `[[file:name^/abs/path]]`
+  as an inline chip with a hover preview popover (icon/thumbnail, type, size, path, modified) and
+  click-to-open via the OS default app. Capability is native-host-owned: both IPC handlers re-validate the
+  path through `resolveTrustedLocalFileReference` (realpath on candidate + roots, root confinement,
+  symlink-escape/filesystem-root/`\0` rejected) so the renderer is never trusted; open is gated by an
+  exec-bit check + extension denylist. Re-reviewed after the prior NO-GO: the arbitrary-path `shell.openPath`
+  RCE was fixed on the branch; the gate's 3-angle review found a residual denylist gap (location/shortcut
+  files `.fileloc`/`.inetloc`/`.url`/`.desktop` + script bundles escaping the root by indirection), which
+  the main agent fixed + regression-tested before merge. Gate: typecheck + `test:core` 609/0 +
+  `test:renderer` 354/0 + light/dark visual verification.
+
 - **sidebar-tag-visual-fixes** (cc-2, PR #133) — three sidebar/tag visual fixes. The workspace-tree
   system rows under Root regained their per-type icons (Daily Notes / Library / Schema / Saved searches /
   Trash) via a new `systemIconForNode` map in `Sidebar.tsx`, reversing #30's removal (PM-ratified); the
