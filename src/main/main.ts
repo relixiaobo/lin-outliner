@@ -86,6 +86,17 @@ if (process.env.ELECTRON_USER_DATA_DIR) {
   app.setPath('userData', join(app.getPath('home'), '.lin-outliner-dev'));
 }
 
+// Unsigned local/dev builds (`mac.identity: null`) can't present a stable code
+// signature to the macOS Keychain, so Chromium's os_crypt (cookie / network-state
+// encryption) re-prompts for the keychain password on EVERY launch — independent
+// of our own secret storage (the app's keychain use was already removed in #115).
+// Use the mock keychain so os_crypt never touches the real Keychain: no per-launch
+// password prompt. This trades keychain-derived cookie encryption for a static key
+// — acceptable here (local single-user app; agent keys are already local 0600 JSON,
+// see agentSettings). Revisit when we ship a Developer ID-signed build. Must run
+// before the app `ready` event.
+app.commandLine.appendSwitch('use-mock-keychain');
+
 // Must run before the app `ready` event so the renderer can load assets with
 // regular <img>/<video> tags via `asset://<id>`.
 protocol.registerSchemesAsPrivileged([

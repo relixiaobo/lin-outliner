@@ -912,6 +912,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Startup: no more per-launch macOS keychain password prompt** — the unsigned local build
+  (`mac.identity: null`) can't present a stable code signature to the macOS Keychain, so Chromium's
+  `os_crypt` (cookie / network-state encryption) re-prompted for the keychain password on *every*
+  launch — independent of the app's own secret storage (that keychain use was already removed in #115).
+  `main.ts` now sets `app.commandLine.appendSwitch('use-mock-keychain')` before `ready`, so `os_crypt`
+  never touches the real Keychain. Trade-off: cookie/network-state encryption uses a static key instead
+  of a keychain-derived one — acceptable for a local single-user app whose agent keys are already local
+  `0600` JSON (the deliberate #115 posture). Revisit when a Developer ID-signed build ships. Fast-track,
+  PM-ratified.
+
 - **Outliner: Today navigation, same-day pane restore, and batch drag/drop (PR #123)** — a cluster of
   navigation and drag fixes found in local use. **Today** now resolves/creates the current *local-date*
   node before opening, instead of trusting a possibly-stale renderer `projection.todayId`, so crossing
