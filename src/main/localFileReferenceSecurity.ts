@@ -3,18 +3,37 @@ import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { isPathInside } from './agentAttachmentMaterialization';
 
+// A denylist is inherently incomplete against the open-ended set of types macOS
+// (and other OSes) will auto-run or redirect through; an allowlist of inert
+// document/media types would be stronger, but that is a product trade-off (it
+// would block legitimate file types). Until then, block the known-dangerous
+// classes:
+//   - executables / installers / app + automation bundles, and
+//   - "location" / shortcut files that resolve to an arbitrary URL or path and
+//     would let a click on an in-root reference escape the trusted root entirely
+//     (e.g. a .fileloc pointing at /Applications/...; .webloc/.inetloc → URLs).
+// The executable-bit check below does NOT catch the location files (they are
+// plain, non-executable plists), so they must be denied here by extension.
 const BLOCKED_OPEN_EXTENSIONS = new Set([
+  '.action',
   '.app',
   '.applescript',
   '.command',
+  '.desktop',
   '.dmg',
+  '.fileloc',
+  '.inetloc',
   '.jar',
   '.mpkg',
   '.pkg',
   '.scpt',
+  '.scptd',
+  '.shortcut',
   '.terminal',
   '.tool',
+  '.url',
   '.webloc',
+  '.wflow',
   '.workflow',
 ]);
 

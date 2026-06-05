@@ -79,6 +79,30 @@ describe('local file reference security', () => {
     expect(appBundleRef && isSafeLocalFileOpenTarget(appBundleRef)).toBe(false);
   });
 
+  test('blocks location/shortcut files that resolve outside the trusted root', async () => {
+    // These are plain, non-executable files that live INSIDE the root (so path
+    // confinement passes), but shell.openPath would follow their embedded
+    // URL/bookmark to an arbitrary target outside the root. They must be denied
+    // by extension since the executable-bit check cannot catch them.
+    const root = await mkdtempRoot('lin-local-file-root-');
+    const locationExtensions = ['.fileloc', '.inetloc', '.url', '.webloc', '.desktop'];
+    for (const extension of locationExtensions) {
+      const filePath = path.join(root, `redirect${extension}`);
+      await writeFile(filePath, 'redirect');
+      const reference = await resolveTrustedLocalFileReference(filePath, [root]);
+      expect(reference?.entryKind).toBe('file');
+      expect(reference && isSafeLocalFileOpenTarget(reference)).toBe(false);
+    }
+
+    // Script/automation bundles are directories (the exec-bit check is skipped
+    // for directories), so they too must be denied by extension.
+    const scriptBundlePath = path.join(root, 'macro.scptd');
+    await mkdir(scriptBundlePath);
+    const scriptBundleRef = await resolveTrustedLocalFileReference(scriptBundlePath, [root]);
+    expect(scriptBundleRef?.entryKind).toBe('directory');
+    expect(scriptBundleRef && isSafeLocalFileOpenTarget(scriptBundleRef)).toBe(false);
+  });
+
   async function mkdtempRoot(prefix: string): Promise<string> {
     const root = await mkdtemp(path.join(tmpdir(), prefix));
     roots.push(root);
