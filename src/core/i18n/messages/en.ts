@@ -687,9 +687,8 @@ commandPalette: {
   agent: {
     // The chat panel header + conversation history menu.
     chat: {
-      // Empty conversation state: a greeting when a provider is connected, else the
+      // Empty conversation state: blank when a provider is connected, else the
       // connect-a-provider onboarding (gated on loaded provider settings).
-      emptyGreeting: 'How can I help with your outline?',
       onboardingText: 'Connect an AI provider to start.',
       onboardingCta: 'Open Settings › Providers',
       showConversations: 'Show conversations',
@@ -788,6 +787,8 @@ commandPalette: {
       editMessage: 'Edit message',
       copy: 'Copy',
       copyMessage: 'Copy message',
+      showMore: 'Show more',
+      showLess: 'Show less',
       retry: 'Retry',
       retryResponse: 'Retry response',
       regenerate: 'Regenerate',
