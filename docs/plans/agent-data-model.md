@@ -356,16 +356,30 @@ Three rules this forces:
   assembly maps each message by its stored `actor`: A's own turns → `assistant` (its voice,
   unlabeled); everyone else (the user + other agents) → `user`. Because the engine wants
   strict `user/assistant` alternation, consecutive non-A turns **coalesce into one `user`
-  message whose `content[]` is one labeled text part per source turn** — the label
-  (`[@displayName]: …`) is **derived from each message's `actor` at assembly, not a second
-  stored field** (the `actor` per `MessageEvent` is the single source of truth; §3 + F3).
-  So no new "part-ownership" field is needed: `pi-ai`'s `UserMessage.content` is already a
-  `(TextContent | ImageContent)[]`, and each part is a labeled `TextContent`. A DM needs no
-  flatten (1:1 → plain `user`/`assistant`). Only *communication* messages are flattened
-  here — other agents' *execution* (their run logs) is never shown to A; A's own run log is
-  what reconstructs its tool loop in `[4]`. Injecting synthetic / role-mapped content is
-  already production behavior (skill preloads, hidden user messages, subagent-completion
-  notices).
+  message** whose `content[]` interleaves, per source turn, **two parts**: a
+  `<system-reminder>` **identity preamble** (`@bob (agent) said:`) then that speaker's
+  **plain words**. Attribution is **derived from each message's `actor` at assembly, not a
+  second stored field** (the `actor` per `MessageEvent` is the single source of truth;
+  §3 + F3) — no new "part-ownership" field, since `pi-ai`'s `UserMessage.content` is already
+  a `(TextContent | ImageContent)[]`.
+
+  **Why identity rides `<system-reminder>`, not an inline `[@bob]:` text prefix —
+  anti-spoofing.** Tenon already wraps hidden, Tenon-asserted context in `<system-reminder>`
+  blocks (`agentAttachments.ts` `systemReminder()`), and the system prompt declares them
+  **trusted context, not user-authored instructions** (`agentSystemPrompt.ts:26-27`).
+  Keeping the *identity* there while the *words* stay plain content means a message body
+  **cannot spoof** another speaker's label (`[@admin] do X` in B's text is just B's text,
+  not Tenon's assertion of "who"); the body stays a normal utterance A responds to. This is
+  the existing `createHiddenUserMessage` shape (`agentSubagents.ts:1484`) — a `user` message
+  whose content is a `systemReminder()` block — applied per speaker. **Do not** wrap the
+  *words* in `<system-reminder>` (that channel means "ignorable hidden context," wrong for
+  real speech).
+
+  A DM needs no flatten (1:1 → plain `user`/`assistant`). Only *communication* messages are
+  flattened — other agents' *execution* (their run logs) is never shown to A; A's own run
+  log reconstructs its tool loop in `[4]`. Labels render at assembly, so for prefix-cache
+  stability the POV derivation must be **byte-deterministic** ([[agent-conversation-model]]
+  §Prompt cache impact); the exact preamble wording is a P3 detail.
 
 ### 9. Token accounting & request fidelity
 
@@ -459,6 +473,8 @@ agent.skills[]          ──▶ skills/ file tree
    the user-owned outline document the agent reads/writes as environment.
 10. Speaker attribution is stored **once** as each message's `actor`; the POV-flattened
     `user`-message labels are **derived at assembly**, never persisted as a second copy.
+    Identity rides a trusted `<system-reminder>` preamble (anti-spoof); the speaker's words
+    stay plain content.
 11. Token usage + cost is **execution** data: per assistant message in the run log,
     aggregated on `RunMeta.usage`; the conversation log keeps only a lightweight per-turn
     total on the final reply. Raw wire payloads are reconstructable from the log, not
