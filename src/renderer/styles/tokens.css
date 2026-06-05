@@ -99,14 +99,13 @@
   --text-selection-bg: rgb(var(--ink) / 0.14); /* neutral ::selection */
   --drop-line: var(--focus-ring);               /* neutral drag insertion line */
 
-  /* accent = brand rose, used SPARSELY (links, brand marks, status) */
+  /* accent = brand rose, used SPARSELY (links, caret, brand marks, status) */
   --accent: #f43f5e;
   --accent-strong: #e11d48;
   --link: var(--accent);
-  /* The agent streaming caret is a functional "still generating" indicator, not a
-     brand mark — keep it neutral (B3/B4) so it doesn't compete with rose links /
-     inline references in the same panel. Inverts with --ink via --text-primary. */
-  --caret: var(--text-primary);
+  /* The agent streaming caret / "still generating" mark carries the brand rose
+     on purpose — it is the one lively, branded beat in the agent panel. */
+  --caret: var(--accent);
   /* foreground for text/glyphs sitting on a saturated accent or status fill;
      stays white in both themes because those fills never invert */
   --text-on-accent: #ffffff;

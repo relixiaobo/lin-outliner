@@ -202,21 +202,54 @@
 
 .agent-streaming-indicator {
   display: flex;
+  align-self: flex-start;
   align-items: center;
+  justify-content: center;
+  /* Match the 14px icon column of the tool / thinking rows
+     (.agent-disclosure-indicator) so the activity mark centers on the SAME column
+     as their status icons. The 20px mark overflows this box symmetrically — only
+     its center matters for the alignment. */
+  width: 14px;
   padding: var(--space-1) 0;
+  /* Soft rose lift for depth. Lives on the (non-rotating) wrapper so the shadow
+     falls consistently downward while the mark inside spins. */
+  filter: drop-shadow(0 1px 1.5px color-mix(in srgb, var(--accent) 32%, transparent));
 }
 
 .agent-streaming-capsule {
   display: inline-block;
-  width: 6px;
-  height: 14px;
-  border-radius: var(--radius-pill);
-  /* The "assistant is responding" pulse is a functional state indicator, not a
-     brand mark — keep it neutral (B3/B4) so it doesn't read as a loud rose bar
-     next to rose links / inline refs. The pulse animation carries the liveness. */
-  background: var(--text-secondary);
+  /* ~0.77 of one body line (--line-content = 26px): clearly present next to the
+     26px text line without overpowering it. */
+  width: 20px;
+  height: 20px;
+  /* Brand-rose "still generating" mark (B4): an SVG whose path morphs
+     triangle → square → circle and back (rounded corners throughout, no sharp
+     points) while the whole mark rotates a full turn. Rotation holds steady on
+     each shape and turns during the morph, so the two stay in lock-step. */
+  color: var(--accent);
   transform-origin: center;
-  animation: agent-capsule 1.35s ease-in-out infinite;
+  animation: agent-shape-spin 3s ease-in-out infinite;
+}
+
+.agent-streaming-capsule path {
+  /* Top-lit rose shading for material depth (B4): a light rose crown grades down
+     to deep --accent-strong. The gradient is defined per-svg in <defs>. */
+  fill: url(#agentShapeFill);
+  /* Initial = rounded triangle; the keyframes drive the morph. All three `d`
+     values share one command structure (M, (L Q)×4, Z) so they interpolate. */
+  d: path("M 23.9 7.81 L 24.1 7.81 Q 28.87 7.81 30.57 12.27 L 37.28 29.8 Q 39.42 35.41 33.42 35.41 L 14.58 35.41 Q 8.58 35.41 10.72 29.8 L 17.43 12.27 Q 19.13 7.81 23.9 7.81 Z");
+  animation: agent-shape 3s ease-in-out infinite;
+}
+
+/* Gradient stops carry tokens so the rose shading inverts/tunes with the system. */
+.agent-shape-grad .agent-shape-stop-0 {
+  stop-color: color-mix(in srgb, var(--accent) 76%, var(--text-on-accent));
+}
+.agent-shape-grad .agent-shape-stop-1 {
+  stop-color: var(--accent);
+}
+.agent-shape-grad .agent-shape-stop-2 {
+  stop-color: var(--accent-strong);
 }
 
 .agent-message-error {
