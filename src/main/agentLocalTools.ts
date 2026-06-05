@@ -601,7 +601,8 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
             },
           };
           await notifySuccessfulFileTouch(workspace, filePath);
-          return agentToolResult(successEnvelope('file_read', data, { metrics: metrics(started, visibleFileRead(data)) }), visibleFileRead(data), [{
+          const visible = visibleFileRead(data);
+          return agentToolResult(successEnvelope('file_read', data, { metrics: metrics(started, visible) }), visible, [{
             type: 'image',
             data: data.file.base64,
             mimeType: imageType,

@@ -484,13 +484,13 @@ describe('agent local tools', () => {
     });
   });
 
-  ripgrepTest('file_glob and file_grep find workspace files without bash', async () => {
+  // file_glob works without ripgrep (it falls back to a pure-JS directory walk),
+  // so its coverage must not be gated on `rg` being installed.
+  test('file_glob finds workspace files without bash', async () => {
     await withWorkspace(async (workspaceRoot) => {
       await mkdir(path.join(workspaceRoot, 'src'), { recursive: true });
-      const alpha = path.join(workspaceRoot, 'src', 'alpha.ts');
-      const beta = path.join(workspaceRoot, 'src', 'beta.ts');
-      await writeFile(alpha, 'export const city = "Chengdu";\n', 'utf8');
-      await writeFile(beta, 'export const city = "Shanghai";\n', 'utf8');
+      await writeFile(path.join(workspaceRoot, 'src', 'alpha.ts'), 'export const city = "Chengdu";\n', 'utf8');
+      await writeFile(path.join(workspaceRoot, 'src', 'beta.ts'), 'export const city = "Shanghai";\n', 'utf8');
       await writeFile(path.join(workspaceRoot, 'root.ts'), 'export const city = "Beijing";\n', 'utf8');
 
       const glob = await executeTool<{ filenames: string[] }>(workspaceRoot, 'file_glob', {
@@ -504,6 +504,14 @@ describe('agent local tools', () => {
       });
       expect(rootGlob.ok).toBe(true);
       expect(rootGlob.data!.filenames).toEqual(['root.ts']);
+    });
+  });
+
+  ripgrepTest('file_grep finds workspace content without bash', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      await mkdir(path.join(workspaceRoot, 'src'), { recursive: true });
+      await writeFile(path.join(workspaceRoot, 'src', 'alpha.ts'), 'export const city = "Chengdu";\n', 'utf8');
+      await writeFile(path.join(workspaceRoot, 'src', 'beta.ts'), 'export const city = "Shanghai";\n', 'utf8');
 
       const grep = await executeTool<{
         mode: 'content';

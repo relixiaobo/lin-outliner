@@ -442,6 +442,38 @@ describe('agent past chats', () => {
     });
   });
 
+  test('tool wrapper read mode drops the echoed anchor id and derivable count', async () => {
+    await withStore(async (store, service) => {
+      const sessionId = 'session-read-wrapper';
+      await store.appendEvents(sessionId, [
+        { ...base(sessionId, 1, 'session.created'), title: 'Read wrapper' },
+        {
+          ...base(sessionId, 2, 'user_message.created', userActor),
+          messageId: 'user-read',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'What did we decide about checkpoints?' }],
+        },
+      ]);
+
+      const tool = createPastChatsTool({ service, currentSessionId: () => 'session-current' });
+      const result = await (tool.execute as any)('tool-call-1', { message_id: 'user-read' });
+      const first = result.content[0];
+      if (!first || first.type !== 'text') throw new Error('Expected model-visible text envelope');
+      const visible = JSON.parse(first.text);
+
+      expect(visible.ok).toBe(true);
+      expect(visible.data).toMatchObject({ session: { id: sessionId, title: 'Read wrapper' } });
+      expect(visible.data.messages.some((message: { message_id: string }) => message.message_id === 'user-read')).toBe(true);
+      expect(visible.data).toHaveProperty('total_chars');
+      expect(visible.data).toHaveProperty('output_truncated');
+      // Dropped: the `mode` arg echo, the `anchor_message_id` echo of the input,
+      // and `message_count` (== messages.length).
+      expect(visible.data).not.toHaveProperty('mode');
+      expect(visible.data).not.toHaveProperty('anchor_message_id');
+      expect(visible.data).not.toHaveProperty('message_count');
+    });
+  });
+
   test('tool wrapper guides empty search without claiming missing history', async () => {
     await withStore(async (_store, service) => {
       const tool = createPastChatsTool({ service, currentSessionId: () => 'session-current' });
