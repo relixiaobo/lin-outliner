@@ -249,6 +249,21 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **definition-empty-state-placeholder** (cc-2, PR #134) — a tagDef's *Default content* / options fieldDef's
+  *Pre-determined options* block now shows an "add here" placeholder on its empty trailing draft
+  (`Add default content…` / `Add an option…`) instead of an orphaned label over a ghost bullet — the
+  geometry was identical to a populated field all along; the "looks weird" was pure empty-state UX.
+  `definitionOutlinerPlaceholder()` mirrors the label fn and threads via NodePanel → OutlinerView/FlatView
+  to the root trailing draft only; reuses the existing `.row-editor.is-empty::before` mechanism. The
+  dedicated-option-type modelling question was shelved (`docs/plans/definition-child-content-modeling.md`).
+  Gate: typecheck + `test:renderer` 353/0 + `definition-config.spec.ts` 3/3 + i18n 832/832 + light/dark
+  visual; cross-PR merge with #132's i18n verified conflict-free.
+
+- **fix-stale-layout-guards** (cc-2, PR #135) — refreshed three stale `workspace-layout.spec.ts` guards to
+  the post-#57 floating-rails geometry (panel-resize hit-strip vs 1px slot + no grab pill; chrome aligns to
+  the chevron control column; row hover = fill + chevron brighten). Re-pinned to real DOM, not relaxed;
+  15/15 pass. Clears the pre-existing :61/:320 failures tracked as PR-C/PR-D residual.
+
 - **inline-file-hover-preview** (codex, PR #132) — agent chat messages render `[[file:name^/abs/path]]`
   as an inline chip with a hover preview popover (icon/thumbnail, type, size, path, modified) and
   click-to-open via the OS default app. Capability is native-host-owned: both IPC handlers re-validate the

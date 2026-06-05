@@ -966,6 +966,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Definition template/options blocks invite content via an empty-state placeholder (PR #134)** — a
+  tagDef's *Default content* and an options fieldDef's *Pre-determined options* block used to read as an
+  orphaned ALL-CAPS label over a near-invisible ghost bullet when empty (the PM's "looks weird"). The
+  geometry was never different from a populated field (label left 261px, outliner left 240px in both) —
+  the gap was purely content state. The block's trailing draft now carries an "add here" call-to-action
+  (`Add default content…` / `Add an option…`) via the existing empty-row placeholder mechanism
+  (`.row-editor.is-empty::before`, hidden on focus); the generic body trailing draft stays unlabeled.
+  `definitionOutlinerPlaceholder()` mirrors `definitionOutlinerLabel()` one-to-one and threads through
+  `NodePanel` → `OutlinerView`/`OutlinerFlatView` to the root-level trailing draft only. The companion
+  modelling question (a dedicated option node type) was shelved — Tana/nodex already model options &
+  template items as plain id-referenced nodes, so a new type would be more machinery, not less. Gate:
+  typecheck + `test:renderer` 353/0 + `definition-config.spec.ts` 3/3 + i18n 832/832 + light/dark visual;
+  verified the cross-PR auto-merge with #132's `filePreview` i18n keys is conflict-free and preserves both.
+  ([#134](https://github.com/relixiaobo/lin-outliner/pull/134))
+
 - **Sidebar system-node icons restored; tagDef header + colour-picker selection (PR #133)** — three
   sidebar/tag visual fixes. (1) The workspace-tree system rows under Root regained their per-type icons
   (Daily Notes → calendar, Library → library, Schema → supertag, Saved searches → search, Trash → trash)
@@ -1267,6 +1282,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   ([#24](https://github.com/relixiaobo/lin-outliner/pull/24))
 
 ### Internal
+
+- **Refresh stale workspace-layout e2e guards to floating-rails geometry (PR #135)** — three assertions in
+  `workspace-layout.spec.ts` still encoded the pre-#57 sidebar/divider shape and failed on current main:
+  (1) the panel-resize cursor moved from the 1px `.panel-resize-slot` (now `auto`) to a separate 10px-wide
+  `.panel-resize-handle` hit strip, and the grab pill is gone (`::after` width `auto`); (2) sidebar chrome
+  now aligns to the tree **chevron** control column (rail-pad 8 + content-start 6), not the label, which
+  clears the chevron by a 6px gap; rows inset 8px from the floating rail; (3) a tree row's hover affordance
+  is a neutral fill + chevron brighten, not a row-text colour shift. Guards re-pinned to the real shipped
+  DOM/CSS (tight numeric checks, not relaxed) — `workspace-layout.spec.ts` 15/15. Resolves the pre-existing
+  :61/:320 failures previously tracked as PR-C/PR-D residual. ([#135](https://github.com/relixiaobo/lin-outliner/pull/135))
 
 - **Agent user-message UI cleanups (post-#130 review)** — two behavior-preserving tidies surfaced
   during the PR #130 gate: collapsed the nested empty-state ternary in `AgentChatPanel`
