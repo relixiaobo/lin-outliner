@@ -105,24 +105,26 @@ test.describe('workspace layout resizing', () => {
     const panelSlotBox = await page.locator('.panel-resize-slot').first().boundingBox();
     expect(panelHandleBox).toBeTruthy();
     expect(panelSlotBox).toBeTruthy();
+    // Post-#57 divider model (agent-dock.css): the visible divider is the 1px
+    // .panel-resize-slot; the grab affordance is a SEPARATE invisible hit strip
+    // (.panel-resize-handle, a child of the slot) that straddles it,
+    // --resize-hit-width (10px) wide and centered. The ew-resize cursor lives on
+    // that handle — not on the 1px slot (which stays `auto`) — and there is no grab
+    // pill. (Pre-#57 the slot itself was an 8px cursor-bearing bar with a pill.)
     await expect.poll(async () => panelHandle.evaluate((element) => (
       getComputedStyle(element).cursor
     ))).toBe('ew-resize');
-    await expect.poll(async () => page.locator('.panel-resize-slot').first().evaluate((element) => (
-      getComputedStyle(element).cursor
-    ))).toBe('ew-resize');
-    expect(panelSlotBox!.width).toBe(8);
+    expect(Math.round(panelHandleBox!.width)).toBe(10);
+    expect(Math.round(panelSlotBox!.width)).toBe(1);
     const gapCenterBefore = (firstBefore!.x + firstBefore!.width + secondBefore!.x) / 2;
     const handleCenterBefore = panelHandleBox!.x + panelHandleBox!.width / 2;
     const slotCenterBefore = panelSlotBox!.x + panelSlotBox!.width / 2;
     expect(Math.abs(handleCenterBefore - gapCenterBefore)).toBeLessThanOrEqual(1);
     expect(Math.abs(slotCenterBefore - gapCenterBefore)).toBeLessThanOrEqual(1);
+    // No grab pill: the handle is a bare hit strip, so its ::after generates no box.
     await expect.poll(async () => panelHandle.evaluate((element) => (
       getComputedStyle(element, '::after').width
-    ))).toBe('4px');
-    await expect.poll(async () => panelHandle.evaluate((element) => (
-      getComputedStyle(element, '::after').height
-    ))).toBe('32px');
+    ))).toBe('auto');
 
     await page.mouse.move(panelHandleBox!.x + panelHandleBox!.width / 2, panelHandleBox!.y + 240);
     await page.mouse.down();
@@ -342,6 +344,10 @@ test.describe('workspace layout resizing', () => {
       const firstRow = tree.querySelector('.workspace-tree-row');
       const firstChevron = firstRow?.querySelector('.workspace-tree-chevron-button');
       const firstContent = firstRow?.querySelector('.workspace-tree-label-icon, .workspace-tree-label-text');
+      // The row's label TEXT specifically — its colour is the de-emphasis baseline
+      // the chevron is compared against (the leading label-icon now shares the
+      // chevron's muted tone, so it is not a useful contrast probe).
+      const firstLabelText = firstRow?.querySelector('.workspace-tree-label-text');
       const sidebarDock = document.querySelector('.sidebar-dock');
       const activePanel = document.querySelector('.outline-panel-surface.active-panel');
       if (!primaryIcon
@@ -350,6 +356,7 @@ test.describe('workspace layout resizing', () => {
         || !(rootAvatar instanceof HTMLElement)
         || !(firstChevron instanceof HTMLElement)
         || !firstContent
+        || !(firstLabelText instanceof HTMLElement)
         || !(sidebarDock instanceof HTMLElement)
         || !(activePanel instanceof HTMLElement)
         || !(firstRow instanceof HTMLElement)) {
@@ -366,13 +373,12 @@ test.describe('workspace layout resizing', () => {
       const pinnedTitleStyle = getComputedStyle(pinnedTitle);
       const rowStyle = getComputedStyle(firstRow);
       const chevronStyle = getComputedStyle(firstChevron);
-      const contentStyle = getComputedStyle(firstContent);
       return {
         chevronColor: chevronStyle.color,
         chevronLeft: firstChevronBox.left,
         chevronRight: firstChevronBox.right,
         chevronWidth: firstChevronBox.width,
-        contentColor: contentStyle.color,
+        labelTextColor: getComputedStyle(firstLabelText).color,
         contentLeft: firstContentBox.left,
         pinnedEmptyIconLeft: pinnedEmptyIconBox.left,
         pinnedTitleLeft: pinnedTitleBox.left + Number.parseFloat(pinnedTitleStyle.paddingLeft),
@@ -386,18 +392,34 @@ test.describe('workspace layout resizing', () => {
         sidebarRight: sidebarDockBox.right,
       };
     });
-    const expectedLeft = sidebarMetrics.contentLeft;
-    expect(Math.abs(sidebarMetrics.primaryIconLeft - expectedLeft)).toBeLessThanOrEqual(1);
-    expect(Math.abs(sidebarMetrics.pinnedTitleLeft - expectedLeft)).toBeLessThanOrEqual(1);
-    expect(Math.abs(sidebarMetrics.pinnedEmptyIconLeft - expectedLeft)).toBeLessThanOrEqual(1);
-    expect(Math.abs(sidebarMetrics.rootAvatarLeft - expectedLeft)).toBeLessThanOrEqual(1);
-    expect(Math.abs((sidebarMetrics.contentLeft - sidebarMetrics.sidebarLeft) - 20)).toBeLessThanOrEqual(1);
-    expect(Math.abs(sidebarMetrics.sidebarRight - sidebarMetrics.rowRight)).toBeLessThanOrEqual(1);
+    // Post-#57 floating-rails geometry. The workspace tree is Root's INDENTED
+    // children: its chevron shares the leading control column with the primary-nav
+    // icons, the pinned section title, the empty-state icon, and the root avatar
+    // (all at --sidebar-content-start). The tree LABEL does not share that column —
+    // it sits one chevron-gutter + breathing gap further right
+    // (--sidebar-tree-label-gap), so the chrome aligns to the CHEVRON, not the
+    // label. (Pre-#57 the label was the control column; that is the alignment this
+    // guard used to assert, see sidebar.css for the current intent.)
+    const controlLeft = sidebarMetrics.chevronLeft;
+    expect(Math.abs(sidebarMetrics.primaryIconLeft - controlLeft)).toBeLessThanOrEqual(1);
+    expect(Math.abs(sidebarMetrics.pinnedTitleLeft - controlLeft)).toBeLessThanOrEqual(1);
+    expect(Math.abs(sidebarMetrics.pinnedEmptyIconLeft - controlLeft)).toBeLessThanOrEqual(1);
+    expect(Math.abs(sidebarMetrics.rootAvatarLeft - controlLeft)).toBeLessThanOrEqual(1);
+    // The control column is a small inset from the rail edge: rail-pad (8) +
+    // --sidebar-content-start (6).
+    expect(Math.abs((controlLeft - sidebarMetrics.sidebarLeft) - 14)).toBeLessThanOrEqual(1);
+    // The label clears the chevron by exactly the breathing gap
+    // (--sidebar-tree-label-gap = 6): content-left = chevron-right + gap.
+    expect(Math.abs(sidebarMetrics.contentLeft - (sidebarMetrics.chevronRight + 6))).toBeLessThanOrEqual(1);
+    // Rows are inset from the rail's right edge by the same rail-pad (8) — the rail
+    // floats, so rows are not flush with its border.
+    expect(Math.abs((sidebarMetrics.sidebarRight - sidebarMetrics.rowRight) - 8)).toBeLessThanOrEqual(1);
+    // The active pane floats one --layout-gap (8) right of the rail.
     expect(Math.abs((sidebarMetrics.panelLeft - sidebarMetrics.sidebarRight) - 8)).toBeLessThanOrEqual(1);
-    expect(Math.abs((sidebarMetrics.chevronLeft - sidebarMetrics.sidebarLeft) - 4)).toBeLessThanOrEqual(1);
     expect(Math.round(sidebarMetrics.chevronWidth)).toBe(16);
     expect(sidebarMetrics.chevronRight).toBeLessThanOrEqual(sidebarMetrics.contentLeft);
-    expect(sidebarMetrics.chevronColor).not.toBe(sidebarMetrics.contentColor);
+    // The chevron is de-emphasized relative to the row's label text.
+    expect(sidebarMetrics.chevronColor).not.toBe(sidebarMetrics.labelTextColor);
     expect(sidebarMetrics.rowHeight).toBe(28);
     expect(sidebarMetrics.rowRadius).toBe('6px');
 
@@ -407,19 +429,28 @@ test.describe('workspace layout resizing', () => {
     await expect.poll(async () => todayNav.evaluate((item) => getComputedStyle(item).backgroundColor))
       .not.toBe(navBackgroundBefore);
 
+    // Post-#57: a tree row's hover affordance is a neutral fill (the same
+    // --control-hover as nav items) plus a chevron brighten — NOT a row-text colour
+    // shift, which is invisible under the collapsed neutral token scale. So on
+    // hover the row background changes and the chevron brightens, while the row's
+    // own text colour stays put. (sidebar.css `.workspace-tree-row:hover`.)
     const firstWorkspaceRow = workspaceTree.locator('.workspace-tree-row').first();
-    const treeRowBefore = await firstWorkspaceRow.evaluate((row) => {
-      const style = getComputedStyle(row);
+    const readRowHover = (row: Element) => {
+      const chevron = row.querySelector('.workspace-tree-chevron-button');
       return {
-        background: style.backgroundColor,
-        color: style.color,
+        background: getComputedStyle(row).backgroundColor,
+        chevronColor: chevron ? getComputedStyle(chevron).color : null,
       };
-    });
+    };
+    await page.mouse.move(0, 0);
+    const treeRowBefore = await firstWorkspaceRow.evaluate(readRowHover);
     await firstWorkspaceRow.hover();
     await expect.poll(async () => firstWorkspaceRow.evaluate((row) => getComputedStyle(row).backgroundColor))
-      .toBe(treeRowBefore.background);
-    await expect.poll(async () => firstWorkspaceRow.evaluate((row) => getComputedStyle(row).color))
-      .not.toBe(treeRowBefore.color);
+      .not.toBe(treeRowBefore.background);
+    await expect.poll(async () => firstWorkspaceRow.evaluate((row) => {
+      const chevron = row.querySelector('.workspace-tree-chevron-button');
+      return chevron ? getComputedStyle(chevron).color : null;
+    })).not.toBe(treeRowBefore.chevronColor);
 
     await workspaceTree.getByRole('button', { name: 'Expand Daily Notes' }).click();
     await expect(workspaceTree).toContainText('2026-05-13');
