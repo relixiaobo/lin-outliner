@@ -1341,6 +1341,34 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Agent data-structure design landed, then extracted into a dedicated `agent-data-model` plan** —
+  a multi-pass design conversation converged the agent storage model and was written into the plans
+  (docs-only; no code); the authoritative shape now lives in its own **`docs/plans/agent-data-model.md`**
+  (single source for the persistence + context contract — F2/F3/F6 cut against it), with
+  `agent-conversation-model` slimmed to the experience design + a pointer, and `agent-program` adding it as
+  a member plan. The model: **three storage families** (linear event log · Loro CRDT · skills file
+  tree), **one log engine with three instances** (conversation / run / memory, differing only by id /
+  writer / retention / vocabulary), **`session` split into `{conversation, run}`** (messages vs execution
+  — keeps the conversation log low-volume and `tool_call ↔ tool_result` off the shared channel stream),
+  a **single `Principal` type** (member = actor = addressee) with conversations as **one primitive (no
+  stored `kind`** — DM/group derived; spawn-don't-convert preserved as a product rule), **runs anchored
+  to exactly one conversation** (trigger = provenance, no conversation-less runs), a **distillation
+  ladder** (raw → segment summary → conversation summary → agent memory) generalizing `compaction.completed`
+  into a **lossy-but-addressable** multi-consumer node (down-pointer to retained source; powers navigation,
+  two-step `recall.overview/expand`, and the memory feedstock), and the **context volatility-ordering /
+  cache-discipline invariant** (stable prefix → one volatile tail; distilled memory → prefix, query recall
+  → tail; compact at segment boundaries, never slide). Validated against the real runtime: pi-agent-core is
+  stateless transcript-replay driven by two seams (`deriveRuntimePiMessages` read / `handlePiAgentEvent`
+  write), so the whole structure lives above the engine unchanged. `agent-program` F2/F3/F5/F6, the event
+  taxonomy, and the consolidated protocol-surface list were updated to match. Four foundational decisions
+  were then **PM-ratified (2026-06-05)**: **canonical DM + user-creatable Channels** (the session list
+  becomes the Channel list; the DM is the always-on continuous thread); **split-now + mixed-resolution
+  replay** (execution incl. `tool_result` lives only in the run log; recent turns join the run log, old
+  segments render as compaction summaries — the agent stops re-seeing old tool outputs verbatim);
+  **memory = one global pool with pure-relevance retrieval** (no per-workspace partition; visible/edit/forget
+  is the bleed guard); **memory writes via a privileged, permission-exempt `agent-memory/` path** (serialized,
+  not a dedicated tool).
+
 - **Refresh stale workspace-layout e2e guards to floating-rails geometry (PR #135)** — three assertions in
   `workspace-layout.spec.ts` still encoded the pre-#57 sidebar/divider shape and failed on current main:
   (1) the panel-resize cursor moved from the 1px `.panel-resize-slot` (now `auto`) to a separate 10px-wide
