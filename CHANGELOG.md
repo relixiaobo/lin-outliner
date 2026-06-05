@@ -1199,6 +1199,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Chrome-zone backing transition off a literal `0ms` (guard hygiene)** — `.window-chrome-zone`
+  declared `transition: background-color 0ms`, whose literal `0ms` tripped the `typography-tokens`
+  motion guard (durations must be tokenized; there is no zero-duration motion token). Rewritten as the
+  longhand `transition-property: background-color` — behavior-identical (default 0s duration → instant
+  paint) but with no literal `ms`, and still honoring the `transition-delay` the collapsed / agent-closed
+  modifiers use to hold the opaque corner backing back until the rail finishes sliding (so `transition:
+  none` was not an option). Pre-existing failure unrelated to any feature PR; fast-track, no user-visible
+  change.
+
 - **Agent permission authority folded into spec (PR #78)** — new
   `docs/spec/agent-tool-permissions.md` is the authority for the shipped
   allow/ask/deny policy (evaluation precedence, platform hard blocks, bash

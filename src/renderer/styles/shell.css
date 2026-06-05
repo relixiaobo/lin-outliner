@@ -56,7 +56,13 @@
   z-index: var(--z-popover);
   height: var(--chrome-height);
   background-color: transparent;
-  transition: background-color 0ms;
+  /* background-color transitions at the default 0s (paints instantly). Longhand,
+     deliberately NOT the `transition: background-color 0ms` shorthand — a literal
+     `0ms` trips the motion-token guard, and there is no zero-duration motion token
+     to reach for. NOT `transition: none` either: that would void the
+     `transition-delay` the collapsed / agent-closed modifiers below rely on to hold
+     the opaque corner backing back until the rail finishes sliding away. */
+  transition-property: background-color;
   -webkit-app-region: drag;
   user-select: none; /* don't rubber-band-select chrome text while dragging */
 }
