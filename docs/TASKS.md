@@ -191,6 +191,39 @@ capture-pipeline tracks below stay separate (orthogonal to the surface).
   (compute once in the memoized `resultParts`); (3) give `visiblePastChatsResult`
   a named return type instead of `unknown`. None affect behavior.
 
+### UI quality (design-system consistency)
+
+The 2026-06-04/05 design-system / UI-consistency review, landed as a plan suite in
+PR #120. `docs/plans/ui-quality-roadmap.md` is the index + **boundary contract**
+(who owns which lines) and the three-layer build order. All nine were validated
+against `main` (post-#118) at the gate; findings are real with `file:line`.
+
+- **responsive-robustness** (P1, **pull first — ratified**) — real layout bugs, not
+  cosmetics: a pane silently crushes below the window min-width (no re-clamp on
+  resize), uncapped outliner/sidebar indentation, tag-bar overflow, width-blind
+  breadcrumb. Independent of the cosmetic layers and of #118. All 7 claimed bugs
+  confirmed at the gate. Needs a live resize smoke test. `docs/plans/responsive-robustness.md`.
+- **composition-rhythm** (P3, Layer 1) — cross-surface composition tokens: shared
+  reading measure (720, kept distinct from #118's 920 settings cap), row-height
+  tier, text-gutter alignment, heading scale, list-row idiom split, context-menu
+  glass/radius alignment. Land its tokens before the Layer-2 primitives (A7).
+- **design-system-consistency** (P3, Layer 1, **PM-ratified**) — icon shape/fill,
+  overlay radius (8→10), accent-focus neutrality, focus-visible, user-select,
+  spacing/z-index, spec sync (icons + the AGENTS.md B2 one-liner).
+- **button-primitive** (P2, Layer 2, **PM-ratified**) — a `<Button variant>`
+  consolidating ~20 hand-rolled text-button stylings.
+- **input-primitive** (P2, Layer 2) — `<Input>/<Textarea>/<Select>/<Field>`;
+  fixes the `--agent-accent` focus B3/B4 leak (owned with design-system §3).
+- **feedback-states** (P2, Layer 2) — `<EmptyState>/<ErrorState>` + outliner empty
+  states + loading/skeleton policy + surfacing aborted agent turns.
+- **keyboard-a11y** (P2, Layer 3, can run in parallel) — menu focus-trap/restore
+  hook, context-menu keyboard nav, outliner tree ARIA, calendar grid, role fixes.
+- **icon-semantics** (P3, Layer 3, small/isolated) — action↔icon collisions (Hash,
+  unknown-tool, remove/X-vs-Trash, the gear catch-all that #118 sharpened).
+- **dark-mode-contrast-pass** (P3, cross-cutting) — runs **last**, after L1/L2, as a
+  real light+dark run to confirm static contrast risks + apply one-token
+  `theme-dark.css` nudges.
+
 ### Performance
 
 - **performance-optimization** (P0–P3 program, PR #116) — prioritized catalog from a
