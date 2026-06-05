@@ -1,10 +1,12 @@
 ---
-status: in-progress
+status: done
 priority: P2
 owner: codex
 branch: codex/settings-macos-clarity
 created: 2026-06-04
 updated: 2026-06-05
+shipped: 2026-06-05
+pr: 118
 ---
 
 # Settings macOS Clarity Pass

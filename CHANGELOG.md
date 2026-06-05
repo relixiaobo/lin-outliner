@@ -534,6 +534,25 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Settings: macOS System Settings clarity pass (PR #118)** — the standalone Settings window now reads
+  closer to macOS System Settings while keeping Tenon's neutral design system. A fixed toolbar pairs the
+  back/forward history controls as one neutral pill capsule (with a hairline divider) and a right-pane
+  page title; the content scrollport sits below it via `margin-top` (not scrollable padding) so dense rows
+  never pass behind the chrome. The category rail gains a compact neutral icon slot + single-line label
+  per row, the content column is constrained to a stable reading width (`--settings-content-max-width`),
+  and grouped inset cards drop their heavy border for a 0.5px inset hairline (`--inset-hairline`). Pop-up
+  selects are now transparent-at-rest text chrome that gain a neutral fill only on hover/focus/press
+  (macOS pop-up rhythm); permission decision pop-ups keep a stable width through the non-allowable last
+  row, and raw `Action(...)` rule strings + redundant inline chips are gone from the first visual level.
+  **Agent Profiles is now hierarchical:** the category page is a pure drill-down list (chevron only, no
+  switch), and clicking a profile pushes an `agent-detail` route — reached through the same back/forward
+  capsule — that carries the enable/disable switch as its own row above the persona card. The runtime/
+  permission Save footer now appears only when the draft is actually dirty. Gate: typecheck + renderer
+  340/0 + agent-settings e2e 19/19 (incl. 5 new drill-down/pop-up/alignment cases) + light/dark visual
+  verification; review fixed 3 issues (a `box-shadow` token-guard regression, a dead `data-window-material`
+  rail rule + over-claiming spec sentence, and orphaned i18n strings). Design folded into
+  `docs/spec/design-system.md`. ([#118](https://github.com/relixiaobo/lin-outliner/pull/118))
+
 - **Perf P1 (PR-A): incremental projection delta over the core↔renderer seam (PR #119)** — the
   keystone of the performance program (`incremental-projection.md`). Instead of shipping the entire
   `DocumentProjection` across IPC on every mutation and having the renderer re-`JSON.stringify` every

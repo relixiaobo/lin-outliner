@@ -204,6 +204,17 @@ capture-pipeline tracks below stay separate (orthogonal to the surface).
 
 ## Recently completed
 
+- **settings-macos-clarity** (codex, PR #118) — Settings window macOS System Settings clarity pass:
+  fixed toolbar = back/forward pill capsule + right-pane page title, scrollport below chrome via margin;
+  denser icon rail; constrained content width; inset cards on a 0.5px `--inset-hairline` (no heavy
+  border); transparent-at-rest pop-up selects (fill on hover/focus/press); aligned permission decision
+  pop-ups; redundant intro copy / raw rule strings / inline chips removed. Agent Profiles is now
+  hierarchical — pure drill-down list → `agent-detail` route (switch as its own row + persona card),
+  navigated by the same history capsule; Save footer shows only when the draft is dirty. Gate: typecheck
+  + renderer 340/0 + agent-settings e2e 19/19 (5 new cases) + light/dark visual; review fixed 3 (box-shadow
+  token-guard regression → `--inset-hairline`; dead `data-window-material` rail rule + over-claiming spec;
+  orphaned i18n strings). Design folded into `docs/spec/design-system.md`; plan `done` → `archive/`.
+
 - **incremental-projection (P1 PR-A)** (cc, PR #119) — perf keystone: deliver each edit's projection
   change as a `ProjectionUpdate` (`full | delta`) across the `core→IPC→renderer` seam instead of the
   whole `DocumentProjection`; `reduceProjection` folds deltas in, preserves unchanged-node identity,
