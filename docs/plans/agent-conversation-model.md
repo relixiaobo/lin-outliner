@@ -30,16 +30,18 @@ design below is the post-stress-test version.
 
 - **Agents are first-class, durable identities** carrying their own memory. An
   agent is the same identity across every conversation it is in.
-- **Conversations are typed by kind, not headcount**: a **DM** (1:1, identity =
-  the relationship) or a **Channel** (a goal, 1..N members, identity = the goal).
+- **Conversations are one primitive (members + optional goal), not a stored kind.**
+  "DM" (1:1, identity = the relationship) vs "Channel" (a goal, 1..N members, identity =
+  the goal) is a **rendering** derived from the member set + `goal` presence (§Data
+  structure) — not a `kind` enum.
 - **Memory belongs to the agent**, lives in runtime storage (not the document,
   not the read-only agent config), and is **visible/editable** (inspect, correct,
   forget).
 - **The outline is ambient.** Every agent perceives the live outline and writes
   anywhere via the existing command surface. No conversation binds a node.
-- **"Session" disappears** as a user-facing/identity unit: it splits into a
-  persistent **message stream** (per conversation) and an ephemeral **per-turn
-  assembly** (invisible).
+- **"Session" disappears** as a user-facing/identity unit: it splits into a persistent
+  **conversation log** (messages, per conversation), a **run log** (execution, per turn /
+  task), and an ephemeral **per-turn assembly** (the invisible read seam) — §Data structure.
 
 ## Non-goals
 
@@ -111,7 +113,8 @@ pipeline*; we diverge on storage and on how forks work (§4 of Adversarial revie
    same everywhere; the conversation only adds a local task overlay.
 2. **One brain, many rooms.** One agent identity = one memory line, across all
    conversations.
-3. **Three durable stores, three owners — they do not absorb each other.**
+3. **Distinct durable stores, distinct owners — they do not absorb each other**
+   (conversation log · run log · memory line · outline; see §Data structure).
 4. **Agent thick, conversation thin, outline ambient.** A place doesn't remember;
    the people in it do.
 5. **Reply ≠ result.** The result is the durable product in its **natural form** —
@@ -126,16 +129,19 @@ pipeline*; we diverge on storage and on how forks work (§4 of Adversarial revie
 | Concept | What it is | Owner |
 |---|---|---|
 | **Agent** | A role (prompt + tools + skills) + a single persistent identity + a memory line. | itself |
-| **Conversation** | Umbrella holding a message stream. | — |
-| **DM** | Kind: 1:1 (you + one agent). Identity = the relationship. | participants |
-| **Channel** | Kind: a goal, 1..N members. Identity = the goal. | the goal |
-| **Member** | An agent placed in a conversation. An edge, not an entity. | — |
-| **Memory line** | Per-agent distilled memory, unified across conversations, private, relevance-retrieved, **visible**. | Agent |
-| **Message stream** | The objective shared record of a conversation. | Conversation |
+| **Principal** | A participant: `user` or `agent`. The one type used as member = actor = addressee. | — |
+| **Conversation** | One primitive holding a message stream; **no stored `kind`** (§Data structure). | — |
+| **DM** *(rendering)* | A conversation rendered 1:1 (you + one agent, no goal, canonical). Identity = the relationship. | participants |
+| **Channel** *(rendering)* | A conversation rendered as a goal-room (1..N members + a `goal`). Identity = the goal. | the goal |
+| **Member** | A `Principal` placed in a conversation. An edge, not an entity. | — |
+| **Run** | The execution stream of one turn / task; anchored to exactly one conversation (§Data structure). | the running Agent |
+| **Memory line** | Per-agent distilled memory, unified across conversations, private, relevance-retrieved, **visible**, **addressable** to source. | Agent |
+| **Message stream** | The objective shared record of a conversation (messages only; execution → Run). | Conversation |
+| **Distillation node** | A recorded summary over a *retained* span (`compaction.completed` generalized); lossy-but-addressable. Feeds navigation / recall / memory. | Conversation |
 | **Outline / Node** | The **ambient** durable product — perceived live every turn. | user / workspace |
 | **File** | A **non-ambient** durable product (PPT/PDF/export/code/image); produced via file tools, referenced & read on demand. | user / workspace |
-| **Per-turn assembly** | Transient context for one turn (the former "session"). | nobody |
-| **Task** | An agent's **off-floor background run** (long work); visible, stateful, posts its result back to the origin conversation. | Agent (run inside a conversation) |
+| **Per-turn assembly** | Transient context for one turn (the read seam; the former "session" read side). | nobody |
+| **Task** | An agent's **off-floor background Run** (long work); visible, stateful, posts its result back to the anchor conversation. | Agent (Run inside a conversation) |
 
 **Member count is a property of a Channel (1..N), never a kind.** "single/multi
 member" survive only as internal implementation-phase labels, never user-facing
@@ -156,13 +162,249 @@ storage, not nodes.
 
 ## Design (code-grounded)
 
-### The three durable stores
+### Data structure (converged — authoritative)
 
-| Store | Owner | Content | Where (today → target) |
-|---|---|---|---|
-| **Memory line** | Agent | distilled: knows / knows-whom / concluded | **new** `userData/agent/agent-memory/<identity>/` |
-| **Message stream** | Conversation | objective record of what was said | `userData/agent/sessions/<id>/` → `…/conversations/<id>/` |
-| **Outline + history** | user | the product | unchanged (`commands.ts` / Loro, ambient) |
+This subsection is the **authoritative** data model. Where prose further down still
+carries a stored DM/Channel `kind` or a session that bundles execution into the message
+stream, **the model here supersedes it** — `kind` is *derived*, and `session` splits into
+`{conversation, run}`.
+
+**Three storage families**, each forced by one distinct, nameable requirement (the test
+of cleanliness — no arbitrary split):
+
+| Family | Members | Forced by |
+|---|---|---|
+| **Linear event log** (append-only, one writer per stream, jsonl) | conversation · run · memory | single-writer ordered history + audit; **plain text = agent-readable / greppable** |
+| **CRDT** (Loro) | document / outline | **two concurrent writers** (user typing + agent commands) needing convergent merge — a single-writer log cannot |
+| **Versioned file tree** | skills (`built-in` / `user` / `project`) | authored *content*, ships with the app, browsed / edited / diffed as files |
+
+**One log engine, three instances.** A single append-only engine (segmented jsonl +
+checkpoint + index, one writer/stream) backs conversation, run, and memory; they differ
+only in **id scheme · writer · retention policy · event vocabulary**. The heavy machinery
+(segmentation / checkpoint / index / retention) is a **policy only the unbounded
+`conversation` instance turns on**; bounded `run` and slow `memory` logs run the bare
+engine (single file). Only **conversation + memory grow monotonically, and both are
+low-volume** (≈1 event / message; distilled, sub-linear); the voluminous execution detail
+lives in `run` logs that **self-clean** (cold-archivable once distilled) — so nothing
+high-volume grows unbounded on the hot path.
+
+**`session` splits into `{conversation, run}`** (this supersedes the earlier "session →
+message stream + per-turn assembly": the per-turn assembly is the *read seam*, and
+execution now has its own durable log):
+
+- **Conversation log** = the COMMUNICATION record — ~1 event per *message*
+  (`message.created` + member / branch / compaction events). Human-readable, append-only,
+  the navigable thread.
+- **Run log** = the EXECUTION detail of producing a message or doing a task —
+  `run.started`, `assistant_message.delta`, `thinking.delta`, `tool_call.*`,
+  `tool_result.created`, `run.completed/failed`. Bounded lifecycle.
+
+Splitting these is what keeps the conversation log low-volume (segmentable, cache-cheap)
+**and** keeps `tool_call ↔ tool_result` pairs out of the *shared* channel record — so a
+flattened multi-agent transcript stays a valid pi-agent-core transcript (§Runtime, §2).
+
+**One `Principal` type — member = actor = addressee:**
+
+```ts
+type Principal =
+  | { type: 'user';  userId: string }
+  | { type: 'agent'; agentId: string };
+type Actor = Principal
+  | { type: 'tool'; toolName: string; toolCallId: string }
+  | { type: 'system' };                 // matches AgentActor (agentEventLog.ts:15)
+// invariant: a message's actor ∈ members ∪ {system}; addressedTo ⊆ members
+```
+
+**Conversation — one primitive, no stored `kind`:**
+
+```ts
+interface ConversationMeta {
+  id: string;
+  members: Principal[];                 // 2 + no goal + canonical → render as DM; else group/channel
+  goal?: string;                        // a channel's goal = its render-time identity
+  name?: string;
+  cursors: Record<string, number>;      // principalKey → last-seen seq (per-member read state)
+  createdAt: number;
+}
+interface MessageEvent {                // one line in conversations/<id>/segments/*.jsonl
+  v: 1; eventId: string; seq: number; createdAt: number;   // seq = order · createdAt = wall-clock
+  conversationId: string;
+  actor: Actor;
+  type: 'message.created' | 'message.edited'
+      | 'member.added' | 'member.removed'      // membership history = system events on the same stream
+      | 'compaction.completed' | 'branch.selected';
+  messageId?: string; parentMessageId?: string;            // branch tree (DM-only retry, §2)
+  role?: 'user' | 'assistant' | 'toolResult';              // pi-agent-core's 3 roles
+  addressedTo?: Principal[];            // who should respond; omitted in a 1:1
+  runId?: string;                       // ↓ which run produced this message
+  content?: AgentPersistedContent;
+}
+```
+
+`kind` is **derived, not stored** (members + `goal` presence + canonical-ness). The
+ratified product behaviors survive as **rules, not types**: the canonical 1:1 DM with
+agent X is **find-or-create-unique**, and **adding an agent never mutates it in place — it
+spawns a new conversation** (§Adding an agent). So "one consistent data structure" and
+"spawn-don't-convert / relationship ≠ goal" coexist — the structure is members-only; the
+DM-ness is a rendering + two product rules. The speaking rule generalizes the coordinator
+(§Channel routing): **a run is produced iff a principal is in `addressedTo`**, bounded by a
+loop budget; the coordinator is simply *the default `addressedTo` when the user `@`s no
+one*.
+
+**Run — anchored to exactly one conversation; the trigger is provenance, not an anchor:**
+
+```ts
+interface RunMeta {
+  id: string;
+  agentId: string;                      // who runs → the task panel groups by this
+  conversationId: string;               // the ONLY anchor (where it lives & reports) — mandatory
+  parentRunId?: string;                 // subagent hierarchy
+  kind: 'turn' | 'background' | 'subagent' | 'scheduled';
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
+  trigger:                              // why it started — orthogonal to the anchor
+    | { type: 'message'; messageId: string }
+    | { type: 'node'; nodeId: string }          // a scheduled command node FIRED it
+    | { type: 'parent-run'; parentRunId: string }
+    | { type: 'manual' | 'system' };
+  createdAt: number;
+}
+```
+
+There are **no conversation-less runs** — a scheduled routine fired by an outline
+`command` node still anchors to a delivery conversation (the agent's DM, or an automations
+channel); the node is the `trigger`, not the home. This closes the earlier
+"conversation-less scheduled run" gap. `runs WHERE conversationId = X` is therefore
+*complete* (no runs hide elsewhere); the per-agent task panel is `runs WHERE agentId = X`.
+
+**Distillation ladder — `compaction.completed` generalized; lossy in content, lossless in
+addressability:**
+
+```
+raw messages (conversation log, leaves)
+  └─distill→ segment summary  ──source→ raw range          [a sealed segment → one summary]
+              └─roll up→ conversation summary ──source→ child summaries
+                          └─distill→ agent MemoryEntry ──sources→ summaries / ranges
+```
+
+One operation ("summarize a span") at increasing scope; each level feeds the next, and
+**every node stores a down-pointer to what it distilled**. Today's `compaction.completed`
+already carries the backbone — `compactedThroughMessageId` (covered range) with raw
+messages **retained** in the tree (`agentEventLog.ts:372-378,937-952`); it is
+non-destructive and single-purpose (context only). The change is to recognize it as a
+**multi-consumer artifact** and make the down-pointer explicit:
+
+```ts
+interface DistillationNode {            // LLM-generated → recorded (not replay-reproducible)
+  id: string; scope: 'segment' | 'conversation'; conversationId: string;
+  summary: string;
+  source: { fromMessageId: string; throughMessageId: string }   // explicit both-ends range
+         | { childSummaryIds: string[] };                       // recursion (deferred)
+  createdAt: number;
+}
+interface MemoryEntry {                 // per-agent, top of the ladder (greenfield)
+  id: string; agentId: string; fact: string;
+  sources: Array<{ conversationId: string; summaryId?: string; messageRange?: [string, string] }>;
+  createdAt: number;
+}
+```
+
+Consumers **beyond context injection**: navigation (summary spine = thread
+table-of-contents), **hierarchical recall** — a two-step `recall.overview(query)` →
+matching summaries *with addresses*, then `recall.expand(summaryId)` → the raw span
+(coarse-to-fine; the coarse layer above `past_chats`, which stays the raw/fine layer),
+**memory feedstock** (segment summaries are the memory line's input — unifying compaction +
+memory), titling, re-entry briefs. **Principle:** a summary must be *lossy-but-addressable,
+never lossy-and-terminal* — one can always drill from any distilled claim to ground truth
+(this is also the contamination guard the LoCoMo ceiling demands — §Memory model).
+
+**On-disk layout (target):**
+
+```
+userData/agent/
+  agents/<agentId>/
+    identity.json                  # current-state doc: name / model / persona / bound skill ids
+    memory/  events.jsonl          # memory-mutation log → projection = current MemoryEntry set
+  conversations/<conversationId>/
+    meta.json                      # members / cursors / goal / name (current-state doc)
+    segments/000001.jsonl …        # message stream (≈1 event/msg), append-only, segmented
+    summaries/                     # distillation nodes (per sealed segment + roll-ups)
+    checkpoints/  index.json       # tail-load snapshot + seq/time → segment (backward paging)
+  runs/<runId>/
+    meta.json  events.jsonl  payloads/   # bounded execution log
+  skills/{built-in,user,project}/  # file tree
+  # document → Loro store (separate substrate, user-owned)
+```
+
+**Three kinds of time, don't conflate:** `seq` = the in-stream ordering authority (not
+wall-clock — avoids skew, and runs/conversations are separate streams with no global
+order); `createdAt` (epoch ms, UTC) on every event = display + retention + time-range
+navigation (`index.json`) + approximate cross-stream merge; the **in-content** `UTC time:`
+block injected into the *current* user message (`agentRuntime.ts:2846`) = so the model
+perceives "now" — it lives in the volatile tail, never the cached prefix.
+
+**Context assembly & cache discipline.** pi-agent-core replays whatever `Message[]` we
+hand it, and Anthropic caching is **prefix-based** (`cache_control` on system prompt /
+last tool / last user message — `anthropic.js:892-900,933`, verified). The load-bearing
+invariant:
+
+> **Order context by volatility — most-stable first — with exactly ONE volatile region at
+> the end; never mutate anything before it.**
+
+Layers: `system + persona (static) → tools (static) → distilled-memory prefix
+(append-only) → history (append-only, mixed-resolution: old segments as their summaries,
+recent as raw) → volatile tail (current user message + query-recall + in-content time)`.
+Two rules this forces: (a) **distilled memory → prefix; query-specific recall → tail**
+(re-retrieving into the prefix each turn is the classic cache-killer); (b) **compact at
+segment boundaries, never slide a window** (a sliding window moves the prefix start every
+turn → constant misses; boundary compaction is a rare, deliberate, aligned reset — and the
+retained raw means it is non-destructive). This extends, and is consistent with, §Prompt
+cache impact.
+
+**Drives pi-agent-core via two seams (the engine is unchanged — stateless transcript-replay):**
+
+- **READ** — `deriveRuntimePiMessages` (`agentRuntime.ts:2414`) assembles the `Message[]`
+  (the volatility layers above; for a multi-member channel it **flattens** other members'
+  turns into `user`-role inputs from the running agent's POV — pi-agent-core has only
+  user / assistant / toolResult roles, no speaker field).
+- **WRITE** — `handlePiAgentEvent` (`:2178`) routes the emitted `PiAgentEvent` stream:
+  COMMUNICATION events → conversation log; EXECUTION events → run log.
+
+Injecting synthetic / role-mapped content is **already production behavior** (skill
+preloads, hidden user messages, subagent-completion notices —
+`agentSubagents.ts:638,1478`), so POV-flatten + memory-injection are *more of an existing
+technique*, not new risk.
+
+**id graph (all by id; no nesting, no global order):**
+
+```
+message.runId           ──▶ run                     message → its execution (down)
+run.conversationId      ──▶ conversation            run → anchor (mandatory)
+run.trigger.nodeId      ──▶ outline command node    provenance: what fired it (NOT an anchor)
+run.parentRunId         ──▶ run                      subagent hierarchy
+DistillationNode.source ──▶ message range | child summaries   summary → raw (addressable)
+MemoryEntry.sources[]   ──▶ conversation / summary / range    fact → ground truth
+agent.skills[]          ──▶ skills/ file tree
+```
+
+**Real today vs build.** *Already real:* event log + checkpoints; `actor` on every event
+(hardcoded `'pi-mono'`); `compaction.completed` as a recorded summary over a **retained**
+range; `AgentDefinitionRegistry`; stateless pi-agent-core + the two seams; subagent
+own-sessionId. *Mechanical re-partition:* `session` → `{conversation, run}`; parameterize
+`agentActor()` off `'pi-mono'`; drop `kind`. *Greenfield:* the memory line (+ `sources`);
+`members` / `cursors` / `addressedTo`; the segment / index physical layout; the
+distillation-ladder consumers + the two-step recall tool. *Needs-PM decisions* (Open
+questions): group default-`addressedTo` / coordinator; document snapshot+delta vs tail;
+history-replay fidelity (sets whether old `tool_result` events stay reachable);
+canonical-DM vs the existing session-list UX.
+
+### The durable stores (summary)
+
+| Store | Family | Owner | Content | Where (today → target) |
+|---|---|---|---|---|
+| **Conversation log** | event log (segmented) | Conversation | objective record of what was said (messages) | `…/sessions/<id>/` → `…/conversations/<id>/` |
+| **Run log** | event log (bounded) | the running Agent | execution detail of a turn / task | **new** `…/runs/<id>/` (today inlined in the session) |
+| **Memory line** | event log (additive) | Agent | distilled: knows / knows-whom / concluded | **new** `…/agents/<id>/memory/` |
+| **Outline + history** | CRDT (Loro) | user | the product | unchanged (`commands.ts` / Loro, ambient) |
 
 ### Agent
 
@@ -207,19 +449,21 @@ memory (accumulated)   the memory line — visible, editable, deletable
 ### Conversations: DM and Channel
 
 ```ts
+// Authoritative shape: see §Data structure. No stored `kind`; DM/group is derived.
 Conversation {
   id: ConversationId            // was sessionId
-  identity:
-    | { kind: 'dm'; with: AgentName[] }
-    | { kind: 'channel'; goal: string }
-  members: AgentName[]          // staffing (the "participant" edge); you are implicit
-  // message stream = events.jsonl + branch structure (reused as-is)
+  members: Principal[]          // the staffing edge; the user is a member too
+  goal?: string                 // a channel's goal = its render-time identity (a DM has none)
+  cursors: Record<string, seq>  // per-member read state
   anchors?: NodeId[]            // OPTIONAL navigation backlinks; never gate/scope/identity
   overlay?: string              // optional "what to do here"
+  // message stream = segmented events.jsonl + branch structure (reused as-is)
 }
 ```
 
-Thin: no memory, no traveling identity, no node binding. Don't give a conversation
+DM vs Channel is a **rendering** (members + `goal` presence + canonical-ness), not a
+stored type — see §Data structure. Thin: no memory, no traveling identity, no node
+binding. Don't give a conversation
 a memory — a "channel summary" is an entry in some agent's memory line, tagged
 with provenance. The branch structure (`childrenByParentId`, `selectedLeafMessageId`,
 `agentEventLog.ts:515,516`) is a **single-agent retry affordance** — keep it for
@@ -400,10 +644,18 @@ answer / explanation / brainstorm?* → reply. The agent decides; the user overr
 - **What not to save:** anything the outline already records (else memory and the
   document duplicate and pollute each other).
 - **`past_chats` stays as raw-transcript recall** (rename sessions→conversations
-  only). It is session/transcript-shaped by construction (search-index keyed by
-  `sessionId:messageId`, `agentEventStore.ts:807`). The memory line is a
-  **separate** store with its own tool — don't "rewire past_chats into memory";
-  keep two distinct things (raw recall vs distilled memory).
+  only) — but it becomes the **fine/raw layer** under the distillation ladder's
+  **coarse** layer (§Data structure): `recall.overview` matches *summaries* with
+  addresses, then `recall.expand` (or `past_chats`) drills to the raw span. It stays
+  session/transcript-shaped by construction (search-index keyed by `sessionId:messageId`,
+  `agentEventStore.ts:807`); the memory line remains a **separate** store with its own
+  tool — don't "rewire past_chats into memory." Three distinct things: raw recall
+  (fine) → segment summaries (coarse, addressable) → distilled memory.
+- **Memory feedstock = the distillation ladder, not raw scraping.** Memory entries are
+  distilled from **segment summaries** (one operation at increasing scope, §Data
+  structure), and each entry keeps a `sources` down-pointer to the summary / message
+  range it came from — so a fact is always traceable to ground truth (the
+  contamination guard the LoCoMo ceiling demands).
 
 ### Skills (capability) — owned by agent-skills-authoring
 
@@ -489,13 +741,18 @@ background-shell `BackgroundTask` registry with `running/completed/failed/stoppe
   cc-2.1's `asyncRewake` (exit-code-2 wakes the model) is the proven shape.
 - **First-class task-update messages** (provenance + a jump-to-artifact pointer),
   not a bare `systemReminder` blob.
-- **Bind a task to its agent + origin conversation**, and **preserve isolation**: a
-  background run must NOT share the foreground's session singletons (`activeRunId`,
-  `toolOutputPayloads`, `lastSubmittedUserPrompt`, `skillRuntime`,
-  `selectedLeafMessageId` — §2). Today isolation holds because a background run is a
-  separate agent instance + the injection is idle-gated; the redesign must keep that
-  as it scopes tasks to the agent (same thread as "split the `AgentSessionState`
-  bundle").
+- **A task is a `Run` with its own durable execution log** (`RunMeta` + `runs/<id>/`,
+  §Data structure), **anchored to exactly one conversation** (`conversationId`,
+  mandatory — where it reports). The **trigger** (`message` / `node` / `parent-run`) is
+  orthogonal provenance, never the anchor: a scheduled routine fired by a `command` node
+  still anchors to a delivery conversation, so there are **no conversation-less runs**.
+  `runs WHERE conversationId=X` is complete; the per-agent panel is `runs WHERE agentId=X`.
+- **Preserve isolation**: a background run must NOT share the foreground's session
+  singletons (`activeRunId`, `toolOutputPayloads`, `lastSubmittedUserPrompt`,
+  `skillRuntime`, `selectedLeafMessageId` — §2). Today isolation holds because a
+  background run is a separate agent instance + the injection is idle-gated; giving each
+  run its own log (above) makes the isolation structural rather than incidental (same
+  thread as "split the `AgentSessionState` bundle").
 
 **Notification / delivery.** Completion routes back to the **origin DM or Channel**
 (the task carries its `conversationId`), in two layers:
@@ -545,16 +802,23 @@ taxonomy once" is the cleaner target, but the fragmentation pressure is real.
 
 ### What dissolves: Session
 
-Splits into the **message stream** (persists, owned by the conversation) and the
-**per-turn assembly** (ephemeral, owned by nobody). The per-session storage becomes
-the substrate, re-keyed by conversation (stream) and by agent identity (memory).
+Splits **three** ways (§Data structure): the **conversation log** (messages, persists,
+owned by the conversation), the **run log** (execution, bounded, owned by the running
+agent — formerly inlined in the session), and the **per-turn assembly** (the ephemeral
+read seam, owned by nobody). The per-session storage becomes the substrate, re-keyed by
+conversation (messages), run (execution), and agent identity (memory).
 
 ### Prompt cache impact
 
+The governing rule is the **volatility-ordering invariant** in §Data structure (stable
+prefix → one volatile tail → never mutate the prefix). This subsection is its
+cache-specific proof.
+
 Verified against the engine. pi-ai uses Anthropic incremental caching —
 `cache_control` is placed on the system prompt, the last tool definition, and the
-**last user/assistant text** (`pi-mono/packages/ai/src/types.ts:410`), i.e. the
-breakpoint sits at the **tail**. The per-turn reminders (and the new MEMORY RECALL)
+**last user message's last block** (verified in the compiled provider,
+`@earendil-works/pi-ai/dist/providers/anthropic.js:892-900,933`; upstream
+`pi-mono/packages/ai/src/types.ts:410`), i.e. the breakpoint sits at the **tail**. The per-turn reminders (and the new MEMORY RECALL)
 are pushed into the **current user turn's content** (`buildUserPromptMessage`,
 `agentRuntime.ts:2673`) — the tail — and are **frozen into the persisted event**
 (`appendUserPromptEvent`, `:662`); history replays verbatim (`deriveRuntimePiMessages`,
@@ -705,10 +969,12 @@ memory line is a separate store. No migration — wipe dev data.
 compaction + tool-result budgeting **unchanged**; skills / tools / permissions;
 pi-agent-core.
 
-**CHANGE** — `sessionId` → `conversationId` (paths `sessions/<id>` →
-`conversations/<id>`, IPC, in-memory map, subagent/approval/branch scope);
-conversation gains typed `identity` + `members`; the main agent gets a stable
-identity record (a `name`), **without** the registry refactor.
+**CHANGE** — `session` → `{conversation, run}`: split the message stream
+(communication) from the run log (execution); re-key `sessions/<id>` →
+`conversations/<id>` **+** `runs/<id>` (IPC, in-memory map, subagent/approval/branch
+scope); conversation gains `Principal`-based `members` + `cursors` (**no stored
+`kind`**); `RunMeta` (anchor + `trigger`); the main agent gets a stable identity record
+(a `name`), **without** the registry refactor.
 
 **BUILD** — the memory line: `agent-memory/<identity>/` store + a memory tool +
 profile UI (view/edit/forget) + the v1 inline-write prompt + reminder-stack
@@ -719,7 +985,7 @@ a typed event for a future hooks consumer (§Background tasks). **Skills structu
 self-authoring** are built in [[agent-skills-authoring]] (not here); this plan only
 consumes binding (`AgentDefinition.skills`) for coordinator routing.
 
-**Honest scope.** Renaming session→conversation is the shallow ~20%. It does NOT
+**Honest scope.** The `session`→`{conversation, run}` split + re-key is the shallow ~20%. It does NOT
 cover: storing `actor` on message records, per-agent POV derivation, splitting the
 `AgentSessionState` bundle, branch-semantics for rooms, the main-agent registry
 refactor, or the memory subsystem. The real builds are the **memory line** and the
@@ -727,7 +993,8 @@ refactor, or the memory subsystem. The real builds are the **memory line** and t
 
 **Protocol-surface coordination (A4 / A7).** This plan's surface items — `actor` on
 `AgentEventMessageRecord` (`src/core/agentEventLog.ts`), `forAgentId` derivation, the
-conversation's typed `identity` / `members` (`src/core/types.ts`) — are part of the
+`Principal` type + conversation `members` / `cursors` + `RunMeta` (no stored `kind`;
+`src/core/types.ts`) — are part of the
 **consolidated M0 protocol-surface change list** in [[agent-program]] (which also
 covers `SkillDefinition.source += 'built-in'`, the `user_question.*` / `widget_state`
 events, etc. — the event taxonomy is decided there once). Land each as an
@@ -739,7 +1006,7 @@ though the `actor` add is backward-compatible.
 | Phase | Scope | Honest size |
 |---|---|---|
 | **P0** | Give the main agent a stable identity record (a `name`) memory attaches to. **Not** the registry refactor. **Pin the identity-tuple shape here** — it threads into the protocol-surface `AgentSession`, so the interim shape can't be revised cheaply later (OQ). | small (incl. the tuple decision) |
-| **P1** | `session`→`Conversation` (typed DM/Channel identity + `members`); conversation list by kind; **store `actor` on the message record** (backward-compatible foundation, drops implicit `'pi-mono'`); **memory v1** (inline tool + `agent-memory/<identity>/` store + profile UI + reminder-stack injection). Single-member only. | moderate (rename + `actor` + memory v1 store/UI) |
+| **P1** | `session`→`{conversation, run}` (conversation log = messages; run log = execution); conversation = `members` + `cursors`, **no stored `kind`** (DM/group derived); conversation list rendered by members/goal; **store `actor` on the message record** (drops implicit `'pi-mono'`); **memory v1** (inline tool + `agents/<id>/memory/` store + profile UI + reminder-stack injection). Single-member only. | moderate (split + `actor` + memory v1 store/UI) |
 | **P2** | **Memory v2** — dedicated extraction subagent + host callback + throttling; provenance tagging. Only if v1 inline proves insufficient. | real build (~400–600 LoC) |
 | **P3** | **Sequential multi-member Channels** — per-agent POV derivation + per-member `agentId` (on the P1 `actor` field), **coordinator-based turn-taking routing** (§Channel routing), rooms-are-linear; **the main-agent registry unification**; **memory v3** consolidation. | the big subsystem |
 
@@ -832,6 +1099,18 @@ decision (Open questions); the single-agent `config` tool is [[agent-self-modifi
   decided: spawn a new seeded Channel, don't convert — §Adding an agent.)
 - **Memory quality ceiling.** LoCoMo's ~40–50pt gap + contamination / retrieval
   misses are ongoing v2/v3 tuning, not solvable in one pass.
+- **History-replay fidelity / mixed resolution.** How old turns render in the assembled
+  `Message[]`: full (every prior `tool_call`/`tool_result` replayed, today's behavior) vs
+  compact (old segments as their summaries, recent as raw). This sets whether old
+  `tool_result` events must stay reachable in the conversation log or can live only in the
+  run log. Pin before the split lands (it shapes the conversation/run boundary).
+- **Document context: snapshot+delta vs tail.** The live outline is volatile *and* large
+  (the worst cache combination). Keep injecting it in the volatile tail (today), or cache a
+  snapshot as a prefix layer + send only the Loro delta since the snapshot? Decide when
+  memory-prefix lands (same volatility-ordering machinery).
+- **Group default-`addressedTo`.** When the user `@`s no one in an N-member channel, who
+  is addressed (all / none / last-speaker / the coordinator)? The coordinator is the
+  current answer; pin the default with the channel work (P3).
 
 ## Checklists
 
@@ -839,10 +1118,11 @@ P0 — identity
 - [ ] Give the main agent a stable identity `name`; thread it where memory will key off it.
 
 P1 — conversations + memory v1
-- [ ] `sessionId`→`conversationId` across storage paths, IPC, state map, scopes.
-- [ ] Typed `identity` (dm | channel) + `members` on the conversation record.
-- [ ] Store `actor` on `AgentEventMessageRecord` (backward-compatible; drop implicit `'pi-mono'`) — foundation for task-notification attribution + P3 POV. Land interface-first (A4).
-- [ ] Conversation list grouped by kind; DM + single-staffed Channel creation.
+- [ ] `session`→`{conversation, run}`: split the message stream (communication) from the run log (execution); re-key `sessions/<id>` → `conversations/<id>` + `runs/<id>`; IPC, state map, scopes.
+- [ ] `Principal` type; `members` + `cursors` on the conversation record — **no stored `kind`** (DM/group derived from members + `goal`). `RunMeta` with mandatory `conversationId` anchor + `trigger` provenance.
+- [ ] Store `actor` on `AgentEventMessageRecord` (backward-compatible; drop implicit `'pi-mono'` — parameterize `agentActor()`) — foundation for task-notification attribution + P3 POV. Land interface-first (A4).
+- [ ] Conversation list rendered by members/goal (1:1 → DM, else group); DM find-or-create-unique; single-staffed Channel creation.
+- [ ] Distillation backbone: make `compaction.completed` a multi-consumer node with an explicit both-ends `source` range (raw retained, already non-destructive). Coarse `recall.overview`/`recall.expand` over summaries is later (P2+), but the addressable range lands here.
 - [ ] "Add agent" spawns a new seeded Channel (no in-place conversion); combined, provenance-marked message forwarding (any conversation → any conversation).
 - [ ] `agent-memory/<identity>/` store; `memory_write`/privileged-path decision.
 - [ ] Inline memory write instructions in the agent prompt.

@@ -42,9 +42,14 @@ and `unified-command-surface` (design ratified, retrieval dep shipped — needs 
 dev build one-pager first). The agent P1s (`agent-conversation-model`,
 `agent-skills-authoring`, `agent-self-modification`, `agent-ask-user-question-tool`,
 `agent-import-skill`) are now sequenced under the **`agent-program`** umbrella
-(foundation **M0** → M3); the program + member-plan reorg is drafted and **pending PM
-ratification before M0 (the interface-first foundation PRs) starts** — escalate before
-code.
+(foundation **M0** → M3). The **M0 data structure is now specified** in
+`agent-conversation-model` §Data structure (one log engine · `session`→`{conversation,
+run}` · `Principal`/`members`, no stored `kind` · run anchored to one conversation ·
+distillation ladder · context cache-discipline invariant), with `agent-program`
+F2/F3/F5/F6 + the event taxonomy + protocol-surface list updated to match. **Still
+pending PM ratification before M0 (the interface-first foundation PRs) starts** — and a
+few needs-PM decisions remain (history-replay fidelity, doc snapshot+delta, group
+default-`addressedTo`, canonical-DM vs session-list UX); escalate before code.
 
 ### Command surface & capture
 
