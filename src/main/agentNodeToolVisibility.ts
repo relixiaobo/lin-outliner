@@ -23,11 +23,22 @@ import type {
   ProjectionIndex,
 } from './agentNodeToolTypes';
 
+/**
+ * Facts the caller already knows that drive the guidance text — passed in
+ * explicitly rather than re-derived from the wire payload's shape. `preview` is
+ * the tool's `preview_only` arg; `count` is `node_search`'s count-only mode.
+ */
+export interface NodeInstructionContext {
+  preview?: boolean;
+  count?: boolean;
+}
+
 export function nodeToolResult<TData>(
   envelope: ToolEnvelope<TData>,
   visibleData: NodeVisibleResult,
+  ctx: NodeInstructionContext = {},
 ): AgentToolResult<ToolEnvelope<TData>> {
-  const visibleEnvelope = nodeVisibleEnvelope(envelope, visibleData);
+  const visibleEnvelope = nodeVisibleEnvelope(envelope, visibleData, ctx);
   return {
     content: [{ type: 'text', text: JSON.stringify(visibleEnvelope, null, 2) }],
     details: envelope,
@@ -46,13 +57,14 @@ export function nodeErrorResult<TData>(
 function nodeVisibleEnvelope<TData>(
   envelope: ToolEnvelope<TData>,
   data: NodeVisibleResult,
+  ctx: NodeInstructionContext,
 ): NodeVisibleEnvelope {
-  const instructions = nodeInstructions(envelope, data);
+  const instructions = nodeInstructions(envelope, data, ctx);
   return compactVisibleEnvelope({
     ok: envelope.ok,
     status: isInformativeStatus(envelope.status) ? envelope.status : undefined,
     instructions,
-    data: modelVisibleData(data),
+    data,
     warnings: envelope.warnings,
   });
 }
@@ -69,20 +81,6 @@ function nodeVisibleErrorEnvelope<TData>(envelope: ToolEnvelope<TData>): NodeVis
     error: visibleToolError(error),
     warnings: envelope.warnings,
   });
-}
-
-/**
- * Strip instruction-only fields from a result before it goes to the model. Today
- * that is the mutation `status` (preview/applied/unchanged) — it drives the
- * instruction text but the model derives preview from its own `preview_only`
- * arg, and `changes` already reports what happened.
- */
-function modelVisibleData(data: NodeVisibleResult): NodeVisibleResult {
-  if ('status' in data && data.status !== undefined) {
-    const { status: _status, ...rest } = data;
-    return rest;
-  }
-  return data;
 }
 
 export function visibleReadResult(
@@ -129,7 +127,6 @@ export function visibleSearchResult(index: ProjectionIndex, data: NodeSearchData
 
 export function visibleCreateResult(data: NodeCreateData, previewOnly: boolean, index?: ProjectionIndex): NodeVisibleMutationResult {
   return compactVisibleResult({
-    status: previewOnly ? 'preview' : 'applied',
     outline: previewOnly
       ? data.outline
       : index ? serializeAnnotatedOutlines(index, data.createdRootIds, 12, 0, 500, false) : undefined,
@@ -139,7 +136,6 @@ export function visibleCreateResult(data: NodeCreateData, previewOnly: boolean, 
 
 export function visibleDeleteResult(data: NodeDeleteData, previewOnly: boolean): NodeVisibleMutationResult {
   return compactVisibleResult({
-    status: previewOnly ? 'preview' : 'applied',
     changes: previewOnly
       ? compactChanges({ trashed: data.preview.map((item) => item.nodeId) }) ?? {}
       : compactChanges({
@@ -150,10 +146,8 @@ export function visibleDeleteResult(data: NodeDeleteData, previewOnly: boolean):
 }
 
 export function visibleEditResult(data: NodeEditData, previewOnly: boolean, index?: ProjectionIndex): NodeVisibleMutationResult {
-  const changed = data.status === 'updated';
   const readableIds = readableEditNodeIds(data);
   return compactVisibleResult({
-    status: previewOnly ? 'preview' : changed ? 'applied' : 'unchanged',
     outline: previewOnly
       ? data.afterOutline
       : index ? serializeAnnotatedOutlines(index, readableIds, 3, 0, 50, false) : undefined,
@@ -194,10 +188,10 @@ function readableEditNodeIds(data: NodeEditData): string[] {
 
 // The visible result no longer carries a `kind`/`action` discriminant (both were
 // derivable from the tool name), so guidance branches on `envelope.tool` and the
-// payload's own shape instead.
-function nodeInstructions<TData>(envelope: ToolEnvelope<TData>, data: NodeVisibleResult): string {
+// caller-supplied `ctx` (preview / count) — never on the payload's shape.
+function nodeInstructions<TData>(envelope: ToolEnvelope<TData>, data: NodeVisibleResult, ctx: NodeInstructionContext): string {
   const parts: string[] = [];
-  const preview = isPreviewResult(data);
+  const preview = ctx.preview === true;
   if (envelope.tool === 'node_read') {
     parts.push('Use data.outline as the single source of truth for follow-up edits. Preserve existing %%node:id%% markers for existing nodes; omit markers only for newly created lines.');
     if (resultReferences(data)?.length) parts.push('For final answers, prefer copying data.references[].display_ref for node mentions.');
@@ -207,7 +201,7 @@ function nodeInstructions<TData>(envelope: ToolEnvelope<TData>, data: NodeVisibl
       parts.push(`More root children are available. Call node_read again with child_offset ${nextOffset} and the same node_id/depth/child_limit.`);
     }
   } else if (envelope.tool === 'node_search') {
-    if ('total' in data) {
+    if (ctx.count) {
       parts.push('Only the result count was requested; call node_search without count when you need editable node ids.');
     } else {
       parts.push('Use the %%node:id%% markers in data.outline when reading or editing a search result.');
@@ -235,10 +229,6 @@ function nodeInstructions<TData>(envelope: ToolEnvelope<TData>, data: NodeVisibl
   }
   if (envelope.instructions) parts.push(envelope.instructions);
   return parts.join(' ');
-}
-
-function isPreviewResult(data: NodeVisibleResult): boolean {
-  return 'status' in data && data.status === 'preview';
 }
 
 function resultReferences(data: NodeVisibleResult): NodeVisibleReference[] | undefined {

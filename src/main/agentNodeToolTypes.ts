@@ -308,12 +308,6 @@ export interface NodeVisibleSearchResult {
 }
 
 export interface NodeVisibleMutationResult {
-  /**
-   * Internal: drives the preview-vs-applied instruction text. Stripped from the
-   * model-visible JSON by `nodeVisibleEnvelope` — the model derives preview from
-   * its own `preview_only` arg, and `changes` already reports what happened.
-   */
-  status?: 'applied' | 'preview' | 'unchanged';
   changes: NodeVisibleChanges;
   outline?: string;
 }

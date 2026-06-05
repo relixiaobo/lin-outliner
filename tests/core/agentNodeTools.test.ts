@@ -1332,6 +1332,35 @@ describe('agent node tools', () => {
     expect(result.details.data!.items![0]!.nodeId).toBe(chengdu);
   });
 
+  test('node_search count mode guides toward an id-returning call instead of an outline', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    mustFocus(core.createNode(today, null, 'Chengdu weather'));
+    core.createNode(today, null, 'Beijing itinerary');
+
+    const result = await executeRawTool(core, 'node_search', {
+      outline: '- %%search%% Chengdu\n  - STRING_MATCH\n    - value:: Chengdu',
+      count: true,
+      limit: 10,
+    });
+    const visible = parseVisibleToolResult<{
+      ok: boolean;
+      instructions?: string;
+      data?: { total?: number; outline?: string; references?: unknown };
+    }>(result.contentText);
+
+    // Count-only mode is signalled by the caller-supplied ctx, not by sniffing
+    // the payload shape — guidance must point back to an id-returning call.
+    expect(visible.instructions).toContain('Only the result count was requested');
+    expect(visible.instructions).toContain('without count');
+    // Editing guidance is suppressed: no outline markers, no reference hints.
+    expect(visible.instructions).not.toContain('%%node:id%%');
+    expect(visible.instructions).not.toContain('display_ref');
+    expect(visible.data!.total).toBe(1);
+    expect(visible.data).not.toHaveProperty('outline');
+    expect(visible.data).not.toHaveProperty('references');
+  });
+
   test('node_search resolves tag conditions from temporary search outlines', async () => {
     const core = Core.new();
     const today = core.projection().todayId;

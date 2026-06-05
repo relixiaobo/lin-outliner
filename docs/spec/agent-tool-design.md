@@ -215,8 +215,11 @@ type NodeVisibleResult =
   | NodeVisibleMutationResult;
 
 // The result kind is no longer carried in the payload — it is implied by
-// `envelope.tool` (read/search/create/edit/delete) and, for search-vs-count, the
-// payload shape (`total` is present only for count).
+// `envelope.tool` (read/search/create/edit/delete). The data shape still differs
+// honestly (count returns `total`, results return `outline`), but the *guidance*
+// text is selected from a caller-supplied `NodeInstructionContext { preview?,
+// count? }` — the facts the caller already knows (`preview_only`, `count`) —
+// never by sniffing the payload shape, which would drift as shapes evolve.
 interface NodeVisibleReadResult {
   outline?: string;
   references?: NodeVisibleReference[];
