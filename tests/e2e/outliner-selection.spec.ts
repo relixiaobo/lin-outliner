@@ -147,3 +147,44 @@ test.describe('outliner selection parity', () => {
     await expect(rowEditor(page, ids.alpha)).toBeFocused();
   });
 });
+
+// Regression: a row's `selected` class is computed during its own render from the
+// prop-drilled `ui`. A nested row receives that `ui` through its owning expanded
+// ancestor, so when the ancestor's OWN memo state is unchanged it used to skip
+// re-rendering and freeze its descendants' `ui` — the newly drag/cmd-click
+// selected children kept a stale (unselected) class until an unrelated render
+// woke them up ("re-enter a node to fix it"). Direct children of the view root
+// never hit this (the root view is not gated behind an ancestor row's memo), so
+// the bug only showed inside an expanded node — most often a supertagged one,
+// since tagged nodes routinely carry an expanded child list.
+test.describe('outliner selection inside an expanded non-root node', () => {
+  test.beforeEach(async ({ page }) => {
+    await openMockedApp(page);
+    // Nest Beta + Gamma under Alpha so they render through Alpha's nested view.
+    await rowEditor(page, ids.beta).click();
+    await page.keyboard.press('Tab');
+    await rowEditor(page, ids.gamma).click();
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Escape');
+    await expect(row(page, ids.beta)).toBeVisible();
+    await expect(row(page, ids.gamma)).toBeVisible();
+  });
+
+  test('drag-select highlights nested children', async ({ page }) => {
+    await dragSelectRows(page, ids.beta, ids.gamma);
+
+    await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
+    await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
+    await expect(rowEditor(page, ids.beta)).not.toBeFocused();
+  });
+
+  test('cmd-click highlights nested children', async ({ page }) => {
+    // Click into Alpha first so the cmd-clicks are fresh ADDs rather than a
+    // toggle-off of a child the nesting setup happened to leave selected.
+    await rowEditor(page, ids.alpha).click();
+    await multiSelect(page, [ids.beta, ids.gamma]);
+
+    await expect(rowBody(page, ids.beta)).toHaveClass(/selected/);
+    await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
+  });
+});

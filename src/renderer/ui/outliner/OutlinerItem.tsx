@@ -2027,14 +2027,33 @@ function outlinerItemPropsEqual(prev: OutlinerItemProps, next: OutlinerItemProps
   // Propagate a focus/pending-input request down to a nested target (see above).
   if (focusAncestorToken(prev, prev.ui.focusRequest) !== focusAncestorToken(next, next.ui.focusRequest)) return false;
   if (focusAncestorToken(prev, prev.ui.pendingInputChar) !== focusAncestorToken(next, next.ui.pendingInputChar)) return false;
-  // Nested OutlinerViews receive `ui` through their owning expanded row. If a
-  // descendant's expanded state changes while the ancestor row's own expanded bit
-  // stays the same, the ancestor still has to re-render so the nested view passes
-  // the fresh `ui` down to that descendant.
-  if (
+  // Nested OutlinerViews receive `ui` by prop-drilling through their owning
+  // expanded row, so a memoized ancestor that bails out freezes its descendants'
+  // `ui`. Whenever a field a *descendant's* render reads moves — even if this
+  // row's own memo state is unchanged — an expanded row must re-render to forward
+  // the fresh `ui` down. Expansion needed this; selection/focus do too: without
+  // it a drag- or modifier-click-selected descendant keeps a stale
+  // `selected`/`focused` class until something unrelated forces its ancestor to
+  // render (the "drag-select among a tagged node's children does nothing until I
+  // re-enter a node" bug). This forwards the full set of `ui` slices a
+  // descendant's `deriveRowMemoState` reads, EXCEPT `focusRequest` /
+  // `pendingInputChar`, which already get precise descendant detection via
+  // `focusAncestorToken` above. Each slice is replaced by identity on change, so
+  // reference comparison suffices. Gated on this row being expanded so only
+  // ancestors that actually own a nested view pay the cost; the moves themselves
+  // are infrequent and user-driven.
+  const rowExpanded = prev.ui.expanded.has(prev.nodeId) || next.ui.expanded.has(next.nodeId);
+  if (rowExpanded && (
     prev.ui.expanded !== next.ui.expanded
-    && (prev.ui.expanded.has(prev.nodeId) || next.ui.expanded.has(next.nodeId))
-  ) {
+    || prev.ui.focusedId !== next.ui.focusedId
+    || prev.ui.focusSurface !== next.ui.focusSurface
+    || prev.ui.focusedPanelId !== next.ui.focusedPanelId
+    || prev.ui.selectedId !== next.ui.selectedId
+    || prev.ui.selectedIds !== next.ui.selectedIds
+    || prev.ui.selectionSource !== next.ui.selectionSource
+    || prev.ui.pendingReferenceConversion !== next.ui.pendingReferenceConversion
+    || prev.ui.pendingReferenceTypeAhead !== next.ui.pendingReferenceTypeAhead
+  )) {
     return false;
   }
   // Re-render only when *this row's* UI state moved (focus/selection/expand/…),
