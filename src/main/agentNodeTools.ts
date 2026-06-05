@@ -981,7 +981,7 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
         limit,
         items,
       };
-      const visible = visibleSearchResult(index, data);
+      const visible = visibleSearchResult(index, data, params.count);
 
       return nodeToolResult(successEnvelope('node_search', data, {
         instructions: offset + limit < total ? `Call node_search with offset ${offset + limit} to continue.` : undefined,

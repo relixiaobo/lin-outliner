@@ -193,6 +193,9 @@ function pastChatsToolResult(
   // The model-visible JSON is the single, self-contained return value: it carries
   // every field the agent needs (search snippets, read message text), so no parallel
   // markdown rendering is emitted. See visiblePastChatsResult for the per-mode shape.
+  // An error with no recovery anchors has no visible data — the envelope's error
+  // already carries code + message. `visible` is undefined there, which omits the
+  // data block (undefined is the safe default; no sentinel needed).
   return agentToolResult(envelope, visible);
 }
 
@@ -221,11 +224,13 @@ function pastChatsInstructions(result: Exclude<PastChatsResult, PastChatsErrorRe
 // (session_title, total_chars) stay out of the model's view; boolean flags are
 // only included when true to keep the payload lean.
 function visiblePastChatsResult(result: PastChatsResult): unknown {
+  // `mode` echoes the model's own arg; `returned_*`/`message_count` equal the
+  // length of the array right beside them; `anchor_message_id` echoes the
+  // `message_id` arg. In error mode the envelope already carries `error.code` +
+  // `error.message`, so only the recovery anchors remain.
   if (result.mode === 'recent') {
     return {
-      mode: result.mode,
       total_items: result.totalItems,
-      returned_items: result.items.length,
       truncated: result.truncated,
       items: result.items.map((item) => ({
         message_id: item.messageId,
@@ -239,9 +244,7 @@ function visiblePastChatsResult(result: PastChatsResult): unknown {
   }
   if (result.mode === 'search') {
     return {
-      mode: result.mode,
       total_hits: result.totalHits,
-      returned_hits: result.hits.length,
       truncated: result.truncated,
       hits: result.hits.map((hit) => ({
         message_id: hit.messageId,
@@ -254,15 +257,12 @@ function visiblePastChatsResult(result: PastChatsResult): unknown {
   }
   if (result.mode === 'read') {
     return {
-      mode: result.mode,
       session: {
         id: result.session.id,
         title: result.session.title,
         created_at: result.session.createdAt,
         updated_at: result.session.updatedAt,
       },
-      anchor_message_id: result.anchorMessageId,
-      message_count: result.messages.length,
       total_chars: result.totalChars,
       output_truncated: result.outputTruncated,
       messages: result.messages.map((message) => ({
@@ -276,12 +276,9 @@ function visiblePastChatsResult(result: PastChatsResult): unknown {
       })),
     };
   }
-  return {
-    mode: result.mode,
-    code: result.code,
-    message: result.message,
-    ...(result.nearbyMessageIds?.length ? { nearby_message_ids: result.nearbyMessageIds } : {}),
-  };
+  return result.nearbyMessageIds?.length
+    ? { nearby_message_ids: result.nearbyMessageIds }
+    : undefined;
 }
 
 function stringParam(value: unknown): string | undefined {

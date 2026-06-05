@@ -29,15 +29,42 @@ export interface ToolEnvelope<TData = unknown> {
 
 export const TOOL_RESULT_VERSION = 1;
 
+/**
+ * The model-visible error carries only what the model can act on. `recoverable`
+ * is dropped (it is a constant `true`); the runtime `details` envelope keeps it.
+ */
+export type VisibleToolError = Pick<ToolError, 'code' | 'message'>;
+
 export type ModelVisibleToolEnvelope<TData = unknown> =
-  Pick<ToolEnvelope<TData>, 'ok' | 'tool' | 'status'>
-  & Partial<Pick<ToolEnvelope<TData>, 'data' | 'error' | 'instructions' | 'warnings'>>;
+  Pick<ToolEnvelope<TData>, 'ok'>
+  & Partial<Pick<ToolEnvelope<TData>, 'status' | 'data' | 'instructions' | 'warnings'>>
+  & { error?: VisibleToolError };
 
-const MODEL_DATA_UNSET = Symbol('model-data-unset');
+/**
+ * `status` is only worth showing the model when it adds something beyond `ok` +
+ * `error`. `success` merely restates `ok:true`; `error` merely restates
+ * `ok:false` + the `error` object. The informative states are `unchanged`,
+ * `partial`, and `denied`.
+ */
+export function isInformativeStatus(status: ToolStatus): boolean {
+  return status !== 'success' && status !== 'error';
+}
 
+export function visibleToolError(error: ToolError): VisibleToolError {
+  return { code: error.code, message: error.message };
+}
+
+/**
+ * Builds a model-facing tool result. `modelData` is what the model sees under
+ * `data`: omitted entirely when `undefined` (the default), so the safe path is
+ * also the natural one — there is no sentinel and no accidental fallback to the
+ * full runtime payload. To show the model a slim projection, pass it; to echo
+ * the runtime `envelope.data` in full, pass `envelope.data` explicitly. The
+ * complete envelope always stays on `details`.
+ */
 export function agentToolResult<TData>(
   envelope: ToolEnvelope<TData>,
-  modelData: unknown = MODEL_DATA_UNSET,
+  modelData?: unknown,
   extraContent: AgentToolResult<TData>['content'] = [],
 ): AgentToolResult<ToolEnvelope<TData>> {
   const visibleEnvelope = modelVisibleEnvelope(envelope, modelData);
@@ -97,23 +124,31 @@ export function isToolEnvelope(value: unknown): value is ToolEnvelope {
     && typeof candidate.status === 'string';
 }
 
-function compactOptions<T extends Record<string, unknown>>(options: T): Partial<T> {
+/** Drop keys whose value is `undefined` (the single shared compaction helper). */
+export function dropUndefinedFields<T extends Record<string, unknown>>(obj: T): T {
   return Object.fromEntries(
-    Object.entries(options).filter(([, value]) => value !== undefined),
-  ) as Partial<T>;
+    Object.entries(obj).filter(([, value]) => value !== undefined),
+  ) as T;
 }
 
-function modelVisibleEnvelope<TData>(
+function compactOptions<T extends Record<string, unknown>>(options: T): Partial<T> {
+  return dropUndefinedFields(options);
+}
+
+/**
+ * Projects the runtime envelope down to what the model sees. Shared by every
+ * tool (the `node_*` path passes its own computed `instructions` via a throwaway
+ * envelope copy). `data` is shown only when `modelData` is defined.
+ */
+export function modelVisibleEnvelope<TData>(
   envelope: ToolEnvelope<TData>,
-  modelData: unknown,
+  modelData?: unknown,
 ): ModelVisibleToolEnvelope<unknown> {
-  const data = modelData === MODEL_DATA_UNSET ? envelope.data : modelData;
   return {
     ok: envelope.ok,
-    tool: envelope.tool,
-    status: envelope.status,
-    ...(data !== undefined ? { data } : {}),
-    ...(envelope.error ? { error: envelope.error } : {}),
+    ...(isInformativeStatus(envelope.status) ? { status: envelope.status } : {}),
+    ...(modelData !== undefined ? { data: modelData } : {}),
+    ...(envelope.error ? { error: visibleToolError(envelope.error) } : {}),
     ...(envelope.instructions ? { instructions: envelope.instructions } : {}),
     ...(envelope.warnings?.length ? { warnings: envelope.warnings } : {}),
   };

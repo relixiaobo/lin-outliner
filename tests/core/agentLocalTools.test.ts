@@ -45,6 +45,11 @@ async function executeTool<TData>(workspaceRoot: string, name: string, params: u
 const hasPdfTools = commandExists('pdfinfo') && commandExists('pdftoppm');
 const pdfTest = hasPdfTools ? test : test.skip;
 
+// file_grep shells out to a real `rg` binary; skip ripgrep-backed cases when the
+// binary is not on PATH (mirrors the pdfTest pattern).
+const hasRipgrep = commandExists('rg');
+const ripgrepTest = hasRipgrep ? test : test.skip;
+
 function commandExists(command: string): boolean {
   return !spawnSync(command, ['--version'], { stdio: 'ignore' }).error;
 }
@@ -178,6 +183,8 @@ describe('agent local tools', () => {
       }>(workspaceRoot, 'file_read', { file_path: filePath, offset: 2, limit: 1 });
 
       expect(read.ok).toBe(true);
+      // A partial read carries a structured truncation signal, not just prose.
+      expect(read.status).toBe('partial');
       expect(read.data!.file).toMatchObject({
         content: 'beta',
         numLines: 1,
@@ -479,13 +486,13 @@ describe('agent local tools', () => {
     });
   });
 
-  test('file_glob and file_grep find workspace files without bash', async () => {
+  // file_glob works without ripgrep (it falls back to a pure-JS directory walk),
+  // so its coverage must not be gated on `rg` being installed.
+  test('file_glob finds workspace files without bash', async () => {
     await withWorkspace(async (workspaceRoot) => {
       await mkdir(path.join(workspaceRoot, 'src'), { recursive: true });
-      const alpha = path.join(workspaceRoot, 'src', 'alpha.ts');
-      const beta = path.join(workspaceRoot, 'src', 'beta.ts');
-      await writeFile(alpha, 'export const city = "Chengdu";\n', 'utf8');
-      await writeFile(beta, 'export const city = "Shanghai";\n', 'utf8');
+      await writeFile(path.join(workspaceRoot, 'src', 'alpha.ts'), 'export const city = "Chengdu";\n', 'utf8');
+      await writeFile(path.join(workspaceRoot, 'src', 'beta.ts'), 'export const city = "Shanghai";\n', 'utf8');
       await writeFile(path.join(workspaceRoot, 'root.ts'), 'export const city = "Beijing";\n', 'utf8');
 
       const glob = await executeTool<{ filenames: string[] }>(workspaceRoot, 'file_glob', {
@@ -499,6 +506,14 @@ describe('agent local tools', () => {
       });
       expect(rootGlob.ok).toBe(true);
       expect(rootGlob.data!.filenames).toEqual(['root.ts']);
+    });
+  });
+
+  ripgrepTest('file_grep finds workspace content without bash', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      await mkdir(path.join(workspaceRoot, 'src'), { recursive: true });
+      await writeFile(path.join(workspaceRoot, 'src', 'alpha.ts'), 'export const city = "Chengdu";\n', 'utf8');
+      await writeFile(path.join(workspaceRoot, 'src', 'beta.ts'), 'export const city = "Shanghai";\n', 'utf8');
 
       const grep = await executeTool<{
         mode: 'content';
@@ -619,7 +634,7 @@ describe('agent local tools', () => {
     });
   });
 
-  test('file_grep uses ripgrep-style modes with relative paths and pagination', async () => {
+  ripgrepTest('file_grep uses ripgrep-style modes with relative paths and pagination', async () => {
     await withWorkspace(async (workspaceRoot) => {
       await mkdir(path.join(workspaceRoot, 'src'), { recursive: true });
       await writeFile(path.join(workspaceRoot, 'src', 'alpha.ts'), 'hello\nHELLO\n', 'utf8');
@@ -817,18 +832,24 @@ describe('local tool model-visible projections', () => {
     expect(visibleFileGlob({ ...data, truncated: true })).toEqual({ filenames: ['a.ts', 'b.ts'], truncated: true });
   });
 
-  test('file_grep returns mode-specific shapes without derivable counts', () => {
+  test('file_grep returns mode-specific shapes without mode or derivable counts', () => {
     const filesMode: FileGrepData = { mode: 'files_with_matches', numFiles: 2, filenames: ['a.ts', 'b.ts'] };
-    expect(visibleFileGrep(filesMode)).toEqual({ mode: 'files_with_matches', filenames: ['a.ts', 'b.ts'] });
+    const filesVisible = visibleFileGrep(filesMode);
+    expect(filesVisible).toEqual({ filenames: ['a.ts', 'b.ts'] });
+    expect(filesVisible).not.toHaveProperty('mode');
 
     const contentMode: FileGrepData = { mode: 'content', numFiles: 0, filenames: [], content: 'a.ts:1:hit', numLines: 1, appliedLimit: 1, appliedOffset: 0 };
-    expect(visibleFileGrep(contentMode)).toEqual({ mode: 'content', content: 'a.ts:1:hit' });
+    const contentVisible = visibleFileGrep(contentMode);
+    expect(contentVisible).toEqual({ content: 'a.ts:1:hit' });
+    expect(contentVisible).not.toHaveProperty('mode');
 
     const countMode: FileGrepData = { mode: 'count', numFiles: 2, filenames: [], content: 'a.ts:2', numMatches: 3 };
-    expect(visibleFileGrep(countMode)).toEqual({ mode: 'count', content: 'a.ts:2', numMatches: 3 });
+    const countVisible = visibleFileGrep(countMode);
+    expect(countVisible).toEqual({ content: 'a.ts:2', numMatches: 3 });
+    expect(countVisible).not.toHaveProperty('mode');
   });
 
-  test('task_stop keeps id/status/outputPath and drops the echoed message', () => {
+  test('task_stop keeps only outputPath and drops the echoed message, id, and status', () => {
     const data: TaskStopData = {
       message: 'Successfully stopped task: task_1 (sleep 100)',
       task_id: 'task_1',
@@ -837,6 +858,10 @@ describe('local tool model-visible projections', () => {
       status: 'stopped',
       outputPath: '/tmp/task_1.log',
     };
-    expect(visibleTaskStop(data)).toEqual({ task_id: 'task_1', status: 'stopped', outputPath: '/tmp/task_1.log' });
+    const visible = visibleTaskStop(data);
+    expect(visible).toEqual({ outputPath: '/tmp/task_1.log' });
+    expect(visible).not.toHaveProperty('task_id');
+    expect(visible).not.toHaveProperty('status');
+    expect(visible).not.toHaveProperty('message');
   });
 });
