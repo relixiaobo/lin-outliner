@@ -146,6 +146,15 @@ plus new delta-application tests; keep a full-projection fallback path.
 
 **Subsumes:** renderer H1/H2/H3, core H2/H3, Codex #1/#3.
 
+**Status: shipped** (detailed plan `docs/plans/archive/incremental-projection.md`,
+folded into `docs/spec/architecture.md`). PR-A (#119) landed the `ProjectionUpdate`
+union + delta reducer (deleted the `JSON.stringify` signature pass, stable
+unchanged-node identity); PR-B (#121) made the reverse-edge index incremental
+(`patchReverseEdges`, held across edits — retired the reverse-edge rebuild). The
+two big O(N) passes here are gone. **Residual O(N) per keystroke** still in the
+delta reducer: `new Map(prev.byId)` whole-map copy and the `nextRevisions`
+whole-map rebuild, both immutability-driven — tracked as **P3-23** below.
+
 ---
 
 ## P2 — Structural (render & streaming paths)
@@ -233,7 +242,8 @@ across keystrokes); they are listed so nothing is lost, but should be revisited
 | ID | Finding | Location | Note |
 |----|---------|----------|------|
 | P3-1 | `OutlinerView`/`OutlinerFieldRow` not memoized → `buildOutlinerRows` (filter/sort/group, recursive `childText`) re-runs per subtree per keystroke | `OutlinerView.tsx:49`, `OutlinerFieldRow.tsx:107`, `outlinerRows.ts:153,327,412` | retired by **P2-1**; else add memo + cache field-value primitives per build (Codex #4/#5) |
-| P3-2 | References display re-runs an O(N) backlink scan every keystroke (memo keyed on per-frame `byId`) | `systemFields.ts:102` via `OutlinerFieldRow.tsx:197` | **↑P1**; deeper fix: maintain a reverse-reference index (target→referrers) |
+| P3-2 | References display re-runs an O(N) backlink scan every keystroke (memo keyed on per-frame `byId`) | `systemFields.ts:102` via `OutlinerFieldRow.tsx:197` | **largely addressed by #121** — a held `target→referrers` reverse-edge index now exists (`renderRev.ts` `ReverseEdges`); remaining work is to route the backlink display through it instead of re-scanning |
+| P3-23 | Delta reducer copies the **whole** `byId` (`new Map(prev.byId)`) and rebuilds the **whole** `nextRevisions` map every keystroke — both O(N), immutability-driven (the residual #119/#121 left) | `renderer/state/document.ts` (`reduceProjection`), `renderRev.ts` (`nextRevisions`) | persistent/HAMT-style structural sharing, or mutate-with-version-stamp; measure with `tmp/bench-reverse-edges.ts` before trading immutability for throughput (perception-first, `AGENTS.md` A9) |
 | P3-3 | `@`/reference & field picker filter+map+rank+sort the **whole** projection per keystroke, with per-candidate ancestor walks | `referenceCandidates.ts:139`, `useFieldNameReuse.ts:57` | reuse the main-process text index or a renderer-side label/fieldDef index (Codex #6) |
 | P3-4 | Day-page note counts scan all of `byId`, memo dep `byId` reborn each keystroke | `NodePanel.tsx:292` | **↑P1**; or move counts into projection metadata / incremental date index (Codex #7) |
 | P3-5 | `index` object identity changes every keystroke → unmemoized siblings (`Sidebar`, `AgentDock`, `CommandPalette`) re-render | `App.tsx:51` (consumers `:337`/`:374`/`:405`) | memo heavy consumers against the slice they use |
