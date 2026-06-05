@@ -23,7 +23,7 @@ const SHOW_DELAY_MS = 220;
 const HIDE_DELAY_MS = 80;
 const POPOVER_GAP = 8;
 const POPOVER_WIDTH = 292;
-const POPOVER_MAX_HEIGHT = 360;
+const POPOVER_MIN_HEIGHT = 120;
 
 export function InlineFilePreviewLayer() {
   const t = useT();
@@ -130,7 +130,7 @@ export function InlineFilePreviewLayer() {
 
     function handleClick(event: MouseEvent) {
       const element = inlineFileElementFromTarget(event.target);
-      if (!element || element.closest('.agent-composer-editor')) return;
+      if (!element) return;
       const file = fileFromElement(element);
       if (!file?.path || !window.lin?.openLocalFile) return;
       event.preventDefault();
@@ -259,14 +259,20 @@ function finiteNumber(value: string | undefined): number | undefined {
 function previewStyle(anchorRect: DOMRectReadOnly): CSSProperties {
   const width = Math.min(POPOVER_WIDTH, Math.max(180, window.innerWidth - POPOVER_GAP * 2));
   const left = clamp(anchorRect.left, POPOVER_GAP, window.innerWidth - width - POPOVER_GAP);
-  const belowTop = anchorRect.bottom + POPOVER_GAP;
-  const aboveTop = anchorRect.top - POPOVER_MAX_HEIGHT - POPOVER_GAP;
-  const top = belowTop + POPOVER_MAX_HEIGHT <= window.innerHeight
-    ? belowTop
-    : Math.max(POPOVER_GAP, aboveTop);
+  const availableBelow = window.innerHeight - anchorRect.bottom - (POPOVER_GAP * 2);
+  const availableAbove = anchorRect.top - (POPOVER_GAP * 2);
+  if (availableBelow >= POPOVER_MIN_HEIGHT || availableBelow >= availableAbove) {
+    return {
+      left,
+      maxHeight: Math.max(POPOVER_MIN_HEIGHT, availableBelow),
+      top: anchorRect.bottom + POPOVER_GAP,
+      width,
+    };
+  }
   return {
+    bottom: window.innerHeight - anchorRect.top + POPOVER_GAP,
     left,
-    top,
+    maxHeight: Math.max(POPOVER_MIN_HEIGHT, availableAbove),
     width,
   };
 }

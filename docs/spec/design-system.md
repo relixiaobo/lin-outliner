@@ -995,8 +995,8 @@ category history; see "Settings window".)
 - Clicking a local-file inline ref opens the file or folder through the preload
   bridge and main-process `shell.openPath` after absolute-path/stat validation.
   Renderer code must not navigate to `file://`, call `openExternal` for file
-  paths, or read local bytes directly. Composer local-file atoms are hover-preview
-  only in this v1 so plain click still preserves editing/selection semantics.
+  paths, or read local bytes directly. Composer local-file atoms use the same
+  click-open behavior as other render sites.
 
 ### Fields And Definition Configuration
 

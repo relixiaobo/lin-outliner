@@ -563,13 +563,15 @@ test.describe('agent composer controls', () => {
 
   test('uses local file thumbnails for mention rows, hover previews, and inline references', async ({ page }) => {
     await page.evaluate(() => {
-      const thumbnail = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lPvsZAAAAABJRU5ErkJggg==';
-      const imageDataBase64 = thumbnail.slice(thumbnail.indexOf(',') + 1);
-      const win = window as typeof window & {
-        lin?: {
-          invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
-          prepareLocalFile?: (options: { id: string }) => Promise<{
-            file: {
+	      const thumbnail = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lPvsZAAAAABJRU5ErkJggg==';
+	      const imageDataBase64 = thumbnail.slice(thumbnail.indexOf(',') + 1);
+	      const win = window as typeof window & {
+	        __openedLocalFiles?: string[];
+	        lin?: {
+	          invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+	          openLocalFile?: (options: { path: string }) => Promise<{ opened: boolean }>;
+	          prepareLocalFile?: (options: { id: string }) => Promise<{
+	            file: {
               entryKind?: 'file' | 'directory';
               path: string;
               name: string;
@@ -577,10 +579,22 @@ test.describe('agent composer controls', () => {
               sizeBytes: number;
               lastModified: number;
               imageDataBase64?: string;
-              thumbnailDataUrl?: string;
-            } | null;
-          }>;
-          searchLocalFiles?: (options: { query: string; limit?: number }) => Promise<{
+	              thumbnailDataUrl?: string;
+	            } | null;
+	          }>;
+	          previewLocalFileReference?: (options: { path: string }) => Promise<{
+	            file: {
+	              entryKind: 'file' | 'directory';
+	              path: string;
+	              name: string;
+	              parentPath: string;
+	              mimeType: string;
+	              sizeBytes: number;
+	              lastModified: number;
+	              thumbnailDataUrl?: string;
+	            } | null;
+	          }>;
+	          searchLocalFiles?: (options: { query: string; limit?: number }) => Promise<{
             files: Array<{
               entryKind: 'file' | 'directory';
               id: string;
@@ -595,8 +609,9 @@ test.describe('agent composer controls', () => {
             query: string;
           }>;
         };
-      };
-      if (!win.lin) return;
+	      };
+	      win.__openedLocalFiles = [];
+	      if (!win.lin) return;
       win.lin.searchLocalFiles = async (options) => ({
         files: options.query.toLowerCase().includes('image')
           ? [{
@@ -613,7 +628,7 @@ test.describe('agent composer controls', () => {
           : [],
         query: options.query,
       });
-      win.lin.prepareLocalFile = async (options) => ({
+	      win.lin.prepareLocalFile = async (options) => ({
         file: options.id === 'local-file-image'
           ? {
               entryKind: 'file',
@@ -625,9 +640,27 @@ test.describe('agent composer controls', () => {
               imageDataBase64,
               thumbnailDataUrl: thumbnail,
             }
-          : null,
-      });
-    });
+	          : null,
+	      });
+	      win.lin.previewLocalFileReference = async (options) => ({
+	        file: options.path === '/Users/test/Pictures/gpt4.png'
+	          ? {
+	              entryKind: 'file',
+	              path: '/Users/test/Pictures/gpt4.png',
+	              name: 'gpt4.png',
+	              parentPath: '/Users/test/Pictures',
+	              mimeType: 'image/png',
+	              sizeBytes: 4096,
+	              lastModified: 1_800_000_000_000,
+	              thumbnailDataUrl: thumbnail,
+	            }
+	          : null,
+	      });
+	      win.lin.openLocalFile = async (options) => {
+	        win.__openedLocalFiles?.push(options.path);
+	        return { opened: true };
+	      };
+	    });
 
     const input = page.getByLabel('Agent message');
     await input.click();
@@ -648,10 +681,29 @@ test.describe('agent composer controls', () => {
     await imageOption.click();
     await expect(page.locator('[data-agent-file-ref]')).toContainText('gpt4.png');
     await expect(page.locator('[data-agent-file-ref] .inline-ref-file-icon')).toHaveAttribute('data-file-icon-kind', 'image');
-    await expect(page.locator('[data-agent-file-ref]')).not.toHaveAttribute('title', /gpt4\.png/);
-    await expect(page.locator('[data-agent-file-ref]')).toHaveAttribute('aria-label', /gpt4\.png/);
+	    await expect(page.locator('[data-agent-file-ref]')).not.toHaveAttribute('title', /gpt4\.png/);
+	    await expect(page.locator('[data-agent-file-ref]')).toHaveAttribute('aria-label', /gpt4\.png/);
 
-    await page.getByRole('button', { name: 'Send message' }).click();
+	    const inlineRef = page.locator('[data-agent-file-ref]');
+	    await inlineRef.hover();
+	    const inlinePreview = page.locator('[data-inline-file-preview]');
+	    await expect(inlinePreview).toBeVisible();
+	    await expect(inlinePreview).toContainText('gpt4.png');
+	    const [inlineRefBox, inlinePreviewBox] = await Promise.all([
+	      inlineRef.boundingBox(),
+	      inlinePreview.boundingBox(),
+	    ]);
+	    expect(inlineRefBox).toBeTruthy();
+	    expect(inlinePreviewBox).toBeTruthy();
+	    expect(inlinePreviewBox!.y + inlinePreviewBox!.height).toBeLessThanOrEqual(inlineRefBox!.y - 4);
+	    expect(inlineRefBox!.y - (inlinePreviewBox!.y + inlinePreviewBox!.height)).toBeLessThan(24);
+	    await inlineRef.click();
+	    await expect.poll(async () => page.evaluate(() => {
+	      const win = window as typeof window & { __openedLocalFiles?: string[] };
+	      return win.__openedLocalFiles ?? [];
+	    })).toEqual(['/Users/test/Pictures/gpt4.png']);
+
+	    await page.getByRole('button', { name: 'Send message' }).click();
     await expect.poll(async () => {
       const calls = await commandCalls(page);
       return calls.find((call) => (
