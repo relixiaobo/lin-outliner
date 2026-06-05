@@ -870,53 +870,72 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                 {loadingAgents ? (
                   <div className="agent-settings-empty">{t.settings.agents.loadingProfiles}</div>
                 ) : selectedAgent ? (
-                  <div className="agent-profile-detail-card">
-                    <div className="agent-profile-detail-header">
-                      <div>
-                        <h4 className="agent-profile-title">{selectedAgent.name}</h4>
-                        <span className="agent-profile-source-label">{t.settings.agents.sourceLabel({ source: selectedAgent.source })}</span>
-                      </div>
-                    </div>
-
-                    <div className="agent-profile-field">
-                      <span className="agent-profile-field-label">{t.settings.agents.personaPromptLabel}</span>
-                      <textarea
-                        className="agent-profile-prompt-preview"
-                        readOnly
-                        value={selectedAgent.body || t.settings.agents.noInstructionBody}
+                  <>
+                    <InsetGroup ariaLabel={t.settings.agents.detailOptionsAriaLabel({ name: selectedAgent.name })}>
+                      <InsetRow
+                        label={t.settings.agents.enabledLabel}
+                        sublabel={t.settings.agents.enabledSublabel}
+                        trailing={(
+                          <SwitchControl
+                            checked={!draft.disabledAgents.includes(selectedAgent.name)}
+                            onCheckedChange={() => toggleAgent(selectedAgent.name)}
+                            label={t.settings.agents.toggleAgent({ name: selectedAgent.name })}
+                          >
+                            <SwitchMark checked={!draft.disabledAgents.includes(selectedAgent.name)} />
+                          </SwitchControl>
+                        )}
+                        wrap
                       />
-                    </div>
+                    </InsetGroup>
 
-                    <div className="agent-profile-specs">
-                      <div className="spec-item">
-                        <span className="spec-label">{t.settings.agents.modelOverride}</span>
-                        <span className="spec-value">{selectedAgent.model || t.settings.agents.inheritParent}</span>
-                      </div>
-                      <div className="spec-item">
-                        <span className="spec-label">{t.settings.agents.thinkingLevel}</span>
-                        <span className="spec-value">{selectedAgent.effort || t.settings.agents.defaultValue}</span>
-                      </div>
-                      <div className="spec-item">
-                        <span className="spec-label">{t.settings.agents.permissionMode}</span>
-                        <span className="spec-value">{selectedAgent.permissionMode || t.settings.agents.restricted}</span>
-                      </div>
-                      <div className="spec-item">
-                        <span className="spec-label">{t.settings.agents.maxTurns}</span>
-                        <span className="spec-value">{selectedAgent.maxTurns || t.settings.agents.unlimited}</span>
-                      </div>
-                    </div>
-
-                    {selectedAgent.tools && selectedAgent.tools.length > 0 && (
-                      <div className="agent-profile-field">
-                        <span className="agent-profile-field-label">{t.settings.agents.enabledTools}</span>
-                        <div className="agent-profile-tags-container">
-                          {selectedAgent.tools.map((tool) => (
-                            <span className="settings-chip" key={tool}>{tool}</span>
-                          ))}
+                    <div className="agent-profile-detail-card">
+                      <div className="agent-profile-detail-header">
+                        <div>
+                          <h4 className="agent-profile-title">{selectedAgent.name}</h4>
+                          <span className="agent-profile-source-label">{t.settings.agents.sourceLabel({ source: selectedAgent.source })}</span>
                         </div>
                       </div>
-                    )}
-                  </div>
+
+                      <div className="agent-profile-field">
+                        <span className="agent-profile-field-label">{t.settings.agents.personaPromptLabel}</span>
+                        <textarea
+                          className="agent-profile-prompt-preview"
+                          readOnly
+                          value={selectedAgent.body || t.settings.agents.noInstructionBody}
+                        />
+                      </div>
+
+                      <div className="agent-profile-specs">
+                        <div className="spec-item">
+                          <span className="spec-label">{t.settings.agents.modelOverride}</span>
+                          <span className="spec-value">{selectedAgent.model || t.settings.agents.inheritParent}</span>
+                        </div>
+                        <div className="spec-item">
+                          <span className="spec-label">{t.settings.agents.thinkingLevel}</span>
+                          <span className="spec-value">{selectedAgent.effort || t.settings.agents.defaultValue}</span>
+                        </div>
+                        <div className="spec-item">
+                          <span className="spec-label">{t.settings.agents.permissionMode}</span>
+                          <span className="spec-value">{selectedAgent.permissionMode || t.settings.agents.restricted}</span>
+                        </div>
+                        <div className="spec-item">
+                          <span className="spec-label">{t.settings.agents.maxTurns}</span>
+                          <span className="spec-value">{selectedAgent.maxTurns || t.settings.agents.unlimited}</span>
+                        </div>
+                      </div>
+
+                      {selectedAgent.tools && selectedAgent.tools.length > 0 && (
+                        <div className="agent-profile-field">
+                          <span className="agent-profile-field-label">{t.settings.agents.enabledTools}</span>
+                          <div className="agent-profile-tags-container">
+                            {selectedAgent.tools.map((tool) => (
+                              <span className="settings-chip" key={tool}>{tool}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </>
                 ) : (
                   <div className="agent-settings-empty">{t.settings.agents.profileNotFound}</div>
                 )}
@@ -930,7 +949,6 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                 ) : (
                   <InsetGroup ariaLabel={t.settings.agents.profilesAriaLabel}>
                     {allAgents.map((agent) => {
-                      const disabled = isAgentDisabled(agent.name);
                       return (
                         <InsetRow
                           ariaLabel={agent.name}
@@ -939,16 +957,7 @@ export function AgentSettingsView({ onApplied, onClose, sessionId }: AgentSettin
                           onSelect={() => navigateAgentDetail(agent.name)}
                           sublabel={agent.description}
                           trailing={(
-                            <>
-                              <SwitchControl
-                                checked={!disabled}
-                                onCheckedChange={() => toggleAgent(agent.name)}
-                                label={t.settings.agents.toggleAgent({ name: agent.name })}
-                              >
-                                <SwitchMark checked={!disabled} />
-                              </SwitchControl>
-                              <ChevronRightIcon className="settings-drilldown-chevron" size={ICON_SIZE.rowGlyph} aria-hidden />
-                            </>
+                            <ChevronRightIcon className="settings-drilldown-chevron" size={ICON_SIZE.rowGlyph} aria-hidden />
                           )}
                         />
                       );

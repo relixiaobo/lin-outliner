@@ -85,7 +85,9 @@ hover / focus / press, matching macOS' text-led pop-up rhythm. Agent Profiles
 should remain a top-level profile list; persona details live in a drill-down child
 route reached by clicking the profile row and navigated through the same
 back/forward capsule. Avoid showing list + detail together in the category page:
-that flattens the hierarchy and creates a large competing detail surface.
+that flattens the hierarchy and creates a large competing detail surface. The
+top-level profile row is pure navigation (chevron only); enable/disable belongs
+inside the detail route as its own settings row, not beside the drill-down affordance.
 Permission decision pop-ups keep a stable width across all rows, including the
 non-allowable final rule, so the transparent chrome still scans as one aligned
 control family.
@@ -143,6 +145,7 @@ No live file-level overlap.
 - [x] Keep pop-up selects transparent at rest with hover/focus/press fill only.
 - [x] Keep Permissions decision pop-ups aligned through the non-allowable last row.
 - [x] Move Agent Profiles persona details into a drill-down child route.
+- [x] Keep Agent Profiles top-level rows pure drill-down; move enable switches into detail.
 - [x] Audit all Settings panes for flattened detail surfaces.
 - [x] Update `docs/spec/design-system.md`.
 - [x] Run `bun run typecheck` and relevant renderer tests.

@@ -123,11 +123,13 @@ test.describe('agent settings window', () => {
     await expect(settings.locator('.settings-toolbar-title')).toHaveText('Agent Profiles');
     await expect(settings.getByRole('list', { name: 'Agent profiles' })).toBeVisible();
     await expect(settings.locator('.agent-profile-detail-card')).toHaveCount(0);
+    await expect(settings.getByRole('switch', { name: 'Toggle general' })).toHaveCount(0);
 
     await settings.getByRole('button', { name: 'general', exact: true }).click();
     await expect(settings.locator('.settings-toolbar-title')).toHaveText('general');
     await expect(settings.locator('.agent-profile-detail-card')).toBeVisible();
     await expect(settings.getByRole('list', { name: 'Agent profiles' })).toHaveCount(0);
+    await expect(settings.getByRole('switch', { name: 'Toggle general' })).toBeVisible();
     await expect(back).toBeEnabled();
     await expect(forward).toBeDisabled();
 
