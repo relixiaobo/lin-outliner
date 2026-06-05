@@ -249,6 +249,16 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **agent-process-block-collapse** (cc-2, PR #129) — the agent thinking/tool process block now collapses
+  by default in every steady state, shows exactly one activity spinner, and never auto-collapses on a
+  user mid-read. While live + collapsed the header doubles as a status line (running tool → latest thought
+  preview → `Thinking...` → `Working...`) carrying the single spinner; expanding moves the spinner to the
+  running tool row and reverts the header to the static group summary. `defaultExpanded` is now
+  `turnFailedWithoutProse` only, so it never flips on seal and a sticky user-expanded override survives;
+  only a failed-without-prose turn auto-expands. Renderer-only; no new i18n. Gate: typecheck +
+  `test:renderer` 353/0 (added live-collapsed + live-expanded cases) + light/dark visual verification of a
+  live streaming turn (one header spinner collapsed; zero header + one tool-row spinner expanded).
+
 - **agent-ref-inline-anchor** (cc-2, PR #127, supersedes closed #126) — inline node references in agent
   responses now render as `<a href>` instead of `<button>`, so they flow inline / break across lines /
   sit on the baseline instead of orphaning onto their own line with a gap. Root cause: a `<button>` is an

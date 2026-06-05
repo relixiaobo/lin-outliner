@@ -927,6 +927,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Agent: process block collapses by default; one spinner; never auto-collapses (PR #129)** — the
+  thinking/tool process block had three flaws while live: it auto-expanded during a run (instead of a
+  compact status), the header *and* the running tool both span (two spinners), and once prose arrived the
+  default flipped expanded→collapsed and snapped shut on a user mid-read. New model: the block is
+  **collapsed by default in every steady state**. While live + collapsed the header doubles as a status
+  line (currently running tool → latest streaming thought, 80-char first-line preview → `Thinking...` →
+  `Working...`) and carries the **single** activity spinner; expanding moves the spinner to the running
+  tool row inside the timeline and reverts the header to the static group summary. `defaultExpanded` is
+  now `turnFailedWithoutProse` only — it never flips on seal, so a user-expanded block keeps its sticky
+  override and **never auto-collapses**; only a turn that failed without any prose auto-expands to surface
+  the error. Renderer-only (`AgentProcessBlock.tsx`); no new i18n strings. Gate: typecheck +
+  `test:renderer` 353/0 (added live-collapsed running-tool / thought-preview / fallback + live-expanded
+  static-summary cases) + light/dark visual verification of a live streaming turn (collapsed status line
+  with one header spinner; expanded shows zero header spinners and exactly one tool-row spinner).
+  ([#129](https://github.com/relixiaobo/lin-outliner/pull/129))
+
 - **Agent: inline node references render as `<a>`, not `<button>` (PR #127)** — in an agent response an
   inline node reference (the rose link) dropped onto its own line with an empty gap before it instead of
   flowing with the sentence. Root cause (corrected from the closed #126, which had wrongly blamed a stray
