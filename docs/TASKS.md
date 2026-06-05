@@ -246,8 +246,9 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
   scan (6k nodes 1.22→0.29 ms). Gate: `/code-review` (3 finders + 1.5k-case fuzz, 0 bugs) + typecheck +
   renderer 345/0; `projectionDeltaIntegration.test.ts` asserts the patched index equals a full rebuild
   after every command (tag/reference/inline-ref churn added); a follow-up dropped a redundant
-  `node.tags.slice()` on the hot path. Residual P3: `new Map(prev.byId)` + `nextRevisions`.
-  `incremental-projection.md` stays in-progress (P3 + spec fold-in remain).
+  `node.tags.slice()` on the hot path. Residual P3 (`new Map(prev.byId)` + `nextRevisions`) is
+  tracked under the perf program. Spec folded into `architecture.md` and the plan archived
+  `done` (PR #122); `incremental-projection.md` → `docs/plans/archive/`.
 
 - **settings-macos-clarity** (codex, PR #118) — Settings window macOS System Settings clarity pass:
   fixed toolbar = back/forward pill capsule + right-pane page title, scrollport below chrome via margin;
