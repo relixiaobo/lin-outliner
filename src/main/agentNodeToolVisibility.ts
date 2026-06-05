@@ -183,7 +183,11 @@ function readableEditNodeIds(data: NodeEditData): string[] {
 // The switch is exhaustive over NodeToolName: a new tool forces a branch here.
 function nodeInstructions<TData>(envelope: ToolEnvelope<TData>, data: NodeVisibleResult, ctx: NodeInstructionContext): string {
   const parts: string[] = [];
-  switch (envelope.tool as NodeToolName) {
+  // Switch on a typed local (not a cast expression) so the `never` default below
+  // is a real exhaustiveness check: extending NodeToolName without a case fails
+  // to compile here.
+  const tool: NodeToolName = envelope.tool as NodeToolName;
+  switch (tool) {
     case 'node_read': {
       parts.push('Use data.outline as the single source of truth for follow-up edits. Preserve existing %%node:id%% markers for existing nodes; omit markers only for newly created lines.');
       if (resultReferences(data)?.length) parts.push('For final answers, prefer copying data.references[].display_ref for node mentions.');
@@ -228,7 +232,7 @@ function nodeInstructions<TData>(envelope: ToolEnvelope<TData>, data: NodeVisibl
     }
     default: {
       // Exhaustiveness guard: extending NodeToolName without a case fails here.
-      const _exhaustive: never = envelope.tool as never;
+      const _exhaustive: never = tool;
       void _exhaustive;
     }
   }
