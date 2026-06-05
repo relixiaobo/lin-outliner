@@ -9,8 +9,11 @@ import {
   LibraryIcon,
   PinIcon,
   RecentsIcon,
+  SearchIcon,
   SettingsIcon,
   SupertagIcon,
+  TrashIcon,
+  type AppIcon,
 } from './icons';
 import { ButtonControl } from './primitives/ButtonControl';
 import { ResizeHandle } from './primitives/ResizeHandle';
@@ -75,7 +78,7 @@ export function Sidebar(props: SidebarProps) {
     const expanded = props.expandedIds.has(node.id);
     const active = props.rootId === node.id || props.rootId === presentation.navigateId;
     const label = presentation.label;
-    const nodeIcon = renderSidebarNodeIcon(childParent);
+    const nodeIcon = renderSidebarNodeIcon(childParent, props.projection);
     const childPath = referenceCycle ? parentPath : [...parentPath, childParentId];
 
     return (
@@ -262,17 +265,38 @@ function sidebarChildren(
     ));
 }
 
-// Workspace-tree items show only a node's own icon. System nodes (Daily notes,
-// Library, Saved searches, Trash) carry no icon of their own, so they render
-// without one rather than borrowing a hardcoded fallback glyph.
-function renderSidebarNodeIcon(node: NodeProjection): ReactNode {
+// Workspace-tree items show a node's own icon when it has one; the system roots
+// (Daily notes, Library, Schema, Saved searches, Trash) carry no icon of their
+// own, so they fall back to a fixed glyph that matches their primary-nav shortcut.
+function renderSidebarNodeIcon(node: NodeProjection, projection: DocumentProjection): ReactNode {
   const icon = nodeIconOf(node);
-  if (!icon) return null;
+  if (icon) {
+    return (
+      <span className="workspace-tree-label-icon workspace-tree-label-emoji" aria-hidden="true">
+        {icon}
+      </span>
+    );
+  }
+
+  const SystemIcon = systemIconForNode(node.id, projection);
+  if (!SystemIcon) return null;
   return (
-    <span className="workspace-tree-label-icon workspace-tree-label-emoji" aria-hidden="true">
-      {icon}
-    </span>
+    <SystemIcon
+      aria-hidden="true"
+      className="workspace-tree-label-icon"
+      size={ICON_SIZE.menu}
+      strokeWidth={1.75}
+    />
   );
+}
+
+function systemIconForNode(nodeId: NodeId, projection: DocumentProjection): AppIcon | null {
+  if (nodeId === projection.dailyNotesId) return CalendarIcon;
+  if (nodeId === projection.libraryId) return LibraryIcon;
+  if (nodeId === projection.schemaId) return SupertagIcon;
+  if (nodeId === projection.searchesId) return SearchIcon;
+  if (nodeId === projection.trashId) return TrashIcon;
+  return null;
 }
 
 function nodeIconOf(node: NodeProjection) {
