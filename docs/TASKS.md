@@ -249,6 +249,14 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **nested-row-selection-render** (cc, PR #136) — nested rows inside an expanded node now pick up the
+  `selected` highlight on drag / cmd-click multi-select instead of staying stale until an unrelated render.
+  Root cause was a memo-comparator render skip: `outlinerItemPropsEqual` let an expanded ancestor bail out
+  (freezing the `ui` it prop-drills to descendants) when its own memo state was unchanged — it forwarded
+  `expanded` changes but not focus/selection. Fix generalizes the forward to every `ui` slice a descendant's
+  `deriveRowMemoState` reads, gated on the row being expanded. Gate: typecheck + `test:renderer` 354/0 +
+  `outliner-selection`(+keyboard) 34/34 (new nested regressions) + light/dark visual; clean merge with #134.
+
 - **outliner-checkbox-wrap** (cc-2, PR #131) — long text on a checkbox row (Done field / `completedAt`) now
   wraps beside the checkbox with a hanging indent instead of dropping onto its own line underneath. One CSS
   rule reserves the 21px checkbox gutter on `.row-editor`'s max-width, scoped via `:has(> .done-checkbox)`

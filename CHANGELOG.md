@@ -966,6 +966,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Nested rows now reflect drag / cmd-click multi-selection (PR #136)** — dragging or modifier-clicking to
+  multi-select the children **inside an expanded node** did nothing visible — the rows never got the
+  `selected` highlight until an unrelated render woke them up ("re-enter a node to fix it"); direct children
+  of the view root were fine. Not a focus race: the selection *state* was correct, the `.selected` *class*
+  was stale. A row computes that class during its own render from the prop-drilled `ui`; a nested row
+  receives `ui` only through its owning expanded ancestor, and the `outlinerItemPropsEqual` memo comparator
+  let that ancestor bail out (freezing the forwarded `ui`) when its own memo state was unchanged — it forced
+  an ancestor re-render for `expanded` changes but not for selection/focus. (Supertag correlation was
+  incidental: tagged nodes routinely carry an expanded child list.) Fix: generalize the expanded-only
+  forward to the full set of `ui` slices a descendant's `deriveRowMemoState` reads (focus + selection +
+  pending-reference), gated on the row being expanded so only ancestors that own a nested view re-render;
+  `focusRequest`/`pendingInputChar` keep their precise `focusAncestorToken` detection. Gate: typecheck +
+  `test:renderer` 354/0 + `outliner-selection`(+keyboard) 34/34 incl. new nested drag-select / cmd-click
+  regressions + light/dark visual; clean cross-PR merge with #134's `OutlinerItem.tsx` edit.
+  ([#136](https://github.com/relixiaobo/lin-outliner/pull/136))
+
 - **Checkbox-row long text wraps beside the checkbox, not under it (PR #131)** — on a checkbox row (a node
   with a Done field / `completedAt`), long content wrapped onto its own line **underneath** the 16px+5px
   done checkbox instead of beside it, breaking the hanging indent. Root cause: `.row-editor` is an
