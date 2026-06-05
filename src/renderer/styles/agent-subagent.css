@@ -483,18 +483,17 @@
   content-visibility: auto;
 }
 
-/* Highlighted JSON for tool input/output. The bordered container matches the
-   outliner code block; the Shiki <pre> inside owns scrolling and code metrics. */
+/* Highlighted JSON for tool input/output. Flattened to render directly on the
+   panel surface — no inner frame — so a tool call's Input/Output read as one
+   card, not nested cards (design-system "density without noise"). The Shiki
+   <pre> owns scrolling and code metrics; it sits flush-left under its label,
+   matching the frameless plain-text <pre> output. */
 .agent-tool-code {
-  overflow: hidden;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-soft);
+  min-width: 0;
 }
 
 .agent-tool-code pre.shiki {
   margin: 0;
-  padding: var(--space-4) var(--space-5);
   max-height: 280px;
   overflow: auto;
   font-family: var(--font-family-mono);

@@ -132,8 +132,13 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  margin-top: var(--space-1);
-  margin-left: 5px;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  /* Center the 1px rail under the 14px disclosure-indicator column above it
+     (chevron center = 7px), so the rail reads as descending from the toggle.
+     7px − half the 1px border = 6.5px. Row content stays indent-right via
+     padding-left. */
+  margin-left: 6.5px;
   border-left: 1px solid var(--border-subtle);
   padding-left: var(--space-5);
 }
@@ -147,7 +152,7 @@
   color: var(--text-soft);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
-  padding: var(--space-1) 0;
+  padding: 0;
   text-align: left;
 }
 
@@ -250,7 +255,7 @@
   color: inherit;
   font-size: var(--font-meta);
   line-height: var(--line-meta);
-  padding: var(--space-1) 0;
+  padding: 0;
   text-align: left;
   transition: color var(--motion-fast);
 }
