@@ -183,6 +183,8 @@ describe('agent local tools', () => {
       }>(workspaceRoot, 'file_read', { file_path: filePath, offset: 2, limit: 1 });
 
       expect(read.ok).toBe(true);
+      // A partial read carries a structured truncation signal, not just prose.
+      expect(read.status).toBe('partial');
       expect(read.data!.file).toMatchObject({
         content: 'beta',
         numLines: 1,

@@ -1,6 +1,6 @@
 import type { AgentToolResult } from '@earendil-works/pi-agent-core';
 import { formatNodeReferenceMarker } from '../core/referenceMarkup';
-import { isInformativeStatus, visibleToolError, type ToolEnvelope } from './agentToolEnvelope';
+import { agentToolResult, dropUndefinedFields, modelVisibleEnvelope, type ToolEnvelope } from './agentToolEnvelope';
 import { FINAL_ANSWER_NODE_REFERENCE_GUIDANCE } from './agentNodeToolGuidance';
 import { nodeKind, nodeTitle, normalChildIds, requiredNode } from './agentNodeToolProjection';
 import { serializeAnnotatedOutlines } from './agentNodeToolRead';
@@ -12,7 +12,6 @@ import type {
   NodeSearchData,
   NodeVisibleChanges,
   NodeVisibleCountResult,
-  NodeVisibleEnvelope,
   NodeVisibleMutationResult,
   NodeVisiblePage,
   NodeVisibleReadResult,
@@ -23,22 +22,37 @@ import type {
   ProjectionIndex,
 } from './agentNodeToolTypes';
 
+// Keep this union in lockstep with the node tool `name` fields. `nodeInstructions`
+// switches on it exhaustively, so adding a tool forces a guidance branch.
+type NodeToolName = 'node_read' | 'node_search' | 'node_create' | 'node_edit' | 'node_delete';
+
 /**
- * Facts the caller already knows that drive the guidance text — passed in
- * explicitly rather than re-derived from the wire payload's shape. `preview` is
- * the tool's `preview_only` arg; `count` is `node_search`'s count-only mode.
+ * Facts the caller holds that drive guidance but never appear in the payload.
+ * `count` is node_search's count-only mode; `outcome` is the mutation result
+ * (a preview, a real apply, or a no-op). Carried next to the visible result so
+ * each fact lives in exactly ONE place — the builder that already knows it —
+ * never re-derived from the payload shape nor duplicated at the call site.
  */
-export interface NodeInstructionContext {
-  preview?: boolean;
+interface NodeInstructionContext {
   count?: boolean;
+  outcome?: 'preview' | 'applied' | 'unchanged';
+}
+
+/** A model-visible node result plus the guidance context the builder computed. */
+export interface NodeVisiblePayload {
+  visible: NodeVisibleResult;
+  ctx: NodeInstructionContext;
 }
 
 export function nodeToolResult<TData>(
   envelope: ToolEnvelope<TData>,
-  visibleData: NodeVisibleResult,
-  ctx: NodeInstructionContext = {},
+  payload: NodeVisiblePayload,
 ): AgentToolResult<ToolEnvelope<TData>> {
-  const visibleEnvelope = nodeVisibleEnvelope(envelope, visibleData, ctx);
+  // Node tools compute their own guidance, then hand off to the shared
+  // `modelVisibleEnvelope` projector. The spread envelope is a throwaway used
+  // only for projection — `details` keeps the original envelope, unchanged.
+  const instructions = nodeInstructions(envelope, payload.visible, payload.ctx);
+  const visibleEnvelope = modelVisibleEnvelope({ ...envelope, instructions }, payload.visible);
   return {
     content: [{ type: 'text', text: JSON.stringify(visibleEnvelope, null, 2) }],
     details: envelope,
@@ -48,56 +62,27 @@ export function nodeToolResult<TData>(
 export function nodeErrorResult<TData>(
   envelope: ToolEnvelope<TData>,
 ): AgentToolResult<ToolEnvelope<TData>> {
-  return {
-    content: [{ type: 'text', text: JSON.stringify(nodeVisibleErrorEnvelope(envelope), null, 2) }],
-    details: envelope,
-  };
-}
-
-function nodeVisibleEnvelope<TData>(
-  envelope: ToolEnvelope<TData>,
-  data: NodeVisibleResult,
-  ctx: NodeInstructionContext,
-): NodeVisibleEnvelope {
-  const instructions = nodeInstructions(envelope, data, ctx);
-  return compactVisibleEnvelope({
-    ok: envelope.ok,
-    status: isInformativeStatus(envelope.status) ? envelope.status : undefined,
-    instructions,
-    data,
-    warnings: envelope.warnings,
-  });
-}
-
-function nodeVisibleErrorEnvelope<TData>(envelope: ToolEnvelope<TData>): NodeVisibleEnvelope {
-  const error = envelope.error ?? {
-    code: 'unknown_error',
-    message: 'Tool failed without an error payload.',
-    recoverable: true,
-  };
-  return compactVisibleEnvelope({
-    ok: false,
-    instructions: errorInstructions(envelope),
-    error: visibleToolError(error),
-    warnings: envelope.warnings,
-  });
+  // Errors use the standard projection: no data block, just `error` +
+  // `instructions` (the error object already carries code + message).
+  return agentToolResult(envelope);
 }
 
 export function visibleReadResult(
   index: ProjectionIndex,
   nodeIds: string[],
   params: NormalizedReadParams,
-): NodeVisibleReadResult {
+): NodeVisiblePayload {
   const outline = serializeAnnotatedOutlines(index, nodeIds, params.depth, params.childOffset, params.childLimit, params.includeDeleted);
   const rootPages = nodeIds
     .map((nodeId) => visibleReadPage(index, nodeId, params))
     .filter((page) => page.total > page.limit || page.offset > 0);
   const page = rootPages.length === 1 ? rootPages[0] : undefined;
-  return compactVisibleResult({
+  const visible: NodeVisibleReadResult = compactVisibleResult({
     outline,
     references: visibleReferences(index, visibleReadReferenceIds(index, nodeIds, params)),
     page,
   });
+  return { visible, ctx: {} };
 }
 
 function visibleReadPage(
@@ -113,29 +98,31 @@ function visibleReadPage(
   });
 }
 
-export function visibleSearchResult(index: ProjectionIndex, data: NodeSearchData): NodeVisibleSearchResult | NodeVisibleCountResult {
+export function visibleSearchResult(index: ProjectionIndex, data: NodeSearchData, count?: boolean): NodeVisiblePayload {
   const items = data.items ?? [];
   const page = visiblePage({ total: data.total, offset: data.offset, limit: data.limit, items });
-  return compactVisibleResult({
-    ...(data.items ? {
+  const visible = compactVisibleResult({
+    ...(count ? { total: data.total } : {
       outline: serializeAnnotatedOutlines(index, items.map((item) => item.nodeId), 0, 0, 0, false),
       references: visibleReferences(index, items.map((item) => item.nodeId)),
-    } : { total: data.total }),
+    }),
     page,
   } as NodeVisibleSearchResult | NodeVisibleCountResult);
+  return { visible, ctx: { count } };
 }
 
-export function visibleCreateResult(data: NodeCreateData, previewOnly: boolean, index?: ProjectionIndex): NodeVisibleMutationResult {
-  return compactVisibleResult({
+export function visibleCreateResult(data: NodeCreateData, previewOnly: boolean, index?: ProjectionIndex): NodeVisiblePayload {
+  const visible: NodeVisibleMutationResult = compactVisibleResult({
     outline: previewOnly
       ? data.outline
       : index ? serializeAnnotatedOutlines(index, data.createdRootIds, 12, 0, 500, false) : undefined,
     changes: previewOnly ? {} : compactChanges({ created: data.createdNodeIds }) ?? {},
   });
+  return { visible, ctx: { outcome: previewOnly ? 'preview' : 'applied' } };
 }
 
-export function visibleDeleteResult(data: NodeDeleteData, previewOnly: boolean): NodeVisibleMutationResult {
-  return compactVisibleResult({
+export function visibleDeleteResult(data: NodeDeleteData, previewOnly: boolean): NodeVisiblePayload {
+  const visible: NodeVisibleMutationResult = compactVisibleResult({
     changes: previewOnly
       ? compactChanges({ trashed: data.preview.map((item) => item.nodeId) }) ?? {}
       : compactChanges({
@@ -143,11 +130,12 @@ export function visibleDeleteResult(data: NodeDeleteData, previewOnly: boolean):
         restored: data.restoredNodeIds,
       }) ?? {},
   });
+  return { visible, ctx: { outcome: previewOnly ? 'preview' : 'applied' } };
 }
 
-export function visibleEditResult(data: NodeEditData, previewOnly: boolean, index?: ProjectionIndex): NodeVisibleMutationResult {
+export function visibleEditResult(data: NodeEditData, previewOnly: boolean, index?: ProjectionIndex): NodeVisiblePayload {
   const readableIds = readableEditNodeIds(data);
-  return compactVisibleResult({
+  const visible: NodeVisibleMutationResult = compactVisibleResult({
     outline: previewOnly
       ? data.afterOutline
       : index ? serializeAnnotatedOutlines(index, readableIds, 3, 0, 50, false) : undefined,
@@ -160,6 +148,9 @@ export function visibleEditResult(data: NodeEditData, previewOnly: boolean, inde
         trashed: data.trashedNodeIds,
       }) ?? {},
   });
+  // A non-preview edit can still be a real no-op (afterOutline == current).
+  const outcome = previewOnly ? 'preview' : data.status === 'updated' ? 'applied' : 'unchanged';
+  return { visible, ctx: { outcome } };
 }
 
 function visiblePage(page: ChildrenPage | { total: number; offset: number; limit: number; items: unknown[] }): NodeVisiblePage {
@@ -187,23 +178,27 @@ function readableEditNodeIds(data: NodeEditData): string[] {
 }
 
 // The visible result no longer carries a `kind`/`action` discriminant (both were
-// derivable from the tool name), so guidance branches on `envelope.tool` and the
-// caller-supplied `ctx` (preview / count) — never on the payload's shape.
+// derivable from the tool name), so guidance switches on `envelope.tool` and the
+// caller-supplied `ctx` (count / mutation outcome) — never on the payload shape.
+// The switch is exhaustive over NodeToolName: a new tool forces a branch here.
 function nodeInstructions<TData>(envelope: ToolEnvelope<TData>, data: NodeVisibleResult, ctx: NodeInstructionContext): string {
   const parts: string[] = [];
-  const preview = ctx.preview === true;
-  if (envelope.tool === 'node_read') {
-    parts.push('Use data.outline as the single source of truth for follow-up edits. Preserve existing %%node:id%% markers for existing nodes; omit markers only for newly created lines.');
-    if (resultReferences(data)?.length) parts.push('For final answers, prefer copying data.references[].display_ref for node mentions.');
-    parts.push(FINAL_ANSWER_NODE_REFERENCE_GUIDANCE);
-    const nextOffset = resultNextOffset(data);
-    if (nextOffset !== undefined) {
-      parts.push(`More root children are available. Call node_read again with child_offset ${nextOffset} and the same node_id/depth/child_limit.`);
+  switch (envelope.tool as NodeToolName) {
+    case 'node_read': {
+      parts.push('Use data.outline as the single source of truth for follow-up edits. Preserve existing %%node:id%% markers for existing nodes; omit markers only for newly created lines.');
+      if (resultReferences(data)?.length) parts.push('For final answers, prefer copying data.references[].display_ref for node mentions.');
+      parts.push(FINAL_ANSWER_NODE_REFERENCE_GUIDANCE);
+      const nextOffset = resultNextOffset(data);
+      if (nextOffset !== undefined) {
+        parts.push(`More root children are available. Call node_read again with child_offset ${nextOffset} and the same node_id/depth/child_limit.`);
+      }
+      break;
     }
-  } else if (envelope.tool === 'node_search') {
-    if (ctx.count) {
-      parts.push('Only the result count was requested; call node_search without count when you need editable node ids.');
-    } else {
+    case 'node_search': {
+      if (ctx.count) {
+        parts.push('Only the result count was requested; call node_search without count when you need editable node ids.');
+        break;
+      }
       parts.push('Use the %%node:id%% markers in data.outline when reading or editing a search result.');
       if (resultReferences(data)?.length) parts.push('For final answers, prefer copying data.references[].display_ref for result mentions.');
       parts.push(FINAL_ANSWER_NODE_REFERENCE_GUIDANCE);
@@ -211,24 +206,43 @@ function nodeInstructions<TData>(envelope: ToolEnvelope<TData>, data: NodeVisibl
       if (nextOffset !== undefined) {
         parts.push(`More search results are available. Call node_search again with offset ${nextOffset} and the same outline/search_node_id/limit.`);
       }
+      break;
     }
-  } else if (envelope.tool === 'node_create') {
-    parts.push(preview
-      ? 'Preview only; no nodes were created.'
-      : 'Created nodes are included in data.outline with fresh %%node:id%% markers for follow-up edits.');
-    parts.push(FINAL_ANSWER_NODE_REFERENCE_GUIDANCE);
-  } else if (envelope.tool === 'node_edit') {
-    parts.push(preview
-      ? 'Preview only; no edit was applied.'
-      : 'Edit applied. Marked existing nodes were updated in place; unmarked new lines were created; removed marked lines were moved to Trash.');
-    parts.push(FINAL_ANSWER_NODE_REFERENCE_GUIDANCE);
-  } else if (envelope.tool === 'node_delete') {
-    parts.push(preview
-      ? 'Preview only; no nodes were moved.'
-      : 'Nodes were moved to Trash, not permanently deleted.');
+    case 'node_create': {
+      parts.push(ctx.outcome === 'preview'
+        ? 'Preview only; no nodes were created.'
+        : 'Created nodes are included in data.outline with fresh %%node:id%% markers for follow-up edits.');
+      parts.push(FINAL_ANSWER_NODE_REFERENCE_GUIDANCE);
+      break;
+    }
+    case 'node_edit': {
+      parts.push(editOutcomeGuidance(ctx.outcome));
+      parts.push(FINAL_ANSWER_NODE_REFERENCE_GUIDANCE);
+      break;
+    }
+    case 'node_delete': {
+      parts.push(ctx.outcome === 'preview'
+        ? 'Preview only; no nodes were moved.'
+        : 'Nodes were moved to Trash, not permanently deleted.');
+      break;
+    }
+    default: {
+      // Exhaustiveness guard: extending NodeToolName without a case fails here.
+      const _exhaustive: never = envelope.tool as never;
+      void _exhaustive;
+    }
   }
   if (envelope.instructions) parts.push(envelope.instructions);
   return parts.join(' ');
+}
+
+// A non-preview node_edit can leave the document unchanged (the requested
+// afterOutline already matched). Guidance must follow the actual outcome rather
+// than always claiming the edit applied.
+function editOutcomeGuidance(outcome: NodeInstructionContext['outcome']): string {
+  if (outcome === 'preview') return 'Preview only; no edit was applied. Re-run without preview_only to apply it.';
+  if (outcome === 'unchanged') return 'No change was needed; the targeted nodes already match the requested content.';
+  return 'Edit applied. Marked existing nodes were updated in place; unmarked new lines were created; removed marked lines were moved to Trash.';
 }
 
 function resultReferences(data: NodeVisibleResult): NodeVisibleReference[] | undefined {
@@ -237,10 +251,6 @@ function resultReferences(data: NodeVisibleResult): NodeVisibleReference[] | und
 
 function resultNextOffset(data: NodeVisibleResult): number | undefined {
   return 'page' in data ? data.page?.next_offset : undefined;
-}
-
-function errorInstructions<TData>(envelope: ToolEnvelope<TData>): string | undefined {
-  return envelope.instructions;
 }
 
 function visibleReadReferenceIds(
@@ -296,17 +306,5 @@ function compactChanges(changes: NodeVisibleChanges): NodeVisibleChanges | undef
 }
 
 function compactVisibleResult<T extends NodeVisibleResult>(result: T): T {
-  return Object.fromEntries(
-    Object.entries(result as unknown as Record<string, unknown>).filter(([, value]) => value !== undefined),
-  ) as unknown as T;
-}
-
-function compactVisibleEnvelope(result: NodeVisibleEnvelope): NodeVisibleEnvelope {
-  return Object.fromEntries(
-    Object.entries(result as unknown as Record<string, unknown>).filter(([, value]) => {
-      if (value === undefined) return false;
-      if (Array.isArray(value) && value.length === 0) return false;
-      return true;
-    }),
-  ) as unknown as NodeVisibleEnvelope;
+  return dropUndefinedFields(result as unknown as Record<string, unknown>) as unknown as T;
 }

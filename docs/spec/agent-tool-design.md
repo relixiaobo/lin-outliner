@@ -190,20 +190,22 @@ to a sibling array's length (`returned_items`, `numLines`, `message_count`), an
 echo of an input arg (`task_id`, `anchor_message_id`, `replaceAll`), a constant
 (`userModified`), an internal path (pdf `outputDir`), or a cross-field duplicate
 (past_chats error `code`/`message` already in `error`; notebook `cells` vs the
-rendered `content`). Pass `NO_MODEL_DATA` as `modelData` to omit the `data` block
-entirely (needed because an explicit `undefined` triggers the default and falls
-back to `envelope.data`).
+rendered `content`). `data` is omitted from the visible envelope whenever
+`modelData` is `undefined` (the default) — the safe path is the natural one, so
+there is no sentinel and no accidental fallback to the full runtime payload. To
+show the model a slim projection, pass it; to echo `envelope.data` in full, pass
+it explicitly.
 
-For `node_*`, model-visible `content.text` uses one concise envelope. Runtime
-debug details stay in `details`; the model-facing payload avoids duplicated
-representations.
+All tools — `node_*` included — project through one shared `modelVisibleEnvelope`
+(the `node_*` path passes its own computed `instructions` via a throwaway
+envelope copy, keeping `details` untouched). The model-visible shape is:
 
 ```ts
-interface NodeVisibleEnvelope {
+interface ModelVisibleToolEnvelope {
   ok: boolean;
   status?: "partial" | "unchanged" | "denied"; // omitted for success/error
   instructions?: string;
-  data?: NodeVisibleResult;
+  data?: NodeVisibleResult; // any tool's slim projection
   error?: { code: string; message: string };
   warnings?: string[];
 }
@@ -217,9 +219,11 @@ type NodeVisibleResult =
 // The result kind is no longer carried in the payload — it is implied by
 // `envelope.tool` (read/search/create/edit/delete). The data shape still differs
 // honestly (count returns `total`, results return `outline`), but the *guidance*
-// text is selected from a caller-supplied `NodeInstructionContext { preview?,
-// count? }` — the facts the caller already knows (`preview_only`, `count`) —
-// never by sniffing the payload shape, which would drift as shapes evolve.
+// text is selected from a caller-supplied `NodeInstructionContext { count?,
+// outcome? }` — `count` is node_search's count-only mode, `outcome` is the
+// mutation result ("preview" / "applied" / a real no-op "unchanged"). These are
+// facts the builder already holds; guidance never sniffs the payload shape
+// (which would drift) and a no-op edit reports "no change", not "edit applied".
 interface NodeVisibleReadResult {
   outline?: string;
   references?: NodeVisibleReference[];
@@ -1499,7 +1503,10 @@ Result behavior:
 
 - Reading directories should fail. Use `file_glob` for file discovery, or
   `bash` with `ls` only when directory metadata is required.
-- Large text files are paginated with `offset` and `limit`.
+- Large text files are paginated with `offset` and `limit`. A partial read
+  (offset past the start, or fewer lines returned than the file holds) sets
+  `status: "partial"` so the model gets a structured truncation signal it can act
+  on without relying on the prose instructions.
 - Image reads return dimensions when they can be determined, attach the image
   block for the model to inspect, and omit base64 from the model-visible JSON so
   text output stays compact.

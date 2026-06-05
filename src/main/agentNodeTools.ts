@@ -296,7 +296,7 @@ function createNodeDeleteTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
           return nodeToolResult(successEnvelope('node_delete', data, {
             status: 'unchanged',
             metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-          }), visibleDeleteResult(data, true), { preview: true });
+          }), visibleDeleteResult(data, true));
         }
         try {
           for (const nodeId of requestedNodeIds) await host.handle('restore_node', { nodeId });
@@ -308,7 +308,7 @@ function createNodeDeleteTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
         }
         return nodeToolResult(successEnvelope('node_delete', data, {
           metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-        }), visibleDeleteResult(data, false), { preview: false });
+        }), visibleDeleteResult(data, false));
       }
       const trashed = requestedNodeIds.find((nodeId) => isInTrash(index, nodeId));
       if (trashed) {
@@ -336,7 +336,7 @@ function createNodeDeleteTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
         return nodeToolResult(successEnvelope('node_delete', data, {
           status: 'unchanged',
           metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-        }), visibleDeleteResult(data, true), { preview: true });
+        }), visibleDeleteResult(data, true));
       }
 
       try {
@@ -355,7 +355,7 @@ function createNodeDeleteTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
       return nodeToolResult(successEnvelope('node_delete', data, {
         warnings: selection.skipped.length ? ['Some requested descendant nodes were covered by a selected ancestor and skipped.'] : undefined,
         metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-      }), visibleDeleteResult(data, false), { preview: false });
+      }), visibleDeleteResult(data, false));
     },
   };
 }
@@ -405,7 +405,7 @@ async function executeOutlineEdit(
     return nodeToolResult(successEnvelope('node_edit', data, {
       status: 'unchanged',
       metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-    }), visibleEditResult(data, false, index), { preview: false });
+    }), visibleEditResult(data, false, index));
   }
 
   const parsed = parseLinOutline(replacement.afterOutline, { annotations: 'allow' });
@@ -462,7 +462,7 @@ async function executeOutlineEdit(
       status: 'unchanged',
       warnings: parsed.warnings.length ? parsed.warnings : undefined,
       metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-    }), visibleEditResult(data, true, index), { preview: true });
+    }), visibleEditResult(data, true, index));
   }
 
   const tracker = createMutationTracker();
@@ -498,7 +498,7 @@ async function executeOutlineEdit(
   return nodeToolResult(successEnvelope('node_edit', data, {
     warnings: warnings.length ? unique(warnings) : undefined,
     metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-  }), visibleEditResult(data, false, updatedIndex), { preview: false });
+  }), visibleEditResult(data, false, updatedIndex));
 }
 
 async function executeMoveEdit(
@@ -535,7 +535,7 @@ async function executeMoveEdit(
     return nodeToolResult(successEnvelope('node_edit', data, {
       status: 'unchanged',
       metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-    }), visibleEditResult(data, true, index), { preview: true });
+    }), visibleEditResult(data, true, index));
   }
 
   try {
@@ -558,7 +558,7 @@ async function executeMoveEdit(
     .map((node) => [node.id, revisionOf(node)]));
   return nodeToolResult(successEnvelope('node_edit', data, {
     metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-  }), visibleEditResult(data, false, updatedIndex), { preview: false });
+  }), visibleEditResult(data, false, updatedIndex));
 }
 
 async function executeMergeEdit(
@@ -620,7 +620,7 @@ async function executeMergeEdit(
       status: 'unchanged',
       warnings: ['Merge preview does not mutate. Source titles and descriptions are not appended to the target.'],
       metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-    }), visibleEditResult(data, true, index), { preview: true });
+    }), visibleEditResult(data, true, index));
   }
 
   try {
@@ -638,7 +638,7 @@ async function executeMergeEdit(
   return nodeToolResult(successEnvelope('node_edit', data, {
     warnings: ['Source titles and descriptions are not appended to the target; source nodes are preserved in Trash for undo/restore.'],
     metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-  }), visibleEditResult(data, false, updatedIndex), { preview: false });
+  }), visibleEditResult(data, false, updatedIndex));
 }
 
 async function executeReferenceReplaceEdit(
@@ -679,7 +679,7 @@ async function executeReferenceReplaceEdit(
     return nodeToolResult(successEnvelope('node_edit', data, {
       status: 'unchanged',
       metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-    }), visibleEditResult(data, false, index), { preview: false });
+    }), visibleEditResult(data, false, index));
   }
   const retargetingReference = current.type === 'reference';
 
@@ -695,7 +695,7 @@ async function executeReferenceReplaceEdit(
     return nodeToolResult(successEnvelope('node_edit', data, {
       status: 'unchanged',
       metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-    }), visibleEditResult(data, true, index), { preview: true });
+    }), visibleEditResult(data, true, index));
   }
 
   try {
@@ -714,7 +714,7 @@ async function executeReferenceReplaceEdit(
 
   return nodeToolResult(successEnvelope('node_edit', data, {
     metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-  }), visibleEditResult(data, false, indexProjection(host.getProjection())), { preview: false });
+  }), visibleEditResult(data, false, indexProjection(host.getProjection())));
 }
 
 function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions): AgentTool<any, ToolEnvelope<NodeCreateData>> {
@@ -762,7 +762,7 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
           return nodeToolResult(successEnvelope('node_create', data, {
             status: 'unchanged',
             metrics: { durationMs: elapsed(started) },
-          }), visibleCreateResult(data, true, initialIndex), { preview: true });
+          }), visibleCreateResult(data, true, initialIndex));
         }
         try {
           const createdId = await addReference(host, insertion.parentId, params.targetId, insertion.index);
@@ -775,7 +775,7 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
           };
           return nodeToolResult(successEnvelope('node_create', data, {
             metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-          }), visibleCreateResult(data, false, indexProjection(host.getProjection())), { preview: false });
+          }), visibleCreateResult(data, false, indexProjection(host.getProjection())));
         } catch (error) {
           return nodeErrorResult(errorEnvelope('node_create', 'mutation_failed', errorMessage(error), {
             instructions: 'Check that the parent and reference target are valid and retry.',
@@ -839,7 +839,7 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
           status: 'unchanged',
           warnings: parsed.warnings.length ? parsed.warnings : undefined,
           metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-        }), visibleCreateResult(data, true, initialIndex), { preview: true });
+        }), visibleCreateResult(data, true, initialIndex));
       }
 
       const tracker = createMutationTracker();
@@ -871,7 +871,7 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
       return nodeToolResult(successEnvelope('node_create', data, {
         warnings: warnings.length ? unique(warnings) : undefined,
         metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-      }), visibleCreateResult(data, false, indexProjection(host.getProjection())), { preview: false });
+      }), visibleCreateResult(data, false, indexProjection(host.getProjection())));
     },
   };
 }
@@ -981,7 +981,7 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
         limit,
         items,
       };
-      const visible = visibleSearchResult(index, data);
+      const visible = visibleSearchResult(index, data, params.count);
 
       return nodeToolResult(successEnvelope('node_search', data, {
         instructions: offset + limit < total ? `Call node_search with offset ${offset + limit} to continue.` : undefined,
@@ -991,7 +991,7 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
           truncated: offset + limit < total,
           outputBytes: jsonByteLength(data),
         },
-      }), visible, { count: params.count });
+      }), visible);
     },
   };
 }

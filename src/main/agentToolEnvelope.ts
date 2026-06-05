@@ -54,20 +54,17 @@ export function visibleToolError(error: ToolError): VisibleToolError {
   return { code: error.code, message: error.message };
 }
 
-const MODEL_DATA_UNSET = Symbol('model-data-unset');
-
 /**
- * Pass as `modelData` to omit the `data` block from the model-visible envelope
- * entirely. Needed because an explicit `undefined` argument triggers the
- * `MODEL_DATA_UNSET` default (JS default-parameter semantics) and would fall
- * back to `envelope.data`. Use when the runtime `details` keep a payload but the
- * model needs nothing beyond `ok` / `error` / `instructions`.
+ * Builds a model-facing tool result. `modelData` is what the model sees under
+ * `data`: omitted entirely when `undefined` (the default), so the safe path is
+ * also the natural one — there is no sentinel and no accidental fallback to the
+ * full runtime payload. To show the model a slim projection, pass it; to echo
+ * the runtime `envelope.data` in full, pass `envelope.data` explicitly. The
+ * complete envelope always stays on `details`.
  */
-export const NO_MODEL_DATA = Symbol('no-model-data');
-
 export function agentToolResult<TData>(
   envelope: ToolEnvelope<TData>,
-  modelData: unknown = MODEL_DATA_UNSET,
+  modelData?: unknown,
   extraContent: AgentToolResult<TData>['content'] = [],
 ): AgentToolResult<ToolEnvelope<TData>> {
   const visibleEnvelope = modelVisibleEnvelope(envelope, modelData);
@@ -127,23 +124,30 @@ export function isToolEnvelope(value: unknown): value is ToolEnvelope {
     && typeof candidate.status === 'string';
 }
 
-function compactOptions<T extends Record<string, unknown>>(options: T): Partial<T> {
+/** Drop keys whose value is `undefined` (the single shared compaction helper). */
+export function dropUndefinedFields<T extends Record<string, unknown>>(obj: T): T {
   return Object.fromEntries(
-    Object.entries(options).filter(([, value]) => value !== undefined),
-  ) as Partial<T>;
+    Object.entries(obj).filter(([, value]) => value !== undefined),
+  ) as T;
 }
 
-function modelVisibleEnvelope<TData>(
+function compactOptions<T extends Record<string, unknown>>(options: T): Partial<T> {
+  return dropUndefinedFields(options);
+}
+
+/**
+ * Projects the runtime envelope down to what the model sees. Shared by every
+ * tool (the `node_*` path passes its own computed `instructions` via a throwaway
+ * envelope copy). `data` is shown only when `modelData` is defined.
+ */
+export function modelVisibleEnvelope<TData>(
   envelope: ToolEnvelope<TData>,
-  modelData: unknown,
+  modelData?: unknown,
 ): ModelVisibleToolEnvelope<unknown> {
-  const data = modelData === MODEL_DATA_UNSET ? envelope.data
-    : modelData === NO_MODEL_DATA ? undefined
-    : modelData;
   return {
     ok: envelope.ok,
     ...(isInformativeStatus(envelope.status) ? { status: envelope.status } : {}),
-    ...(data !== undefined ? { data } : {}),
+    ...(modelData !== undefined ? { data: modelData } : {}),
     ...(envelope.error ? { error: visibleToolError(envelope.error) } : {}),
     ...(envelope.instructions ? { instructions: envelope.instructions } : {}),
     ...(envelope.warnings?.length ? { warnings: envelope.warnings } : {}),

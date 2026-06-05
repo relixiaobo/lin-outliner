@@ -602,7 +602,7 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
           };
           await notifySuccessfulFileTouch(workspace, filePath);
           const visible = visibleFileRead(data);
-          return agentToolResult(successEnvelope('file_read', data, { metrics: metrics(started, visible) }), visible, [{
+          return agentToolResult(successEnvelope('file_read', data, { metrics: metrics(started, data) }), visible, [{
             type: 'image',
             data: data.file.base64,
             mimeType: imageType,
@@ -631,7 +631,7 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
             instructions: extractedText
               ? 'PDF text was extracted for searchable content, and pages were also rendered as images for visual layout inspection.'
               : 'PDF pages were rendered as images and attached to this tool result so the model can inspect them. No embedded text was extracted.',
-            metrics: metrics(started, visible),
+            metrics: metrics(started, parts),
           }), visible, [...textContent, ...imageContent]);
         }
         if (ext === '.ipynb') {
@@ -664,7 +664,7 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
           };
           await notifySuccessfulFileTouch(workspace, filePath);
           const visible = visibleFileRead(data);
-          return agentToolResult(successEnvelope('file_read', data, { metrics: metrics(started, visible) }), visible);
+          return agentToolResult(successEnvelope('file_read', data, { metrics: metrics(started, data) }), visible);
         }
         if (fileStat.size > MAX_TEXT_FILE_BYTES) {
           throw new LocalToolFailure('file_too_large', `File is too large to read as text: ${filePath}`, 'Use file_grep to locate relevant content or read a smaller file.');
@@ -697,7 +697,7 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
           return agentToolResult(successEnvelope('file_read', data, {
             status: 'unchanged',
             instructions: 'The file is unchanged since the previous full file_read result. Use the earlier content already in context instead of reading it again.',
-            metrics: metrics(started, visible),
+            metrics: metrics(started, data),
           }), visible);
         }
         const selected = lines.slice(lineOffset, lineOffset + limit);
@@ -728,8 +728,11 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
         await notifySuccessfulFileTouch(workspace, filePath);
         const visible = visibleFileRead(data);
         return agentToolResult(successEnvelope('file_read', data, {
+          // A partial read is `status: 'partial'` so the model gets a structured
+          // truncation signal, not just prose it might skip.
+          status: partial ? 'partial' : undefined,
           instructions: partial ? `Call file_read with offset ${nextOffset} to continue, or read the whole file before editing it.` : undefined,
-          metrics: { ...metrics(started, visible), truncated: partial },
+          metrics: { ...metrics(started, data), truncated: partial },
         }), visible);
       } catch (error) {
         return localErrorResult('file_read', error, started);
@@ -2078,28 +2081,34 @@ function visibleFileEdit(data: FileEditData) {
 // `extractedText.chars`), the internal pdf `outputDir`, the image mime (`type`,
 // also on the attached image block), and the notebook `cells` (a duplicate of the
 // rendered `content`) are all stripped. The full data stays on the envelope.
-function visibleFileRead(data: FileReadData): unknown {
-  if (data.type === 'image') {
-    return { file: { filePath: data.file.filePath, originalSize: data.file.originalSize, dimensions: data.file.dimensions } };
+function visibleFileRead(data: FileReadData): { file: Record<string, unknown> } {
+  switch (data.type) {
+    case 'image':
+      return { file: { filePath: data.file.filePath, originalSize: data.file.originalSize, dimensions: data.file.dimensions } };
+    case 'text':
+      return { file: { filePath: data.file.filePath, content: data.file.content, startLine: data.file.startLine, totalLines: data.file.totalLines } };
+    case 'notebook':
+      return { file: { filePath: data.file.filePath, content: data.file.content, originalSize: data.file.originalSize } };
+    case 'parts': {
+      const file = data.file;
+      return {
+        file: {
+          filePath: file.filePath,
+          originalSize: file.originalSize,
+          pages: file.pages,
+          ...(file.extractedText ? { extractedText: { truncated: file.extractedText.truncated } } : {}),
+        },
+      };
+    }
+    case 'file_unchanged':
+      return { file: { filePath: data.file.filePath } };
+    default: {
+      // Exhaustiveness guard: a new FileReadData variant must add a case above,
+      // otherwise this fails to compile instead of silently dropping content.
+      const _exhaustive: never = data;
+      return _exhaustive;
+    }
   }
-  if (data.type === 'text') {
-    return { file: { filePath: data.file.filePath, content: data.file.content, startLine: data.file.startLine, totalLines: data.file.totalLines } };
-  }
-  if (data.type === 'notebook') {
-    return { file: { filePath: data.file.filePath, content: data.file.content, originalSize: data.file.originalSize } };
-  }
-  if (data.type === 'parts') {
-    const file = data.file;
-    return {
-      file: {
-        filePath: file.filePath,
-        originalSize: file.originalSize,
-        pages: file.pages,
-        ...(file.extractedText ? { extractedText: { truncated: file.extractedText.truncated } } : {}),
-      },
-    };
-  }
-  return { file: { filePath: data.file.filePath } };
 }
 
 function visibleFileWrite(data: FileWriteData) {

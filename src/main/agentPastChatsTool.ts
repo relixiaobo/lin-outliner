@@ -8,7 +8,6 @@ import {
 import {
   agentToolResult,
   errorEnvelope,
-  NO_MODEL_DATA,
   successEnvelope,
   type ToolEnvelope,
 } from './agentToolEnvelope';
@@ -195,8 +194,9 @@ function pastChatsToolResult(
   // every field the agent needs (search snippets, read message text), so no parallel
   // markdown rendering is emitted. See visiblePastChatsResult for the per-mode shape.
   // An error with no recovery anchors has no visible data — the envelope's error
-  // already carries code + message — so omit the data block entirely.
-  return agentToolResult(envelope, visible ?? NO_MODEL_DATA);
+  // already carries code + message. `visible` is undefined there, which omits the
+  // data block (undefined is the safe default; no sentinel needed).
+  return agentToolResult(envelope, visible);
 }
 
 function pastChatsTruncated(result: Exclude<PastChatsResult, PastChatsErrorResult>): boolean {

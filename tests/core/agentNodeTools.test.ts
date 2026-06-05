@@ -557,6 +557,24 @@ describe('agent node tools', () => {
     expect(core.state().nodes[root]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual(['', 'New child']);
   });
 
+  test('node_edit guidance reports a real no-op instead of claiming the edit applied', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Task'));
+
+    // old_string === new_string leaves the outline byte-identical → unchanged.
+    const result = await executeRawTool<{ status: 'updated' | 'unchanged' }>(core, 'node_edit', {
+      node_id: root,
+      old_string: 'Task',
+      new_string: 'Task',
+    });
+    const visible = parseVisibleToolResult<{ instructions?: string }>(result.contentText);
+
+    expect(result.details.status).toBe('unchanged');
+    expect(visible.instructions).toContain('No change was needed');
+    expect(visible.instructions).not.toContain('Edit applied');
+  });
+
   test('node_edit rejects out-of-root local-file markers from agent outlines', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-node-root-'));
     const sourceRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-node-source-'));

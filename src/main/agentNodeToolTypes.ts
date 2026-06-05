@@ -1,7 +1,6 @@
 import type { DocumentCommand } from '../core/commands';
 import type { DocumentProjection, NodeProjection, SearchQueryExpr } from '../core/types';
 import type { TextSearchIndex } from '../core/textSearchIndex';
-import type { ToolEnvelope, VisibleToolError } from './agentToolEnvelope';
 
 export interface OutlinerToolHost {
   getProjection(): DocumentProjection;
@@ -285,15 +284,6 @@ export type NodeVisibleResult =
   | NodeVisibleSearchResult
   | NodeVisibleMutationResult
   | NodeVisibleCountResult;
-
-export interface NodeVisibleEnvelope {
-  ok: boolean;
-  status?: ToolEnvelope['status'];
-  instructions?: string;
-  data?: NodeVisibleResult;
-  error?: VisibleToolError;
-  warnings?: string[];
-}
 
 export interface NodeVisibleReadResult {
   outline?: string;
