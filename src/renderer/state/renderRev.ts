@@ -1,4 +1,5 @@
 import { inlineRefNodeId, type NodeId, type NodeProjection } from '../api/types';
+import { addToSetMap } from '../../core/setUtils';
 
 // Per-node "data revision" support for memoizing the outliner.
 //
@@ -23,113 +24,117 @@ import { inlineRefNodeId, type NodeId, type NodeProjection } from '../api/types'
 // scanning the document. Held across edits in the projection store and patched
 // from each delta (see `patchReverseEdges`) rather than rebuilt — that rebuild was
 // the last O(N) per-keystroke pass.
-export interface ReverseEdges {
-  // target node -> reference nodes pointing at it (immediate targetId).
-  references: Map<NodeId, Set<NodeId>>;
-  // tag definition -> nodes carrying that tag.
-  taggers: Map<NodeId, Set<NodeId>>;
-  // inline-reference target -> nodes whose content links to it.
-  inlineReferrers: Map<NodeId, Set<NodeId>>;
-}
+// The reverse-edge categories, each an independent `target -> referrers` map:
+//   references      — target node      -> reference nodes pointing at it (targetId)
+//   taggers         — tag definition   -> nodes carrying that tag
+//   inlineReferrers — inline-ref target -> nodes whose content links to it
+// They are keyed and patched identically, so every operation below iterates this
+// tuple rather than spelling the three out by hand.
+const REVERSE_CATEGORIES = ['references', 'taggers', 'inlineReferrers'] as const;
+type ReverseCategory = (typeof REVERSE_CATEGORIES)[number];
+
+export type ReverseEdges = {
+  [Category in ReverseCategory]: Map<NodeId, Set<NodeId>>;
+};
 
 export function emptyReverseEdges(): ReverseEdges {
   return { references: new Map(), taggers: new Map(), inlineReferrers: new Map() };
 }
 
-// The reverse-edge keys a single node contributes, by category. A node points at
-// its reference target, every tag it carries, and every inline-ref target in its
-// content.
-function nodeReverseKeys(node: NodeProjection): { references: NodeId[]; taggers: NodeId[]; inlineReferrers: NodeId[] } {
-  const inline: NodeId[] = [];
+// The reverse-edge keys a single node contributes, by category.
+function nodeReverseKeys(node: NodeProjection): Record<ReverseCategory, NodeId[]> {
+  const inlineReferrers: NodeId[] = [];
   for (const inlineRef of node.content.inlineRefs) {
     const nodeId = inlineRefNodeId(inlineRef);
-    if (nodeId) inline.push(nodeId);
+    if (nodeId) inlineReferrers.push(nodeId);
   }
   return {
     references: node.type === 'reference' && node.targetId ? [node.targetId] : [],
     taggers: node.tags.slice(),
-    inlineReferrers: inline,
+    inlineReferrers,
   };
 }
 
 export function buildReverseEdges(byId: ReadonlyMap<NodeId, NodeProjection>): ReverseEdges {
   const edges = emptyReverseEdges();
-  const add = (map: Map<NodeId, Set<NodeId>>, key: NodeId, value: NodeId) => {
-    const set = map.get(key);
-    if (set) set.add(value);
-    else map.set(key, new Set([value]));
-  };
   for (const [id, node] of byId) {
     const keys = nodeReverseKeys(node);
-    for (const key of keys.references) add(edges.references, key, id);
-    for (const key of keys.taggers) add(edges.taggers, key, id);
-    for (const key of keys.inlineReferrers) add(edges.inlineReferrers, key, id);
+    for (const category of REVERSE_CATEGORIES) {
+      for (const key of keys[category]) addToSetMap(edges[category], key, id);
+    }
   }
   return edges;
 }
 
 // Incrementally fold a delta into the reverse-edge index, returning a NEW index
-// and leaving `prev` untouched (copy-on-write: the three top-level maps are
-// shallow-copied — O(distinct targets), not O(nodes) — and each affected target's
-// member set is copied at most once per patch before it is mutated). For every
-// removed or changed node we strip the edges it contributed in `prevById`; for
-// every changed node we add the edges it contributes now. A changed node whose
-// edge keys are identical is skipped, so a plain text edit touches nothing.
+// and leaving `prev` untouched (copy-on-write at BOTH levels: a category's map is
+// cloned on its first write — O(distinct targets), not O(nodes) — and each
+// affected target's member set is copied at most once per patch before it is
+// mutated). For every removed or changed node we strip the edges it contributed in
+// `prevById`; for every changed node we add the edges it contributes now. A changed
+// node whose edge keys are identical is skipped, so a delta that changes no edges
+// (the common plain text edit) mutates nothing and returns `prev` as-is — zero
+// allocation.
 export function patchReverseEdges(
   prev: ReverseEdges,
   prevById: ReadonlyMap<NodeId, NodeProjection>,
   changedNodes: readonly NodeProjection[],
   removedIds: readonly NodeId[],
 ): ReverseEdges {
-  const next: ReverseEdges = {
-    references: new Map(prev.references),
-    taggers: new Map(prev.taggers),
-    inlineReferrers: new Map(prev.inlineReferrers),
+  const next: ReverseEdges = { ...prev };
+  const copiedMaps = new Set<ReverseCategory>();
+  const ownedSets = new WeakSet<Set<NodeId>>();
+  // The category's map, cloned on its first write so `prev`'s map is never touched.
+  const mapFor = (category: ReverseCategory): Map<NodeId, Set<NodeId>> => {
+    if (!copiedMaps.has(category)) { next[category] = new Map(next[category]); copiedMaps.add(category); }
+    return next[category];
   };
-  const owned = new WeakSet<Set<NodeId>>();
-  // The member set for `key`, copied once per patch before its first mutation so
+  // The member set for `key`, cloned once per patch before its first mutation so
   // `prev`'s sets are never touched.
-  const editable = (map: Map<NodeId, Set<NodeId>>, key: NodeId): Set<NodeId> => {
+  const ownedSet = (category: ReverseCategory, key: NodeId): Set<NodeId> => {
+    const map = mapFor(category);
     let set = map.get(key);
-    if (!set) { set = new Set(); map.set(key, set); owned.add(set); return set; }
-    if (!owned.has(set)) { set = new Set(set); map.set(key, set); owned.add(set); }
+    if (!set) { set = new Set(); map.set(key, set); ownedSets.add(set); return set; }
+    if (!ownedSets.has(set)) { set = new Set(set); map.set(key, set); ownedSets.add(set); }
     return set;
   };
-  const removeEdge = (map: Map<NodeId, Set<NodeId>>, key: NodeId, value: NodeId) => {
-    if (!map.has(key)) return;
-    const set = editable(map, key);
-    set.delete(value);
-    if (set.size === 0) map.delete(key);
+  const addKey = (category: ReverseCategory, key: NodeId, id: NodeId) => ownedSet(category, key).add(id);
+  const removeKey = (category: ReverseCategory, key: NodeId, id: NodeId) => {
+    if (!next[category].has(key)) return; // read-only probe; safe before the map is cloned
+    const set = ownedSet(category, key);
+    set.delete(id);
+    if (set.size === 0) mapFor(category).delete(key);
   };
-  const removeNode = (id: NodeId) => {
-    const old = prevById.get(id);
-    if (!old) return;
-    const keys = nodeReverseKeys(old);
-    for (const key of keys.references) removeEdge(next.references, key, id);
-    for (const key of keys.taggers) removeEdge(next.taggers, key, id);
-    for (const key of keys.inlineReferrers) removeEdge(next.inlineReferrers, key, id);
+  const removeNode = (id: NodeId, keys: Record<ReverseCategory, NodeId[]>) => {
+    for (const category of REVERSE_CATEGORIES) {
+      for (const key of keys[category]) removeKey(category, key, id);
+    }
   };
 
-  for (const id of removedIds) removeNode(id);
+  for (const id of removedIds) {
+    const old = prevById.get(id);
+    if (old) removeNode(id, nodeReverseKeys(old));
+  }
   for (const node of changedNodes) {
     const old = prevById.get(node.id);
+    const oldKeys = old ? nodeReverseKeys(old) : null;
     const keys = nodeReverseKeys(node);
-    if (old && sameReverseKeys(nodeReverseKeys(old), keys)) continue; // edges unchanged — skip
-    if (old) removeNode(node.id);
-    for (const key of keys.references) editable(next.references, key).add(node.id);
-    for (const key of keys.taggers) editable(next.taggers, key).add(node.id);
-    for (const key of keys.inlineReferrers) editable(next.inlineReferrers, key).add(node.id);
+    if (oldKeys && sameReverseKeys(oldKeys, keys)) continue; // edges unchanged — skip
+    if (oldKeys) removeNode(node.id, oldKeys);
+    for (const category of REVERSE_CATEGORIES) {
+      for (const key of keys[category]) addKey(category, key, node.id);
+    }
   }
-  return next;
+  // No edge moved (e.g. a pure text edit): hand back `prev` so the store keeps the
+  // same index object and the keystroke allocates nothing.
+  return copiedMaps.size === 0 ? prev : next;
 }
 
 function sameReverseKeys(
-  a: { references: NodeId[]; taggers: NodeId[]; inlineReferrers: NodeId[] },
-  b: { references: NodeId[]; taggers: NodeId[]; inlineReferrers: NodeId[] },
+  a: Record<ReverseCategory, NodeId[]>,
+  b: Record<ReverseCategory, NodeId[]>,
 ): boolean {
-  return sameList(a.references, b.references)
-    && sameList(a.taggers, b.taggers)
-    && sameList(a.inlineReferrers, b.inlineReferrers);
+  return REVERSE_CATEGORIES.every((category) => sameList(a[category], b[category]));
 }
 
 function sameList(a: readonly NodeId[], b: readonly NodeId[]): boolean {
@@ -159,9 +164,7 @@ export function propagateDirty(
     affected.add(id);
     const node = byId.get(id);
     if (node?.parentId && !affected.has(node.parentId)) stack.push(node.parentId);
-    enqueue(edges.references.get(id));
-    enqueue(edges.taggers.get(id));
-    enqueue(edges.inlineReferrers.get(id));
+    for (const category of REVERSE_CATEGORIES) enqueue(edges[category].get(id));
   }
   return affected;
 }

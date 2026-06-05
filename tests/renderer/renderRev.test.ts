@@ -146,13 +146,37 @@ describe('patchReverseEdges', () => {
     expect(taggersOfT.has('x')).toBe(true);
   });
 
+  test('matches a full rebuild after a node gains an edge, copying the existing target set', () => {
+    // `ref` already points at `target`; a second node `ref2` starts pointing at it
+    // too, so the add path must copy `target`'s existing referrer set, not mutate it.
+    const before = byIdOf([
+      node('ref', { type: 'reference', targetId: 'target' }),
+      node('ref2', { type: 'reference', targetId: undefined }),
+      node('target'),
+    ]);
+    const prev = buildReverseEdges(before);
+    const referrersOfTarget = prev.references.get('target')!; // {ref}
+    expect([...referrersOfTarget]).toEqual(['ref']);
+
+    const editedRef2 = node('ref2', { type: 'reference', targetId: 'target' }); // now points at target
+    const after = byIdOf([before.get('ref')!, editedRef2, before.get('target')!]);
+    const next = patchReverseEdges(prev, before, [editedRef2], []);
+
+    expect(next).toEqual(buildReverseEdges(after));
+    expect(next.references.get('target')).toEqual(new Set(['ref', 'ref2']));
+    // prev's set was copied, not extended, on the add path.
+    expect(prev.references.get('target')).toBe(referrersOfTarget);
+    expect(referrersOfTarget.has('ref2')).toBe(false);
+  });
+
   test('a text-only edit (same edge keys) leaves the edges equal', () => {
     const before = scene();
     const prev = buildReverseEdges(before);
     // Same tag + same inline-ref target, only the surrounding text changed.
     const editedX = node('x', { tags: ['t'], content: { text: 'see more', marks: [], inlineRefs: [{ offset: 0, target: { kind: 'node', nodeId: 'target' } }] } });
     const next = patchReverseEdges(prev, before, [editedX], []);
-    expect(next).toEqual(prev);
+    // No edge moved, so the patch allocates nothing and hands back `prev` as-is.
+    expect(next).toBe(prev);
   });
 });
 

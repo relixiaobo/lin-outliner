@@ -91,6 +91,13 @@ describe('reduceProjection over real core deltas', () => {
     step(() => core.applyTag(c, tag));   // taggers: tag -> {a, c}
     step(() => core.removeTag(a, tag));  // taggers: tag -> {c}
     step(() => core.addReference(b, a)); // references: a -> <ref node>
+    // Inline reference: convert a fresh node into an inline ref of `a`, then delete
+    // it — exercises the inlineReferrers reverse-edge category add + remove paths.
+    let inlineHost = '';
+    step(() => { inlineHost = newId(core.createNode(LIBRARY_ID, null, 'inline host')); });
+    let inlineRef = '';
+    step(() => { inlineRef = newId(core.replaceNodeWithInlineReference(inlineHost, a)); }); // inlineReferrers: a -> inlineRef
+    step(() => core.deleteNode(inlineRef)); // drop the inline-ref edge
     step(() => core.trashNode(b));
     step(() => core.restoreNode(b));
     step(() => core.deleteNode(b)); // hard subtree delete (b now carries c + the ref)
