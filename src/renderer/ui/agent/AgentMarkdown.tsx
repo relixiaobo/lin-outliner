@@ -20,6 +20,7 @@ import { ButtonControl } from '../primitives/ButtonControl';
 import { useT } from '../../i18n/I18nProvider';
 import { highlightCode, plainCodeHtml } from '../editor/shikiHighlighter';
 import {
+  NODE_REFERENCE_LINK_PREFIX,
   nodeReferenceDisplayLabel,
   nodeReferenceOpenOptionsFromClick,
   nodeReferenceStyle,
@@ -42,7 +43,6 @@ interface MarkdownAstNode {
   value?: string;
 }
 
-const NODE_REFERENCE_LINK_PREFIX = 'lin-node:';
 const REMARK_PLUGINS = [remarkGfm, remarkNodeReferences];
 
 function splitMarkdownBlocks(text: string): string[] {
@@ -190,19 +190,19 @@ function useMarkdownComponents(
           );
         }
         return (
-          <button
+          <a
             className="inline-ref agent-message-inline-ref"
             data-inline-ref={nodeId}
+            href={href}
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
               onNodeReferenceOpen(nodeId, nodeReferenceOpenOptionsFromClick(event));
             }}
             style={style}
-            type="button"
           >
             {label}
-          </button>
+          </a>
         );
       }
       return (
