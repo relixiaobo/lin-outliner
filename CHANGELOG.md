@@ -912,6 +912,27 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Outliner: Today navigation, same-day pane restore, and batch drag/drop (PR #123)** — a cluster of
+  navigation and drag fixes found in local use. **Today** now resolves/creates the current *local-date*
+  node before opening, instead of trusting a possibly-stale renderer `projection.todayId`, so crossing
+  midnight with the app open no longer opens yesterday; all entry points (App / command palette / `go to
+  today`) route through the same ensure-first helper. **Workspace-layout persistence** gained a local-day
+  guard: saved panes restore only on the same calendar day, so a launch on a later day starts at Today
+  rather than reopening a stale day's panes. **Drag/drop** now supports dragging a whole block selection
+  of structural roots to one target (and dropping onto a trailing draft row to append), clears stale drop
+  guide lines on invalid drop / drag end / nested-hover transitions (only the nearest hovered row owns the
+  guide, including nested rows), and preserves block selection/focus through a drag. A block drag is now
+  **one undoable operation**: a new atomic `batch_move_nodes` core command (validate-the-whole-batch on a
+  clone, then apply in one `mutate`) replaces the per-row `move_node` loop, so a multi-row drag is a single
+  undo step and a single projection delta — the dedicated command keeps the protocol surface
+  (`commands.ts`/`types.ts`) the move's source of truth via the shared `BatchMoveNodeInput`. Finally,
+  indent-guide clicks toggle direct-child expansion again — `OutlinerItem`'s memo no longer skips an
+  expanded ancestor when only a descendant's expanded state changes. Gate: `/code-review` (re-review after
+  the atomic fix) + typecheck + `test:core` 79/0 (incl. a batch-move atomicity/undo test) + `test:renderer`
+  342/0 + new e2e (`outliner-drag-drop`, `outliner-trailing-expand`, navigation/workspace-layout specs);
+  spec synced (`commands.md`, `ui-behavior.md`, `outliner-parity-matrix.md`).
+  ([#123](https://github.com/relixiaobo/lin-outliner/pull/123))
+
 - **Agent secrets: removed the keychain prompt; secrets now stored as local 0600 JSON (PR #115)** —
   Electron `safeStorage`/macOS Keychain backing triggered a macOS password prompt during
   startup/settings reads, a poor first-run experience. Agent provider credentials (API keys / OAuth

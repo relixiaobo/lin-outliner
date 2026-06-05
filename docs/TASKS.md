@@ -238,6 +238,20 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **outliner-today-nav-and-drag** (codex, PR #123) — fixes from local use: Today navigation resolves/
+  creates the current *local-date* node before opening (no more stale `projection.todayId` → yesterday
+  after midnight); workspace-layout restores panes only on the same calendar day; block-selection drag
+  moves all selected structural roots to one target (trailing-draft drop appends), with stale drop-guide
+  cleanup, single-owner nested guide lines, and preserved block selection through a drag. Block drag is
+  now **one undoable op** via a new atomic `batch_move_nodes` core command (validate-on-clone then one
+  `mutate`) replacing the per-row `move_node` loop. Indent-guide clicks toggle child expansion again
+  (`OutlinerItem` memo no longer skips an expanded ancestor on a descendant-only expand change). Touches
+  the **protocol surface** (`commands.ts`/`types.ts`) — additive command, PM-ratified to land in-PR
+  rather than interface-first (no in-flight sibling on those files). Gate: re-review after the atomic fix
+  + typecheck + `test:core` 79/0 (batch-move atomicity/undo test) + `test:renderer` 342/0 + new e2e; spec
+  synced (`commands.md`, `ui-behavior.md`, `outliner-parity-matrix.md`). Follow-up (low): Sidebar Today
+  item still keys `disabled`/highlight off the stale `projection.todayId` — cosmetic, self-healing.
+
 - **incremental-projection (P1 PR-B)** (cc, PR #121) — perf follow-up to #119: the renderer's
   reverse-edge index (reference / tag / inline-ref target → referrers, now `Set`-valued) is held in
   `ProjectionState` and patched per delta by `patchReverseEdges` (copy-on-write at the category-map +
