@@ -12,6 +12,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Outliner expansion survives reload (renderer-local view state) (PR #124)** — each root-node page
+  now remembers its expanded rows and revealed hidden-field keys across reload / reopen, instead of
+  collapsing back on every reload. A new renderer-local store (`outlineViewState.ts`) persists, per root
+  node id, the expanded node ids + hidden-field keys in `localStorage` (scoped to that root's structural
+  subtree; references are **not** followed into other roots; pruned to the 500 most-recent roots). It is
+  pure **view state** — not core commands, undo/redo, import/export, or agent-editable content. Because
+  the renderer keeps one global `expanded` set shared by every split pane, restore is **additive**: it
+  merges a root's saved expansion in and never clears rows another pane may be showing; persistence
+  writes one entry per visible outliner pane root, and a same-day multi-pane layout (PR #123) replays
+  expansion for every restored pane on boot. Gate: re-review after a first pass — all six split-pane /
+  scope / spec findings fixed (cross-pane collapse, multi-pane boot restore, non-active-pane persist,
+  reference-scope bleed, thin tests, spec drift) — + typecheck + `test:renderer` 350/0 + 3 unit
+  (additive merge, reference-scope isolation, colon-id round-trip) + 2 e2e (per-root reload restore,
+  multi-pane boot restore). ([#124](https://github.com/relixiaobo/lin-outliner/pull/124))
+
 - **Multi-language (i18n): typed foundation + full en / 简体中文 migration (PR #110)** — the app now
   ships English and Simplified Chinese with a typed message layer. All UI strings live in
   `src/core/i18n/messages/<locale>.ts` keyed off a single `Messages` tree (`= typeof en`), read via

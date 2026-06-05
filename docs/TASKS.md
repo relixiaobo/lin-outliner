@@ -249,6 +249,17 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **persist-outline-view-state** (codex, PR #124) — outliner expansion now survives reload/reopen: a
+  renderer-local store (`outlineViewState.ts`) persists each root page's expanded node ids + revealed
+  hidden-field keys in `localStorage` (scoped to the root's structural subtree, references not followed,
+  pruned to 500 roots). Pure view state — not core/undo/import/agent content. Restore is **additive**
+  against the single global `expanded` set (never collapses another pane); persists one entry per visible
+  outliner pane root; same-day multi-pane layouts replay expansion for every restored pane on boot. Gate:
+  re-review after a first pass fixed all six split-pane/scope/spec findings (cross-pane collapse,
+  multi-pane boot restore, non-active-pane persist, reference bleed, thin tests, spec drift); verified
+  typecheck + `test:renderer` 350/0 + 3 unit + 2 e2e (per-root + multi-pane restore). Spec updated in
+  `ui-behavior.md` / `workspace-layout.md`.
+
 - **outliner-today-nav-and-drag** (codex, PR #123) — fixes from local use: Today navigation resolves/
   creates the current *local-date* node before opening (no more stale `projection.todayId` → yesterday
   after midnight); workspace-layout restores panes only on the same calendar day; block-selection drag
