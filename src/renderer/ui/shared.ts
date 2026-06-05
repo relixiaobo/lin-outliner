@@ -1,8 +1,9 @@
 import { useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import type {
-  CommandOutcome,
-  DocumentProjection,
+  CommandResult,
+  ProjectionSnapshot,
+  ProjectionUpdate,
   FocusHint,
   NodeId,
   NodeProjection,
@@ -13,13 +14,12 @@ import { measureRender } from './outliner/renderProbe';
 
 export interface CommandRunnerOptions {
   applyFocus?: boolean;
-  applyProjection?: boolean;
 }
 
 export type CommandRunner = (
-  operation: () => Promise<CommandOutcome | DocumentProjection>,
+  operation: () => Promise<CommandResult | ProjectionSnapshot>,
   options?: CommandRunnerOptions,
-) => Promise<CommandOutcome | DocumentProjection | null>;
+) => Promise<CommandResult | ProjectionSnapshot | null>;
 
 export interface CommandRunnerLifecycle {
   onLocalCommandStart?: () => void;
@@ -100,7 +100,7 @@ export function fieldEntries(
 }
 
 export function useCommandRunner(
-  setProjection: (projection: DocumentProjection) => void,
+  applyProjectionUpdate: (update: ProjectionUpdate) => void,
   setFocus: (focus: FocusHint | null) => void,
   setError: (message: string | null) => void,
   lifecycle: CommandRunnerLifecycle = EMPTY_COMMAND_RUNNER_LIFECYCLE,
@@ -109,18 +109,16 @@ export function useCommandRunner(
     lifecycle.onLocalCommandStart?.();
     try {
       const result = await operation();
-      if (options?.applyProjection === false) {
-        setError(null);
-        return result;
-      }
-      if ('projection' in result) {
+      // A mutation returns a `CommandResult` (an `update` to fold in); a no-op /
+      // query path returns a `ProjectionSnapshot` (apply as a full reseed).
+      if ('update' in result) {
         measureRender(() => flushSync(() => {
-          setProjection(result.projection);
+          applyProjectionUpdate(result.update);
           setFocus(options?.applyFocus === false ? null : result.focus ?? null);
         }));
       } else {
         measureRender(() => flushSync(() => {
-          setProjection(result);
+          applyProjectionUpdate({ kind: 'full', revision: result.revision, projection: result.projection });
           setFocus(null);
         }));
       }
@@ -132,5 +130,5 @@ export function useCommandRunner(
     } finally {
       lifecycle.onLocalCommandSettled?.();
     }
-  }, [lifecycle, setError, setFocus, setProjection]);
+  }, [lifecycle, setError, setFocus, applyProjectionUpdate]);
 }

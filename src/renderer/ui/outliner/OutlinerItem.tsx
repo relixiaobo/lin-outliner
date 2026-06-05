@@ -447,10 +447,10 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     const fieldValue = props.fieldValue;
     const runCreate = fieldValue
       ? () => fieldValue.materializeValue(props.nodeId, seed.text)
-      : () => props.run(async () => {
-        const outcome = await api.materializeDraftNode(props.parentId, null, seed.text, props.nodeId);
-        return outcome.projection;
-      }, { applyFocus: false });
+      : () => props.run(
+        () => api.materializeDraftNode(props.parentId, null, seed.text, props.nodeId),
+        { applyFocus: false },
+      );
     pendingTextPatchRef.current = pendingTextPatchRef.current
       .then(runCreate)
       .then(() => {

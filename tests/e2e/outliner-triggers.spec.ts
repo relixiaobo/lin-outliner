@@ -112,8 +112,8 @@ async function invokeMockCommand(page: import('@playwright/test').Page, cmd: str
       __LIN_E2E__?: { emitDocumentEvent: (event: unknown) => void };
     };
     const result = await win.lin?.invoke(cmd, args);
-    const projection = result && typeof result === 'object' && 'projection' in result
-      ? (result as { projection: unknown }).projection
+    const projection = result && typeof result === 'object' && 'update' in result
+      ? (result as { update: { projection: unknown } }).update.projection
       : result;
     if (projection) {
       win.__LIN_E2E__?.emitDocumentEvent({
@@ -1684,7 +1684,7 @@ test.describe('outliner options field inline value', () => {
       const win = window as unknown as {
         lin?: {
           invoke: (cmd: string, args?: Record<string, unknown>) =>
-            Promise<{ focus?: { nodeId: string }; projection?: unknown }>;
+            Promise<{ focus?: { nodeId: string }; update?: { projection?: unknown } }>;
         };
         __LIN_E2E__?: { emitDocumentEvent: (event: unknown) => void };
       };
@@ -1696,7 +1696,7 @@ test.describe('outliner options field inline value', () => {
       });
       const entryId = created.focus!.nodeId;
       const reused = await win.lin!.invoke('reuse_field_definition', { entryId, targetDefId: 'sys:done' });
-      const projection = reused.projection ?? created.projection;
+      const projection = reused.update?.projection ?? created.update?.projection;
       if (projection) {
         win.__LIN_E2E__?.emitDocumentEvent({
           type: 'projection_changed',

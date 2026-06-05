@@ -1,10 +1,11 @@
 import { api } from '../../api/client';
 import {
   plainText,
-  type CommandOutcome,
+  type CommandResult,
   type FieldType,
   type NodeId,
 } from '../../api/types';
+import { nodeFromProjectionUpdate } from '../../state/document';
 import type { EditorTrigger } from '../shared';
 
 const LEGACY_EMPTY_FIELD_FALLBACK_NAME = 'Field';
@@ -18,18 +19,20 @@ function isEmptyFieldNameError(error: unknown): boolean {
   return message.includes('field name cannot be empty');
 }
 
-async function clearFallbackFieldName(outcome: CommandOutcome): Promise<CommandOutcome> {
-  const fieldEntryId = outcome.focus?.nodeId;
-  const fieldEntry = outcome.projection.nodes.find((node) => node.id === fieldEntryId);
+// Reads the field entry + its definition straight out of the create's delta. Safe
+// because both are freshly created by the same `create_inline_field*` command, so
+// both are in its `changedNodeIds` (a delta never omits a node it just created).
+async function clearFallbackFieldName(outcome: CommandResult): Promise<CommandResult> {
+  const fieldEntry = nodeFromProjectionUpdate(outcome.update, outcome.focus?.nodeId);
   const fieldDefId = fieldEntry?.type === 'fieldEntry' ? fieldEntry.fieldDefId : undefined;
   if (!fieldDefId) return outcome;
 
-  const fieldDef = outcome.projection.nodes.find((node) => node.id === fieldDefId);
+  const fieldDef = nodeFromProjectionUpdate(outcome.update, fieldDefId);
   if (!fieldDef || fieldDef.content.text === '') return outcome;
 
   const cleared = await api.replaceNodeText(fieldDefId, plainText(''));
   return {
-    projection: cleared.projection,
+    update: cleared.update,
     focus: outcome.focus,
   };
 }
@@ -37,7 +40,7 @@ async function clearFallbackFieldName(outcome: CommandOutcome): Promise<CommandO
 export async function createPlaceholderInlineFieldAfterNode(
   afterNodeId: NodeId,
   fieldType: FieldType,
-): Promise<CommandOutcome> {
+): Promise<CommandResult> {
   try {
     return await api.createInlineFieldAfterNode(afterNodeId, '', fieldType);
   } catch (error) {
@@ -56,7 +59,7 @@ export async function createPlaceholderInlineField(
   parentId: NodeId,
   index: number | null,
   fieldType: FieldType,
-): Promise<CommandOutcome> {
+): Promise<CommandResult> {
   try {
     return await api.createInlineField(parentId, index, '', fieldType);
   } catch (error) {

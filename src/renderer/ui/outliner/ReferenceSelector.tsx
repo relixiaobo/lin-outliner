@@ -1,6 +1,6 @@
 import { api } from '../../api/client';
-import type { CommandOutcome, DocumentProjection, NodeId, NodeProjection } from '../../api/types';
-import type { DocumentIndex } from '../../state/document';
+import type { CommandResult, NodeId, NodeProjection, ProjectionSnapshot } from '../../api/types';
+import { nodeFromProjectionUpdate, type DocumentIndex } from '../../state/document';
 import { AddIcon, CalendarIcon, ICON_SIZE } from '../icons';
 import { buildReferenceCandidates, referenceCandidateLabels, type ReferenceCandidate, type ReferenceCandidateLabels } from '../interactions/referenceCandidates';
 import type { CommandRunner } from '../shared';
@@ -18,7 +18,7 @@ interface ReferenceSelectorProps {
   run: CommandRunner;
   close: () => void;
   clearTriggerText: () => Promise<void>;
-  applyReference?: (target: NodeProjection) => Promise<CommandOutcome | DocumentProjection | null | void>;
+  applyReference?: (target: NodeProjection) => Promise<CommandResult | ProjectionSnapshot | null | void>;
 }
 
 export function referenceItems(params: {
@@ -39,8 +39,8 @@ export function referenceItems(params: {
   });
 }
 
-function nodeFromOutcome(outcome: CommandOutcome, nodeId: NodeId): NodeProjection | undefined {
-  return outcome.projection.nodes.find((node) => node.id === nodeId);
+function nodeFromOutcome(outcome: CommandResult, nodeId: NodeId): NodeProjection | undefined {
+  return nodeFromProjectionUpdate(outcome.update, nodeId);
 }
 
 function dateParts(date: Date): { year: number; month: number; day: number } {
@@ -102,7 +102,12 @@ export function ReferenceSelector(props: ReferenceSelectorProps) {
       const parts = dateParts(date);
       const outcome = await api.ensureDateNode(parts.year, parts.month, parts.day);
       const targetId = outcome.focus?.nodeId;
-      const target = targetId ? nodeFromOutcome(outcome, targetId) : undefined;
+      // `ensure_date_node` is idempotent: referencing an already-existing daily
+      // note bumps no revision, so its delta is empty and the node isn't in
+      // `changedNodes`. Fall back to the held index, where it already lives.
+      const target = targetId
+        ? nodeFromOutcome(outcome, targetId) ?? props.index.byId.get(targetId)
+        : undefined;
       if (!target) return outcome;
       if (props.applyReference) {
         const result = await props.applyReference(target);

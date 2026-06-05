@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import type { AgentUserViewContext } from '../../core/agentTypes';
 import { api } from '../api/client';
-import type { DocumentProjection, FocusHint, NodeId } from '../api/types';
-import { useRenderIndex, useUiState } from '../state/document';
+import type { FocusHint, NodeId } from '../api/types';
+import { useProjectionStore, useUiState } from '../state/document';
 import { AgentDock, type AgentRailState } from './AgentDock';
 import { CommandPalette } from './CommandPalette';
 import { Sidebar } from './Sidebar';
@@ -33,7 +33,7 @@ import { useT } from '../i18n/I18nProvider';
 
 export function App() {
   const t = useT();
-  const [projection, setProjection] = useState<DocumentProjection | null>(null);
+  const { index, applyProjectionUpdate } = useProjectionStore(api.getProjection);
   const [ui, setUi] = useUiState();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   // Agent rail is a 3-state model: collapsed seed (bare icon) -> hover glass chip
@@ -48,7 +48,6 @@ export function App() {
   const [dragId, setDragId] = useState<NodeId | null>(null);
   const pendingLocalUserCommandsRef = useRef(0);
   const ignoreLocalUserEventsThroughRef = useRef(0);
-  const index = useRenderIndex(projection);
   const commandRunnerLifecycle = useMemo(() => ({
     onLocalCommandStart: () => {
       pendingLocalUserCommandsRef.current += 1;
@@ -58,7 +57,7 @@ export function App() {
       ignoreLocalUserEventsThroughRef.current = Date.now();
     },
   }), []);
-  const run = useCommandRunner(setProjection, setPendingFocus, setError, commandRunnerLifecycle);
+  const run = useCommandRunner(applyProjectionUpdate, setPendingFocus, setError, commandRunnerLifecycle);
 
   const setCommandOpen = useCallback((commandOpen: boolean) => {
     setUi((prev) => ({ ...prev, commandOpen }));
@@ -112,12 +111,12 @@ export function App() {
   useEffect(() => {
     void run(async () => {
       const initial = await api.initWorkspace();
-      const initialFocusId = initializeLayout(initial);
+      const initialFocusId = initializeLayout(initial.projection);
       setUi((prev) => {
         const next = requestFocusState(prev, rowFocusTarget(initialFocusId, null, null), cursorEnd());
         return {
           ...next,
-          expanded: new Set([...next.expanded, initial.libraryId]),
+          expanded: new Set([...next.expanded, initial.projection.libraryId]),
         };
       });
       return initial;
@@ -137,7 +136,7 @@ export function App() {
           )
         );
       if (isLocalUserCommandEvent) return;
-      setProjection(event.projection);
+      applyProjectionUpdate(event.update);
     });
     return () => {
       unlisten?.();
@@ -298,7 +297,7 @@ export function App() {
     });
   }, [activePanelId, index, panels, ui]);
 
-  if (!projection || !index) {
+  if (!index) {
     return (
       <div className="app">
         <div className="loading-panel">
@@ -346,7 +345,7 @@ export function App() {
           onResizeReset={resetSidebarWidth}
           onResizeStart={beginSidebarResize}
           onToggleTreeNode={toggleSidebarTreeNode}
-          projection={projection}
+          projection={index.projection}
           rootId={rootId}
         />
 
@@ -403,7 +402,7 @@ export function App() {
 
       {ui.commandOpen && (
         <CommandPalette
-          projection={projection}
+          projection={index.projection}
           index={index}
           onClose={() => setCommandOpen(false)}
           onFocus={focusNode}

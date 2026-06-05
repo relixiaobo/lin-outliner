@@ -16,7 +16,10 @@ import { createTextSearchIndex, type MutableTextSearchIndex, type TextSearchInde
 import { collectDescendantIds, nodeIsInSubtree } from '../core/treeUtils';
 import { TRASH_ID } from '../core/types';
 import type {
+  CommandResult,
   DocumentProjectionChangedEvent,
+  ProjectionSnapshot,
+  ProjectionUpdate,
   DisplayPlacement,
   FieldConfigPatch,
   FieldType,
@@ -62,6 +65,12 @@ export class DocumentService {
   private core = Core.new();
   private mutationQueue = Promise.resolve();
   private projectionChangedListeners = new Set<ProjectionChangedListener>();
+  // The last projection revision delivered to the renderer (via a command reply
+  // or an event), so projection deltas form a contiguous `+1` chain. A discontinuity
+  // forces a `full` reseed. Cached per-revision so the command reply and the
+  // (often suppressed) event for the same mutation deliver the identical update.
+  private lastEmittedProjectionRevision = -1;
+  private builtProjectionUpdate: { revision: number; update: ProjectionUpdate } | null = null;
   private transactionContext = new AsyncLocalStorage<boolean>();
   private textEditGroup?: TextEditGroup;
   private readonly textEditFlushDelayMs = 700;
@@ -83,13 +92,64 @@ export class DocumentService {
     getTextSearchIndex: () => this.getTextSearchIndex(),
   });
 
-  async initWorkspace() {
+  async initWorkspace(): Promise<ProjectionSnapshot> {
     this.core = await this.loadCore();
     const projection = this.core.projection();
     this.rebuildTextSearchIndex(projection);
-    return projection;
+    return this.projectionSnapshot();
   }
 
+  // A full projection plus its revision, used to seed the renderer (init) and to
+  // resync after a delta gap. Establishes the emit-chain baseline so the next
+  // mutation's delta applies cleanly.
+  projectionSnapshot(): ProjectionSnapshot {
+    const revision = this.core.revision();
+    this.lastEmittedProjectionRevision = revision;
+    this.builtProjectionUpdate = null;
+    return { revision, projection: this.core.projection() };
+  }
+
+  // Build the projection update for the just-committed mutation: a `delta`
+  // carrying only the changed/removed nodes when the revision advanced by exactly
+  // one from the last emit, else a `full` reseed (whole-tree rewrite / discontinuity).
+  // Cached per-revision so a command reply and its (usually suppressed) event
+  // deliver the identical update and advance the chain once. Mirrors
+  // refreshTextSearchIndexFromCoreDelta.
+  private buildProjectionUpdate(): ProjectionUpdate {
+    const revision = this.core.revision();
+    if (this.builtProjectionUpdate && this.builtProjectionUpdate.revision === revision) {
+      return this.builtProjectionUpdate.update;
+    }
+    if (revision === this.lastEmittedProjectionRevision) {
+      // An idempotent / no-op command that did not advance the revision. Deliver an
+      // empty delta at the current revision; the renderer ignores already-applied ones.
+      return { kind: 'delta', revision, todayId: this.core.todayId(), changedNodes: [], removedIds: [] };
+    }
+    const delta = this.core.revisionDelta();
+    let update: ProjectionUpdate;
+    if (
+      delta.requiresFullSearchRebuild
+      || delta.revision !== revision
+      || revision !== this.lastEmittedProjectionRevision + 1
+    ) {
+      update = { kind: 'full', revision, projection: this.core.projection() };
+    } else {
+      const present = this.core.projectionNodesFor(delta.changedNodeIds);
+      update = {
+        kind: 'delta',
+        revision,
+        todayId: this.core.todayId(),
+        changedNodes: [...present.values()],
+        removedIds: delta.changedNodeIds.filter((id) => !present.has(id)),
+      };
+    }
+    this.lastEmittedProjectionRevision = revision;
+    this.builtProjectionUpdate = { revision, update };
+    return update;
+  }
+
+  // Full projection for the agent tool host (OutlinerToolHost). The renderer's
+  // resync path uses the `get_projection` command, which returns a ProjectionSnapshot.
   getProjection() {
     return this.core.projection();
   }
@@ -103,6 +163,12 @@ export class DocumentService {
    *  (the launcher inline-search hot path). See Core.projectionNodesByIds. */
   projectionNodesByIds(ids: Iterable<string>) {
     return this.core.projectionNodesByIds(ids);
+  }
+
+  /** The current daily-note ("today") node id. Cheap accessor — used by launcher
+   *  capture after `ensure_date_node`, which no longer returns a full projection. */
+  todayId() {
+    return this.core.todayId();
   }
 
   onProjectionChanged(listener: ProjectionChangedListener) {
@@ -159,7 +225,7 @@ export class DocumentService {
       case 'init_workspace':
         return this.initWorkspace();
       case 'get_projection':
-        return this.mutationQueue.then(() => this.getProjection());
+        return this.mutationQueue.then(() => this.projectionSnapshot());
       case 'search_nodes':
         return this.searchNodes(String(args.query ?? ''));
       case 'backlinks':
@@ -213,7 +279,9 @@ export class DocumentService {
       }
       if (changed && (command === 'apply_node_text_patch' || isMaterialize)) this.refreshTextSearchIndexFromCoreDelta();
       if (changed) this.emitProjectionChanged(effectiveMeta.origin ?? 'user');
-      return outcome;
+      const focus = 'focus' in outcome ? outcome.focus : undefined;
+      const result: CommandResult = { update: this.buildProjectionUpdate(), ...(focus ? { focus } : {}) };
+      return result;
     });
     this.mutationQueue = task.then(() => undefined, () => undefined);
     return task;
@@ -725,7 +793,7 @@ export class DocumentService {
     const event: DocumentProjectionChangedEvent = {
       type: 'projection_changed',
       origin,
-      projection: this.core.projection(),
+      update: this.buildProjectionUpdate(),
       timestamp: Date.now(),
     };
     for (const listener of this.projectionChangedListeners) listener(event);

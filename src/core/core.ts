@@ -274,6 +274,13 @@ export class Core {
     };
   }
 
+  // The current daily-note ("today") node id — the one projection envelope pointer
+  // that can move post-init. Cheap accessor so a projection delta can carry it
+  // without assembling the whole projection.
+  todayId(): string {
+    return this.currentTodayNodeId();
+  }
+
   projectionNodesFor(nodeIds: readonly NodeId[]): Map<NodeId, NodeProjection> {
     if (this.activeTransaction) {
       const state = this.loro.materializeState();

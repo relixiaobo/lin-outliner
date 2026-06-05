@@ -20,10 +20,22 @@ export function traceIpc(command: string, result: unknown, durationMs: number): 
   console.log(`[ipc] ${command} ${durationMs.toFixed(1)}ms ${sizePart}${nodePart}`);
 }
 
-// A command outcome carries the projection under `.projection`; a bare
-// get_projection returns the projection itself. Both expose `nodes[]`.
+// Surface the node count a result carries across IPC: a `CommandResult` wraps a
+// `ProjectionUpdate` under `.update` (delta → changed-node count; full →
+// projection size); a `ProjectionSnapshot` (init/get_projection) holds
+// `.projection`; a bare projection exposes `nodes[]` directly.
 function projectionNodeCount(result: unknown): number | undefined {
   if (!result || typeof result !== 'object') return undefined;
+  const update = (result as { update?: unknown }).update;
+  if (update && typeof update === 'object') {
+    const kind = (update as { kind?: unknown }).kind;
+    if (kind === 'delta') {
+      const changed = (update as { changedNodes?: unknown }).changedNodes;
+      return Array.isArray(changed) ? changed.length : undefined;
+    }
+    const projection = (update as { projection?: { nodes?: unknown } }).projection;
+    return Array.isArray(projection?.nodes) ? projection.nodes.length : undefined;
+  }
   const candidate = (result as { projection?: unknown }).projection ?? result;
   const nodes = (candidate as { nodes?: unknown }).nodes;
   return Array.isArray(nodes) ? nodes.length : undefined;

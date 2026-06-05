@@ -19,7 +19,7 @@ import {
 } from '../core/settingsWindow';
 import { LIN_WINDOW_ACTIVE_CHANNEL } from '../core/windowActivity';
 import { ASSET_URL_SCHEME } from '../core/assets';
-import { LIN_AGENT_OAUTH_EVENT_CHANNEL, LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput, type CommandOutcome } from '../core/types';
+import { LIN_AGENT_OAUTH_EVENT_CHANNEL, LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput, type CommandResult } from '../core/types';
 import {
   deleteProviderApiKey,
   deleteProviderConfig,
@@ -931,17 +931,17 @@ function registerIpc() {
     const note = typeof payload.note === 'string' ? payload.note : undefined;
     try {
       const now = new Date();
-      const ensured = await documentService.handle('ensure_date_node', {
+      await documentService.handle('ensure_date_node', {
         year: now.getFullYear(),
         month: now.getMonth() + 1,
         day: now.getDate(),
-      }) as CommandOutcome;
+      });
       const input = buildManualNoteInput({
-        destinationParentId: ensured.projection.todayId,
+        destinationParentId: documentService.todayId(),
         title,
         note,
       });
-      const outcome = await documentService.handle('create_capture', { input }) as CommandOutcome;
+      const outcome = await documentService.handle('create_capture', { input }) as CommandResult;
       return { ok: true, nodeId: outcome.focus?.nodeId };
     } catch (error) {
       console.error('[launcher] createCapture failed', error);
@@ -961,11 +961,11 @@ function registerIpc() {
     const intent = isCaptureIntent(payload.intent) ? payload.intent : undefined;
     try {
       const now = new Date();
-      const ensured = await documentService.handle('ensure_date_node', {
+      await documentService.handle('ensure_date_node', {
         year: now.getFullYear(),
         month: now.getMonth() + 1,
         day: now.getDate(),
-      }) as CommandOutcome;
+      });
       const captureId = `cap:${randomUUID()}`;
       // Basic-info capture: the node carries title + URL + author only. Rich page
       // content (body/selection/transcript) is not extracted today — it returns
@@ -973,12 +973,12 @@ function registerIpc() {
       // (docs/plans/browser-extension-integration.md).
       const input = buildContextCaptureInput({
         context,
-        destinationParentId: ensured.projection.todayId,
+        destinationParentId: documentService.todayId(),
         captureId,
         note,
         intent,
       });
-      const outcome = await documentService.handle('create_capture', { input }) as CommandOutcome;
+      const outcome = await documentService.handle('create_capture', { input }) as CommandResult;
       if (!app.isPackaged) {
         console.log('[launcher] capture saved', { nodeId: outcome.focus?.nodeId ?? null });
       }

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { CommandOutcome, DocumentProjection } from '../../api/types';
+import type { CommandResult, ProjectionSnapshot } from '../../api/types';
 import { api } from '../../api/client';
 import {
   AddChildIcon,
@@ -27,7 +27,7 @@ interface SlashCommandMenuProps {
   setSelectedIndex: (index: number | ((current: number) => number)) => void;
   enabledSlashCommandIds?: SlashCommandId[];
   run: CommandRunner;
-  executeSlashCommand: (commandId: SlashCommandId) => Promise<CommandOutcome | DocumentProjection | null | void>;
+  executeSlashCommand: (commandId: SlashCommandId) => Promise<CommandResult | ProjectionSnapshot | null | void>;
   close: () => void;
 }
 

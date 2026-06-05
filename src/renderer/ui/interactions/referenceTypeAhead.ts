@@ -1,7 +1,7 @@
 import type { Dispatch, SetStateAction } from 'react';
 import { api } from '../../api/client';
 import type { NodeId } from '../../api/types';
-import type { UiState } from '../../state/document';
+import { nodeFromProjectionUpdate, type UiState } from '../../state/document';
 import { clearFocusState, cursorOffset, requestFocusState, rowFocusTarget } from '../focus/focusModel';
 import type { CommandRunner } from '../shared';
 
@@ -46,7 +46,7 @@ export function armReferenceTypeAhead(params: {
     let cursorTextLength = 0;
     const initialText = params.initialText ?? '';
     if (initialText) {
-      const convertedNode = result.projection.nodes.find((node) => node.id === inlineNodeId);
+      const convertedNode = nodeFromProjectionUpdate(result.update, inlineNodeId);
       if (convertedNode) {
         cursorTextLength = initialText.length;
         await params.run(() => api.replaceNodeText(inlineNodeId, {
