@@ -1,9 +1,18 @@
 import { describe, expect, test } from 'bun:test';
 import type { NodeId, NodeProjection } from '../../src/core/types';
 import {
+  buildReverseEdges,
   nextRevisions,
-  propagateDirty,
+  patchReverseEdges,
+  propagateDirty as propagateDirtyRaw,
 } from '../../src/renderer/state/renderRev';
+
+// Tests exercise propagation given the reverse-edge index built from the same
+// snapshot; the index is built incrementally in the store but a full build is the
+// correct oracle for a one-shot assertion.
+function propagateDirty(changed: ReadonlySet<NodeId>, byId: Map<NodeId, NodeProjection>) {
+  return propagateDirtyRaw(changed, byId, buildReverseEdges(byId));
+}
 
 function node(id: string, patch: Partial<NodeProjection> = {}): NodeProjection {
   return {
@@ -88,6 +97,86 @@ describe('propagateDirty', () => {
     ]);
     const affected = propagateDirty(new Set(['target']), byId);
     expect(affected.has('x')).toBe(true);
+  });
+});
+
+describe('patchReverseEdges', () => {
+  // x carries tag t and inline-refs target; ref(->target) points at target.
+  function scene(): Map<NodeId, NodeProjection> {
+    return byIdOf([
+      node('x', { tags: ['t'], content: { text: 'see', marks: [], inlineRefs: [{ offset: 0, target: { kind: 'node', nodeId: 'target' } }] } }),
+      node('ref', { type: 'reference', targetId: 'target' }),
+      node('target'),
+      node('t', { type: 'tagDef' }),
+    ]);
+  }
+
+  test('matches a full rebuild after a tag is dropped from a node', () => {
+    const before = scene();
+    const prev = buildReverseEdges(before);
+    const editedX = node('x', { tags: [], content: before.get('x')!.content }); // lost tag t
+    const after = byIdOf([editedX, before.get('ref')!, before.get('target')!, before.get('t')!]);
+
+    const next = patchReverseEdges(prev, before, [editedX], []);
+    expect(next).toEqual(buildReverseEdges(after));
+    expect(next.taggers.has('t')).toBe(false); // empty key pruned
+  });
+
+  test('matches a full rebuild after a node is removed', () => {
+    const before = scene();
+    const prev = buildReverseEdges(before);
+    const after = byIdOf([before.get('x')!, before.get('target')!, before.get('t')!]); // ref gone
+
+    const next = patchReverseEdges(prev, before, [], ['ref']);
+    expect(next).toEqual(buildReverseEdges(after));
+    expect(next.references.has('target')).toBe(false);
+  });
+
+  test('does not mutate the previous index (copy-on-write)', () => {
+    const before = scene();
+    const prev = buildReverseEdges(before);
+    const taggersOfT = prev.taggers.get('t')!;
+    expect(taggersOfT.has('x')).toBe(true);
+
+    const editedX = node('x', { tags: [], content: before.get('x')!.content });
+    patchReverseEdges(prev, before, [editedX], []);
+
+    // prev's set is untouched — the new index owns a fresh copy.
+    expect(prev.taggers.get('t')).toBe(taggersOfT);
+    expect(taggersOfT.has('x')).toBe(true);
+  });
+
+  test('matches a full rebuild after a node gains an edge, copying the existing target set', () => {
+    // `ref` already points at `target`; a second node `ref2` starts pointing at it
+    // too, so the add path must copy `target`'s existing referrer set, not mutate it.
+    const before = byIdOf([
+      node('ref', { type: 'reference', targetId: 'target' }),
+      node('ref2', { type: 'reference', targetId: undefined }),
+      node('target'),
+    ]);
+    const prev = buildReverseEdges(before);
+    const referrersOfTarget = prev.references.get('target')!; // {ref}
+    expect([...referrersOfTarget]).toEqual(['ref']);
+
+    const editedRef2 = node('ref2', { type: 'reference', targetId: 'target' }); // now points at target
+    const after = byIdOf([before.get('ref')!, editedRef2, before.get('target')!]);
+    const next = patchReverseEdges(prev, before, [editedRef2], []);
+
+    expect(next).toEqual(buildReverseEdges(after));
+    expect(next.references.get('target')).toEqual(new Set(['ref', 'ref2']));
+    // prev's set was copied, not extended, on the add path.
+    expect(prev.references.get('target')).toBe(referrersOfTarget);
+    expect(referrersOfTarget.has('ref2')).toBe(false);
+  });
+
+  test('a text-only edit (same edge keys) leaves the edges equal', () => {
+    const before = scene();
+    const prev = buildReverseEdges(before);
+    // Same tag + same inline-ref target, only the surrounding text changed.
+    const editedX = node('x', { tags: ['t'], content: { text: 'see more', marks: [], inlineRefs: [{ offset: 0, target: { kind: 'node', nodeId: 'target' } }] } });
+    const next = patchReverseEdges(prev, before, [editedX], []);
+    // No edge moved, so the patch allocates nothing and hands back `prev` as-is.
+    expect(next).toBe(prev);
   });
 });
 

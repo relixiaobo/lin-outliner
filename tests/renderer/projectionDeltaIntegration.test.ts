@@ -9,6 +9,7 @@ import {
   type ProjectionUpdate,
 } from '../../src/core/types';
 import { reduceProjection } from '../../src/renderer/state/document';
+import { buildReverseEdges } from '../../src/renderer/state/renderRev';
 
 // End-to-end coverage of the real delta path: a live Core produces a
 // `ProjectionUpdate` exactly as `documentService.buildProjectionUpdate` does, and
@@ -68,6 +69,8 @@ describe('reduceProjection over real core deltas', () => {
       expect(state).not.toBeNull();
       // The renderer index must match an independent rebuild after every command.
       expect(state!.index.byId).toEqual(rebuiltById(core));
+      // ...and the incrementally-patched reverse edges must match a full rebuild.
+      expect(state!.reverseEdges).toEqual(buildReverseEdges(state!.index.byId));
     };
 
     const a = newId(core.createNode(LIBRARY_ID, null, 'Alpha'));
@@ -80,9 +83,24 @@ describe('reduceProjection over real core deltas', () => {
     step(() => core.indentNode(b));
     step(() => core.outdentNode(b));
     step(() => core.toggleDone(a));
+    // Exercise the reverse-edge categories: a tag applied then removed, and a
+    // reference node added then trashed.
+    let tag = '';
+    step(() => { tag = newId(core.createTag('project')); });
+    step(() => core.applyTag(a, tag));   // taggers: tag -> a
+    step(() => core.applyTag(c, tag));   // taggers: tag -> {a, c}
+    step(() => core.removeTag(a, tag));  // taggers: tag -> {c}
+    step(() => core.addReference(b, a)); // references: a -> <ref node>
+    // Inline reference: convert a fresh node into an inline ref of `a`, then delete
+    // it — exercises the inlineReferrers reverse-edge category add + remove paths.
+    let inlineHost = '';
+    step(() => { inlineHost = newId(core.createNode(LIBRARY_ID, null, 'inline host')); });
+    let inlineRef = '';
+    step(() => { inlineRef = newId(core.replaceNodeWithInlineReference(inlineHost, a)); }); // inlineReferrers: a -> inlineRef
+    step(() => core.deleteNode(inlineRef)); // drop the inline-ref edge
     step(() => core.trashNode(b));
     step(() => core.restoreNode(b));
-    step(() => core.deleteNode(b)); // hard subtree delete (b now carries c)
+    step(() => core.deleteNode(b)); // hard subtree delete (b now carries c + the ref)
   });
 
   test('merge re-parents grandchildren without dropping them (regression for #1)', () => {

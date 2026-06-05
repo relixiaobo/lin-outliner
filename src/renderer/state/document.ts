@@ -9,7 +9,13 @@ import type {
   ProjectionSnapshot,
   ProjectionUpdate,
 } from '../api/types';
-import { nextRevisions, propagateDirty } from './renderRev';
+import {
+  buildReverseEdges,
+  nextRevisions,
+  patchReverseEdges,
+  propagateDirty,
+  type ReverseEdges,
+} from './renderRev';
 import { measureRenderIndex } from '../ui/outliner/renderProbe';
 import {
   resolveSelectableReferenceTargetId,
@@ -51,6 +57,10 @@ export function buildIndex(projection: DocumentProjection): DocumentIndex {
 interface ProjectionState {
   index: DocumentIndex & { renderRev: Map<NodeId, number> };
   revision: number;
+  // The reverse-edge index, carried across edits and patched per delta. Internal
+  // to the store (not exposed on DocumentIndex); a new state owns a freshly
+  // copy-on-write-patched one, so `prev`'s is never mutated.
+  reverseEdges: ReverseEdges;
 }
 
 // Fold a ProjectionUpdate into the previous state. Returns the next state, the
@@ -70,7 +80,11 @@ export function reduceProjection(
     const byId = new Map(update.projection.nodes.map((node) => [node.id, node]));
     const affected = new Set<NodeId>(byId.keys());
     const renderRev = nextRevisions(prev?.index.renderRev ?? null, affected, byId.keys());
-    return { index: { projection: update.projection, byId, renderRev }, revision: update.revision };
+    return {
+      index: { projection: update.projection, byId, renderRev },
+      revision: update.revision,
+      reverseEdges: buildReverseEdges(byId),
+    };
   }
   if (!prev) return null;
   if (update.revision <= prev.revision) return prev; // dual-channel duplicate — already applied
@@ -98,9 +112,10 @@ export function reduceProjection(
   // NOT a stable contract — the tree is defined by each node's `children`, and
   // display lists that iterate it sort/filter for themselves.
   const projection: DocumentProjection = { ...prev.index.projection, todayId: update.todayId, nodes: [...byId.values()] };
-  const affected = propagateDirty(changed, byId);
+  const reverseEdges = patchReverseEdges(prev.reverseEdges, prev.index.byId, update.changedNodes, update.removedIds);
+  const affected = propagateDirty(changed, byId, reverseEdges);
   const renderRev = nextRevisions(prev.index.renderRev, affected, byId.keys());
-  return { index: { projection, byId, renderRev }, revision: update.revision };
+  return { index: { projection, byId, renderRev }, revision: update.revision, reverseEdges };
 }
 
 // Find a node by id within a ProjectionUpdate: the changed set for a `delta`, the
