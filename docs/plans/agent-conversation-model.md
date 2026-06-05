@@ -139,7 +139,8 @@ names. Naming by headcount repeats the people-centric mistake; kind is intrinsic
 **Coordinator is likewise a per-Channel role flag on a Member, not a kind nor a
 new entity.** The same Agent identity is coordinator in one Channel and a plain
 member in another (environment-local, like everything else a Channel adds). DMs
-have none; default = the main agent. Mechanics in §Channel routing.
+have none (Coordinator is Channel-only); a Channel's default coordinator = the main
+agent. Mechanics in §Channel routing.
 
 **Removed / collapsed:** `Session` → message stream + per-turn assembly;
 `Participant` → `Member` edge; `Artifact` (noun) → **no separate entity; the product
@@ -173,15 +174,18 @@ memory (accumulated)   the memory line — visible, editable, deletable
   the agent is** — exactly symmetric with the memory line. Model selection therefore
   moves from a global setting onto the **agent profile**. Sequencing: real
   `AgentDefinition` agents already carry these fields (`types.ts:702`), so per-agent
-  model/config is **free for specialist agents**; the **main agent**'s model today
-  resolves from the global settings path (`agentRuntime.ts:3305`), so its true
-  per-identity binding rides the **same P3 registry unification** as §3 (until then
-  it uses the default/global model).
+  model/config is **near-free at the type level** for specialist agents (the fields
+  exist) — but verify the runtime actually threads `model`/`effort` into the
+  conversation-turn assembly, not just at subagent spawn. The **main agent**'s model
+  today resolves via `resolveProviderModel`/`resolveModel` (`agentRuntime.ts:1741`,
+  `:3663`), wired in `createConfiguredAgent` (`:3276`), so its true per-identity
+  binding rides the **same P3 registry unification** as §3 (until then it uses the
+  default/global model).
 - **v1 does NOT route the main agent through `AgentDefinitionRegistry`.** The main
   agent's construction spans 7 session-scoped layers an `AgentDefinition` cannot
   express (multi-section prompt `agentSystemPrompt.ts:15`; per-turn reminders
   `agentRuntime.ts:640`; permission classifier + approval handler ~`:3310,3345`;
-  context manager 8-callback `:302`; provider/OAuth `:3305`; compaction + `/compact`
+  context manager 8-callback `:302`; provider/model/OAuth (`createConfiguredAgent :3276`); compaction + `/compact`
   `:388,625`). What v1 needs is far smaller: **a stable identity record** (a `name`)
   that the memory line attaches to. Promoting the main agent to a real on-disk
   definition is deferred to P3 (when there is genuinely more than one agent).
@@ -255,7 +259,7 @@ conversation, not just onboarding):
 - **Combined / merged forward** — selected messages travel as **one bundle**, not
   message-by-message.
 - **With a provenance marker** — the bundle lands in the target stream tagged
-  "forwarded from `<source>`" (reuses the `actor` / source attribution §2 adds),
+  "forwarded from `<source>`" (reuses the P1 `actor` / source attribution),
   visually distinct from natively-said messages; append-only, the source stream is
   untouched.
 - It becomes **first-class context** for the target's agents (enters their per-turn
@@ -434,7 +438,9 @@ the foreground conversation stays live. A turn and a task run on **two planes**:
 A task is **off-floor while running, on-floor only to deliver** — which is exactly
 why a long task never blocks chat.
 
-**Substrate already exists** (this is *surface + unify*, not invent): background /
+**The primitives already exist** — but *surfacing + unifying* them is a **real build,
+not a freebie** (the §4 "reuse the fork" caution applies; the additions below + the
+`AgentSessionState`-singleton split of §2 are substantial): background /
 detached subagent runs with an `agent_id` addressable via `AgentStatus / AgentSend /
 AgentStop` (`agentSubagents.ts:86-117,206`); a terminal-state callback
 `notifyTerminalRun` (`:473,718`); a completion queue `pendingSubagentNotifications`
@@ -465,19 +471,23 @@ background-shell `BackgroundTask` registry with `running/completed/failed/stoppe
 (the task carries its `conversationId`), in two layers:
 
 - **In-stream message** (durable, always): the result as a first-class message in
-  that conversation, authored by the agent — reuses the **`actor`** field §2 adds.
+  that conversation, authored by the agent — reuses the **`actor`** field landed at
+  **P1** (§Code mapping).
 - **Attention signal** (when you are not looking): an unread badge on that
   conversation + an optional OS notification.
 
 Timing is **floor-aware**: the task ran off-floor, but *delivering* is an on-floor
 event, so it **queues until that conversation's floor is idle** (the existing
-idle-gate) and, in a Channel, respects the coordinator/floor. Two cost tiers: a
+idle-gate). The **P2 piece is DM delivery + the panel**; in a Channel, delivery
+respects the coordinator/floor — which is **P3** (Channels/coordinator don't exist
+earlier). Two cost tiers: a
 **cheap status post** (no LLM — "task #3 done → [5 nodes]") or a **composed turn**
 (the agent reads the result and writes a communication-shaped update; the existing
 mechanism does this via `session.agent.prompt`). This also satisfies *Reply ≠
 result*: the post is communication + a pointer to the node/file produced. The build
 is to **generalize `pendingSubagentNotifications` from session- to
-conversation-scoped**, add `actor` attribution, and add **rate-limiting / folding**
+conversation-scoped** (reusing the **P1 `actor`** attribution), and add
+**rate-limiting / folding**
 (completion can flood — hermes uses watch-strike + a global circuit breaker; cc-2.1
 folds / invalidates notifications; we only batch today).
 
@@ -526,7 +536,13 @@ are pushed into the **current user turn's content** (`buildUserPromptMessage`,
   replacing) is itself a cache-protection decision**: the rejected "memory replaces
   transcript" would move the first divergence point to mid-array every turn →
   recompute the whole suffix. hermes makes the same call for the same stated reason —
-  it injects memory into the user message *to preserve prompt cache*.
+  it injects memory into the user message *to preserve prompt cache*. **Caveat (must
+  hold):** the provider only marks `cache_control` when the *last content block* of
+  the user turn is `text`/`image`/`tool_result` (`anthropic.ts:1160-1164`), and
+  `buildUserPromptMessage` appends attachments after the prompt
+  (`agentRuntime.ts:2681-2695`) — so MEMORY RECALL must be a text block and nothing
+  non-cacheable may end the turn, or the marker silently drops and the turn misses
+  cache.
 - **`session`→`conversation` rename — zero impact.** It changes storage keys, not
   the bytes sent to the model.
 - **Per-agent capability — expected, not a regression.** Each agent's distinct
@@ -579,10 +595,11 @@ history.)
 ### §2 — "Multi-member Channels (N-party stream)" — a real subsystem; do it SEQUENTIAL
 
 - **Authorship is lost after replay.** `AgentActor` has `{type:'agent',agentId}`
-  (`agentEventLog.ts:15`) but `agentId` is hardcoded `'pi-mono'` (`agentRuntime.ts:3203`),
+  (`agentEventLog.ts:15`) but `agentId` is hardcoded `'pi-mono'` (`agentRuntime.ts:3211`),
   and **`AgentEventMessageRecord` has no `actor` field** (`agentEventLog.ts:451`) —
   who authored a message is dropped at replay. Fix: store `actor` on the message
-  record (backward-compatible add).
+  record — a backward-compatible add **pulled forward to P1** (foundational: both the
+  task-notification and N-party POV reuse it; A7 foundation-before-consumers).
 - **POV derivation doesn't exist.** `deriveRuntimePiMessages` is a 1:1 role map
   (`:2414`); pi-agent-core expects `user→assistant→toolResult→user` alternation.
   An N-party room needs other members' turns mapped to `user`-role inputs from each
@@ -598,9 +615,9 @@ Rebecca @mention chains), which dodges *all* the concurrency collisions — they
 concurrency bugs, not multi-agent bugs. Who actually replies is resolved by a
 **coordinator Member** (§Channel routing): explicit `@` addresses directly,
 un-addressed messages fall to the coordinator, hand-offs are sequential relays. The
-genuinely required changes shrink to: store `actor` on the record, add per-agent POV
-derivation, and **keep branching DM-only (rooms are linear)** so no per-agent branch
-pointers are needed. The foundation is extensible (`childrenByParentId` is already
+genuinely required changes shrink to: **per-agent POV derivation** (on top of the P1
+`actor` field) + threading per-member `agentId`, and **keep branching DM-only (rooms
+are linear)** so no per-agent branch pointers are needed. The foundation is extensible (`childrenByParentId` is already
 arrays `:515`; the event log is immutable), so this is "extend + parameterize," not
 "rewrite." Still a real subsystem — hence P3.
 
@@ -611,7 +628,8 @@ The main agent is constructed across 7 session-scoped layers that
 (vs single `body`, `agentSystemPrompt.ts:15`); 5 dynamic per-turn reminders
 (`agentRuntime.ts:640`); session-bound skill/subagent runtimes (`:929`); permission
 classifier + approval handler + session allow-rules (`:3310,3345`); the 8-callback
-context manager (`:302`); provider/model/OAuth resolution (`:3305`); `/compact` +
+context manager (`:302`); provider/model/OAuth resolution (`resolveModel :3663` /
+`createConfiguredAgent :3276`); `/compact` +
 reactive retry + main-loop steering (`:388,625,3496`). Estimated ~1–2k LoC,
 <30% reusable.
 
@@ -675,14 +693,21 @@ cover: storing `actor` on message records, per-agent POV derivation, splitting t
 refactor, or the memory subsystem. The real builds are the **memory line** and the
 **sequential multi-member room layer**.
 
+**Protocol-surface coordination (A4 / A7).** `actor` on `AgentEventMessageRecord`
+(`src/core/agentEventLog.ts`), `forAgentId` derivation, and the conversation's typed
+`identity` / `members` (`src/core/types.ts`) touch the **coordinated protocol
+surface** (the infrastructure-ownership list). Land each as an **interface-first PR**
+before consumers build on it — never a drive-by edit, even though the `actor` add is
+backward-compatible.
+
 ## Phases (revised effort)
 
 | Phase | Scope | Honest size |
 |---|---|---|
-| **P0** | Give the main agent a stable identity record (a `name`) memory attaches to. **Not** the registry refactor. | small |
-| **P1** | `session`→`Conversation` (typed DM/Channel identity + `members`); conversation list by kind; **memory v1** (inline tool + `agent-memory/<identity>/` store + profile UI + reminder-stack injection). Single-member only. | moderate (rename + memory v1 store/UI) |
+| **P0** | Give the main agent a stable identity record (a `name`) memory attaches to. **Not** the registry refactor. **Pin the identity-tuple shape here** — it threads into the protocol-surface `AgentSession`, so the interim shape can't be revised cheaply later (OQ). | small (incl. the tuple decision) |
+| **P1** | `session`→`Conversation` (typed DM/Channel identity + `members`); conversation list by kind; **store `actor` on the message record** (backward-compatible foundation, drops implicit `'pi-mono'`); **memory v1** (inline tool + `agent-memory/<identity>/` store + profile UI + reminder-stack injection). Single-member only. | moderate (rename + `actor` + memory v1 store/UI) |
 | **P2** | **Memory v2** — dedicated extraction subagent + host callback + throttling; provenance tagging. Only if v1 inline proves insufficient. | real build (~400–600 LoC) |
-| **P3** | **Sequential multi-member Channels** — `actor` on message records, per-agent POV derivation, **coordinator-based turn-taking routing** (§Channel routing), rooms-are-linear; **the main-agent registry unification**; **memory v3** consolidation. | the big subsystem |
+| **P3** | **Sequential multi-member Channels** — per-agent POV derivation + per-member `agentId` (on the P1 `actor` field), **coordinator-based turn-taking routing** (§Channel routing), rooms-are-linear; **the main-agent registry unification**; **memory v3** consolidation. | the big subsystem |
 
 Single-member conversations (DM + a Channel staffed with one agent) deliver most
 of the value — per-agent memory, DM/goal conversations, no session — without any
@@ -727,7 +752,9 @@ coordinator/floor). The **hooks** subsystem is out of this plan (forward-pointer
   multi-human: needs a discretion rule. Deferred.
 - **Agent identity tuple.** `<source>_<name>` resolves user-vs-project collisions,
   but is a user-scoped agent's memory truly global across workspaces, or
-  per-workspace? Pin before P1 storage.
+  per-workspace? **Pin with P0** — the `name`/tuple threads into the protocol-surface
+  `AgentSession`, so the interim shape can't be revised cheaply once data is keyed on
+  it.
 - **Memory internal format.** Markdown topic files + index (simple, agent-writable)
   vs a structured store. Lean markdown.
 - **Per-turn memory injection budget.** Whole index vs top-N by recency/salience;
@@ -739,9 +766,9 @@ coordinator/floor). The **hooks** subsystem is out of this plan (forward-pointer
 - **Coordinator relay bound & surfacing.** The hop budget N (how many relays per
   user message before stopping), and whether a coordinator hand-off shows as a
   normal channel message or a quieter system line. Pin during P3.
-- **Per-conversation capability override.** Should a Channel locally override an
-  agent's effort or model? Default **no** — capability is identity, kept clean and
-  symmetric with the memory line; recorded in case a real need appears.
+- **Per-conversation capability override** — **decided: no** (capability is identity,
+  §Agent). Tracked only as a watch-item, not an open decision: revisit solely if a
+  real need ever forces an exception.
 - **Result routing judgment.** The boundary between conversational output (reply)
   and an artifact, and between node vs file when it *is* an artifact — who decides
   (agent default + user override) and the draft gray zone ("draft an intro" → node?
@@ -766,6 +793,7 @@ P0 — identity
 P1 — conversations + memory v1
 - [ ] `sessionId`→`conversationId` across storage paths, IPC, state map, scopes.
 - [ ] Typed `identity` (dm | channel) + `members` on the conversation record.
+- [ ] Store `actor` on `AgentEventMessageRecord` (backward-compatible; drop implicit `'pi-mono'`) — foundation for task-notification attribution + P3 POV. Land interface-first (A4).
 - [ ] Conversation list grouped by kind; DM + single-staffed Channel creation.
 - [ ] "Add agent" spawns a new seeded Channel (no in-place conversion); combined, provenance-marked message forwarding (any conversation → any conversation).
 - [ ] `agent-memory/<identity>/` store; `memory_write`/privileged-path decision.
@@ -778,11 +806,10 @@ P2 — memory v2 + background-task surfacing
 - [ ] Dedicated restricted extraction agent definition (read + memory-write only).
 - [ ] Host callback feeding recent messages; throttle; provenance tags (conversation/node/workspace).
 - [ ] Visible per-agent task panel (runs aggregated across conversations, cancelable).
-- [ ] Generalize `pendingSubagentNotifications` → conversation-scoped delivery + `actor` attribution + first-class task-update messages + rate-limiting/folding.
+- [ ] Generalize `pendingSubagentNotifications` → conversation-scoped delivery (reusing the P1 `actor` field) + first-class task-update messages + rate-limiting/folding. (DM delivery; Channel/coordinator delivery is P3.)
 
 P3 — sequential rooms + consolidation + registry
-- [ ] Store `actor` on `AgentEventMessageRecord`; thread real `agentId` (drop hardcoded `'pi-mono'`).
-- [ ] `forAgentId` POV derivation in `deriveRuntimePiMessages` (others' turns → user-role).
+- [ ] `forAgentId` POV derivation in `deriveRuntimePiMessages` (others' turns → user-role); thread per-member `agentId` into the P1 `actor` field (N-agent authorship).
 - [ ] Sequential turn-taking routing; rooms-are-linear (no per-agent branch pointers).
 - [ ] Channel routing: coordinator Member role flag (default = main agent); explicit `@` bypasses, no-`@` → coordinator, hop-budget-bounded relay; coordinator reassignable per channel.
 - [ ] Promote the main agent through `AgentDefinitionRegistry` (the ~1–2k-LoC refactor).
