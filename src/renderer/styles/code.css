@@ -249,6 +249,21 @@
   background: transparent !important;
 }
 
+/* Dual-theme token colors. Shiki (`defaultColor: false`) emits `--shiki-light` /
+   `--shiki-dark` per token instead of a baked `color`; resolve which wins by the
+   same `prefers-color-scheme` the rest of the theme follows. The `pre.shiki`
+   keeps `color: var(--text-strong)` as the adaptive fallback for any untokenized
+   text and the pre-grammar plain render. */
+.shiki span {
+  color: var(--shiki-light);
+}
+
+@media (prefers-color-scheme: dark) {
+  .shiki span {
+    color: var(--shiki-dark);
+  }
+}
+
 /* Agent transcript code is read-only and scrolls within a bounded height. */
 .agent-code-block pre {
   max-height: 280px;

@@ -15,9 +15,14 @@ export {
   type CodeLanguageOption,
 } from './codeLanguages';
 
-// The app ships a single light theme today (see styles.css `:root`). When a
-// dark theme lands, switch this to a dual-theme setup with CSS variables.
-const THEME = 'github-light';
+// Dual-theme highlight: Shiki emits `--shiki-light` / `--shiki-dark` CSS custom
+// properties per token (via `defaultColor: false`) instead of baking one theme's
+// colors as inline `color`. CSS then resolves which variable wins under
+// `@media (prefers-color-scheme)` — matching the rest of the theming (no JS
+// bridge). Without this, dark mode rendered light-theme token colors (dark navy
+// on a dark surface) and code was unreadable.
+const THEMES = { light: 'github-light', dark: 'github-dark' } as const;
+const THEME_NAMES = [THEMES.light, THEMES.dark];
 const PLAIN = 'text';
 
 // Loaded eagerly so the most common blocks highlight without a flash. Other
@@ -42,7 +47,7 @@ const failedLangs = new Set<string>();
 function getHighlighter(): Promise<Highlighter> {
   if (!highlighterPromise) {
     highlighterPromise = createHighlighter({
-      themes: [THEME],
+      themes: THEME_NAMES,
       langs: DEFAULT_LANGS,
       engine: createJavaScriptRegexEngine(),
     });
@@ -90,5 +95,5 @@ export async function highlightCode(code: string, language: string | undefined |
   }
   if (!loadedLangs.has(id)) return plainCodeHtml(code);
 
-  return highlighter.codeToHtml(code, { lang: id, theme: THEME });
+  return highlighter.codeToHtml(code, { lang: id, themes: THEMES, defaultColor: false });
 }
