@@ -966,6 +966,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Agent stop button + streaming indicators look right (PR #137)** — the composer **stop button**
+  rendered a 10px filled square inside the 28px inverse-fill disc — undersized, and near-white-on-dark
+  felt off; the StopIcon is now 14px so the rounded square sits proportionally in the disc (light + dark).
+  Separately the **streaming "still generating" signals** (inline `.agent-stream-caret` via `--caret`, and
+  the standalone `.agent-streaming-capsule` pulse) painted in brand rose `--accent`, reading as a loud rose
+  bar competing with rose links / inline references in the same panel. These are functional state
+  indicators, not brand marks (B3/B4): the caret is now neutral via `--text-primary` (inverts with `--ink`)
+  and the capsule via `--text-secondary`; the pulse animation carries the liveness. Gate: typecheck +
+  token-guard e2e (`typography-tokens.spec.ts`) 8/8 + light/dark visual verification; no raw hex /
+  non-token values added (B11). ([#137](https://github.com/relixiaobo/lin-outliner/pull/137))
+
 - **Nested rows now reflect drag / cmd-click multi-selection (PR #136)** — dragging or modifier-clicking to
   multi-select the children **inside an expanded node** did nothing visible — the rows never got the
   `selected` highlight until an unrelated render woke them up ("re-enter a node to fix it"); direct children

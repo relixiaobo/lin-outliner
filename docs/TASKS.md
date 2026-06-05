@@ -249,6 +249,13 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **agent-stop-caret-polish** (main, PR #137) — the composer stop button glyph was 10px in a 28px disc
+  (undersized, near-white-on-dark); bumped to 14px so the rounded square sits proportionally (light + dark).
+  The streaming "still generating" signals (inline `.agent-stream-caret` via `--caret`, standalone
+  `.agent-streaming-capsule` pulse) painted in brand rose `--accent` — neutralized per B3/B4 (caret →
+  `--text-primary` so it inverts with `--ink`; capsule → `--text-secondary`), the pulse animation carries
+  liveness. Gate: typecheck + token-guard e2e 8/8 + light/dark visual; no raw hex / non-token added (B11).
+
 - **nested-row-selection-render** (cc, PR #136) — nested rows inside an expanded node now pick up the
   `selected` highlight on drag / cmd-click multi-select instead of staying stale until an unrelated render.
   Root cause was a memo-comparator render skip: `outlinerItemPropsEqual` let an expanded ancestor bail out

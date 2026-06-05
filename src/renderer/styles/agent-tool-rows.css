@@ -211,7 +211,10 @@
   width: 6px;
   height: 14px;
   border-radius: var(--radius-pill);
-  background: var(--accent);
+  /* The "assistant is responding" pulse is a functional state indicator, not a
+     brand mark — keep it neutral (B3/B4) so it doesn't read as a loud rose bar
+     next to rose links / inline refs. The pulse animation carries the liveness. */
+  background: var(--text-secondary);
   transform-origin: center;
   animation: agent-capsule 1.35s ease-in-out infinite;
 }

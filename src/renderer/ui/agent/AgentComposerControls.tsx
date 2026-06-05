@@ -166,7 +166,7 @@ export function AgentComposerPrimaryAction({
       <IconButton
         className="agent-composer-action-button is-stop"
         icon={StopIcon}
-        iconSize={10}
+        iconSize={14}
         label={t.agent.composer.stopAgent}
         onClick={onStop}
         strokeWidth={0}
