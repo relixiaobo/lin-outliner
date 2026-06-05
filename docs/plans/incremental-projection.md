@@ -158,8 +158,12 @@ pass separate:
   deltas, **preserves unchanged-node identity**, and **drops the `nodeSignatures`
   JSON.stringify pass**. Add `getProjectionSnapshot` resync valve. Gate:
   `/code-review ultra` (protocol surface + the risky delta logic) + perf before/after.
-- **PR-B — incremental reverse edges.** Maintain the `renderRev` reverse-edge maps
-  across renders, patch from the delta (retires the last O(N) per-keystroke pass).
+- **PR-B — incremental reverse edges.** *(shipped)* The reverse-edge index
+  (`ReverseEdges`) is held in `ProjectionState` and patched per delta
+  (`patchReverseEdges`, copy-on-write, with a same-keys skip so a text edit touches
+  nothing) instead of rebuilt from every node in `propagateDirty`. `Set`-valued
+  for O(1) add/remove. Retires the last O(N) edge scan; consistency vs a full
+  rebuild is asserted after every command in `projectionDeltaIntegration.test.ts`.
 
 ## Risks & correctness
 
@@ -206,10 +210,21 @@ several document sizes and measures both the main-side payload and the renderer
 
 The headline is the **payload**: ~2 MB → 362 B at 6k nodes (and it crosses IPC
 twice per command), and the renderer `index=` pass drops from 7.0 ms → 1.2 ms
-(~5.7×) by deleting the whole-document `JSON.stringify` signature pass. The
-`index=` cost is not yet flat in doc size — the residual `new Map(prev.byId)` copy
-and `nextRevisions` rebuild are still O(N); PR-B (incremental reverse edges) and
-P3 close the rest.
+(~5.7×) by deleting the whole-document `JSON.stringify` signature pass.
+
+**PR-B** then retires the reverse-edge rebuild inside `propagateDirty`. The held
+index is patched per delta (`patchReverseEdges`, copy-on-write) instead of rebuilt
+from every node. `tmp/bench-reverse-edges.ts` (edge-build + propagate, single
+keystroke, ~20% of nodes tagged):
+
+| nodes | OLD (rebuild) | NEW (patch) |
+|------:|--------------:|------------:|
+|  1041 |       0.22 ms |     0.07 ms |
+|  3041 |       0.65 ms |     0.13 ms |
+|  6041 |       1.22 ms |     0.29 ms |
+
+OLD is clearly O(N); NEW grows far slower (its residual is the shared
+`nextRevisions` + `new Map(prev.byId)`, both still O(N) — the P3 cleanup).
 
 ## Decisions (PM-ratified)
 
@@ -233,9 +248,13 @@ P3 close the rest.
       guard); `get_projection` → `ProjectionSnapshot` resync valve; perf captured
 - [x] PR-A gate fixes: merge-survivor pruning bug, idempotent-date-ref fallback,
       no-op-sentinel full reseed, pure projection-store updater + resync guard
-- [ ] PR-B incremental reverse-edge maps in `renderRev`
-- [x] delta-application unit tests (`reduceProjection.test.ts`) + real-core
-      integration (`projectionDeltaIntegration.test.ts`: folds a delta stream and
-      asserts equality with an independent rebuild after each command, incl.
-      merge-with-grandchildren); `renderRev.test.ts` still green
+- [x] PR-B incremental reverse-edge maps in `renderRev` (`patchReverseEdges`,
+      copy-on-write, held in `ProjectionState`); `propagateDirty` takes the index
+      instead of rebuilding it
+- [x] delta-application unit tests (`reduceProjection.test.ts`) +
+      `patchReverseEdges` unit tests (COW immutability, same-keys skip, matches a
+      full rebuild) + real-core integration (`projectionDeltaIntegration.test.ts`:
+      folds a delta stream and asserts both the index AND the reverse edges equal
+      an independent rebuild after each command, incl. merge-with-grandchildren and
+      tag/reference churn); `renderRev.test.ts` still green
 - [ ] fold the shipped design into `docs/spec/` (architecture / projection)
