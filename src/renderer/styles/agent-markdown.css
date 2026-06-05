@@ -10,7 +10,13 @@
 
 .agent-markdown p {
   margin: 0;
-  white-space: pre-wrap;
+  /* Standard-markdown whitespace: a lone newline is a soft break that collapses
+     to a space, so an inline node reference stays on the same line as its text
+     instead of orphaning onto the next. `pre-wrap` here turned every model soft
+     `\n` into a hard break, which forced references to wrap. Paragraph breaks
+     (blank line → separate <p>) and real hard breaks still apply; long tokens
+     still wrap via `.agent-markdown { overflow-wrap: anywhere }`. */
+  white-space: normal;
 }
 
 .agent-markdown h1,
@@ -58,7 +64,9 @@
   border-left: 2px solid var(--border);
   color: var(--text-soft);
   padding-left: var(--space-5);
-  white-space: pre-wrap;
+  /* Same as `.agent-markdown p`: standard-markdown whitespace so references and
+     soft-wrapped lines flow inline rather than breaking on every model `\n`. */
+  white-space: normal;
 }
 
 .agent-markdown a {
