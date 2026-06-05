@@ -21,12 +21,6 @@
   user-select: none;
 }
 
-:root[data-window-material] .settings-rail {
-  background: var(--material-sidebar);
-  -webkit-backdrop-filter: var(--material-backdrop);
-  backdrop-filter: var(--material-backdrop);
-}
-
 .settings-rail-title {
   margin: 0;
   padding: 0 var(--space-3);

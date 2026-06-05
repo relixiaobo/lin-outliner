@@ -107,14 +107,10 @@ export const zhHans: PartialMessages = {
     },
     permissions: {
       sectionAriaLabel: '工具权限',
-      intro: '选择哪些常见的智能体操作自动执行，哪些需要先询问。',
       commonActionsGroup: '常见操作',
       commonActionsAriaLabel: '常见操作',
       ignoredRulesGroup: '已忽略的 JSON 规则',
       ignoredRulesAriaLabel: '已忽略的 JSON 规则',
-      denyChip: '在 JSON 中拒绝',
-      allowChip: '允许',
-      askChip: '询问',
       decisionAriaLabel: ({ rule }: { rule: string }) => `${rule}权限`,
       askOption: '先询问',
       allowOption: '始终允许',
@@ -164,7 +160,6 @@ export const zhHans: PartialMessages = {
     },
     skills: {
       sectionAriaLabel: '技能与行为',
-      intro: '管理已安装的能力和智能体自动化。',
       behaviorRulesGroup: '行为规则',
       behaviorRulesAriaLabel: '行为规则',
       automaticSkillsLabel: '自动技能',
@@ -181,7 +176,6 @@ export const zhHans: PartialMessages = {
     },
     agents: {
       sectionAriaLabel: '智能体配置',
-      intro: '管理系统子智能体并查看其角色详情。',
       profilesAriaLabel: '智能体配置',
       loadingProfiles: '正在加载配置…',
       noneFound: '未找到任何智能体定义。',
@@ -203,7 +197,6 @@ export const zhHans: PartialMessages = {
       unlimited: '无限制',
       enabledTools: '已启用的工具',
       profileNotFound: '未找到智能体配置。',
-      selectToView: '选择一个智能体配置以查看详情。',
     },
     footer: {
       cancel: '取消',
@@ -234,7 +227,6 @@ export const zhHans: PartialMessages = {
       agents: { label: '智能体配置', hint: '人格定义' },
     },
     general: {
-      intro: '外观与全局偏好设置。',
       appearanceGroup: '外观',
       themeLabel: '主题',
       themeSublabel: '跟随系统外观，或始终使用浅色 / 深色。',

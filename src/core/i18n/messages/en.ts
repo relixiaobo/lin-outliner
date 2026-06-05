@@ -136,15 +136,10 @@ export const en = {
     },
     permissions: {
       sectionAriaLabel: 'Tool Permissions',
-      intro: 'Choose which common agent actions run automatically and which ask first.',
       commonActionsGroup: 'Common Actions',
       commonActionsAriaLabel: 'Common actions',
       ignoredRulesGroup: 'Ignored JSON Rules',
       ignoredRulesAriaLabel: 'Ignored JSON rules',
-      // Per-row chips reflecting the current decision
-      denyChip: 'Deny in JSON',
-      allowChip: 'Allow',
-      askChip: 'Ask',
       // Decision dropdown
       decisionAriaLabel: ({ rule }: { rule: string }) => `${rule} permission`,
       askOption: 'Ask first',
@@ -196,7 +191,6 @@ export const en = {
     },
     skills: {
       sectionAriaLabel: 'Skills & Behaviors',
-      intro: 'Manage installed capabilities and agent automation.',
       behaviorRulesGroup: 'Behavior Rules',
       behaviorRulesAriaLabel: 'Behavior rules',
       automaticSkillsLabel: 'Automatic Skills',
@@ -213,7 +207,6 @@ export const en = {
     },
     agents: {
       sectionAriaLabel: 'Agent Profiles',
-      intro: 'Manage system subagents and view their persona details.',
       profilesAriaLabel: 'Agent profiles',
       loadingProfiles: 'Loading profiles…',
       noneFound: 'No agent definitions found.',
@@ -235,7 +228,6 @@ export const en = {
       unlimited: 'Unlimited',
       enabledTools: 'Enabled Tools',
       profileNotFound: 'Agent profile not found.',
-      selectToView: 'Select an agent profile to view details.',
     },
     footer: {
       cancel: 'Cancel',
@@ -269,7 +261,6 @@ export const en = {
       agents: { label: 'Agent Profiles', hint: 'Persona Definitions' },
     },
     general: {
-      intro: 'Appearance and app-wide preferences.',
       appearanceGroup: 'Appearance',
       themeLabel: 'Theme',
       themeSublabel: 'Match the system appearance, or always use light or dark.',

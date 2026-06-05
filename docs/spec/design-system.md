@@ -1103,9 +1103,11 @@ not Apple chrome. We borrow the interaction, not the chrome.
   window opens to Providers (the primary connection task). The rail is the
   app's own floating glass panel — elevated surface, soft elevation, rounded,
   hairline edge — mirroring the main window's `.sidebar-dock`, so it reads as a
-  rail that floats off the content base rather than a flat column. On real native
-  windows it uses `--material-sidebar` + `--material-backdrop`, with the central
-  reduced-transparency / high-contrast opaque fallback. Rail rows keep the
+  rail that floats off the content base rather than a flat column. Unlike the main
+  window, the Settings window is an opaque Preferences surface (no OS vibrancy
+  under it — see `main.tsx`, which sets `data-window-material` for the main surface
+  only), so the rail floats on an opaque `--bg-elevated`, not a translucent
+  material. Rail rows keep the
   category IA, but add a compact neutral icon slot and a single clear label per
   row so scanning is closer to System Settings without explanatory subcopy or
   functional status color. The content pane is the flat window base (no
