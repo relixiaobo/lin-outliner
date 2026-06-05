@@ -19,7 +19,7 @@ interface InlineFilePreviewState {
   status: 'loading' | 'ready' | 'missing';
 }
 
-const SHOW_DELAY_MS = 220;
+const SHOW_DELAY_MS = 450;
 const HIDE_DELAY_MS = 80;
 const POPOVER_GAP = 8;
 const POPOVER_WIDTH = 292;

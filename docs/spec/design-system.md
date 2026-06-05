@@ -989,9 +989,11 @@ category history; see "Settings window".)
   `[data-inline-ref-kind="local-file"]` and shows one neutral popover: images use
   the native thumbnail when available; other files/folders use the same metadata
   card shell with icon, name, type/size, path, modified time, and unavailable
-  state. The ref itself keeps the normal text-link hover treatment; the popover is
-  the only added surface and uses the elevated popover material + level-1 shadow
-  with reduced-transparency fallback.
+  state. Pointer hover waits briefly before opening to avoid accidental peeks while
+  the cursor moves through dense prose; keyboard focus opens immediately. The ref
+  itself keeps the normal text-link hover treatment; the popover is the only added
+  surface and uses the elevated popover material + level-1 shadow with
+  reduced-transparency fallback.
 - Clicking a local-file inline ref opens the file or folder through the preload
   bridge and main-process `shell.openPath` after absolute-path/stat validation.
   Renderer code must not navigate to `file://`, call `openExternal` for file
