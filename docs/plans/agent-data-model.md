@@ -183,6 +183,7 @@ interface RunMeta {                     // runs/<id>/meta.json
     | { type: 'node'; nodeId: string }          // a scheduled command node FIRED it
     | { type: 'parent-run'; parentRunId: string }
     | { type: 'manual' | 'system' };
+  usage?: Usage;                        // aggregate token + cost for the whole run (Σ its assistant messages) — §9
   createdAt: number;
 }
 
@@ -350,12 +351,58 @@ Three rules this forces:
   assembly joins **whole turns**, pairs are never split. Old segments are summaries with
   no tool events. (cc-2.1 hit this hazard and solved it by re-pulling boundaries; the
   log split avoids it structurally.)
-- **POV flatten (multi-agent).** For a channel, other members' turns map to `user`-role
-  inputs from the running agent's POV — pi-agent-core has only `user/assistant/toolResult`
-  and no speaker field. Injecting synthetic / role-mapped content is already production
-  behavior (skill preloads, hidden user messages, subagent-completion notices).
+- **POV flatten + attribution (multi-agent).** pi-agent-core has only
+  `user/assistant/toolResult` and **no speaker field**, so for agent A's turn in a channel
+  assembly maps each message by its stored `actor`: A's own turns → `assistant` (its voice,
+  unlabeled); everyone else (the user + other agents) → `user`. Because the engine wants
+  strict `user/assistant` alternation, consecutive non-A turns **coalesce into one `user`
+  message whose `content[]` is one labeled text part per source turn** — the label
+  (`[@displayName]: …`) is **derived from each message's `actor` at assembly, not a second
+  stored field** (the `actor` per `MessageEvent` is the single source of truth; §3 + F3).
+  So no new "part-ownership" field is needed: `pi-ai`'s `UserMessage.content` is already a
+  `(TextContent | ImageContent)[]`, and each part is a labeled `TextContent`. A DM needs no
+  flatten (1:1 → plain `user`/`assistant`). Only *communication* messages are flattened
+  here — other agents' *execution* (their run logs) is never shown to A; A's own run log is
+  what reconstructs its tool loop in `[4]`. Injecting synthetic / role-mapped content is
+  already production behavior (skill preloads, hidden user messages, subagent-completion
+  notices).
 
-### 9. Growth & retention (why it doesn't blow up)
+### 9. Token accounting & request fidelity
+
+**Usage is per assistant message.** pi-agent-core attaches a `Usage` to every
+`AssistantMessage` — `{ input, output, cacheRead, cacheWrite, totalTokens, cost{ input,
+output, cacheRead, cacheWrite, total } }`, cost in dollars (`pi-ai/dist/types.d.ts`). It
+is **execution** data, so it lives in the **run log**: every `assistant_message.completed`
+carries `usage` (`agentEventLog.ts:200,771`). A run spans several assistant messages (the
+tool loop), so the **run total = their sum**.
+
+- **`RunMeta.usage` is that aggregate** — the whole-run token + cost rollup, so the task
+  panel / cost view reads one number instead of scanning the run log. (Today
+  `AgentRunRecord` (`agentEventLog.ts:474`) has no such aggregate; this adds it.)
+- **The conversation log's final assistant reply carries a lightweight per-turn total**
+  (just the numbers) for cheap per-message cost display, without re-opening the run log —
+  small enough to keep the conversation log low-volume.
+
+**Request fidelity — what is and isn't archived.** Every *semantic* input and output is
+recorded durably:
+
+| Recorded | Where |
+|---|---|
+| the user message (the request) **with that turn's reminders frozen in** — what was actually sent | conversation log |
+| the assistant reply: full text + thinking + tool calls, plus `providerId / modelId / apiId / stopReason / responseId` | conversation log (final) + run log (intermediate) |
+| every tool call + tool result | run log |
+| token usage + dollar cost | run log (per message) + `RunMeta.usage` (aggregate) |
+
+What is **not** archived is the raw **wire payload** — the entire assembled `Message[]`
+plus the system prompt and the tools' JSON schemas that physically went to the provider —
+as a verbatim blob. Instead it is **deterministically reconstructable** by replaying the
+append-only log through `deriveRuntimePiMessages`: same log + same assembly ⇒ same request.
+So "the exact bytes sent" is *reproducible* rather than stored, while every meaningful
+field is recorded. If verbatim capture is ever needed (provider-dispute forensics,
+prompt-debugging), it is an **opt-in** debug artifact under `runs/<id>/payloads/`, never
+the default (it bloats the hot path and duplicates the log).
+
+### 10. Growth & retention (why it doesn't blow up)
 
 | Thing | Growth | Volume | Disposition |
 |---|---|---|---|
@@ -366,18 +413,18 @@ Three rules this forces:
 → Nothing high-volume grows unbounded on the hot path; `append` is O(1) and never
 degrades; opening reads only the checkpoint + segment tail.
 
-### 10. Multi-agent specialization (same structure, zero new storage)
+### 11. Multi-agent specialization (same structure, zero new storage)
 
 - **A Channel = the same conversation primitive** — one shared, `actor`-tagged stream;
   `addressedTo` + "respond iff addressed + loop budget" (coordinator = default
   addressee). Detail in [[agent-conversation-model]] §Channel routing.
 - **Each agent's turn = one independent stateless call**, fed a POV-flattened `Message[]`
-  (§8).
+  with other speakers rendered as `actor`-labeled `user` parts (§8).
 - **Each agent's run is a parallel sub-stream**, all anchored to the same conversation;
   N agents in a channel = N independent run logs.
 - **Memory stays per-agent** — A carries the same memory line into any channel.
 
-### 11. id / reference graph (all by id; no nesting, no global order)
+### 12. id / reference graph (all by id; no nesting, no global order)
 
 ```
 message.runId           ──▶ run                     message → its execution (down)
@@ -389,7 +436,7 @@ MemoryEntry.sources[]   ──▶ conversation / summary / range    fact → gro
 agent.skills[]          ──▶ skills/ file tree
 ```
 
-### 12. Invariants (the load-bearing rules)
+### 13. Invariants (the load-bearing rules)
 
 1. One `Principal` = member = actor = addressee.
 2. A conversation is **one primitive with no stored `kind`**; DM/Channel is a rendering
@@ -410,6 +457,12 @@ agent.skills[]          ──▶ skills/ file tree
    self-clean.
 9. All agent state is single-writer jsonl event logs; **it never touches Loro**. Loro is
    the user-owned outline document the agent reads/writes as environment.
+10. Speaker attribution is stored **once** as each message's `actor`; the POV-flattened
+    `user`-message labels are **derived at assembly**, never persisted as a second copy.
+11. Token usage + cost is **execution** data: per assistant message in the run log,
+    aggregated on `RunMeta.usage`; the conversation log keeps only a lightweight per-turn
+    total on the final reply. Raw wire payloads are reconstructable from the log, not
+    archived verbatim.
 
 ### Real today vs build
 
@@ -439,6 +492,8 @@ they land **interface-first** before consumers build on them:
   run-log vocabulary.
 - `DistillationNode.source` (explicit both-ends range) + `MemoryEntry.sources`
   down-pointer.
+- `RunMeta.usage` aggregate (run-level token + cost rollup; `AgentRunRecord` has none
+  today) + a lightweight per-turn usage total on the conversation log's final reply.
 
 ## Open questions
 
