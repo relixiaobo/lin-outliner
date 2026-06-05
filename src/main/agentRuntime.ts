@@ -2640,6 +2640,10 @@ export class AgentRuntime {
         out.push(attachment);
         continue;
       }
+      if (isDirectoryAttachment(attachment)) {
+        out.push(attachment);
+        continue;
+      }
       const originalPath = attachment.path;
       const materialized = await materializePathBackedAttachment(root, attachment);
       out.push(materialized);
@@ -2653,6 +2657,10 @@ export class AgentRuntime {
     }
     return { attachments: out, pathMap };
   }
+}
+
+function isDirectoryAttachment(attachment: AgentPathBackedAttachment): boolean {
+  return attachment.kind === 'file' && attachment.mimeType === 'inode/directory';
 }
 
 function buildUserPromptMessage(
