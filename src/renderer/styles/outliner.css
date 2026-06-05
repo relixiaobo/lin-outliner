@@ -137,9 +137,10 @@
 
 /* Selected swatch: a strong ink ring with a surface gap so the pick is obvious
    in both themes. The old --border-emphasis (rgb(ink/0.18)) border was too faint
-   to read against a coloured swatch, especially in dark mode. */
+   to read against a coloured swatch, especially in dark mode. Ring lives in
+   --swatch-selected-ring (tokens.css) so the multi-layer shadow stays tokenised. */
 .definition-color-swatch.selected {
-  box-shadow: 0 0 0 2px var(--panel-bg), 0 0 0 3.5px var(--text-primary);
+  box-shadow: var(--swatch-selected-ring);
 }
 
 .definition-color-swatch:focus-visible {
