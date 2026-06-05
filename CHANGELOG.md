@@ -567,6 +567,13 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Agent: "Used N tools" summary glyph → chart-no-axes-gantt (PR #139)** — the collapsed process summary
+  that lists tool usage swapped its `ListChecks` glyph (generic "options list") for lucide
+  `ChartNoAxesGantt` (staggered bars, a "steps / process" feel), via a new `UsedToolsIcon` alias used only
+  there. `OptionsIcon` keeps mapping to `ListChecks` for the field-type "options" usages (definition config,
+  view toolbar, field presentation), so this is not a global remap. Gate: typecheck + `test:renderer` 354/0
+  + light/dark in-context visual. ([#139](https://github.com/relixiaobo/lin-outliner/pull/139))
+
 - **Agent: morphing geometric "still generating" mark (PR #138)** — the flat rose streaming pulse is
   replaced by a richer brand mark: an SVG whose path morphs **triangle → square → circle** and back while
   rotating a full turn. All three shapes are 4-corner rounded polygons sharing one command structure

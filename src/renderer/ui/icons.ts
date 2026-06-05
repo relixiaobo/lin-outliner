@@ -20,6 +20,7 @@ export {
   Brain as BrainIcon,
   Bug as DebugIcon,
   CalendarDays as CalendarIcon,
+  ChartNoAxesGantt as UsedToolsIcon,
   Check as CheckIcon,
   Square as CheckboxIcon,
   ChevronDown as ChevronDownIcon,

@@ -249,6 +249,11 @@ against `main` (post-#118) at the gate; findings are real with `file:line`.
 
 ## Recently completed
 
+- **used-tools-icon** (main, PR #139) — swapped the "Used N tools" process-summary glyph from `ListChecks`
+  to lucide `ChartNoAxesGantt` (staggered bars) via a new `UsedToolsIcon` alias used only there;
+  `OptionsIcon` stays `ListChecks` for field-type "options" usages. Gate: typecheck + `test:renderer` 354/0
+  + light/dark visual.
+
 - **agent-streaming-shape-morph** (main, PR #138) — replaced the flat rose streaming pulse with a morphing
   geometric mark: an SVG path morphs triangle → square → circle and back (rounded corners throughout) while
   rotating, with equal optical area (centroid-centered) so the triangle isn't visually small and the size
