@@ -3,7 +3,7 @@ import {
   MAC_TRAFFIC_LIGHT_POSITION,
   MAC_TRAFFIC_LIGHT_SIZE,
 } from '../../src/core/chromeGeometry';
-import { e2eProjection, emitDocumentEvent, ids, openMockedApp } from './outlinerMock';
+import { e2eProjection, emitDocumentEvent, ids, openMockedApp, row } from './outlinerMock';
 
 test.describe('workspace layout resizing', () => {
   test.beforeEach(async ({ page }) => {
@@ -492,7 +492,7 @@ test.describe('workspace layout resizing', () => {
     await page.locator('.sidebar-primary-nav').getByRole('button', { name: 'Schema', exact: true }).click();
     await expect(page.locator('.outline-panel-surface.active-panel .panel-title-editor')).toContainText('Schema');
 
-    // The layout is persisted (localStorage workspace-layout:v2) and restored on
+    // The layout is persisted with today's local date and restored on same-day
     // reload.
     await page.reload();
     await expect(panels).toHaveCount(2);
@@ -502,6 +502,31 @@ test.describe('workspace layout resizing', () => {
     await page.locator('.outline-panel-surface.active-panel')
       .getByRole('button', { name: 'Close panel' }).click();
     await expect(panels).toHaveCount(1);
+  });
+
+  test('stale persisted pane layout falls back to Today on a new local day', async ({ page }) => {
+    await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
+    await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
+    await page.evaluate(() => {
+      window.localStorage.setItem('lin-outliner:workspace-layout:v2', JSON.stringify({
+        version: 2,
+        localDate: '1999-01-01',
+        activePanelId: 'panel-stale',
+        panels: [{
+          id: 'panel-stale',
+          type: 'outliner',
+          rootId: 'alpha',
+          size: 1,
+          pageBackStack: [],
+          pageForwardStack: [],
+        }],
+      }));
+    });
+
+    await page.reload();
+
+    await expect(page.locator('.panel-title-editor').first()).toContainText('May 13');
+    await expect(row(page, ids.alpha)).toContainText('Alpha');
   });
 
   test('panes open from keyboard and sidebar option-click up to the cap', async ({ page }) => {

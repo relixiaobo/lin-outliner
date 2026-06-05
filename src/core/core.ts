@@ -50,6 +50,7 @@ import {
   plainText,
   systemOptionNodeId,
   type Backlink,
+  type BatchMoveNodeInput,
   type DefConfigKey,
   type RefRole,
   type CommandOutcome,
@@ -958,6 +959,18 @@ export class Core {
       this.loro.moveNode(nodeId, parentId, index);
       this.touchNodeDirect(nodeId);
       return focus(nodeId);
+    });
+  }
+
+  batchMoveNodes(moves: readonly BatchMoveNodeInput[]): CommandOutcome {
+    return this.mutate(() => {
+      const planned = cloneState(this.snapshot());
+      for (const move of moves) applyPlannedNodeMove(planned, move);
+      for (const move of moves) {
+        this.loro.moveNode(move.nodeId, move.parentId, move.index);
+        this.touchNodeDirect(move.nodeId);
+      }
+      return undefined;
     });
   }
 
@@ -3139,6 +3152,29 @@ function clone<T>(value: T): T {
 
 function cloneState(state: DocumentState): DocumentState {
   return clone(state);
+}
+
+function applyPlannedNodeMove(state: DocumentState, move: BatchMoveNodeInput) {
+  const node = requiredNode(state, move.nodeId);
+  if (move.nodeId === move.parentId || isDescendant(state, move.parentId, move.nodeId)) {
+    throw CoreError.invalidMove();
+  }
+  ensureNodeMovable(state, move.nodeId);
+  ensureParentMutable(state, move.parentId);
+  ensureParentCanContainChildInstance(state, move.parentId, childInstanceTargetId(state, move.nodeId), move.nodeId);
+
+  const targetParent = requiredNode(state, move.parentId);
+  const targetIndex = plannedInsertIndex(move.index, targetParent.children.length);
+  const previousParent = node.parentId ? requiredNode(state, node.parentId) : null;
+  if (previousParent) previousParent.children = previousParent.children.filter((childId) => childId !== move.nodeId);
+  const refreshedTargetParent = requiredNode(state, move.parentId);
+  refreshedTargetParent.children.splice(Math.min(targetIndex, refreshedTargetParent.children.length), 0, move.nodeId);
+  node.parentId = move.parentId;
+}
+
+function plannedInsertIndex(index: number | null | undefined, length: number): number {
+  if (index === null || index === undefined) return length;
+  return Math.max(0, Math.min(index, length));
 }
 
 function collectDescendantsFromState(state: DocumentState, nodeId: string): string[] {

@@ -20,6 +20,7 @@ export type {
   AgentSession,
   AgentSessionMeta,
   Backlink,
+  BatchMoveNodeInput,
   CommandResult,
   CreateNodeTree,
   DocumentProjection,

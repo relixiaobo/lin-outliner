@@ -14,6 +14,7 @@ import type {
   SkillDefinition,
   CommandResult,
   CreateNodeTree,
+  BatchMoveNodeInput,
   PasteRowMeta,
   DocumentProjection,
   ProjectionSnapshot,
@@ -155,6 +156,8 @@ export const api = {
     command<CommandResult>('merge_node_into', { nodeId, targetId }),
   moveNode: (nodeId: string, parentId: string, index: number | null = null) =>
     command<CommandResult>('move_node', { nodeId, parentId, index }),
+  batchMoveNodes: (moves: readonly BatchMoveNodeInput[]) =>
+    command<CommandResult>('batch_move_nodes', { moves }),
   indentNode: (nodeId: string) => command<CommandResult>('indent_node', { nodeId }),
   outdentNode: (nodeId: string) => command<CommandResult>('outdent_node', { nodeId }),
   trashNode: (nodeId: string) => command<CommandResult>('trash_node', { nodeId }),

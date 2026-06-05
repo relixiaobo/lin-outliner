@@ -24,6 +24,7 @@ interface CommandPaletteProps {
   projection: DocumentProjection;
   index: DocumentIndex;
   onClose: () => void;
+  onEnsureToday: () => Promise<NodeId | null>;
   onFocus: (nodeId: NodeId | null) => void;
   onRoot: (nodeId: NodeId) => void;
   run: CommandRunner;
@@ -78,13 +79,22 @@ export function CommandPalette(props: CommandPaletteProps) {
     props.onClose();
   };
 
+  const openToday = () => {
+    void props.onEnsureToday().then((nodeId) => {
+      if (nodeId) openNode(nodeId);
+    });
+  };
+
   const createFromQuery = () => {
     const trimmed = query.trim();
     if (!trimmed) return;
-    void props.run(async () => {
-      const outcome = await api.createNode(props.projection.todayId, null, trimmed);
-      props.onClose();
-      return outcome;
+    void props.onEnsureToday().then((todayId) => {
+      if (!todayId) return;
+      void props.run(async () => {
+        const outcome = await api.createNode(todayId, null, trimmed);
+        props.onClose();
+        return outcome;
+      });
     });
   };
 
@@ -95,7 +105,7 @@ export function CommandPalette(props: CommandPaletteProps) {
       icon: CalendarIcon,
       kind: 'navigate',
       typeLabel: t.commandPalette.typeNavigate,
-      action: () => openNode(props.projection.todayId),
+      action: openToday,
     },
     {
       id: props.projection.libraryId,

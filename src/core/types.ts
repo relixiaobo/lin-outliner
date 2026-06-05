@@ -589,6 +589,12 @@ export interface SplitNodeOptions {
   focusPlacement?: FocusPlacement;
 }
 
+export interface BatchMoveNodeInput {
+  nodeId: NodeId;
+  parentId: NodeId;
+  index: number | null;
+}
+
 // Core's internal command result: a command assembles the full projection
 // in-process (cheap — cached refs, no clone). The main-process boundary converts
 // this to a `CommandResult` before crossing IPC.

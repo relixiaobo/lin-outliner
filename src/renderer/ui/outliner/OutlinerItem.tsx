@@ -2027,6 +2027,16 @@ function outlinerItemPropsEqual(prev: OutlinerItemProps, next: OutlinerItemProps
   // Propagate a focus/pending-input request down to a nested target (see above).
   if (focusAncestorToken(prev, prev.ui.focusRequest) !== focusAncestorToken(next, next.ui.focusRequest)) return false;
   if (focusAncestorToken(prev, prev.ui.pendingInputChar) !== focusAncestorToken(next, next.ui.pendingInputChar)) return false;
+  // Nested OutlinerViews receive `ui` through their owning expanded row. If a
+  // descendant's expanded state changes while the ancestor row's own expanded bit
+  // stays the same, the ancestor still has to re-render so the nested view passes
+  // the fresh `ui` down to that descendant.
+  if (
+    prev.ui.expanded !== next.ui.expanded
+    && (prev.ui.expanded.has(prev.nodeId) || next.ui.expanded.has(next.nodeId))
+  ) {
+    return false;
+  }
   // Re-render only when *this row's* UI state moved (focus/selection/expand/…),
   // not on every global UI change. Behavioural ui reads go through a live ref
   // (useOutlinerRowInteraction), so a row that skips re-render stays correct.

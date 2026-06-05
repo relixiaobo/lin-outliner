@@ -36,6 +36,7 @@ export const DOCUMENT_COMMANDS = [
   'set_node_banner',
   'merge_node_into',
   'move_node',
+  'batch_move_nodes',
   'indent_node',
   'outdent_node',
   'trash_node',

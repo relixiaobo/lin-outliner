@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useState,
   type CSSProperties,
   type Dispatch,
@@ -11,7 +12,7 @@ import {
 import { api } from '../../api/client';
 import type { NodeId } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
-import { OUTLINER_NODE_DRAG_MIME, resolveOutlinerDropMove } from '../interactions/dragDrop';
+import { OUTLINER_NODE_DRAG_MIME, resolveOutlinerDropBatchMove } from '../interactions/dragDrop';
 import { flattenVisibleRows } from '../../state/document';
 import { buildSelectableRows } from '../../state/selectableRows';
 import { resolveDropHoverPosition, type DropHoverPosition } from '../interactions/dropPosition';
@@ -19,7 +20,8 @@ import {
   resolveRowPointerSelectAction,
   shouldPreserveSelectedRowContextClick,
 } from '../interactions/rowPointerSelection';
-import { toggleVisibleSelection } from '../interactions/selectionActions';
+import { idsAllowedForStructuralBatch, selectableRowMap } from '../interactions/selectionBatchActions';
+import { selectedRootIds, toggleVisibleSelection } from '../interactions/selectionActions';
 import type { CommandRunner } from '../shared';
 import {
   clearFocusState,
@@ -58,6 +60,14 @@ interface UseOutlinerRowInteractionOptions {
   draft?: boolean;
 }
 
+const DROP_TARGET_CHANGE_EVENT = 'lin:outliner-drop-target-change';
+
+function announceDropTarget(key: string | null) {
+  window.dispatchEvent(new CustomEvent<{ key: string | null }>(DROP_TARGET_CHANGE_EVENT, {
+    detail: { key },
+  }));
+}
+
 export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOptions) {
   const {
     rowId,
@@ -91,6 +101,25 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     && ui.selectionSource === 'ref-click'
     && ui.selectedIds.size <= 1;
   const rowSelected = selected && !refClickSelected;
+  const dropTargetKey = `${panelId}:${parentId}:${rowId}:${draft ? 'draft' : 'row'}`;
+  const clearDropState = useCallback(() => {
+    setDropPosition(null);
+    setDragId(null);
+    announceDropTarget(null);
+  }, [setDragId]);
+
+  useEffect(() => {
+    if (!dragId) setDropPosition(null);
+  }, [dragId]);
+
+  useEffect(() => {
+    const handleDropTargetChange = (event: Event) => {
+      const key = (event as CustomEvent<{ key: string | null }>).detail?.key ?? null;
+      if (key !== dropTargetKey) setDropPosition(null);
+    };
+    window.addEventListener(DROP_TARGET_CHANGE_EVENT, handleDropTargetChange);
+    return () => window.removeEventListener(DROP_TARGET_CHANGE_EVENT, handleDropTargetChange);
+  }, [dropTargetKey]);
 
   const updateSelection = useCallback(() => {
     setUi((prev) => selectFocusState(prev, rowFocusTarget(rowId, parentId, panelId)));
@@ -332,48 +361,84 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
   }, [rowId, setDragId]);
 
   const onDragEnd = useCallback(() => {
-    setDragId(null);
-    setDropPosition(null);
-  }, [setDragId]);
+    clearDropState();
+  }, [clearDropState]);
+
+  const dragNodeIds = useCallback((): NodeId[] => {
+    const liveUi = uiRef.current;
+    if (!liveUi.selectedIds.has(dragId ?? '')) return dragId ? [dragId] : [];
+
+    const selectableRows = buildSelectableRows(selectionRootId, byId, {
+      expanded: liveUi.expanded,
+      expandedHiddenFields: liveUi.expandedHiddenFields,
+    });
+    const rowMap = selectableRowMap(selectableRows);
+    const selectedRows = selectableRows
+      .map((row) => row.id)
+      .filter((id) => liveUi.selectedIds.has(id));
+    const rootIds = selectedRootIds(
+      selectedRows,
+      byId,
+      (id) => rowMap.get(id)?.parentId ?? byId.get(id)?.parentId,
+    );
+    const moveIds = idsAllowedForStructuralBatch({
+      ids: rootIds,
+      panelRootId: selectionRootId,
+      byId,
+      rowMap,
+    });
+    return moveIds.length > 0 ? moveIds : dragId ? [dragId] : [];
+  }, [byId, dragId, selectionRootId, uiRef]);
+
+  const resolveDropMove = useCallback((position: DropHoverPosition | null) => {
+    const nodeIds = dragNodeIds();
+    if (nodeIds.length === 0) return null;
+    const siblings = byId.get(parentId)?.children ?? [];
+    const targetIndex = draft ? siblings.length : siblings.indexOf(rowId);
+    return resolveOutlinerDropBatchMove({
+      dragNodeIds: nodeIds,
+      targetNodeId: rowId,
+      targetParentId: parentId,
+      siblingIndex: targetIndex,
+      dropPosition: draft ? 'before' : position,
+      targetHasChildren: !draft && hasChildren,
+      targetIsExpanded: !draft && expanded,
+      parentIdForNode: (nodeId) => byId.get(nodeId)?.parentId,
+      childrenForParent: (nodeId) => byId.get(nodeId)?.children ?? [],
+    });
+  }, [byId, dragNodeIds, draft, expanded, hasChildren, parentId, rowId]);
 
   const onDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
-    if (!dragId || dragId === rowId) return;
+    if (!dragId) {
+      setDropPosition(null);
+      return;
+    }
     event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
+    event.stopPropagation();
     const rect = event.currentTarget.getBoundingClientRect();
-    setDropPosition(resolveDropHoverPosition({
+    const nextPosition = draft ? 'before' : resolveDropHoverPosition({
       offsetY: event.clientY - rect.top,
       rowHeight: rect.height,
-    }));
-  }, [dragId, rowId]);
+    });
+    if (!resolveDropMove(nextPosition)) {
+      event.dataTransfer.dropEffect = 'none';
+      setDropPosition(null);
+      announceDropTarget(null);
+      return;
+    }
+    event.dataTransfer.dropEffect = 'move';
+    announceDropTarget(dropTargetKey);
+    setDropPosition(nextPosition);
+  }, [draft, dragId, dropTargetKey, resolveDropMove]);
 
   const onDrop = useCallback(async (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.stopPropagation();
     const position = dropPosition ?? 'before';
     setDropPosition(null);
-    if (!dragId || dragId === rowId) return;
-
-    const siblings = byId.get(parentId)?.children ?? [];
-    const targetIndex = siblings.indexOf(rowId);
-    const dragParentId = byId.get(dragId)?.parentId ?? null;
-    const dragIndex = dragParentId === parentId
-      ? siblings.indexOf(dragId)
-      : byId.get(dragParentId ?? '')?.children.indexOf(dragId) ?? -1;
-    const move = resolveOutlinerDropMove({
-      dragNodeId: dragId,
-      targetNodeId: rowId,
-      targetParentId: parentId,
-      siblingIndex: targetIndex,
-      dropPosition: position,
-      targetHasChildren: hasChildren,
-      targetIsExpanded: expanded,
-      currentParentId: dragParentId,
-      currentIndex: dragIndex,
-    });
-
+    const move = resolveDropMove(position);
     if (!move) {
-      setDragId(null);
+      clearDropState();
       return;
     }
 
@@ -386,11 +451,16 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     }
 
     try {
-      await run(() => api.moveNode(dragId, move.parentId, move.index));
+      if (move.moves.length === 1) {
+        const single = move.moves[0]!;
+        await run(() => api.moveNode(single.nodeId, single.parentId, single.index), { applyFocus: false });
+      } else {
+        await run(() => api.batchMoveNodes(move.moves), { applyFocus: false });
+      }
     } finally {
-      setDragId(null);
+      clearDropState();
     }
-  }, [byId, dragId, dropPosition, expanded, hasChildren, parentId, rowId, run, setDragId, setUi]);
+  }, [clearDropState, dropPosition, resolveDropMove, run, setUi]);
 
   const wrapStyle: CSSProperties = { marginLeft: depth * 28 };
 
@@ -414,7 +484,12 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
       ...(draft ? { 'data-trailing-parent-id': parentId } : {}),
       style: wrapStyle,
       onDragOver,
-      onDragLeave: () => setDropPosition(null),
+      onDragLeave: (event: DragEvent<HTMLDivElement>) => {
+        if (dragId) event.stopPropagation();
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+        setDropPosition(null);
+        announceDropTarget(null);
+      },
       onDrop: (event: DragEvent<HTMLDivElement>) => void onDrop(event),
     },
     dragHandleProps: {

@@ -1064,6 +1064,23 @@ describe('Core', () => {
     expect(core.state().nodes[today].children).toEqual([first, second, third, fourth]);
   });
 
+  test('batch drag move is one undoable operation', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const first = mustFocus(core.createNode(today, null, 'First'));
+    const second = mustFocus(core.createNode(today, null, 'Second'));
+    const third = mustFocus(core.createNode(today, null, 'Third'));
+
+    core.batchMoveNodes([
+      { nodeId: second, parentId: today, index: 2 },
+      { nodeId: first, parentId: today, index: 1 },
+    ]);
+
+    expect(core.state().nodes[today].children).toEqual([third, first, second]);
+    core.undoUser();
+    expect(core.state().nodes[today].children).toEqual([first, second, third]);
+  });
+
   test('inline field trigger converts the current row in place and undo restores it', () => {
     const core = Core.new();
     const today = core.projection().todayId;

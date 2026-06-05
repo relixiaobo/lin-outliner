@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import type { AgentUserViewContext } from '../../core/agentTypes';
 import { api } from '../api/client';
-import type { FocusHint, NodeId } from '../api/types';
+import { parseIsoLocalDate, todayIsoLocalDate, type FocusHint, type NodeId } from '../api/types';
 import { useProjectionStore, useUiState } from '../state/document';
 import { AgentDock, type AgentRailState } from './AgentDock';
 import { CommandPalette } from './CommandPalette';
@@ -168,6 +168,23 @@ export function App() {
     setActivePanelRoot(nodeId, options);
     expandNodeInOutliner(nodeId);
   }, [expandNodeInOutliner, openPanel, setActivePanelRoot]);
+
+  const ensureTodayNode = useCallback(async (): Promise<NodeId | null> => {
+    const today = parseIsoLocalDate(todayIsoLocalDate());
+    if (!today) return null;
+    const result = await run(() => api.ensureDateNode(
+      today.getFullYear(),
+      today.getMonth() + 1,
+      today.getDate(),
+    ), { applyFocus: false });
+    return result && 'focus' in result ? result.focus?.nodeId ?? null : null;
+  }, [run]);
+
+  const navigateToday = useCallback((options?: NavigateRootOptions) => {
+    void ensureTodayNode().then((nodeId) => {
+      if (nodeId) navigateRoot(nodeId, options);
+    });
+  }, [ensureTodayNode, navigateRoot]);
 
   // The global launcher opened an inline node search result — navigate the active
   // panel to it and focus it (mirrors the in-app CommandPalette jump).
@@ -336,6 +353,7 @@ export function App() {
         <Sidebar
           expandedIds={sidebarExpandedIds}
           index={index}
+          onNavigateToday={navigateToday}
           onNavigateRoot={navigateRoot}
           onOpenPanel={openRootInPanel}
           onOpenSettings={() => {
@@ -405,6 +423,7 @@ export function App() {
           projection={index.projection}
           index={index}
           onClose={() => setCommandOpen(false)}
+          onEnsureToday={ensureTodayNode}
           onFocus={focusNode}
           onRoot={navigateRoot}
           run={run}

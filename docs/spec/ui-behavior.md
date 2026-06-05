@@ -211,7 +211,7 @@ row; the rest become siblings/children. Behavior parity target is nodex
 | Expanded scope guide line | Render for expanded rows, including leaf rows expanded to show trailing input. |
 | Click indent guide line | Toggle expanded state for the row's direct children when present. |
 | Click bullet | Open/drill into the node. |
-| Drag bullet | Move the row, expanding inside-drop targets. |
+| Drag bullet | Move the row, expanding inside-drop targets. If the dragged row is part of a block selection, move the selected structural roots together in visible order as one undoable document operation; dropping on a trailing draft row appends to that scope. Only the nearest hovered row owns the drop guide line, including nested rows. Invalid or completed drags clear any guide line and keep block selection instead of focusing a single row. |
 | Applied tag display | Render tags inline after node text using nodex-style badges; do not render a second-line chip strip. |
 | Applied tag bullet color | Color the node bullet from applied tag colors, using pie segments for multiple tags. |
 
