@@ -50,7 +50,8 @@ dev userData — no migration scripts.
   This doc defines `ConversationMeta`; the rendering rules are there.
 - **The memory write pipeline tiers** (v1 inline / v2 extraction subagent / v3 offline
   consolidation) — owned by [[agent-conversation-model]] §Memory model. This doc
-  defines `MemoryEntry` and the privileged-path *shape*, not the write machinery.
+  defines the `MemoryEntry` shape + the runtime-owned append-surface *contract* (§3), not
+  the write machinery.
 - **Skill structure / authoring** — owned by [[agent-skills-authoring]]. This doc only
   references the skills file tree as a storage family.
 - **Milestone sequencing + the full event taxonomy** — owned by [[agent-program]].
@@ -121,17 +122,19 @@ type Actor = Principal
 #### per-conversation — the objective record
 
 ```ts
-interface ConversationMeta {            // meta.json (current-state doc)
+interface ConversationMeta {            // meta.json = a PROJECTION of the stream's membership/rename events (cache, NOT authority)
   id: string;
-  members: Principal[];                 // no stored `kind`: 1:1 + no goal + canonical → render as DM, else group/Channel
+  members: Principal[];                 // authority = member.added/removed events on the stream; this is the rebuilt current set
   goal?: string;                        // a Channel's goal = its render-time identity
   name?: string;
-  cursors: Record<string, number>;      // principalKey → last-seen seq (per-member read state)
   createdAt: number;
   // product rules (NOT fields): canonical DM = find-or-create-unique on {user, oneAgent};
   //   adding an agent never mutates members in place → spawns a new Channel
   //   (the session list = the Channel list). DM/Channel rendering lives in conversation-model.
 }
+// cursors are NOT a conversation field: per-principal read state is high-frequency UI state, kept OUT of the
+// objective record (else it churns the event log). Separate per-principal store, last-seen seq:
+interface ReadCursors { conversationId: string; byPrincipal: Record<string, number> }   // principalKey → last-seen seq
 
 interface MessageEvent {                // one line in conversations/<id>/segments/*.jsonl
   v: 1; eventId: string; seq: number; createdAt: number;   // seq = order · createdAt = wall-clock
@@ -145,6 +148,10 @@ interface MessageEvent {                // one line in conversations/<id>/segmen
                                          //   Tool calls / tool results are NOT here — they are execution (run log, §3 run).
   addressedTo?: Principal[];            // who should respond; omitted in a 1:1
   runId?: string;                       // ↓ which run produced this assistant message
+  forwarded?: {                         // combined/merged forward provenance (preserves "actor = native speaker")
+    fromConversationId: string;         //   actor = who placed the bundle in THIS stream; forwarded.* = where it came from
+    sourceMessageIds: string[]; bundleId: string;
+  };
   content?: AgentPersistedContent;
 }
 ```
@@ -184,6 +191,14 @@ interface RunMeta {                     // runs/<id>/meta.json
     | { type: 'parent-run'; parentRunId: string }
     | { type: 'manual' | 'system' };
   usage?: Usage;                        // aggregate token + cost for the whole run (Σ its assistant messages) — §9
+  fingerprint: {                        // the version boundary that makes replay "same-version replayable", not timeless (§9)
+    appVersion: string;
+    promptHash: string;                 // agent persona + per-turn reminder shape
+    toolSchemaHash: string;             // tool registry + JSON schemas
+    skillBindings: string[];            // bound skill ids + content versions
+    modelConfig: string;                // provider / model / effort fingerprint
+  };
+  retention: 'hot' | 'cold-archived' | 'summarized-only' | 'deleted';   // §10 retention state machine
   createdAt: number;
 }
 
@@ -193,7 +208,8 @@ type RunEventType =                     // runs/<id>/events.jsonl — ★ ALL ex
   | 'thinking.delta'
   | 'tool_call.started' | 'tool_call.completed' | 'tool_call.failed'
   | 'tool_result.created'               // ★ tool_result lives ONLY here, never the conversation log
-  | 'tool.permission.requested' | 'tool.permission.resolved';
+  | 'tool.permission.checked' | 'tool.permission.resolved';   // canonical names pinned in agent-program M0 taxonomy
+                                                              //   (reconciles today's checked/resolved + approval.* dual-track, keyed by request id)
 ```
 
 There are **no conversation-less runs** — a scheduled routine fired by an outline
@@ -221,22 +237,38 @@ interface DistillationNode {            // conversations/<id>/summaries/ — LLM
 
 ```ts
 interface AgentIdentity {               // agents/<id>/identity.json (current-state doc, overwrite)
-  agentId: string;                      // explicit tuple `<source>_<name>`
-  displayName: string;
+  agentId: string;                      // STABLE tuple: `${sourceKind}:${sourceInstanceId}:${name}`
+                                        //   sourceInstanceId = workspace/root hash for project agents (else 'user' / 'built-in')
+                                        //   → two projects' `researcher` do NOT collide in the global memory pool
+  displayName: string;                  // rename policy: changing this keeps agentId — memory follows the identity, not the label
   model: string; effort?: string;
   systemPrompt: string;                 // persona
   skills: string[];                     // bound skill ids → skills file tree
 }
 
-interface MemoryEntry {                 // agents/<id>/memory/ — top of the distillation ladder (greenfield)
+interface MemoryEntry {                 // projection of agents/<id>/memory/events.jsonl (memory.entry_added/updated/removed)
   id: string;
-  agentId: string;                      // ★ per-agent: one global pool across all workspaces (PM-ratified)
+  agentId: string;                      // per-agent. Retrieval default = global pool across workspaces (PM-ratified D2)
   fact: string;                         // distilled, additive
-  sources: Array<{ conversationId: string; summaryId?: string; messageRange?: [string, string] }>;
-                                        // ↓ down-pointer to ground truth (for the visible guard);
-                                        //   ★ does NOT scope retrieval — retrieval is pure relevance (PM-ratified)
+  originWorkspace?: string;             // where it was learned — drives the opt-in isolation tier (D2)
+  sources: Array<{                      // ↓ down-pointer to ground truth (visible guard) — does NOT scope retrieval
+    conversationId: string; summaryId?: string; messageRange?: [string, string];
+    runId?: string; eventId?: string;   // bind to the producing run/event so it can be invalidated (gemini#5)
+  }>;
+  status: 'active' | 'invalidated';     // soft-deleted when its source branch is discarded / undone (gemini#5) — excluded from injection
   createdAt: number;
 }
+// ── Write surface (PM-ratified D1) — NOT file_write/edit ──────────────────────────────────
+//   The local file tools are realpath-jailed to workspace.root (agentLocalTools.ts:2207), so they
+//   cannot reach userData/agent-memory, and whole-file rewrite + fileWriteChains still risks lost-update.
+//   Instead: a RUNTIME-OWNED memory-append API emits memory.entry_added/updated/removed events → projection.
+//   Append-only (no lost-update), schema-checked, serialized, and prompt-free (a runtime primitive, not a
+//   sandboxed file op). This also honors self-mod's "don't use generic file write for runtime metadata".
+// ── Retrieval isolation (PM-ratified D2) ─────────────────────────────────────────────────
+//   Default GLOBAL (pure relevance). Per-agent opt-in tiers:
+//     'isolated'         — retrieve only where originWorkspace == current workspace
+//     'read-only-global' — read the global pool, but new facts learned here do NOT enter it
+//   `originWorkspace` is recorded always; the tier decides whether it scopes retrieval.
 ```
 
 ### 4. The distillation ladder & the ownership boundary
@@ -276,14 +308,16 @@ summaries are the memory line's input); titling; re-entry briefs.
 userData/agent/
   agents/<agentId>/
     identity.json                  # per-agent current state: name / model / persona / bound skill ids
-    memory/  events.jsonl          # per-agent memory-mutation log → projection = current MemoryEntry set (one global pool)
+    memory/  events.jsonl          # memory.entry_added/updated/removed (runtime-owned append, D1) → projection = MemoryEntry set
+                                   #   retrieval: global by default, opt-in isolation tiers (D2); NOT written via file_write
   conversations/<conversationId>/
-    meta.json                      # members / cursors / goal / name
+    meta.json                      # PROJECTION of membership/rename events: members / goal / name (NOT authority)
+    cursors.json                   # per-principal read state (UI state, kept out of the objective stream)
     segments/000001.jsonl …        # message stream (≈1 event/msg), append-only, segmented
     summaries/                     # DistillationNode (per sealed segment + roll-ups)
     checkpoints/  index.json       # tail-load snapshot + seq/time → segment (backward paging)
   runs/<runId>/
-    meta.json  events.jsonl  payloads/   # bounded execution log + large tool outputs / transcripts
+    meta.json  events.jsonl  payloads/   # bounded execution log; retention: hot → cold-archived → summarized-only → deleted (§10)
   skills/{built-in,user,project}/  # file tree
   # outline document → Loro store (separate substrate, user-owned)
 ```
@@ -409,10 +443,13 @@ recorded durably:
 
 What is **not** archived is the raw **wire payload** — the entire assembled `Message[]`
 plus the system prompt and the tools' JSON schemas that physically went to the provider —
-as a verbatim blob. Instead it is **deterministically reconstructable** by replaying the
-append-only log through `deriveRuntimePiMessages`: same log + same assembly ⇒ same request.
-So "the exact bytes sent" is *reproducible* rather than stored, while every meaningful
-field is recorded. If verbatim capture is ever needed (provider-dispute forensics,
+as a verbatim blob. Instead it is **replayable within a version boundary**: replaying the
+append-only log through `deriveRuntimePiMessages` reproduces the request **only if the
+assembling inputs are unchanged** — system prompt, tool schemas, skill contents, agent
+identity, model settings, and the assembly code all drift across app versions. So every run
+records `RunMeta.fingerprint` (`appVersion` + prompt / tool-schema / skill-binding / model
+hashes), and the honest claim is **"same-fingerprint ⇒ same request"**, not timeless
+determinism. If verbatim capture is ever needed (provider-dispute forensics,
 prompt-debugging), it is an **opt-in** debug artifact under `runs/<id>/payloads/`, never
 the default (it bloats the hot path and duplicates the log).
 
@@ -422,10 +459,25 @@ the default (it bloats the hot path and duplicates the log).
 |---|---|---|---|
 | conversation log | monotonic | **low** (≈1 event/msg) | segment + checkpoint + index; old segments cold-archivable |
 | memory line | monotonic | **low** (distilled, sub-linear) | additive; visible / editable / forgettable |
-| run log | many but bounded | high (heavy) | **self-cleans**: cold-archived / dropped once distilled into (message + memory) |
+| run log | many but bounded | high (heavy) | **state machine** (below): `hot → cold-archived → summarized-only → deleted` |
 
 → Nothing high-volume grows unbounded on the hot path; `append` is O(1) and never
 degrades; opening reads only the checkpoint + segment tail.
+
+**Run-log retention state machine** (reconciles "self-clean" with the request-fidelity
+claim in §9 — they are not a contradiction, they are different states):
+
+| State | Holds | Still supports |
+|---|---|---|
+| `hot` | full events + payloads, in the live window | assembly join · same-fingerprint replay · full audit |
+| `cold-archived` | full events, compressed, off the hot path | replay + audit on demand (slower); not in the live window |
+| `summarized-only` | the distillation summary only; events dropped | navigation + the conversation summary; **NOT** verbatim replay |
+| `deleted` | nothing | nothing |
+
+A run is replayable **only while `hot` or `cold-archived`**; once `summarized-only`, the
+verbatim request is gone *by design* (the summary is the durable trace). So §9's "replay
+within a version boundary" is scoped to those two states, and a run that has been distilled
+can drop its heavy events without violating it.
 
 ### 11. Multi-agent specialization (same structure, zero new storage)
 
@@ -467,8 +519,8 @@ agent.skills[]          ──▶ skills/ file tree
    `MemoryEntry` carries a down-pointer; raw is retained.
 7. The per-turn assembly is **append-only prefix, ordered by volatility, single volatile
    tail**; mixed-resolution; compaction at segment boundaries.
-8. Only conversation + memory grow monotonically and both are low-volume; runs
-   self-clean.
+8. Only conversation + memory grow monotonically and both are low-volume; runs follow a
+   retention state machine (`hot → cold-archived → summarized-only → deleted`).
 9. All agent state is single-writer jsonl event logs; **it never touches Loro**. Loro is
    the user-owned outline document the agent reads/writes as environment.
 10. Speaker attribution is stored **once** as each message's `actor`; the POV-flattened
@@ -477,8 +529,15 @@ agent.skills[]          ──▶ skills/ file tree
     stay plain content.
 11. Token usage + cost is **execution** data: per assistant message in the run log,
     aggregated on `RunMeta.usage`; the conversation log keeps only a lightweight per-turn
-    total on the final reply. Raw wire payloads are reconstructable from the log, not
-    archived verbatim.
+    total on the final reply. Wire payloads are replayable within a version boundary
+    (`RunMeta.fingerprint`), not archived verbatim.
+12. Memory is written by a **runtime-owned append surface** (event-sourced), never generic
+    `file_write` — append-only (no lost-update), schema-checked, prompt-free.
+13. Memory retrieval is **global by default** with per-agent opt-in isolation tiers;
+    `originWorkspace` is on every entry; a `MemoryEntry` whose source branch is
+    discarded/undone is **invalidated**, not silently kept.
+14. `meta.json` is a **projection** of membership/rename events (the event log is the
+    authority); `cursors` are per-principal UI state, outside the objective record.
 
 ### Real today vs build
 
@@ -492,9 +551,14 @@ agent.skills[]          ──▶ skills/ file tree
   the segment / index physical layout; the distillation-ladder consumers + the two-step
   recall; mixed-resolution assembly (joining the run log).
 - **PM-ratified (2026-06-05):** canonical DM + user-creatable Channels; split-now +
-  mixed-resolution; memory = one global pool, pure-relevance retrieval; memory writes via
-  the privileged `agent-memory/` path. (Full rationale in [[agent-conversation-model]]
-  Open questions.)
+  mixed-resolution; memory retrieval = global pool, pure relevance.
+- **PM-ratified (2026-06-06, after the codex + gemini design review):** memory writes via a
+  **runtime-owned append surface** (event-sourced), *not* the privileged `file_write` path —
+  reversed because the file tools are realpath-jailed to `workspace.root`
+  (`agentLocalTools.ts:2207`, can't reach `userData/agent-memory`) and whole-file rewrite
+  risks lost-update; plus an **opt-in isolation tier** (`isolated` / `read-only-global`)
+  over the global default, with `originWorkspace` recorded. (Rationale in
+  [[agent-conversation-model]] §Memory model.)
 
 ## Protocol-surface coordination (A4 / A7)
 
@@ -502,14 +566,21 @@ These `src/core/*` additions are the [[agent-program]] **F6 consolidated change 
 they land **interface-first** before consumers build on them:
 
 - `actor` on `AgentEventMessageRecord` (`agentEventLog.ts`; backward-compatible).
-- `Principal` type + conversation `members` + `cursors`; `RunMeta` (mandatory
-  `conversationId` anchor + `trigger` provenance); **no stored `kind`** (`types.ts`).
+- `Principal` type + conversation `members` (`meta.json` = projection of membership events);
+  `cursors` as a **separate** per-principal store; `RunMeta` (mandatory `conversationId`
+  anchor + `trigger` provenance); **no stored `kind`** (`types.ts`).
+- `agentId` = stable tuple `${sourceKind}:${sourceInstanceId}:${name}` (project instance =
+  workspace/root hash), so global-pool memory doesn't collide across projects.
 - `MessageEvent.role` narrowed to `user | assistant`; `tool_result` events move to the
-  run-log vocabulary.
+  run-log vocabulary; canonical `tool.permission.*` names pinned in the program M0 taxonomy.
+- `MessageEvent.forwarded` (combined-forward provenance; `actor` stays the native speaker).
 - `DistillationNode.source` (explicit both-ends range) + `MemoryEntry.sources`
-  down-pointer.
-- `RunMeta.usage` aggregate (run-level token + cost rollup; `AgentRunRecord` has none
-  today) + a lightweight per-turn usage total on the conversation log's final reply.
+  down-pointer (incl. `runId`/`eventId` for invalidation).
+- `MemoryEntry` shape: event-sourced (`memory.entry_added/updated/removed`), `originWorkspace`
+  + isolation tier (D2), `status: active|invalidated` (D1/gemini undo-invalidation); written
+  via the runtime memory-append API, **not** `file_write`.
+- `RunMeta.usage` aggregate + per-turn total on the final reply; `RunMeta.fingerprint`
+  (`appVersion` + prompt/tool-schema/skill/model hashes) + `retention` state.
 
 ## Open questions
 
@@ -526,5 +597,9 @@ These are data-model-local; the experience/sequencing OQs live in
   large (the worst cache combination). Keep it in the volatile tail, or cache a snapshot
   prefix + send only the Loro delta? Decide when the memory-prefix lands (same
   volatility-ordering machinery).
-- **Run-log retention policy** — when exactly a run log is cold-archived vs dropped after
-  distillation (tie to the compaction trigger).
+- **Run-log retention thresholds** — the state machine is fixed (§10); open is the *trigger
+  policy* for each transition (age / count / distilled-yet? / disk pressure), tied to the
+  compaction trigger.
+- **Memory write-API surface** — the exact shape of the runtime memory-append primitive
+  (a tool the model calls vs a host-side callback the extraction path drives), and how the
+  isolation tier is configured per agent (D2). Pin when memory v1 lands.
