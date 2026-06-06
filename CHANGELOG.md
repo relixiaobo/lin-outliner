@@ -1358,6 +1358,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Agent M0 F2a run-log join read seam (PR #149)** — replay now exposes two named read seams over the
+  still-flat session log: `getAgentEventConversationPath()` returns communication only (user messages +
+  final assistant replies, excluding run-scoped execution — tool-result messages and assistant turns whose
+  completed content is a tool call / `stopReason: 'toolUse'`), while `getAgentEventRuntimeTranscriptPath()`
+  returns the joined pi-agent-core transcript (today ≡ the active parent-linked path). The runtime
+  transcript builder (`agentRuntime.ts`) and `deriveAgentPiMessages` route through the runtime seam — a
+  behavioral no-op now, but the future physical `conversation`/`run` split can replace it without touching
+  consumers. Runtime-emitted `tool_result.created`/`replaced` events now carry `runId` (the run-log join
+  key); legacy flat events infer run ownership from the parent assistant message during replay. The
+  conversation-path consumer is not wired into the renderer yet (the seam lands first), so the
+  communication/execution distinction is currently latent. Gate: typecheck clean + `test:core` 611/0 (new
+  run-ownership-inference + seam-split tests) + spec updated (`agent-event-log-rendering.md`).
+  ([#149](https://github.com/relixiaobo/lin-outliner/pull/149))
+
 - **Agent M0 data-model protocol types landed (interface-first, replay-neutral) (PR #147)** — the target
   conversation/run/memory contracts from `docs/plans/agent-data-model.md` are now declared in
   `src/core/agentEventLog.ts`: `AgentPrincipal`/`AgentId` (template-literal `sourceKind:instance:name`

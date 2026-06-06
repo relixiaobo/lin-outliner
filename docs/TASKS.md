@@ -70,7 +70,11 @@ protocol types landed interface-first (#147)** — `AgentConversationEvent`/`Age
 `AgentMemoryEvent` unions + `AgentRunMeta`/`AgentIdentityRecord`/`AgentMemoryEntry` declared in
 `agentEventLog.ts`, the flat session log gained `user_question.*`/`widget_state.updated`
 (replay-neutral) + optional `actor`, all spec-aligned and replay-neutral (typecheck + `test:core`
-610/0). Remaining M0 work wires consumers onto these contracts. Remaining needs-PM decisions are
+610/0). **F2a read seam landed next (#149):** replay exposes `getAgentEventConversationPath()`
+(communication only) vs `getAgentEventRuntimeTranscriptPath()` (joined pi-agent-core transcript ≡
+active path today), and `tool_result.created/replaced` gained a `runId` join key (legacy events infer
+it from the parent assistant). Behaviorally a no-op until the renderer adopts the conversation seam;
+remaining M0 work wires consumers onto these contracts. Remaining needs-PM decisions are
 lower-priority (doc snapshot+delta, group default-`addressedTo` (M3), who-configures-whom (M3)).
 Escalate before behavior-changing code.
 
