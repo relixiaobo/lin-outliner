@@ -369,9 +369,9 @@ userData/agent/
   # outline document → Loro store (separate substrate, user-owned)
 ```
 
-Today's flat `sessions/<id>/` (which conflates messages + execution in one stream) is
-re-keyed into `conversations/<id>` (communication) **+** `runs/<id>` (execution) **+**
-`agents/<id>/memory` (the new memory line).
+M0 re-keys the old flat `sessions/<id>/` model into `conversations/<id>`
+(communication) **+** `runs/<id>` (execution) **+** `agents/<id>/memory`
+(the reserved memory line).
 
 ### 6. Three kinds of time (don't conflate)
 

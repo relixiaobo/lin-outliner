@@ -277,16 +277,17 @@ query, and the command node stays clean across N occurrences.
 ## History (conversation + run, post-F2)
 
 Run transcripts live in the **existing event-store infrastructure** (no new sidecar).
-Under today's flat layout that is `sessions/<sessionId>/`; **after the program's F2 split
-this re-keys to `conversations/<id>` (the delivery thread) + `runs/<id>` (each fire's
-execution)** — see [[agent-data-model]]. This plan is sequenced at **M2**, on top of that
-split, so it is written against the conversation/run model, not `session`.
+M0 stores the delivery thread under `conversations/<id>` and each execution under
+`runs/<id>` — see [[agent-data-model]]. This plan is sequenced at **M2**, on top of that
+split, so it is written against the conversation/run model, not the old flat
+`session` directory.
 
 ```
-${userData}/agent/                                          # today (pre-F2)  →  after F2
-  sessions/<sessionId>/        ← per-session event log       →  conversations/<id>/ + runs/<id>/
-  indexes/SESSION_INDEX_FILE   ← session list                →  conversation list
-  indexes/SEARCH_INDEX_FILE    ← full-text recall index       →  unchanged
+${userData}/agent/
+  conversations/<id>/       # delivery conversation
+  runs/<id>/                # one execution log per fire
+  indexes/session-index.json
+  indexes/search-index.json
 ```
 
 Code: `src/main/agentEventStore.ts`, rooted at `${userData}/agent/` (see

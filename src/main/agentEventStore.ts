@@ -1,14 +1,25 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, readdir, appendFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, appendFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type {
+  Usage,
+} from '../core/agentTypes';
+import type {
+  AgentConversationMeta,
   AgentEvent,
   AgentEventMessageRole,
+  AgentPrincipal,
   AgentEventReplayState,
   AgentPersistedContent,
   AgentPayloadDisplayMetadata,
   AgentPayloadRef,
   AgentPayloadRole,
+  AgentRunFingerprint,
+  AgentRunKind,
+  AgentRunRetention,
+  AgentRunStatus,
+  AgentIdentityRecord,
+  AgentRunTrigger,
 } from '../core/agentEventLog';
 import { appendAgentEventToReplayState, replayAgentEvents } from '../core/agentEventLog';
 import {
@@ -17,14 +28,16 @@ import {
   textSearchTextMatchesQuery,
 } from '../core/textSearchAnalyzer';
 
-const EVENT_LOG_FILE = 'events.jsonl';
+const CONVERSATION_SEGMENT_FILE = '000001.jsonl';
+const RUN_EVENT_LOG_FILE = 'events.jsonl';
+const RUN_META_FILE = 'meta.json';
+const AGENT_IDENTITY_FILE = 'identity.json';
 const SESSION_INDEX_FILE = 'session-index.json';
 const SEARCH_INDEX_FILE = 'search-index.json';
 const CHECKPOINT_VERSION = 2;
 const SEARCH_INDEX_VERSION = 1;
 const DEFAULT_CHECKPOINT_EVENT_INTERVAL = 100;
 const MAX_CHECKPOINTS_PER_SESSION = 3;
-const READ_TAIL_CHUNK_SIZE = 64 * 1024;
 const MAX_SEARCH_INDEX_TEXT_CHARS = 20_000;
 const SEARCH_INDEX_PREVIEW_CHARS = 240;
 
@@ -33,6 +46,7 @@ export interface AgentPayloadWriteInput {
   data: Buffer | Uint8Array | string;
   encoding?: BufferEncoding;
   mimeType: string;
+  runId?: string;
   role?: AgentPayloadRole;
   summary?: string;
   truncated?: boolean;
@@ -41,12 +55,50 @@ export interface AgentPayloadWriteInput {
 
 export interface AgentEventStorePaths {
   rootDir: string;
-  sessionsDir: string;
   indexesDir: string;
-  sessionDir: string;
-  eventsPath: string;
-  payloadsDir: string;
+  agentsDir: string;
+  conversationsDir: string;
+  conversationDir: string;
+  conversationMetaPath: string;
+  conversationCursorsPath: string;
+  conversationSegmentsDir: string;
+  conversationEventsPath: string;
+  conversationPayloadsDir: string;
   checkpointsDir: string;
+  runsDir: string;
+}
+
+export interface AgentRunEventStorePaths {
+  rootDir: string;
+  runsDir: string;
+  runDir: string;
+  runMetaPath: string;
+  runEventsPath: string;
+  payloadsDir: string;
+}
+
+export interface AgentRunMetaProjection {
+  v: 1;
+  id: string;
+  agentId: string;
+  conversationId: string;
+  parentRunId?: string;
+  kind: AgentRunKind;
+  status: AgentRunStatus;
+  trigger: AgentRunTrigger;
+  usage?: Usage;
+  fingerprint: AgentRunFingerprint;
+  retention: AgentRunRetention;
+  createdAt: number;
+  updatedAt: number;
+  latestSeq: number;
+}
+
+export interface AgentConversationMetaProjection extends AgentConversationMeta {
+  v: 1;
+  title: string | null;
+  updatedAt: number;
+  latestSeq: number;
 }
 
 export interface AgentEventSessionIndexEntry {
@@ -63,7 +115,6 @@ export interface AgentEventCheckpoint {
   sessionId: string;
   seq: number;
   latestEventId: string | null;
-  eventFileByteOffset: number;
   createdAt: number;
   state: AgentEventReplayState;
 }
@@ -71,7 +122,6 @@ export interface AgentEventCheckpoint {
 interface AgentEventFileTail {
   seq: number;
   eventId: string | null;
-  byteOffset: number;
 }
 
 export interface AgentEventSearchIndexEntry {
@@ -109,16 +159,44 @@ export class AgentEventStore {
   constructor(private readonly rootDir: string) {}
 
   paths(sessionId: string): AgentEventStorePaths {
-    const sessionsDir = path.join(this.rootDir, 'sessions');
-    const sessionDir = path.join(sessionsDir, agentSessionDirName(sessionId));
+    const conversationsDir = path.join(this.rootDir, 'conversations');
+    const conversationDir = path.join(conversationsDir, agentSessionDirName(sessionId));
+    const conversationSegmentsDir = path.join(conversationDir, 'segments');
     return {
       rootDir: this.rootDir,
-      sessionsDir,
       indexesDir: path.join(this.rootDir, 'indexes'),
-      sessionDir,
-      eventsPath: path.join(sessionDir, EVENT_LOG_FILE),
-      payloadsDir: path.join(sessionDir, 'payloads'),
-      checkpointsDir: path.join(sessionDir, 'checkpoints'),
+      agentsDir: path.join(this.rootDir, 'agents'),
+      conversationsDir,
+      conversationDir,
+      conversationMetaPath: path.join(conversationDir, 'meta.json'),
+      conversationCursorsPath: path.join(conversationDir, 'cursors.json'),
+      conversationSegmentsDir,
+      conversationEventsPath: path.join(conversationSegmentsDir, CONVERSATION_SEGMENT_FILE),
+      conversationPayloadsDir: path.join(conversationDir, 'payloads'),
+      checkpointsDir: path.join(conversationDir, 'checkpoints'),
+      runsDir: path.join(this.rootDir, 'runs'),
+    };
+  }
+
+  runPaths(runId: string): AgentRunEventStorePaths {
+    const runsDir = path.join(this.rootDir, 'runs');
+    const runDir = path.join(runsDir, agentRunDirName(runId));
+    return {
+      rootDir: this.rootDir,
+      runsDir,
+      runDir,
+      runMetaPath: path.join(runDir, RUN_META_FILE),
+      runEventsPath: path.join(runDir, RUN_EVENT_LOG_FILE),
+      payloadsDir: path.join(runDir, 'payloads'),
+    };
+  }
+
+  agentPaths(agentId: string): { agentDir: string; identityPath: string; memoryEventsPath: string } {
+    const agentDir = path.join(this.rootDir, 'agents', agentIdentityDirName(agentId));
+    return {
+      agentDir,
+      identityPath: path.join(agentDir, AGENT_IDENTITY_FILE),
+      memoryEventsPath: path.join(agentDir, 'memory', RUN_EVENT_LOG_FILE),
     };
   }
 
@@ -132,9 +210,7 @@ export class AgentEventStore {
         throw new Error(`Agent event seq ${firstSeq} is not after existing seq ${latestSeq}`);
       }
 
-      const paths = this.paths(sessionId);
-      await mkdir(paths.sessionDir, { recursive: true });
-      await appendFile(paths.eventsPath, `${events.map((event) => JSON.stringify(event)).join('\n')}\n`, 'utf8');
+      await this.appendSplitEvents(sessionId, events);
       this.lastSeqBySessionId.set(sessionId, events.at(-1)!.seq);
       // Streaming assistant deltas carry no index content: the session/search
       // indexes derive assistant text from assistant_message.completed, and a
@@ -151,16 +227,12 @@ export class AgentEventStore {
   }
 
   async readEvents(sessionId: string): Promise<AgentEvent[]> {
-    const eventsPath = this.paths(sessionId).eventsPath;
-    let raw = '';
-    try {
-      raw = await readFile(eventsPath, 'utf8');
-    } catch (error) {
-      if (isNotFoundError(error)) return [];
-      throw error;
-    }
-
-    return parseEventsJsonl(raw, eventsPath);
+    const paths = this.paths(sessionId);
+    const events = [
+      ...await readEventsJsonlIfExists(paths.conversationEventsPath),
+      ...await this.readRunEventsForSession(sessionId),
+    ];
+    return events.sort(compareAgentEventsForReplay);
   }
 
   async replay(sessionId: string): Promise<AgentEventReplayState> {
@@ -174,16 +246,15 @@ export class AgentEventStore {
     return this.enqueueSessionWrite(sessionId, async () => {
       const tail = await this.readEventFileTail(sessionId);
       if (tail.seq !== state.latestSeq || tail.eventId !== state.latestEventId) return null;
-      const paths = this.paths(sessionId);
       const checkpoint: AgentEventCheckpoint = {
         v: CHECKPOINT_VERSION,
         sessionId,
         seq: state.latestSeq,
         latestEventId: state.latestEventId,
-        eventFileByteOffset: tail.byteOffset,
         createdAt: Date.now(),
         state: cloneReplayState(state),
       };
+      const paths = this.paths(sessionId);
       await mkdir(paths.checkpointsDir, { recursive: true });
       await atomicWriteFile(this.checkpointPath(sessionId, checkpoint.seq), `${JSON.stringify(checkpoint)}\n`);
       await this.pruneCheckpoints(sessionId).catch(() => undefined);
@@ -214,14 +285,17 @@ export class AgentEventStore {
       mimeType: input.mimeType,
       byteLength: bytes.byteLength,
       sha256: createHash('sha256').update(bytes).digest('hex'),
+      scope: input.runId
+        ? { type: 'run', conversationId: sessionId, runId: input.runId }
+        : { type: 'conversation', conversationId: sessionId },
       role: input.role,
       summary: input.summary,
       truncated: input.truncated,
       display: input.display,
     };
 
-    const paths = this.paths(sessionId);
-    await mkdir(paths.payloadsDir, { recursive: true });
+    const payloadDir = input.runId ? this.runPaths(input.runId).payloadsDir : this.paths(sessionId).conversationPayloadsDir;
+    await mkdir(payloadDir, { recursive: true });
     await writeFile(this.payloadPath(sessionId, payload), bytes);
     return payload;
   }
@@ -230,12 +304,22 @@ export class AgentEventStore {
     return readFile(this.payloadPath(sessionId, payload));
   }
 
-  payloadPath(sessionId: string, payload: Pick<AgentPayloadRef, 'id' | 'mimeType'>): string {
-    return path.join(this.paths(sessionId).payloadsDir, agentPayloadFileName(payload.id, payload.mimeType));
+  payloadPath(
+    sessionId: string,
+    payload: Pick<AgentPayloadRef, 'id' | 'mimeType'> & Partial<Pick<AgentPayloadRef, 'scope'>>,
+  ): string {
+    const scope = payload.scope;
+    const payloadDir = scope?.type === 'run'
+      ? this.runPaths(scope.runId).payloadsDir
+      : this.paths(sessionId).conversationPayloadsDir;
+    return path.join(payloadDir, agentPayloadFileName(payload.id, payload.mimeType));
   }
 
   async deleteSession(sessionId: string): Promise<void> {
-    await rm(this.paths(sessionId).sessionDir, { recursive: true, force: true });
+    await rm(this.paths(sessionId).conversationDir, { recursive: true, force: true });
+    await Promise.all((await this.listRunIdsForSession(sessionId)).map((runId) => (
+      rm(this.runPaths(runId).runDir, { recursive: true, force: true })
+    )));
     this.lastSeqBySessionId.delete(sessionId);
     this.writeQueues.delete(sessionId);
     await this.removeSessionFromIndex(sessionId);
@@ -243,9 +327,8 @@ export class AgentEventStore {
   }
 
   async listSessionIds(): Promise<string[]> {
-    const sessionsDir = path.join(this.rootDir, 'sessions');
     try {
-      const entries = await readdir(sessionsDir, { withFileTypes: true });
+      const entries = await readdir(this.paths('__placeholder__').conversationsDir, { withFileTypes: true });
       return entries.filter((entry) => entry.isDirectory()).map((entry) => decodeAgentSessionDirName(entry.name));
     } catch (error) {
       if (isNotFoundError(error)) return [];
@@ -300,14 +383,28 @@ export class AgentEventStore {
     return path.join(this.paths(sessionId).checkpointsDir, agentCheckpointFileName(seq));
   }
 
+  async writeAgentIdentity(identity: AgentIdentityRecord): Promise<void> {
+    const paths = this.agentPaths(identity.agentId);
+    await mkdir(paths.agentDir, { recursive: true });
+    await atomicWriteFile(paths.identityPath, `${JSON.stringify({ v: 1, ...identity })}\n`);
+  }
+
+  async readAgentIdentity(agentId: string): Promise<AgentIdentityRecord | null> {
+    const paths = this.agentPaths(agentId);
+    try {
+      const raw = await readFile(paths.identityPath, 'utf8');
+      return normalizeAgentIdentity(JSON.parse(raw));
+    } catch (error) {
+      if (isNotFoundError(error)) return null;
+      throw error;
+    }
+  }
+
   private async replayFromCheckpoint(sessionId: string): Promise<AgentEventReplayState | null> {
     const checkpoint = await this.readLatestCheckpoint(sessionId);
     if (!checkpoint) return null;
     try {
-      const eventStats = await stat(this.paths(sessionId).eventsPath);
-      if (checkpoint.eventFileByteOffset > eventStats.size) return null;
-      const tailRaw = await readUtf8FileFromOffset(this.paths(sessionId).eventsPath, checkpoint.eventFileByteOffset);
-      const tailEvents = parseEventsJsonl(tailRaw, `${this.paths(sessionId).eventsPath}@${checkpoint.eventFileByteOffset}`);
+      const tailEvents = (await this.readEvents(sessionId)).filter((event) => event.seq > checkpoint.seq);
       const state = cloneReplayState(checkpoint.state);
       for (const event of tailEvents) {
         appendAgentEventToReplayState(state, event);
@@ -354,21 +451,141 @@ export class AgentEventStore {
   }
 
   private async readEventFileTail(sessionId: string): Promise<AgentEventFileTail> {
-    const eventsPath = this.paths(sessionId).eventsPath;
+    const latest = (await this.readEvents(sessionId)).at(-1);
+    return {
+      seq: latest?.seq ?? 0,
+      eventId: latest?.eventId ?? null,
+    };
+  }
+
+  private async appendSplitEvents(sessionId: string, events: readonly AgentEvent[]): Promise<void> {
+    const paths = this.paths(sessionId);
+    const conversationEvents: AgentEvent[] = [];
+    const runEvents = new Map<string, AgentEvent[]>();
+
+    for (const event of events) {
+      const runId = agentRunIdForEvent(event);
+      if (runId && isRunLogEvent(event)) {
+        const group = runEvents.get(runId) ?? [];
+        group.push(event);
+        runEvents.set(runId, group);
+      } else {
+        conversationEvents.push(event);
+      }
+    }
+
+    if (conversationEvents.length > 0) {
+      await mkdir(paths.conversationSegmentsDir, { recursive: true });
+      await appendFile(paths.conversationEventsPath, serializeEventsJsonl(conversationEvents), 'utf8');
+    } else {
+      await mkdir(paths.conversationDir, { recursive: true });
+    }
+
+    for (const [runId, group] of runEvents) {
+      const runPaths = this.runPaths(runId);
+      await mkdir(runPaths.runDir, { recursive: true });
+      await appendFile(runPaths.runEventsPath, serializeEventsJsonl(group), 'utf8');
+      await this.updateRunMeta(sessionId, runId, group);
+    }
+
+    await this.updateConversationMeta(sessionId, events);
+  }
+
+  private async readRunEventsForSession(sessionId: string): Promise<AgentEvent[]> {
+    const events: AgentEvent[] = [];
+    for (const runId of await this.listRunIdsForSession(sessionId)) {
+      events.push(...await readEventsJsonlIfExists(this.runPaths(runId).runEventsPath));
+    }
+    return events;
+  }
+
+  private async listRunIdsForSession(sessionId: string): Promise<string[]> {
+    const runsDir = this.paths(sessionId).runsDir;
+    let entries: Array<{ name: string; isDirectory(): boolean }> = [];
     try {
-      const [eventStats, lastLine] = await Promise.all([
-        stat(eventsPath),
-        readLastNonEmptyLine(eventsPath),
-      ]);
-      if (!lastLine) return { seq: 0, eventId: null, byteOffset: eventStats.size };
-      const parsed = JSON.parse(lastLine) as Partial<AgentEvent>;
-      return {
-        seq: typeof parsed.seq === 'number' && Number.isSafeInteger(parsed.seq) ? parsed.seq : 0,
-        eventId: typeof parsed.eventId === 'string' ? parsed.eventId : null,
-        byteOffset: eventStats.size,
-      };
+      entries = await readdir(runsDir, { withFileTypes: true });
     } catch (error) {
-      if (isNotFoundError(error)) return { seq: 0, eventId: null, byteOffset: 0 };
+      if (isNotFoundError(error)) return [];
+      throw error;
+    }
+
+    const ids: string[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const runId = decodeAgentRunDirName(entry.name);
+      const meta = await this.readRunMeta(runId);
+      if (meta?.conversationId === sessionId) ids.push(runId);
+    }
+    return ids;
+  }
+
+  private async readRunMeta(runId: string): Promise<AgentRunMetaProjection | null> {
+    try {
+      const raw = await readFile(this.runPaths(runId).runMetaPath, 'utf8');
+      return normalizeRunMeta(JSON.parse(raw));
+    } catch (error) {
+      if (isNotFoundError(error)) return null;
+      if (error instanceof SyntaxError) return null;
+      throw error;
+    }
+  }
+
+  private async updateRunMeta(sessionId: string, runId: string, events: readonly AgentEvent[]) {
+    const existing = await this.readRunMeta(runId);
+    const latest = events.at(-1);
+    if (!latest) return;
+    const terminal = [...events].reverse().find(isRunTerminalEvent);
+    const started = events.find((event) => event.type === 'run.started');
+    const meta: AgentRunMetaProjection = {
+      v: 1,
+      id: runId,
+      agentId: existing?.agentId ?? (started?.type === 'run.started' ? started.agentId : undefined) ?? agentIdFromEvents(events) ?? 'built-in:tenon:assistant',
+      conversationId: sessionId,
+      parentRunId: existing?.parentRunId,
+      kind: existing?.kind ?? (started?.type === 'run.started' ? started.kind : undefined) ?? 'turn',
+      status: terminal ? runStatusFromTerminalEvent(terminal) : existing?.status ?? 'running',
+      trigger: existing?.trigger ?? (started?.type === 'run.started' ? started.trigger : undefined) ?? { type: 'manual' },
+      usage: terminal?.type === 'run.completed' ? terminal.usage : existing?.usage,
+      fingerprint: existing?.fingerprint ?? (started?.type === 'run.started' ? started.fingerprint : undefined) ?? emptyRunFingerprint(),
+      retention: existing?.retention ?? (started?.type === 'run.started' ? started.retention : undefined) ?? 'hot',
+      createdAt: existing?.createdAt ?? started?.createdAt ?? events[0]!.createdAt,
+      updatedAt: latest.createdAt,
+      latestSeq: latest.seq,
+    };
+    const runPaths = this.runPaths(runId);
+    await mkdir(runPaths.runDir, { recursive: true });
+    await atomicWriteFile(runPaths.runMetaPath, `${JSON.stringify(meta)}\n`);
+  }
+
+  private async updateConversationMeta(sessionId: string, events: readonly AgentEvent[]) {
+    const paths = this.paths(sessionId);
+    const existing = await this.readConversationMeta(sessionId);
+    const created = events.find((event) => event.type === 'session.created');
+    const renamed = [...events].reverse().find((event) => event.type === 'session.renamed');
+    const latest = events.at(-1);
+    if (!created && !renamed && !latest) return;
+    const members = mergePrincipals(existing?.members ?? [], events.flatMap(principalsFromEvent));
+    const meta: AgentConversationMetaProjection = {
+      v: 1,
+      id: sessionId,
+      members,
+      createdAt: existing?.createdAt ?? created?.createdAt ?? latest!.createdAt,
+      title: renamed?.title ?? created?.title ?? existing?.title ?? null,
+      name: renamed?.title ?? created?.title ?? existing?.name,
+      updatedAt: Math.max(existing?.updatedAt ?? 0, latest?.createdAt ?? 0),
+      latestSeq: Math.max(existing?.latestSeq ?? 0, latest?.seq ?? 0),
+    };
+    await mkdir(paths.conversationDir, { recursive: true });
+    await atomicWriteFile(paths.conversationMetaPath, `${JSON.stringify(meta)}\n`);
+  }
+
+  private async readConversationMeta(sessionId: string): Promise<AgentConversationMetaProjection | null> {
+    try {
+      const raw = await readFile(this.paths(sessionId).conversationMetaPath, 'utf8');
+      return normalizeConversationMeta(JSON.parse(raw));
+    } catch (error) {
+      if (isNotFoundError(error)) return null;
+      if (error instanceof SyntaxError) return null;
       throw error;
     }
   }
@@ -835,12 +1052,211 @@ function clampSearchLimit(limit: number | undefined): number {
   return Math.max(1, Math.min(200, Math.trunc(limit)));
 }
 
+function serializeEventsJsonl(events: readonly AgentEvent[]): string {
+  return `${events.map((event) => JSON.stringify(event)).join('\n')}\n`;
+}
+
+async function readEventsJsonlIfExists(filePath: string): Promise<AgentEvent[]> {
+  try {
+    return parseEventsJsonl(await readFile(filePath, 'utf8'), filePath);
+  } catch (error) {
+    if (isNotFoundError(error)) return [];
+    throw error;
+  }
+}
+
+function compareAgentEventsForReplay(left: AgentEvent, right: AgentEvent): number {
+  return left.seq - right.seq || left.createdAt - right.createdAt || left.eventId.localeCompare(right.eventId);
+}
+
+function agentRunIdForEvent(event: AgentEvent): string | null {
+  return typeof event.runId === 'string' && event.runId.length > 0 ? event.runId : null;
+}
+
+function isRunLogEvent(event: AgentEvent): boolean {
+  switch (event.type) {
+    case 'run.started':
+    case 'run.completed':
+    case 'run.failed':
+    case 'run.cancelled':
+    case 'assistant_message.started':
+    case 'assistant_message.delta':
+    case 'assistant_message.completed':
+    case 'assistant_message.failed':
+    case 'thinking.delta':
+    case 'tool_call.started':
+    case 'tool_call.delta':
+    case 'tool_call.completed':
+    case 'tool_call.failed':
+    case 'tool_result.created':
+    case 'tool_result.replaced':
+    case 'tool.permission.checked':
+    case 'tool.permission.resolved':
+    case 'approval.requested':
+    case 'approval.resolved':
+    case 'user_question.requested':
+    case 'user_question.answered':
+    case 'user_question.cancelled':
+    case 'widget_state.updated':
+    case 'debug.snapshot.created':
+    case 'subagent_run.started':
+    case 'subagent_run.updated':
+    case 'metric.recorded':
+      return true;
+    case 'payload.created':
+    case 'payload.derived':
+      return agentRunIdForEvent(event) !== null;
+    default:
+      return false;
+  }
+}
+
+function isRunTerminalEvent(event: AgentEvent): event is Extract<AgentEvent, { type: 'run.completed' | 'run.failed' | 'run.cancelled' }> {
+  return event.type === 'run.completed' || event.type === 'run.failed' || event.type === 'run.cancelled';
+}
+
+function runStatusFromTerminalEvent(event: Extract<AgentEvent, { type: 'run.completed' | 'run.failed' | 'run.cancelled' }>): AgentRunStatus {
+  if (event.type === 'run.completed') return 'completed';
+  if (event.type === 'run.failed') return 'failed';
+  return 'cancelled';
+}
+
+function agentIdFromEvents(events: readonly AgentEvent[]): string | null {
+  for (const event of events) {
+    if (event.actor.type === 'agent') return event.actor.agentId;
+  }
+  return null;
+}
+
+function principalsFromEvent(event: AgentEvent): AgentPrincipal[] {
+  if (event.actor.type === 'user') return [{ type: 'user', userId: event.actor.userId }];
+  if (event.actor.type === 'agent') return [{ type: 'agent', agentId: event.actor.agentId }];
+  return [];
+}
+
+function mergePrincipals(current: readonly AgentPrincipal[], next: readonly AgentPrincipal[]): AgentPrincipal[] {
+  const byKey = new Map<string, AgentPrincipal>();
+  for (const principal of [...current, ...next]) byKey.set(principalKey(principal), principal);
+  return [...byKey.values()].sort((left, right) => principalKey(left).localeCompare(principalKey(right)));
+}
+
+function principalKey(principal: AgentPrincipal): string {
+  return principal.type === 'user' ? `user:${principal.userId}` : `agent:${principal.agentId}`;
+}
+
+function emptyRunFingerprint(): AgentRunFingerprint {
+  return {
+    appVersion: 'unknown',
+    promptHash: 'unknown',
+    toolSchemaHash: 'unknown',
+    skillBindings: [],
+    modelConfig: 'unknown',
+  };
+}
+
+function normalizeRunMeta(value: unknown): AgentRunMetaProjection | null {
+  if (!isRecord(value) || value.v !== 1) return null;
+  if (typeof value.id !== 'string' || typeof value.conversationId !== 'string') return null;
+  if (typeof value.agentId !== 'string') return null;
+  if (!isAgentRunStatus(value.status) || !isAgentRunRetention(value.retention)) return null;
+  if (!isRecord(value.trigger) || typeof value.trigger.type !== 'string') return null;
+  if (!isRecord(value.fingerprint)) return null;
+  const createdAt = numberOrNull(value.createdAt);
+  const updatedAt = numberOrNull(value.updatedAt);
+  const latestSeq = numberOrNull(value.latestSeq);
+  if (createdAt === null || updatedAt === null || latestSeq === null) return null;
+  return {
+    v: 1,
+    id: value.id,
+    agentId: value.agentId,
+    conversationId: value.conversationId,
+    parentRunId: typeof value.parentRunId === 'string' ? value.parentRunId : undefined,
+    kind: isAgentRunKind(value.kind) ? value.kind : 'turn',
+    status: value.status,
+    trigger: value.trigger as AgentRunTrigger,
+    usage: isRecord(value.usage) ? value.usage as unknown as Usage : undefined,
+    fingerprint: value.fingerprint as unknown as AgentRunFingerprint,
+    retention: value.retention,
+    createdAt,
+    updatedAt,
+    latestSeq,
+  };
+}
+
+function normalizeConversationMeta(value: unknown): AgentConversationMetaProjection | null {
+  if (!isRecord(value) || value.v !== 1 || typeof value.id !== 'string') return null;
+  const createdAt = numberOrNull(value.createdAt);
+  const updatedAt = numberOrNull(value.updatedAt);
+  const latestSeq = numberOrNull(value.latestSeq);
+  if (createdAt === null || updatedAt === null || latestSeq === null) return null;
+  return {
+    v: 1,
+    id: value.id,
+    members: Array.isArray(value.members) ? value.members.filter(isAgentPrincipal) : [],
+    goal: typeof value.goal === 'string' ? value.goal : undefined,
+    name: typeof value.name === 'string' ? value.name : undefined,
+    createdAt,
+    title: typeof value.title === 'string' || value.title === null ? value.title : null,
+    updatedAt,
+    latestSeq,
+  };
+}
+
+function normalizeAgentIdentity(value: unknown): AgentIdentityRecord | null {
+  if (!isRecord(value) || typeof value.agentId !== 'string') return null;
+  if (typeof value.displayName !== 'string' || typeof value.model !== 'string') return null;
+  if (typeof value.systemPrompt !== 'string' || !Array.isArray(value.skills)) return null;
+  return {
+    agentId: value.agentId as AgentIdentityRecord['agentId'],
+    displayName: value.displayName,
+    model: value.model,
+    effort: typeof value.effort === 'string' ? value.effort : undefined,
+    systemPrompt: value.systemPrompt,
+    skills: value.skills.filter((skill): skill is string => typeof skill === 'string'),
+  };
+}
+
+function isAgentPrincipal(value: unknown): value is AgentPrincipal {
+  if (!isRecord(value)) return false;
+  if (value.type === 'user') return typeof value.userId === 'string';
+  if (value.type === 'agent') return typeof value.agentId === 'string';
+  return false;
+}
+
+function isAgentRunKind(value: unknown): value is AgentRunKind {
+  return value === 'turn' || value === 'background' || value === 'subagent' || value === 'scheduled';
+}
+
+function isAgentRunStatus(value: unknown): value is AgentRunStatus {
+  return value === 'running' || value === 'completed' || value === 'failed' || value === 'cancelled';
+}
+
+function isAgentRunRetention(value: unknown): value is AgentRunRetention {
+  return value === 'hot' || value === 'cold-archived' || value === 'summarized-only' || value === 'deleted';
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 export function agentSessionDirName(sessionId: string): string {
   return encodeURIComponent(sessionId).replace(/\./g, '%2E');
 }
 
 export function decodeAgentSessionDirName(dirName: string): string {
   return decodeURIComponent(dirName);
+}
+
+export function agentRunDirName(runId: string): string {
+  return encodeURIComponent(runId).replace(/\./g, '%2E');
+}
+
+export function decodeAgentRunDirName(dirName: string): string {
+  return decodeURIComponent(dirName);
+}
+
+export function agentIdentityDirName(agentId: string): string {
+  return encodeURIComponent(agentId).replace(/\./g, '%2E');
 }
 
 export function agentPayloadFileName(payloadId: string, mimeType: string): string {
@@ -883,52 +1299,6 @@ function payloadExtension(mimeType: string): string {
   return '.bin';
 }
 
-async function readLastNonEmptyLine(filePath: string): Promise<string | null> {
-  let handle: Awaited<ReturnType<typeof open>> | null = null;
-  try {
-    handle = await open(filePath, 'r');
-    const stats = await handle.stat();
-    let position = stats.size;
-    let text = '';
-    while (position > 0) {
-      const chunkSize = Math.min(READ_TAIL_CHUNK_SIZE, position);
-      position -= chunkSize;
-      const buffer = Buffer.alloc(chunkSize);
-      await handle.read(buffer, 0, chunkSize, position);
-      text = `${buffer.toString('utf8')}${text}`;
-      const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
-      if (lines.length > 0 && (position === 0 || text.startsWith('\n') || text.startsWith('\r'))) {
-        return lines.at(-1) ?? null;
-      }
-      if (lines.length > 1) return lines.at(-1) ?? null;
-    }
-    return text.trim() ? text.trim() : null;
-  } catch (error) {
-    if (isNotFoundError(error)) return null;
-    throw error;
-  } finally {
-    await handle?.close();
-  }
-}
-
-async function readUtf8FileFromOffset(filePath: string, offset: number): Promise<string> {
-  let handle: Awaited<ReturnType<typeof open>> | null = null;
-  try {
-    handle = await open(filePath, 'r');
-    const stats = await handle.stat();
-    if (offset < 0 || offset > stats.size) {
-      throw new Error(`Invalid agent event checkpoint byte offset ${offset} for ${filePath}`);
-    }
-    const length = stats.size - offset;
-    if (length === 0) return '';
-    const buffer = Buffer.alloc(length);
-    await handle.read(buffer, 0, length, offset);
-    return buffer.toString('utf8');
-  } finally {
-    await handle?.close();
-  }
-}
-
 function parseEventsJsonl(raw: string, source: string): AgentEvent[] {
   const events: AgentEvent[] = [];
   const lines = raw.split(/\r?\n/);
@@ -965,11 +1335,6 @@ function normalizeCheckpoint(value: unknown, sessionId: string): AgentEventCheck
   if (value.sessionId !== sessionId) return null;
   const seq = typeof value.seq === 'number' && Number.isSafeInteger(value.seq) ? value.seq : null;
   if (seq === null || seq <= 0) return null;
-  const eventFileByteOffset = typeof value.eventFileByteOffset === 'number'
-    && Number.isSafeInteger(value.eventFileByteOffset)
-    ? value.eventFileByteOffset
-    : null;
-  if (eventFileByteOffset === null || eventFileByteOffset < 0) return null;
   const createdAt = typeof value.createdAt === 'number' && Number.isFinite(value.createdAt)
     ? value.createdAt
     : null;
@@ -994,7 +1359,6 @@ function normalizeCheckpoint(value: unknown, sessionId: string): AgentEventCheck
     sessionId,
     seq,
     latestEventId,
-    eventFileByteOffset,
     createdAt,
     state: value.state as unknown as AgentEventReplayState,
   };

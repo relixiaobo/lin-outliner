@@ -48,7 +48,7 @@ describe('agent event store', () => {
         },
       ]);
 
-      const raw = await readFile(store.paths(sessionId).eventsPath, 'utf8');
+      const raw = await readFile(store.paths(sessionId).conversationEventsPath, 'utf8');
       expect(raw.trim().split('\n')).toHaveLength(2);
 
       const events = await store.readEvents(sessionId);
@@ -387,19 +387,103 @@ describe('agent event store', () => {
       ]);
 
       expect(agentSessionDirName(sessionId)).not.toContain('..');
-      expect(store.paths(sessionId).sessionDir.startsWith(path.join(root, 'sessions'))).toBe(true);
+      expect(store.paths(sessionId).conversationDir.startsWith(path.join(root, 'conversations'))).toBe(true);
       expect(await store.listSessionIds()).toEqual([sessionId]);
+    });
+  });
+
+  test('splits conversation events from run execution events and joins them for replay', async () => {
+    await withStore(async (store) => {
+      const sessionId = 'session-1';
+      const runId = 'run-1';
+
+      await store.appendEvents(sessionId, [
+        { ...base(sessionId, 1, 'session.created'), title: 'Split test' },
+        {
+          ...base(sessionId, 2, 'user_message.created', userActor),
+          messageId: 'message-1',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'Run a tool' }],
+        },
+        {
+          ...base(sessionId, 3, 'run.started'),
+          runId,
+          agentId: 'built-in:tenon:assistant',
+          kind: 'turn',
+          trigger: { type: 'message', messageId: 'message-1' },
+          fingerprint: {
+            appVersion: 'test',
+            promptHash: 'prompt',
+            toolSchemaHash: 'tools',
+            skillBindings: [],
+            modelConfig: 'model',
+          },
+          retention: 'hot',
+        },
+        {
+          ...base(sessionId, 4, 'assistant_message.started'),
+          runId,
+          messageId: 'assistant-1',
+          parentMessageId: 'message-1',
+          providerId: 'test',
+          modelId: 'test',
+        },
+        {
+          ...base(sessionId, 5, 'assistant_message.completed'),
+          runId,
+          messageId: 'assistant-1',
+          stopReason: 'stop',
+          content: [{ type: 'text', text: 'Done' }],
+        },
+        {
+          ...base(sessionId, 6, 'run.completed'),
+          runId,
+        },
+      ]);
+
+      const conversationRaw = await readFile(store.paths(sessionId).conversationEventsPath, 'utf8');
+      expect(conversationRaw).toContain('session.created');
+      expect(conversationRaw).toContain('user_message.created');
+      expect(conversationRaw).not.toContain('assistant_message.started');
+
+      const runRaw = await readFile(store.runPaths(runId).runEventsPath, 'utf8');
+      expect(runRaw).toContain('run.started');
+      expect(runRaw).toContain('assistant_message.completed');
+
+      const runMeta = JSON.parse(await readFile(store.runPaths(runId).runMetaPath, 'utf8')) as {
+        agentId: string;
+        conversationId: string;
+        trigger: { type: string; messageId?: string };
+        fingerprint: { appVersion: string };
+        status: string;
+        retention: string;
+      };
+      expect(runMeta).toMatchObject({
+        agentId: 'built-in:tenon:assistant',
+        conversationId: sessionId,
+        trigger: { type: 'message', messageId: 'message-1' },
+        fingerprint: { appVersion: 'test' },
+        status: 'completed',
+        retention: 'hot',
+      });
+
+      expect((await store.readEvents(sessionId)).map((event) => event.seq)).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(await store.listSessionIndexEntries()).toMatchObject([{
+        id: sessionId,
+        title: 'Split test',
+        latestSeq: 6,
+      }]);
     });
   });
 
   test('reports malformed JSONL line numbers', async () => {
     await withStore(async (store) => {
       const sessionId = 'session-1';
-      const eventsPath = store.paths(sessionId).eventsPath;
+      const eventsPath = store.paths(sessionId).conversationEventsPath;
       await mkdir(path.dirname(eventsPath), { recursive: true });
       await writeFile(eventsPath, '{"v":1}\nnot-json\n', 'utf8');
 
-      await expect(store.readEvents(sessionId)).rejects.toThrow(/events\.jsonl:2/);
+      await expect(store.readEvents(sessionId)).rejects.toThrow(/\.jsonl:2/);
     });
   });
 
@@ -429,6 +513,44 @@ describe('agent event store', () => {
       expect(agentPayloadFileName('screen_shot', payload.mimeType)).not.toBe(agentPayloadFileName(payload.id, payload.mimeType));
       await expect(readFile(store.payloadPath(sessionId, payload), 'utf8')).resolves.toBe('image-bytes');
       await expect(store.readPayload(sessionId, payload)).resolves.toEqual(Buffer.from('image-bytes'));
+    });
+  });
+
+  test('stores run-scoped payload bytes under the owning run', async () => {
+    await withStore(async (store) => {
+      const sessionId = 'session-1';
+      const runId = 'run-1';
+      const payload = await store.writePayload(sessionId, {
+        runId,
+        id: 'tool-output-1',
+        data: 'tool bytes',
+        mimeType: 'text/plain',
+        role: 'tool_output',
+      });
+
+      expect(payload.scope).toEqual({ type: 'run', conversationId: sessionId, runId });
+      await expect(readFile(store.payloadPath(sessionId, payload), 'utf8')).resolves.toBe('tool bytes');
+      expect(store.payloadPath(sessionId, payload).startsWith(store.runPaths(runId).payloadsDir)).toBe(true);
+    });
+  });
+
+  test('persists stable agent identity records', async () => {
+    await withStore(async (store) => {
+      await store.writeAgentIdentity({
+        agentId: 'built-in:tenon:assistant',
+        displayName: 'Tenon Assistant',
+        model: 'test-model',
+        systemPrompt: 'You are Tenon.',
+        skills: ['skill-a'],
+      });
+
+      await expect(readFile(store.agentPaths('built-in:tenon:assistant').identityPath, 'utf8')).resolves.toContain('test-model');
+      await expect(store.readAgentIdentity('built-in:tenon:assistant')).resolves.toMatchObject({
+        agentId: 'built-in:tenon:assistant',
+        displayName: 'Tenon Assistant',
+        model: 'test-model',
+        skills: ['skill-a'],
+      });
     });
   });
 });

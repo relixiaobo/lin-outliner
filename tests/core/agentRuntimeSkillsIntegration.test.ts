@@ -408,14 +408,7 @@ describe('agent runtime skill integration', () => {
 
     await runtime.sendMessage(created.sessionId, '/compact keep the skill context');
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
-    const rawEvents = await readFile(path.join(dataRoot, 'sessions', created.sessionId, 'events.jsonl'), 'utf8');
-    const compactionEvent = rawEvents
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as {
-        type?: string;
-        summary?: string;
-      })
+    const compactionEvent = (await new AgentEventStore(dataRoot).readEvents(created.sessionId))
       .find((event) => event.type === 'compaction.completed');
     expect(compactionEvent?.summary).toBe('Kept the skill outcome.');
 

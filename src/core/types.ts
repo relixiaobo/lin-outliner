@@ -54,7 +54,8 @@ export type NodeType =
   | 'filterRule'
   | 'displayField'
   | 'search'
-  | 'queryCondition';
+  | 'queryCondition'
+  | 'command';
 
 export type FieldType =
   | 'plain'
@@ -366,6 +367,7 @@ export interface NodeBase {
   templateId?: NodeId;
   autoCollected: boolean;
   aiSummary?: string;
+  protectedFields?: string[];
   /**
    * Typed launcher-capture sidecar: provenance metadata only (what the node is
    * and where it came from — provider, source, app, capture origin). System-owned
@@ -462,6 +464,12 @@ export interface QueryParams {
 }
 export interface SearchNode extends NodeBase, QueryParams { type: 'search'; }
 export interface QueryConditionNode extends NodeBase, QueryParams { type: 'queryCondition'; }
+export interface CommandNode extends NodeBase {
+  type: 'command';
+  command?: string;
+  commandSchedule?: string;
+  sysLastRunAt?: number;
+}
 
 export type Node =
   | ContentNode
@@ -479,7 +487,8 @@ export type Node =
   | FilterRuleNode
   | DisplayFieldNode
   | SearchNode
-  | QueryConditionNode;
+  | QueryConditionNode
+  | CommandNode;
 
 export interface DocumentState {
   schemaVersion: number;

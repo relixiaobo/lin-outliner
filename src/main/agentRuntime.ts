@@ -44,6 +44,7 @@ import {
   type AgentUserViewContext,
   type ImageContent,
   type TextContent,
+  type Usage,
   type UserMessage,
 } from '../core/agentTypes';
 import {
@@ -57,8 +58,11 @@ import {
   type AgentEvent,
   type AgentEventMessageRecord,
   type AgentEventReplayState,
+  type AgentIdentityRecord,
   type AgentPayloadRef,
   type AgentPersistedContent,
+  type AgentRunFingerprint,
+  type AgentRunTrigger,
 } from '../core/agentEventLog';
 import {
   nodeReferenceMarkersToText,
@@ -84,6 +88,7 @@ import {
 import {
   AgentEventStore,
 } from './agentEventStore';
+import { AgentDomainEventBus } from './agentDomainEvents';
 import { AgentPastChatsService } from './agentPastChats';
 import {
   getActiveProviderRuntimeConfig,
@@ -151,7 +156,11 @@ import {
   summarizeTextPayload,
   type ToolResultBudgetState,
 } from './agentToolOutputSlimming';
-import { AgentRuntimeContextManager, type AgentRuntimeContextEventInput } from './agentRuntimeContext';
+import {
+  AgentRuntimeContextManager,
+  type AgentRuntimeActiveRunState,
+  type AgentRuntimeContextEventInput,
+} from './agentRuntimeContext';
 import type {
   AgentPermissionMode,
   AgentReasoningLevel,
@@ -213,6 +222,8 @@ type CompleteSimpleFn = typeof completeSimple;
 
 interface AgentRuntimeOptions {
   agentDataRoot?: string;
+  agentIdentity?: AgentIdentityRecord;
+  domainEvents?: AgentDomainEventBus;
   completeSimpleFn?: CompleteSimpleFn;
   localFileRoot?: string;
   permissionMode?: AgentPermissionMode;
@@ -238,19 +249,24 @@ interface AgentToolApprovalResolution {
   alwaysAllowRule?: string;
 }
 
+interface AgentActiveRunState extends AgentRuntimeActiveRunState {
+  assistantMessageId: string | null;
+  assistantText: string;
+  toolCallMessageIds: Map<string, string>;
+}
+
 interface AgentSessionState {
   agent: Agent;
+  activeRun: AgentActiveRunState | null;
+  lastRun: AgentActiveRunState | null;
+  runStates: Map<string, AgentActiveRunState>;
   autoCompactConsecutiveFailures: number;
   autoCompactInProgress: boolean;
   eventState: AgentEventReplayState;
-  activeRunId: string | null;
   activeCompaction: AgentRenderActiveCompaction | null;
-  activeAssistantMessageId: string | null;
-  activeAssistantText: string;
   currentDebugQueryIndex: number;
   nextDebugQueryIndex: number;
   nextDebugTurnIndex: number;
-  lastSubmittedUserPrompt: UserMessage | null;
   pendingSubagentNotifications: string[];
   pendingEventAppend: Promise<void>;
   pendingProjectionLastEventType: string | null;
@@ -263,9 +279,7 @@ interface AgentSessionState {
   skillRuntime: AgentSkillRuntime;
   subagentRuntime: AgentSubagentRuntime;
   localWorkspace: AgentLocalWorkspaceContext;
-  toolOutputPayloads: Map<string, { payload: AgentPayloadRef; label: string }>;
   toolResultBudgetState: ToolResultBudgetState;
-  toolCallMessageIds: Map<string, string>;
   permissionSessionAllowRules: string[];
   unsubscribe: (() => void) | null;
 }
@@ -294,12 +308,16 @@ export class AgentRuntime {
   private nextSessionId = 1;
   private readonly userViewContextReminderTracker = new AgentUserViewContextReminderTracker();
   private readonly contextManager: AgentRuntimeContextManager<AgentSessionState>;
+  private readonly agentIdentity: AgentIdentityRecord;
+  private readonly domainEvents: AgentDomainEventBus;
 
   constructor(
     private readonly getWindow: () => BrowserWindow | null,
     private readonly outlinerToolHost: OutlinerToolHost,
     private readonly options: AgentRuntimeOptions = {},
   ) {
+    this.agentIdentity = options.agentIdentity ?? createDefaultAgentIdentity();
+    this.domainEvents = options.domainEvents ?? new AgentDomainEventBus();
     this.contextManager = new AgentRuntimeContextManager<AgentSessionState>({
       refreshRuntimeSettings: (session) => this.refreshRuntimeSettings(session),
       deriveRuntimePiMessages: (sessionId, eventState) => this.deriveRuntimePiMessages(sessionId, eventState),
@@ -373,6 +391,7 @@ export class AgentRuntime {
     }]);
     await this.getEventStore().appendEvents(sessionId, created);
     for (const event of created) appendAgentEventToReplayState(eventState, event);
+    this.publishPersistedEvents(sessionId, created);
     const session = await this.createSessionWithEventState(eventState);
     return this.sessionResponse(sessionId, session);
   }
@@ -449,7 +468,7 @@ export class AgentRuntime {
       await this.appendSessionEvents(sessionId, session, [{
         type: 'approval.resolved',
         actor: userActor(),
-        runId: session.activeRunId ?? undefined,
+        runId: this.activeRunId(session) ?? undefined,
         requestId,
         approved,
       }]);
@@ -584,6 +603,7 @@ export class AgentRuntime {
     }]);
     await this.getEventStore().appendEvents(sessionId, events);
     for (const event of events) appendAgentEventToReplayState(eventState, event);
+    this.publishPersistedEvents(sessionId, events);
     return eventStateToMeta(eventState);
   }
 
@@ -659,10 +679,9 @@ export class AgentRuntime {
         skillListingReminder,
         agentListingReminder,
       }, now);
-      session.lastSubmittedUserPrompt = prompt;
       await this.appendUserPromptEvent(sessionId, session, prompt);
       userViewContextReminder.commit();
-      await this.startRun(sessionId, session);
+      await this.startRun(sessionId, session, prompt);
       await session.agent.prompt(prompt);
       await this.contextManager.runReactiveCompactRetryIfNeeded(sessionId, session);
       await this.persistAndEmitIdle(sessionId, session);
@@ -855,15 +874,17 @@ export class AgentRuntime {
       }]);
       await this.getEventStore().appendEvents(sessionId, events);
       for (const event of events) appendAgentEventToReplayState(eventState, event);
+      this.publishPersistedEvents(sessionId, events);
       session.eventState = eventState;
       session.agent.state.messages = [];
       session.autoCompactConsecutiveFailures = 0;
-      session.lastSubmittedUserPrompt = null;
+      session.activeRun = null;
+      session.lastRun = null;
+      session.runStates.clear();
       session.pendingSubagentNotifications.length = 0;
       session.queuedFollowUpSkillListingReservation = null;
       session.reactiveCompactRequested = false;
       session.localWorkspace.readFileState.clear();
-      session.toolOutputPayloads.clear();
       session.toolResultBudgetState = createToolResultBudgetState();
       await this.refreshRuntimeSettings(session);
       session.skillRuntime.resetSessionState();
@@ -893,7 +914,7 @@ export class AgentRuntime {
       resolvedEvents.push({
         type: 'approval.resolved',
         actor: systemActor(),
-        runId: session.activeRunId ?? undefined,
+        runId: this.activeRunId(session) ?? undefined,
         requestId,
         approved: false,
       });
@@ -926,6 +947,8 @@ export class AgentRuntime {
     const providerConfig = await this.getActiveProviderConfig();
     const runtimeSettings = await this.getRuntimeSettings();
     const activePath = await this.deriveRuntimePiMessages(sessionId, eventState);
+    const providerModel = providerConfig ? this.resolveProviderModel(providerConfig) : null;
+    await this.getEventStore().writeAgentIdentity(this.currentAgentIdentity(providerModel));
     const sessionRef: { current: AgentSessionState | null } = { current: null };
     const agentRef: { current: Agent | null } = { current: null };
     const skillRuntime = new AgentSkillRuntime({
@@ -1009,7 +1032,7 @@ export class AgentRuntime {
       ? createConfiguredAgent(sessionId, providerConfig, activePath, this.outlinerToolHost, {
           localFileRoot: this.options.localFileRoot,
           localWorkspace,
-          model: this.resolveProviderModel(providerConfig),
+          model: providerModel!,
           permissionMode: this.options.permissionMode,
           runtimeSettingsLoader: () => this.getRuntimeSettings(),
           skillToolEnabled: runtimeSettings.automaticSkillsEnabled,
@@ -1058,15 +1081,14 @@ export class AgentRuntime {
     const debugCounters = await this.loadDebugCounters(sessionId);
     const session: AgentSessionState = {
       agent,
+      activeRun: null,
+      lastRun: null,
+      runStates: new Map(),
       autoCompactConsecutiveFailures: 0,
       autoCompactInProgress: false,
       eventState,
-      activeRunId: null,
       activeCompaction: null,
-      activeAssistantMessageId: null,
-      activeAssistantText: '',
       currentDebugQueryIndex: 0,
-      lastSubmittedUserPrompt: null,
       nextDebugQueryIndex: debugCounters.nextQueryIndex,
       nextDebugTurnIndex: debugCounters.nextTurnIndex,
       pendingSubagentNotifications: [],
@@ -1081,9 +1103,7 @@ export class AgentRuntime {
       skillRuntime,
       subagentRuntime,
       localWorkspace,
-      toolOutputPayloads: new Map(),
       toolResultBudgetState: restoreToolResultBudgetStateFromMessages(getAgentEventActivePath(eventState)),
-      toolCallMessageIds: new Map(),
       permissionSessionAllowRules: [],
       unsubscribe: null,
     };
@@ -1363,12 +1383,12 @@ export class AgentRuntime {
   private async flushSubagentNotifications(sessionId: string, session: AgentSessionState): Promise<void> {
     if (session.subagentNotificationFlushInProgress) return;
     if (session.pendingSubagentNotifications.length === 0) return;
-    if (session.activeRunId || session.agent.state.isStreaming) return;
+    if (this.activeRunId(session) || session.agent.state.isStreaming) return;
 
     session.subagentNotificationFlushInProgress = true;
     try {
       while (session.pendingSubagentNotifications.length > 0) {
-        if (session.activeRunId || session.agent.state.isStreaming) break;
+        if (this.activeRunId(session) || session.agent.state.isStreaming) break;
         const notifications = session.pendingSubagentNotifications.splice(0);
         const prompt: UserMessage = {
           role: 'user',
@@ -1377,9 +1397,8 @@ export class AgentRuntime {
         };
         session.skillRuntime.resetRunPermissionRules();
         this.beginDebugQuery(session);
-        session.lastSubmittedUserPrompt = prompt;
         await this.appendSystemPromptEvent(sessionId, session, prompt);
-        await this.startRun(sessionId, session);
+        await this.startRun(sessionId, session, prompt);
         await session.agent.prompt(prompt);
         await this.contextManager.runReactiveCompactRetryIfNeeded(sessionId, session);
         await this.persistAndEmitIdle(sessionId, session, { flushSubagentNotifications: false });
@@ -1397,10 +1416,13 @@ export class AgentRuntime {
     toolName: string,
     text: string,
   ): Promise<{ payload: AgentPayloadRef; label: string }> {
+    const session = this.sessions.get(sessionId);
+    const runId = session ? this.activeRunId(session) ?? undefined : undefined;
     const payload = await this.getEventStore().writePayload(sessionId, {
       id: `tool-output-${toolCallId}`,
       data: text,
       mimeType: 'text/plain',
+      runId,
       role: 'tool_output',
       summary: summarizeTextPayload(text, `${toolName} output`),
       truncated: true,
@@ -1493,18 +1515,19 @@ export class AgentRuntime {
       id: `${debugId}-payload`,
       data: envelope.json,
       mimeType: 'application/json',
+      runId: this.activeRunId(session) ?? undefined,
       role: 'debug',
       summary: `${sourceLabel} round ${turnIndex}`,
     });
     await this.appendSessionEvents(sessionId, session, [{
       type: 'payload.created',
       actor: systemActor(),
-      runId: session.activeRunId ?? undefined,
+      runId: this.activeRunId(session) ?? undefined,
       payload: payloadRef,
     }, {
       type: 'debug.snapshot.created',
       actor: systemActor(),
-      runId: session.activeRunId ?? undefined,
+      runId: this.activeRunId(session) ?? undefined,
       debugId,
       source,
       queryIndex: session.currentDebugQueryIndex,
@@ -1605,6 +1628,48 @@ export class AgentRuntime {
     return `${prefix}-${randomUUID()}`;
   }
 
+  private agentActor(): AgentActor {
+    return { type: 'agent', agentId: this.agentIdentity.agentId };
+  }
+
+  private activeRunId(session: AgentSessionState): string | null {
+    return session.activeRun?.id ?? null;
+  }
+
+  private requireActiveRun(session: AgentSessionState): AgentActiveRunState {
+    if (!session.activeRun) throw new Error('Agent run state is not active.');
+    return session.activeRun;
+  }
+
+  private currentAgentIdentity(model: Model<Api> | null): AgentIdentityRecord {
+    return {
+      ...this.agentIdentity,
+      model: model?.id ?? this.agentIdentity.model,
+    };
+  }
+
+  private runTrigger(session: AgentSessionState): AgentRunTrigger {
+    const messageId = session.eventState.selectedLeafMessageId ?? session.eventState.latestMessageId;
+    return messageId ? { type: 'message', messageId } : { type: 'manual' };
+  }
+
+  private runFingerprint(session: AgentSessionState): AgentRunFingerprint {
+    return {
+      appVersion: electronAppVersion(),
+      promptHash: hashJson({
+        agentId: this.agentIdentity.agentId,
+        systemPrompt: this.agentIdentity.systemPrompt,
+      }),
+      toolSchemaHash: 'runtime-tools',
+      skillBindings: [],
+      modelConfig: hashJson({
+        model: session.agent.state.model.id,
+        provider: session.agent.state.model.provider,
+        thinkingLevel: session.agent.state.thinkingLevel,
+      }),
+    };
+  }
+
   private sessionResponse(sessionId: string, session: AgentSessionState) {
     return {
       sessionId,
@@ -1615,7 +1680,7 @@ export class AgentRuntime {
   private renderProjection(session: AgentSessionState) {
     const projection = buildAgentRenderProjection(session.eventState, {
       revision: session.revision,
-      activeRunId: session.activeRunId,
+      activeRunId: this.activeRunId(session),
       activeCompaction: session.activeCompaction,
       isStreaming: session.agent.state.isStreaming,
       model: clone(session.agent.state.model) as unknown as Record<string, unknown>,
@@ -1686,14 +1751,37 @@ export class AgentRuntime {
     if (!session) return;
     session.revision += 1;
     const renderProjection = this.renderProjection(session);
+    const timestamp = Date.now();
+    this.domainEvents.publish({
+      lane: 'renderer-projection',
+      name: 'RendererProjectionUpdated',
+      sessionId,
+      lastEventType,
+      revision: session.revision,
+      projection: renderProjection,
+      createdAt: timestamp,
+    });
     this.emit({
       type: 'projection',
       sessionId,
       lastEventType,
       revision: session.revision,
       renderProjection,
-      timestamp: Date.now(),
+      timestamp,
     });
+  }
+
+  private publishPersistedEvents(sessionId: string, events: readonly AgentEvent[]) {
+    for (const event of events) {
+      this.domainEvents.publish({
+        lane: 'persisted-log',
+        name: 'PersistedLogEvent',
+        sessionId,
+        runId: event.runId,
+        event,
+        createdAt: event.createdAt,
+      });
+    }
   }
 
   private emitError(sessionId: string, message: string) {
@@ -1786,6 +1874,7 @@ export class AgentRuntime {
       events = this.buildEvents(session.eventState, sessionId, inputs);
       await this.getEventStore().appendEvents(sessionId, events);
       for (const event of events) appendAgentEventToReplayState(session.eventState, event);
+      this.publishPersistedEvents(sessionId, events);
     };
     const operation = session.pendingEventAppend.then(writeEvents, writeEvents);
     session.pendingEventAppend = operation.then(() => undefined, () => undefined);
@@ -1827,6 +1916,7 @@ export class AgentRuntime {
         args: input.args,
       }, null, 2),
       mimeType: 'application/json',
+      runId: this.activeRunId(session) ?? undefined,
       role: 'approval',
       summary: request.title,
     });
@@ -1834,12 +1924,12 @@ export class AgentRuntime {
     await this.appendSessionEvents(sessionId, session, [{
       type: 'payload.created',
       actor: systemActor(),
-      runId: session.activeRunId ?? undefined,
+      runId: this.activeRunId(session) ?? undefined,
       payload,
     }, {
       type: 'approval.requested',
       actor: systemActor(),
-      runId: session.activeRunId ?? undefined,
+      runId: this.activeRunId(session) ?? undefined,
       requestId,
       summary: `${request.title} ${request.target}`.trim(),
       payloadRef: payload,
@@ -1863,7 +1953,7 @@ export class AgentRuntime {
         void this.appendSessionEvents(sessionId, session, [{
           type: 'approval.resolved',
           actor: systemActor(),
-          runId: session.activeRunId ?? undefined,
+          runId: this.activeRunId(session) ?? undefined,
           requestId,
           approved: false,
         }]).catch((error) => this.emitError(sessionId, error instanceof Error ? error.message : String(error)));
@@ -1901,7 +1991,7 @@ export class AgentRuntime {
     const events: AgentEventInput[] = input.includeChecked === false ? [] : [{
       type: 'tool.permission.checked',
       actor: systemActor(),
-      runId: session.activeRunId ?? undefined,
+      runId: this.activeRunId(session) ?? undefined,
       requestId: input.requestId,
       toolCallId: input.toolCall.id,
       toolName: input.toolCall.name,
@@ -1914,7 +2004,7 @@ export class AgentRuntime {
       events.push({
         type: 'tool.permission.resolved',
         actor: systemActor(),
-        runId: session.activeRunId ?? undefined,
+        runId: this.activeRunId(session) ?? undefined,
         requestId: input.requestId,
         toolCallId: input.toolCall.id,
         toolName: input.toolCall.name,
@@ -2064,7 +2154,7 @@ export class AgentRuntime {
         inputs: [
           {
             type: 'assistant_message.started',
-            actor: agentActor(),
+            actor: this.agentActor(),
             runId,
             messageId,
             parentMessageId,
@@ -2075,7 +2165,7 @@ export class AgentRuntime {
           },
           {
             type: 'assistant_message.completed',
-            actor: agentActor(),
+            actor: this.agentActor(),
             runId,
             messageId,
             stopReason: message.stopReason,
@@ -2149,17 +2239,28 @@ export class AgentRuntime {
     };
   }
 
-  private async startRun(sessionId: string, session: AgentSessionState) {
+  private async startRun(sessionId: string, session: AgentSessionState, prompt: UserMessage | null = null) {
     const runId = randomUUID();
-    session.activeRunId = runId;
-    session.activeAssistantMessageId = null;
-    session.activeAssistantText = '';
-    session.toolCallMessageIds.clear();
-    session.toolOutputPayloads.clear();
+    const runState: AgentActiveRunState = {
+      id: runId,
+      assistantMessageId: null,
+      assistantText: '',
+      lastSubmittedUserPrompt: prompt,
+      toolOutputPayloads: new Map(),
+      toolCallMessageIds: new Map(),
+    };
+    session.activeRun = runState;
+    session.lastRun = null;
+    session.runStates.set(runId, runState);
     await this.appendSessionEvents(sessionId, session, [{
       type: 'run.started',
       actor: systemActor(),
       runId,
+      agentId: this.agentIdentity.agentId,
+      kind: 'turn',
+      trigger: this.runTrigger(session),
+      fingerprint: this.runFingerprint(session),
+      retention: 'hot',
     }]);
   }
 
@@ -2215,7 +2316,8 @@ export class AgentRuntime {
       return;
     }
 
-    if (event.type === 'agent_end' && session.activeRunId) {
+    if (event.type === 'agent_end' && session.activeRun) {
+      const activeRun = session.activeRun;
       const errorMessage = session.agent.state.errorMessage ?? null;
       const terminalAssistant = [...event.messages].reverse().find(isAssistantMessage);
       const cancelled = terminalAssistant?.stopReason === 'aborted';
@@ -2225,28 +2327,29 @@ export class AgentRuntime {
       await this.appendSessionEvents(sessionId, session, [{
         type: cancelled ? 'run.cancelled' : errorMessage ? 'run.failed' : 'run.completed',
         actor: systemActor(),
-        runId: session.activeRunId,
+        runId: activeRun.id,
         errorMessage: cancelled ? undefined : errorMessage ?? undefined,
+        usage: sumRunUsage(session.eventState, activeRun.id),
       }]);
-      session.activeRunId = null;
-      session.activeAssistantMessageId = null;
-      session.activeAssistantText = '';
-      session.skillRuntime.resetRunPermissionRules();
       session.reactiveCompactRequested = Boolean(!cancelled && contextOverflow);
-      if (!session.reactiveCompactRequested) session.lastSubmittedUserPrompt = null;
+      if (!session.reactiveCompactRequested) activeRun.lastSubmittedUserPrompt = null;
+      session.lastRun = activeRun;
+      session.activeRun = null;
+      session.skillRuntime.resetRunPermissionRules();
       await this.getEventStore().maybeWriteCheckpoint(sessionId, session.eventState, { force: true });
     }
   }
 
   private async ensureAssistantStarted(sessionId: string, session: AgentSessionState, message: AssistantMessage) {
-    if (session.activeAssistantMessageId) return;
+    const activeRun = session.activeRun;
+    if (!activeRun || activeRun.assistantMessageId) return;
     const messageId = this.createMessageId('assistant');
-    session.activeAssistantMessageId = messageId;
-    session.activeAssistantText = '';
+    activeRun.assistantMessageId = messageId;
+    activeRun.assistantText = '';
     await this.appendSessionEvents(sessionId, session, [{
       type: 'assistant_message.started',
-      actor: agentActor(),
-      runId: session.activeRunId ?? randomUUID(),
+      actor: this.agentActor(),
+      runId: this.activeRunId(session) ?? randomUUID(),
       messageId,
       parentMessageId: session.eventState.selectedLeafMessageId,
       providerId: message.provider,
@@ -2256,16 +2359,17 @@ export class AgentRuntime {
   }
 
   private async appendAssistantDelta(sessionId: string, session: AgentSessionState, message: AssistantMessage) {
-    const messageId = session.activeAssistantMessageId;
+    const activeRun = session.activeRun;
+    const messageId = activeRun?.assistantMessageId;
     if (!messageId) return;
     const nextText = assistantText(message);
-    if (!nextText.startsWith(session.activeAssistantText) || nextText.length <= session.activeAssistantText.length) return;
-    const delta = nextText.slice(session.activeAssistantText.length);
-    session.activeAssistantText = nextText;
+    if (!nextText.startsWith(activeRun.assistantText) || nextText.length <= activeRun.assistantText.length) return;
+    const delta = nextText.slice(activeRun.assistantText.length);
+    activeRun.assistantText = nextText;
     await this.appendSessionEvents(sessionId, session, [{
       type: 'assistant_message.delta',
-      actor: agentActor(),
-      runId: session.activeRunId ?? undefined,
+      actor: this.agentActor(),
+      runId: this.activeRunId(session) ?? undefined,
       messageId,
       delta: { type: 'text_delta', text: delta },
       providerChunkCount: 1,
@@ -2275,7 +2379,8 @@ export class AgentRuntime {
   }
 
   private async appendAssistantCompleted(sessionId: string, session: AgentSessionState, message: AssistantMessage) {
-    const messageId = session.activeAssistantMessageId;
+    const activeRun = session.activeRun;
+    const messageId = activeRun?.assistantMessageId;
     if (!messageId) return;
     // A provider/run failure surfaces as a terminal assistant message with an
     // error stop reason (pi-agent-core synthesizes it). Carry that error onto the
@@ -2290,8 +2395,8 @@ export class AgentRuntime {
     await this.appendSessionEvents(sessionId, session, [
       {
         type: 'assistant_message.completed',
-        actor: agentActor(),
-        runId: session.activeRunId ?? undefined,
+        actor: this.agentActor(),
+        runId: this.activeRunId(session) ?? undefined,
         messageId,
         stopReason: message.stopReason,
         content: fromPiAssistantContent(message.content),
@@ -2299,20 +2404,22 @@ export class AgentRuntime {
       },
       ...(inlineFailure ? [{
         type: 'assistant_message.failed' as const,
-        actor: agentActor(),
-        runId: session.activeRunId ?? undefined,
+        actor: this.agentActor(),
+        runId: this.activeRunId(session) ?? undefined,
         messageId,
         errorMessage: inlineFailure,
       }] : []),
     ]);
-    session.activeAssistantMessageId = null;
-    session.activeAssistantText = '';
+    activeRun.assistantMessageId = null;
+    activeRun.assistantText = '';
   }
 
   private async appendToolResultMessage(sessionId: string, session: AgentSessionState, message: ToolResultMessage) {
+    const activeRun = session.activeRun;
+    if (!activeRun) return;
     const actor = toolActor(message.toolName, message.toolCallId);
-    const prePersisted = session.toolOutputPayloads.get(message.toolCallId);
-    session.toolOutputPayloads.delete(message.toolCallId);
+    const prePersisted = activeRun.toolOutputPayloads.get(message.toolCallId);
+    activeRun.toolOutputPayloads.delete(message.toolCallId);
     const persisted = prePersisted
       ? {
           content: [{ type: 'payload_ref', payload: prePersisted.payload, label: prePersisted.label }] satisfies AgentPersistedContent[],
@@ -2320,6 +2427,7 @@ export class AgentRuntime {
         }
       : await this.persistPiUserContent(sessionId, message.content, {
           imageSummary: `${message.toolName} image output`,
+          runId: this.activeRunId(session) ?? undefined,
           textPayloadRole: 'tool_output',
           textSummary: `${message.toolName} output`,
           textPayloadIdPrefix: `tool-output-${message.toolCallId}`,
@@ -2336,7 +2444,7 @@ export class AgentRuntime {
       {
         type: 'tool_result.created',
         actor,
-        runId: session.activeRunId ?? undefined,
+        runId: this.activeRunId(session) ?? undefined,
         messageId: this.createMessageId('tool-result'),
         parentMessageId: session.eventState.selectedLeafMessageId,
         toolCallId: message.toolCallId,
@@ -2350,16 +2458,17 @@ export class AgentRuntime {
   }
 
   private async appendToolCallEventsFromAssistant(sessionId: string, session: AgentSessionState, message: AssistantMessage) {
-    const assistantMessageId = session.activeAssistantMessageId;
+    const activeRun = session.activeRun;
+    const assistantMessageId = activeRun?.assistantMessageId;
     if (!assistantMessageId) return;
     const toolCalls = message.content.filter((part): part is ToolCall => part.type === 'toolCall');
     const inputs: AgentEventInput[] = [];
     for (const toolCall of toolCalls) {
-      session.toolCallMessageIds.set(toolCall.id, assistantMessageId);
+      activeRun.toolCallMessageIds.set(toolCall.id, assistantMessageId);
       inputs.push({
         type: 'tool_call.started',
-        actor: agentActor(),
-        runId: session.activeRunId ?? undefined,
+        actor: this.agentActor(),
+        runId: this.activeRunId(session) ?? undefined,
         messageId: assistantMessageId,
         toolCallId: toolCall.id,
         name: toolCall.name,
@@ -2377,14 +2486,15 @@ export class AgentRuntime {
     toolName: string,
     args: unknown,
   ) {
-    if (session.toolCallMessageIds.has(toolCallId)) return;
+    const activeRun = session.activeRun;
+    if (!activeRun || activeRun.toolCallMessageIds.has(toolCallId)) return;
     const messageId = findLatestAssistantMessageId(session.eventState);
     if (!messageId) return;
-    session.toolCallMessageIds.set(toolCallId, messageId);
+    activeRun.toolCallMessageIds.set(toolCallId, messageId);
     await this.appendSessionEvents(sessionId, session, [{
       type: 'tool_call.started',
       actor: toolActor(toolName, toolCallId),
-      runId: session.activeRunId ?? undefined,
+      runId: this.activeRunId(session) ?? undefined,
       messageId,
       toolCallId,
       name: toolName,
@@ -2401,12 +2511,13 @@ export class AgentRuntime {
     result: unknown,
     isError: boolean,
   ) {
-    const messageId = session.toolCallMessageIds.get(toolCallId) ?? findLatestAssistantMessageId(session.eventState);
+    const activeRun = session.activeRun;
+    const messageId = activeRun?.toolCallMessageIds.get(toolCallId) ?? findLatestAssistantMessageId(session.eventState);
     if (!messageId) return;
     await this.appendSessionEvents(sessionId, session, [{
       type: isError ? 'tool_call.failed' : 'tool_call.completed',
       actor: toolActor(toolName, toolCallId),
-      runId: session.activeRunId ?? undefined,
+      runId: this.activeRunId(session) ?? undefined,
       messageId,
       toolCallId,
       errorMessage: isError ? summarizeJson(result) : undefined,
@@ -2461,6 +2572,7 @@ export class AgentRuntime {
       textPayloadRole?: AgentPayloadRef['role'];
       textSummary?: string;
       textPayloadIdPrefix?: string;
+      runId?: string;
     },
   ): Promise<{ content: AgentPersistedContent[]; payloads: AgentPayloadRef[] }> {
     if (typeof content === 'string') {
@@ -2495,6 +2607,7 @@ export class AgentRuntime {
       const payload = await this.getEventStore().writePayload(sessionId, {
         data: Buffer.from(stripDataUrlPrefix(part.data), 'base64'),
         mimeType: part.mimeType,
+        runId: options.runId,
         role: 'source',
         summary: options.imageSummary,
       });
@@ -2511,6 +2624,7 @@ export class AgentRuntime {
       textPayloadRole?: AgentPayloadRef['role'];
       textSummary?: string;
       textPayloadId?: string;
+      runId?: string;
     },
   ): Promise<{ content: AgentPersistedContent; payload?: AgentPayloadRef }> {
     if (!options.textPayloadRole || text.length <= MAX_INLINE_TOOL_OUTPUT_CHARS) {
@@ -2520,6 +2634,7 @@ export class AgentRuntime {
       id: options.textPayloadId,
       data: text,
       mimeType: 'text/plain',
+      runId: options.runId,
       role: options.textPayloadRole,
       summary: summarizeTextPayload(text, options.textSummary ?? 'Tool output'),
       truncated: true,
@@ -3202,16 +3317,54 @@ function clearPendingProjection(session: AgentSessionState) {
   session.pendingProjectionLastEventType = null;
 }
 
+function sumRunUsage(state: AgentEventReplayState, runId: string): Usage | undefined {
+  const messages = Object.values(state.messages)
+    .filter((message) => message.role === 'assistant' && message.runId === runId && message.usage);
+  if (messages.length === 0) return undefined;
+  return messages.reduce((total, message) => addUsage(total, message.usage ?? EMPTY_USAGE), EMPTY_USAGE);
+}
+
+function addUsage(left: Usage, right: Usage): Usage {
+  return {
+    input: left.input + right.input,
+    output: left.output + right.output,
+    cacheRead: left.cacheRead + right.cacheRead,
+    cacheWrite: left.cacheWrite + right.cacheWrite,
+    totalTokens: left.totalTokens + right.totalTokens,
+    cost: {
+      input: left.cost.input + right.cost.input,
+      output: left.cost.output + right.cost.output,
+      cacheRead: left.cost.cacheRead + right.cost.cacheRead,
+      cacheWrite: left.cost.cacheWrite + right.cost.cacheWrite,
+      total: left.cost.total + right.cost.total,
+    },
+  };
+}
+
+function createDefaultAgentIdentity(): AgentIdentityRecord {
+  return {
+    agentId: 'built-in:tenon:assistant',
+    displayName: 'Tenon Assistant',
+    model: 'unknown',
+    systemPrompt: LIN_AGENT_SYSTEM_PROMPT,
+    skills: [],
+  };
+}
+
+function electronAppVersion(): string {
+  return typeof app.getVersion === 'function' ? app.getVersion() : 'dev';
+}
+
+function hashJson(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
 function systemActor(): AgentActor {
   return { type: 'system' };
 }
 
 function userActor(): AgentActor {
   return { type: 'user', userId: 'local-user' };
-}
-
-function agentActor(): AgentActor {
-  return { type: 'agent', agentId: 'pi-mono' };
 }
 
 function toolActor(toolName: string, toolCallId: string): AgentActor {

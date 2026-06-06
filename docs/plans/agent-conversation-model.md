@@ -202,11 +202,11 @@ The facts the rest of *this* plan leans on:
 
 ### The durable stores (summary)
 
-| Store | Family | Owner | Content | Where (today → target) |
+| Store | Family | Owner | Content | Where (M0) |
 |---|---|---|---|---|
-| **Conversation log** | event log (segmented) | Conversation | objective record of what was said (messages) | `…/sessions/<id>/` → `…/conversations/<id>/` |
-| **Run log** | event log (bounded) | the running Agent | execution detail of a turn / task | **new** `…/runs/<id>/` (today inlined in the session) |
-| **Memory line** | event log (additive) | Agent | distilled: knows / knows-whom / concluded | **new** `…/agents/<id>/memory/` |
+| **Conversation log** | event log (segmented) | Conversation | objective record of what was said (messages) | `…/conversations/<id>/` |
+| **Run log** | event log (bounded) | the running Agent | execution detail of a turn / task | `…/runs/<id>/` |
+| **Memory line** | event log (additive) | Agent | distilled: knows / knows-whom / concluded | reserved `…/agents/<id>/memory/` |
 | **Outline + history** | CRDT (Loro) | user | the product | unchanged (`commands.ts` / Loro, ambient) |
 
 ### Agent
@@ -821,13 +821,13 @@ data.
 compaction + tool-result budgeting **unchanged**; skills / tools / permissions;
 pi-agent-core.
 
-**CHANGE** — `session` → `{conversation, run}`: split the message stream
-(communication) from the run log (execution); re-key `sessions/<id>` →
-`conversations/<id>` **+** `runs/<id>` (IPC, in-memory map, subagent/approval/branch
-scope); conversation gains `Principal`-based `members` (`cursors` is a **separate**
-per-principal store, not a conversation field) (**no stored
-`kind`**); `RunMeta` (anchor + `trigger`); the main agent gets a stable identity record
-(the `agentId` tuple, not a bare `name`), **without** the registry refactor.
+**M0 FOUNDATION** — `session` → `{conversation, run}`: the message stream
+(communication) is split from the run log (execution); storage is keyed under
+`conversations/<id>` **+** `runs/<id>` (IPC state still uses the product session id as
+the conversation id); conversation meta gains `Principal`-based `members`
+(`cursors` is a **separate** per-principal store, not a conversation field) (**no stored
+`kind`**); `RunMeta` records the conversation anchor + `trigger`; the main agent has a
+stable identity record, **without** the registry refactor.
 
 **BUILD** — the memory line: `agents/<agentId>/memory/` store + a memory tool +
 profile UI (view/edit/forget) + the v1 inline-write prompt + reminder-stack
@@ -989,13 +989,13 @@ decision (Open questions); the single-agent `config` tool is [[agent-self-modifi
 ## Checklists
 
 P0 — identity
-- [ ] Give the main agent a stable `agentId` **tuple** (`sourceKind:sourceInstanceId:name`, not a bare `name`); thread it where memory will key off it.
+- [x] Give the main agent a stable `agentId` **tuple** (`sourceKind:sourceInstanceId:name`, not a bare `name`); thread it where memory will key off it.
 
 P1 — conversations + memory v1
-- [ ] `session`→`{conversation, run}`: split the message stream (communication) from the run log (execution **incl. `tool_result`**); re-key `sessions/<id>` → `conversations/<id>` + `runs/<id>`; IPC, state map, scopes.
+- [x] `session`→`{conversation, run}`: split the message stream (communication) from the run log (execution **incl. `tool_result`**); re-key `sessions/<id>` → `conversations/<id>` + `runs/<id>`; IPC, state map, scopes.
 - [ ] **Mixed-resolution assembly** (PM-ratified): `deriveRuntimePiMessages` joins the recent window's run logs into a valid pi-agent-core transcript and renders old segments as their (compaction) summaries — the agent no longer re-sees old tool outputs verbatim.
-- [ ] `Principal` type; `members` on the conversation record (`meta.json` = projection of membership events; `cursors` a **separate** per-principal store) — **no stored `kind`** (DM/group derived from members + `goal`). `RunMeta` with mandatory `conversationId` anchor + `trigger` provenance.
-- [ ] Store `actor` on `AgentEventMessageRecord` (backward-compatible; drop implicit `'pi-mono'` — parameterize `agentActor()`) — foundation for task-notification attribution + P3 POV. Land interface-first (A4).
+- [x] `Principal` type; `members` on the conversation record (`meta.json` = projection of membership events; `cursors` a **separate** per-principal store) — **no stored `kind`** (DM/group derived from members + `goal`). `RunMeta` with mandatory `conversationId` anchor + `trigger` provenance.
+- [x] Store `actor` on `AgentEventMessageRecord`; drop implicit `'pi-mono'` by parameterizing runtime-authored agent actors — foundation for task-notification attribution + P3 POV.
 - [ ] **Canonical DM + Channels** (PM-ratified): one find-or-create DM per agent (no "new conversation" for DMs); re-target the `createSession`/`deleteSession`/`renameSession` surface to **Channels**; single-staffed Channel creation.
 - [ ] Distillation backbone: make `compaction.completed` a multi-consumer node with an explicit both-ends `source` range (raw retained, already non-destructive). Coarse `recall.overview`/`recall.expand` over summaries is later (P2+), but the addressable range lands here.
 - [ ] "Add agent" spawns a new seeded Channel (no in-place conversion); combined, provenance-marked message forwarding (any conversation → any conversation).
