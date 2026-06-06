@@ -721,7 +721,7 @@ export interface SkillDefinition {
   name: string;
   identity?: string;
   displayName?: string;
-  source: 'user' | 'project' | 'dynamic';
+  source: 'built-in' | 'user' | 'project' | 'dynamic';
   rootDir: string;
   skillFile: string;
   description: string;
