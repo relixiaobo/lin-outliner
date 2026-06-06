@@ -73,9 +73,9 @@ that consume it — proof it belongs here, not inside one feature plan.
 | # | Seam | What | Consumers |
 |---|---|---|---|
 | F1 | **Agent identity record** | A stable `name` agents / memory / config hang off (NOT the registry refactor — that is M3) | conversation-model (memory), self-modification (config/status), skills (binding) |
-| F2 | **session → `{conversation, run}`** | Split the conflated session: re-key `sessions/<id>` → a **conversation log** (`conversations/<id>`, messages) **+ a run log** (`runs/<id>`, execution); add the `Principal` type + `members` + `cursors` (**no stored `kind`** — DM/group is derived); `RunMeta` anchors to exactly one conversation, `trigger` is provenance. (Detail: [[agent-data-model]].) | conversation-model, scheduled-routines (persistence), past_chats, ask-question (events) |
+| F2 | **session → `{conversation, run}` (+ minimal join)** | Split the conflated session: re-key `sessions/<id>` → a **conversation log** (`conversations/<id>`, messages) **+ a run log** (`runs/<id>`, execution); add `Principal` + `members` (`meta.json` = projection; `cursors` a **separate** store), **no stored `kind`**; `RunMeta` anchors to one conversation, `trigger` is provenance. **Because `tool_result` moves to the run log, M0 MUST also ship the minimal run-log-join in `deriveRuntimePiMessages`** (rebuild a valid pi-ai transcript) — the bare rename can't run without it. Mixed-resolution (old segments → summaries) is the **M1** enhancement. (Detail: [[agent-data-model]].) | conversation-model, scheduled-routines (persistence), past_chats, ask-question (events) |
 | F3 | **`actor` on message records** | Store authorship on `AgentEventMessageRecord` (`agentEventLog.ts:451`); **parameterize** `agentActor()`, dropping hardcoded `'pi-mono'` (`agentRuntime.ts:3211`). `actor` is one `Principal`-based type used as member = author = addressee | conversation-model (notifications, multi-agent POV, forwarding), task delivery |
-| F4 | **Typed event bus + taxonomy** | One typed domain-event emitter (`agentRuntime.ts:1707`) + a **single event taxonomy designed once** (below) | **notifications** (conv-model, trusted observer) + **hooks** (self-mod, untrusted) + ask-question + gen-ui + scheduled + config + skills |
+| F4 | **Internal domain-event bus + taxonomy** | Build a **new internal domain-event bus** + a **single event taxonomy designed once** (below). NOTE: `agentRuntime.ts:1707` `emit()` is **renderer IPC** (`webContents.send`), **not** a domain bus — do not reuse it. Separate four lanes: persisted-log event · renderer-projection event · trusted observer (notifications) · untrusted hook interceptor | **notifications** (conv-model, trusted observer) + **hooks** (self-mod, untrusted) + ask-question + gen-ui + scheduled + config + skills |
 | F5 | **`AgentSessionState` split** | Break the per-session singleton bundle (`activeRunId`, `toolOutputPayloads`, `lastSubmittedUserPrompt`, `skillRuntime`, `selectedLeafMessageId`; `agentRuntime.ts:240-270`) so parallel runs don't clobber. The F2 **run log** makes this isolation *structural* (each run owns its own execution stream), not incidental | background tasks, scheduled routines, multi-agent channels |
 | F6 | **Protocol-surface type adds (consolidated)** | One coordinated round of `src/core/*` additions (below) instead of N drive-by edits | all plans |
 
@@ -90,6 +90,7 @@ naming; align lifecycle points to it rather than inventing variants.
 |---|---|---|---|
 | **Lifecycle** (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PreCompact`, `PostCompact`, `Stop`) | runtime | hooks (self-mod), notifications | cc-2.1 names; the hook event surface |
 | **Run / execution** (`run.started/completed/failed`, `*_message.delta`, `thinking.delta`, `tool_call.*`, `tool_result.created`) | the run loop | run log, debug panel | live in the **run log** (F2), not the conversation log — keeps `tool_call ↔ tool_result` pairs off the shared channel stream |
+| **Permission** (`tool.permission.checked` → `tool.permission.resolved`, keyed by request id) | permission engine | approval UI, hooks, run log, `needs-input` | **M0 pins ONE canonical vocabulary + the request-id join** — reconciles today's `tool.permission.checked/resolved` + `approval.*` dual-track, which the spec admits can't join (`docs/spec/agent-tool-permissions.md:144,189`) |
 | **Distillation** (`compaction.completed`, generalized) | compaction / consolidation | context assembly, navigation, recall, memory feedstock | a recorded summary over a **retained** range; carries the addressable `source` down-pointer ([[agent-data-model]]) |
 | **Task** (`TaskCreated`, `TaskCompleted`, `needs-input`) | task plane (conv-model) | task panel, notifications, hooks | self-mod's `TaskCreated/Completed` hooks **depend on conv-model building this** |
 | **Notification / attention** | task plane, runs | origin conversation (in-stream + unread/OS) | trusted internal observer; reuses **F3 `actor`** |
@@ -115,9 +116,11 @@ Land these as a small number of coordinated interface-first PRs (the
 infrastructure-ownership list — `src/core/types.ts`, `commands.ts`, `agentEventLog.ts`):
 
 - `actor` on `AgentEventMessageRecord` (F3; backward-compatible).
-- `Principal` type + conversation `members` + `cursors`; `RunMeta` (mandatory `conversationId` anchor + `trigger` provenance); **no stored `kind`** (F2).
-- `DistillationNode.source` (explicit both-ends range) + `MemoryEntry.sources` down-pointer (the addressable-distillation backbone; [[agent-data-model]]).
-- `MessageEvent.role` narrowed to `user | assistant`; `tool_result` events move to the run-log vocabulary ([[agent-data-model]]).
+- `Principal` type + conversation `members` (`meta.json` = projection of membership events; `cursors` a **separate** per-principal store); `agentId` = stable tuple `sourceKind:sourceInstanceId:name`; `RunMeta` (mandatory `conversationId` anchor + `trigger` provenance, **+ `fingerprint` + `retention`**); **no stored `kind`** (F2).
+- `DistillationNode.source` (explicit both-ends range) + `MemoryEntry.sources` down-pointer (incl. `runId`/`eventId` for invalidation; [[agent-data-model]]).
+- `MessageEvent.role` narrowed to `user | assistant`; `tool_result` events move to the run-log vocabulary; `MessageEvent.forwarded` provenance (`actor` stays native speaker) ([[agent-data-model]]).
+- `MemoryEntry` event-sourced (`memory.entry_added/...`) + `originWorkspace` + isolation tier + `status: active|invalidated`; written via the **runtime memory-append API**, not `file_write` ([[agent-data-model]]).
+- Canonical `tool.permission.*` names + request-id join (reconcile the `checked/resolved` + `approval.*` dual-track; [[agent-tool-permissions-hardening]]).
 - `'built-in'` on `SkillDefinition.source` ([[agent-skills-authoring]]; backward-compatible).
 - Pending-interaction types for `user_question.*` ([[agent-ask-user-question-tool]]).
 - `widget_state.updated` event ([[agent-generative-ui]]).
@@ -131,8 +134,8 @@ together, here, so consumers don't diverge.)
 
 ```
 L0 FOUNDATION (M0, interface-first)
-   F1 identity · F2 session→{conversation,run}+Principal/members · F3 actor
-   · F4 typed event bus + ONE taxonomy · F5 AgentSessionState split · F6 protocol type adds
+   F1 identity · F2 session→{conversation,run}+Principal/members+minimal-join · F3 actor
+   · F4 internal domain bus (≠ renderer IPC) + ONE taxonomy · F5 AgentSessionState split · F6 protocol type adds
         │
 L1 SINGLE-AGENT CAPABILITY (M1)
    memory v1 (conv-model) · skills self-authoring (skills-authoring)
@@ -156,8 +159,8 @@ mostly independent).
 
 | Milestone | Content | User-visible value |
 |---|---|---|
-| **M0 — Foundation** | F1–F6: identity · session→`{conversation, run}` (+ `Principal`/`members`, no stored `kind`) · actor · event bus + taxonomy · AgentSessionState split · consolidated protocol-surface adds | none directly — unblocks the whole program, one design pass, no rework |
-| **M1 — Single-agent "self"** | memory v1 (global pool, pure-relevance, privileged `agent-memory/` path) · **mixed-resolution assembly** (recent turns join the run log, old segments render as compaction summaries — PM-ratified, see conversation-model) · canonical DM + user-creatable Channels · skills self-authoring · config tool + runtime_status + doctor · ask_user_question | the agent **remembers**, can be **configured**, can **author its own skills**, can **ask structured questions** — the bulk of perceived value |
+| **M0 — Foundation** | F1–F6: identity · session→`{conversation, run}` (+ `Principal`/`members`, no stored `kind`, **+ minimal run-log-join assembly**) · actor · **internal domain bus** + taxonomy (canonical permission names) · AgentSessionState split · consolidated protocol-surface adds | none directly — unblocks the whole program, one design pass, no rework |
+| **M1 — Single-agent "self"** | memory v1 (global-default + **opt-in isolation**; **runtime-owned append surface**, not file_write) · **mixed-resolution enhancement** (old segments render as compaction summaries — the run-log join itself ships in M0) · canonical DM + user-creatable Channels · skills self-authoring · config tool + runtime_status + doctor · ask_user_question | the agent **remembers**, can be **configured**, can **author its own skills**, can **ask structured questions** — the bulk of perceived value |
 | **M2 — Off-floor + extension** | background task panel + notifications + needs-input · prompt-only hooks · memory v2 extraction · config recovery + skill curation | long tasks **don't go silent**, work is **observable**, memory becomes **automatic**, runtime self-heals |
 | **M3 — Multi-agent** | sequential Channels + coordinator · per-agent POV · cross-agent configuration · command hooks · memory v3 consolidation · main-agent registry unification | **IM-native multi-agent** collaboration |
 
