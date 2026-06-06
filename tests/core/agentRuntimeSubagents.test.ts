@@ -265,8 +265,8 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await runtime.createSession();
-    await sendMessageApprovingAgent(runtime, session.sessionId, 'Use a subagent for this.', sink);
+    const session = await runtime.createConversation();
+    await sendMessageApprovingAgent(runtime, session.conversationId, 'Use a subagent for this.', sink);
 
     expect(script.pendingCount()).toBe(0);
     expect(contexts.some((text) => text.includes('RESEARCHER_AGENT_BODY'))).toBe(true);
@@ -316,8 +316,8 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await runtime.createSession();
-    await sendMessageApprovingAgent(runtime, session.sessionId, 'Parent context marker.', sink);
+    const session = await runtime.createConversation();
+    await sendMessageApprovingAgent(runtime, session.conversationId, 'Parent context marker.', sink);
 
     const forkContext = contexts.join('\n');
     expect(forkContext).toContain('Parent context marker.');
@@ -378,8 +378,8 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await runtime.createSession();
-    await sendMessageApprovingAgent(runtime, session.sessionId, 'Use a subagent for large output.', sink);
+    const session = await runtime.createConversation();
+    await sendMessageApprovingAgent(runtime, session.conversationId, 'Use a subagent for large output.', sink);
 
     const slimmedContext = childContexts.find((context) => context.includes('<persisted-output>')) ?? '';
     expect(script.pendingCount()).toBe(0);
@@ -465,8 +465,8 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await runtime.createSession();
-    await sendMessageApprovingAgent(runtime, session.sessionId, 'Use a subagent that will compact.', sink);
+    const session = await runtime.createConversation();
+    await sendMessageApprovingAgent(runtime, session.conversationId, 'Use a subagent that will compact.', sink);
 
     const compactedChildContext = childContexts.join('\n');
     expect(script.pendingCount()).toBe(0);
@@ -535,8 +535,8 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await runtime.createSession();
-    await sendMessageApprovingAgent(runtime, session.sessionId, 'Use a subagent that will hit a context error.', sink);
+    const session = await runtime.createConversation();
+    await sendMessageApprovingAgent(runtime, session.conversationId, 'Use a subagent that will hit a context error.', sink);
 
     const retriedContext = childContexts.join('\n');
     expect(script.pendingCount()).toBe(0);
@@ -596,8 +596,8 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await runtime.createSession();
-    await sendMessageApprovingAgent(runtime, session.sessionId, 'Start and inspect a background subagent.', sink);
+    const session = await runtime.createConversation();
+    await sendMessageApprovingAgent(runtime, session.conversationId, 'Start and inspect a background subagent.', sink);
 
     expect(script.pendingCount()).toBe(0);
     expect(contexts.join('\n')).toContain('Background result.');
@@ -650,8 +650,8 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await runtime.createSession();
-    await sendMessageApprovingAgent(runtime, session.sessionId, 'Start a self-reporting background subagent.', sink);
+    const session = await runtime.createConversation();
+    await sendMessageApprovingAgent(runtime, session.conversationId, 'Start a self-reporting background subagent.', sink);
 
     expect(script.pendingCount()).toBe(0);
     const notificationText = notificationContexts.join('\n');
@@ -708,18 +708,18 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await runtime.createSession();
-    await sendMessageApprovingAgent(runtime, session.sessionId, 'Start a commandable background subagent.', sink);
-    const restored = await runtime.restoreSession(session.sessionId);
+    const session = await runtime.createConversation();
+    await sendMessageApprovingAgent(runtime, session.conversationId, 'Start a commandable background subagent.', sink);
+    const restored = await runtime.restoreConversation(session.conversationId);
     const subagentId = restored.renderProjection.subagentRunIds[0]!;
 
-    const queued = await runtime.subagentSend(session.sessionId, subagentId, 'Continue with risks.');
+    const queued = await runtime.subagentSend(session.conversationId, subagentId, 'Continue with risks.');
     expect(queued).toMatchObject({
       agent_id: subagentId,
       status: 'queued',
     });
 
-    const status = await runtime.subagentStatus(session.sessionId, subagentId, { wait: true });
+    const status = await runtime.subagentStatus(session.conversationId, subagentId, { wait: true });
     expect(status).toMatchObject({
       agent_id: subagentId,
       result: 'Follow-up background result.',
@@ -784,24 +784,24 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await runtime.createSession();
-    await sendMessageApprovingAgent(runtime, session.sessionId, 'Start a stoppable background subagent.', sink);
+    const session = await runtime.createConversation();
+    await sendMessageApprovingAgent(runtime, session.conversationId, 'Start a stoppable background subagent.', sink);
     const subagentId = latestProjection(sink.events)?.subagentRunIds[0]!;
 
-    const stopped = await runtime.subagentStop(session.sessionId, subagentId);
+    const stopped = await runtime.subagentStop(session.conversationId, subagentId);
     expect(stopped).toMatchObject({
       agent_id: subagentId,
       status: 'stopped',
     });
     await waitFor(() => script.pendingCount() === 2);
 
-    const queued = await runtime.subagentSend(session.sessionId, subagentId, 'Resume after stop.');
+    const queued = await runtime.subagentSend(session.conversationId, subagentId, 'Resume after stop.');
     expect(queued).toMatchObject({
       agent_id: subagentId,
       status: 'queued',
     });
 
-    const status = await runtime.subagentStatus(session.sessionId, subagentId, { wait: true });
+    const status = await runtime.subagentStatus(session.conversationId, subagentId, { wait: true });
     expect(status).toMatchObject({
       agent_id: subagentId,
       result: 'Resumed stopped result.',
@@ -862,10 +862,10 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const session = await firstRuntime.createSession();
-    await sendMessageApprovingAgent(firstRuntime, session.sessionId, 'Start a restorable background subagent.', firstSink);
-    firstRuntime.closeSession(session.sessionId);
-    const transcriptPayloadEvents = (await new AgentEventStore(dataRoot).readEvents(session.sessionId))
+    const session = await firstRuntime.createConversation();
+    await sendMessageApprovingAgent(firstRuntime, session.conversationId, 'Start a restorable background subagent.', firstSink);
+    firstRuntime.closeConversation(session.conversationId);
+    const transcriptPayloadEvents = (await new AgentEventStore(dataRoot).readEvents(session.conversationId))
       .filter((event) => event.type === 'payload.created' && event.payload?.role === 'subagent_transcript');
     expect(new Set(transcriptPayloadEvents.map((event) => event.payload?.sha256)).size)
       .toBe(transcriptPayloadEvents.length);
@@ -904,7 +904,7 @@ describe('agent runtime subagents', () => {
       },
     );
 
-    const restored = await secondRuntime.restoreSession(session.sessionId);
+    const restored = await secondRuntime.restoreConversation(session.conversationId);
     expect(restored.renderProjection.subagentRunIds).toHaveLength(1);
     const subagent = restored.renderProjection.entities.subagents[restored.renderProjection.subagentRunIds[0]!];
     expect(subagent).toMatchObject({
@@ -914,7 +914,7 @@ describe('agent runtime subagents', () => {
     });
     expect(subagent?.transcriptMessageCount).toBeGreaterThan(0);
 
-    await secondRuntime.sendMessage(session.sessionId, 'Check the restored background subagent status.');
+    await secondRuntime.sendMessage(session.conversationId, 'Check the restored background subagent status.');
 
     expect(secondScript.pendingCount()).toBe(0);
     expect(restoredContexts.join('\n')).toContain('Restored background result.');

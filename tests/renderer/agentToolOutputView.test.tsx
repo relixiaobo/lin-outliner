@@ -64,7 +64,7 @@ describe('agent tool output view', () => {
         defaultExpanded
         pendingToolCallIds={new Set()}
         result={result}
-        sessionId="session-1"
+        conversationId="conversation-1"
         toolCall={{ type: 'toolCall', id: 'tool-ws-1', name: 'web_search', arguments: { query: 'chengdu weather' } } satisfies ToolCall}
         turnActive={false}
       />,

@@ -165,7 +165,7 @@ import type {
   AgentPermissionMode,
   AgentReasoningLevel,
   AgentRuntimeSettings,
-  AgentSessionMeta,
+  AgentConversationMeta,
   AgentSlashCommandView,
 } from '../core/types';
 import { buildAgentRenderProjection, type AgentRenderActiveCompaction } from '../core/agentRenderProjection';
@@ -245,7 +245,7 @@ interface AgentToolApprovalResolution {
   approved: boolean;
   deniedBy?: 'abort' | 'runtime' | 'user';
   scope?: AgentApprovalResolutionScope;
-  sessionRule?: string;
+  conversationRule?: string;
   alwaysAllowRule?: string;
 }
 
@@ -279,7 +279,7 @@ interface AgentSessionState {
   subagentRuntime: AgentSubagentRuntime;
   localWorkspace: AgentLocalWorkspaceContext;
   toolResultBudgetState: ToolResultBudgetState;
-  permissionSessionAllowRules: string[];
+  permissionConversationAllowRules: string[];
   unsubscribe: (() => void) | null;
 }
 
@@ -300,7 +300,7 @@ export class AgentRuntime {
   private pendingApprovals = new Map<string, {
     sessionId: string;
     request: AgentApprovalRequestView;
-    suggestedSessionRule?: string;
+    suggestedConversationRule?: string;
     alwaysAllowRule?: string;
     resolve: (resolution: AgentToolApprovalResolution) => void;
   }>();
@@ -320,7 +320,7 @@ export class AgentRuntime {
     this.domainEvents.subscribeLane('renderer-projection', (event) => {
       this.emit({
         type: 'projection',
-        sessionId: event.sessionId,
+        conversationId: event.sessionId,
         lastEventType: event.lastEventType,
         revision: event.revision,
         renderProjection: event.projection,
@@ -374,23 +374,32 @@ export class AgentRuntime {
   }
 
   ready() {
-    this.emit({ type: 'ready', sessionId: null, timestamp: Date.now() });
+    this.emit({ type: 'ready', conversationId: null, timestamp: Date.now() });
   }
 
-  async restoreLatestSession() {
-    const latest = (await this.listSessions())[0] ?? null;
-    if (!latest) return this.createSession();
-    return this.restoreSession(latest.id);
+  async restoreLatestConversation() {
+    for (const conversation of await this.listConversations()) {
+      try {
+        return await this.restoreConversation(conversation.id);
+      } catch (error) {
+        console.warn(
+          `Skipping unrestorable agent conversation ${conversation.id}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+    return this.createConversation();
   }
 
-  async restoreSession(sessionId: string) {
+  async restoreConversation(sessionId: string) {
     const eventState = await this.loadEventState(sessionId);
-    if (!eventState.session) throw new Error(`Agent session not found: ${sessionId}`);
+    if (!eventState.session) throw new Error(`Agent conversation not found: ${sessionId}`);
     const session = await this.createSessionWithEventState(eventState);
-    return this.sessionResponse(sessionId, session);
+    return this.conversationResponse(sessionId, session);
   }
 
-  async createSession() {
+  async createConversation() {
     const sessionId = this.createSessionId();
     const eventState = createEmptyAgentEventReplayState();
     const created = this.buildEvents(eventState, sessionId, [{
@@ -402,11 +411,11 @@ export class AgentRuntime {
     for (const event of created) appendAgentEventToReplayState(eventState, event);
     this.publishPersistedEvents(sessionId, created);
     const session = await this.createSessionWithEventState(eventState);
-    return this.sessionResponse(sessionId, session);
+    return this.conversationResponse(sessionId, session);
   }
 
-  listSessions() {
-    return this.listEventSessions();
+  listConversations() {
+    return this.listEventConversations();
   }
 
   async listSlashCommands(sessionId: string): Promise<AgentSlashCommandView[]> {
@@ -452,9 +461,9 @@ export class AgentRuntime {
     const session = this.sessions.get(sessionId);
     if (!session) return { resolved: false };
 
-    const sessionRule = approved && scope === 'session' ? pending.suggestedSessionRule : undefined;
-    if (sessionRule && !session.permissionSessionAllowRules.includes(sessionRule)) {
-      session.permissionSessionAllowRules.push(sessionRule);
+    const conversationRule = approved && scope === 'conversation' ? pending.suggestedConversationRule : undefined;
+    if (conversationRule && !session.permissionConversationAllowRules.includes(conversationRule)) {
+      session.permissionConversationAllowRules.push(conversationRule);
     }
     let resolvedScope = scope;
     let alwaysAllowRule = approved && scope === 'always' ? pending.alwaysAllowRule : undefined;
@@ -483,7 +492,7 @@ export class AgentRuntime {
       }]);
       this.emit({
         type: 'approval_resolved',
-        sessionId,
+        conversationId: sessionId,
         requestId,
         approved,
         scope: resolvedScope,
@@ -495,7 +504,7 @@ export class AgentRuntime {
         approved,
         deniedBy: approved ? undefined : 'user',
         scope: resolvedScope,
-        sessionRule,
+        conversationRule,
         alwaysAllowRule,
       });
     }
@@ -591,7 +600,7 @@ export class AgentRuntime {
     return tempRuntime.listAllSkills();
   }
 
-  async renameSession(sessionId: string, title: string) {
+  async renameConversation(sessionId: string, title: string) {
     const normalized = normalizeSessionTitle(title);
     const session = this.sessions.get(sessionId);
     if (session) {
@@ -616,7 +625,7 @@ export class AgentRuntime {
     return eventStateToMeta(eventState);
   }
 
-  async deleteSession(sessionId: string) {
+  async deleteConversation(sessionId: string) {
     const session = this.sessions.get(sessionId);
     if (session) {
       session.agent.abort();
@@ -625,10 +634,10 @@ export class AgentRuntime {
       this.sessions.delete(sessionId);
       this.debugProjectionCache.delete(sessionId);
       this.userViewContextReminderTracker.reset(sessionId);
-      this.emit({ type: 'closed', sessionId, timestamp: Date.now() });
+      this.emit({ type: 'closed', conversationId: sessionId, timestamp: Date.now() });
     }
     this.cleanupProviderSessionResources(sessionId);
-    await this.getEventStore().deleteSession(sessionId);
+    await this.getEventStore().deleteConversation(sessionId);
     this.userViewContextReminderTracker.reset(sessionId);
   }
 
@@ -648,7 +657,7 @@ export class AgentRuntime {
         if (attachments.length > 0) {
           throw new Error('Attachments cannot be queued while the agent is running.');
         }
-        await this.steerSession(sessionId, messageText);
+          await this.steerConversation(sessionId, messageText);
         return;
       }
       const runtimeSettings = await this.refreshRuntimeSettings(session);
@@ -801,7 +810,7 @@ export class AgentRuntime {
   async queueFollowUp(sessionId: string, message: string, userViewContextInput: unknown = null) {
     const session = this.sessions.get(sessionId);
     if (!session) {
-      this.emitError(sessionId, `Unknown agent session: ${sessionId}`);
+      this.emitError(sessionId, `Unknown agent conversation: ${sessionId}`);
       return { queued: false };
     }
     const text = message.trim();
@@ -823,10 +832,10 @@ export class AgentRuntime {
     return { queued: true };
   }
 
-  steerSession(sessionId: string, message: string) {
+  steerConversation(sessionId: string, message: string) {
     const session = this.sessions.get(sessionId);
     if (!session) {
-      this.emitError(sessionId, `Unknown agent session: ${sessionId}`);
+      this.emitError(sessionId, `Unknown agent conversation: ${sessionId}`);
       return { queued: false };
     }
     const text = message.trim();
@@ -857,7 +866,7 @@ export class AgentRuntime {
     this.emitProjection(sessionId, 'follow_up_cleared');
   }
 
-  stopSession(sessionId: string) {
+  stopConversation(sessionId: string) {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     session.agent.abort();
@@ -865,7 +874,7 @@ export class AgentRuntime {
     this.emitProjection(sessionId, 'stop_requested');
   }
 
-  resetSession(sessionId: string) {
+  resetConversation(sessionId: string) {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     session.agent.reset();
@@ -873,7 +882,7 @@ export class AgentRuntime {
     this.userViewContextReminderTracker.reset(sessionId);
     void (async () => {
       await this.clearPendingApprovalsForSession(sessionId, session);
-      await this.getEventStore().deleteSession(sessionId);
+      await this.getEventStore().deleteConversation(sessionId);
       this.debugProjectionCache.delete(sessionId);
       const eventState = createEmptyAgentEventReplayState();
       const events = this.buildEvents(eventState, sessionId, [{
@@ -900,7 +909,7 @@ export class AgentRuntime {
     })().catch((error) => this.emitError(sessionId, error instanceof Error ? error.message : String(error)));
   }
 
-  closeSession(sessionId: string) {
+  closeConversation(sessionId: string) {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     void this.clearPendingApprovalsForSession(sessionId, session)
@@ -911,7 +920,7 @@ export class AgentRuntime {
     this.sessions.delete(sessionId);
     this.userViewContextReminderTracker.reset(sessionId);
     this.cleanupProviderSessionResources(sessionId);
-    this.emit({ type: 'closed', sessionId, timestamp: Date.now() });
+    this.emit({ type: 'closed', conversationId: sessionId, timestamp: Date.now() });
   }
 
   private async clearPendingApprovalsForSession(sessionId: string, session: AgentSessionState) {
@@ -928,7 +937,7 @@ export class AgentRuntime {
       });
       this.emit({
         type: 'approval_resolved',
-        sessionId,
+        conversationId: sessionId,
         requestId,
         approved: false,
         timestamp: Date.now(),
@@ -975,7 +984,7 @@ export class AgentRuntime {
           localRoot: this.options.localFileRoot,
           permissionMode: this.options.permissionMode ?? activeSettings.permissionMode,
           allowedTools: skill.allowedTools,
-          sessionAllowRules: current?.permissionSessionAllowRules ?? [],
+          conversationAllowRules: current?.permissionConversationAllowRules ?? [],
           globalPermissions,
           toolCallId: `skill-shell-${randomUUID()}`,
         });
@@ -1048,7 +1057,7 @@ export class AgentRuntime {
           subagentRuntime,
           pastChats: {
             service: this.getPastChatsService(),
-            currentSessionId: () => sessionId,
+            currentConversationId: () => sessionId,
           },
           streamFn: this.options.streamFn,
           completeSimpleFn: this.options.completeSimpleFn,
@@ -1058,7 +1067,7 @@ export class AgentRuntime {
             const current = sessionRef.current;
             return current ? this.appendToolPermissionEvent(sessionId, current, input) : Promise.resolve();
           },
-          sessionAllowRules: () => sessionRef.current?.permissionSessionAllowRules ?? [],
+          conversationAllowRules: () => sessionRef.current?.permissionConversationAllowRules ?? [],
           approvalHandler: (input, signal) => {
             const current = sessionRef.current;
             if (!current) return Promise.resolve({ approved: false, deniedBy: 'runtime' });
@@ -1111,7 +1120,7 @@ export class AgentRuntime {
       subagentRuntime,
       localWorkspace,
       toolResultBudgetState: restoreToolResultBudgetStateFromMessages(getAgentEventActivePath(eventState)),
-      permissionSessionAllowRules: [],
+      permissionConversationAllowRules: [],
       unsubscribe: null,
     };
     sessionRef.current = session;
@@ -1198,7 +1207,7 @@ export class AgentRuntime {
       subagentRuntime: session.subagentRuntime,
       pastChats: {
         service: this.getPastChatsService(),
-        currentSessionId: () => session.eventState.session?.id ?? null,
+        currentConversationId: () => session.eventState.session?.id ?? null,
       },
     });
   }
@@ -1238,7 +1247,7 @@ export class AgentRuntime {
       allowedTools: input.allowedTools,
       disallowedTools: input.disallowedTools,
       preapprovedToolRules: input.preapprovedToolRules,
-      sessionAllowRules: () => parentSessionRef.current?.permissionSessionAllowRules ?? [],
+      conversationAllowRules: () => parentSessionRef.current?.permissionConversationAllowRules ?? [],
       approvalHandler: (approvalInput, signal) => {
         const parentSession = parentSessionRef.current;
         if (!parentSession) return Promise.resolve({ approved: false, deniedBy: 'runtime' });
@@ -1563,8 +1572,8 @@ export class AgentRuntime {
       messages: state.messages as AgentMessage[],
       model: state.model as Model<any>,
       queryIndex: 0,
-      sessionId,
-      sessionTitle: sanitizeSessionTitle(session.eventState.session?.title),
+      conversationId: sessionId,
+      conversationTitle: sanitizeSessionTitle(session.eventState.session?.title),
       systemPrompt: state.systemPrompt,
       thinkingLevel: state.thinkingLevel,
       tools: state.tools,
@@ -1584,8 +1593,8 @@ export class AgentRuntime {
     const projection = await deriveAgentDebugProjectionFromEvents({
       events,
       readPayload: (payload) => this.getEventStore().readPayload(sessionId, payload),
-      sessionId,
-      sessionTitle: sanitizeSessionTitle(this.sessions.get(sessionId)?.eventState.session?.title),
+      conversationId: sessionId,
+      conversationTitle: sanitizeSessionTitle(this.sessions.get(sessionId)?.eventState.session?.title),
     });
     this.debugProjectionCache.set(sessionId, projection);
     return projection;
@@ -1677,9 +1686,9 @@ export class AgentRuntime {
     };
   }
 
-  private sessionResponse(sessionId: string, session: AgentSessionState) {
+  private conversationResponse(sessionId: string, session: AgentSessionState) {
     return {
-      sessionId,
+      conversationId: sessionId,
       renderProjection: this.renderProjection(session),
     };
   }
@@ -1700,7 +1709,7 @@ export class AgentRuntime {
     });
     return {
       ...projection,
-      sessionTitle: sanitizeSessionTitle(projection.sessionTitle),
+      conversationTitle: sanitizeSessionTitle(projection.conversationTitle),
     };
   }
 
@@ -1786,7 +1795,7 @@ export class AgentRuntime {
   private emitError(sessionId: string, message: string) {
     this.emit({
       type: 'error',
-      sessionId,
+      conversationId: sessionId,
       error: message,
       timestamp: Date.now(),
     });
@@ -1830,8 +1839,8 @@ export class AgentRuntime {
     return this.options.providerModelResolver?.(providerConfig) ?? resolveModel(providerConfig);
   }
 
-  private async listEventSessions(): Promise<AgentSessionMeta[]> {
-    return (await this.getEventStore().listSessionIndexEntries()).map((entry) => ({
+  private async listEventConversations(): Promise<AgentConversationMeta[]> {
+    return (await this.getEventStore().listConversationIndexEntries()).map((entry) => ({
       id: entry.id,
       title: sanitizeSessionTitle(entry.title),
       createdAt: entry.createdAt,
@@ -1892,14 +1901,14 @@ export class AgentRuntime {
     const requestId = randomUUID();
     const request: AgentApprovalRequestView = {
       requestId,
-      sessionId,
+      conversationId: sessionId,
       toolCallId: input.toolCall.id,
       toolName: input.toolCall.name,
       title: input.decision.request.title,
       target: input.decision.request.target,
       reason: input.decision.reason,
       details: input.decision.request.details,
-      suggestedSessionRule: input.decision.request.suggestedSessionRule,
+      suggestedConversationRule: input.decision.request.suggestedConversationRule,
       alwaysAllowRule: input.decision.request.alwaysAllowRule,
     };
     const payload = await this.getEventStore().writePayload(sessionId, {
@@ -1936,7 +1945,7 @@ export class AgentRuntime {
 
     this.emit({
       type: 'approval_request',
-      sessionId,
+      conversationId: sessionId,
       requestId,
       request,
       timestamp: Date.now(),
@@ -1958,7 +1967,7 @@ export class AgentRuntime {
         }]).catch((error) => this.emitError(sessionId, error instanceof Error ? error.message : String(error)));
         this.emit({
           type: 'approval_resolved',
-          sessionId,
+          conversationId: sessionId,
           requestId,
           approved: false,
           timestamp: Date.now(),
@@ -1969,7 +1978,7 @@ export class AgentRuntime {
       this.pendingApprovals.set(requestId, {
         sessionId,
         request,
-        suggestedSessionRule: request.suggestedSessionRule,
+        suggestedConversationRule: request.suggestedConversationRule,
         alwaysAllowRule: request.alwaysAllowRule,
         resolve: (resolution) => {
           signal?.removeEventListener('abort', onAbort);
@@ -3190,7 +3199,7 @@ function findLatestAssistantMessageId(eventState: AgentEventReplayState): string
   return [...getAgentEventActivePath(eventState)].reverse().find((message) => message.role === 'assistant')?.id ?? null;
 }
 
-function eventStateToMeta(eventState: AgentEventReplayState): AgentSessionMeta | null {
+function eventStateToMeta(eventState: AgentEventReplayState): AgentConversationMeta | null {
   if (!eventState.session) return null;
   return {
     id: eventState.session.id,
@@ -3447,7 +3456,7 @@ function createConfiguredAgent(
     allowedTools?: string[];
     disallowedTools?: string[];
     preapprovedToolRules?: string[];
-    sessionAllowRules?: () => readonly string[];
+    conversationAllowRules?: () => readonly string[];
     approvalHandler?: (input: AgentToolApprovalInput, signal?: AbortSignal) => Promise<AgentToolApprovalResolution>;
     streamFn?: StreamFn;
     completeSimpleFn?: CompleteSimpleFn;
@@ -3517,7 +3526,7 @@ function createConfiguredAgent(
             ...(skillRuntime?.getActivePermissionRules() ?? []),
             ...(options.preapprovedToolRules ?? []),
           ],
-          sessionAllowRules: options.sessionAllowRules?.() ?? [],
+          conversationAllowRules: options.conversationAllowRules?.() ?? [],
         },
       });
       const permissionRequestId = `permission-${randomUUID()}`;

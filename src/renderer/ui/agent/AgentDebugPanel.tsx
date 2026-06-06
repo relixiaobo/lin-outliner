@@ -16,7 +16,7 @@ import { IconButton } from '../primitives/IconButton';
 type DebugLabels = Messages['agentDebug'];
 
 interface AgentDebugPanelProps {
-  sessionId: string | null;
+  conversationId: string | null;
 }
 
 function emptyTotals(): AgentDebugTotals {
@@ -227,8 +227,8 @@ function DebugSectionHeader(props: { id?: string; meta?: ReactNode; title: strin
   );
 }
 
-function useAgentDebug(sessionId: string | null) {
-  const [resolvedSessionId, setResolvedSessionId] = useState<string | null>(sessionId);
+function useAgentDebug(conversationId: string | null) {
+  const [resolvedConversationId, setResolvedConversationId] = useState<string | null>(conversationId);
   const [snapshot, setSnapshot] = useState<AgentDebugSnapshot | null>(null);
   const [history, setHistory] = useState<AgentDebugSnapshot[]>([]);
   const [totals, setTotals] = useState<AgentDebugTotals>(() => emptyTotals());
@@ -241,16 +241,16 @@ function useAgentDebug(sessionId: string | null) {
     refreshRequestRef.current = requestId;
     setLoading(true);
     try {
-      let targetSessionId = sessionId;
-      if (!targetSessionId) {
-        const sessions = await api.agentListSessions();
+      let targetConversationId = conversationId;
+      if (!targetConversationId) {
+        const conversations = await api.agentListConversations();
         if (requestId !== refreshRequestRef.current) return;
-        targetSessionId = sessions[0]?.id ?? null;
+        targetConversationId = conversations[0]?.id ?? null;
       }
       if (requestId !== refreshRequestRef.current) return;
-      setResolvedSessionId(targetSessionId);
+      setResolvedConversationId(targetConversationId);
 
-      if (!targetSessionId) {
+      if (!targetConversationId) {
         setSnapshot(null);
         setHistory([]);
         setTotals(emptyTotals());
@@ -258,10 +258,10 @@ function useAgentDebug(sessionId: string | null) {
         return;
       }
 
-      const nextSnapshot = await api.agentDebugSnapshot(targetSessionId);
+      const nextSnapshot = await api.agentDebugSnapshot(targetConversationId);
       const [nextHistory, nextTotals] = await Promise.all([
-        api.agentDebugHistory(targetSessionId),
-        api.agentDebugTotals(targetSessionId),
+        api.agentDebugHistory(targetConversationId),
+        api.agentDebugTotals(targetConversationId),
       ]);
       if (requestId !== refreshRequestRef.current) return;
       setSnapshot(nextSnapshot);
@@ -274,48 +274,48 @@ function useAgentDebug(sessionId: string | null) {
     } finally {
       if (requestId === refreshRequestRef.current) setLoading(false);
     }
-  }, [sessionId]);
+  }, [conversationId]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
   useEffect(() => {
-    const eventSessionId = sessionId ?? resolvedSessionId;
-    if (!eventSessionId) return undefined;
+    const eventConversationId = conversationId ?? resolvedConversationId;
+    if (!eventConversationId) return undefined;
     const unlisten = window.lin?.onAgentEvent((event: AgentRuntimeEvent) => {
       if (event.type !== 'projection' && event.type !== 'error' && event.type !== 'tool_call' && event.type !== 'tool_result') {
         return;
       }
-      if (event.sessionId !== eventSessionId) return;
+      if (event.conversationId !== eventConversationId) return;
       void refresh();
     });
     return () => {
       unlisten?.();
     };
-  }, [refresh, resolvedSessionId, sessionId]);
+  }, [refresh, resolvedConversationId, conversationId]);
 
-  return { error, history, loading, refresh, resolvedSessionId, snapshot, totals };
+  return { error, history, loading, refresh, resolvedConversationId, snapshot, totals };
 }
 
-export function AgentDebugPanel({ sessionId }: AgentDebugPanelProps) {
+export function AgentDebugPanel({ conversationId }: AgentDebugPanelProps) {
   const labels = useT().agentDebug;
-  const { error, history, loading, refresh, resolvedSessionId, snapshot, totals } = useAgentDebug(sessionId);
+  const { error, history, loading, refresh, resolvedConversationId, snapshot, totals } = useAgentDebug(conversationId);
   const latest = snapshot ?? history.at(-1) ?? null;
   const queryBlocks = useMemo(() => buildQueryBlocks(history, labels), [history, labels]);
 
-  if (!sessionId && !resolvedSessionId && loading) {
+  if (!conversationId && !resolvedConversationId && loading) {
     return (
       <div className="agent-debug-panel">
-        <div className="agent-debug-empty">{labels.loadingSession}</div>
+        <div className="agent-debug-empty">{labels.loadingConversation}</div>
       </div>
     );
   }
 
-  if (!sessionId && !resolvedSessionId) {
+  if (!conversationId && !resolvedConversationId) {
     return (
       <div className="agent-debug-panel">
-        <div className="agent-debug-empty">{labels.noSession}</div>
+        <div className="agent-debug-empty">{labels.noConversation}</div>
       </div>
     );
   }
@@ -325,7 +325,7 @@ export function AgentDebugPanel({ sessionId }: AgentDebugPanelProps) {
       <header className="agent-debug-header">
         <div>
           <h2>{labels.title}</h2>
-          <p>{resolvedSessionId ?? sessionId}</p>
+          <p>{resolvedConversationId ?? conversationId}</p>
         </div>
         <IconButton
           className="agent-debug-icon-button"
@@ -342,7 +342,7 @@ export function AgentDebugPanel({ sessionId }: AgentDebugPanelProps) {
 
       {latest ? (
         <>
-          <SessionBar latest={latest} totals={totals} />
+          <ConversationBar latest={latest} totals={totals} />
           <ContextCard snapshot={latest} />
           <section className="agent-debug-query-stack" aria-label={labels.timelineAriaLabel}>
             {queryBlocks.length === 0 ? (
@@ -359,7 +359,7 @@ export function AgentDebugPanel({ sessionId }: AgentDebugPanelProps) {
   );
 }
 
-function SessionBar(props: { latest: AgentDebugSnapshot; totals: AgentDebugTotals }) {
+function ConversationBar(props: { latest: AgentDebugSnapshot; totals: AgentDebugTotals }) {
   const labels = useT().agentDebug;
   const latest = props.latest;
   const estimate = latest.tokenEstimate;
@@ -367,7 +367,7 @@ function SessionBar(props: { latest: AgentDebugSnapshot; totals: AgentDebugTotal
   return (
     <section className="agent-debug-overview-grid" aria-label={labels.overviewAriaLabel}>
       <DebugMetric
-        label={labels.metricSession}
+        label={labels.metricConversation}
         value={labels.queries({ count: props.totals.queries })}
         meta={<>{labels.rounds({ count: props.totals.rounds })} · <CostInline usage={props.totals} /></>}
       />
@@ -519,14 +519,14 @@ function RawProviderPayload({ round }: { round: AgentDebugSnapshot }) {
     if (payload || loading || !payloadId) return;
     setLoading(true);
     setError(null);
-    void api.agentDebugPayload(round.sessionId, payloadId)
+    void api.agentDebugPayload(round.conversationId, payloadId)
       .then((nextPayload) => {
         setPayload(nextPayload ?? '');
         if (nextPayload == null) setError(labels.payloadUnavailableNow);
       })
       .catch((nextError) => setError(nextError instanceof Error ? nextError.message : String(nextError)))
       .finally(() => setLoading(false));
-  }, [labels, loading, payload, round.sessionId, round.wire.payloadRef?.id]);
+  }, [labels, loading, payload, round.conversationId, round.wire.payloadRef?.id]);
 
   return (
     <details

@@ -34,7 +34,8 @@ const LEGACY_SESSIONS_DIR = 'sessions';
 const RUN_EVENT_LOG_FILE = 'events.jsonl';
 const RUN_META_FILE = 'meta.json';
 const AGENT_IDENTITY_FILE = 'identity.json';
-const SESSION_INDEX_FILE = 'session-index.json';
+const CONVERSATION_INDEX_FILE = 'conversation-index.json';
+const LEGACY_SESSION_INDEX_FILE = 'session-index.json';
 const SEARCH_INDEX_FILE = 'search-index.json';
 const CHECKPOINT_VERSION = 3;
 const SEARCH_INDEX_VERSION = 1;
@@ -104,7 +105,7 @@ export interface AgentConversationMetaProjection extends AgentConversationMeta {
   latestSeq: number;
 }
 
-export interface AgentEventSessionIndexEntry {
+export interface AgentConversationIndexEntry {
   id: string;
   title: string | null;
   createdAt: number;
@@ -176,7 +177,7 @@ export class AgentEventStore {
 
   paths(sessionId: string): AgentEventStorePaths {
     const conversationsDir = path.join(this.rootDir, 'conversations');
-    const conversationDir = path.join(conversationsDir, agentSessionDirName(sessionId));
+    const conversationDir = path.join(conversationsDir, agentConversationDirName(sessionId));
     const conversationSegmentsDir = path.join(conversationDir, 'segments');
     return {
       rootDir: this.rootDir,
@@ -238,7 +239,7 @@ export class AgentEventStore {
       // index files on every streamed token. The events.jsonl append above is
       // the source of truth and still happens per delta.
       if (events.some((event) => !isStreamingDeltaEvent(event))) {
-        await this.updateSessionIndex(sessionId, events);
+        await this.updateConversationIndex(sessionId, events);
         await this.updateSearchIndex(sessionId, events);
       }
     });
@@ -339,7 +340,7 @@ export class AgentEventStore {
     return path.join(payloadDir, agentPayloadFileName(payload.id, payload.mimeType));
   }
 
-  async deleteSession(sessionId: string): Promise<void> {
+  async deleteConversation(sessionId: string): Promise<void> {
     await this.ensureStorageLayout();
     await rm(this.paths(sessionId).conversationDir, { recursive: true, force: true });
     await Promise.all((await this.listRunIdsForSession(sessionId)).map((runId) => (
@@ -347,28 +348,28 @@ export class AgentEventStore {
     )));
     this.lastSeqBySessionId.delete(sessionId);
     this.writeQueues.delete(sessionId);
-    await this.removeSessionFromIndex(sessionId);
+    await this.removeConversationFromIndex(sessionId);
     await this.removeSessionFromSearchIndex(sessionId);
   }
 
-  async listSessionIds(): Promise<string[]> {
+  async listConversationIds(): Promise<string[]> {
     await this.ensureStorageLayout();
     try {
       const entries = await readdir(this.paths('__placeholder__').conversationsDir, { withFileTypes: true });
-      return entries.filter((entry) => entry.isDirectory()).map((entry) => decodeAgentSessionDirName(entry.name));
+      return entries.filter((entry) => entry.isDirectory()).map((entry) => decodeAgentConversationDirName(entry.name));
     } catch (error) {
       if (isNotFoundError(error)) return [];
       throw error;
     }
   }
 
-  async listSessionIndexEntries(): Promise<AgentEventSessionIndexEntry[]> {
+  async listConversationIndexEntries(): Promise<AgentConversationIndexEntry[]> {
     await this.ensureStorageLayout();
-    const index = await this.readSessionIndex();
-    if (index && await this.sessionIndexMatchesConversations(index)) {
-      return Object.values(index.sessions).sort((left, right) => right.updatedAt - left.updatedAt);
+    const index = await this.readConversationIndex();
+    if (index && await this.conversationIndexMatchesConversations(index)) {
+      return Object.values(index.conversations).sort((left, right) => right.updatedAt - left.updatedAt);
     }
-    return this.rebuildSessionIndex();
+    return this.rebuildConversationIndex();
   }
 
   async listUserMessageIndexEntries(sessionId?: string): Promise<AgentEventUserMessageIndexEntry[]> {
@@ -449,7 +450,7 @@ export class AgentEventStore {
 
     if (
       !await pathExists(this.paths('__placeholder__').conversationsDir)
-      && await pathExists(this.sessionIndexPath())
+      && (await pathExists(this.conversationIndexPath()) || await pathExists(this.legacySessionIndexPath()))
     ) {
       await rm(indexesDir, { recursive: true, force: true });
     }
@@ -785,10 +786,10 @@ export class AgentEventStore {
     return next;
   }
 
-  private async updateSessionIndex(sessionId: string, events: readonly AgentEvent[]) {
+  private async updateConversationIndex(sessionId: string, events: readonly AgentEvent[]) {
     await this.enqueueIndexWrite(async () => {
-      const index = await this.readSessionIndex() ?? { sessions: {} };
-      let entry: AgentEventSessionIndexEntry | null = index.sessions[sessionId] ?? null;
+      const index = await this.readConversationIndex() ?? { conversations: {} };
+      let entry: AgentConversationIndexEntry | null = index.conversations[sessionId] ?? null;
       for (const event of events) {
         if (event.type === 'session.created') {
           entry = {
@@ -800,34 +801,34 @@ export class AgentEventStore {
             latestSeq: event.seq,
           };
         } else if (entry) {
-          entry = updateSessionIndexEntry(entry, event);
+          entry = updateConversationIndexEntry(entry, event);
         }
       }
-      if (!entry) entry = sessionIndexEntryFromReplayState(sessionId, await this.replay(sessionId));
-      if (entry) index.sessions[sessionId] = entry;
-      await this.writeSessionIndex(index);
+      if (!entry) entry = conversationIndexEntryFromReplayState(sessionId, await this.replay(sessionId));
+      if (entry) index.conversations[sessionId] = entry;
+      await this.writeConversationIndex(index);
     });
   }
 
-  private async removeSessionFromIndex(sessionId: string) {
+  private async removeConversationFromIndex(sessionId: string) {
     await this.enqueueIndexWrite(async () => {
-      const index = await this.readSessionIndex();
-      if (!index || !index.sessions[sessionId]) return;
-      delete index.sessions[sessionId];
-      await this.writeSessionIndex(index);
+      const index = await this.readConversationIndex();
+      if (!index || !index.conversations[sessionId]) return;
+      delete index.conversations[sessionId];
+      await this.writeConversationIndex(index);
     });
   }
 
-  private async rebuildSessionIndex(): Promise<AgentEventSessionIndexEntry[]> {
-    const ids = await this.listSessionIds();
-    const entries: AgentEventSessionIndexEntry[] = [];
+  private async rebuildConversationIndex(): Promise<AgentConversationIndexEntry[]> {
+    const ids = await this.listConversationIds();
+    const entries: AgentConversationIndexEntry[] = [];
     for (const id of ids) {
       const state = await this.replay(id);
-      const entry = sessionIndexEntryFromReplayState(id, state);
+      const entry = conversationIndexEntryFromReplayState(id, state);
       if (entry) entries.push(entry);
     }
-    const sessions = Object.fromEntries(entries.map((entry) => [entry.id, entry]));
-    await this.writeSessionIndex({ sessions });
+    const conversations = Object.fromEntries(entries.map((entry) => [entry.id, entry]));
+    await this.writeConversationIndex({ conversations });
     return entries.sort((left, right) => right.updatedAt - left.updatedAt);
   }
 
@@ -866,7 +867,7 @@ export class AgentEventStore {
 
   private async buildSearchIndexFromEventLogs(): Promise<AgentEventSearchIndex> {
     const index = createEmptySearchIndex();
-    const ids = await this.listSessionIds();
+    const ids = await this.listConversationIds();
     for (const id of ids) {
       for (const event of await this.readEvents(id)) {
         applyAgentEventToSearchIndex(index, event);
@@ -944,34 +945,38 @@ export class AgentEventStore {
     }));
   }
 
-  private sessionIndexPath(): string {
-    return path.join(this.rootDir, 'indexes', SESSION_INDEX_FILE);
+  private conversationIndexPath(): string {
+    return path.join(this.rootDir, 'indexes', CONVERSATION_INDEX_FILE);
+  }
+
+  private legacySessionIndexPath(): string {
+    return path.join(this.rootDir, 'indexes', LEGACY_SESSION_INDEX_FILE);
   }
 
   private searchIndexPath(): string {
     return path.join(this.rootDir, 'indexes', SEARCH_INDEX_FILE);
   }
 
-  private async readSessionIndex(): Promise<{ sessions: Record<string, AgentEventSessionIndexEntry> } | null> {
-    const indexPath = this.sessionIndexPath();
+  private async readConversationIndex(): Promise<{ conversations: Record<string, AgentConversationIndexEntry> } | null> {
+    const indexPath = this.conversationIndexPath();
     try {
       const raw = await readFile(indexPath, 'utf8');
-      const parsed = JSON.parse(raw) as { sessions?: unknown };
+      const parsed = JSON.parse(raw) as { conversations?: unknown };
       return {
-        sessions: isRecord(parsed.sessions) ? parsed.sessions as Record<string, AgentEventSessionIndexEntry> : {},
+        conversations: isRecord(parsed.conversations) ? parsed.conversations as Record<string, AgentConversationIndexEntry> : {},
       };
     } catch (error) {
       if (isNotFoundError(error)) return null;
       if (error instanceof SyntaxError) return null;
-      throw new Error(`Invalid agent session index at ${indexPath}: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`Invalid agent conversation index at ${indexPath}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  private async sessionIndexMatchesConversations(index: {
-    sessions: Record<string, AgentEventSessionIndexEntry>;
+  private async conversationIndexMatchesConversations(index: {
+    conversations: Record<string, AgentConversationIndexEntry>;
   }): Promise<boolean> {
-    const indexedIds = new Set(Object.keys(index.sessions));
-    const conversationIds = new Set(await this.listSessionIds());
+    const indexedIds = new Set(Object.keys(index.conversations));
+    const conversationIds = new Set(await this.listConversationIds());
     if (indexedIds.size !== conversationIds.size) return false;
     for (const id of indexedIds) {
       if (!conversationIds.has(id)) return false;
@@ -979,8 +984,8 @@ export class AgentEventStore {
     return true;
   }
 
-  private async writeSessionIndex(index: { sessions: Record<string, AgentEventSessionIndexEntry> }) {
-    const indexPath = this.sessionIndexPath();
+  private async writeConversationIndex(index: { conversations: Record<string, AgentConversationIndexEntry> }) {
+    const indexPath = this.conversationIndexPath();
     await mkdir(path.dirname(indexPath), { recursive: true });
     await atomicWriteFile(indexPath, `${JSON.stringify(index)}\n`);
   }
@@ -1004,11 +1009,11 @@ export class AgentEventStore {
   }
 }
 
-function updateSessionIndexEntry(
-  entry: AgentEventSessionIndexEntry,
+function updateConversationIndexEntry(
+  entry: AgentConversationIndexEntry,
   event: AgentEvent,
-): AgentEventSessionIndexEntry {
-  const next: AgentEventSessionIndexEntry = {
+): AgentConversationIndexEntry {
+  const next: AgentConversationIndexEntry = {
     ...entry,
     updatedAt: Math.max(entry.updatedAt, event.createdAt),
     latestSeq: Math.max(entry.latestSeq, event.seq),
@@ -1026,10 +1031,10 @@ function updateSessionIndexEntry(
   return next;
 }
 
-function sessionIndexEntryFromReplayState(
+function conversationIndexEntryFromReplayState(
   sessionId: string,
   state: AgentEventReplayState,
-): AgentEventSessionIndexEntry | null {
+): AgentConversationIndexEntry | null {
   if (!state.session) return null;
   return {
     id: sessionId,
@@ -1538,11 +1543,11 @@ function numberOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-export function agentSessionDirName(sessionId: string): string {
+export function agentConversationDirName(sessionId: string): string {
   return encodeAgentDirName(sessionId);
 }
 
-export function decodeAgentSessionDirName(dirName: string): string {
+export function decodeAgentConversationDirName(dirName: string): string {
   return decodeAgentDirName(dirName);
 }
 

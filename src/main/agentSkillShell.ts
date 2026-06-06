@@ -15,7 +15,7 @@ export interface AgentSkillShellApprovalResolution {
   approved: boolean;
   deniedBy?: 'abort' | 'runtime' | 'user';
   scope?: AgentApprovalResolutionScope;
-  sessionRule?: string;
+  conversationRule?: string;
 }
 
 export interface AgentSkillShellCommandInput {
@@ -24,7 +24,7 @@ export interface AgentSkillShellCommandInput {
   localRoot?: string;
   permissionMode?: AgentPermissionMode;
   allowedTools?: readonly string[];
-  sessionAllowRules?: readonly string[];
+  conversationAllowRules?: readonly string[];
   globalPermissions?: GlobalToolPermissionConfig;
   signal?: AbortSignal;
   toolCallId?: string;
@@ -48,7 +48,7 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
       mode: input.permissionMode,
       workspaceRoot: input.localRoot,
       preapprovedToolRules: input.allowedTools ?? [],
-      sessionAllowRules: input.sessionAllowRules ?? [],
+      conversationAllowRules: input.conversationAllowRules ?? [],
       globalPermissions: input.globalPermissions,
     },
   });

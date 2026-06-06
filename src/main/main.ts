@@ -1753,87 +1753,88 @@ const TEXT_ATTACHMENT_EXTENSIONS = new Set([
 ]);
 
 async function handleAgentCommand(command: AgentCommand, args: Record<string, unknown>) {
+  const conversationId = () => String(args.conversationId);
   switch (command) {
-    case 'agent_restore_latest_session':
-      return agentRuntime.restoreLatestSession();
-    case 'agent_restore_session':
-      return agentRuntime.restoreSession(String(args.sessionId));
-    case 'agent_create_session':
-      return agentRuntime.createSession();
-    case 'agent_list_sessions':
-      return agentRuntime.listSessions();
-    case 'agent_rename_session':
-      return agentRuntime.renameSession(String(args.sessionId), String(args.title ?? ''));
-    case 'agent_delete_session':
-      return agentRuntime.deleteSession(String(args.sessionId));
+    case 'agent_restore_latest_conversation':
+      return agentRuntime.restoreLatestConversation();
+    case 'agent_restore_conversation':
+      return agentRuntime.restoreConversation(conversationId());
+    case 'agent_create_conversation':
+      return agentRuntime.createConversation();
+    case 'agent_list_conversations':
+      return agentRuntime.listConversations();
+    case 'agent_rename_conversation':
+      return agentRuntime.renameConversation(conversationId(), String(args.title ?? ''));
+    case 'agent_delete_conversation':
+      return agentRuntime.deleteConversation(conversationId());
     case 'agent_debug_snapshot':
-      return agentRuntime.debugSnapshot(String(args.sessionId));
+      return agentRuntime.debugSnapshot(conversationId());
     case 'agent_debug_history':
-      return agentRuntime.debugHistory(String(args.sessionId));
+      return agentRuntime.debugHistory(conversationId());
     case 'agent_debug_totals':
-      return agentRuntime.debugTotals(String(args.sessionId));
+      return agentRuntime.debugTotals(conversationId());
     case 'agent_debug_payload':
-      return agentRuntime.debugPayload(String(args.sessionId), String(args.payloadId));
+      return agentRuntime.debugPayload(conversationId(), String(args.payloadId));
     case 'agent_payload_text':
-      return agentRuntime.payloadText(String(args.sessionId), String(args.payloadId));
+      return agentRuntime.payloadText(conversationId(), String(args.payloadId));
     case 'agent_subagent_status':
-      return agentRuntime.subagentStatus(String(args.sessionId), String(args.agentId), {
+      return agentRuntime.subagentStatus(conversationId(), String(args.agentId), {
         wait: args.wait === true,
         timeoutMs: typeof args.timeoutMs === 'number' ? args.timeoutMs : undefined,
       });
     case 'agent_subagent_send':
-      return agentRuntime.subagentSend(String(args.sessionId), String(args.agentId), String(args.message ?? ''));
+      return agentRuntime.subagentSend(conversationId(), String(args.agentId), String(args.message ?? ''));
     case 'agent_subagent_stop':
-      return agentRuntime.subagentStop(String(args.sessionId), String(args.agentId));
+      return agentRuntime.subagentStop(conversationId(), String(args.agentId));
     case 'agent_send_message':
       return agentRuntime.sendMessage(
-        String(args.sessionId),
+        conversationId(),
         String(args.message ?? ''),
         args.attachments,
         args.userViewContext,
       );
     case 'agent_edit_message':
       return agentRuntime.editMessage(
-        String(args.sessionId),
+        conversationId(),
         String(args.nodeId),
         String(args.message ?? ''),
       );
     case 'agent_regenerate_message':
-      return agentRuntime.regenerateMessage(String(args.sessionId), String(args.nodeId));
+      return agentRuntime.regenerateMessage(conversationId(), String(args.nodeId));
     case 'agent_retry_message':
-      return agentRuntime.retryMessage(String(args.sessionId), String(args.nodeId));
+      return agentRuntime.retryMessage(conversationId(), String(args.nodeId));
     case 'agent_switch_branch':
-      return agentRuntime.switchBranch(String(args.sessionId), String(args.nodeId));
+      return agentRuntime.switchBranch(conversationId(), String(args.nodeId));
     case 'agent_queue_follow_up':
       return agentRuntime.queueFollowUp(
-        String(args.sessionId),
+        conversationId(),
         String(args.message ?? ''),
         args.userViewContext,
       );
     case 'agent_clear_follow_up':
-      return agentRuntime.clearFollowUp(String(args.sessionId));
-    case 'agent_steer_session':
-      return agentRuntime.steerSession(
-        String(args.sessionId),
+      return agentRuntime.clearFollowUp(conversationId());
+    case 'agent_steer_conversation':
+      return agentRuntime.steerConversation(
+        conversationId(),
         String(args.message ?? ''),
       );
     case 'agent_clear_steer':
-      return agentRuntime.clearSteer(String(args.sessionId));
+      return agentRuntime.clearSteer(conversationId());
     case 'agent_resolve_approval':
       return agentRuntime.resolveApproval(
-        String(args.sessionId),
+        conversationId(),
         String(args.requestId),
         args.approved === true,
-        args.scope === 'always' ? 'always' : args.scope === 'session' ? 'session' : 'once',
+        args.scope === 'always' ? 'always' : args.scope === 'conversation' ? 'conversation' : 'once',
       );
-    case 'agent_stop_session':
-      return agentRuntime.stopSession(String(args.sessionId));
-    case 'agent_reset_session':
-      return agentRuntime.resetSession(String(args.sessionId));
-    case 'agent_close_session':
-      return agentRuntime.closeSession(String(args.sessionId));
+    case 'agent_stop_conversation':
+      return agentRuntime.stopConversation(conversationId());
+    case 'agent_reset_conversation':
+      return agentRuntime.resetConversation(conversationId());
+    case 'agent_close_conversation':
+      return agentRuntime.closeConversation(conversationId());
     case 'agent_list_slash_commands':
-      return agentRuntime.listSlashCommands(String(args.sessionId));
+      return agentRuntime.listSlashCommands(conversationId());
     case 'agent_get_provider_settings':
       return getProviderSettings();
     case 'agent_update_runtime_settings':
@@ -1874,7 +1875,7 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
       oauthLoginManager.cancel(String(args.providerId));
       return undefined;
     case 'agent_list_all_definitions':
-      return agentRuntime.listAllAgentDefinitions(String(args.sessionId));
+      return agentRuntime.listAllAgentDefinitions(conversationId());
     case 'agent_test_provider_connection':
       return testProviderConnection({
         providerId: String(args.providerId),
@@ -1883,7 +1884,7 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
         apiKey: args.apiKey ? String(args.apiKey) : undefined,
       });
     case 'agent_list_all_skills':
-      return agentRuntime.listAllSkills(String(args.sessionId));
+      return agentRuntime.listAllSkills(conversationId());
     default:
       throw new Error(`Unknown agent command: ${command}`);
   }

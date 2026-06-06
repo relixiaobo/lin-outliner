@@ -2052,24 +2052,24 @@ parameter-selected modes:
   `message_id` anchors. It is ordered by user-message recency and strips system
   reminders. Use it when the user asks about prior conversations but gives no
   concrete keywords.
-- `search`: `query` searches visible messages across older sessions. The
+- `search`: `query` searches visible messages across older conversations. The
   derived event-store search index provides candidates only; the service then
-  replays each candidate session, checks that the message is on the active
+  replays each candidate conversation, checks that the message is on the active
   visible branch, verifies the visible message text with shared text-search
-  analysis, and sorts by relevance before session/message recency. Search
+  analysis, and sorts by relevance before conversation/message recency. Search
   snippets are navigation aids, not citation context.
 - `read`: `message_id` reads bounded visible conversation context around a
   `recent` or `search` anchor.
 
-All modes support optional `after`, `before`, `session_ids`, and `limit` filters
-where applicable. The current session is excluded by default; agents may pass
-`include_current_session: true` only after compaction when earlier turns from the
-same session are no longer in working context.
+All modes support optional `after`, `before`, `conversation_ids`, and `limit`
+filters where applicable. The current conversation is excluded by default;
+agents may pass `include_current_conversation: true` only after compaction when
+earlier turns from the same conversation are no longer in working context.
 
-The event store remains the source of truth. Session, search, and user-message
+The event store remains the source of truth. Conversation, search, and user-message
 indexes are derived and rebuildable, and text ranking never bypasses active
-branch visibility, session/date/current-session filters, or read-mode context
-bounds.
+branch visibility, conversation/date/current-conversation filters, or read-mode
+context bounds.
 
 ## Self-Maintenance Controls
 

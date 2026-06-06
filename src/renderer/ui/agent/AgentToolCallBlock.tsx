@@ -39,7 +39,7 @@ interface AgentToolCallBlockProps {
   onOpenSubagentTranscript?: (subagentId: string) => void;
   pendingToolCallIds?: ReadonlySet<string>;
   result?: AgentToolResultWithPayloads;
-  sessionId?: string | null;
+  conversationId?: string | null;
   subagent?: AgentRenderSubagentEntity;
   toolCall: ToolCall;
   turnActive?: boolean;
@@ -495,13 +495,13 @@ function PersistedToolOutput({
   index,
   onNodeReferenceOpen,
   payloadRef,
-  sessionId,
+  conversationId,
 }: {
   initialText: string;
   index?: DocumentIndex;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   payloadRef: AgentToolResultPayloadPart;
-  sessionId?: string | null;
+  conversationId?: string | null;
 }) {
   const t = useT();
   const [fullText, setFullText] = useState<string | null>(null);
@@ -510,20 +510,20 @@ function PersistedToolOutput({
   const requestRef = useRef(0);
   const payload = payloadRef.payload;
   const visible = outputWindow(fullText ?? initialText, t.agent.toolCall.charsOmitted);
-  const canLoad = !!sessionId && (payload.mimeType.startsWith('text/') || payload.mimeType === 'application/json');
+  const canLoad = !!conversationId && (payload.mimeType.startsWith('text/') || payload.mimeType === 'application/json');
 
   useEffect(() => () => {
     requestRef.current += 1;
   }, []);
 
   async function loadFullOutput() {
-    if (!sessionId || loading) return;
+    if (!conversationId || loading) return;
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
     setLoading(true);
     setLoadError(null);
     try {
-      const text = await api.agentPayloadText(sessionId, payload.id);
+      const text = await api.agentPayloadText(conversationId, payload.id);
       if (requestId !== requestRef.current) return;
       if (text === null) {
         setLoadError(t.agent.toolCall.payloadUnavailable);
@@ -581,7 +581,7 @@ export function AgentToolCallBlock({
   onOpenSubagentTranscript,
   pendingToolCallIds,
   result,
-  sessionId,
+  conversationId,
   subagent,
   toolCall,
   turnActive,
@@ -658,7 +658,7 @@ export function AgentToolCallBlock({
                 key={`payload-${part.payloadRef.payload.id}`}
                 onNodeReferenceOpen={onNodeReferenceOpen}
                 payloadRef={part.payloadRef}
-                sessionId={sessionId}
+                conversationId={conversationId}
               />
             ) : isJsonText(part.text) ? (
               <HighlightedJson code={part.text} key={`text-${partIndex}`} />

@@ -31,7 +31,7 @@ describe('agent subagent UI', () => {
           openedSubagentId = subagentId;
         }}
         pendingToolCallIds={new Set()}
-        sessionId="session-1"
+        conversationId="session-1"
         subagent={subagentEntity()}
         toolCall={agentToolCall()}
         turnActive={false}
@@ -99,7 +99,7 @@ describe('agent subagent UI', () => {
     const rendered = renderComponent(
       <AgentSubagentDetailsPanel
         onClose={() => undefined}
-        sessionId="session-1"
+        conversationId="session-1"
         subagent={subagentEntity()}
       />,
       {
@@ -122,7 +122,7 @@ describe('agent subagent UI', () => {
     const rendered = renderComponent(
       <AgentSubagentDetailsPanel
         onClose={() => undefined}
-        sessionId="session-1"
+        conversationId="session-1"
         subagent={{
           ...subagentEntity(),
           completedAt: undefined,
@@ -157,14 +157,14 @@ describe('agent subagent UI', () => {
         args: {
           agentId: 'subagent-1',
           message: 'Continue with layout risks.',
-          sessionId: 'session-1',
+          conversationId: 'session-1',
         },
       },
       {
         cmd: 'agent_subagent_stop',
         args: {
           agentId: 'subagent-1',
-          sessionId: 'session-1',
+          conversationId: 'session-1',
         },
       },
     ]);

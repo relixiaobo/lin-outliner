@@ -20,7 +20,7 @@ interface AgentDockProps {
   railState: AgentRailState;
   userViewContext: AgentUserViewContext;
   onOpenNodeReference: AgentNodeReferenceOpenHandler;
-  onOpenDebugPanel: (sessionId: string | null) => void;
+  onOpenDebugPanel: (conversationId: string | null) => void;
   onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
   onResizeReset: () => void;
   onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;

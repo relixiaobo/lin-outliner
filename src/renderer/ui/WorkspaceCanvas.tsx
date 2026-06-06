@@ -77,7 +77,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 setDragId={props.setDragId}
               />
             ) : (
-              <AgentDebugPanel sessionId={panel.sessionId} />
+              <AgentDebugPanel conversationId={panel.conversationId} />
             )}
           </WorkspacePanelSurface>
           {panelIndex < activePanels.length - 1 && (

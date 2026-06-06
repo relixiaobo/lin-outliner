@@ -19,7 +19,7 @@ import type {
   Usage,
   UserMessage,
 } from '../../core/agentTypes';
-import type { AgentSession } from '../../core/types';
+import type { AgentConversation } from '../../core/types';
 import type {
   AgentRenderActiveCompaction,
   AgentRenderCompactionEntity,
@@ -59,9 +59,9 @@ export type AgentConversationEntry = AgentMessageEntry | AgentCompactionEntry;
 export type AgentTurnPhase = 'idle' | 'streaming_text' | 'waiting_for_tool' | 'resuming_after_tool';
 
 const EMPTY_PROJECTION: AgentRenderProjection = {
-  sessionId: '',
+  conversationId: '',
   revision: 0,
-  sessionTitle: null,
+  conversationTitle: null,
   activeRunId: null,
   activeCompaction: null,
   isStreaming: false,
@@ -246,7 +246,7 @@ function projectionModelValue(projection: AgentRenderProjection, key: string): s
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-function sessionCost(projection: AgentRenderProjection): number {
+function conversationCost(projection: AgentRenderProjection): number {
   return Object.values(projection.entities.messages).reduce((total, message) => {
     if (message.role !== 'assistant') return total;
     return total + (message.usage?.cost?.total ?? 0);
@@ -351,35 +351,35 @@ function normalizeStopReason(value: string | undefined): AssistantMessage['stopR
 }
 
 export interface AgentRuntimeClient {
-  restoreLatestSession: () => Promise<AgentSession>;
-  restoreSession: (sessionId: string) => Promise<AgentSession>;
-  createSession: () => Promise<AgentSession>;
-  closeSession: (sessionId: string) => Promise<void>;
+  restoreLatestConversation: () => Promise<AgentConversation>;
+  restoreConversation: (conversationId: string) => Promise<AgentConversation>;
+  createConversation: () => Promise<AgentConversation>;
+  closeConversation: (conversationId: string) => Promise<void>;
   sendMessage: (
-    sessionId: string,
+    conversationId: string,
     message: string,
     attachments?: AgentMessageAttachmentInput[],
     userViewContext?: AgentUserViewContext | null,
   ) => Promise<void>;
-  editMessage: (sessionId: string, nodeId: string, message: string) => Promise<void>;
-  regenerateMessage: (sessionId: string, nodeId: string) => Promise<void>;
-  retryMessage: (sessionId: string, nodeId: string) => Promise<void>;
-  switchBranch: (sessionId: string, nodeId: string) => Promise<void>;
+  editMessage: (conversationId: string, nodeId: string, message: string) => Promise<void>;
+  regenerateMessage: (conversationId: string, nodeId: string) => Promise<void>;
+  retryMessage: (conversationId: string, nodeId: string) => Promise<void>;
+  switchBranch: (conversationId: string, nodeId: string) => Promise<void>;
   queueFollowUp: (
-    sessionId: string,
+    conversationId: string,
     message: string,
     userViewContext?: AgentUserViewContext | null,
   ) => Promise<{ queued: boolean }>;
-  clearFollowUp: (sessionId: string) => Promise<void>;
-  steerSession: (sessionId: string, message: string) => Promise<{ queued: boolean }>;
-  clearSteer: (sessionId: string) => Promise<void>;
+  clearFollowUp: (conversationId: string) => Promise<void>;
+  steerConversation: (conversationId: string, message: string) => Promise<{ queued: boolean }>;
+  clearSteer: (conversationId: string) => Promise<void>;
   resolveApproval: (
-    sessionId: string,
+    conversationId: string,
     requestId: string,
     approved: boolean,
     scope?: AgentApprovalResolutionScope,
   ) => Promise<{ resolved: boolean }>;
-  stopSession: (sessionId: string) => Promise<void>;
+  stopConversation: (conversationId: string) => Promise<void>;
   onEvent: (listener: (event: AgentRuntimeEvent) => void) => (() => void) | null;
 }
 
@@ -392,17 +392,17 @@ export interface LinAgentRuntimeView {
   pendingToolCallIds: Set<string>;
   reasoningLevel: string;
   revision: string;
-  sessionId: string | null;
-  sessionTitle: string | null;
-  sessionCost: number;
+  conversationId: string | null;
+  conversationTitle: string | null;
+  conversationCost: number;
   subagentRunIds: string[];
   subagents: Record<string, AgentRenderSubagentEntity>;
   subagentsByParentToolCallId: Map<string, AgentRenderSubagentEntity>;
   pendingApproval: AgentApprovalRequestView | null;
   toolResults: Map<string, AgentToolResultWithPayloads>;
   turnPhase: AgentTurnPhase;
-  selectSession: (targetSessionId: string) => Promise<void>;
-  newSession: () => Promise<void>;
+  selectConversation: (targetConversationId: string) => Promise<void>;
+  newConversation: () => Promise<void>;
   sendMessage: (
     prompt: string,
     attachments?: AgentMessageAttachmentInput[],
@@ -423,36 +423,36 @@ export interface LinAgentRuntimeView {
   ) => Promise<boolean>;
   stop: () => void;
   reset: () => void;
-  reloadSession: () => Promise<void>;
+  reloadConversation: () => Promise<void>;
   seedUserMessage: (message: string) => UserMessage;
 }
 
 const defaultAgentRuntimeClient: AgentRuntimeClient = {
-  restoreLatestSession: () => api.agentRestoreLatestSession(),
-  restoreSession: (sessionId) => api.agentRestoreSession(sessionId),
-  createSession: () => api.agentCreateSession(),
-  closeSession: (sessionId) => api.agentCloseSession(sessionId),
-  sendMessage: (sessionId, message, attachments = [], userViewContext = null) =>
-    api.agentSendMessage(sessionId, message, attachments, userViewContext),
-  editMessage: (sessionId, nodeId, message) => api.agentEditMessage(sessionId, nodeId, message),
-  regenerateMessage: (sessionId, nodeId) => api.agentRegenerateMessage(sessionId, nodeId),
-  retryMessage: (sessionId, nodeId) => api.agentRetryMessage(sessionId, nodeId),
-  switchBranch: (sessionId, nodeId) => api.agentSwitchBranch(sessionId, nodeId),
-  queueFollowUp: (sessionId, message, userViewContext = null) =>
-    api.agentQueueFollowUp(sessionId, message, userViewContext),
-  clearFollowUp: (sessionId) => api.agentClearFollowUp(sessionId),
-  steerSession: (sessionId, message) => api.agentSteerSession(sessionId, message),
-  clearSteer: (sessionId) => api.agentClearSteer(sessionId),
-  resolveApproval: (sessionId, requestId, approved, scope = 'once') =>
-    api.agentResolveApproval(sessionId, requestId, approved, scope),
-  stopSession: (sessionId) => api.agentStopSession(sessionId),
+  restoreLatestConversation: () => api.agentRestoreLatestConversation(),
+  restoreConversation: (conversationId) => api.agentRestoreConversation(conversationId),
+  createConversation: () => api.agentCreateConversation(),
+  closeConversation: (conversationId) => api.agentCloseConversation(conversationId),
+  sendMessage: (conversationId, message, attachments = [], userViewContext = null) =>
+    api.agentSendMessage(conversationId, message, attachments, userViewContext),
+  editMessage: (conversationId, nodeId, message) => api.agentEditMessage(conversationId, nodeId, message),
+  regenerateMessage: (conversationId, nodeId) => api.agentRegenerateMessage(conversationId, nodeId),
+  retryMessage: (conversationId, nodeId) => api.agentRetryMessage(conversationId, nodeId),
+  switchBranch: (conversationId, nodeId) => api.agentSwitchBranch(conversationId, nodeId),
+  queueFollowUp: (conversationId, message, userViewContext = null) =>
+    api.agentQueueFollowUp(conversationId, message, userViewContext),
+  clearFollowUp: (conversationId) => api.agentClearFollowUp(conversationId),
+  steerConversation: (conversationId, message) => api.agentSteerConversation(conversationId, message),
+  clearSteer: (conversationId) => api.agentClearSteer(conversationId),
+  resolveApproval: (conversationId, requestId, approved, scope = 'once') =>
+    api.agentResolveApproval(conversationId, requestId, approved, scope),
+  stopConversation: (conversationId) => api.agentStopConversation(conversationId),
   onEvent: (listener) => typeof window === 'undefined' ? null : window.lin?.onAgentEvent(listener) ?? null,
 };
 
 export class AgentRuntimeStore {
   private readonly listeners = new Set<() => void>();
   private projection: AgentRenderProjection = EMPTY_PROJECTION;
-  private sessionId: string | null = null;
+  private conversationId: string | null = null;
   private error: string | null = null;
   private readonly pendingApprovals = new Map<string, AgentApprovalRequestView>();
   private pendingApprovalOrder: string[] = [];
@@ -475,39 +475,39 @@ export class AgentRuntimeStore {
 
   getSnapshot = () => this.view;
 
-  selectSession = async (targetSessionId: string) => {
-    if (!targetSessionId || targetSessionId === this.sessionId) return;
-    const previousSessionId = this.sessionId;
-    const requestVersion = this.beginSessionRequest();
-    this.sessionId = targetSessionId;
+  selectConversation = async (targetConversationId: string) => {
+    if (!targetConversationId || targetConversationId === this.conversationId) return;
+    const previousConversationId = this.conversationId;
+    const requestVersion = this.beginConversationRequest();
+    this.conversationId = targetConversationId;
     this.projection = EMPTY_PROJECTION;
     this.error = null;
     this.clearPendingApprovalState();
     this.publish();
     try {
-      const session = await this.client.restoreSession(targetSessionId);
+      const conversation = await this.client.restoreConversation(targetConversationId);
       if (!this.isCurrentRequest(requestVersion)) return;
-      this.hydrateSession(session);
-      await this.closePreviousSession(previousSessionId, session.sessionId);
+      this.hydrateConversation(conversation);
+      await this.closePreviousConversation(previousConversationId, conversation.conversationId);
     } catch (caught) {
       this.reportError(caught);
       throw caught;
     }
   };
 
-  newSession = async () => {
-    const previousSessionId = this.sessionId;
-    const requestVersion = this.beginSessionRequest();
-    this.sessionId = null;
+  newConversation = async () => {
+    const previousConversationId = this.conversationId;
+    const requestVersion = this.beginConversationRequest();
+    this.conversationId = null;
     this.projection = EMPTY_PROJECTION;
     this.error = null;
     this.clearPendingApprovalState();
     this.publish();
     try {
-      const session = await this.client.createSession();
+      const conversation = await this.client.createConversation();
       if (!this.isCurrentRequest(requestVersion)) return;
-      this.hydrateSession(session);
-      await this.closePreviousSession(previousSessionId, session.sessionId);
+      this.hydrateConversation(conversation);
+      await this.closePreviousConversation(previousConversationId, conversation.conversationId);
     } catch (caught) {
       this.reportError(caught);
       throw caught;
@@ -522,8 +522,8 @@ export class AgentRuntimeStore {
     const trimmed = prompt.trim();
     if (!trimmed && attachments.length === 0) return;
     try {
-      const currentSessionId = await this.ensureSession();
-      await this.client.sendMessage(currentSessionId, trimmed, attachments, userViewContext);
+      const currentConversationId = await this.ensureConversation();
+      await this.client.sendMessage(currentConversationId, trimmed, attachments, userViewContext);
     } catch (caught) {
       this.reportError(caught);
       throw caught;
@@ -532,9 +532,9 @@ export class AgentRuntimeStore {
 
   editMessage = async (nodeId: string, prompt: string) => {
     const trimmed = prompt.trim();
-    if (!trimmed || !this.sessionId) return;
+    if (!trimmed || !this.conversationId) return;
     try {
-      await this.client.editMessage(this.sessionId, nodeId, trimmed);
+      await this.client.editMessage(this.conversationId, nodeId, trimmed);
     } catch (caught) {
       this.reportError(caught);
       throw caught;
@@ -542,9 +542,9 @@ export class AgentRuntimeStore {
   };
 
   regenerateMessage = async (nodeId: string) => {
-    if (!this.sessionId) return;
+    if (!this.conversationId) return;
     try {
-      await this.client.regenerateMessage(this.sessionId, nodeId);
+      await this.client.regenerateMessage(this.conversationId, nodeId);
     } catch (caught) {
       this.reportError(caught);
       throw caught;
@@ -552,9 +552,9 @@ export class AgentRuntimeStore {
   };
 
   retryMessage = async (nodeId: string) => {
-    if (!this.sessionId) return;
+    if (!this.conversationId) return;
     try {
-      await this.client.retryMessage(this.sessionId, nodeId);
+      await this.client.retryMessage(this.conversationId, nodeId);
     } catch (caught) {
       this.reportError(caught);
       throw caught;
@@ -562,9 +562,9 @@ export class AgentRuntimeStore {
   };
 
   switchBranch = async (nodeId: string) => {
-    if (!this.sessionId) return;
+    if (!this.conversationId) return;
     try {
-      await this.client.switchBranch(this.sessionId, nodeId);
+      await this.client.switchBranch(this.conversationId, nodeId);
     } catch (caught) {
       this.reportError(caught);
       throw caught;
@@ -575,8 +575,8 @@ export class AgentRuntimeStore {
     const trimmed = prompt.trim();
     if (!trimmed) return false;
     try {
-      const currentSessionId = await this.ensureSession();
-      const result = await this.client.queueFollowUp(currentSessionId, trimmed, userViewContext);
+      const currentConversationId = await this.ensureConversation();
+      const result = await this.client.queueFollowUp(currentConversationId, trimmed, userViewContext);
       return result.queued;
     } catch (caught) {
       this.reportError(caught);
@@ -585,9 +585,9 @@ export class AgentRuntimeStore {
   };
 
   clearFollowUp = async () => {
-    if (!this.sessionId) return;
+    if (!this.conversationId) return;
     try {
-      await this.client.clearFollowUp(this.sessionId);
+      await this.client.clearFollowUp(this.conversationId);
     } catch (caught) {
       this.reportError(caught);
       throw caught;
@@ -598,8 +598,8 @@ export class AgentRuntimeStore {
     const trimmed = prompt.trim();
     if (!trimmed) return false;
     try {
-      const currentSessionId = await this.ensureSession();
-      const result = await this.client.steerSession(currentSessionId, trimmed);
+      const currentConversationId = await this.ensureConversation();
+      const result = await this.client.steerConversation(currentConversationId, trimmed);
       return result.queued;
     } catch (caught) {
       this.reportError(caught);
@@ -608,9 +608,9 @@ export class AgentRuntimeStore {
   };
 
   clearSteer = async () => {
-    if (!this.sessionId) return;
+    if (!this.conversationId) return;
     try {
-      await this.client.clearSteer(this.sessionId);
+      await this.client.clearSteer(this.conversationId);
     } catch (caught) {
       this.reportError(caught);
       throw caught;
@@ -622,9 +622,9 @@ export class AgentRuntimeStore {
     approved: boolean,
     scope: AgentApprovalResolutionScope = 'once',
   ) => {
-    if (!this.sessionId) return false;
+    if (!this.conversationId) return false;
     try {
-      const result = await this.client.resolveApproval(this.sessionId, requestId, approved, scope);
+      const result = await this.client.resolveApproval(this.conversationId, requestId, approved, scope);
       if (result.resolved && this.pendingApprovals.has(requestId)) {
         this.removePendingApproval(requestId);
         this.publish();
@@ -637,38 +637,38 @@ export class AgentRuntimeStore {
   };
 
   stop = () => {
-    if (!this.sessionId) return;
-    void this.client.stopSession(this.sessionId).catch((caught) => {
+    if (!this.conversationId) return;
+    void this.client.stopConversation(this.conversationId).catch((caught) => {
       this.reportError(caught);
     });
   };
 
   reset = () => {
-    void this.newSession();
+    void this.newConversation();
   };
 
-  reloadSession = async () => {
-    const currentSessionId = this.sessionId;
-    const requestVersion = this.beginSessionRequest();
+  reloadConversation = async () => {
+    const currentConversationId = this.conversationId;
+    const requestVersion = this.beginConversationRequest();
     this.error = null;
     this.clearPendingApprovalState();
-    // Keep the CURRENT projection on screen while a same-session reload re-fetches
+    // Keep the CURRENT projection on screen while a same-conversation reload re-fetches
     // (e.g. after a model/reasoning config change, which doesn't alter the transcript).
     // Blanking to EMPTY_PROJECTION + publish here flashed the whole transcript empty for
     // one frame before re-hydrating — the dock flicker seen on every reasoning toggle.
-    // hydrateSession swaps in the fresh projection atomically below. Only the cold path
-    // (no session yet) legitimately shows empty while a session is established.
-    if (!currentSessionId) {
+    // hydrateConversation swaps in the fresh projection atomically below. Only the cold path
+    // (no conversation yet) legitimately shows empty while a conversation is established.
+    if (!currentConversationId) {
       this.projection = EMPTY_PROJECTION;
     }
     this.publish();
     try {
-      if (currentSessionId) {
-        const session = await this.client.restoreSession(currentSessionId);
-        if (this.isCurrentRequest(requestVersion)) this.hydrateSession(session);
+      if (currentConversationId) {
+        const conversation = await this.client.restoreConversation(currentConversationId);
+        if (this.isCurrentRequest(requestVersion)) this.hydrateConversation(conversation);
         return;
       }
-      await this.ensureSession();
+      await this.ensureConversation();
     } catch (caught) {
       this.reportError(caught);
       throw caught;
@@ -685,22 +685,22 @@ export class AgentRuntimeStore {
     if (this.started) return;
     this.started = true;
     this.client.onEvent(this.handleEvent);
-    void this.ensureSession().catch((caught) => {
+    void this.ensureConversation().catch((caught) => {
       this.reportError(caught);
     });
   }
 
-  private ensureSession() {
-    if (this.sessionId) return Promise.resolve(this.sessionId);
+  private ensureConversation() {
+    if (this.conversationId) return Promise.resolve(this.conversationId);
     if (!this.restorePromise) {
       const requestVersion = this.requestVersion;
-      this.restorePromise = this.client.restoreLatestSession()
-        .then((session) => {
+      this.restorePromise = this.client.restoreLatestConversation()
+        .then((conversation) => {
           if (!this.isCurrentRequest(requestVersion)) {
-            return this.sessionId ?? session.sessionId;
+            return this.conversationId ?? conversation.conversationId;
           }
-          this.hydrateSession(session);
-          return session.sessionId;
+          this.hydrateConversation(conversation);
+          return conversation.conversationId;
         })
         .catch((caught) => {
           this.restorePromise = null;
@@ -710,10 +710,10 @@ export class AgentRuntimeStore {
     return this.restorePromise;
   }
 
-  private hydrateSession(session: AgentSession) {
-    this.sessionId = session.sessionId;
-    this.projection = session.renderProjection;
-    this.error = session.renderProjection.errorMessage;
+  private hydrateConversation(conversation: AgentConversation) {
+    this.conversationId = conversation.conversationId;
+    this.projection = conversation.renderProjection;
+    this.error = conversation.renderProjection.errorMessage;
     this.clearPendingApprovalState();
     this.publish();
   }
@@ -722,9 +722,9 @@ export class AgentRuntimeStore {
     if (payload.type === 'ready') return;
 
     if (payload.type === 'closed') {
-      if (payload.sessionId === this.sessionId) {
-        this.beginSessionRequest();
-        this.sessionId = null;
+      if (payload.conversationId === this.conversationId) {
+        this.beginConversationRequest();
+        this.conversationId = null;
         this.restorePromise = null;
         this.projection = EMPTY_PROJECTION;
         this.error = null;
@@ -735,7 +735,7 @@ export class AgentRuntimeStore {
     }
 
     if (payload.type === 'error') {
-      if (!this.sessionId || payload.sessionId === this.sessionId) {
+      if (!this.conversationId || payload.conversationId === this.conversationId) {
         this.error = payload.error;
         this.publish();
       }
@@ -743,17 +743,17 @@ export class AgentRuntimeStore {
     }
 
     if (payload.type === 'approval_request') {
-      if (!this.sessionId) {
-        this.sessionId = payload.sessionId;
+      if (!this.conversationId) {
+        this.conversationId = payload.conversationId;
       }
-      if (payload.sessionId !== this.sessionId) return;
+      if (payload.conversationId !== this.conversationId) return;
       this.addPendingApproval(payload.request);
       this.publish();
       return;
     }
 
     if (payload.type === 'approval_resolved') {
-      if (payload.sessionId !== this.sessionId) return;
+      if (payload.conversationId !== this.conversationId) return;
       if (this.pendingApprovals.has(payload.requestId)) {
         this.removePendingApproval(payload.requestId);
         this.publish();
@@ -762,22 +762,22 @@ export class AgentRuntimeStore {
     }
 
     if (payload.type === 'projection') {
-      if (!this.sessionId) {
-        this.sessionId = payload.sessionId;
+      if (!this.conversationId) {
+        this.conversationId = payload.conversationId;
       }
-      if (payload.sessionId !== this.sessionId) return;
+      if (payload.conversationId !== this.conversationId) return;
       this.projection = payload.renderProjection;
       this.error = payload.renderProjection.errorMessage;
       this.publish();
     }
   };
 
-  private async closePreviousSession(previousSessionId: string | null, nextSessionId: string) {
-    if (!previousSessionId || previousSessionId === nextSessionId) return;
-    await this.client.closeSession(previousSessionId);
+  private async closePreviousConversation(previousConversationId: string | null, nextConversationId: string) {
+    if (!previousConversationId || previousConversationId === nextConversationId) return;
+    await this.client.closeConversation(previousConversationId);
   }
 
-  private beginSessionRequest() {
+  private beginConversationRequest() {
     this.requestVersion += 1;
     this.restorePromise = null;
     return this.requestVersion;
@@ -815,18 +815,18 @@ export class AgentRuntimeStore {
       providerId: projectionModelValue(this.projection, 'provider'),
       pendingToolCallIds: new Set(this.projection.pendingToolCallIds),
       reasoningLevel: this.projection.thinkingLevel,
-      revision: `${this.sessionId ?? 'pending'}-${this.projection.revision}-${this.projection.rows.length}-${this.projection.transcriptRows.length}-${this.projection.pendingToolCallIds.join(',')}`,
-      sessionId: this.sessionId,
-      sessionTitle: this.projection.sessionTitle,
-      sessionCost: sessionCost(this.projection),
+      revision: `${this.conversationId ?? 'pending'}-${this.projection.revision}-${this.projection.rows.length}-${this.projection.transcriptRows.length}-${this.projection.pendingToolCallIds.join(',')}`,
+      conversationId: this.conversationId,
+      conversationTitle: this.projection.conversationTitle,
+      conversationCost: conversationCost(this.projection),
       subagentRunIds: this.projection.subagentRunIds,
       subagents,
       subagentsByParentToolCallId,
       pendingApproval: this.currentPendingApproval(),
       toolResults,
       turnPhase,
-      selectSession: this.selectSession,
-      newSession: this.newSession,
+      selectConversation: this.selectConversation,
+      newConversation: this.newConversation,
       sendMessage: this.sendMessage,
       editMessage: this.editMessage,
       regenerateMessage: this.regenerateMessage,
@@ -839,7 +839,7 @@ export class AgentRuntimeStore {
       resolveApproval: this.resolveApproval,
       stop: this.stop,
       reset: this.reset,
-      reloadSession: this.reloadSession,
+      reloadConversation: this.reloadConversation,
       seedUserMessage: this.seedUserMessage,
     };
   }

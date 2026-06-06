@@ -7,7 +7,7 @@ import {
   AgentEventStore,
   agentCheckpointFileName,
   agentPayloadFileName,
-  agentSessionDirName,
+  agentConversationDirName,
 } from '../../src/main/agentEventStore';
 
 const systemActor: AgentActor = { type: 'system' };
@@ -84,7 +84,7 @@ describe('agent event store', () => {
         },
       ]);
 
-      const entries = await store.listSessionIndexEntries();
+      const entries = await store.listConversationIndexEntries();
       expect(entries).toEqual([{
         id: sessionId,
         title: 'Renamed',
@@ -93,10 +93,10 @@ describe('agent event store', () => {
         messageCount: 2,
         latestSeq: 4,
       }]);
-      const index = JSON.parse(await readFile(path.join(root, 'indexes', 'session-index.json'), 'utf8')) as {
-        sessions: Record<string, unknown>;
+      const index = JSON.parse(await readFile(path.join(root, 'indexes', 'conversation-index.json'), 'utf8')) as {
+        conversations: Record<string, unknown>;
       };
-      expect(index.sessions[sessionId]).toBeDefined();
+      expect(index.conversations[sessionId]).toBeDefined();
     });
   });
 
@@ -367,17 +367,17 @@ describe('agent event store', () => {
       ]);
       await rm(path.join(root, 'indexes'), { recursive: true, force: true });
 
-      expect(await store.listSessionIndexEntries()).toMatchObject([{
+      expect(await store.listConversationIndexEntries()).toMatchObject([{
         id: sessionId,
         title: 'Untitled',
         messageCount: 1,
         latestSeq: 2,
       }]);
-      await expect(readFile(path.join(root, 'indexes', 'session-index.json'), 'utf8')).resolves.toContain(sessionId);
+      await expect(readFile(path.join(root, 'indexes', 'conversation-index.json'), 'utf8')).resolves.toContain(sessionId);
     });
   });
 
-  test('rebuilds the session index when the derived index is malformed', async () => {
+  test('rebuilds the conversation index when the derived index is malformed', async () => {
     await withStore(async (store, root) => {
       const sessionId = 'session-1';
       await store.appendEvents(sessionId, [
@@ -389,10 +389,10 @@ describe('agent event store', () => {
           content: [{ type: 'text', text: 'Hello' }],
         },
       ]);
-      const indexPath = path.join(root, 'indexes', 'session-index.json');
+      const indexPath = path.join(root, 'indexes', 'conversation-index.json');
       await writeFile(indexPath, 'not-json\n', 'utf8');
 
-      expect(await store.listSessionIndexEntries()).toMatchObject([{
+      expect(await store.listConversationIndexEntries()).toMatchObject([{
         id: sessionId,
         title: 'Untitled',
         messageCount: 1,
@@ -424,23 +424,23 @@ describe('agent event store', () => {
       }), 'utf8');
 
       const restarted = new AgentEventStore(root);
-      expect(await restarted.listSessionIndexEntries()).toMatchObject([{
+      expect(await restarted.listConversationIndexEntries()).toMatchObject([{
         id: sessionId,
         title: 'Current layout',
       }]);
       await expect(readdir(path.join(root, 'sessions'))).rejects.toThrow();
-      await expect(readFile(path.join(root, 'indexes', 'session-index.json'), 'utf8')).resolves.toContain(sessionId);
+      await expect(readFile(path.join(root, 'indexes', 'conversation-index.json'), 'utf8')).resolves.toContain(sessionId);
     });
   });
 
-  test('rebuilds stale session indexes that do not match conversations', async () => {
+  test('rebuilds stale conversation indexes that do not match conversations', async () => {
     await withStore(async (store, root) => {
       const sessionId = 'session-1';
       await store.appendEvents(sessionId, [
         { ...base(sessionId, 1, 'session.created'), title: 'Indexed conversation' },
       ]);
-      await writeFile(path.join(root, 'indexes', 'session-index.json'), JSON.stringify({
-        sessions: {
+      await writeFile(path.join(root, 'indexes', 'conversation-index.json'), JSON.stringify({
+        conversations: {
           'missing-session': {
             id: 'missing-session',
             title: 'Missing',
@@ -452,28 +452,28 @@ describe('agent event store', () => {
         },
       }), 'utf8');
 
-      expect(await new AgentEventStore(root).listSessionIndexEntries()).toMatchObject([{
+      expect(await new AgentEventStore(root).listConversationIndexEntries()).toMatchObject([{
         id: sessionId,
         title: 'Indexed conversation',
       }]);
-      const rebuilt = JSON.parse(await readFile(path.join(root, 'indexes', 'session-index.json'), 'utf8')) as {
-        sessions: Record<string, unknown>;
+      const rebuilt = JSON.parse(await readFile(path.join(root, 'indexes', 'conversation-index.json'), 'utf8')) as {
+        conversations: Record<string, unknown>;
       };
-      expect(Object.keys(rebuilt.sessions)).toEqual([sessionId]);
+      expect(Object.keys(rebuilt.conversations)).toEqual([sessionId]);
     });
   });
 
-  test('removes deleted sessions from the derived session index', async () => {
+  test('removes deleted conversations from the derived conversation index', async () => {
     await withStore(async (store) => {
       const sessionId = 'session-1';
       await store.appendEvents(sessionId, [
         { ...base(sessionId, 1, 'session.created'), title: 'Untitled' },
       ]);
 
-      await store.deleteSession(sessionId);
+      await store.deleteConversation(sessionId);
 
-      expect(await store.listSessionIndexEntries()).toEqual([]);
-      expect(await store.listSessionIds()).toEqual([]);
+      expect(await store.listConversationIndexEntries()).toEqual([]);
+      expect(await store.listConversationIds()).toEqual([]);
     });
   });
 
@@ -497,9 +497,9 @@ describe('agent event store', () => {
         { ...base(sessionId, 1, 'session.created'), title: 'Untitled' },
       ]);
 
-      expect(agentSessionDirName(sessionId)).not.toContain('..');
+      expect(agentConversationDirName(sessionId)).not.toContain('..');
       expect(store.paths(sessionId).conversationDir.startsWith(path.join(root, 'conversations'))).toBe(true);
-      expect(await store.listSessionIds()).toEqual([sessionId]);
+      expect(await store.listConversationIds()).toEqual([sessionId]);
     });
   });
 
@@ -583,7 +583,7 @@ describe('agent event store', () => {
       expect(runIndex.runIds).toEqual([runId]);
 
       expect((await store.readEvents(sessionId)).map((event) => event.seq)).toEqual([1, 2, 3, 4, 5, 6]);
-      expect(await store.listSessionIndexEntries()).toMatchObject([{
+      expect(await store.listConversationIndexEntries()).toMatchObject([{
         id: sessionId,
         title: 'Split test',
         latestSeq: 6,

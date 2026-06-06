@@ -19,7 +19,7 @@ import { nodeReferenceMarkersToText } from '../../../core/referenceMarkup';
 import type {
   AgentProviderSettingsView,
   AgentReasoningLevel,
-  AgentSessionMeta,
+  AgentConversationMeta,
   AgentSlashCommandView,
   NodeId,
 } from '../../api/types';
@@ -66,7 +66,7 @@ interface AgentChatPanelProps {
   index: DocumentIndex;
   userViewContext: AgentUserViewContext;
   onOpenNodeReference: AgentNodeReferenceOpenHandler;
-  onOpenDebugPanel?: (sessionId: string | null) => void;
+  onOpenDebugPanel?: (conversationId: string | null) => void;
 }
 
 function shouldStickToBottom(element: HTMLDivElement): boolean {
@@ -119,19 +119,19 @@ function withReferencedNodes(
   return referencedNodes.length > 0 ? { ...context, referencedNodes } : context;
 }
 
-// The agent runtime stores this English placeholder as a session's title until it
+// The agent runtime stores this English placeholder as a conversation's title until it
 // auto-derives a real one (src/main/agentRuntime.ts). It is a sentinel, not display
 // copy — treat it as "unnamed" so the localized fallback shows instead of leaking
-// raw English into the header / session list.
+// raw English into the header / conversation list.
 const RUNTIME_UNTITLED_SENTINEL = 'Untitled';
 
-function readableSessionTitle(title: string | null | undefined, fallback: string): string {
+function readableConversationTitle(title: string | null | undefined, fallback: string): string {
   const readable = nodeReferenceMarkersToText(title ?? '').replace(/\s+/g, ' ').trim();
   if (!readable || readable === RUNTIME_UNTITLED_SENTINEL) return fallback;
   return readable;
 }
 
-function formatSessionTime(timestamp: number, locale: string): string {
+function formatConversationTime(timestamp: number, locale: string): string {
   const date = new Date(timestamp);
   const now = new Date();
   if (date.toDateString() === now.toDateString()) {
@@ -353,20 +353,20 @@ function visibleTranscriptRange(
 
 type PayloadTextPromiseCache = Map<string, Promise<string | null>>;
 
-function payloadCopyCacheKey(sessionId: string, payloadId: string): string {
-  return `${sessionId}:${payloadId}`;
+function payloadCopyCacheKey(conversationId: string, payloadId: string): string {
+  return `${conversationId}:${payloadId}`;
 }
 
 function loadPayloadTextForCopy(
-  sessionId: string | null,
+  conversationId: string | null,
   payloadId: string,
   cache: PayloadTextPromiseCache,
 ): Promise<string | null> {
-  if (!sessionId) return Promise.resolve(null);
-  const key = payloadCopyCacheKey(sessionId, payloadId);
+  if (!conversationId) return Promise.resolve(null);
+  const key = payloadCopyCacheKey(conversationId, payloadId);
   let pending = cache.get(key);
   if (!pending) {
-    pending = api.agentPayloadText(sessionId, payloadId).catch(() => null);
+    pending = api.agentPayloadText(conversationId, payloadId).catch(() => null);
     cache.set(key, pending);
   }
   return pending;
@@ -374,7 +374,7 @@ function loadPayloadTextForCopy(
 
 async function toolResultCopyText(
   result: AgentToolResultWithPayloads | undefined,
-  sessionId: string | null,
+  conversationId: string | null,
   payloadTextCache: PayloadTextPromiseCache,
 ): Promise<string> {
   if (!result) return '';
@@ -384,7 +384,7 @@ async function toolResultCopyText(
     if (block.type !== 'text') continue;
     const payloadRef = result.payloadRefs?.find((ref) => ref.contentIndex === index);
     if (payloadRef) {
-      const fullText = await loadPayloadTextForCopy(sessionId, payloadRef.payload.id, payloadTextCache);
+      const fullText = await loadPayloadTextForCopy(conversationId, payloadRef.payload.id, payloadTextCache);
       blocks.push(fullText ?? block.text);
       continue;
     }
@@ -397,7 +397,7 @@ async function buildAssistantTurnCopyText(
   entries: AgentConversationEntry[],
   lastEntryIndex: number,
   toolResults: Map<string, AgentToolResultWithPayloads>,
-  sessionId: string | null,
+  conversationId: string | null,
   payloadTextCache: PayloadTextPromiseCache,
 ): Promise<string> {
   let turnStart = lastEntryIndex;
@@ -421,7 +421,7 @@ async function buildAssistantTurnCopyText(
       }
       if (block.type === 'toolCall') {
         parts.push(`\`\`\`tool ${block.name}\n${JSON.stringify(block.arguments ?? {}, null, 2)}\n\`\`\``);
-        const resultText = await toolResultCopyText(toolResults.get(block.id), sessionId, payloadTextCache);
+        const resultText = await toolResultCopyText(toolResults.get(block.id), conversationId, payloadTextCache);
         if (resultText) {
           const tag = toolResults.get(block.id)?.isError ? 'tool-error' : 'tool-result';
           parts.push(`\`\`\`${tag}\n${resultText}\n\`\`\``);
@@ -489,16 +489,16 @@ export function AgentChatPanel({
     editMessage,
     pendingToolCallIds,
     regenerateMessage,
-    reloadSession,
-    newSession,
+    reloadConversation,
+    newConversation,
     pendingApproval,
     revision,
     retryMessage,
     resolveApproval,
-    selectSession,
+    selectConversation,
     sendMessage: sendRuntimeMessage,
-    sessionId,
-    sessionTitle,
+    conversationId,
+    conversationTitle,
     steer: steerRuntime,
     subagentRunIds,
     subagents,
@@ -512,11 +512,11 @@ export function AgentChatPanel({
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [steeringNote, setSteeringNote] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [sessions, setSessions] = useState<AgentSessionMeta[]>([]);
-  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [conversations, setConversations] = useState<AgentConversationMeta[]>([]);
+  const [conversationsLoading, setConversationsLoading] = useState(false);
   const [slashCommands, setSlashCommands] = useState<AgentSlashCommandView[]>([]);
-  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
-  const [pendingDeleteSession, setPendingDeleteSession] = useState<{ id: string; title: string | null } | null>(null);
+  const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
+  const [pendingDeleteConversation, setPendingDeleteConversation] = useState<{ id: string; title: string | null } | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [selectedSubagentId, setSelectedSubagentId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -526,7 +526,7 @@ export function AgentChatPanel({
   const stickToBottomRef = useRef(true);
   const mountedRef = useRef(false);
   const providerSettingsRequestRef = useRef(0);
-  const sessionsRequestRef = useRef(0);
+  const conversationsRequestRef = useRef(0);
   const slashCommandsRequestRef = useRef(0);
   const scrollFrameRef = useRef<number | null>(null);
   const rowHeightsRef = useRef(new Map<string, number>());
@@ -604,23 +604,23 @@ export function AgentChatPanel({
     }
   }, []);
 
-  const loadSessions = useCallback(async () => {
-    const requestId = sessionsRequestRef.current + 1;
-    sessionsRequestRef.current = requestId;
-    setSessionsLoading(true);
+  const loadConversations = useCallback(async () => {
+    const requestId = conversationsRequestRef.current + 1;
+    conversationsRequestRef.current = requestId;
+    setConversationsLoading(true);
     try {
-      const next = await api.agentListSessions();
-      if (!mountedRef.current || requestId !== sessionsRequestRef.current) return null;
-      setSessions(next);
+      const next = await api.agentListConversations();
+      if (!mountedRef.current || requestId !== conversationsRequestRef.current) return null;
+      setConversations(next);
       return next;
     } catch (caught) {
-      if (mountedRef.current && requestId === sessionsRequestRef.current) {
+      if (mountedRef.current && requestId === conversationsRequestRef.current) {
         setSettingsError(caught instanceof Error ? caught.message : String(caught));
       }
       return null;
     } finally {
-      if (mountedRef.current && requestId === sessionsRequestRef.current) {
-        setSessionsLoading(false);
+      if (mountedRef.current && requestId === conversationsRequestRef.current) {
+        setConversationsLoading(false);
       }
     }
   }, []);
@@ -628,12 +628,12 @@ export function AgentChatPanel({
   const loadSlashCommands = useCallback(async () => {
     const requestId = slashCommandsRequestRef.current + 1;
     slashCommandsRequestRef.current = requestId;
-    if (!sessionId) {
+    if (!conversationId) {
       setSlashCommands([]);
       return null;
     }
     try {
-      const next = await api.agentListSlashCommands(sessionId);
+      const next = await api.agentListSlashCommands(conversationId);
       if (!mountedRef.current || requestId !== slashCommandsRequestRef.current) return null;
       setSlashCommands(next);
       return next;
@@ -644,7 +644,7 @@ export function AgentChatPanel({
       }
       return null;
     }
-  }, [sessionId]);
+  }, [conversationId]);
 
   useLayoutEffect(() => {
     const element = scrollRef.current;
@@ -654,7 +654,7 @@ export function AgentChatPanel({
     const observer = new ResizeObserver(() => updateScrollMetrics(element));
     observer.observe(element);
     return () => observer.disconnect();
-  }, [sessionId, updateScrollMetrics]);
+  }, [conversationId, updateScrollMetrics]);
 
   useLayoutEffect(() => {
     const element = scrollRef.current;
@@ -667,7 +667,7 @@ export function AgentChatPanel({
     rowHeightsRef.current.clear();
     copyPayloadTextCacheRef.current.clear();
     setMeasureVersion((version) => version + 1);
-  }, [sessionId]);
+  }, [conversationId]);
 
   useEffect(() => () => {
     if (scrollFrameRef.current !== null) {
@@ -682,7 +682,7 @@ export function AgentChatPanel({
     return () => {
       mountedRef.current = false;
       providerSettingsRequestRef.current += 1;
-      sessionsRequestRef.current += 1;
+      conversationsRequestRef.current += 1;
       slashCommandsRequestRef.current += 1;
     };
   }, [loadProviderSettings]);
@@ -702,8 +702,8 @@ export function AgentChatPanel({
   }, [selectedSubagentId, subagents]);
 
   useEffect(() => {
-    if (historyOpen) void loadSessions();
-  }, [historyOpen, loadSessions]);
+    if (historyOpen) void loadConversations();
+  }, [historyOpen, loadConversations]);
 
   useEffect(() => {
     if (!historyOpen) return;
@@ -746,7 +746,7 @@ export function AgentChatPanel({
       if (mountedRef.current && requestId === providerSettingsRequestRef.current) {
         setProviderSettings(next);
       }
-      await reloadSession();
+      await reloadConversation();
     } catch (caught) {
       if (mountedRef.current && requestId === providerSettingsRequestRef.current) {
         setSettingsError(caught instanceof Error ? caught.message : String(caught));
@@ -765,11 +765,11 @@ export function AgentChatPanel({
   async function refreshAfterSettingsChange() {
     await loadProviderSettings();
     await loadSlashCommands();
-    await reloadSession();
+    await reloadConversation();
   }
 
   // Settings now live in a separate window; when it applies changes the main
-  // process broadcasts here so the panel re-syncs provider/slash/session state
+  // process broadcasts here so the panel re-syncs provider/slash/conversation state
   // instead of showing stale providers. A ref keeps the subscription mounted once
   // while always calling the latest closure.
   const refreshAfterSettingsChangeRef = useRef(refreshAfterSettingsChange);
@@ -795,42 +795,42 @@ export function AgentChatPanel({
     await clearSteer();
   }
 
-  async function handleNewSession() {
+  async function handleNewConversation() {
     setHistoryOpen(false);
-    setEditingSessionId(null);
-    await newSession();
-    await loadSessions();
+    setEditingConversationId(null);
+    await newConversation();
+    await loadConversations();
   }
 
-  async function handleSelectSession(targetSessionId: string) {
-    if (isStreaming || targetSessionId === sessionId) return;
+  async function handleSelectConversation(targetConversationId: string) {
+    if (isStreaming || targetConversationId === conversationId) return;
     setHistoryOpen(false);
-    setEditingSessionId(null);
-    await selectSession(targetSessionId);
+    setEditingConversationId(null);
+    await selectConversation(targetConversationId);
   }
 
-  async function handleRenameSession(targetSessionId: string) {
+  async function handleRenameConversation(targetConversationId: string) {
     const trimmed = editingTitle.trim();
     if (!trimmed) return;
-    await api.agentRenameSession(targetSessionId, trimmed);
-    setEditingSessionId(null);
-    await loadSessions();
+    await api.agentRenameConversation(targetConversationId, trimmed);
+    setEditingConversationId(null);
+    await loadConversations();
   }
 
-  function handleDeleteSession(targetSessionId: string, title: string | null) {
-    setPendingDeleteSession({ id: targetSessionId, title });
+  function handleDeleteConversation(targetConversationId: string, title: string | null) {
+    setPendingDeleteConversation({ id: targetConversationId, title });
   }
 
-  async function confirmDeleteSession() {
-    const target = pendingDeleteSession;
+  async function confirmDeleteConversation() {
+    const target = pendingDeleteConversation;
     if (!target) return;
-    setPendingDeleteSession(null);
-    await api.agentDeleteSession(target.id);
-    if (target.id === sessionId) {
-      await newSession();
+    setPendingDeleteConversation(null);
+    await api.agentDeleteConversation(target.id);
+    if (target.id === conversationId) {
+      await newConversation();
       setHistoryOpen(false);
     }
-    await loadSessions();
+    await loadConversations();
   }
 
   function renderConversationRow(row: AgentConversationRenderRow): ReactNode {
@@ -844,7 +844,7 @@ export function AgentChatPanel({
             entries,
             row.endIndex,
             toolResults,
-            sessionId,
+            conversationId,
             copyPayloadTextCacheRef.current,
           );
           if (text) await navigator.clipboard.writeText(text);
@@ -866,7 +866,7 @@ export function AgentChatPanel({
         onRetry={retryMessage}
         onSwitchBranch={switchBranch}
         pendingToolCallIds={pendingToolCallIds}
-        sessionId={sessionId}
+        conversationId={conversationId}
         streaming={row.streaming}
         subagentsByParentToolCallId={subagentsByParentToolCallId}
         toolResults={toolResults}
@@ -882,13 +882,13 @@ export function AgentChatPanel({
   // it flash during the load window; until loaded we stay neutral.
   const settingsLoaded = providerSettings !== null;
   const hasUsableProvider = settingsLoaded && Boolean(resolveUsableActiveProvider(providerSettings));
-  // Unnamed sessions read "untitled" in the header too, matching the session list
+  // Unnamed conversations read "untitled" in the header too, matching the conversation list
   // and delete-confirm — one fallback everywhere so inside/outside never disagree.
-  const displayTitle = readableSessionTitle(sessionTitle, t.common.untitled);
+  const displayTitle = readableConversationTitle(conversationTitle, t.common.untitled);
   const historyMenuStyle = useAnchoredOverlay(historyMenuRef, {
     anchorRef: historyButtonRef,
     disabled: !historyOpen,
-    layoutKey: `${sessions.length}:${sessionsLoading ? 'loading' : 'ready'}`,
+    layoutKey: `${conversations.length}:${conversationsLoading ? 'loading' : 'ready'}`,
     maxHeight: 420,
     placement: 'bottom-start',
     width: 326,
@@ -917,7 +917,7 @@ export function AgentChatPanel({
             disabled={isStreaming}
             icon={NewConversationIcon}
             label={t.agent.chat.newConversation}
-            onClick={() => void handleNewSession()}
+            onClick={() => void handleNewConversation()}
             title={t.agent.chat.newConversation}
             variant="composerTool"
           />
@@ -935,7 +935,7 @@ export function AgentChatPanel({
             className="agent-menu-button"
             icon={DebugIcon}
             label={t.agent.chat.openDebug}
-            onClick={() => onOpenDebugPanel?.(sessionId)}
+            onClick={() => onOpenDebugPanel?.(conversationId)}
             title={t.agent.chat.openDebug}
             variant="composerTool"
           />
@@ -943,42 +943,42 @@ export function AgentChatPanel({
         {historyOpen ? createPortal(
           <div
             ref={historyMenuRef}
-            className="agent-session-menu"
+            className="agent-conversation-menu"
             role="dialog"
             aria-label={t.agent.chat.conversations}
             style={historyMenuStyle}
           >
-            <div className="agent-session-menu-header">
+            <div className="agent-conversation-menu-header">
               <span>{t.agent.chat.conversations}</span>
               <IconButton
                 className="agent-message-action-button"
                 disabled={isStreaming}
                 icon={NewConversationIcon}
                 label={t.agent.chat.newConversation}
-                onClick={() => void handleNewSession()}
+                onClick={() => void handleNewConversation()}
                 title={t.agent.chat.newConversation}
                 variant="message"
               />
             </div>
-            <div className="agent-session-list">
-              {sessionsLoading ? (
-                <div className="agent-session-empty">{t.common.loading}</div>
-              ) : sessions.length === 0 ? (
-                <div className="agent-session-empty">{t.agent.chat.noConversations}</div>
-              ) : sessions.map((session) => {
-                const isCurrent = session.id === sessionId;
-                const title = readableSessionTitle(session.title, t.common.untitled);
-                if (editingSessionId === session.id) {
+            <div className="agent-conversation-list">
+              {conversationsLoading ? (
+                <div className="agent-conversation-empty">{t.common.loading}</div>
+              ) : conversations.length === 0 ? (
+                <div className="agent-conversation-empty">{t.agent.chat.noConversations}</div>
+              ) : conversations.map((conversation) => {
+                const isCurrent = conversation.id === conversationId;
+                const title = readableConversationTitle(conversation.title, t.common.untitled);
+                if (editingConversationId === conversation.id) {
                   return (
-                    <div className="agent-session-row is-editing" key={session.id}>
+                    <div className="agent-conversation-row is-editing" key={conversation.id}>
                       <TextInputControl
                         autoFocus
-                        className="agent-session-title-input"
+                        className="agent-conversation-title-input"
                         label={t.agent.chat.conversationTitle}
                         onChange={(event) => setEditingTitle(event.target.value)}
                         onKeyDown={(event) => {
-                          if (event.key === 'Escape') setEditingSessionId(null);
-                          if (event.key === 'Enter') void handleRenameSession(session.id);
+                          if (event.key === 'Escape') setEditingConversationId(null);
+                          if (event.key === 'Enter') void handleRenameConversation(conversation.id);
                         }}
                         value={editingTitle}
                       />
@@ -986,14 +986,14 @@ export function AgentChatPanel({
                         className="agent-message-action-button"
                         icon={CloseIcon}
                         label={t.agent.chat.cancelRename}
-                        onClick={() => setEditingSessionId(null)}
+                        onClick={() => setEditingConversationId(null)}
                         variant="message"
                       />
                       <IconButton
                         className="agent-message-action-button"
                         icon={CheckIcon}
                         label={t.agent.chat.saveRename}
-                        onClick={() => void handleRenameSession(session.id)}
+                        onClick={() => void handleRenameConversation(conversation.id)}
                         variant="message"
                       />
                     </div>
@@ -1001,28 +1001,28 @@ export function AgentChatPanel({
                 }
                 return (
                   <div
-                    className={isCurrent ? 'agent-session-row is-current' : 'agent-session-row'}
-                    key={session.id}
+                    className={isCurrent ? 'agent-conversation-row is-current' : 'agent-conversation-row'}
+                    key={conversation.id}
                   >
                     <ButtonControl
-                      className="agent-session-select"
+                      className="agent-conversation-select"
                       disabled={isStreaming}
-                      onClick={() => void handleSelectSession(session.id)}
+                      onClick={() => void handleSelectConversation(conversation.id)}
                     >
-                      <span className="agent-session-name">{title}</span>
-                      <span className="agent-session-meta">
-                        {formatSessionTime(session.updatedAt, locale)}
-                        {session.messageCount > 0 ? ` · ${session.messageCount}` : ''}
+                      <span className="agent-conversation-name">{title}</span>
+                      <span className="agent-conversation-meta">
+                        {formatConversationTime(conversation.updatedAt, locale)}
+                        {conversation.messageCount > 0 ? ` · ${conversation.messageCount}` : ''}
                       </span>
                     </ButtonControl>
-                    <div className="agent-session-row-actions">
+                    <div className="agent-conversation-row-actions">
                       <IconButton
                         className="agent-message-action-button"
                         disabled={isStreaming}
                         icon={PencilIcon}
                         label={t.agent.chat.renameConversation}
                         onClick={() => {
-                          setEditingSessionId(session.id);
+                          setEditingConversationId(conversation.id);
                           setEditingTitle(title);
                         }}
                         title={t.agent.chat.rename}
@@ -1033,7 +1033,7 @@ export function AgentChatPanel({
                         disabled={isStreaming}
                         icon={TrashIcon}
                         label={t.agent.chat.deleteConversation}
-                        onClick={() => void handleDeleteSession(session.id, session.title)}
+                        onClick={() => void handleDeleteConversation(conversation.id, conversation.title)}
                         title={t.agent.chat.delete}
                         variant="message"
                       />
@@ -1123,19 +1123,19 @@ export function AgentChatPanel({
       />
       <AgentSubagentDetailsPanel
         onClose={() => setSelectedSubagentId(null)}
-        sessionId={sessionId}
+        conversationId={conversationId}
         subagent={selectedSubagent}
         subagentsByParentToolCallId={subagentsByParentToolCallId}
       />
-      {pendingDeleteSession ? (
+      {pendingDeleteConversation ? (
         <ConfirmDialog
           title={t.agent.chat.deleteConfirmTitle}
-          message={t.agent.chat.deleteConfirmMessage({ title: readableSessionTitle(pendingDeleteSession.title, t.common.untitled) })}
+          message={t.agent.chat.deleteConfirmMessage({ title: readableConversationTitle(pendingDeleteConversation.title, t.common.untitled) })}
           confirmLabel={t.agent.chat.delete}
           cancelLabel={t.agent.chat.cancel}
           danger
-          onConfirm={() => void confirmDeleteSession()}
-          onCancel={() => setPendingDeleteSession(null)}
+          onConfirm={() => void confirmDeleteConversation()}
+          onCancel={() => setPendingDeleteConversation(null)}
         />
       ) : null}
     </div>

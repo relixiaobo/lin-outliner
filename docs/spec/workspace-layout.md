@@ -177,7 +177,7 @@ interface OutlinePanelState extends WorkspacePanelBase {
 
 interface AgentDebugPanelState extends WorkspacePanelBase {
   type: 'agent-debug';
-  sessionId: string | null;
+  conversationId: string | null;
 }
 
 type WorkspacePanelState = OutlinePanelState | AgentDebugPanelState;

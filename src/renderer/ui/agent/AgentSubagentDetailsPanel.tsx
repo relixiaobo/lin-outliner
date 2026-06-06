@@ -32,7 +32,7 @@ import { useT } from '../../i18n/I18nProvider';
 
 interface AgentSubagentDetailsPanelProps {
   onClose: () => void;
-  sessionId: string | null;
+  conversationId: string | null;
   subagent: AgentRenderSubagentEntity | null;
   subagentsByParentToolCallId?: Map<string, AgentRenderSubagentEntity>;
 }
@@ -224,13 +224,13 @@ function TranscriptThinking({ block, index }: { block: ThinkingContent; index: n
 function TranscriptAssistantMessage({
   message,
   pendingToolCallIds,
-  sessionId,
+  conversationId,
   subagentsByParentToolCallId,
   toolResults,
 }: {
   message: AssistantMessage;
   pendingToolCallIds: ReadonlySet<string>;
-  sessionId: string | null;
+  conversationId: string | null;
   subagentsByParentToolCallId?: Map<string, AgentRenderSubagentEntity>;
   toolResults: Map<string, AgentToolResultWithPayloads>;
 }) {
@@ -257,7 +257,7 @@ function TranscriptAssistantMessage({
               key={`tool-${block.id}`}
               pendingToolCallIds={pendingToolCallIds}
               result={toolResults.get(block.id)}
-              sessionId={sessionId}
+              conversationId={conversationId}
               subagent={subagentsByParentToolCallId?.get(block.id)}
               toolCall={block as ToolCall}
               turnActive={pendingToolCallIds.has(block.id)}
@@ -290,7 +290,7 @@ function TranscriptTimeline({
   messages,
   pendingToolCallIds,
   reload,
-  sessionId,
+  conversationId,
   subagent,
   subagentsByParentToolCallId,
   toolResults,
@@ -300,7 +300,7 @@ function TranscriptTimeline({
   messages: AgentMessage[];
   pendingToolCallIds: ReadonlySet<string>;
   reload: () => void;
-  sessionId: string | null;
+  conversationId: string | null;
   subagent: AgentRenderSubagentEntity;
   subagentsByParentToolCallId?: Map<string, AgentRenderSubagentEntity>;
   toolResults: Map<string, AgentToolResultWithPayloads>;
@@ -348,7 +348,7 @@ function TranscriptTimeline({
               key={`assistant-${index}`}
               message={message}
               pendingToolCallIds={pendingToolCallIds}
-              sessionId={sessionId}
+              conversationId={conversationId}
               subagentsByParentToolCallId={subagentsByParentToolCallId}
               toolResults={toolResults}
             />
@@ -363,7 +363,7 @@ function TranscriptTimeline({
 
 export function AgentSubagentDetailsPanel({
   onClose,
-  sessionId,
+  conversationId,
   subagent,
   subagentsByParentToolCallId,
 }: AgentSubagentDetailsPanelProps) {
@@ -378,12 +378,12 @@ export function AgentSubagentDetailsPanel({
   const requestRef = useRef(0);
 
   const loadTranscript = useCallback(() => {
-    if (!sessionId || !subagent?.transcriptPayloadId) return;
+    if (!conversationId || !subagent?.transcriptPayloadId) return;
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
     setLoading(true);
     setError(null);
-    void api.agentPayloadText(sessionId, subagent.transcriptPayloadId)
+    void api.agentPayloadText(conversationId, subagent.transcriptPayloadId)
       .then((text) => {
         if (requestId !== requestRef.current) return;
         if (text === null) {
@@ -401,7 +401,7 @@ export function AgentSubagentDetailsPanel({
       .finally(() => {
         if (requestId === requestRef.current) setLoading(false);
       });
-  }, [sessionId, subagent?.transcriptPayloadId, t.agent.subagent.transcriptPayloadUnavailable]);
+  }, [conversationId, subagent?.transcriptPayloadId, t.agent.subagent.transcriptPayloadUnavailable]);
 
   useEffect(() => {
     setActiveTab('timeline');
@@ -441,11 +441,11 @@ export function AgentSubagentDetailsPanel({
 
   async function sendFollowUp() {
     const message = followUpDraft.trim();
-    if (!sessionId || !subagent || !message || !canSendFollowUp || actionPending) return;
+    if (!conversationId || !subagent || !message || !canSendFollowUp || actionPending) return;
     setActionPending('send');
     setActionError(null);
     try {
-      await api.agentSubagentSend(sessionId, subagent.id, message);
+      await api.agentSubagentSend(conversationId, subagent.id, message);
       setFollowUpDraft('');
     } catch (caught) {
       setActionError(caught instanceof Error ? caught.message : String(caught));
@@ -455,11 +455,11 @@ export function AgentSubagentDetailsPanel({
   }
 
   async function stopSubagent() {
-    if (!sessionId || !subagent || !canStop || actionPending) return;
+    if (!conversationId || !subagent || !canStop || actionPending) return;
     setActionPending('stop');
     setActionError(null);
     try {
-      await api.agentSubagentStop(sessionId, subagent.id);
+      await api.agentSubagentStop(conversationId, subagent.id);
     } catch (caught) {
       setActionError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -558,7 +558,7 @@ export function AgentSubagentDetailsPanel({
             messages={messages}
             pendingToolCallIds={pendingToolCallIds}
             reload={loadTranscript}
-            sessionId={sessionId}
+            conversationId={conversationId}
             subagent={subagent}
             subagentsByParentToolCallId={subagentsByParentToolCallId}
             toolResults={toolResults}

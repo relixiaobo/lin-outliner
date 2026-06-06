@@ -168,7 +168,7 @@ describe('large agent sessions', () => {
       expect(projection.rows.length).toBe(397);
       expect(projection.rows.at(-1)?.messageId).toBe('assistant-194');
 
-      const sessions = await store.listSessionIndexEntries();
+      const sessions = await store.listConversationIndexEntries();
       expect(sessions[0]).toMatchObject({
         id: sessionId,
         messageCount: 397,

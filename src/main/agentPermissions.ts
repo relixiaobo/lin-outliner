@@ -34,7 +34,7 @@ export interface AgentApprovalRequest {
   title: string;
   target: string;
   details: AgentApprovalDetail[];
-  suggestedSessionRule?: string;
+  suggestedConversationRule?: string;
   alwaysAllowRule?: string;
 }
 
@@ -43,7 +43,7 @@ export interface AgentPermissionPolicy {
   workspaceRoot: string;
   denyTools: readonly string[];
   preapprovedToolRules: readonly string[];
-  sessionAllowRules: readonly string[];
+  conversationAllowRules: readonly string[];
   allowOutsideWorkspaceRead: boolean;
   allowOutsideWorkspaceWrite: boolean;
   globalPermissions: GlobalToolPermissionConfig;
@@ -54,7 +54,7 @@ export interface AgentPermissionPolicyInput {
   workspaceRoot?: string;
   denyTools?: readonly string[];
   preapprovedToolRules?: readonly string[];
-  sessionAllowRules?: readonly string[];
+  conversationAllowRules?: readonly string[];
   allowOutsideWorkspaceRead?: boolean;
   allowOutsideWorkspaceWrite?: boolean;
   globalPermissions?: unknown;
@@ -66,7 +66,7 @@ interface AgentPermissionDecisionBase {
   reason?: string;
   code?: string;
   preapproved: boolean;
-  sessionApproved: boolean;
+  conversationApproved: boolean;
   ruleId?: string;
   permissionSource?: 'configured_allow' | 'configured_ask' | 'default';
   descriptor?: ToolActionDescriptor;
@@ -249,7 +249,7 @@ export function createAgentPermissionPolicy(input: AgentPermissionPolicyInput = 
     workspaceRoot: path.resolve(input.workspaceRoot ?? process.cwd()),
     denyTools: input.denyTools ?? DEFAULT_DENY_TOOLS,
     preapprovedToolRules: input.preapprovedToolRules ?? [],
-    sessionAllowRules: input.sessionAllowRules ?? [],
+    conversationAllowRules: input.conversationAllowRules ?? [],
     allowOutsideWorkspaceRead: input.allowOutsideWorkspaceRead ?? false,
     allowOutsideWorkspaceWrite: input.allowOutsideWorkspaceWrite ?? false,
     globalPermissions: parseGlobalToolPermissionSettings(input.globalPermissions),
@@ -261,10 +261,10 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
   const toolName = normalizeToolName(input.toolName);
   const access = classifyToolAccess(toolName);
   const preapproved = policy.preapprovedToolRules.some((rule) => matchesAgentToolRule(rule, toolName, input.args));
-  const sessionApproved = policy.sessionAllowRules.some((rule) => matchesAgentToolRule(rule, toolName, input.args));
+  const conversationApproved = policy.conversationAllowRules.some((rule) => matchesAgentToolRule(rule, toolName, input.args));
 
   if (policy.denyTools.some((rule) => matchesToolNameRule(rule, toolName))) {
-    return deny('tool_denied', `Tool ${input.toolName} is not available for this run.`, access, preapproved, sessionApproved);
+    return deny('tool_denied', `Tool ${input.toolName} is not available for this run.`, access, preapproved, conversationApproved);
   }
 
   const descriptors = deriveAgentToolActionDescriptors({
@@ -280,7 +280,7 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
       platformBlock.consequence,
       access,
       preapproved,
-      sessionApproved,
+      conversationApproved,
       platformBlock.redline,
       {
         descriptor: platformBlock,
@@ -296,7 +296,7 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
       `A global permission rule denied ${globalResolution.descriptor.title}.`,
       access,
       preapproved,
-      sessionApproved,
+      conversationApproved,
       undefined,
       {
         descriptor: globalResolution.descriptor,
@@ -305,13 +305,13 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
     );
   }
 
-  if (policy.mode === 'restricted' && !preapproved && !sessionApproved && !isRestrictedBaseAllowed(toolName)) {
+  if (policy.mode === 'restricted' && !preapproved && !conversationApproved && !isRestrictedBaseAllowed(toolName)) {
     return deny(
       'tool_not_preapproved',
       `Tool ${input.toolName} is not available for this run.`,
       access,
       preapproved,
-      sessionApproved,
+      conversationApproved,
       undefined,
       {
         descriptors,
@@ -319,8 +319,8 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
     );
   }
 
-  if (sessionApproved && !descriptors.some((descriptor) => descriptor.actionKind === 'shell.sandbox_override' || descriptor.actionKind === 'shell.background_process')) {
-    return allow(access, preapproved, sessionApproved, 'Allowed by a session permission rule.', 'important', {
+  if (conversationApproved && !descriptors.some((descriptor) => descriptor.actionKind === 'shell.sandbox_override' || descriptor.actionKind === 'shell.background_process')) {
+    return allow(access, preapproved, conversationApproved, 'Allowed by a conversation permission rule.', 'important', {
       descriptors,
     });
   }
@@ -329,7 +329,7 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
     return allow(
       access,
       preapproved,
-      sessionApproved,
+      conversationApproved,
       globalResolution.source === 'configured_allow'
         ? `Allowed by global rule ${globalResolution.rule?.ruleValue ?? globalResolution.descriptor.actionKind}.`
         : undefined,
@@ -347,7 +347,7 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
       globalResolution.descriptor as DerivedToolActionDescriptor,
       access,
       preapproved,
-      sessionApproved,
+      conversationApproved,
       globalResolution.source === 'configured_ask' ? 'configured_ask' : 'default',
       descriptors,
     );
@@ -356,9 +356,9 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
   return allow(
     access,
     preapproved,
-    sessionApproved,
-    sessionApproved ? 'Allowed by a session permission rule.' : undefined,
-    sessionApproved ? 'important' : undefined,
+    conversationApproved,
+    conversationApproved ? 'Allowed by a conversation permission rule.' : undefined,
+    conversationApproved ? 'important' : undefined,
     { descriptors },
   );
 }
@@ -1070,7 +1070,7 @@ function askForDescriptor(
   descriptor: DerivedToolActionDescriptor,
   access: AgentPermissionAccess,
   preapproved: boolean,
-  sessionApproved: boolean,
+  conversationApproved: boolean,
   permissionSource: 'configured_ask' | 'default',
   descriptors: readonly DerivedToolActionDescriptor[],
 ): AgentPermissionAskDecision {
@@ -1081,7 +1081,7 @@ function askForDescriptor(
     reason,
     access,
     preapproved,
-    sessionApproved,
+    conversationApproved,
     {
       title: descriptor.requestTitle ?? `Approve ${descriptor.title}?`,
       target,
@@ -1600,12 +1600,12 @@ function looksLikePath(value: string): boolean {
 function allow(
   access: AgentPermissionAccess,
   preapproved: boolean,
-  sessionApproved: boolean,
+  conversationApproved: boolean,
   reason?: string,
   visibility?: 'normal' | 'important',
   options: Pick<AgentPermissionAllowDecision, 'descriptor' | 'descriptors' | 'permissionSource'> = {},
 ): AgentPermissionAllowDecision {
-  return { behavior: 'allow', access, preapproved, sessionApproved, reason, visibility, ...options };
+  return { behavior: 'allow', access, preapproved, conversationApproved, reason, visibility, ...options };
 }
 
 function ask(
@@ -1613,11 +1613,11 @@ function ask(
   reason: string,
   access: AgentPermissionAccess,
   preapproved: boolean,
-  sessionApproved: boolean,
+  conversationApproved: boolean,
   request: AgentApprovalRequest,
   options: Pick<AgentPermissionAskDecision, 'descriptor' | 'descriptors' | 'permissionSource'>,
 ): AgentPermissionAskDecision {
-  return { behavior: 'ask', code, reason, access, preapproved, sessionApproved, request, ...options };
+  return { behavior: 'ask', code, reason, access, preapproved, conversationApproved, request, ...options };
 }
 
 function deny(
@@ -1625,9 +1625,9 @@ function deny(
   reason: string,
   access: AgentPermissionAccess,
   preapproved: boolean,
-  sessionApproved: boolean,
+  conversationApproved: boolean,
   redline?: true,
   options: Pick<AgentPermissionDenyDecision, 'descriptor' | 'descriptors'> = {},
 ): AgentPermissionDenyDecision {
-  return { behavior: 'deny', code, reason, access, preapproved, sessionApproved, redline, ...options };
+  return { behavior: 'deny', code, reason, access, preapproved, conversationApproved, redline, ...options };
 }

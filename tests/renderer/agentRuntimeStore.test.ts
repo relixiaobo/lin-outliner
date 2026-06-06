@@ -10,7 +10,7 @@ import type {
   AssistantMessage,
   UserMessage,
 } from '../../src/core/agentTypes';
-import type { AgentSession } from '../../src/core/types';
+import type { AgentConversation } from '../../src/core/types';
 import type {
   AgentRenderActiveCompaction,
   AgentRenderProjection,
@@ -78,9 +78,9 @@ function projection(
     messageId: entry.nodeId,
   }));
   return {
-    sessionId: 'saved',
+    conversationId: 'saved',
     revision: options.revision ?? 1,
-    sessionTitle: 'Saved conversation',
+    conversationTitle: 'Saved conversation',
     activeRunId: options.isStreaming ? 'run-1' : null,
     activeCompaction: options.activeCompaction ?? null,
     isStreaming: !!options.isStreaming,
@@ -149,10 +149,10 @@ function persistedContent(message: UserMessage | AssistantMessage): AgentPersist
   return content;
 }
 
-function session(sessionId: string, renderProjection: AgentRenderProjection): AgentSession {
+function conversation(conversationId: string, renderProjection: AgentRenderProjection): AgentConversation {
   return {
-    sessionId,
-    renderProjection: { ...renderProjection, sessionId },
+    conversationId,
+    renderProjection: { ...renderProjection, conversationId },
   };
 }
 
@@ -172,63 +172,63 @@ async function flushMicrotasks() {
 }
 
 function createFakeClient(options: {
-  latestSession: Promise<AgentSession> | AgentSession;
-  createdSession?: AgentSession;
+  latestConversation: Promise<AgentConversation> | AgentConversation;
+  createdConversation?: AgentConversation;
 }) {
   const listeners = new Set<(event: AgentRuntimeEvent) => void>();
   const calls = {
-    closeSession: [] as string[],
-    createSession: 0,
-    restoreLatestSession: 0,
-    restoreSession: [] as string[],
-    queueFollowUp: [] as Array<{ sessionId: string; message: string; userViewContext?: AgentUserViewContext | null }>,
-    resolveApproval: [] as Array<{ sessionId: string; requestId: string; approved: boolean; scope: AgentApprovalResolutionScope | undefined }>,
-    steerSession: [] as Array<{ sessionId: string; message: string }>,
+    closeConversation: [] as string[],
+    createConversation: 0,
+    restoreLatestConversation: 0,
+    restoreConversation: [] as string[],
+    queueFollowUp: [] as Array<{ conversationId: string; message: string; userViewContext?: AgentUserViewContext | null }>,
+    resolveApproval: [] as Array<{ conversationId: string; requestId: string; approved: boolean; scope: AgentApprovalResolutionScope | undefined }>,
+    steerConversation: [] as Array<{ conversationId: string; message: string }>,
     sendMessage: [] as Array<{
-      sessionId: string;
+      conversationId: string;
       message: string;
       userViewContext?: AgentUserViewContext | null;
     }>,
   };
 
   const client: AgentRuntimeClient = {
-    restoreLatestSession: async () => {
-      calls.restoreLatestSession += 1;
-      return options.latestSession;
+    restoreLatestConversation: async () => {
+      calls.restoreLatestConversation += 1;
+      return options.latestConversation;
     },
-    restoreSession: async (sessionId) => {
-      calls.restoreSession.push(sessionId);
-      return session(sessionId, projection([]));
+    restoreConversation: async (conversationId) => {
+      calls.restoreConversation.push(conversationId);
+      return conversation(conversationId, projection([]));
     },
-    createSession: async () => {
-      calls.createSession += 1;
-      return options.createdSession ?? session('created', projection([]));
+    createConversation: async () => {
+      calls.createConversation += 1;
+      return options.createdConversation ?? conversation('created', projection([]));
     },
-    closeSession: async (sessionId) => {
-      calls.closeSession.push(sessionId);
+    closeConversation: async (conversationId) => {
+      calls.closeConversation.push(conversationId);
     },
-    sendMessage: async (sessionId, message, _attachments, userViewContext) => {
-      calls.sendMessage.push({ sessionId, message, userViewContext });
+    sendMessage: async (conversationId, message, _attachments, userViewContext) => {
+      calls.sendMessage.push({ conversationId, message, userViewContext });
     },
     editMessage: async () => {},
     regenerateMessage: async () => {},
     retryMessage: async () => {},
     switchBranch: async () => {},
-    queueFollowUp: async (sessionId, message, userViewContext) => {
-      calls.queueFollowUp.push({ sessionId, message, userViewContext });
+    queueFollowUp: async (conversationId, message, userViewContext) => {
+      calls.queueFollowUp.push({ conversationId, message, userViewContext });
       return { queued: true };
     },
     clearFollowUp: async () => {},
-    steerSession: async (sessionId, message) => {
-      calls.steerSession.push({ sessionId, message });
+    steerConversation: async (conversationId, message) => {
+      calls.steerConversation.push({ conversationId, message });
       return { queued: true };
     },
     clearSteer: async () => {},
-    resolveApproval: async (sessionId, requestId, approved, scope) => {
-      calls.resolveApproval.push({ sessionId, requestId, approved, scope });
+    resolveApproval: async (conversationId, requestId, approved, scope) => {
+      calls.resolveApproval.push({ conversationId, requestId, approved, scope });
       return { resolved: true };
     },
-    stopSession: async () => {},
+    stopConversation: async () => {},
     onEvent: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -246,21 +246,21 @@ function createFakeClient(options: {
 
 describe('agent runtime store', () => {
   test('hydrates conversation from restore command response without waiting for an event', async () => {
-    const restored = session('saved', projection([
+    const restored = conversation('saved', projection([
       { nodeId: 'u1', message: userMessage('hello'), branches: null },
       { nodeId: 'a1', message: assistantMessage('hi'), branches: null },
     ]));
-    const fake = createFakeClient({ latestSession: restored });
+    const fake = createFakeClient({ latestConversation: restored });
     const store = createAgentRuntimeStore(fake.client);
     const unsubscribe = store.subscribe(() => {});
 
     await flushMicrotasks();
 
-    expect(fake.calls.restoreLatestSession).toBe(1);
-    expect(store.getSnapshot().sessionId).toBe('saved');
+    expect(fake.calls.restoreLatestConversation).toBe(1);
+    expect(store.getSnapshot().conversationId).toBe('saved');
     expect(store.getSnapshot().entries.map((entry) => entry.nodeId))
       .toEqual(['u1', 'a1']);
-    expect(fake.calls.closeSession).toEqual([]);
+    expect(fake.calls.closeConversation).toEqual([]);
     unsubscribe();
   });
 
@@ -273,10 +273,10 @@ describe('agent runtime store', () => {
       ],
       timestamp: 1,
     };
-    const restored = session('saved', projection([
+    const restored = conversation('saved', projection([
       { nodeId: 'u1', message: user, branches: null },
     ]));
-    const fake = createFakeClient({ latestSession: restored });
+    const fake = createFakeClient({ latestConversation: restored });
     const store = createAgentRuntimeStore(fake.client);
     const unsubscribe = store.subscribe(() => {});
 
@@ -292,7 +292,7 @@ describe('agent runtime store', () => {
   });
 
   test('tracks pending approval requests and clears them after resolve', async () => {
-    const fake = createFakeClient({ latestSession: session('saved', projection([], { isStreaming: true })) });
+    const fake = createFakeClient({ latestConversation: conversation('saved', projection([], { isStreaming: true })) });
     const store = createAgentRuntimeStore(fake.client);
     const unsubscribe = store.subscribe(() => {});
 
@@ -300,38 +300,38 @@ describe('agent runtime store', () => {
 
     fake.emit({
       type: 'approval_request',
-      sessionId: 'saved',
+      conversationId: 'saved',
       requestId: 'approval-1',
       request: {
         requestId: 'approval-1',
-        sessionId: 'saved',
+        conversationId: 'saved',
         toolCallId: 'tool-1',
         toolName: 'bash',
         title: 'Approve GitHub push?',
         target: 'git push origin codex/foo',
         reason: 'This changes external state on a git remote.',
         details: [{ label: 'Command', value: 'git push origin codex/foo' }],
-        suggestedSessionRule: 'Bash(git push origin codex/foo)',
+        suggestedConversationRule: 'Bash(git push origin codex/foo)',
       },
       timestamp: 10,
     });
 
     expect(store.getSnapshot().pendingApproval?.requestId).toBe('approval-1');
 
-    await store.getSnapshot().resolveApproval('approval-1', true, 'session');
+    await store.getSnapshot().resolveApproval('approval-1', true, 'conversation');
 
     expect(fake.calls.resolveApproval).toEqual([{
-      sessionId: 'saved',
+      conversationId: 'saved',
       requestId: 'approval-1',
       approved: true,
-      scope: 'session',
+      scope: 'conversation',
     }]);
     expect(store.getSnapshot().pendingApproval).toBeNull();
     unsubscribe();
   });
 
   test('queues multiple pending approval requests and shows the next one after resolution', async () => {
-    const fake = createFakeClient({ latestSession: session('saved', projection([], { isStreaming: true })) });
+    const fake = createFakeClient({ latestConversation: conversation('saved', projection([], { isStreaming: true })) });
     const store = createAgentRuntimeStore(fake.client);
     const unsubscribe = store.subscribe(() => {});
 
@@ -339,11 +339,11 @@ describe('agent runtime store', () => {
 
     const request = (requestId: string, target: string): AgentRuntimeEvent => ({
       type: 'approval_request',
-      sessionId: 'saved',
+      conversationId: 'saved',
       requestId,
       request: {
         requestId,
-        sessionId: 'saved',
+        conversationId: 'saved',
         toolCallId: `tool-${requestId}`,
         toolName: 'bash',
         title: 'Approve command?',
@@ -365,7 +365,7 @@ describe('agent runtime store', () => {
 
     fake.emit({
       type: 'approval_resolved',
-      sessionId: 'saved',
+      conversationId: 'saved',
       requestId: 'approval-2',
       approved: false,
       timestamp: 20,
@@ -376,11 +376,11 @@ describe('agent runtime store', () => {
   });
 
   test('filters hidden system reminder user rows from the visible conversation', async () => {
-    const restored = session('saved', projection([
+    const restored = conversation('saved', projection([
       { nodeId: 'system-notification', message: userMessage(systemReminder('Background subagent completed.')), branches: null },
       { nodeId: 'a1', message: assistantMessage('handled notification'), branches: null },
     ]));
-    const fake = createFakeClient({ latestSession: restored });
+    const fake = createFakeClient({ latestConversation: restored });
     const store = createAgentRuntimeStore(fake.client);
     const unsubscribe = store.subscribe(() => {});
 
@@ -420,7 +420,7 @@ describe('agent runtime store', () => {
       trigger: 'auto',
       createdAt: 10,
     };
-    const fake = createFakeClient({ latestSession: session('saved', restoredProjection) });
+    const fake = createFakeClient({ latestConversation: conversation('saved', restoredProjection) });
     const store = createAgentRuntimeStore(fake.client);
     const unsubscribe = store.subscribe(() => {});
 
@@ -446,7 +446,7 @@ describe('agent runtime store', () => {
         startedAt: 20,
       },
     });
-    const fake = createFakeClient({ latestSession: session('saved', restoredProjection) });
+    const fake = createFakeClient({ latestConversation: conversation('saved', restoredProjection) });
     const store = createAgentRuntimeStore(fake.client);
     const unsubscribe = store.subscribe(() => {});
 
@@ -462,11 +462,11 @@ describe('agent runtime store', () => {
   });
 
   test('keeps the restored session through unsubscribe and resubscribe races', async () => {
-    const restore = deferred<AgentSession>();
-    const restored = session('saved', projection([
+    const restore = deferred<AgentConversation>();
+    const restored = conversation('saved', projection([
       { nodeId: 'u1', message: userMessage('persisted'), branches: null },
     ]));
-    const fake = createFakeClient({ latestSession: restore.promise });
+    const fake = createFakeClient({ latestConversation: restore.promise });
     const store = createAgentRuntimeStore(fake.client);
 
     const unsubscribeFirst = store.subscribe(() => {});
@@ -475,30 +475,30 @@ describe('agent runtime store', () => {
     restore.resolve(restored);
     await flushMicrotasks();
 
-    expect(fake.calls.restoreLatestSession).toBe(1);
-    expect(fake.calls.closeSession).toEqual([]);
-    expect(store.getSnapshot().sessionId).toBe('saved');
+    expect(fake.calls.restoreLatestConversation).toBe(1);
+    expect(fake.calls.closeConversation).toEqual([]);
+    expect(store.getSnapshot().conversationId).toBe('saved');
     expect(store.getSnapshot().entries).toHaveLength(1);
     unsubscribeSecond();
   });
 
   test('closes the previous runtime session only on explicit new session', async () => {
-    const restored = session('saved', projection([
+    const restored = conversation('saved', projection([
       { nodeId: 'u1', message: userMessage('old'), branches: null },
     ]));
-    const created = session('created', projection([
+    const created = conversation('created', projection([
       { nodeId: 'u2', message: userMessage('new'), branches: null },
     ]));
-    const fake = createFakeClient({ latestSession: restored, createdSession: created });
+    const fake = createFakeClient({ latestConversation: restored, createdConversation: created });
     const store = createAgentRuntimeStore(fake.client);
     const unsubscribe = store.subscribe(() => {});
     await flushMicrotasks();
 
-    await store.getSnapshot().newSession();
+    await store.getSnapshot().newConversation();
 
-    expect(fake.calls.createSession).toBe(1);
-    expect(fake.calls.closeSession).toEqual(['saved']);
-    expect(store.getSnapshot().sessionId).toBe('created');
+    expect(fake.calls.createConversation).toBe(1);
+    expect(fake.calls.closeConversation).toEqual(['saved']);
+    expect(store.getSnapshot().conversationId).toBe('created');
     expect(store.getSnapshot().entries.map((entry) => entry.nodeId))
       .toEqual(['u2']);
     unsubscribe();
@@ -506,17 +506,17 @@ describe('agent runtime store', () => {
 
   test('keeps a stable assistant entry while a streamed turn starts producing text', async () => {
     const user = userMessage('hello', 42);
-    const restored = session('saved', projection([
+    const restored = conversation('saved', projection([
       { nodeId: 'u1', message: user, branches: null },
     ]));
-    const fake = createFakeClient({ latestSession: restored });
+    const fake = createFakeClient({ latestConversation: restored });
     const store = createAgentRuntimeStore(fake.client);
     const unsubscribe = store.subscribe(() => {});
     await flushMicrotasks();
 
     fake.emit({
       type: 'projection',
-      sessionId: 'saved',
+      conversationId: 'saved',
       lastEventType: null,
       revision: 1,
       renderProjection: projection([{ nodeId: 'u1', message: user, branches: null }], { isStreaming: true, revision: 1 }),
@@ -531,7 +531,7 @@ describe('agent runtime store', () => {
 
     fake.emit({
       type: 'projection',
-      sessionId: 'saved',
+      conversationId: 'saved',
       lastEventType: null,
       revision: 2,
       renderProjection: projection([
@@ -585,7 +585,7 @@ describe('agent runtime store', () => {
       toolName: 'file_read',
       isError: false,
     };
-    const fake = createFakeClient({ latestSession: session('saved', restoredProjection) });
+    const fake = createFakeClient({ latestConversation: conversation('saved', restoredProjection) });
     const store = createAgentRuntimeStore(fake.client);
     const unsubscribe = store.subscribe(() => {});
     await flushMicrotasks();
@@ -612,7 +612,7 @@ describe('agent runtime store', () => {
       transcriptMessageCount: 4,
       parentToolCallId: 'tool-agent-1',
     } satisfies AgentRenderSubagentEntity;
-    const restored = session('saved', projection([
+    const restored = conversation('saved', projection([
       { nodeId: 'u1', message: userMessage('inspect'), branches: null },
       {
         nodeId: 'a1',
@@ -634,7 +634,7 @@ describe('agent runtime store', () => {
       subagents: { [subagent.id]: subagent },
       subagentRunIds: [subagent.id],
     }));
-    const fake = createFakeClient({ latestSession: restored });
+    const fake = createFakeClient({ latestConversation: restored });
     const store = createAgentRuntimeStore(fake.client);
     const unsubscribe = store.subscribe(() => {});
 
@@ -648,7 +648,7 @@ describe('agent runtime store', () => {
   });
 
   test('passes user view context through user turns and queued follow-ups', async () => {
-    const restored = session('saved', projection([]));
+    const restored = conversation('saved', projection([]));
     const userViewContext: AgentUserViewContext = {
       activePanelId: 'panel-1',
       focusedPanelId: 'panel-1',
@@ -676,7 +676,7 @@ describe('agent runtime store', () => {
         visibleOutlineTruncated: false,
       }],
     };
-    const fake = createFakeClient({ latestSession: restored });
+    const fake = createFakeClient({ latestConversation: restored });
     const store = createAgentRuntimeStore(fake.client);
     const unsubscribe = store.subscribe(() => {});
     await flushMicrotasks();
@@ -686,41 +686,41 @@ describe('agent runtime store', () => {
     await store.getSnapshot().steer('correct course');
 
     expect(fake.calls.sendMessage).toEqual([{
-      sessionId: 'saved',
+      conversationId: 'saved',
       message: 'hello',
       userViewContext,
     }]);
     expect(fake.calls.queueFollowUp).toEqual([{
-      sessionId: 'saved',
+      conversationId: 'saved',
       message: 'next',
       userViewContext,
     }]);
-    expect(fake.calls.steerSession).toEqual([{
-      sessionId: 'saved',
+    expect(fake.calls.steerConversation).toEqual([{
+      conversationId: 'saved',
       message: 'correct course',
     }]);
     unsubscribe();
   });
 
   test('ignores stale initial restore after an explicit session change', async () => {
-    const restore = deferred<AgentSession>();
-    const restored = session('saved', projection([
+    const restore = deferred<AgentConversation>();
+    const restored = conversation('saved', projection([
       { nodeId: 'u1', message: userMessage('old'), branches: null },
     ]));
-    const created = session('created', projection([
+    const created = conversation('created', projection([
       { nodeId: 'u2', message: userMessage('new'), branches: null },
     ]));
-    const fake = createFakeClient({ latestSession: restore.promise, createdSession: created });
+    const fake = createFakeClient({ latestConversation: restore.promise, createdConversation: created });
     const store = createAgentRuntimeStore(fake.client);
     const unsubscribe = store.subscribe(() => {});
 
-    await store.getSnapshot().newSession();
+    await store.getSnapshot().newConversation();
     restore.resolve(restored);
     await flushMicrotasks();
 
-    expect(fake.calls.restoreLatestSession).toBe(1);
-    expect(fake.calls.createSession).toBe(1);
-    expect(store.getSnapshot().sessionId).toBe('created');
+    expect(fake.calls.restoreLatestConversation).toBe(1);
+    expect(fake.calls.createConversation).toBe(1);
+    expect(store.getSnapshot().conversationId).toBe('created');
     expect(store.getSnapshot().entries.map((entry) => entry.nodeId))
       .toEqual(['u2']);
     unsubscribe();

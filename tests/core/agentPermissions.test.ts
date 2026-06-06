@@ -229,7 +229,7 @@ describe('agent permissions', () => {
     expect(blocked).toMatchObject({ behavior: 'deny', code: 'tool_not_preapproved' });
   });
 
-  test('asks for external bash side effects and can allow an exact session rule', () => {
+  test('asks for external bash side effects and can allow an exact conversation rule', () => {
     const command = 'git push origin codex/foo';
     const asked = evaluateAgentToolPermission({
       toolName: 'bash',
@@ -241,12 +241,12 @@ describe('agent permissions', () => {
       args: { command },
       policy: {
         workspaceRoot: '/tmp/workspace',
-        sessionAllowRules: [`Bash(${command})`],
+        conversationAllowRules: [`Bash(${command})`],
       },
     });
 
     expect(asked).toMatchObject({ behavior: 'ask', code: 'external_git_push' });
-    expect(allowed).toMatchObject({ behavior: 'allow', sessionApproved: true, visibility: 'important' });
+    expect(allowed).toMatchObject({ behavior: 'allow', conversationApproved: true, visibility: 'important' });
   });
 
   test('approval requests expose validated always-allow rules', () => {
@@ -335,10 +335,10 @@ describe('agent permissions', () => {
     expect(compound).toMatchObject({ behavior: 'ask', code: 'external_git_push' });
   });
 
-  test('session rules do not approve execution mode upgrades', () => {
+  test('conversation rules do not approve execution mode upgrades', () => {
     const policy = {
       workspaceRoot: '/tmp/workspace',
-      sessionAllowRules: ['Bash(npm test)'],
+      conversationAllowRules: ['Bash(npm test)'],
     };
 
     const sandboxOverride = evaluateAgentToolPermission({
@@ -352,10 +352,10 @@ describe('agent permissions', () => {
       policy,
     });
 
-    expect(sandboxOverride).toMatchObject({ behavior: 'ask', code: 'sandbox_override', sessionApproved: true });
-    expect(background).toMatchObject({ behavior: 'ask', code: 'background_process', sessionApproved: true });
-    expect(sandboxOverride.behavior === 'ask' ? sandboxOverride.request.suggestedSessionRule : undefined).toBeUndefined();
-    expect(background.behavior === 'ask' ? background.request.suggestedSessionRule : undefined).toBeUndefined();
+    expect(sandboxOverride).toMatchObject({ behavior: 'ask', code: 'sandbox_override', conversationApproved: true });
+    expect(background).toMatchObject({ behavior: 'ask', code: 'background_process', conversationApproved: true });
+    expect(sandboxOverride.behavior === 'ask' ? sandboxOverride.request.suggestedConversationRule : undefined).toBeUndefined();
+    expect(background.behavior === 'ask' ? background.request.suggestedConversationRule : undefined).toBeUndefined();
   });
 
   test('global rules use deny over ask over allow precedence', () => {

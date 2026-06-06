@@ -19,7 +19,7 @@ export interface OutlinePanelState extends WorkspacePanelBase {
 
 export interface AgentDebugPanelState extends WorkspacePanelBase {
   type: 'agent-debug';
-  sessionId: string | null;
+  conversationId: string | null;
 }
 
 export type WorkspacePanelState = OutlinePanelState | AgentDebugPanelState;

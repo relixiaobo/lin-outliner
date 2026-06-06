@@ -5,8 +5,8 @@ import type {
   AgentProviderSecretStatus,
   AgentProviderSettingsView,
   AgentRuntimeSettingsInput,
-  AgentSession,
-  AgentSessionMeta,
+  AgentConversation,
+  AgentConversationMeta,
   AgentSlashCommandView,
   AgentApprovalResolutionScope,
   AgentToolPermissionSettingsView,
@@ -236,69 +236,71 @@ export const api = {
   backlinks: (targetId: string) => command<Backlink[]>('backlinks', { targetId }),
   undo: () => command<CommandResult>('undo'),
   redo: () => command<CommandResult>('redo'),
-  agentRestoreLatestSession: () => command<AgentSession>('agent_restore_latest_session'),
-  agentRestoreSession: (sessionId: string) => command<AgentSession>('agent_restore_session', { sessionId }),
-  agentCreateSession: () => command<AgentSession>('agent_create_session'),
-  agentListSessions: () => command<AgentSessionMeta[]>('agent_list_sessions'),
-  agentRenameSession: (sessionId: string, title: string) =>
-    command<AgentSessionMeta | null>('agent_rename_session', { sessionId, title }),
-  agentDeleteSession: (sessionId: string) =>
-    command<void>('agent_delete_session', { sessionId }),
-  agentDebugSnapshot: (sessionId: string) =>
-    command<AgentDebugSnapshot | null>('agent_debug_snapshot', { sessionId }),
-  agentDebugHistory: (sessionId: string) =>
-    command<AgentDebugSnapshot[]>('agent_debug_history', { sessionId }),
-  agentDebugTotals: (sessionId: string) =>
-    command<AgentDebugTotals>('agent_debug_totals', { sessionId }),
-  agentDebugPayload: (sessionId: string, payloadId: string) =>
-    command<string | null>('agent_debug_payload', { sessionId, payloadId }),
-  agentPayloadText: (sessionId: string, payloadId: string) =>
-    command<string | null>('agent_payload_text', { sessionId, payloadId }),
-  agentSubagentStatus: (sessionId: string, agentId: string, options: { wait?: boolean; timeoutMs?: number } = {}) =>
-    command<AgentSubagentActionResult>('agent_subagent_status', { sessionId, agentId, ...options }),
-  agentSubagentSend: (sessionId: string, agentId: string, message: string) =>
-    command<AgentSubagentActionResult>('agent_subagent_send', { sessionId, agentId, message }),
-  agentSubagentStop: (sessionId: string, agentId: string) =>
-    command<AgentSubagentActionResult>('agent_subagent_stop', { sessionId, agentId }),
+  agentRestoreLatestConversation: () => command<AgentConversation>('agent_restore_latest_conversation'),
+  agentRestoreConversation: (conversationId: string) => (
+    command<AgentConversation>('agent_restore_conversation', { conversationId })
+  ),
+  agentCreateConversation: () => command<AgentConversation>('agent_create_conversation'),
+  agentListConversations: () => command<AgentConversationMeta[]>('agent_list_conversations'),
+  agentRenameConversation: (conversationId: string, title: string) =>
+    command<AgentConversationMeta | null>('agent_rename_conversation', { conversationId, title }),
+  agentDeleteConversation: (conversationId: string) =>
+    command<void>('agent_delete_conversation', { conversationId }),
+  agentDebugSnapshot: (conversationId: string) =>
+    command<AgentDebugSnapshot | null>('agent_debug_snapshot', { conversationId }),
+  agentDebugHistory: (conversationId: string) =>
+    command<AgentDebugSnapshot[]>('agent_debug_history', { conversationId }),
+  agentDebugTotals: (conversationId: string) =>
+    command<AgentDebugTotals>('agent_debug_totals', { conversationId }),
+  agentDebugPayload: (conversationId: string, payloadId: string) =>
+    command<string | null>('agent_debug_payload', { conversationId, payloadId }),
+  agentPayloadText: (conversationId: string, payloadId: string) =>
+    command<string | null>('agent_payload_text', { conversationId, payloadId }),
+  agentSubagentStatus: (conversationId: string, agentId: string, options: { wait?: boolean; timeoutMs?: number } = {}) =>
+    command<AgentSubagentActionResult>('agent_subagent_status', { conversationId, agentId, ...options }),
+  agentSubagentSend: (conversationId: string, agentId: string, message: string) =>
+    command<AgentSubagentActionResult>('agent_subagent_send', { conversationId, agentId, message }),
+  agentSubagentStop: (conversationId: string, agentId: string) =>
+    command<AgentSubagentActionResult>('agent_subagent_stop', { conversationId, agentId }),
   agentSendMessage: (
-    sessionId: string,
+    conversationId: string,
     message: string,
     attachments: AgentMessageAttachmentInput[] = [],
     userViewContext?: AgentUserViewContext | null,
-  ) => command<void>('agent_send_message', { sessionId, message, attachments, userViewContext }),
-  agentEditMessage: (sessionId: string, nodeId: string, message: string) =>
-    command<void>('agent_edit_message', { sessionId, nodeId, message }),
-  agentRegenerateMessage: (sessionId: string, nodeId: string) =>
-    command<void>('agent_regenerate_message', { sessionId, nodeId }),
-  agentRetryMessage: (sessionId: string, nodeId: string) =>
-    command<void>('agent_retry_message', { sessionId, nodeId }),
-  agentSwitchBranch: (sessionId: string, nodeId: string) =>
-    command<void>('agent_switch_branch', { sessionId, nodeId }),
+  ) => command<void>('agent_send_message', { conversationId, message, attachments, userViewContext }),
+  agentEditMessage: (conversationId: string, nodeId: string, message: string) =>
+    command<void>('agent_edit_message', { conversationId, nodeId, message }),
+  agentRegenerateMessage: (conversationId: string, nodeId: string) =>
+    command<void>('agent_regenerate_message', { conversationId, nodeId }),
+  agentRetryMessage: (conversationId: string, nodeId: string) =>
+    command<void>('agent_retry_message', { conversationId, nodeId }),
+  agentSwitchBranch: (conversationId: string, nodeId: string) =>
+    command<void>('agent_switch_branch', { conversationId, nodeId }),
   agentQueueFollowUp: (
-    sessionId: string,
+    conversationId: string,
     message: string,
     userViewContext?: AgentUserViewContext | null,
-  ) => command<{ queued: boolean }>('agent_queue_follow_up', { sessionId, message, userViewContext }),
-  agentClearFollowUp: (sessionId: string) =>
-    command<void>('agent_clear_follow_up', { sessionId }),
-  agentSteerSession: (sessionId: string, message: string) =>
-    command<{ queued: boolean }>('agent_steer_session', { sessionId, message }),
-  agentClearSteer: (sessionId: string) =>
-    command<void>('agent_clear_steer', { sessionId }),
+  ) => command<{ queued: boolean }>('agent_queue_follow_up', { conversationId, message, userViewContext }),
+  agentClearFollowUp: (conversationId: string) =>
+    command<void>('agent_clear_follow_up', { conversationId }),
+  agentSteerConversation: (conversationId: string, message: string) =>
+    command<{ queued: boolean }>('agent_steer_conversation', { conversationId, message }),
+  agentClearSteer: (conversationId: string) =>
+    command<void>('agent_clear_steer', { conversationId }),
   agentResolveApproval: (
-    sessionId: string,
+    conversationId: string,
     requestId: string,
     approved: boolean,
     scope: AgentApprovalResolutionScope = 'once',
-  ) => command<{ resolved: boolean }>('agent_resolve_approval', { sessionId, requestId, approved, scope }),
-  agentStopSession: (sessionId: string) =>
-    command<void>('agent_stop_session', { sessionId }),
-  agentResetSession: (sessionId: string) =>
-    command<void>('agent_reset_session', { sessionId }),
-  agentCloseSession: (sessionId: string) =>
-    command<void>('agent_close_session', { sessionId }),
-  agentListSlashCommands: (sessionId: string) =>
-    command<AgentSlashCommandView[]>('agent_list_slash_commands', { sessionId }),
+  ) => command<{ resolved: boolean }>('agent_resolve_approval', { conversationId, requestId, approved, scope }),
+  agentStopConversation: (conversationId: string) =>
+    command<void>('agent_stop_conversation', { conversationId }),
+  agentResetConversation: (conversationId: string) =>
+    command<void>('agent_reset_conversation', { conversationId }),
+  agentCloseConversation: (conversationId: string) =>
+    command<void>('agent_close_conversation', { conversationId }),
+  agentListSlashCommands: (conversationId: string) =>
+    command<AgentSlashCommandView[]>('agent_list_slash_commands', { conversationId }),
   agentGetProviderSettings: () =>
     command<AgentProviderSettingsView>('agent_get_provider_settings'),
   agentUpdateRuntimeSettings: (settings: AgentRuntimeSettingsInput) =>
@@ -327,10 +329,10 @@ export const api = {
     command<void>('agent_oauth_respond', { requestId, value }),
   agentOAuthCancel: (providerId: string) =>
     command<void>('agent_oauth_cancel', { providerId }),
-  agentListAllDefinitions: (sessionId: string) =>
-    command<AgentDefinition[]>('agent_list_all_definitions', { sessionId }),
+  agentListAllDefinitions: (conversationId: string) =>
+    command<AgentDefinition[]>('agent_list_all_definitions', { conversationId }),
   agentTestProviderConnection: (options: { providerId: string; modelId: string; baseUrl?: string; apiKey?: string }) =>
     command<{ success: boolean; message: string; statusCode?: number }>('agent_test_provider_connection', options),
-  agentListAllSkills: (sessionId: string) =>
-    command<SkillDefinition[]>('agent_list_all_skills', { sessionId }),
+  agentListAllSkills: (conversationId: string) =>
+    command<SkillDefinition[]>('agent_list_all_skills', { conversationId }),
 };

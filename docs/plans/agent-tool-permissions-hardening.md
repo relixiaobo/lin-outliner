@@ -45,17 +45,18 @@ if (sessionApproved && !descriptors.some((d) =>
 
 This silently relaxes a configured `ask` rule and skips the ask
 resolver/classifier. The path is reachable: `resolveApproval` pushes
-`suggestedSessionRule` into `permissionSessionAllowRules` for `scope==='session'`,
-and `main.ts` forwards `scope: 'session'` from IPC. The parent plan removes
-session grants as a permission concept (Decision #3; "current session-scoped
-approval runtime support must be removed") and requires
+`suggestedConversationRule` into `permissionConversationAllowRules` for
+`scope==='conversation'`, and `main.ts` forwards `scope: 'conversation'` from
+IPC. The parent plan removes conversation grants as a permission concept
+(Decision #3; "current conversation-scoped approval runtime support must be
+removed") and requires
 that a configured `ask` is never silently relaxed by `allow` (precedence). Not a
 deny/hard-block bypass (those precede it), hence medium.
 
 **Fix:** remove session-scoped allow rules from the permission model. Approval
-choices may remain "once" or "always" only; do not keep a hidden session
+choices may remain "once" or "always" only; do not keep a hidden conversation
 compatibility layer. **Test:** a configured `ask(Action(...))` plus any stale
-session-shaped rule fixture must still resolve to `ask`/`needs_user`, not `allow`.
+conversation-shaped rule fixture must still resolve to `ask`/`needs_user`, not `allow`.
 
 ### 2. `parseGlobalToolPermissionSettings` pre-shaped early-return (MEDIUM, latent)
 

@@ -195,8 +195,8 @@ export interface AgentDebugTokenEstimate {
 export interface AgentDebugSnapshot {
   id: string;
   source: AgentDebugSnapshotSource;
-  sessionId: string;
-  sessionTitle: string | null;
+  conversationId: string;
+  conversationTitle: string | null;
   turnIndex: number;
   queryIndex: number;
   capturedAt: number;
@@ -229,7 +229,7 @@ export interface AgentMessageBranchState {
 
 export interface AgentProjectionEvent {
   type: 'projection';
-  sessionId: string;
+  conversationId: string;
   lastEventType: string | null;
   revision: number;
   renderProjection: AgentRenderProjection;
@@ -238,26 +238,26 @@ export interface AgentProjectionEvent {
 
 export interface AgentReadyEvent {
   type: 'ready';
-  sessionId: null;
+  conversationId: null;
   timestamp: number;
 }
 
 export interface AgentErrorEvent {
   type: 'error';
-  sessionId: string;
+  conversationId: string;
   error: string;
   timestamp: number;
 }
 
 export interface AgentClosedEvent {
   type: 'closed';
-  sessionId: string;
+  conversationId: string;
   timestamp: number;
 }
 
 export interface AgentToolCallEvent {
   type: 'tool_call';
-  sessionId: string;
+  conversationId: string;
   toolCallId: string;
   toolName: string;
   args?: unknown;
@@ -266,13 +266,13 @@ export interface AgentToolCallEvent {
 
 export interface AgentToolResultEvent {
   type: 'tool_result';
-  sessionId: string;
+  conversationId: string;
   toolCallId: string;
   result?: unknown;
   timestamp: number;
 }
 
-export type AgentApprovalResolutionScope = 'once' | 'session' | 'always';
+export type AgentApprovalResolutionScope = 'once' | 'conversation' | 'always';
 
 export interface AgentApprovalRequestDetail {
   label: string;
@@ -281,20 +281,20 @@ export interface AgentApprovalRequestDetail {
 
 export interface AgentApprovalRequestView {
   requestId: string;
-  sessionId: string;
+  conversationId: string;
   toolCallId: string;
   toolName: string;
   title: string;
   target: string;
   reason: string;
   details: AgentApprovalRequestDetail[];
-  suggestedSessionRule?: string;
+  suggestedConversationRule?: string;
   alwaysAllowRule?: string;
 }
 
 export interface AgentApprovalResolvedEvent {
   type: 'approval_resolved';
-  sessionId: string;
+  conversationId: string;
   requestId: string;
   approved: boolean;
   scope?: AgentApprovalResolutionScope;
@@ -303,7 +303,7 @@ export interface AgentApprovalResolvedEvent {
 
 export interface AgentApprovalRequestEvent {
   type: 'approval_request';
-  sessionId: string;
+  conversationId: string;
   requestId: string;
   request: AgentApprovalRequestView;
   timestamp: number;

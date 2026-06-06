@@ -248,7 +248,7 @@ button.panel-resize-handle {
   cursor: default;
 }
 
-.agent-session-menu {
+.agent-conversation-menu {
   position: absolute;
   z-index: var(--z-popover);
   top: 32px;
@@ -265,7 +265,7 @@ button.panel-resize-handle {
   box-shadow: var(--shadow);
 }
 
-.agent-session-menu-header {
+.agent-conversation-menu-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -276,7 +276,7 @@ button.panel-resize-handle {
   padding: var(--space-4) var(--space-5);
 }
 
-.agent-session-list {
+.agent-conversation-list {
   display: flex;
   max-height: 360px;
   flex-direction: column;
@@ -285,14 +285,14 @@ button.panel-resize-handle {
   padding: var(--space-3);
 }
 
-.agent-session-empty {
+.agent-conversation-empty {
   color: var(--text-faint);
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
   padding: var(--space-5) var(--space-6);
 }
 
-.agent-session-row {
+.agent-conversation-row {
   display: flex;
   min-width: 0;
   min-height: 54px;
@@ -301,16 +301,16 @@ button.panel-resize-handle {
   border-radius: var(--radius-sm);
 }
 
-.agent-session-row:hover,
-.agent-session-row.is-current {
+.agent-conversation-row:hover,
+.agent-conversation-row.is-current {
   background: var(--control-hover);
 }
 
-.agent-session-row.is-editing {
+.agent-conversation-row.is-editing {
   padding: var(--space-3) var(--space-3) var(--space-3) var(--space-5);
 }
 
-.agent-session-select {
+.agent-conversation-select {
   display: flex;
   min-width: 0;
   min-height: 54px;
@@ -322,11 +322,11 @@ button.panel-resize-handle {
   text-align: left;
 }
 
-.agent-session-select:disabled {
+.agent-conversation-select:disabled {
   cursor: default;
 }
 
-.agent-session-name {
+.agent-conversation-name {
   overflow: hidden;
   color: var(--text-strong);
   font-size: var(--font-ui-sm);
@@ -335,17 +335,17 @@ button.panel-resize-handle {
   white-space: nowrap;
 }
 
-.agent-session-row.is-current .agent-session-name {
+.agent-conversation-row.is-current .agent-conversation-name {
   font-weight: 500;
 }
 
-.agent-session-meta {
+.agent-conversation-meta {
   color: var(--text-faint);
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
 }
 
-.agent-session-row-actions {
+.agent-conversation-row-actions {
   display: inline-flex;
   flex: 0 0 auto;
   gap: var(--space-1);
@@ -353,12 +353,12 @@ button.panel-resize-handle {
   padding-right: var(--space-2);
 }
 
-.agent-session-row:hover .agent-session-row-actions,
-.agent-session-row:focus-within .agent-session-row-actions {
+.agent-conversation-row:hover .agent-conversation-row-actions,
+.agent-conversation-row:focus-within .agent-conversation-row-actions {
   opacity: 1;
 }
 
-.agent-session-title-input {
+.agent-conversation-title-input {
   height: 32px;
   min-width: 0;
   flex: 1 1 auto;

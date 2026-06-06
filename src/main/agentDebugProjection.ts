@@ -38,15 +38,15 @@ export interface AgentDebugProjection {
 export async function deriveAgentDebugProjectionFromEvents(input: {
   events: readonly AgentEvent[];
   readPayload: (payload: AgentPayloadRef) => Promise<Buffer | Uint8Array | string>;
-  sessionId: string;
-  sessionTitle?: string | null;
+  conversationId: string;
+  conversationTitle?: string | null;
 }): Promise<AgentDebugProjection> {
   const latestSeq = input.events.at(-1)?.seq ?? 0;
   const debugEvents = input.events.filter(isDebugSnapshotCreatedEvent).slice(-20);
   const completedAssistantEvents = input.events.filter(isAssistantMessageCompletedEvent);
   const usedAssistantCompletions = new Set<string>();
   const history: AgentDebugSnapshot[] = [];
-  const sessionTitle = input.sessionTitle ?? sessionTitleFromEvents(input.events);
+  const conversationTitle = input.conversationTitle ?? conversationTitleFromEvents(input.events);
 
   for (let index = 0; index < debugEvents.length; index += 1) {
     const event = debugEvents[index]!;
@@ -65,8 +65,8 @@ export async function deriveAgentDebugProjectionFromEvents(input: {
       wirePayloadRef: event.payloadRef,
       model: debugModelFromMetadata(event.model),
       queryIndex: event.queryIndex,
-      sessionId: input.sessionId,
-      sessionTitle,
+      conversationId: input.conversationId,
+      conversationTitle,
       source: event.source,
       turnIndex: event.turnIndex,
     });
@@ -202,7 +202,7 @@ function debugTotalsFromHistory(history: readonly AgentDebugSnapshot[]): AgentDe
   return totals;
 }
 
-function sessionTitleFromEvents(events: readonly AgentEvent[]): string | null {
+function conversationTitleFromEvents(events: readonly AgentEvent[]): string | null {
   let title: string | null = null;
   for (const event of events) {
     if (event.type === 'session.created' || event.type === 'session.renamed') title = event.title;

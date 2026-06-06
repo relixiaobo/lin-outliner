@@ -15,7 +15,7 @@ interface AgentProcessTimelineProps {
   onOpenSubagentTranscript?: (subagentId: string) => void;
   pendingToolCallIds: ReadonlySet<string>;
   results: Map<string, AgentToolResultWithPayloads>;
-  sessionId?: string | null;
+  conversationId?: string | null;
   subagentsByParentToolCallId?: Map<string, AgentRenderSubagentEntity>;
   turnActive: boolean;
 }
@@ -29,7 +29,7 @@ export function AgentProcessTimeline({
   onOpenSubagentTranscript,
   pendingToolCallIds,
   results,
-  sessionId,
+  conversationId,
   subagentsByParentToolCallId,
   turnActive,
 }: AgentProcessTimelineProps) {
@@ -71,7 +71,7 @@ export function AgentProcessTimeline({
               onOpenSubagentTranscript={onOpenSubagentTranscript}
               pendingToolCallIds={pendingToolCallIds}
               result={results.get(block.toolCall.id)}
-              sessionId={sessionId}
+              conversationId={conversationId}
               subagent={subagentsByParentToolCallId?.get(block.toolCall.id)}
               toolCall={block.toolCall}
               turnActive={turnActive}
