@@ -3,7 +3,9 @@ import {
   deriveAgentPiMessages,
   getAgentEventActivePath,
   getAgentEventConversation,
+  getAgentEventConversationPath,
   getAgentEventMessageBranches,
+  getAgentEventRuntimeTranscriptPath,
   getAgentEventVisibleTranscript,
   replayAgentEvents,
   type AgentActor,
@@ -387,6 +389,7 @@ describe('agent event log', () => {
       },
       {
         ...base(6, 'tool_result.created', { type: 'tool', toolName: 'file_read', toolCallId: 'tool-1' }),
+        runId: 'run-1',
         messageId: 'tool-result-1',
         parentMessageId: 'assistant-1',
         toolCallId: 'tool-1',
@@ -395,18 +398,50 @@ describe('agent event log', () => {
         content: [{ type: 'text', text: 'notes content' }],
         outputSummary: 'notes content',
       },
+      {
+        ...base(7, 'assistant_message.started', agentActor),
+        runId: 'run-1',
+        messageId: 'assistant-2',
+        parentMessageId: 'tool-result-1',
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        ...base(8, 'assistant_message.completed', agentActor),
+        runId: 'run-1',
+        messageId: 'assistant-2',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Done.' }],
+      },
     ];
 
     const state = replayAgentEvents(events);
+    expect(getAgentEventActivePath(state).map((message) => message.id)).toEqual([
+      'user-1',
+      'assistant-1',
+      'tool-result-1',
+      'assistant-2',
+    ]);
+    expect(getAgentEventRuntimeTranscriptPath(state).map((message) => message.id)).toEqual([
+      'user-1',
+      'assistant-1',
+      'tool-result-1',
+      'assistant-2',
+    ]);
+    expect(getAgentEventConversationPath(state).map((message) => message.id)).toEqual(['user-1', 'assistant-2']);
+    expect(getAgentEventConversation(state).map((entry) => entry.messageId)).toEqual(['user-1', 'assistant-2']);
     expect(getAgentEventActivePath(state).map((message) => message.actor)).toEqual([
       userActor,
       agentActor,
       { type: 'tool', toolName: 'file_read', toolCallId: 'tool-1' },
+      agentActor,
     ]);
+    expect(state.messages['tool-result-1']?.runId).toBe('run-1');
 
     const messages = deriveAgentPiMessages(state);
     const assistant = messages[1];
     const toolResult = messages[2];
+    const finalAssistant = messages[3];
 
     expect(assistant?.role).toBe('assistant');
     if (assistant?.role !== 'assistant') throw new Error('Expected assistant');
@@ -422,6 +457,42 @@ describe('agent event log', () => {
       toolName: 'file_read',
       isError: false,
     });
+    expect(finalAssistant?.role).toBe('assistant');
+    if (finalAssistant?.role !== 'assistant') throw new Error('Expected final assistant');
+    expect(finalAssistant.content).toEqual([{ type: 'text', text: 'Done.' }]);
+  });
+
+  test('infers run ownership for legacy flat tool results from the parent assistant', () => {
+    const state = replayAgentEvents([
+      { ...base(1, 'session.created'), title: 'Untitled' },
+      {
+        ...base(2, 'assistant_message.started', agentActor),
+        runId: 'run-legacy',
+        messageId: 'assistant-1',
+        parentMessageId: null,
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        ...base(3, 'assistant_message.completed', agentActor),
+        runId: 'run-legacy',
+        messageId: 'assistant-1',
+        stopReason: 'toolUse',
+        content: [{ type: 'toolCall', id: 'tool-1', name: 'file_read', arguments: {} }],
+      },
+      {
+        ...base(4, 'tool_result.created', { type: 'tool', toolName: 'file_read', toolCallId: 'tool-1' }),
+        messageId: 'tool-result-1',
+        parentMessageId: 'assistant-1',
+        toolCallId: 'tool-1',
+        toolName: 'file_read',
+        isError: false,
+        content: [{ type: 'text', text: 'legacy result' }],
+        outputSummary: 'legacy result',
+      },
+    ]);
+
+    expect(state.messages['tool-result-1']?.runId).toBe('run-legacy');
   });
 
   test('uses persisted output labels instead of expanding tool payload refs for pi-mono', () => {
@@ -585,6 +656,7 @@ describe('agent event log', () => {
       { ...base(5, 'payload.created'), payload },
       {
         ...base(6, 'tool_result.replaced'),
+        runId: 'run-1',
         messageId: 'tool-result-1',
         toolCallId: 'tool-1',
         content: [{ type: 'payload_ref', payload, label: replacement }],
@@ -595,6 +667,7 @@ describe('agent event log', () => {
 
     const state = replayAgentEvents(events);
     expect(state.messages['tool-result-1']?.outputSummary).toBe('bash output');
+    expect(state.messages['tool-result-1']?.runId).toBe('run-1');
     const toolResult = deriveAgentPiMessages(state)[1];
     expect(toolResult?.role).toBe('toolResult');
     if (toolResult?.role !== 'toolResult') throw new Error('Expected tool result');

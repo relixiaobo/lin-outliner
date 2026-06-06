@@ -570,6 +570,7 @@ export interface ToolCallFailedEvent extends AgentEventBase {
 
 export interface ToolResultCreatedEvent extends AgentEventBase {
   type: 'tool_result.created';
+  runId?: string;
   toolCallId: string;
   toolName: string;
   messageId: string;
@@ -582,6 +583,7 @@ export interface ToolResultCreatedEvent extends AgentEventBase {
 
 export interface ToolResultReplacedEvent extends AgentEventBase {
   type: 'tool_result.replaced';
+  runId?: string;
   toolCallId: string;
   messageId: string;
   content: AgentPersistedContent[];
@@ -973,6 +975,18 @@ export function getAgentEventVisibleTranscript(
   return entries;
 }
 
+export function getAgentEventConversationPath(state: AgentEventReplayState): AgentEventMessageRecord[] {
+  return getAgentEventActivePath(state).filter(isAgentConversationMessage);
+}
+
+export function getAgentEventRuntimeTranscriptPath(state: AgentEventReplayState): AgentEventMessageRecord[] {
+  // F2a read seam: this is the joined pi-agent-core transcript. While storage is
+  // still flat, the active path already interleaves communication messages with
+  // run-scoped execution messages; the physical run-log split can later replace
+  // this implementation without changing runtime consumers.
+  return getAgentEventActivePath(state);
+}
+
 export function getAgentEventMessageBranches(
   state: AgentEventReplayState,
   messageId: string,
@@ -991,8 +1005,7 @@ export function getAgentEventMessageBranches(
 }
 
 export function getAgentEventConversation(state: AgentEventReplayState): AgentEventConversationEntry[] {
-  return getAgentEventActivePath(state)
-    .filter((message) => message.role === 'user' || message.role === 'assistant')
+  return getAgentEventConversationPath(state)
     .map((message) => ({
       messageId: message.id,
       message,
@@ -1001,9 +1014,21 @@ export function getAgentEventConversation(state: AgentEventReplayState): AgentEv
 }
 
 export function deriveAgentPiMessages(state: AgentEventReplayState): AgentMessage[] {
-  return getAgentEventActivePath(state)
+  return getAgentEventRuntimeTranscriptPath(state)
     .map(agentEventMessageToPiMessage)
     .filter((message): message is AgentMessage => Boolean(message));
+}
+
+export function isAgentConversationMessage(message: AgentEventMessageRecord): boolean {
+  if (message.role === 'user') return true;
+  if (message.role !== 'assistant') return false;
+  return !isAgentRunExecutionMessage(message);
+}
+
+export function isAgentRunExecutionMessage(message: AgentEventMessageRecord): boolean {
+  if (message.role === 'toolResult') return true;
+  return message.role === 'assistant'
+    && (message.stopReason === 'toolUse' || message.content.some((part) => part.type === 'toolCall'));
 }
 
 export function agentEventMessageToPiMessage(message: AgentEventMessageRecord): AgentMessage | null {
@@ -1153,6 +1178,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         createdAt: event.createdAt,
         updatedAt: event.createdAt,
         status: 'completed',
+        runId: event.runId ?? parentRunId(state, event.parentMessageId),
         toolCallId: event.toolCallId,
         toolName: event.toolName,
         isError: event.isError,
@@ -1169,6 +1195,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       message.content = cloneContent(event.content);
       message.updatedAt = event.createdAt;
       message.outputSummary = event.outputSummary;
+      message.runId = event.runId ?? message.runId;
       return;
     }
     case 'branch.selected':
@@ -1350,6 +1377,10 @@ function requireMessage(state: AgentEventReplayState, messageId: string): AgentE
   const message = state.messages[messageId];
   if (!message) throw new Error(`Missing agent message: ${messageId}`);
   return message;
+}
+
+function parentRunId(state: AgentEventReplayState, parentMessageId: string | null): string | undefined {
+  return parentMessageId ? state.messages[parentMessageId]?.runId : undefined;
 }
 
 function applyContentDelta(message: AgentEventMessageRecord, delta: AgentContentDelta) {

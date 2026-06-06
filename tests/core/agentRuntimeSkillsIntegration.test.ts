@@ -822,6 +822,15 @@ describe('agent runtime skill integration', () => {
       && event.status === 'denied'
       && event.resolvedBy === 'user_once'
     ))).toBe(true);
+    const deniedToolResult = events.find((event) => (
+      event.type === 'tool_result.created'
+      && event.toolCallId === 'tool-denied-push'
+    ));
+    expect(deniedToolResult?.runId).toBeDefined();
+    expect(events.some((event) => (
+      event.type === 'run.started'
+      && event.runId === deniedToolResult?.runId
+    ))).toBe(true);
   });
 
   test('persists always-allow approval rules globally', async () => {

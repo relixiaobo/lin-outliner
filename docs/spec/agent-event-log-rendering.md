@@ -308,6 +308,12 @@ type AgentEventType =
   | 'tool_call.failed'
   | 'tool_result.created'
   | 'tool_result.replaced'
+  | 'tool.permission.checked'
+  | 'tool.permission.resolved'
+  | 'user_question.requested'
+  | 'user_question.answered'
+  | 'user_question.cancelled'
+  | 'widget_state.updated'
   | 'approval.requested'
   | 'approval.resolved'
   | 'follow_up.queued'
@@ -326,10 +332,10 @@ type AgentEventType =
 ```
 
 Not every schema event is emitted by the current runtime yet. Approval,
-follow-up, metric, thinking delta, tool-call delta, and derived payload events
-remain schema-reserved so these features can land without changing the
-event-store model. Events that are emitted today still go through the same
-append-only rules.
+follow-up, metric, thinking delta, tool-call delta, user-question, widget-state,
+and derived payload events remain schema-reserved so these features can land
+without changing the event-store model. Events that are emitted today still go
+through the same append-only rules.
 
 ## Message Model
 
@@ -435,6 +441,7 @@ interface ToolCallStartedEvent extends AgentEventBase {
 
 interface ToolResultCreatedEvent extends AgentEventBase {
   type: 'tool_result.created';
+  runId?: string;
   toolCallId: string;
   toolName: string;
   messageId: string;
@@ -447,6 +454,7 @@ interface ToolResultCreatedEvent extends AgentEventBase {
 
 interface ToolResultReplacedEvent extends AgentEventBase {
   type: 'tool_result.replaced';
+  runId?: string;
   toolCallId: string;
   messageId: string;
   content: AgentPersistedContent[];
@@ -454,6 +462,11 @@ interface ToolResultReplacedEvent extends AgentEventBase {
   outputRef?: AgentPayloadRef;
 }
 ```
+
+Runtime-emitted `tool_result.created` events carry `runId` so run-log assembly
+has an explicit join key. Legacy flat events may omit it; replay infers the run
+from the parent assistant message when available. Replacement events preserve
+the existing run ownership unless they provide a more explicit `runId`.
 
 The pi-mono projection reconstructs pi-ai messages as:
 
@@ -464,6 +477,25 @@ ToolResultMessage(toolCallId, toolName, content)
 
 The render projection may group thinking, tool calls, and tool results under a
 single process block.
+
+## Conversation vs Runtime Transcript Projections
+
+The current on-disk store is still a flat session log, but replay exposes two
+separate read seams:
+
+- `getAgentEventConversationPath()` returns communication messages: user
+  messages and final assistant replies. It excludes run-scoped execution
+  messages: tool-result messages and assistant messages whose completed content
+  is a tool call (`stopReason: 'toolUse'` or persisted `toolCall` content).
+- `getAgentEventRuntimeTranscriptPath()` returns the joined pi-agent-core
+  transcript. Today it is the active parent-linked path, including both
+  communication messages and run-scoped execution messages. The future physical
+  `conversation`/`run` split can replace this implementation without changing
+  runtime consumers.
+
+This is the M0 F2a read seam: product conversation views can stop treating tool
+execution as communication, while pi-mono still receives a valid transcript with
+assistant tool calls followed by matching tool results.
 
 ## Payload Refs
 
