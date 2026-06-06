@@ -309,6 +309,16 @@ not primary composer modes.
 the rendered composer. Both may share chrome primitives, but their actions and
 payloads must remain separate.
 
+**Per-run reconciliation (with the F5 split).** The runtime gates blocking interactions
+**per run** (§1), but the composer is a **single focused surface**. Reconcile: keep a
+**per-run pending-interaction map** (keyed by `runId`) in the runtime, and have the composer
+mode reflect only the **focused run's** pending interaction. **M1 scope:** exactly one
+*visible* blocking interaction at a time (the focused run); if a second run blocks in
+parallel, its `needs-input` surfaces via the **task panel** (M2) and selecting it refocuses
+the composer — the composer never tries to render two blocking interactions at once. So the
+single `AgentComposerMode` is the *focused-run* projection of the per-run map, not a global
+singleton.
+
 ### 6. References and attachments
 
 The answer input should reuse the main composer reference model:

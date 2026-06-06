@@ -241,18 +241,18 @@ A single rule covers every state change:
 This split — *active gestures re-arm*, *passive lapses catch up* — keeps every
 case below predictable:
 
-| User action | schedule | `sys:lastRunAt` | content / session |
+| User action | schedule | `sys:lastRunAt` | content / conversation |
 |---|---|---|---|
 | Edit the brief (prompt text) | unchanged | unchanged | takes effect immediately; no re-confirm |
 | Edit `date` (user-only) | recomputed | **reset to now** (re-arm) | — |
 | Clear `date` | becomes manual-only | unchanged | — |
 | Convert node out of `command` | schedule released | retained on node | fields linger; convert back to re-enable |
-| Move node to trash | paused | unchanged | session preserved |
+| Move node to trash | paused | unchanged | delivery conversation preserved |
 | Restore from trash | **re-armed** at restore time | reset to now | — |
-| Permanently delete | released | gone with node | session becomes an orphan, preserved unless user deletes it separately |
+| Permanently delete | released | gone with node | delivery conversation becomes an orphan, preserved unless user deletes it separately |
 
 **In-flight when the user deletes / converts.** The active Run receives a
-cancel signal; whatever was already emitted into its session is preserved.
+cancel signal; whatever was already emitted into its delivery conversation is preserved.
 No Result node is materialized.
 
 **Why the brief stays freely editable.** We deliberately cut snapshot /
@@ -365,8 +365,9 @@ Counted, ordered:
 4. **Add `sys:lastRunAt`** to `ViewSystemField` (`src/core/types.ts`).
 5. **Anacron scheduler** in main process: tick on launch / `powerMonitor.resume`
    / 60 s heartbeat; for each command node compute `mostRecentDue` and compare.
-6. **`startTriggeredRun`** entry beside `sendMessage`: starts a run with no
-   human turn, attaches to the command's session, hands the agent the brief +
+6. **`startTriggeredRun`** entry beside `sendMessage`: starts a `Run` with no
+   human turn, `trigger:{type:'node', nodeId}` **anchored to the command's delivery
+   conversation** ([[agent-data-model]]), hands the agent the brief +
    `lastSuccessAt`, runs under inherited interactive capabilities.
 7. **Result routing** by trigger: `Run now` → under the command node;
    scheduled fire → `Today` (via existing `ensure_date_node`). Empty result =
@@ -465,8 +466,9 @@ Each of these was considered during design and explicitly dropped:
    for browse).
 4. **`startTriggeredRun` refactor depth.** Without per-run `toolPolicy` or a
    `scheduled_fire` context projection (both cut), this is mostly: extract the
-   shared execution path below `sendMessage`, add a no-human-turn entry, attach
-   to the command's session. Materially smaller than the prior plan assumed.
+   shared execution path below `sendMessage`, add a no-human-turn entry, anchor
+   the `Run` (`trigger:{node}`) to the command's delivery conversation. Materially
+   smaller than the prior plan assumed.
 5. **Where recurrence lives — DECIDED: B1 (extend the generic `date`
    FieldType).** Any date value may carry an optional `RRULE`; recurrence is a
    general capability (reusable for future recurring events / todos), not a
@@ -494,8 +496,8 @@ Resequenced to match the converged model — kernel first, polish next:
    `sys:updatedAt`).
 4. **Anacron scheduler** (tick + `mostRecentDue` + the fire condition). Verify
    catch-up coalesce, `powerMonitor.resume`, sweep-after-document-load.
-5. **`startTriggeredRun`** entry: no-human-turn, attached to the command's
-   session, agent gets `brief + lastSuccessAt`.
+5. **`startTriggeredRun`** entry: no-human-turn `Run` (`trigger:{node}`) anchored
+   to the command's delivery conversation, agent gets `brief + lastSuccessAt`.
 6. **One local-only task review command** — e.g. "summarize what's overdue and
    due today," `date: today`, no recurrence. Result lands under the node on
    Run-now; Today on schedule. Proves: only enabled commands fire, fire on
@@ -526,10 +528,10 @@ any consideration of the deferred features (multi-participant, IM, cloud).
 - **Result routing:** Run-now nests under the command; scheduled fire lands in
   Today via `ensure_date_node`; empty result materializes no node, but
   `sys:lastRunAt` still advances.
-- **Session lifecycle:** all fires of one command append to a single session;
-  scheduled fires use bounded context (brief + `lastSuccessAt`), not a full
-  replay; deleting the session does not stop the command (next fire recreates
-  the session); session is visible in `AgentChatPanel` with normal
+- **Conversation/run lifecycle:** all fires of one command are `Run`s posting into a
+  single delivery conversation; scheduled fires use bounded context (brief +
+  `lastSuccessAt`), not a full replay; deleting the conversation does not stop the command
+  (next fire recreates it); the conversation is visible in `AgentChatPanel` with normal
   list/rename/delete via existing IPC.
 - **Smart convert:** converting a node into `command` pre-fills `date`
   (with any recurrence) and rewrites the prose into a brief; nothing is armed

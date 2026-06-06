@@ -837,8 +837,10 @@ Files:
 
 Tasks:
 
-- Add transient `streamingVisualWidgets` state to `AgentSessionState`; it feeds the
-  unified projection entity defined in Phase 2 (same `{ html, status }`).
+- Add transient `streamingVisualWidgets` state **per run** (off the executing `Run`, **not**
+  the `AgentSessionState` singleton — F5, so concurrent widget-emitting runs don't clobber;
+  see Runtime streaming state above); it feeds the unified projection entity defined in
+  Phase 2 (same `{ html, status }`).
 - Read `event.assistantMessageEvent` for `toolcall_start`, `toolcall_delta`,
   `toolcall_end`; track by `contentIndex` and `toolCallId`.
 - Update the widget snapshot from partial parsed arguments; emit coalesced
