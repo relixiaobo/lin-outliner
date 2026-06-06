@@ -177,7 +177,8 @@ L0 FOUNDATION (M0, interface-first)
    · F4 internal domain bus (≠ renderer IPC) + ONE taxonomy · F5 AgentSessionState split · F6 protocol type adds
         │
 L0.5 CLEAN CUT (pre-M1)
-   remove session-named agent protocol/index/API bridge debt · wipe dev userData
+   remove session-named agent protocol/index/API bridge debt
+   · event store deletes obsolete sessions/ + derived indexes
    · verify every active consumer plan targets conversation/run/agent seams directly
         │
 L1 SINGLE-AGENT CAPABILITY (M1)
@@ -203,7 +204,7 @@ mostly independent).
 | Milestone | Content | User-visible value |
 |---|---|---|
 | **M0 — Foundation** | F1–F6: identity · session→`{conversation, run}` (+ `Principal`/`members`, no stored `kind`, **+ minimal run-log-join assembly**) · actor · **internal domain bus** + taxonomy (canonical permission names) · AgentSessionState split · consolidated protocol-surface adds | none directly — unblocks the whole program, one design pass, no rework |
-| **M0.5 — Clean cut** | Rename/remove remaining agent `session*` protocol/index/API bridge debt; update consumers to `conversationId`/`runId`/`agentId`; delete old aliases instead of preserving compatibility; wipe dev userData after the format cut | none directly — prevents M1 from building on transitional names or stale storage assumptions |
+| **M0.5 — Clean cut** | Rename/remove remaining agent `session*` protocol/index/API bridge debt; update consumers to `conversationId`/`runId`/`agentId`; delete old aliases instead of preserving compatibility; event store deletes obsolete `sessions/` + derived `indexes/` after the format cut | none directly — prevents M1 from building on transitional names or stale storage assumptions |
 | **M1 — Single-agent "self"** | memory v1 (global-default + **opt-in isolation**; **runtime-owned append surface**, not file_write) · **mixed-resolution enhancement** (old segments render as compaction summaries — the run-log join itself ships in M0) · canonical DM + user-creatable Channels · skills self-authoring · config tool + runtime_status + doctor · ask_user_question | the agent **remembers**, can be **configured**, can **author its own skills**, can **ask structured questions** — the bulk of perceived value |
 | **M2 — Off-floor + extension** | background task panel + notifications + needs-input · prompt-only hooks · memory v2 extraction · config recovery + skill curation | long tasks **don't go silent**, work is **observable**, memory becomes **automatic**, runtime self-heals |
 | **M3 — Multi-agent** | sequential Channels + coordinator · per-agent POV · cross-agent configuration · command hooks · memory v3 consolidation · main-agent registry unification | **IM-native multi-agent** collaboration |

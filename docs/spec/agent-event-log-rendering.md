@@ -267,6 +267,16 @@ Derived and rebuildable:
 - `conversations/<id>/meta.json`
 - `conversations/<id>/runs.json`
 
+Clean-cut startup policy:
+
+- `sessions/` is the obsolete pre-M0 flat layout. The event store never reads or
+  migrates it.
+- On first store access, if `sessions/` exists, delete `sessions/` and
+  `indexes/` so stale `session-index.json` entries cannot point runtime restore
+  at unreadable legacy sessions.
+- If a session index survives without matching `conversations/`, treat it as a
+  stale projection and rebuild it from the current conversation directories.
+
 The renderer still uses `sessionId` in command payloads. In storage, that id is
 the conversation id. `AgentEventStore.readEvents(sessionId)` joins the
 conversation segment and the run logs listed in `conversations/<id>/runs.json`,
@@ -901,8 +911,8 @@ user sends prompt
 
 ```txt
 open app
-  -> scan agent/sessions
-  -> load session-index cache if valid
+  -> clean obsolete agent/sessions + derived indexes if present
+  -> load session-index cache if it matches conversations/
   -> load selected session checkpoint
   -> replay later events
   -> derive render projection

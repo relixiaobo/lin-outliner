@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, readdir, appendFile, rename, rm, writeFile, open } from 'node:fs/promises';
+import { mkdir, readFile, readdir, appendFile, rename, rm, writeFile, open, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type {
   Usage,
@@ -30,6 +30,7 @@ import {
 
 const CONVERSATION_SEGMENT_FILE = '000001.jsonl';
 const CONVERSATION_RUN_INDEX_FILE = 'runs.json';
+const LEGACY_SESSIONS_DIR = 'sessions';
 const RUN_EVENT_LOG_FILE = 'events.jsonl';
 const RUN_META_FILE = 'meta.json';
 const AGENT_IDENTITY_FILE = 'identity.json';
@@ -169,6 +170,7 @@ export class AgentEventStore {
   private readonly writeQueues = new Map<string, Promise<unknown>>();
   private indexQueue = Promise.resolve();
   private readonly lastSeqBySessionId = new Map<string, number>();
+  private storageLayoutPromise: Promise<void> | null = null;
 
   constructor(private readonly rootDir: string) {}
 
@@ -217,6 +219,7 @@ export class AgentEventStore {
 
   async appendEvents(sessionId: string, events: readonly AgentEvent[]): Promise<void> {
     if (events.length === 0) return;
+    await this.ensureStorageLayout();
     this.assertEventBatch(sessionId, events);
     await this.enqueueSessionWrite(sessionId, async () => {
       const latestSeq = await this.getLatestSeq(sessionId);
@@ -242,6 +245,7 @@ export class AgentEventStore {
   }
 
   async readEvents(sessionId: string): Promise<AgentEvent[]> {
+    await this.ensureStorageLayout();
     const paths = this.paths(sessionId);
     const events = [
       ...await readEventsJsonlIfExists(paths.conversationEventsPath),
@@ -251,6 +255,7 @@ export class AgentEventStore {
   }
 
   async replay(sessionId: string): Promise<AgentEventReplayState> {
+    await this.ensureStorageLayout();
     const checkpointed = await this.replayFromCheckpoint(sessionId);
     if (checkpointed) return checkpointed;
     return replayAgentEvents(await this.readEvents(sessionId));
@@ -258,6 +263,7 @@ export class AgentEventStore {
 
   async writeCheckpoint(sessionId: string, state: AgentEventReplayState): Promise<AgentEventCheckpoint | null> {
     if (!state.session || state.session.id !== sessionId || state.latestSeq <= 0) return null;
+    await this.ensureStorageLayout();
     return this.enqueueSessionWrite(sessionId, async () => {
       const tail = await this.readEventFileTail(sessionId);
       if (tail.seq !== state.latestSeq || tail.eventId !== state.latestEventId) return null;
@@ -291,6 +297,7 @@ export class AgentEventStore {
   }
 
   async writePayload(sessionId: string, input: AgentPayloadWriteInput): Promise<AgentPayloadRef> {
+    await this.ensureStorageLayout();
     const bytes = typeof input.data === 'string'
       ? Buffer.from(input.data, input.encoding ?? 'utf8')
       : Buffer.from(input.data);
@@ -317,6 +324,7 @@ export class AgentEventStore {
   }
 
   async readPayload(sessionId: string, payload: AgentPayloadRef): Promise<Buffer> {
+    await this.ensureStorageLayout();
     return readFile(this.payloadPath(sessionId, payload));
   }
 
@@ -332,6 +340,7 @@ export class AgentEventStore {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
+    await this.ensureStorageLayout();
     await rm(this.paths(sessionId).conversationDir, { recursive: true, force: true });
     await Promise.all((await this.listRunIdsForSession(sessionId)).map((runId) => (
       rm(this.runPaths(runId).runDir, { recursive: true, force: true })
@@ -343,6 +352,7 @@ export class AgentEventStore {
   }
 
   async listSessionIds(): Promise<string[]> {
+    await this.ensureStorageLayout();
     try {
       const entries = await readdir(this.paths('__placeholder__').conversationsDir, { withFileTypes: true });
       return entries.filter((entry) => entry.isDirectory()).map((entry) => decodeAgentSessionDirName(entry.name));
@@ -353,14 +363,16 @@ export class AgentEventStore {
   }
 
   async listSessionIndexEntries(): Promise<AgentEventSessionIndexEntry[]> {
+    await this.ensureStorageLayout();
     const index = await this.readSessionIndex();
-    if (index) {
+    if (index && await this.sessionIndexMatchesConversations(index)) {
       return Object.values(index.sessions).sort((left, right) => right.updatedAt - left.updatedAt);
     }
     return this.rebuildSessionIndex();
   }
 
   async listUserMessageIndexEntries(sessionId?: string): Promise<AgentEventUserMessageIndexEntry[]> {
+    await this.ensureStorageLayout();
     const index = await this.getSearchIndex();
     return Object.values(index.userMessages)
       .filter((entry) => !sessionId || entry.sessionId === sessionId)
@@ -368,12 +380,14 @@ export class AgentEventStore {
   }
 
   async listMessageIndexEntries(): Promise<AgentEventSearchIndexEntry[]> {
+    await this.ensureStorageLayout();
     const index = await this.getSearchIndex();
     return Object.values(index.messages)
       .sort((left, right) => right.updatedAt - left.updatedAt);
   }
 
   async findMessageIndexEntry(messageId: string): Promise<AgentEventSearchIndexEntry | null> {
+    await this.ensureStorageLayout();
     const index = await this.getSearchIndex();
     return Object.values(index.messages)
       .filter((entry) => entry.messageId === messageId)
@@ -384,6 +398,7 @@ export class AgentEventStore {
     query: string,
     options: { sessionId?: string; limit?: number } = {},
   ): Promise<AgentEventSearchIndexEntry[]> {
+    await this.ensureStorageLayout();
     const terms = normalizeSearchTerms(query);
     if (terms.length === 0) return [];
     const analysis = { ...analyzeTextSearchQuery(query), terms };
@@ -400,12 +415,14 @@ export class AgentEventStore {
   }
 
   async writeAgentIdentity(identity: AgentIdentityRecord): Promise<void> {
+    await this.ensureStorageLayout();
     const paths = this.agentPaths(identity.agentId);
     await mkdir(paths.agentDir, { recursive: true });
     await atomicWriteFile(paths.identityPath, `${JSON.stringify({ v: 1, ...identity })}\n`);
   }
 
   async readAgentIdentity(agentId: string): Promise<AgentIdentityRecord | null> {
+    await this.ensureStorageLayout();
     const paths = this.agentPaths(agentId);
     try {
       const raw = await readFile(paths.identityPath, 'utf8');
@@ -413,6 +430,28 @@ export class AgentEventStore {
     } catch (error) {
       if (isNotFoundError(error)) return null;
       throw error;
+    }
+  }
+
+  private ensureStorageLayout(): Promise<void> {
+    this.storageLayoutPromise ??= this.cleanLegacyStorageLayout();
+    return this.storageLayoutPromise;
+  }
+
+  private async cleanLegacyStorageLayout(): Promise<void> {
+    const legacySessionsDir = path.join(this.rootDir, LEGACY_SESSIONS_DIR);
+    const indexesDir = this.paths('__placeholder__').indexesDir;
+    if (await pathExists(legacySessionsDir)) {
+      await rm(legacySessionsDir, { recursive: true, force: true });
+      await rm(indexesDir, { recursive: true, force: true });
+      return;
+    }
+
+    if (
+      !await pathExists(this.paths('__placeholder__').conversationsDir)
+      && await pathExists(this.sessionIndexPath())
+    ) {
+      await rm(indexesDir, { recursive: true, force: true });
     }
   }
 
@@ -928,6 +967,18 @@ export class AgentEventStore {
     }
   }
 
+  private async sessionIndexMatchesConversations(index: {
+    sessions: Record<string, AgentEventSessionIndexEntry>;
+  }): Promise<boolean> {
+    const indexedIds = new Set(Object.keys(index.sessions));
+    const conversationIds = new Set(await this.listSessionIds());
+    if (indexedIds.size !== conversationIds.size) return false;
+    for (const id of indexedIds) {
+      if (!conversationIds.has(id)) return false;
+    }
+    return true;
+  }
+
   private async writeSessionIndex(index: { sessions: Record<string, AgentEventSessionIndexEntry> }) {
     const indexPath = this.sessionIndexPath();
     await mkdir(path.dirname(indexPath), { recursive: true });
@@ -1296,6 +1347,16 @@ async function fileSizeIfExists(filePath: string): Promise<number> {
     }
   } catch (error) {
     if (isNotFoundError(error)) return 0;
+    throw error;
+  }
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await stat(filePath);
+    return true;
+  } catch (error) {
+    if (isNotFoundError(error)) return false;
     throw error;
   }
 }

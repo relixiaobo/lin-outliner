@@ -402,6 +402,67 @@ describe('agent event store', () => {
     });
   });
 
+  test('drops legacy flat sessions and stale indexes on first access', async () => {
+    await withStore(async (store, root) => {
+      const sessionId = 'session-1';
+      await store.appendEvents(sessionId, [
+        { ...base(sessionId, 1, 'session.created'), title: 'Current layout' },
+      ]);
+
+      await mkdir(path.join(root, 'sessions', 'legacy-session'), { recursive: true });
+      await writeFile(path.join(root, 'indexes', 'session-index.json'), JSON.stringify({
+        sessions: {
+          'legacy-session': {
+            id: 'legacy-session',
+            title: 'Legacy',
+            createdAt: 1,
+            updatedAt: 9_999,
+            messageCount: 1,
+            latestSeq: 1,
+          },
+        },
+      }), 'utf8');
+
+      const restarted = new AgentEventStore(root);
+      expect(await restarted.listSessionIndexEntries()).toMatchObject([{
+        id: sessionId,
+        title: 'Current layout',
+      }]);
+      await expect(readdir(path.join(root, 'sessions'))).rejects.toThrow();
+      await expect(readFile(path.join(root, 'indexes', 'session-index.json'), 'utf8')).resolves.toContain(sessionId);
+    });
+  });
+
+  test('rebuilds stale session indexes that do not match conversations', async () => {
+    await withStore(async (store, root) => {
+      const sessionId = 'session-1';
+      await store.appendEvents(sessionId, [
+        { ...base(sessionId, 1, 'session.created'), title: 'Indexed conversation' },
+      ]);
+      await writeFile(path.join(root, 'indexes', 'session-index.json'), JSON.stringify({
+        sessions: {
+          'missing-session': {
+            id: 'missing-session',
+            title: 'Missing',
+            createdAt: 1,
+            updatedAt: 9_999,
+            messageCount: 1,
+            latestSeq: 1,
+          },
+        },
+      }), 'utf8');
+
+      expect(await new AgentEventStore(root).listSessionIndexEntries()).toMatchObject([{
+        id: sessionId,
+        title: 'Indexed conversation',
+      }]);
+      const rebuilt = JSON.parse(await readFile(path.join(root, 'indexes', 'session-index.json'), 'utf8')) as {
+        sessions: Record<string, unknown>;
+      };
+      expect(Object.keys(rebuilt.sessions)).toEqual([sessionId]);
+    });
+  });
+
   test('removes deleted sessions from the derived session index', async () => {
     await withStore(async (store) => {
       const sessionId = 'session-1';

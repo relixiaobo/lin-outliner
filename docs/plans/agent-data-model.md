@@ -55,8 +55,9 @@ shipping migrations or compatibility branches.
 - **Skill structure / authoring** — owned by [[agent-skills-authoring]]. This doc only
   references the skills file tree as a storage family.
 - **Milestone sequencing + the full event taxonomy** — owned by [[agent-program]].
-- **Back-compat / migration** — none (pre-release; wipe dev userData and delete
-  old shapes rather than preserving them).
+- **Back-compat / migration** — none (pre-release; delete old shapes rather than
+  preserving them; the event store removes obsolete dev `sessions/` + derived
+  `indexes/` on first access).
 
 ## Design — the converged data structure
 
@@ -615,8 +616,9 @@ agent.skills[]          ──▶ skills/ file tree
   + `seq`; domain event bus; active-run state isolation; stateless pi-agent-core +
   the two seams.
 - **M0.5 clean cut:** remove remaining agent protocol/index/API names that still say
-  `session*`; wipe dev `userData`; do not write a legacy `sessions/<id>` reader,
-  adapter, or alias.
+  `session*`; the event store deletes obsolete `sessions/` + derived `indexes/`
+  on first access; do not write a legacy `sessions/<id>` reader, adapter, or
+  alias.
 - **M1 build:** the memory line (+ `sources`); `addressedTo`; distillation-ladder
   consumers + two-step recall; mixed-resolution assembly over old summaries.
 - **PM-ratified (2026-06-05):** canonical DM + user-creatable Channels; split-now +
