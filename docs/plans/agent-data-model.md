@@ -228,8 +228,19 @@ type RunEvent =
   | (RunEventBase & { type: 'tool_result.created';                                  // ★ tool_result lives ONLY here, never the conversation log
       toolCallId: string; content: AgentPersistedContent[]; isError?: boolean })
   // ── permission (canonical names pinned in agent-program M0 taxonomy; keyed by requestId, reconciles checked/resolved + approval.* dual-track) ──
-  | (RunEventBase & { type: 'tool.permission.checked'; requestId: string; toolCallId: string; name: string; input: unknown })
-  | (RunEventBase & { type: 'tool.permission.resolved'; requestId: string; decision: 'allow' | 'deny'; scope?: 'once' | 'always' })
+  //   field set MIRRORS the real ToolPermission*Event (agentEventLog.ts:266/293) — the audit + hardening trail (denied reason / recoverability) MUST survive M0:
+  | (RunEventBase & { type: 'tool.permission.checked'; requestId: string; toolCallId: string; toolName: string;
+      primaryActionKind?: string; actionKinds: string[];
+      outcome: 'allow' | 'ask' | 'blocked';
+      source: 'global_rule' | 'action_default' | 'configured_deny' | 'classifier'
+            | 'classifier_unavailable' | 'safe_allowlist' | 'user' | 'platform_hard_block' | 'runtime';
+      classifierResult?: { outcome: 'allow' | 'block'; reason: string; model?: string; unavailable?: boolean };
+      descriptorRef?: AgentPayloadRef })                                            // tool descriptor (name+input) offloaded to payloads/ (§5)
+  | (RunEventBase & { type: 'tool.permission.resolved'; requestId: string; toolCallId: string; toolName: string;
+      status: 'approved' | 'denied' | 'aborted';
+      resolvedBy: 'classifier' | 'safe_allowlist' | 'user_once' | 'allow_rule_update' | 'global_rule'
+                | 'configured_deny' | 'classifier_unavailable' | 'platform_hard_block' | 'runtime' | 'system_abort';
+      updatedRule?: string; deniedReason?: string })                               // deniedReason + resolvedBy = the recoverability/audit trail
   // ── run-scoped INTERACTION / UI-STATE (consumed by ask-user + gen-ui; persisted here so a paused run / widget restores) ──
   | (RunEventBase & { type: 'user_question.requested';                              // [[agent-ask-user-question-tool]] §7 UserQuestionRunEvent
       requestId: string; toolCallId: string; request: AgentUserQuestionRequestView })
@@ -296,7 +307,7 @@ interface MemoryEntry {                 // projection of agents/<id>/memory/even
 }
 // ── Write surface (PM-ratified D1) — NOT file_write/edit ──────────────────────────────────
 //   The local file tools are realpath-jailed to workspace.root (agentLocalTools.ts:2207), so they
-//   cannot reach userData/agent-memory, and whole-file rewrite + fileWriteChains still risks lost-update.
+//   cannot reach userData/agent/ at all, and whole-file rewrite + fileWriteChains still risks lost-update.
 //   Instead: a RUNTIME-OWNED memory-append API emits memory.entry_added/updated/removed events → projection.
 //   Append-only (no lost-update), schema-checked, serialized, and prompt-free (a runtime primitive, not a
 //   sandboxed file op). This also honors self-mod's "don't use generic file write for runtime metadata".
@@ -609,7 +620,7 @@ agent.skills[]          ──▶ skills/ file tree
 - **PM-ratified (2026-06-06, after the codex + gemini design review):** memory writes via a
   **runtime-owned append surface** (event-sourced), *not* the privileged `file_write` path —
   reversed because the file tools are realpath-jailed to `workspace.root`
-  (`agentLocalTools.ts:2207`, can't reach `userData/agent-memory`) and whole-file rewrite
+  (`agentLocalTools.ts:2207`, can't reach `userData/agent/`) and whole-file rewrite
   risks lost-update; plus an **opt-in isolation tier** (`isolated` / `read-only-global`)
   over the global default, with `originWorkspace` recorded. (Rationale in
   [[agent-conversation-model]] §Memory model.)

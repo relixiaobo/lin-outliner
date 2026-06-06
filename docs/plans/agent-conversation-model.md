@@ -244,8 +244,8 @@ memory (accumulated)   the memory line — visible, editable, deletable
 - **Memory is not in `.agents/`.** Agent definitions there are read-only, loaded
   once at startup and cached (`agentSubagents.ts:1141,1255`), and may be
   git-tracked / dual-scoped (user `~/.agents` vs project `<ws>/.agents`). Mutable
-  runtime memory must live in `userData/agent/agent-memory/<identity>/`, keyed by a
-  **stable identity tuple** (`sourceKind:sourceInstanceId:name`, where a project's
+  runtime memory must live in `userData/agent/agents/<agentId>/memory/`, keyed by a
+  **stable identity tuple** (`agentId` = `sourceKind:sourceInstanceId:name`, where a project's
   `sourceInstanceId` is its workspace/root hash) so that not only user-vs-project but **two
   different projects' same-named agents don't collide in the global pool**
   ([[agent-data-model]] §3). Retrieval is global by default with opt-in isolation tiers
@@ -438,7 +438,7 @@ answer / explanation / brainstorm?* → reply. The agent decides; the user overr
   present; replacing the transcript with memory desyncs them (§Adversarial review
   §1). Within-conversation shrinking stays the job of compaction; cross-conversation
   durability is the job of the memory line. They are complementary layers.
-- **Storage:** `userData/agent/agent-memory/<identity>/memory/events.jsonl` — an
+- **Storage:** `userData/agent/agents/<agentId>/memory/events.jsonl` — an
   **event-sourced** log (`memory.entry_added/updated/removed`) projected to the current
   `MemoryEntry` set; profile-visible/editable. Satisfies the trust affordances
   (inspect / edit / forget) that "retain everything" requires. (Shape: [[agent-data-model]]
@@ -448,7 +448,7 @@ answer / explanation / brainstorm?* → reply. The agent decides; the user overr
     **reversing** the earlier "privileged `file_write` path"). The agent appends memory
     through a **runtime primitive** — *not* `file_write`/`edit`. **Why reversed:** the file
     tools are realpath-jailed to `workspace.root` (`agentLocalTools.ts:2207`), so they
-    cannot reach `userData/agent-memory` at all; and whole-file rewrite + `fileWriteChains`
+    cannot reach `userData/agent/` at all; and whole-file rewrite + `fileWriteChains`
     only serializes I/O — it does **not** prevent a logical *lost-update* when a foreground
     turn and a background task both edit memory (the gemini review's concurrency case). An
     append-only, schema-checked, prompt-free runtime API sidesteps all three (no sandbox
@@ -829,7 +829,7 @@ per-principal store, not a conversation field) (**no stored
 `kind`**); `RunMeta` (anchor + `trigger`); the main agent gets a stable identity record
 (the `agentId` tuple, not a bare `name`), **without** the registry refactor.
 
-**BUILD** — the memory line: `agent-memory/<identity>/` store + a memory tool +
+**BUILD** — the memory line: `agents/<agentId>/memory/` store + a memory tool +
 profile UI (view/edit/forget) + the v1 inline-write prompt + reminder-stack
 injection; later the v2 extraction definition and v3 consolidation. **The task
 plane:** a visible per-agent task panel + conversation-scoped notification
@@ -887,7 +887,7 @@ decision (Open questions); the single-agent `config` tool is [[agent-self-modifi
 - **Forked subagent as a cheap extractor** → rejected; fork is a full
   `tools:['*']` agent. v2 = dedicated restricted definition (§4).
 - **Memory in `.agents/agents/<name>/memory/`** → rejected; config is read-only /
-  dual-scoped. Memory → `userData/agent/agent-memory/<identity>/` (§5).
+  dual-scoped. Memory → `userData/agent/agents/<agentId>/memory/` (§5).
 - **Concurrent multi-agent rooms** → rejected for P3; sequential turn-taking
   avoids the shared-state collisions (§2).
 - **No-router vs heavy-router for Channels** → both rejected; a **coordinator
@@ -928,9 +928,9 @@ decision (Open questions); the single-agent `config` tool is [[agent-self-modifi
   bound it (cc-2.1 caps MEMORY.md at 200 lines / 25KB).
 - **Memory write — DECIDED (PM-ratified 2026-06-05, REVERSED 2026-06-06 after the codex +
   gemini review): runtime-owned append surface, not a privileged file path.** The earlier
-  "permission-exempt `file_write`/`edit` into `agent-memory/`" is dropped — the file tools
+  "permission-exempt `file_write`/`edit` into the memory store" is dropped — the file tools
   are realpath-jailed to `workspace.root` (`agentLocalTools.ts:2207`) and cannot reach
-  `userData/agent-memory`, and whole-file rewrite + `fileWriteChains` serializes I/O but not
+  `userData/agent/`, and whole-file rewrite + `fileWriteChains` serializes I/O but not
   logical *lost-update*. Instead memory is written through a **runtime-owned, event-sourced
   append API** (`memory.entry_added/updated/removed` → projection) — append-only,
   schema-checked, serialized, prompt-free, audited. Open sub-detail: whether that surface is
@@ -999,7 +999,7 @@ P1 — conversations + memory v1
 - [ ] **Canonical DM + Channels** (PM-ratified): one find-or-create DM per agent (no "new conversation" for DMs); re-target the `createSession`/`deleteSession`/`renameSession` surface to **Channels**; single-staffed Channel creation.
 - [ ] Distillation backbone: make `compaction.completed` a multi-consumer node with an explicit both-ends `source` range (raw retained, already non-destructive). Coarse `recall.overview`/`recall.expand` over summaries is later (P2+), but the addressable range lands here.
 - [ ] "Add agent" spawns a new seeded Channel (no in-place conversion); combined, provenance-marked message forwarding (any conversation → any conversation).
-- [ ] `agent-memory/<identity>/memory/events.jsonl` store (event-sourced) + a **runtime-owned memory-append surface** (append-only, schema-checked, serialized, prompt-free — *not* `file_write`); **global-default retrieval + opt-in isolation tiers** (`isolated`/`read-only-global`), `originWorkspace` recorded; `MemoryEntry` binds source `runId`/`eventId` for undo-invalidation.
+- [ ] `agents/<agentId>/memory/events.jsonl` store (event-sourced) + a **runtime-owned memory-append surface** (append-only, schema-checked, serialized, prompt-free — *not* `file_write`); **global-default retrieval + opt-in isolation tiers** (`isolated`/`read-only-global`), `originWorkspace` recorded; `MemoryEntry` binds source `runId`/`eventId` for undo-invalidation.
 - [ ] Inline memory write instructions in the agent prompt.
 - [ ] Memory recall added to the per-turn reminder stack (`agentRuntime.ts:640`); index budget bounded; `sources` down-pointer recorded (for the visible guard, not retrieval scoping).
 - [ ] Profile UI: view / edit / forget memory.
