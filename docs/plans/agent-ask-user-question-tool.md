@@ -179,9 +179,11 @@ type PendingAgentInteraction =
   | { kind: "user_question"; question: AgentUserQuestionRequestView };
 ```
 
-The runtime must guarantee only one blocking interaction is active per session.
-If an approval request and a user question can both be queued, the queue should
-preserve order and expose only the active item to the renderer.
+The runtime must guarantee only one blocking interaction is active **per run** (not "per
+session" — after the program's F2/F5 split, blocking is a property of the executing `Run`,
+so parallel runs in one conversation each gate independently; see [[agent-data-model]] /
+[[agent-program]] F5). If an approval request and a user question can both be queued within
+a run, the queue preserves order and exposes only that run's active item to the renderer.
 
 ### 2. Tool contract
 

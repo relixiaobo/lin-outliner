@@ -43,7 +43,10 @@ permission plan; it builds on it.
 ## Non-goals
 
 - Do not let the model directly edit Lin's provider settings, permission files,
-  skill registries, app config, or runtime metadata as ordinary file writes.
+  skill registries, app config, or runtime metadata as ordinary file writes. (This now
+  also governs the **memory line** — written via a runtime-owned append surface, not
+  `file_write`; the conversation-model memory-write decision was reversed to honor exactly
+  this principle. See [[agent-conversation-model]] §Memory model.)
 - Do not make self-modification a synonym for unrestricted autonomy.
 - Do not add autonomous command hooks before read-only and prompt-only hooks are
   implemented and observable.
