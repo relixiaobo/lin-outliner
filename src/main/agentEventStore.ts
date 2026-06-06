@@ -508,9 +508,10 @@ export class AgentEventStore {
 
     for (const [runId, group] of runEvents) {
       const runPaths = this.runPaths(runId);
+      const metaEvents = group.filter((event) => !isStreamingDeltaEvent(event));
+      if (metaEvents.length > 0) await this.registerConversationRun(sessionId, runId);
       await mkdir(runPaths.runDir, { recursive: true });
       await appendFile(runPaths.runEventsPath, serializeEventsJsonl(group), 'utf8');
-      const metaEvents = group.filter((event) => !isStreamingDeltaEvent(event));
       if (metaEvents.length > 0) {
         await this.updateRunMeta(sessionId, runId, metaEvents);
         await this.updateConversationRunIndex(sessionId, runId, metaEvents.at(-1)!.seq);
@@ -652,11 +653,7 @@ export class AgentEventStore {
 
   private async updateConversationRunIndex(sessionId: string, runId: string, latestSeq: number) {
     const paths = this.paths(sessionId);
-    const existing = await this.readConversationRunIndex(sessionId) ?? {
-      v: 1 as const,
-      runIds: [],
-      latestSeqByRunId: {},
-    };
+    const existing = await this.ensureConversationRunIndex(sessionId);
     const runIds = existing.runIds.includes(runId) ? existing.runIds : [...existing.runIds, runId];
     const index: AgentConversationRunIndex = {
       v: 1,
@@ -665,6 +662,19 @@ export class AgentEventStore {
         ...existing.latestSeqByRunId,
         [runId]: Math.max(existing.latestSeqByRunId[runId] ?? 0, latestSeq),
       },
+    };
+    await mkdir(paths.conversationDir, { recursive: true });
+    await atomicWriteFile(paths.conversationRunIndexPath, `${JSON.stringify(index)}\n`);
+  }
+
+  private async registerConversationRun(sessionId: string, runId: string) {
+    const existing = await this.ensureConversationRunIndex(sessionId);
+    if (existing.runIds.includes(runId)) return;
+    const paths = this.paths(sessionId);
+    const index: AgentConversationRunIndex = {
+      v: 1,
+      runIds: [...existing.runIds, runId],
+      latestSeqByRunId: existing.latestSeqByRunId,
     };
     await mkdir(paths.conversationDir, { recursive: true });
     await atomicWriteFile(paths.conversationRunIndexPath, `${JSON.stringify(index)}\n`);
@@ -1263,9 +1273,11 @@ async function readLastNonEmptyLine(filePath: string): Promise<string | null> {
       position -= readSize;
       const buffer = Buffer.alloc(readSize);
       await handle.read(buffer, 0, readSize, position);
-      suffix = buffer.toString('utf8') + suffix;
+      const text = buffer.toString('utf8');
+      suffix = text + suffix;
       const lines = suffix.split('\n').filter((line) => line.trim().length > 0);
-      if (lines.length > 0 && (position === 0 || suffix.includes('\n'))) return lines.at(-1)!;
+      if (lines.length > 0 && (position === 0 || text.startsWith('\n'))) return lines.at(-1)!;
+      if (lines.length > 1) return lines.at(-1)!;
     }
     const trimmed = suffix.trim();
     return trimmed || null;

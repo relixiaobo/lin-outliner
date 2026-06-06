@@ -139,6 +139,31 @@ describe('agent event store', () => {
     });
   });
 
+  test('reads a long trailing JSONL event as the physical tail after restart', async () => {
+    await withStore(async (store, root) => {
+      const sessionId = 'session-1';
+      const runId = 'run-1';
+      await store.appendEvents(sessionId, [
+        { ...base(sessionId, 1, 'session.created'), title: 'Long tail' },
+        { ...base(sessionId, 2, 'run.started'), runId },
+        {
+          ...base(sessionId, 3, 'assistant_message.completed'),
+          runId,
+          messageId: 'assistant-1',
+          stopReason: 'stop',
+          content: [{ type: 'text', text: 'x'.repeat(5_000) }],
+        },
+      ]);
+
+      const restarted = new AgentEventStore(root);
+      await expect(restarted.appendEvents(sessionId, [
+        { ...base(sessionId, 4, 'run.completed'), runId },
+      ])).resolves.toBeUndefined();
+
+      expect((await restarted.readEvents(sessionId)).map((event) => event.seq)).toEqual([1, 2, 3, 4]);
+    });
+  });
+
   test('falls back to log replay when a checkpoint points past the physical tail', async () => {
     await withStore(async (store) => {
       const sessionId = 'session-1';
@@ -529,6 +554,35 @@ describe('agent event store', () => {
         runIds: string[];
       };
       expect(rebuilt.runIds).toEqual([runId]);
+    });
+  });
+
+  test('preserves existing runs when appending after the derived run index is missing', async () => {
+    await withStore(async (store) => {
+      const sessionId = 'session-1';
+      await store.appendEvents(sessionId, [
+        { ...base(sessionId, 1, 'session.created'), title: 'Run index merge' },
+        { ...base(sessionId, 2, 'run.started'), runId: 'run-1' },
+        {
+          ...base(sessionId, 3, 'assistant_message.started'),
+          runId: 'run-1',
+          messageId: 'assistant-1',
+          parentMessageId: null,
+          providerId: 'test',
+          modelId: 'test',
+        },
+      ]);
+      await rm(store.paths(sessionId).conversationRunIndexPath, { force: true });
+
+      await store.appendEvents(sessionId, [
+        { ...base(sessionId, 4, 'run.started'), runId: 'run-2' },
+      ]);
+
+      expect((await store.readEvents(sessionId)).map((event) => event.seq)).toEqual([1, 2, 3, 4]);
+      const rebuilt = JSON.parse(await readFile(store.paths(sessionId).conversationRunIndexPath, 'utf8')) as {
+        runIds: string[];
+      };
+      expect(rebuilt.runIds).toEqual(['run-1', 'run-2']);
     });
   });
 
