@@ -19,7 +19,7 @@ import { nodeReferenceMarkersToText } from '../../../core/referenceMarkup';
 import type {
   AgentProviderSettingsView,
   AgentReasoningLevel,
-  AgentConversationMeta,
+  AgentConversationListMeta,
   AgentSlashCommandView,
   NodeId,
 } from '../../api/types';
@@ -512,7 +512,7 @@ export function AgentChatPanel({
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [steeringNote, setSteeringNote] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [conversations, setConversations] = useState<AgentConversationMeta[]>([]);
+  const [conversations, setConversations] = useState<AgentConversationListMeta[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(false);
   const [slashCommands, setSlashCommands] = useState<AgentSlashCommandView[]>([]);
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null);

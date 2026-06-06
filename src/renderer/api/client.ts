@@ -6,7 +6,7 @@ import type {
   AgentProviderSettingsView,
   AgentRuntimeSettingsInput,
   AgentConversation,
-  AgentConversationMeta,
+  AgentConversationListMeta,
   AgentSlashCommandView,
   AgentApprovalResolutionScope,
   AgentToolPermissionSettingsView,
@@ -241,9 +241,9 @@ export const api = {
     command<AgentConversation>('agent_restore_conversation', { conversationId })
   ),
   agentCreateConversation: () => command<AgentConversation>('agent_create_conversation'),
-  agentListConversations: () => command<AgentConversationMeta[]>('agent_list_conversations'),
+  agentListConversations: () => command<AgentConversationListMeta[]>('agent_list_conversations'),
   agentRenameConversation: (conversationId: string, title: string) =>
-    command<AgentConversationMeta | null>('agent_rename_conversation', { conversationId, title }),
+    command<AgentConversationListMeta | null>('agent_rename_conversation', { conversationId, title }),
   agentDeleteConversation: (conversationId: string) =>
     command<void>('agent_delete_conversation', { conversationId }),
   agentDebugSnapshot: (conversationId: string) =>

@@ -433,6 +433,36 @@ describe('agent event store', () => {
     });
   });
 
+  test('drops an orphaned legacy session index from the current storage layout', async () => {
+    await withStore(async (store, root) => {
+      const sessionId = 'session-1';
+      await store.appendEvents(sessionId, [
+        { ...base(sessionId, 1, 'session.created'), title: 'Current layout' },
+      ]);
+      const legacyIndexPath = path.join(root, 'indexes', 'session-index.json');
+      await writeFile(legacyIndexPath, JSON.stringify({
+        sessions: {
+          'legacy-session': {
+            id: 'legacy-session',
+            title: 'Legacy',
+            createdAt: 1,
+            updatedAt: 9_999,
+            messageCount: 1,
+            latestSeq: 1,
+          },
+        },
+      }), 'utf8');
+
+      const restarted = new AgentEventStore(root);
+      expect(await restarted.listConversationIndexEntries()).toMatchObject([{
+        id: sessionId,
+        title: 'Current layout',
+      }]);
+      await expect(readFile(legacyIndexPath, 'utf8')).rejects.toThrow();
+      await expect(readFile(path.join(root, 'indexes', 'conversation-index.json'), 'utf8')).resolves.toContain(sessionId);
+    });
+  });
+
   test('rebuilds stale conversation indexes that do not match conversations', async () => {
     await withStore(async (store, root) => {
       const sessionId = 'session-1';

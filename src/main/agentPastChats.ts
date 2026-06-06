@@ -143,6 +143,10 @@ interface VisibleSessionCacheEntry {
   compactionMessageIds: Set<string>;
 }
 
+interface ConversationIndexedEntry {
+  sessionId: string;
+}
+
 export class AgentPastChatsService {
   private readonly visibleSessionCache = new Map<string, VisibleSessionCacheEntry>();
 
@@ -164,16 +168,16 @@ export class AgentPastChatsService {
     const conversations = await this.conversationMetaById();
     const currentConversationId = context.currentConversationId ?? null;
     const candidates = (await this.eventStore.listMessageIndexEntries())
-      .filter((entry) => conversations.has(entry.sessionId))
-      .filter((entry) => !conversationIds || conversationIds.has(entry.sessionId))
-      .filter((entry) => params.includeCurrentConversation || entry.sessionId !== currentConversationId)
+      .filter((entry) => conversations.has(entryConversationId(entry)))
+      .filter((entry) => !conversationIds || conversationIds.has(entryConversationId(entry)))
+      .filter((entry) => params.includeCurrentConversation || entryConversationId(entry) !== currentConversationId)
       .filter((entry) => after === null || entry.createdAt >= after)
       .filter((entry) => before === null || entry.createdAt <= before)
       .filter((entry) => textSearchTextMatchesQuery(entry.normalizedText, analysis));
 
     const visibleHits: Array<{ entry: AgentEventSearchIndexEntry; match: PastChatTextMatch }> = [];
     for (const entry of candidates) {
-      const visible = await this.visibleSessionMessages(entry.sessionId);
+      const visible = await this.visibleSessionMessages(entryConversationId(entry));
       if (!visible.messageIds.has(entry.messageId)) continue;
       const text = searchResultText(entry, visible.messageById.get(entry.messageId));
       const match = scorePastChatText(text, analysis);
@@ -182,8 +186,8 @@ export class AgentPastChatsService {
     }
 
     visibleHits.sort((left, right) => {
-      const leftConversation = conversations.get(left.entry.sessionId)?.updatedAt ?? left.entry.updatedAt;
-      const rightConversation = conversations.get(right.entry.sessionId)?.updatedAt ?? right.entry.updatedAt;
+      const leftConversation = conversations.get(entryConversationId(left.entry))?.updatedAt ?? left.entry.updatedAt;
+      const rightConversation = conversations.get(entryConversationId(right.entry))?.updatedAt ?? right.entry.updatedAt;
       return right.match.score - left.match.score
         || rightConversation - leftConversation
         || right.entry.updatedAt - left.entry.updatedAt;
@@ -194,8 +198,7 @@ export class AgentPastChatsService {
       mode: 'search',
       hits: selected.map(({ entry, match }) => ({
         messageId: entry.messageId,
-        conversationId: entry.sessionId,
-        conversationTitle: conversations.get(entry.sessionId)?.title ?? null,
+        ...conversationFieldsForEntry(entry, conversations),
         role: entry.role,
         createdAt: isoTime(entry.createdAt),
         snippet: match.snippet,
@@ -222,26 +225,24 @@ export class AgentPastChatsService {
     const conversations = await this.conversationMetaById();
     const currentConversationId = context.currentConversationId ?? null;
     const candidates = (await this.eventStore.listUserMessageIndexEntries())
-      .filter((entry) => conversations.has(entry.sessionId))
-      .filter((entry) => !conversationIds || conversationIds.has(entry.sessionId))
-      .filter((entry) => params.includeCurrentConversation || entry.sessionId !== currentConversationId)
+      .filter((entry) => conversations.has(entryConversationId(entry)))
+      .filter((entry) => !conversationIds || conversationIds.has(entryConversationId(entry)))
+      .filter((entry) => params.includeCurrentConversation || entryConversationId(entry) !== currentConversationId)
       .filter((entry) => after === null || entry.createdAt >= after)
       .filter((entry) => before === null || entry.createdAt <= before);
 
     const items: Array<PastChatsRecentItem & { sortAt: number }> = [];
     for (const entry of candidates) {
-      const visible = await this.visibleSessionMessages(entry.sessionId);
+      const visible = await this.visibleSessionMessages(entryConversationId(entry));
       if (!visible.messageIds.has(entry.messageId)) continue;
       if (visible.compactionMessageIds.has(entry.messageId)) continue;
       const message = visible.messageById.get(entry.messageId);
       if (!message || message.role !== 'user') continue;
       const text = cleanUserMessageText(contentText(message.content));
       if (!text) continue;
-      const conversation = conversations.get(entry.sessionId);
       items.push({
         messageId: entry.messageId,
-        conversationId: entry.sessionId,
-        conversationTitle: conversation?.title ?? null,
+        ...conversationFieldsForEntry(entry, conversations),
         createdAt: isoTime(entry.createdAt),
         text: truncateForDisplay(text, maxMessageChars),
         totalChars: text.length,
@@ -276,17 +277,17 @@ export class AgentPastChatsService {
     }
 
     const currentConversationId = context.currentConversationId ?? null;
-    if (!params.includeCurrentConversation && indexEntry.sessionId === currentConversationId) {
+    if (!params.includeCurrentConversation && entryConversationId(indexEntry) === currentConversationId) {
       return pastChatsError('CONVERSATION_IS_CURRENT', 'That message is in the current conversation. Use current context unless the conversation was compacted.');
     }
 
     const conversations = await this.conversationMetaById();
-    const conversation = conversations.get(indexEntry.sessionId);
+    const conversation = conversations.get(entryConversationId(indexEntry));
     if (!conversation) {
       return pastChatsError('CONVERSATION_NOT_FOUND', `No visible conversation was found for message ${messageId}.`);
     }
 
-    const visible = await this.visibleSessionMessages(indexEntry.sessionId);
+    const visible = await this.visibleSessionMessages(entryConversationId(indexEntry));
     const anchorIndex = visible.messages.findIndex((message) => message.id === messageId);
     if (anchorIndex < 0) {
       return pastChatsError(
@@ -539,6 +540,21 @@ function firstTextSearchMatchIndex(
 function stringSet(values: readonly string[] | undefined): Set<string> | null {
   const normalized = values?.map((value) => value.trim()).filter(Boolean) ?? [];
   return normalized.length > 0 ? new Set(normalized) : null;
+}
+
+function entryConversationId(entry: ConversationIndexedEntry): string {
+  return entry.sessionId;
+}
+
+function conversationFieldsForEntry(
+  entry: ConversationIndexedEntry,
+  conversations: ReadonlyMap<string, AgentConversationIndexEntry>,
+): { conversationId: string; conversationTitle: string | null } {
+  const conversationId = entryConversationId(entry);
+  return {
+    conversationId,
+    conversationTitle: conversations.get(conversationId)?.title ?? null,
+  };
 }
 
 function parseDateFilter(value: string | undefined): number | null {

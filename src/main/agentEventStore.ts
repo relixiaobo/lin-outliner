@@ -454,6 +454,7 @@ export class AgentEventStore {
     ) {
       await rm(indexesDir, { recursive: true, force: true });
     }
+    await rm(this.legacySessionIndexPath(), { force: true });
   }
 
   private async replayFromCheckpoint(sessionId: string): Promise<AgentEventReplayState | null> {

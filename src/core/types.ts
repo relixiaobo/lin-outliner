@@ -666,7 +666,7 @@ export interface AgentConversation {
   renderProjection: AgentRenderProjection;
 }
 
-export interface AgentConversationMeta {
+export interface AgentConversationListMeta {
   id: string;
   title: string | null;
   createdAt: number;

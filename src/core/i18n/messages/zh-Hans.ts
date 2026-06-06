@@ -1008,7 +1008,7 @@ commandPalette: {
     noRuntimeData: '暂无运行数据。',
     unknown: '未知',
     overviewAriaLabel: 'Agent 调试概览',
-    metricConversation: '会话',
+    metricConversation: '对话',
     metricModel: '模型',
     metricContext: '上下文',
     metricStatus: '状态',

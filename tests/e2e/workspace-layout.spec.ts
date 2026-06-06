@@ -5,7 +5,7 @@ import {
 } from '../../src/core/chromeGeometry';
 import { e2eProjection, emitDocumentEvent, ids, openMockedApp, row } from './outlinerMock';
 
-const WORKSPACE_LAYOUT_STORAGE_KEY = 'lin-outliner:workspace-layout:v2';
+const WORKSPACE_LAYOUT_STORAGE_KEY = 'lin-outliner:workspace-layout:v3';
 const OUTLINE_VIEW_STATE_STORAGE_KEY = 'lin-outliner:outline-view-state:v1';
 
 test.describe('workspace layout resizing', () => {
@@ -640,7 +640,7 @@ test.describe('workspace layout resizing', () => {
     await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
     await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
     await page.evaluate(() => {
-      window.localStorage.setItem('lin-outliner:workspace-layout:v2', JSON.stringify({
+      window.localStorage.setItem('lin-outliner:workspace-layout:v3', JSON.stringify({
         version: 2,
         localDate: '1999-01-01',
         activePanelId: 'panel-stale',

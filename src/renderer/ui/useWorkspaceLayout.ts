@@ -9,7 +9,7 @@ import type {
 } from './workspaceLayoutTypes';
 
 let nextWorkspaceId = 0;
-const STORAGE_KEY = 'lin-outliner:workspace-layout:v2';
+const STORAGE_KEY = 'lin-outliner:workspace-layout:v3';
 const MAX_PERSISTED_PANELS = 4;
 const MAX_PANEL_PAGE_HISTORY = 50;
 

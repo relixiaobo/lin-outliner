@@ -18,7 +18,7 @@ export type {
   AgentDefinition,
   SkillDefinition,
   AgentConversation,
-  AgentConversationMeta,
+  AgentConversationListMeta,
   Backlink,
   BatchMoveNodeInput,
   CommandResult,

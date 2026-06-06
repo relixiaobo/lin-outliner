@@ -1111,7 +1111,7 @@ commandPalette: {
     noRuntimeData: 'No runtime data available.',
     unknown: 'unknown',
     overviewAriaLabel: 'Agent debug overview',
-    metricConversation: 'Session',
+    metricConversation: 'Conversation',
     metricModel: 'Model',
     metricContext: 'Context',
     metricStatus: 'Status',

@@ -88,7 +88,7 @@ import {
 import {
   AgentEventStore,
 } from './agentEventStore';
-import { AgentDomainEventBus } from './agentDomainEvents';
+import { AgentDomainEventBus, type AgentDomainEvent } from './agentDomainEvents';
 import { AgentPastChatsService } from './agentPastChats';
 import {
   getActiveProviderRuntimeConfig,
@@ -165,7 +165,7 @@ import type {
   AgentPermissionMode,
   AgentReasoningLevel,
   AgentRuntimeSettings,
-  AgentConversationMeta,
+  AgentConversationListMeta,
   AgentSlashCommandView,
 } from '../core/types';
 import { buildAgentRenderProjection, type AgentRenderActiveCompaction } from '../core/agentRenderProjection';
@@ -255,6 +255,13 @@ interface AgentActiveRunState extends AgentRuntimeActiveRunState {
   toolCallMessageIds: Map<string, string>;
 }
 
+type RendererProjectionDomainEvent = Extract<AgentDomainEvent, { lane: 'renderer-projection' }>;
+type PublicConversationRuntimeEventInput =
+  | Omit<Extract<AgentRuntimeEvent, { type: 'approval_request' }>, 'conversationId' | 'timestamp'>
+  | Omit<Extract<AgentRuntimeEvent, { type: 'approval_resolved' }>, 'conversationId' | 'timestamp'>
+  | Omit<Extract<AgentRuntimeEvent, { type: 'closed' }>, 'conversationId' | 'timestamp'>
+  | Omit<Extract<AgentRuntimeEvent, { type: 'error' }>, 'conversationId' | 'timestamp'>;
+
 interface AgentSessionState {
   agent: Agent;
   activeRun: AgentActiveRunState | null;
@@ -318,14 +325,7 @@ export class AgentRuntime {
     this.agentIdentity = options.agentIdentity ?? createDefaultAgentIdentity();
     this.domainEvents = options.domainEvents ?? new AgentDomainEventBus();
     this.domainEvents.subscribeLane('renderer-projection', (event) => {
-      this.emit({
-        type: 'projection',
-        conversationId: event.sessionId,
-        lastEventType: event.lastEventType,
-        revision: event.revision,
-        renderProjection: event.projection,
-        timestamp: event.createdAt,
-      });
+      this.emit(rendererProjectionEventFromDomain(event));
     });
     this.contextManager = new AgentRuntimeContextManager<AgentSessionState>({
       refreshRuntimeSettings: (session) => this.refreshRuntimeSettings(session),
@@ -392,7 +392,8 @@ export class AgentRuntime {
     return this.createConversation();
   }
 
-  async restoreConversation(sessionId: string) {
+  async restoreConversation(conversationId: string) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     const eventState = await this.loadEventState(sessionId);
     if (!eventState.session) throw new Error(`Agent conversation not found: ${sessionId}`);
     const session = await this.createSessionWithEventState(eventState);
@@ -418,7 +419,8 @@ export class AgentRuntime {
     return this.listEventConversations();
   }
 
-  async listSlashCommands(sessionId: string): Promise<AgentSlashCommandView[]> {
+  async listSlashCommands(conversationId: string): Promise<AgentSlashCommandView[]> {
+    const sessionId = sessionIdFromConversationId(conversationId);
     const session = await this.ensureSessionWithId(sessionId);
     const runtimeSettings = await this.refreshRuntimeSettings(session);
     const commands: AgentSlashCommandView[] = [];
@@ -451,11 +453,12 @@ export class AgentRuntime {
   }
 
   async resolveApproval(
-    sessionId: string,
+    conversationId: string,
     requestId: string,
     approved: boolean,
     scope: AgentApprovalResolutionScope = 'once',
   ) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     const pending = this.pendingApprovals.get(requestId);
     if (!pending || pending.sessionId !== sessionId) return { resolved: false };
     const session = this.sessions.get(sessionId);
@@ -490,13 +493,11 @@ export class AgentRuntime {
         requestId,
         approved,
       }]);
-      this.emit({
+      this.emitConversationRuntimeEvent(sessionId, {
         type: 'approval_resolved',
-        conversationId: sessionId,
         requestId,
         approved,
         scope: resolvedScope,
-        timestamp: Date.now(),
       });
       this.emitProjection(sessionId, 'approval.resolved');
     } finally {
@@ -511,24 +512,28 @@ export class AgentRuntime {
     return { resolved: true };
   }
 
-  async debugSnapshot(sessionId: string) {
+  async debugSnapshot(conversationId: string) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     const session = await this.ensureSessionWithId(sessionId);
     const projection = await this.deriveDebugProjection(sessionId);
     const snapshot = projection.history.at(-1) ?? this.getRuntimeDebugSnapshot(sessionId, session);
     return snapshot ? cloneDebug(snapshot) : null;
   }
 
-  async debugHistory(sessionId: string) {
+  async debugHistory(conversationId: string) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     await this.ensureSessionWithId(sessionId);
     return cloneDebug((await this.deriveDebugProjection(sessionId)).history);
   }
 
-  async debugTotals(sessionId: string) {
+  async debugTotals(conversationId: string) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     await this.ensureSessionWithId(sessionId);
     return cloneDebug((await this.deriveDebugProjection(sessionId)).totals);
   }
 
-  async debugPayload(sessionId: string, payloadId: string) {
+  async debugPayload(conversationId: string, payloadId: string) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     const session = this.sessions.get(sessionId);
     const eventState = session?.eventState ?? await this.loadEventState(sessionId);
     const payload = eventState.payloads[payloadId];
@@ -537,7 +542,8 @@ export class AgentRuntime {
     return bytes.toString('utf8');
   }
 
-  async payloadText(sessionId: string, payloadId: string) {
+  async payloadText(conversationId: string, payloadId: string) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     const session = this.sessions.get(sessionId);
     const eventState = session?.eventState ?? await this.loadEventState(sessionId);
     const payload = eventState.payloads[payloadId];
@@ -547,10 +553,11 @@ export class AgentRuntime {
   }
 
   async subagentStatus(
-    sessionId: string,
+    conversationId: string,
     agentId: string,
     options: { wait?: boolean; timeoutMs?: number } = {},
   ) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     const session = await this.ensureSessionWithId(sessionId);
     return session.subagentRuntime.status({
       agent_id: agentId,
@@ -559,7 +566,8 @@ export class AgentRuntime {
     });
   }
 
-  async subagentSend(sessionId: string, agentId: string, message: string) {
+  async subagentSend(conversationId: string, agentId: string, message: string) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     const session = await this.ensureSessionWithId(sessionId);
     return session.subagentRuntime.send({
       agent_id: agentId,
@@ -567,14 +575,16 @@ export class AgentRuntime {
     });
   }
 
-  async subagentStop(sessionId: string, agentId: string) {
+  async subagentStop(conversationId: string, agentId: string) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     const session = await this.ensureSessionWithId(sessionId);
     return session.subagentRuntime.stop({
       agent_id: agentId,
     });
   }
 
-  async listAllAgentDefinitions(sessionId: string) {
+  async listAllAgentDefinitions(conversationId: string) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     const session = this.sessions.get(sessionId);
     if (session) {
       return session.subagentRuntime.listAllAgentDefinitions();
@@ -587,7 +597,8 @@ export class AgentRuntime {
     return tempRuntime.listAllAgentDefinitions();
   }
 
-  async listAllSkills(sessionId: string) {
+  async listAllSkills(conversationId: string) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     const session = this.sessions.get(sessionId);
     if (session) {
       return session.skillRuntime.listAllSkills();
@@ -600,7 +611,8 @@ export class AgentRuntime {
     return tempRuntime.listAllSkills();
   }
 
-  async renameConversation(sessionId: string, title: string) {
+  async renameConversation(conversationId: string, title: string) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     const normalized = normalizeSessionTitle(title);
     const session = this.sessions.get(sessionId);
     if (session) {
@@ -625,7 +637,8 @@ export class AgentRuntime {
     return eventStateToMeta(eventState);
   }
 
-  async deleteConversation(sessionId: string) {
+  async deleteConversation(conversationId: string) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     const session = this.sessions.get(sessionId);
     if (session) {
       session.agent.abort();
@@ -634,7 +647,7 @@ export class AgentRuntime {
       this.sessions.delete(sessionId);
       this.debugProjectionCache.delete(sessionId);
       this.userViewContextReminderTracker.reset(sessionId);
-      this.emit({ type: 'closed', conversationId: sessionId, timestamp: Date.now() });
+      this.emitConversationRuntimeEvent(sessionId, { type: 'closed' });
     }
     this.cleanupProviderSessionResources(sessionId);
     await this.getEventStore().deleteConversation(sessionId);
@@ -642,11 +655,12 @@ export class AgentRuntime {
   }
 
   async sendMessage(
-    sessionId: string,
+    conversationId: string,
     message: string,
     attachmentInput: unknown = [],
     userViewContextInput: unknown = null,
   ) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     try {
       const session = await this.ensureSessionWithId(sessionId);
       const materialized = await this.materializeFileAttachments(normalizeAttachmentInputs(attachmentInput));
@@ -657,7 +671,7 @@ export class AgentRuntime {
         if (attachments.length > 0) {
           throw new Error('Attachments cannot be queued while the agent is running.');
         }
-          await this.steerConversation(sessionId, messageText);
+        await this.steerConversation(conversationId, messageText);
         return;
       }
       const runtimeSettings = await this.refreshRuntimeSettings(session);
@@ -708,7 +722,8 @@ export class AgentRuntime {
     }
   }
 
-  async editMessage(sessionId: string, nodeId: string, message: string) {
+  async editMessage(conversationId: string, nodeId: string, message: string) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     const trimmed = message.trim();
     if (!trimmed) return;
     try {
@@ -738,7 +753,8 @@ export class AgentRuntime {
     }
   }
 
-  async regenerateMessage(sessionId: string, nodeId: string) {
+  async regenerateMessage(conversationId: string, nodeId: string) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     try {
       const session = await this.ensureSessionWithId(sessionId);
       if (session.agent.state.isStreaming) throw new Error('Cannot regenerate while the agent is running.');
@@ -764,7 +780,8 @@ export class AgentRuntime {
     }
   }
 
-  async retryMessage(sessionId: string, nodeId: string) {
+  async retryMessage(conversationId: string, nodeId: string) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     try {
       const session = await this.ensureSessionWithId(sessionId);
       if (session.agent.state.isStreaming) throw new Error('Cannot retry while the agent is running.');
@@ -789,7 +806,8 @@ export class AgentRuntime {
     }
   }
 
-  async switchBranch(sessionId: string, nodeId: string) {
+  async switchBranch(conversationId: string, nodeId: string) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     try {
       const session = await this.ensureSessionWithId(sessionId);
       if (session.agent.state.isStreaming) throw new Error('Cannot switch branches while the agent is running.');
@@ -807,7 +825,8 @@ export class AgentRuntime {
     }
   }
 
-  async queueFollowUp(sessionId: string, message: string, userViewContextInput: unknown = null) {
+  async queueFollowUp(conversationId: string, message: string, userViewContextInput: unknown = null) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     const session = this.sessions.get(sessionId);
     if (!session) {
       this.emitError(sessionId, `Unknown agent conversation: ${sessionId}`);
@@ -832,7 +851,8 @@ export class AgentRuntime {
     return { queued: true };
   }
 
-  steerConversation(sessionId: string, message: string) {
+  steerConversation(conversationId: string, message: string) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     const session = this.sessions.get(sessionId);
     if (!session) {
       this.emitError(sessionId, `Unknown agent conversation: ${sessionId}`);
@@ -851,14 +871,16 @@ export class AgentRuntime {
     return { queued: true };
   }
 
-  clearSteer(sessionId: string) {
+  clearSteer(conversationId: string) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     const session = this.sessions.get(sessionId);
     if (!session) return;
     session.agent.clearSteeringQueue();
     this.emitProjection(sessionId, 'steer_cleared');
   }
 
-  clearFollowUp(sessionId: string) {
+  clearFollowUp(conversationId: string) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     const session = this.sessions.get(sessionId);
     if (!session) return;
     session.agent.clearFollowUpQueue();
@@ -866,7 +888,8 @@ export class AgentRuntime {
     this.emitProjection(sessionId, 'follow_up_cleared');
   }
 
-  stopConversation(sessionId: string) {
+  stopConversation(conversationId: string) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     const session = this.sessions.get(sessionId);
     if (!session) return;
     session.agent.abort();
@@ -874,7 +897,8 @@ export class AgentRuntime {
     this.emitProjection(sessionId, 'stop_requested');
   }
 
-  resetConversation(sessionId: string) {
+  resetConversation(conversationId: string) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     const session = this.sessions.get(sessionId);
     if (!session) return;
     session.agent.reset();
@@ -909,7 +933,8 @@ export class AgentRuntime {
     })().catch((error) => this.emitError(sessionId, error instanceof Error ? error.message : String(error)));
   }
 
-  closeConversation(sessionId: string) {
+  closeConversation(conversationId: string) {
+    const sessionId = sessionIdFromConversationId(conversationId);
     const session = this.sessions.get(sessionId);
     if (!session) return;
     void this.clearPendingApprovalsForSession(sessionId, session)
@@ -920,7 +945,7 @@ export class AgentRuntime {
     this.sessions.delete(sessionId);
     this.userViewContextReminderTracker.reset(sessionId);
     this.cleanupProviderSessionResources(sessionId);
-    this.emit({ type: 'closed', conversationId: sessionId, timestamp: Date.now() });
+    this.emitConversationRuntimeEvent(sessionId, { type: 'closed' });
   }
 
   private async clearPendingApprovalsForSession(sessionId: string, session: AgentSessionState) {
@@ -935,12 +960,10 @@ export class AgentRuntime {
         requestId,
         approved: false,
       });
-      this.emit({
+      this.emitConversationRuntimeEvent(sessionId, {
         type: 'approval_resolved',
-        conversationId: sessionId,
         requestId,
         approved: false,
-        timestamp: Date.now(),
       });
       pending.resolve({ approved: false, deniedBy: 'runtime' });
     }
@@ -1572,7 +1595,7 @@ export class AgentRuntime {
       messages: state.messages as AgentMessage[],
       model: state.model as Model<any>,
       queryIndex: 0,
-      conversationId: sessionId,
+      conversationId: conversationIdFromSessionId(sessionId),
       conversationTitle: sanitizeSessionTitle(session.eventState.session?.title),
       systemPrompt: state.systemPrompt,
       thinkingLevel: state.thinkingLevel,
@@ -1593,7 +1616,7 @@ export class AgentRuntime {
     const projection = await deriveAgentDebugProjectionFromEvents({
       events,
       readPayload: (payload) => this.getEventStore().readPayload(sessionId, payload),
-      conversationId: sessionId,
+      conversationId: conversationIdFromSessionId(sessionId),
       conversationTitle: sanitizeSessionTitle(this.sessions.get(sessionId)?.eventState.session?.title),
     });
     this.debugProjectionCache.set(sessionId, projection);
@@ -1688,7 +1711,7 @@ export class AgentRuntime {
 
   private conversationResponse(sessionId: string, session: AgentSessionState) {
     return {
-      conversationId: sessionId,
+      conversationId: conversationIdFromSessionId(sessionId),
       renderProjection: this.renderProjection(session),
     };
   }
@@ -1793,11 +1816,40 @@ export class AgentRuntime {
   }
 
   private emitError(sessionId: string, message: string) {
-    this.emit({
+    this.emitConversationRuntimeEvent(sessionId, {
       type: 'error',
-      conversationId: sessionId,
       error: message,
-      timestamp: Date.now(),
+    });
+  }
+
+  private emitConversationRuntimeEvent(sessionId: string, input: PublicConversationRuntimeEventInput) {
+    const conversationId = conversationIdFromSessionId(sessionId);
+    const timestamp = Date.now();
+    if (input.type === 'closed') {
+      this.emit({ type: 'closed', conversationId, timestamp });
+      return;
+    }
+    if (input.type === 'error') {
+      this.emit({ type: 'error', conversationId, error: input.error, timestamp });
+      return;
+    }
+    if (input.type === 'approval_request') {
+      this.emit({
+        type: 'approval_request',
+        conversationId,
+        requestId: input.requestId,
+        request: input.request,
+        timestamp,
+      });
+      return;
+    }
+    this.emit({
+      type: 'approval_resolved',
+      conversationId,
+      requestId: input.requestId,
+      approved: input.approved,
+      scope: input.scope,
+      timestamp,
     });
   }
 
@@ -1839,7 +1891,7 @@ export class AgentRuntime {
     return this.options.providerModelResolver?.(providerConfig) ?? resolveModel(providerConfig);
   }
 
-  private async listEventConversations(): Promise<AgentConversationMeta[]> {
+  private async listEventConversations(): Promise<AgentConversationListMeta[]> {
     return (await this.getEventStore().listConversationIndexEntries()).map((entry) => ({
       id: entry.id,
       title: sanitizeSessionTitle(entry.title),
@@ -1901,7 +1953,7 @@ export class AgentRuntime {
     const requestId = randomUUID();
     const request: AgentApprovalRequestView = {
       requestId,
-      conversationId: sessionId,
+      conversationId: conversationIdFromSessionId(sessionId),
       toolCallId: input.toolCall.id,
       toolName: input.toolCall.name,
       title: input.decision.request.title,
@@ -1943,12 +1995,10 @@ export class AgentRuntime {
       payloadRef: payload,
     }]);
 
-    this.emit({
+    this.emitConversationRuntimeEvent(sessionId, {
       type: 'approval_request',
-      conversationId: sessionId,
       requestId,
       request,
-      timestamp: Date.now(),
     });
     this.emitProjection(sessionId, 'approval.requested');
 
@@ -1965,12 +2015,10 @@ export class AgentRuntime {
           requestId,
           approved: false,
         }]).catch((error) => this.emitError(sessionId, error instanceof Error ? error.message : String(error)));
-        this.emit({
+        this.emitConversationRuntimeEvent(sessionId, {
           type: 'approval_resolved',
-          conversationId: sessionId,
           requestId,
           approved: false,
-          timestamp: Date.now(),
         });
         resolve({ approved: false, deniedBy: 'abort' });
       };
@@ -3199,7 +3247,7 @@ function findLatestAssistantMessageId(eventState: AgentEventReplayState): string
   return [...getAgentEventActivePath(eventState)].reverse().find((message) => message.role === 'assistant')?.id ?? null;
 }
 
-function eventStateToMeta(eventState: AgentEventReplayState): AgentConversationMeta | null {
+function eventStateToMeta(eventState: AgentEventReplayState): AgentConversationListMeta | null {
   if (!eventState.session) return null;
   return {
     id: eventState.session.id,
@@ -3902,6 +3950,25 @@ function slashCommandDescription(displayName: string | undefined, description: s
   const detail = description.split('\n').map((line) => line.trim()).find(Boolean) ?? '';
   if (!displayName || displayName === detail) return detail;
   return detail ? `${displayName} - ${detail}` : displayName;
+}
+
+function rendererProjectionEventFromDomain(event: RendererProjectionDomainEvent): AgentRuntimeEvent {
+  return {
+    type: 'projection',
+    conversationId: conversationIdFromSessionId(event.sessionId),
+    lastEventType: event.lastEventType,
+    revision: event.revision,
+    renderProjection: event.projection,
+    timestamp: event.createdAt,
+  };
+}
+
+function conversationIdFromSessionId(sessionId: string): string {
+  return sessionId;
+}
+
+function sessionIdFromConversationId(conversationId: string): string {
+  return conversationId;
 }
 
 function clone<T>(value: T): T {
