@@ -3,7 +3,7 @@
 This document is the working checklist for Lin's local agent integration. Keep
 it current whenever a meaningful agent milestone lands or a priority changes.
 
-Last updated: 2026-05-26
+Last updated: 2026-06-06
 
 ## Current Direction
 
@@ -112,6 +112,12 @@ truth.
   - skill `context: fork` routed through the subagent runtime
   - provider overflow detection, response debug capture, stream option pass-through,
     and session resource cleanup via pi-ai
+- [x] Agent memory foundation:
+  - per-agent `agents/<agentId>/memory/events.jsonl` event log
+  - `memory` tool with list/remember/update/forget actions
+  - bounded `<agent-memory>` turn reminder injection
+  - Settings Memory pane for list/edit/forget
+  - permission classification as `agent.memory.manage`
 
 ## Next Milestone
 

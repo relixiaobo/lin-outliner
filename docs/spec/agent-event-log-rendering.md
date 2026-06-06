@@ -257,7 +257,7 @@ Authoritative:
 - `conversations/<id>/segments/*.jsonl`
 - `runs/<id>/events.jsonl`
 - `agents/<id>/identity.json`
-- `agents/<id>/memory/events.jsonl` once memory emission lands
+- `agents/<id>/memory/events.jsonl`
 - payload files referenced by event payload refs
 
 Derived and rebuildable:
@@ -967,6 +967,8 @@ The current renderer contract is `AgentRenderProjection`, carried by
   corrupt-checkpoint fallback, atomic writes, stale-state guards, and best-effort retention of the latest three
   valid checkpoints.
 - Transcript row virtualization and bounded large-output rendering.
+- Agent memory event emission, projection, reminder injection, and Settings
+  list/edit/forget management.
 
 ### Remaining
 
@@ -974,7 +976,8 @@ The current renderer contract is `AgentRenderProjection`, carried by
   projection, IPC bytes, render commits, and long transcript behavior.
 - Richer non-text media previews and lazy full-payload loading in render/debug
   detail views.
-- Full memory event emission and memory retrieval.
+- Memory consolidation beyond explicit tool writes, including extraction from
+  summaries and mixed-resolution memory retrieval.
 - Mixed-resolution context assembly that replaces old conversation segments
   with distillation summaries.
 - Runtime consumers for the schema-reserved task, notification, config-change,

@@ -849,4 +849,50 @@ describe('agent event store', () => {
       });
     });
   });
+
+  test('projects agent memory from per-agent JSONL events', async () => {
+    await withStore(async (store, root) => {
+      const agentId = 'built-in:tenon:assistant';
+      const first = await store.addMemoryEntry(agentId, {
+        id: 'memory-1',
+        fact: '  User prefers concise engineering answers.  ',
+        originWorkspace: 'workspace:abc',
+        sources: [{ conversationId: 'conversation-1', runId: 'run-1', messageRange: ['user-1', 'user-1'] }],
+        createdAt: 10,
+      });
+      const second = await store.addMemoryEntry(agentId, {
+        id: 'memory-2',
+        fact: 'Project codename is Tenon.',
+        sources: [{ conversationId: 'conversation-2' }],
+        createdAt: 20,
+      });
+
+      expect(first.fact).toBe('User prefers concise engineering answers.');
+      expect(second.fact).toBe('Project codename is Tenon.');
+      await expect(readFile(store.agentPaths(agentId).memoryEventsPath, 'utf8')).resolves.toContain('memory.entry_added');
+
+      const updated = await store.updateMemoryEntry(agentId, 'memory-1', {
+        fact: 'User prefers direct, concise engineering answers.',
+      });
+      expect(updated?.fact).toBe('User prefers direct, concise engineering answers.');
+
+      const removed = await store.removeMemoryEntry(agentId, 'memory-1', 'test');
+      expect(removed?.status).toBe('invalidated');
+
+      expect(await store.listMemoryEntries(agentId)).toMatchObject([
+        { id: 'memory-2', status: 'active' },
+      ]);
+      expect(await store.listMemoryEntries(agentId, { includeInvalidated: true, query: 'direct concise' })).toMatchObject([
+        { id: 'memory-1', status: 'invalidated' },
+      ]);
+
+      const raw = await readFile(store.agentPaths(agentId).memoryEventsPath, 'utf8');
+      expect(raw.trim().split('\n')).toHaveLength(4);
+      const restarted = new AgentEventStore(root);
+      expect(await restarted.listMemoryEntries(agentId, { includeInvalidated: true })).toMatchObject([
+        { id: 'memory-2', status: 'active' },
+        { id: 'memory-1', status: 'invalidated' },
+      ]);
+    });
+  });
 });

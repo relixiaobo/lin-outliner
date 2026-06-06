@@ -25,6 +25,7 @@
 @import './settings-provider-sheet.css';
 @import './settings-providers.css';
 @import './settings-fields.css';
+@import './settings-memory.css';
 @import './settings-skills.css';
 @import './settings-agents.css';
 @import './agent-runtime.css';

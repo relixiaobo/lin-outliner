@@ -25,6 +25,7 @@ export type AgentToolActionKind =
   | 'deploy.publish_remote'
   | 'external.message.send'
   | 'task.stop'
+  | 'agent.memory.manage'
   | 'agent.skill.invoke'
   | 'agent.subagent.spawn'
   | 'agent.subagent.status'
@@ -145,6 +146,7 @@ export const SUPPORTED_AGENT_TOOL_ACTION_KINDS: readonly AgentToolActionKind[] =
   'deploy.publish_remote',
   'external.message.send',
   'task.stop',
+  'agent.memory.manage',
   'agent.skill.invoke',
   'agent.subagent.spawn',
   'agent.subagent.status',
@@ -216,6 +218,7 @@ export const SAFE_AUTO_ALLOW_TOOL_NAMES: readonly string[] = [
   'node_search',
   'operation_history',
   'past_chats',
+  'memory',
   'task_stop',
   'web_search',
 ];
@@ -243,6 +246,7 @@ const KNOWN_TOOL_NAMES = new Set<string>([
   'bash',
   'file_edit',
   'file_write',
+  'memory',
   'node_create',
   'node_delete',
   'node_edit',

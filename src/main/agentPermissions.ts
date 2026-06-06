@@ -124,6 +124,7 @@ const RESTRICTED_BASE_ALLOWED_TOOLS = new Set([
   'web_search',
   'web_fetch',
   'past_chats',
+  'memory',
   'skill',
   'task_stop',
   'node_read',
@@ -150,6 +151,7 @@ const TOOL_ALIASES = new Map<string, string>([
   ['web_search', 'web_search'],
   ['pastchats', 'past_chats'],
   ['past_chats', 'past_chats'],
+  ['memory', 'memory'],
   ['skill', 'skill'],
   ['task_stop', 'task_stop'],
   ['agent', 'agent'],
@@ -427,6 +429,20 @@ export function deriveAgentToolActionDescriptors(input: {
       classifierAutoAllowEligible: false,
       requestTitle: 'Approve web fetch?',
       requestTarget: url,
+    })];
+  }
+
+  if (toolName === 'memory') {
+    return [descriptor(toolName, 'agent.memory.manage', {
+      accessScope: 'none',
+      title: 'agent memory',
+      summary: 'Read or update durable facts remembered by the local agent.',
+      consequence: 'This changes local agent memory only; it does not edit documents or contact external systems.',
+      defaultDecision: 'allow',
+      reversible: true,
+      externalEffect: false,
+      highConsequence: false,
+      classifierAutoAllowEligible: false,
     })];
   }
 
@@ -1126,6 +1142,7 @@ export function toPermissionClassifierInput(toolNameInput: string, args: unknown
     case 'node_delete':
     case 'operation_history':
     case 'past_chats':
+    case 'memory':
     case 'task_stop':
     case 'agent_status':
     case 'agent_send':
@@ -1501,7 +1518,7 @@ function toolPathArgumentName(toolName: string): string | null {
 
 function classifyToolAccess(toolName: string): AgentPermissionAccess {
   if (toolName === 'bash') return 'execute';
-  if (toolName === 'task_stop' || toolName === 'agent' || toolName === 'agent_status' || toolName === 'agent_send' || toolName === 'agent_stop' || toolName === 'skill') return 'control';
+  if (toolName === 'task_stop' || toolName === 'agent' || toolName === 'agent_status' || toolName === 'agent_send' || toolName === 'agent_stop' || toolName === 'skill' || toolName === 'memory') return 'control';
   if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete') return 'write';
   if (toolName === 'file_read' || toolName === 'file_glob' || toolName === 'file_grep' || toolName === 'web_fetch' || toolName === 'web_search' || toolName === 'past_chats' || toolName === 'node_read' || toolName === 'node_search' || toolName === 'operation_history') return 'read';
   return 'unknown';

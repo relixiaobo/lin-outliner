@@ -1767,6 +1767,15 @@ async function handleAgentCommand(command: AgentCommand, args: Record<string, un
       return agentRuntime.renameConversation(conversationId(), String(args.title ?? ''));
     case 'agent_delete_conversation':
       return agentRuntime.deleteConversation(conversationId());
+    case 'agent_list_memory':
+      return agentRuntime.listMemory({
+        includeInvalidated: args.includeInvalidated === true,
+        limit: typeof args.limit === 'number' ? args.limit : undefined,
+      });
+    case 'agent_update_memory':
+      return agentRuntime.updateMemory(String(args.memoryId), String(args.fact ?? ''));
+    case 'agent_forget_memory':
+      return agentRuntime.forgetMemory(String(args.memoryId));
     case 'agent_debug_snapshot':
       return agentRuntime.debugSnapshot(conversationId());
     case 'agent_debug_history':

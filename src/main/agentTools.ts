@@ -14,6 +14,7 @@ import { createNodeTools, type OutlinerToolHost } from './agentNodeTools';
 import { createLocalTools, type AgentLocalWorkspaceContext } from './agentLocalTools';
 import { createSkillTool, type AgentSkillRuntime } from './agentSkills';
 import { createAgentSubagentTools, normalizeAgentToolNames, type AgentSubagentRuntime } from './agentSubagents';
+import { createMemoryTool, type AgentMemoryToolRuntime } from './agentMemoryTool';
 import { createPastChatsTool, type PastChatsToolRuntime } from './agentPastChatsTool';
 import {
   agentToolResult,
@@ -180,6 +181,7 @@ export interface AgentToolsOptions {
   skillRuntime?: AgentSkillRuntime;
   skillToolEnabled?: boolean;
   subagentRuntime?: AgentSubagentRuntime;
+  memory?: AgentMemoryToolRuntime;
   pastChats?: PastChatsToolRuntime;
   allowedTools?: string[];
   disallowedTools?: string[];
@@ -191,6 +193,7 @@ export function createAgentTools(outliner?: OutlinerToolHost, options: AgentTool
     ...createLocalTools({ localRoot: options.localFileRoot, workspace: options.localWorkspace, skillRuntime: options.skillRuntime }),
     createWebSearchTool(),
     createWebFetchTool(options.localFileRoot),
+    ...(options.memory ? [createMemoryTool(options.memory)] : []),
     ...(options.pastChats ? [createPastChatsTool(options.pastChats)] : []),
     ...(options.skillRuntime && options.skillToolEnabled !== false ? [createSkillTool(options.skillRuntime)] : []),
     ...(options.subagentRuntime ? createAgentSubagentTools(options.subagentRuntime) : []),

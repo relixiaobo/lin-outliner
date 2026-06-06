@@ -19,6 +19,9 @@ import type {
   AgentRunRetention,
   AgentRunStatus,
   AgentIdentityRecord,
+  AgentMemoryEntry,
+  AgentMemoryEvent,
+  AgentMemorySource,
   AgentRunTrigger,
 } from '../core/agentEventLog';
 import { appendAgentEventToReplayState, replayAgentEvents } from '../core/agentEventLog';
@@ -43,6 +46,7 @@ const DEFAULT_CHECKPOINT_EVENT_INTERVAL = 100;
 const MAX_CHECKPOINTS_PER_SESSION = 3;
 const MAX_SEARCH_INDEX_TEXT_CHARS = 20_000;
 const SEARCH_INDEX_PREVIEW_CHARS = 240;
+const MAX_MEMORY_FACT_CHARS = 2_000;
 
 export interface AgentPayloadWriteInput {
   id?: string;
@@ -103,6 +107,21 @@ export interface AgentConversationMetaProjection extends AgentConversationMeta {
   title: string | null;
   updatedAt: number;
   latestSeq: number;
+}
+
+export interface AgentMemoryEntryInput {
+  id?: string;
+  fact: string;
+  originWorkspace?: string;
+  sources: AgentMemorySource[];
+  createdAt?: number;
+}
+
+export interface AgentMemoryEntryPatch {
+  fact?: string;
+  originWorkspace?: string;
+  sources?: AgentMemorySource[];
+  status?: AgentMemoryEntry['status'];
 }
 
 export interface AgentConversationIndexEntry {
@@ -169,8 +188,10 @@ interface AgentEventSearchIndex {
 
 export class AgentEventStore {
   private readonly writeQueues = new Map<string, Promise<unknown>>();
+  private readonly memoryWriteQueues = new Map<string, Promise<unknown>>();
   private indexQueue = Promise.resolve();
   private readonly lastSeqBySessionId = new Map<string, number>();
+  private readonly lastMemorySeqByAgentId = new Map<string, number>();
   private storageLayoutPromise: Promise<void> | null = null;
 
   constructor(private readonly rootDir: string) {}
@@ -434,6 +455,86 @@ export class AgentEventStore {
     }
   }
 
+  async addMemoryEntry(agentId: string, input: AgentMemoryEntryInput): Promise<AgentMemoryEntry> {
+    await this.ensureStorageLayout();
+    return this.enqueueMemoryWrite(agentId, async () => {
+      const createdAt = input.createdAt ?? Date.now();
+      const entry = normalizeMemoryEntry({
+        id: input.id ?? `memory-${randomUUID()}`,
+        agentId,
+        fact: input.fact,
+        originWorkspace: input.originWorkspace,
+        sources: input.sources,
+        status: 'active',
+        createdAt,
+      });
+      if (!entry) throw new Error('Invalid agent memory entry.');
+      const event = await this.nextMemoryEvent(agentId, {
+        type: 'memory.entry_added',
+        createdAt,
+        entry,
+      });
+      await this.appendMemoryEventsFile(agentId, [event]);
+      return entry;
+    });
+  }
+
+  async updateMemoryEntry(
+    agentId: string,
+    entryId: string,
+    patch: AgentMemoryEntryPatch,
+  ): Promise<AgentMemoryEntry | null> {
+    await this.ensureStorageLayout();
+    return this.enqueueMemoryWrite(agentId, async () => {
+      const current = projectMemoryEntries(await this.readMemoryEvents(agentId)).get(entryId);
+      if (!current) return null;
+      const normalizedPatch = normalizeMemoryEntryPatch(patch);
+      if (Object.keys(normalizedPatch).length === 0) return current;
+      const event = await this.nextMemoryEvent(agentId, {
+        type: 'memory.entry_updated',
+        createdAt: Date.now(),
+        entryId,
+        patch: normalizedPatch,
+      });
+      await this.appendMemoryEventsFile(agentId, [event]);
+      return normalizeMemoryEntry({ ...current, ...normalizedPatch }) ?? current;
+    });
+  }
+
+  async removeMemoryEntry(agentId: string, entryId: string, reason?: string): Promise<AgentMemoryEntry | null> {
+    await this.ensureStorageLayout();
+    return this.enqueueMemoryWrite(agentId, async () => {
+      const current = projectMemoryEntries(await this.readMemoryEvents(agentId)).get(entryId);
+      if (!current) return null;
+      const event = await this.nextMemoryEvent(agentId, {
+        type: 'memory.entry_removed',
+        createdAt: Date.now(),
+        entryId,
+        reason,
+      });
+      await this.appendMemoryEventsFile(agentId, [event]);
+      return { ...current, status: 'invalidated' };
+    });
+  }
+
+  async listMemoryEntries(
+    agentId: string,
+    options: { includeInvalidated?: boolean; limit?: number; query?: string; originWorkspace?: string } = {},
+  ): Promise<AgentMemoryEntry[]> {
+    await this.ensureStorageLayout();
+    const entries = [...projectMemoryEntries(await this.readMemoryEvents(agentId)).values()]
+      .filter((entry) => options.includeInvalidated || entry.status === 'active')
+      .filter((entry) => !options.originWorkspace || entry.originWorkspace === options.originWorkspace)
+      .filter((entry) => memoryEntryMatchesQuery(entry, options.query))
+      .sort((left, right) => right.createdAt - left.createdAt || right.id.localeCompare(left.id));
+    return entries.slice(0, clampMemoryLimit(options.limit));
+  }
+
+  async readMemoryEvents(agentId: string): Promise<AgentMemoryEvent[]> {
+    await this.ensureStorageLayout();
+    return readMemoryEventsJsonlIfExists(this.agentPaths(agentId).memoryEventsPath);
+  }
+
   private ensureStorageLayout(): Promise<void> {
     this.storageLayoutPromise ??= this.cleanLegacyStorageLayout();
     return this.storageLayoutPromise;
@@ -509,6 +610,45 @@ export class AgentEventStore {
     const next = current.then(operation, operation);
     this.writeQueues.set(sessionId, next.then(() => undefined, () => undefined));
     return next;
+  }
+
+  private enqueueMemoryWrite<T>(agentId: string, operation: () => Promise<T>): Promise<T> {
+    const current = this.memoryWriteQueues.get(agentId) ?? Promise.resolve();
+    const next = current.then(operation, operation);
+    this.memoryWriteQueues.set(agentId, next.then(() => undefined, () => undefined));
+    return next;
+  }
+
+  private async nextMemoryEvent(
+    agentId: string,
+    input: Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_added' }>, 'v' | 'eventId' | 'seq' | 'agentId'>
+      | Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_updated' }>, 'v' | 'eventId' | 'seq' | 'agentId'>
+      | Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_removed' }>, 'v' | 'eventId' | 'seq' | 'agentId'>,
+  ): Promise<AgentMemoryEvent> {
+    const seq = await this.getLatestMemorySeq(agentId) + 1;
+    return {
+      v: 1,
+      eventId: `memory-event-${randomUUID()}`,
+      seq,
+      agentId,
+      ...input,
+    } as AgentMemoryEvent;
+  }
+
+  private async getLatestMemorySeq(agentId: string): Promise<number> {
+    const cached = this.lastMemorySeqByAgentId.get(agentId);
+    if (cached !== undefined) return cached;
+    const tail = await readMemoryEventJsonlTail(this.agentPaths(agentId).memoryEventsPath);
+    this.lastMemorySeqByAgentId.set(agentId, tail.seq);
+    return tail.seq;
+  }
+
+  private async appendMemoryEventsFile(agentId: string, events: readonly AgentMemoryEvent[]): Promise<void> {
+    if (events.length === 0) return;
+    const paths = this.agentPaths(agentId);
+    await mkdir(path.dirname(paths.memoryEventsPath), { recursive: true });
+    await appendFile(paths.memoryEventsPath, serializeMemoryEventsJsonl(events));
+    this.lastMemorySeqByAgentId.set(agentId, events.at(-1)!.seq);
   }
 
   private async readEventFileTail(sessionId: string): Promise<AgentEventFileTail> {
@@ -1272,6 +1412,34 @@ async function readEventsJsonlIfExists(filePath: string): Promise<AgentEvent[]> 
   }
 }
 
+function serializeMemoryEventsJsonl(events: readonly AgentMemoryEvent[]): string {
+  return `${events.map((event) => JSON.stringify(event)).join('\n')}\n`;
+}
+
+async function readMemoryEventsJsonlIfExists(filePath: string): Promise<AgentMemoryEvent[]> {
+  try {
+    return parseMemoryEventsJsonl(await readFile(filePath, 'utf8'), filePath);
+  } catch (error) {
+    if (isNotFoundError(error)) return [];
+    throw error;
+  }
+}
+
+async function readMemoryEventJsonlTail(filePath: string): Promise<AgentEventFileTail> {
+  try {
+    const line = await readLastNonEmptyLine(filePath);
+    if (!line) return { seq: 0, eventId: null };
+    const event = JSON.parse(line) as AgentMemoryEvent;
+    return {
+      seq: typeof event.seq === 'number' ? event.seq : 0,
+      eventId: typeof event.eventId === 'string' ? event.eventId : null,
+    };
+  } catch (error) {
+    if (isNotFoundError(error)) return { seq: 0, eventId: null };
+    throw error;
+  }
+}
+
 async function readEventsJsonlFromOffsetIfExists(
   filePath: string,
   byteOffset: number,
@@ -1629,6 +1797,182 @@ function parseEventsJsonl(raw: string, source: string): AgentEvent[] {
     }
   }
   return events;
+}
+
+function parseMemoryEventsJsonl(raw: string, source: string): AgentMemoryEvent[] {
+  const events: AgentMemoryEvent[] = [];
+  const lines = raw.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!.trim();
+    if (!line) continue;
+    try {
+      const event = normalizeMemoryEvent(JSON.parse(line));
+      if (event) events.push(event);
+    } catch (error) {
+      throw new Error(`Invalid agent memory event JSON at ${source}:${index + 1}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return events;
+}
+
+function projectMemoryEntries(events: readonly AgentMemoryEvent[]): Map<string, AgentMemoryEntry> {
+  const entries = new Map<string, AgentMemoryEntry>();
+  for (const event of [...events].sort(compareMemoryEventsForReplay)) {
+    if (event.type === 'memory.entry_added') {
+      const entry = normalizeMemoryEntry(event.entry);
+      if (entry) entries.set(entry.id, entry);
+      continue;
+    }
+
+    const current = entries.get(event.entryId);
+    if (!current) continue;
+    if (event.type === 'memory.entry_updated') {
+      const next = normalizeMemoryEntry({ ...current, ...normalizeMemoryEntryPatch(event.patch) });
+      if (next) entries.set(next.id, next);
+      continue;
+    }
+
+    entries.set(current.id, { ...current, status: 'invalidated' });
+  }
+  return entries;
+}
+
+function normalizeMemoryEvent(value: unknown): AgentMemoryEvent | null {
+  if (!isRecord(value) || value.v !== 1) return null;
+  if (typeof value.eventId !== 'string' || typeof value.agentId !== 'string') return null;
+  const seq = numberOrNull(value.seq);
+  const createdAt = numberOrNull(value.createdAt);
+  if (seq === null || createdAt === null) return null;
+
+  if (value.type === 'memory.entry_added') {
+    const entry = normalizeMemoryEntry(value.entry);
+    if (!entry || entry.agentId !== value.agentId) return null;
+    return {
+      v: 1,
+      type: 'memory.entry_added',
+      eventId: value.eventId,
+      seq,
+      agentId: value.agentId,
+      createdAt,
+      entry,
+    };
+  }
+
+  if (value.type === 'memory.entry_updated') {
+    if (typeof value.entryId !== 'string') return null;
+    return {
+      v: 1,
+      type: 'memory.entry_updated',
+      eventId: value.eventId,
+      seq,
+      agentId: value.agentId,
+      createdAt,
+      entryId: value.entryId,
+      patch: normalizeMemoryEntryPatch(isRecord(value.patch) ? value.patch : {}),
+    };
+  }
+
+  if (value.type === 'memory.entry_removed') {
+    if (typeof value.entryId !== 'string') return null;
+    return {
+      v: 1,
+      type: 'memory.entry_removed',
+      eventId: value.eventId,
+      seq,
+      agentId: value.agentId,
+      createdAt,
+      entryId: value.entryId,
+      reason: typeof value.reason === 'string' ? value.reason : undefined,
+    };
+  }
+
+  return null;
+}
+
+function normalizeMemoryEntry(value: unknown): AgentMemoryEntry | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.id !== 'string' || typeof value.agentId !== 'string') return null;
+  const fact = normalizeMemoryFact(value.fact);
+  const createdAt = numberOrNull(value.createdAt);
+  if (!fact || createdAt === null) return null;
+  return {
+    id: value.id,
+    agentId: value.agentId,
+    fact,
+    originWorkspace: normalizeOptionalString(value.originWorkspace),
+    sources: Array.isArray(value.sources) ? value.sources.map(normalizeMemorySource).filter(isPresent) : [],
+    status: value.status === 'invalidated' ? 'invalidated' : 'active',
+    createdAt,
+  };
+}
+
+function normalizeMemoryEntryPatch(value: unknown): AgentMemoryEntryPatch {
+  if (!isRecord(value)) return {};
+  const patch: AgentMemoryEntryPatch = {};
+  if ('fact' in value) {
+    const fact = normalizeMemoryFact(value.fact);
+    if (fact) patch.fact = fact;
+  }
+  if ('originWorkspace' in value) {
+    patch.originWorkspace = normalizeOptionalString(value.originWorkspace);
+  }
+  if ('sources' in value) {
+    patch.sources = Array.isArray(value.sources) ? value.sources.map(normalizeMemorySource).filter(isPresent) : [];
+  }
+  if (value.status === 'active' || value.status === 'invalidated') {
+    patch.status = value.status;
+  }
+  return patch;
+}
+
+function normalizeMemorySource(value: unknown): AgentMemorySource | null {
+  if (!isRecord(value) || typeof value.conversationId !== 'string' || value.conversationId.length === 0) return null;
+  const source: AgentMemorySource = { conversationId: value.conversationId };
+  if (typeof value.summaryId === 'string' && value.summaryId.length > 0) source.summaryId = value.summaryId;
+  if (Array.isArray(value.messageRange) && value.messageRange.length === 2) {
+    const [from, to] = value.messageRange;
+    if (typeof from === 'string' && typeof to === 'string') source.messageRange = [from, to];
+  }
+  if (typeof value.runId === 'string' && value.runId.length > 0) source.runId = value.runId;
+  if (typeof value.eventId === 'string' && value.eventId.length > 0) source.eventId = value.eventId;
+  return source;
+}
+
+function normalizeMemoryFact(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const fact = normalizeDisplayText(value);
+  if (!fact) return null;
+  return fact.length > MAX_MEMORY_FACT_CHARS ? `${fact.slice(0, MAX_MEMORY_FACT_CHARS).trim()}...` : fact;
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim();
+  return normalized || undefined;
+}
+
+function memoryEntryMatchesQuery(entry: AgentMemoryEntry, query: string | undefined): boolean {
+  if (!query || normalizeSearchText(query).length === 0) return true;
+  const terms = normalizeSearchTerms(query);
+  if (terms.length === 0) return true;
+  return textSearchTextMatchesQuery(normalizeSearchText(entry.fact), {
+    ...analyzeTextSearchQuery(query),
+    terms,
+  });
+}
+
+function clampMemoryLimit(limit: number | undefined): number {
+  if (limit === undefined) return 50;
+  if (!Number.isFinite(limit)) return 50;
+  return Math.max(1, Math.min(200, Math.trunc(limit)));
+}
+
+function compareMemoryEventsForReplay(left: AgentMemoryEvent, right: AgentMemoryEvent): number {
+  return left.seq - right.seq || left.createdAt - right.createdAt || left.eventId.localeCompare(right.eventId);
+}
+
+function isPresent<T>(value: T | null | undefined): value is T {
+  return value !== null && value !== undefined;
 }
 
 function cloneReplayState(state: AgentEventReplayState): AgentEventReplayState {
