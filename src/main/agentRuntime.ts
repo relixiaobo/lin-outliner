@@ -51,6 +51,7 @@ import {
   appendAgentEventToReplayState,
   createEmptyAgentEventReplayState,
   getAgentEventActivePath,
+  getAgentEventRuntimeTranscriptPath,
   type AgentActor,
   type AgentCompactionTrigger,
   type AgentEvent,
@@ -2335,6 +2336,7 @@ export class AgentRuntime {
       {
         type: 'tool_result.created',
         actor,
+        runId: session.activeRunId ?? undefined,
         messageId: this.createMessageId('tool-result'),
         parentMessageId: session.eventState.selectedLeafMessageId,
         toolCallId: message.toolCallId,
@@ -2416,7 +2418,7 @@ export class AgentRuntime {
     eventState: AgentEventReplayState,
   ): Promise<AgentMessage[]> {
     const messages: AgentMessage[] = [];
-    for (const message of getAgentEventActivePath(eventState)) {
+    for (const message of getAgentEventRuntimeTranscriptPath(eventState)) {
       if (message.role === 'user') {
         messages.push({
           role: 'user',
